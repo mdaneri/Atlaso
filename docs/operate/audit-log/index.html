@@ -4022,12 +4022,18 @@
 intended for investigation and change review.</p>
 <!-- BEGIN GENERATED INTERFACE OVERVIEW -->
 <h2 id="interface-overview">Interface overview<a class="headerlink" href="#interface-overview" title="Permanent link">&para;</a></h2>
-<p>This verified appliance view provides visual orientation before you begin.</p>
-<p><img alt="Atlaso Audit Events page in the clean-appliance desktop viewport." src="../../assets/screenshots/audit-log-clean-desktop.webp" /></p>
-<p><em>Figure: Audit Events in the verified clean-appliance desktop state.</em></p>
+<p>This interface capture uses synthetic test data for visual orientation.</p>
+<p><img alt="Atlaso Audit Events desktop layout showing retained-history navigation with synthetic data." src="../../assets/screenshots/audit-log-clean-desktop.webp" /></p>
+<p><em>Figure: Audit Events history controls in the desktop layout with synthetic test data.</em></p>
 <!-- END GENERATED INTERFACE OVERVIEW -->
 
 <h2 id="review-an-event">Review an event<a class="headerlink" href="#review-an-event" title="Permanent link">&para;</a></h2>
+<p>The open grid refreshes automatically. <strong>From beginning</strong>, <strong>Previous page</strong>, and <strong>Next page</strong> access all retained
+events in adjacent groups of up to 500, including a shorter oldest group; the grid's own page controls
+navigate within that group. Column filters and sorting
+apply to the displayed group and remain selected when it refreshes. <strong>Follow live</strong> advances to the newest group.
+With Time sorted descending, the newest rows appear on the first local page; ascending uses the last local page.
+Reading an earlier grid page or selecting text holds the displayed rows and reports newly available output.</p>
 <ol>
 <li>Filter the grid by actor, action, resource, or time.</li>
 <li>Open the relevant event and compare its timestamp with related entries on <strong>Tasks</strong>.</li>
@@ -4045,12 +4051,16 @@ must also be treated as sensitive when it is embedded in or paired with authenti
 Use <a href="../logs/">Operational logs</a> for runtime diagnostics. Preserve the relevant timestamps and identifiers when
 escalating; do not copy credentials or raw secrets into an issue. The data classification does not make authenticated
 audit history public or override site handling policy.</p>
+<p>The live view opens at the newest retained group. <strong>From beginning</strong> reads the oldest retained entries; <strong>Follow live</strong>
+returns directly to the newest group.</p>
+<p>The initial audit table is a ready snapshot even when JavaScript is unavailable. HTML and JSON history responses
+disable caching and distinguish their representation header so live refreshes cannot receive cached HTML.</p>
 <!-- BEGIN GENERATED ADDITIONAL SCREENSHOTS -->
 <h2 id="additional-verified-states">Additional verified states<a class="headerlink" href="#additional-verified-states" title="Permanent link">&para;</a></h2>
 <p>These captures show responsive layouts and useful operational states referenced by this page.</p>
 <h3 id="audit-events">Audit events<a class="headerlink" href="#audit-events" title="Permanent link">&para;</a></h3>
-<p><img alt="Atlaso Audit Events page in the clean-appliance responsive viewport." src="../../assets/screenshots/audit-log-clean-responsive.webp" /></p>
-<p><em>Figure: Audit Events in the verified clean-appliance responsive state.</em></p>
+<p><img alt="Atlaso Audit Events responsive layout showing retained-history navigation with synthetic data." src="../../assets/screenshots/audit-log-clean-responsive.webp" /></p>
+<p><em>Figure: Audit Events history controls in the responsive layout with synthetic test data.</em></p>
 <!-- END GENERATED ADDITIONAL SCREENSHOTS -->
 
 

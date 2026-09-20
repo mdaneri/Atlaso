@@ -4059,6 +4059,11 @@ job with its type, state, timestamps, and result.</p>
 <p>When you open several task logs in quick succession, the last task selected owns the log dialog. Atlaso cancels the
 older request where possible and ignores any stale success or error that arrives after the newer selection or after the
 dialog was closed.</p>
+<p>An open log refreshes automatically while its task is active and reads trailing output after completion. Use
+<strong>From beginning</strong> and the page controls to inspect its complete retained history; <strong>Follow live</strong> advances with new
+output. Reading older entries preserves your position and selection. A stale-connection notice keeps the last useful
+output visible while the viewer retries. These controls also apply to standalone VCF download logs and service logs;
+see <a href="../logs/">Operational logs</a> for retention and refresh behavior.</p>
 <p>Pending and running tasks are not proof that appliance state changed. Treat only a successful terminal result plus the
 service-specific verification as success.</p>
 <p>During a real Appliance Update installation, nginx temporarily replaces ordinary management and public browser pages
@@ -4077,6 +4082,11 @@ content changed, and neither is replayed automatically.</p>
 <p>Read the failed step and sanitized task log, then correlate its identifier with <a href="../logs/">Operational logs</a> and the
 <a href="../audit-log/">Audit log</a>. Correct desired state in the owning page and submit a new task. Do not edit task history or
 fabricate a successful result.</p>
+<p>Task history pages exclude the changing status and progress summary, which remains in the task detail dialog.
+Updating that summary does not reset an older log page. Result changes and audit events are captured transactionally
+as an ordered history stream. New fields and appended output do not move an existing history cursor; updated or removed
+fields add entries while earlier output stays readable. Existing retained tasks are initialized when the appliance
+starts. Cancelling or rolling back a producer transaction does not publish uncommitted log entries.</p>
 <h2 id="cancellation-and-execution-ownership">Cancellation and execution ownership<a class="headerlink" href="#cancellation-and-execution-ownership" title="Permanent link">&para;</a></h2>
 <p>Tasks and the API expose the same backend-owned <code>can_cancel</code>, <code>cancel_reason</code>, and <code>cancel_confirmation</code> fields.
 The task detail shows the reason even when cancellation is unavailable. Its Cancel action also works for a task
