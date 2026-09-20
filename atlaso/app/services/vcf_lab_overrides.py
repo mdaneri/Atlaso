@@ -287,16 +287,19 @@ def inspect_properties(db: Session, target: Target, ssh: str) -> dict[str, Any]:
     }
 
 
-def _property_owner_key(ssh: str, key: str) -> str:
+def _property_owner_key(ssh: str, key: str, target: Target) -> str:
     """Identify the latest dispatched mutation for a pinned target/property."""
-    return "vcf_lab_owner:" + hashlib.sha256(ssh.encode()).hexdigest() + ":" + key
+    identity = json.dumps([target.host, target.api_port, target.ssh_port, ssh])
+    return "vcf_lab_owner:" + hashlib.sha256(identity.encode()).hexdigest() + ":" + key
 
 
-def _require_property_owner(db: Session, ssh: str, keys: Any, job_id: str) -> None:
+def _require_property_owner(
+    db: Session, ssh: str, keys: Any, job_id: str, target: Target
+) -> None:
     """Reject stale baselines even when later writes restore identical values."""
     for key in keys:
         owner = db.scalar(
-            select(Setting).where(Setting.key == _property_owner_key(ssh, key))
+            select(Setting).where(Setting.key == _property_owner_key(ssh, key, target))
         )
         if owner is None or owner.value != job_id:
             raise LabOverrideError(
@@ -368,7 +371,7 @@ def review(
             for key, value in previous["previous"].items()
             if value != previous["desired"][key]
         }
-        _require_property_owner(db, ssh, desired, source.id)
+        _require_property_owner(db, ssh, desired, source.id, target)
     else:
         state = inspect_target(db, target, tls, ssh)
         allowed = {
@@ -523,14 +526,18 @@ def run_job(job_id: str) -> None:
                 )
             if plan["source_job_id"]:
                 _require_property_owner(
-                    db, plan["ssh_fingerprint"], plan["desired"], plan["source_job_id"]
+                    db,
+                    plan["ssh_fingerprint"],
+                    plan["desired"],
+                    plan["source_job_id"],
+                    target,
                 )
             # Persist provenance before dispatch. An uncertain write invalidates
             # older baselines rather than guessing that they remain safe.
             for key, value in plan["desired"].items():
                 if value == plan["previous"][key]:
                     continue
-                owner_key = _property_owner_key(plan["ssh_fingerprint"], key)
+                owner_key = _property_owner_key(plan["ssh_fingerprint"], key, target)
                 owner = db.scalar(select(Setting).where(Setting.key == owner_key))
                 if owner is None:
                     db.add(Setting(key=owner_key, value=job.id))

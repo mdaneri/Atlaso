@@ -263,16 +263,20 @@ def operate(request: dict[str, Any]) -> dict[str, Any]:
                     stderr=subprocess.DEVNULL,
                     check=False,
                 )
-            except subprocess.SubprocessError:
+            except (OSError, subprocess.SubprocessError):
                 result.update(
                     ok=False,
                     service_active=False,
-                    error="Properties verified, but service restart timed out. Review target health or revert.",
+                    error="Properties verified, but service restart failed or timed out. Review target health or revert.",
                 )
                 return result
             deadline = time.monotonic() + 180
             while restart.returncode == 0 and time.monotonic() < deadline:
-                if active():
+                try:
+                    ready = active()
+                except (OSError, subprocess.SubprocessError):
+                    break
+                if ready:
                     result["service_active"] = True
                     return result
                 time.sleep(3)

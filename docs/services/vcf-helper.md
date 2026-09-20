@@ -89,7 +89,8 @@ Replacement Vault entries or reordered URI lists are accepted when the pinned en
 Select **Review revert** and acknowledge the reviewed restoration. Revert restores only that operation's previous
 selected-property values; originally absent
 properties are removed. Unrelated current configuration remains intact. A changed target identity or managed property
-blocks revert instead of overwriting another edit. A later dispatched managed write or revert also invalidates the
+blocks revert instead of overwriting another edit. Ownership is scoped to the host, ports and SSH fingerprint. A
+later dispatched managed write or revert invalidates the
 older baseline for each affected property, even if values later match again. Uncertain writes require manual recovery.
 Recovery inspects the current file over pinned SSH and uses the
 original operation's verified role/version, explicitly labelled in review; it does not require a working VCF API or

@@ -257,7 +257,10 @@ def test_job_outcomes_preserve_recovery_state(db, values, state, monkeypatch, fa
     for key in ("esa", "nic"):
         owner = db.scalar(
             select(Setting).where(
-                Setting.key == lab._property_owner_key(values["ssh_fingerprint"], key)
+                Setting.key
+                == lab._property_owner_key(
+                    values["ssh_fingerprint"], key, lab.target_from_values(db, values)
+                )
             )
         )
         assert (owner.value if owner else None) == (job.id if calls else None)
@@ -275,7 +278,9 @@ def test_revert_preserves_original_default_and_refuses_drift(db, values, state):
     for key in ("esa", "nic"):
         db.add(
             Setting(
-                key=lab._property_owner_key(values["ssh_fingerprint"], key),
+                key=lab._property_owner_key(
+                    values["ssh_fingerprint"], key, lab.target_from_values(db, values)
+                ),
                 value=job.id,
             )
         )
@@ -369,6 +374,8 @@ def test_worker_rechecks_administrator_before_remote_credentials(
         "success",
         "restart_failure",
         "restart_timeout",
+        "restart_oserror",
+        "readiness_oserror",
         "readback_failure",
         "drift",
         "noop",
@@ -446,6 +453,8 @@ def test_remote_transaction_permissions_restart_and_readback(
 
     def run(command, **kwargs):
         calls.append(command)
+        if mode == "restart_oserror":
+            raise OSError("sensitive-process-error")
         if mode == "restart_timeout":
             raise subprocess.TimeoutExpired(command, 90)
         return SimpleNamespace(returncode=1 if mode == "restart_failure" else 0)
@@ -461,6 +470,16 @@ def test_remote_transaction_permissions_restart_and_readback(
         "revision": inspected["revision"],
         "desired": {"esa": "true"},
     }
+    if mode == "readiness_oserror":
+        observed = []
+
+        def readiness():
+            if observed:
+                raise OSError("sensitive-readiness-error")
+            observed.append(True)
+            return True
+
+        monkeypatch.setattr(remote, "active", readiness)
     if mode == "stopped_revert":
         request["recovery"] = True
         # Initial in-lock observation is inactive; readiness subsequently recovers.
@@ -594,7 +613,9 @@ def test_revert_reviews_and_executes_without_api(db, values, state, monkeypatch,
     for key in ("esa", "nic"):
         db.add(
             Setting(
-                key=lab._property_owner_key(values["ssh_fingerprint"], key),
+                key=lab._property_owner_key(
+                    values["ssh_fingerprint"], key, lab.target_from_values(db, values)
+                ),
                 value=job.id,
             )
         )
@@ -663,7 +684,9 @@ def test_revert_rejects_superseded_property_with_matching_values(
     for key in ("esa", "nic"):
         db.add(
             Setting(
-                key=lab._property_owner_key(values["ssh_fingerprint"], key),
+                key=lab._property_owner_key(
+                    values["ssh_fingerprint"], key, lab.target_from_values(db, values)
+                ),
                 value=job.id,
             )
         )
@@ -672,7 +695,9 @@ def test_revert_rejects_superseded_property_with_matching_values(
     db.scalar(
         select(Setting).where(
             Setting.key
-            == lab._property_owner_key(values["ssh_fingerprint"], superseded_key)
+            == lab._property_owner_key(
+                values["ssh_fingerprint"], superseded_key, target
+            )
         )
     ).value = "later-write-or-revert"
     db.commit()
@@ -701,7 +726,9 @@ def test_history_retains_old_property_owners_beyond_recent_limit(db, values, sta
     for key in ("esa", "nic"):
         db.add(
             Setting(
-                key=lab._property_owner_key(values["ssh_fingerprint"], key),
+                key=lab._property_owner_key(
+                    values["ssh_fingerprint"], key, lab.target_from_values(db, values)
+                ),
                 value=baseline.id,
             )
         )
@@ -777,7 +804,9 @@ def test_recovery_accepts_replacement_credentials_for_same_endpoint(db, values, 
     for key in ("esa", "nic"):
         db.add(
             Setting(
-                key=lab._property_owner_key(values["ssh_fingerprint"], key),
+                key=lab._property_owner_key(
+                    values["ssh_fingerprint"], key, lab.target_from_values(db, values)
+                ),
                 value=job.id,
             )
         )
@@ -824,3 +853,23 @@ def test_settings_restore_preserves_local_lab_runtime_state_without_export(db):
     retained = set(db.scalars(select(Setting.key)))
     assert set(keys) <= retained
     assert "ordinary-desired-state" not in retained
+
+
+def test_cloned_ssh_keys_do_not_share_property_ownership(db, values):
+    from dataclasses import replace
+
+    first = lab.target_from_values(db, values)
+    second = replace(first, host="clone.example.test")
+    third = replace(first, ssh_port=2222)
+    for index, target in enumerate((first, second, third)):
+        db.add(
+            Setting(
+                key=lab._property_owner_key("same-host-key", "esa", target),
+                value=f"job-{index}",
+            )
+        )
+    db.commit()
+    for index, target in enumerate((first, second, third)):
+        lab._require_property_owner(
+            db, "same-host-key", ["esa"], f"job-{index}", target
+        )
