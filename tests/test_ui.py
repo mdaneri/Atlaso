@@ -17569,7 +17569,7 @@ def test_vcf_helper_page_renders_domain_dropdown(client):
     assert "Generated VCF FQDNs" in response.text
     assert "DNS Boundary" not in response.text
     assert 'href="/ui/management/vcf-helper"' in response.text
-    visible_workspace = response.text.split('<section class="split-workspace vcf-helper-workspace"', 1)[1].split("</section>", 1)[0]
+    visible_workspace = response.text.split('<section class="split-workspace vcf-helper-workspace"', 1)[1].split('<dialog ', 1)[0]
     assert "VCF Certificate Trust" in visible_workspace
     assert "Review DNS" not in visible_workspace
     assert visible_workspace.count('class="info-band vcf-helper-action-band"') == 8

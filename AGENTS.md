@@ -61,8 +61,8 @@ sections as needed. Resolve unknown applicability before mutation rather than tr
 
 ## Review and delegation entry points
 
-For every PR review load the review route, even for an assignment mentioning individual files. Complete analysis and
-internal verification before one consolidated actionable review. Never repeatedly review an unchanged head without
+For every PR review load the review route, even for an assignment mentioning individual files. Complete analysis and verification
+before one consolidated review. Never repeatedly review an unchanged head without
 material new evidence; relevant commits still require re-review under that contract.
 
 A delegating agent includes the startup gate, exact resolved worktree/state roots, owned files, applicable routes,
@@ -72,4 +72,6 @@ Delegation never expands permissions. The implementation route owns the Spark co
 For UI work complete the **Mandatory UI Design Guide Gate** in the UI guide: classify the interaction, name the reused
 Atlaso reference, and obtain explicit maintainer approval for `custom/other` before implementation.
 
-The optional [progressive policy guide](docs/contribute/progressive-policy.md) explains ownership and measurement.
+See [progressive policy](docs/contribute/progressive-policy.md) for measurement.
+
+VCF property edits/recovery: [VCF Helper](docs/services/vcf-helper.md).

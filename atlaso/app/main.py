@@ -39,6 +39,9 @@ from atlaso.app.services.network_boot import (
 )
 from atlaso.app.services.networking import sync_host_physical_interfaces
 from atlaso.app.services.oidc import validate_enabled_provider_at_startup
+from atlaso.app.services.vcf_lab_overrides import (
+    recover_interrupted_jobs as recover_interrupted_vcf_lab_jobs,
+)
 from atlaso.app.ui import (
     active_appliance_apply_job,
     cleanup_transient_secret_staging_files,
@@ -145,6 +148,7 @@ async def lifespan(app: FastAPI):
                 "VCFDT runtime index remains deferred while independently owned operations are running."
             )
         recover_interrupted_vcf_helper_jobs(db)
+        recover_interrupted_vcf_lab_jobs(db)
         refresh_startup_host_inventory(db, environment=settings.environment)
         if appliance_mode:
             ensure_ca_state(db)

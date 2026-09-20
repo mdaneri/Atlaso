@@ -20,6 +20,10 @@ brings infrastructure, storage, identity, networking, and lifecycle workflows in
 [Appliance Update](docs/operate/appliance-update.md) follows one durable task through service restarts and recovery,
 with automatic browser status navigation and a final result backed by active-release and service checks.
 
+[VCF Helper lab overrides](docs/services/vcf-helper.md#lab--non-production-overrides) let administrators review either
+or both fixed domainmanager properties on VCF Installer and SDDC Manager 9.0.x / 9.1.x, with verified writes,
+service restart and explicit recovery. These lab-only settings do not certify hardware or establish production support.
+
 [Maintenance](docs/operate/backup-restore.md) groups LDAP, Backup, Reset, and Diagnostics into separate tabs.
 Administrators can create [diagnostic support bundles](docs/operate/diagnostics.md) through a reviewed wizard or use
 the recovery CLI when the web service, worker, or database is unavailable. Optional hostname and username aliases are

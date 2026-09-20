@@ -1,6 +1,6 @@
 [project]
 name = "atlaso"
-version = "0.9.360"
+version = "0.9.361"
 description = "Atlaso supports POC, lab, and test environments by simplifying deployment, maintenance, and validation."
 readme = "README.md"
 license = "MIT"
@@ -81,6 +81,9 @@ ignore = [
   "B008",
 ]
 
+[tool.ruff.per-file-target-version]
+"atlaso/app/services/vcf_lab_remote.py" = "py310"
+
 [tool.mypy]
 python_version = "3.14"
 strict = true
@@ -88,6 +91,9 @@ show_error_codes = true
 warn_unused_configs = true
 follow_imports = "silent"
 files = [
+  "atlaso/app/services/vcf_lab_remote.py",
+  "atlaso/app/services/vcf_lab_overrides.py",
+  "atlaso/app/services/remote_ssh.py",
   "atlaso/app/services/log_viewer.py",
   "atlaso/app/services/producer_log_history.py",
   "atlaso/app/services/log_sanitization.py",
