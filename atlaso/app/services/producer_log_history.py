@@ -529,7 +529,7 @@ def read_page(path: Path, source: str, *, after: int = 0, through: int | None = 
             used += size
             position = int(sequence)
         start = max(after, int(first) - 1) if output and first is not None else after
-        return ProducerPage(observed, boundary, start, position, tuple(output), position < boundary, int(first or 0))
+        return ProducerPage(observed, boundary, start, position, tuple(output), position < newest, int(first or 0))
 
 
 def read_tail(path: Path, source: str, *, before: int | None = None,

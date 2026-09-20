@@ -33,8 +33,10 @@ def test_pages_stay_fixed_during_concurrent_appends(tmp_path):
                                      generation=first.generation, limit=7)
             rows.extend(page.lines)
             position = page.after
-            assert history.read_page(path, "app", through=first.through, limit=7) == first
-            if not page.more:
+            refreshed = history.read_page(path, "app", through=first.through, limit=7)
+            assert (refreshed.lines, refreshed.start, refreshed.after, refreshed.through) == (
+                first.lines, first.start, first.after, first.through)
+            if position == first.through:
                 break
         future.result()
     assert rows == [f"event {index}" for index in range(30)]
