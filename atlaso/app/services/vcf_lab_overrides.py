@@ -150,15 +150,14 @@ def _entry(db: Session, identifier: int) -> VaultEntry:
 def probe(target: Target) -> dict[str, str]:
     """Return unauthenticated TLS and SSH fingerprints for explicit confirmation."""
     try:
-        return {
-            "target": target.host,
-            "tls_fingerprint": tls_sha256_fingerprint(target.host, target.api_port),
-            "ssh_fingerprint": probe_remote_ssh_host(target.host, target.ssh_port),
-        }
+        ssh = probe_remote_ssh_host(target.host, target.ssh_port)
     except Exception as exc:
-        raise LabOverrideError(
-            "Could not probe the target TLS certificate and SSH host key."
-        ) from exc
+        raise LabOverrideError("Could not probe the target SSH host key.") from exc
+    try:
+        tls = tls_sha256_fingerprint(target.host, target.api_port)
+    except Exception:  # noqa: BLE001 - pinned SSH recovery remains available when TLS is down.
+        tls = ""
+    return {"target": target.host, "tls_fingerprint": tls, "ssh_fingerprint": ssh}
 
 
 def appliance_info(db: Session, target: Target, fingerprint: str) -> dict[str, str]:
@@ -259,6 +258,11 @@ def remote(
 def inspect_target(db: Session, target: Target, tls: str, ssh: str) -> dict[str, Any]:
     """Return only bounded boolean state and verified appliance identity."""
     info = appliance_info(db, target, tls)
+    return {**inspect_properties(db, target, ssh), **info}
+
+
+def inspect_properties(db: Session, target: Target, ssh: str) -> dict[str, Any]:
+    """Inspect pinned SSH state independently of domainmanager API readiness."""
     state = remote(db, target, ssh, {"action": "inspect"})
     if state.get("ok") is not True:
         raise LabOverrideError(
@@ -276,7 +280,6 @@ def inspect_target(db: Session, target: Target, tls: str, ssh: str) -> dict[str,
         raise LabOverrideError("Remote configuration revision is unavailable.")
     return {
         "target": target.host,
-        **info,
         "values": observed,
         "revision": revision,
         "service_active": state.get("service_active") is True,
@@ -301,7 +304,6 @@ def review(
         str(values.get("tls_fingerprint", "")),
         str(values.get("ssh_fingerprint", "")),
     )
-    state = inspect_target(db, target, tls, ssh)
     source_id = values.get("source_job_id")
     if source_id:
         source = db.get(Job, str(source_id))
@@ -323,12 +325,18 @@ def review(
         if (
             previous.get("target") != target.fields()
             or previous.get("ssh_fingerprint") != ssh
-            or previous.get("role") != state["role"]
-            or previous.get("version") != state["version"]
         ):
             raise LabOverrideError(
-                "The target identity or version differs from the original operation."
+                "The target identity differs from the original operation."
             )
+        supported_catalog(previous["role"], previous["version"])
+        state = {
+            **inspect_properties(db, target, ssh),
+            "role": previous["role"],
+            "version": previous["version"],
+            "identity_source": "original verified operation; recovery uses pinned SSH",
+        }
+        tls = previous["tls_fingerprint"]
         if any(
             state["values"][key] != value for key, value in previous["desired"].items()
         ):
@@ -337,6 +345,7 @@ def review(
             )
         desired = previous["previous"]
     else:
+        state = inspect_target(db, target, tls, ssh)
         allowed = {
             item["id"]: item["value"]
             for item in supported_catalog(state["role"], state["version"])
@@ -468,9 +477,17 @@ def run_job(job_id: str) -> None:
             target = target_from_values(db, plan["target"])
             if target.fields() != plan["target"]:
                 raise LabOverrideError("Vault endpoint changed after review.")
-            state = inspect_target(
-                db, target, plan["tls_fingerprint"], plan["ssh_fingerprint"]
-            )
+            if plan["source_job_id"]:
+                # API availability must not be a recovery prerequisite.
+                state = {
+                    **inspect_properties(db, target, plan["ssh_fingerprint"]),
+                    "role": plan["role"],
+                    "version": plan["version"],
+                }
+            else:
+                state = inspect_target(
+                    db, target, plan["tls_fingerprint"], plan["ssh_fingerprint"]
+                )
             if any(state[key] != plan[key] for key in ("role", "version", "revision")):
                 raise LabOverrideError(
                     "Target version or configuration changed after review."

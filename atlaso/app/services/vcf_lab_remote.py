@@ -67,10 +67,20 @@ def properties(
                 raise PropertyError("Configuration has an incomplete continuation.")
             line = line[:-1] + lines[index].lstrip().rstrip("\r\n")
             index += 1
-        match = re.match(r"\s*((?:\\.|[^\s:=])+)\s*(?:[=:]\s*)?(.*)$", line)
-        if not match:
-            continue
-        key, value = _unescape(match[1]), _unescape(match[2]).strip()
+        # Scan once; escaped separators belong to the key.
+        line = line.lstrip(" \t\f")
+        end = 0
+        while end < len(line):
+            if line[end] == "\\":
+                end += 2
+            elif line[end] in " \t\f:=":
+                break
+            else:
+                end += 1
+        raw_value = line[end:].lstrip(" \t\f")
+        if raw_value.startswith((":", "=")):
+            raw_value = raw_value[1:].lstrip(" \t\f")
+        key, value = _unescape(line[:end]), _unescape(raw_value).strip()
         for identifier, allowed_key in KEYS.items():
             if key != allowed_key:
                 continue

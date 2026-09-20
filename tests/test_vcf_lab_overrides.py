@@ -131,6 +131,7 @@ def state(monkeypatch):
         "warning": lab.WARNING,
     }
     monkeypatch.setattr(lab, "inspect_target", lambda *args: dict(current))
+    monkeypatch.setattr(lab, "inspect_properties", lambda *args: dict(current))
     return current
 
 
@@ -504,3 +505,65 @@ def test_remote_editor_remains_compatible_with_vcf_python():
     from atlaso.app.services import vcf_lab_remote
 
     ast.parse(Path(vcf_lab_remote.__file__).read_text(), feature_version=(3, 10))
+
+
+@pytest.mark.parametrize("suffix", [b"", b"=value", b" value", b":value"])
+def test_long_escaped_unrelated_keys_are_preserved(suffix):
+    original = b"\\:" * 100000 + suffix + b"\n"
+    assert edit_properties(original, {"esa": "true"}).endswith(original)
+
+
+def test_probe_keeps_ssh_recovery_available_without_tls(db, values, monkeypatch):
+    monkeypatch.setattr(lab, "probe_remote_ssh_host", lambda *args: "confirmed-ssh")
+
+    def unavailable(*args):
+        raise OSError("offline")
+
+    monkeypatch.setattr(lab, "tls_sha256_fingerprint", unavailable)
+    assert lab.probe(lab.target_from_values(db, values))["tls_fingerprint"] == ""
+
+
+@pytest.mark.parametrize("role", ["VcfInstaller", "SddcManager"])
+def test_revert_reviews_and_executes_without_api(db, values, state, monkeypatch, role):
+    state["role"] = role
+    target = lab.target_from_values(db, values)
+    job = lab.enqueue(db, "admin", lab.review(db, "admin", target, values)["token"])
+    job.status = "failed"
+    job.result = json.dumps({"changed": True, "property_verified": True})
+    for lock in db.scalars(select(Setting).where(Setting.key.like("vcf_lab_lock:%"))):
+        db.delete(lock)
+    db.commit()
+    state["values"] = {"esa": "true", "nic": "false"}
+
+    def unavailable(*args):
+        raise lab.LabOverrideError("API unavailable")
+
+    monkeypatch.setattr(lab, "inspect_target", unavailable)
+    monkeypatch.setattr(lab, "appliance_info", unavailable)
+    reviewed = lab.review(
+        db, "admin", target, {**values, "source_job_id": job.id, "tls_fingerprint": ""}
+    )
+    assert "original verified" in reviewed["identity_source"]
+    recovery = lab.enqueue(db, "admin", reviewed["token"])
+    assert json.loads(recovery.task_config_json)["tls_fingerprint"] == "confirmed-tls"
+    calls = []
+
+    def restore(*args):
+        calls.append(args[-1])
+        return {
+            "ok": True,
+            "changed": True,
+            "values": {"esa": None, "nic": "true"},
+            "service_active": True,
+        }
+
+    monkeypatch.setattr(lab, "remote", restore)
+    ticks = iter([0, 121])
+    monkeypatch.setattr(lab.time, "monotonic", lambda: next(ticks))
+    lab.run_job(recovery.id)
+    db.refresh(recovery)
+    assert calls[0]["desired"] == {"esa": None, "nic": "true"}
+    assert recovery.status == "failed"
+    result = json.loads(recovery.result)
+    assert result["property_verified"] is True
+    assert result["api_ready"] is False

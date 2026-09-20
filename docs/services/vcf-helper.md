@@ -11,6 +11,17 @@ status: current
 VCF Helper prepares deployment DNS desired state. It is available under `VCF Workflows` at
 `/ui/management/vcf-helper`.
 
+<!-- BEGIN GENERATED INTERFACE OVERVIEW -->
+## Interface overview
+
+This verified appliance view provides visual orientation before you begin.
+
+![Atlaso VCF Helper page in the clean-appliance desktop viewport.](../assets/screenshots/vcf-helper-clean-desktop.webp)
+
+*Figure: VCF Helper in the verified clean-appliance desktop state.*
+
+<!-- END GENERATED INTERFACE OVERVIEW -->
+
 ## Lab / Non-production Overrides
 
 Administrators can manage either or both of these explicit properties on **VCF Installer** and **SDDC Manager**:
@@ -69,10 +80,14 @@ VCF workflow acceptance test; verify the intended VCF workflow separately on the
 
 ### Revert and recovery
 
-Choose a **Previous managed operation** after inspecting the same target, select **Review revert**, and acknowledge
+Choose the same credentials, probe and confirm the SSH fingerprint, then choose a **Previous managed operation**,
+select **Review revert**, and acknowledge
 the reviewed restoration. Revert restores only that operation's previous selected-property values; originally absent
-properties are removed. Unrelated current configuration remains intact. A changed version, target identity or
-managed property blocks revert instead of overwriting another edit.
+properties are removed. Unrelated current configuration remains intact. A changed target identity or managed property
+blocks revert instead of overwriting another edit. Recovery inspects the current file over pinned SSH and uses the
+original operation's verified role/version, explicitly labelled in review; it does not require a working VCF API or
+successful API inspection. If TLS probing fails, only recovery remains available. API readiness is checked after
+restoration using the original TLS fingerprint and reported separately from property verification.
 
 A verified property change remains revertible if service/API recovery failed. A no-op task or a task without verified
 write evidence cannot be automatically reverted. If connectivity failed during mutation, inspect the target using
@@ -84,17 +99,6 @@ The browser-only operations are beneath `/ui/management/vcf-helper/lab-overrides
 and `execute`, plus GET `history` and `tasks/{job_id}`. Execution and revert require admin authorization, CSRF and an
 acknowledged signed review. They are explicit remote tasks, separate from global Appliance Apply. Audit events record
 actor, target, version, selected previous/desired values and outcome, without credentials or raw remote configuration.
-
-<!-- BEGIN GENERATED INTERFACE OVERVIEW -->
-## Interface overview
-
-This verified appliance view provides visual orientation before you begin.
-
-![Atlaso VCF Helper page in the clean-appliance desktop viewport.](../assets/screenshots/vcf-helper-clean-desktop.webp)
-
-*Figure: VCF Helper in the verified clean-appliance desktop state.*
-
-<!-- END GENERATED INTERFACE OVERVIEW -->
 
 Administrators can also use **Import passwords into a vault** for VCF 9 SDDC Manager and VCF Installer appliances.
 The wizard chooses vault or manual credentials first, confirms the server second, and then opens a dedicated TLS page.

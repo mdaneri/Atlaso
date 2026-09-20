@@ -20,10 +20,10 @@
   }
 
   function controls() {
-    action("inspect").disabled = busy || !trust || !field("confirmed").checked;
+    action("inspect").disabled = busy || !trust?.tls_fingerprint || !field("confirmed").checked;
     node("options").disabled = busy || !inspected;
     action("review").disabled = busy || !inspected || !(field("esa").checked || field("nic").checked);
-    action("revert").disabled = busy || !inspected || !field("source_job_id").value;
+    action("revert").disabled = busy || !trust || !field("confirmed").checked || !field("source_job_id").value;
     node("execute").disabled = busy || !token || !field("acknowledged").checked;
     action("probe").disabled = busy;
     field("api_credential").disabled = busy;
@@ -108,7 +108,7 @@
         invalidate();
         field("confirmed").checked = false;
         node("target").textContent = result.target;
-        node("tls").textContent = result.tls_fingerprint;
+        node("tls").textContent = result.tls_fingerprint || "Unavailable. Only recovery of a previous managed operation is available.";
         node("ssh").textContent = result.ssh_fingerprint;
         setHidden("trust", false);
         setHidden("confirm-label", false);
@@ -118,7 +118,7 @@
       } else {
         token = result.token;
         field("acknowledged").checked = false;
-        node("review-target").textContent = `${kind === "revert" ? "Revert" : "Apply"}: ${result.target} · ${result.role} · VCF ${result.version}`;
+        node("review-target").textContent = `${kind === "revert" ? "Revert" : "Apply"}: ${result.target} · ${result.role} · VCF ${result.version}${result.identity_source ? ` (${result.identity_source})` : ""}`;
         node("changes").replaceChildren();
         result.changes.forEach((change) => {
           const li = document.createElement("li");
