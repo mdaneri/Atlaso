@@ -544,6 +544,7 @@ def run_job(job_id: str) -> None:
                 plan["ssh_fingerprint"],
                 {
                     "action": "write",
+                    "recovery": bool(plan["source_job_id"]),
                     "revision": plan["revision"],
                     "desired": plan["desired"],
                 },

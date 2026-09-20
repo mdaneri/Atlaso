@@ -372,6 +372,8 @@ def test_worker_rechecks_administrator_before_remote_credentials(
         "readback_failure",
         "drift",
         "noop",
+        "stopped_apply",
+        "stopped_revert",
     ],
 )
 def test_remote_transaction_permissions_restart_and_readback(
@@ -394,7 +396,9 @@ def test_remote_transaction_permissions_restart_and_readback(
     monkeypatch.setattr(os, "geteuid", lambda: 0, raising=False)
     monkeypatch.setattr(os, "O_NOFOLLOW", 0, raising=False)
     monkeypatch.setattr(os, "O_DIRECTORY", 0, raising=False)
-    monkeypatch.setattr(sys.modules[remote.__name__], "active", lambda: True)
+    monkeypatch.setattr(
+        sys.modules[remote.__name__], "active", lambda: not mode.startswith("stopped")
+    )
     monkeypatch.setitem(
         sys.modules,
         "fcntl",
@@ -457,13 +461,24 @@ def test_remote_transaction_permissions_restart_and_readback(
         "revision": inspected["revision"],
         "desired": {"esa": "true"},
     }
+    if mode == "stopped_revert":
+        request["recovery"] = True
+        # Initial in-lock observation is inactive; readiness subsequently recovers.
+        states = iter([False, True])
+        monkeypatch.setattr(remote, "active", lambda: next(states, True))
+    if mode == "stopped_apply":
+        with pytest.raises(PropertyError, match="inactive"):
+            remote.operate(request)
+        assert path.read_bytes() == b"vendor.setting=untouched\n"
+        assert calls == []
+        return
     if mode in {"drift", "readback_failure"}:
         with pytest.raises(PropertyError):
             remote.operate(request)
         assert calls == []
         return
     outcome = remote.operate(request)
-    assert outcome["ok"] == (mode in {"success", "noop"})
+    assert outcome["ok"] == (mode in {"success", "noop", "stopped_revert"})
     assert outcome["changed"] == (mode != "noop")
     assert path.read_bytes().endswith(b"vendor.setting=untouched\n")
     assert outcome["values"]["esa"] == "true"
@@ -789,3 +804,23 @@ def test_recovery_accepts_replacement_credentials_for_same_endpoint(db, values, 
     db.commit()
     with pytest.raises(lab.LabOverrideError, match="identity differs"):
         lab.review(db, "admin", lab.target_from_values(db, replacement), replacement)
+
+
+def test_settings_restore_preserves_local_lab_runtime_state_without_export(db):
+    from atlaso.app.services.settings_archive import (
+        SAFE_SETTING_KEYS,
+        _clear_desired_state,
+        _settings_rows,
+    )
+
+    keys = ["vcf_lab_owner:target:esa", "vcf_lab_lock:target", "vcf_lab_used:review"]
+    for key in keys + ["ordinary-desired-state"]:
+        db.add(Setting(key=key, value="local-state"))
+    db.commit()
+    assert not any(row["key"] in keys for row in _settings_rows(db))
+    assert not set(keys) & SAFE_SETTING_KEYS
+    _clear_desired_state(db)
+    db.commit()
+    retained = set(db.scalars(select(Setting.key)))
+    assert set(keys) <= retained
+    assert "ordinary-desired-state" not in retained

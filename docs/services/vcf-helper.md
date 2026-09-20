@@ -71,7 +71,8 @@ the operator; it does not substitute a different path or claim that this covers 
    proposed values and restart requirement. An absent value means the property is not explicitly configured.
 6. Acknowledge the lab-only warning and choose **Apply reviewed changes**. Review expires after ten minutes and
    is bound to the operator, target and inspected configuration. Any configuration drift requires a new review.
-   Apply also refuses to write if `domainmanager` has stopped since review; revert remains available for recovery.
+   Apply rechecks service activity inside the remote lock and refuses an inactive `domainmanager`; revert remains
+   available for recovery.
 7. Follow **Open task details**. A changed file triggers only `domainmanager` restart. Atlaso separately reports
    property readback, service activity and VCF API readiness. An already matching configuration requires no restart.
 
@@ -94,6 +95,9 @@ Recovery inspects the current file over pinned SSH and uses the
 original operation's verified role/version, explicitly labelled in review; it does not require a working VCF API or
 successful API inspection. If TLS probing fails, only recovery remains available. API readiness is checked after
 restoration using the original TLS fingerprint and reported separately from property verification.
+
+Settings restore preserves local VCF task provenance, reservations and consumed reviews; these records are never
+exported or imported as desired state.
 
 History retains current property-owner operations alongside the 50 most recent tasks so older recovery baselines
 remain selectable. A verified property change remains revertible if service/API recovery failed. A no-op task or a task

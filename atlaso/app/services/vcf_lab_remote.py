@@ -208,6 +208,8 @@ def operate(request: dict[str, Any]) -> dict[str, Any]:
             raise PropertyError(
                 "Configuration changed after review. Inspect and review again."
             )
+        if not result["service_active"] and request.get("recovery") is not True:
+            raise PropertyError("domainmanager is inactive; ordinary apply is refused.")
         updated = edit_properties(content, request.get("desired", {}))
         if updated == content:
             return result

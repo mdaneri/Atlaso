@@ -1727,7 +1727,12 @@ def _clear_desired_state(db: Session) -> None:
         if model is Setting:
             # Native helper history survives restore too. Keep this appliance's
             # resolution and identity evidence; it is never exported or imported.
-            statement = statement.where(Setting.key != STATUS_KEY)
+            # Remote VCF task provenance, reservations and consumed reviews are
+            # local runtime state tied to retained Jobs, not archive desired state.
+            statement = statement.where(
+                Setting.key != STATUS_KEY,
+                ~Setting.key.startswith("vcf_lab_", autoescape=True),
+            )
         db.execute(statement)
     db.flush()
 
