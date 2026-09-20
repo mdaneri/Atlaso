@@ -901,3 +901,40 @@ def test_revert_ignores_later_edits_to_original_noop_selection(
     state["values"][changed_key] = "false" if changed_key == "esa" else "true"
     with pytest.raises(lab.LabOverrideError, match="overwrite another edit"):
         lab.review(db, "admin", target, {**values, "source_job_id": job.id})
+
+
+@pytest.mark.parametrize(
+    "clone_uri", ["ssh://clone.example.test", "ssh://vcf.example.test:2222"]
+)
+def test_reservations_isolate_cloned_ssh_keys(db, values, state, clone_uri):
+    from urllib.parse import urlsplit
+
+    first = lab.enqueue(
+        db,
+        "admin",
+        lab.review(db, "admin", lab.target_from_values(db, values), values)["token"],
+    )
+    first.status = "running"
+    db.get(VaultEntry, 1).uris_json = json.dumps(
+        [f"https://{urlsplit(clone_uri).hostname}"]
+    )
+    db.get(VaultEntry, 2).uris_json = json.dumps([clone_uri])
+    db.commit()
+    second = lab.enqueue(
+        db,
+        "admin",
+        lab.review(db, "admin", lab.target_from_values(db, values), values)["token"],
+    )
+    assert (
+        len(list(db.scalars(select(Setting).where(Setting.key.like("vcf_lab_lock:%")))))
+        == 2
+    )
+    assert lab.recover_interrupted_jobs(db) == 2
+    locks = list(db.scalars(select(Setting).where(Setting.key.like("vcf_lab_lock:%"))))
+    assert [lock.value for lock in locks] == [first.id]
+    third = lab.enqueue(
+        db,
+        "admin",
+        lab.review(db, "admin", lab.target_from_values(db, values), values)["token"],
+    )
+    assert third.id != second.id

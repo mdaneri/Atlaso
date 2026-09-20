@@ -77,7 +77,8 @@ the operator; it does not substitute a different path or claim that this covers 
    property readback, service activity and VCF API readiness. An already matching configuration requires no restart.
 
 Atlaso preserves unrelated file content, ownership, permissions and extended attributes. It refuses symbolic links,
-hard-linked configuration and competing Atlaso operations. Restart is bounded to 90 seconds, service readiness to
+hard-linked configuration and competing Atlaso operations on the same pinned SSH host/port. Restart is bounded to 90
+seconds, service readiness to
 180 seconds and subsequent API readiness to a bounded retry window. Never interpret property readback as a live
 VCF workflow acceptance test; verify the intended VCF workflow separately on the lab appliance.
 

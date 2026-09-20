@@ -418,6 +418,14 @@ def review(
     }
 
 
+def _reservation_key(plan: dict[str, Any]) -> str:
+    """Reserve a pinned SSH endpoint independently of cloned host keys."""
+    identity = json.dumps(
+        [plan["target"]["host"], plan["target"]["ssh_port"], plan["ssh_fingerprint"]]
+    )
+    return "vcf_lab_lock:" + hashlib.sha256(identity.encode()).hexdigest()
+
+
 def enqueue(db: Session, actor: str, token: str) -> Job:
     """Atomically consume a review and reserve the SSH identity across workers."""
     try:
@@ -432,9 +440,7 @@ def enqueue(db: Session, actor: str, token: str) -> Job:
     if target.fields() != plan["target"]:
         raise LabOverrideError("Vault endpoint changed; review again.")
     job_id = str(uuid4())
-    lock_key = (
-        "vcf_lab_lock:" + hashlib.sha256(plan["ssh_fingerprint"].encode()).hexdigest()
-    )
+    lock_key = _reservation_key(plan)
     used_key = "vcf_lab_used:" + plan["nonce"]
     job = Job(
         id=job_id,
@@ -470,10 +476,7 @@ def run_job(job_id: str) -> None:
         if job is None or job.status != JobStatus.PENDING.value:
             return
         plan = json.loads(job.task_config_json)
-        lock_key = (
-            "vcf_lab_lock:"
-            + hashlib.sha256(plan["ssh_fingerprint"].encode()).hexdigest()
-        )
+        lock_key = _reservation_key(plan)
         claimed = db.execute(
             update(Job)
             .where(Job.id == job_id, Job.status == JobStatus.PENDING.value)
