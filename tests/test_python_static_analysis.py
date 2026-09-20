@@ -138,6 +138,7 @@ def test_static_analysis_configuration_is_pinned_and_scoped() -> None:
         "files": [
             "atlaso/app/services/log_viewer.py",
             "atlaso/app/services/producer_log_history.py",
+            "atlaso/app/services/log_sanitization.py",
             "atlaso/app/services/app_history_cutover.py",
             "atlaso/app/services/external_log_reader.py",
             "atlaso/app/services/external_history_lifecycle.py",

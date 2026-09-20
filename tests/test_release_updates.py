@@ -1451,7 +1451,7 @@ def test_release_workflows_use_successful_main_sha_and_promote_without_rebuildin
     assert "legacy bridge" not in publication
     assert 'cat > "$SITE_ROOT/index.html"' in publication
     assert "Everything your virtualization lab needs." in publication
-    assert "Infrastructure â€¢ Storage â€¢ Identity â€¢ Networking â€¢ Lifecycle" in publication
+    assert "Infrastructure • Storage • Identity • Networking • Lifecycle" in publication
     assert "The HTML page is informational." in publication
     assert "python scripts/check_published_release_channel.py" in publication
     assert "--expected-channel development" in publication
