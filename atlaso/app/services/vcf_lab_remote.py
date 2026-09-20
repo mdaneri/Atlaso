@@ -30,14 +30,27 @@ class PropertyError(ValueError):
 
 
 def _lines(content: bytes) -> list[str]:
-    """Split Java physical lines, preserving every unrelated byte."""
+    """Split Java physical lines, preserving every unrelated byte.
+
+    Args:
+        content: Original property-file bytes, never returned to the browser.
+    """
     return re.findall(r"[^\r\n]*(?:\r\n|\r|\n|$)", content.decode("latin-1"))[:-1]
 
 
 def _unescape(value: str) -> str:
-    """Decode Java property escapes when identifying protected keys."""
+    """Decode Java property escapes when identifying protected keys.
+
+    Args:
+        value: Escaped Java property text to decode.
+    """
 
     def replace(match: re.Match[str]) -> str:
+        """Exercise replace.
+
+        Args:
+            match: Matched Java property escape sequence.
+        """
         token = match.group(1)
         if token.startswith("u") and len(token) == 5:
             return chr(int(token[1:], 16))
@@ -49,7 +62,11 @@ def _unescape(value: str) -> str:
 def properties(
     content: bytes,
 ) -> tuple[dict[str, str | None], dict[str, tuple[int, int]]]:
-    """Read only allowlisted booleans; reject duplicate and continued keys."""
+    """Read only allowlisted booleans; reject duplicate and continued keys.
+
+    Args:
+        content: Original property-file bytes, never returned to the browser.
+    """
     if len(content) > MAX_BYTES or b"\x00" in content:
         raise PropertyError("Configuration is oversized or malformed.")
     lines = _lines(content)
@@ -98,7 +115,12 @@ def properties(
 
 
 def edit_properties(content: bytes, desired: dict[str, str | None]) -> bytes:
-    """Change only selected keys without appending duplicate properties."""
+    """Change only selected keys without appending duplicate properties.
+
+    Args:
+        content: Original property-file bytes, never returned to the browser.
+        desired: Allowlisted property values to apply, with None meaning removal.
+    """
     current, locations = properties(content)
     if not desired or set(desired) - KEYS.keys():
         raise PropertyError("Choose one or both supported properties.")
@@ -132,7 +154,11 @@ def edit_properties(content: bytes, desired: dict[str, str | None]) -> bytes:
 
 
 def read_configuration(path: Path) -> tuple[bytes, os.stat_result]:
-    """Reject links and non-regular configuration before bounded reading."""
+    """Reject links and non-regular configuration before bounded reading.
+
+    Args:
+        path: Fixed property-file path to inspect.
+    """
     for ancestor in (path, *path.parents):
         if ancestor.is_symlink():
             raise PropertyError("Configuration path contains a symbolic link.")
@@ -147,7 +173,12 @@ def read_configuration(path: Path) -> tuple[bytes, os.stat_result]:
 
 
 def snapshot(content: bytes, info: os.stat_result) -> str:
-    """Bind review to bytes, identity, ownership and permissions."""
+    """Bind review to bytes, identity, ownership and permissions.
+
+    Args:
+        content: Original property-file bytes, never returned to the browser.
+        info: Original file metadata bound into the review revision.
+    """
     metadata = (info.st_dev, info.st_ino, info.st_mode, info.st_uid, info.st_gid)
     return hashlib.sha256(repr(metadata).encode() + content).hexdigest()
 
@@ -167,7 +198,11 @@ def active() -> bool:
 
 
 def operate(request: dict[str, Any]) -> dict[str, Any]:
-    """Inspect or compare-and-replace fixed properties under a remote lock."""
+    """Inspect or compare-and-replace fixed properties under a remote lock.
+
+    Args:
+        request: Bounded request carrying only allowed operation inputs.
+    """
     import fcntl
 
     # Remote execution is Linux-only; Windows imports only the pure editor tests.

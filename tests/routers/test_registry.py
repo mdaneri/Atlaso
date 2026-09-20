@@ -242,7 +242,8 @@ def test_facades_register_extracted_domains_in_exact_order():
         "atlaso.app.routers.ui.network_boot"
     }
     assert {route.endpoint.__module__ for route in ui.vcf_workflows_router.routes} == {
-        "atlaso.app.routers.ui.vcf_workflows"
+        "atlaso.app.routers.ui.vcf_workflows",
+        "atlaso.app.routers.ui.vcf_lab_overrides",
     }
     assert {route.endpoint.__module__ for route in ui.automation_router.routes} == {
         "atlaso.app.routers.ui.automation"

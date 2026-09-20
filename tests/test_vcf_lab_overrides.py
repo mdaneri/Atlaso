@@ -23,6 +23,12 @@ from atlaso.app.services.vcf_lab_remote import (
 )
 @pytest.mark.parametrize("ending", [b"\n", b"\r\n", b""])
 def test_property_edits_are_idempotent_and_preserve_unrelated_bytes(desired, ending):
+    """Exercise property edits are idempotent and preserve unrelated bytes.
+
+    Args:
+        desired: Allowlisted property values to apply, with None meaning removal.
+        ending: Line-ending variant used by the preservation test.
+    """
     original = b"# vendor configuration\r\nsecret.example=keep-this-value" + ending
     changed = edit_properties(original, desired)
     assert changed.endswith(original)
@@ -55,6 +61,11 @@ def test_existing_properties_and_unselected_values():
     ],
 )
 def test_ambiguous_properties_fail_closed_without_disclosing_content(text):
+    """Exercise ambiguous properties fail closed without disclosing content.
+
+    Args:
+        text: Ambiguous property fixture that must be refused.
+    """
     with pytest.raises(PropertyError) as error:
         edit_properties(text.encode(), {"esa": "true"})
     assert "unexpected-secret" not in str(error.value)
@@ -69,6 +80,11 @@ def test_escaped_key_is_updated_not_duplicated():
 
 @pytest.fixture
 def db(monkeypatch):
+    """Exercise db.
+
+    Args:
+        monkeypatch: Pytest fixture replacing external boundaries for this test.
+    """
     engine = create_engine("sqlite://")
     Base.metadata.create_all(engine)
     with Session(engine) as session:
@@ -121,6 +137,11 @@ def values():
 
 @pytest.fixture
 def state(monkeypatch):
+    """Exercise state.
+
+    Args:
+        monkeypatch: Pytest fixture replacing external boundaries for this test.
+    """
     current = {
         "target": "vcf.example.test",
         "role": "VcfInstaller",
@@ -136,6 +157,12 @@ def state(monkeypatch):
 
 
 def test_matching_vault_endpoints_required(db, values):
+    """Exercise matching vault endpoints required.
+
+    Args:
+        db: Database session for credential metadata and durable task state.
+        values: Selected credential references and confirmed review inputs.
+    """
     assert lab.target_from_values(db, values).host == "vcf.example.test"
     db.get(VaultEntry, 2).uris_json = '["ssh://other.example.test"]'
     with pytest.raises(lab.LabOverrideError, match="same hostname"):
@@ -147,14 +174,35 @@ def test_matching_vault_endpoints_required(db, values):
     "version", ["9.0.0.0", "9.0.1.0.24962180", "9.0.2", "9.1.0", "9.1.1"]
 )
 def test_supported_families_and_roles(db, values, monkeypatch, role, version):
+    """Exercise supported families and roles.
+
+    Args:
+        db: Database session for credential metadata and durable task state.
+        values: Selected credential references and confirmed review inputs.
+        monkeypatch: Pytest fixture replacing external boundaries for this test.
+        role: Detected VCF appliance role.
+        version: Detected VCF release string.
+    """
+
     class Api:
         def __init__(self, *args, **kwargs):
+            """Exercise   init  .
+
+            Args:
+                *args: Positional arguments supplied by the replaced boundary.
+                **kwargs: Keyword arguments supplied by the replaced boundary.
+            """
             assert kwargs["expected_fingerprint"] == "confirmed-tls"
 
         def __enter__(self):
             return self
 
         def __exit__(self, *args):
+            """Exercise   exit  .
+
+            Args:
+                *args: Positional arguments supplied by the replaced boundary.
+            """
             pass
 
         def appliance_info(self):
@@ -171,14 +219,34 @@ def test_supported_families_and_roles(db, values, monkeypatch, role, version):
     "version", ["9.2.0", "9.10.0", "8.0.0", "9.1", "unknown", "9.1.1 malicious"]
 )
 def test_unsupported_versions(db, values, monkeypatch, version):
+    """Exercise unsupported versions.
+
+    Args:
+        db: Database session for credential metadata and durable task state.
+        values: Selected credential references and confirmed review inputs.
+        monkeypatch: Pytest fixture replacing external boundaries for this test.
+        version: Detected VCF release string.
+    """
+
     class Api:
         def __init__(self, *args, **kwargs):
+            """Exercise   init  .
+
+            Args:
+                *args: Positional arguments supplied by the replaced boundary.
+                **kwargs: Keyword arguments supplied by the replaced boundary.
+            """
             pass
 
         def __enter__(self):
             return self
 
         def __exit__(self, *args):
+            """Exercise   exit  .
+
+            Args:
+                *args: Positional arguments supplied by the replaced boundary.
+            """
             pass
 
         def appliance_info(self):
@@ -191,6 +259,13 @@ def test_unsupported_versions(db, values, monkeypatch, version):
 
 
 def test_review_binds_actor_and_is_single_use(db, values, state):
+    """Exercise review binds actor and is single use.
+
+    Args:
+        db: Database session for credential metadata and durable task state.
+        values: Selected credential references and confirmed review inputs.
+        state: Mutable inspected-state fixture used to simulate remote changes.
+    """
     target = lab.target_from_values(db, values)
     reviewed = lab.review(db, "admin", target, values)
     assert len(reviewed["changes"]) == 2
@@ -206,6 +281,14 @@ def test_review_binds_actor_and_is_single_use(db, values, state):
 
 
 def test_tampered_expired_and_unconfirmed_reviews(db, values, state, monkeypatch):
+    """Exercise tampered expired and unconfirmed reviews.
+
+    Args:
+        db: Database session for credential metadata and durable task state.
+        values: Selected credential references and confirmed review inputs.
+        state: Mutable inspected-state fixture used to simulate remote changes.
+        monkeypatch: Pytest fixture replacing external boundaries for this test.
+    """
     target = lab.target_from_values(db, values)
     with pytest.raises(lab.LabOverrideError, match="Confirm both"):
         lab.review(db, "admin", target, {**values, "confirmed": False})
@@ -222,11 +305,25 @@ def test_tampered_expired_and_unconfirmed_reviews(db, values, state, monkeypatch
 
 @pytest.mark.parametrize("failure", ["restart", "exception", "drift", "success"])
 def test_job_outcomes_preserve_recovery_state(db, values, state, monkeypatch, failure):
+    """Exercise job outcomes preserve recovery state.
+
+    Args:
+        db: Database session for credential metadata and durable task state.
+        values: Selected credential references and confirmed review inputs.
+        state: Mutable inspected-state fixture used to simulate remote changes.
+        monkeypatch: Pytest fixture replacing external boundaries for this test.
+        failure: Worker outcome variant under test.
+    """
     reviewed = lab.review(db, "admin", lab.target_from_values(db, values), values)
     job = lab.enqueue(db, "admin", reviewed["token"])
     calls = []
 
     def remote(*args):
+        """Exercise remote.
+
+        Args:
+            *args: Positional arguments supplied by the replaced boundary.
+        """
         calls.append(args[-1])
         if failure == "exception":
             raise RuntimeError("secret that must not be logged")
@@ -270,6 +367,13 @@ def test_job_outcomes_preserve_recovery_state(db, values, state, monkeypatch, fa
 
 
 def test_revert_preserves_original_default_and_refuses_drift(db, values, state):
+    """Exercise revert preserves original default and refuses drift.
+
+    Args:
+        db: Database session for credential metadata and durable task state.
+        values: Selected credential references and confirmed review inputs.
+        state: Mutable inspected-state fixture used to simulate remote changes.
+    """
     target = lab.target_from_values(db, values)
     reviewed = lab.review(db, "admin", target, values)
     job = lab.enqueue(db, "admin", reviewed["token"])
@@ -297,6 +401,13 @@ def test_revert_preserves_original_default_and_refuses_drift(db, values, state):
 
 
 def test_review_requires_nonempty_allowlisted_selection(db, values, state):
+    """Exercise review requires nonempty allowlisted selection.
+
+    Args:
+        db: Database session for credential metadata and durable task state.
+        values: Selected credential references and confirmed review inputs.
+        state: Mutable inspected-state fixture used to simulate remote changes.
+    """
     target = lab.target_from_values(db, values)
     for selected in [[], ["arbitrary"], ["esa", "esa"]]:
         with pytest.raises(lab.LabOverrideError):
@@ -304,6 +415,13 @@ def test_review_requires_nonempty_allowlisted_selection(db, values, state):
 
 
 def test_unverified_write_is_not_claimed_as_revertible(db, values, state):
+    """Exercise unverified write is not claimed as revertible.
+
+    Args:
+        db: Database session for credential metadata and durable task state.
+        values: Selected credential references and confirmed review inputs.
+        state: Mutable inspected-state fixture used to simulate remote changes.
+    """
     target = lab.target_from_values(db, values)
     job = lab.enqueue(db, "admin", lab.review(db, "admin", target, values)["token"])
     job.status = "failed"
@@ -318,6 +436,15 @@ def test_unverified_write_is_not_claimed_as_revertible(db, values, state):
 def test_restart_recovery_never_replays_remote_changes(
     db, values, state, dispatched, revert
 ):
+    """Exercise restart recovery never replays remote changes.
+
+    Args:
+        db: Database session for credential metadata and durable task state.
+        values: Selected credential references and confirmed review inputs.
+        state: Mutable inspected-state fixture used to simulate remote changes.
+        dispatched: Whether the interrupted task already started running.
+        revert: Whether the interrupted task is a revert operation.
+    """
     target = lab.target_from_values(db, values)
     job = lab.enqueue(db, "admin", lab.review(db, "admin", target, values)["token"])
     if dispatched:
@@ -356,6 +483,14 @@ def test_restart_recovery_never_replays_remote_changes(
 def test_worker_rechecks_administrator_before_remote_credentials(
     db, values, state, monkeypatch
 ):
+    """Exercise worker rechecks administrator before remote credentials.
+
+    Args:
+        db: Database session for credential metadata and durable task state.
+        values: Selected credential references and confirmed review inputs.
+        state: Mutable inspected-state fixture used to simulate remote changes.
+        monkeypatch: Pytest fixture replacing external boundaries for this test.
+    """
     target = lab.target_from_values(db, values)
     job = lab.enqueue(db, "admin", lab.review(db, "admin", target, values)["token"])
     db.scalar(select(User).where(User.username == "admin")).enabled = False
@@ -386,7 +521,13 @@ def test_worker_rechecks_administrator_before_remote_credentials(
 def test_remote_transaction_permissions_restart_and_readback(
     tmp_path, monkeypatch, mode
 ):
-    """Run the actual transaction with only Linux OS/service boundaries substituted."""
+    """Run the actual transaction with only Linux OS/service boundaries substituted.
+
+    Args:
+        tmp_path: Isolated temporary directory for transaction fixtures.
+        monkeypatch: Pytest fixture replacing external boundaries for this test.
+        mode: Transaction scenario or permission bits under test.
+    """
     import os
     import stat
     import subprocess
@@ -420,6 +561,12 @@ def test_remote_transaction_permissions_restart_and_readback(
     real_fchmod = os.fchmod
 
     def record_fchmod(fd, mode):
+        """Exercise record fchmod.
+
+        Args:
+            fd: Open file descriptor whose mode is recorded and preserved.
+            mode: Transaction scenario or permission bits under test.
+        """
         modes.append(mode)
         real_fchmod(fd, mode)
 
@@ -435,6 +582,14 @@ def test_remote_transaction_permissions_restart_and_readback(
     real_open, real_replace = os.open, os.replace
 
     def mapped_open(name, flags, *args, **kwargs):
+        """Exercise mapped open.
+
+        Args:
+            name: Filesystem path passed to the mocked open boundary.
+            flags: File-open flags forwarded to the real implementation.
+            *args: Positional arguments supplied by the replaced boundary.
+            **kwargs: Keyword arguments supplied by the replaced boundary.
+        """
         if str(name) == "/run/lock/atlaso-vcf-lab.lock":
             name = tmp_path / "lock"
         if name == path.parent:
@@ -443,6 +598,12 @@ def test_remote_transaction_permissions_restart_and_readback(
         return real_open(name, flags, *args, **kwargs)
 
     def replace(source, destination):
+        """Exercise replace.
+
+        Args:
+            source: Temporary replacement-file path.
+            destination: Final configuration path.
+        """
         real_replace(source, destination)
         if mode == "readback_failure":
             path.write_bytes(b"vendor.setting=concurrently-modified\n")
@@ -452,6 +613,12 @@ def test_remote_transaction_permissions_restart_and_readback(
     calls = []
 
     def run(command, **kwargs):
+        """Exercise run.
+
+        Args:
+            command: Fixed service command submitted by the remote editor.
+            **kwargs: Keyword arguments supplied by the replaced boundary.
+        """
         calls.append(command)
         if mode == "restart_oserror":
             raise OSError("sensitive-process-error")
@@ -511,19 +678,41 @@ def test_remote_transaction_permissions_restart_and_readback(
 
 
 def test_remote_fingerprint_mismatch_never_authenticates(db, values, monkeypatch):
+    """Exercise remote fingerprint mismatch never authenticates.
+
+    Args:
+        db: Database session for credential metadata and durable task state.
+        values: Selected credential references and confirmed review inputs.
+        monkeypatch: Pytest fixture replacing external boundaries for this test.
+    """
     calls = []
 
     class Transport:
         def __init__(self, sock):
+            """Exercise   init  .
+
+            Args:
+                sock: Connected socket supplied to the mocked SSH transport.
+            """
             pass
 
         def start_client(self, **kwargs):
+            """Exercise start client.
+
+            Args:
+                **kwargs: Keyword arguments supplied by the replaced boundary.
+            """
             pass
 
         def get_remote_server_key(self):
             return object()
 
         def auth_password(self, *args):
+            """Exercise auth password.
+
+            Args:
+                *args: Positional arguments supplied by the replaced boundary.
+            """
             calls.append("auth")
 
         def close(self):
@@ -543,6 +732,12 @@ def test_remote_fingerprint_mismatch_never_authenticates(db, values, monkeypatch
 
 
 def test_ui_requires_admin_csrf_and_explicit_acknowledgement(client, monkeypatch):
+    """Exercise ui requires admin csrf and explicit acknowledgement.
+
+    Args:
+        client: Authenticated application test client.
+        monkeypatch: Pytest fixture replacing external boundaries for this test.
+    """
     from tests.routers.ui.helpers import login
 
     login(client)
@@ -589,14 +784,31 @@ def test_remote_editor_remains_compatible_with_vcf_python():
 
 @pytest.mark.parametrize("suffix", [b"", b"=value", b" value", b":value"])
 def test_long_escaped_unrelated_keys_are_preserved(suffix):
+    """Exercise long escaped unrelated keys are preserved.
+
+    Args:
+        suffix: Separator/value variant appended to an escaped key fixture.
+    """
     original = b"\\:" * 100000 + suffix + b"\n"
     assert edit_properties(original, {"esa": "true"}).endswith(original)
 
 
 def test_probe_keeps_ssh_recovery_available_without_tls(db, values, monkeypatch):
+    """Exercise probe keeps ssh recovery available without tls.
+
+    Args:
+        db: Database session for credential metadata and durable task state.
+        values: Selected credential references and confirmed review inputs.
+        monkeypatch: Pytest fixture replacing external boundaries for this test.
+    """
     monkeypatch.setattr(lab, "probe_remote_ssh_host", lambda *args: "confirmed-ssh")
 
     def unavailable(*args):
+        """Exercise unavailable.
+
+        Args:
+            *args: Positional arguments supplied by the replaced boundary.
+        """
         raise OSError("offline")
 
     monkeypatch.setattr(lab, "tls_sha256_fingerprint", unavailable)
@@ -605,6 +817,15 @@ def test_probe_keeps_ssh_recovery_available_without_tls(db, values, monkeypatch)
 
 @pytest.mark.parametrize("role", ["VcfInstaller", "SddcManager"])
 def test_revert_reviews_and_executes_without_api(db, values, state, monkeypatch, role):
+    """Exercise revert reviews and executes without api.
+
+    Args:
+        db: Database session for credential metadata and durable task state.
+        values: Selected credential references and confirmed review inputs.
+        state: Mutable inspected-state fixture used to simulate remote changes.
+        monkeypatch: Pytest fixture replacing external boundaries for this test.
+        role: Detected VCF appliance role.
+    """
     state["role"] = role
     target = lab.target_from_values(db, values)
     job = lab.enqueue(db, "admin", lab.review(db, "admin", target, values)["token"])
@@ -626,6 +847,11 @@ def test_revert_reviews_and_executes_without_api(db, values, state, monkeypatch,
     state["service_active"] = False
 
     def unavailable(*args):
+        """Exercise unavailable.
+
+        Args:
+            *args: Positional arguments supplied by the replaced boundary.
+        """
         raise lab.LabOverrideError("API unavailable")
 
     monkeypatch.setattr(lab, "inspect_target", unavailable)
@@ -639,6 +865,11 @@ def test_revert_reviews_and_executes_without_api(db, values, state, monkeypatch,
     calls = []
 
     def restore(*args):
+        """Exercise restore.
+
+        Args:
+            *args: Positional arguments supplied by the replaced boundary.
+        """
         calls.append(args[-1])
         return {
             "ok": True,
@@ -660,6 +891,14 @@ def test_revert_reviews_and_executes_without_api(db, values, state, monkeypatch,
 
 
 def test_apply_rechecks_service_before_writing(db, values, state, monkeypatch):
+    """Exercise apply rechecks service before writing.
+
+    Args:
+        db: Database session for credential metadata and durable task state.
+        values: Selected credential references and confirmed review inputs.
+        state: Mutable inspected-state fixture used to simulate remote changes.
+        monkeypatch: Pytest fixture replacing external boundaries for this test.
+    """
     target = lab.target_from_values(db, values)
     job = lab.enqueue(db, "admin", lab.review(db, "admin", target, values)["token"])
     state["service_active"] = False
@@ -676,6 +915,14 @@ def test_apply_rechecks_service_before_writing(db, values, state, monkeypatch):
 def test_revert_rejects_superseded_property_with_matching_values(
     db, values, state, superseded_key
 ):
+    """Exercise revert rejects superseded property with matching values.
+
+    Args:
+        db: Database session for credential metadata and durable task state.
+        values: Selected credential references and confirmed review inputs.
+        state: Mutable inspected-state fixture used to simulate remote changes.
+        superseded_key: Property whose later mutation invalidates the baseline.
+    """
     target = lab.target_from_values(db, values)
     job = lab.enqueue(db, "admin", lab.review(db, "admin", target, values)["token"])
     job.status = "succeeded"
@@ -713,6 +960,13 @@ def test_revert_rejects_superseded_property_with_matching_values(
 
 
 def test_history_retains_old_property_owners_beyond_recent_limit(db, values, state):
+    """Exercise history retains old property owners beyond recent limit.
+
+    Args:
+        db: Database session for credential metadata and durable task state.
+        values: Selected credential references and confirmed review inputs.
+        state: Mutable inspected-state fixture used to simulate remote changes.
+    """
     from datetime import timedelta
 
     from atlaso.app.models import Job, utcnow
@@ -756,6 +1010,14 @@ def test_history_retains_old_property_owners_beyond_recent_limit(db, values, sta
 @pytest.mark.parametrize("scheme", ["http", "https"])
 @pytest.mark.parametrize("port", [None, 8443])
 def test_vault_api_uri_preserves_explicit_port(db, values, scheme, port):
+    """Exercise vault api uri preserves explicit port.
+
+    Args:
+        db: Database session for credential metadata and durable task state.
+        values: Selected credential references and confirmed review inputs.
+        scheme: Saved URI scheme under test; API transport remains HTTPS.
+        port: Selected remote TCP port.
+    """
     uri = f"{scheme}://vcf.example.test" + (f":{port}" if port else "")
     db.get(VaultEntry, 1).uris_json = json.dumps([uri])
     target = lab.target_from_values(db, values)
@@ -764,6 +1026,14 @@ def test_vault_api_uri_preserves_explicit_port(db, values, scheme, port):
 
 
 def test_terminal_outcome_and_audit_share_commit(db, values, state, monkeypatch):
+    """Exercise terminal outcome and audit share commit.
+
+    Args:
+        db: Database session for credential metadata and durable task state.
+        values: Selected credential references and confirmed review inputs.
+        state: Mutable inspected-state fixture used to simulate remote changes.
+        monkeypatch: Pytest fixture replacing external boundaries for this test.
+    """
     from sqlalchemy import event
 
     target = lab.target_from_values(db, values)
@@ -781,6 +1051,11 @@ def test_terminal_outcome_and_audit_share_commit(db, values, state, monkeypatch)
     terminal_commits = []
 
     def verify_commit(session):
+        """Exercise verify commit.
+
+        Args:
+            session: Database session at the transaction boundary.
+        """
         if job.status in {"succeeded", "failed"}:
             audit = session.scalar(
                 select(AuditEvent).where(AuditEvent.resource_id == job.id)
@@ -797,6 +1072,13 @@ def test_terminal_outcome_and_audit_share_commit(db, values, state, monkeypatch)
 
 
 def test_recovery_accepts_replacement_credentials_for_same_endpoint(db, values, state):
+    """Exercise recovery accepts replacement credentials for same endpoint.
+
+    Args:
+        db: Database session for credential metadata and durable task state.
+        values: Selected credential references and confirmed review inputs.
+        state: Mutable inspected-state fixture used to simulate remote changes.
+    """
     target = lab.target_from_values(db, values)
     job = lab.enqueue(db, "admin", lab.review(db, "admin", target, values)["token"])
     job.status = "succeeded"
@@ -836,6 +1118,11 @@ def test_recovery_accepts_replacement_credentials_for_same_endpoint(db, values, 
 
 
 def test_settings_restore_preserves_local_lab_runtime_state_without_export(db):
+    """Exercise settings restore preserves local lab runtime state without export.
+
+    Args:
+        db: Database session for credential metadata and durable task state.
+    """
     from atlaso.app.services.settings_archive import (
         SAFE_SETTING_KEYS,
         _clear_desired_state,
@@ -856,6 +1143,12 @@ def test_settings_restore_preserves_local_lab_runtime_state_without_export(db):
 
 
 def test_cloned_ssh_keys_do_not_share_property_ownership(db, values):
+    """Exercise cloned ssh keys do not share property ownership.
+
+    Args:
+        db: Database session for credential metadata and durable task state.
+        values: Selected credential references and confirmed review inputs.
+    """
     from dataclasses import replace
 
     first = lab.target_from_values(db, values)
@@ -879,6 +1172,14 @@ def test_cloned_ssh_keys_do_not_share_property_ownership(db, values):
 def test_revert_ignores_later_edits_to_original_noop_selection(
     db, values, state, changed_key
 ):
+    """Exercise revert ignores later edits to original noop selection.
+
+    Args:
+        db: Database session for credential metadata and durable task state.
+        values: Selected credential references and confirmed review inputs.
+        state: Mutable inspected-state fixture used to simulate remote changes.
+        changed_key: Selected property that actually changes in the source task.
+    """
     target = lab.target_from_values(db, values)
     desired = {"esa": "true", "nic": "false"}
     state["values"] = {**desired, changed_key: None}
@@ -907,6 +1208,14 @@ def test_revert_ignores_later_edits_to_original_noop_selection(
     "clone_uri", ["ssh://clone.example.test", "ssh://vcf.example.test:2222"]
 )
 def test_reservations_isolate_cloned_ssh_keys(db, values, state, clone_uri):
+    """Exercise reservations isolate cloned ssh keys.
+
+    Args:
+        db: Database session for credential metadata and durable task state.
+        values: Selected credential references and confirmed review inputs.
+        state: Mutable inspected-state fixture used to simulate remote changes.
+        clone_uri: Second SSH endpoint sharing the first target host key.
+    """
     from urllib.parse import urlsplit
 
     first = lab.enqueue(

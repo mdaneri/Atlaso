@@ -16,11 +16,21 @@ from atlaso.app.services import vcf_lab_overrides as lab
 
 
 def register_routes(router: APIRouter, verify_csrf: Callable[..., Any]) -> None:
-    """Register browser-only handlers with the existing management boundary."""
+    """Register browser-only handlers with the existing management boundary.
+
+    Args:
+        router: Existing management UI router that owns these endpoints.
+        verify_csrf: Management UI CSRF validator.
+    """
 
     def require_admin(
         identity: Identity = Depends(require_session_identity),
     ) -> Identity:
+        """Exercise require admin.
+
+        Args:
+            identity: Authenticated operator identity used for authorization.
+        """
         if not identity.has_role("admin"):
             raise HTTPException(
                 403, "Administrator access is required for VCF lab overrides."
@@ -28,6 +38,11 @@ def register_routes(router: APIRouter, verify_csrf: Callable[..., Any]) -> None:
         return identity
 
     async def payload(request: Request) -> dict[str, Any]:
+        """Exercise payload.
+
+        Args:
+            request: Incoming HTTP request used for body and CSRF validation.
+        """
         verify_csrf(request, request.headers.get("X-CSRF-Token", ""))
         # Bound the body before parsing, including chunked requests.
         body = bytearray()
@@ -51,7 +66,15 @@ def register_routes(router: APIRouter, verify_csrf: Callable[..., Any]) -> None:
         identity: Identity = Depends(require_admin),
         db: Session = Depends(get_db),
     ) -> dict[str, Any]:
-        """Probe, inspect, review or queue an explicitly acknowledged operation."""
+        """Probe, inspect, review or queue an explicitly acknowledged operation.
+
+        Args:
+            operation: Allowlisted lab operation selected by the route.
+            request: Incoming HTTP request used for body and CSRF validation.
+            background_tasks: FastAPI task dispatcher for the durable worker.
+            identity: Authenticated operator identity used for authorization.
+            db: Database session for credential metadata and durable task state.
+        """
         values = await payload(request)
         if operation not in {"probe", "inspect", "review", "execute"}:
             raise HTTPException(404, "Unknown lab operation.")
@@ -116,7 +139,12 @@ def register_routes(router: APIRouter, verify_csrf: Callable[..., Any]) -> None:
         identity: Identity = Depends(require_admin),
         db: Session = Depends(get_db),
     ) -> dict[str, Any]:
-        """Return managed operation choices for review and revert."""
+        """Return managed operation choices for review and revert.
+
+        Args:
+            identity: Authenticated operator identity used for authorization.
+            db: Database session for credential metadata and durable task state.
+        """
         return {"jobs": lab.history(db)}
 
     @router.get("/vcf-helper/lab-overrides/tasks/{job_id}", include_in_schema=False)
@@ -125,7 +153,13 @@ def register_routes(router: APIRouter, verify_csrf: Callable[..., Any]) -> None:
         identity: Identity = Depends(require_admin),
         db: Session = Depends(get_db),
     ) -> dict[str, Any]:
-        """Report property verification separately from service/API recovery."""
+        """Report property verification separately from service/API recovery.
+
+        Args:
+            job_id: Durable task identifier.
+            identity: Authenticated operator identity used for authorization.
+            db: Database session for credential metadata and durable task state.
+        """
         job = db.get(Job, job_id)
         if job is None or job.type != lab.JOB_TYPE:
             raise HTTPException(404, "VCF lab task not found.")

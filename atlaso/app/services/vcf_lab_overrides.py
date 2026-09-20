@@ -60,7 +60,12 @@ WARNING = (
 
 
 def supported_catalog(role: str, version: str) -> tuple[dict[str, str], ...]:
-    """Select the explicit property-management contract for supported targets."""
+    """Select the explicit property-management contract for supported targets.
+
+    Args:
+        role: Detected VCF appliance role.
+        version: Detected VCF release string.
+    """
     if role not in {"VcfInstaller", "SddcManager"}:
         raise LabOverrideError(
             "Only VCF Installer and SDDC Manager targets are eligible."
@@ -94,7 +99,12 @@ class Target:
 
 
 def target_from_values(db: Session, values: dict[str, Any]) -> Target:
-    """Resolve matching API/SSH endpoints from existing encrypted Vault entries."""
+    """Resolve matching API/SSH endpoints from existing encrypted Vault entries.
+
+    Args:
+        db: Database session for credential metadata and durable task state.
+        values: Selected credential references and confirmed review inputs.
+    """
     try:
         api_id, ssh_id = int(values["api_entry_id"]), int(values["ssh_entry_id"])
         api_index, ssh_index = (
@@ -140,7 +150,12 @@ def target_from_values(db: Session, values: dict[str, Any]) -> Target:
 
 
 def _entry(db: Session, identifier: int) -> VaultEntry:
-    """Require a current credential record at every use."""
+    """Require a current credential record at every use.
+
+    Args:
+        db: Database session for credential metadata and durable task state.
+        identifier: Vault entry primary key.
+    """
     entry = db.get(VaultEntry, identifier)
     if entry is None or not entry.username:
         raise LabOverrideError("A selected credential is no longer available.")
@@ -148,7 +163,11 @@ def _entry(db: Session, identifier: int) -> VaultEntry:
 
 
 def probe(target: Target) -> dict[str, str]:
-    """Return unauthenticated TLS and SSH fingerprints for explicit confirmation."""
+    """Return unauthenticated TLS and SSH fingerprints for explicit confirmation.
+
+    Args:
+        target: Resolved endpoint and encrypted Vault credential references.
+    """
     try:
         ssh = probe_remote_ssh_host(target.host, target.ssh_port)
     except Exception as exc:
@@ -161,7 +180,13 @@ def probe(target: Target) -> dict[str, str]:
 
 
 def appliance_info(db: Session, target: Target, fingerprint: str) -> dict[str, str]:
-    """Authenticate only after certificate pinning and gate exact version families."""
+    """Authenticate only after certificate pinning and gate exact version families.
+
+    Args:
+        db: Database session for credential metadata and durable task state.
+        target: Resolved endpoint and encrypted Vault credential references.
+        fingerprint: Expected remote fingerprint checked before authentication.
+    """
     if not fingerprint:
         raise LabOverrideError("Confirm the TLS fingerprint before authentication.")
     entry = _entry(db, target.api_entry_id)
@@ -187,7 +212,14 @@ def appliance_info(db: Session, target: Target, fingerprint: str) -> dict[str, s
 def remote(
     db: Session, target: Target, fingerprint: str, request: dict[str, Any]
 ) -> dict[str, Any]:
-    """Execute the fixed editor over pinned SSH with bounded input/output/time."""
+    """Execute the fixed editor over pinned SSH with bounded input/output/time.
+
+    Args:
+        db: Database session for credential metadata and durable task state.
+        target: Resolved endpoint and encrypted Vault credential references.
+        fingerprint: Expected remote fingerprint checked before authentication.
+        request: Bounded request carrying only allowed operation inputs.
+    """
     if not fingerprint:
         raise LabOverrideError("Confirm the SSH host key before authentication.")
     entry = _entry(db, target.ssh_entry_id)
@@ -256,13 +288,26 @@ def remote(
 
 
 def inspect_target(db: Session, target: Target, tls: str, ssh: str) -> dict[str, Any]:
-    """Return only bounded boolean state and verified appliance identity."""
+    """Return only bounded boolean state and verified appliance identity.
+
+    Args:
+        db: Database session for credential metadata and durable task state.
+        target: Resolved endpoint and encrypted Vault credential references.
+        tls: Confirmed API TLS certificate fingerprint.
+        ssh: Confirmed SSH host-key fingerprint.
+    """
     info = appliance_info(db, target, tls)
     return {**inspect_properties(db, target, ssh), **info}
 
 
 def inspect_properties(db: Session, target: Target, ssh: str) -> dict[str, Any]:
-    """Inspect pinned SSH state independently of domainmanager API readiness."""
+    """Inspect pinned SSH state independently of domainmanager API readiness.
+
+    Args:
+        db: Database session for credential metadata and durable task state.
+        target: Resolved endpoint and encrypted Vault credential references.
+        ssh: Confirmed SSH host-key fingerprint.
+    """
     state = remote(db, target, ssh, {"action": "inspect"})
     if state.get("ok") is not True:
         raise LabOverrideError(
@@ -288,7 +333,13 @@ def inspect_properties(db: Session, target: Target, ssh: str) -> dict[str, Any]:
 
 
 def _property_owner_key(ssh: str, key: str, target: Target) -> str:
-    """Identify the latest dispatched mutation for a pinned target/property."""
+    """Identify the latest dispatched mutation for a pinned target/property.
+
+    Args:
+        ssh: Confirmed SSH host-key fingerprint.
+        key: Allowlisted managed property identifier.
+        target: Resolved endpoint and encrypted Vault credential references.
+    """
     identity = json.dumps([target.host, target.api_port, target.ssh_port, ssh])
     return "vcf_lab_owner:" + hashlib.sha256(identity.encode()).hexdigest() + ":" + key
 
@@ -296,7 +347,15 @@ def _property_owner_key(ssh: str, key: str, target: Target) -> str:
 def _require_property_owner(
     db: Session, ssh: str, keys: Any, job_id: str, target: Target
 ) -> None:
-    """Reject stale baselines even when later writes restore identical values."""
+    """Reject stale baselines even when later writes restore identical values.
+
+    Args:
+        db: Database session for credential metadata and durable task state.
+        ssh: Confirmed SSH host-key fingerprint.
+        keys: Property identifiers whose current ownership must match.
+        job_id: Durable task identifier.
+        target: Resolved endpoint and encrypted Vault credential references.
+    """
     for key in keys:
         owner = db.scalar(
             select(Setting).where(Setting.key == _property_owner_key(ssh, key, target))
@@ -315,7 +374,14 @@ def _signer() -> URLSafeTimedSerializer:
 def review(
     db: Session, actor: str, target: Target, values: dict[str, Any]
 ) -> dict[str, Any]:
-    """Capture a signed ten-minute plan, including previous/default values."""
+    """Capture a signed ten-minute plan, including previous/default values.
+
+    Args:
+        db: Database session for credential metadata and durable task state.
+        actor: Authenticated administrator submitting the operation.
+        target: Resolved endpoint and encrypted Vault credential references.
+        values: Selected credential references and confirmed review inputs.
+    """
     if values.get("confirmed") is not True:
         raise LabOverrideError(
             "Confirm both fingerprints out of band before inspecting the target."
@@ -419,7 +485,11 @@ def review(
 
 
 def _reservation_key(plan: dict[str, Any]) -> str:
-    """Reserve a pinned SSH endpoint independently of cloned host keys."""
+    """Reserve a pinned SSH endpoint independently of cloned host keys.
+
+    Args:
+        plan: Server-signed target and property-change plan.
+    """
     identity = json.dumps(
         [plan["target"]["host"], plan["target"]["ssh_port"], plan["ssh_fingerprint"]]
     )
@@ -427,7 +497,13 @@ def _reservation_key(plan: dict[str, Any]) -> str:
 
 
 def enqueue(db: Session, actor: str, token: str) -> Job:
-    """Atomically consume a review and reserve the SSH identity across workers."""
+    """Atomically consume a review and reserve the SSH identity across workers.
+
+    Args:
+        db: Database session for credential metadata and durable task state.
+        actor: Authenticated administrator submitting the operation.
+        token: Signed, expiring review token.
+    """
     try:
         plan = _signer().loads(token, max_age=600)
     except BadData:
@@ -470,7 +546,11 @@ def enqueue(db: Session, actor: str, token: str) -> Job:
 
 
 def run_job(job_id: str) -> None:
-    """Execute and retain truthful partial outcomes plus a safe revert baseline."""
+    """Execute and retain truthful partial outcomes plus a safe revert baseline.
+
+    Args:
+        job_id: Durable task identifier.
+    """
     with SessionLocal() as db:
         job = db.get(Job, job_id)
         if job is None or job.status != JobStatus.PENDING.value:
@@ -633,7 +713,11 @@ def run_job(job_id: str) -> None:
 
 
 def history(db: Session) -> list[dict[str, str]]:
-    """List recent history plus every retained property owner for recovery."""
+    """List recent history plus every retained property owner for recovery.
+
+    Args:
+        db: Database session for credential metadata and durable task state.
+    """
     recent = (
         select(Job.id)
         .where(Job.type == JOB_TYPE)
@@ -658,7 +742,11 @@ def history(db: Session) -> list[dict[str, str]]:
 
 
 def recover_interrupted_jobs(db: Session) -> int:
-    """Close interrupted tasks without guessing whether a dispatched write ran."""
+    """Close interrupted tasks without guessing whether a dispatched write ran.
+
+    Args:
+        db: Database session for credential metadata and durable task state.
+    """
     jobs = list(
         db.scalars(
             select(Job).where(

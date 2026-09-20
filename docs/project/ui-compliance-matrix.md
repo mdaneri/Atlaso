@@ -243,3 +243,12 @@ shared controls. Diagnostics does not invoke Appliance Apply. Desktop and narrow
 The matrix is complete only while E1–E8 pass on the same pull-request head. A future failure must be remediated in the
 same change or tracked by a separately labeled issue linked to #115; a new `custom/other` interaction also requires
 explicit maintainer approval before implementation.
+
+### VCF lab overrides (#849)
+
+`partials/vcf_lab_overrides.html` uses the existing VCF Helper non-grid settings layout, shared form controls,
+explicit fingerprint confirmation, reviewed changes, lab acknowledgement and task-result links. Administrator-only
+operations use encrypted Vault references; the browser receives no credential values. Controls expose keyboard focus,
+errors and progress, and disable apply until inspection and acknowledgement. JavaScript-disabled pages explain the
+requirement without applying changes. Desktop and narrow browser fixtures verified selection, review, recovery,
+keyboard submission and result visibility; live VCF appliance interoperability remains unverified.

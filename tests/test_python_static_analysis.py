@@ -123,6 +123,7 @@ def test_static_analysis_configuration_is_pinned_and_scoped() -> None:
     assert analyzer_requirements == {"ruff==0.16.5", "mypy==2.3.1"}
     assert project["tool"]["ruff"] == {
         "target-version": "py314",
+        "per-file-target-version": {"atlaso/app/services/vcf_lab_remote.py": "py310"},
         "extend-exclude": ["VCFDT", "third_party", "vcfDownloadTool"],
         "lint": {
             "select": ["E4", "E7", "E9", "F", "B", "BLE", "I"],
@@ -136,6 +137,9 @@ def test_static_analysis_configuration_is_pinned_and_scoped() -> None:
         "warn_unused_configs": True,
         "follow_imports": "silent",
         "files": [
+            "atlaso/app/services/vcf_lab_remote.py",
+            "atlaso/app/services/vcf_lab_overrides.py",
+            "atlaso/app/services/remote_ssh.py",
             "atlaso/app/services/log_viewer.py",
             "atlaso/app/services/producer_log_history.py",
             "atlaso/app/services/log_sanitization.py",
