@@ -254,6 +254,13 @@ def test_job_outcomes_preserve_recovery_state(db, values, state, monkeypatch, fa
     )
     assert json.loads(job.task_config_json)["previous"] == {"esa": None, "nic": "true"}
     assert bool(calls) == (failure != "drift")
+    for key in ("esa", "nic"):
+        owner = db.scalar(
+            select(Setting).where(
+                Setting.key == lab._property_owner_key(values["ssh_fingerprint"], key)
+            )
+        )
+        assert (owner.value if owner else None) == (job.id if calls else None)
     if failure == "restart":
         assert json.loads(job.result)["property_verified"] is True
         assert json.loads(job.result)["service_active"] is False
@@ -265,6 +272,13 @@ def test_revert_preserves_original_default_and_refuses_drift(db, values, state):
     job = lab.enqueue(db, "admin", reviewed["token"])
     job.status = "failed"  # Restart failure can still need a revert.
     job.result = json.dumps({"changed": True, "property_verified": True})
+    for key in ("esa", "nic"):
+        db.add(
+            Setting(
+                key=lab._property_owner_key(values["ssh_fingerprint"], key),
+                value=job.id,
+            )
+        )
     db.commit()
     state["values"] = {"esa": "true", "nic": "false"}
     revert = lab.review(db, "admin", target, {**values, "source_job_id": job.id})
@@ -392,7 +406,13 @@ def test_remote_transaction_permissions_restart_and_readback(
     monkeypatch.setattr(
         os, "fchown", lambda fd, uid, gid: owners.append((uid, gid)), raising=False
     )
-    monkeypatch.setattr(os, "fchmod", lambda fd, mode: modes.append(mode))
+    real_fchmod = os.fchmod
+
+    def record_fchmod(fd, mode):
+        modes.append(mode)
+        real_fchmod(fd, mode)
+
+    monkeypatch.setattr(os, "fchmod", record_fchmod)
     monkeypatch.setattr(os, "listxattr", lambda p: ["user.test"], raising=False)
     monkeypatch.setattr(os, "getxattr", lambda p, key: b"attribute", raising=False)
     monkeypatch.setattr(
@@ -556,6 +576,13 @@ def test_revert_reviews_and_executes_without_api(db, values, state, monkeypatch,
     job = lab.enqueue(db, "admin", lab.review(db, "admin", target, values)["token"])
     job.status = "failed"
     job.result = json.dumps({"changed": True, "property_verified": True})
+    for key in ("esa", "nic"):
+        db.add(
+            Setting(
+                key=lab._property_owner_key(values["ssh_fingerprint"], key),
+                value=job.id,
+            )
+        )
     for lock in db.scalars(select(Setting).where(Setting.key.like("vcf_lab_lock:%"))):
         db.delete(lock)
     db.commit()
@@ -607,3 +634,39 @@ def test_apply_rechecks_service_before_writing(db, values, state, monkeypatch):
     assert "stopped after review" in job.error
     assert calls == []
     assert json.loads(job.result)["property_verified"] is False
+
+
+@pytest.mark.parametrize("superseded_key", ["esa", "nic"])
+def test_revert_rejects_superseded_property_with_matching_values(
+    db, values, state, superseded_key
+):
+    target = lab.target_from_values(db, values)
+    job = lab.enqueue(db, "admin", lab.review(db, "admin", target, values)["token"])
+    job.status = "succeeded"
+    job.result = json.dumps({"changed": True, "property_verified": True})
+    state["values"] = {"esa": "true", "nic": "false"}
+    for key in ("esa", "nic"):
+        db.add(
+            Setting(
+                key=lab._property_owner_key(values["ssh_fingerprint"], key),
+                value=job.id,
+            )
+        )
+    db.commit()
+    reviewed = lab.review(db, "admin", target, {**values, "source_job_id": job.id})
+    db.scalar(
+        select(Setting).where(
+            Setting.key
+            == lab._property_owner_key(values["ssh_fingerprint"], superseded_key)
+        )
+    ).value = "later-write-or-revert"
+    db.commit()
+    with pytest.raises(lab.LabOverrideError, match="superseded"):
+        lab.review(db, "admin", target, {**values, "source_job_id": job.id})
+    for lock in db.scalars(select(Setting).where(Setting.key.like("vcf_lab_lock:%"))):
+        db.delete(lock)
+    db.commit()
+    recovery = lab.enqueue(db, "admin", reviewed["token"])
+    lab.run_job(recovery.id)
+    assert recovery.status == "failed"
+    assert "superseded" in recovery.error

@@ -85,7 +85,9 @@ Choose the same credentials, probe and confirm the SSH fingerprint, then choose 
 select **Review revert**, and acknowledge
 the reviewed restoration. Revert restores only that operation's previous selected-property values; originally absent
 properties are removed. Unrelated current configuration remains intact. A changed target identity or managed property
-blocks revert instead of overwriting another edit. Recovery inspects the current file over pinned SSH and uses the
+blocks revert instead of overwriting another edit. A later dispatched managed write or revert also invalidates the
+older baseline for each affected property, even if values later match again. Uncertain writes require manual recovery.
+Recovery inspects the current file over pinned SSH and uses the
 original operation's verified role/version, explicitly labelled in review; it does not require a working VCF API or
 successful API inspection. If TLS probing fails, only recovery remains available. API readiness is checked after
 restoration using the original TLS fingerprint and reported separately from property verification.

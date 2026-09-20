@@ -287,6 +287,23 @@ def inspect_properties(db: Session, target: Target, ssh: str) -> dict[str, Any]:
     }
 
 
+def _property_owner_key(ssh: str, key: str) -> str:
+    """Identify the latest dispatched mutation for a pinned target/property."""
+    return "vcf_lab_owner:" + hashlib.sha256(ssh.encode()).hexdigest() + ":" + key
+
+
+def _require_property_owner(db: Session, ssh: str, keys: Any, job_id: str) -> None:
+    """Reject stale baselines even when later writes restore identical values."""
+    for key in keys:
+        owner = db.scalar(
+            select(Setting).where(Setting.key == _property_owner_key(ssh, key))
+        )
+        if owner is None or owner.value != job_id:
+            raise LabOverrideError(
+                "A later managed mutation superseded this operation; select the latest operation or recover manually."
+            )
+
+
 def _signer() -> URLSafeTimedSerializer:
     """Bind review tokens to the appliance secret and this workflow only."""
     return URLSafeTimedSerializer(get_settings().secret_key, salt="vcf-lab-review-v1")
@@ -343,7 +360,12 @@ def review(
             raise LabOverrideError(
                 "Managed properties changed since the operation; revert would overwrite another edit."
             )
-        desired = previous["previous"]
+        desired = {
+            key: value
+            for key, value in previous["previous"].items()
+            if value != previous["desired"][key]
+        }
+        _require_property_owner(db, ssh, desired, source.id)
     else:
         state = inspect_target(db, target, tls, ssh)
         allowed = {
@@ -496,6 +518,21 @@ def run_job(job_id: str) -> None:
                 raise LabOverrideError(
                     "domainmanager stopped after review. Restore service health and review again."
                 )
+            if plan["source_job_id"]:
+                _require_property_owner(
+                    db, plan["ssh_fingerprint"], plan["desired"], plan["source_job_id"]
+                )
+            # Persist provenance before dispatch. An uncertain write invalidates
+            # older baselines rather than guessing that they remain safe.
+            for key, value in plan["desired"].items():
+                if value == plan["previous"][key]:
+                    continue
+                owner_key = _property_owner_key(plan["ssh_fingerprint"], key)
+                owner = db.scalar(select(Setting).where(Setting.key == owner_key))
+                if owner is None:
+                    db.add(Setting(key=owner_key, value=job.id))
+                else:
+                    owner.value = job.id
             job.progress_percent = 30
             db.commit()
             outcome = remote(
