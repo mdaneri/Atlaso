@@ -2,9 +2,8 @@
 
 ## Mandatory Agent Startup Gate
 
-Read this file and [CONTRIBUTING.md](CONTRIBUTING.md) before planning implementation or changing repository or external
-state. These are the mandatory core. Load each applicable route below before planning or performing its operation;
-a link is conditional, not an instruction to read every linked document.
+Read this file and [CONTRIBUTING.md](CONTRIBUTING.md) before implementation planning or repository/external mutation.
+Load each applicable route below before planning or performing its operation; other links are conditional.
 
 In the first progress update, confirm policies read, classify the work as `bug`, `enhancement`, `documentation`, or
 security-sensitive, and identify the linked issue. For private remediation, confirm private tracking without revealing
@@ -22,6 +21,9 @@ before the affected operation for maintainer direction.
   `git-worktree-root`. Resolve it independently; never guess or implement in the primary checkout. Keep task-owned
   temporary files, caches, builds, logs, and evidence beneath that root or another explicit maintainer-configured
   permitted root. Preserve out-of-root or ambiguous state and stop before mutation.
+- Before worktree or disposable validation-root creation, load cleanup's ownership section. Record original identities
+  and task/repository/source bindings durably outside removal roots before use; verify containment and supported cleanup.
+  Missing creation provenance blocks implementation/validation: report the prerequisite, never retrofit later snapshots.
 - Protect secrets: never expose credentials, authenticated URLs, private keys, or secret-bearing data in tool output,
   logs, ordinary files, screenshots, or public reports. Before credential operations load the credentials route;
   suspected sensitive vulnerabilities require the security route before any public issue or finding.
@@ -36,9 +38,8 @@ before the affected operation for maintainer direction.
 
 ## Conditional policy routes
 
-Select routes by operation AND affected behavior, not filenames alone. Cross-domain work loads all affected routes.
-For subsystem policy, read the relevant named sections; inspect headings first if needed. Resolve unknown applicability
-before mutation rather than treating it as an exemption.
+Select routes by operation AND affected behavior, not filenames alone; load all affected routes. Read relevant subsystem
+sections as needed. Resolve unknown applicability before mutation rather than treating it as an exemption.
 
 | Route | Trigger before planning or action | Canonical source |
 | --- | --- | --- |
@@ -55,7 +56,7 @@ before mutation rather than treating it as an exemption.
 | release | Changes to release/version tooling, trusted CI, signing, publication, promotion, GitHub Pages; routine synchronized version bumps follow CONTRIBUTING only | [Release policy](docs/contribute/release-policy.md) |
 | subsystem | Appliance, networking, services, authentication, storage, host-mutation behavior | [Relevant subsystem sections](docs/contribute/agent-policies.md) |
 | infrastructure | Image builds, VMware/lifecycle validation, deployment, external infrastructure mutation | [Lifecycle procedures](docs/reference/vmware-workstation-lifecycle-testing.md), [subsystem contracts](docs/contribute/agent-policies.md) |
-| cleanup | Creating disposable validation resources (ownership section), resource release, destructive cleanup, completed-task handoff | [Cleanup policy](docs/contribute/completed-task-cleanup.md) |
+| cleanup | Creating task worktrees or disposable validation resources (ownership section), resource release, destructive cleanup, completed-task handoff | [Cleanup policy](docs/contribute/completed-task-cleanup.md) |
 | community | Community participation | [Code of conduct](CODE_OF_CONDUCT.md) |
 
 ## Review and delegation entry points
@@ -71,5 +72,4 @@ Delegation never expands permissions. The implementation route owns the Spark co
 For UI work complete the **Mandatory UI Design Guide Gate** in the UI guide: classify the interaction, name the reused
 Atlaso reference, and obtain explicit maintainer approval for `custom/other` before implementation.
 
-The [progressive policy guide](docs/contribute/progressive-policy.md) explains ownership and measurement; it is not an
-additional unconditional startup dependency.
+The optional [progressive policy guide](docs/contribute/progressive-policy.md) explains ownership and measurement.
