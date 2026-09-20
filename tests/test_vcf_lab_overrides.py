@@ -318,12 +318,14 @@ def test_job_outcomes_preserve_recovery_state(db, values, state, monkeypatch, fa
     job = lab.enqueue(db, "admin", reviewed["token"])
     calls = []
 
-    def remote(*args):
+    def remote(*args, before_dispatch):
         """Exercise remote.
 
         Args:
             *args: Positional arguments supplied by the replaced boundary.
+            before_dispatch: Callback recording ownership at dispatch.
         """
+        before_dispatch()
         calls.append(args[-1])
         if failure == "exception":
             raise RuntimeError("secret that must not be logged")
@@ -864,12 +866,14 @@ def test_revert_reviews_and_executes_without_api(db, values, state, monkeypatch,
     assert json.loads(recovery.task_config_json)["tls_fingerprint"] == "confirmed-tls"
     calls = []
 
-    def restore(*args):
+    def restore(*args, before_dispatch):
         """Exercise restore.
 
         Args:
             *args: Positional arguments supplied by the replaced boundary.
+            before_dispatch: Callback recording ownership at dispatch.
         """
+        before_dispatch()
         calls.append(args[-1])
         return {
             "ok": True,
@@ -1247,3 +1251,142 @@ def test_reservations_isolate_cloned_ssh_keys(db, values, state, clone_uri):
         lab.review(db, "admin", lab.target_from_values(db, values), values)["token"],
     )
     assert third.id != second.id
+
+
+@pytest.mark.parametrize(
+    "failure", ["connection", "host_key", "authentication", "session", "dispatch"]
+)
+def test_revert_preserves_owner_until_authenticated_dispatch(
+    db, values, state, monkeypatch, failure
+):
+    """Keep recovery retryable for failures known to precede remote dispatch.
+
+    Args:
+        db: Database session for retained recovery state.
+        values: Confirmed target and credential references.
+        state: Inspected target state fixture.
+        monkeypatch: External boundary replacement fixture.
+        failure: SSH setup or dispatch failure stage.
+    """
+    target = lab.target_from_values(db, values)
+    source = lab.enqueue(db, "admin", lab.review(db, "admin", target, values)["token"])
+    source.status = "succeeded"
+    source.result = json.dumps({"changed": True, "property_verified": True})
+    for key in ("esa", "nic"):
+        db.add(
+            Setting(
+                key=lab._property_owner_key(values["ssh_fingerprint"], key, target),
+                value=source.id,
+            )
+        )
+    for lock in db.scalars(select(Setting).where(Setting.key.like("vcf_lab_lock:%"))):
+        db.delete(lock)
+    db.commit()
+    state["values"] = {"esa": "true", "nic": "false"}
+    recovery_values = {**values, "source_job_id": source.id}
+    recovery = lab.enqueue(
+        db, "admin", lab.review(db, "admin", target, recovery_values)["token"]
+    )
+
+    def fail_at(stage):
+        """Raise at the selected transport boundary.
+
+        Args:
+            stage: Transport stage reached by the test.
+        """
+        if failure == stage:
+            raise OSError("private transport detail")
+
+    class Transport:
+        def __init__(self, sock):
+            """Accept the synthetic socket.
+
+            Args:
+                sock: Test socket placeholder.
+            """
+
+        def start_client(self, **kwargs):
+            """Simulate an SSH handshake.
+
+            Args:
+                **kwargs: Bounded transport options.
+            """
+
+        def get_remote_server_key(self):
+            return object()
+
+        def auth_password(self, *args):
+            """Simulate authentication failure.
+
+            Args:
+                *args: Vault authentication inputs.
+            """
+            fail_at("authentication")
+
+        def open_session(self, **kwargs):
+            """Create the command channel.
+
+            Args:
+                **kwargs: Bounded channel options.
+            """
+            fail_at("session")
+            return self
+
+        def settimeout(self, timeout):
+            """Accept the channel deadline.
+
+            Args:
+                timeout: Bounded channel timeout.
+            """
+
+        def exec_command(self, command):
+            """Check that ownership is durable before uncertain dispatch.
+
+            Args:
+                command: Fixed remote editor command.
+            """
+            for key in ("esa", "nic"):
+                owner = db.scalar(
+                    select(Setting).where(
+                        Setting.key
+                        == lab._property_owner_key(
+                            values["ssh_fingerprint"], key, target
+                        )
+                    )
+                )
+                assert owner.value == recovery.id
+            fail_at("dispatch")
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(
+        lab.socket, "create_connection", lambda *args, **kwargs: fail_at("connection")
+    )
+    monkeypatch.setattr(lab.paramiko, "Transport", Transport)
+    monkeypatch.setattr(
+        lab,
+        "ssh_fingerprint",
+        lambda key: "wrong" if failure == "host_key" else values["ssh_fingerprint"],
+    )
+    monkeypatch.setattr(lab, "decrypt_secret", lambda value: "synthetic-password")
+    lab.run_job(recovery.id)
+    db.expire_all()
+    assert recovery.status == "failed"
+    assert "private transport detail" not in recovery.error
+    for key in ("esa", "nic"):
+        owner = db.scalar(
+            select(Setting).where(
+                Setting.key
+                == lab._property_owner_key(values["ssh_fingerprint"], key, target)
+            )
+        )
+        assert owner.value == (recovery.id if failure == "dispatch" else source.id)
+    if failure != "dispatch":
+        retry = lab.enqueue(
+            db, "admin", lab.review(db, "admin", target, recovery_values)["token"]
+        )
+        assert retry.id != recovery.id
+    else:
+        with pytest.raises(lab.LabOverrideError, match="superseded"):
+            lab.review(db, "admin", target, recovery_values)

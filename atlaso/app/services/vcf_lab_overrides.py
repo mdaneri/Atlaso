@@ -9,6 +9,7 @@ import re
 import shlex
 import socket
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -210,7 +211,12 @@ def appliance_info(db: Session, target: Target, fingerprint: str) -> dict[str, s
 
 
 def remote(
-    db: Session, target: Target, fingerprint: str, request: dict[str, Any]
+    db: Session,
+    target: Target,
+    fingerprint: str,
+    request: dict[str, Any],
+    *,
+    before_dispatch: Callable[[], None] | None = None,
 ) -> dict[str, Any]:
     """Execute the fixed editor over pinned SSH with bounded input/output/time.
 
@@ -219,6 +225,7 @@ def remote(
         target: Resolved endpoint and encrypted Vault credential references.
         fingerprint: Expected remote fingerprint checked before authentication.
         request: Bounded request carrying only allowed operation inputs.
+        before_dispatch: Durable provenance handoff after SSH setup and before execution.
     """
     if not fingerprint:
         raise LabOverrideError("Confirm the SSH host key before authentication.")
@@ -242,6 +249,8 @@ def remote(
         )
         channel = transport.open_session(timeout=10)
         channel.settimeout(10)
+        if before_dispatch is not None:
+            before_dispatch()
         channel.exec_command(command)
         channel.sendall(json.dumps(request).encode() + b"\n")
         channel.shutdown_write()
@@ -613,19 +622,25 @@ def run_job(job_id: str) -> None:
                     plan["source_job_id"],
                     target,
                 )
-            # Persist provenance before dispatch. An uncertain write invalidates
-            # older baselines rather than guessing that they remain safe.
-            for key, value in plan["desired"].items():
-                if value == plan["previous"][key]:
-                    continue
-                owner_key = _property_owner_key(plan["ssh_fingerprint"], key, target)
-                owner = db.scalar(select(Setting).where(Setting.key == owner_key))
-                if owner is None:
-                    db.add(Setting(key=owner_key, value=job.id))
-                else:
-                    owner.value = job.id
-            job.progress_percent = 30
-            db.commit()
+
+            def handoff_ownership() -> None:
+                """Persist provenance only once SSH is ready to dispatch the editor."""
+                # Dispatch failures remain uncertain; earlier connection failures
+                # leave the original recovery baseline available for retry.
+                for key, value in plan["desired"].items():
+                    if value == plan["previous"][key]:
+                        continue
+                    owner_key = _property_owner_key(
+                        plan["ssh_fingerprint"], key, target
+                    )
+                    owner = db.scalar(select(Setting).where(Setting.key == owner_key))
+                    if owner is None:
+                        db.add(Setting(key=owner_key, value=job.id))
+                    else:
+                        owner.value = job.id
+                job.progress_percent = 30
+                db.commit()
+
             outcome = remote(
                 db,
                 target,
@@ -636,6 +651,7 @@ def run_job(job_id: str) -> None:
                     "revision": plan["revision"],
                     "desired": plan["desired"],
                 },
+                before_dispatch=handoff_ownership,
             )
             observed = outcome.get("values", {})
             result.update(
