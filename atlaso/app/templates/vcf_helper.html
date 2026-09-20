@@ -96,6 +96,8 @@
         </div>
       </div>
 
+      {% include "partials/vcf_lab_overrides.html" %}
+
       <div class="vcf-helper-subject-group" aria-labelledby="vcf-helper-ldap-title">
         <div class="vcf-helper-subject-head">
           <h3 id="vcf-helper-ldap-title">LDAP</h3>
@@ -228,4 +230,5 @@
     </div>
   </form>
 </dialog>
+<script src="/static/vcf-lab-overrides.js?v=issue-849-1" defer></script>
 {% endblock %}

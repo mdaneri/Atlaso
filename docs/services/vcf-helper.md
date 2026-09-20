@@ -11,6 +11,80 @@ status: current
 VCF Helper prepares deployment DNS desired state. It is available under `VCF Workflows` at
 `/ui/management/vcf-helper`.
 
+## Lab / Non-production Overrides
+
+Administrators can manage either or both of these explicit properties on **VCF Installer** and **SDDC Manager**:
+
+| Option | Property value |
+| --- | --- |
+| Allow non-HCL vSAN ESA devices | `vsan.esa.sddc.managed.disk.claim=true` |
+| Disable 10GbE physical NIC validation | `enable.speed.of.physical.nics.validation=false` |
+
+The only edited file is `/etc/vmware/vcf/domainmanager/application-prod.properties`. Unselected properties remain
+unchanged. This is **lab / PoC / non-production property management**, not a certification or a guarantee that VCF
+will bypass a particular check. It does not change `operationsmanager`, commission hosts, generate deployment JSON,
+or disable other validation checks.
+
+### Version and support matrix
+
+| Detected release | Target | Behavior |
+| --- | --- | --- |
+| VCF 9.0.x | VCF Installer or SDDC Manager | Review and manage the two fixed domainmanager properties. |
+| VCF 9.1.0 | VCF Installer or SDDC Manager | Same explicit property management. |
+| VCF 9.1.1 and later 9.1.x patches | VCF Installer or SDDC Manager | Same explicit property management, with a native ESA warning. |
+| Other, missing, or ambiguous versions | Any | Unavailable; no guessed configuration changes. |
+
+[William Lam's VCF 9.0.1 reference](https://williamlam.com/2025/09/enhancement-in-vcf-9-0-1-to-bypass-vsan-esa-hcl-host-commission-10gbe-nic-check.html)
+describes legacy ESA properties and separate NIC validation behavior. Its update points to
+[native ESA handling in VCF 9.1.1](https://williamlam.com/2026/09/10-exciting-enhancements-in-vmware-cloud-foundation-9-1-1.html).
+[Broadcom KB 408300](https://knowledge.broadcom.com/external/article/408300) documents different property-file and
+component combinations for specific workflows. Atlaso deliberately edits only the file named above, as reviewed by
+the operator; it does not substitute a different path or claim that this covers every VCF workflow.
+
+### Review and apply
+
+1. Save the target API credential with an HTTP/HTTPS URI and SSH credential with an SSH/SFTP URI in an existing
+   Atlaso Vault. Both must identify the same hostname or IP. The API connection always uses HTTPS. The SSH account
+   must be root or have passwordless sudo permission to run the bounded editor; Python 3.10 or newer and `systemctl`
+   are required.
+   Atlaso does not enable root SSH, change sudo policy, or attempt password-based privilege escalation.
+2. Open **VCF Helper > Lab / Non-production Overrides** and select the two credentials. Credential values stay in
+   the existing encrypted Vault custody and never enter the page.
+3. Select **Probe target fingerprints**, verify both fingerprints out of band, and confirm the target. Probing sends
+   no credentials. A changed target clears confirmation; a changed SSH key or TLS certificate blocks authentication.
+4. Select **Inspect current properties**. Atlaso verifies the VCF role/version, fixed file, property values and
+   service state. Missing files, duplicate/continued managed properties, non-boolean values and unsafe file types
+   are refused. Repair ambiguous configuration on the target before continuing.
+5. Select either or both options, then **Review selected changes**. Review the target, release, previous values,
+   proposed values and restart requirement. An absent value means the property is not explicitly configured.
+6. Acknowledge the lab-only warning and choose **Apply reviewed changes**. Review expires after ten minutes and
+   is bound to the operator, target and inspected configuration. Any configuration drift requires a new review.
+7. Follow **Open task details**. A changed file triggers only `domainmanager` restart. Atlaso separately reports
+   property readback, service activity and VCF API readiness. An already matching configuration requires no restart.
+
+Atlaso preserves unrelated file content, ownership, permissions and extended attributes. It refuses symbolic links,
+hard-linked configuration and competing Atlaso operations. Restart is bounded to 90 seconds, service readiness to
+180 seconds and subsequent API readiness to a bounded retry window. Never interpret property readback as a live
+VCF workflow acceptance test; verify the intended VCF workflow separately on the lab appliance.
+
+### Revert and recovery
+
+Choose a **Previous managed operation** after inspecting the same target, select **Review revert**, and acknowledge
+the reviewed restoration. Revert restores only that operation's previous selected-property values; originally absent
+properties are removed. Unrelated current configuration remains intact. A changed version, target identity or
+managed property blocks revert instead of overwriting another edit.
+
+A verified property change remains revertible if service/API recovery failed. A no-op task or a task without verified
+write evidence cannot be automatically reverted. If connectivity failed during mutation, inspect the target using
+the retained previous/desired values and recover manually before submitting another operation. An interrupted Atlaso
+worker retains its target reservation: reconcile the task and remote state before clearing that reservation through
+maintainer recovery. Do not blindly resubmit a task whose outcome is unknown.
+
+The browser-only operations are beneath `/ui/management/vcf-helper/lab-overrides`: POST `probe`, `inspect`, `review`
+and `execute`, plus GET `history` and `tasks/{job_id}`. Execution and revert require admin authorization, CSRF and an
+acknowledged signed review. They are explicit remote tasks, separate from global Appliance Apply. Audit events record
+actor, target, version, selected previous/desired values and outcome, without credentials or raw remote configuration.
+
 <!-- BEGIN GENERATED INTERFACE OVERVIEW -->
 ## Interface overview
 

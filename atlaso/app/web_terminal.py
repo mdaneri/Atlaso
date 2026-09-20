@@ -67,7 +67,15 @@ from atlaso.app.services.authentication_lifetimes import (
     BROWSER_SESSION_IDLE_TIMEOUT_DEFAULT_MINUTES,
 )
 from atlaso.app.services.management_bindings import applied_management_bindings
-from atlaso.app.services.vaults import vault_entry_uris
+from atlaso.app.services.remote_ssh import (
+    probe_remote_ssh_host as _probe_remote_ssh_host,
+)
+from atlaso.app.services.remote_ssh import (
+    remote_entry_target as _remote_entry_target,
+)
+from atlaso.app.services.remote_ssh import (
+    ssh_fingerprint as _ssh_fingerprint,
+)
 from atlaso.app.ui_routes import (
     MANAGEMENT_UI_ROOT,
     PUBLIC_UI_ROOT,
@@ -194,54 +202,6 @@ def _ticket_digest(raw: str) -> str:
         raw: Raw consumed by ticket digest.
     """
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
-
-
-def _ssh_fingerprint(key: paramiko.PKey) -> str:
-    """Return ssh fingerprint.
-
-    Args:
-        key: Stable key identifying the setting, secret, or mapping entry.
-    """
-    digest = hashlib.sha256(key.asbytes()).digest()
-    return f"SHA256:{base64.b64encode(digest).decode('ascii').rstrip('=')}"
-
-
-def _remote_entry_target(entry: VaultEntry, uri_index: int) -> tuple[str, int, str]:
-    """Return remote entry target.
-
-    Args:
-        entry: Entry consumed by remote entry target.
-        uri_index: Uri index consumed by remote entry target.
-
-
-    Raises:
-        ValueError: If an input value is invalid.
-    """
-    uris = vault_entry_uris(entry)
-    if uri_index < 1 or uri_index > len(uris):
-        raise ValueError("The selected vault URI does not exist.")
-    parsed = urlparse(uris[uri_index - 1])
-    if parsed.scheme not in {"ssh", "sftp"} or not parsed.hostname:
-        raise ValueError("The selected vault URI is not an SSH or SFTP target.")
-    if not entry.username:
-        raise ValueError("Enter a username before opening an SSH or SFTP URI.")
-    return parsed.hostname, parsed.port or 22, entry.username
-
-
-def _probe_remote_ssh_host(hostname: str, port: int) -> str:
-    """Return probe remote ssh host.
-
-    Args:
-        hostname: DNS hostname contacted, validated, or configured by the operation.
-        port: Network port contacted, validated, or configured by the operation.
-    """
-    sock = socket.create_connection((hostname, port), timeout=10)
-    transport = paramiko.Transport(sock)
-    try:
-        transport.start_client(timeout=10)
-        return _ssh_fingerprint(transport.get_remote_server_key())
-    finally:
-        transport.close()
 
 
 def _terminal_replay_output(output: bytearray) -> bytes:

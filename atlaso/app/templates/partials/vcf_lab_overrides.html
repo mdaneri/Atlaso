@@ -1,0 +1,51 @@
+<section class="vcf-helper-subject-group" aria-labelledby="vcf-lab-title">
+  <div class="vcf-helper-subject-head">
+    <h3 id="vcf-lab-title">Lab / Non-production Overrides</h3>
+    <p class="muted">Manage two explicit domainmanager properties on VCF Installer or SDDC Manager 9.0.x / 9.1.x.</p>
+  </div>
+  <p class="alert warning">Lab / PoC only. These changes do not make hardware certified or production-supported. VCF 9.1.1 and later provide native ESA handling; editing this legacy property does not replace that workflow.</p>
+  {% if identity.has_role('admin') %}
+  <form class="form-stack" data-vcf-lab-form data-endpoint="{{ management_ui_root }}/vcf-helper/lab-overrides" data-tasks-root="{{ management_ui_root }}/tasks">
+    <input type="hidden" name="csrf" value="{{ csrf_token }}">
+    <p class="muted">Choose existing Vault credentials for the same appliance. SSH requires root or passwordless sudo and Python 3.10 or newer. No passwords are loaded into this page.</p>
+    <div class="form-grid">
+      <label><span class="field-label"><span>VCF API credential</span><button class="help-icon" type="button" data-help="Select an HTTP/HTTPS Vault URI for the VCF API. Authentication always uses HTTPS after fingerprint confirmation.">i</button></span><select name="api_credential" required><option value="">Choose a credential</option></select></label>
+      <label><span class="field-label"><span>SSH credential</span><button class="help-icon" type="button" data-help="Select an SSH/SFTP Vault URI for the same hostname. The account needs root or passwordless sudo to edit the fixed file and restart domainmanager.">i</button></span><select name="ssh_credential" required><option value="">Choose a credential</option></select></label>
+    </div>
+    <button class="button secondary" type="button" data-lab-action="probe">Probe target fingerprints</button>
+    <div class="settings-list compact-settings-list hidden" data-lab-trust hidden>
+      <div><span>Target</span><strong data-lab-target></strong></div>
+      <div><span>TLS SHA-256</span><code data-lab-tls></code></div>
+      <div><span>SSH SHA-256</span><code data-lab-ssh></code></div>
+    </div>
+    <label class="hidden" data-lab-confirm-label hidden><input name="confirmed" type="checkbox"> I verified both fingerprints out of band and confirm this target.</label>
+    <button class="button secondary" type="button" data-lab-action="inspect" disabled>Inspect current properties</button>
+    <p class="muted" data-lab-observed aria-live="polite">Current properties have not been inspected.</p>
+    <fieldset class="scope-choice-fieldset" data-lab-options disabled>
+      <legend>Select changes</legend>
+      <div class="scope-choice-grid">
+        <label class="scope-choice"><input type="checkbox" name="esa"><span class="scope-choice-copy"><strong>Allow non-HCL vSAN ESA devices</strong><small>Set vsan.esa.sddc.managed.disk.claim=true.</small></span></label>
+        <label class="scope-choice"><input type="checkbox" name="nic"><span class="scope-choice-copy"><strong>Disable 10GbE physical NIC validation</strong><small>Set enable.speed.of.physical.nics.validation=false.</small></span></label>
+      </div>
+      <p class="muted">Choose either or both. Unselected properties stay unchanged. This edits only <code>/etc/vmware/vcf/domainmanager/application-prod.properties</code> and restarts <code>domainmanager</code> when needed.</p>
+    </fieldset>
+    <button class="button secondary" type="button" data-lab-action="review" disabled>Review selected changes</button>
+    <label><span class="field-label"><span>Previous managed operation</span><button class="help-icon" type="button" data-help="Revert restores the selected operation's previous property values. Atlaso rejects conflicting edits and changed target identities.">i</button></span><select name="source_job_id"><option value="">Choose an operation to revert</option></select></label>
+    <button class="button secondary" type="button" data-lab-action="revert" disabled>Review revert</button>
+    <section class="panel detail-panel hidden" data-lab-review hidden aria-labelledby="vcf-lab-review-title">
+      <h4 id="vcf-lab-review-title">Review remote property changes</h4>
+      <p data-lab-review-target></p>
+      <ul data-lab-changes></ul>
+      <p data-lab-restart></p>
+      <label><input name="acknowledged" type="checkbox"> I acknowledge this is a lab / PoC / non-production change and authorize the reviewed remote changes and required service restart.</label>
+      <button class="button primary" type="submit" data-lab-execute disabled>Apply reviewed changes</button>
+    </section>
+    <p class="alert error hidden" data-lab-error role="alert" hidden></p>
+    <p data-lab-status role="status" aria-live="polite"></p>
+    <a class="hidden" data-lab-task hidden>Open task details</a>
+    <noscript><p>JavaScript is required for fingerprint confirmation, review and task submission. No changes have been applied.</p></noscript>
+  </form>
+  {% else %}
+  <p class="muted">Administrator access is required to manage remote lab properties.</p>
+  {% endif %}
+</section>
