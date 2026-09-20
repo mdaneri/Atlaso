@@ -9926,11 +9926,12 @@ def test_kms_helper_apply_installs_atlaso_kmip_service(monkeypatch, tmp_path):
     credential_inputs: list[tuple[list[str], str]] = []
     ownership: list[tuple[Path, int, int]] = []
 
-    def fake_run(command):
+    def fake_run(command, **kwargs):
         """Return fake run.
 
         Args:
             command: Command and arguments to execute.
+            **kwargs: Bounded execution options for history cutover.
         """
         commands.append(command)
         return subprocess.CompletedProcess(command, 0, "", "")

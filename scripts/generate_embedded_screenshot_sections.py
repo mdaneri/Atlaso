@@ -230,7 +230,9 @@ def main() -> None:
             OVERVIEW_BEGIN,
             OVERVIEW_HEADING,
             "",
-            "This verified appliance view provides visual orientation before you begin.",
+            ("This interface capture uses synthetic test data for visual orientation."
+             if primary.get("state") == "retained-history-synthetic-fixture"
+             else "This verified appliance view provides visual orientation before you begin."),
             "",
             *figure(primary),
             OVERVIEW_END,

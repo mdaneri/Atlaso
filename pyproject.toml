@@ -1,6 +1,6 @@
 [project]
 name = "atlaso"
-version = "0.9.359"
+version = "0.9.360"
 description = "Atlaso supports POC, lab, and test environments by simplifying deployment, maintenance, and validation."
 readme = "README.md"
 license = "MIT"
@@ -88,6 +88,15 @@ show_error_codes = true
 warn_unused_configs = true
 follow_imports = "silent"
 files = [
+  "atlaso/app/services/log_viewer.py",
+  "atlaso/app/services/producer_log_history.py",
+  "atlaso/app/services/log_sanitization.py",
+  "atlaso/app/services/app_history_cutover.py",
+  "atlaso/app/services/external_log_reader.py",
+  "atlaso/app/services/external_history_lifecycle.py",
+  "atlaso/app/services/kmip_log_capture.py",
+  "atlaso/app/services/nginx_log_capture.py",
+  "atlaso/app/services/nginx_log_sealing.py",
   "atlaso/app/services/task_cancellation.py",
   "atlaso/diagnostics.py",
   "atlaso/app/services/diagnostics.py",

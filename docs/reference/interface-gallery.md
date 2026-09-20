@@ -55,13 +55,13 @@ Figure: Appliance Update repository readiness at the responsive viewport.
 
 Route: `/ui/management/audit-log`
 
-![Atlaso Audit Events page in the clean-appliance desktop viewport.](../assets/screenshots/audit-log-clean-desktop.webp)
+![Atlaso Audit Events desktop layout showing retained-history navigation with synthetic data.](../assets/screenshots/audit-log-clean-desktop.webp)
 
-Figure: Audit Events in the verified clean-appliance desktop state.
+Figure: Audit Events history controls in the desktop layout with synthetic test data.
 
-![Atlaso Audit Events page in the clean-appliance responsive viewport.](../assets/screenshots/audit-log-clean-responsive.webp)
+![Atlaso Audit Events responsive layout showing retained-history navigation with synthetic data.](../assets/screenshots/audit-log-clean-responsive.webp)
 
-Figure: Audit Events in the verified clean-appliance responsive state.
+Figure: Audit Events history controls in the responsive layout with synthetic test data.
 
 ## Automation
 
@@ -303,13 +303,13 @@ Figure: Appliance sign-in in the verified responsive viewport.
 
 Route: `/ui/management/logs`
 
-![Atlaso Logs page in the clean-appliance desktop viewport.](../assets/screenshots/logs-clean-desktop.webp)
+![Atlaso Logs desktop layout showing retained-history navigation with synthetic data.](../assets/screenshots/logs-clean-desktop.webp)
 
-Figure: Logs in the verified clean-appliance desktop state.
+Figure: Logs history controls in the desktop layout with synthetic test data.
 
-![Atlaso Logs page in the clean-appliance responsive viewport.](../assets/screenshots/logs-clean-responsive.webp)
+![Atlaso Logs responsive layout showing retained-history navigation with synthetic data.](../assets/screenshots/logs-clean-responsive.webp)
 
-Figure: Logs in the verified clean-appliance responsive state.
+Figure: Logs history controls in the responsive layout with synthetic test data.
 
 ## Management CA / Requests
 

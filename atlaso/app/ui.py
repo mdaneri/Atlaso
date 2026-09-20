@@ -124,6 +124,7 @@ from atlaso.app.models import (
     utcnow,
 )
 from atlaso.app.operational_logging import (
+    SECRET_LINE_PATTERN,
     configure_operational_logging,
     logging_preferences_from_db,
     logging_preferences_to_dict,
@@ -543,6 +544,9 @@ from atlaso.app.services.settings_archive import (
     desired_state_counts,
     export_settings_archive,
     restore_settings_archive,
+)
+from atlaso.app.services.task_log_redaction import (
+    redact_task_value as _redact_task_value,
 )
 from atlaso.app.services.traffic_publishing import (
     NAT_CONFIG_PATH,
@@ -3341,6 +3345,10 @@ def retry_network_transaction_cleanup(db: Session) -> int:
                 "Network transaction cleanup completed. Review applied state and submit any remaining components."
             )
             job.progress_percent = 100
+        from atlaso.app.services.task_log_history import capture_task_history
+
+        db.flush()
+        capture_task_history(db.connection(), job.id)
         db.commit()
         return int(recovery.returncode == 0)
     return 0
@@ -8388,13 +8396,6 @@ SERVICE_ADMIN_CANCELLABLE_JOB_TYPES = {
     "vcf-ca-trust",
     "pxe-media-sync",
 }
-TASK_SECRET_KEY_RE = re.compile(r"(password|passwd|secret|token|credential|authorization|activation|private[_-]?key|api[_-]?key|payload[_-]?b64)", re.IGNORECASE)
-TASK_SECRET_VALUE_RE = re.compile(r"(-----BEGIN [A-Z ]*PRIVATE KEY-----|sk-[A-Za-z0-9_-]{16,}|Bearer\s+[A-Za-z0-9._-]{12,})", re.IGNORECASE)
-TASK_INLINE_SECRET_RE = re.compile(
-    r"(?P<label>\b[a-z0-9_-]*(?:password|passwd|secret|token|credential|authorization|activation|private[_-]?key|api[_-]?key|payload[_-]?b64)\b)"
-    r"(?P<separator>\s*(?:=|:)\s*)(?P<value>\"[^\"]*\"|'[^']*'|[^\s,;]+)",
-    re.IGNORECASE,
-)
 
 
 def _raise_if_job_cancelled(job: Job, db: Session) -> None:
@@ -8444,24 +8445,6 @@ def _update_cancelable_job(job: Job, db: Session, percent: int, state: str, **va
     _update_job(job, db, percent, state, **values)
 
 
-def _redact_task_value(value: Any, *, key: str = "") -> Any:
-    """Return redact task value.
-
-    Args:
-        value: Candidate value consumed by redact task value.
-        key: Stable key identifying the setting, secret, or mapping entry.
-    """
-    if key and TASK_SECRET_KEY_RE.search(key):
-        return "[redacted]"
-    if isinstance(value, dict):
-        return {str(item_key): _redact_task_value(item_value, key=str(item_key)) for item_key, item_value in value.items()}
-    if isinstance(value, list):
-        return [_redact_task_value(item) for item in value]
-    if isinstance(value, str):
-        if TASK_SECRET_VALUE_RE.search(value):
-            return "[redacted]"
-        return TASK_INLINE_SECRET_RE.sub(lambda match: f"{match.group('label')}{match.group('separator')}[redacted]", value)
-    return value
 
 
 def _task_failure_messages(value: Any) -> list[str]:
@@ -8871,12 +8854,13 @@ def _task_component_filter_options(db: Session) -> list[str]:
     return sorted(options, key=str.lower)
 
 
-def _task_log_lines(job: Job, db: Session) -> list[str]:
+def _task_log_lines(job: Job, db: Session, *, include_metadata: bool = True) -> list[str]:
     """Return task log lines.
 
     Args:
         job: Job being processed.
         db: Active database session.
+        include_metadata: Include mutable summary fields for the legacy projection.
     """
     row = _task_row(job)
     lines = [
@@ -8893,6 +8877,8 @@ def _task_log_lines(job: Job, db: Session) -> list[str]:
         lines.append(f"Summary: {row['summary']}")
     if row["error"]:
         lines.append(f"Error: {row['error']}")
+    if not include_metadata:
+        lines = []
     result = row["result"]
     if isinstance(result, dict):
         for key, value in result.items():
@@ -8914,6 +8900,8 @@ def _task_log_lines(job: Job, db: Session) -> list[str]:
             detail = _redact_task_value(event.detail or "")
             outcome = "success" if event.success else "failed"
             lines.append(f"{event.created_at.isoformat()} {event.action} {outcome} {detail}".rstrip())
+    if not include_metadata and row["error"] and job.status not in ACTIVE_JOB_STATUSES:
+        lines.append(f"Error: {row['error']}")
     return [str(_redact_task_value(line)) for line in lines]
 
 
@@ -9672,10 +9660,6 @@ def appliance_settings_management_status_transition(results: list[Any]) -> dict[
     return None
 
 
-SECRET_LINE_PATTERN = re.compile(
-    r"(rootpw|password|passwd|token|secret|credential|private[_.-]?key|robot[_.-]?account|ca[_.-]?bundle[_.-]?pem|activation[_.-]?code|license|ipxe[_.-]?script|payload[_.-]?b64)",
-    re.IGNORECASE,
-)
 PRIVATE_KEY_BEGIN_PATTERN = re.compile(r"-----BEGIN .*PRIVATE KEY-----")
 PRIVATE_KEY_END_PATTERN = re.compile(r"-----END .*PRIVATE KEY-----")
 JWT_PATH_SEGMENT_PATTERN = re.compile(r"(?<=/)[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}(?=/|$)")
@@ -16528,11 +16512,13 @@ def run_vcf_depot_software_id_job(job_id: str) -> None:
                     **payload,
                     "state": job.status,
                     "software_depot_id": software_depot_id if succeeded else "",
-                    "log_lines": log_lines,
                     "units": [safe_result],
                 },
                 indent=2,
             )
+            from atlaso.app.services.task_log_history import append_task_log_lines
+
+            append_task_log_lines(db, job.id, tuple(log_lines))
             db.commit()
             record_audit(
                 db,

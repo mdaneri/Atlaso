@@ -15,15 +15,22 @@ intended for investigation and change review.
 <!-- BEGIN GENERATED INTERFACE OVERVIEW -->
 ## Interface overview
 
-This verified appliance view provides visual orientation before you begin.
+This interface capture uses synthetic test data for visual orientation.
 
-![Atlaso Audit Events page in the clean-appliance desktop viewport.](../assets/screenshots/audit-log-clean-desktop.webp)
+![Atlaso Audit Events desktop layout showing retained-history navigation with synthetic data.](../assets/screenshots/audit-log-clean-desktop.webp)
 
-*Figure: Audit Events in the verified clean-appliance desktop state.*
+*Figure: Audit Events history controls in the desktop layout with synthetic test data.*
 
 <!-- END GENERATED INTERFACE OVERVIEW -->
 
 ## Review an event
+
+The open grid refreshes automatically. **From beginning**, **Previous page**, and **Next page** access all retained
+events in adjacent groups of up to 500, including a shorter oldest group; the grid's own page controls
+navigate within that group. Column filters and sorting
+apply to the displayed group and remain selected when it refreshes. **Follow live** advances to the newest group.
+With Time sorted descending, the newest rows appear on the first local page; ascending uses the last local page.
+Reading an earlier grid page or selecting text holds the displayed rows and reports newly available output.
 
 1. Filter the grid by actor, action, resource, or time.
 2. Open the relevant event and compare its timestamp with related entries on **Tasks**.
@@ -45,6 +52,12 @@ Use [Operational logs](logs.md) for runtime diagnostics. Preserve the relevant t
 escalating; do not copy credentials or raw secrets into an issue. The data classification does not make authenticated
 audit history public or override site handling policy.
 
+The live view opens at the newest retained group. **From beginning** reads the oldest retained entries; **Follow live**
+returns directly to the newest group.
+
+The initial audit table is a ready snapshot even when JavaScript is unavailable. HTML and JSON history responses
+disable caching and distinguish their representation header so live refreshes cannot receive cached HTML.
+
 <!-- BEGIN GENERATED ADDITIONAL SCREENSHOTS -->
 ## Additional verified states
 
@@ -52,8 +65,8 @@ These captures show responsive layouts and useful operational states referenced 
 
 ### Audit events
 
-![Atlaso Audit Events page in the clean-appliance responsive viewport.](../assets/screenshots/audit-log-clean-responsive.webp)
+![Atlaso Audit Events responsive layout showing retained-history navigation with synthetic data.](../assets/screenshots/audit-log-clean-responsive.webp)
 
-*Figure: Audit Events in the verified clean-appliance responsive state.*
+*Figure: Audit Events history controls in the responsive layout with synthetic test data.*
 
 <!-- END GENERATED ADDITIONAL SCREENSHOTS -->

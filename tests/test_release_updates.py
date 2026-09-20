@@ -5083,6 +5083,13 @@ def test_committed_activation_finishes_forward_without_database_rollback(monkeyp
     from tests.test_appliance_update import load_helper_module
 
     helper = load_helper_module()
+    monkeypatch.setattr(
+        helper,
+        "_complete_release_log_history",
+        lambda _candidate, _receipt, _job_id: (
+            {"success": True, "worker_restart": {"success": True}}, []
+        ),
+    )
     candidate = tmp_path / "releases/0.9.0"
     candidate.mkdir(parents=True)
     receipt = release_payload()
@@ -5184,7 +5191,7 @@ def test_committed_activation_finishes_forward_without_database_rollback(monkeyp
         assert result["success"] is True
         assert result["error"] == ""
         assert result["failure_layer"] == ""
-        assert finalizers == ["succeeded"]
+        assert finalizers == ["activation_committed", "succeeded"]
         assert gate_states == [False]
 
 

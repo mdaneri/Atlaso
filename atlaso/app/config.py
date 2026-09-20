@@ -44,6 +44,7 @@ class Settings(BaseSettings):
         repository_path: Filesystem path used for repository.
         vcf_backup_path: Filesystem path used for vcf backup.
         app_log_path: Filesystem path used for app log.
+        app_log_history_path: Prepared producer store for opt-in App capture before viewer cutover.
         esxi_kickstart_max_bytes: Esxi kickstart max size in bytes.
         esxi_installer_iso_max_bytes: Esxi installer iso max size in bytes.
         monitor_enabled: Whether monitor is enabled.
@@ -76,6 +77,7 @@ class Settings(BaseSettings):
     repository_path: Path = Path("/mnt/atlaso-vcf-offline-depot")
     vcf_backup_path: Path = Path("/mnt/atlaso-vcf-backups")
     app_log_path: Path = Path("/var/log/atlaso/atlaso.log")
+    app_log_history_path: Path | None = None
     diagnostics_spool_path: Path = Path("/var/lib/atlaso/diagnostics")
     esxi_kickstart_max_bytes: int = 262_144
     esxi_installer_iso_max_bytes: int = 1024 * 1024 * 1024

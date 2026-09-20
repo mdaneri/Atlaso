@@ -1968,6 +1968,9 @@ def _run_pxe_media_sync(db: Session, job: Job) -> None:
                 raise NetworkBootMediaSyncCancelled(
                     "Network Boot media deletion was cancelled before completion."
                 )
+            from atlaso.app.services.task_log_history import capture_task_history
+
+            capture_task_history(db.connection(), job.id)
             db.add(
                 AuditEvent(
                     actor=job.created_by,
@@ -2047,6 +2050,9 @@ def _run_pxe_media_sync(db: Session, job: Job) -> None:
             raise NetworkBootMediaSyncCancelled(
                 "Network Boot media task was cancelled before completion."
             )
+        from atlaso.app.services.task_log_history import capture_task_history
+
+        capture_task_history(db.connection(), job.id)
         db.add(
             AuditEvent(
                 actor=job.created_by,
@@ -2188,6 +2194,10 @@ def main() -> int:
     _stop_requested = False
     signal.signal(signal.SIGTERM, _request_stop)
     signal.signal(signal.SIGINT, _request_stop)
+    if get_settings().app_log_history_path is not None:
+        from atlaso.app.operational_logging import configure_operational_logging
+
+        configure_operational_logging(writer="worker")
     init_db()
     _write_worker_startup_status()
     release_finalizer_ready = _wait_for_release_restart_finalizer()

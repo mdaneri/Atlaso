@@ -239,6 +239,12 @@ def test_network_cleanup_worker_retries_without_restart(client, monkeypatch, com
         assert ui.active_appliance_apply_job(db).id == job.id
         assert json.loads(job.result)["network_runtime_commit_pending"] is True
         assert job.finished_at is None
+        from sqlalchemy import select
+
+        from atlaso.app.models import TaskLogChunk
+
+        chunks = db.scalars(select(TaskLogChunk).where(TaskLogChunk.job_id == job.id)).all()
+        assert any("network_transaction_recovery" in chunk.content for chunk in chunks)
         assert ui.retry_network_transaction_cleanup(db) == 1
         assert calls == [(job.id, committed), (job.id, committed)]
         assert json.loads(job.result)["network_runtime_commit_pending"] is False
