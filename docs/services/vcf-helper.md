@@ -70,6 +70,7 @@ the operator; it does not substitute a different path or claim that this covers 
    proposed values and restart requirement. An absent value means the property is not explicitly configured.
 6. Acknowledge the lab-only warning and choose **Apply reviewed changes**. Review expires after ten minutes and
    is bound to the operator, target and inspected configuration. Any configuration drift requires a new review.
+   Apply also refuses to write if `domainmanager` has stopped since review; revert remains available for recovery.
 7. Follow **Open task details**. A changed file triggers only `domainmanager` restart. Atlaso separately reports
    property readback, service activity and VCF API readiness. An already matching configuration requires no restart.
 
@@ -93,7 +94,8 @@ A verified property change remains revertible if service/API recovery failed. A 
 write evidence cannot be automatically reverted. If connectivity failed during mutation, inspect the target using
 the retained previous/desired values and recover manually before submitting another operation. An interrupted Atlaso
 worker retains its target reservation: reconcile the task and remote state before clearing that reservation through
-maintainer recovery. Do not blindly resubmit a task whose outcome is unknown.
+maintainer recovery. Interrupted tasks record a sanitized failed audit outcome, distinguishing undispatched tasks
+from unknown remote outcomes. Do not blindly resubmit a task whose outcome is unknown.
 
 The browser-only operations are beneath `/ui/management/vcf-helper/lab-overrides`: POST `probe`, `inspect`, `review`
 and `execute`, plus GET `history` and `tasks/{job_id}`. Execution and revert require admin authorization, CSRF and an

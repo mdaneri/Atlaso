@@ -492,6 +492,10 @@ def run_job(job_id: str) -> None:
                 raise LabOverrideError(
                     "Target version or configuration changed after review."
                 )
+            if not plan["source_job_id"] and not state["service_active"]:
+                raise LabOverrideError(
+                    "domainmanager stopped after review. Restore service health and review again."
+                )
             job.progress_percent = 30
             db.commit()
             outcome = remote(
@@ -608,6 +612,8 @@ def recover_interrupted_jobs(db: Session) -> int:
         )
     )
     for job in jobs:
+        plan = json.loads(job.task_config_json)
+        interrupted_status = job.status
         # A pending task never dispatched SSH. A running task retains its target
         # reservation because its remote process may still hold the Linux lock.
         if job.status == "pending":
@@ -618,5 +624,31 @@ def recover_interrupted_jobs(db: Session) -> int:
             )
         job.status, job.finished_at, job.progress_percent = "failed", utcnow(), 100
         job.error = "Interrupted by Atlaso restart. Inspect remote state before recovery; a dispatched target reservation remains held for maintainer reconciliation."
+        # Commit the terminal state and its audit together. Do not copy remote
+        # output, errors or credentials into recovery audit details.
+        record_audit(
+            db,
+            actor=job.created_by,
+            action="revert_vcf_lab_overrides"
+            if plan["source_job_id"]
+            else "apply_vcf_lab_overrides",
+            resource_type=JOB_TYPE,
+            resource_id=job.id,
+            success=False,
+            detail=json.dumps(
+                {
+                    "target": plan["target"]["host"],
+                    "version": plan["version"],
+                    "previous": plan["previous"],
+                    "desired": plan["desired"],
+                    "outcome": "interrupted_by_atlaso_restart",
+                    "interrupted_status": interrupted_status,
+                    "remote_outcome": "unknown"
+                    if interrupted_status == "running"
+                    else "not_dispatched",
+                }
+            ),
+            post_commit_best_effort=True,
+        )
     db.commit()
     return len(jobs)

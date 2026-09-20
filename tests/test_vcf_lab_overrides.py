@@ -8,7 +8,7 @@ from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
 
 from atlaso.app.database import Base
-from atlaso.app.models import Setting, User, Vault, VaultEntry
+from atlaso.app.models import AuditEvent, Setting, User, Vault, VaultEntry
 from atlaso.app.services import vcf_lab_overrides as lab
 from atlaso.app.services.vcf_lab_remote import (
     KEYS,
@@ -295,17 +295,43 @@ def test_unverified_write_is_not_claimed_as_revertible(db, values, state):
 
 
 @pytest.mark.parametrize("dispatched", [False, True])
-def test_restart_recovery_never_replays_remote_changes(db, values, state, dispatched):
+@pytest.mark.parametrize("revert", [False, True])
+def test_restart_recovery_never_replays_remote_changes(
+    db, values, state, dispatched, revert
+):
     target = lab.target_from_values(db, values)
     job = lab.enqueue(db, "admin", lab.review(db, "admin", target, values)["token"])
     if dispatched:
         job.status = "running"
-        db.commit()
+    if revert:
+        plan = json.loads(job.task_config_json)
+        plan["source_job_id"] = "original-operation"
+        job.task_config_json = json.dumps(plan)
+    job.result = '{"error":"sensitive-remote-output"}'
+    db.commit()
     assert lab.recover_interrupted_jobs(db) == 1
     assert job.status == "failed"
     held = list(db.scalars(select(Setting).where(Setting.key.like("vcf_lab_lock:%"))))
     assert bool(held) is dispatched
     assert "Interrupted" in job.error
+    event = db.scalar(select(AuditEvent).where(AuditEvent.resource_id == job.id))
+    assert event.actor == "admin" and event.success is False
+    assert event.action == (
+        "revert_vcf_lab_overrides" if revert else "apply_vcf_lab_overrides"
+    )
+    detail = json.loads(event.detail)
+    assert detail["target"] == target.host
+    assert detail["version"] == state["version"]
+    assert detail["remote_outcome"] == ("unknown" if dispatched else "not_dispatched")
+    assert "sensitive-remote-output" not in event.detail
+    assert "never-decrypt-this" not in event.detail
+    assert lab.recover_interrupted_jobs(db) == 0
+    assert (
+        len(
+            list(db.scalars(select(AuditEvent).where(AuditEvent.resource_id == job.id)))
+        )
+        == 1
+    )
 
 
 def test_worker_rechecks_administrator_before_remote_credentials(
@@ -534,6 +560,7 @@ def test_revert_reviews_and_executes_without_api(db, values, state, monkeypatch,
         db.delete(lock)
     db.commit()
     state["values"] = {"esa": "true", "nic": "false"}
+    state["service_active"] = False
 
     def unavailable(*args):
         raise lab.LabOverrideError("API unavailable")
@@ -567,3 +594,16 @@ def test_revert_reviews_and_executes_without_api(db, values, state, monkeypatch,
     result = json.loads(recovery.result)
     assert result["property_verified"] is True
     assert result["api_ready"] is False
+
+
+def test_apply_rechecks_service_before_writing(db, values, state, monkeypatch):
+    target = lab.target_from_values(db, values)
+    job = lab.enqueue(db, "admin", lab.review(db, "admin", target, values)["token"])
+    state["service_active"] = False
+    calls = []
+    monkeypatch.setattr(lab, "remote", lambda *args: calls.append(args))
+    lab.run_job(job.id)
+    assert job.status == "failed"
+    assert "stopped after review" in job.error
+    assert calls == []
+    assert json.loads(job.result)["property_verified"] is False
