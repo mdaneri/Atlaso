@@ -1510,6 +1510,7 @@ find "$site_packages" -type f -name '*.pyc' -delete
 find "$site_packages" -depth -type d -name __pycache__ -empty -delete
 atlaso_was_active=false
 worker_was_active=false
+app_history_cutover_in_progress=false
 if systemctl is-active --quiet atlaso.service; then
     atlaso_was_active=true
 fi
@@ -1520,6 +1521,12 @@ restore_services_on_exit() {
     exit_status=$?
     trap - EXIT
     set +e
+    if [ "$app_history_cutover_in_progress" = "true" ]; then
+        # Selection may have committed before a durability failure. Keep both
+        # producers stopped until the preserved attempt can be reconciled.
+        systemctl stop atlaso.service atlaso-worker.service
+        exit "$exit_status"
+    fi
     if [ "$atlaso_was_active" = "true" ]; then
         systemctl restart atlaso.service
     else
@@ -1733,6 +1740,14 @@ systemctl daemon-reload
 find "$venv" -type d -exec chmod 755 {} \;
 find "$venv" -type f -exec chmod 644 {} \;
 find "$venv/bin" -type f -exec chmod 755 {} \;
+app_history_cutover_in_progress=true
+systemd-run --quiet --wait --collect --unit=atlaso-app-history-cutover \
+    --property=Type=oneshot --property=EnvironmentFile=/etc/atlaso/atlaso.env \
+    --property=TimeoutStartSec=10min --property=UMask=0077 \
+    --setenv=PYTHONDONTWRITEBYTECODE=1 \
+    "$python" -I -m atlaso.app.services.app_history_cutover --already-stopped --prepare-roots
+app_history_cutover_in_progress=false
+"$python" -I -m atlaso.app.services.external_history_lifecycle install
 if systemctl cat atlaso-console.service >/dev/null 2>&1; then
     systemctl restart atlaso-console.service
     systemctl is-active atlaso-console.service

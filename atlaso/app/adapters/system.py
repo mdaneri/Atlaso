@@ -64,6 +64,20 @@ class SystemAdapter:
             dry_run_message=json.dumps({"files": [], "base": "access.log" if source == "nginx-access" else "error.log"}),
         )
 
+    def read_producer_log(self, source: str, position: dict[str, object]) -> AdapterResult:
+        """Read an unsigned immutable page from a fixed privileged producer store.
+
+        Args:
+            source: Fixed KMS or Nginx source identifier.
+            position: Server-authenticated source position without a filesystem path.
+        """
+        if source not in {"kms", "nginx-access", "nginx-error"}:
+            raise ValueError("Unknown producer log source.")
+        return self._helper_result(
+            "logs", "page", source, json.dumps({**position, "transport": "producer"}),
+            timeout_seconds=15, dry_run_message=json.dumps({"active": False}),
+        )
+
     def __init__(self, dry_run: bool | None = None) -> None:
         """Initialize the system adapter.
 

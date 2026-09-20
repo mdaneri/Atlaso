@@ -1004,10 +1004,17 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--check", action="store_true", help="Validate TLS, identity, and store configuration.")
     parser.add_argument("--status", action="store_true", help="Return authenticated redacted provider counts.")
     args = parser.parse_args(argv)
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s %(levelname)s atlaso-kmip %(message)s",
-    )
+    logging_options: dict[str, Any] = {
+        "level": logging.INFO,
+        "format": "%(asctime)s %(levelname)s atlaso-kmip %(message)s",
+    }
+    history_path = os.environ.get("ATLASO_KMS_LOG_HISTORY_PATH", "")
+    if history_path and not args.check and not args.status:
+        from atlaso.app.services.kmip_log_capture import CapturingStreamHandler
+
+        logging_options["handlers"] = [CapturingStreamHandler(Path(history_path))]
+        logging_options["force"] = True
+    logging.basicConfig(**logging_options)
     try:
         config = load_config(args.config)
         secrets_key = _load_secrets_key()

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-import re
 import socket
 from dataclasses import dataclass
 from logging.handlers import RotatingFileHandler, SysLogHandler
@@ -16,6 +15,30 @@ from sqlalchemy.orm import Session
 
 from atlaso.app.config import get_settings
 from atlaso.app.models import Setting, utcnow
+from atlaso.app.services.log_sanitization import (
+    JSON_SECRET_FIELD_PATTERN as JSON_SECRET_FIELD_PATTERN,
+)
+from atlaso.app.services.log_sanitization import (
+    JWT_PATH_SEGMENT_PATTERN as JWT_PATH_SEGMENT_PATTERN,
+)
+from atlaso.app.services.log_sanitization import (
+    OIDC_QUERY_SECRET_PATTERN as OIDC_QUERY_SECRET_PATTERN,
+)
+from atlaso.app.services.log_sanitization import (
+    PRIVATE_KEY_BEGIN_PATTERN as PRIVATE_KEY_BEGIN_PATTERN,
+)
+from atlaso.app.services.log_sanitization import (
+    PRIVATE_KEY_END_PATTERN as PRIVATE_KEY_END_PATTERN,
+)
+from atlaso.app.services.log_sanitization import (
+    SECRET_LINE_PATTERN as SECRET_LINE_PATTERN,
+)
+from atlaso.app.services.log_sanitization import (
+    URL_USERINFO_PATTERN as URL_USERINFO_PATTERN,
+)
+from atlaso.app.services.log_sanitization import (
+    redact_operational_text as redact_operational_text,
+)
 
 LOGGING_LEVEL_KEY = "logging.level"
 LOGGING_SYSLOG_ENABLED_KEY = "logging.syslog.enabled"
@@ -31,20 +54,6 @@ SYSLOG_FACILITIES = ("auth", "authpriv", "cron", "daemon", "kern", "local0", "lo
 
 LOGGER = logging.getLogger("atlaso.operational")
 FORMATTER = logging.Formatter("%(asctime)s %(levelname)s [%(name)s] %(message)s")
-
-SECRET_LINE_PATTERN = re.compile(
-    r"(rootpw|password|passwd|token|secret|credential|private[_.-]?key|robot[_.-]?account|ca[_.-]?bundle[_.-]?pem|activation[_.-]?code|license|ipxe[_.-]?script|payload[_.-]?b64)",
-    re.IGNORECASE,
-)
-PRIVATE_KEY_BEGIN_PATTERN = re.compile(r"-----BEGIN .*PRIVATE KEY-----")
-PRIVATE_KEY_END_PATTERN = re.compile(r"-----END .*PRIVATE KEY-----")
-JWT_PATH_SEGMENT_PATTERN = re.compile(r"(?<=/)[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}(?=/|$)")
-JSON_SECRET_FIELD_PATTERN = re.compile(r'^(\s*"[^"]+"\s*:\s*)(.*?)(,?)\s*$')
-URL_USERINFO_PATTERN = re.compile(r"(https?://)[^/\s@]+@", re.IGNORECASE)
-OIDC_QUERY_SECRET_PATTERN = re.compile(
-    r"([?&](?:code|client_secret|id_token_hint|access_token)=)[^&\s]+",
-    re.IGNORECASE,
-)
 
 
 @dataclass(frozen=True)
@@ -319,24 +328,56 @@ def _level_number(level: str) -> int:
     return int(getattr(logging, _normalize_level(level), logging.INFO))
 
 
-def _ensure_file_handler(log_path: Path, level: int) -> None:
+class _HistoryFileHandler(RotatingFileHandler):
+    """Capture App records synchronously before mirroring them to the existing file."""
+
+    def __init__(self, log_path: Path, history_path: Path, writer: str) -> None:
+        """Bind a prepared store and the fixed process writer slot.
+
+        Args:
+            log_path: Existing rotating operational log path.
+            history_path: Prepared private producer history store.
+            writer: Fixed web or worker producer identity.
+        """
+        super().__init__(log_path, maxBytes=2 * 1024 * 1024, backupCount=3, encoding="utf-8")
+        self.history_path = history_path
+        self.writer = writer
+
+    def emit(self, record: logging.LogRecord) -> None:
+        """Require durable capture before acknowledging an operational record.
+
+        Args:
+            record: Newly emitted Python logging event.
+        """
+        from atlaso.app.services.producer_log_history import capture_record
+
+        capture_record(self.history_path, self.writer, record, self.formatter or FORMATTER)
+        super().emit(record)
+
+
+def _ensure_file_handler(log_path: Path, level: int, history_path: Path | None = None, writer: str = "web") -> None:
     """Ensure file handler.
 
     Args:
         log_path: Filesystem path used for log.
         level: Level consumed by ensure file handler.
+        history_path: Optional prepared producer store; absent until explicit capture cutover.
+        writer: Fixed process writer slot for producer capture.
     """
     root_logger = logging.getLogger()
     for handler in list(root_logger.handlers):
         if not _handler_is_file(handler):
             continue
-        if Path(getattr(handler, "baseFilename", "")) == log_path:
+        if (Path(getattr(handler, "baseFilename", "")) == log_path
+                and getattr(handler, "history_path", None) == history_path
+                and getattr(handler, "writer", "web") == writer):
             handler.setLevel(level)
             return
         root_logger.removeHandler(handler)
         handler.close()
     log_path.parent.mkdir(parents=True, exist_ok=True)
-    handler = RotatingFileHandler(log_path, maxBytes=2 * 1024 * 1024, backupCount=3, encoding="utf-8")
+    handler = (_HistoryFileHandler(log_path, history_path, writer) if history_path is not None
+               else RotatingFileHandler(log_path, maxBytes=2 * 1024 * 1024, backupCount=3, encoding="utf-8"))
     handler.setFormatter(FORMATTER)
     handler.setLevel(level)
     handler._atlaso_file_handler = True  # type: ignore[attr-defined]  # Atlaso adds a private runtime marker to Handler.
@@ -366,11 +407,12 @@ def _ensure_syslog_handler(preferences: LoggingPreferences) -> bool:
     return True
 
 
-def configure_operational_logging(db: Session | None = None) -> LoggingPreferences:
+def configure_operational_logging(db: Session | None = None, *, writer: str = "web") -> LoggingPreferences:
     """Update operational logging.
 
     Args:
         db: Active database session.
+        writer: Fixed process producer identity when history capture is enabled.
 
     Returns:
         The configure operational logging result.
@@ -381,7 +423,7 @@ def configure_operational_logging(db: Session | None = None) -> LoggingPreferenc
     file_level = _level_number(preferences.level)
     root_logger.setLevel(min(file_level, _level_number(preferences.syslog_level) if preferences.syslog_enabled else file_level))
     try:
-        _ensure_file_handler(settings.app_log_path, file_level)
+        _ensure_file_handler(settings.app_log_path, file_level, settings.app_log_history_path, writer)
     except OSError:
         logging.getLogger("atlaso").exception("Unable to initialize Atlaso app log at %s", settings.app_log_path)
         return preferences
@@ -398,41 +440,6 @@ def configure_operational_logging(db: Session | None = None) -> LoggingPreferenc
         "enabled" if syslog_configured else "disabled",
     )
     return preferences
-
-
-def redact_operational_text(value: str | None) -> str:
-    """Return redact operational text.
-
-    Args:
-        value: Candidate value consumed by redact operational text.
-    """
-    lines: list[str] = []
-    in_private_key = False
-    for line in (value or "").splitlines():
-        if PRIVATE_KEY_BEGIN_PATTERN.search(line):
-            lines.append("[redacted private key]")
-            in_private_key = True
-            continue
-        if in_private_key:
-            if PRIVATE_KEY_END_PATTERN.search(line):
-                in_private_key = False
-            continue
-        if SECRET_LINE_PATTERN.search(line):
-            json_match = JSON_SECRET_FIELD_PATTERN.match(line)
-            if json_match:
-                lines.append(f'{json_match.group(1)}"[redacted]"{json_match.group(3)}')
-                continue
-            separator = "=" if "=" in line else ":" if ":" in line else None
-            if separator:
-                prefix = line.split(separator, 1)[0].rstrip()
-                lines.append(f"{prefix}{separator} [redacted]")
-            else:
-                lines.append("[redacted sensitive line]")
-            continue
-        redacted = URL_USERINFO_PATTERN.sub(r"\1[redacted]@", line)
-        redacted = OIDC_QUERY_SECRET_PATTERN.sub(r"\1[redacted]", redacted)
-        lines.append(JWT_PATH_SEGMENT_PATTERN.sub("[redacted-token]", redacted))
-    return "\n".join(lines)
 
 
 def log_audit_event(event: Any) -> None:

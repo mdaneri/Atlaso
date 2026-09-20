@@ -23,6 +23,7 @@ from itsdangerous import BadSignature, URLSafeSerializer
 from atlaso.app.adapters.system import SystemAdapter
 from atlaso.app.config import get_settings
 from atlaso.app.operational_logging import redact_operational_text
+from atlaso.app.services.log_sanitization import _scan_pem_markers as _scan_pem_markers
 
 PAGE_LINES = 500
 PAGE_BYTES = 1024 * 1024
@@ -284,19 +285,119 @@ def _file_available(path: Path) -> bool:
     return False
 
 
+def _app_producer_available(path: Path | None) -> bool | None:
+    """Probe selected App metadata, distinguishing inactive capture from failure.
+
+    Args:
+        path: Optional trusted producer path selected by application settings.
+    """
+    if path is None:
+        return None
+    import sqlite3
+
+    from atlaso.app.services.producer_log_history import source_active
+
+    try:
+        return True if source_active(path, "app") else None
+    except (OSError, ValueError, sqlite3.Error):
+        return False
+
+
+def _remote_producer_available(adapter: SystemAdapter, source: str) -> bool | None:
+    """Read only activation metadata through the fixed privileged source boundary.
+
+    Args:
+        adapter: Existing application adapter for the metadata refresh.
+        source: Fixed external source identifier.
+    """
+    try:
+        result = adapter.read_producer_log(source, {"metadata": True})
+        if result.returncode or len(result.stdout.encode("utf-8")) > 4096:
+            return False
+        payload = json.loads(result.stdout)
+        if (not isinstance(payload, dict) or set(payload) != {"active"}
+                or type(payload["active"]) is not bool):
+            return False
+        return True if payload["active"] else None
+    except (OSError, ValueError):
+        return False
+
+
 def source_availability() -> dict[str, Any]:
-    """Return fixed-source metadata so disabled tabs can recover without reading history."""
-    sources = [{"id": "app", "available": _file_available(get_settings().app_log_path)},
-               {"id": "kms", "available": _file_available(Path("/var/log/atlaso/kmip/server.log"))}]
-    result = SystemAdapter().read_log_history("availability", {})
+    """Return selected-store metadata, consulting legacy files only before capture."""
+    settings = get_settings()
+    app = _app_producer_available(getattr(settings, "app_log_history_path", None))
+    sources = {"app": {"id": "app", "available": app if app is not None else _file_available(settings.app_log_path)}}
+    adapter = SystemAdapter()
+    result = adapter.read_log_history("availability", {})
     if not result.returncode:
         payload = json.loads(result.stdout)
-        sources.extend(payload.get("sources", []))
-    return {"sources": sources}
+        for row in payload.get("sources", []):
+            sources[row["id"]] = row
+    for source in ("kms", "nginx-access", "nginx-error"):
+        producer = _remote_producer_available(adapter, source)
+        if producer is None:
+            available = (_file_available(Path("/var/log/atlaso/kmip/server.log")) if source == "kms"
+                         else bool(sources.get(source, {}).get("available", False)))
+        else:
+            available = producer
+        sources[source] = {"id": source, "available": available}
+    return {"sources": list(sources.values())}
 
 
 _JOURNAL_PREPARATION: OrderedDict[tuple[str, str, bool, int], tuple[dict[str, Any], float]] = OrderedDict()
 _JOURNAL_PREPARATION_LOCK = RLock()
+
+
+def _remote_producer_page(source: str, *, cursor: str, tail: bool, limit: int) -> dict[str, Any] | None:
+    """Authenticate positions and sign bounded fixed-helper producer responses.
+
+    Args:
+        source: Authorized fixed external source identifier.
+        cursor: Appliance-signed position belonging to this source.
+        tail: Select the current newest retained page.
+        limit: Maximum requested physical rows.
+    """
+    position = decode_cursor(cursor, source)
+    legacy = bool(position) and position.get("kind") != "producer"
+    request: dict[str, Any] = {key: position[key] for key in ("generation", "after", "through", "before") if key in position} if not legacy else {}
+    request["limit"] = max(1, min(PAGE_LINES, limit))
+    if tail:
+        request = {"tail": True, "limit": request["limit"]}
+    result = SystemAdapter().read_producer_log(source, request)
+    if result.returncode:
+        raise ValueError("Producer log history is temporarily unavailable. Your displayed page is preserved.")
+    payload = json.loads(result.stdout)
+    if not isinstance(payload, dict) or type(payload.get("active")) is not bool:
+        raise ValueError("Invalid producer log response.")
+    if payload["active"] is False:
+        if position.get("kind") == "producer":
+            raise ValueError("Producer history was replaced; reopen retained history.")
+        return None
+    if legacy:
+        raise ValueError("Log history position belongs to another storage generation.")
+    generation, lines = payload.get("generation"), payload.get("lines")
+    if (not isinstance(generation, str) or len(generation) != 32
+            or any(char not in "0123456789abcdef" for char in generation)
+            or not isinstance(lines, list) or len(lines) > request["limit"]
+            or any(not isinstance(line, str) for line in lines)
+            or len(result.stdout.encode("utf-8")) > PAGE_BYTES
+            or type(payload.get("more")) is not bool):
+        raise ValueError("Invalid producer log response.")
+    for key in ("start", "after", "through", "oldest"):
+        if type(payload.get(key)) is not int or payload[key] < 0:
+            raise ValueError("Invalid producer log boundary.")
+    if not payload["start"] <= payload["after"] <= payload["through"] or len(lines) != payload["after"] - payload["start"]:
+        raise ValueError("Invalid producer log boundary.")
+    from atlaso.app.services.producer_log_history import (
+        ProducerPage,
+        bounded_viewer_page,
+    )
+
+    page = ProducerPage(generation, payload["through"], payload["start"], payload["after"],
+                        tuple(lines), payload["more"], payload["oldest"])
+    return bounded_viewer_page(page, source, backward=tail or "before" in position)
+
 
 
 def source_page(source: str, *, cursor: str = "", tail: bool = False, limit: int = PAGE_LINES) -> dict[str, Any]:
@@ -309,10 +410,25 @@ def source_page(source: str, *, cursor: str = "", tail: bool = False, limit: int
         limit: Selected bounded page size; total retained history is unchanged.
     """
     if source == "app":
-        return file_page(get_settings().app_log_path, source=source, cursor=cursor, tail=tail, limit=limit)
+        settings = get_settings()
+        if settings.app_log_history_path is not None:
+            from atlaso.app.services.producer_log_history import (
+                source_active,
+                viewer_page,
+            )
+
+            if source_active(settings.app_log_history_path, source):
+                return viewer_page(settings.app_log_history_path, source, cursor=cursor, tail=tail, limit=limit)
+        return file_page(settings.app_log_path, source=source, cursor=cursor, tail=tail, limit=limit)
     if source == "kms":
+        producer = _remote_producer_page(source, cursor=cursor, tail=tail, limit=limit)
+        if producer is not None:
+            return producer
         return file_page(Path("/var/log/atlaso/kmip/server.log"), source=source, cursor=cursor, tail=tail, limit=limit)
     if source in {"nginx-access", "nginx-error"}:
+        producer = _remote_producer_page(source, cursor=cursor, tail=tail, limit=limit)
+        if producer is not None:
+            return producer
         return _remote_file_page(source, cursor=cursor, tail=tail, limit=limit)
     if source not in {"dnsmasq-dns", "dnsmasq-dhcp", "dnsmasq-tftp", "ldap", "ntp", "esx-storage", "nginx", "nginx-access", "nginx-error"}:
         raise ValueError("Unknown log source.")
@@ -531,80 +647,6 @@ def _verify_retained_prefix(raw: Any, path: _HistoryPath, offset: int, expected:
     if checked < offset:
         raise _TailScanPending("Verifying retained history; the next request resumes the saved hash.")
     return verification.digest() == expected
-
-def _scan_pem_markers(chunk: bytes, carry: bytes = b"") -> tuple[bool | None, bytes]:
-    """Match private-key labels with bounded resumable label fingerprints.
-
-    Args:
-        chunk: Next contiguous source fragment.
-        carry: Parser tokens and fixed-size label fingerprints from the prior fragment.
-    """
-    starts = (b"-----BEGIN ", b"-----END ")
-    endings = (b"PRIVATE KEY-----", b"-----")
-    start_parts = sorted({token[:size] for token in starts for size in range(1, len(token))}, key=len, reverse=True)
-    end_parts = sorted({token[:size] for token in endings for size in range(1, len(token))}, key=len, reverse=True)
-    if carry.startswith(b"["):
-        fields = json.loads(carry)
-        if not isinstance(fields, list) or len(fields) != 5 or not all(isinstance(item, str) for item in fields):
-            raise ValueError("Invalid private-key parser state.")
-        mode, suffix_hex, digest_hex, pending_hex, active = fields
-        suffix, digest, pending = bytes.fromhex(suffix_hex), bytes.fromhex(digest_hex), bytes.fromhex(pending_hex)
-    else:
-        mode, suffix = (carry[:1] or b"S").decode("ascii"), carry[1:]
-        digest, pending, active = bytes(32), b"", ""
-    allowed = start_parts if mode == "S" else end_parts
-    if (mode not in ("S", "B", "E") or (suffix and suffix not in allowed) or len(digest) != 32 or len(pending) >= 16 or
-            (active not in ("", "!") and (len(active) != 64 or any(char not in "0123456789abcdef" for char in active)))):
-        raise ValueError("Invalid private-key parser state.")
-
-    def absorb(value: bytes) -> None:
-        """Hash canonical blocks independently of transport fragmentation.
-
-        Args:
-            value: Confirmed label bytes, excluding an unconsumed fixed-token suffix.
-        """
-        nonlocal digest, pending
-        value = pending + value
-        boundary = len(value) // 16 * 16
-        for index in range(0, boundary, 16):
-            digest = hashlib.sha256(b"pem-label-block" + digest + value[index:index + 16]).digest()
-        pending = value[boundary:]
-
-    data, position, last = suffix + chunk, 0, None
-    start_pattern = re.compile(rb"-----(BEGIN|END) ")
-    boundary_pattern = re.compile(rb"-----|[^ -~]")
-    while True:
-        if mode == "S":
-            match = start_pattern.search(data, position)
-            if match is None:
-                suffix = next((part for part in start_parts if data.endswith(part, position)), b"")
-                break
-            position = match.end()
-            mode = "B" if match.group(1) == b"BEGIN" else "E"
-            digest, pending = bytes(32), b""
-        boundary = boundary_pattern.search(data, position)
-        if boundary is None:
-            suffix = next((part for part in end_parts if data.endswith(part, position)), b"")
-            absorb(data[position:len(data) - len(suffix)] if suffix else data[position:])
-            break
-        start = boundary.start()
-        if boundary.group() == b"-----" and data.endswith(b"PRIVATE KEY", position, start):
-            absorb(data[position:boundary.end()])
-            label = hashlib.sha256(b"pem-label-final" + digest + pending).hexdigest()
-            if mode == "B":
-                active = label if not active else "!"
-                last = True
-            elif active == label:
-                active, last = "", False
-            elif active:
-                last = True
-            else:
-                last = False
-            position = boundary.end()
-        else:
-            position = start if boundary.group() == b"-----" else boundary.end()
-        mode, digest, pending = "S", bytes(32), b""
-    return last, json.dumps([mode, suffix.hex(), digest.hex(), pending.hex(), active], separators=(",", ":")).encode("ascii")
 
 
 def _tail_private_key(paths: list[_HistoryPath], offset: int, *, deadline: float) -> bool:

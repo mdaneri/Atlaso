@@ -2194,6 +2194,10 @@ def main() -> int:
     _stop_requested = False
     signal.signal(signal.SIGTERM, _request_stop)
     signal.signal(signal.SIGINT, _request_stop)
+    if get_settings().app_log_history_path is not None:
+        from atlaso.app.operational_logging import configure_operational_logging
+
+        configure_operational_logging(writer="worker")
     init_db()
     _write_worker_startup_status()
     release_finalizer_ready = _wait_for_release_restart_finalizer()

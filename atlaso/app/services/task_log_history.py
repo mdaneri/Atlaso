@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 from atlaso.app.config import get_settings
 from atlaso.app.models import AuditEvent, Job, TaskLogCheckpoint, TaskLogChunk
 from atlaso.app.services import log_viewer
+from atlaso.app.services.log_sanitization import _safe_lines as _safe_lines
 from atlaso.app.services.task_log_redaction import redact_task_value
 
 CHUNK_CHARS = 16384
@@ -28,33 +29,6 @@ def _payload(value: str | None) -> dict[str, Any]:
     except (ValueError, TypeError):
         return {}
     return result if isinstance(result, dict) else {}
-
-
-def _safe_lines(lines: list[str], private: bool = False, parser: dict[str, str] | None = None) -> tuple[list[str], bool]:
-    """Sanitize complete lines while carrying an unfinished private key.
-
-    Args:
-        lines: Newly observed producer lines, before scalar sanitization.
-        private: Whether an earlier committed fragment opened a key.
-        parser: Finite marker state retained between committed fragments.
-    """
-    output = []
-    parser = parser if parser is not None else {}
-    carry = parser.get("carry", "").encode("ascii")
-    if private and not carry.startswith(b"["):
-        carry = json.dumps(["S", "", bytes(32).hex(), "", "!"]).encode("ascii")
-    for value in lines:
-        for line in str(value).splitlines() or [""]:
-            private = private or parser.get("hold") == "1"
-            marker, carry = log_viewer._scan_pem_markers(line.encode("utf-8"), carry)
-            concealed = private or marker is not None or (json.loads(carry)[0] != "S" or bool(json.loads(carry)[1]))
-            output.append("[redacted private key]" if concealed else str(redact_task_value(line)))
-            if marker is not None:
-                private = marker
-            if carry.startswith((b"B", b'["B",')) or parser.get("hold") == "1":
-                private = True
-    parser["carry"] = carry.decode("ascii")
-    return output, private
 
 
 def _log_digest(lines: list[Any]) -> str:

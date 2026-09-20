@@ -905,6 +905,15 @@ nginx -t
 log_step "enabling appliance services"
 systemctl daemon-reexec
 systemctl daemon-reload
+# Run outside the producer startup transaction: queued start jobs are not proof
+# of quiescence. Both units consume the same atomic selection after migration.
+systemctl stop atlaso-worker.service atlaso.service
+systemd-run --quiet --wait --collect --unit=atlaso-app-history-cutover \
+  --property=Type=oneshot --property=EnvironmentFile=/etc/atlaso/atlaso.env \
+  --property=TimeoutStartSec=10min --property=UMask=0077 \
+  --setenv=PYTHONDONTWRITEBYTECODE=1 \
+  "$ATLASO_HOME/.venv/bin/python" -I -m atlaso.app.services.app_history_cutover \
+  --already-stopped --prepare-roots
 systemctl enable systemd-networkd
 systemctl enable systemd-resolved || true
 systemctl enable sshd
@@ -927,6 +936,9 @@ install -d -o root -g root -m 0755 /etc/systemd/system/nginx.service.d
 install -o root -g root -m 0644 "$ATLASO_HOME/image/common/systemd/nginx-atlaso-data-disks.conf" /etc/systemd/system/nginx.service.d/atlaso-data-disks.conf
 sed -i 's/\r$//' /etc/systemd/system/nginx.service.d/atlaso-data-disks.conf
 systemctl daemon-reload
+
+log_step "preserving and activating external service log history"
+"$ATLASO_HOME/.venv/bin/python" -I -m atlaso.app.services.external_history_lifecycle install
 
 log_step "configuring Atlaso nftables firewall"
 # A DHCP deployment must not inherit the temporary builder's connected subnet.

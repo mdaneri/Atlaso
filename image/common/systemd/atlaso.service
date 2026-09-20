@@ -10,6 +10,7 @@ User=atlaso
 Group=atlaso
 WorkingDirectory=/var/lib/atlaso
 EnvironmentFile=/etc/atlaso/atlaso.env
+EnvironmentFile=-/etc/atlaso/app-history.env
 Environment=PYTHONDONTWRITEBYTECODE=1
 Environment=ATLASO_HELPER_USE_SYSTEMD_RUN=1
 UMask=0027

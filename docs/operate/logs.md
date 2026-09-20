@@ -23,13 +23,40 @@ This interface capture uses synthetic test data for visual orientation.
 
 <!-- END GENERATED INTERFACE OVERVIEW -->
 
+## Captured application and HTTP history
+
+Supported provisioning and development deployment prepare producer-owned history for App, KMS, and HTTP logs.
+App and KMS capture sanitized records in their existing processes. HTTP capture seals the previous Nginx files,
+requests the supported reopen operation, and verifies that every Nginx process has released the old files before
+importing them. The collector runs every five seconds; new HTTP entries appear after a successful collection.
+Accepted history pages keep their original boundaries while newer records arrive.
+
+The initial migration stops the affected producers, preserves the complete retained legacy inventory, verifies its
+hashes, and imports it before selecting the new store. App capture uses the existing web and worker processes;
+no logging wrapper replaces the worker. Oversized physical entries show an omission notice while their private-key
+redaction state continues into subsequent entries. App history retains an 8 MiB window measured in original input
+bytes. KMS and HTTP history currently preserve all captured records and sealed raw generations; administrators
+must account for their disk growth. Raw migration copies remain protected and are not displayed by the viewer.
+
+A conflicting HTTP rotation configuration prevents activation rather than risking an incomplete import.
+A capture failure preserves its durable recovery state. Successfully prepared sanitized records can be recovered
+without replaying raw secrets; an interruption before sanitization requires operator investigation and leaves capture
+unavailable. Do not delete a selected store or its pending state to resume logging. Existing displayed pages remain
+available in the browser when a request fails.
+
+Signed-release migration runs only after the release has committed and before maintenance mode is cleared.
+A failure at this stage requires forward recovery, not rollback of the selected history. For first adoption from a
+release with the older helper, install the verified new helper through the supported deployment procedure before
+starting the signed update: an already-running older helper cannot execute the newly installed completion hook.
+
 ## Investigate a problem
 
 The selected source updates automatically every five seconds. **Lines per page** selects 100, 200, or 500 lines
 for the live tail and history pages; it never limits the total retained history. The browser remembers this selection.
 Unavailable source tabs are disabled,
 and a source that becomes unavailable yields to another available tab. Lightweight metadata checks re-enable tabs
-when their log files appear, without loading inactive log contents. These checks pause when the page is hidden.
+when their selected history store or legacy log files become available, without loading inactive log contents.
+These checks pause when the page is hidden.
 **From beginning** opens its oldest retained entries;
 **Next page** and **Previous page** move through the complete retained history in bounded pages. From the live tail,
 **Previous page** opens the preceding group directly, including within a multiline journal record. The page size limits
