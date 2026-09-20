@@ -340,7 +340,10 @@ def review(
                 "This task has no verified managed change to revert. Inspect uncertain outcomes on the target before recovery."
             )
         if (
-            previous.get("target") != target.fields()
+            any(
+                previous["target"][key] != target.fields()[key]
+                for key in ("host", "api_port", "ssh_port")
+            )
             or previous.get("ssh_fingerprint") != ssh
         ):
             raise LabOverrideError(
@@ -598,7 +601,6 @@ def run_job(job_id: str) -> None:
             db.execute(
                 delete(Setting).where(Setting.key == lock_key, Setting.value == job_id)
             )
-            db.commit()
             record_audit(
                 db,
                 actor=job.created_by,
@@ -617,6 +619,7 @@ def run_job(job_id: str) -> None:
                         **result,
                     }
                 ),
+                post_commit_best_effort=True,
             )
 
 

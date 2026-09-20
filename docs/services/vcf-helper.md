@@ -82,9 +82,11 @@ VCF workflow acceptance test; verify the intended VCF workflow separately on the
 
 ### Revert and recovery
 
-Choose the same credentials, probe and confirm the SSH fingerprint, then choose a **Previous managed operation**,
-select **Review revert**, and acknowledge
-the reviewed restoration. Revert restores only that operation's previous selected-property values; originally absent
+Choose credentials for the same host and ports, probe and confirm the SSH fingerprint, then choose a
+**Previous managed operation**.
+Replacement Vault entries or reordered URI lists are accepted when the pinned endpoint is unchanged.
+Select **Review revert** and acknowledge the reviewed restoration. Revert restores only that operation's previous
+selected-property values; originally absent
 properties are removed. Unrelated current configuration remains intact. A changed target identity or managed property
 blocks revert instead of overwriting another edit. A later dispatched managed write or revert also invalidates the
 older baseline for each affected property, even if values later match again. Uncertain writes require manual recovery.

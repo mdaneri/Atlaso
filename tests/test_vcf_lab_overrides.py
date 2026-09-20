@@ -719,3 +719,73 @@ def test_vault_api_uri_preserves_explicit_port(db, values, scheme, port):
     target = lab.target_from_values(db, values)
     assert target.host == "vcf.example.test"
     assert target.api_port == (port or 443)
+
+
+def test_terminal_outcome_and_audit_share_commit(db, values, state, monkeypatch):
+    from sqlalchemy import event
+
+    target = lab.target_from_values(db, values)
+    job = lab.enqueue(db, "admin", lab.review(db, "admin", target, values)["token"])
+    monkeypatch.setattr(
+        lab,
+        "remote",
+        lambda *args: {
+            "ok": False,
+            "changed": True,
+            "values": {"esa": "true", "nic": "false"},
+            "service_active": False,
+        },
+    )
+    terminal_commits = []
+
+    def verify_commit(session):
+        if job.status in {"succeeded", "failed"}:
+            audit = session.scalar(
+                select(AuditEvent).where(AuditEvent.resource_id == job.id)
+            )
+            assert audit is not None
+            terminal_commits.append(audit.id)
+
+    event.listen(db, "before_commit", verify_commit)
+    try:
+        lab.run_job(job.id)
+    finally:
+        event.remove(db, "before_commit", verify_commit)
+    assert len(terminal_commits) == 1
+
+
+def test_recovery_accepts_replacement_credentials_for_same_endpoint(db, values, state):
+    target = lab.target_from_values(db, values)
+    job = lab.enqueue(db, "admin", lab.review(db, "admin", target, values)["token"])
+    job.status = "succeeded"
+    job.result = json.dumps({"changed": True, "property_verified": True})
+    for key in ("esa", "nic"):
+        db.add(
+            Setting(
+                key=lab._property_owner_key(values["ssh_fingerprint"], key),
+                value=job.id,
+            )
+        )
+    api, ssh = db.get(VaultEntry, 1), db.get(VaultEntry, 2)
+    api.id, ssh.id = 11, 12
+    api.uris_json = '["https://other.test", "https://vcf.example.test"]'
+    ssh.uris_json = '["ssh://other.test", "ssh://vcf.example.test"]'
+    db.commit()
+    replacement = {
+        **values,
+        "api_entry_id": 11,
+        "ssh_entry_id": 12,
+        "api_uri_index": 2,
+        "ssh_uri_index": 2,
+        "source_job_id": job.id,
+    }
+    state["values"] = {"esa": "true", "nic": "false"}
+    target = lab.target_from_values(db, replacement)
+    reviewed = lab.review(db, "admin", target, replacement)
+    plan = lab._signer().loads(reviewed["token"])
+    assert plan["target"]["ssh_entry_id"] == 12
+    assert plan["target"]["api_uri_index"] == 2
+    ssh.uris_json = '["ssh://other.test", "ssh://vcf.example.test:2222"]'
+    db.commit()
+    with pytest.raises(lab.LabOverrideError, match="identity differs"):
+        lab.review(db, "admin", lab.target_from_values(db, replacement), replacement)
