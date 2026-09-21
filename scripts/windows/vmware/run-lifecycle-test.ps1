@@ -1558,7 +1558,7 @@ function New-CloudInitSeedIso {
         $helper = Join-Path $runtimeSourceRoot 'scripts\interop\create_nocloud_seed_iso.py'
         # The repository-controlled seed helper reads one password line from
         # stdin so the client credential never appears in process arguments.
-        $fixtureArguments = if ($RoutingOverlapOnly) { @('--routing-overlap-guest') } else { @() }
+        $fixtureArguments = @(if ($RoutingOverlapOnly) { '--routing-overlap-guest' })
         $SshPassword | & python $helper --output $Path --hostname $HostName --user $ClientSshUser --password-stdin @fixtureArguments | Out-Host
         if ($LASTEXITCODE -ne 0) {
             throw "Failed to create NoCloud seed ISO for $HostName"

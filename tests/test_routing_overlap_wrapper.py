@@ -99,3 +99,30 @@ def test_legacy_bundle_without_root_field_remains_valid_under_strict_mode():
         "[pscustomobject]@{same=[object]::ReferenceEquals($value,$admin); refused=$refused} | ConvertTo-Json -Compress")
     result = subprocess.run(['pwsh', '-NoProfile', '-Command', command], capture_output=True, text=True, timeout=60, check=True)
     assert json.loads(result.stdout) == {'same': True, 'refused': True}
+
+
+@pytest.mark.parametrize('enabled', [False, True])
+def test_seed_fixture_flag_is_one_python_argument(enabled):
+    """Execute the real seed producer and capture its exact Python argument vector.
+
+    Args:
+        enabled: Whether the private fixture package and network mode is requested.
+    """
+    runner = ROOT / 'scripts/windows/vmware/run-lifecycle-test.ps1'
+    command = ("$ErrorActionPreference='Stop'; $tokens=$null; $errors=$null; "
+        f"$ast=[Management.Automation.Language.Parser]::ParseFile({ps_literal(runner)},[ref]$tokens,[ref]$errors); "
+        "$definition=$ast.Find({param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] "
+        "-and $node.Name -eq 'New-CloudInitSeedIso'},$true); "
+        "function python { $script:capturedArguments=@($args); $global:LASTEXITCODE=0 }; "
+        "function Invoke-SeedProducer { [CmdletBinding(SupportsShouldProcess=$true)] param(); "
+        ". ([scriptblock]::Create($definition.Extent.Text)); "
+        f"$runtimeSourceRoot={ps_literal(ROOT)}; $RoutingOverlapOnly=${str(enabled).lower()}; "
+        "$ClientSshUser='alpine'; $SshPassword='synthetic-fixture-only'; "
+        "New-CloudInitSeedIso -Path 'owned-seed.iso' -HostName 'fixture' }; "
+        "Invoke-SeedProducer -Confirm:$false; ConvertTo-Json -InputObject @($script:capturedArguments) -Compress")
+    result = subprocess.run(['pwsh', '-NoProfile', '-Command', command], capture_output=True, text=True, timeout=60, check=True)
+    expected = [str(ROOT / 'scripts/interop/create_nocloud_seed_iso.py'), '--output', 'owned-seed.iso',
+        '--hostname', 'fixture', '--user', 'alpine', '--password-stdin']
+    if enabled:
+        expected.append('--routing-overlap-guest')
+    assert json.loads(result.stdout) == expected
