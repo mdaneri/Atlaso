@@ -1007,7 +1007,11 @@ function Invoke-AtlasoVirtualizationPrerelease {
     $storagePlan = @(Get-AtlasoVirtualizationStoragePlan -RepoRoot $RepoRoot -Operation $plannedOperation `
         -BuilderOutput $builderOutput -Resume $capacityResume -SourceBytes $sourceEstimate `
         -RetainedSource:$retainedSourceVerified)
-    Assert-AtlasoVirtualizationStoragePlan -Plan $storagePlan -Stage 0
+    # Admit source reconstruction before mutation. Its verified size, and later
+    # the compacted template/artifacts, are evidence barriers: an unknown future
+    # worst case must not be added to an earlier stage's transient allocations.
+    # Each expensive stage is independently admitted against fresh free space.
+    Assert-AtlasoVirtualizationStoragePlan -Plan $storagePlan -Stage 0 -ThroughStage 0
     if ($SmokeConsoleMinutes -gt 0) {
         $null = Get-Command 1password-mcp -ErrorAction Stop
     }
@@ -1103,6 +1107,13 @@ function Invoke-AtlasoVirtualizationPrerelease {
         }
     }
     $source = Get-Content -LiteralPath $sourceMetadata -Raw | ConvertFrom-Json
+    # The preparer has just authenticated and reconstructed this exact tree.
+    # File lengths bound ordinary snapshot copies, not virtual disk allocation.
+    # The retained tree itself is already reflected in current volume free space.
+    $sourceEstimate = [long]((Get-ChildItem -LiteralPath $sourceInput -Recurse -File |
+        Measure-Object -Property Length -Sum).Sum)
+    $storagePlan = @(Get-AtlasoVirtualizationStoragePlan -RepoRoot $RepoRoot -Operation $operation `
+        -BuilderOutput $builderOutput -Resume $capacityResume -SourceBytes $sourceEstimate -RetainedSource)
     $candidate = Join-Path $operation 'candidate'
     $releaseState = $null
     try {
@@ -1173,7 +1184,10 @@ function Invoke-AtlasoVirtualizationPrerelease {
             -VmxPath $vmx -ExpectedSourceCommit $identity.Commit -RequireCleanSource -RequireReleaseBuilder
     }
     if ($requiresBuild) {
-        Assert-AtlasoVirtualizationStoragePlan -Plan $storagePlan -Stage 1
+        $storagePlan = @(Get-AtlasoVirtualizationStoragePlan -RepoRoot $RepoRoot -Operation $operation `
+            -BuilderOutput $builderOutput -Resume Build -SourceBytes $sourceEstimate -RetainedSource `
+            -VerifiedIsoCache:(Test-AtlasoVirtualizationIsoCache -RepoRoot $RepoRoot))
+        Assert-AtlasoVirtualizationStoragePlan -Plan $storagePlan -Stage 1 -ThroughStage 1
         Invoke-AtlasoVirtualizationReleaseImageBuilder `
             -VirtualizationSourceDirectory $sourceInput `
             -BuilderScriptPath (Join-Path $RepoRoot 'scripts\windows\vmware\build-photon-image.ps1') `
@@ -1196,7 +1210,7 @@ function Invoke-AtlasoVirtualizationPrerelease {
     Assert-AtlasoTemplatePoweredOff -VmxPath $vmx
     Assert-AtlasoTemplateSoftwareIdentity -TemplateContract $existingProvenance.template_contract -SoftwareSource $source
     $name = "atlaso-v$($identity.Version)"
-    Assert-AtlasoVirtualizationStoragePlan -Plan $storagePlan -Stage 2
+    Assert-AtlasoVirtualizationStoragePlan -Plan $storagePlan -Stage 2 -ThroughStage 2
     & (Join-Path $RepoRoot 'scripts\windows\vmware\export-ovf.ps1') `
         -SourceVmxPath $vmx -Name $name -Force -VirtualizationSourceMetadata $sourceMetadata -ProtectedExport
     if ($LASTEXITCODE -ne 0) {
@@ -1208,7 +1222,7 @@ function Invoke-AtlasoVirtualizationPrerelease {
         -Source $ovaPath `
         -Destination (Join-Path $ovaRoot "$name.ova")
     $hypervRoot = Join-Path $RepoRoot "artifacts\virtualization\$tag"
-    Assert-AtlasoVirtualizationStoragePlan -Plan $storagePlan -Stage 3
+    Assert-AtlasoVirtualizationStoragePlan -Plan $storagePlan -Stage 3 -ThroughStage 3
     & (Join-Path $RepoRoot 'scripts\windows\virtualization\export-artifacts.ps1') `
         -OvaPath $ovaPath -OutputRoot $hypervRoot -Force
     if ($LASTEXITCODE -ne 0) {
@@ -1233,7 +1247,7 @@ function Invoke-AtlasoVirtualizationPrerelease {
         $smokePassword.MakeReadOnly()
         $smokeCredential = [PSCredential]::new('admin', $smokePassword)
         $smokeRoot = Join-Path $RepoRoot "artifacts\virtualization-smoke\$tag"
-        Assert-AtlasoVirtualizationStoragePlan -Plan $storagePlan -Stage 4
+        Assert-AtlasoVirtualizationStoragePlan -Plan $storagePlan -Stage 4 -ThroughStage 4
         $consoleArguments = @{}
         if ($SmokeConsoleMinutes -gt 0) {
             $consoleRunId = [guid]::NewGuid().ToString('N')
@@ -1251,7 +1265,7 @@ function Invoke-AtlasoVirtualizationPrerelease {
         if ($LASTEXITCODE -ne 0) {
             throw 'VMware smoke failed.'
         }
-        Assert-AtlasoVirtualizationStoragePlan -Plan $storagePlan -Stage 5
+        Assert-AtlasoVirtualizationStoragePlan -Plan $storagePlan -Stage 5 -ThroughStage 5
         & (Join-Path $RepoRoot 'scripts\windows\virtualization\smoke-hyperv.ps1') -ZipPath $hypervZip[0].FullName -ManagementSwitch $ManagementSwitch -ServiceSwitch $ServiceSwitch -OutputRoot (Join-Path $smokeRoot 'hyperv')
         if ($LASTEXITCODE -ne 0) {
             throw 'Hyper-V smoke failed.'
@@ -1269,7 +1283,7 @@ function Invoke-AtlasoVirtualizationPrerelease {
         $null = Assert-AtlasoVmwarePayloadProvenance -VmxPath $vmx -ExpectedSourceCommit $identity.Commit -RequireReleaseBuilder
     }
     $evidencePath = Join-Path $operation 'windows-smoke-evidence.json'
-    Assert-AtlasoVirtualizationStoragePlan -Plan $storagePlan -Stage 6
+    Assert-AtlasoVirtualizationStoragePlan -Plan $storagePlan -Stage 6 -ThroughStage 6
     [ordered]@{
         schema_version = 1
         kind = 'atlaso-windows-virtualization-smoke'
