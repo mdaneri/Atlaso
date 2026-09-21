@@ -1474,8 +1474,8 @@ def test_su_command_excludes_secret_and_runs_only_fixed_editor(monkeypatch):
     assert password not in command
     assert "sudo -n" not in command
     args = shlex.split(command)
-    assert args[:2] == ["python3", "-c"]
-    compile(args[2], "<generated-root-program>", "exec")
+    assert args[:8] == ["cd", "/", "&&", "exec", "/usr/bin/python3", "-I", "-S", "-c"]
+    compile(args[8], "<generated-root-program>", "exec")
 
 
 @pytest.mark.parametrize(
@@ -1702,6 +1702,7 @@ def test_remote_uses_vcf_and_sends_root_secret_only_over_stdin(
     assert "root-sentinel" not in captured["command"]
     assert "ssh-sentinel" not in captured["command"]
     assert "sudo" not in captured["command"]
+    assert captured["command"].startswith("cd / && exec /usr/bin/python3 -I -S -c ")
     assert captured["closed"]
 
 
@@ -1738,7 +1739,7 @@ def test_generated_privileged_program_waits_for_write_authorization(
             **kwargs: Write-handshake selection.
         """
         assert kwargs["authorize_write"] is True
-        exec(shlex.split(command)[2], {})
+        exec(shlex.split(command)[8], {})
         return {"ok": True}
 
     monkeypatch.setattr(remote, "elevated", execute)
@@ -1754,3 +1755,55 @@ def test_generated_privileged_program_waits_for_write_authorization(
     else:
         assert remote.dispatch(envelope) == {"ok": True}
         assert "EDITOR_RAN" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("module_name", ["base64", "signal"])
+def test_remote_python_ignores_caller_modules_and_pythonpath(tmp_path, module_name):
+    """Exercise isolated imports with a hostile cwd and environment path.
+
+    Args:
+        tmp_path: Owned temporary fixture directory.
+        module_name: Standard-library module shadowed by an untrusted file.
+    """
+    import os
+    import shlex
+    import subprocess
+    import sys
+
+    from atlaso.app.services import vcf_lab_remote as remote
+
+    (tmp_path / f"{module_name}.py").write_text(
+        "raise RuntimeError('caller-module-loaded')\n", encoding="utf-8"
+    )
+    environment = {
+        **os.environ,
+        "PYTHONPATH": str(tmp_path),
+        "PYTHONUSERBASE": str(tmp_path),
+    }
+    program = f"import {module_name}; print('trusted-import')"
+    unsafe = subprocess.run(
+        [sys.executable, "-c", program],
+        cwd=tmp_path,
+        env=environment,
+        capture_output=True,
+        text=True,
+        timeout=15,
+        check=False,
+    )
+    assert unsafe.returncode != 0 and "caller-module-loaded" in unsafe.stderr
+    command = shlex.split(remote.PYTHON_COMMAND)
+    assert command[:5] == ["cd", "/", "&&", "exec", "/usr/bin/python3"]
+    # Run the actual selected interpreter flags on this host; no root privileges
+    # or VCF mutation are needed to verify Python's import isolation boundary.
+    safe = subprocess.run(
+        [sys.executable, *command[5:], program],
+        cwd=tmp_path,
+        env=environment,
+        capture_output=True,
+        text=True,
+        timeout=15,
+        check=False,
+    )
+    assert safe.returncode == 0
+    assert safe.stdout.strip() == "trusted-import"
+    assert "caller-module-loaded" not in safe.stderr

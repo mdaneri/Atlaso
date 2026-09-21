@@ -25,6 +25,8 @@ KEYS = {
 }
 VALUES = {"esa": "true", "nic": "false"}
 MAX_BYTES = 1024 * 1024
+# Neither credential handling nor privileged execution may import caller files.
+PYTHON_COMMAND = "cd / && exec /usr/bin/python3 -I -S -c "
 
 
 class PropertyError(ValueError):
@@ -498,7 +500,7 @@ def dispatch(envelope: dict[str, Any]) -> dict[str, Any]:
     # Suppress the module's stdin entrypoint inside the privileged interpreter.
     program = "__name__='atlaso_vcf_editor';" + program
     return elevated(
-        "python3 -c " + shlex.quote(program),
+        PYTHON_COMMAND + shlex.quote(program),
         envelope["root_password"],
         authorize_write=request.get("action") == "write",
     )

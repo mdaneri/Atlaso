@@ -302,6 +302,11 @@ function Assert-AtlasoStorageCapacity {
         Write-Host ("  free={0}" -f [long]$bucket.RemainingBytes)
         Write-Host ("  required={0}" -f [long]$requiredWithHeadroom)
         Write-Host ("  shortfall={0}" -f [long]$shortfall)
+        Write-Host ("  GiB: free={0:N2}; required={1:N2}; shortfall={2:N2}; headroom={3:N2}" -f
+            ($bucket.RemainingBytes / 1GB), ($requiredWithHeadroom / 1GB), ($shortfall / 1GB), ($headroomBytes / 1GB))
+        foreach ($component in $bucket.Components) {
+            Write-Host ("  {0}: {1:N2} GiB" -f $component.Name, ($component.Bytes / 1GB))
+        }
         Write-Host ("  components=[{0}]" -f $componentsSummary)
 
         if ($shortfall -gt 0) {
@@ -321,10 +326,12 @@ function Assert-AtlasoStorageCapacity {
     if ($shortfalls.Count -gt 0) {
         $details = @(
             foreach ($entry in $shortfalls) {
-                "volume $($entry.VolumeId): free=$($entry.Remaining) required=$($entry.Required) shortfall=$($entry.Shortfall); components=$($entry.Components)"
+                "volume $($entry.VolumeId): free=$($entry.Remaining) required=$($entry.Required) shortfall=$($entry.Shortfall); " +
+                    ('GiB free={0:N2} required={1:N2} shortfall={2:N2}; ' -f ($entry.Remaining / 1GB), ($entry.Required / 1GB), ($entry.Shortfall / 1GB)) +
+                    "components=$($entry.Components)"
             }
         ) -join '; '
-        throw "Storage admission failed for stage '$Stage': insufficient capacity on $($shortfalls.Count) volume(s): $details. Remediation: reduce or remove listed component bytes or choose an alternate destination with enough free space."
+        throw "Storage admission failed for stage '$Stage': insufficient capacity on $($shortfalls.Count) volume(s): $details. Remediation: release only ownership-verified disposable outputs or choose a supported destination with enough free space. Retained artifacts already reduce free space; deleting them is not assumed."
     }
 }
 

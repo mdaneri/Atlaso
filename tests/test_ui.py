@@ -1055,7 +1055,7 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-10" in service_worker.text
     assert "/static/appliance-apply-polling.js?v=issue-420-6" in service_worker.text
     assert "/static/ui-routes.js?v=issue-287-1" in service_worker.text
-    assert "/static/app.js?v=full-history-822-15" in service_worker.text
+    assert "/static/app.js?v=vcf-lab-873-1" in service_worker.text
     assert "/static/terminal.js?v=issue-287-2" in service_worker.text
     assert "/static/pwa.js?v=issue-287-2" in service_worker.text
     assert "vcfdt-configuration-248-20260807-14" not in service_worker.text
@@ -1109,8 +1109,8 @@ def test_shared_ui_pattern_shell_and_wizard_contracts(client):
     base = (templates / "base.html").read_text(encoding="utf-8")
     public_base = (templates / "public_portal_base.html").read_text(encoding="utf-8")
     for shell, app_asset in (
-        (base, "/static/app.js?v=full-history-822-15"),
-        (public_base, "/static/app.js?v=full-history-822-15"),
+        (base, "/static/app.js?v=vcf-lab-873-1"),
+        (public_base, "/static/app.js?v=vcf-lab-873-1"),
         (base, "/static/appliance-apply-polling.js?v=issue-420-6"),
     ):
         assert shell.index("/static/vendor/tabulator/tabulator.min.js") < shell.index(
@@ -1778,7 +1778,7 @@ def test_monitor_page_renders_template_and_browser_assets(client):
     assert "swagger-link-icon" in page.text
     assert "/static/app.css?v=issue-818-1" in page.text
     assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-10" in page.text
-    assert "/static/app.js?v=full-history-822-15" in page.text
+    assert "/static/app.js?v=vcf-lab-873-1" in page.text
     app_css = client.get("/static/app.css")
     assert app_css.status_code == 200
     assert ".split-workspace > .wide-panel" in app_css.text
@@ -17572,7 +17572,7 @@ def test_vcf_helper_page_renders_domain_dropdown(client):
     visible_workspace = response.text.split('<section class="split-workspace vcf-helper-workspace"', 1)[1].split('<dialog ', 1)[0]
     assert "VCF Certificate Trust" in visible_workspace
     assert "Review DNS" not in visible_workspace
-    assert visible_workspace.count('class="info-band vcf-helper-action-band"') == 8
+    assert visible_workspace.count('class="info-band vcf-helper-action-band"') == 9
     assert "Import passwords into a vault" in visible_workspace
     assert 'id="vcf-helper-platform-title">SDDC Manager / VCF Installer</h3>' in visible_workspace
     assert 'id="vcf-helper-ldap-title">LDAP</h3>' in visible_workspace

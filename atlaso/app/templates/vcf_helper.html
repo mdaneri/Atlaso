@@ -99,8 +99,6 @@
         </div>
       </div>
 
-      {% include "partials/vcf_lab_overrides.html" %}
-
       <div class="vcf-helper-subject-group" aria-labelledby="vcf-helper-ldap-title">
         <div class="vcf-helper-subject-head">
           <h3 id="vcf-helper-ldap-title">LDAP</h3>
@@ -130,6 +128,7 @@
   </div>
 </section>
 
+{% include "partials/vcf_lab_overrides.html" %}
 {% include "partials/vcf_trust_modal.html" %}
 {% include "partials/vcf_sddc_deploy_modal.html" %}
 {% if identity.has_role('admin') or identity.has_role('service-admin') %}{% include "partials/vcf_sddc_upload_modal.html" %}{% endif %}

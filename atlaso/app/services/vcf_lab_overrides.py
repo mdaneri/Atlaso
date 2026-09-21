@@ -278,7 +278,7 @@ def remote(
             "ascii"
         )
         program = f"import base64;exec(compile(base64.b64decode('{source}'),'<atlaso-vcf-lab>','exec'))"
-        command = "python3 -c " + shlex.quote(program)
+        command = vcf_lab_remote.PYTHON_COMMAND + shlex.quote(program)
         stage = "SSH channel setup"
         channel = transport.open_session(timeout=10)
         channel.settimeout(10)
