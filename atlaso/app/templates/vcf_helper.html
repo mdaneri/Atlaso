@@ -66,6 +66,9 @@
           <span class="muted">Choose a DNS zone and starting IP/prefix. Existing FQDNs stay untouched; new records are applied later through global Appliance Apply.</span>
         </span>
           </button>
+          <button class="info-band vcf-helper-action-band" type="button" data-vcf-lab-open aria-haspopup="dialog" aria-controls="vcf-lab-modal" {% if not identity.has_role('admin') %}disabled{% endif %}>
+            <span class="vcf-helper-action-copy"><span class="vcf-helper-action-title">Lab / Non-production Overrides</span><span class="muted">Review, apply, verify or revert two domainmanager properties using vcf SSH and separate root elevation. Administrator access required.</span></span>
+          </button>
           <button class="info-band vcf-helper-action-band" type="button" onclick="document.getElementById('vcf-trust-modal').showModal()" aria-haspopup="dialog" aria-controls="vcf-trust-modal" {% if vcf_trust_ca_error %}disabled{% endif %}>
         <span class="vcf-helper-action-copy">
           <span class="vcf-helper-action-title">VCF Certificate Trust</span>
@@ -230,5 +233,5 @@
     </div>
   </form>
 </dialog>
-<script src="/static/vcf-lab-overrides.js?v=issue-849-1" defer></script>
+<script src="/static/vcf-lab-overrides.js?v=issue-873-1" defer></script>
 {% endblock %}

@@ -4,10 +4,12 @@ Only this module's fixed path, keys and service are writable. No configuration
 contents or command stderr cross the SSH boundary. Also importable for tests.
 """
 
+import base64
 import hashlib
 import json
 import os
 import re
+import shlex
 import stat
 import subprocess
 import sys
@@ -209,12 +211,21 @@ def operate(request: dict[str, Any]) -> dict[str, Any]:
     posix: Any = os
     locking: Any = fcntl
 
-    if posix.geteuid() != 0:
-        raise PropertyError(
-            "SSH requires root or passwordless sudo for this operation."
-        )
     if request.get("action") not in {"inspect", "write"}:
         raise PropertyError("Unsupported operation.")
+    if request["action"] == "inspect":
+        # Inspection never creates a lock file or mutates the appliance. Try as
+        # vcf first; only a permission refusal warrants the separate su boundary.
+        content, info = read_configuration(Path(CONFIG_PATH))
+        return {
+            "ok": True,
+            "values": properties(content)[0],
+            "revision": snapshot(content, info),
+            "service_active": active(),
+            "changed": False,
+        }
+    if posix.geteuid() != 0:
+        raise PermissionError("Root elevation is required for property writes.")
     lock_fd = os.open(
         "/run/lock/atlaso-vcf-lab.lock",
         os.O_CREAT | os.O_RDWR | posix.O_NOFOLLOW,
@@ -326,11 +337,178 @@ def operate(request: dict[str, Any]) -> dict[str, Any]:
                 os.unlink(temporary)
 
 
+def elevated(
+    command: str, password: str, *, authorize_write: bool = False
+) -> dict[str, Any]:
+    """Run the fixed editor through a private, unlogged, non-echoing su terminal.
+
+    Args:
+        command: Internally generated editor command containing no credentials.
+        password: Separate root secret received through encrypted SSH stdin only.
+        authorize_write: Require a durable Atlaso handoff before allowing mutation.
+    """
+    import pty
+    import select
+    import signal
+    import termios
+
+    posix: Any = os
+    terminals: Any = termios
+    pseudoterminals: Any = pty
+    signals: Any = signal
+    if (
+        not password
+        or len(password.encode()) > 1024
+        or any(ord(char) < 32 or ord(char) == 127 for char in password)
+    ):
+        return {"elevation_error": "authentication"}
+    if not Path("/usr/bin/su").is_file() and not Path("/bin/su").is_file():
+        return {"elevation_error": "unavailable"}
+    su = "/usr/bin/su" if Path("/usr/bin/su").is_file() else "/bin/su"
+    pid, terminal = pseudoterminals.fork()
+    if pid == 0:
+        try:
+            # The child owns the controlling terminal; turn echo off before su
+            # starts. The parent checks it again immediately before secret input.
+            settings = terminals.tcgetattr(0)
+            settings[3] &= ~(terminals.ECHO | terminals.ECHONL)
+            terminals.tcsetattr(0, terminals.TCSANOW, settings)
+            posix.execve(
+                su,
+                [su, "-s", "/bin/sh", "-c", command, "root"],
+                {"PATH": "/usr/sbin:/usr/bin:/sbin:/bin", "LC_ALL": "C"},
+            )
+        except (OSError, terminals.error):
+            posix._exit(126)
+    output = bytearray()
+    sent = False
+    ready = False
+    reaped = False
+    deadline = time.monotonic() + 20
+    try:
+        while time.monotonic() < deadline:
+            if select.select([terminal], [], [], 0.1)[0]:
+                try:
+                    data = os.read(terminal, 4096)
+                except OSError:
+                    data = b""
+                if not data:
+                    break
+                output.extend(data)
+                if len(output) > 32768:
+                    return {"elevation_error": "execution"}
+                if (
+                    not sent
+                    and bytes(output).rsplit(b"\n", 1)[-1].strip().lower()
+                    == b"password:"
+                ):
+                    if terminals.tcgetattr(terminal)[3] & (
+                        terminals.ECHO | terminals.ECHONL
+                    ):
+                        return {"elevation_error": "echo"}
+                    os.write(terminal, password.encode() + b"\n")
+                    password = ""
+                    sent = True
+                    output.clear()
+                if b"ATLASO_ROOT_READY" in output and not ready:
+                    ready = True
+                    deadline = time.monotonic() + 310
+                    if authorize_write:
+                        print(json.dumps({"ready": True}), flush=True)
+                        if not select.select([sys.stdin], [], [], 15)[0]:
+                            return {"elevation_error": "timeout"}
+                        if sys.stdin.buffer.readline(32) != b"ATLASO_APPLY\n":
+                            return {"elevation_error": "execution"}
+                        os.write(terminal, b"ATLASO_APPLY\n")
+                marker = b"ATLASO_RESULT:"
+                if marker in output:
+                    result_line = bytes(output).split(marker, 1)[1].split(b"\n", 1)
+                    if len(result_line) == 2:
+                        result = json.loads(result_line[0])
+                        if isinstance(result, dict) and ready:
+                            return result
+                        return {"elevation_error": "execution"}
+            exited = 0
+            if not reaped:
+                exited, _ = posix.waitpid(pid, posix.WNOHANG)
+            if exited:
+                reaped = True
+                # Drain a final ready chunk on the next iteration.
+                if not select.select([terminal], [], [], 0)[0]:
+                    break
+        else:
+            return {"elevation_error": "timeout"}
+        return {"elevation_error": "execution" if ready else "authentication"}
+    finally:
+        password = ""
+        output.clear()
+        os.close(terminal)
+        if not reaped:
+            try:
+                posix.kill(pid, signals.SIGKILL)
+            except (ProcessLookupError, PermissionError):
+                pass
+            posix.waitpid(pid, posix.WNOHANG)
+
+
+def safe_operate(request: dict[str, Any]) -> dict[str, Any]:
+    """Return safe editor failures without a traceback or remote configuration.
+
+    Args:
+        request: Fixed property inspection or mutation request.
+    """
+    try:
+        return operate(request)
+    except PropertyError as exc:
+        return {"ok": False, "error": str(exc), "phase": "property"}
+    except (OSError, ValueError, TypeError, subprocess.SubprocessError):
+        return {
+            "ok": False,
+            "phase": "property",
+            "error": "Property operation failed; inspect the target before recovery.",
+        }
+
+
+def dispatch(envelope: dict[str, Any]) -> dict[str, Any]:
+    """Keep readable inspection unprivileged; elevate only the fixed editor.
+
+    Args:
+        envelope: Request, editor source and transient root secret from SSH stdin.
+    """
+    request = envelope["request"]
+    if request.get("action") == "inspect":
+        try:
+            return operate(request)
+        except PermissionError:
+            pass
+    # Only source and the non-secret operation enter su's argv. No password is
+    # inserted into this program, its arguments, a file, or a shell environment.
+    source = base64.b64decode(envelope["editor"], validate=True).decode()
+    program = (
+        "import os,signal,sys;signal.alarm(300);"
+        "assert os.geteuid()==0;print('ATLASO_ROOT_READY',flush=True);"
+        + (
+            "assert sys.stdin.readline()=='ATLASO_APPLY\\n';"
+            if request.get("action") == "write"
+            else ""
+        )
+        + f"exec(compile({source!r},'<atlaso-vcf-lab>','exec'),globals());"
+        f"print('ATLASO_RESULT:'+json.dumps(safe_operate({request!r})),flush=True)"
+    )
+    # Suppress the module's stdin entrypoint inside the privileged interpreter.
+    program = "__name__='atlaso_vcf_editor';" + program
+    return elevated(
+        "python3 -c " + shlex.quote(program),
+        envelope["root_password"],
+        authorize_write=request.get("action") == "write",
+    )
+
+
 def main() -> None:
     """Return bounded structured evidence, never raw configuration or stderr."""
     try:
-        request = json.loads(sys.stdin.buffer.readline(16385))
-        result = operate(request)
+        envelope = json.loads(sys.stdin.buffer.readline(131073))
+        result = dispatch(envelope)
     except PropertyError as exc:
         result = {"ok": False, "error": str(exc)}
     except (OSError, ValueError, TypeError, subprocess.SubprocessError):

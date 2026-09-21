@@ -114,6 +114,7 @@ def register_routes(router: APIRouter, verify_csrf: Callable[..., Any]) -> None:
                         "target": target.host,
                         "api_entry_id": target.api_entry_id,
                         "ssh_entry_id": target.ssh_entry_id,
+                        "root_entry_id": target.root_entry_id,
                         "operation": operation,
                     }
                 ),

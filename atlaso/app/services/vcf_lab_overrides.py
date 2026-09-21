@@ -93,6 +93,8 @@ class Target:
     api_uri_index: int
     ssh_entry_id: int
     ssh_uri_index: int
+    root_entry_id: int
+    root_uri_index: int
 
     def fields(self) -> dict[str, Any]:
         """Return stable review input fields."""
@@ -127,6 +129,27 @@ def target_from_values(db: Session, values: dict[str, Any]) -> Target:
         ):
             raise ValueError
         host, ssh_port, _ = remote_entry_target(ssh_entry, ssh_index)
+        root_id, root_index = (
+            int(values["root_entry_id"]),
+            int(values["root_uri_index"]),
+        )
+        root_entry = _entry(db, root_id)
+        root_host, root_port, _ = remote_entry_target(root_entry, root_index)
+        if (
+            ssh_entry.username != "vcf"
+            or root_entry.username != "root"
+            or root_id == ssh_id
+        ):
+            raise LabOverrideError(
+                "Choose separate vcf SSH and root elevation credentials."
+            )
+        if (root_host.lower().rstrip("."), root_port) != (
+            host.lower().rstrip("."),
+            ssh_port,
+        ):
+            raise LabOverrideError(
+                "Root elevation credentials must identify the same SSH endpoint."
+            )
         if host.lower().rstrip(".") != api_uri.hostname.lower().rstrip("."):
             raise LabOverrideError(
                 "API and SSH credentials must identify the same hostname or IP."
@@ -141,12 +164,14 @@ def target_from_values(db: Session, values: dict[str, Any]) -> Target:
             api_index,
             ssh_id,
             ssh_index,
+            root_id,
+            root_index,
         )
     except (KeyError, TypeError, ValueError) as exc:
         if isinstance(exc, LabOverrideError):
             raise
         raise LabOverrideError(
-            "Choose valid API and SSH Vault credentials for the target."
+            "Choose valid API, vcf SSH and separate root Vault credentials for the target."
         ) from None
 
 
@@ -230,31 +255,49 @@ def remote(
     if not fingerprint:
         raise LabOverrideError("Confirm the SSH host key before authentication.")
     entry = _entry(db, target.ssh_entry_id)
+    root_entry = _entry(db, target.root_entry_id)
+    if (
+        entry.username != "vcf"
+        or root_entry.username != "root"
+        or entry.id == root_entry.id
+    ):
+        raise LabOverrideError(
+            "Choose separate vcf SSH and root elevation credentials."
+        )
     transport: paramiko.Transport | None = None
+    stage = "connection"
     try:
         sock = socket.create_connection((target.host, target.ssh_port), timeout=10)
         transport = paramiko.Transport(sock)
         transport.start_client(timeout=10)
         if ssh_fingerprint(transport.get_remote_server_key()) != fingerprint:
             raise LabOverrideError("SSH host key changed after confirmation.")
+        stage = "SSH authentication"
         transport.auth_password(entry.username, decrypt_secret(entry.encrypted_value))
         source = base64.b64encode(Path(vcf_lab_remote.__file__).read_bytes()).decode(
             "ascii"
         )
         program = f"import base64;exec(compile(base64.b64decode('{source}'),'<atlaso-vcf-lab>','exec'))"
-        command = (
-            ("" if entry.username == "root" else "sudo -n -- ")
-            + "python3 -c "
-            + shlex.quote(program)
-        )
+        command = "python3 -c " + shlex.quote(program)
+        stage = "SSH channel setup"
         channel = transport.open_session(timeout=10)
         channel.settimeout(10)
-        if before_dispatch is not None:
-            before_dispatch()
+        stage = "remote execution"
         channel.exec_command(command)
-        channel.sendall(json.dumps(request).encode() + b"\n")
-        channel.shutdown_write()
+        # No SSH PTY: the secret travels only over encrypted channel stdin. The
+        # remote adapter supplies it to su only after verifying terminal echo is off.
+        channel.sendall(
+            json.dumps(
+                {
+                    "request": request,
+                    "editor": source,
+                    "root_password": decrypt_secret(root_entry.encrypted_value),
+                }
+            ).encode()
+            + b"\n"
+        )
         output = bytearray()
+        authorized = False
         total = 0
         deadline = time.monotonic() + 330
         while time.monotonic() < deadline:
@@ -262,6 +305,17 @@ def remote(
                 data = channel.recv(8192)
                 total += len(data)
                 output.extend(data)
+                if not authorized and b"\n" in output:
+                    first_line, _, remaining = output.partition(b"\n")
+                    if json.loads(first_line) == {"ready": True}:
+                        if before_dispatch is not None:
+                            before_dispatch()
+                        authorized = True
+                        output = bytearray(remaining)
+                        # Root is authenticated and waiting. Persist provenance
+                        # before granting the fixed editor permission to mutate.
+                        channel.sendall(b"ATLASO_APPLY\n")
+                        channel.shutdown_write()
             if channel.recv_stderr_ready():
                 total += len(channel.recv_stderr(8192))
             if total > 16384:
@@ -280,6 +334,22 @@ def remote(
                 payload = json.loads(output)
                 if not isinstance(payload, dict):
                     raise ValueError
+                elevation_error = payload.get("elevation_error")
+                if elevation_error:
+                    messages = {
+                        "unavailable": "Root elevation unavailable: su or its required terminal support could not run.",
+                        "authentication": "Root su authentication failed. Check the separate root credential.",
+                        "echo": "Root elevation refused because password echo could not be disabled.",
+                        "timeout": "Root elevation or operation timed out; inspect target state before retrying.",
+                        "execution": "Privileged property operation failed or disconnected; inspect target state.",
+                    }
+                    raise LabOverrideError(
+                        messages.get(str(elevation_error), messages["execution"])
+                    )
+                if request.get("action") == "write" and not authorized:
+                    raise LabOverrideError(
+                        "Remote editor did not authorize the reviewed write."
+                    )
                 return payload
             time.sleep(0.05)
         raise LabOverrideError(
@@ -289,7 +359,7 @@ def remote(
         raise
     except Exception as exc:
         raise LabOverrideError(
-            "SSH operation failed; inspect target state before retrying."
+            f"VCF {stage} failed; inspect target state before retrying."
         ) from exc
     finally:
         if transport is not None:
@@ -670,7 +740,9 @@ def run_job(job_id: str) -> None:
                 or not result["service_active"]
             ):
                 raise LabOverrideError(
-                    "Property application or domainmanager recovery failed. Inspect the target and review a revert; changes may have occurred."
+                    "Properties verified, but domainmanager recovery failed. Inspect target health or review a revert."
+                    if result["property_verified"]
+                    else "Property write or readback failed. Inspect the target before recovery; changes may have occurred."
                 )
             deadline = time.monotonic() + 120
             while time.monotonic() < deadline:

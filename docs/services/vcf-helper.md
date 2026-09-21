@@ -54,27 +54,32 @@ the operator; it does not substitute a different path or claim that this covers 
 
 ### Review and apply
 
-1. Save the target API credential with an HTTP/HTTPS URI and SSH credential with an SSH/SFTP URI in an existing
-   Atlaso Vault. Both must identify the same hostname or IP. The API connection always uses HTTPS and preserves an
-   explicit URI port (default 443). The SSH account
-   must be root or have passwordless sudo permission to run the bounded editor; Python 3.10 or newer and `systemctl`
-   are required.
-   Atlaso does not enable root SSH, change sudo policy, or attempt password-based privilege escalation.
-2. Open **VCF Helper > Lab / Non-production Overrides** and select the two credentials. Credential values stay in
-   the existing encrypted Vault custody and never enter the page.
-3. Select **Probe target fingerprints**, verify both fingerprints out of band, and confirm the target. Probing sends
-   no credentials. A changed target clears confirmation; a changed SSH key or TLS certificate blocks authentication.
-4. Select **Inspect current properties**. Atlaso verifies the VCF role/version, fixed file, property values and
-   service state. Missing files, duplicate/continued managed properties, non-boolean values and unsafe file types
-   are refused. Repair ambiguous configuration on the target before continuing.
-5. Select either or both options, then **Review selected changes**. Review the target, release, previous values,
+1. Save three separate credentials in an existing Atlaso Vault: an API identity with an HTTP/HTTPS URI,
+   a **vcf** identity with an SSH/SFTP URI, and a **root** identity with the same SSH host and port.
+   All must identify the same hostname or IP. API authentication uses HTTPS (default port 443).
+   Python 3.10 or newer, `su`, and `systemctl` must be available on the target. Root SSH and sudo are not required.
+2. Open the **Lab / Non-production Overrides** tile in **VCF Helper**. Its modal wizard reuses the
+   **VCF Certificate Trust** presentation, but property operations use SSH. Select the three credentials and
+   review the server. Passwords remain in encrypted Vault custody and never enter browser state.
+3. Select **Probe target fingerprints**, verify both fingerprints out of band, and confirm the target.
+   Probing sends no credentials. Changed selections clear confirmation. SSH host keys are checked before SSH
+   authentication; API TLS certificates are checked before API authentication.
+4. Select **Verify login and inspect properties**. Atlaso connects as `vcf`, verifies role/version through the API,
+   and reads the fixed properties and service state. Readable inspection runs as `vcf`; root-only reads use `su`.
+   The distinct root secret travels over encrypted SSH stdin into a private, non-echoing terminal only for `su`.
+   It never enters command arguments, scripts, files, logs, audits, or task output.
+5. Select either or both properties, then choose **Next** to review the exact target, release, previous values,
    proposed values and restart requirement. An absent value means the property is not explicitly configured.
-6. Acknowledge the lab-only warning and choose **Apply reviewed changes**. Review expires after ten minutes and
-   is bound to the operator, target and inspected configuration. Any configuration drift requires a new review.
-   Apply rechecks service activity inside the remote lock and refuses an inactive `domainmanager`; revert remains
-   available for recovery.
-7. Follow **Open task details**. A changed file triggers only `domainmanager` restart. Atlaso separately reports
-   property readback, service activity and VCF API readiness. An already matching configuration requires no restart.
+   Navigation and review never write properties, create target lock files, or restart services.
+6. Acknowledge the lab-only warning and choose **Apply reviewed changes**. The signed review expires after ten
+   minutes and binds the operator, credentials, target and inspected configuration. Changes invalidate review.
+   Apply rechecks service activity inside the remote lock and refuses inactive `domainmanager`; revert remains
+   available for recovery. Privileged writes and the necessary restart run through `su`.
+7. Follow **Open task details** for progress and results. A changed file triggers only `domainmanager` restart.
+   Atlaso separately reports property readback, service activity and VCF API readiness. Matching properties need
+   no restart. SSH connection/authentication, changed host identity, root elevation, timeout and property/recovery
+   failures are reported without remote terminal output. Check the separate root credential after a su
+   authentication failure; do not change sudo policy or enable root SSH.
 
 Atlaso preserves unrelated file content, ownership, permissions and extended attributes. It refuses symbolic links,
 hard-linked configuration and competing Atlaso operations on the same pinned SSH host/port. Restart is bounded to 90
@@ -87,7 +92,7 @@ VCF workflow acceptance test; verify the intended VCF workflow separately on the
 Choose credentials for the same host and ports, probe and confirm the SSH fingerprint, then choose a
 **Previous managed operation**.
 Replacement Vault entries or reordered URI lists are accepted when the pinned endpoint is unchanged.
-Select **Review revert** and acknowledge the reviewed restoration. Revert restores only properties the operation
+Select **Next** to review the revert and acknowledge the reviewed restoration. Revert restores only properties the operation
 actually changed; selections that were already correct stay untouched. Originally absent properties are removed.
 Unrelated current configuration remains intact. A changed target identity or managed property
 blocks revert instead of overwriting another edit. Ownership is scoped to the host, ports and SSH fingerprint. A

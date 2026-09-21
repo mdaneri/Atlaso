@@ -96,7 +96,8 @@ def db(monkeypatch):
         session.flush()
         for identifier, username, uri in [
             (1, "admin@local", "https://vcf.example.test"),
-            (2, "root", "ssh://vcf.example.test"),
+            (2, "vcf", "ssh://vcf.example.test"),
+            (3, "root", "ssh://vcf.example.test"),
         ]:
             session.add(
                 VaultEntry(
@@ -128,6 +129,8 @@ def values():
         "api_uri_index": 1,
         "ssh_entry_id": 2,
         "ssh_uri_index": 1,
+        "root_entry_id": 3,
+        "root_uri_index": 1,
         "tls_fingerprint": "confirmed-tls",
         "ssh_fingerprint": "confirmed-ssh",
         "confirmed": True,
@@ -165,7 +168,7 @@ def test_matching_vault_endpoints_required(db, values):
     """
     assert lab.target_from_values(db, values).host == "vcf.example.test"
     db.get(VaultEntry, 2).uris_json = '["ssh://other.example.test"]'
-    with pytest.raises(lab.LabOverrideError, match="same hostname"):
+    with pytest.raises(lab.LabOverrideError, match="same (hostname|SSH endpoint)"):
         lab.target_from_values(db, values)
 
 
@@ -1115,6 +1118,7 @@ def test_recovery_accepts_replacement_credentials_for_same_endpoint(db, values, 
     plan = lab._signer().loads(reviewed["token"])
     assert plan["target"]["ssh_entry_id"] == 12
     assert plan["target"]["api_uri_index"] == 2
+    db.get(VaultEntry, 3).uris_json = '["ssh://vcf.example.test:2222"]'
     ssh.uris_json = '["ssh://other.test", "ssh://vcf.example.test:2222"]'
     db.commit()
     with pytest.raises(lab.LabOverrideError, match="identity differs"):
@@ -1232,6 +1236,7 @@ def test_reservations_isolate_cloned_ssh_keys(db, values, state, clone_uri):
         [f"https://{urlsplit(clone_uri).hostname}"]
     )
     db.get(VaultEntry, 2).uris_json = json.dumps([clone_uri])
+    db.get(VaultEntry, 3).uris_json = json.dumps([clone_uri])
     db.commit()
     second = lab.enqueue(
         db,
@@ -1354,7 +1359,7 @@ def test_revert_preserves_owner_until_authenticated_dispatch(
                         )
                     )
                 )
-                assert owner.value == recovery.id
+                assert owner.value == source.id
             fail_at("dispatch")
 
         def close(self):
@@ -1381,8 +1386,8 @@ def test_revert_preserves_owner_until_authenticated_dispatch(
                 == lab._property_owner_key(values["ssh_fingerprint"], key, target)
             )
         )
-        assert owner.value == (recovery.id if failure == "dispatch" else source.id)
-    if failure != "dispatch":
+        assert owner.value == source.id
+    if failure in {"connection", "host_key", "authentication", "session", "dispatch"}:
         retry = lab.enqueue(
             db, "admin", lab.review(db, "admin", target, recovery_values)["token"]
         )
@@ -1390,3 +1395,362 @@ def test_revert_preserves_owner_until_authenticated_dispatch(
     else:
         with pytest.raises(lab.LabOverrideError, match="superseded"):
             lab.review(db, "admin", target, recovery_values)
+
+
+@pytest.mark.parametrize("username", ["root", "admin", "sudo-user"])
+def test_ssh_requires_vcf_not_root_or_sudo(db, values, username):
+    """Reject accounts that bypass the supported vcf privilege boundary.
+
+    Args:
+        db: Credential fixture session.
+        values: Selected credential references.
+        username: Unsupported SSH identity.
+    """
+    db.get(VaultEntry, 2).username = username
+    with pytest.raises(lab.LabOverrideError, match="separate vcf"):
+        lab.target_from_values(db, values)
+
+
+def test_root_credential_is_required_and_bound_to_review(db, values, state):
+    """Bind the separate elevation reference without persisting its value.
+
+    Args:
+        db: Credential fixture session.
+        values: Selected credential references.
+        state: Nonmutating inspected-state fixture.
+    """
+    missing = {key: value for key, value in values.items() if key != "root_entry_id"}
+    with pytest.raises(lab.LabOverrideError, match="separate root"):
+        lab.target_from_values(db, missing)
+    plan = lab.review(db, "admin", lab.target_from_values(db, values), values)
+    job = lab.enqueue(db, "admin", plan["token"])
+    assert json.loads(job.task_config_json)["target"]["root_entry_id"] == 3
+    assert "never-decrypt-this" not in job.task_config_json
+
+
+def test_readable_inspection_never_elevates(monkeypatch):
+    """Readable properties stay at vcf privilege and never consume root input.
+
+    Args:
+        monkeypatch: External boundary replacement fixture.
+    """
+    from atlaso.app.services import vcf_lab_remote as remote
+
+    monkeypatch.setattr(remote, "operate", lambda request: {"ok": True})
+    assert remote.dispatch({"request": {"action": "inspect"}}) == {"ok": True}
+
+
+def test_su_command_excludes_secret_and_runs_only_fixed_editor(monkeypatch):
+    """The root secret is separate from every generated command and source.
+
+    Args:
+        monkeypatch: External boundary replacement fixture.
+    """
+    import base64
+    import shlex
+    from pathlib import Path
+
+    from atlaso.app.services import vcf_lab_remote as remote
+
+    captured = []
+    monkeypatch.setattr(
+        remote,
+        "elevated",
+        lambda command, password, **kwargs: (
+            captured.append((command, password)) or {"ok": True}
+        ),
+    )
+    source = Path(remote.__file__).read_bytes()
+    request = {"action": "write", "desired": {"nic": "false"}, "revision": "a" * 64}
+    assert remote.dispatch(
+        {
+            "request": request,
+            "editor": base64.b64encode(source).decode(),
+            "root_password": "root-sentinel-only",
+        }
+    ) == {"ok": True}
+    command, password = captured[0]
+    assert password == "root-sentinel-only"
+    assert password not in command
+    assert "sudo -n" not in command
+    args = shlex.split(command)
+    assert args[:2] == ["python3", "-c"]
+    compile(args[2], "<generated-root-program>", "exec")
+
+
+@pytest.mark.parametrize(
+    "mode",
+    ["success", "wrong_password", "echo", "timeout", "disconnect", "unavailable"],
+)
+def test_su_terminal_exchange_is_bounded_and_non_echoing(monkeypatch, mode):
+    """Only a non-echoing password prompt accepts the secret; output stays private.
+
+    Args:
+        monkeypatch: External boundary replacement fixture.
+        mode: Native-terminal outcome being simulated.
+    """
+    import sys
+    from types import SimpleNamespace
+
+    from atlaso.app.services import vcf_lab_remote as remote
+
+    chunks = [b"Password:"]
+    if mode == "success":
+        chunks += [b"ATLASO_ROOT_READY\r\n", b'ATLASO_RESULT:{"ok": true}\r\n']
+    elif mode == "wrong_password":
+        chunks += [b"su: Authentication failure root-sentinel-only\r\n"]
+    elif mode == "disconnect":
+        chunks += [b"ATLASO_ROOT_READY\r\n"]
+    writes = []
+    monkeypatch.setitem(sys.modules, "pty", SimpleNamespace(fork=lambda: (123, 9)))
+    monkeypatch.setitem(
+        sys.modules,
+        "termios",
+        SimpleNamespace(
+            tcgetattr=lambda fd: [0, 0, 0, 8 if mode == "echo" else 0],
+            ECHO=8,
+            ECHONL=64,
+        ),
+    )
+    monkeypatch.setattr(remote.Path, "is_file", lambda path: mode != "unavailable")
+    import select
+
+    monkeypatch.setattr(select, "select", lambda *args: ([9], [], []))
+    monkeypatch.setattr(
+        remote.os, "read", lambda *args: chunks.pop(0) if chunks else b""
+    )
+    monkeypatch.setattr(
+        remote.os, "write", lambda fd, value: writes.append(value) or len(value)
+    )
+    monkeypatch.setattr(remote.os, "close", lambda fd: None)
+    monkeypatch.setattr(remote.os, "waitpid", lambda *args: (0, 0), raising=False)
+    monkeypatch.setattr(remote.os, "WNOHANG", 1, raising=False)
+    monkeypatch.setattr(remote.os, "kill", lambda *args: None)
+    import signal
+
+    monkeypatch.setattr(signal, "SIGKILL", 9, raising=False)
+    clock = iter([0, 21] if mode == "timeout" else range(100))
+    monkeypatch.setattr(remote.time, "monotonic", lambda: next(clock))
+    result = remote.elevated("fixed-nonsecret-command", "root-sentinel-only")
+    expected = {
+        "success": None,
+        "wrong_password": "authentication",
+        "echo": "echo",
+        "timeout": "timeout",
+        "disconnect": "execution",
+        "unavailable": "unavailable",
+    }[mode]
+    assert result.get("elevation_error") == expected
+    assert "root-sentinel-only" not in json.dumps(result)
+    assert writes == (
+        [] if mode in {"echo", "timeout", "unavailable"} else [b"root-sentinel-only\n"]
+    )
+
+
+@pytest.mark.parametrize("mode", ["inspect", "write", "su_failure"])
+def test_remote_uses_vcf_and_sends_root_secret_only_over_stdin(
+    db, values, monkeypatch, mode
+):
+    """Keep the distinct root secret out of commands, authentication and results.
+
+    Args:
+        db: Credential fixture session.
+        values: Selected credential references.
+        monkeypatch: External boundary replacement fixture.
+        mode: Inspection, authenticated write or failed root authentication.
+    """
+    captured = {"handoff": False}
+    chunks = (
+        [b'{"ready":true}\n', b'{"ok":true}\n']
+        if mode == "write"
+        else [b'{"elevation_error":"authentication"}\n']
+        if mode == "su_failure"
+        else [b'{"ok":true}\n']
+    )
+    db.get(VaultEntry, 2).encrypted_value = "ssh-cipher"
+    db.get(VaultEntry, 3).encrypted_value = "root-cipher"
+
+    class Channel:
+        """Bounded non-PTY SSH channel fixture."""
+
+        available = True
+
+        def settimeout(self, timeout):
+            """Accept the channel bound.
+
+            Args:
+                timeout: Configured deadline.
+            """
+            assert timeout == 10
+
+        def exec_command(self, command):
+            """Capture only the non-secret command.
+
+            Args:
+                command: Fixed remote adapter command.
+            """
+            captured["command"] = command
+
+        def sendall(self, payload):
+            """Capture encrypted channel input privately in this test.
+
+            Args:
+                payload: Serialized operation envelope.
+            """
+            if payload == b"ATLASO_APPLY\n":
+                assert captured["handoff"]
+                captured["authorized"] = True
+            else:
+                captured["input"] = json.loads(payload)
+
+        def shutdown_write(self):
+            """Finish the request stream."""
+
+        def recv_ready(self):
+            """Report the one bounded result chunk."""
+            return bool(chunks)
+
+        def recv(self, size):
+            """Return sanitized editor output.
+
+            Args:
+                size: Maximum read size.
+            """
+            return chunks.pop(0)
+
+        def recv_stderr_ready(self):
+            return False
+
+        def exit_status_ready(self):
+            return not chunks
+
+        def recv_exit_status(self):
+            return 0
+
+    class Transport:
+        """SSH transport recording the login identity."""
+
+        def __init__(self, sock):
+            """Accept the connected fixture socket.
+
+            Args:
+                sock: In-memory socket stand-in.
+            """
+
+        def start_client(self, timeout):
+            """Accept the handshake bound.
+
+            Args:
+                timeout: Handshake deadline.
+            """
+
+        def get_remote_server_key(self):
+            return object()
+
+        def auth_password(self, username, password):
+            """Record vcf authentication separately from root elevation.
+
+            Args:
+                username: SSH login identity.
+                password: SSH-only secret.
+            """
+            captured["auth"] = (username, password)
+
+        def open_session(self, timeout):
+            """Create a non-PTY command channel.
+
+            Args:
+                timeout: Channel setup deadline.
+            """
+            return Channel()
+
+        def close(self):
+            captured["closed"] = True
+
+    monkeypatch.setattr(
+        lab.socket, "create_connection", lambda *args, **kwargs: object()
+    )
+    monkeypatch.setattr(lab.paramiko, "Transport", Transport)
+    monkeypatch.setattr(lab, "ssh_fingerprint", lambda key: values["ssh_fingerprint"])
+    monkeypatch.setattr(
+        lab,
+        "decrypt_secret",
+        lambda value: {"ssh-cipher": "ssh-sentinel", "root-cipher": "root-sentinel"}[
+            value
+        ],
+    )
+
+    def run():
+        """Exercise the real adapter with a synthetic SSH channel."""
+        return lab.remote(
+            db,
+            lab.target_from_values(db, values),
+            values["ssh_fingerprint"],
+            {"action": "inspect" if mode == "inspect" else "write"},
+            before_dispatch=lambda: captured.update(handoff=True),
+        )
+
+    if mode == "su_failure":
+        with pytest.raises(lab.LabOverrideError, match="su authentication failed"):
+            run()
+        assert not captured["handoff"]
+    else:
+        assert run() == {"ok": True}
+        assert captured["handoff"] == (mode == "write")
+    assert captured["auth"] == ("vcf", "ssh-sentinel")
+    assert captured["input"]["root_password"] == "root-sentinel"
+    assert "root-sentinel" not in captured["command"]
+    assert "ssh-sentinel" not in captured["command"]
+    assert "sudo" not in captured["command"]
+    assert captured["closed"]
+
+
+@pytest.mark.parametrize("acknowledgement", ["ATLASO_APPLY\n", "wrong\n"])
+def test_generated_privileged_program_waits_for_write_authorization(
+    monkeypatch, capsys, acknowledgement
+):
+    """Authenticate first and require Atlaso's durable handoff before mutation.
+
+    Args:
+        monkeypatch: External boundary replacement fixture.
+        capsys: Captured safe protocol output.
+        acknowledgement: Valid or invalid durable write authorization.
+    """
+    import base64
+    import io
+    import shlex
+    import signal
+    import sys
+
+    from atlaso.app.services import vcf_lab_remote as remote
+
+    source = b'import json\ndef safe_operate(request):\n print("EDITOR_RAN",flush=True)\n return {"ok":True}\n'
+    monkeypatch.setattr(remote.os, "geteuid", lambda: 0, raising=False)
+    monkeypatch.setattr(signal, "alarm", lambda timeout: None, raising=False)
+    monkeypatch.setattr(sys, "stdin", io.StringIO(acknowledgement))
+
+    def execute(command, password, **kwargs):
+        """Execute the generated program against a harmless editor fixture.
+
+        Args:
+            command: Fixed privileged Python program.
+            password: Separate synthetic root password.
+            **kwargs: Write-handshake selection.
+        """
+        assert kwargs["authorize_write"] is True
+        exec(shlex.split(command)[2], {})
+        return {"ok": True}
+
+    monkeypatch.setattr(remote, "elevated", execute)
+    envelope = {
+        "request": {"action": "write"},
+        "editor": base64.b64encode(source).decode(),
+        "root_password": "synthetic-root",
+    }
+    if acknowledgement == "wrong\n":
+        with pytest.raises(AssertionError):
+            remote.dispatch(envelope)
+        assert "EDITOR_RAN" not in capsys.readouterr().out
+    else:
+        assert remote.dispatch(envelope) == {"ok": True}
+        assert "EDITOR_RAN" in capsys.readouterr().out

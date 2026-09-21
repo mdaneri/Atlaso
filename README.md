@@ -21,7 +21,8 @@ brings infrastructure, storage, identity, networking, and lifecycle workflows in
 with automatic browser status navigation and a final result backed by active-release and service checks.
 
 [VCF Helper lab overrides](docs/services/vcf-helper.md#lab--non-production-overrides) let administrators review either
-or both fixed domainmanager properties on VCF Installer and SDDC Manager 9.0.x / 9.1.x, with verified writes,
+or both fixed domainmanager properties in a tile-launched wizard on VCF Installer and SDDC Manager 9.0.x / 9.1.x.
+SSH connects as `vcf` and uses separate root credentials through `su`, with verified writes,
 service restart and explicit recovery. These lab-only settings do not certify hardware or establish production support.
 
 [Maintenance](docs/operate/backup-restore.md) groups LDAP, Backup, Reset, and Diagnostics into separate tabs.
