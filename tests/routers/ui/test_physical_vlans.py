@@ -7,6 +7,83 @@ import pytest
 from tests.routers.ui.helpers import assert_apply_redirect, login
 
 
+@pytest.mark.parametrize(
+    ("previous_method", "ipv6_cidr"),
+    [("dhcp", ""), ("static", ""), ("static", "fd00:168::30/64")],
+)
+def test_access_management_address_edit_matches_console_desired_state(
+    client, monkeypatch, previous_method, ipv6_cidr,
+):
+    """Verify browser address edits and legacy conversion retain console-compatible intent.
+
+    Args:
+        client: HTTP test client exercising the authenticated browser transport.
+        monkeypatch: Replace console host mutation with bounded recording stubs.
+        previous_method: Static intent or a legacy Access DHCP row to recover.
+        ipv6_cidr: Requested static IPv6 CIDR, or disabled IPv6.
+    """
+    from sqlalchemy import select
+
+    from atlaso.app import appliance_console
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Job, PhysicalInterface
+
+    login(client)
+    with SessionLocal() as db:
+        interface = PhysicalInterface(
+            name="access_management_test", mac_address="02:00:00:00:85:20",
+            role="access", mode="access", admin_state="up", oper_state="up",
+            access_management_ui_enabled=True, ipv4_method=previous_method,
+            ip_cidr="192.168.167.219/24" if previous_method == "static" else None,
+            host_ip_cidr="192.168.167.219/24", ipv6_enabled=bool(ipv6_cidr),
+            ipv6_cidr="fd00:167::219/64" if ipv6_cidr else None,
+            host_ipv6_cidr="fd00:167::219/64" if ipv6_cidr else None,
+        )
+        db.add(interface)
+        db.commit()
+        interface_id = interface.id
+        before_jobs = list(db.scalars(select(Job.id)))
+
+    page = client.get("/physical-interfaces")
+    csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    response = client.post(
+        f"/ui/management/physical-interfaces/{interface_id}/edit",
+        data={
+            "role": "access", "mode": "access", "admin_state": "up",
+            "access_management_ui_enabled": "on", "ipv4_method": "static",
+            "ip_cidr": "192.168.168.30/24", "gateway": "",
+            "ipv6_enabled": str(bool(ipv6_cidr)).lower(), "ipv6_cidr": ipv6_cidr,
+            "ipv6_gateway": "", "mtu": "1500", "csrf": csrf,
+        },
+        follow_redirects=False,
+    )
+    assert response.status_code == 303, response.text
+    fields = ("role", "mode", "access_management_ui_enabled", "ipv4_method", "ip_cidr", "gateway", "ipv6_enabled", "ipv6_cidr", "ipv6_gateway")
+    with SessionLocal() as db:
+        interface = db.get(PhysicalInterface, interface_id)
+        browser_intent = tuple(getattr(interface, field) for field in fields)
+        assert browser_intent == ("access", "access", True, "static", "192.168.168.30/24", None, bool(ipv6_cidr), ipv6_cidr or None, None)
+        assert interface.host_ip_cidr == "192.168.167.219/24"
+        assert list(db.scalars(select(Job.id))) == before_jobs
+        interface.ipv4_method = previous_method
+        interface.ip_cidr = "192.168.167.219/24" if previous_method == "static" else None
+        interface.ipv6_cidr = "fd00:167::219/64" if ipv6_cidr else None
+        db.commit()
+
+    console_units = []
+    monkeypatch.setattr(appliance_console, "_management_interface", lambda db: db.get(PhysicalInterface, interface_id))
+    monkeypatch.setattr(appliance_console, "_ensure_no_active_apply", lambda: None)
+    monkeypatch.setattr(appliance_console, "_recover_management_plane", lambda stage: None)
+    monkeypatch.setattr(appliance_console, "_submit_console_apply", lambda units: console_units.append(units) or "test-console-job")
+    appliance_console.configure_management(
+        "static", "192.168.168.30/24", "", "static" if ipv6_cidr else "disabled", ipv6_cidr, "", "192.168.168.2",
+    )
+    with SessionLocal() as db:
+        interface = db.get(PhysicalInterface, interface_id)
+        assert tuple(getattr(interface, field) for field in fields) == browser_intent
+    assert console_units == [{"network", "firewall"}, {"appliance_settings"}]
+
+
 def test_forget_missing_physical_interface_deletes_only_stale_rows(client):
     """Verify that forget missing physical interface deletes only stale rows.
 
