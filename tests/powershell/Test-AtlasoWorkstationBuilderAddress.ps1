@@ -4,9 +4,12 @@ Validate VMware builder-address pool admission and reservation behavior.
 
 .PARAMETER RepositoryRoot
 Atlaso repository root containing the module and wrapper under test.
+.PARAMETER RetainedTestRoot
+Existing empty task-owned validation root whose cleanup is managed by the caller.
 #>
 param(
-    [Parameter(Mandatory = $true)][string]$RepositoryRoot
+    [Parameter(Mandatory = $true)][string]$RepositoryRoot,
+    [string]$RetainedTestRoot = ''
 )
 
 Set-StrictMode -Version Latest
@@ -16,9 +19,13 @@ $modulePath = Join-Path $RepositoryRoot 'scripts\windows\vmware\Atlaso.Workstati
 $wrapperPath = Join-Path $RepositoryRoot 'scripts\windows\vmware\build-photon-image.ps1'
 Import-Module $modulePath -Force
 
-$testRoot = Join-Path ([System.IO.Path]::GetTempPath()) (
+$testRoot = if ($RetainedTestRoot) { [IO.Path]::GetFullPath($RetainedTestRoot) } else { Join-Path ([System.IO.Path]::GetTempPath()) (
     "atlaso-builder-address-test-$([guid]::NewGuid().ToString('N'))"
-)
+) }
+if ($RetainedTestRoot -and (-not (Test-Path -LiteralPath $testRoot -PathType Container) -or
+    @(Get-ChildItem -LiteralPath $testRoot -Force).Count -ne 0)) {
+    throw 'The retained validation root must already exist and be empty.'
+}
 [void][System.IO.Directory]::CreateDirectory($testRoot)
 try {
     $dhcpPath = Join-Path $testRoot 'vmnetdhcp.conf'
@@ -525,6 +532,7 @@ exit 1
     [IO.File]::WriteAllText($failedChild, @'
 param($HandoffPath, $LedgerPath)
 $record = Get-Content $HandoffPath -Raw | ConvertFrom-Json
+$record.PSObject.Properties.Remove('TerminationProof')
 $record.OwnerPid = $PID
 $record.OwnerStartTimeUtcTicks = (Get-Process -Id $PID).StartTime.ToUniversalTime().Ticks
 $ledger = Get-Content $LedgerPath -Raw | ConvertFrom-Json
@@ -608,6 +616,128 @@ catch {
     if ($running.Status -ne 'blocked' -or (Get-FileHash $recoveryLedger).Hash -cne $before) {
         throw 'Termination proof bypassed running-VM protection.'
     }
+    $badReceipt = $receiptBytes | ConvertFrom-Json
+    $badReceipt.TerminationProof.ReservationSha256 = '0' * 64
+    [IO.File]::WriteAllText($handoffPath, ($badReceipt | ConvertTo-Json -Depth 8))
+    $mismatch = Invoke-AtlasoBuilderReservationRecovery -HandoffPath $handoffPath -VmrunPath $vmrunPath -StateRoot $recoveryState -Execute
+    if ($mismatch.Status -ne 'blocked' -or $mismatch.Reason -notlike '*receipt does not match*') {
+        throw 'A mismatched receipt was accepted.'
+    }
+    $activeController = $receiptBytes | ConvertFrom-Json
+    $activeController.TerminationProof.ControllerPid = $PID
+    $activeController.TerminationProof.ControllerStartTimeUtcTicks = (Get-Process -Id $PID).StartTime.ToUniversalTime().Ticks
+    [IO.File]::WriteAllText($handoffPath, ($activeController | ConvertTo-Json -Depth 8))
+    $controller = Invoke-AtlasoBuilderReservationRecovery -HandoffPath $handoffPath -VmrunPath $vmrunPath -StateRoot $recoveryState -Execute
+    if ($controller.Status -ne 'blocked' -or $controller.Reason -notlike '*controller is still active*') {
+        throw 'Recovery bypassed an active controller.'
+    }
+    [IO.File]::WriteAllText($handoffPath, $receiptBytes)
+
+    # Exercise successful bounded completion using the production receipt block.
+    # The following release fails on a stale-only observation, then a later caller
+    # must reach the address check instead of losing the process proof.
+    [IO.File]::WriteAllText($failedChild, ([IO.File]::ReadAllText($failedChild).Replace('exit 1', 'exit 0')))
+    [IO.File]::WriteAllText($publisher, @'
+param($ModulePath, $HandoffPath, $ChildPath, $LedgerPath)
+Import-Module $ModulePath -Force
+. (Join-Path (Split-Path -Parent $ModulePath) 'Atlaso.WorkstationFirstBoot.ps1')
+$processOwnershipPayload = @{}
+Invoke-AtlasoBoundedStreamingProcess -FilePath (Get-Process -Id $PID).Path `
+    -ArgumentList @('-NoProfile', '-File', $ChildPath, $HandoffPath, $LedgerPath) `
+    -TimeoutSeconds 20 -Action 'Successful inert builder fixture' `
+    -ProcessJobName ('Local\Atlaso-Receipt-Test-' + [guid]::NewGuid().ToString('N')) `
+    -ProcessOwnershipPublisher {
+        param($Job)
+        $processOwnershipPayload.ChildProcessId = $Job.RootProcess.Id
+        $processOwnershipPayload.ChildProcessStartFileTimeUtc = $Job.RootProcess.StartTime.ToUniversalTime().ToFileTimeUtc()
+    }
+$childBuilderAddressReservationPath = $HandoffPath
+$wrapperPath = Join-Path (Split-Path -Parent $ModulePath) 'build-photon-image.ps1'
+$ast = [Management.Automation.Language.Parser]::ParseFile($wrapperPath, [ref]$null, [ref]$null)
+$receiptBlock = @($ast.FindAll({ param($node)
+    $node -is [Management.Automation.Language.IfStatementAst] -and
+    $node.Clauses[0].Item1.Extent.Text -ceq '$isolatedBuildSucceeded' -and
+    $node.Clauses[0].Item2.Extent.Text.Contains('Save-AtlasoBuilderTerminationProof')
+}, $true))
+if ($receiptBlock.Count -ne 1) { throw 'Missing unique successful-completion receipt block.' }
+$body = $receiptBlock[0].Clauses[0].Item2.Extent.Text
+& ([scriptblock]::Create($body.Substring(1, $body.Length - 2)))
+$module = Get-Module Atlaso.WorkstationBuilderAddress
+& $module {
+    param($HandoffPath, $LedgerPath)
+    function Get-NetNeighbor {
+        [pscustomobject]@{ IPAddress = '192.0.2.30'; State = 'Stale'; LinkLayerAddress = '00-0C-29-D3-54-B3' }
+    }
+    try {
+        Exit-AtlasoVmwareBuilderAddressReservation -Reservation (Get-Content $HandoffPath -Raw | ConvertFrom-Json) `
+            -VmrunPath (Join-Path (Split-Path -Parent (Split-Path -Parent $LedgerPath)) 'fake-vmrun.ps1') `
+            -StateRoot (Split-Path -Parent $LedgerPath) -ProcessTreeTerminationProven
+        throw 'Stale-only release unexpectedly succeeded.'
+    } catch {
+        if ($_.Exception.Message -notlike '*Only stale Windows*') { throw }
+    }
+} $HandoffPath $LedgerPath
+'@)
+    & (Get-Process -Id $PID).Path -NoProfile -File $publisher $modulePath $handoffPath $failedChild $recoveryLedger
+    if ($LASTEXITCODE -ne 0) { throw 'Successful build did not retain proof before failed release.' }
+    $receiptBytes = [IO.File]::ReadAllText($handoffPath)
+    $before = (Get-FileHash $recoveryLedger).Hash
+    $module = Get-Module Atlaso.WorkstationBuilderAddress
+    & $module {
+        param($HandoffPath, $VmrunPath, $StateRoot, $Before, $ReceiptBytes)
+        foreach ($state in @('Stale', 'Reachable', 'Permanent', 'Unknown')) {
+            function Get-NetNeighbor {
+                <#
+                .SYNOPSIS
+                Supply one controlled Windows neighbor observation.
+                #>
+                [pscustomobject]@{ IPAddress = '192.0.2.30'; State = $state; LinkLayerAddress = '00-0C-29-D3-54-B3' }
+            }
+            if (-not (Test-AtlasoVmwareAddressObservedInUse -Address '192.0.2.30' -VmrunPath $VmrunPath)) {
+                throw 'Allocation safety ignored cached address evidence.'
+            }
+            $result = Invoke-AtlasoBuilderReservationRecovery -HandoffPath $HandoffPath -VmrunPath $VmrunPath -StateRoot $StateRoot -Execute
+            $expected = if ($state -eq 'Stale') { '*Only stale Windows*' } else { '*non-stale Windows*' }
+            if ($result.Status -ne 'blocked' -or $result.Reason -notlike $expected -or
+                (Get-FileHash (Join-Path $StateRoot 'reservations.json')).Hash -cne $Before -or
+                [IO.File]::ReadAllText($HandoffPath) -cne $ReceiptBytes) {
+                throw "Recovery did not preserve and classify $state evidence: $($result.Reason)"
+            }
+        }
+        function Get-NetNeighbor {
+            <#
+            .SYNOPSIS
+            Inject an unavailable Windows neighbor provider.
+            #>
+            throw 'Injected neighbor read failure.'
+        }
+        $result = Invoke-AtlasoBuilderReservationRecovery -HandoffPath $HandoffPath -VmrunPath $VmrunPath -StateRoot $StateRoot
+        if ($result.Status -ne 'blocked' -or $result.Reason -notlike '*inactivity is unknown*') {
+            throw 'Unavailable neighbor evidence was treated as inactivity.'
+        }
+    } $handoffPath $vmrunPath $recoveryState $before $receiptBytes
+    $foreignVmrun = Join-Path $testRoot 'foreign-vmrun.ps1'
+    [IO.File]::WriteAllText($foreignVmrun, @'
+param([Parameter(ValueFromRemainingArguments = $true)][string[]]$Arguments)
+if ($Arguments[-1] -ceq 'list') { 'Total running VMs: 1'; 'C:\foreign\guest.vmx'; exit 0 }
+'192.0.2.30'
+exit 0
+'@)
+    $foreign = Invoke-AtlasoBuilderReservationRecovery -HandoffPath $handoffPath -VmrunPath $foreignVmrun -StateRoot $recoveryState
+    if ($foreign.Status -ne 'blocked' -or $foreign.Reason -notlike '*reported by a running VMware VM*') {
+        throw 'Current foreign VMware address use was not identified.'
+    }
+    $foreignSource = [IO.File]::ReadAllText($foreignVmrun)
+    [IO.File]::WriteAllText($foreignVmrun, $foreignSource.Replace("'192.0.2.30'", 'exit 1'))
+    $unknown = Invoke-AtlasoBuilderReservationRecovery -HandoffPath $handoffPath -VmrunPath $foreignVmrun -StateRoot $recoveryState
+    if ($unknown.Status -ne 'blocked' -or $unknown.Reason -notlike '*inactivity is unknown*') {
+        throw 'Guest provider failure allowed release or lost its classification.'
+    }
+    [IO.File]::WriteAllText($foreignVmrun, $foreignSource.Replace("'192.0.2.30'", "'Not an address'"))
+    $malformed = Invoke-AtlasoBuilderReservationRecovery -HandoffPath $handoffPath -VmrunPath $foreignVmrun -StateRoot $recoveryState
+    if ($malformed.Status -ne 'blocked' -or $malformed.Reason -notlike '*inactivity is unknown*') {
+        throw 'Malformed guest provider output allowed release.'
+    }
     $released = Invoke-AtlasoBuilderReservationRecovery -HandoffPath $handoffPath -VmrunPath $vmrunPath -StateRoot $recoveryState -Execute
     $remaining = (Get-Content $recoveryLedger -Raw | ConvertFrom-Json).Reservations
     if ($released.Status -ne 'released' -or (Test-Path $handoffPath) -or @($remaining).Count -ne 1 -or
@@ -657,7 +787,7 @@ catch {
     }
 }
 finally {
-    if (Test-Path -LiteralPath $testRoot) {
+    if (-not $RetainedTestRoot -and (Test-Path -LiteralPath $testRoot)) {
         [System.IO.Directory]::Delete($testRoot, $true)
     }
 }
