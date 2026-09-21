@@ -129,5 +129,5 @@ removed. Do not replace the wrapper with a direct Zensical invocation: stale cac
 redirect targets fail nondeterministically. The wrapper does not disable link or anchor validation, so genuine missing
 targets still fail the strict build.
 
-Documentation linting applies to every tracked Markdown source. Do not suppress existing files, create a warning-only
-baseline, or couple tests to exact explanatory prose when a stable marker or canonical path can express the contract.
+Lint all tracked Markdown; keep sources outside excluded root `.atlaso-local/`. Opt in to fixture paths with
+`--no-globs`. Never suppress sources or use warning-only baselines. Test stable markers/paths instead of exact prose.
