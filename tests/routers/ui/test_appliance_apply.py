@@ -9,6 +9,76 @@ import pytest
 from tests.routers.ui.helpers import login
 
 
+@pytest.mark.parametrize("apply_succeeds", [False, True])
+def test_network_runtime_revision_requires_successful_upgrade_apply(client, monkeypatch, apply_succeeds):
+    """Offer unchanged legacy Network intent until its revised runtime is applied.
+
+    Args:
+        client: Isolated application database fixture.
+        monkeypatch: Replace only the privileged execution boundary.
+        apply_succeeds: Whether the simulated Network execution succeeds.
+    """
+    from atlaso.app import ui
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Job, JobStatus, JobStep
+
+    marker = "# Network runtime revision: exact-source-routing-v1.\n"
+    with SessionLocal() as db:
+        unit = next(item for item in ui.appliance_apply_units(db) if item["id"] == "network")
+        assert marker in unit["config_preview"]
+        legacy_preview = unit["config_preview"].replace(marker, "")
+        legacy_hash = ui.appliance_snapshot_hash({
+            "unit_id": "network", "summary": unit["summary"], "config_path": unit["config_path"],
+            "config_preview": legacy_preview, "snapshot_marker": None,
+        })
+        legacy_unit = {**unit, "snapshot_hash": legacy_hash, "config_preview": legacy_preview}
+        ui.update_appliance_apply_baselines(db, [legacy_unit], {"network"})
+        db.add(Job(id="previous-apply", type="appliance-apply", status=JobStatus.SUCCEEDED.value,
+                   created_by="admin", result="{}"))
+        db.commit()
+        context = ui.appliance_apply_context(db)
+        assert context["initial_apply_required"] is False
+        pending = next(item for item in context["review_apply_units"] if item["id"] == "network")
+        assert pending["changed"] and pending["valid"] and pending["has_baseline"]
+        assert pending["config_preview"].replace(marker, "") == legacy_preview
+        assert pending["management_handoff_required"] is False
+        job = Job(id="network-revision-upgrade", type="appliance-apply", status=JobStatus.PENDING.value,
+                  created_by="admin", result=json.dumps({"selected_units": ["network"],
+                  "captured_units": [{"unit_id": "network", "snapshot_hash": pending["snapshot_hash"]}]}))
+        db.add(job)
+        db.add(JobStep(id="network-revision-upgrade:network", job=job, component_key="network",
+                       label="Network", position=1, status=JobStatus.PENDING.value, result="{}"))
+        db.commit()
+
+    executed = []
+
+    def execute(candidate, **_kwargs):
+        """Return a controlled result without executing host operations.
+
+        Args:
+            candidate: Real Network unit approved by the ordinary review flow.
+            **_kwargs: Production execution options.
+        """
+        executed.append(candidate["snapshot_hash"])
+        return {"unit_id": "network", "label": "Network", "success": apply_succeeds,
+                "status": JobStatus.SUCCEEDED.value if apply_succeeds else JobStatus.FAILED.value,
+                "dry_run": True, "commands": []}
+
+    monkeypatch.setattr(ui, "execute_appliance_apply_unit", execute)
+    ui.run_appliance_apply_job("network-revision-upgrade")
+    assert executed == [unit["snapshot_hash"]]
+    with SessionLocal() as db:
+        completed = db.get(Job, "network-revision-upgrade")
+        assert completed.status == (JobStatus.SUCCEEDED.value if apply_succeeds else JobStatus.FAILED.value)
+        baseline = ui.load_appliance_apply_baselines(db)["network"]
+        assert baseline["snapshot_hash"] == (unit["snapshot_hash"] if apply_succeeds else legacy_hash)
+        assert baseline["config_preview"] == (unit["config_preview"] if apply_succeeds else legacy_preview)
+        context = ui.appliance_apply_context(db)
+        assert any(item["id"] == "network" for item in context["review_apply_units"]) is (not apply_succeeds)
+        current = next(item for item in context["apply_units"] if item["id"] == "network")
+        assert current["changed"] is (not apply_succeeds)
+
+
 @pytest.mark.parametrize("commit_fails", [False, True])
 @pytest.mark.parametrize("cleanup_fails", [False, True])
 def test_network_apply_acknowledges_only_durable_executed_baseline(client, monkeypatch, commit_fails, cleanup_fails):

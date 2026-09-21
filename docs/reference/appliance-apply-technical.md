@@ -252,6 +252,9 @@ excluded. Duplicate sources across domains or uncertain old identities retain un
 The watcher never reads pending database intent or changes routes. Its event-driven updates are asynchronous outside
 Apply; no zero-gap lease-renewal guarantee is implied.
 
+The rendered Network configuration includes a routing-domain revision marker. Its snapshot hash differs from a
+pre-migration baseline even when interface desired state is unchanged, so ordinary Apply review offers Network after
+upgrade. Only successful Apply advances that baseline; failed migration remains pending for retry.
 Network Apply journals the old `1000–1099`/`2000–2099` rules and migrates them to lab ingress selectors using only the
 last-applied forwarding setting. It does not apply pending WAN changes. Both ordinary and protected transactions restore
 those exact rules, applied intent, and watcher boot/runtime state on failure. Protected handoffs preserve old source

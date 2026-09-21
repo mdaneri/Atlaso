@@ -1100,6 +1100,7 @@ def render_network_config(
     lines = [
         "# Managed by Atlaso. Local changes may be overwritten.",
         "# Dry-run preview of desired Linux network state.",
+        "# Network runtime revision: exact-source-routing-v1.",
         "# Static management gateways install in the main table and management policy table 100.",
         "",
         "[physical_interfaces]",

@@ -64,8 +64,11 @@ If that lookup has no matching route, an interface-specific unreachable rule sto
 including its management default. Existing firewall and Routing Permission checks still decide whether forwarding is
 allowed. These forwarded-traffic rules do not match appliance-local traffic on `lo`.
 
-Apply **Network** once after upgrading to install this domain ownership and migrate previous prefix rules. That migration
-uses the already-applied forwarding setting and does not apply pending Routes & WAN edits. Rollback restores the prior
+After upgrading, **Network** appears as pending in Appliance Apply even when interface settings are unchanged. Its
+versioned configuration marker makes this one-time migration selectable. Review and apply **Network** to install this
+domain ownership and migrate previous prefix rules. A successful Network Apply clears the pending migration; a failed
+migration leaves it pending for retry. The migration uses the already-applied forwarding setting and does not apply
+pending Routes & WAN edits. Rollback restores the prior
 rules, network files, and routing service state. Subsequent WAN Apply uses the applied Network ownership.
 
 The routing service follows DHCP and IPv6 address events and periodically reconciles missed events. Protected Apply
