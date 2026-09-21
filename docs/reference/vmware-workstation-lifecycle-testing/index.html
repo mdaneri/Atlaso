@@ -5090,7 +5090,10 @@ portability, and host/client integration where separate vmnets are equivalent. T
 compatible upstream virtual-network configuration and recorded topology evidence.</p>
 <h2 id="recover-a-retained-builder-address">Recover a retained builder address<a class="headerlink" href="#recover-a-retained-builder-address" title="Permanent link">&para;</a></h2>
 <p>A failed image build can finish process cleanup while Workstation still holds its stopped VM tab open. The image
-wrapper now saves its exact allocation and process-termination proof before attempting VMware deletion. After
+wrapper saves its exact allocation and process-termination proof before attempting VMware deletion. Successful
+bounded image builds also save that proof before attempting address release. If release fails, the wrapper reports
+<strong>image build succeeded, builder-address cleanup failed</strong>, returns a failure for the incomplete cleanup, and retains
+the completed VM artifacts and exact recovery handoff. After
 closing that stopped tab and completing checked VM cleanup, use the standalone reservation command; a new build
 and a Windows restart are unnecessary when the saved proof is valid.</p>
 <p>Use the exact handoff path reported by the build, under the task's
@@ -5110,6 +5113,13 @@ and recorded/current boot identities. Exit code <code>0</code> means verificatio
 completed; <code>2</code> means recovery is blocked. A live owner/controller, a running VM, observed address use, changed
 allocation, or unreadable evidence keeps the reservation. <code>already-released</code> means ledger removal previously
 completed and cleanup can finish handoff retirement. An interrupted cleanup can be retried with the same handoff.</p>
+<p>Recovery distinguishes a running VM reporting the address, non-stale Windows neighbor evidence, stale-only cache
+evidence, and unavailable provider observations. A <code>Stale</code> entry proves neither current use nor ownership by the
+stopped builder. Stale-only evidence therefore retains the reservation with an explicit uncertainty message; it is
+not reported as proven live foreign use. Allocation still excludes cached addresses. Do not flush the neighbor cache
+or delete reservation JSON to force release. Retry the read-only command after the address observations clear and
+the original controller has exited; valid retained termination proof then allows same-boot recovery. A successful
+release requires fresh provider and address checks, not just the saved receipt.</p>
 <p>Older handoffs have no retained process-termination receipt. The tool reports that limitation instead of creating
 proof from VM-file absence or a dead PID. Such records still require independently available termination evidence
 or a changed host boot, followed by the same provider and address checks. Do not edit ledger JSON or insert receipts
