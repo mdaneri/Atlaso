@@ -348,3 +348,119 @@ def test_initial_setup_uses_reviewed_nonformatting_units(monkeypatch):
     monkeypatch.setattr(scenario, "_clean", lambda current: {"pending_count": 0})
     assert scenario._setup(client)["initial_apply"]["job_id"] == "job_abc"
     assert selected == ["network"]
+
+
+@pytest.mark.parametrize("changed", [False, True])
+def test_same_address_requires_original_unexpired_server_lease(monkeypatch, topology, native, changed):
+    """Only a retained real lease plus native static then dynamic ownership proves the case.
+
+    Args:
+        monkeypatch: Substitute native observations and ordinary Apply.
+        topology: Admitted original fixture identities.
+        native: Acquired address and rule evidence.
+        changed: Whether the server lease changes during the static phase.
+    """
+    client, applies = FakeClient(), []
+    lease = {"mac": topology.link("appliance", 0).mac, "address": "192.0.2.10",
+             "expires_at": int(time.time()) + 100, "unexpired": True}
+    observations = iter([lease, {**lease, "expires_at": lease["expires_at"] + int(changed)}, lease, lease])
+    static = copy.deepcopy(native)
+    static["links"][0]["addr_info"][0].pop("dynamic")
+    monkeypatch.setattr(scenario, "_snapshot", lambda connect: static)
+    monkeypatch.setattr(scenario, "_same_address_native", lambda connect, admitted: {"native": native})
+    monkeypatch.setattr(scenario, "_apply", lambda current: applies.append(copy.deepcopy(current.rows)) or {"status": "succeeded"})
+    if changed:
+        with pytest.raises(OverlapPrerequisiteError, match="not retained"):
+            scenario._same_address_lease(client, lambda: None, topology, lambda action: {"leases": [next(observations)]})
+        assert len(applies) == 1
+    else:
+        result = scenario._same_address_lease(client, lambda: None, topology, lambda action: {"leases": [next(observations)]})
+        assert result["lease_before_activation"] == lease
+        assert [rows["eth0"]["ipv4_method"] for rows in applies] == ["static", "dhcp"]
+
+
+@pytest.fixture
+def lease_native(native, topology):
+    """Keep the installed helper's client lease verdict and raw kernel state distinct.
+
+    Args:
+        native: Complete kernel address and rule observations.
+        topology: Independently admitted original NIC identity.
+    """
+    raw = native["links"][0]
+    raw.update(ifindex=2, address=topology.link("appliance", 0).mac)
+    raw["addr_info"][0].update(prefixlen=24, valid_life_time=4294967295)
+    raw["addr_info"][0].pop("dynamic")
+    return {"native": native, "address_status": {"complete": True, "links": [{
+        "name": "eth0", "ifindex": 2, "mac": raw["address"], "configured": True,
+        "addresses": [{"address": "192.0.2.10", "cidr": "192.0.2.10/24", "source": "static",
+                       "state": "assigned", "dhcp4_lease": True}],
+    }]}}
+
+
+@pytest.mark.parametrize("source", ["static", "DHCPv4"])
+def test_same_address_accepts_current_native_client_lease(monkeypatch, topology, lease_native, source):
+    """A measured helper can prove current DHCP ownership without the kernel dynamic flag.
+
+    Args:
+        monkeypatch: Replace only the bounded guest observation boundary.
+        topology: Independently admitted original NIC identity.
+        lease_native: Helper proof plus unchanged raw kernel evidence.
+        source: Networkd's truthful classification of the address object.
+    """
+    programs = []
+    lease_native["address_status"]["links"][0]["addresses"][0]["source"] = source
+
+    def observe(connect, program):
+        """Capture the fixed read-only command and return independently generated evidence.
+
+        Args:
+            connect: Unused pinned SSH factory.
+            program: Fixed guest observation source.
+        """
+        programs.append(program)
+        return lease_native
+
+    monkeypatch.setattr(scenario, "_observe", observe)
+    assert scenario._same_address_native(lambda: None, topology) is lease_native
+    assert '"network", "address-status", "--real"' in programs[0]
+    assert '"apply"' not in programs[0]
+    with pytest.raises(OverlapPrerequisiteError, match="not ready"):
+        scenario._prove(lease_native["native"], topology)
+
+
+@pytest.mark.parametrize("invalid", ["stale-lease", "incomplete", "wrong-mac", "wrong-index", "configuring",
+                                    "wrong-prefix", "conflict", "kernel-conflict", "missing-guard"])
+def test_same_address_rejects_missing_or_mismatched_client_proof(monkeypatch, topology, lease_native, invalid):
+    """A server lease or retained address cannot substitute for live identity-bound helper proof.
+
+    Args:
+        monkeypatch: Replace the bounded read-only native observation.
+        topology: Independently admitted original NIC identity.
+        lease_native: Helper proof plus raw kernel evidence.
+        invalid: Missing, stale, conflicting, or foreign native evidence.
+    """
+    status = lease_native["address_status"]
+    link = status["links"][0]
+    record = link["addresses"][0]
+    if invalid == "stale-lease":
+        record["dhcp4_lease"] = False
+    elif invalid == "incomplete":
+        status["complete"] = False
+    elif invalid == "wrong-mac":
+        link["mac"] = "00:50:56:00:00:ff"
+    elif invalid == "wrong-index":
+        link["ifindex"] = 3
+    elif invalid == "configuring":
+        link["configured"] = False
+    elif invalid == "wrong-prefix":
+        record["cidr"] = "192.0.2.10/25"
+    elif invalid == "conflict":
+        record["state"] = "conflict"
+    elif invalid == "kernel-conflict":
+        lease_native["native"]["links"][0]["addr_info"][0]["dadfailed"] = True
+    else:
+        lease_native["native"]["rules"]["4"].pop(1)
+    monkeypatch.setattr(scenario, "_observe", lambda connect, program: lease_native)
+    with pytest.raises(OverlapPrerequisiteError):
+        scenario._same_address_native(lambda: None, topology)

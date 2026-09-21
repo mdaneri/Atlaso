@@ -367,6 +367,88 @@ def _restore(
     return {"apply": applied, "native": native, "clean": _clean(client)}
 
 
+def _same_address_native(
+    connect: Callable[[], paramiko.SSHClient], topology: AdmittedTopology,
+) -> dict[str, Any]:
+    """Require current client-side lease proof without relabeling a static address.
+
+    Args:
+        connect: Fresh pinned root SSH factory for the measured installed helper.
+        topology: Independently admitted original interface and MAC identities.
+    """
+    evidence = _observe(connect, SNAPSHOT_PROGRAM + '''
+p = subprocess.run(["/opt/atlaso/bin/atlaso-helper", "network", "address-status", "--real"],
+                   capture_output=True, text=True, timeout=20)
+if p.returncode or len(p.stdout) > 262144:
+    raise RuntimeError("native lease observation failed")
+print(json.dumps({"address_status": json.loads(p.stdout), "native": snapshot()}))
+''')
+    native, status = evidence.get("native"), evidence.get("address_status")
+    if not isinstance(native, dict) or not isinstance(status, dict) or status.get("complete") is not True:
+        raise OverlapPrerequisiteError("complete native client lease observation is required")
+    admitted = topology.link("appliance", 0)
+    links = [row for row in status.get("links", []) if row.get("name") == admitted.interface]
+    kernel = [row for row in native.get("links", []) if row.get("ifname") == admitted.interface]
+    if len(links) != 1 or len(kernel) != 1:
+        raise OverlapPrerequisiteError("native client lease interface is ambiguous")
+    link, raw = links[0], kernel[0]
+    if (link.get("configured") is not True or link.get("mac") != admitted.mac
+            or raw.get("address") != admitted.mac or type(link.get("ifindex")) is not int
+            or link["ifindex"] <= 0 or link["ifindex"] != raw.get("ifindex")):
+        raise OverlapPrerequisiteError("native client lease interface identity or readiness differs")
+    records = [row for row in link.get("addresses", []) if row.get("address") == "192.0.2.10"]
+    addresses = [row for row in _addresses(native, admitted.interface) if row.get("local") == "192.0.2.10"]
+    if (len(records) != 1 or records[0].get("cidr") != "192.0.2.10/24"
+            or records[0].get("state") != "assigned" or records[0].get("dhcp4_lease") is not True
+            or len(addresses) != 1 or addresses[0].get("prefixlen") != 24
+            or addresses[0].get("tentative") or addresses[0].get("dadfailed")):
+        raise OverlapPrerequisiteError("same-address activation lacks a current assigned native DHCP lease")
+    verify_source_rules({"192.0.2.10": 100}, _rules(native))
+    return evidence
+
+
+def _same_address_lease(
+    client: FixtureHttpClient, connect: Callable[[], paramiko.SSHClient],
+    topology: AdmittedTopology, server_action: Callable[[str], dict[str, Any]],
+) -> dict[str, Any]:
+    """Prove DHCP activation against an unexpired lease retaining the same static address.
+
+    Args:
+        client: Pinned authenticated HTTPS client.
+        connect: Fresh pinned root SSH factory.
+        topology: Independently admitted fixture identities.
+        server_action: Admitted DHCP server status controller.
+    """
+    before = _lease(server_action("status"), topology)
+    interface = topology.link("appliance", 0).interface
+    path = f"/api/v1/interfaces/physical/{interface}"
+    client.json_request("PATCH", path, json_body={
+        "ipv4_method": "static", "ip_cidr": "192.0.2.10/24", "gateway": "192.0.2.1",
+    })
+    static_apply = _apply(client)
+    static = _snapshot(connect)
+    static_rows = [row for row in _addresses(static, interface) if row.get("local") == "192.0.2.10"]
+    if len(static_rows) != 1 or static_rows[0].get("dynamic") is True:
+        raise OverlapPrerequisiteError("same-address phase did not establish native static ownership")
+    retained = _lease(server_action("status"), topology)
+    if before["expires_at"] != retained["expires_at"] or retained["expires_at"] <= time.time():
+        raise OverlapPrerequisiteError("the original DHCP lease was not retained through static Apply")
+    client.json_request("PATCH", path, json_body={"ipv4_method": "dhcp", "ip_cidr": None, "gateway": None})
+    # Record the actual still-unexpired server lease immediately before activation.
+    activation_lease = _lease(server_action("status"), topology)
+    if activation_lease["expires_at"] != retained["expires_at"]:
+        raise OverlapPrerequisiteError("retained DHCP lease changed before activation")
+    dhcp_apply = _apply(client)
+    acquired = _same_address_native(connect, topology)
+    desired = client.json_request("GET", path)
+    if desired.get("ipv4_method") != "dhcp" or desired.get("ip_cidr"):
+        raise OverlapPrerequisiteError("same-address activation did not retain desired DHCP")
+    return {"original_lease": before, "lease_before_activation": activation_lease,
+            "static_apply": static_apply, "static_native": static,
+            "dhcp_apply": dhcp_apply, "acquired_native": acquired,
+            "acquired_lease": _lease(server_action("status"), topology)}
+
+
 def run_scenario(
     *, client: FixtureHttpClient, connect_appliance: Callable[[], paramiko.SSHClient],
     topology: AdmittedTopology, server_action: Callable[[str], dict[str, Any]],
@@ -427,8 +509,9 @@ def _run_authenticated(
         for row in [client.json_request("GET", f"/api/v1/interfaces/physical/{name}")]
     }
     evidence: dict[str, Any] = {"schema": 1, "setup": setup, "baseline": clean,
-                                "covered": ["native-dhcp", "native-slaac", "expiry", "source-domains"],
-                                "not_covered": ["retained-static-same-address-lease", "dad-conflict"]}
+                                "covered": ["native-dhcp", "native-slaac", "expiry", "source-domains",
+                                            "retained-static-same-address-lease"],
+                                "not_covered": ["dad-conflict"]}
     if baseline[management]["ipv6_enabled"] or baseline[lab]["role"] != "unused":
         raise OverlapPrerequisiteError("scenario requires original IPv4 management and unused lab baseline")
     restore_allowed = True
@@ -465,6 +548,7 @@ def _run_authenticated(
         evidence["dhcp_expired"] = _expiry(connect_appliance, server_action, kind="dhcp", addresses=["192.0.2.10"],
                                             interface=management, wait_seconds=155)
         evidence["dhcp_reacquired"] = _ready(connect_appliance, topology)
+        evidence["same_address_lease"] = _same_address_lease(client, connect_appliance, topology, server_action)
     except ApplyOutcomeUnknown:
         restore_allowed = False
         raise
