@@ -37,7 +37,16 @@ $module = Import-Module $modulePath -Force -PassThru
 $runnerText = Get-Content -LiteralPath $runner -Raw
 $cleanupStart = $runnerText.IndexOf('# No further provider operations are safe while a diagnostic writer may survive.')
 if ($cleanupStart -lt 0) { throw 'Lifecycle cleanup gate is missing.' }
-$cleanupSource = $runnerText.Substring($cleanupStart)
+# Select the containing try body so its closing brace and finally block cannot
+# turn the extracted cleanup statements into an invalid standalone script.
+$cleanupBody = @($ast.FindAll({
+    param($node)
+    $node -is [Management.Automation.Language.TryStatementAst] -and
+    $node.Body.Extent.StartOffset -lt $cleanupStart -and $node.Body.Extent.EndOffset -gt $cleanupStart
+}, $true) | Sort-Object { $_.Body.Extent.EndOffset - $_.Body.Extent.StartOffset })[0].Body
+if ($null -eq $cleanupBody) { throw 'Lifecycle cleanup containing try body is missing.' }
+$cleanupSource = $runnerText.Substring($cleanupStart, $cleanupBody.Extent.EndOffset - 1 - $cleanupStart)
+$null = [scriptblock]::Create($cleanupSource)
 try {
     & $module {
         [CmdletBinding(SupportsShouldProcess = $true)]
@@ -148,11 +157,21 @@ try {
         $seedArtifactsRetired = $false
         $vmRoot = $FixtureRoot
         $failure = $null
-        try { & ([scriptblock]::Create($CleanupSource)) }
+        $cleanupScript = [scriptblock]::Create($CleanupSource)
+        try { & $CleanupScript }
         catch { $failure = $_ }
-        if ($null -eq $failure -or $failure.Exception.Message -notlike '*cleanup is blocked*' -or $script:cleanupCalls -ne 0) {
-            throw 'Unproven diagnostic termination allowed final lifecycle provider cleanup.'
+        if ($script:cleanupCalls -ne 0) {
+            throw "Unproven diagnostic termination invoked $script:cleanupCalls provider cleanup calls."
         }
+        if ($null -eq $failure -or $failure.Exception.Message -notlike '*cleanup is blocked*') {
+            throw 'Lifecycle cleanup did not report its termination guard refusal.'
+        }
+        # The same extracted statements must reach both mocked providers when
+        # termination is proven, so an empty or incomplete extraction cannot pass.
+        $script:diagnosticTerminationUnproven = $false
+        $scenarioFailure = $null
+        & $cleanupScript
+        if ($script:cleanupCalls -ne 2) { throw 'Proven termination did not reach both cleanup providers.' }
         Remove-Item -LiteralPath $raw
     } $OutputDirectory $cleanupSource
 }
