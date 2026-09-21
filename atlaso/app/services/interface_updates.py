@@ -872,6 +872,11 @@ def refresh_interface_dependent_addresses(
                     or _address_in_network(server_address, resulting_scope_network)
                 ):
                     continue
+                if source_scope_network is None or not _address_in_network(
+                    server_address,
+                    source_scope_network,
+                ):
+                    continue
                 rebased_server = _rebase_address_in_network(
                     server_address,
                     source_scope_network,

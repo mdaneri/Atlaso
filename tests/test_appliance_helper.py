@@ -2117,11 +2117,21 @@ def test_management_handoff_persists_flagged_access_resolver(
             "external",
             ["192.0.2.53"],
             [
+                ["networkctl", "reload"],
+                ["networkctl", "reconfigure", "eth0"],
                 ["resolvectl", "dns", "eth0", "192.0.2.53"],
                 ["resolvectl", "domain", "eth0", ""],
             ],
         ),
-        ("dhcp", [], [["resolvectl", "revert", "eth0"]]),
+        (
+            "dhcp",
+            [],
+            [
+                ["networkctl", "reload"],
+                ["networkctl", "reconfigure", "eth0"],
+                ["resolvectl", "revert", "eth0"],
+            ],
+        ),
     ],
 )
 def test_management_handoff_updates_same_interface_resolver_holdover(
@@ -2179,6 +2189,48 @@ def test_management_handoff_updates_same_interface_resolver_holdover(
         assert not any(line.startswith("DNS=") for line in holdover_text.splitlines())
     assert "DNS=198.51.100.53" in candidate_path.read_text(encoding="utf-8")
     assert commands == expected_commands
+
+
+def test_management_handoff_stops_when_networkd_reconfigure_fails(monkeypatch, tmp_path):
+    """Do not apply transient resolver state after networkd rejects persistence.
+
+    Args:
+        monkeypatch: Pytest fixture used to isolate networkd and runtime commands.
+        tmp_path: Temporary directory containing the generated networkd file.
+    """
+    helper = load_helper_module()
+    networkd_dir = tmp_path / "networkd"
+    networkd_dir.mkdir()
+    network_path = networkd_dir / "00-atlaso-mgmt.network"
+    network_path.write_text("[Match]\nName=eth0\n\n[Network]\nDHCP=yes\n", encoding="utf-8")
+    commands: list[list[str]] = []
+    monkeypatch.setattr(helper, "NETWORKD_CONFIG_DIR", networkd_dir)
+    monkeypatch.setattr(helper, "NETWORKD_MGMT_CONFIG_PATH", network_path)
+
+    def fake_run(command):
+        commands.append(command)
+        return subprocess.CompletedProcess(
+            command,
+            1 if command == ["networkctl", "reconfigure", "eth0"] else 0,
+            "",
+            "reconfigure failed" if command[0] == "networkctl" else "",
+        )
+
+    monkeypatch.setattr(helper, "_run", fake_run)
+
+    result = helper._configure_management_handoff_resolver(
+        {
+            "management_interface": "eth0",
+            "resolver_mode": "local_dns",
+            "resolver_servers": ["127.0.0.1"],
+        }
+    )
+
+    assert result.returncode == 1
+    assert commands == [
+        ["networkctl", "reload"],
+        ["networkctl", "reconfigure", "eth0"],
+    ]
 
 
 def test_management_handoff_rejects_unpersisted_resolver(monkeypatch):

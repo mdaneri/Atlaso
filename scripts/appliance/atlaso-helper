@@ -2774,7 +2774,7 @@ def _write_management_resolver(
     interface_name: str,
     servers: list[str],
     domains: list[str],
-) -> None:
+) -> Path | None:
     """Write management resolver.
 
     Args:
@@ -2786,6 +2786,36 @@ def _write_management_resolver(
     if network_path is not None:
         text = network_path.read_text(encoding="utf-8")
         network_path.write_text(_management_resolver_candidate(text, servers, domains), encoding="utf-8")
+    return network_path
+
+
+def _reload_management_resolver(
+    interface_name: str,
+    network_path: Path | None,
+) -> subprocess.CompletedProcess[str] | None:
+    """Apply a persisted management resolver change to the active networkd link.
+
+    Args:
+        interface_name: Host network-interface name affected by the operation.
+        network_path: Generated networkd file updated for the interface, when present.
+
+    Returns:
+        The first failed networkctl result, the final successful result, or ``None``
+        when no generated networkd file was updated.
+    """
+    if network_path is None:
+        return None
+    commands = [
+        ["networkctl", "reload"],
+        ["networkctl", "reconfigure", interface_name],
+    ]
+    for command in commands:
+        result = _run(command)
+        print(result.stdout, end="")
+        print(result.stderr, end="", file=sys.stderr)
+        if result.returncode != 0:
+            return result
+    return result
 
 
 
@@ -2797,7 +2827,10 @@ def _configure_resolver(interface_name: str, servers: list[str], domains: list[s
         servers: Servers consumed by configure resolver.
         domains: Domains consumed by configure resolver.
     """
-    _write_management_resolver(interface_name, servers, domains)
+    network_path = _write_management_resolver(interface_name, servers, domains)
+    reload_result = _reload_management_resolver(interface_name, network_path)
+    if reload_result is not None and reload_result.returncode != 0:
+        return reload_result
     commands = [
         ["resolvectl", "dns", interface_name, *servers],
         ["resolvectl", "domain", interface_name, *(domains or [""])],
@@ -2817,7 +2850,10 @@ def _configure_dhcp_resolver(interface_name: str) -> subprocess.CompletedProcess
     Args:
         interface_name: Host network-interface name affected by the operation.
     """
-    _write_management_resolver(interface_name, [], [])
+    network_path = _write_management_resolver(interface_name, [], [])
+    reload_result = _reload_management_resolver(interface_name, network_path)
+    if reload_result is not None and reload_result.returncode != 0:
+        return reload_result
     result = _run(["resolvectl", "revert", interface_name])
     print(result.stdout, end="")
     print(result.stderr, end="", file=sys.stderr)

@@ -486,6 +486,53 @@ def test_mutation_rebases_one_unambiguous_reservation_and_owned_dns_record(clien
         assert operator_record.address == "192.168.50.10"
 
 
+def test_mutation_preserves_routed_dhcp_service_endpoints(client):
+    """Keep routed DNS and NTP endpoints when an interface subnet changes.
+
+    Args:
+        client: Application fixture that initializes an isolated seeded database.
+    """
+    with SessionLocal() as db:
+        db.query(DhcpScope).delete()
+        interface = _physical_interface(db)
+        interface.role = "access"
+        interface.mode = "access"
+        interface.admin_state = "up"
+        interface.ip_cidr = "192.168.50.1/24"
+        db.add(
+            DhcpScope(
+                name="routed-service-scope",
+                address_family="ipv4",
+                interface_name=interface.name,
+                site_address="192.168.50.1",
+                prefix_length=24,
+                range_expression="192.168.50.100-192.168.50.120",
+                dns_server="192.0.2.53",
+                ntp_server="198.51.100.123",
+                enabled=True,
+            )
+        )
+        db.commit()
+
+        result = mutate_physical_interface_desired_state(
+            db,
+            interface,
+            PhysicalInterfaceMutation(ip_cidr="192.168.60.1/24"),
+            audit=_mutation_audit("test_routed_dhcp_services"),
+        )
+
+        assert "DHCP" in result.changed_dependent_units
+
+    with SessionLocal() as db:
+        scope = db.execute(
+            select(DhcpScope).where(DhcpScope.name == "routed-service-scope")
+        ).scalar_one()
+        assert scope.site_address == "192.168.60.1"
+        assert scope.range_expression == "192.168.60.100-192.168.60.120"
+        assert scope.dns_server == "192.0.2.53"
+        assert scope.ntp_server == "198.51.100.123"
+
+
 def test_mutation_includes_child_vlan_dependencies_and_legacy_dhcp_is_inactive(client):
     """Verify parent loss evaluates child VLANs while real scopes supersede legacy binding.
 
