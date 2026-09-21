@@ -2226,6 +2226,7 @@ else {
     $processTreeTerminationUnproven = $false
     $plaintextCleanupUnproven = $false
     $reservationReleaseBlocked = $false
+    $isolatedBuildSucceeded = $false
     try {
         Assert-AtlasoPhotonCredentialRootIdentity `
             -BuildStateRoot $resolvedBuildStateRoot `
@@ -2431,7 +2432,7 @@ else {
                 -Action 'The isolated VMware Photon image build' `
                 -ProcessJobName $processJobName `
                 -ProcessOwnershipPublisher $processOwnershipPublisher
-            $processOwnershipPayload = $null
+            $isolatedBuildSucceeded = $true
         }
         catch {
             $isolatedBuildFailure = $_
@@ -2544,6 +2545,17 @@ else {
                         -StateIdentity ([string]$builderHandoffRootIdentity.StateIdentity) `
                         -PendingIdentity ([string]$builderHandoffRootIdentity.PendingIdentity)
                     if (Test-Path -LiteralPath $childBuilderAddressReservationPath -PathType Leaf) {
+                        # A zero-exit runner also proves the entire job empty. Retain
+                        # that proof before any release check can fail, independently
+                        # of the credential marker retired below.
+                        if ($isolatedBuildSucceeded) {
+                            Save-AtlasoBuilderTerminationProof `
+                                -HandoffPath $childBuilderAddressReservationPath `
+                                -ExpectedOwnerPid ([int]$processOwnershipPayload.ChildProcessId) `
+                                -ExpectedOwnerStartTimeUtcTicks ([DateTime]::FromFileTimeUtc(
+                                    [long]$processOwnershipPayload.ChildProcessStartFileTimeUtc
+                                ).Ticks)
+                        }
                         Assert-AtlasoBuilderHandoffRootIdentity `
                             -BuildStateRoot $resolvedBuildStateRoot `
                             -HandoffStateRoot $builderReservationHandoffStateRoot `
@@ -2586,6 +2598,9 @@ else {
                     -MarkerDirectoryIdentity $cleanupMarkerDirectoryIdentity
             }
             if ($null -ne $reservationReleaseError) {
+                if ($isolatedBuildSucceeded) {
+                    throw "The VMware Photon image build succeeded and its artifacts were preserved, but builder-address cleanup failed: $($reservationReleaseError.Exception.Message) The reservation and exact recovery handoff were retained: $childBuilderAddressReservationPath"
+                }
                 throw "The VMware builder address reservation was retained: $($reservationReleaseError.Exception.Message)"
             }
         }

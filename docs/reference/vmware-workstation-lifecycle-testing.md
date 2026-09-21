@@ -1005,7 +1005,10 @@ compatible upstream virtual-network configuration and recorded topology evidence
 ## Recover a retained builder address
 
 A failed image build can finish process cleanup while Workstation still holds its stopped VM tab open. The image
-wrapper now saves its exact allocation and process-termination proof before attempting VMware deletion. After
+wrapper saves its exact allocation and process-termination proof before attempting VMware deletion. Successful
+bounded image builds also save that proof before attempting address release. If release fails, the wrapper reports
+**image build succeeded, builder-address cleanup failed**, returns a failure for the incomplete cleanup, and retains
+the completed VM artifacts and exact recovery handoff. After
 closing that stopped tab and completing checked VM cleanup, use the standalone reservation command; a new build
 and a Windows restart are unnecessary when the saved proof is valid.
 
@@ -1030,6 +1033,14 @@ and recorded/current boot identities. Exit code `0` means verification or releas
 completed; `2` means recovery is blocked. A live owner/controller, a running VM, observed address use, changed
 allocation, or unreadable evidence keeps the reservation. `already-released` means ledger removal previously
 completed and cleanup can finish handoff retirement. An interrupted cleanup can be retried with the same handoff.
+
+Recovery distinguishes a running VM reporting the address, non-stale Windows neighbor evidence, stale-only cache
+evidence, and unavailable provider observations. A `Stale` entry proves neither current use nor ownership by the
+stopped builder. Stale-only evidence therefore retains the reservation with an explicit uncertainty message; it is
+not reported as proven live foreign use. Allocation still excludes cached addresses. Do not flush the neighbor cache
+or delete reservation JSON to force release. Retry the read-only command after the address observations clear and
+the original controller has exited; valid retained termination proof then allows same-boot recovery. A successful
+release requires fresh provider and address checks, not just the saved receipt.
 
 Older handoffs have no retained process-termination receipt. The tool reports that limitation instead of creating
 proof from VM-file absence or a dead PID. Such records still require independently available termination evidence
