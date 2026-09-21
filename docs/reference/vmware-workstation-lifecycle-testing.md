@@ -371,6 +371,30 @@ Unless overridden, the build wrapper chooses `.30` in the selected management su
 leaves final appliance management on DHCP and
 discovers the runtime address through VMware Tools.
 
+## Isolated routing-overlap fixture contracts
+
+The preparatory `scripts/interop/routing_overlap.py` and `routing_overlap_transport.py` modules provide tested
+contracts for a future canonical DHCP/SLAAC overlap scenario. They are not wired into a runnable lifecycle mode;
+`-RoutingWanOnly` still exercises its existing static routing scenario. Their unit tests are not native acceptance
+for automatic IPv6 acquisition, lease expiry, rollback, or reboot.
+
+The topology admission contract requires independent task/PR/source identity, original creation-receipt digests for
+two distinct task-owned LAN segments, complete enabled VMX adapter observations, and exact guest MAC/interface
+matches. The appliance has only private management and lab links. Both client guests retain a separate existing
+control VMnet; test prefixes must not overlap its observed prefixes. Shared segment registrations without creation
+receipts, extra adapters, ambiguous interfaces, and mismatched receipt owners are refused before configuration.
+
+Server configuration is bound only to the admitted private management interface. DHCP is restricted to the appliance
+MAC and reservation; RA advertises a short-lived private IPv6 prefix. The renderer starts no service, changes no
+Windows networking, and enables no guest forwarding or NAT. The transport uses in-process, pinned SSH channels to
+only the private appliance's SSH and HTTPS ports, opens no host listener, and verifies HTTPS with the explicit
+appliance CA and private target identity. It does not follow redirects to another origin or load ambient SSH keys.
+
+Canonical integration still needs provider readback and immutable descriptor propagation through both lifecycle
+wrappers, opt-in client server provisioning, bootstrap/connectivity admission, collection of native acquisition and
+expiry evidence, restoration, and existing ownership-aware resource teardown. Until those steps are implemented and
+validated, do not launch ad hoc DHCP/RA servers on a shared VMnet or report the overlap lifecycle gate as passed.
+
 ## Appliance Update status and ordering acceptance
 
 For the 0.9.220 to 0.9.223 updater transition, use a brand-new normal test VM with a unique name and destination. Run

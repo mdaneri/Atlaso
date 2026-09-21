@@ -1,0 +1,182 @@
+"""Reject unsafe routing-overlap fixture topology before any guest mutation."""
+
+import copy
+import hashlib
+import json
+
+import pytest
+
+from scripts.interop.routing_overlap import (
+    FixtureOwner,
+    OverlapPrerequisiteError,
+    admit_topology,
+    server_configuration,
+    verify_expired_sources,
+    verify_source_rules,
+)
+
+
+@pytest.fixture
+def topology_inputs():
+    """Supply independent synthetic receipts, provider adapters, and guest links."""
+    owner = FixtureOwner("task", "mdaneri/Atlaso", "a" * 40, 868, "E:/owned/lab")
+    segments, receipts = {}, {}
+    for purpose, tail in (("management", "01"), ("lab", "02")):
+        provider = f"52 00 00 00 00 00 00 00-00 00 00 00 00 00 00 {tail}"
+        name = f"Atlaso-PR-868-routing-overlap-{purpose}"
+        receipt = {"schema": 1, "creation_id": "b" * 32, "name": name, "pvn_id": provider,
+                   **owner.__dict__}
+        raw = json.dumps(receipt).encode()
+        segments[purpose] = {"id": provider, "name": name, "receipt_sha256": hashlib.sha256(raw).hexdigest()}
+        receipts[purpose] = raw
+    mapping = [("appliance", 0, "management"), ("appliance", 1, "lab"),
+               ("client-a", 0, "control"), ("client-a", 1, "management"),
+               ("client-b", 0, "control"), ("client-b", 1, "lab")]
+    nics, guests = [], []
+    for index, (role, adapter, network) in enumerate(mapping):
+        mac = f"00:50:56:00:00:{index + 1:02x}"
+        nics.append({"role": role, "adapter": adapter, "mac": mac,
+                     "network_type": "custom" if network == "control" else "pvn",
+                     "network_id": "VMnet8" if network == "control" else segments[network]["id"]})
+        guests.append({"role": role, "interface": f"eth{adapter}", "mac": mac})
+    return {"owner": owner, "segments": segments, "receipt_bytes": receipts, "provider_nics": nics,
+            "guest_links": guests, "control_network": "VMnet8", "control_prefixes": ["192.168.167.0/24"]}
+
+
+def test_private_server_configuration(topology_inputs):
+    """Keep DHCP/RA on the independently matched private management NIC.
+
+    Args:
+        topology_inputs: Synthetic ownership and topology evidence.
+    """
+    topology = admit_topology(**topology_inputs)
+    config = server_configuration(topology)
+    assert config["private_interface"] == "eth1"
+    assert config["control_interface"] == "eth0"
+    assert "\ninterface=eth1\n" in config["dnsmasq"]
+    assert "\nexcept-interface=eth0\n" in config["dnsmasq"]
+    assert "00:50:56:00:00:01,192.0.2.10,2m" in config["dnsmasq"]
+    assert "interface eth1" in config["radvd"] and "eth0" not in config["radvd"]
+    assert "AdvValidLifetime 60;" in config["radvd"]
+    assert "port=0" in config["dnsmasq"]
+
+
+@pytest.mark.parametrize("fault", ["receipt-hash", "owner", "reused", "shared-id", "shared-network", "extra-nic",
+                                   "missing-nic", "mac-mismatch", "duplicate-mac", "ambiguous-guest", "interface",
+                                   "ipv4-control-overlap", "ipv6-control-overlap", "missing-control-prefix"])
+def test_topology_refuses_unproven_isolation(topology_inputs, fault):
+    """Fail admission without making provider or guest calls.
+
+    Args:
+        topology_inputs: Synthetic topology evidence.
+        fault: One missing or conflicting ownership/isolation fact.
+    """
+    inputs = copy.deepcopy(topology_inputs)
+    if fault == "receipt-hash":
+        inputs["receipt_bytes"]["management"] += b" "
+    elif fault == "owner":
+        inputs["owner"] = FixtureOwner("other", "mdaneri/Atlaso", "a" * 40, 868, "E:/owned/lab")
+    elif fault == "reused":
+        inputs["segments"]["management"]["receipt_sha256"] = ""
+    elif fault == "shared-id":
+        inputs["segments"]["lab"] = inputs["segments"]["management"]
+        inputs["receipt_bytes"]["lab"] = inputs["receipt_bytes"]["management"]
+    elif fault == "shared-network":
+        inputs["provider_nics"][0].update(network_type="custom", network_id="VMnet8")
+    elif fault == "extra-nic":
+        inputs["provider_nics"].append(copy.deepcopy(inputs["provider_nics"][0]))
+    elif fault == "missing-nic":
+        inputs["provider_nics"].pop()
+    elif fault == "mac-mismatch":
+        inputs["guest_links"][0]["mac"] = "00:50:56:00:01:ff"
+    elif fault == "duplicate-mac":
+        inputs["provider_nics"][1]["mac"] = inputs["provider_nics"][0]["mac"]
+    elif fault == "ambiguous-guest":
+        inputs["guest_links"].append(copy.deepcopy(inputs["guest_links"][0]))
+    elif fault == "interface":
+        inputs["guest_links"][0]["interface"] = "eth0;reboot"
+    elif fault == "ipv4-control-overlap":
+        inputs["control_prefixes"] = ["192.0.2.0/24"]
+    elif fault == "ipv6-control-overlap":
+        inputs["control_prefixes"] += ["fd74:1::/64"]
+    else:
+        inputs["control_prefixes"] = []
+    with pytest.raises(OverlapPrerequisiteError):
+        admit_topology(**inputs)
+
+
+def source_evidence():
+    """Return dual-family exact source isolation observations."""
+    addresses = {"192.0.2.10": 100, "192.0.2.20": 200, "fd74:1::10": 100, "fd74:1::20": 200}
+    rules = {4: [], 6: []}
+    for source, table in addresses.items():
+        family = 6 if ":" in source else 4
+        rules[family].extend([{"src": source, "table": table, "priority": 1000},
+                              {"src": source, "action": 7, "priority": 1001}])
+    return addresses, rules
+
+
+def test_dual_family_exact_sources():
+    """Accept Photon numeric unreachable actions for both separate domains."""
+    addresses, rules = source_evidence()
+    assert verify_source_rules(addresses, rules) == addresses
+
+
+@pytest.mark.parametrize("fault", ["broad", "wrong-table", "missing-fallback", "wrong-order", "ingress-only", "missing-family"])
+def test_source_proof_rejects_incomplete_isolation(fault):
+    """Reject a route proof that could still select the other domain.
+
+    Args:
+        fault: Invalid rule evidence.
+    """
+    addresses, rules = source_evidence()
+    if fault == "broad":
+        rules[4][0]["src"] = "192.0.2.0/24"
+    elif fault == "wrong-table":
+        rules[4][0]["table"] = 200
+    elif fault == "missing-fallback":
+        rules[4].pop(1)
+    elif fault == "wrong-order":
+        rules[4][1]["priority"] = 999
+    elif fault == "ingress-only":
+        rules[4][0]["iif"] = "eth0"
+    else:
+        del rules[6]
+    with pytest.raises(OverlapPrerequisiteError):
+        verify_source_rules(addresses, rules)
+
+
+def test_expiry_requires_kernel_address_and_rule_removal():
+    """Retained lease addresses or stale routing rules cannot prove expiry."""
+    verify_expired_sources(["192.0.2.10", "fd74:1::10"], ["192.0.2.20"], {4: [], 6: []})
+    with pytest.raises(OverlapPrerequisiteError, match="remains active"):
+        verify_expired_sources(["192.0.2.10"], ["192.0.2.10"], {4: [], 6: []})
+    with pytest.raises(OverlapPrerequisiteError, match="rule remains"):
+        verify_expired_sources(["fd74:1::10"], [], {4: [], 6: [{"src": "fd74:1::10/128"}]})
+
+
+@pytest.mark.parametrize("fault", [None, "wrong-table", "wrong-interface", "wrong-source", "missing-source", "multiple"])
+def test_native_lookup_proves_selected_domain(fault):
+    """Rule presence alone cannot substitute for actual kernel route selection.
+
+    Args:
+        fault: Conflicting or incomplete native route lookup.
+    """
+    from scripts.interop.routing_overlap import verify_route_selection
+
+    rows = [{"table": 200, "dev": "eth1", "from": "192.0.2.20", "dst": "192.0.2.1"}]
+    if fault == "wrong-table":
+        rows[0]["table"] = 100
+    elif fault == "wrong-interface":
+        rows[0]["dev"] = "eth0"
+    elif fault == "wrong-source":
+        rows[0]["from"] = "192.0.2.10"
+    elif fault == "missing-source":
+        del rows[0]["from"]
+    elif fault == "multiple":
+        rows.append(dict(rows[0]))
+    if fault:
+        with pytest.raises(OverlapPrerequisiteError):
+            verify_route_selection("192.0.2.20", 200, "eth1", rows)
+    else:
+        verify_route_selection("192.0.2.20", 200, "eth1", rows)
