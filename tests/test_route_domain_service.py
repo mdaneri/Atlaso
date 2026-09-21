@@ -9,7 +9,14 @@ from tests.test_appliance_helper import load_helper_module
 
 @pytest.mark.parametrize("enabled,active", [(False, False), (True, True), (False, True)])
 def test_watcher_rollback_restores_original_runtime_and_boot_policy(monkeypatch, tmp_path, enabled, active):
-    """Restore a previously disabled service without implicitly enabling it."""
+    """Restore a previously disabled service without implicitly enabling it.
+
+    Args:
+        monkeypatch: Pytest fixture replacing native operations with controlled observations.
+        tmp_path: Isolated temporary directory for test-owned state.
+        enabled: Original systemd boot-enable state to restore.
+        active: Original systemd runtime state to restore.
+    """
     helper = load_helper_module()
     unit = tmp_path / "atlaso-route-domains.service"
     unit.write_text("candidate")
@@ -30,7 +37,12 @@ def test_watcher_rollback_restores_original_runtime_and_boot_policy(monkeypatch,
 
 
 def test_failed_watcher_stop_leaves_handoff_network_files_untouched(monkeypatch, tmp_path):
-    """A quiesce failure must retain every artifact needed for retry."""
+    """A quiesce failure must retain every artifact needed for retry.
+
+    Args:
+        monkeypatch: Pytest fixture replacing native operations with controlled observations.
+        tmp_path: Isolated temporary directory for test-owned state.
+    """
     helper = load_helper_module()
     unit = tmp_path / "atlaso-route-domains.service"
     unit.write_text("candidate unit")
@@ -49,7 +61,12 @@ def test_failed_watcher_stop_leaves_handoff_network_files_untouched(monkeypatch,
 
 
 def test_first_apply_rollback_removes_boot_link_before_unit_removal(monkeypatch, tmp_path):
-    """An absent prior service must not leave an enabled dangling unit."""
+    """An absent prior service must not leave an enabled dangling unit.
+
+    Args:
+        monkeypatch: Pytest fixture replacing native operations with controlled observations.
+        tmp_path: Isolated temporary directory for test-owned state.
+    """
     helper = load_helper_module()
     unit = tmp_path / "atlaso-route-domains.service"
     unit.write_text("candidate")
@@ -68,7 +85,12 @@ def test_first_apply_rollback_removes_boot_link_before_unit_removal(monkeypatch,
 
 
 def test_factory_reset_quiesces_old_domain_before_flushing_routes(monkeypatch, tmp_path):
-    """A watcher cannot repopulate pre-reset rules during factory activation."""
+    """A watcher cannot repopulate pre-reset rules during factory activation.
+
+    Args:
+        monkeypatch: Pytest fixture replacing native operations with controlled observations.
+        tmp_path: Isolated temporary directory for test-owned state.
+    """
     helper = load_helper_module()
     unit = tmp_path / "atlaso-route-domains.service"
     unit.write_text("unit")

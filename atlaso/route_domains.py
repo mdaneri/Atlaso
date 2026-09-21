@@ -48,7 +48,12 @@ class ReconcileError(RuntimeError):
 
 
 def linux_attribute(owner: Any, name: str) -> Any:
-    """Require Linux primitives while allowing pure planner tests on Windows."""
+    """Require Linux primitives while allowing pure planner tests on Windows.
+
+    Args:
+        owner: Module or object exposing the required Linux primitive.
+        name: Exact native attribute or interface name.
+    """
     try:
         return getattr(owner, name)
     except AttributeError as exc:
@@ -100,7 +105,11 @@ class Rule:
 
 
 def usable_address(value: Any) -> str:
-    """Validate a unicast host address, including private and deprecated IPs."""
+    """Validate a unicast host address, including private and deprecated IPs.
+
+    Args:
+        value: Untrusted value being validated.
+    """
     if not isinstance(value, str) or "%" in value:
         raise ReconcileError("invalid source address")
     try:
@@ -113,7 +122,11 @@ def usable_address(value: Any) -> str:
 
 
 def parse_interface(row: Any) -> Interface:
-    """Require a safe exact interface name, unicast MAC, and known table."""
+    """Require a safe exact interface name, unicast MAC, and known table.
+
+    Args:
+        row: Interface ownership record.
+    """
     if not isinstance(row, dict) or set(row) != {"name", "mac", "table"}:
         raise ReconcileError("invalid interface intent")
     name, mac, table = row["name"], row["mac"], row["table"]
@@ -130,7 +143,11 @@ def parse_interface(row: Any) -> Interface:
 
 
 def parse_intent(value: Any) -> Intent:
-    """Validate schema-1 applied intent and optional handoff ownership holds."""
+    """Validate schema-1 applied intent and optional handoff ownership holds.
+
+    Args:
+        value: Untrusted value being validated.
+    """
     if not isinstance(value, dict) or set(value) - {"schema", "interfaces", "held_addresses"}:
         raise ReconcileError("invalid routing-domain intent")
     if type(value.get("schema")) is not int or value["schema"] != 1:
@@ -172,7 +189,12 @@ def read_intent() -> Intent:
 
 
 def source_tables(intent: Intent, inventory: Any) -> tuple[dict[str, int | None], bool]:
-    """Resolve assigned sources; ambiguous cross-domain addresses get guards only."""
+    """Resolve assigned sources; ambiguous cross-domain addresses get guards only.
+
+    Args:
+        intent: Validated applied routing ownership and handoff holds.
+        inventory: Native link and assigned-address inventory.
+    """
     if not isinstance(inventory, list) or len(inventory) > 4096:
         raise ReconcileError("invalid native address inventory")
     links: dict[str, dict[str, Any]] = {}
@@ -222,7 +244,12 @@ def source_tables(intent: Intent, inventory: Any) -> tuple[dict[str, int | None]
 
 
 def owned_rules(rows: Any, family: int) -> set[Rule]:
-    """Reject occupied ranges or tagged rules outside the canonical owned form."""
+    """Reject occupied ranges or tagged rules outside the canonical owned form.
+
+    Args:
+        rows: Native policy rule records.
+        family: IP version, either 4 or 6.
+    """
     if not isinstance(rows, list) or len(rows) > 16384:
         raise ReconcileError("invalid native policy rules")
     rules: set[Rule] = set()
@@ -258,7 +285,12 @@ def owned_rules(rows: Any, family: int) -> set[Rule]:
 
 
 def plan_rules(sources: dict[str, int | None], existing: set[Rule]) -> set[Rule]:
-    """Allocate stable paired priorities without reusing stale occupied slots."""
+    """Allocate stable paired priorities without reusing stale occupied slots.
+
+    Args:
+        sources: Exact assigned source addresses mapped to their owning table or quarantine.
+        existing: Previously observed owned policy rules.
+    """
     slots: dict[tuple[int, str], int] = {}
     occupied: dict[tuple[int, int], str] = {}
     for rule in existing:
@@ -287,7 +319,12 @@ def plan_rules(sources: dict[str, int | None], existing: set[Rule]) -> set[Rule]
 
 
 def rule_command(action: str, rule: Rule) -> list[str]:
-    """Build an exact tagged argv without shell interpolation or broad deletion."""
+    """Build an exact tagged argv without shell interpolation or broad deletion.
+
+    Args:
+        action: Native policy action under test or requested rule operation.
+        rule: Exact source lookup or unreachable guard.
+    """
     prefix = 32 if rule.family == 4 else 128
     command = [IP_COMMAND, f"-{rule.family}", "rule", action, "priority", str(rule.priority),
                "from", f"{rule.source}/{prefix}", "iif", "lo", "protocol", str(PROTOCOL)]
@@ -295,7 +332,11 @@ def rule_command(action: str, rule: Rule) -> list[str]:
 
 
 def run_ip(arguments: list[str]) -> str:
-    """Execute fixed ip argv with bounded runtime and captured-output memory."""
+    """Execute fixed ip argv with bounded runtime and captured-output memory.
+
+    Args:
+        arguments: Native command argument vector.
+    """
     try:
         with subprocess.Popen(arguments, stdout=subprocess.PIPE, stderr=subprocess.STDOUT) as process:
             if process.stdout is None:
@@ -331,7 +372,11 @@ def run_ip(arguments: list[str]) -> str:
 
 
 def read_native(arguments: list[str]) -> Any:
-    """Admit one bounded JSON response from numeric iproute2 output."""
+    """Admit one bounded JSON response from numeric iproute2 output.
+
+    Args:
+        arguments: Native command argument vector.
+    """
     try:
         # iproute2 omits protocol=kernel unless detailed output is requested.
         return json.loads(run_ip([IP_COMMAND, "-N", "-j", "-details", *arguments]))
@@ -340,9 +385,18 @@ def read_native(arguments: list[str]) -> Any:
 
 
 def apply_rules(desired: set[Rule], existing: set[Rule]) -> None:
-    """Install guards first, preserve working rules, then retire exact stale state."""
+    """Install guards first, preserve working rules, then retire exact stale state.
+
+    Args:
+        desired: Target set of owned source rules.
+        existing: Previously observed owned policy rules.
+    """
     def sort_key(rule: Rule) -> tuple[int, int, str, int]:
-        """Order independent commands deterministically for bounded recovery."""
+        """Order independent commands deterministically for bounded recovery.
+
+        Args:
+            rule: Exact source lookup or unreachable guard.
+        """
         return rule.family, rule.priority, rule.source, rule.table or 0
     # Ensure even partial prior executions have guards before changing lookups.
     guards = {Rule(rule.slot + 1, rule.source, None) for rule in existing | desired}
@@ -407,7 +461,12 @@ def reconcile() -> None:
 
 
 def event_requires_rescan(data: bytes, truncated: bool = False) -> bool:
-    """Rescan after link/address events, malformed datagrams, or netlink loss."""
+    """Rescan after link/address events, malformed datagrams, or netlink loss.
+
+    Args:
+        data: Received netlink datagram bytes.
+        truncated: Whether the receive operation reported a truncated datagram.
+    """
     if truncated or not data:
         return True
     offset = 0

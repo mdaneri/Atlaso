@@ -9,7 +9,12 @@ from tests.test_appliance_helper import load_helper_module
 @pytest.mark.parametrize("helper_side", [False, True])
 @pytest.mark.parametrize("management_first", [False, True])
 def test_connected_prefix_owner_is_scoped_to_routing_domain(helper_side, management_first):
-    """Keep both domain routes regardless of interface enumeration order."""
+    """Keep both domain routes regardless of interface enumeration order.
+
+    Args:
+        helper_side: Whether to exercise the privileged helper or application projection.
+        management_first: Whether management appears before the overlapping lab interface.
+    """
     targets = [
         {"name": "eth0", "routing_domain": "management", "ip_cidr": "192.0.2.10/24",
          "ipv6_cidr": "2001:db8:1::10/64"},
@@ -28,7 +33,12 @@ def test_connected_prefix_owner_is_scoped_to_routing_domain(helper_side, managem
 
 
 def test_networkd_connected_routes_have_one_owner_per_domain(monkeypatch, tmp_path):
-    """Networkd and WAN must not race duplicate same-domain connected routes."""
+    """Networkd and WAN must not race duplicate same-domain connected routes.
+
+    Args:
+        monkeypatch: Pytest fixture replacing native operations with controlled observations.
+        tmp_path: Isolated temporary directory for test-owned state.
+    """
     helper = load_helper_module()
     physical = [
         {"name": "eth0", "role": "management", "mode": "access", "admin_state": "up",

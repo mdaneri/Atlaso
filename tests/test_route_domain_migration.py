@@ -31,7 +31,11 @@ def native_rules(helper, monkeypatch, rows4, rows6=None):
     commands = []
 
     def observe(command):
-        """Return the corresponding numeric native inventory."""
+        """Return the corresponding numeric native inventory.
+
+        Args:
+            command: Native command being recorded or simulated.
+        """
         assert command in [["ip", "-N", "-j", "-details", f"-{family}", "rule", "show"]
                            for family in (4, 6)]
         rows = rows4 if "-4" in command else rows6 or []
@@ -44,7 +48,12 @@ def native_rules(helper, monkeypatch, rows4, rows6=None):
 
 
 def test_snapshot_and_restore_preserve_dual_stack_rules(helper, monkeypatch):
-    """Capture exact prefixes and ingress rules while ignoring unrelated priorities."""
+    """Capture exact prefixes and ingress rules while ignoring unrelated priorities.
+
+    Args:
+        helper: Loaded appliance helper with isolated test dependencies.
+        monkeypatch: Pytest fixture replacing native operations with controlled observations.
+    """
     original4 = [{"priority": 1000, "src": "192.0.2.0/24", "table": 100, "protocol": 3}]
     original6 = [{"priority": 2001, "src": "2001:db8::/64", "table": 200, "protocol": "boot"}]
     native_rules(helper, monkeypatch, [{"priority": 32766, "src": "all", "table": 254}, *original4], original6)
@@ -83,7 +92,12 @@ def test_foreign_window_occupants_prevent_any_mutation(helper, monkeypatch, over
 
 
 def test_duplicate_priorities_and_corrupt_journal_fail_before_mutation(helper, monkeypatch):
-    """Ambiguous ownership and journal paths cannot broaden rule mutation."""
+    """Ambiguous ownership and journal paths cannot broaden rule mutation.
+
+    Args:
+        helper: Loaded appliance helper with isolated test dependencies.
+        monkeypatch: Pytest fixture replacing native operations with controlled observations.
+    """
     row = {"priority": 1000, "src": "192.0.2.0/24", "table": 100}
     commands = native_rules(helper, monkeypatch, [row, row])
     with pytest.raises(ValueError, match="ambiguous"):
@@ -130,7 +144,13 @@ def test_migration_reads_only_applied_wan_and_network_domains(helper, monkeypatc
 
 
 def test_applied_domain_projection_excludes_held_management(helper, monkeypatch, tmp_path):
-    """An old management listener keeps its domain until the retirement phase."""
+    """An old management listener keeps its domain until the retirement phase.
+
+    Args:
+        helper: Loaded appliance helper with isolated test dependencies.
+        monkeypatch: Pytest fixture replacing native operations with controlled observations.
+        tmp_path: Isolated temporary directory for test-owned state.
+    """
     path = tmp_path / "route-domains.json"
     intent = {"schema": 1, "interfaces": [
         {"name": "eth0", "table": 200, "mac": "00:11:22:33:44:00"},
@@ -147,7 +167,13 @@ def test_applied_domain_projection_excludes_held_management(helper, monkeypatch,
 
 
 def test_invalid_applied_wan_fails_before_rule_mutation(helper, monkeypatch, tmp_path):
-    """A corrupt applied forwarding policy cannot silently authorize migration."""
+    """A corrupt applied forwarding policy cannot silently authorize migration.
+
+    Args:
+        helper: Loaded appliance helper with isolated test dependencies.
+        monkeypatch: Pytest fixture replacing native operations with controlled observations.
+        tmp_path: Isolated temporary directory for test-owned state.
+    """
     network = tmp_path / "network.conf"
     network.write_text(network_config_text(), encoding="utf-8")
     wan = tmp_path / "wan.conf"
@@ -160,7 +186,12 @@ def test_invalid_applied_wan_fails_before_rule_mutation(helper, monkeypatch, tmp
 
 
 def test_partial_failure_can_restore_original_journal(helper, monkeypatch):
-    """An interrupted mutation propagates failure and admits exact subsequent recovery."""
+    """An interrupted mutation propagates failure and admits exact subsequent recovery.
+
+    Args:
+        helper: Loaded appliance helper with isolated test dependencies.
+        monkeypatch: Pytest fixture replacing native operations with controlled observations.
+    """
     original = [{"priority": 1000, "src": "192.0.2.0/24", "table": 100}]
     native_rules(helper, monkeypatch, original)
     snapshot = helper._snapshot_route_domain_rules()
@@ -169,7 +200,11 @@ def test_partial_failure_can_restore_original_journal(helper, monkeypatch):
     commands = []
 
     def fail_second(command):
-        """Fail after deletion so the journal is necessary for recovery."""
+        """Fail after deletion so the journal is necessary for recovery.
+
+        Args:
+            command: Native command being recorded or simulated.
+        """
         commands.append(command)
         return subprocess.CompletedProcess(command, 1 if len(commands) == 2 else 0, "", "")
 
@@ -183,7 +218,12 @@ def test_partial_failure_can_restore_original_journal(helper, monkeypatch):
 
 
 def test_unchanged_snapshot_does_not_churn_rules(helper, monkeypatch):
-    """Repeated reconciliation preserves already matching rule state."""
+    """Repeated reconciliation preserves already matching rule state.
+
+    Args:
+        helper: Loaded appliance helper with isolated test dependencies.
+        monkeypatch: Pytest fixture replacing native operations with controlled observations.
+    """
     commands = native_rules(helper, monkeypatch, [{"priority": 1000, "src": "192.0.2.0/24", "table": 100}])
     snapshot = helper._snapshot_route_domain_rules()
     helper._restore_route_domain_rules(snapshot)
@@ -191,7 +231,12 @@ def test_unchanged_snapshot_does_not_churn_rules(helper, monkeypatch):
 
 
 def test_photon_numeric_strings_and_unspecified_protocol_round_trip(helper, monkeypatch):
-    """Preserve Photon 257's actual numeric-string table and protocol-zero records."""
+    """Preserve Photon 257's actual numeric-string table and protocol-zero records.
+
+    Args:
+        helper: Loaded appliance helper with isolated test dependencies.
+        monkeypatch: Pytest fixture replacing native operations with controlled observations.
+    """
     native_rules(helper, monkeypatch, [
         {"priority": 0, "src": "all", "table": "255", "protocol": "2"},
         {"priority": 1000, "src": "192.168.167.0", "srclen": 24, "table": "100", "protocol": "0"},
@@ -209,7 +254,13 @@ def test_photon_numeric_strings_and_unspecified_protocol_round_trip(helper, monk
 
 @pytest.mark.parametrize("protocol", [4, "4", "static"])
 def test_legacy_networkd_static_source_rule_is_preserved(helper, monkeypatch, protocol):
-    """Networkd v257 marks Atlaso's prior persisted prefix rules RTPROT_STATIC."""
+    """Networkd v257 marks Atlaso's prior persisted prefix rules RTPROT_STATIC.
+
+    Args:
+        helper: Loaded appliance helper with isolated test dependencies.
+        monkeypatch: Pytest fixture replacing native operations with controlled observations.
+        protocol: Native protocol identifier to preserve during migration.
+    """
     native_rules(helper, monkeypatch, [{"priority": 1000, "src": "192.0.2.0", "srclen": 24,
                                         "table": "100", "protocol": protocol}])
     snapshot = helper._snapshot_route_domain_rules()
@@ -224,7 +275,12 @@ def test_legacy_networkd_static_source_rule_is_preserved(helper, monkeypatch, pr
 
 
 def test_owned_kernel_ingress_protocol_survives_snapshot_and_restore(helper, monkeypatch):
-    """Accept only the narrow kernel-protocol ingress shape used to survive networkd."""
+    """Accept only the narrow kernel-protocol ingress shape used to survive networkd.
+
+    Args:
+        helper: Loaded appliance helper with isolated test dependencies.
+        monkeypatch: Pytest fixture replacing native operations with controlled observations.
+    """
     native_rules(helper, monkeypatch, [{"priority": 2000, "src": "all", "iif": "eth1",
                                         "table": "200", "protocol": "2"}])
     snapshot = helper._snapshot_route_domain_rules()
@@ -236,7 +292,13 @@ def test_owned_kernel_ingress_protocol_survives_snapshot_and_restore(helper, mon
 
 @pytest.mark.parametrize("action", ["unreachable", "7"])
 def test_ingress_guards_round_trip_distinct_interfaces_at_shared_priority(helper, monkeypatch, action):
-    """Native numeric actions and distinct same-priority iif guards stay journalable."""
+    """Native numeric actions and distinct same-priority iif guards stay journalable.
+
+    Args:
+        helper: Loaded appliance helper with isolated test dependencies.
+        monkeypatch: Pytest fixture replacing native operations with controlled observations.
+        action: Native policy action under test or requested rule operation.
+    """
     rows = [{"priority": 2100, "src": "all", "iif": name, "protocol": "2", "action": action}
             for name in ("eth1", "eth2")]
     native_rules(helper, monkeypatch, rows, rows)
@@ -255,7 +317,13 @@ def test_ingress_guards_round_trip_distinct_interfaces_at_shared_priority(helper
     {"fwmark": "0x1"}, {"srclen": True}, {"srclen": 24},
 ])
 def test_foreign_terminal_priority_is_never_adopted_or_deleted(helper, monkeypatch, override):
-    """Only exact protocol2 interface terminal guards belong to Atlaso at2100."""
+    """Only exact protocol2 interface terminal guards belong to Atlaso at2100.
+
+    Args:
+        helper: Loaded appliance helper with isolated test dependencies.
+        monkeypatch: Pytest fixture replacing native operations with controlled observations.
+        override: Foreign or malformed rule fields injected into the snapshot.
+    """
     row = {"priority": 2100, "src": "all", "iif": "eth1", "protocol": "2", "action": "7", **override}
     commands = native_rules(helper, monkeypatch, [row])
     with pytest.raises(ValueError):
@@ -264,7 +332,12 @@ def test_foreign_terminal_priority_is_never_adopted_or_deleted(helper, monkeypat
 
 
 def test_duplicate_identical_guard_is_ambiguous(helper, monkeypatch):
-    """Same-priority guards need distinct iif selectors for exact deletion."""
+    """Same-priority guards need distinct iif selectors for exact deletion.
+
+    Args:
+        helper: Loaded appliance helper with isolated test dependencies.
+        monkeypatch: Pytest fixture replacing native operations with controlled observations.
+    """
     row = {"priority": 2100, "src": "all", "iif": "eth1", "protocol": "2", "action": "7"}
     native_rules(helper, monkeypatch, [row, row])
     with pytest.raises(ValueError, match="ambiguous"):
@@ -272,21 +345,34 @@ def test_duplicate_identical_guard_is_ambiguous(helper, monkeypatch):
 
 
 def test_ingress_guard_capacity_remains_one_hundred_interfaces(helper):
-    """Terminal protection does not halve the admitted lab-interface capacity."""
+    """Terminal protection does not halve the admitted lab-interface capacity.
+
+    Args:
+        helper: Loaded appliance helper with isolated test dependencies.
+    """
     desired = helper._route_domain_ingress_rules([f"eth{index}" for index in range(100)])
     assert len(helper._validated_route_domain_rule_snapshot(desired)) == 400
     assert max(row["priority"] for row in desired if row["table"] == 200) == 2099
 
 
 def test_failed_lookup_install_retains_guards_and_allows_exact_rollback(helper, monkeypatch):
-    """Guards precede legacy retirement and survive an interrupted lookup addition."""
+    """Guards precede legacy retirement and survive an interrupted lookup addition.
+
+    Args:
+        helper: Loaded appliance helper with isolated test dependencies.
+        monkeypatch: Pytest fixture replacing native operations with controlled observations.
+    """
     original = [{"priority": 1000, "src": "192.0.2.0/24", "table": 100}]
     native_rules(helper, monkeypatch, original)
     snapshot = helper._snapshot_route_domain_rules()
     commands = []
 
     def fail_lookup(command):
-        """Model a native lookup failure after both family guards are installed."""
+        """Model a native lookup failure after both family guards are installed.
+
+        Args:
+            command: Native command being recorded or simulated.
+        """
         commands.append(command)
         return subprocess.CompletedProcess(command, int("add" in command and "table" in command), "", "")
 
@@ -305,14 +391,24 @@ def test_failed_lookup_install_retains_guards_and_allows_exact_rollback(helper, 
 @pytest.mark.parametrize("family", [4, 6])
 @pytest.mark.parametrize("lab_route_exists", [False, True])
 def test_lab_lookup_miss_cannot_fall_through_management_main_default(helper, family, lab_route_exists):
-    """Model RPDB fallthrough with overlapping lab traffic and a management default."""
+    """Model RPDB fallthrough with overlapping lab traffic and a management default.
+
+    Args:
+        helper: Loaded appliance helper with isolated test dependencies.
+        family: IP version, either 4 or 6.
+        lab_route_exists: Whether the simulated lab table contains the requested destination.
+    """
     rules = helper._route_domain_ingress_rules(["eth1", "eth2"])
     rules += [{"family": family, "priority": 5000, "incoming_interface": "lo", "table": 100},
               {"family": family, "priority": 5001, "incoming_interface": "lo", "table": None},
               {"family": family, "priority": 32766, "incoming_interface": "", "table": 254}]
 
     def route(incoming):
-        """An unsuccessful table lookup continues; unreachable ends evaluation."""
+        """An unsuccessful table lookup continues; unreachable ends evaluation.
+
+        Args:
+            incoming: Ingress interface selecting the simulated routing domain.
+        """
         for rule in sorted(rules, key=lambda item: item["priority"]):
             if rule["family"] != family or rule["incoming_interface"] not in {"", incoming}:
                 continue
@@ -330,7 +426,13 @@ def test_lab_lookup_miss_cannot_fall_through_management_main_default(helper, fam
 
 
 def test_wan_uses_same_guards_and_preserves_local_source_rules(helper, monkeypatch, tmp_path):
-    """WAN enabled/disabled reconciliation never claims the5000 local-source window."""
+    """WAN enabled/disabled reconciliation never claims the5000 local-source window.
+
+    Args:
+        helper: Loaded appliance helper with isolated test dependencies.
+        monkeypatch: Pytest fixture replacing native operations with controlled observations.
+        tmp_path: Isolated temporary directory for test-owned state.
+    """
     intent = tmp_path / "route-domains.json"
     intent.write_text(json.dumps({"schema": 1, "interfaces": [{"name": "eth1", "table": 200}]}))
     monkeypatch.setattr(helper, "ROUTE_DOMAIN_CONFIG_PATH", intent)

@@ -10,7 +10,15 @@ from tests.test_appliance_helper import load_helper_module
 
 
 def observe_snapshot(helper, monkeypatch, *, v4_routes=None, v6_routes=None, addresses=None):
-    """Provide bounded native route/address snapshots without touching the host."""
+    """Provide bounded native route/address snapshots without touching the host.
+
+    Args:
+        helper: Loaded appliance helper with isolated test dependencies.
+        monkeypatch: Pytest fixture replacing native operations with controlled observations.
+        v4_routes: Observed IPv4 routes for the previous management path.
+        v6_routes: Observed IPv6 routes for the previous management path.
+        addresses: Assigned native address records.
+    """
     if addresses is None:
         addresses = [{"local": "192.0.2.10", "prefixlen": 24, "scope": "global"},
                      {"local": "2001:db8::10", "prefixlen": 64, "scope": "global"}]
@@ -23,7 +31,11 @@ def observe_snapshot(helper, monkeypatch, *, v4_routes=None, v6_routes=None, add
     commands = []
 
     def observation(command):
-        """Return only the exact interface or family requested by the helper."""
+        """Return only the exact interface or family requested by the helper.
+
+        Args:
+            command: Native command being recorded or simulated.
+        """
         commands.append(command)
         if "address" in command:
             rows = [{"ifname": "eth0", "address": "02:00:00:00:00:01", "addr_info": addresses}]
@@ -36,7 +48,11 @@ def observe_snapshot(helper, monkeypatch, *, v4_routes=None, v6_routes=None, add
 
 
 def test_legacy_dhcp_and_ra_routes_gain_disjoint_standby_metrics(monkeypatch):
-    """Native main-only routes can support old source rules in table100."""
+    """Native main-only routes can support old source rules in table100.
+
+    Args:
+        monkeypatch: Pytest fixture replacing native operations with controlled observations.
+    """
     helper = load_helper_module()
     commands = observe_snapshot(helper, monkeypatch)
     evidence = helper._snapshot_management_handoff_routing(["eth0"], {"eth0": 100})["eth0"]
@@ -53,7 +69,11 @@ def test_legacy_dhcp_and_ra_routes_gain_disjoint_standby_metrics(monkeypatch):
 
 
 def test_snapshot_never_invents_gateway_or_ipv6_onlink_prefix(monkeypatch):
-    """An RA prefix without the on-link flag must retain only observed routes."""
+    """An RA prefix without the on-link flag must retain only observed routes.
+
+    Args:
+        monkeypatch: Pytest fixture replacing native operations with controlled observations.
+    """
     helper = load_helper_module()
     observe_snapshot(helper, monkeypatch,
                      v4_routes=[{"dst": "192.0.2.0/24", "dev": "eth0", "scope": "link"}],
@@ -65,7 +85,11 @@ def test_snapshot_never_invents_gateway_or_ipv6_onlink_prefix(monkeypatch):
 
 
 def test_snapshot_ignores_other_domains_local_routes_and_duplicate_native_copies(monkeypatch):
-    """Only the old device's main/old-domain unicast routes enter its holdover."""
+    """Only the old device's main/old-domain unicast routes enter its holdover.
+
+    Args:
+        monkeypatch: Pytest fixture replacing native operations with controlled observations.
+    """
     helper = load_helper_module()
     route = {"dst": "192.0.2.0/24", "dev": "eth0", "scope": "link"}
     observe_snapshot(helper, monkeypatch, v4_routes=[route, {**route, "table": 100},
@@ -82,7 +106,12 @@ def test_snapshot_ignores_other_domains_local_routes_and_duplicate_native_copies
     {"gateway": "2001:db8::1"},
 ])
 def test_snapshot_refuses_unrepresentable_routes_before_mutation(monkeypatch, bad_route):
-    """Overflow and unsupported route semantics cannot silently alter the old path."""
+    """Overflow and unsupported route semantics cannot silently alter the old path.
+
+    Args:
+        monkeypatch: Pytest fixture replacing native operations with controlled observations.
+        bad_route: Unsupported native route shape that must be rejected.
+    """
     helper = load_helper_module()
     route = {"dst": "default", "dev": "eth0", "gateway": "192.0.2.1", **bad_route}
     observe_snapshot(helper, monkeypatch, v4_routes=[route])
@@ -96,7 +125,12 @@ def test_snapshot_refuses_unrepresentable_routes_before_mutation(monkeypatch, ba
     {"local": "192.0.2.10", "prefixlen": 24, "scope": "global", "flags": ["dadfailed"]},
 ])
 def test_snapshot_requires_assigned_prefix_complete_old_addresses(monkeypatch, address):
-    """Tentative or prefix-less addresses cannot authorize new held routing rules."""
+    """Tentative or prefix-less addresses cannot authorize new held routing rules.
+
+    Args:
+        monkeypatch: Pytest fixture replacing native operations with controlled observations.
+        address: Native address record used to test prefix completeness.
+    """
     helper = load_helper_module()
     observe_snapshot(helper, monkeypatch, addresses=[address])
     with pytest.raises(ValueError):
@@ -104,7 +138,11 @@ def test_snapshot_requires_assigned_prefix_complete_old_addresses(monkeypatch, a
 
 
 def test_holdover_renders_snapshotted_standby_routes_without_changing_candidate_domain(monkeypatch):
-    """The old DHCP path keeps table100 alongside the candidate lab table200."""
+    """The old DHCP path keeps table100 alongside the candidate lab table200.
+
+    Args:
+        monkeypatch: Pytest fixture replacing native operations with controlled observations.
+    """
     helper = load_helper_module()
     observe_snapshot(helper, monkeypatch)
     evidence = helper._snapshot_management_handoff_routing(["eth0"], {"eth0": 100})["eth0"]
@@ -119,7 +157,11 @@ def test_holdover_renders_snapshotted_standby_routes_without_changing_candidate_
 
 
 def test_route_readiness_requires_standby_copy_not_merely_previous_native_route(monkeypatch):
-    """Existing native route presence cannot race standby installation."""
+    """Existing native route presence cannot race standby installation.
+
+    Args:
+        monkeypatch: Pytest fixture replacing native operations with controlled observations.
+    """
     helper = load_helper_module()
     observe_snapshot(helper, monkeypatch, v6_routes=[], addresses=[{"local": "192.0.2.10", "prefixlen": 24, "scope": "global"}])
     evidence = helper._snapshot_management_handoff_routing(["eth0"], {"eth0": 100})
@@ -138,7 +180,11 @@ def test_route_readiness_requires_standby_copy_not_merely_previous_native_route(
 
 
 def test_missing_standby_route_blocks_activation(monkeypatch):
-    """Do not publish source selectors that would choose an empty old table."""
+    """Do not publish source selectors that would choose an empty old table.
+
+    Args:
+        monkeypatch: Pytest fixture replacing native operations with controlled observations.
+    """
     helper = load_helper_module()
     observe_snapshot(helper, monkeypatch)
     state = {"previous_management_routing": helper._snapshot_management_handoff_routing(["eth0"], {"eth0": 100})}
@@ -154,7 +200,13 @@ def test_missing_standby_route_blocks_activation(monkeypatch):
     ("::/0", "default"),
 ])
 def test_route_readiness_normalizes_native_host_and_default_destinations(monkeypatch, destination, native_destination):
-    """iproute2 omits host prefix lengths and prints both family defaults alike."""
+    """iproute2 omits host prefix lengths and prints both family defaults alike.
+
+    Args:
+        monkeypatch: Pytest fixture replacing native operations with controlled observations.
+        destination: Desired canonical route destination.
+        native_destination: Equivalent destination spelling returned by iproute2.
+    """
     helper = load_helper_module()
     route = {"destination": destination, "gateway": "", "holdover_metric": 1025,
              "table": 100, "scope": "link", "preferred_source": "", "preference": "medium"}
@@ -168,7 +220,11 @@ def test_route_readiness_normalizes_native_host_and_default_destinations(monkeyp
 
 
 def test_candidate_reconfiguration_waits_routes_without_installing_source_rules(monkeypatch):
-    """Source intent is deferred until the caller proves candidate address readiness."""
+    """Source intent is deferred until the caller proves candidate address readiness.
+
+    Args:
+        monkeypatch: Pytest fixture replacing native operations with controlled observations.
+    """
     helper = load_helper_module()
     calls = []
     monkeypatch.setattr(helper, "_install_systemd_networkd_files", lambda *_args, **_kwargs: (0, [], [], []))
@@ -183,7 +239,12 @@ def test_candidate_reconfiguration_waits_routes_without_installing_source_rules(
 
 
 def test_candidate_new_address_never_becomes_a_held_old_source(monkeypatch, tmp_path):
-    """Publishing after DHCP/RA acquisition uses only immutable pre-mutation holds."""
+    """Publishing after DHCP/RA acquisition uses only immutable pre-mutation holds.
+
+    Args:
+        monkeypatch: Pytest fixture replacing native operations with controlled observations.
+        tmp_path: Isolated temporary directory for test-owned state.
+    """
     helper = load_helper_module()
     monkeypatch.setattr(helper, "ROUTE_DOMAIN_CONFIG_PATH", tmp_path / "route-domains.json")
     monkeypatch.setattr(helper, "ROUTE_DOMAIN_SERVICE_PATH", tmp_path / "route-domains.service")

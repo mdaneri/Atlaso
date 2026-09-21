@@ -9725,7 +9725,11 @@ def _stop_route_domains_for_restore(state: dict) -> None:
 
 
 def _restore_route_domains(state: dict) -> None:
-    """Reconcile restored or absent applied intent before admitting old listeners."""
+    """Reconcile restored or absent applied intent before admitting old listeners.
+
+    Args:
+        state: Captured original routing-domain journal to restore.
+    """
     if _run(["systemctl", "daemon-reload"]).returncode:
         raise ValueError("routing-domain rollback daemon reload failed")
     _reconcile_route_domains()

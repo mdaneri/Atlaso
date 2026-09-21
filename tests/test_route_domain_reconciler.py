@@ -11,17 +11,33 @@ from atlaso import route_domains as domains
 
 
 def interface(name="eth0", mac="02:00:00:00:00:01", table=100):
-    """Return a single applied interface identity."""
+    """Return a single applied interface identity.
+
+    Args:
+        name: Exact native attribute or interface name.
+        mac: Expected native interface MAC identity.
+        table: Owned management or lab routing table number.
+    """
     return {"name": name, "mac": mac, "table": table}
 
 
 def intent(*rows, held_addresses=None):
-    """Validate an ordinary or protected-handoff intent fixture."""
+    """Validate an ordinary or protected-handoff intent fixture.
+
+    Args:
+        held_addresses: Previous management sources retained until handoff retirement.
+        *rows: Interface records included in the applied intent fixture.
+    """
     return domains.parse_intent({"schema": 1, "interfaces": list(rows), "held_addresses": held_addresses or []})
 
 
 def link(row, *addresses):
-    """Return native iproute2 interface and assigned-address observations."""
+    """Return native iproute2 interface and assigned-address observations.
+
+    Args:
+        row: Interface ownership record.
+        *addresses: Assigned addresses included in the native link fixture.
+    """
     return {"ifname": row["name"], "address": row["mac"], "addr_info": [
         {"local": address, "scope": "global", "valid_life_time": 3600} if isinstance(address, str) else address
         for address in addresses
@@ -29,18 +45,31 @@ def link(row, *addresses):
 
 
 def native_rule(rule):
-    """Encode the exact iproute2 JSON shape, including omitted host prefix lengths."""
+    """Encode the exact iproute2 JSON shape, including omitted host prefix lengths.
+
+    Args:
+        rule: Exact source lookup or unreachable guard.
+    """
     result = {"priority": rule.priority, "src": rule.source, "iif": "lo", "protocol": "2"}
     result.update({"table": str(rule.table)} if rule.table is not None else {"action": "unreachable"})
     return result
 
 
 def capture_commands(monkeypatch, fail_at=None):
-    """Capture native mutations and optionally inject a bounded command failure."""
+    """Capture native mutations and optionally inject a bounded command failure.
+
+    Args:
+        monkeypatch: Pytest fixture replacing native operations with controlled observations.
+        fail_at: Command ordinal at which the stub injects failure.
+    """
     commands = []
 
     def execute(arguments):
-        """Record the command before simulating its native result."""
+        """Record the command before simulating its native result.
+
+        Args:
+            arguments: Native command argument vector.
+        """
         commands.append(arguments)
         if fail_at == len(commands):
             raise domains.ReconcileError("injected native failure")
@@ -78,7 +107,11 @@ def test_overlapping_domains_keep_distinct_exact_dual_stack_sources():
     {"local": "::1"}, {"local": "0.0.0.0"}, {"local": "ff02::1"}, {"local": "224.0.0.1"},
 ])
 def test_unassigned_failed_and_special_sources_never_acquire_lookup_rules(entry):
-    """Tentative, failed DAD, expired, and non-unicast sources are ineligible."""
+    """Tentative, failed DAD, expired, and non-unicast sources are ineligible.
+
+    Args:
+        entry: Native address record whose eligibility is tested.
+    """
     row = interface()
     assert domains.source_tables(intent(row), [link(row, entry)]) == ({}, False)
 
@@ -93,12 +126,20 @@ def test_deprecated_and_privacy_addresses_keep_reply_routes_until_removed():
 
 @pytest.mark.parametrize("inventory", [[], [link(interface(mac="02:00:00:00:00:99"), "192.0.2.10")]])
 def test_missing_or_replaced_interface_never_inherits_applied_ownership(inventory):
-    """An interface name alone does not authorize a replacement NIC's addresses."""
+    """An interface name alone does not authorize a replacement NIC's addresses.
+
+    Args:
+        inventory: Native link and assigned-address inventory.
+    """
     assert domains.source_tables(intent(interface()), inventory) == ({}, True)
 
 
 def test_shared_source_is_guarded_without_arbitrary_table(monkeypatch):
-    """A new duplicate removes an existing lookup only after its guard is ready."""
+    """A new duplicate removes an existing lookup only after its guard is ready.
+
+    Args:
+        monkeypatch: Pytest fixture replacing native operations with controlled observations.
+    """
     management, lab = interface(), interface("eth1", "02:00:00:00:00:02", 200)
     sources, _ = domains.source_tables(intent(management, lab), [link(management, "192.0.2.10"), link(lab, "192.0.2.10")])
     assert sources == {"192.0.2.10": None}
@@ -111,7 +152,11 @@ def test_shared_source_is_guarded_without_arbitrary_table(monkeypatch):
 
 
 def test_renewal_and_slaac_expiry_install_new_pairs_before_retiring_old(monkeypatch):
-    """Renewal keeps unrelated stable priorities while safely replacing expired sources."""
+    """Renewal keeps unrelated stable priorities while safely replacing expired sources.
+
+    Args:
+        monkeypatch: Pytest fixture replacing native operations with controlled observations.
+    """
     old = domains.plan_rules({"192.0.2.10": 100, "2001:db8::10": 200, "2001:db8::20": 200}, set())
     desired = domains.plan_rules({"192.0.2.11": 100, "2001:db8::20": 200}, old)
     assert {rule for rule in old if rule.source == "2001:db8::20"} <= desired
@@ -124,7 +169,11 @@ def test_renewal_and_slaac_expiry_install_new_pairs_before_retiring_old(monkeypa
 
 
 def test_handoff_hold_overrides_new_interface_domain_until_retirement(monkeypatch):
-    """An old management source remains in table100 beside a new lab source."""
+    """An old management source remains in table100 beside a new lab source.
+
+    Args:
+        monkeypatch: Pytest fixture replacing native operations with controlled observations.
+    """
     row = interface(table=200)
     hold = {**row, "address": "192.0.2.10", "table": 100}
     inventory = [link(row, "192.0.2.10", "192.0.2.11")]
@@ -153,7 +202,11 @@ def test_hold_can_retain_source_on_old_interface_omitted_from_final_intent():
     {"table": "254"}, {"priority": 5001}, {"action": "blackhole"},
 ])
 def test_rule_ownership_refuses_foreign_or_noncanonical_records(change):
-    """Never delete a range occupant or tagged rule with unproven selectors."""
+    """Never delete a range occupant or tagged rule with unproven selectors.
+
+    Args:
+        change: Noncanonical rule field overrides that must be rejected.
+    """
     row = native_rule(domains.Rule(5000, "192.0.2.10", 100))
     row.update(change)
     with pytest.raises(domains.ReconcileError):
@@ -172,7 +225,12 @@ def test_round_trip_owned_rules_and_preserve_unrelated_priorities():
 
 @pytest.mark.parametrize("action", ["7", "unreachable"])
 def test_photon_unreachable_action_allows_repeat_reconciliation_and_rollback(monkeypatch, action):
-    """Admit the captured numeric guard so repeat Apply and rollback can converge."""
+    """Admit the captured numeric guard so repeat Apply and rollback can converge.
+
+    Args:
+        monkeypatch: Pytest fixture replacing native operations with controlled observations.
+        action: Native policy action under test or requested rule operation.
+    """
     row = {"priority": 5571, "src": "192.168.167.172", "iif": "lo", "action": action, "protocol": "2"}
     lookup = domains.Rule(5570, "192.168.167.172", 100)
     guard = domains.Rule(5571, "192.168.167.172", None)
@@ -187,7 +245,11 @@ def test_photon_unreachable_action_allows_repeat_reconciliation_and_rollback(mon
 
 @pytest.mark.parametrize("action", ["6", "8", "07", "blackhole", "prohibit", 7, True, None])
 def test_unreachable_numeric_action_does_not_admit_other_native_shapes(action):
-    """Only named unreachable or its canonical numeric string owns a guard."""
+    """Only named unreachable or its canonical numeric string owns a guard.
+
+    Args:
+        action: Native policy action under test or requested rule operation.
+    """
     row = {"priority": 5571, "src": "192.168.167.172", "iif": "lo", "action": action, "protocol": "2"}
     with pytest.raises(domains.ReconcileError, match="policy action"):
         domains.owned_rules([row], 4)
@@ -203,7 +265,11 @@ def test_duplicate_native_priority_and_slot_ownership_are_rejected():
 
 
 def test_capacity_failure_does_not_retire_stale_rules_to_make_space(monkeypatch):
-    """Fail before mutation when add-before-retire cannot fit in the owned range."""
+    """Fail before mutation when add-before-retire cannot fit in the owned range.
+
+    Args:
+        monkeypatch: Pytest fixture replacing native operations with controlled observations.
+    """
     monkeypatch.setattr(domains, "PRIORITY_END", 5004)
     old = {domains.Rule(5000, "192.0.2.1", 100), domains.Rule(5002, "192.0.2.2", 100)}
     with pytest.raises(domains.ReconcileError, match="capacity"):
@@ -212,7 +278,12 @@ def test_capacity_failure_does_not_retire_stale_rules_to_make_space(monkeypatch)
 
 @pytest.mark.parametrize("fail_at", [1, 2])
 def test_partial_add_failure_never_retires_old_working_source(monkeypatch, fail_at):
-    """Failed guards or lookups preserve the existing source path for recovery."""
+    """Failed guards or lookups preserve the existing source path for recovery.
+
+    Args:
+        monkeypatch: Pytest fixture replacing native operations with controlled observations.
+        fail_at: Command ordinal at which the stub injects failure.
+    """
     old = domains.plan_rules({"192.0.2.10": 100}, set())
     desired = domains.plan_rules({"192.0.2.11": 100}, old)
     commands = capture_commands(monkeypatch, fail_at)
@@ -222,7 +293,11 @@ def test_partial_add_failure_never_retires_old_working_source(monkeypatch, fail_
 
 
 def test_empty_intent_retires_lookup_before_its_guard(monkeypatch):
-    """Rollback to a pre-feature snapshot can remove only owned rule pairs."""
+    """Rollback to a pre-feature snapshot can remove only owned rule pairs.
+
+    Args:
+        monkeypatch: Pytest fixture replacing native operations with controlled observations.
+    """
     old = {domains.Rule(5000, "192.0.2.10", 100), domains.Rule(5001, "192.0.2.10", None)}
     commands = capture_commands(monkeypatch)
     domains.apply_rules(set(), old)
@@ -232,14 +307,23 @@ def test_empty_intent_retires_lookup_before_its_guard(monkeypatch):
 
 @pytest.mark.parametrize("failure_step", range(1, 5))
 def test_partial_renewal_mutation_is_recoverable_from_native_snapshot(monkeypatch, failure_step):
-    """Every interrupted renewal step converges without duplicate or broad rules."""
+    """Every interrupted renewal step converges without duplicate or broad rules.
+
+    Args:
+        monkeypatch: Pytest fixture replacing native operations with controlled observations.
+        failure_step: Mutation ordinal at which simulated interruption occurs.
+    """
     native = domains.plan_rules({"192.0.2.10": 100}, set())
     desired_sources = {"192.0.2.11": 100}
     desired = domains.plan_rules(desired_sources, native)
     calls = 0
 
     def execute(arguments):
-        """Emulate kernel rule updates and one injected command failure."""
+        """Emulate kernel rule updates and one injected command failure.
+
+        Args:
+            arguments: Native command argument vector.
+        """
         nonlocal calls
         calls += 1
         if calls == failure_step:
@@ -263,7 +347,11 @@ def test_partial_renewal_mutation_is_recoverable_from_native_snapshot(monkeypatc
 
 
 def test_failed_table_change_leaves_unreachable_guard_active(monkeypatch):
-    """Changing ownership may fail closed but cannot fall into the other table."""
+    """Changing ownership may fail closed but cannot fall into the other table.
+
+    Args:
+        monkeypatch: Pytest fixture replacing native operations with controlled observations.
+    """
     existing = {domains.Rule(5000, "192.0.2.10", 100), domains.Rule(5001, "192.0.2.10", None)}
     desired = domains.plan_rules({"192.0.2.10": 200}, existing)
     commands = capture_commands(monkeypatch, fail_at=2)
@@ -274,9 +362,17 @@ def test_failed_table_change_leaves_unreachable_guard_active(monkeypatch):
 
 
 def test_missing_intent_is_empty_for_prefeature_rollback(monkeypatch):
-    """A missing fixed intent file means no applied source-rule ownership."""
+    """A missing fixed intent file means no applied source-rule ownership.
+
+    Args:
+        monkeypatch: Pytest fixture replacing native operations with controlled observations.
+    """
     def missing(*_args):
-        """Model an older snapshot without the routing-domain feature."""
+        """Model an older snapshot without the routing-domain feature.
+
+        Args:
+            *_args: Unused positional arguments required by the mocked native interface.
+        """
         raise FileNotFoundError
 
     monkeypatch.setattr(domains.os, "open", missing)
@@ -292,14 +388,22 @@ def test_missing_intent_is_empty_for_prefeature_rollback(monkeypatch):
     {"schema": 1, "interfaces": [interface(), interface()]},
 ])
 def test_malformed_intent_cannot_authorize_commands(value):
-    """Schema, identity, and shell-safe interface admission remain strict."""
+    """Schema, identity, and shell-safe interface admission remain strict.
+
+    Args:
+        value: Untrusted value being validated.
+    """
     with pytest.raises(domains.ReconcileError):
         domains.parse_intent(value)
 
 
 @pytest.mark.parametrize("kind", [2, 4, 16, 17, 20, 21])
 def test_link_address_and_overflow_events_trigger_full_snapshot(kind):
-    """Initial and recovery planning uses complete snapshots instead of event deltas."""
+    """Initial and recovery planning uses complete snapshots instead of event deltas.
+
+    Args:
+        kind: Netlink message type encoded in the test datagram.
+    """
     assert domains.event_requires_rescan(struct.pack("=IHHII", 16, kind, 0, 0, 0))
 
 
@@ -311,7 +415,11 @@ def test_truncation_malformed_event_and_unrelated_message_handling():
 
 
 def test_reconcile_reads_new_intent_each_time_and_never_uses_desired_db(monkeypatch):
-    """A periodic rescan consumes freshly published applied identity bindings."""
+    """A periodic rescan consumes freshly published applied identity bindings.
+
+    Args:
+        monkeypatch: Pytest fixture replacing native operations with controlled observations.
+    """
     row = interface()
     states = iter([intent(row), intent()])
     monkeypatch.setattr(domains, "reconciliation_lock", nullcontext)
@@ -326,7 +434,11 @@ def test_reconcile_reads_new_intent_each_time_and_never_uses_desired_db(monkeypa
 
 
 def test_missing_identity_quarantines_old_source_instead_of_opening_main_fallback(monkeypatch):
-    """Replacement NIC with an old source cannot inherit or bypass domain rules."""
+    """Replacement NIC with an old source cannot inherit or bypass domain rules.
+
+    Args:
+        monkeypatch: Pytest fixture replacing native operations with controlled observations.
+    """
     row = interface()
     replaced = interface(mac="02:00:00:00:00:99")
     old = {domains.Rule(5000, "192.0.2.10", 100), domains.Rule(5001, "192.0.2.10", None)}
@@ -341,7 +453,11 @@ def test_missing_identity_quarantines_old_source_instead_of_opening_main_fallbac
 
 
 def test_native_rule_dump_requests_numeric_and_detailed_kernel_protocol(monkeypatch):
-    """Kernel-protocol ownership is visible only with detailed iproute2 dumps."""
+    """Kernel-protocol ownership is visible only with detailed iproute2 dumps.
+
+    Args:
+        monkeypatch: Pytest fixture replacing native operations with controlled observations.
+    """
     commands = []
     monkeypatch.setattr(domains, "run_ip", lambda arguments: commands.append(arguments) or "[]")
     assert domains.read_native(["-4", "rule", "show"]) == []
@@ -349,7 +465,11 @@ def test_native_rule_dump_requests_numeric_and_detailed_kernel_protocol(monkeypa
 
 
 def test_native_json_failure_is_sanitized(monkeypatch):
-    """Malformed command output is not included in privileged service errors."""
+    """Malformed command output is not included in privileged service errors.
+
+    Args:
+        monkeypatch: Pytest fixture replacing native operations with controlled observations.
+    """
     monkeypatch.setattr(domains, "run_ip", lambda _args: "untrusted native output")
     with pytest.raises(domains.ReconcileError, match="invalid native policy JSON"):
         domains.read_native(["address", "show"])
@@ -357,7 +477,12 @@ def test_native_json_failure_is_sanitized(monkeypatch):
 
 @pytest.mark.parametrize("failure", ["overflow", "timeout", "exit"])
 def test_native_command_limits_kill_or_reap_child_without_exposing_output(monkeypatch, failure):
-    """A stalled or noisy ip process cannot run indefinitely or leak its output."""
+    """A stalled or noisy ip process cannot run indefinitely or leak its output.
+
+    Args:
+        monkeypatch: Pytest fixture replacing native operations with controlled observations.
+        failure: Injected subprocess failure mode.
+    """
     class Output:
         """Provide the native stdout descriptor expected by bounded reads."""
 
@@ -375,6 +500,11 @@ def test_native_command_limits_kill_or_reap_child_without_exposing_output(monkey
             return self
 
         def __exit__(self, *_args):
+            """Implement the exit test stub.
+
+            Args:
+                *_args: Unused positional arguments required by the mocked native interface.
+            """
             return False
 
         def poll(self):
@@ -384,6 +514,11 @@ def test_native_command_limits_kill_or_reap_child_without_exposing_output(monkey
             self.killed = True
 
         def wait(self, **_kwargs):
+            """Implement the wait test stub.
+
+            Args:
+                **_kwargs: Unused keyword arguments required by the mocked subprocess interface.
+            """
             self.stopped = True
             return 1 if failure == "exit" else 0
 
@@ -400,7 +535,11 @@ def test_native_command_limits_kill_or_reap_child_without_exposing_output(monkey
 
 
 def test_monitor_rescans_receive_overflow_without_waiting_period(monkeypatch):
-    """ENOBUFS cannot leave a missed lease change stale until another event."""
+    """ENOBUFS cannot leave a missed lease change stale until another event.
+
+    Args:
+        monkeypatch: Pytest fixture replacing native operations with controlled observations.
+    """
     class StopMonitor(Exception):
         """End the controlled monitor after its overflow recovery snapshot."""
 
@@ -411,15 +550,35 @@ def test_monitor_rescans_receive_overflow_without_waiting_period(monkeypatch):
             return self
 
         def __exit__(self, *_args):
+            """Implement the exit test stub.
+
+            Args:
+                *_args: Unused positional arguments required by the mocked native interface.
+            """
             return False
 
         def setsockopt(self, *_args):
+            """Implement the setsockopt test stub.
+
+            Args:
+                *_args: Unused positional arguments required by the mocked native interface.
+            """
             pass
 
         def bind(self, *_args):
+            """Implement the bind test stub.
+
+            Args:
+                *_args: Unused positional arguments required by the mocked native interface.
+            """
             pass
 
         def recvmsg(self, *_args):
+            """Implement the recvmsg test stub.
+
+            Args:
+                *_args: Unused positional arguments required by the mocked native interface.
+            """
             raise OSError(errno.ENOBUFS, "overflow")
 
     calls = []
