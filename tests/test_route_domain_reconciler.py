@@ -170,6 +170,29 @@ def test_round_trip_owned_rules_and_preserve_unrelated_priorities():
     assert domains.owned_rules(rows, 4) == rules
 
 
+@pytest.mark.parametrize("action", ["7", "unreachable"])
+def test_photon_unreachable_action_allows_repeat_reconciliation_and_rollback(monkeypatch, action):
+    """Admit the captured numeric guard so repeat Apply and rollback can converge."""
+    row = {"priority": 5571, "src": "192.168.167.172", "iif": "lo", "action": action, "protocol": "2"}
+    lookup = domains.Rule(5570, "192.168.167.172", 100)
+    guard = domains.Rule(5571, "192.168.167.172", None)
+    existing = domains.owned_rules([native_rule(lookup), row], 4)
+    assert existing == {lookup, guard}
+    commands = capture_commands(monkeypatch)
+    domains.apply_rules(domains.plan_rules({lookup.source: 100}, existing), existing)
+    assert commands == []
+    domains.apply_rules(set(), existing)
+    assert commands == [domains.rule_command("del", lookup), domains.rule_command("del", guard)]
+
+
+@pytest.mark.parametrize("action", ["6", "8", "07", "blackhole", "prohibit", 7, True, None])
+def test_unreachable_numeric_action_does_not_admit_other_native_shapes(action):
+    """Only named unreachable or its canonical numeric string owns a guard."""
+    row = {"priority": 5571, "src": "192.168.167.172", "iif": "lo", "action": action, "protocol": "2"}
+    with pytest.raises(domains.ReconcileError, match="policy action"):
+        domains.owned_rules([row], 4)
+
+
 def test_duplicate_native_priority_and_slot_ownership_are_rejected():
     """Ambiguous partial state must never be repaired using broad deletion."""
     row = native_rule(domains.Rule(5000, "192.0.2.10", 100))

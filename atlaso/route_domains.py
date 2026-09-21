@@ -243,7 +243,8 @@ def owned_rules(rows: Any, family: int) -> set[Rule]:
         source = usable_address(row.get("src"))
         if ipaddress.ip_address(source).version != family or row.get("srclen", 32 if family == 4 else 128) != (32 if family == 4 else 128):
             raise ReconcileError("noncanonical owned source prefix")
-        if row.get("action") == "unreachable" and "table" not in row:
+        # Numeric iproute2 dumps use FR_ACT_UNREACHABLE (7) on Photon.
+        if row.get("action") in ("unreachable", "7") and "table" not in row:
             table = None
         elif "action" not in row and str(row.get("table")) in {"100", "200"}:
             table = int(row["table"])
