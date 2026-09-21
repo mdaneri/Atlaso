@@ -55,6 +55,44 @@ def native_rule(rule):
     return result
 
 
+@pytest.mark.parametrize("family", [4, 6])
+@pytest.mark.parametrize("foreign", [False, True])
+def test_preflight_reads_only_rules_without_intent(monkeypatch, family, foreign):
+    """Canonical occupied-window admission is read-only and needs no prior intent.
+
+    Args:
+        monkeypatch: Reversible native boundary replacements.
+        family: Family containing the observed source rule.
+        foreign: Whether an unowned occupant must reject admission.
+    """
+    source = "192.0.2.10" if family == 4 else "2001:db8::10"
+    row = native_rule(domains.Rule(5000, source, 100))
+    if foreign:
+        row["protocol"] = "99"
+    reads = []
+
+    def observe(arguments):
+        """Return fixed rule observations, rejecting any other native operation.
+
+        Args:
+            arguments: Requested native read command.
+        """
+        assert arguments in [[f"-{version}", "rule", "show"] for version in (4, 6)]
+        reads.append(arguments)
+        return [row] if arguments[0] == f"-{family}" else []
+
+    monkeypatch.setattr(domains, "reconciliation_lock", nullcontext)
+    monkeypatch.setattr(domains, "read_native", observe)
+    monkeypatch.setattr(domains, "read_intent", lambda: pytest.fail("preflight read intent"))
+    monkeypatch.setattr(domains, "apply_rules", lambda *_args: pytest.fail("preflight mutated rules"))
+    if foreign:
+        with pytest.raises(domains.ReconcileError, match="ownership conflict"):
+            domains.preflight()
+    else:
+        domains.preflight()
+        assert len(reads) == 2
+
+
 def capture_commands(monkeypatch, fail_at=None):
     """Capture native mutations and optionally inject a bounded command failure.
 

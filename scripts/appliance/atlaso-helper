@@ -9631,6 +9631,13 @@ def _install_systemd_networkd_files(
     return 0, installed, reconfigure_links, admin_down_links
 
 
+def _preflight_route_domains() -> None:
+    """Check canonical source-rule ownership before publishing any rollback journal."""
+    result = _run(["/opt/atlaso/.venv/bin/python", "-I", "-m", "atlaso.route_domains", "--preflight"])
+    if result.returncode:
+        raise ValueError("routing-domain source-rule ownership preflight failed: inspect IPv4/IPv6 priorities 5000-5999 and rule observation availability")
+
+
 def _reconcile_route_domains() -> None:
     """Require exact local source routing to match the applied interface intent."""
     result = _run(["/opt/atlaso/.venv/bin/python", "-I", "-m", "atlaso.route_domains", "--once"])
@@ -10550,6 +10557,7 @@ def _network_apply_transaction(path: Path):
         if _network_transaction_state():
             raise ValueError("pending network transaction requires application recovery before another Apply")
     binding = re.search(r"(?m)^# atlaso-network-task: ([A-Za-z0-9_-]{1,128})$", path.read_text(encoding="utf-8"))
+    _preflight_route_domains()
     job_id = binding[1] if binding else "manual"
     files, _links, _down = _systemd_networkd_files(path)
     physical, vlans, link_states = _management_handoff_candidate_links(
@@ -12105,20 +12113,54 @@ def _apply_wan_policy_rules(parsed: dict[str, list[dict[str, str]]]) -> int:
     return 0
 
 
-def _run_route_delete(destination: str, interface_name: str) -> int:
+def _run_route_delete(
+    destination: str, interface_name: str, *, metric: int | None = None, gateway: str = "",
+) -> int:
     """Run route delete.
 
     Args:
         destination: Destination object or location receiving the result.
         interface_name: Host network-interface name affected by the operation.
+        metric: Exact static metric when a connected route shares the destination.
+        gateway: Static next hop that must not select a connected route for deletion.
     """
     command = [*_route_command_prefix(destination), "del", destination, "dev", interface_name, "table", str(LAB_ROUTE_TABLE_ID)]
+    if metric is not None:
+        command.extend(["metric", str(metric)])
+    if gateway:
+        command.extend(["via", gateway])
     result = _run(command)
     print(result.stdout, end="")
     print(result.stderr, end="", file=sys.stderr)
     if result.returncode == 2:
         return 0
     return result.returncode
+
+
+def _retire_wan_static_route(route: dict[str, str], targets: dict[str, dict[str, str]]) -> int:
+    """Retire a static identity without selecting its Network-owned connected route.
+
+    Args:
+        route: Disabled or removed saved static route.
+        targets: Current connected targets already installed by WAN reconciliation.
+    """
+    destination, name = route["destination_cidr"], route["interface"]
+    target = targets.get(name, {})
+    network = ip_network(destination, strict=False)
+    connected = target.get("routing_domain", "lab") != "management" and str(network) in _target_networks(target)
+    if connected:
+        ordered = list(targets.values())
+        owners = _target_network_owners(ordered)
+        connected = owners[(target.get("routing_domain", "lab"), str(network))] == ordered.index(target)
+    if not connected:
+        return _run_route_delete(destination, name)
+    metric = int(route.get("metric", "100") or "100")
+    gateway = route.get("gateway", "")
+    # IPv6 maps metric zero to its native default of 1024. With no next hop,
+    # these rows alias the connected route; its continued presence is required.
+    if not gateway and (metric == 0 or (network.version == 6 and metric == 1024)):
+        return 0
+    return _run_route_delete(destination, name, metric=metric, gateway=gateway)
 
 
 def _mirrored_wan_default_keys(
@@ -12200,7 +12242,7 @@ def _apply_wan_routes_and_qdiscs(
             # interface that merely became ineligible (for example, a trunk).
             if interface_name not in targets and not _link_exists(interface_name):
                 continue
-            delete_result = _run_route_delete(destination, interface_name)
+            delete_result = _retire_wan_static_route(route, targets)
             if delete_result != 0:
                 return delete_result
             if not saved_enabled and (management_ui_default or previously_mirrored_default):
@@ -12261,7 +12303,7 @@ def _apply_wan_routes_and_qdiscs(
         interface_name = route["interface"]
         if interface_name not in targets and not _link_exists(interface_name):
             continue
-        delete_result = _run_route_delete(route["destination_cidr"], route["interface"])
+        delete_result = _retire_wan_static_route(route, targets)
         if delete_result != 0:
             return delete_result
         try:
@@ -24762,6 +24804,7 @@ def _snapshot_management_handoff(payload: dict) -> dict:
     """
     if MANAGEMENT_HANDOFF_STATE_PATH.exists():
         raise ValueError("another management handoff requires recovery")
+    _preflight_route_domains()
     state_dir_existed = MANAGEMENT_HANDOFF_STATE_DIR.is_dir()
     MANAGEMENT_HANDOFF_STATE_DIR.mkdir(mode=0o700, parents=True, exist_ok=True)
     if not state_dir_existed:

@@ -9,6 +9,46 @@ import pytest
 from tests.routers.ui.helpers import login
 
 
+@pytest.mark.parametrize("baseline_kind", ["modern", "legacy", "missing"])
+def test_wan_review_uses_applied_network_ingress_with_pending_network(client, baseline_kind):
+    """Keep WAN-only selectors on applied intent and label combined Apply correctly.
+
+    Args:
+        client: Isolated application database fixture.
+        baseline_kind: Applied Network migration state to project.
+    """
+    from atlaso.app import ui
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.services.routes_wan import save_routes_wan_settings
+
+    with SessionLocal() as db:
+        save_routes_wan_settings(db, routing_enabled=True, nat_enabled=False, wan_simulation_enabled=False)
+        baseline_preview = "[physical_interfaces]\ninterface=eth9\n  role=access\n  mode=access\n  admin_state=up\n"
+        baseline_preview += "interface=eth8\n  role=route\n  mode=access\n  admin_state=down\n"
+        baseline_preview += "interface=eth7\n  role=access\n  mode=trunk\n  admin_state=up\n"
+        baseline_preview += "interface=eth6\n  role=management\n  mode=access\n  admin_state=up\n"
+        if baseline_kind == "modern":
+            baseline_preview = "# Network runtime revision: exact-source-routing-v1.\n" + baseline_preview
+        baselines = ui.load_appliance_apply_baselines(db)
+        baselines.pop("network", None)
+        if baseline_kind != "missing":
+            baselines["network"] = {"config_preview": baseline_preview, "snapshot_hash": "prior-network"}
+        ui.save_appliance_apply_baselines(db, baselines)
+        db.commit()
+        page = ui.routes_wan_context(db)
+        units = ui.appliance_apply_units(db)
+        assert next(unit for unit in units if unit["id"] == "network")["changed"]
+        wan = next(unit for unit in units if unit["id"] == "wan")
+        for preview in (page["wan_config_preview"], wan["config_preview"]):
+            commands = [line for line in preview.splitlines() if "rule add iif " in line]
+            assert len(commands) == (4 if baseline_kind == "modern" else 0)
+            assert all(" iif eth9 " in line for line in commands)
+            assert "not pending Network edits" in preview
+            assert "If Network is applied first in the same task" in preview
+            if baseline_kind != "modern":
+                assert "pre-migration baselines retain legacy WAN handling" in preview
+
+
 @pytest.mark.parametrize("apply_succeeds", [False, True])
 def test_network_runtime_revision_requires_successful_upgrade_apply(client, monkeypatch, apply_succeeds):
     """Offer unchanged legacy Network intent until its revised runtime is applied.

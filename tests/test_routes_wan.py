@@ -1,5 +1,7 @@
 """Test routes wan behavior."""
 
+import pytest
+
 from atlaso.app.models import NatRule, Route, RoutingRule, Setting, WanPolicy
 from atlaso.app.services.routes_wan import (
     ROUTES_WAN_SETTING_KEYS,
@@ -14,6 +16,43 @@ from atlaso.app.services.routes_wan import (
     validate_nat_source,
     validate_wan_state,
 )
+
+
+@pytest.mark.parametrize("family", [4, 6])
+@pytest.mark.parametrize("retirement", ["disabled", "removed", "routing-off"])
+@pytest.mark.parametrize("metric,gateway_present", [(0, False), (100, False), (1024, False), (1024, True)])
+@pytest.mark.parametrize("owns_prefix", [False, True])
+def test_static_retirement_preview_preserves_connected_routes(family, retirement, metric, gateway_present, owns_prefix):
+    """Match precise native retirement selectors for a connected destination.
+
+    Args:
+        family: Address family to render.
+        retirement: Desired action that retires the static row.
+        metric: Saved static route metric.
+        gateway_present: Whether the row has a distinguishing next hop.
+        owns_prefix: Whether this target owns the connected prefix in its domain.
+    """
+    prefix = "192.0.2.0/24" if family == 4 else "2001:db8::/64"
+    address = "192.0.2.10/24" if family == 4 else "2001:db8::10/64"
+    gateway = ("192.0.2.1" if family == 4 else "2001:db8::1") if gateway_present else ""
+    route = Route(destination_cidr=prefix, interface_name="eth1", metric=metric,
+                  gateway=gateway, enabled=retirement != "disabled")
+    target = {"name": "eth1", "routing_domain": "lab", "ip_cidr" if family == 4 else "ipv6_cidr": address}
+    targets = [target] if owns_prefix else [{**target, "name": "eth0"}, target]
+    preview = render_wan_config([] if retirement == "removed" else [route], targets=targets,
+                               removed_routes=[{"destination_cidr": prefix, "interface_name": "eth1",
+                                                "metric": str(metric), "gateway": gateway}] if retirement == "removed" else [],
+                               settings=RoutesWanSettings(retirement != "routing-off", False, False))
+    command = f"ip {'-6 ' if family == 6 else ''}route del {prefix} dev eth1 table 200"
+    alias = owns_prefix and not gateway and (metric == 0 or (family == 6 and metric == 1024))
+    if not owns_prefix:
+        assert command + "  #" in preview
+    elif alias:
+        assert command not in preview
+        assert f"Retain Network-owned connected route {prefix}" in preview
+    else:
+        expected = command + f" metric {metric}" + (f" via {gateway}" if gateway else "")
+        assert expected + "  #" in preview
 
 
 def test_feature_settings_render_full_saved_intent_with_effective_gates():

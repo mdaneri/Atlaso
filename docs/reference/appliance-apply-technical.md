@@ -261,6 +261,10 @@ those exact rules, applied intent, and watcher boot/runtime state on failure. Pr
 ownership and connected/default routes until retirement, then reconcile again before final readiness. Factory reset
 quiesces the watcher before clearing its intent and routes. A WAN-only Apply before Network migration retains legacy
 behavior; after migration, WAN replay obtains interface ownership from applied Network intent.
+Before starting either Network transaction, a read-only ownership check rejects noncanonical rules in the new
+local-source priority window. An existing conflict is reported before network files, VLANs, or addresses change.
+WAN review shows ingress commands for the current applied Network baseline, rather than pending interface edits.
+When Network and WAN are applied together, WAN uses the Network intent established by the successful Network step.
 Canonical lab ingress rules also use protocol `kernel` within the existing `2000–2099` window so networkd reload does
 not remove forwarding selectors. Other selectors or protocol/range combinations are not adopted by migration.
 
@@ -437,8 +441,10 @@ Through `atlaso-helper wan validate|apply`, the helper validates staged routes, 
 and netem policy values only for their active global feature. The staged `[feature_settings]` section carries
 `routing_enabled` and `wan_simulation_enabled` while retaining every saved resource row. Routing on
 sets `net.ipv4.ip_forward=1` and `net.ipv6.conf.all.forwarding=1`; Routing off sets both to `0`, removes forwarded lab
-rules and explicit static routes, and retains connected routes and local-source rules in both domains. NAT is effective
-only when Routing and
+rules and explicit static routes, and retains connected routes and local-source rules in both domains.
+Static-route removal uses the saved metric and next hop when its destination and interface overlap a connected route;
+an entry that aliases the connected route does not remove that Network-owned path.
+NAT is effective only when Routing and
 NAT are both on; the `nat` unit otherwise clears Atlaso's NAT rules without changing saved intent. WAN Simulation
 independently applies or removes root `tc/netem` qdiscs. After Network migration, WAN Apply applies ingress rules with
 `ip rule` and

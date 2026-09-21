@@ -873,6 +873,7 @@ def test_ordinary_apply_restores_rejected_candidate(tmp_path, monkeypatch, capsy
     from tests.test_appliance_helper import load_helper_module, network_config_text
 
     helper = load_helper_module()
+    monkeypatch.setattr(helper, "_preflight_route_domains", lambda: None)
     monkeypatch.setattr(helper, "ROUTE_DOMAIN_CONFIG_PATH", tmp_path / "route-domains.json")
     monkeypatch.setattr(helper, "ROUTE_DOMAIN_SERVICE_PATH", tmp_path / "route-domains.service")
     monkeypatch.setattr(helper, "_snapshot_route_domain_service", lambda: {"enabled": False, "active": False})

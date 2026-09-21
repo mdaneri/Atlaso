@@ -440,6 +440,13 @@ def reconciliation_lock() -> Iterator[None]:
             fcntl.flock(handle, fcntl.LOCK_UN)
 
 
+def preflight() -> None:
+    """Reject foreign source-rule ownership before Network starts a transaction."""
+    with reconciliation_lock():
+        for family in (4, 6):
+            owned_rules(read_native([f"-{family}", "rule", "show"]), family)
+
+
 def reconcile() -> None:
     """Re-read applied intent and native state under the shared mutation lock."""
     with reconciliation_lock():
@@ -516,12 +523,16 @@ def monitor() -> None:
 def main() -> int:
     """Run a synchronous Apply reconciliation or the privileged event monitor."""
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--once", action="store_true", help="Reconcile once for protected Apply readiness")
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--once", action="store_true", help="Reconcile once for protected Apply readiness")
+    mode.add_argument("--preflight", action="store_true", help="Check source-rule ownership without changing rules or intent")
     arguments = parser.parse_args()
     try:
         if linux_attribute(os, "geteuid")() != 0:
             raise ReconcileError("routing-domain reconciliation requires root")
-        if arguments.once:
+        if arguments.preflight:
+            preflight()
+        elif arguments.once:
             reconcile()
         else:
             monitor()

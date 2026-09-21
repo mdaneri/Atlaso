@@ -947,6 +947,33 @@ def mirrored_management_default_keys(config_preview: str) -> set[tuple[str, str]
     }
 
 
+def _static_route_cleanup_preview(destination: str, name: str, metric: int, gateway: str,
+                                  target: dict[str, str], targets: list[dict[str, str]]) -> str:
+    """Describe static retirement without deleting a Network-owned connected route.
+
+    Args:
+        destination: Saved destination prefix.
+        name: Saved output interface.
+        metric: Saved static route metric.
+        gateway: Saved next hop, if present.
+        target: Current connected target on this interface.
+        targets: Ordered targets determining the connected-prefix owner.
+    """
+    network = ip_network(destination, strict=False)
+    family = "-6 " if network.version == 6 else ""
+    command = f"ip {family}route del {destination} dev {name} table {LAB_ROUTE_TABLE_ID}"
+    domain = target.get("routing_domain", "lab")
+    connected = (domain != "management" and network in _target_networks(target)
+                 and _target_network_owners(targets).get((domain, str(network))) == targets.index(target))
+    if connected:
+        if not gateway and (metric == 0 or (network.version == 6 and metric == 1024)):
+            return f"# Retain Network-owned connected route {destination} dev {name} table {LAB_ROUTE_TABLE_ID}"
+        command += f" metric {metric}"
+        if gateway:
+            command += f" via {gateway}"
+    return command if target else _link_guarded_cleanup(command, name)
+
+
 def render_wan_config(
     routes: list[Route],
     policies: list[WanPolicy] | None = None,
@@ -957,6 +984,7 @@ def render_wan_config(
     source_groups: list[dict] | None = None,
     previous_config_preview: str = "",
     settings: RoutesWanSettings | None = None,
+    applied_network_ingress: list[str] | None = None,
 ) -> str:
     """Render wan config.
 
@@ -970,6 +998,7 @@ def render_wan_config(
         source_groups: Source Groups available to the rule.
         previous_config_preview: Last-applied configuration used to retire prior host defaults.
         settings: Saved global activation state. Omission preserves the legacy active behavior.
+        applied_network_ingress: Lab interfaces from the last-applied Network baseline for UI review.
 
     Returns:
         The rendered wan config.
@@ -1146,7 +1175,13 @@ def render_wan_config(
         lines.append("# Routing disabled: reconcile owned IPv4/IPv6 lab ingress lookups and terminal guards to an empty set.")
         lines.append("# Local source-address rules remain reconciled from applied Network intent.")
     else:
-        ingress_names = sorted({target["name"] for target in targets if target.get("routing_domain") != "management"})
+        if applied_network_ingress is not None:
+            lines.append("# Ingress commands below reflect the last-applied Network baseline, not pending Network edits.")
+            lines.append("# If Network is applied first in the same task, ingress uses that successfully applied Network intent instead.")
+            if not applied_network_ingress:
+                lines.append("# No modern ingress selectors are available from this baseline; pre-migration baselines retain legacy WAN handling.")
+        ingress_names = sorted(set(applied_network_ingress)) if applied_network_ingress is not None else sorted(
+            {target["name"] for target in targets if target.get("routing_domain") != "management"})
         # The helper installs terminal guards before introducing lab lookups.
         for name in ingress_names:
             for route_family in ("", "-6 "):
@@ -1214,12 +1249,8 @@ def render_wan_config(
         ) in previously_mirrored_defaults
         route_effective = route.enabled and settings.routing_enabled
         if not route_effective:
-            cleanup_command = f"ip {route_family}route del {destination_cidr} dev {route.interface_name} table {LAB_ROUTE_TABLE_ID}"
-            if not route_target:
-                cleanup_command = _link_guarded_cleanup(
-                    cleanup_command,
-                    route.interface_name,
-                )
+            cleanup_command = _static_route_cleanup_preview(
+                destination_cidr, route.interface_name, route.metric, route.gateway or "", route_target, targets)
             lines.append(cleanup_command + "  # disabled desired route")
             if route.enabled and management_ui_default:
                 main_command = ["ip", "-6", "route", "replace", destination_cidr] if destination.version == 6 else ["ip", "route", "replace", destination_cidr]
@@ -1272,9 +1303,9 @@ def render_wan_config(
             {},
         )
         interface_name = str(route.get("interface_name", ""))
-        cleanup_command = f"ip {route_family}route del {route.get('destination_cidr', '')} dev {interface_name} table {LAB_ROUTE_TABLE_ID}"
-        if not route_target:
-            cleanup_command = _link_guarded_cleanup(cleanup_command, interface_name)
+        cleanup_command = _static_route_cleanup_preview(
+            str(route.get("destination_cidr", "")), interface_name,
+            int(str(route.get("metric", "100")) or "100"), str(route.get("gateway") or ""), route_target, targets)
         lines.append(cleanup_command + "  # removed managed route")
         removed_key = (
             canonical_route_destination(str(route.get("destination_cidr", ""))),

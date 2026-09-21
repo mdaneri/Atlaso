@@ -5743,6 +5743,7 @@ def routes_wan_context(db: Session) -> dict:
         routing_rules,
         source_groups=source_groups,
         settings=feature_settings,
+        applied_network_ingress=wan_applied_network_ingress(db),
     )
     return {
         "routes": routes,
@@ -9854,6 +9855,22 @@ def network_interface_entries(config_preview: str) -> list[dict[str, str]]:
     return rows
 
 
+def wan_applied_network_ingress(db: Session) -> list[str]:
+    """Project WAN ingress selectors from the saved Network baseline.
+
+    Args:
+        db: Active database session containing successful Apply baselines.
+    """
+    baseline = load_appliance_apply_baselines(db).get("network", {})
+    preview = str(baseline.get("config_preview") or "")
+    if "# Network runtime revision: exact-source-routing-v1." not in preview.splitlines():
+        return []
+    rows = network_interface_entries(preview)
+    return sorted({row["name"] for row in rows
+                   if row.get("role") in {"access", "route"}
+                   and row.get("mode") != "trunk" and row.get("admin_state") != "down"})
+
+
 def network_management_paths(config_preview: str) -> list[dict[str, str]]:
     """Return every effective management browser path in a network preview.
 
@@ -11062,6 +11079,7 @@ def appliance_apply_units(db: Session, *, reconcile: bool = True) -> list[dict[s
         source_groups=wan["wan_source_groups"],
         previous_config_preview=str((wan_baseline or {}).get("config_preview") or ""),
         settings=wan["routes_wan_settings"],
+        applied_network_ingress=wan_applied_network_ingress(db),
     )
     wan_summary = [
         f"{len(wan['routes'])} routes",
