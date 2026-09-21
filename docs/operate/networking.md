@@ -59,8 +59,10 @@ The dedicated management network and a separate lab network may use the same pre
 Atlaso selects local reply routes by the appliance's exact source address, rather than assigning the entire prefix to
 whichever interface appears first. An Access interface exposing Management UI still belongs to the lab routing domain;
 its off-subnet paths require Routes & WAN configuration. If its domain has no matching route, traffic fails instead of
-falling through to a route on the other network. Forwarded lab traffic selects the lab table by its incoming interface;
-existing firewall and Routing Permission checks still decide whether forwarding is allowed.
+falling through to a route on the other network. Forwarded lab traffic selects the lab table by its incoming interface.
+If that lookup has no matching route, an interface-specific unreachable rule stops evaluation before the main table,
+including its management default. Existing firewall and Routing Permission checks still decide whether forwarding is
+allowed. These forwarded-traffic rules do not match appliance-local traffic on `lo`.
 
 Apply **Network** once after upgrading to install this domain ownership and migrate previous prefix rules. That migration
 uses the already-applied forwarding setting and does not apply pending Routes & WAN edits. Rollback restores the prior

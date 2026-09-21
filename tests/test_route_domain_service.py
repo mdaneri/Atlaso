@@ -93,8 +93,10 @@ def test_factory_reset_quiesces_old_domain_before_flushing_routes(monkeypatch, t
         operations.append(["reconcile"])
 
     monkeypatch.setattr(helper, "_reconcile_route_domains", reconcile)
+    monkeypatch.setattr(helper, "_restore_route_domain_rules", lambda rows: operations.append(["retire-ingress", rows]))
     assert helper._reset_factory_network_runtime() == 0
     assert operations[:3] == [
         ["systemctl", "stop", unit.name], ["systemctl", "disable", unit.name], ["reconcile"],
     ]
-    assert operations[3][:4] == ["ip", "route", "flush", "table"]
+    assert operations[3] == ["retire-ingress", []]
+    assert operations[4][:4] == ["ip", "route", "flush", "table"]

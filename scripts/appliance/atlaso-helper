@@ -467,6 +467,7 @@ LAB_ROUTE_TABLE_ID = 200
 MANAGEMENT_ROUTE_RULE_PRIORITY = 1000
 LAB_ROUTE_RULE_PRIORITY = 2000
 ROUTE_RULE_PRIORITY_WINDOW = 100
+LAB_ROUTE_GUARD_PRIORITY = LAB_ROUTE_RULE_PRIORITY + ROUTE_RULE_PRIORITY_WINDOW
 APPLIANCE_SETTINGS_APPLY_DIR = Path("/var/lib/atlaso/apply/appliance-settings")
 PUBLIC_SERVICES_APPLY_DIR = Path("/var/lib/atlaso/apply/public-services")
 LOCAL_USERS_APPLY_DIR = Path("/var/lib/atlaso/apply/local-users")
@@ -9762,6 +9763,20 @@ def _route_domain_rule_row(row: dict, family: int) -> dict:
     priority = row.get("priority")
     if type(priority) is not int:
         raise ValueError("invalid routing-domain rule priority")
+    if priority == LAB_ROUTE_GUARD_PRIORITY:
+        # All guards have the same terminal action, so their relative order is
+        # irrelevant. Exact iif selectors distinguish same-priority ownership.
+        incoming = row.get("iif", "")
+        source = "0.0.0.0/0" if family == 4 else "::/0"
+        if ("table" in row or row.get("action") not in ("unreachable", "7")
+                or str(row.get("protocol")) not in {"2", "kernel"}
+                or not isinstance(incoming, str) or not _valid_network_interface_name(incoming)
+                or incoming in {"lo", ".", ".."}
+                or row.get("src", "all") not in ("all", source)
+                or ("srclen" in row and (type(row["srclen"]) is not int or row["srclen"] != 0))):
+            raise ValueError("foreign routing-domain ingress guard")
+        return {"family": family, "priority": priority, "table": None, "source": source,
+                "incoming_interface": incoming, "protocol": 2}
     table = _route_domain_rule_number(row.get("table"), "table")
     expected = (MANAGEMENT_ROUTE_TABLE_ID if MANAGEMENT_ROUTE_RULE_PRIORITY <= priority
                 < MANAGEMENT_ROUTE_RULE_PRIORITY + ROUTE_RULE_PRIORITY_WINDOW else LAB_ROUTE_TABLE_ID)
@@ -9769,7 +9784,7 @@ def _route_domain_rule_row(row: dict, family: int) -> dict:
         raise ValueError("foreign routing-domain rule table")
     protocol = row.get("protocol", 0)
     if isinstance(protocol, str):
-        protocol = {"boot": 3, "static": 4}.get(protocol, protocol)
+        protocol = {"kernel": 2, "boot": 3, "static": 4}.get(protocol, protocol)
     protocol = _route_domain_rule_number(protocol, "protocol")
     # Historical WAN commands used unspecified protocol; networkd's old static
     # [RoutingPolicyRule] entries used RTPROT_STATIC. New ingress rules use
@@ -9807,7 +9822,7 @@ def _route_domain_rule_row(row: dict, family: int) -> dict:
 
 
 def _snapshot_route_domain_rules() -> list[dict]:
-    """Capture both legacy windows, rejecting foreign occupants before mutation."""
+    """Capture legacy windows and exact ingress guards, rejecting foreign rules."""
     snapshot = []
     for family in (4, 6):
         result = _network_observation_command(["ip", "-N", "-j", "-details", f"-{family}", "rule", "show"])
@@ -9821,13 +9836,15 @@ def _snapshot_route_domain_rules() -> list[dict]:
             if not isinstance(row, dict) or type(row.get("priority")) is not int:
                 raise ValueError("invalid routing-domain rule inventory")
             priority = row["priority"]
-            if not any(base <= priority < base + ROUTE_RULE_PRIORITY_WINDOW
+            if priority != LAB_ROUTE_GUARD_PRIORITY and not any(base <= priority < base + ROUTE_RULE_PRIORITY_WINDOW
                        for base in (MANAGEMENT_ROUTE_RULE_PRIORITY, LAB_ROUTE_RULE_PRIORITY)):
                 continue
-            if priority in seen:
+            admitted = _route_domain_rule_row(row, family)
+            key = (priority, admitted["incoming_interface"] if priority == LAB_ROUTE_GUARD_PRIORITY else "")
+            if key in seen:
                 raise ValueError("ambiguous routing-domain rule priority")
-            seen.add(priority)
-            snapshot.append(_route_domain_rule_row(row, family))
+            seen.add(key)
+            snapshot.append(admitted)
     return snapshot
 
 
@@ -9837,7 +9854,7 @@ def _validated_route_domain_rule_snapshot(snapshot: list[dict]) -> list[dict]:
     Args:
         snapshot: Serialized pre-Apply rules or canonical candidate rules.
     """
-    if not isinstance(snapshot, list) or len(snapshot) > 4 * ROUTE_RULE_PRIORITY_WINDOW:
+    if not isinstance(snapshot, list) or len(snapshot) > 6 * ROUTE_RULE_PRIORITY_WINDOW:
         raise ValueError("invalid routing-domain rule snapshot")
     validated = []
     seen = set()
@@ -9847,17 +9864,22 @@ def _validated_route_domain_rule_snapshot(snapshot: list[dict]) -> list[dict]:
         } or type(row["family"]) is not int or row["family"] not in {4, 6}:
             raise ValueError("invalid routing-domain rule snapshot")
         priority = row["priority"]
-        if type(priority) is not int or not any(base <= priority < base + ROUTE_RULE_PRIORITY_WINDOW
-                                                for base in (MANAGEMENT_ROUTE_RULE_PRIORITY, LAB_ROUTE_RULE_PRIORITY)):
+        if type(priority) is not int or (priority != LAB_ROUTE_GUARD_PRIORITY and not any(
+                base <= priority < base + ROUTE_RULE_PRIORITY_WINDOW
+                for base in (MANAGEMENT_ROUTE_RULE_PRIORITY, LAB_ROUTE_RULE_PRIORITY))):
             raise ValueError("routing-domain rule snapshot is outside owned windows")
-        key = (row["family"], priority)
+        native = {"priority": priority, "src": row["source"],
+                  "iif": row["incoming_interface"], "protocol": row["protocol"]}
+        if row["table"] is None:
+            native["action"] = "unreachable"
+        else:
+            native["table"] = row["table"]
+        admitted = _route_domain_rule_row(native, row["family"])
+        key = (row["family"], priority, admitted["incoming_interface"] if priority == LAB_ROUTE_GUARD_PRIORITY else "")
         if key in seen:
             raise ValueError("duplicate routing-domain rule snapshot priority")
         seen.add(key)
-        validated.append(_route_domain_rule_row({
-            "priority": priority, "table": row["table"], "src": row["source"],
-            "iif": row["incoming_interface"], "protocol": row["protocol"],
-        }, row["family"]))
+        validated.append(admitted)
     return validated
 
 
@@ -9869,13 +9891,20 @@ def _restore_route_domain_rules(snapshot: list[dict]) -> None:
     """
     desired = _validated_route_domain_rule_snapshot(snapshot)
     current = _snapshot_route_domain_rules()
-    for action, rows in (("del", [row for row in current if row not in desired]),
-                         ("add", [row for row in desired if row not in current])):
+    additions = [row for row in desired if row not in current]
+    removals = [row for row in current if row not in desired]
+    # Install terminal guards first. Failed lookup replacement then remains
+    # fail-closed, and old guards survive until the replacement rules are ready.
+    for action, rows in (("add", [row for row in additions if row["table"] is None]),
+                         ("del", [row for row in removals if row["table"] is not None]),
+                         ("add", [row for row in additions if row["table"] is not None]),
+                         ("del", [row for row in removals if row["table"] is None])):
         for row in rows:
             selector = (["iif", row["incoming_interface"]] if row["incoming_interface"]
                         else ["from", row["source"]])
+            target = ["unreachable"] if row["table"] is None else ["table", str(row["table"])]
             command = ["ip", f"-{row['family']}", "rule", action, *selector,
-                       "table", str(row["table"]), "priority", str(row["priority"]), "protocol", str(row["protocol"])]
+                       *target, "priority", str(row["priority"]), "protocol", str(row["protocol"])]
             if _run(command).returncode:
                 raise ValueError("routing-domain rule migration failed")
 
@@ -9925,6 +9954,20 @@ def _route_domain_ingress_interfaces(
     return result
 
 
+def _route_domain_ingress_rules(names: list[str]) -> list[dict]:
+    """Build lab lookups and terminal guards without touching local-source rules.
+
+    Args:
+        names: Validated, sorted applied lab ingress interfaces.
+    """
+    return [{"family": family, "priority": priority, "table": table,
+             "source": "0.0.0.0/0" if family == 4 else "::/0",
+             "incoming_interface": name, "protocol": 2}
+            for index, name in enumerate(names) for family in (4, 6)
+            for priority, table in ((LAB_ROUTE_RULE_PRIORITY + index, LAB_ROUTE_TABLE_ID),
+                                    (LAB_ROUTE_GUARD_PRIORITY, None))]
+
+
 def _apply_route_domain_ingress(
     path: Path | None = None, *, held_management_interfaces: set[str] | None = None,
 ) -> None:
@@ -9949,10 +9992,7 @@ def _apply_route_domain_ingress(
         if _wan_config_errors(WAN_RUNTIME_CONFIG_PATH, include_nat=False):
             raise ValueError("applied WAN configuration is invalid")
         enabled = _wan_feature_settings(parsed)["routing_enabled"]
-    desired = [{"family": family, "priority": LAB_ROUTE_RULE_PRIORITY + index,
-                "table": LAB_ROUTE_TABLE_ID, "source": "0.0.0.0/0" if family == 4 else "::/0",
-                "incoming_interface": name, "protocol": 2}
-               for index, name in enumerate(names if enabled else []) for family in (4, 6)]
+    desired = _route_domain_ingress_rules(names if enabled else [])
     _restore_route_domain_rules(desired)
 
 
@@ -12034,10 +12074,7 @@ def _apply_wan_policy_rules(parsed: dict[str, list[dict[str, str]]]) -> int:
     routing_enabled = _wan_feature_settings(parsed)["routing_enabled"]
     if ROUTE_DOMAIN_CONFIG_PATH.exists():
         names = _route_domain_ingress_interfaces()
-        desired = [{"family": family, "priority": LAB_ROUTE_RULE_PRIORITY + index,
-                    "table": LAB_ROUTE_TABLE_ID, "source": "0.0.0.0/0" if family == 4 else "::/0",
-                    "incoming_interface": name, "protocol": 2}
-                   for index, name in enumerate(names if routing_enabled else []) for family in (4, 6)]
+        desired = _route_domain_ingress_rules(names if routing_enabled else [])
         _restore_route_domain_rules(desired)
         return 0
     # A WAN-only Apply before the first Network migration must retain the old
@@ -23921,6 +23958,10 @@ def _reset_factory_network_runtime() -> int:
             _stop_route_domains_for_restore({})
             _durable_management_handoff_unlink(ROUTE_DOMAIN_CONFIG_PATH)
             _reconcile_route_domains()
+        # Terminal ingress guards outlive route-table flushing. Retire their
+        # exact canonical forms as part of reset, even after an interrupted
+        # reset already removed the applied domain intent.
+        _restore_route_domain_rules([])
     except (OSError, ValueError) as exc:
         print(str(exc), file=sys.stderr)
         return 2

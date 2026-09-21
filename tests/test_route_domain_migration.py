@@ -117,11 +117,13 @@ def test_migration_reads_only_applied_wan_and_network_domains(helper, monkeypatc
     monkeypatch.setattr(helper, "WAN_RUNTIME_CONFIG_PATH", wan)
     commands = native_rules(helper, monkeypatch, [{"priority": 1000, "src": "192.168.49.0/24", "table": 100}])
     helper._apply_route_domain_ingress(network)
-    assert commands[0][3] == "del"
+    assert commands[0][3] == ("add" if applied_forwarding else "del")
     additions = [command for command in commands if command[3] == "add"]
-    assert len(additions) == (2 if applied_forwarding else 0)
+    assert len(additions) == (4 if applied_forwarding else 0)
     if additions:
-        assert all(command[4:8] == ["iif", "eth2.20", "table", "200"] for command in additions)
+        assert all(command[4:6] == ["iif", "eth2.20"] for command in additions)
+        assert len([command for command in additions if "unreachable" in command]) == 2
+        assert all(command[6:8] == ["table", "200"] for command in additions if "unreachable" not in command)
         assert all(command[-2:] == ["protocol", "2"] for command in additions)
     assert all(command[:1] == ["ip"] and "rule" in command for command in commands)
     assert {path: path.read_bytes() for path in before} == before
@@ -230,3 +232,120 @@ def test_owned_kernel_ingress_protocol_survives_snapshot_and_restore(helper, mon
     helper._restore_route_domain_rules(snapshot)
     assert commands == [["ip", "-4", "rule", "add", "iif", "eth1", "table", "200",
                          "priority", "2000", "protocol", "2"]]
+
+
+@pytest.mark.parametrize("action", ["unreachable", "7"])
+def test_ingress_guards_round_trip_distinct_interfaces_at_shared_priority(helper, monkeypatch, action):
+    """Native numeric actions and distinct same-priority iif guards stay journalable."""
+    rows = [{"priority": 2100, "src": "all", "iif": name, "protocol": "2", "action": action}
+            for name in ("eth1", "eth2")]
+    native_rules(helper, monkeypatch, rows, rows)
+    snapshot = helper._snapshot_route_domain_rules()
+    assert len(snapshot) == 4
+    assert all(row["table"] is None and len(row) == 6 for row in snapshot)
+    commands = native_rules(helper, monkeypatch, [])
+    helper._restore_route_domain_rules(snapshot)
+    assert len(commands) == 4
+    assert all(command[6:] == ["unreachable", "priority", "2100", "protocol", "2"] for command in commands)
+
+
+@pytest.mark.parametrize("override", [
+    {"iif": "lo"}, {"iif": ""}, {"src": "192.0.2.0/24"}, {"table": 200},
+    {"action": "blackhole"}, {"action": 7}, {"protocol": 0}, {"protocol": True},
+    {"fwmark": "0x1"}, {"srclen": True}, {"srclen": 24},
+])
+def test_foreign_terminal_priority_is_never_adopted_or_deleted(helper, monkeypatch, override):
+    """Only exact protocol2 interface terminal guards belong to Atlaso at2100."""
+    row = {"priority": 2100, "src": "all", "iif": "eth1", "protocol": "2", "action": "7", **override}
+    commands = native_rules(helper, monkeypatch, [row])
+    with pytest.raises(ValueError):
+        helper._restore_route_domain_rules(helper._route_domain_ingress_rules(["eth1"]))
+    assert not commands
+
+
+def test_duplicate_identical_guard_is_ambiguous(helper, monkeypatch):
+    """Same-priority guards need distinct iif selectors for exact deletion."""
+    row = {"priority": 2100, "src": "all", "iif": "eth1", "protocol": "2", "action": "7"}
+    native_rules(helper, monkeypatch, [row, row])
+    with pytest.raises(ValueError, match="ambiguous"):
+        helper._snapshot_route_domain_rules()
+
+
+def test_ingress_guard_capacity_remains_one_hundred_interfaces(helper):
+    """Terminal protection does not halve the admitted lab-interface capacity."""
+    desired = helper._route_domain_ingress_rules([f"eth{index}" for index in range(100)])
+    assert len(helper._validated_route_domain_rule_snapshot(desired)) == 400
+    assert max(row["priority"] for row in desired if row["table"] == 200) == 2099
+
+
+def test_failed_lookup_install_retains_guards_and_allows_exact_rollback(helper, monkeypatch):
+    """Guards precede legacy retirement and survive an interrupted lookup addition."""
+    original = [{"priority": 1000, "src": "192.0.2.0/24", "table": 100}]
+    native_rules(helper, monkeypatch, original)
+    snapshot = helper._snapshot_route_domain_rules()
+    commands = []
+
+    def fail_lookup(command):
+        """Model a native lookup failure after both family guards are installed."""
+        commands.append(command)
+        return subprocess.CompletedProcess(command, int("add" in command and "table" in command), "", "")
+
+    monkeypatch.setattr(helper, "_run", fail_lookup)
+    with pytest.raises(ValueError, match="migration failed"):
+        helper._restore_route_domain_rules(helper._route_domain_ingress_rules(["eth1"]))
+    assert [command[3] for command in commands] == ["add", "add", "del", "add"]
+    assert all("unreachable" in command for command in commands[:2])
+    guard = {"priority": 2100, "src": "all", "iif": "eth1", "protocol": "2", "action": "7"}
+    commands = native_rules(helper, monkeypatch, [guard], [guard])
+    helper._restore_route_domain_rules(snapshot)
+    assert commands[0][3:6] == ["add", "from", "192.0.2.0/24"]
+    assert all(command[3] == "del" and "unreachable" in command for command in commands[1:])
+
+
+@pytest.mark.parametrize("family", [4, 6])
+@pytest.mark.parametrize("lab_route_exists", [False, True])
+def test_lab_lookup_miss_cannot_fall_through_management_main_default(helper, family, lab_route_exists):
+    """Model RPDB fallthrough with overlapping lab traffic and a management default."""
+    rules = helper._route_domain_ingress_rules(["eth1", "eth2"])
+    rules += [{"family": family, "priority": 5000, "incoming_interface": "lo", "table": 100},
+              {"family": family, "priority": 5001, "incoming_interface": "lo", "table": None},
+              {"family": family, "priority": 32766, "incoming_interface": "", "table": 254}]
+
+    def route(incoming):
+        """An unsuccessful table lookup continues; unreachable ends evaluation."""
+        for rule in sorted(rules, key=lambda item: item["priority"]):
+            if rule["family"] != family or rule["incoming_interface"] not in {"", incoming}:
+                continue
+            if rule["table"] is None:
+                return "unreachable"
+            if rule["table"] == 200 and lab_route_exists:
+                return "lab"
+            if rule["table"] in {100, 254}:
+                return "management"
+        return "unreachable"
+
+    assert route("eth1") == ("lab" if lab_route_exists else "unreachable")
+    assert route("eth2") == ("lab" if lab_route_exists else "unreachable")
+    assert route("lo") == "management"
+
+
+def test_wan_uses_same_guards_and_preserves_local_source_rules(helper, monkeypatch, tmp_path):
+    """WAN enabled/disabled reconciliation never claims the5000 local-source window."""
+    intent = tmp_path / "route-domains.json"
+    intent.write_text(json.dumps({"schema": 1, "interfaces": [{"name": "eth1", "table": 200}]}))
+    monkeypatch.setattr(helper, "ROUTE_DOMAIN_CONFIG_PATH", intent)
+    monkeypatch.setattr(helper.shutil, "which", lambda _name: "ip")
+    local = [{"priority": 5000, "src": "192.0.2.10", "iif": "lo", "table": 100, "protocol": "2"},
+             {"priority": 5001, "src": "192.0.2.10", "iif": "lo", "action": "7", "protocol": "2"}]
+    commands = native_rules(helper, monkeypatch, local)
+    monkeypatch.setattr(helper, "_wan_feature_settings", lambda _parsed: {"routing_enabled": True})
+    assert helper._apply_wan_policy_rules({}) == 0
+    assert len(commands) == 4
+    assert all("unreachable" in command for command in commands[:2])
+    assert all("lo" not in command for command in commands)
+    guard = {"priority": 2100, "src": "all", "iif": "eth1", "protocol": "2", "action": "7"}
+    commands = native_rules(helper, monkeypatch, [*local, guard], [guard])
+    monkeypatch.setattr(helper, "_wan_feature_settings", lambda _parsed: {"routing_enabled": False})
+    assert helper._apply_wan_policy_rules({}) == 0
+    assert len(commands) == 2
+    assert all(command[3] == "del" and "unreachable" in command and "lo" not in command for command in commands)
