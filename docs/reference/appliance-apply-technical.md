@@ -181,9 +181,10 @@ restore; unrelated role strings fail closed.
 
 The management physical interface may define optional static IPv4 and IPv6 gateways. IPv4 must be on-link. IPv6 may be
 on-link or link-local (`fe80::/10`); neither gateway may equal its interface address. Network apply writes each
-configured management default to both the main table and management policy table `100`. For every static address family
-with a configured default, it also writes the directly connected prefix as a scope-link route in table `100` before the
-source rule selects that table. This prevents same-subnet management replies from following the default gateway after a
+configured management default to both the main table and management policy table `100`. For every static address family,
+including gatewayless management, it writes the connected prefix as a scope-link route in table `100` before the
+exact source rule selects that table. This prevents same-subnet management replies from following the default gateway
+after a
 clean reboot. Non-management physical interfaces and VLANs cannot set these fields. IPv4 DHCP and IPv6 Disabled or
 Automatic clear the corresponding static gateway. Lab route gateways remain owned by Routing & WAN in table
 `200`, allowing management and lab traffic to use different exits.
@@ -235,12 +236,35 @@ gateway intent, installs Atlaso-owned `.network` and `.netdev` files under `/etc
 and reconfigures non-management links. Disabled management IPv6 renders `IPv6AcceptRA=no` with no static IPv6 address or
 route. Automatic renders `IPv6AcceptRA=yes` with IPv6 link-local addressing. Static renders `IPv6AcceptRA=no`, the
 configured address, IPv6 link-local addressing, and the optional default route in both the main and management policy
-  tables. Static networkd output also persists the family-matching connected prefix in the management policy table so
-  reboot reconstruction retains on-link host replies as well as routed egress. The helper does not blindly reconfigure
-  a dedicated management link during this first pass. Dedicated
-  management source networks use the Atlaso management route table, while access and route networks use the
-lab route table. When a VLAN was present in successful Atlaso network apply history and is no longer desired, the staged
+tables. Static networkd output persists connected routes independently in the management (`100`) and lab (`200`) tables,
+including when their prefixes match. DHCPv4 and IPv6 RA use the interface's domain `RouteTable`; management also retains
+lease/router-derived main defaults for unbound host connections. The helper does not blindly reconfigure
+a dedicated management link during this first pass. When a VLAN was present in successful Atlaso network apply history
+and is no longer desired, the staged
 config includes an explicit removal target and the helper deletes that VLAN link after verifying it is a VLAN device.
+
+`/etc/atlaso/route-domains.json` records only applied Network ownership, binding interface names to MAC addresses and
+tables. `atlaso-route-domains.service` follows rtnetlink address/link events and rescans every ten seconds. It owns exact
+local-source (`iif lo`, `/32` or `/128`) lookup/adjacent-unreachable pairs at priorities `5000–5999`. Protocol `kernel`
+deliberately exempts these rules from networkd's foreign-rule cleanup; ownership still requires the reserved range and
+canonical selector shape. Deprecated valid addresses remain covered; tentative, failed-DAD and link-local addresses are
+excluded. Duplicate sources across domains or uncertain old identities retain unreachable guards and fail readiness.
+The watcher never reads pending database intent or changes routes. Its event-driven updates are asynchronous outside
+Apply; no zero-gap lease-renewal guarantee is implied.
+
+Network Apply journals the old `1000–1099`/`2000–2099` rules and migrates them to lab ingress selectors using only the
+last-applied forwarding setting. It does not apply pending WAN changes. Both ordinary and protected transactions restore
+those exact rules, applied intent, and watcher boot/runtime state on failure. Protected handoffs preserve old source
+ownership and connected/default routes until retirement, then reconcile again before final readiness. Factory reset
+quiesces the watcher before clearing its intent and routes. A WAN-only Apply before Network migration retains legacy
+behavior; after migration, WAN replay obtains interface ownership from applied Network intent.
+Canonical lab ingress rules also use protocol `kernel` within the existing `2000–2099` window so networkd reload does
+not remove forwarding selectors. Other selectors or protocol/range combinations are not adopted by migration.
+
+For an overlapping-prefix validation, keep both links up and verify both families with
+`ip route get <management-client> from <management-address>` and the equivalent Access source. Require the expected
+interface and table (`100` or `200`), host-facing ping and trusted HTTPS, then repeat after networkd reload and reboot.
+Connected routes and local-source rules remain present with forwarding disabled.
 
 Any change to the effective management address, gateway, dedicated-management role, flagged access-management
 listener, or management-listener VLAN MTU converts five apply units into one `management-handoff` helper transaction
@@ -409,10 +433,12 @@ they never invoke this helper or apply unit directly. Generated route-role permi
 Through `atlaso-helper wan validate|apply`, the helper validates staged routes, routing rules, WAN targets,
 and netem policy values only for their active global feature. The staged `[feature_settings]` section carries
 `routing_enabled` and `wan_simulation_enabled` while retaining every saved resource row. Routing on
-sets `net.ipv4.ip_forward=1` and `net.ipv6.conf.all.forwarding=1`; Routing off sets both to `0`, removes Atlaso lab
-routes and rules, and leaves protected management table `100` behavior intact. NAT is effective only when Routing and
+sets `net.ipv4.ip_forward=1` and `net.ipv6.conf.all.forwarding=1`; Routing off sets both to `0`, removes forwarded lab
+rules and explicit static routes, and retains connected routes and local-source rules in both domains. NAT is effective
+only when Routing and
 NAT are both on; the `nat` unit otherwise clears Atlaso's NAT rules without changing saved intent. WAN Simulation
-independently applies or removes root `tc/netem` qdiscs. WAN Apply applies source policy rules with `ip rule` and
+independently applies or removes root `tc/netem` qdiscs. After Network migration, WAN Apply applies ingress rules with
+`ip rule` and
 static routes with
 `ip route replace ... table 200`. Removed route deletion is staged only when a route existed in the selected unit's
 last-applied baseline and is absent from current desired state. Management is never a route, NAT, or routing-permission

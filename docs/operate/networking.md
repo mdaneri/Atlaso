@@ -48,10 +48,28 @@ off-subnet HTTPS, DNS, repository, and update access will stop after Apply. Off-
 interface address remain invalid. Cancel the review or revert the pending Network desired state to retain the applied
 DHCP address and route; a failed protected management handoff rolls back to the last-applied DHCP path.
 
-For a static dedicated-management address with a gateway, Atlaso persists three related networkd objects: the connected
-management prefix in policy table `100`, a source rule selecting that table, and the default route through the reviewed
-gateway. The connected route keeps replies to the VMware host or another same-subnet client on-link after reboot; the
-default route continues to carry off-subnet appliance traffic.
+Dedicated-management connected routes use table `100`; Access, Route, and VLAN connected routes use table `200`.
+Connected routes remain available without a gateway and when forwarding is disabled. A configured management gateway
+adds the off-subnet default route. Networkd owns DHCP/IPv6 router-advertisement routes and their expiry in the same
+domain tables; the management default also remains available to appliance connections that have not selected a source.
+
+### Reusing a prefix on separate networks
+
+The dedicated management network and a separate lab network may use the same prefix with different appliance addresses.
+Atlaso selects local reply routes by the appliance's exact source address, rather than assigning the entire prefix to
+whichever interface appears first. An Access interface exposing Management UI still belongs to the lab routing domain;
+its off-subnet paths require Routes & WAN configuration. If its domain has no matching route, traffic fails instead of
+falling through to a route on the other network. Forwarded lab traffic selects the lab table by its incoming interface;
+existing firewall and Routing Permission checks still decide whether forwarding is allowed.
+
+Apply **Network** once after upgrading to install this domain ownership and migrate previous prefix rules. That migration
+uses the already-applied forwarding setting and does not apply pending Routes & WAN edits. Rollback restores the prior
+rules, network files, and routing service state. Subsequent WAN Apply uses the applied Network ownership.
+
+The routing service follows DHCP and IPv6 address events and periodically reconciles missed events. Protected Apply
+waits for address activation and synchronously verifies source rules before readiness. Address changes outside Apply are
+asynchronous; this is not a guarantee of uninterrupted routing during lease changes. Reusing the exact same appliance IP
+in both domains is ambiguous and is rejected. Keep distinct appliance addresses even when their prefixes overlap.
 
 ### Assign an interface role
 

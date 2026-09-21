@@ -873,6 +873,17 @@ def test_ordinary_apply_restores_rejected_candidate(tmp_path, monkeypatch, capsy
     from tests.test_appliance_helper import load_helper_module, network_config_text
 
     helper = load_helper_module()
+    monkeypatch.setattr(helper, "ROUTE_DOMAIN_CONFIG_PATH", tmp_path / "route-domains.json")
+    monkeypatch.setattr(helper, "ROUTE_DOMAIN_SERVICE_PATH", tmp_path / "route-domains.service")
+    monkeypatch.setattr(helper, "_snapshot_route_domain_service", lambda: {"enabled": False, "active": False})
+    legacy_rules = [{"family": 4, "priority": 1000, "table": 100,
+                     "source": "192.0.2.0/24", "incoming_interface": "", "protocol": 0}]
+    live_rules = list(legacy_rules)
+    monkeypatch.setattr(helper, "_snapshot_route_domain_rules", lambda: list(live_rules))
+    monkeypatch.setattr(helper, "_install_route_domain_intent", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(helper, "_apply_route_domain_ingress", lambda *_args, **_kwargs: live_rules.clear())
+    monkeypatch.setattr(helper, "_restore_route_domain_rules", lambda snapshot: live_rules.__setitem__(slice(None), snapshot))
+    monkeypatch.setattr(helper, "_reconcile_route_domains", lambda: None)
     config = tmp_path / "candidate.conf"
     config.write_text(network_config_text(include_vlan=False), encoding="utf-8")
     if failure in {"interrupted", "awaiting", "acknowledged", "publication"}:
@@ -983,6 +994,8 @@ def test_ordinary_apply_restores_rejected_candidate(tmp_path, monkeypatch, capsy
         assert helper._handle_network("apply", [str(config)]) == 2
         pending = helper._network_transaction_state()
         assert pending["phase"] == "applying"
+        assert pending["previous_route_domain_rules"] == legacy_rules
+        assert pending["previous_route_domain_service"] == {"enabled": False, "active": False}
         for snapshot in pending["snapshots"]:
             if snapshot["existed"]:
                 assert helper.Path(snapshot["backup"]).read_bytes() == original
@@ -1000,13 +1013,22 @@ def test_ordinary_apply_restores_rejected_candidate(tmp_path, monkeypatch, capsy
         assert helper._handle_network("recover", ["test-task"]) == 0
     elif failure in {"awaiting", "acknowledged"}:
         assert helper._handle_network("apply", [str(config)]) == 0
-        assert helper._network_transaction_state()["phase"] == "awaiting-commit"
+        pending = helper._network_transaction_state()
+        assert pending["phase"] == "awaiting-commit"
+        assert pending["previous_route_domain_rules"] == legacy_rules
+        assert {str(helper.ROUTE_DOMAIN_CONFIG_PATH), str(helper.ROUTE_DOMAIN_SERVICE_PATH)} <= {
+            row["path"] for row in pending["snapshots"]
+        }
         assert helper._handle_network("acknowledge", ["wrong-task"]) == 2
         action = "acknowledge" if failure == "acknowledged" else "recover"
         assert helper._handle_network(action, ["test-task"]) == 0
         assert helper._handle_network(action, ["test-task"]) == 0
     else:
         assert helper._handle_network("apply", [str(config)]) == (0 if failure in {"none", "cleanup"} else 2)
+    if failure not in {"rollback", "none", "cleanup", "acknowledged"}:
+        assert live_rules == legacy_rules
+    if failure in {"none", "cleanup", "acknowledged"}:
+        assert live_rules == []
     backups = list((tmp_path / "transaction").glob("backup-*"))
     if failure in {"none", "cleanup", "acknowledged"}:
         assert previous.read_bytes() == b"rejected candidate"

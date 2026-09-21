@@ -480,6 +480,9 @@ LOCAL_USERS_PWQUALITY_END = "# END Atlaso managed local user password policy"
 LOCAL_USERS_ALLOWED_SHELLS = {"/sbin/nologin", "/bin/bash", "/bin/sh", "/usr/bin/pwsh"}
 NETWORKD_CONFIG_DIR = Path("/etc/systemd/network")
 NETWORKD_MGMT_CONFIG_PATH = NETWORKD_CONFIG_DIR / "00-atlaso-mgmt.network"
+ROUTE_DOMAIN_CONFIG_PATH = Path("/etc/atlaso/route-domains.json")
+ROUTE_DOMAIN_SERVICE_PATH = Path("/etc/systemd/system/atlaso-route-domains.service")
+
 NETWORKD_MANAGED_PREFIX = "10-atlaso-"
 NETWORKD_DEFAULT_APPLIANCE_FILES = {
     "50-static-en.network",
@@ -9083,6 +9086,7 @@ def _systemd_networkd_files(path: Path) -> tuple[dict[str, str], list[str], list
     files: dict[str, str] = {}
     reconfigure_links: list[str] = []
     admin_down_links: list[str] = []
+    connected_owners: set[tuple[int, str]] = set()
 
     for interface in physical_interfaces:
         name = interface.get("name", "")
@@ -9133,25 +9137,6 @@ def _systemd_networkd_files(path: Path) -> tuple[dict[str, str], list[str], list
                 if shutil.which("ip") is not None:
                     gateway_candidates.extend(_runtime_default_gateways_for_interface(name))
             usable_gateways = _usable_management_default_gateways(static_management_cidrs, gateway_candidates)
-            gateway_versions = {ip_address(gateway).version for gateway in usable_gateways}
-            for cidr in static_management_cidrs:
-                network = ip_network(cidr, strict=False)
-                if network.version not in gateway_versions:
-                    continue
-                lines.extend(
-                    [
-                        "",
-                        "[Route]",
-                        f"Destination={network}",
-                        "Scope=link",
-                        f"Table={MANAGEMENT_ROUTE_TABLE_ID}",
-                        "",
-                        "[RoutingPolicyRule]",
-                        f"From={network}",
-                        f"Table={MANAGEMENT_ROUTE_TABLE_ID}",
-                        f"Priority={MANAGEMENT_ROUTE_RULE_PRIORITY}",
-                    ]
-                )
             for gateway in usable_gateways:
                 # The gateway is already validated against the intended link.
                 # During ACD, its connected address may not exist yet; do not
@@ -9172,11 +9157,30 @@ def _systemd_networkd_files(path: Path) -> tuple[dict[str, str], list[str], list
         if ipv4_method == "dhcp":
             # Preserve the image's lease-retention policy when Network Apply rewrites this file.
             lines.extend(["", "[DHCPv4]", "SendRelease=no",
-                          "SendDecline=" + ("no" if interface.get("check_duplicate_ip_addresses") == "false" else "yes")])
+                          "SendDecline=" + ("no" if interface.get("check_duplicate_ip_addresses") == "false" else "yes"),
+                          f"RouteTable={MANAGEMENT_ROUTE_TABLE_ID if name == management_name else LAB_ROUTE_TABLE_ID}"])
+            if name == management_name:
+                # Unbound host connections first consult main before selecting
+                # a source. Networkd owns this lease-derived route's lifetime.
+                lines.extend(["", "[Route]", "Destination=0.0.0.0/0", "Gateway=_dhcp4",
+                              "GatewayOnLink=yes", "Table=main"])
+        if ipv6_enabled and not interface.get("ipv6_cidr"):
+            lines.extend(["", "[IPv6AcceptRA]",
+                          f"RouteTable={MANAGEMENT_ROUTE_TABLE_ID if name == management_name else LAB_ROUTE_TABLE_ID}"])
+            if name == management_name:
+                lines.extend(["", "[Route]", "Destination=::/0", "Gateway=_ipv6ra",
+                              "Table=main"])
         for key, family in (("ip_cidr", "ipv4"), ("ipv6_cidr", "ipv6")):
             if interface.get(key) and (family != "ipv4" or ipv4_method != "dhcp") and (family != "ipv6" or ipv6_enabled):
                 detection = "none" if family == "ipv4" and interface.get("check_duplicate_ip_addresses") == "false" else family
                 lines.extend(["", "[Address]", f"Address={interface[key]}", f"DuplicateAddressDetection={detection}"])
+                address = ip_interface(interface[key])
+                table = MANAGEMENT_ROUTE_TABLE_ID if name == management_name else LAB_ROUTE_TABLE_ID
+                owner_key = (table, str(address.network))
+                if owner_key not in connected_owners:
+                    connected_owners.add(owner_key)
+                    lines.extend(["", "[Route]", f"Destination={address.network}", "Scope=link",
+                                  f"PreferredSource={address.ip}", f"Table={table}"])
         filename = "00-atlaso-mgmt.network" if name == management_name else _networkd_managed_filename(name, "network")
         files[filename] = "\n".join(lines).strip() + "\n"
         if name != management_name:
@@ -9209,6 +9213,13 @@ def _systemd_networkd_files(path: Path) -> tuple[dict[str, str], list[str], list
             if vlan.get(key):
                 detection = "none" if family == "ipv4" and vlan.get("check_duplicate_ip_addresses") == "false" else family
                 network_lines.extend(["", "[Address]", f"Address={vlan[key]}", f"DuplicateAddressDetection={detection}"])
+                address = ip_interface(vlan[key])
+                table = MANAGEMENT_ROUTE_TABLE_ID if vlan.get('role') == 'management' else LAB_ROUTE_TABLE_ID
+                owner_key = (table, str(address.network))
+                if owner_key not in connected_owners:
+                    connected_owners.add(owner_key)
+                    network_lines.extend(["", "[Route]", f"Destination={address.network}", "Scope=link",
+                                          f"PreferredSource={address.ip}", f"Table={table}"])
         if not vlan.get("ip_cidr") and not vlan.get("ipv6_cidr"):
             network_lines.append("LinkLocalAddressing=no")
         files[_networkd_managed_filename(name, "network")] = "\n".join(network_lines).strip() + "\n"
@@ -9617,6 +9628,332 @@ def _install_systemd_networkd_files(
         if link_down.returncode != 0:
             return link_down.returncode, installed, reconfigure_links, admin_down_links
     return 0, installed, reconfigure_links, admin_down_links
+
+
+def _reconcile_route_domains() -> None:
+    """Require exact local source routing to match the applied interface intent."""
+    result = _run(["/opt/atlaso/.venv/bin/python", "-I", "-m", "atlaso.route_domains", "--once"])
+    if result.returncode != 0:
+        raise ValueError("routing-domain source reconciliation failed")
+
+
+def _install_route_domain_intent(
+    path: Path, *, held_interfaces: set[str] | None = None, held_tables: dict[str, int] | None = None,
+    held_addresses: list[dict] | None = None,
+) -> None:
+    """Publish only staged Network intent, binding routing ownership to native MAC identity.
+
+    Args:
+        path: Validated staged Network configuration being applied.
+        held_interfaces: Previous listener interfaces retained by a protected handoff.
+        held_tables: Snapshotted previous routing domains, before candidate files replace them.
+        held_addresses: Exact pre-mutation old-source bindings, excluding new candidate addresses.
+    """
+    physical, vlans, _removed = _parse_network_config(path)
+    result = _network_observation_command(["ip", "-j", "address", "show"])
+    if result.returncode:
+        raise ValueError("routing-domain interface identity observation failed")
+    observed = {row["ifname"]: row for row in json.loads(result.stdout)}
+    intent: dict = {"schema": 1, "interfaces": [], "held_addresses": []}
+    previous = json.loads(ROUTE_DOMAIN_CONFIG_PATH.read_text()) if ROUTE_DOMAIN_CONFIG_PATH.exists() else {}
+    previous_tables = {row["name"]: row["table"] for row in previous.get("interfaces", [])}
+    legacy_management = set(_read_existing_management_network_values().get("Name", []))
+    if held_addresses is not None:
+        intent["held_addresses"] = [dict(row) for row in held_addresses]
+    for name in sorted(held_interfaces or set()) if held_addresses is None else []:
+        row = observed.get(name)
+        if row is None:
+            raise ValueError("previous routing-domain interface disappeared")
+        table = (held_tables or {}).get(name, previous_tables.get(
+            name, MANAGEMENT_ROUTE_TABLE_ID if name in legacy_management else LAB_ROUTE_TABLE_ID,
+        ))
+        for address in row.get("addr_info", []):
+            if address.get("scope") == "global":
+                intent["held_addresses"].append({"name": name, "mac": row["address"],
+                                                 "address": address["local"], "table": table})
+    for row in [*physical, *vlans]:
+        if row.get("role") == "unused" or row.get("mode") == "trunk" or row.get("admin_state") == "down":
+            continue
+        name = row.get("name", "")
+        live = observed.get(name)
+        if live is None:
+            raise ValueError("candidate routing-domain interface is missing")
+        intent["interfaces"].append({"name": name, "mac": live["address"],
+                                     "table": MANAGEMENT_ROUTE_TABLE_ID if row.get("role") == "management" else LAB_ROUTE_TABLE_ID})
+    ROUTE_DOMAIN_CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
+    _durable_management_handoff_state_write(intent, ROUTE_DOMAIN_CONFIG_PATH)
+    ROUTE_DOMAIN_SERVICE_PATH.write_text("\n".join([
+        "[Unit]", "Description=Atlaso applied routing-domain source rules",
+        "After=systemd-networkd.service", "Before=atlaso.service atlaso-worker.service nginx.service",
+        "[Service]", "Type=simple",
+        "ExecStartPre=/opt/atlaso/.venv/bin/python -I -m atlaso.route_domains --once",
+        "ExecStart=/opt/atlaso/.venv/bin/python -I -m atlaso.route_domains",
+        "Restart=on-failure", "RestartSec=2", "[Install]", "WantedBy=multi-user.target", "",
+    ]), encoding="utf-8")
+    os.chmod(ROUTE_DOMAIN_SERVICE_PATH, 0o644)
+    _fsync_file(ROUTE_DOMAIN_SERVICE_PATH)
+    _fsync_directory(ROUTE_DOMAIN_SERVICE_PATH.parent)
+    for command in (["systemctl", "daemon-reload"], ["systemctl", "enable", "--now", ROUTE_DOMAIN_SERVICE_PATH.name]):
+        if _run(command).returncode:
+            raise ValueError("routing-domain service activation failed")
+    _reconcile_route_domains()
+
+
+def _snapshot_route_domain_service() -> dict[str, bool]:
+    """Capture the pre-Apply boot and runtime policy for the owned watcher."""
+    return {
+        "enabled": _run(["systemctl", "is-enabled", ROUTE_DOMAIN_SERVICE_PATH.name]).returncode == 0,
+        "active": _run(["systemctl", "is-active", ROUTE_DOMAIN_SERVICE_PATH.name]).returncode == 0,
+    }
+
+
+def _stop_route_domains_for_restore(state: dict) -> None:
+    """Quiesce before changing files and remove newly installed boot linkage.
+
+    Args:
+        state: Durable pre-Apply journal, possibly predating routing domains.
+    """
+    if not ROUTE_DOMAIN_SERVICE_PATH.exists():
+        return
+    if _run(["systemctl", "stop", ROUTE_DOMAIN_SERVICE_PATH.name]).returncode:
+        raise ValueError("routing-domain watcher could not stop before rollback")
+    previous = state.get("previous_route_domain_service", {})
+    if not previous.get("enabled"):
+        if _run(["systemctl", "disable", ROUTE_DOMAIN_SERVICE_PATH.name]).returncode:
+            raise ValueError("routing-domain boot linkage could not restore before rollback")
+
+
+def _restore_route_domains(state: dict) -> None:
+    """Reconcile restored or absent applied intent before admitting old listeners."""
+    if _run(["systemctl", "daemon-reload"]).returncode:
+        raise ValueError("routing-domain rollback daemon reload failed")
+    _reconcile_route_domains()
+    previous = state.get("previous_route_domain_service", {})
+    if previous.get("enabled") and _run(["systemctl", "enable", ROUTE_DOMAIN_SERVICE_PATH.name]).returncode:
+        raise ValueError("routing-domain boot policy rollback failed")
+    if previous.get("active"):
+        if _run(["systemctl", "start", ROUTE_DOMAIN_SERVICE_PATH.name]).returncode:
+            raise ValueError("restored routing-domain service did not start")
+
+
+def _route_domain_rule_number(value, label: str) -> int:
+    """Admit native integers and their canonical decimal-string equivalents.
+
+    Args:
+        value: A numeric iproute2 table or protocol field.
+        label: Fixed diagnostic field name.
+    """
+    if type(value) is int:
+        return value
+    if isinstance(value, str) and re.fullmatch(r"0|[1-9][0-9]{0,9}", value):
+        return int(value)
+    raise ValueError(f"invalid routing-domain rule {label}")
+
+
+def _route_domain_rule_row(row: dict, family: int) -> dict:
+    """Admit only the historical Atlaso prefix and ingress rule forms.
+
+    Args:
+        row: One numeric iproute2 rule record inside an owned priority window.
+        family: Address family supplied by the fixed observation command.
+    """
+    if set(row) - {"priority", "src", "srclen", "table", "protocol", "iif", "action"}:
+        raise ValueError("unrecognized routing-domain rule selector")
+    priority = row.get("priority")
+    if type(priority) is not int:
+        raise ValueError("invalid routing-domain rule priority")
+    table = _route_domain_rule_number(row.get("table"), "table")
+    expected = (MANAGEMENT_ROUTE_TABLE_ID if MANAGEMENT_ROUTE_RULE_PRIORITY <= priority
+                < MANAGEMENT_ROUTE_RULE_PRIORITY + ROUTE_RULE_PRIORITY_WINDOW else LAB_ROUTE_TABLE_ID)
+    if table != expected:
+        raise ValueError("foreign routing-domain rule table")
+    protocol = row.get("protocol", 0)
+    if isinstance(protocol, str):
+        protocol = {"boot": 3, "static": 4}.get(protocol, protocol)
+    protocol = _route_domain_rule_number(protocol, "protocol")
+    # Historical WAN commands used unspecified protocol; networkd's old static
+    # [RoutingPolicyRule] entries used RTPROT_STATIC. New ingress rules use
+    # kernel protocol so networkd v257 preserves them during reconfiguration.
+    if protocol not in {0, 2, 3, 4}:
+        raise ValueError("foreign routing-domain rule protocol")
+    if row.get("action", "to_tbl") != "to_tbl":
+        raise ValueError("foreign routing-domain rule action")
+    incoming = row.get("iif", "")
+    if not isinstance(incoming, str) or (incoming and (
+        not _valid_network_interface_name(incoming) or incoming in {"lo", ".", ".."}
+    )):
+        raise ValueError("invalid routing-domain ingress interface")
+    source = row.get("src", "all")
+    if source == "all":
+        source = "0.0.0.0/0" if family == 4 else "::/0"
+    if not isinstance(source, str):
+        raise ValueError("invalid routing-domain rule source")
+    prefix = row.get("srclen")
+    if prefix is not None:
+        if type(prefix) is not int or not 0 <= prefix <= (32 if family == 4 else 128):
+            raise ValueError("invalid routing-domain rule prefix")
+        if "/" not in source:
+            source = f"{source}/{prefix}"
+    network = ip_network(source, strict=True)
+    if network.version != family or (prefix is not None and network.prefixlen != prefix):
+        raise ValueError("routing-domain rule family mismatch")
+    if incoming:
+        if table != LAB_ROUTE_TABLE_ID or network.prefixlen != 0 or protocol == 4:
+            raise ValueError("foreign routing-domain ingress rule")
+    elif network.prefixlen == 0 or protocol == 2:
+        raise ValueError("foreign routing-domain catch-all rule")
+    return {"family": family, "priority": priority, "table": table, "source": str(network),
+            "incoming_interface": incoming, "protocol": protocol}
+
+
+def _snapshot_route_domain_rules() -> list[dict]:
+    """Capture both legacy windows, rejecting foreign occupants before mutation."""
+    snapshot = []
+    for family in (4, 6):
+        result = _network_observation_command(["ip", "-N", "-j", "-details", f"-{family}", "rule", "show"])
+        if result.returncode:
+            raise ValueError("routing-domain rules could not be observed")
+        rows = json.loads(result.stdout)
+        if not isinstance(rows, list) or len(rows) > 16384:
+            raise ValueError("invalid routing-domain rule inventory")
+        seen = set()
+        for row in rows:
+            if not isinstance(row, dict) or type(row.get("priority")) is not int:
+                raise ValueError("invalid routing-domain rule inventory")
+            priority = row["priority"]
+            if not any(base <= priority < base + ROUTE_RULE_PRIORITY_WINDOW
+                       for base in (MANAGEMENT_ROUTE_RULE_PRIORITY, LAB_ROUTE_RULE_PRIORITY)):
+                continue
+            if priority in seen:
+                raise ValueError("ambiguous routing-domain rule priority")
+            seen.add(priority)
+            snapshot.append(_route_domain_rule_row(row, family))
+    return snapshot
+
+
+def _validated_route_domain_rule_snapshot(snapshot: list[dict]) -> list[dict]:
+    """Validate journal values without allowing arbitrary native command replay.
+
+    Args:
+        snapshot: Serialized pre-Apply rules or canonical candidate rules.
+    """
+    if not isinstance(snapshot, list) or len(snapshot) > 4 * ROUTE_RULE_PRIORITY_WINDOW:
+        raise ValueError("invalid routing-domain rule snapshot")
+    validated = []
+    seen = set()
+    for row in snapshot:
+        if not isinstance(row, dict) or set(row) != {
+            "family", "priority", "table", "source", "incoming_interface", "protocol",
+        } or type(row["family"]) is not int or row["family"] not in {4, 6}:
+            raise ValueError("invalid routing-domain rule snapshot")
+        priority = row["priority"]
+        if type(priority) is not int or not any(base <= priority < base + ROUTE_RULE_PRIORITY_WINDOW
+                                                for base in (MANAGEMENT_ROUTE_RULE_PRIORITY, LAB_ROUTE_RULE_PRIORITY)):
+            raise ValueError("routing-domain rule snapshot is outside owned windows")
+        key = (row["family"], priority)
+        if key in seen:
+            raise ValueError("duplicate routing-domain rule snapshot priority")
+        seen.add(key)
+        validated.append(_route_domain_rule_row({
+            "priority": priority, "table": row["table"], "src": row["source"],
+            "iif": row["incoming_interface"], "protocol": row["protocol"],
+        }, row["family"]))
+    return validated
+
+
+def _restore_route_domain_rules(snapshot: list[dict]) -> None:
+    """Replace only admitted legacy-window rules; callers journal before entry.
+
+    Args:
+        snapshot: Exact validated prior rules, or canonical candidate ingress rules.
+    """
+    desired = _validated_route_domain_rule_snapshot(snapshot)
+    current = _snapshot_route_domain_rules()
+    for action, rows in (("del", [row for row in current if row not in desired]),
+                         ("add", [row for row in desired if row not in current])):
+        for row in rows:
+            selector = (["iif", row["incoming_interface"]] if row["incoming_interface"]
+                        else ["from", row["source"]])
+            command = ["ip", f"-{row['family']}", "rule", action, *selector,
+                       "table", str(row["table"]), "priority", str(row["priority"]), "protocol", str(row["protocol"])]
+            if _run(command).returncode:
+                raise ValueError("routing-domain rule migration failed")
+
+
+def _route_domain_ingress_interfaces(
+    path: Path | None = None, *, held_management_interfaces: set[str] | None = None,
+) -> list[str]:
+    """Project eligible lab links from Network intent, never pending WAN targets.
+
+    Args:
+        path: Staged candidate Network file, or None for persisted applied intent.
+        held_management_interfaces: Old management links retained until retirement.
+    """
+    excluded = set(held_management_interfaces or set())
+    if path is not None:
+        physical, vlans, _removed = _parse_network_config(path)
+        names = [row.get("name", "") for row in [*physical, *vlans]
+                 if row.get("role") in {"access", "route"} and row.get("mode") != "trunk"
+                 and row.get("admin_state") != "down"]
+    else:
+        if ROUTE_DOMAIN_CONFIG_PATH.is_symlink() or not ROUTE_DOMAIN_CONFIG_PATH.is_file():
+            raise ValueError("applied routing-domain intent is unavailable")
+        if ROUTE_DOMAIN_CONFIG_PATH.stat().st_size > 262144:
+            raise ValueError("applied routing-domain intent is oversized")
+        intent = json.loads(ROUTE_DOMAIN_CONFIG_PATH.read_text(encoding="utf-8"))
+        if (not isinstance(intent, dict) or type(intent.get("schema")) is not int
+                or intent["schema"] != 1 or not isinstance(intent.get("interfaces"), list)):
+            raise ValueError("invalid applied routing-domain intent")
+        rows = intent["interfaces"]
+        if len(rows) > 256 or any(not isinstance(row, dict) or type(row.get("table")) is not int
+                                  or row["table"] not in {100, 200} for row in rows):
+            raise ValueError("invalid applied routing-domain interfaces")
+        names = [row.get("name", "") for row in rows if row["table"] == LAB_ROUTE_TABLE_ID]
+        holds = intent.get("held_addresses", [])
+        if not isinstance(holds, list) or len(holds) > 256 or any(
+            not isinstance(row, dict) or not isinstance(row.get("name"), str)
+            or type(row.get("table")) is not int or row["table"] not in {100, 200} for row in holds
+        ):
+            raise ValueError("invalid applied routing-domain holds")
+        excluded.update(row["name"] for row in holds if row["table"] == MANAGEMENT_ROUTE_TABLE_ID)
+    if any(not isinstance(name, str) or not _valid_network_interface_name(name)
+           or name in {"lo", ".", ".."} for name in names) or len(names) != len(set(names)):
+        raise ValueError("invalid routing-domain ingress interfaces")
+    result = sorted(set(names) - excluded)
+    if len(result) > ROUTE_RULE_PRIORITY_WINDOW:
+        raise ValueError("routing-domain ingress interfaces exceed rule capacity")
+    return result
+
+
+def _apply_route_domain_ingress(
+    path: Path | None = None, *, held_management_interfaces: set[str] | None = None,
+) -> None:
+    """Migrate legacy rules using only already-applied WAN forwarding policy.
+
+    Args:
+        path: Candidate Network configuration, or None for persisted applied intent.
+        held_management_interfaces: Old management links to exclude until retirement.
+    """
+    names = _route_domain_ingress_interfaces(path, held_management_interfaces=held_management_interfaces)
+    enabled = False
+    if WAN_RUNTIME_CONFIG_PATH.exists() or WAN_RUNTIME_CONFIG_PATH.is_symlink():
+        if WAN_RUNTIME_CONFIG_PATH.is_symlink() or not WAN_RUNTIME_CONFIG_PATH.is_file() or WAN_RUNTIME_CONFIG_PATH.stat().st_size > 2_000_000:
+            raise ValueError("applied WAN configuration is unsafe")
+        parsed = _parse_wan_config(WAN_RUNTIME_CONFIG_PATH)
+        feature_rows = parsed.get("feature_settings", [])
+        if feature_rows and feature_rows[0].get("routing_enabled", "false").strip().lower() not in {
+            "0", "1", "true", "false", "yes", "no", "on", "off", "enabled", "disabled",
+        }:
+            raise ValueError("applied WAN configuration is invalid")
+        # Validate without applying routes, forwarding, qdiscs, NAT, or saved desired state.
+        if _wan_config_errors(WAN_RUNTIME_CONFIG_PATH, include_nat=False):
+            raise ValueError("applied WAN configuration is invalid")
+        enabled = _wan_feature_settings(parsed)["routing_enabled"]
+    desired = [{"family": family, "priority": LAB_ROUTE_RULE_PRIORITY + index,
+                "table": LAB_ROUTE_TABLE_ID, "source": "0.0.0.0/0" if family == 4 else "::/0",
+                "incoming_interface": name, "protocol": 2}
+               for index, name in enumerate(names if enabled else []) for family in (4, 6)]
+    _restore_route_domain_rules(desired)
 
 
 def _network_observation_command(command: list[str], *, timeout: float = 4) -> subprocess.CompletedProcess[str]:
@@ -10066,7 +10403,9 @@ def _network_transaction_state() -> dict:
         raise ValueError("network transaction backup root is unsafe")
     for item in state.get("snapshots", []):
         target = Path(str(item.get("path", "")))
-        if target.parent != NETWORKD_CONFIG_DIR or target.suffix not in {".network", ".netdev"}:
+        if target not in {ROUTE_DOMAIN_CONFIG_PATH, ROUTE_DOMAIN_SERVICE_PATH} and (
+            target.parent != NETWORKD_CONFIG_DIR or target.suffix not in {".network", ".netdev"}
+        ):
             raise ValueError("network transaction target is unsafe")
         if item.get("existed") and Path(str(item.get("backup", ""))).parent != backup:
             raise ValueError("network transaction backup is outside its root")
@@ -10106,6 +10445,7 @@ def _restore_network_transaction(state: dict) -> bool:
         Whether the restored transaction's durable cleanup also completed.
     """
     failures = []
+    _stop_route_domains_for_restore(state)
     for item in state["snapshots"]:
         try:
             _restore_management_handoff_snapshot(item)
@@ -10118,6 +10458,9 @@ def _restore_network_transaction(state: dict) -> bool:
         failures.append(str(exc))
     try:
         _restore_management_handoff_links(state, [])
+        _restore_route_domains(state)
+        if "previous_route_domain_rules" in state:
+            _restore_route_domain_rules(state["previous_route_domain_rules"])
     except (OSError, ValueError, subprocess.TimeoutExpired) as exc:
         failures.append(str(exc))
     if failures:
@@ -10169,7 +10512,7 @@ def _network_apply_transaction(path: Path):
         {"network_config_path": str(path)}, include_removed=True,
     )
     paths = {
-        NETWORKD_MGMT_CONFIG_PATH,
+        NETWORKD_MGMT_CONFIG_PATH, ROUTE_DOMAIN_CONFIG_PATH, ROUTE_DOMAIN_SERVICE_PATH,
         *(NETWORKD_CONFIG_DIR / name for name in files),
         *(NETWORKD_CONFIG_DIR / name for name in NETWORKD_DEFAULT_APPLIANCE_FILES),
         *(item for item in NETWORKD_CONFIG_DIR.glob(f"{NETWORKD_MANAGED_PREFIX}*")
@@ -10192,6 +10535,8 @@ def _network_apply_transaction(path: Path):
                 _fsync_file(backup)
             snapshots.append(item)
         state = {"snapshots": snapshots, "candidate_physical_interfaces": physical,
+                 "previous_route_domain_service": _snapshot_route_domain_service(),
+                 "previous_route_domain_rules": _snapshot_route_domain_rules(),
                  "candidate_vlan_interfaces": vlans, "candidate_link_states": link_states,
                  "backup_root": str(backup_root), "job_id": job_id, "phase": "applying"}
         _fsync_directory(backup_root)
@@ -10357,6 +10702,9 @@ def _handle_network_locked(action: str, args: list[str]) -> int:
             if _apply_vlan_interfaces(config_path, defer_removed=True) != 0:
                 raise ValueError("candidate VLAN activation failed")
             _wait_network_addresses(config_path, started_at=activation_started)
+            _install_route_domain_intent(config_path)
+            _apply_route_domain_ingress(config_path)
+            _reconcile_route_domains()
             # Retire old VLANs only after the candidate addresses have activated.
             if _apply_vlan_interfaces(config_path, removed_only=True) != 0:
                 raise ValueError("previous VLAN retirement failed")
@@ -11388,22 +11736,17 @@ def _target_networks(target: dict[str, str]) -> list[str]:
     return networks
 
 
-def _target_network_owners(targets: list[dict[str, str]]) -> dict[str, int]:
-    """Perform target network owners.
+def _target_network_owners(targets: list[dict[str, str]]) -> dict[tuple[str, str], int]:
+    """Choose one connected-route owner per routing domain and prefix.
 
     Args:
-        targets: Targets consumed by target network owners.
+        targets: Ordered interface targets with their routing-domain ownership.
     """
-    owners: dict[str, int] = {}
+    owners: dict[tuple[str, str], int] = {}
     for index, target in enumerate(targets):
+        domain = target.get("routing_domain", "lab")
         for network in _target_networks(target):
-            owner_index = owners.get(network)
-            if owner_index is None:
-                owners[network] = index
-                continue
-            owner = targets[owner_index]
-            if owner.get("routing_domain", "lab") != "management" and target.get("routing_domain", "lab") == "management":
-                owners[network] = index
+            owners.setdefault((domain, str(network)), index)
     return owners
 
 
@@ -11548,7 +11891,6 @@ def _apply_wan_target_routes(
         print("ip command not found", file=sys.stderr)
         return 127
     targets = parsed["targets"]
-    routing_enabled = _wan_feature_settings(parsed)["routing_enabled"]
     current_lab_routes = {
         (target.get("name", ""), network)
         for target in targets
@@ -11587,22 +11929,10 @@ def _apply_wan_target_routes(
         table_id = _target_route_table_id(target)
         interface_name = target.get("name", "")
         management = target.get("routing_domain", "lab") == "management"
-        if not management and not routing_enabled:
-            for network in _target_networks(target):
-                result = _run_target_route_delete(network, interface_name, table_id)
-                if result != 0:
-                    return result
-            continue
         gateways = _management_default_gateways_for_target(target) if management else []
         gateways_by_version = {ip_address(gateway).version: gateway for gateway in gateways}
         for network in _target_networks(target):
-            if network_owners[network] != index:
-                result = _run_target_route_delete(network, interface_name, table_id)
-                if result != 0:
-                    return result
-                continue
-            network_version = ip_network(network, strict=False).version
-            if management and network_version not in gateways_by_version:
+            if network_owners[(target.get("routing_domain", "lab"), network)] != index:
                 result = _run_target_route_delete(network, interface_name, table_id)
                 if result != 0:
                     return result
@@ -11641,13 +11971,14 @@ def _apply_wan_target_routes(
     return 0
 
 
-def _run_rule_replace(source_network: str, table_id: int, priority: int) -> int:
+def _run_rule_replace(source_network: str, table_id: int, priority: int, *, incoming_interface: str = "") -> int:
     """Run rule replace.
 
     Args:
         source_network: Source network consumed by run rule replace.
         table_id: Stable identifier of the associated table resource.
         priority: Priority consumed by run rule replace.
+        incoming_interface: Optional ingress selector for forwarded lab traffic.
     """
     prefix = _rule_command_prefix(source_network)
     delete = _run([*prefix, "del", "priority", str(priority)])
@@ -11655,7 +11986,8 @@ def _run_rule_replace(source_network: str, table_id: int, priority: int) -> int:
         print(delete.stdout, end="")
         print(delete.stderr, end="", file=sys.stderr)
         return delete.returncode
-    add = _run([*prefix, "add", "from", source_network, "table", str(table_id), "priority", str(priority)])
+    selector = ["iif", incoming_interface] if incoming_interface else ["from", source_network]
+    add = _run([*prefix, "add", *selector, "table", str(table_id), "priority", str(priority)])
     print(add.stdout, end="")
     print(add.stderr, end="", file=sys.stderr)
     return add.returncode
@@ -11699,29 +12031,34 @@ def _apply_wan_policy_rules(parsed: dict[str, list[dict[str, str]]]) -> int:
     if shutil.which("ip") is None:
         print("ip command not found", file=sys.stderr)
         return 127
+    routing_enabled = _wan_feature_settings(parsed)["routing_enabled"]
+    if ROUTE_DOMAIN_CONFIG_PATH.exists():
+        names = _route_domain_ingress_interfaces()
+        desired = [{"family": family, "priority": LAB_ROUTE_RULE_PRIORITY + index,
+                    "table": LAB_ROUTE_TABLE_ID, "source": "0.0.0.0/0" if family == 4 else "::/0",
+                    "incoming_interface": name, "protocol": 2}
+                   for index, name in enumerate(names if routing_enabled else []) for family in (4, 6)]
+        _restore_route_domain_rules(desired)
+        return 0
+    # A WAN-only Apply before the first Network migration must retain the old
+    # local-source behavior. Network Apply journals and retires these rules.
     cleanup_result = _cleanup_wan_policy_rules()
     if cleanup_result != 0:
         return cleanup_result
     targets = parsed["targets"]
-    routing_enabled = _wan_feature_settings(parsed)["routing_enabled"]
-    network_owners = _target_network_owners(targets)
+    owners = _target_network_owners(targets)
     for index, target in enumerate(targets):
         domain = target.get("routing_domain", "lab")
         if domain != "management" and not routing_enabled:
             continue
-        table_id = _target_route_table_id(target)
-        base_priority = MANAGEMENT_ROUTE_RULE_PRIORITY if domain == "management" else LAB_ROUTE_RULE_PRIORITY
-        management_gateway_versions = (
-            {ip_address(gateway).version for gateway in _management_default_gateways_for_target(target)}
-            if domain == "management"
-            else set()
-        )
-        for source_network in _target_networks(target):
-            if network_owners[source_network] != index:
+        gateways = {ip_address(gateway).version for gateway in _management_default_gateways_for_target(target)}
+        for source in _target_networks(target):
+            if owners[(domain, source)] != index:
                 continue
-            if domain == "management" and ip_network(source_network, strict=False).version not in management_gateway_versions:
+            if domain == "management" and ip_network(source).version not in gateways:
                 continue
-            result = _run_rule_replace(source_network, table_id, base_priority + index)
+            result = _run_rule_replace(source, _target_route_table_id(target),
+                                       (MANAGEMENT_ROUTE_RULE_PRIORITY if domain == "management" else LAB_ROUTE_RULE_PRIORITY) + index)
             if result != 0:
                 return result
     return 0
@@ -23577,6 +23914,13 @@ def _reset_factory_network_runtime() -> int:
         netem_interfaces = _factory_reset_root_netem_interfaces(wan_route_interfaces)
         _reset_factory_port_forward_runtime()
         _clear_factory_network_conflicts()
+        # Reset is a durable roll-forward operation. Quiesce the watcher before
+        # removing its applied ownership, otherwise it can recreate old rules
+        # while route tables and VLANs are being reset.
+        if ROUTE_DOMAIN_CONFIG_PATH.exists() or ROUTE_DOMAIN_SERVICE_PATH.exists():
+            _stop_route_domains_for_restore({})
+            _durable_management_handoff_unlink(ROUTE_DOMAIN_CONFIG_PATH)
+            _reconcile_route_domains()
     except (OSError, ValueError) as exc:
         print(str(exc), file=sys.stderr)
         return 2
@@ -24066,7 +24410,7 @@ def _management_handoff_runtime_paths(payload: dict) -> list[Path]:
         The runtime paths.
     """
     paths = [
-        NETWORKD_MGMT_CONFIG_PATH,
+        NETWORKD_MGMT_CONFIG_PATH, ROUTE_DOMAIN_CONFIG_PATH, ROUTE_DOMAIN_SERVICE_PATH,
         *sorted(NETWORKD_CONFIG_DIR.glob(f"{NETWORKD_MANAGED_PREFIX}*")),
         *[NETWORKD_CONFIG_DIR / name for name in sorted(NETWORKD_DEFAULT_APPLIANCE_FILES)],
         FIREWALL_CONFIG_PATH,
@@ -24194,6 +24538,174 @@ def _management_handoff_previous_addresses(payload: dict) -> list[str]:
     return list(dict.fromkeys(previous_addresses))
 
 
+def _snapshot_management_handoff_routing(interfaces: list[str], tables: dict[str, int]) -> dict:
+    """Capture only observed old-interface addresses and unicast domain/main routes.
+
+    Args:
+        interfaces: Previous listener interfaces, excluding bare VLAN parents.
+        tables: Previous applied domain table for each listener interface.
+    """
+    captured = {}
+    for name in interfaces:
+        if not _valid_network_interface_name(name) or tables.get(name) not in {100, 200}:
+            raise ValueError("previous routing-domain identity is invalid")
+        result = _network_observation_command(["ip", "-j", "address", "show", "dev", name])
+        if result.returncode:
+            raise ValueError("previous routing-domain addresses could not be captured")
+        rows = json.loads(result.stdout)
+        if not isinstance(rows, list) or len(rows) != 1 or not isinstance(rows[0], dict) or rows[0].get("ifname") != name:
+            raise ValueError("previous routing-domain address inventory is ambiguous")
+        mac = str(rows[0].get("address") or "").lower()
+        if (not re.fullmatch(r"(?:[0-9a-f]{2}:){5}[0-9a-f]{2}", mac)
+                or mac == "00:00:00:00:00:00" or int(mac[:2], 16) & 1):
+            raise ValueError("previous routing-domain MAC identity is missing")
+        cidrs = []
+        addresses = rows[0].get("addr_info", [])
+        if not isinstance(addresses, list) or len(addresses) > 4096:
+            raise ValueError("previous routing-domain addresses are malformed")
+        for address in addresses:
+            if not isinstance(address, dict) or not isinstance(address.get("flags", []), list):
+                raise ValueError("previous routing-domain address is malformed")
+            if address.get("scope") != "global":
+                continue
+            flags = address.get("flags", [])
+            if any(address.get(flag) or flag in flags for flag in ("tentative", "dadfailed")):
+                continue
+            if address.get("valid_life_time") == 0:
+                continue
+            prefix = address.get("prefixlen")
+            if type(prefix) is not int:
+                raise ValueError("previous routing-domain prefix length is missing")
+            parsed = ip_interface(f"{address.get('local')}/{prefix}")
+            if parsed.ip.is_unspecified or parsed.ip.is_multicast or parsed.ip.is_loopback or parsed.ip.is_link_local:
+                continue
+            cidrs.append(str(parsed))
+        if not cidrs:
+            raise ValueError("previous routing-domain assigned addresses are missing")
+        routes = {}
+        for family in (4, 6):
+            result = _network_observation_command(["ip", "-j", f"-{family}", "route", "show", "table", "all", "dev", name])
+            if result.returncode:
+                raise ValueError("previous routing-domain routes could not be captured")
+            entries = json.loads(result.stdout)
+            if not isinstance(entries, list) or len(entries) > 4096:
+                raise ValueError("previous routing-domain routes are malformed")
+            for route in entries:
+                if not isinstance(route, dict):
+                    raise ValueError("previous routing-domain route is malformed")
+                table = str(route.get("table", "main"))
+                if route.get("dev") != name or table not in {"main", "254", str(tables[name])}:
+                    continue
+                if route.get("type", "unicast") != "unicast":
+                    raise ValueError("previous routing-domain route type cannot be preserved")
+                flags = route.get("flags", [])
+                if not isinstance(flags, list):
+                    raise ValueError("previous routing-domain route flags are malformed")
+                if set(flags) & {"dead", "linkdown"}:
+                    continue
+                if route.get("nhid") or route.get("multipath") or route.get("from", "all") != "all":
+                    raise ValueError("previous routing-domain route requires unsupported nexthop or source preservation")
+                destination = str(route.get("dst") or "default")
+                destination = ("0.0.0.0/0" if family == 4 else "::/0") if destination == "default" else destination
+                network = ip_network(destination, strict=False)
+                gateway = str(route.get("gateway") or "")
+                metric = route.get("metric", 0)
+                scope = str(route.get("scope", "global"))
+                if (network.version != family or type(metric) is not int or not 0 <= metric <= 0xFFFFFFFF
+                        or scope not in {"global", "link"}):
+                    raise ValueError("previous routing-domain route attributes are invalid")
+                if gateway and ip_address(gateway).version != family:
+                    raise ValueError("previous routing-domain gateway family differs")
+                preferred_source = str(route.get("prefsrc") or "")
+                if preferred_source and preferred_source not in {str(ip_interface(cidr).ip) for cidr in cidrs}:
+                    raise ValueError("previous routing-domain preferred source is not assigned")
+                preference = route.get("pref", "medium")
+                if family == 6 and preference not in {"low", "medium", "high"}:
+                    raise ValueError("previous routing-domain router preference is invalid")
+                captured_route = {"destination": str(network), "gateway": gateway,
+                                  "metric": metric, "scope": scope, "table": tables[name],
+                                  "preferred_source": preferred_source, "preference": preference}
+                routes[(str(network), gateway, metric)] = captured_route
+        # Standby route metrics must be disjoint from all observed metrics. A
+        # uniform offset preserves ordering without replacing live DHCP/RA keys.
+        offset = max((route["metric"] for route in routes.values()), default=0) + 1
+        for route in routes.values():
+            if route["metric"] + offset > 0xFFFFFFFF:
+                raise ValueError("previous routing-domain standby metric would overflow")
+            route["holdover_metric"] = route["metric"] + offset
+        for family in {ip_interface(cidr).version for cidr in cidrs}:
+            if not any(ip_network(route["destination"]).version == family for route in routes.values()):
+                raise ValueError("previous routing-domain family has no observed usable route")
+        captured[name] = {"mac": mac, "table": tables[name], "cidrs": sorted(set(cidrs)),
+                          "routes": list(routes.values())}
+    return captured
+
+
+def _management_handoff_held_addresses(state: dict) -> list[dict]:
+    """Derive immutable held sources from pre-mutation routing evidence.
+
+    Args:
+        state: Durable handoff snapshot containing old interface CIDRs and MACs.
+    """
+    return [
+        {"name": name, "mac": row["mac"], "address": str(ip_interface(cidr).ip), "table": row["table"]}
+        for name, row in state.get("previous_management_routing", {}).items()
+        for cidr in row["cidrs"]
+    ]
+
+
+def _wait_management_handoff_routes(state: dict, *, attempts: int = 31) -> None:
+    """Require snapshotted old routes in their source-selected tables before activation.
+
+    Args:
+        state: Durable old-interface routing evidence rendered into holdover files.
+        attempts: Bounded sample count within a 30-second readiness window.
+    """
+    required = state.get("previous_management_routing", {})
+    if not required:
+        return
+    deadline = time.monotonic() + 30
+    for attempt in range(max(1, attempts)):
+        missing = False
+        for name, evidence in required.items():
+            for family in (4, 6):
+                expected = [route for route in evidence["routes"] if ip_network(route["destination"]).version == family]
+                if not expected:
+                    continue
+                result = _network_observation_command(["ip", "-j", f"-{family}", "route", "show", "table", str(evidence["table"]), "dev", name])
+                if result.returncode:
+                    missing = True
+                    continue
+                rows = json.loads(result.stdout)
+                if not isinstance(rows, list) or len(rows) > 4096:
+                    raise ValueError("held routing-domain route observation is malformed")
+                observed = []
+                for row in rows:
+                    if not isinstance(row, dict):
+                        raise ValueError("held routing-domain route observation is malformed")
+                    destination = row.get("dst", "default")
+                    if destination == "default":
+                        destination = "0.0.0.0/0" if family == 4 else "::/0"
+                    observed.append((row, ip_network(destination, strict=False)))
+                for route in expected:
+                    destination = ip_network(route["destination"])
+                    if not any(row.get("dev") == name
+                               and row.get("type", "unicast") == "unicast"
+                               and observed_destination == destination
+                               and str(row.get("gateway") or "") == route["gateway"]
+                               and str(row.get("table", evidence["table"])) == str(evidence["table"])
+                               and not set(row.get("flags", [])) & {"dead", "linkdown"}
+                               and row.get("metric", 0) == route["holdover_metric"] for row, observed_destination in observed):
+                        missing = True
+        if not missing:
+            return
+        if time.monotonic() >= deadline:
+            break
+        if attempt + 1 < attempts:
+            time.sleep(min(1, max(0, deadline - time.monotonic())))
+    raise ValueError("held routing-domain routes did not become ready")
+
+
 def _snapshot_management_handoff(payload: dict) -> dict:
     """Create the durable pre-mutation snapshot and interruption marker.
 
@@ -24234,6 +24746,11 @@ def _snapshot_management_handoff(payload: dict) -> dict:
     if not _valid_network_interface_name(candidate_management_interface):
         raise ValueError("candidate management resolver interface is invalid")
     previous_addresses = _management_handoff_previous_addresses(payload)
+    previous_domains = {
+        name: MANAGEMENT_ROUTE_TABLE_ID if name in _read_existing_management_network_values().get("Name", [])
+        else LAB_ROUTE_TABLE_ID for name in payload["previous_management_interfaces"]
+    }
+    previous_routing = _snapshot_management_handoff_routing(payload["previous_management_interfaces"], previous_domains)
     candidate_physical, candidate_vlans, candidate_link_states = _management_handoff_candidate_links(payload)
     previous_firewall_config_existed = FIREWALL_CONFIG_PATH.is_file()
     previous_firewall_service_existed = FIREWALL_SERVICE_PATH.is_file()
@@ -24245,6 +24762,10 @@ def _snapshot_management_handoff(payload: dict) -> dict:
         "phase": "snapshotted",
         "snapshots": snapshots,
         "previous_management_interfaces": payload["previous_management_interfaces"],
+        "previous_route_domain_service": _snapshot_route_domain_service(),
+        "previous_route_domain_rules": _snapshot_route_domain_rules(),
+        "previous_route_domains": previous_domains,
+        "previous_management_routing": previous_routing,
         "previous_management_parent_interfaces": payload.get(
             "previous_management_parent_interfaces",
             [],
@@ -24313,12 +24834,13 @@ def _write_management_handoff_state(state: dict, phase: str) -> None:
     _durable_management_handoff_state_write(state, MANAGEMENT_HANDOFF_STATE_PATH)
 
 
-def _networkd_handoff_text(previous: str, candidate: str) -> str:
+def _networkd_handoff_text(previous: str, candidate: str, *, held_routes: list[dict] | None = None) -> str:
     """Merge previous reachability values into a candidate networkd file.
 
     Args:
         previous: Previous networkd configuration.
         candidate: Candidate networkd configuration.
+        held_routes: Observed old routes pinned to their previous domain during readiness.
 
     Returns:
         A transitional configuration that carries old and candidate paths.
@@ -24362,6 +24884,8 @@ def _networkd_handoff_text(previous: str, candidate: str) -> str:
         index = end
     candidate_text = "\n".join(candidate_lines)
     for block in previous_blocks:
+        if block[0] == "[RoutingPolicyRule]":
+            continue
         if block[0] == "[DHCPv4]" and "[DHCPv4]" in candidate_lines:
             continue
         block_text = "\n".join(block).strip()
@@ -24371,6 +24895,17 @@ def _networkd_handoff_text(previous: str, candidate: str) -> str:
         if block_text and block_text not in candidate_text:
             candidate_lines.extend(["", *block])
             candidate_text = "\n".join(candidate_lines)
+    for route in held_routes or []:
+        candidate_lines.extend(["", "[Route]", f"Destination={route['destination']}",
+                                f"Table={route['table']}", f"Metric={route['holdover_metric']}"])
+        if route["gateway"]:
+            candidate_lines.extend([f"Gateway={route['gateway']}", "GatewayOnLink=yes"])
+        elif ip_network(route["destination"]).version == 4:
+            candidate_lines.append(f"Scope={route['scope']}")
+        if route.get("preferred_source"):
+            candidate_lines.append(f"PreferredSource={route['preferred_source']}")
+        if ip_network(route["destination"]).version == 6:
+            candidate_lines.append(f"IPv6Preference={route.get('preference', 'medium')}")
     return "\n".join(candidate_lines).rstrip() + "\n"
 
 
@@ -24417,9 +24952,10 @@ def _install_management_holdovers(state: dict, payload: dict) -> list[Path]:
         match = re.search(r"(?m)^Name=(\S+)\s*$", previous_text)
         if match is None or match.group(1) not in previous_interfaces:
             continue
-        text = previous_text
-        if match.group(1) in candidate_by_interface:
-            text = _networkd_handoff_text(previous_text, candidate_by_interface[match.group(1)])
+        text = _networkd_handoff_text(
+            previous_text, candidate_by_interface.get(match.group(1), previous_text),
+            held_routes=state.get("previous_management_routing", {}).get(match.group(1), {}).get("routes", []),
+        )
         target = NETWORKD_CONFIG_DIR / f"{MANAGEMENT_HANDOFF_HOLDOVER_PREFIX}{len(installed):02d}.network"
         target.write_text(text, encoding="utf-8")
         os.chmod(target, 0o644)
@@ -24467,6 +25003,7 @@ def _apply_management_candidate_network(path: Path, state: dict) -> None:
         result = _run(["networkctl", "reconfigure", interface])
         if result.returncode != 0:
             raise ValueError(f"candidate networkd reconfigure failed for {interface}")
+    _wait_management_handoff_routes(state)
 
 
 def _management_handoff_candidate_firewall_rules(
@@ -25286,6 +25823,7 @@ def _restore_management_handoff(state: dict) -> dict:
     """
     commands: list[dict[str, object]] = []
     errors: list[str] = []
+    _stop_route_domains_for_restore(state)
 
     def attempt(stage: str, operation: Callable[[], None]) -> None:
         """Run one rollback stage without preventing later restoration work.
@@ -25335,11 +25873,14 @@ def _restore_management_handoff(state: dict) -> dict:
         attempt(f"{' '.join(command)}", run_reload)
     attempt("resolver restore", lambda: _restore_management_handoff_resolver(state, commands))
     attempt("network link restore", lambda: _restore_management_handoff_links(state, commands))
+    attempt("routing-domain restore", lambda: _restore_route_domains(state))
 
     attempt(
         "Routes & WAN rollback",
         lambda: _restore_management_handoff_wan(state, commands),
     )
+    if "previous_route_domain_rules" in state:
+        attempt("routing-domain rule restore", lambda: _restore_route_domain_rules(state["previous_route_domain_rules"]))
     # Firewall restoration flushes the ruleset; replay canonical NAT after that final flush.
     attempt("firewall restore", lambda: _restore_management_handoff_firewall(state, commands))
     # Older journals lack publication progress; retain conservative recovery for them.
@@ -25884,6 +26425,16 @@ def _apply_management_handoff(payload: dict) -> int:
         _apply_management_candidate_network(Path(str(payload["network_config_path"])), state)
         failing_layer = "address activation"
         address_observation = _wait_network_addresses(Path(str(payload["network_config_path"])), started_at=activation_started)
+        _wait_management_handoff_routes(state)
+        _apply_route_domain_ingress(
+            Path(str(payload["network_config_path"])),
+            held_management_interfaces={name for name, table in state.get("previous_route_domains", {}).items()
+                                        if table == MANAGEMENT_ROUTE_TABLE_ID},
+        )
+        _install_route_domain_intent(
+            Path(str(payload["network_config_path"])),
+            held_addresses=_management_handoff_held_addresses(state),
+        )
         previous_firewall = FIREWALL_CONFIG_PATH.read_text(encoding="utf-8") if FIREWALL_CONFIG_PATH.is_file() else ""
         candidate_firewall_path = Path(str(payload["firewall_config_path"]))
         candidate_firewall = candidate_firewall_path.read_text(encoding="utf-8")
@@ -25993,6 +26544,7 @@ def _apply_management_handoff(payload: dict) -> int:
         _wait_network_addresses(
             Path(str(payload["network_config_path"])), started_at=retirement_started, stable_samples=3,
         )
+        _reconcile_route_domains()
         if payload.get("wan_config_path"):
             # The final Network regeneration intentionally replaces networkd
             # runtime. Reapply the coupled route intent afterwards so policy

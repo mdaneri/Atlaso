@@ -764,23 +764,17 @@ def _target_networks(target: dict[str, str]) -> list:
     ]
 
 
-def _target_network_owners(targets: list[dict[str, str]]) -> dict[str, int]:
-    """Return target network owners.
+def _target_network_owners(targets: list[dict[str, str]]) -> dict[tuple[str, str], int]:
+    """Choose one connected-route owner per routing domain and prefix.
 
     Args:
-        targets: Targets consumed by target network owners.
+        targets: Ordered interface targets with their routing-domain ownership.
     """
-    owners: dict[str, int] = {}
+    owners: dict[tuple[str, str], int] = {}
     for index, target in enumerate(targets):
+        domain = target.get("routing_domain", "lab")
         for network in _target_networks(target):
-            key = str(network)
-            owner_index = owners.get(key)
-            if owner_index is None:
-                owners[key] = index
-                continue
-            owner = targets[owner_index]
-            if owner.get("routing_domain") != "management" and target.get("routing_domain") == "management":
-                owners[key] = index
+            owners.setdefault((domain, str(network)), index)
     return owners
 
 
@@ -1172,13 +1166,6 @@ def render_wan_config(
     for index, target in enumerate(targets):
         management = target.get("routing_domain") == "management"
         table = MANAGEMENT_ROUTE_TABLE_ID if management else LAB_ROUTE_TABLE_ID
-        if not management and not settings.routing_enabled:
-            for network in _target_networks(target):
-                route_family = "-6 " if network.version == 6 else ""
-                lines.append(
-                    f"ip {route_family}route del {network} dev {target['name']} table {table}"
-                )
-            continue
         priority = (MANAGEMENT_ROUTE_RULE_PRIORITY if management else LAB_ROUTE_RULE_PRIORITY) + index
         gateways = [
             str(target.get(key, "") or "").strip()
@@ -1192,17 +1179,17 @@ def render_wan_config(
             except ValueError:
                 continue
         for network in _target_networks(target):
-            owner_index = target_network_owners[str(network)]
+            owner_index = target_network_owners[(target.get("routing_domain", "lab"), str(network))]
             if owner_index != index:
                 owner_name = targets[owner_index]["name"]
                 lines.append(f"# {network} on {target['name']} reuses the subnet owned by {owner_name}; no duplicate policy route generated")
                 continue
-            if management and network.version not in gateway_by_version:
-                lines.append(f"# {network} on {target['name']} has no management default gateway; the main routing table remains authoritative")
-                continue
             route_family = "-6 " if network.version == 6 else ""
-            lines.append(f"ip {route_family}rule add from {network} table {table} priority {priority}")
             lines.append(f"ip {route_family}route replace {network} dev {target['name']} table {table}")
+        if not management and settings.routing_enabled:
+            for route_family in ("", "-6 "):
+                lines.append(f"ip {route_family}rule add iif {target['name']} table {table} priority {priority}")
+        lines.append(f"# Local source-address rules for {target['name']} are reconciled from applied Network intent.")
         if management and gateways:
             for version, gateway in sorted(gateway_by_version.items()):
                 route_family = "-6 " if version == 6 else ""

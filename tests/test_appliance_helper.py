@@ -1561,6 +1561,7 @@ def test_management_handoff_rollback_continues_after_missing_snapshot(monkeypatc
         tmp_path: Temporary directory containing runtime and backup files.
     """
     helper = load_helper_module()
+    monkeypatch.setattr(helper, "_reconcile_route_domains", lambda: None)
     network_dir = tmp_path / "networkd"
     network_dir.mkdir()
     missing_target = network_dir / "00-atlaso-mgmt.network"
@@ -1650,6 +1651,7 @@ def test_management_handoff_rollback_preserves_nat_after_firewall(monkeypatch, t
         publication: Durable publication progress and effective mapping change.
     """
     helper = load_helper_module()
+    monkeypatch.setattr(helper, "_reconcile_route_domains", lambda: None)
     runtime = tmp_path / "nat.conf"
     runtime.write_text("prior NAT", encoding="utf-8")
     monkeypatch.setattr(helper, "NAT_RUNTIME_CONFIG_PATH", runtime)
@@ -2286,6 +2288,10 @@ def test_management_handoff_syncs_transaction_and_backups_before_marker(monkeypa
         tmp_path: Temporary root containing runtime and durable state files.
     """
     helper = load_helper_module()
+    monkeypatch.setattr(helper, "_snapshot_management_handoff_routing", lambda *_args: {})
+    monkeypatch.setattr(helper, "_snapshot_route_domain_rules", lambda: [])
+    monkeypatch.setattr(helper, "_snapshot_route_domain_service", lambda: {"enabled": False, "active": False})
+    monkeypatch.setattr(helper, "_read_existing_management_network_values", lambda: {"Name": ["eth0"]})
     state_dir = tmp_path / "state"
     backup_dir = state_dir / "backup"
     runtime_path = tmp_path / "runtime.conf"
@@ -2780,6 +2786,11 @@ def test_management_handoff_candidate_durability_gates_ack(
         mapping_change: Effective forwarding difference in the candidate handoff.
     """
     helper = load_helper_module()
+    monkeypatch.setattr(helper, "_wait_management_handoff_routes", lambda *_args: None)
+    monkeypatch.setattr(helper, "_apply_route_domain_ingress", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(helper, "_install_route_domain_intent", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(helper, "_management_handoff_held_addresses", lambda *_args: [])
+    monkeypatch.setattr(helper, "_reconcile_route_domains", lambda: None)
     state = {
         "job_id": "job-435",
         "previous_management_interfaces": ["eth0"],
@@ -3102,6 +3113,11 @@ def test_management_handoff_failure_rolls_back_with_truthful_layer(monkeypatch, 
         failing_layer: Network activation or downstream firewall failure under test.
     """
     helper = load_helper_module()
+    monkeypatch.setattr(helper, "_wait_management_handoff_routes", lambda *_args: None)
+    monkeypatch.setattr(helper, "_apply_route_domain_ingress", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(helper, "_install_route_domain_intent", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(helper, "_management_handoff_held_addresses", lambda *_args: [])
+    monkeypatch.setattr(helper, "_reconcile_route_domains", lambda: None)
     monkeypatch.setattr(helper, "_network_detection_preflight", lambda _path: None)
     monkeypatch.setattr(helper, "_wait_network_addresses", lambda _path, **_kwargs: (_ for _ in ()).throw(ValueError("IP conflict on eth0: 192.0.2.20")) if failing_layer == "address activation" else {})
     state = {
@@ -3173,6 +3189,11 @@ def test_management_handoff_resolver_failure_rolls_back_before_nginx(
         capsys: Pytest fixture used to inspect bounded helper output.
     """
     helper = load_helper_module()
+    monkeypatch.setattr(helper, "_wait_management_handoff_routes", lambda *_args: None)
+    monkeypatch.setattr(helper, "_apply_route_domain_ingress", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(helper, "_install_route_domain_intent", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(helper, "_management_handoff_held_addresses", lambda *_args: [])
+    monkeypatch.setattr(helper, "_reconcile_route_domains", lambda: None)
     monkeypatch.setattr(helper, "_network_detection_preflight", lambda _path: None)
     monkeypatch.setattr(helper, "_wait_network_addresses", lambda _path, **_kwargs: {})
     state = {
@@ -3253,6 +3274,11 @@ def test_management_handoff_never_activates_nginx_with_unhealthy_upstream(monkey
         capsys: Pytest fixture used to capture bounded helper output.
     """
     helper = load_helper_module()
+    monkeypatch.setattr(helper, "_wait_management_handoff_routes", lambda *_args: None)
+    monkeypatch.setattr(helper, "_apply_route_domain_ingress", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(helper, "_install_route_domain_intent", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(helper, "_management_handoff_held_addresses", lambda *_args: [])
+    monkeypatch.setattr(helper, "_reconcile_route_domains", lambda: None)
     monkeypatch.setattr(helper, "_network_detection_preflight", lambda _path: None)
     monkeypatch.setattr(helper, "_wait_network_addresses", lambda _path, **_kwargs: {})
     state = {
@@ -6970,8 +6996,8 @@ def test_network_helper_renders_explicit_management_gateway_without_runtime_fall
     files, _links, _admin_down = helper._systemd_networkd_files(config_path)
 
     rendered = files["00-atlaso-mgmt.network"]
-    assert "From=192.168.49.0/24" in rendered
-    assert "Destination=192.168.49.0/24\nScope=link\nTable=100" in rendered
+    assert "[RoutingPolicyRule]" not in rendered
+    assert "Destination=192.168.49.0/24\nScope=link\nPreferredSource=192.168.49.1\nTable=100" in rendered
     assert rendered.count("Gateway=192.168.49.254") == 2
     assert rendered.count("Gateway=192.168.49.254\nGatewayOnLink=yes") == 2
     assert "Table=100" in rendered
@@ -7002,8 +7028,8 @@ def test_network_helper_persists_management_connected_route_for_reboot(monkeypat
 
     rendered = files["00-atlaso-mgmt.network"]
     assert "Address=192.168.167.134/24" in rendered
-    assert "Destination=192.168.167.0/24\nScope=link\nTable=100" in rendered
-    assert "From=192.168.167.0/24\nTable=100" in rendered
+    assert "Destination=192.168.167.0/24\nScope=link\nPreferredSource=192.168.167.134\nTable=100" in rendered
+    assert "[RoutingPolicyRule]" not in rendered
     assert "Gateway=192.168.167.2\nGatewayOnLink=yes\nTable=100" in rendered
 
 
@@ -7198,7 +7224,7 @@ def test_network_helper_replaces_stale_preserved_management_gateway(monkeypatch,
     rendered = files["00-atlaso-mgmt.network"]
     assert "Gateway=192.168.1.1" in rendered
     assert "Gateway=192.168.167.2" not in rendered
-    assert "From=192.168.1.0/24" in rendered
+    assert "[RoutingPolicyRule]" not in rendered
     assert "Table=100" in rendered
 
 
@@ -7225,7 +7251,7 @@ def test_network_helper_omits_management_policy_rule_without_default_gateway(mon
     rendered = files["00-atlaso-mgmt.network"]
     assert "Address=192.168.1.10/24" in rendered
     assert "[RoutingPolicyRule]" not in rendered
-    assert "Table=100" not in rendered
+    assert "Destination=192.168.1.0/24\nScope=link\nPreferredSource=192.168.1.10\nTable=100" in rendered
     assert "Gateway=" not in rendered
 
 
@@ -7305,7 +7331,8 @@ def test_network_helper_preserves_automatic_ipv6_for_management(tmp_path):
     assert "DHCP=ipv4" in management_network
     assert "IPv6AcceptRA=yes" in management_network
     assert "LinkLocalAddressing=ipv6" in management_network
-    parsed = configparser.ConfigParser()
+    # Networkd permits repeated Route sections; this parser inspects only Network/DHCP.
+    parsed = configparser.ConfigParser(strict=False)
     parsed.read_string(management_network)
     assert parsed["DHCPv4"].getboolean("SendRelease") is False
     assert parsed["Network"].getboolean("IPv6AcceptRA") is True
@@ -7347,8 +7374,8 @@ def test_network_helper_renders_static_management_ipv6_gateway_in_main_and_table
     assert "IPv6AcceptRA=no" in rendered
     assert "LinkLocalAddressing=ipv6" in rendered
     assert "Address=2001:db8:49::10/64" in rendered
-    assert "Destination=2001:db8:49::/64\nScope=link\nTable=100" in rendered
-    assert "From=2001:db8:49::/64" in rendered
+    assert "Destination=2001:db8:49::/64\nScope=link\nPreferredSource=2001:db8:49::10\nTable=100" in rendered
+    assert "[RoutingPolicyRule]" not in rendered
     assert rendered.count("Gateway=fe80::1") == 2
     assert "Table=100" in rendered
 
@@ -7997,6 +8024,10 @@ def test_wan_helper_replaces_stale_preserved_management_gateway_with_runtime_gat
         tmp_path: Temporary directory provided by pytest for isolated filesystem state.
     """
     helper = load_helper_module()
+    applied_domains = tmp_path / "route-domains.json"
+    applied_domains.write_text('{"schema": 1, "interfaces": [{"name": "eth0", "table": 100, "mac": "00:11:22:33:44:01"}]}', encoding="utf-8")
+    monkeypatch.setattr(helper, "ROUTE_DOMAIN_CONFIG_PATH", applied_domains)
+    monkeypatch.setattr(helper, "_snapshot_route_domain_rules", lambda: [])
     management_network = tmp_path / "00-atlaso-mgmt.network"
     management_network.write_text(
         "\n".join(
@@ -8056,11 +8087,11 @@ def test_wan_helper_replaces_stale_preserved_management_gateway_with_runtime_gat
     assert ["ip", "route", "replace", "default", "via", "192.168.1.1", "dev", "eth0"] in commands
     assert ["ip", "route", "replace", "default", "via", "192.168.1.1", "dev", "eth0", "table", "100"] in commands
     assert ["ip", "route", "replace", "default", "via", "192.168.167.2", "dev", "eth0", "table", "100"] not in commands
-    assert ["ip", "rule", "add", "from", "192.168.1.0/24", "table", "100", "priority", "1000"] in commands
+    assert not any("add" in command and "from" in command for command in commands)
 
 
-def test_wan_helper_skips_management_policy_rule_without_usable_gateway(monkeypatch, tmp_path):
-    """Verify that wan helper skips management policy rule without usable gateway.
+def test_wan_helper_preserves_connected_route_without_usable_gateway(monkeypatch, tmp_path):
+    """Keep gatewayless management connected routing without a prefix source rule.
 
     Args:
         monkeypatch: Pytest fixture used to replace dependencies for the test.
@@ -8105,8 +8136,8 @@ def test_wan_helper_skips_management_policy_rule_without_usable_gateway(monkeypa
 
     assert helper._apply_wan_target_routes(parsed) == 0
     assert helper._apply_wan_policy_rules(parsed) == 0
-    assert ["ip", "route", "replace", "192.168.1.0/24", "dev", "eth0", "table", "100"] not in commands
-    assert ["ip", "route", "del", "192.168.1.0/24", "dev", "eth0", "table", "100"] in commands
+    assert ["ip", "route", "replace", "192.168.1.0/24", "dev", "eth0", "table", "100"] in commands
+    assert ["ip", "route", "del", "192.168.1.0/24", "dev", "eth0", "table", "100"] not in commands
     assert ["ip", "route", "del", "default", "dev", "eth0", "table", "100"] in commands
     assert ["ip", "route", "del", "default", "dev", "eth0"] in commands
     assert ["ip", "route", "show", "default", "dev", "eth0"] not in commands
@@ -8160,18 +8191,24 @@ def test_wan_helper_does_not_delete_dhcp_management_default(monkeypatch, tmp_pat
     assert ["ip", "route", "del", "default", "dev", "eth0"] not in commands
 
 
-def test_wan_helper_gives_management_ownership_of_duplicate_vlan_network(monkeypatch, tmp_path):
-    """Verify that wan helper gives management ownership of duplicate vlan network.
+def test_wan_helper_preserves_overlapping_prefixes_in_both_domains(monkeypatch, tmp_path):
+    """Keep overlapping management and access prefixes owned independently.
 
     Args:
         monkeypatch: Pytest fixture used to replace dependencies for the test.
         tmp_path: Temporary directory provided by pytest for isolated filesystem state.
     """
     helper = load_helper_module()
+    applied_domains = tmp_path / "route-domains.json"
+    applied_domains.write_text('{"schema": 1, "interfaces": [{"name": "eth0", "table": 100, "mac": "00:11:22:33:44:01"}, {"name": "eth1.1", "table": 200, "mac": "00:11:22:33:44:01"}]}', encoding="utf-8")
+    monkeypatch.setattr(helper, "ROUTE_DOMAIN_CONFIG_PATH", applied_domains)
+    monkeypatch.setattr(helper, "_snapshot_route_domain_rules", lambda: [])
     config_path = tmp_path / "duplicate-management-vlan.conf"
     config_path.write_text(
         "\n".join(
             [
+                "[feature_settings]",
+                "routing_enabled=true",
                 "[targets]",
                 "target=eth0",
                 "  kind=physical",
@@ -8212,9 +8249,10 @@ def test_wan_helper_gives_management_ownership_of_duplicate_vlan_network(monkeyp
     assert helper._apply_wan_target_routes(parsed) == 0
     assert helper._apply_wan_policy_rules(parsed) == 0
     assert ["ip", "route", "replace", "192.168.1.0/24", "dev", "eth0", "table", "100"] in commands
-    assert ["ip", "route", "replace", "192.168.1.0/24", "dev", "eth1.1", "table", "200"] not in commands
-    assert ["ip", "route", "del", "192.168.1.0/24", "dev", "eth1.1", "table", "200"] in commands
-    assert ["ip", "rule", "add", "from", "192.168.1.0/24", "table", "100", "priority", "1000"] in commands
+    assert ["ip", "route", "replace", "192.168.1.0/24", "dev", "eth1.1", "table", "200"] in commands
+    assert ["ip", "route", "del", "192.168.1.0/24", "dev", "eth1.1", "table", "200"] not in commands
+    assert ["ip", "-4", "rule", "add", "iif", "eth1.1", "table", "200", "priority", "2000", "protocol", "2"] in commands
+    assert not any("add" in command and "from" in command for command in commands)
     assert ["ip", "rule", "add", "from", "192.168.1.0/24", "table", "200", "priority", "2001"] not in commands
 
 
@@ -8932,6 +8970,10 @@ def test_wan_helper_apply_routes_nat_and_netem(monkeypatch, tmp_path):
         tmp_path: Temporary directory provided by pytest for isolated filesystem state.
     """
     helper = load_helper_module()
+    applied_domains = tmp_path / "route-domains.json"
+    applied_domains.write_text('{"schema": 1, "interfaces": [{"name": "eth1.20", "table": 200, "mac": "00:11:22:33:44:01"}]}', encoding="utf-8")
+    monkeypatch.setattr(helper, "ROUTE_DOMAIN_CONFIG_PATH", applied_domains)
+    monkeypatch.setattr(helper, "_snapshot_route_domain_rules", lambda: [])
     apply_dir = tmp_path / "apply" / "wan"
     apply_dir.mkdir(parents=True)
     config_path = apply_dir / "atlaso-wan.conf"
@@ -8991,7 +9033,7 @@ def test_wan_helper_apply_routes_nat_and_netem(monkeypatch, tmp_path):
     assert ["sysctl", "-w", "net.ipv4.ip_forward=1"] in commands
     assert ["nft", "-f", str(nat_dir / "atlaso-nat.nft")] in commands
     assert ["ip", "route", "replace", "192.168.20.0/24", "dev", "eth1.20", "table", "200"] in commands
-    assert ["ip", "rule", "add", "from", "192.168.20.0/24", "table", "200", "priority", "2000"] in commands
+    assert ["ip", "-4", "rule", "add", "iif", "eth1.20", "table", "200", "priority", "2000", "protocol", "2"] in commands
     assert ["ip", "route", "replace", "10.20.0.0/24", "dev", "eth1.20", "metric", "120", "table", "200"] in commands
     assert ["tc", "qdisc", "replace", "dev", "eth1.20", "root", "netem", "delay", "100ms", "10ms", "loss", "0.5%", "rate", "100mbit"] in commands
     assert not service_path.exists()
@@ -9573,7 +9615,7 @@ def test_network_helper_renders_systemd_networkd_files(tmp_path):
     assert "Name=eth*" not in files["00-atlaso-mgmt.network"]
     assert "Address=192.168.49.1/24" in files["00-atlaso-mgmt.network"]
     assert "[RoutingPolicyRule]" not in files["00-atlaso-mgmt.network"]
-    assert "Table=100" not in files["00-atlaso-mgmt.network"]
+    assert "Destination=192.168.49.0/24\nScope=link\nPreferredSource=192.168.49.1\nTable=100" in files["00-atlaso-mgmt.network"]
     assert "10-atlaso-eth2.network" in files
     assert "VLAN=eth2.20" in files["10-atlaso-eth2.network"]
     assert "10-atlaso-eth2.20.netdev" in files
@@ -15161,3 +15203,74 @@ def test_recovery_diagnostic_spool_configuration(tmp_path, monkeypatch, configur
     else:
         with pytest.raises(ValueError):
             helper._installed_diagnostics_spool()
+
+
+@pytest.mark.parametrize("gateway", ["", "192.168.49.254"])
+def test_network_helper_persists_overlapping_connected_prefixes_by_domain(monkeypatch, tmp_path, gateway):
+    """Persist both L2 domains, even when management has no default gateway.
+
+    Args:
+        monkeypatch: Replace native gateway discovery.
+        tmp_path: Isolated candidate configuration directory.
+        gateway: Optional explicit management default gateway.
+    """
+    helper = load_helper_module()
+    config = network_config_text(dual_stack=True, management_gateway=gateway)
+    config = config.replace("192.168.20.1/24", "192.168.49.20/24")
+    config = config.replace("2001:db8:20::1/64", "2001:db8:49::20/64")
+    path = tmp_path / "overlapping.conf"
+    path.write_text(config, encoding="utf-8")
+    monkeypatch.setattr(helper, "NETWORKD_MGMT_CONFIG_PATH", tmp_path / "missing.network")
+    monkeypatch.setattr(helper, "_runtime_default_gateways_for_interface", lambda _name: [])
+    files, _links, _down = helper._systemd_networkd_files(path)
+    for filename, table, suffix in (("00-atlaso-mgmt.network", 100, "1"),
+                                    ("10-atlaso-eth2.20.network", 200, "20")):
+        rendered = files[filename]
+        assert f"Destination=192.168.49.0/24\nScope=link\nPreferredSource=192.168.49.{suffix}\nTable={table}" in rendered
+        assert f"Destination=2001:db8:49::/64\nScope=link\nPreferredSource=2001:db8:49::{suffix}\nTable={table}" in rendered
+        assert "[RoutingPolicyRule]" not in rendered
+
+
+@pytest.mark.parametrize(("role", "table"), [("management", 100), ("access", 200)])
+def test_network_helper_keeps_dynamic_routes_in_interface_domain(tmp_path, role, table):
+    """Keep DHCPv4 and router-advertisement routes in their owning domain.
+
+    Args:
+        tmp_path: Isolated candidate configuration directory.
+        role: Applied interface routing role.
+        table: Expected policy-routing table.
+    """
+    helper = load_helper_module()
+    path = tmp_path / "dynamic.conf"
+    path.write_text("\n".join([
+        "[physical_interfaces]", "interface=eth0", f"  role={role}", "  mode=access",
+        "  access_management_ui_enabled=true", "  ipv4_method=dhcp", "  ip_cidr=",
+        "  ipv6_enabled=true", "  ipv6_cidr=", "  admin_state=up", "  mtu=1500",
+        "[vlan_interfaces]",
+    ]), encoding="utf-8")
+    files, _links, _down = helper._systemd_networkd_files(path)
+    rendered = files["00-atlaso-mgmt.network" if role == "management" else "10-atlaso-eth0.network"]
+    assert f"[DHCPv4]\nSendRelease=no\nSendDecline=yes\nRouteTable={table}" in rendered
+    assert f"[IPv6AcceptRA]\nRouteTable={table}" in rendered
+    assert "[RoutingPolicyRule]" not in rendered
+
+
+def test_wan_helper_preserves_local_routes_when_forwarding_disabled(monkeypatch, tmp_path):
+    """Disabling forwarding must not remove local access connectivity.
+
+    Args:
+        monkeypatch: Replace native command execution.
+        tmp_path: Isolated candidate configuration directory.
+    """
+    helper = load_helper_module()
+    path = tmp_path / "local-only.conf"
+    path.write_text("[feature_settings]\nrouting_enabled=false\n" + wan_config_text(ipv6_route=True), encoding="utf-8")
+    parsed = helper._parse_wan_config(path)
+    commands = []
+    monkeypatch.setattr(helper.shutil, "which", lambda _name: "/usr/sbin/ip")
+    monkeypatch.setattr(helper, "_run", lambda command: commands.append(command) or subprocess.CompletedProcess(command, 0, "", ""))
+    assert helper._apply_wan_target_routes(parsed) == 0
+    assert helper._apply_wan_policy_rules(parsed) == 0
+    assert ["ip", "route", "replace", "192.168.20.0/24", "dev", "eth1.20", "table", "200"] in commands
+    assert ["ip", "-6", "route", "replace", "2001:db8:20::/64", "dev", "eth1.20", "table", "200"] in commands
+    assert not any("rule" in command and "add" in command for command in commands)

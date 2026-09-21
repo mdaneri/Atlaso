@@ -62,7 +62,8 @@ def test_feature_settings_render_full_saved_intent_with_effective_gates():
     assert "nat=Lab NAT" not in config
     assert "policy=Slow WAN" in config
     assert "ip route replace 10.20.0.0/24" not in config
-    assert "ip route del 192.0.2.0/24 dev eth1 table 200" in config
+    assert "ip route replace 192.0.2.0/24 dev eth1 table 200" in config
+    assert "rule add iif" not in config
     assert 'for priority in $(seq 2000 2099); do ip rule del priority "$priority"' in config
     assert 'for priority in $(seq 2000 2099); do ip -6 rule del priority "$priority"' in config
     assert "masquerade comment \"Lab NAT\"" not in config
@@ -714,7 +715,7 @@ def test_render_wan_config_uses_ipv6_route_commands():
 
     assert "  ipv6_cidr=2001:db8:50::1/64" in config
     assert "  routing_domain=lab" in config
-    assert "ip -6 rule add from 2001:db8:50::/64 table 200 priority 2000" in config
+    assert "ip -6 rule add iif eth2.50 table 200 priority 2000" in config
     assert "ip -6 route replace 2001:db8:100::/64 via 2001:db8:50::fe dev eth2.50 metric 120 table 200" in config
 
 
@@ -748,11 +749,11 @@ def test_render_wan_config_keeps_management_and_lab_route_tables_separate():
     assert "management=100 atlaso_mgmt" in config
     assert "lab=200 atlaso_lab" in config
     assert "  gateway=192.168.49.254" in config
-    assert "ip rule add from 192.168.49.0/24 table 100 priority 1000" in config
+    assert "rule add from" not in config
     assert "ip route replace 192.168.49.0/24 dev eth0 table 100" in config
     assert "ip route replace default via 192.168.49.254 dev eth0\n" in config
     assert "ip route replace default via 192.168.49.254 dev eth0 table 100" in config
-    assert "ip rule add from 172.20.0.0/24 table 200 priority 2001" in config
+    assert "ip rule add iif eth1 table 200 priority 2001" in config
     assert "ip route replace 172.20.0.0/24 dev eth1 table 200" in config
     assert "ip route replace 0.0.0.0/0 via 172.20.0.254 dev eth1 metric 100 table 200" in config
 
@@ -782,8 +783,8 @@ def test_render_wan_config_emits_dual_stack_management_defaults_in_main_and_tabl
     assert "ip -6 route replace default via fe80::1 dev eth0 table 100" in config
 
 
-def test_render_wan_config_gives_management_ownership_of_duplicate_vlan_network():
-    """Verify that render wan config gives management ownership of duplicate vlan network."""
+def test_render_wan_config_preserves_overlapping_prefixes_in_both_domains():
+    """Keep identical management and access prefixes in their independent tables."""
     config = render_wan_config(
         [],
         targets=[
@@ -809,15 +810,16 @@ def test_render_wan_config_gives_management_ownership_of_duplicate_vlan_network(
         ],
     )
 
-    assert "ip rule add from 192.168.1.0/24 table 100 priority 1000" in config
+    assert "rule add from" not in config
     assert "ip route replace 192.168.1.0/24 dev eth0 table 100" in config
     assert "ip rule add from 192.168.1.0/24 table 200" not in config
-    assert "ip route replace 192.168.1.0/24 dev eth1.1 table 200" not in config
-    assert "# 192.168.1.0/24 on eth1.1 reuses the subnet owned by eth0; no duplicate policy route generated" in config
+    assert "ip route replace 192.168.1.0/24 dev eth1.1 table 200" in config
+    assert "ip rule add iif eth1.1 table 200 priority 2001" in config
+    assert "ip -6 rule add iif eth1.1 table 200 priority 2001" in config
 
 
-def test_render_wan_config_keeps_gatewayless_management_on_main_table():
-    """Verify that render wan config keeps gatewayless management on main table."""
+def test_render_wan_config_keeps_gatewayless_management_connected_route():
+    """Keep gatewayless management peers reachable through the dedicated table."""
     config = render_wan_config(
         [],
         targets=[
@@ -835,8 +837,8 @@ def test_render_wan_config_keeps_gatewayless_management_on_main_table():
     )
 
     assert "ip rule add from 192.168.1.0/24 table 100" not in config
-    assert "ip route replace 192.168.1.0/24 dev eth0 table 100" not in config
-    assert "# 192.168.1.0/24 on eth0 has no management default gateway; the main routing table remains authoritative" in config
+    assert "ip route replace 192.168.1.0/24 dev eth0 table 100" in config
+    assert "route replace default" not in config
 
 
 def test_validate_wan_state_rejects_ipv6_nat_sources_and_gateway_family_mismatch():
