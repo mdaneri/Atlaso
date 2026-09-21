@@ -323,19 +323,21 @@ function Test-AtlasoVmwareAddressObservedInUse {
     Candidate IPv4 address.
     .PARAMETER VmrunPath
     Exact vmrun executable path.
-    .PARAMETER ExplainBlockingEvidence
-    Fail with a classified release blocker, including unavailable guest observations.
+    .PARAMETER CompletedReservationRelease
+    Check release after process-tree termination and exact-VM inactivity are proven.
+    Stale-only cache entries do not retain the completed reservation; allocation
+    still excludes them. Other use or unavailable evidence blocks release.
     #>
     param(
         [Parameter(Mandatory = $true)][string]$Address,
         [Parameter(Mandatory = $true)][string]$VmrunPath,
-        [switch]$ExplainBlockingEvidence
+        [switch]$CompletedReservationRelease
     )
 
     $running = @(Get-AtlasoRunningVmwareVmxPaths -VmrunPath $VmrunPath)
     foreach ($vmx in $running) {
         $answer = @(& $VmrunPath -T ws getGuestIPAddress $vmx 2>$null)
-        if ($ExplainBlockingEvidence) {
+        if ($CompletedReservationRelease) {
             $guestAddress = $null
             if ($LASTEXITCODE -ne 0 -or $answer.Count -ne 1 -or
                 -not [Net.IPAddress]::TryParse(([string]$answer[0]).Trim(), [ref]$guestAddress)) {
@@ -343,10 +345,22 @@ function Test-AtlasoVmwareAddressObservedInUse {
             }
         }
         if ($LASTEXITCODE -eq 0 -and @($answer | Where-Object { $_.Trim() -ceq $Address }).Count -gt 0) {
-            if ($ExplainBlockingEvidence) {
+            if ($CompletedReservationRelease) {
                 throw 'The reserved address is reported by a running VMware VM.'
             }
             return $true
+        }
+    }
+    if ($CompletedReservationRelease) {
+        try {
+            $hostAddresses = @(Get-NetIPAddress -AddressFamily IPv4 -ErrorAction Stop |
+                Where-Object { $_.IPAddress -ceq $Address })
+        }
+        catch {
+            throw 'Address inactivity is unknown: Windows interface addresses could not be inspected.'
+        }
+        if ($hostAddresses.Count -gt 0) {
+            throw 'The reserved address is assigned to a Windows host interface.'
         }
     }
     try {
@@ -360,11 +374,12 @@ function Test-AtlasoVmwareAddressObservedInUse {
         throw "Address inactivity is unknown: could not inspect the Windows IPv4 neighbor table for $Address."
     }
     if ($neighbors.Count -gt 0) {
-        if ($ExplainBlockingEvidence) {
+        if ($CompletedReservationRelease) {
             if (@($neighbors | Where-Object { $_.State -ne 'Stale' }).Count -eq 0) {
-                # Stale describes a cache entry, not current reachability or ownership.
-                # Preserve allocation safety until inactivity can be established.
-                throw 'Only stale Windows neighbor-cache evidence remains; current address use and MAC ownership are unproven. The reservation is retained.'
+                # Relinquishing an inactive builder's allocation does not admit a
+                # new builder. Admission always uses the default mode and excludes
+                # these entries, without assuming the cached MAC belongs to us.
+                return $false
             }
             throw 'The reserved address has non-stale Windows neighbor evidence; address inactivity is not established.'
         }
@@ -1099,7 +1114,7 @@ function Exit-AtlasoVmwareBuilderAddressReservation {
             throw "Builder address $($matching[0].Address) remains reserved because its exact VMware VM is still running: $vmx"
         }
         if (-not $isExactCurrentOwner -and
-            (Test-AtlasoVmwareAddressObservedInUse -Address ([string]$matching[0].Address) -VmrunPath $VmrunPath -ExplainBlockingEvidence)) {
+            (Test-AtlasoVmwareAddressObservedInUse -Address ([string]$matching[0].Address) -VmrunPath $VmrunPath -CompletedReservationRelease)) {
             throw 'The reserved address still has host or VMware usage evidence.'
         }
         if ($VerifyOnly) { return }

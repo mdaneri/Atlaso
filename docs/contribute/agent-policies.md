@@ -1031,7 +1031,11 @@ preserved with their affected subsystem below. Keep new requirements at their to
   boot identity, output root, VM name, and VMX path, and retain it while that exact VM remains active or recovery
   evidence is ambiguous. A dead owner alone cannot release its reservation during the same Windows boot because a surviving
   descendant could still start the VM. Permit stale recovery after either a valid controlling-parent termination
-  receipt or a changed host-boot identity proves that tree gone, and the exact VM and address are inactive. Keep the
+  receipt or a changed host-boot identity proves that tree gone, and the exact VM is inactive. Release checks must
+  reject current host-interface assignments, running-VM address use, non-stale neighbor evidence, and unavailable
+  provider observations. Stale-only neighbor-cache evidence may allow release of that completed reservation without
+  asserting ownership of the cached MAC: every subsequent allocation must independently exclude the cached address,
+  including explicit address requests. Never flush the neighbor cache to make an address eligible. Keep the
   non-secret release handoff outside temporary credential
   storage, never recover it while its exact owner process remains active, retry it after a preserved VM stops, and
   delete it only after exact ledger release succeeds. Never replay a dead same-boot owner's handoff unless the

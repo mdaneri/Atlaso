@@ -5,6 +5,9 @@ Verify or release one retained VMware builder-address reservation.
 Defaults to read-only verification. Cleanup rechecks the exact allocation and
 process evidence, releases only that allocation, and removes its handoff. It
 never launches a build, retrieves credentials, stops a VM, or deletes VM files.
+Stale-only neighbor evidence may permit release after verified completion, but
+new allocations still exclude that address. A live original controller blocks
+recovery; close its interactive PowerShell session after the build has returned.
 .PARAMETER HandoffPath
 Absolute path to the exact pending-release JSON file reported by the build.
 .PARAMETER VmrunPath
