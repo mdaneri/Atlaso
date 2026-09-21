@@ -375,7 +375,7 @@ class FixtureHttpClient:
         Args:
             method: HTTP method.
             path: Origin-relative target.
-            kwargs: Supported request_bytes options.
+            **kwargs: Supported request_bytes options.
         """
         status, content, headers = self.request_bytes(method, path, **kwargs)
         return status, content.decode("utf-8", errors="replace"), headers

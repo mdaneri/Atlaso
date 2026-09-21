@@ -123,6 +123,25 @@ def test_agent_missing_active_configuration_fails_closed(tmp_path):
     assert not list(tmp_path.iterdir())
 
 
+def test_ownership_bootstrap_loads_actual_same_commit_git_dependencies():
+    """In-memory cleanup imports its real LAN dependency without PSScriptRoot."""
+    script = ROOT / 'scripts/windows/vmware/run-lifecycle-test.ps1'
+    command = (
+        "$ErrorActionPreference='Stop'; $tokens=$null; $errors=$null; "
+        f"$ast=[Management.Automation.Language.Parser]::ParseFile({ps_literal(script)},[ref]$tokens,[ref]$errors); "
+        "$function=$ast.Find({param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] "
+        "-and $node.Name -eq 'Import-LifecycleOwnershipPrimitives'},$true); "
+        ". ([scriptblock]::Create($function.Extent.Text)); "
+        f"$commit=(& git -C {ps_literal(ROOT)} rev-parse HEAD).Trim(); "
+        f"Import-LifecycleOwnershipPrimitives -RepositoryRoot {ps_literal(ROOT)} -Commit $commit; "
+        "$command=Get-Command Resolve-AtlasoOwnedLanSegment -ErrorAction Stop; "
+        "[pscustomobject]@{command=$command.Name; typePresent=($null -ne ('Atlaso.WorkstationDurablePublisherV3' -as [type]))} | ConvertTo-Json -Compress"
+    )
+    result = subprocess.run(['pwsh', '-NoProfile', '-Command', command], capture_output=True,
+                            text=True, timeout=60, check=True)
+    assert json.loads(result.stdout) == {'command': 'Resolve-AtlasoOwnedLanSegment', 'typePresent': True}
+
+
 @pytest.mark.parametrize('target,load,active,intent,allowed', [
     (False, 'not-found', 'inactive', None, True),
     (False, 'loaded', 'active', None, False),

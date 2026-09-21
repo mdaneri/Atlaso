@@ -21,7 +21,7 @@ def test_source_inspection_keeps_missing_intent_and_service_truth(monkeypatch):
 
         Args:
             command: Fixed read-only systemctl invocation.
-            kwargs: Bounded subprocess options.
+            **kwargs: Bounded subprocess options.
         """
         calls.append((command, kwargs))
         return SimpleNamespace(stdout='LoadState=not-found\nActiveState=inactive\nUnitFileState=\n', returncode=0)

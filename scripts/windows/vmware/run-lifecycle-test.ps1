@@ -177,6 +177,34 @@ function Assert-LifecycleRunnerSource {
 
 <#
 .SYNOPSIS
+Load cleanup primitives and their LAN dependency from one admitted Git object set.
+.PARAMETER RepositoryRoot
+Admitted source checkout used only to read immutable Git objects.
+.PARAMETER Commit
+Exact admitted source commit, never a moving branch name.
+#>
+function Import-LifecycleOwnershipPrimitives {
+    param([Parameter(Mandatory)][string]$RepositoryRoot,
+        [Parameter(Mandatory)][ValidatePattern('^[0-9a-f]{40}$')][string]$Commit)
+
+    $cleanupLines = @(& git -C $RepositoryRoot show "${Commit}:scripts/windows/vmware/Atlaso.WorkstationCleanup.psm1")
+    if ($LASTEXITCODE -ne 0) { throw 'Cannot load admitted cleanup primitives.' }
+    $lanLines = @(& git -C $RepositoryRoot show "${Commit}:scripts/windows/vmware/Atlaso.WorkstationLanSegments.ps1")
+    if ($LASTEXITCODE -ne 0) { throw 'Cannot load admitted LAN dependency.' }
+    $dependencyStatement = '. (Join-Path $PSScriptRoot ''Atlaso.WorkstationLanSegments.ps1'')'
+    if (@($cleanupLines | Where-Object { $_ -ceq $dependencyStatement }).Count -ne 1) {
+        throw 'Admitted cleanup dependency shape changed; explicit bootstrap review is required.'
+    }
+    # In-memory modules have no file-backed PSScriptRoot. Replace only the exact
+    # reviewed dependency statement with its same-commit Git object, not a
+    # mutable checkout read or a guessed path.
+    $definition = ($cleanupLines -join "`n").Replace($dependencyStatement, ($lanLines -join "`n"))
+    New-Module -Name Atlaso.LifecycleOwnershipPrimitives -ScriptBlock ([scriptblock]::Create($definition)) |
+        Import-Module -Force -Global
+}
+
+<#
+.SYNOPSIS
 Export an admitted Git object into a fresh task-owned wheel source directory.
 .PARAMETER RepositoryRoot
 Repository containing the admitted immutable commit object.
@@ -795,13 +823,10 @@ $lifecycleTaskId = if ($env:CODEX_THREAD_ID) { $env:CODEX_THREAD_ID } elseif ($O
 $externalOwnershipEnabled = -not $PlanOnly -and [bool]($env:CODEX_THREAD_ID -or $OwnershipRoot -or $OwnershipTaskId)
 if ($externalOwnershipEnabled) {
     if ($lifecycleTaskId -notmatch '^[A-Za-z0-9_-]{1,128}$') { throw 'A valid lifecycle ownership task identifier is required.' }
-    foreach ($helper in @('Atlaso.WorkstationCleanup.psm1', 'Atlaso.LifecycleOwnership.ps1')) {
-        $helperSource = @(& git -C $repoRoot show "${sourceCommit}:scripts/windows/vmware/$helper")
-        if ($LASTEXITCODE -ne 0) { throw 'Cannot load admitted lifecycle ownership helpers.' }
-        if ($helper.EndsWith('.psm1')) {
-            New-Module -Name Atlaso.LifecycleOwnershipPrimitives -ScriptBlock ([scriptblock]::Create(($helperSource -join "`n"))) | Import-Module -Force
-        } else { . ([scriptblock]::Create(($helperSource -join "`n"))) }
-    }
+    Import-LifecycleOwnershipPrimitives -RepositoryRoot $repoRoot -Commit $sourceCommit
+    $helperSource = @(& git -C $repoRoot show "${sourceCommit}:scripts/windows/vmware/Atlaso.LifecycleOwnership.ps1")
+    if ($LASTEXITCODE -ne 0) { throw 'Cannot load admitted lifecycle ownership helper.' }
+    . ([scriptblock]::Create(($helperSource -join "`n")))
     if ($env:CODEX_THREAD_ID) {
         $durableOwnershipRoot = Get-AtlasoLifecycleDurableRoot
         if (($OwnershipRoot -and [IO.Path]::GetFullPath($OwnershipRoot).TrimEnd('\', '/') -ine $durableOwnershipRoot) -or
