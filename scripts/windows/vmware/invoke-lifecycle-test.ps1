@@ -417,7 +417,7 @@ if (-not $PlanOnly) {
 if (@($OidcOnly, $RoutingWanOnly, $RoutingOverlapOnly, $FullEsxiPxeInstall | Where-Object { $_ }).Count -gt 1) {
     throw 'Focused lifecycle modes are mutually exclusive.'
 }
-if ($RoutingOverlapOnly -and (-not $SkipClientPrepare -or -not $ClientVmdkPath -or $ApplianceSshUser -cne 'root' -or
+if ($RoutingOverlapOnly -and -not $PlanOnly -and (-not $SkipClientPrepare -or -not $ClientVmdkPath -or $ApplianceSshUser -cne 'root' -or
     $ApplianceIPAddress -or $ApplianceUrl -or $AllowDryRunApply -or $ManagementNetwork -notmatch '^VMnet\d+$')) {
     throw 'Private overlap requires a prepared client disk, SkipClientPrepare, root appliance SSH, discovered addressing, and real Apply.'
 }

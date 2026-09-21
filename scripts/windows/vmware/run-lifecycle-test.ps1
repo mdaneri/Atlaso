@@ -2495,11 +2495,11 @@ $resolvedVmrun = Resolve-VmrunPath
 if (@($OidcOnly, $RoutingWanOnly, $RoutingOverlapOnly, $FullEsxiPxeInstall | Where-Object { $_ }).Count -gt 1) {
     throw 'Focused lifecycle modes are mutually exclusive.'
 }
-if ($RoutingOverlapOnly -and ((-not $PlanOnly -and -not $externalOwnershipEnabled) -or $ApplianceSshUser -cne 'root' -or
+if ($RoutingOverlapOnly -and -not $PlanOnly -and (-not $externalOwnershipEnabled -or $ApplianceSshUser -cne 'root' -or
     $ApplianceIPAddress -or $ApplianceUrl -or $AllowDryRunApply -or $ManagementNetwork -notmatch '^VMnet\d+$')) {
     throw 'Private overlap requires external ownership, root appliance SSH, an existing control VMnet, discovered addressing, and real Apply.'
 }
-if ($RoutingOverlapOnly -and $lifecycleTaskId -notmatch '^[0-9a-fA-F]{8}(-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}$') {
+if ($RoutingOverlapOnly -and -not $PlanOnly -and $lifecycleTaskId -notmatch '^[0-9a-fA-F]{8}(-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}$') {
     throw 'Private guest ownership requires an originating UUID task identifier.'
 }
 $overlapControlNetwork = $ManagementNetwork

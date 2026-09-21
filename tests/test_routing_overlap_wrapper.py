@@ -126,3 +126,44 @@ def test_seed_fixture_flag_is_one_python_argument(enabled):
     if enabled:
         expected.append('--routing-overlap-guest')
     assert json.loads(result.stdout) == expected
+
+
+@pytest.mark.parametrize('script_name', ['invoke-lifecycle-test.ps1', 'run-lifecycle-test.ps1'])
+@pytest.mark.parametrize('mode', ['plan', 'run-missing', 'run-valid', 'run-bad-task'])
+def test_private_plan_binding_skips_only_execution_prerequisites(script_name, mode):
+    """Execute real parameter binding and private guards without the script body.
+
+    Args:
+        script_name: Public wrapper or downstream runner to exercise.
+        mode: Plan binding, incomplete Run, complete Run, or Run with an invalid task identity.
+    """
+    path = ROOT / 'scripts/windows/vmware' / script_name
+    downstream = script_name == 'run-lifecycle-test.ps1'
+    arguments = "@{PullRequestNumber=868; RoutingOverlapOnly=$true; CollisionSuffix='guard-test'}"
+    additions = ""
+    if downstream:
+        additions += "$arguments.ApplianceVmxPath='unused-source.vmx'; $arguments.ClientVmdkPath='unused-client.vmdk'; "
+    if mode == 'plan':
+        additions += "$arguments.PlanOnly=$true; "
+    elif mode in {'run-valid', 'run-bad-task'}:
+        additions += "$arguments.ApplianceSshUser='root'; "
+        if not downstream:
+            additions += "$arguments.SkipClientPrepare=$true; $arguments.ClientVmdkPath='unused-client.vmdk'; "
+    task_id = '11111111-2222-3333-4444-555555555555' if mode == 'run-valid' else 'ordinary-human-plan'
+    # Only the real binding and the selected guards execute. No provider lookup,
+    # credential prompt, source snapshot, plan.json write, or other script body.
+    command = ("$ErrorActionPreference='Stop'; $tokens=$null; $errors=$null; "
+        f"$ast=[Management.Automation.Language.Parser]::ParseFile({ps_literal(path)},[ref]$tokens,[ref]$errors); "
+        "$guards=@($ast.FindAll({param($node) $node -is [Management.Automation.Language.IfStatementAst] -and "
+        "($node.Extent.Text.Contains(\"throw 'Private overlap requires a prepared client disk\") -or "
+        "$node.Extent.Text.Contains(\"throw 'Private overlap requires external ownership\") -or "
+        "$node.Extent.Text.Contains(\"throw 'Private guest ownership requires an originating UUID\")) },$true)); "
+        f"if ($guards.Count -ne {2 if downstream else 1}) {{ throw 'Expected guard ASTs were not found' }}; "
+        "$body=$ast.ParamBlock.Extent.Text + [Environment]::NewLine + "
+        f"'$externalOwnershipEnabled=$true; $lifecycleTaskId=\"{task_id}\"; ' + "
+        "(($guards | ForEach-Object {$_.Extent.Text}) -join [Environment]::NewLine); "
+        f"$arguments={arguments}; {additions}"
+        "$accepted=$false; try { & ([scriptblock]::Create($body)) @arguments; $accepted=$true } catch { }; "
+        "$accepted | ConvertTo-Json -Compress")
+    result = subprocess.run(['pwsh', '-NoProfile', '-Command', command], capture_output=True, text=True, timeout=60, check=True)
+    assert json.loads(result.stdout) is (mode != 'run-missing' and not (downstream and mode == 'run-bad-task'))
