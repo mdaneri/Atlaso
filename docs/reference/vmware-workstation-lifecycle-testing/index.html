@@ -5115,11 +5115,16 @@ allocation, or unreadable evidence keeps the reservation. <code>already-released
 completed and cleanup can finish handoff retirement. An interrupted cleanup can be retried with the same handoff.</p>
 <p>Recovery distinguishes a running VM reporting the address, non-stale Windows neighbor evidence, stale-only cache
 evidence, and unavailable provider observations. A <code>Stale</code> entry proves neither current use nor ownership by the
-stopped builder. Stale-only evidence therefore retains the reservation with an explicit uncertainty message; it is
-not reported as proven live foreign use. Allocation still excludes cached addresses. Do not flush the neighbor cache
-or delete reservation JSON to force release. Retry the read-only command after the address observations clear and
-the original controller has exited; valid retained termination proof then allows same-boot recovery. A successful
-release requires fresh provider and address checks, not just the saved receipt.</p>
+stopped builder. Once process-tree termination and exact-VM inactivity are proven, stale-only evidence permits
+release of the completed builder's reservation. It does <strong>not</strong> make the address eligible for another build:
+automatic allocation still skips it, and an explicit request for it fails while the cache entry remains. Release
+does not flush the neighbor cache or claim that its MAC belongs to the builder. Current host-interface assignments,
+running-VM address use, non-stale neighbors, and unavailable provider evidence still block release.</p>
+<p>For an already retained handoff, let the original controller exit before retrying the read-only command. When the
+build was launched from an interactive PowerShell session, that session is the controller: after the build returns,
+close that session and run recovery from a new session. A valid receipt then permits same-boot recovery without
+waiting for stale-only cache entries to disappear. Verify <code>releasable</code> before requesting <code>-Cleanup</code>; do not edit
+reservation JSON. The recovery command retains its active-controller and fresh provider checks.</p>
 <p>Older handoffs have no retained process-termination receipt. The tool reports that limitation instead of creating
 proof from VM-file absence or a dead PID. Such records still require independently available termination evidence
 or a changed host boot, followed by the same provider and address checks. Do not edit ledger JSON or insert receipts
