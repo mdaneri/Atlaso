@@ -634,7 +634,7 @@ catch {
     [IO.File]::WriteAllText($handoffPath, $receiptBytes)
 
     # Exercise successful bounded completion using the production receipt block.
-    # The following release fails on a stale-only observation, then a later caller
+    # The following release fails on a reachable observation, then a later caller
     # must reach the address check instead of losing the process proof.
     [IO.File]::WriteAllText($failedChild, ([IO.File]::ReadAllText($failedChild).Replace('exit 1', 'exit 0')))
     [IO.File]::WriteAllText($publisher, @'
@@ -668,13 +668,22 @@ $module = Get-Module Atlaso.WorkstationBuilderAddress
     function Get-NetNeighbor {
         [pscustomobject]@{ IPAddress = '192.0.2.30'; State = 'Stale'; LinkLayerAddress = '00-0C-29-D3-54-B3' }
     }
+    # The normal parent completion path must accept stale-only evidence while
+    # still running in its original controller. VerifyOnly preserves this fixture
+    # for the failure-and-recovery checks that follow.
+    Exit-AtlasoVmwareBuilderAddressReservation -Reservation (Get-Content $HandoffPath -Raw | ConvertFrom-Json) `
+        -VmrunPath (Join-Path (Split-Path -Parent (Split-Path -Parent $LedgerPath)) 'fake-vmrun.ps1') `
+        -StateRoot (Split-Path -Parent $LedgerPath) -ProcessTreeTerminationProven -VerifyOnly
+    function Get-NetNeighbor {
+        [pscustomobject]@{ IPAddress = '192.0.2.30'; State = 'Reachable'; LinkLayerAddress = '00-0C-29-D3-54-B3' }
+    }
     try {
         Exit-AtlasoVmwareBuilderAddressReservation -Reservation (Get-Content $HandoffPath -Raw | ConvertFrom-Json) `
             -VmrunPath (Join-Path (Split-Path -Parent (Split-Path -Parent $LedgerPath)) 'fake-vmrun.ps1') `
             -StateRoot (Split-Path -Parent $LedgerPath) -ProcessTreeTerminationProven
-        throw 'Stale-only release unexpectedly succeeded.'
+        throw 'Reachable-address release unexpectedly succeeded.'
     } catch {
-        if ($_.Exception.Message -notlike '*Only stale Windows*') { throw }
+        if ($_.Exception.Message -notlike '*non-stale Windows*') { throw }
     }
 } $HandoffPath $LedgerPath
 '@)
@@ -685,7 +694,7 @@ $module = Get-Module Atlaso.WorkstationBuilderAddress
     $module = Get-Module Atlaso.WorkstationBuilderAddress
     & $module {
         param($HandoffPath, $VmrunPath, $StateRoot, $Before, $ReceiptBytes)
-        foreach ($state in @('Stale', 'Reachable', 'Permanent', 'Unknown')) {
+        foreach ($state in @('Reachable', 'Permanent', 'Delay', 'Probe', 'Unknown')) {
             function Get-NetNeighbor {
                 <#
                 .SYNOPSIS
@@ -697,8 +706,7 @@ $module = Get-Module Atlaso.WorkstationBuilderAddress
                 throw 'Allocation safety ignored cached address evidence.'
             }
             $result = Invoke-AtlasoBuilderReservationRecovery -HandoffPath $HandoffPath -VmrunPath $VmrunPath -StateRoot $StateRoot -Execute
-            $expected = if ($state -eq 'Stale') { '*Only stale Windows*' } else { '*non-stale Windows*' }
-            if ($result.Status -ne 'blocked' -or $result.Reason -notlike $expected -or
+            if ($result.Status -ne 'blocked' -or $result.Reason -notlike '*non-stale Windows*' -or
                 (Get-FileHash (Join-Path $StateRoot 'reservations.json')).Hash -cne $Before -or
                 [IO.File]::ReadAllText($HandoffPath) -cne $ReceiptBytes) {
                 throw "Recovery did not preserve and classify $state evidence: $($result.Reason)"
@@ -714,6 +722,40 @@ $module = Get-Module Atlaso.WorkstationBuilderAddress
         $result = Invoke-AtlasoBuilderReservationRecovery -HandoffPath $HandoffPath -VmrunPath $VmrunPath -StateRoot $StateRoot
         if ($result.Status -ne 'blocked' -or $result.Reason -notlike '*inactivity is unknown*') {
             throw 'Unavailable neighbor evidence was treated as inactivity.'
+        }
+        function Get-NetNeighbor {
+            <#
+            .SYNOPSIS
+            Supply stale and reachable entries on different interfaces for the same IP.
+            #>
+            [pscustomobject]@{ IPAddress = '192.0.2.30'; State = 'Stale'; LinkLayerAddress = '00-0C-29-D3-54-B3' }
+            [pscustomobject]@{ IPAddress = '192.0.2.30'; State = 'Reachable'; LinkLayerAddress = '00-0C-29-11-22-33' }
+        }
+        $mixed = Invoke-AtlasoBuilderReservationRecovery -HandoffPath $HandoffPath -VmrunPath $VmrunPath -StateRoot $StateRoot
+        if ($mixed.Status -ne 'blocked' -or $mixed.Reason -notlike '*non-stale Windows*') {
+            throw 'A stale observation hid concurrent live address evidence.'
+        }
+        function Get-NetIPAddress {
+            <#
+            .SYNOPSIS
+            Supply a current host assignment for the reserved address.
+            #>
+            [pscustomobject]@{ IPAddress = '192.0.2.30' }
+        }
+        $hostUse = Invoke-AtlasoBuilderReservationRecovery -HandoffPath $HandoffPath -VmrunPath $VmrunPath -StateRoot $StateRoot
+        if ($hostUse.Status -ne 'blocked' -or $hostUse.Reason -notlike '*assigned to a Windows host interface*') {
+            throw 'A host interface assignment did not block release.'
+        }
+        function Get-NetIPAddress {
+            <#
+            .SYNOPSIS
+            Inject an unavailable Windows interface provider.
+            #>
+            throw 'Injected interface read failure.'
+        }
+        $unknownHost = Invoke-AtlasoBuilderReservationRecovery -HandoffPath $HandoffPath -VmrunPath $VmrunPath -StateRoot $StateRoot
+        if ($unknownHost.Status -ne 'blocked' -or $unknownHost.Reason -notlike '*inactivity is unknown*') {
+            throw 'Unavailable host address evidence allowed release.'
         }
     } $handoffPath $vmrunPath $recoveryState $before $receiptBytes
     $foreignVmrun = Join-Path $testRoot 'foreign-vmrun.ps1'
@@ -738,7 +780,40 @@ exit 0
     if ($malformed.Status -ne 'blocked' -or $malformed.Reason -notlike '*inactivity is unknown*') {
         throw 'Malformed guest provider output allowed release.'
     }
-    $released = Invoke-AtlasoBuilderReservationRecovery -HandoffPath $handoffPath -VmrunPath $vmrunPath -StateRoot $recoveryState -Execute
+    $released = & $module {
+        param($HandoffPath, $VmrunPath, $StateRoot, $Before, $ReceiptBytes, $Common, $TestRoot)
+        function Get-NetNeighbor {
+            <#
+            .SYNOPSIS
+            Retain a stale observation without making any MAC ownership assumption.
+            #>
+            [pscustomobject]@{ IPAddress = '192.0.2.30'; State = 'Stale'; LinkLayerAddress = '00-0C-29-D3-54-B3' }
+        }
+        $verification = Invoke-AtlasoBuilderReservationRecovery -HandoffPath $HandoffPath -VmrunPath $VmrunPath -StateRoot $StateRoot
+        if ($verification.Status -ne 'releasable' -or
+            (Get-FileHash (Join-Path $StateRoot 'reservations.json')).Hash -cne $Before -or
+            [IO.File]::ReadAllText($HandoffPath) -cne $ReceiptBytes) {
+            throw 'Stale-only verification failed or changed durable evidence.'
+        }
+        $result = Invoke-AtlasoBuilderReservationRecovery -HandoffPath $HandoffPath -VmrunPath $VmrunPath -StateRoot $StateRoot -Execute
+        if ($result.Status -ne 'released') { throw "Stale-only release failed: $($result.Reason)" }
+        # The ledger lock is now available to a different build. Address .30 must
+        # still be excluded; .31 belongs to the unrelated allocation fixture.
+        $next = $Common.Clone()
+        $next.StateRoot = $StateRoot
+        $next.PoolEndOffset = 32
+        $allocation = Enter-AtlasoVmwareBuilderAddressReservation @next -OutputDirectory (Join-Path $TestRoot 'next-output')
+        if ($allocation.Address -cne '192.0.2.32') { throw 'Allocation reused the stale address after release.' }
+        try {
+            $null = Enter-AtlasoVmwareBuilderAddressReservation @next -OutputDirectory (Join-Path $TestRoot 'explicit-output') -PreferredAddress '192.0.2.30'
+            throw 'Explicit allocation reused the stale address after release.'
+        }
+        catch {
+            if ($_.Exception.Message -eq 'Explicit allocation reused the stale address after release.') { throw }
+        }
+        Exit-AtlasoVmwareBuilderAddressReservation -Reservation $allocation -VmrunPath $VmrunPath -StateRoot $StateRoot
+        return $result
+    } $handoffPath $vmrunPath $recoveryState $before $receiptBytes $common $testRoot
     $remaining = (Get-Content $recoveryLedger -Raw | ConvertFrom-Json).Reservations
     if ($released.Status -ne 'released' -or (Test-Path $handoffPath) -or @($remaining).Count -ne 1 -or
         ($remaining[0] | ConvertTo-Json -Compress) -cne ($unrelated | ConvertTo-Json -Compress)) {

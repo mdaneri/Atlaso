@@ -55,7 +55,7 @@ sections as needed. Resolve unknown applicability before mutation rather than tr
 | dependencies | Dependency updates or generated locks, including Dependabot | [Dependency management](docs/contribute/dependency-management.md) |
 | release | Changes to release/version tooling, trusted CI, signing, publication, promotion, GitHub Pages; routine synchronized version bumps follow CONTRIBUTING only | [Release policy](docs/contribute/release-policy.md) |
 | subsystem | Appliance, networking, services, authentication, storage, host-mutation behavior | [Relevant subsystem sections](docs/contribute/agent-policies.md) |
-| infrastructure | Image builds, VMware/lifecycle validation, deployment, external infrastructure mutation | [Lifecycle procedures](docs/reference/vmware-workstation-lifecycle-testing.md), [subsystem contracts](docs/contribute/agent-policies.md) |
+| infrastructure | Image builds, builder reservations, VMware validation, deployment, infrastructure mutation | [Lifecycle procedures](docs/reference/vmware-workstation-lifecycle-testing.md), [subsystem contracts](docs/contribute/agent-policies.md) |
 | cleanup | Creating task worktrees or disposable validation resources (ownership section), resource release, destructive cleanup, completed-task handoff | [Cleanup policy](docs/contribute/completed-task-cleanup.md) |
 | community | Community participation | [Code of conduct](CODE_OF_CONDUCT.md) |
 
