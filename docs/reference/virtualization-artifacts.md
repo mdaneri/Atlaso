@@ -13,14 +13,29 @@ status: current
 
 `export-ovf.ps1 -Prerelease` checks free storage before it creates staging directories, retrieves credentials,
 downloads software, builds, exports, or mutates a VM. Read-only GitHub metadata and retained-artifact verification
-run first. The check resolves each destination to its actual Windows volume and calculates the largest remaining
-simultaneous allocation on that volume. Paths sharing a volume compete for the same free bytes; sequential VMware
-and Hyper-V smoke imports are not added together. Every summary identifies the paths, volume, free bytes, required
-bytes, components, and any shortfall.
+run first. Admission resolves each destination to its actual Windows volume and checks the additional allocation
+for the next stage against fresh free space. Source verification, build/compaction, export, conversion, smoke,
+and candidate staging are separate evidence boundaries. Paths sharing a volume compete for the same free bytes;
+sequential VMware and Hyper-V smoke imports are not added together. Summaries identify the stage, paths, volume,
+free and required bytes, components, and shortfall, with a readable GiB breakdown.
+
+The initial check admits source verification, not an unconditional promise that every later stage will fit.
+After source verification, the build check uses the authenticated tree's actual file lengths for its snapshot copy.
+After compaction, the retained builder consumes only the space reported by the filesystem: its earlier zero-fill
+high-water mark is not reserved again alongside the smoke import. Every expensive stage still checks capacity before
+it starts. If another process consumes space or an artifact grows unexpectedly, a later check can stop the workflow
+with the verified outputs preserved for retry. No speculative deletion or compaction credit is added to free space.
 
 The conservative planning estimates below are additional physical storage, in GiB. They are not the virtual
 capacity of the two empty 500 GiB data disks. Existing files already consume the reported free space and do not
 receive speculative cleanup credits.
+
+Keep the size categories separate: guest virtual capacity is the addressable disk size; host allocation is the
+space currently consumed on the Windows volume; file logical length bounds an ordinary copy even when a source
+file has sparse holes or host compression. Stream-optimized VMDKs and the Hyper-V ZIP also compress guest data,
+so their archive sizes do not bound the growth of an imported disk. Admission includes conversion scratch,
+memory backing, and guest-write allowances separately. File-length measurements are not reported as physical
+allocation measurements.
 
 Source reconstruction checks the aggregate declared size of selected archive members before extracting any payload.
 The 16 GiB limit includes the signed manifest and signature plus a 1 MiB reserve for the generated source identity;
@@ -30,10 +45,10 @@ compressed download sizes alone do not establish this expansion bound. Oversized
 | --- | ---: | --- |
 | Signed software downloads | 2 | Source verification; larger or unknown GitHub asset sizes fail admission |
 | Reconstructed verified source | 16, or verified retained tree length | Source through staging |
-| Builder payload disks | 64 | Build through staging; includes the 40 + 20 GiB zero-fill high-water mark |
-| Builder compaction and memory | 64 | Build only |
+| Builder payload disks | 64 | Build admission; includes the 40 + 20 GiB zero-fill high-water mark and metadata |
+| Builder compaction and memory | 44 | Build only; one 40 GiB payload scratch copy plus metadata/memory allowance |
 | Source snapshot, source copies, ISO and credential staging | Source estimate + 8 | Build only |
-| Verified ISO cache | 4 | Build through staging |
+| ISO download cache | 5, or zero for checksum-verified reuse | Build admission; the pinned ISO is about 4.31 GiB |
 | OVF/OVA outputs and staged OVA copy | 8 | Export through staging |
 | Export before asset-size admission | 60 | Export only |
 | Hyper-V ZIP | 2 | Conversion through staging |
@@ -44,15 +59,35 @@ compressed download sizes alone do not establish this expansion bound. Oversized
 | Operational headroom | 2 per volume | Every admission |
 
 These estimates cover the canonical four-disk pipeline, including payload zero filling and compaction, not an
-arbitrary workload inside a diagnostic guest. For a new build with every path on one volume, the current conservative
-peak plus headroom is 180 GiB. A verified retained template omits new builder allocations; a verified candidate
+arbitrary workload inside a diagnostic guest. The pinned [VMware Packer plugin's compaction loop](https://github.com/vmware/packer-plugin-vmware/blob/v2.1.5/builder/vmware/common/step_compact_disk.go)
+handles the two payload disks sequentially. Its [Workstation driver](https://github.com/vmware/packer-plugin-vmware/blob/v2.1.5/builder/vmware/common/driver_workstation.go)
+finishes defragmentation and shrinking for one disk before advancing to the other; the scratch budget therefore
+covers the largest payload rather than a second copy of both disks.
+
+The remaining export and conversion estimates conservatively cover both 40 + 20 GiB payloads before their output
+sizes are known. The converter subsequently discounts validated completed VHDX lengths and checks its ZIP step again.
+The Hyper-V package enforces an 8 GiB expanded limit: extraction plus a second disk copy account for at most 16 GiB,
+with 16 GiB guest growth and 4 GiB memory added for smoke. VMware's 84 GiB estimate retains the 64 GiB import/validation
+allowance plus the same 20 GiB memory/growth allowance. Neither smoke estimate reserves the two empty 500 GiB virtual
+data-disk capacities. The 8 GiB candidate-copy allowance covers the admitted release assets; existing candidate bytes
+are verified for reuse instead of copied again. These bounds remain deliberately larger than a typical compressed
+image and do not guarantee space for arbitrary writes to the virtual data disks.
+
+For a fresh source, initial verification reserves at most 20 GiB including headroom. This is a source-extraction
+bound, **not a 20 GiB whole-build budget**. On one volume, the following build admission reserves 123 GiB plus the
+verified source-copy length, or 118 GiB plus that length when the existing ISO passes the builder's pinned SHA-512
+check. Zero filling can expand thin disks substantially; thin provisioning is not proof that a complete build fits
+in 20 GiB. The compaction and guest-growth allowances remain conservative estimates, not measured guarantees.
+
+A verified retained template omits new builder allocations; a verified candidate
 omits build, export, conversion, and smoke allocations. Retained source, template provenance, powered-off state, and
 candidate bytes must pass their existing validation before the smaller resume plan is admitted. An invalid retained
 operation is preserved and rejected, never relocated automatically.
 When the source tree is already verified, only its temporary reconstruction copy is budgeted during source verification;
 that copy is removed before later stages. A newly created source tree remains allocated through candidate staging.
 
-The workflow repeats admission before each heavy stage using the remaining plan. Hyper-V conversion discounts validated
+The workflow repeats admission before each heavy stage using its additional allocation plan. Hyper-V conversion discounts
+validated
 completed VHDX bytes from subsequent conversion checks while retaining the ZIP output budget. Direct OVF export,
 Hyper-V conversion and smoke entry points also check capacity; the standalone packaged Hyper-V importer uses actual
 VHDX file lengths
@@ -66,6 +101,46 @@ On refusal, free space through an ownership-verified cleanup procedure or choose
 conversion output, or smoke roots. Use a checkout on an adequately sized volume for those outputs, and use
 `-DestinationRoot` for a standalone Hyper-V import. Do not move or delete a retained operation to evade admission.
 Keep the completed source template powered off and preserve its provenance plus valid OVA/ZIP evidence for retry.
+
+### Measured storage example
+
+On 2026-09-21, an isolated Windows build used published source `v0.9.363`
+(`1246b50d95648784ff76f1174824f7faafa1319e`), Windows build 26200, VMware Workstation 26.0.1,
+the pinned VMware Packer plugin 2.1.5, and QEMU 2.3.0. The fresh operation started with 150.70 GiB free.
+A maintainer-authorized, process-only 140 GiB admission cap allowed measurement past the old 180 GiB forecast;
+that cap is not a supported production setting or a replacement estimate.
+
+The fresh build completed zero filling, compaction, export, conversion, and VMware smoke. Its first Hyper-V attempt
+timed out without a management IPv4 address. A verified-template retry on Windows `Default Switch` ran the updated
+admission code without an override and passed both smokes, including reboot checks. The producer then encountered
+the separate [nested OVF package staging issue](https://github.com/mdaneri/Atlaso/issues/870). Selecting the actual
+package with the supported stager's `--ova-directory` and supplying the exact OVA beside it completed all 14 candidate
+assets and their readback validation. No image Release was published. That explicit extra OVA copy is included below.
+
+| Phase | Largest sampled total task-file allocation, GiB |
+| --- | ---: |
+| Retained-source verification | 15.00 |
+| Fresh build, zero filling, and compaction | 17.80 |
+| Export | 14.94 |
+| Hyper-V conversion | 22.68 |
+| VMware smoke | 25.07 |
+| Hyper-V smoke | 30.08 |
+| Candidate staging and readback | 22.82 |
+
+These are total resident task files across the initial attempt and retry, including retained outputs and the ISO,
+not additional stage requirements. The verified source contained 33,717,157 bytes. The updated model's largest
+additional requirement for that fresh source is **123.03 GiB at build**, including headroom, compared with the old
+180 GiB initial forecast and the **30.08 GiB observed maximum during Hyper-V smoke**. All seven stage admissions
+passed replay against their recorded free-space observations; the retry also passed every applicable resume-stage
+check live.
+The estimates intentionally retain headroom for unobserved zero-fill, compaction, copy, and guest-growth cases.
+
+Measurement used Windows `GetCompressedFileSizeW` over the task's source/builder, export, conversion, smoke, ISO,
+temporary, and build-state trees. Sampling was approximately five seconds initially and one second on retry/staging;
+no file-read races were reported. This API accounts for sparse/compressed files but reports file length for ordinary
+files, excluding filesystem metadata and allocation rounding. Recursive samples are not atomic and can miss brief
+transient peaks, especially the short initial source extraction. Thus this observation does not establish a safe
+30 GiB minimum, and it does not support a blanket 20 GiB whole-pipeline allowance.
 
 ## Disposable VMware console diagnostics
 
