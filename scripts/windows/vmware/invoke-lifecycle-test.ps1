@@ -41,7 +41,9 @@ IPv4 CIDR assigned to the site-network scenario.
 .PARAMETER AdminUsername
 Atlaso administrator account used by the lifecycle harness.
 .PARAMETER AdminPassword
-Secure Admin Password supplied at runtime; no repository default is used.
+Protected administrator identity credential.
+.PARAMETER RootPassword
+Protected root identity credential; required for private overlap and optional for existing lifecycle modes.
 .PARAMETER ApplianceSshUser
 SSH account used for appliance guest operations.
 .PARAMETER ClientSshUser
@@ -59,7 +61,9 @@ IPv4 CIDR used by the tagged-network scenario.
 .PARAMETER WanCidr
 IPv4 CIDR used by the simulated WAN scenario.
 .PARAMETER RoutingWanOnly
-Run only the routing and WAN lifecycle scenario.
+Run the focused WAN routing scenario.
+.PARAMETER RoutingOverlapOnly
+Run isolated DHCP and SLAAC same-prefix acceptance on task-owned private LAN segments.
 .PARAMETER OidcOnly
 Run only the OIDC lifecycle scenario.
 .PARAMETER FullEsxiPxeInstall
@@ -166,6 +170,8 @@ param(
     [Parameter(ParameterSetName = 'Run')]
     [Parameter(ParameterSetName = 'Plan')]
     [SecureString]$AdminPassword,
+    [Parameter(ParameterSetName = 'Run')]
+    [SecureString]$RootPassword,
 
     [Parameter(ParameterSetName = 'Run')]
     [Parameter(ParameterSetName = 'Plan')]
@@ -202,6 +208,9 @@ param(
     [Parameter(ParameterSetName = 'Run')]
     [Parameter(ParameterSetName = 'Plan')]
     [switch]$RoutingWanOnly,
+    [Parameter(ParameterSetName = 'Run')]
+    [Parameter(ParameterSetName = 'Plan')]
+    [switch]$RoutingOverlapOnly,
 
     [Parameter(ParameterSetName = 'Run')]
     [Parameter(ParameterSetName = 'Plan')]
@@ -398,15 +407,22 @@ if (-not $PlanOnly) {
     if ($null -eq $SshPassword) {
         $SshPassword = $AdminPassword
     }
-    if (-not ($OidcOnly -or $RoutingWanOnly) -and $null -eq $VcfBackupPassword) {
+    if (-not ($OidcOnly -or $RoutingWanOnly -or $RoutingOverlapOnly) -and $null -eq $VcfBackupPassword) {
         $VcfBackupPassword = Read-Host -Prompt 'VCF Backup lifecycle password' -AsSecureString
     }
     if ($FullEsxiPxeInstall -and $null -eq $EsxiPassword) {
         $EsxiPassword = Read-Host -Prompt 'ESXi root password for lifecycle probing' -AsSecureString
     }
 }
-if (($RoutingWanOnly -and $FullEsxiPxeInstall) -or ($OidcOnly -and ($RoutingWanOnly -or $FullEsxiPxeInstall))) {
-    throw "-OidcOnly, -RoutingWanOnly, and -FullEsxiPxeInstall are mutually exclusive."
+if (@($OidcOnly, $RoutingWanOnly, $RoutingOverlapOnly, $FullEsxiPxeInstall | Where-Object { $_ }).Count -gt 1) {
+    throw 'Focused lifecycle modes are mutually exclusive.'
+}
+if ($RoutingOverlapOnly -and (-not $SkipClientPrepare -or -not $ClientVmdkPath -or $ApplianceSshUser -cne 'root' -or
+    $ApplianceIPAddress -or $ApplianceUrl -or $AllowDryRunApply -or $ManagementNetwork -notmatch '^VMnet\d+$')) {
+    throw 'Private overlap requires a prepared client disk, SkipClientPrepare, root appliance SSH, discovered addressing, and real Apply.'
+}
+if ($RoutingOverlapOnly -and -not $PlanOnly -and $null -eq $RootPassword) {
+    throw 'Private overlap requires the corresponding root identity through protected RootPassword.'
 }
 if (-not $ApplianceVmxPath) {
     if ($PlanOnly) {
@@ -424,7 +440,7 @@ if (-not $applianceIpWasPassed) {
         throw "Missing VMware Workstation networks: $($networkPlan.missing_networks -join ', ')."
     }
 }
-if (-not $PlanOnly -and $PSCmdlet.ParameterSetName -eq 'Run') {
+if (-not $PlanOnly -and $PSCmdlet.ParameterSetName -eq 'Run' -and -not $RoutingOverlapOnly) {
     $usesLanSegments = @($SiteANetwork, $SiteBNetwork, $TrunkNetwork) | Where-Object { $_.StartsWith('lan:') }
     if (-not $usesLanSegments) {
         $lifecycleNetworkPlan = Get-ManagementNetworkPlan -NetworkName $ManagementNetwork -Vmrun $VmrunPath -BridgeAlias $BridgedInterfaceAlias -AllLifecycleNetworks
@@ -442,7 +458,7 @@ if (-not $SkipClientPrepare -and -not $PlanOnly) {
     }
 }
 
-$effectiveSkipBackupRestoreTest = [bool]($SkipBackupRestoreTest -or $RoutingWanOnly -or $OidcOnly)
+$effectiveSkipBackupRestoreTest = [bool]($SkipBackupRestoreTest -or $RoutingWanOnly -or $OidcOnly -or $RoutingOverlapOnly)
 $powerShell7Path = Resolve-PowerShell7Path
 
 $secretBundlePath = ''
@@ -453,6 +469,7 @@ try {
         # can leave a partial current-user-decryptable file when it fails.
         [pscustomobject]@{
             AdminPassword     = $AdminPassword
+            RootPassword      = $RootPassword
             SshPassword       = $SshPassword
             VcfBackupPassword = $VcfBackupPassword
             EsxiPassword      = $EsxiPassword
@@ -492,6 +509,7 @@ if ($AllowDryRunApply) { $arguments += '-AllowDryRunApply' }
 if ($effectiveSkipBackupRestoreTest) { $arguments += '-SkipBackupRestoreTest' }
 if ($OidcOnly) { $arguments += '-OidcOnly' }
 if ($RoutingWanOnly) { $arguments += '-RoutingWanOnly' }
+if ($RoutingOverlapOnly) { $arguments += '-RoutingOverlapOnly' }
 if ($OwnershipRoot) { $arguments += @('-OwnershipRoot', $OwnershipRoot) }
 if ($OwnershipTaskId) { $arguments += @('-OwnershipTaskId', $OwnershipTaskId) }
 if ($FullEsxiPxeInstall) { $arguments += '-FullEsxiPxeInstall' }

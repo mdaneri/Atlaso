@@ -84,7 +84,9 @@ ssh_pwauth: true"""
     ssh_authorized_keys:
       - {args.public_key}"""
 
-    fixture_packages = "\n  - dnsmasq\n  - radvd\n  - python3" if getattr(args, "routing_overlap_guest", False) else ""
+    fixture_packages = "\n  - dnsmasq\n  - radvd\n  - python3\n  - nftables\n  - ethtool" if getattr(args, "routing_overlap_guest", False) else ""
+    fixture_mode = bool(getattr(args, "routing_overlap_guest", False))
+    refresh_command = "true" if fixture_mode else "/usr/local/sbin/atlaso-refresh-test-dhcp || true"
 
     user_data = f"""#cloud-config
 hostname: {args.hostname}
@@ -121,13 +123,22 @@ write_files:
 runcmd:
   - rc-update add sshd default || true
   - rc-service sshd restart || true
-  - /usr/local/sbin/atlaso-refresh-test-dhcp || true
+  - {refresh_command}
 """
 
     return {
         "user-data": user_data,
         "meta-data": f"instance-id: {args.hostname}\nlocal-hostname: {args.hostname}\n",
-        "network-config": """version: 2
+        "network-config": ("""version: 2
+ethernets:
+  eth0:
+    dhcp4: true
+  eth1:
+    dhcp4: false
+    dhcp6: false
+    accept-ra: false
+    optional: true
+""" if fixture_mode else """version: 2
 ethernets:
   eth0:
     dhcp4: true
@@ -137,7 +148,7 @@ ethernets:
   eth2:
     dhcp4: true
     optional: true
-""",
+"""),
     }
 
 

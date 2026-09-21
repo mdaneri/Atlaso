@@ -56,6 +56,8 @@ Skip backup/restore validation pass.
 Run only OIDC scenario path.
 .PARAMETER RoutingWanOnly
 Run only WAN routing scenario.
+.PARAMETER RoutingOverlapOnly
+Run isolated DHCP and SLAAC overlap acceptance using two task-owned LAN segments.
 .PARAMETER FullEsxiPxeInstall
 Include ESXi PXE install scenario.
 .PARAMETER PxeInstallerIsoPath
@@ -105,6 +107,7 @@ param(
     [switch]$SkipBackupRestoreTest,
     [switch]$OidcOnly,
     [switch]$RoutingWanOnly,
+    [switch]$RoutingOverlapOnly,
     [switch]$FullEsxiPxeInstall,
     [string]$PxeInstallerIsoPath = '',
     [string]$PxeClientIPAddress = '',
@@ -115,6 +118,12 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+if ($RoutingOverlapOnly -and -not $PlanOnly) {
+    & python -I -B -c 'import paramiko, cryptography, pycdlib' 2>$null
+    if ($LASTEXITCODE -ne 0) {
+        throw 'Private lifecycle requires the repository development dependencies in the active isolated Python environment; select an owned prepared virtual environment before creating resources.'
+    }
+}
 
 $repoRoot = Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..\..')
 <#
@@ -877,7 +886,30 @@ $adminPasswordSecure = $null
 $sshPasswordSecure = $null
 $vcfBackupPasswordSecure = $null
 $esxiPasswordSecure = $null
+<#
+.SYNOPSIS
+Resolve the optional root credential without breaking legacy protected bundles.
+.PARAMETER Bundle
+Existing current-user protected lifecycle credential object.
+.PARAMETER AdminPassword
+Legacy administrator credential used only when no distinct root field exists.
+.PARAMETER RequireRoot
+Require the distinct protected root identity for private lifecycle execution.
+#>
+function Get-LifecycleRootCredential {
+    param([object]$Bundle, [SecureString]$AdminPassword, [switch]$RequireRoot)
+
+    $property = $Bundle.PSObject.Properties['RootPassword']
+    $credential = if ($null -ne $property) { $property.Value } else { $null }
+    if ($null -ne $credential -and $credential -isnot [SecureString]) { throw 'Lifecycle root credential must be protected.' }
+    if ($RequireRoot -and $credential -isnot [SecureString]) { throw 'Private lifecycle requires its separate protected root credential.' }
+    if ($credential -is [SecureString]) { return $credential }
+    return $AdminPassword
+}
+
 $AdminPassword = ''
+$RootGuestPassword = ''
+$rootPasswordSecure = $null
 $SshPassword = ''
 $VcfBackupPassword = ''
 if (-not $PlanOnly) {
@@ -890,7 +922,7 @@ if (-not $PlanOnly) {
             throw "Lifecycle secret bundle property is missing or invalid: $propertyName"
         }
     }
-    $focusedRun = $OidcOnly -or $RoutingWanOnly
+    $focusedRun = $OidcOnly -or $RoutingWanOnly -or $RoutingOverlapOnly
     if (-not $focusedRun -and $secretBundle.VcfBackupPassword -isnot [SecureString]) {
         throw 'Lifecycle secret bundle property is missing or invalid: VcfBackupPassword'
     }
@@ -901,10 +933,12 @@ if (-not $PlanOnly) {
         throw 'Lifecycle secret bundle property is missing or invalid: EsxiPassword'
     }
     $adminPasswordSecure = $secretBundle.AdminPassword
+    $rootPasswordSecure = Get-LifecycleRootCredential -Bundle $secretBundle -AdminPassword $adminPasswordSecure -RequireRoot:$RoutingOverlapOnly
     $sshPasswordSecure = $secretBundle.SshPassword
     $vcfBackupPasswordSecure = $secretBundle.VcfBackupPassword
     $esxiPasswordSecure = $secretBundle.EsxiPassword
     $AdminPassword = ConvertFrom-SecureString -SecureString $adminPasswordSecure -AsPlainText
+    $RootGuestPassword = ConvertFrom-SecureString -SecureString $rootPasswordSecure -AsPlainText
     $SshPassword = ConvertFrom-SecureString -SecureString $sshPasswordSecure -AsPlainText
     if ($null -ne $vcfBackupPasswordSecure) {
         $VcfBackupPassword = ConvertFrom-SecureString -SecureString $vcfBackupPasswordSecure -AsPlainText
@@ -916,8 +950,9 @@ Import-Module (Join-Path $runtimeVmwareRoot 'Atlaso.VmwarePayload.psm1') -Force
 if (-not $SshPassword) {
     $SshPassword = $AdminPassword
 }
-$ApplianceGuestPassword = $AdminPassword
-if ($RoutingWanOnly) {
+$applianceSshPasswordSecure = if ($ApplianceSshUser -ceq 'root') { $rootPasswordSecure } else { $adminPasswordSecure }
+$ApplianceGuestPassword = if ($ApplianceSshUser -ceq 'root') { $RootGuestPassword } else { $AdminPassword }
+if ($RoutingWanOnly -or $RoutingOverlapOnly) {
     $SkipBackupRestoreTest = $true
 }
 if ($OidcOnly) {
@@ -939,6 +974,8 @@ Protected Atlaso administrator password written only to the child process standa
 
 .PARAMETER SshPassword
 Protected client SSH password written only to the child process standard-input stream.
+.PARAMETER RootPassword
+Optional distinct protected root credential written only to the child standard-input stream.
 
 .PARAMETER VcfBackupPassword
 Optional protected VCF Backup password written only to the child process standard-input stream.
@@ -953,17 +990,20 @@ function Invoke-LifecyclePython {
         [Parameter(Mandatory)][AllowEmptyCollection()][Collections.Generic.List[IDisposable]]$SourcePins,
         [Parameter(Mandatory = $true)][SecureString]$AdminPassword,
         [Parameter(Mandatory = $true)][SecureString]$SshPassword,
+        [SecureString]$RootPassword,
         [SecureString]$VcfBackupPassword,
         [SecureString]$EsxiPassword
     )
 
     $adminPasswordText = ''
     $sshPasswordText = ''
+    $rootPasswordText = ''
     $vcfBackupPasswordText = ''
     $esxiPasswordText = ''
     $secretPayload = ''
     try {
         $adminPasswordText = ConvertFrom-SecureString -SecureString $AdminPassword -AsPlainText
+        $rootPasswordText = if ($null -ne $RootPassword) { ConvertFrom-SecureString -SecureString $RootPassword -AsPlainText } else { $adminPasswordText }
         $sshPasswordText = ConvertFrom-SecureString -SecureString $SshPassword -AsPlainText
         if ($null -ne $VcfBackupPassword) {
             $vcfBackupPasswordText = ConvertFrom-SecureString -SecureString $VcfBackupPassword -AsPlainText
@@ -975,7 +1015,7 @@ function Invoke-LifecyclePython {
         # child command line without creating another plaintext file boundary.
         $secretPayload = [pscustomobject]@{
             password               = $adminPasswordText
-            appliance_ssh_password = $adminPasswordText
+            appliance_ssh_password = $rootPasswordText
             ssh_password           = $sshPasswordText
             vcf_backup_password    = $vcfBackupPasswordText
             esxi_password          = $esxiPasswordText
@@ -992,6 +1032,7 @@ function Invoke-LifecyclePython {
     }
     finally {
         $adminPasswordText = $null
+        $rootPasswordText = $null
         $sshPasswordText = $null
         $vcfBackupPasswordText = $null
         $esxiPasswordText = $null
@@ -1517,7 +1558,8 @@ function New-CloudInitSeedIso {
         $helper = Join-Path $runtimeSourceRoot 'scripts\interop\create_nocloud_seed_iso.py'
         # The repository-controlled seed helper reads one password line from
         # stdin so the client credential never appears in process arguments.
-        $SshPassword | & python $helper --output $Path --hostname $HostName --user $ClientSshUser --password-stdin | Out-Host
+        $fixtureArguments = if ($RoutingOverlapOnly) { @('--routing-overlap-guest') } else { @() }
+        $SshPassword | & python $helper --output $Path --hostname $HostName --user $ClientSshUser --password-stdin @fixtureArguments | Out-Host
         if ($LASTEXITCODE -ne 0) {
             throw "Failed to create NoCloud seed ISO for $HostName"
         }
@@ -2114,16 +2156,16 @@ function Save-ApplianceSourceNetworkEvidence {
     $hostOutput = Join-Path $resultRoot 'source-image-network.json'
     if (Test-Path -LiteralPath $hostOutput) { throw 'Source-image evidence already exists; refusing replacement.' }
     $null = Invoke-AtlasoBoundedStreamingProcess -FilePath $resolvedVmrun -DiscardOutput -ArgumentList @(
-        '-T', 'ws', '-gu', 'root', '-gp', $ApplianceGuestPassword,
+        '-T', 'ws', '-gu', 'root', '-gp', $RootGuestPassword,
         'copyFileFromHostToGuest', $ApplianceVmx, $inspector, $guestScript
     ) -TimeoutSeconds 30 -Action 'Source-image inspector upload'
     $null = Invoke-AtlasoBoundedStreamingProcess -FilePath $resolvedVmrun -DiscardOutput -ArgumentList @(
-        '-T', 'ws', '-gu', 'root', '-gp', $ApplianceGuestPassword,
+        '-T', 'ws', '-gu', 'root', '-gp', $RootGuestPassword,
         'runScriptInGuest', $ApplianceVmx, '/bin/sh',
         "/opt/atlaso/.venv/bin/python -I '$guestScript' --output '$guestOutput'"
     ) -TimeoutSeconds 30 -Action 'Source-image routing inspection'
     $null = Invoke-AtlasoBoundedStreamingProcess -FilePath $resolvedVmrun -DiscardOutput -ArgumentList @(
-        '-T', 'ws', '-gu', 'root', '-gp', $ApplianceGuestPassword,
+        '-T', 'ws', '-gu', 'root', '-gp', $RootGuestPassword,
         'copyFileFromGuestToHost', $ApplianceVmx, $guestOutput, $hostOutput
     ) -TimeoutSeconds 30 -Action 'Source-image routing evidence readback'
     if (-not (Test-Path -LiteralPath $hostOutput -PathType Leaf) -or (Get-Item -LiteralPath $hostOutput).Length -gt 65536) {
@@ -2185,16 +2227,16 @@ function Save-ApplianceDeploymentIdentity {
     $guestWheel = ConvertTo-GuestShellSingleQuote -Value "/tmp/$($Wheel.Name)"
     $guestAddress = ConvertTo-GuestShellSingleQuote -Value $ApplianceIPAddress
     $null = Invoke-AtlasoBoundedStreamingProcess -FilePath $resolvedVmrun -DiscardOutput -ArgumentList @(
-        '-T', 'ws', '-gu', 'root', '-gp', $ApplianceGuestPassword,
+        '-T', 'ws', '-gu', 'root', '-gp', $RootGuestPassword,
         'copyFileFromHostToGuest', $ApplianceVmx, $inspector, $guestScript
     ) -TimeoutSeconds 30 -Action 'Deployment inspector upload'
     $null = Invoke-AtlasoBoundedStreamingProcess -FilePath $resolvedVmrun -DiscardOutput -ArgumentList @(
-        '-T', 'ws', '-gu', 'root', '-gp', $ApplianceGuestPassword,
+        '-T', 'ws', '-gu', 'root', '-gp', $RootGuestPassword,
         'runScriptInGuest', $ApplianceVmx, '/bin/sh',
         "/opt/atlaso/.venv/bin/python -I '$guestScript' --wheel $guestWheel --address $guestAddress --output '$guestOutput'"
     ) -TimeoutSeconds 60 -Action 'Installed runtime identity inspection'
     $null = Invoke-AtlasoBoundedStreamingProcess -FilePath $resolvedVmrun -DiscardOutput -ArgumentList @(
-        '-T', 'ws', '-gu', 'root', '-gp', $ApplianceGuestPassword,
+        '-T', 'ws', '-gu', 'root', '-gp', $RootGuestPassword,
         'copyFileFromGuestToHost', $ApplianceVmx, $guestOutput, $hostReadback
     ) -TimeoutSeconds 30 -Action 'Installed runtime identity readback'
     if (-not (Test-Path -LiteralPath $hostReadback -PathType Leaf) -or (Get-Item -LiteralPath $hostReadback).Length -gt 8192) {
@@ -2324,7 +2366,10 @@ function Sync-ApplianceApplicationWheel {
 
         $deadline = (Get-Date).AddMinutes(3)
         do {
-            if (Test-ApplianceOpenApi -Url "$ApplianceUrl/openapi.json") {
+            $ready = if ($RoutingOverlapOnly) {
+                try { Invoke-RoutingOverlapPhase -Phase probe -Descriptor $overlapDescriptor -Trust $overlapTrust; $true } catch { $false }
+            } else { Test-ApplianceOpenApi -Url "$ApplianceUrl/openapi.json" }
+            if ($ready) {
                 return $wheel
             }
             Start-Sleep -Seconds 5
@@ -2447,8 +2492,21 @@ function Add-LifecycleResultStep {
 }
 
 $resolvedVmrun = Resolve-VmrunPath
-if (($RoutingWanOnly -and $FullEsxiPxeInstall) -or ($OidcOnly -and ($RoutingWanOnly -or $FullEsxiPxeInstall))) {
-    throw "-OidcOnly, -RoutingWanOnly, and -FullEsxiPxeInstall are mutually exclusive."
+if (@($OidcOnly, $RoutingWanOnly, $RoutingOverlapOnly, $FullEsxiPxeInstall | Where-Object { $_ }).Count -gt 1) {
+    throw 'Focused lifecycle modes are mutually exclusive.'
+}
+if ($RoutingOverlapOnly -and ((-not $PlanOnly -and -not $externalOwnershipEnabled) -or $ApplianceSshUser -cne 'root' -or
+    $ApplianceIPAddress -or $ApplianceUrl -or $AllowDryRunApply -or $ManagementNetwork -notmatch '^VMnet\d+$')) {
+    throw 'Private overlap requires external ownership, root appliance SSH, an existing control VMnet, discovered addressing, and real Apply.'
+}
+if ($RoutingOverlapOnly -and $lifecycleTaskId -notmatch '^[0-9a-fA-F]{8}(-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}$') {
+    throw 'Private guest ownership requires an originating UUID task identifier.'
+}
+$overlapControlNetwork = $ManagementNetwork
+if ($RoutingOverlapOnly) {
+    $ManagementNetwork = "lan:$LabName-OverlapManagement"
+    $SiteANetwork = "lan:$LabName-OverlapLab"
+    . (Join-Path $runtimeVmwareRoot 'Atlaso.RoutingOverlap.ps1')
 }
 $applianceName = "$LabName-Appliance"
 $clientAName = "$LabName-ClientA"
@@ -2459,7 +2517,7 @@ $planApplianceVmx = if (Test-Path -LiteralPath $ApplianceVmxPath) { (Resolve-Pat
 $planClientVmdk = if (Test-Path -LiteralPath $ClientVmdkPath) { (Resolve-Path -LiteralPath $ClientVmdkPath).Path } else { $ClientVmdkPath }
 
 $lanSegmentOwner = @{
-    task_id = $(if ($env:CODEX_THREAD_ID) { $env:CODEX_THREAD_ID } else { $LabName })
+    task_id = $lifecycleTaskId
     repository = 'mdaneri/Atlaso'; source_commit = $sourceCommit
     pr = $PullRequestNumber; lab_root = $resultRoot
 }
@@ -2481,6 +2539,7 @@ $plan = [ordered]@{
     site_b_network        = $SiteBNetwork
     oidc_only             = [bool]$OidcOnly
     routing_wan_only      = [bool]$RoutingWanOnly
+    routing_overlap_only  = [bool]$RoutingOverlapOnly
     full_esxi_pxe_install = [bool]$FullEsxiPxeInstall
     pxe_installer_iso     = $PxeInstallerIsoPath
     pxe_client_ip         = $PxeClientIPAddress
@@ -2511,7 +2570,7 @@ try {
 $firstBootOvfEnvironment = New-AtlasoWorkstationOvfEnvironment `
     -Fqdn (New-AtlasoWorkstationFqdn -Name $applianceName) `
     -AdminPassword $adminPasswordSecure `
-    -RootPassword $adminPasswordSecure `
+    -RootPassword $rootPasswordSecure `
     -RootSshEnabled:($ApplianceSshUser -eq 'root')
 
 New-Item -ItemType Directory -Path $vmRoot -ErrorAction Stop | Out-Null
@@ -2662,6 +2721,10 @@ $clientAVmx = ''
 $clientBVmx = ''
 $seedArtifactsRetired = [bool]$OidcOnly
 $scenarioFailure = $null
+$overlapDescriptor = $null
+$overlapTrust = ''
+$overlapStarted = $false
+$overlapRecoveryUncertain = $false
 try {
     if (-not $OidcOnly) {
         $clientASeedIso = Join-Path $seedRoot "$clientAName-seed.iso"
@@ -2684,8 +2747,10 @@ try {
     Set-AtlasoWorkstationOvfEnvironment -VmxPath $applianceVmx -OvfEnvironment $firstBootOvfEnvironment
     if (-not $OidcOnly) {
         Set-VmxNetworkAdapter -Path $applianceVmx -Index 1 -Vmnet $SiteANetwork
-        Set-VmxNetworkAdapter -Path $applianceVmx -Index 2 -Vmnet $TrunkNetwork
-        Set-VmxNetworkAdapter -Path $applianceVmx -Index 3 -Vmnet $SiteBNetwork
+        if (-not $RoutingOverlapOnly) {
+            Set-VmxNetworkAdapter -Path $applianceVmx -Index 2 -Vmnet $TrunkNetwork
+            Set-VmxNetworkAdapter -Path $applianceVmx -Index 3 -Vmnet $SiteBNetwork
+        }
         $clientADirectory = Join-Path $vmRoot $clientAName
         $clientAVmx = Invoke-TrackedLifecycleVmCreation `
             -Role 'client-a' `
@@ -2697,7 +2762,7 @@ try {
                     -Directory $clientADirectory `
                     -DiskPath $ClientVmdkPath `
                     -SeedIso $clientASeedIso `
-                    -Networks @($ManagementNetwork, $SiteANetwork, $TrunkNetwork)
+                    -Networks $(if ($RoutingOverlapOnly) { @($overlapControlNetwork, $ManagementNetwork) } else { @($ManagementNetwork, $SiteANetwork, $TrunkNetwork) })
             }
         $clientBDirectory = Join-Path $vmRoot $clientBName
         $clientBVmx = Invoke-TrackedLifecycleVmCreation `
@@ -2710,7 +2775,7 @@ try {
                     -Directory $clientBDirectory `
                     -DiskPath $ClientVmdkPath `
                     -SeedIso $clientBSeedIso `
-                    -Networks @($ManagementNetwork, $SiteBNetwork)
+                    -Networks $(if ($RoutingOverlapOnly) { @($overlapControlNetwork, $SiteANetwork) } else { @($ManagementNetwork, $SiteBNetwork) })
             }
     }
     $esxiVmx = ''
@@ -2728,6 +2793,20 @@ try {
                     -MacAddress $esxiMacAddress
             }
     }
+    if ($RoutingOverlapOnly) {
+        foreach ($entry in @(@{ Path = $applianceVmx; Networks = @($ManagementNetwork, $SiteANetwork) },
+                @{ Path = $clientAVmx; Networks = @($overlapControlNetwork, $ManagementNetwork) },
+                @{ Path = $clientBVmx; Networks = @($overlapControlNetwork, $SiteANetwork) })) {
+            for ($index = 0; $index -lt 2; $index++) {
+                Set-VmxNetworkAdapter -Path $entry.Path -Index $index -Vmnet $entry.Networks[$index] -StaticMac (New-StaticVmwareMac)
+            }
+            foreach ($line in Get-Content -LiteralPath $entry.Path) {
+                if ($line -match '^ethernet(\d+)\.present\s*=' -and [int]$Matches[1] -ge 2) {
+                    Set-VmxValue -Path $entry.Path -Key "ethernet$($Matches[1]).present" -Value 'FALSE'
+                }
+            }
+        }
+    }
     Write-Host "Lifecycle identity evidence: $identityPath"
     foreach ($identityVm in $identityVms) {
         Write-Host "Lifecycle VM [$($identityVm.role)]: $($identityVm.display_name) => $($identityVm.vmx)"
@@ -2742,14 +2821,31 @@ try {
     }
 
     Start-Sleep -Seconds 20
+    if ($RoutingOverlapOnly) {
+        $null = Wait-GuestIPv4 -Path $clientAVmx -GuestUser $ClientSshUser -GuestPassword $sshPasswordSecure -Name $clientAName
+        $null = Wait-GuestIPv4 -Path $clientBVmx -GuestUser $ClientSshUser -GuestPassword $sshPasswordSecure -Name $clientBName
+        $guests = @{
+            'appliance' = Get-RoutingOverlapGuest -Vmx $applianceVmx -Role appliance -Phase initial
+            'client-a' = Get-RoutingOverlapGuest -Vmx $clientAVmx -Role client-a -Phase initial -InstallController
+            'client-b' = Get-RoutingOverlapGuest -Vmx $clientBVmx -Role client-b -Phase initial -InstallController
+        }
+        $overlapDescriptor = New-RoutingOverlapDescriptor -Guests $guests `
+            -VmxPaths @{ appliance = $applianceVmx; 'client-a' = $clientAVmx; 'client-b' = $clientBVmx } -ControlNetwork $overlapControlNetwork
+        $overlapStarted = $true
+        Invoke-RoutingOverlapPhase -Phase bootstrap -Descriptor $overlapDescriptor
+    }
     if (-not $ApplianceIPAddress) {
-        $ApplianceIPAddress = Wait-GuestIPv4 -Path $applianceVmx -TimeoutSeconds 300 -GuestUser $ApplianceSshUser -GuestPassword $adminPasswordSecure -Name $applianceName
+        $ApplianceIPAddress = Wait-GuestIPv4 -Path $applianceVmx -TimeoutSeconds 300 -GuestUser $ApplianceSshUser -GuestPassword $applianceSshPasswordSecure -Name $applianceName
         if (-not $ApplianceIPAddress) {
             throw "Timed out waiting for VMware Tools to report the appliance management IPv4 address."
         }
     }
     if (-not $ApplianceUrl) {
         $ApplianceUrl = "https://${ApplianceIPAddress}"
+    }
+    if ($RoutingOverlapOnly) {
+        if ($ApplianceIPAddress -cne '192.0.2.10') { throw 'Private DHCP reservation was not observed on the appliance.' }
+        $overlapTrust = (Get-RoutingOverlapGuest -Vmx $applianceVmx -Role appliance -Phase trust).Path
     }
     [pscustomobject]@{
         appliance_ip  = $ApplianceIPAddress
@@ -2769,7 +2865,12 @@ try {
             $deploymentFailure.Exception
         )
     }
-    $applianceHostKey = Get-PlinkHostKey -HostName $ApplianceIPAddress -UserName $ApplianceSshUser -Password $adminPasswordSecure
+    if ($RoutingOverlapOnly) {
+        Invoke-RoutingOverlapPhase -Phase scenario -Descriptor $overlapDescriptor -Trust $overlapTrust
+        Invoke-RoutingOverlapPhase -Phase stop -Descriptor $overlapDescriptor
+        $overlapStarted = $false
+    } else {
+    $applianceHostKey = Get-PlinkHostKey -HostName $ApplianceIPAddress -UserName $ApplianceSshUser -Password $applianceSshPasswordSecure
     $clientAHost = ''
     $clientBHost = ''
     $clientAHostKey = ''
@@ -2834,6 +2935,7 @@ try {
     if ($PSCmdlet.ShouldProcess($LabName, 'Run Workstation lifecycle interop scenario')) {
         $pythonExitCode = Invoke-LifecyclePython -Arguments $initialPythonArgs -SourcePins $runtimeConsumerPins `
             -AdminPassword $adminPasswordSecure `
+            -RootPassword $applianceSshPasswordSecure `
             -SshPassword $sshPasswordSecure `
             -VcfBackupPassword $vcfBackupPasswordSecure `
             -EsxiPassword $esxiPasswordSecure
@@ -2875,6 +2977,7 @@ try {
             ))
             $pythonExitCode = Invoke-LifecyclePython -Arguments $restoredPythonArgs -SourcePins $runtimeConsumerPins `
                 -AdminPassword $adminPasswordSecure `
+                -RootPassword $applianceSshPasswordSecure `
                 -SshPassword $sshPasswordSecure `
                 -VcfBackupPassword $vcfBackupPasswordSecure `
                 -EsxiPassword $esxiPasswordSecure
@@ -2882,6 +2985,7 @@ try {
                 throw "Restored lifecycle interop runner failed with exit code $pythonExitCode"
             }
         }
+    }
     }
     if (-not $OidcOnly) {
         # Successful lifecycle client access proves cloud-init consumed both
@@ -2894,6 +2998,14 @@ try {
     }
 } catch {
     $scenarioFailure = $_
+}
+if ($overlapRecoveryUncertain) {
+    throw "Private Apply outcome is unknown. Preserve the running lab and original evidence at '$resultRoot'; reconcile its public job identity before restoration or cleanup."
+}
+if ($overlapStarted -and $null -ne $overlapDescriptor -and -not $diagnosticTerminationUnproven) {
+    try { Invoke-RoutingOverlapPhase -Phase stop -Descriptor $overlapDescriptor } catch {
+        $scenarioFailure = $_
+    }
 }
 
 # No further provider operations are safe while a diagnostic writer may survive.

@@ -92,6 +92,7 @@ warn_unused_configs = true
 follow_imports = "silent"
 files = [
   "atlaso/route_domains.py",
+  "scripts/interop/routing_overlap_guest.py",
   "atlaso/app/services/vcf_lab_remote.py",
   "atlaso/app/services/vcf_lab_overrides.py",
   "atlaso/app/services/remote_ssh.py",

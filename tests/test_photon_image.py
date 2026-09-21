@@ -3321,15 +3321,15 @@ def test_lifecycle_vmware_script_supports_routing_wan_only_and_esxi_pxe_install(
     assert "[switch]$OidcOnly" in wrapper
     assert "[switch]$FullEsxiPxeInstall" in wrapper
     assert "[string]$PxeInstallerIsoPath = ''" in wrapper
-    assert "$effectiveSkipBackupRestoreTest = [bool]($SkipBackupRestoreTest -or $RoutingWanOnly -or $OidcOnly)" in wrapper
+    assert "$effectiveSkipBackupRestoreTest = [bool]($SkipBackupRestoreTest -or $RoutingWanOnly -or $OidcOnly -or $RoutingOverlapOnly)" in wrapper
     assert "if ($OidcOnly) { $arguments += '-OidcOnly' }" in wrapper
     assert "if ($RoutingWanOnly) { $arguments += '-RoutingWanOnly' }" in wrapper
     assert "if ($FullEsxiPxeInstall) { $arguments += '-FullEsxiPxeInstall' }" in wrapper
     assert "if ($PxeInstallerIsoPath) { $arguments += @('-PxeInstallerIsoPath', $PxeInstallerIsoPath) }" in wrapper
-    assert "-OidcOnly, -RoutingWanOnly, and -FullEsxiPxeInstall are mutually exclusive." in wrapper
+    assert "Focused lifecycle modes are mutually exclusive." in wrapper
     assert "[SecureString]$EsxiPassword" in wrapper
     assert "Read-Host -Prompt 'ESXi root password for lifecycle probing' -AsSecureString" in wrapper
-    assert "if (-not ($OidcOnly -or $RoutingWanOnly) -and $null -eq $VcfBackupPassword)" in wrapper
+    assert "if (-not ($OidcOnly -or $RoutingWanOnly -or $RoutingOverlapOnly) -and $null -eq $VcfBackupPassword)" in wrapper
     assert wrapper.index("$secretBundlePath = ''\ntry {") < wrapper.index("Export-Clixml")
     assert wrapper.index("Export-Clixml") < wrapper.index("Remove-Item -LiteralPath $secretBundlePath -Force")
     assert "Remove-Item -LiteralPath $secretBundlePath -Force -ErrorAction Stop" in wrapper

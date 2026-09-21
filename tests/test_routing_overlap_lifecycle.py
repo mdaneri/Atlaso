@@ -153,11 +153,18 @@ def test_client_seed_installs_fixture_tools_only_when_requested(enabled):
     files = cloud_init_files(Namespace(hostname="fixture", user="alpine", public_key="synthetic-public-key",
                                       password="", routing_overlap_guest=enabled))
     data = files["user-data"]
-    for package in ("dnsmasq", "radvd", "python3"):
+    for package in ("dnsmasq", "radvd", "python3", "nftables", "ethtool"):
         assert (f"  - {package}\n" in data) == enabled
     assert "rc-service dnsmasq" not in data and "rc-service radvd" not in data
     assert "rc-update add dnsmasq" not in data and "rc-update add radvd" not in data
     assert "NOPASSWD:ALL" in data
+    if enabled:
+        assert "  - /usr/local/sbin/atlaso-refresh-test-dhcp" not in data
+        assert "  eth1:\n    dhcp4: false\n    dhcp6: false\n    accept-ra: false" in files["network-config"]
+        assert "eth2:" not in files["network-config"]
+    else:
+        assert "  - /usr/local/sbin/atlaso-refresh-test-dhcp" in data
+        assert "  eth1:\n    dhcp4: true" in files["network-config"]
 
 
 @pytest.mark.parametrize("fault", ["broad", "wrong-table", "missing-fallback", "wrong-order", "ingress-only",

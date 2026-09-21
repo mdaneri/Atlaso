@@ -373,10 +373,15 @@ discovers the runtime address through VMware Tools.
 
 ## Isolated routing-overlap fixture contracts
 
-The preparatory `scripts/interop/routing_overlap.py` and `routing_overlap_transport.py` modules provide tested
-contracts for a future canonical DHCP/SLAAC overlap scenario. They are not wired into a runnable lifecycle mode;
-`-RoutingWanOnly` still exercises its existing static routing scenario. Their unit tests are not native acceptance
-for automatic IPv6 acquisition, lease expiry, rollback, or reboot.
+The opt-in `-RoutingOverlapOnly` mode exercises DHCP/SLAAC overlap through the canonical lifecycle wrapper.
+`-RoutingWanOnly` retains its existing static routing scenario. Focused unit tests do not replace native acceptance
+for automatic IPv6 acquisition, lease expiry, rollback, or reboot. Use a prepared client disk with
+`-SkipClientPrepare -ClientVmdkPath <owned-client-disk>` and `-ApplianceSshUser root`; the existing management VMnet
+is used only for control access to the two clients. Do not supply an appliance IP/URL override or dry-run Apply.
+Original external ownership must be enabled; human runs opt in with `-OwnershipRoot` and a UUID `-OwnershipTaskId`.
+Pass distinct protected `-RootPassword` and `-AdminPassword` identities from the supported credential provider.
+Select an owned prepared Python environment with the repository development dependencies available under
+`python -I -B`; user-site-only packages are intentionally excluded and fail preflight before resource creation.
 
 The topology admission contract requires independent task/PR/source identity, original creation-receipt digests for
 two distinct task-owned LAN segments, complete enabled VMX adapter observations, and exact guest MAC/interface
@@ -385,15 +390,24 @@ control VMnet; test prefixes must not overlap its observed prefixes. Shared segm
 receipts, extra adapters, ambiguous interfaces, and mismatched receipt owners are refused before configuration.
 
 Server configuration is bound only to the admitted private management interface. DHCP is restricted to the appliance
-MAC and reservation; RA advertises a short-lived private IPv6 prefix. The renderer starts no service, changes no
-Windows networking, and enables no guest forwarding or NAT. The transport uses in-process, pinned SSH channels to
+MAC and reservation; RA advertises a short-lived private IPv6 prefix. The fixture changes no Windows networking
+and configures no NAT. To advertise a nonzero IPv6 router lifetime, client A temporarily enables global IPv6
+forwarding only after installing its own IPv6 forward-drop guard. It captures and restores all/default/per-interface
+forwarding and RA settings, keeps forwarding disabled on each admitted NIC, and refuses NICs with LRO enabled.
+The original guard handles are removed only after restoration readback. The transport uses in-process, pinned SSH
+channels to
 only the private appliance's SSH and HTTPS ports, opens no host listener, and verifies HTTPS with the explicit
 appliance CA and private target identity. It does not follow redirects to another origin or load ambient SSH keys.
 
-Canonical integration still needs provider readback and immutable descriptor propagation through both lifecycle
-wrappers, opt-in client server provisioning, bootstrap/connectivity admission, collection of native acquisition and
-expiry evidence, restoration, and existing ownership-aware resource teardown. Until those steps are implemented and
-validated, do not launch ad hoc DHCP/RA servers on a shared VMnet or report the overlap lifecycle gate as passed.
+The wrapper publishes pinned provider readback and public guest NIC/SSH identities before bootstrap. The private
+clients have no DHCP or RA client on their fixture NIC. Their controller receipts bind original directory, link,
+process, and firewall identities before use. HTTPS verifies the provider-observed appliance CA and private address;
+no host port forward or insecure legacy HTTP client is used. The scenario records native acquired addresses,
+source rules, route selection, DHCP and RA expiry, and ordinary Apply restoration. An uncertain Apply outcome
+preserves the running fixture and public job identity for reconciliation before any further cleanup.
+Retained-static same-address DHCP ACK, negative DAD Apply, and reboot are separate acceptance cases and are not
+claimed by this mode. Do not launch ad hoc DHCP/RA servers on shared VMnets or mark native acceptance passed from
+unit-test results alone.
 
 Agent lifecycle creation uses the originating `CODEX_THREAD_ID` and independently resolves the active
 `desktop.git-worktree-root` before creating the result directory. Human CLI runs keep the existing canonical identity
