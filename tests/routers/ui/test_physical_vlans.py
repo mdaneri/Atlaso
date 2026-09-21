@@ -1090,12 +1090,19 @@ def test_physical_interface_grid_menu_actions_are_available(client):
     assert "initializePublicAddressModeToggle" in js.text
 
 
-def test_management_dhcp_interface_can_be_saved_as_static_from_observed_addresses(client, monkeypatch):
+@pytest.mark.parametrize("role", ["management", "access"])
+@pytest.mark.parametrize("dns_enabled,explicit_dns", [(False, ""), (True, ""), (False, "192.0.2.53")])
+def test_management_dhcp_interface_can_be_saved_as_static_from_observed_addresses(
+    client, monkeypatch, role, dns_enabled, explicit_dns,
+):
     """Verify that management dhcp interface can be saved as static from observed addresses.
 
     Args:
         client: HTTP test client used to exercise the Atlaso application.
         monkeypatch: Pytest fixture used to replace dependencies for the test.
+        role: Dedicated management or flagged Access listener.
+        dns_enabled: Whether the local DNS service is enabled.
+        explicit_dns: Existing explicit DNS configuration to retain.
     """
     import html
 
@@ -1109,12 +1116,14 @@ def test_management_dhcp_interface_can_be_saved_as_static_from_observed_addresse
     monkeypatch.setattr("atlaso.app.ui.discover_host_ipv4_default_gateways", lambda: {"eth0": "192.168.167.2"})
     with SessionLocal() as db:
         appliance_settings = db.execute(select(ApplianceSettings)).scalar_one()
-        appliance_settings.external_dns_servers = ""
+        appliance_settings.external_dns_servers = explicit_dns
         dns_settings = db.execute(select(DnsSettings)).scalar_one()
-        dns_settings.enabled = False
-        dns_settings.upstream_servers = ""
+        dns_settings.enabled = dns_enabled
+        dns_settings.upstream_servers = explicit_dns
         eth0 = db.execute(select(PhysicalInterface).where(PhysicalInterface.name == "eth0")).scalar_one()
-        eth0.role = "management"
+        eth0.role = role
+        eth0.access_management_ui_enabled = role == "access"
+        eth0.admin_state = "up"
         eth0.mode = "access"
         eth0.ipv4_method = "dhcp"
         eth0.ip_cidr = None
@@ -1133,11 +1142,12 @@ def test_management_dhcp_interface_can_be_saved_as_static_from_observed_addresse
     response = client.post(
         f"/physical-interfaces/{eth0_row['id']}/edit",
         data={
-            "role": "management",
+            "role": role,
+            "access_management_ui_enabled": "on" if role == "access" else "",
             "mode": "access",
             "ipv4_method": "static",
             "ip_cidr": eth0_row["host_ip_cidr"],
-            "gateway": eth0_row["host_ipv4_gateway"],
+            "gateway": eth0_row["host_ipv4_gateway"] if role == "management" else "",
             "ipv6_enabled": "on",
             "ipv6_cidr": eth0_row["host_ipv6_cidr"],
             "mtu": "1500",
@@ -1152,17 +1162,22 @@ def test_management_dhcp_interface_can_be_saved_as_static_from_observed_addresse
         eth0 = db.execute(select(PhysicalInterface).where(PhysicalInterface.name == "eth0")).scalar_one()
         assert eth0.ipv4_method == "static"
         assert eth0.ip_cidr == "192.168.167.219/24"
-        assert eth0.gateway == "192.168.167.2"
+        assert eth0.gateway == ("192.168.167.2" if role == "management" else None)
+        assert eth0.role == role
+        assert eth0.access_management_ui_enabled is (role == "access")
         assert eth0.ipv6_cidr == "fd00:167::219/64"
         appliance_settings = db.execute(select(ApplianceSettings)).scalar_one()
         dns_settings = db.execute(select(DnsSettings)).scalar_one()
-        assert appliance_settings.external_dns_servers == "192.168.167.2\n192.168.167.3"
-        assert dns_settings.upstream_servers == "192.168.167.2\n192.168.167.3"
+        assert appliance_settings.external_dns_servers == (
+            explicit_dns or ("" if dns_enabled else "192.168.167.2\n192.168.167.3")
+        )
+        assert dns_settings.upstream_servers == (explicit_dns or "192.168.167.2\n192.168.167.3")
 
     review = client.get("/appliance-apply/review")
     assert review.status_code == 200
-    assert "management IPv4 gateway 192.168.167.2" in review.text
-    assert "gateway=192.168.167.2" in review.text
+    if role == "management":
+        assert "management IPv4 gateway 192.168.167.2" in review.text
+        assert "gateway=192.168.167.2" in review.text
 
 
 def test_management_physical_interface_cannot_be_disabled(client):
@@ -2027,3 +2042,57 @@ def test_vlan_interface_wizard_respects_read_only_permissions(client):
     )
     assert denied.status_code == 403
     assert "Missing required scope: write:vlans" in denied.text
+
+
+@pytest.mark.parametrize("case", ["unflagged", "other_management", "no_observation", "disabled"])
+def test_access_static_conversion_does_not_copy_unrelated_dhcp_dns(client, monkeypatch, case):
+    """Preserve only DNS inherited from the effective, retained management listener.
+
+    Args:
+        client: Application fixture initializing the database.
+        monkeypatch: Replace host DHCP DNS discovery.
+        case: Ineligible listener or missing observation scenario.
+    """
+    from sqlalchemy import select
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import ApplianceSettings, DnsSettings, PhysicalInterface
+    from atlaso.app.services.interface_updates import (
+        _preserve_management_dhcp_dns_on_static_conversion,
+    )
+
+    login(client)
+    monkeypatch.setattr(
+        "atlaso.app.services.appliance_settings.observed_management_dhcp_dns_servers",
+        lambda name: [] if case == "no_observation" else ["192.0.2.53"],
+    )
+    with SessionLocal() as db:
+        for existing in db.scalars(select(PhysicalInterface)):
+            existing.role = "unused"
+            existing.access_management_ui_enabled = False
+        interface = PhysicalInterface(
+            name="dns_access_test", mac_address="02:00:00:00:85:29",
+            role="access", mode="access", admin_state="up", oper_state="up",
+            access_management_ui_enabled=case != "unflagged", ipv4_method="dhcp",
+            host_ip_cidr="192.0.2.10/24",
+        )
+        db.add(interface)
+        if case == "other_management":
+            db.add(PhysicalInterface(
+                name="dns_dedicated_test", mac_address="02:00:00:00:85:30",
+                role="management", mode="access", admin_state="up", oper_state="up",
+                ipv4_method="static", ip_cidr="198.51.100.10/24",
+            ))
+        appliance = db.scalars(select(ApplianceSettings)).one()
+        dns = db.scalars(select(DnsSettings)).one()
+        appliance.external_dns_servers = ""
+        dns.enabled = False
+        dns.upstream_servers = ""
+        db.flush()
+        assert _preserve_management_dhcp_dns_on_static_conversion(
+            db, interface, new_role="access", new_management_ui_enabled=True,
+            new_admin_state="down" if case == "disabled" else "up",
+            old_ipv4_method="dhcp", new_ipv4_method="static",
+        ) == []
+        assert appliance.external_dns_servers == ""
+        assert dns.upstream_servers == ""

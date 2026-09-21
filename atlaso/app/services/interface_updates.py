@@ -1149,6 +1149,8 @@ def _preserve_management_dhcp_dns_on_static_conversion(
     interface: PhysicalInterface,
     *,
     new_role: str,
+    new_management_ui_enabled: bool,
+    new_admin_state: str,
     old_ipv4_method: str,
     new_ipv4_method: str,
 ) -> list[str]:
@@ -1158,16 +1160,23 @@ def _preserve_management_dhcp_dns_on_static_conversion(
         db: Active database session.
         interface: Management interface being converted.
         new_role: Normalized desired interface role.
+        new_management_ui_enabled: Whether the desired Access listener remains enabled.
+        new_admin_state: Desired administrative state.
         old_ipv4_method: Previous normalized IPv4 method.
         new_ipv4_method: Desired normalized IPv4 method.
     """
-    if (
-        new_role != "management"
-        or old_ipv4_method != "dhcp"
-        or new_ipv4_method != "static"
-    ):
+    if old_ipv4_method != "dhcp" or new_ipv4_method != "static":
         return []
-    _management, observed_servers = management_dhcp_dns_context([interface])
+    if new_role == "management":
+        _management, observed_servers = management_dhcp_dns_context([interface])
+    elif new_role == "access" and new_management_ui_enabled and new_admin_state == "up":
+        interfaces = list(db.scalars(select(PhysicalInterface)).all())
+        vlans = list(db.scalars(select(VlanInterface)).all())
+        management, observed_servers = management_dhcp_dns_context(interfaces, vlans)
+        if management.get("name") != interface.name:
+            return []
+    else:
+        return []
     if not observed_servers:
         return []
     preserved: list[str] = []
@@ -1440,6 +1449,8 @@ def update_physical_interface_desired_state(
             db,
             interface,
             new_role=role_value,
+            new_management_ui_enabled=management_ui_value,
+            new_admin_state=admin_state_value,
             old_ipv4_method=old_ipv4_method,
             new_ipv4_method=ipv4_method_value,
         )
