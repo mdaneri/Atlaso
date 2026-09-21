@@ -8,6 +8,10 @@ Exact positive GitHub pull-request number that owns this lifecycle lab.
 Short purpose text sanitized into the canonical lifecycle identity.
 .PARAMETER CollisionSuffix
 Exact collision-safe suffix that distinguishes this lab for the pull request.
+.PARAMETER OwnershipRoot
+Explicit permitted durable ownership root for human CLI runs; agent runs independently resolve and enforce active Codex configuration.
+.PARAMETER OwnershipTaskId
+Human run identifier for ownership records; defaults to the canonical lab name. Agent runs enforce their originating task identifier.
 .PARAMETER ApplianceVmxPath
 Path to the appliance source VMX.
 .PARAMETER ClientVmdkPath
@@ -75,6 +79,8 @@ param(
     [string]$Purpose = 'lifecycle',
     [Parameter(Mandatory = $true)]
     [string]$CollisionSuffix,
+    [string]$OwnershipRoot = '',
+    [string]$OwnershipTaskId = '',
     [Parameter(Mandatory = $true)]
     [string]$ApplianceVmxPath,
     [Parameter(Mandatory = $true)]
@@ -783,6 +789,40 @@ if (Test-Path -LiteralPath $resultRoot) {
 $preflightRootCreated = $false
 $preflightGuard = $null
 $runtimeConsumerPins = [Collections.Generic.List[IDisposable]]::new()
+$originalOwnershipRecords = [Collections.Generic.List[object]]::new()
+$durableOwnershipRoot = ''
+$lifecycleTaskId = if ($env:CODEX_THREAD_ID) { $env:CODEX_THREAD_ID } elseif ($OwnershipTaskId) { $OwnershipTaskId } else { $LabName }
+$externalOwnershipEnabled = -not $PlanOnly -and [bool]($env:CODEX_THREAD_ID -or $OwnershipRoot -or $OwnershipTaskId)
+if ($externalOwnershipEnabled) {
+    if ($lifecycleTaskId -notmatch '^[A-Za-z0-9_-]{1,128}$') { throw 'A valid lifecycle ownership task identifier is required.' }
+    foreach ($helper in @('Atlaso.WorkstationCleanup.psm1', 'Atlaso.LifecycleOwnership.ps1')) {
+        $helperSource = @(& git -C $repoRoot show "${sourceCommit}:scripts/windows/vmware/$helper")
+        if ($LASTEXITCODE -ne 0) { throw 'Cannot load admitted lifecycle ownership helpers.' }
+        if ($helper.EndsWith('.psm1')) {
+            New-Module -Name Atlaso.LifecycleOwnershipPrimitives -ScriptBlock ([scriptblock]::Create(($helperSource -join "`n"))) | Import-Module -Force
+        } else { . ([scriptblock]::Create(($helperSource -join "`n"))) }
+    }
+    if ($env:CODEX_THREAD_ID) {
+        $durableOwnershipRoot = Get-AtlasoLifecycleDurableRoot
+        if (($OwnershipRoot -and [IO.Path]::GetFullPath($OwnershipRoot).TrimEnd('\', '/') -ine $durableOwnershipRoot) -or
+            ($OwnershipTaskId -and $OwnershipTaskId -cne $lifecycleTaskId)) {
+            throw 'Agent lifecycle ownership overrides differ from the active configured root or task.'
+        }
+    } else {
+        if (-not $OwnershipRoot -or -not [IO.Path]::IsPathFullyQualified($OwnershipRoot)) {
+            throw 'Human lifecycle runs require -OwnershipRoot naming an existing permitted durable root containing the source checkout.'
+        }
+        $durableOwnershipRoot = [IO.Path]::GetFullPath($OwnershipRoot).TrimEnd('\', '/')
+        if ($durableOwnershipRoot -eq [IO.Path]::GetPathRoot($durableOwnershipRoot).TrimEnd('\', '/')) {
+            throw 'Lifecycle ownership root cannot be a volume root.'
+        }
+    }
+    $ownershipCheckout = [IO.Path]::GetFullPath($repoRoot).TrimEnd('\', '/')
+    if (-not $ownershipCheckout.StartsWith($durableOwnershipRoot + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)) {
+        throw 'Lifecycle source worktree is outside the configured supported root; no resource may be created.'
+    }
+    $runtimeConsumerPins.Add([Atlaso.WorkstationFileIdentity]::PinOrdinaryDirectoryPath($ownershipCheckout, $true))
+}
 try {
 try {
 $runtimeSourceRoot = $repoRoot
@@ -790,6 +830,11 @@ if (-not $PlanOnly) {
     New-Item -ItemType Directory -Path $resultRoot -ErrorAction Stop | Out-Null
     $preflightRootCreated = $true
     $preflightGuard = New-LifecyclePreflightGuard -Path $resultRoot
+    if ($externalOwnershipEnabled) {
+        $originalOwnershipRecords.Add((New-AtlasoLifecycleOwnershipRecord -DurableRoot $durableOwnershipRoot `
+            -Worktree $repoRoot -LabRoot $resultRoot -ResourcePath $resultRoot -Kind lifecycle `
+            -TaskId $lifecycleTaskId -SourceCommit $sourceCommit -PullRequestNumber $PullRequestNumber -RequireEmpty))
+    }
     foreach ($artifact in @('plan.json', 'vmware-identity.json', 'vms', 'seed')) {
         $preflightGuard.Expect((Join-Path $resultRoot $artifact))
     }
@@ -1255,6 +1300,11 @@ function Copy-VmDirectory {
     }
     $targetVmx = Join-Path $DestinationDirectory "$Name.vmx"
     if ($PSCmdlet.ShouldProcess($DestinationDirectory, "Clone Workstation VM $Name with dedicated storage")) {
+        $creationOwnership = @{
+            Root = $durableOwnershipRoot; Worktree = [string]$repoRoot; LabRoot = $resultRoot
+            TaskId = $lifecycleTaskId; Commit = $sourceCommit; Pr = $PullRequestNumber; Records = $originalOwnershipRecords
+            Enabled = $externalOwnershipEnabled
+        }
         try {
             # Reuse the normal clone contract: immutable two-payload source,
             # private 500 GiB thin depot/backup disks at SCSI units 2 and 3.
@@ -1263,7 +1313,17 @@ function Copy-VmDirectory {
                 -Name $Name -ApplianceVmxPath $resolvedSourceVmx `
                 -OutputDirectory $DestinationDirectory -VmrunPath $resolvedVmrun `
                 -VdiskManagerPath (Resolve-VdiskManagerPath) `
-                -ManagementNetwork $ManagementNetwork -SkipLabNetworkAdapters | Out-Host
+                -ManagementNetwork $ManagementNetwork -SkipLabNetworkAdapters `
+                -CloneCreatedContext $creationOwnership `
+                -CloneCreated {
+                    param($CreatedDirectory, $CreatedVmx, $Ownership)
+                    if (-not $Ownership.Enabled) { return }
+                    foreach ($entry in @(@{ Path = $CreatedDirectory; Kind = 'vm-directory' }, @{ Path = $CreatedVmx; Kind = 'vm' })) {
+                        $Ownership.Records.Add((New-AtlasoLifecycleOwnershipRecord -DurableRoot $Ownership.Root `
+                            -Worktree $Ownership.Worktree -LabRoot $Ownership.LabRoot -ResourcePath $entry.Path -Kind $entry.Kind `
+                            -TaskId $Ownership.TaskId -SourceCommit $Ownership.Commit -PullRequestNumber $Ownership.Pr))
+                    }
+                } | Out-Host
         }
         finally {
             # A failed disk creation can leave a valid clone. Retain its exact
@@ -1301,7 +1361,8 @@ function New-ClientVm {
     )
 
     Assert-SafeLifecycleName -Name $Name
-    New-Item -ItemType Directory -Force -Path $Directory | Out-Null
+    New-Item -ItemType Directory -Path $Directory -ErrorAction Stop | Out-Null
+    Publish-LifecycleOriginalVmIdentity -Directory $Directory -RequireEmpty
     $diskTarget = Join-Path $Directory "$Name.vmdk"
     if ($PSCmdlet.ShouldProcess($diskTarget, "Copy client VMDK for $Name")) {
         Copy-Item -LiteralPath $DiskPath -Destination $diskTarget
@@ -1327,6 +1388,7 @@ function New-ClientVm {
         'sata0:1.startConnected = "TRUE"'
     )
     [System.IO.File]::WriteAllLines($vmxPath, [string[]]$lines, [System.Text.UTF8Encoding]::new($false))
+    Publish-LifecycleOriginalVmIdentity -VmxPath $vmxPath
     for ($index = 0; $index -lt $Networks.Count; $index++) {
         Set-VmxNetworkAdapter -Path $vmxPath -Index $index -Vmnet $Networks[$index] -VirtualDev 'e1000'
     }
@@ -1356,7 +1418,8 @@ function New-EsxiPxeVm {
     )
 
     Assert-SafeLifecycleName -Name $Name
-    New-Item -ItemType Directory -Force -Path $Directory | Out-Null
+    New-Item -ItemType Directory -Path $Directory -ErrorAction Stop | Out-Null
+    Publish-LifecycleOriginalVmIdentity -Directory $Directory -RequireEmpty
     $diskTarget = Join-Path $Directory "$Name.vmdk"
     $vdiskManager = Resolve-VdiskManagerPath
     if ($PSCmdlet.ShouldProcess($diskTarget, "Create ESXi PXE install disk for $Name")) {
@@ -1400,6 +1463,7 @@ function New-EsxiPxeVm {
         "scsi0:0.fileName = $(ConvertTo-VmxString -Value (Split-Path -Leaf $diskTarget))"
     )
     [System.IO.File]::WriteAllLines($vmxPath, [string[]]$lines, [System.Text.UTF8Encoding]::new($false))
+    Publish-LifecycleOriginalVmIdentity -VmxPath $vmxPath
     Set-VmxNetworkAdapter -Path $vmxPath -Index 0 -Vmnet $Network -StaticMac $MacAddress -VirtualDev 'vmxnet3'
     $createdVmxPaths.Add($vmxPath)
     return $vmxPath
@@ -2010,6 +2074,133 @@ function Get-ApplianceStartupDiagnostic {
 
 <#
 .SYNOPSIS
+Capture source-image routing prerequisites before replacing helper or application code.
+.PARAMETER ApplianceVmx
+Original task-owned appliance clone admitted by the canonical creator.
+#>
+function Save-ApplianceSourceNetworkEvidence {
+    param([Parameter(Mandatory)][string]$ApplianceVmx)
+
+    Assert-LifecycleSourcePins -Pins $runtimeConsumerPins
+    $inspector = Join-Path $runtimeSourceRoot 'scripts/interop/routing_source_inspection.py'
+    $nonce = [guid]::NewGuid().ToString('N')
+    $guestScript = "/tmp/atlaso-source-inspection-$nonce.py"
+    $guestOutput = "/tmp/atlaso-source-inspection-$nonce.json"
+    $hostOutput = Join-Path $resultRoot 'source-image-network.json'
+    if (Test-Path -LiteralPath $hostOutput) { throw 'Source-image evidence already exists; refusing replacement.' }
+    $null = Invoke-AtlasoBoundedStreamingProcess -FilePath $resolvedVmrun -DiscardOutput -ArgumentList @(
+        '-T', 'ws', '-gu', 'root', '-gp', $ApplianceGuestPassword,
+        'copyFileFromHostToGuest', $ApplianceVmx, $inspector, $guestScript
+    ) -TimeoutSeconds 30 -Action 'Source-image inspector upload'
+    $null = Invoke-AtlasoBoundedStreamingProcess -FilePath $resolvedVmrun -DiscardOutput -ArgumentList @(
+        '-T', 'ws', '-gu', 'root', '-gp', $ApplianceGuestPassword,
+        'runScriptInGuest', $ApplianceVmx, '/bin/sh',
+        "/opt/atlaso/.venv/bin/python -I '$guestScript' --output '$guestOutput'"
+    ) -TimeoutSeconds 30 -Action 'Source-image routing inspection'
+    $null = Invoke-AtlasoBoundedStreamingProcess -FilePath $resolvedVmrun -DiscardOutput -ArgumentList @(
+        '-T', 'ws', '-gu', 'root', '-gp', $ApplianceGuestPassword,
+        'copyFileFromGuestToHost', $ApplianceVmx, $guestOutput, $hostOutput
+    ) -TimeoutSeconds 30 -Action 'Source-image routing evidence readback'
+    if (-not (Test-Path -LiteralPath $hostOutput -PathType Leaf) -or (Get-Item -LiteralPath $hostOutput).Length -gt 65536) {
+        throw 'Source-image inspection did not produce bounded evidence.'
+    }
+    $evidence = Get-Content -LiteralPath $hostOutput -Raw | ConvertFrom-Json
+    if ($evidence.schema -ne 1 -or $evidence.phase -cne 'before-lifecycle-deployment') {
+        throw 'Source-image inspection returned an invalid evidence envelope.'
+    }
+    Assert-LifecycleSourceNetworkCompatibility -Evidence $evidence `
+        -TargetHasRoutingDomains (Test-Path -LiteralPath (Join-Path $runtimeSourceRoot 'atlaso/route_domains.py') -PathType Leaf)
+    Assert-LifecycleSourcePins -Pins $runtimeConsumerPins
+}
+
+<#
+.SYNOPSIS
+Refuse deployment of an older runtime onto source-image routing state it cannot maintain.
+.PARAMETER Evidence
+Validated public source-image inspection captured before any replacement deployment.
+.PARAMETER TargetHasRoutingDomains
+Whether the exact admitted deployment snapshot includes the canonical routing-domain handler.
+#>
+function Assert-LifecycleSourceNetworkCompatibility {
+    param([Parameter(Mandatory)][object]$Evidence, [Parameter(Mandatory)][bool]$TargetHasRoutingDomains)
+
+    if ($Evidence.schema -ne 1 -or $Evidence.phase -cne 'before-lifecycle-deployment') {
+        throw 'Source-image compatibility requires predeployment evidence.'
+    }
+    if (-not $TargetHasRoutingDomains -and ($null -ne $Evidence.routing_intent -or
+        $Evidence.routing_service.LoadState -cne 'not-found' -or $Evidence.routing_service.ActiveState -cne 'inactive')) {
+        throw 'Source image retains routing-domain state unsupported by the admitted target; preserve this clone and select a compatible source.'
+    }
+}
+
+<#
+.SYNOPSIS
+Bind measured installed runtime and helper bytes to the immutable deployed commit and original VM.
+.PARAMETER ApplianceVmx
+Exact original task-owned appliance VMX.
+.PARAMETER Wheel
+Pinned build result identifying the wheel uploaded and verified by the deployer.
+#>
+function Save-ApplianceDeploymentIdentity {
+    param([Parameter(Mandatory)][string]$ApplianceVmx, [Parameter(Mandatory)][object]$Wheel)
+
+    Assert-LifecycleSourcePins -Pins $runtimeConsumerPins
+    if ($Wheel.Name -notmatch '^atlaso-[A-Za-z0-9_.+-]+\.whl$' -or $Wheel.Sha256 -notmatch '^[a-fA-F0-9]{64}$') {
+        throw 'Deployment inspection requires the pinned wheel build identity.'
+    }
+    $inspector = Join-Path $runtimeSourceRoot 'scripts/interop/routing_deployment_inspection.py'
+    $nonce = [guid]::NewGuid().ToString('N')
+    $guestScript = "/tmp/atlaso-deployment-inspection-$nonce.py"
+    $guestOutput = "/tmp/atlaso-deployment-inspection-$nonce.json"
+    $hostReadback = Join-Path $resultRoot 'deployment-measured.json'
+    $hostOutput = Join-Path $resultRoot 'deployed-runtime-identity.json'
+    if ((Test-Path -LiteralPath $hostReadback) -or (Test-Path -LiteralPath $hostOutput)) {
+        throw 'Deployment identity already exists; refusing replacement.'
+    }
+    $guestWheel = ConvertTo-GuestShellSingleQuote -Value "/tmp/$($Wheel.Name)"
+    $guestAddress = ConvertTo-GuestShellSingleQuote -Value $ApplianceIPAddress
+    $null = Invoke-AtlasoBoundedStreamingProcess -FilePath $resolvedVmrun -DiscardOutput -ArgumentList @(
+        '-T', 'ws', '-gu', 'root', '-gp', $ApplianceGuestPassword,
+        'copyFileFromHostToGuest', $ApplianceVmx, $inspector, $guestScript
+    ) -TimeoutSeconds 30 -Action 'Deployment inspector upload'
+    $null = Invoke-AtlasoBoundedStreamingProcess -FilePath $resolvedVmrun -DiscardOutput -ArgumentList @(
+        '-T', 'ws', '-gu', 'root', '-gp', $ApplianceGuestPassword,
+        'runScriptInGuest', $ApplianceVmx, '/bin/sh',
+        "/opt/atlaso/.venv/bin/python -I '$guestScript' --wheel $guestWheel --address $guestAddress --output '$guestOutput'"
+    ) -TimeoutSeconds 60 -Action 'Installed runtime identity inspection'
+    $null = Invoke-AtlasoBoundedStreamingProcess -FilePath $resolvedVmrun -DiscardOutput -ArgumentList @(
+        '-T', 'ws', '-gu', 'root', '-gp', $ApplianceGuestPassword,
+        'copyFileFromGuestToHost', $ApplianceVmx, $guestOutput, $hostReadback
+    ) -TimeoutSeconds 30 -Action 'Installed runtime identity readback'
+    if (-not (Test-Path -LiteralPath $hostReadback -PathType Leaf) -or (Get-Item -LiteralPath $hostReadback).Length -gt 8192) {
+        throw 'Deployment inspection did not produce bounded evidence.'
+    }
+    $measured = Get-Content -LiteralPath $hostReadback -Raw | ConvertFrom-Json
+    $helperHash = (Get-FileHash -LiteralPath (Join-Path $runtimeSourceRoot 'scripts/appliance/atlaso-helper') -Algorithm SHA256).Hash.ToLowerInvariant()
+    if ($measured.schema -ne 1 -or $measured.wheel_sha256 -ine $Wheel.Sha256 -or $measured.helper_sha256 -cne $helperHash -or
+        $measured.wheel_payload_sha256 -notmatch '^[a-f0-9]{64}$' -or $measured.wheel_payload_sha256 -cne $measured.installed_payload_sha256 -or
+        $measured.verified_payload_files -le 0 -or $measured.address -cne $ApplianceIPAddress -or
+        $measured.interface -notmatch '^[A-Za-z0-9_.:-]{1,15}$' -or $measured.mac -notmatch '^(?:[0-9a-f]{2}:){5}[0-9a-f]{2}$') {
+        throw 'Measured deployment identity differs from immutable source artifacts or the discovered target.'
+    }
+    $originalVm = @($originalOwnershipRecords | Where-Object { $_.resource -ieq $ApplianceVmx })
+    if ($externalOwnershipEnabled -and $originalVm.Count -ne 1) { throw 'Deployment identity requires exactly one original VM ownership record.' }
+    $originalVmHash = if ($originalVm.Count -eq 1) { $originalVm[0].sha256 } else { '' }
+    $report = [ordered]@{
+        schema = 1; task_id = $lifecycleTaskId; vmx_path = $ApplianceVmx; vm_ownership_sha256 = $originalVmHash
+        deployed_commit = $sourceCommit; wheel_sha256 = $measured.wheel_sha256; helper_sha256 = $measured.helper_sha256
+        wheel_payload_sha256 = $measured.wheel_payload_sha256; installed_payload_sha256 = $measured.installed_payload_sha256
+        verified_payload_files = $measured.verified_payload_files; url = $ApplianceUrl
+        interface = $measured.interface; mac = $measured.mac
+    }
+    $stream = [IO.File]::Open($hostOutput, 'CreateNew', 'Write', 'None')
+    try { $stream.Write([Text.UTF8Encoding]::new($false).GetBytes(($report | ConvertTo-Json -Depth 4))); $stream.Flush($true) }
+    finally { $stream.Dispose() }
+    Assert-LifecycleSourcePins -Pins $runtimeConsumerPins
+}
+
+<#
+.SYNOPSIS
 Upload the lifecycle helper script to the appliance guest.
 .PARAMETER ApplianceVmx
 VMX path identifying the appliance guest that receives the helper.
@@ -2109,7 +2300,7 @@ function Sync-ApplianceApplicationWheel {
         $deadline = (Get-Date).AddMinutes(3)
         do {
             if (Test-ApplianceOpenApi -Url "$ApplianceUrl/openapi.json") {
-                return $wheel.FullName
+                return $wheel
             }
             Start-Sleep -Seconds 5
         } while ((Get-Date) -lt $deadline)
@@ -2321,6 +2512,7 @@ function Write-LifecycleIdentityEvidence {
         log_identity        = $LabName
         vms                 = @($identityVms)
         lan_segments        = @($ownedLanSegments)
+        original_ownership  = @($originalOwnershipRecords)
     } | ConvertTo-Json -Depth 5
 
     # Keep every observable ownership manifest complete. The temporary file is
@@ -2338,6 +2530,29 @@ function Write-LifecycleIdentityEvidence {
     if ($preflightGuard) { $preflightGuard.Published($identityTempPath, $identityPath) }
     # Failed publication retains its exact stage for ownership-aware recovery;
     # never delete a reopened staging pathname after releasing its creation handle.
+}
+
+<#
+.SYNOPSIS
+Publish each original VM directory or VMX before its first configuration or boot.
+.PARAMETER Directory
+Directory just returned by creation, never an adopted existing directory.
+.PARAMETER VmxPath
+VMX just produced by the owning clone or writer.
+.PARAMETER RequireEmpty
+Require the original empty directory before copying the first client artifact.
+#>
+function Publish-LifecycleOriginalVmIdentity {
+    param([string]$Directory = '', [string]$VmxPath = '', [switch]$RequireEmpty)
+    if (-not $externalOwnershipEnabled) { return }
+    foreach ($entry in @(@{ Path = $Directory; Kind = 'vm-directory' }, @{ Path = $VmxPath; Kind = 'vm' })) {
+        if (-not $entry.Path) { continue }
+        $originalOwnershipRecords.Add((New-AtlasoLifecycleOwnershipRecord -DurableRoot $durableOwnershipRoot `
+            -Worktree $repoRoot -LabRoot $resultRoot -ResourcePath $entry.Path -Kind $entry.Kind `
+            -TaskId $lifecycleTaskId -SourceCommit $sourceCommit -PullRequestNumber $PullRequestNumber `
+            -RequireEmpty:($RequireEmpty -and $entry.Kind -eq 'vm-directory')))
+    }
+    Write-LifecycleIdentityEvidence
 }
 
 <#
@@ -2516,8 +2731,10 @@ try {
         appliance_url = $ApplianceUrl
     } | ConvertTo-Json -Depth 3 | Set-Content -LiteralPath (Join-Path $resultRoot 'discovered-appliance.json') -Encoding UTF8
     try {
+        Save-ApplianceSourceNetworkEvidence -ApplianceVmx $applianceVmx
         Sync-ApplianceHelperScript -ApplianceVmx $applianceVmx
-        $applianceWheelPath = Sync-ApplianceApplicationWheel -ApplianceVmx $applianceVmx
+        $applianceWheelIdentity = Sync-ApplianceApplicationWheel -ApplianceVmx $applianceVmx
+        Save-ApplianceDeploymentIdentity -ApplianceVmx $applianceVmx -Wheel $applianceWheelIdentity
     }
     catch {
         $deploymentFailure = $_

@@ -259,11 +259,13 @@ def verify_source_rules(
                 )
             except (ValueError, TypeError) as exc:
                 raise OverlapPrerequisiteError("invalid native source rule observation") from exc
-            if network == prefix and not row.get("iif"):
+            if (network == prefix and row.get("iif") == "lo"
+                    and str(row.get("protocol")) == "2"
+                    and type(row.get("priority")) is int and 5000 <= row["priority"] < 6000):
                 matching.append(row)
         lookups = [row for row in matching if str(row.get("table")) == str(table)
-                   and row.get("action", "to_tbl") in {"to_tbl", 1}]
-        fallbacks = [row for row in matching if row.get("action") in {"unreachable", 7}]
+                   and row.get("action", "to_tbl") in {"to_tbl", 1, "1"}]
+        fallbacks = [row for row in matching if row.get("action") in {"unreachable", 7, "7"}]
         if (len(lookups) != 1 or len(fallbacks) != 1
                 or type(lookups[0].get("priority")) is not int
                 or type(fallbacks[0].get("priority")) is not int

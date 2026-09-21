@@ -9,11 +9,16 @@ from __future__ import annotations
 import base64
 import binascii
 import http.client
+import http.cookiejar
 import io
 import ipaddress
+import json
 import re
 import ssl
 import time
+import urllib.parse
+import urllib.request
+from email.message import Message
 from typing import Any
 
 import paramiko
@@ -104,6 +109,10 @@ class TLSChannel:
                 self._flush()
             except ssl.SSLWantReadError:
                 self._flush()
+                remaining = self.deadline - time.monotonic()
+                if remaining <= 0:
+                    raise TimeoutError("fixture HTTPS deadline exceeded") from None
+                self.channel.settimeout(remaining)
                 incoming = self.channel.recv(65536)
                 if not incoming:
                     raise ssl.SSLEOFError("fixture TLS peer closed without a complete record") from None
@@ -230,7 +239,7 @@ class PinnedFixtureGateway:
         return channel
 
     def request(self, method: str, path: str, *, body: bytes | None = None,
-                headers: dict[str, str] | None = None) -> tuple[int, bytes, dict[str, str]]:
+                headers: dict[str, str] | None = None, timeout: float = 30) -> tuple[int, bytes, Message]:
         """Perform one CA-validated private-origin HTTPS request with no redirects.
 
         Args:
@@ -238,6 +247,7 @@ class PinnedFixtureGateway:
             path: Origin-relative path; alternate origins are refused.
             body: Optional request body.
             headers: Request headers; Host and Connection overrides are refused.
+            timeout: Maximum TLS operation duration in seconds.
         """
         if (not path.startswith("/") or path.startswith("//") or "://" in path
                 or any(character in path for character in "\r\n")
@@ -247,13 +257,17 @@ class PinnedFixtureGateway:
         connection = http.client.HTTPSConnection(self.target, context=self.context, timeout=30)
         channel = self.channel(443)
         try:
-            connection.sock = TLSChannel(channel, self.context, self.target)
+            connection.sock = TLSChannel(channel, self.context, self.target, timeout=timeout)
             connection.request(method, path, body=body, headers={**(headers or {}), "Connection": "close"})
-            response = connection.getresponse()
-            content = response.read(8 * 1024 * 1024 + 1)
-            if len(content) > 8 * 1024 * 1024:
-                raise FixtureTransportError("fixture HTTPS response exceeds evidence limit")
-            return response.status, content, dict(response.getheaders())
+            # HTTPConnection.getresponse closes its socket immediately for a
+            # Connection: close response. Own the parser lifetime explicitly:
+            # this SSH-backed stream has no socket.makefile reference counting.
+            with http.client.HTTPResponse(connection.sock, method=method) as response:
+                response.begin()
+                content = response.read(8 * 1024 * 1024 + 1)
+                if len(content) > 8 * 1024 * 1024:
+                    raise FixtureTransportError("fixture HTTPS response exceeds evidence limit")
+                return response.status, content, response.headers
         finally:
             connection.close()
             channel.close()
@@ -283,3 +297,117 @@ class PinnedFixtureGateway:
             channel.close()
         self.channels.clear()
         self.client.close()
+
+
+class FixtureHttpClient:
+    """Keep lifecycle cookies and tokens inside the pinned private HTTPS origin."""
+
+    def __init__(self, gateway: PinnedFixtureGateway) -> None:
+        """Bind one previously admitted transport without ambient HTTP handlers.
+
+        Args:
+            gateway: Authenticated private fixture transport.
+        """
+        self.gateway = gateway
+        self.base_url = f"https://{gateway.target}"
+        self.bearer_token = ""
+        self.cookie_jar = http.cookiejar.CookieJar()
+
+    def request_bytes(
+        self, method: str, path: str, *, json_body: dict[str, Any] | None = None,
+        form: dict[str, Any] | list[tuple[str, Any]] | None = None, body: bytes | None = None,
+        headers: dict[str, str] | None = None, follow_redirects: bool = True, timeout: int = 30,
+    ) -> tuple[int, bytes, dict[str, str]]:
+        """Perform bounded authenticated requests with only same-origin redirects.
+
+        Args:
+            method: HTTP method passed to the pinned transport.
+            path: Origin-relative request path.
+            json_body: Optional JSON object.
+            form: Optional form fields.
+            body: Optional raw body.
+            headers: Additional request headers.
+            follow_redirects: Whether same-origin redirects may be followed.
+            timeout: Whole redirect-chain deadline, at most 120 seconds.
+        """
+        if not 0 < timeout <= 120:
+            raise FixtureTransportError("invalid fixture HTTP deadline")
+        if not path.startswith("/") or path.startswith("//") or "://" in path:
+            raise FixtureTransportError("fixture request must be origin-relative")
+        request_headers = dict(headers or {})
+        if self.bearer_token:
+            request_headers.setdefault("Authorization", f"Bearer {self.bearer_token}")
+        if json_body is not None:
+            body = json.dumps(json_body).encode()
+            request_headers["Content-Type"] = "application/json"
+        elif form is not None:
+            body = urllib.parse.urlencode(form, doseq=True).encode()
+            request_headers["Content-Type"] = "application/x-www-form-urlencoded"
+        deadline = time.monotonic() + timeout
+        for _attempt in range(6):
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError("fixture HTTP deadline exceeded")
+            request = urllib.request.Request(self.base_url + path, data=body, headers=request_headers, method=method)
+            self.cookie_jar.add_cookie_header(request)
+            status, content, response_headers = self.gateway.request(
+                method, path, body=body, headers=dict(request.header_items()), timeout=remaining,
+            )
+            self.cookie_jar.extract_cookies(_CookieResponse(response_headers), request)
+            location = response_headers.get("Location", "")
+            if follow_redirects and status in {301, 302, 303, 307, 308} and location:
+                redirect = urllib.parse.urlsplit(urllib.parse.urljoin(self.base_url + path, location))
+                if (redirect.scheme != "https" or redirect.netloc != self.gateway.target
+                        or redirect.username is not None or redirect.password is not None):
+                    raise FixtureTransportError("fixture redirect changes the pinned private origin")
+                path = urllib.parse.urlunsplit(("", "", redirect.path or "/", redirect.query, ""))
+                if status in {301, 302, 303} and method not in {"GET", "HEAD"}:
+                    method, body = "GET", None
+                    request_headers = {key: value for key, value in request_headers.items()
+                                       if key.lower() not in {"content-type", "content-length"}}
+                continue
+            return status, content, dict(response_headers.items())
+        raise FixtureTransportError("fixture HTTP redirect limit exceeded")
+
+    def request(self, method: str, path: str, **kwargs: Any) -> tuple[int, str, dict[str, str]]:
+        """Decode bounded lifecycle text responses.
+
+        Args:
+            method: HTTP method.
+            path: Origin-relative target.
+            kwargs: Supported request_bytes options.
+        """
+        status, content, headers = self.request_bytes(method, path, **kwargs)
+        return status, content.decode("utf-8", errors="replace"), headers
+
+    def json_request(self, method: str, path: str, *, json_body: dict[str, Any] | None = None) -> Any:
+        """Decode successful API JSON without echoing secret-bearing errors.
+
+        Args:
+            method: HTTP method.
+            path: Origin-relative API target.
+            json_body: Optional request object.
+        """
+        status, content, _headers = self.request_bytes(method, path, json_body=json_body)
+        if status >= 400:
+            raise FixtureTransportError(f"fixture API request failed with HTTP {status}")
+        try:
+            return json.loads(content)
+        except ValueError:
+            raise FixtureTransportError("fixture API returned invalid JSON") from None
+
+
+class _CookieResponse:
+    """Expose repeated Set-Cookie headers to the standard cookie policy."""
+
+    def __init__(self, headers: Message) -> None:
+        """Keep the original multi-value response headers.
+
+        Args:
+            headers: Headers from the actual verified HTTPS response.
+        """
+        self.headers = headers
+
+    def info(self) -> Message:
+        """Return all response headers without collapsing repeated cookies."""
+        return self.headers

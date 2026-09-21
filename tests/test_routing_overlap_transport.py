@@ -2,6 +2,7 @@
 
 import ssl
 from datetime import datetime, timedelta, timezone
+from email.message import Message
 from ipaddress import ip_address
 from unittest.mock import Mock
 
@@ -13,6 +14,7 @@ from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.x509.oid import NameOID
 
 from scripts.interop.routing_overlap_transport import (
+    FixtureHttpClient,
     FixtureTransportError,
     PinnedFixtureGateway,
     TLSChannel,
@@ -23,11 +25,13 @@ from scripts.interop.routing_overlap_transport import (
 class MemoryPeer:
     """Exchange genuine TLS records through an in-memory SSH-channel substitute."""
 
-    def __init__(self, context):
+    def __init__(self, context, *, delayed_body=None, fail_body=False):
         """Initialize a TLS server endpoint.
 
         Args:
             context: Synthetic server certificate configuration.
+            delayed_body: Optional response sent in separate later TLS records.
+            fail_body: Raise a channel error after delivering the headers.
         """
         self.incoming, self.outgoing = ssl.MemoryBIO(), ssl.MemoryBIO()
         self.tls = context.wrap_bio(self.incoming, self.outgoing, server_side=True)
@@ -35,6 +39,9 @@ class MemoryPeer:
         self.ready = False
         self.received = b""
         self.timeout = None
+        self.delayed_body = delayed_body
+        self.fail_body = fail_body
+        self.headers_sent = False
 
     def settimeout(self, timeout):
         """Record bounded channel deadlines.
@@ -57,7 +64,12 @@ class MemoryPeer:
                 self.ready = True
             self.received += self.tls.read(65536)
             if b"\r\n\r\n" in self.received:
-                self.tls.write(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nOK")
+                if self.delayed_body is None:
+                    self.tls.write(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nOK")
+                else:
+                    self.tls.write((f"HTTP/1.1 200 OK\r\nContent-Length: {len(self.delayed_body)}\r\n"
+                                    "Connection: close\r\n\r\n").encode())
+                    self.headers_sent = True
         except ssl.SSLWantReadError:
             pass
 
@@ -67,6 +79,13 @@ class MemoryPeer:
         Args:
             size: Requested byte count.
         """
+        if self.closed:
+            raise OSError("channel closed before body read")
+        if self.headers_sent and not self.outgoing.pending and self.delayed_body:
+            if self.fail_body:
+                raise OSError("synthetic body channel failure")
+            chunk, self.delayed_body = self.delayed_body[:4096], self.delayed_body[4096:]
+            self.tls.write(chunk)
         return self.outgoing.read(size)
 
     def close(self):
@@ -150,6 +169,33 @@ def public_ssh_key():
     return f"{key.get_name()} {key.get_base64()}"
 
 
+@pytest.mark.parametrize("fail_body", [False, True])
+def test_gateway_retains_channel_until_delayed_response_body_finishes(tls_material, fail_body):
+    """Keep a Connection: close stream alive through multi-record body parsing.
+
+    Args:
+        tls_material: Synthetic trusted TLS identities.
+        fail_body: Inject a read error to prove channel cleanup on failure.
+    """
+    server, _context, root = tls_material
+    body = b"bounded response " * 4096
+    peer = MemoryPeer(server, delayed_body=body, fail_body=fail_body)
+    key = public_ssh_key()
+    gateway = PinnedFixtureGateway("192.168.167.50", "192.0.2.10", key, key, root)
+    gateway.client = Mock()
+    gateway.client.get_transport.return_value.open_channel.return_value = peer
+    try:
+        if fail_body:
+            with pytest.raises(OSError, match="synthetic body"):
+                gateway.request("GET", "/api/v1/tasks")
+        else:
+            status, content, headers = gateway.request("GET", "/api/v1/tasks")
+            assert status == 200 and content == body and headers["Connection"] == "close"
+        assert peer.closed and not gateway.channels
+    finally:
+        gateway.close()
+
+
 def test_ssh_reject_policy_and_exact_public_key():
     """Use exactly one provider-supplied key without ambient key discovery."""
     client = pinned_client("192.168.167.50", public_ssh_key())
@@ -198,3 +244,53 @@ def test_gateway_rejects_changed_http_origin(tls_material, path, headers):
         gateway.request("GET", path, headers=headers)
     gateway.client.get_transport.assert_not_called()
     gateway.close()
+
+
+def test_http_client_retains_repeated_cookies_and_same_origin_auth():
+    """Both session cookies survive a same-origin redirect without replaying POST."""
+    first = Message()
+    first.add_header("Set-Cookie", "session=one; Secure; Path=/; HttpOnly")
+    first.add_header("Set-Cookie", "csrf=two; Secure; Path=/")
+    first.add_header("Location", "/ui/management")
+    gateway = Mock(target="192.0.2.10")
+    gateway.request.side_effect = [(303, b"", first), (200, b'{"ok": true}', Message())]
+    client = FixtureHttpClient(gateway)
+    client.bearer_token = "synthetic-token"
+    status, content, _headers = client.request("POST", "/login", form={"username": "admin"})
+    assert status == 200 and content == '{"ok": true}'
+    first_call, second_call = gateway.request.call_args_list
+    assert first_call.args == ("POST", "/login")
+    assert second_call.args == ("GET", "/ui/management")
+    assert second_call.kwargs["body"] is None
+    headers = second_call.kwargs["headers"]
+    assert set(headers["Cookie"].split("; ")) == {"session=one", "csrf=two"}
+    assert headers["Authorization"] == "Bearer synthetic-token"
+    assert "Content-type" not in headers
+    assert 0 < second_call.kwargs["timeout"] <= first_call.kwargs["timeout"] <= 30
+
+
+@pytest.mark.parametrize("location", ["https://other/", "//other/", "http://192.0.2.10/",
+                                      "https://user@192.0.2.10/", "https://192.0.2.11/"])
+def test_http_client_refuses_cross_origin_redirect_before_forwarding(location):
+    """Never forward a credential-bearing redirect outside the pinned target.
+
+    Args:
+        location: Untrusted redirect target from the private server.
+    """
+    headers = Message()
+    headers["Location"] = location
+    gateway = Mock(target="192.0.2.10")
+    gateway.request.return_value = 307, b"", headers
+    client = FixtureHttpClient(gateway)
+    with pytest.raises(FixtureTransportError, match="pinned private origin"):
+        client.request("POST", "/login", form={"password": "synthetic-value"})
+    assert gateway.request.call_count == 1
+
+
+def test_http_api_failure_does_not_echo_secret_payload_or_target():
+    """Keep an API error's potentially sensitive body and query out of errors."""
+    gateway = Mock(target="192.0.2.10")
+    gateway.request.return_value = 401, b"synthetic-secret", Message()
+    with pytest.raises(FixtureTransportError) as error:
+        FixtureHttpClient(gateway).json_request("POST", "/login?password=synthetic-secret")
+    assert str(error.value) == "fixture API request failed with HTTP 401"

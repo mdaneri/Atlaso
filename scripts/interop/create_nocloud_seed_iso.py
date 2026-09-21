@@ -26,6 +26,8 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Read the client password from standard input instead of argv.",
     )
+    parser.add_argument("--routing-overlap-guest", action="store_true",
+                        help="Install private routing-fixture tools without starting a DHCP/RA service.")
     return parser.parse_args()
 
 
@@ -82,6 +84,8 @@ ssh_pwauth: true"""
     ssh_authorized_keys:
       - {args.public_key}"""
 
+    fixture_packages = "\n  - dnsmasq\n  - radvd\n  - python3" if getattr(args, "routing_overlap_guest", False) else ""
+
     user_data = f"""#cloud-config
 hostname: {args.hostname}
 manage_etc_hosts: true
@@ -104,7 +108,7 @@ packages:
   - iputils
   - openssl
   - openssh-client
-  - sshpass
+  - sshpass{fixture_packages}
 write_files:
   - path: /usr/local/sbin/atlaso-refresh-test-dhcp
     permissions: '0755'

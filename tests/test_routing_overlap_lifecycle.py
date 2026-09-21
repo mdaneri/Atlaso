@@ -111,8 +111,8 @@ def source_evidence():
     rules = {4: [], 6: []}
     for source, table in addresses.items():
         family = 6 if ":" in source else 4
-        rules[family].extend([{"src": source, "table": table, "priority": 1000},
-                              {"src": source, "action": 7, "priority": 1001}])
+        rules[family].extend([{"src": source, "table": table, "priority": 5570, "iif": "lo", "protocol": "2"},
+                              {"src": source, "action": "7", "priority": 5571, "iif": "lo", "protocol": "2"}])
     return addresses, rules
 
 
@@ -122,7 +122,46 @@ def test_dual_family_exact_sources():
     assert verify_source_rules(addresses, rules) == addresses
 
 
-@pytest.mark.parametrize("fault", ["broad", "wrong-table", "missing-fallback", "wrong-order", "ingress-only", "missing-family"])
+def test_recorded_photon_rules_match_source_isolation_contract():
+    """Accept the actual IPv4/IPv6 JSON shape recorded on the #741 appliance."""
+    addresses = {"192.168.167.172": 100, "192.168.167.254": 200,
+                 "fd42:741::172": 100, "fd42:741::254": 200}
+    rules = {
+        4: [{"priority": 5570, "src": "192.168.167.172", "iif": "lo", "table": "100", "protocol": "2"},
+            {"priority": 5571, "src": "192.168.167.172", "iif": "lo", "action": "7", "protocol": "2"},
+            {"priority": 5780, "src": "192.168.167.254", "iif": "lo", "table": "200", "protocol": "2"},
+            {"priority": 5781, "src": "192.168.167.254", "iif": "lo", "action": "7", "protocol": "2"}],
+        6: [{"priority": 5314, "src": "fd42:741::254", "iif": "lo", "table": "200", "protocol": "2"},
+            {"priority": 5315, "src": "fd42:741::254", "iif": "lo", "action": "7", "protocol": "2"},
+            {"priority": 5552, "src": "fd42:741::172", "iif": "lo", "table": "100", "protocol": "2"},
+            {"priority": 5553, "src": "fd42:741::172", "iif": "lo", "action": "7", "protocol": "2"}],
+    }
+    assert verify_source_rules(addresses, rules) == addresses
+
+
+@pytest.mark.parametrize("enabled", [False, True])
+def test_client_seed_installs_fixture_tools_only_when_requested(enabled):
+    """Keep ordinary clients unchanged and never start private servers in seeds.
+
+    Args:
+        enabled: Whether the wrapper requested the dedicated fixture tools.
+    """
+    from argparse import Namespace
+
+    from scripts.interop.create_nocloud_seed_iso import cloud_init_files
+
+    files = cloud_init_files(Namespace(hostname="fixture", user="alpine", public_key="synthetic-public-key",
+                                      password="", routing_overlap_guest=enabled))
+    data = files["user-data"]
+    for package in ("dnsmasq", "radvd", "python3"):
+        assert (f"  - {package}\n" in data) == enabled
+    assert "rc-service dnsmasq" not in data and "rc-service radvd" not in data
+    assert "rc-update add dnsmasq" not in data and "rc-update add radvd" not in data
+    assert "NOPASSWD:ALL" in data
+
+
+@pytest.mark.parametrize("fault", ["broad", "wrong-table", "missing-fallback", "wrong-order", "ingress-only",
+                                   "missing-family", "wrong-protocol", "wrong-band", "missing-iif"])
 def test_source_proof_rejects_incomplete_isolation(fault):
     """Reject a route proof that could still select the other domain.
 
@@ -140,6 +179,12 @@ def test_source_proof_rejects_incomplete_isolation(fault):
         rules[4][1]["priority"] = 999
     elif fault == "ingress-only":
         rules[4][0]["iif"] = "eth0"
+    elif fault == "wrong-protocol":
+        rules[4][0]["protocol"] = "99"
+    elif fault == "wrong-band":
+        rules[4][0]["priority"] = 4999
+    elif fault == "missing-iif":
+        del rules[4][0]["iif"]
     else:
         del rules[6]
     with pytest.raises(OverlapPrerequisiteError):

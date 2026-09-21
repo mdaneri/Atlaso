@@ -395,6 +395,32 @@ wrappers, opt-in client server provisioning, bootstrap/connectivity admission, c
 expiry evidence, restoration, and existing ownership-aware resource teardown. Until those steps are implemented and
 validated, do not launch ad hoc DHCP/RA servers on a shared VMnet or report the overlap lifecycle gate as passed.
 
+Agent lifecycle creation uses the originating `CODEX_THREAD_ID` and independently resolves the active
+`desktop.git-worktree-root` before creating the result directory. Human CLI runs keep the existing canonical identity
+behavior without new required arguments; they can opt into external creation records using `-OwnershipRoot` and an
+optional `-OwnershipTaskId`. The explicit root must contain the source checkout and remain outside its removal scopes.
+When enabled, creation publishes each original Windows filesystem
+identity with task, repository, source commit, and PR bindings in a durable sibling manifest under that configured
+root. The empty result root is recorded before source extraction; each clone is recorded immediately after the
+provider creates it and before configuration; client directories are recorded before their first artifact is copied.
+`vmware-identity.json` references these external manifests and their hashes. Existing retained labs are never adopted
+or given retrospective creation records. VM-only cleanup retains the result root; the existing artifact-root cleanup
+procedure still applies after VM cleanup and evidence preservation.
+
+Before uploading a replacement helper or installing the lifecycle wheel, the wrapper collects
+`source-image-network.json` through bounded VMware guest operations using the root credential established by that
+run's first-boot environment. The inspector reads only the installed package version, routing service state, and
+validated public routing intent; it does not change networking or import appliance application code. Missing source
+routing support remains explicit evidence. A target without the canonical routing-domain handler refuses a source
+with retained intent or a loaded/active routing service before either deployment step. This inspection is distinct
+from postdeployment runtime acceptance.
+
+After deployment, `deployed-runtime-identity.json` binds the original VM manifest hash and admitted source commit to
+measured wheel/helper digests, the target interface/MAC, and matching expected/installed payload digests. The guest
+inspector compares the uploaded wheel's payload with installed files and rejects stale extra Atlaso files; the host
+checks wheel and helper hashes against the immutable build inputs. This proves the inspected on-disk runtime bytes,
+not continuous execution or transient publication behavior.
+
 ## Appliance Update status and ordering acceptance
 
 For the 0.9.220 to 0.9.223 updater transition, use a brand-new normal test VM with a unique name and destination. Run

@@ -10,6 +10,10 @@ Short purpose text sanitized into the canonical lifecycle identity.
 .PARAMETER CollisionSuffix
 Optional collision-safe suffix. Run and plan modes generate one when omitted;
 cleanup requires the exact suffix reported by the creating run.
+.PARAMETER OwnershipRoot
+Existing permitted durable root containing the source checkout for human lifecycle runs. Agent runs enforce active Codex configuration.
+.PARAMETER OwnershipTaskId
+Optional human run ownership identifier. Agent runs enforce their originating task identifier.
 .PARAMETER ApplianceVmxPath
 Path to the source appliance VMX used for the lifecycle VM.
 .PARAMETER ClientVmdkPath
@@ -94,6 +98,12 @@ param(
     [Parameter(ParameterSetName = 'Plan')]
     [Parameter(Mandatory = $true, ParameterSetName = 'CleanupVms')]
     [string]$CollisionSuffix = '',
+
+    [Parameter(ParameterSetName = 'Run')]
+    [string]$OwnershipRoot = '',
+
+    [Parameter(ParameterSetName = 'Run')]
+    [string]$OwnershipTaskId = '',
 
     [Parameter(ParameterSetName = 'Run')]
     [Parameter(ParameterSetName = 'Plan')]
@@ -482,6 +492,8 @@ if ($AllowDryRunApply) { $arguments += '-AllowDryRunApply' }
 if ($effectiveSkipBackupRestoreTest) { $arguments += '-SkipBackupRestoreTest' }
 if ($OidcOnly) { $arguments += '-OidcOnly' }
 if ($RoutingWanOnly) { $arguments += '-RoutingWanOnly' }
+if ($OwnershipRoot) { $arguments += @('-OwnershipRoot', $OwnershipRoot) }
+if ($OwnershipTaskId) { $arguments += @('-OwnershipTaskId', $OwnershipTaskId) }
 if ($FullEsxiPxeInstall) { $arguments += '-FullEsxiPxeInstall' }
 if ($PxeInstallerIsoPath) { $arguments += @('-PxeInstallerIsoPath', $PxeInstallerIsoPath) }
 if ($PlanOnly) { $arguments += '-PlanOnly' }
