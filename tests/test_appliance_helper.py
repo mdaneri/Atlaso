@@ -4525,6 +4525,12 @@ def test_factory_reset_network_runtime_cleanup_uses_live_owned_state(monkeypatch
     monkeypatch.setattr(helper, "ATLASO_FACTORY_RESET_REQUEST_PATH", request_path)
     monkeypatch.setattr(helper, "NETWORKD_CONFIG_DIR", networkd_directory)
     monkeypatch.setattr(helper, "NETWORK_APPLY_DIR", state_directory)
+    monkeypatch.setattr(helper, "ROUTE_DOMAIN_CONFIG_PATH", state_directory / "route-domains.json")
+    monkeypatch.setattr(helper, "ROUTE_DOMAIN_SERVICE_PATH", state_directory / "atlaso-route-domains.service")
+    live_ingress_guards = [helper._route_domain_rule_row({
+        "priority": helper.LAB_ROUTE_GUARD_PRIORITY, "iif": "eth1", "protocol": "2", "action": "7",
+    }, family) for family in (4, 6)]
+    monkeypatch.setattr(helper, "_snapshot_route_domain_rules", lambda: live_ingress_guards)
     monkeypatch.setattr(helper.shutil, "which", lambda command: f"/usr/sbin/{command}")
     monkeypatch.setattr(helper, "_run", fake_run)
 
@@ -4567,6 +4573,11 @@ def test_factory_reset_network_runtime_cleanup_uses_live_owned_state(monkeypatch
     assert not conflict_path.exists()
     assert helper._read_retained_network_conflicts() == []
     assert payload["removed_vlans"] == ["eth1.120"]
+    for family in (4, 6):
+        retire_guard = ["ip", f"-{family}", "rule", "del", "iif", "eth1", "unreachable",
+                        "priority", str(helper.LAB_ROUTE_GUARD_PRIORITY), "protocol", "2"]
+        assert retire_guard in commands
+        assert commands.index(retire_guard) < commands.index(["ip", "route", "flush", "table", "100"])
     assert ["ip", "route", "flush", "table", "100"] in commands
     assert ["ip", "route", "flush", "table", "200"] in commands
     assert ["ip", "-6", "route", "flush", "table", "100"] in commands

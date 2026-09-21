@@ -224,8 +224,10 @@ The **WAN Policies** wizard groups delay/capacity settings separately from packe
 policy to a Static Route identifies its target interface or VLAN; WAN Simulation v1 impairs all traffic on that target,
 not only traffic matching the route destination.
 
-The **Routing & WAN Settings** card controls Routing and WAN Simulation. Routing owns lab routes, routing permissions,
-and IPv4/IPv6 forwarding; WAN Simulation independently owns saved `tc/netem` assignments. Traffic Publishing owns
+The **Routing & WAN Settings** card controls Routing and WAN Simulation. Routing owns explicit lab static routes,
+forwarded lab ingress rules, routing permissions, and IPv4/IPv6 forwarding. Connected routes and exact local-source
+rules remain active in both routing domains while Routing is off, preserving appliance replies without enabling
+forwarding. WAN Simulation independently owns saved `tc/netem` assignments. Traffic Publishing owns
 NAT enablement and remains suspended while Routing is off. Fresh installs and factory reset start all switches off;
 disabling them preserves their saved rows. Saving does not change Photon. Submit the **Routing & WAN** (`wan`) and
 **Traffic Publishing** (`nat`) units through global Appliance Apply after reviewing their configuration.

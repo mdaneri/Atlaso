@@ -2885,7 +2885,9 @@ def test_vmware_raw_vmx_workflows_inject_complete_first_boot_ovf_environment_bef
     )
     assert "[string]$SecretBundlePath" in lifecycle
     assert "Import-Clixml -LiteralPath $SecretBundlePath" in lifecycle
-    assert "$ApplianceGuestPassword = $AdminPassword" in lifecycle
+    assert "$ApplianceGuestPassword = if ($ApplianceSshUser -ceq 'root') { $RootGuestPassword } else { $AdminPassword }" in lifecycle
+    assert "-RootPassword $rootPasswordSecure" in lifecycle
+    assert "[SecureString]$RootPassword" in lifecycle_wrapper
     assert "'--secret-stdin'" in lifecycle
     assert "'--password', $AdminPassword" not in lifecycle
     assert "'--appliance-ssh-password', $ApplianceGuestPassword" not in lifecycle
