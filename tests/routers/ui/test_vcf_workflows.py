@@ -1,5 +1,7 @@
 """Test VCF workflow management UI transports."""
 
+import pytest
+
 from tests.routers.ui.helpers import login
 
 
@@ -180,3 +182,35 @@ def test_vcf_trust_rejects_mismatched_confirmed_tls_fingerprint(client, monkeypa
 
     assert response.status_code == 409
     assert response.json()["fingerprint"] == "AA:BB"
+
+
+@pytest.mark.parametrize("stage", ["dns", "tcp", "tls"])
+def test_vcf_trust_reports_connection_failure_stage(client, monkeypatch, stage):
+    """Connection errors identify the failing stage before credentials are sent."""
+    import socket
+    import ssl
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.services.ca import ensure_root_ca_material
+    from atlaso.app.ui import get_ca_settings_row
+
+    login(client)
+    with SessionLocal() as db:
+        settings = get_ca_settings_row(db)
+        settings.enabled = True
+        ensure_root_ca_material(settings)
+        db.commit()
+    def fail(_address, _port):
+        """Inject an isolated pre-authentication connection failure."""
+        raise {"dns": socket.gaierror("name unavailable"), "tcp": ConnectionRefusedError("refused"),
+               "tls": ssl.SSLError("handshake failed")}[stage]
+    monkeypatch.setattr("atlaso.app.routers.ui.vcf_workflows.tls_sha256_fingerprint", fail)
+    csrf = client.get("/vcf-helper").text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    response = client.post("/vcf-trust/root-ca", data={"address": "target.example.test",
+                           "api_username": "admin", "api_password": "test-only", "csrf": csrf},
+                           headers={"X-Atlaso-VCF-Trust": "1"})
+    assert response.status_code == 422
+    assert any(
+        {"dns": "Unable to resolve", "tcp": "Unable to connect", "tls": "TLS handshake"}[stage] in error
+        for error in response.json()["errors"]
+    )

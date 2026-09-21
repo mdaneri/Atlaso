@@ -7,6 +7,10 @@
 Atlaso is an all-in-one infrastructure appliance for virtualization proof-of-concept, lab, and test environments. It
 brings infrastructure, storage, identity, networking, and lifecycle workflows into one operator-focused control plane.
 
+DNS listeners serve managed zones and configured upstream forwarding together. Appliance Apply coordinates host
+resolution with DNS activation; DHCP scopes may advertise routed DNS/NTP service endpoints. See the
+[DNS](docs/services/dns.md) and [DHCP](docs/services/dhcp.md) guides.
+
 ## What Atlaso brings together
 
 - **Infrastructure** — deploy and operate a Photon OS appliance across supported virtualization platforms.

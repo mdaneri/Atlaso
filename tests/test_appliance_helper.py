@@ -2176,7 +2176,7 @@ def test_management_handoff_updates_same_interface_resolver_holdover(
     if resolver_servers:
         assert f"DNS={resolver_servers[0]}" in holdover_text
     else:
-        assert "DNS=" not in holdover_text
+        assert not any(line.startswith("DNS=") for line in holdover_text.splitlines())
     assert "DNS=198.51.100.53" in candidate_path.read_text(encoding="utf-8")
     assert commands == expected_commands
 
@@ -10577,7 +10577,7 @@ def test_dnsmasq_helper_apply_installs_config_dropin_and_enables_service(monkeyp
     assert ["/usr/sbin/dnsmasq", "--test", f"--conf-file={config_path}"] in commands
     assert ["systemctl", "daemon-reload"] in commands
     assert ["systemctl", "enable", "dnsmasq"] in commands
-    assert ["systemctl", "reload-or-restart", "dnsmasq"] in commands
+    assert ["systemctl", "restart", "dnsmasq"] in commands
     assert ["resolvectl", "dns", "eth0", "127.0.0.1"] not in commands
     assert ["resolvectl", "domain", "eth0", "~."] not in commands
     assert "DNS=1.1.1.1" in mgmt_network.read_text(encoding="utf-8")
@@ -10628,7 +10628,7 @@ def test_dnsmasq_helper_apply_creates_allowlisted_tftp_root(monkeypatch, tmp_pat
 
     assert tftp_root.is_dir()
     assert chowned == [tftp_root]
-    assert ["systemctl", "reload-or-restart", "dnsmasq"] in commands
+    assert ["systemctl", "restart", "dnsmasq"] in commands
 
 
 def test_dnsmasq_helper_apply_rejects_unexpected_tftp_root(monkeypatch, tmp_path, capsys):
@@ -10667,7 +10667,7 @@ def test_dnsmasq_helper_apply_rejects_unexpected_tftp_root(monkeypatch, tmp_path
     captured = capsys.readouterr()
     assert f"dnsmasq TFTP root must be {allowed_root}" in captured.err
     assert not unexpected_root.exists()
-    assert ["systemctl", "reload-or-restart", "dnsmasq"] not in commands
+    assert ["systemctl", "restart", "dnsmasq"] not in commands
 
 
 def test_dnsmasq_helper_reload_restarts_service(monkeypatch):
@@ -10694,7 +10694,7 @@ def test_dnsmasq_helper_reload_restarts_service(monkeypatch):
 
     assert commands == [
         ["systemctl", "daemon-reload"],
-        ["systemctl", "reload-or-restart", "dnsmasq"],
+        ["systemctl", "restart", "dnsmasq"],
     ]
 
 
@@ -14202,6 +14202,32 @@ def test_management_front_door_reports_post_commit_cleanup_without_rollback(
     assert helper._configure_atlaso_management_https(payload) == (0, None)
 
     assert "candidate committed; deferred cleanup: backup cleanup" in capsys.readouterr().err
+
+
+def test_resolver_persistence_excludes_dynamic_upstreams_and_restores_dhcp():
+    """Lease renewal and reboot must not mix public DNS into the local resolver."""
+    helper = load_helper_module()
+    original = "[Match]\nName=eth0\n[Network]\nDHCP=ipv4\nDNS=1.1.1.1\n[DHCPv4]\nUseDNS=yes\nSendRelease=no\n"
+    local = helper._management_resolver_candidate(original, ["127.0.0.1"], ["~."])
+    assert "DNS=127.0.0.1" in local and "Domains=~." in local
+    assert "UseDNS=yes" not in local and "DNS=1.1.1.1" not in local
+    assert "SendRelease=no" in local
+    assert helper._management_resolver_candidate(local, ["127.0.0.1"], ["~."]) == local
+    restored = helper._management_resolver_candidate(local, [], [])
+    assert "DNS=127.0.0.1" not in restored and "Domains=~." not in restored
+    assert "UseDNS=no" not in restored and "UseDNS=yes" in restored
+
+
+def test_resolver_persistence_does_not_add_dynamic_sections_to_static_network():
+    """Static management networks must not gain irrelevant DHCP or RA sections."""
+    helper = load_helper_module()
+    original = "[Match]\nName=eth0\n[Network]\nAddress=192.0.2.10/24\nGateway=192.0.2.1\n"
+    candidate = helper._management_resolver_candidate(original, ["127.0.0.1"], ["~."])
+    assert "DNS=127.0.0.1" in candidate
+    assert "Domains=~." in candidate
+    assert "UseDNS=" not in candidate
+    assert "[DHCP" not in candidate
+    assert "[IPv6AcceptRA]" not in candidate
 
 
 def test_appliance_settings_helper_applies_local_resolver_without_timesyncd(monkeypatch, tmp_path):

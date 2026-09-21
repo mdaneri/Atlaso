@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+import socket
 import ssl
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
@@ -615,10 +616,20 @@ def build_router(dependencies: VcfWorkflowsUiDependencies) -> VcfWorkflowsUiRout
         """
         try:
             fingerprint = tls_sha256_fingerprint(address, port)
-        except (OSError, ssl.SSLError) as exc:
+        except socket.gaierror as exc:
             raise HTTPException(
                 status_code=422,
-                detail=f"Could not read the target TLS certificate: {exc}",
+                detail=f"Unable to resolve {address}. Check Atlaso DNS and host resolver configuration.",
+            ) from exc
+        except ssl.SSLError as exc:
+            raise HTTPException(
+                status_code=422,
+                detail=f"TLS handshake or certificate retrieval failed for {address}:{port}: {exc}",
+            ) from exc
+        except OSError as exc:
+            raise HTTPException(
+                status_code=422,
+                detail=f"Unable to connect to {address}:{port}. Check target availability and network connectivity: {exc}",
             ) from exc
         if confirmed.strip().upper() != fingerprint.upper():
             return fingerprint, JSONResponse(

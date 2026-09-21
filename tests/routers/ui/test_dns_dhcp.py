@@ -1158,8 +1158,8 @@ def test_dhcp_scope_edit_form_updates_ip_zone(client):
             "range_expression": "192.168.50.110-210",
             "lease_time": "8h",
             "domain_name": "atlaso.internal",
-            "dns_server": "192.168.50.1",
-            "ntp_server": "192.168.50.1",
+            "dns_server": "192.168.1.250",
+            "ntp_server": "192.168.1.250",
             "description": "edited IP zone",
             "enabled": "on",
             "csrf": csrf,
@@ -1172,7 +1172,8 @@ def test_dhcp_scope_edit_form_updates_ip_zone(client):
     assert "SiteA-Lab" in refreshed.text
     assert "192.168.50.110" in refreshed.text
     assert "edited IP zone" in refreshed.text
-    assert '"ntp_server": "192.168.50.1"' in refreshed.text
+    assert '"dns_server": "192.168.1.250"' in refreshed.text
+    assert '"ntp_server": "192.168.1.250"' in refreshed.text
 
 
 def test_dhcp_vlan_scope_can_be_created_without_dns_server(client):

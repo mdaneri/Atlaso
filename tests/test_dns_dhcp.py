@@ -171,7 +171,8 @@ def test_dnsmasq_renderer_emits_shared_authoritative_zones_and_generated_glue():
     assert "auth-zone=atlaso.internal" in config
     assert "auth-zone=sitea.internal" in config
     assert "local=/atlaso.internal/" not in config
-    assert "auth-server=ns1.atlaso.internal,eth1,eth2" in config
+    assert "auth-server=ns1.atlaso.internal" in config.splitlines()
+    assert "bind-dynamic" in config.splitlines()
     assert "auth-soa=2026072201,hostmaster.atlaso.internal,1200,180,1209600" in config
     assert "auth-ttl=3600" in config
     assert "host-record=ns1.atlaso.internal,192.168.50.1" in config
@@ -947,7 +948,7 @@ def test_dns_dhcp_validation_reports_bad_addresses():
     assert any("conditional forwarder sddc.internal server" in error for error in errors)
     assert any("conditional forwarder bad server port" in error for error in errors)
     assert any("range 192.168.51.10-192.168.50.20 must stay inside" in error for error in errors)
-    assert any("DNS server" in error for error in errors)
+    assert not any("DNS server" in error for error in errors)
 
 
 def test_dns_listen_target_validation_rejects_trunks_and_unknown_targets():

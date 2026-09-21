@@ -53,7 +53,7 @@ remain normal dnsmasq PTR behavior rather than authoritative reverse zones.
 
 The authoritative renderer emits:
 
-- `auth-server` for the configured primary nameserver and every selected DNS interface;
+- `auth-server` for the configured primary nameserver, without an authoritative-only interface;
 - one `auth-zone` per managed forward domain;
 - shared `auth-soa` and `auth-ttl` values;
 - A/AAAA `host-record` glue mapping the primary nameserver to every selected DNS listen address.
@@ -62,11 +62,25 @@ The primary nameserver must belong to a managed domain. Its glue identity is gen
 CNAME or A/AAAA data. SOA expiry must be greater than refresh and retry, and all timer values must be positive 32-bit
 seconds.
 
-dnsmasq treats interfaces named by `auth-server` as authoritative-only destinations. Those selected DNS listeners return
-complete authoritative SOA, NS, glue, positive-record, and negative-SOA responses, but intentionally return `REFUSED`
-for unrelated recursive queries and non-authoritative reverse zones. The same dnsmasq process retains ordinary local/PTR
-and upstream-recursive service on listeners not named by `auth-server`, including appliance loopback. This service-level
-boundary is why v1 cannot provide authority and recursion on the same address and port.
+Selected DNS listeners answer managed-zone records (including SOA and NS), ordinary PTR queries, and external queries
+through the configured upstreams. Listener selections and firewall policy continue to limit client access; Atlaso does
+not bind an unrestricted public resolver. The renderer uses `bind-dynamic` so selected interfaces and addresses can
+appear after dnsmasq starts, including VLANs created during Network Apply.
+
+### Appliance host resolution
+
+Applying enabled DNS also selects Appliance Settings. The task starts dnsmasq before directing the host's
+systemd-resolved resolver to `127.0.0.1` with the catch-all routing domain `~.`. DNS startup failure skips the resolver
+change. Disabling DNS moves the host back to configured external or management DHCP DNS before stopping local DNS.
+The managed networkd file persists the selection across reboot and excludes DHCP/RA DNS while explicit DNS is active.
+The systemd-resolved stub in `/etc/resolv.conf` remains in use; dnsmasq uses explicit upstreams with `no-resolv` to avoid
+resolver loops. Apply restarts dnsmasq because a SIGHUP reload does not reread its configuration.
+
+After Apply and again after reboot, compare `dig @127.0.0.1 host.atlaso.internal`,
+`resolvectl query host.atlaso.internal`, `getent hosts host.atlaso.internal`, and a Python `socket.getaddrinfo()` lookup.
+From an allowed LAN client, query local records, SOA/NS, and an external name over UDP and TCP. If DNS activation fails,
+inspect the DNS task error and correct listener/upstream configuration before retrying global Apply. To restore external
+host resolution, disable DNS and submit the resulting DNS/DHCP and Appliance Settings changes.
 
 ## Generated zone records and serial
 

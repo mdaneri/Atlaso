@@ -1412,10 +1412,14 @@ def validate_dhcp_scope(scope: DhcpScope) -> tuple[list[str], object | None]:
         errors.append(f"{label} IPv4 prefix length must be between 1 and 32.")
     if family == "ipv6" and not 1 <= int(scope.prefix_length or 0) <= 128:
         errors.append(f"{label} IPv6 prefix length must be between 1 and 128.")
-    if network and dns_server and dns_server not in network:
-        errors.append(f"{label} DNS server {dns_server} is outside {network.with_prefixlen}. Bind DNS to {scope.interface_name} or leave the DNS server blank for this zone.")
-    if network and ntp_server and ntp_server not in network:
-        errors.append(f"{label} NTP server {ntp_server} is outside {network.with_prefixlen}. Bind NTPsec to {scope.interface_name} or leave the NTP server blank for this zone.")
+    # Service endpoints may be routed; only the gateway and lease range are on-link.
+    for service, address in (("DNS", dns_server), ("NTP", ntp_server)):
+        if address and (
+            address.is_loopback or address.is_unspecified or address.is_multicast
+            or address.is_link_local or address.is_reserved
+            or (network and address.version == 4 and address in (network.network_address, network.broadcast_address))
+        ):
+            errors.append(f"{label} {service} server must be a usable unicast IPv{required_version} address.")
     return errors, network
 
 
@@ -1462,7 +1466,7 @@ def render_dnsmasq_config(
         "domain-needed",
         "bogus-priv",
         "no-resolv",
-        "bind-interfaces",
+        "bind-dynamic",
         f"dhcp-leasefile={DNSMASQ_LEASE_FILE_PATH}",
         f"cache-size={dns_settings.cache_size if dns_settings.cache_size is not None else 1000}",
     ]
@@ -1485,9 +1489,9 @@ def render_dnsmasq_config(
             lines.append(f"local=/{domain}/")
     if dns_settings.authoritative:
         server = authoritative_server_name(dns_settings)
-        authoritative_interfaces = split_interfaces(dns_settings.listen_interface)
-        auth_server = ",".join([server, *authoritative_interfaces])
-        lines.append(f"auth-server={auth_server}")
+        # The ordinary listeners serve both local zones and upstream recursion.
+        # An interface-qualified auth-server makes that interface authoritative-only.
+        lines.append(f"auth-server={server}")
         lines.append(
             "auth-soa="
             f"{dns_settings.authoritative_serial},{authoritative_contact_name(dns_settings)},"

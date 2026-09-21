@@ -3566,14 +3566,26 @@ def skip_name(data, offset):
             return offset
         offset += length
 
-def query(name, qtype, target=server):
+def query(name, qtype, target=server, tcp=False):
     query_id = random.randrange(0, 65536)
     qname = b"".join(bytes([len(part)]) + part.encode("ascii") for part in name.rstrip(".").split(".")) + b"\\0"
     packet = struct.pack("!HHHHHH", query_id, 0x0100, 1, 0, 0, 0) + qname + struct.pack("!HH", qtype, 1)
-    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    sock.settimeout(5)
-    sock.sendto(packet, (target, 53))
-    data, _ = sock.recvfrom(4096)
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM if tcp else socket.SOCK_DGRAM) as sock:
+        sock.settimeout(5)
+        if tcp:
+            sock.connect((target, 53))
+            sock.sendall(struct.pack("!H", len(packet)) + packet)
+            def read_exact(size):
+                data = b""
+                while len(data) < size:
+                    part = sock.recv(size - len(data))
+                    assert part, "DNS TCP connection closed early"
+                    data += part
+                return data
+            data = read_exact(struct.unpack("!H", read_exact(2))[0])
+        else:
+            sock.sendto(packet, (target, 53))
+            data, _ = sock.recvfrom(4096)
     response_id, flags, qd, an, ns, ar = struct.unpack("!HHHHHH", data[:12])
     assert response_id == query_id
     offset = 12
@@ -3597,12 +3609,15 @@ expected = [
     ("ns1." + domain, 1, 0, 1, True),
     ("interop-appliance." + domain, 1, 0, 1, True),
 ]
-for name, qtype, expected_rcode, expected_type, authoritative in expected:
-    flags, sections = query(name, qtype)
-    assert flags & 0x000F == expected_rcode, (name, flags, sections)
-    assert expected_type in sections[0], (name, flags, sections)
-    if authoritative:
-        assert flags & 0x0400, (name, flags, sections)
+for tcp in (False, True):
+    for name, qtype, expected_rcode, expected_type, authoritative in expected:
+        flags, sections = query(name, qtype, tcp=tcp)
+        assert flags & 0x000F == expected_rcode, (name, flags, sections)
+        assert expected_type in sections[0], (name, flags, sections)
+        if authoritative:
+            assert flags & 0x0400, (name, flags, sections)
+    flags, sections = query("example.com", 1, tcp=tcp)
+    assert flags & 0x000F == 0 and sections[0], (flags, sections)
 
 flags, sections = query("missing-authoritative." + domain, 1)
 assert flags & 0x000F == 3, (flags, sections)
@@ -3640,14 +3655,26 @@ def skip_name(data, offset):
             return offset
         offset += length
 
-def query(name, qtype):
+def query(name, qtype, tcp=False):
     query_id = random.randrange(0, 65536)
     qname = b"".join(bytes([len(part)]) + part.encode("ascii") for part in name.rstrip(".").split(".")) + b"\\0"
     packet = struct.pack("!HHHHHH", query_id, 0x0100, 1, 0, 0, 0) + qname + struct.pack("!HH", qtype, 1)
-    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    sock.settimeout(5)
-    sock.sendto(packet, (server, 53))
-    data, _ = sock.recvfrom(4096)
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM if tcp else socket.SOCK_DGRAM) as sock:
+        sock.settimeout(5)
+        if tcp:
+            sock.connect((server, 53))
+            sock.sendall(struct.pack("!H", len(packet)) + packet)
+            def read_exact(size):
+                data = b""
+                while len(data) < size:
+                    part = sock.recv(size - len(data))
+                    assert part, "DNS TCP connection closed early"
+                    data += part
+                return data
+            data = read_exact(struct.unpack("!H", read_exact(2))[0])
+        else:
+            sock.sendto(packet, (server, 53))
+            data, _ = sock.recvfrom(4096)
     response_id, flags, qd, an, ns, ar = struct.unpack("!HHHHHH", data[:12])
     assert response_id == query_id
     offset = 12

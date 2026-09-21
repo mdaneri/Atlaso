@@ -2564,12 +2564,13 @@ def ensure_dns_for_appliance_settings(
     return "+".join(actions) if actions else None
 
 
-def appliance_settings_context(db: Session, *, reconcile_dns: bool = True) -> dict[str, Any]:
+def appliance_settings_context(db: Session, *, reconcile_dns: bool = True, applying_dns: bool = False) -> dict[str, Any]:
     """Return appliance settings context.
 
     Args:
         db: Active database session.
         reconcile_dns: Reconcile dns supplied by the caller.
+        applying_dns: DNS activation is ordered before these resolver settings in the same Apply.
     """
     settings = get_appliance_settings_row(db)
     dns_settings = get_dns_settings_row(db)
@@ -2579,7 +2580,7 @@ def appliance_settings_context(db: Session, *, reconcile_dns: bool = True) -> di
         db.refresh(dns_settings)
     local_dns_enabled = bool(
         dns_settings.enabled
-        and applied_local_dns_enabled(load_appliance_apply_baselines(db).get("dnsmasq"))
+        and (applying_dns or applied_local_dns_enabled(load_appliance_apply_baselines(db).get("dnsmasq")))
     )
     interfaces = db.execute(select(PhysicalInterface).order_by(PhysicalInterface.name)).scalars().all()
     vlans = db.execute(select(VlanInterface).order_by(VlanInterface.parent_interface, VlanInterface.vlan_id)).scalars().all()
@@ -11109,18 +11110,19 @@ def esx_storage_context(db: Session, *, reconcile: bool = True, include_disk_inv
     }
 
 
-def appliance_apply_units(db: Session, *, reconcile: bool = True) -> list[dict[str, Any]]:
+def appliance_apply_units(db: Session, *, reconcile: bool = True, applying_dns: bool = False) -> list[dict[str, Any]]:
     """Return appliance apply units.
 
     Args:
         db: Active database session.
         reconcile: Whether dependent desired state should be reconciled.
+        applying_dns: Include the resolver intent that follows selected DNS activation.
     """
     from atlaso.app.services.network_boot import load_esxi_applied_runtime
 
     baselines = load_appliance_apply_baselines(db)
     local_users = local_users_apply_context(db, baselines.get("local_users"))
-    appliance_settings = appliance_settings_context(db, reconcile_dns=reconcile)
+    appliance_settings = appliance_settings_context(db, reconcile_dns=reconcile, applying_dns=applying_dns)
     network = network_context(db)
     wan = routes_wan_context(db)
     nat = traffic_publishing_context(db)
@@ -15859,7 +15861,7 @@ def run_appliance_apply_job(job_id: str, *, force_real: bool = False) -> None:
             }
             invalidate_observed_management_dhcp_dns()
             invalidate_appliance_apply_status_projection()
-            current_units = appliance_apply_units(db)
+            current_units = appliance_apply_units(db, applying_dns=True) if job_result.get("dns_resolver_activation") else appliance_apply_units(db)
             current_by_id = {unit["id"]: unit for unit in current_units}
             missing_ids = [unit_id for unit_id in selected_order if unit_id not in current_by_id]
             if missing_ids:
@@ -16281,7 +16283,7 @@ def run_appliance_apply_job(job_id: str, *, force_real: bool = False) -> None:
                     db.expire_all()
                     refreshed_units = appliance_apply_units(db, reconcile=False)
                     applied_unit = next((candidate for candidate in refreshed_units if candidate["id"] == unit["id"]), unit)
-                    if unit["id"] == "network":
+                    if unit["id"] in {"network", "dnsmasq", "appliance_settings"}:
                         # Commit exactly the executed intent, including when desired
                         # state changed while native address readiness was running.
                         applied_unit = unit
@@ -16749,6 +16751,11 @@ def _submit_appliance_apply(
     if ca_required_for_nts:
         selected_ids.add("ca")
     dns_settings_for_apply = unit_map.get("dnsmasq", {}).get("context", {}).get("dns_settings")
+    dns_resolver_activation = bool("dnsmasq" in selected_ids and getattr(dns_settings_for_apply, "enabled", False))
+    if dns_resolver_activation:
+        selected_ids.add("appliance_settings")
+        units = appliance_apply_units(db, applying_dns=True)
+        unit_map = {unit["id"]: unit for unit in units}
     local_dns_disable_requires_resolver = bool(
         "dnsmasq" in selected_ids
         and not getattr(dns_settings_for_apply, "enabled", False)
@@ -16907,6 +16914,12 @@ def _submit_appliance_apply(
         publication_index = next(index for index, unit in enumerate(selected_ordered_units)
                                  if unit["id"] in grouped)
         selected_ordered_units[publication_index:publication_index] = releases
+    if dns_resolver_activation:
+        # Dynamic binding permits future VLAN addresses. DNS must start successfully
+        # before the resolver switches, including before a management handoff group.
+        selected_ordered_units = [unit_map["dnsmasq"], *[
+            unit for unit in selected_ordered_units if unit["id"] != "dnsmasq"
+        ]]
     skipped_changed_units = [
         {"unit_id": unit["id"], "label": unit["label"], "summary": unit["summary"]}
         for unit in units
@@ -16936,6 +16949,7 @@ def _submit_appliance_apply(
 
     job_result = {
         "selected_units": [unit["id"] for unit in selected_ordered_units],
+        "dns_resolver_activation": dns_resolver_activation,
         "skipped_changed_units": skipped_changed_units,
         "captured_units": [
             {

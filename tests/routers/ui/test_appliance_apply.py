@@ -566,6 +566,33 @@ def test_appliance_settings_uses_last_applied_dns_state_for_resolver(client):
     assert disabling_preview["resolver_servers"] != ["127.0.0.1"]
 
 
+def test_local_dns_enable_applies_listener_before_host_resolver(client):
+    """DNS-only Apply includes the resolver after successful listener activation."""
+    from atlaso.app import ui
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import DnsSettings, Job
+
+    login(client)
+    with SessionLocal() as db:
+        dns = db.query(DnsSettings).one()
+        dns.enabled = False
+        db.commit()
+        units = ui.appliance_apply_units(db)
+        ui.update_appliance_apply_baselines(db, units, {unit["id"] for unit in units})
+        dns.enabled = True
+        db.commit()
+    csrf = client.get("/dashboard").text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    response = client.post("/appliance-apply", data={"csrf": csrf, "selected_units": "dnsmasq"},
+                           headers={"Accept": "application/json"})
+    assert response.status_code == 202
+    with SessionLocal() as db:
+        job = db.get(Job, response.json()["job_id"])
+        payload = json.loads(job.result)
+        assert payload["selected_units"] == ["dnsmasq", "appliance_settings"]
+        settings = next(unit for unit in payload["captured_units"] if unit["unit_id"] == "appliance_settings")
+        assert json.loads(settings["config_preview"])["resolver_servers"] == ["127.0.0.1"]
+
+
 def test_local_dns_disable_forces_resolver_move_before_dns_stop(client):
     """Move the resolver before an applied local DNS listener is disabled.
 

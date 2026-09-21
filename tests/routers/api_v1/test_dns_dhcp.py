@@ -364,12 +364,14 @@ def test_dhcp_api_scope_and_reservations(client):
             "range_expression": "192.168.60.100-192.168.60.200",
             "lease_time": "8h",
             "domain_name": "siteb.internal",
-            "dns_server": "192.168.60.1",
-            "ntp_server": "192.168.60.1",
+            "dns_server": "192.168.1.250",
+            "ntp_server": "192.168.1.250",
             "enabled": True,
         },
     )
     assert created_scope.status_code == 201, created_scope.text
+    assert created_scope.json()["dns_server"] == "192.168.1.250"
+    assert created_scope.json()["ntp_server"] == "192.168.1.250"
     created_option = client.post(
         "/api/v1/dhcp/options",
         headers={"Authorization": f"Bearer {dhcp_token}"},

@@ -464,3 +464,6 @@ These captures show responsive layouts and useful operational states referenced 
 *Figure: VCF Helper in the verified clean-appliance responsive state.*
 
 <!-- END GENERATED ADDITIONAL SCREENSHOTS -->
+
+Connection failures distinguish hostname resolution, TCP connectivity, and TLS handshake/certificate retrieval.
+For an unresolved Atlaso-managed name, verify local DNS and host resolver configuration before retrying TLS confirmation.

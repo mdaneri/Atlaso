@@ -1240,8 +1240,8 @@ preserved with their affected subsystem below. Keep new requirements at their to
   exemptions, and query logging uses `log-queries=extra` only as a temporary troubleshooting setting because query names
   may be sensitive. Operator DNS records support A, AAAA, CNAME, TXT, SRV, MX, CAA, and explicit PTR, while A/AAAA still
   generate PTR answers through dnsmasq `host-record`. Authoritative mode renders every managed forward zone through one
-  interface-bound `auth-server` plus shared SOA policy and generated NS/glue; dnsmasq treats those selected listeners as
-  authoritative-only, while loopback and other non-authoritative listeners retain PTR and upstream-recursive behavior.
+  unqualified `auth-server` plus shared SOA policy and generated NS/glue; selected listeners retain local authority,
+  PTR and upstream-recursive behavior within the existing listener and firewall boundaries.
   When Appliance Settings resolver mode is DHCP and DNS upstreams are empty, use the management interface's observed
   DHCP DNS servers as dnsmasq forwarder fallback. If local DNS makes resolvectl loopback-only, resolve the exact
   management interface ifindex and read only its systemd-networkd lease through the constrained helper; filter loopback,
