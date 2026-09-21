@@ -78,6 +78,8 @@ bound, **not a 20 GiB whole-build budget**. On one volume, the following build a
 verified source-copy length, or 118 GiB plus that length when the existing ISO passes the builder's pinned SHA-512
 check. Zero filling can expand thin disks substantially; thin provisioning is not proof that a complete build fits
 in 20 GiB. The compaction and guest-growth allowances remain conservative estimates, not measured guarantees.
+Cache admission checks every `*.iso` in the shared `image/common/source` directory, regardless of filename.
+Checkout-local Packer caches are not reused by the release builder's fresh isolated child and receive no credit.
 
 A verified retained template omits new builder allocations; a verified candidate
 omits build, export, conversion, and smoke allocations. Retained source, template provenance, powered-off state, and

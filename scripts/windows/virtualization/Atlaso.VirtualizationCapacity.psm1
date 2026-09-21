@@ -18,22 +18,25 @@ function Test-AtlasoVirtualizationIsoCache {
     $ast = [Management.Automation.Language.Parser]::ParseFile($builder, [ref]$null, [ref]$parseErrors)
     if ($parseErrors.Count -gt 0) { throw 'Cannot read the canonical builder ISO defaults.' }
     $defaults = @{}
-    foreach ($name in @('IsoUrl', 'IsoChecksum')) {
+    foreach ($name in @('IsoChecksum')) {
         $parameter = @($ast.ParamBlock.Parameters | Where-Object { $_.Name.VariablePath.UserPath -eq $name })
         if ($parameter.Count -ne 1 -or $null -eq $parameter[0].DefaultValue) { throw 'Canonical ISO defaults are ambiguous.' }
         $defaults[$name] = [string]$parameter[0].DefaultValue.SafeGetValue()
     }
     if ($defaults.IsoChecksum -notmatch '^sha512:([a-fA-F0-9]{128})$') { throw 'Canonical ISO checksum is unsupported.' }
     $expected = $Matches[1]
-    $name = [IO.Path]::GetFileName(([uri]$defaults.IsoUrl).AbsolutePath)
-    if (-not $name) { throw 'Canonical ISO URL has no filename.' }
-    $path = Join-Path (Join-Path $RepoRoot 'image/common/source') $name
-    if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { return $false }
-    # Resolve the parent using the same no-reparse, per-volume boundary as admission.
-    $null = Get-AtlasoStorageVolume -Path (Split-Path -Parent $path)
-    $item = Get-Item -LiteralPath $path -Force
-    if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { return $false }
-    return (Get-FileHash -LiteralPath $path -Algorithm SHA512).Hash -ieq $expected
+    $directory = Join-Path $RepoRoot 'image/common/source'
+    if (-not (Test-Path -LiteralPath $directory -PathType Container)) { return $false }
+    $null = Get-AtlasoStorageVolume -Path $directory
+    # Resolve-AtlasoPhotonSourceIso accepts any checksum-valid *.iso filename.
+    # The release wrapper forwards this shared cache, but creates a fresh private
+    # packer-work directory: checkout-local build/source and packer_cache are not
+    # visible to that child and must not receive speculative reuse credit.
+    foreach ($item in Get-ChildItem -LiteralPath $directory -Filter '*.iso' -File) {
+        if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { continue }
+        if ((Get-FileHash -LiteralPath $item.FullName -Algorithm SHA512).Hash -ieq $expected) { return $true }
+    }
+    return $false
 }
 
 <#
