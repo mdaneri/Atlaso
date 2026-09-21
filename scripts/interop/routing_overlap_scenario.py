@@ -1,0 +1,474 @@
+"""Exercise native DHCP/SLAAC isolation through an admitted private fixture."""
+
+from __future__ import annotations
+
+import base64
+import ipaddress
+import json
+import re
+import time
+import urllib.parse
+from collections.abc import Callable
+from typing import Any
+
+import paramiko
+
+from scripts.interop.lifecycle_test import extract_csrf
+from scripts.interop.routing_overlap import (
+    AdmittedTopology,
+    OverlapPrerequisiteError,
+    verify_expired_sources,
+    verify_route_selection,
+    verify_source_rules,
+)
+from scripts.interop.routing_overlap_transport import FixtureHttpClient
+
+FIELDS = (
+    "role", "mode", "ipv4_method", "ip_cidr", "gateway", "ipv6_enabled",
+    "ipv6_cidr", "ipv6_gateway", "mtu", "admin_state",
+    "check_duplicate_ip_addresses", "access_management_ui_enabled",
+)
+
+
+class ApplyOutcomeUnknown(OverlapPrerequisiteError):
+    """Preserve an uncertain Apply identity and prohibit competing restoration."""
+
+# Fixed, read-only guest program. No files, services, route edits, or credentials.
+SNAPSHOT_PROGRAM = '''
+import json, subprocess, time, ipaddress
+def command(args):
+    p = subprocess.run(args, capture_output=True, text=True, timeout=10)
+    if p.returncode:
+        raise RuntimeError("native observation failed")
+    return json.loads(p.stdout)
+def snapshot():
+    links = command(["ip", "-j", "address", "show"])
+    rules = {str(f): command(["ip", "-j", "-N", "-details", "-"+str(f), "rule", "show"])
+             for f in (4,6)}
+    routes = {str(f): command(["ip", "-j", "-N", "-"+str(f), "route", "show", "table", "100"])
+              for f in (4,6)}
+    return {"links": links, "rules": rules, "management_routes": routes}
+'''
+
+
+def _command(program: str) -> str:
+    """Encode a fixed guest program without shell interpolation.
+
+    Args:
+        program: Python source containing only admitted public observations.
+    """
+    encoded = base64.b64encode(program.encode()).decode()
+    return f"python3 -c 'import base64;exec(base64.b64decode(\"{encoded}\"))'"
+
+
+def _observe(connect: Callable[[], paramiko.SSHClient], program: str) -> dict[str, Any]:
+    """Read bounded native evidence and close the dedicated pinned SSH session.
+
+    Args:
+        connect: Factory for a fresh admitted root SSH session.
+        program: Fixed read-only guest program.
+    """
+    ssh = connect()
+    try:
+        _stdin, stdout, _stderr = ssh.exec_command(_command(program), timeout=45)
+        raw = stdout.read(262145)
+        if len(raw) > 262144 or stdout.channel.recv_exit_status() != 0:
+            raise OverlapPrerequisiteError("native observation failed or exceeded its bound")
+        value = json.loads(raw)
+        if not isinstance(value, dict):
+            raise OverlapPrerequisiteError("native observation is not an object")
+        return value
+    finally:
+        ssh.close()
+
+
+def _snapshot(connect: Callable[[], paramiko.SSHClient]) -> dict[str, Any]:
+    """Capture both complete native rule families and interface addresses.
+
+    Args:
+        connect: Factory for a fresh pinned SSH session.
+    """
+    return _observe(connect, SNAPSHOT_PROGRAM + "\nprint(json.dumps(snapshot()))\n")
+
+
+def _addresses(snapshot: dict[str, Any], interface: str) -> list[dict[str, Any]]:
+    """Select exactly one admitted native interface observation.
+
+    Args:
+        snapshot: Complete native observation.
+        interface: Independently admitted NIC name.
+    """
+    matches = [row for row in snapshot["links"] if row.get("ifname") == interface]
+    if len(matches) != 1:
+        raise OverlapPrerequisiteError("native interface identity is ambiguous")
+    return list(matches[0].get("addr_info", []))
+
+
+def _rules(snapshot: dict[str, Any]) -> dict[int, list[dict[str, Any]]]:
+    """Normalize JSON family keys without changing rule evidence.
+
+    Args:
+        snapshot: Complete native observation.
+    """
+    return {int(key): value for key, value in snapshot["rules"].items()}
+
+
+def _prove(snapshot: dict[str, Any], topology: AdmittedTopology) -> dict[str, int]:
+    """Require acquired DHCP/SLAAC sources and their exact isolation rules.
+
+    Args:
+        snapshot: Complete native observation.
+        topology: Independently admitted isolated fixture.
+    """
+    management = topology.link("appliance", 0).interface
+    lab = topology.link("appliance", 1).interface
+    dynamic = _addresses(snapshot, management)
+    dhcp = [row for row in dynamic if row.get("local") == "192.0.2.10"
+            and row.get("dynamic") is True and isinstance(row.get("valid_life_time"), int)
+            and 0 < row["valid_life_time"] <= 180]
+    slaac = [row for row in dynamic if row.get("family") == "inet6"
+             and ipaddress.ip_address(row["local"]) in ipaddress.ip_network("fd74:1::/64")
+             and row.get("dynamic") is True and not row.get("tentative") and not row.get("dadfailed")
+             and isinstance(row.get("valid_life_time"), int) and 0 < row["valid_life_time"] <= 120]
+    static = {row["local"] for row in _addresses(snapshot, lab)
+              if not row.get("tentative") and not row.get("dadfailed")}
+    if len(dhcp) != 1 or not slaac or not {"192.0.2.20", "fd74:1::20"} <= static:
+        raise OverlapPrerequisiteError("native DHCP/SLAAC and static overlap are not ready")
+    if not any(row.get("dst") == "default" and row.get("dev") == management
+               and str(row.get("protocol")) in {"ra", "9"}
+               for row in snapshot["management_routes"]["6"]):
+        raise OverlapPrerequisiteError("native RA default is absent from management table")
+    sources = {"192.0.2.10": 100, "192.0.2.20": 200, "fd74:1::20": 200}
+    sources.update({row["local"]: 100 for row in slaac})
+    return verify_source_rules(sources, _rules(snapshot))
+
+
+def _ready(connect: Callable[[], paramiko.SSHClient], topology: AdmittedTopology) -> dict[str, Any]:
+    """Wait within a fixed convergence bound for independently proven sources.
+
+    Args:
+        connect: Fresh pinned SSH factory.
+        topology: Admitted interface identities.
+    """
+    deadline = time.monotonic() + 120
+    while True:
+        snapshot = _snapshot(connect)
+        try:
+            _prove(snapshot, topology)
+            return snapshot
+        except OverlapPrerequisiteError:
+            if time.monotonic() >= deadline:
+                raise
+            time.sleep(2)
+
+
+def _apply(client: FixtureHttpClient, units: list[str] | None = None) -> dict[str, Any]:
+    """Submit changed networking units through the ordinary audited global Apply.
+
+    Args:
+        client: Authenticated private pinned HTTPS client.
+        units: Explicit reviewed initial units, or the scenario's networking units.
+    """
+    status, body, _headers = client.request("GET", "/ui/management/appliance-apply")
+    if status != 200:
+        raise OverlapPrerequisiteError("global Apply page unavailable")
+    selected = units if units is not None else ["network", "firewall", "wan"]
+    form = [("csrf", extract_csrf(body)), *(("selected_units", unit) for unit in selected)]
+    try:
+        status, body, _headers = client.request(
+            "POST", "/ui/management/appliance-apply", form=form,
+            headers={"Accept": "application/json"}, follow_redirects=False,
+        )
+    except Exception:  # noqa: BLE001 - submission may have reached the server; never retry or expose request details.
+        raise ApplyOutcomeUnknown("Apply submission outcome unknown; preserve fixture and reconcile active task") from None
+    if status != 202:
+        if not 400 <= status < 500:
+            raise ApplyOutcomeUnknown(f"Apply submission returned ambiguous HTTP {status}; preserve fixture")
+        raise OverlapPrerequisiteError(f"global Apply submission failed with HTTP {status}")
+    try:
+        submission = json.loads(body)
+    except ValueError:
+        raise ApplyOutcomeUnknown("accepted Apply returned an unreadable task identity; preserve fixture") from None
+    job = submission.get("job_id") if isinstance(submission, dict) else None
+    if not isinstance(job, str) or not re.fullmatch(r"job_[0-9a-f]+", job):
+        raise ApplyOutcomeUnknown("accepted Apply did not return a canonical task identity; preserve fixture")
+    deadline = time.monotonic() + 180
+    while time.monotonic() < deadline:
+        try:
+            task = client.json_request("GET", f"/tasks/{job}/status").get("task", {})
+        except Exception:  # noqa: BLE001 - reconcile this same known job until the bounded deadline without a second mutation.
+            time.sleep(1)
+            continue
+        if task.get("status") == "succeeded":
+            if task.get("result", {}).get("dry_run"):
+                raise OverlapPrerequisiteError("native Apply unexpectedly reported dry-run")
+            return {"job_id": job, "status": "succeeded"}
+        if task.get("status") in {"failed", "cancelled"}:
+            raise OverlapPrerequisiteError("native Apply did not succeed")
+        time.sleep(1)
+    raise ApplyOutcomeUnknown(f"Apply {job} did not reach a known terminal state; preserve fixture before restoration")
+
+
+def _clean(client: FixtureHttpClient) -> dict[str, Any]:
+    """Require established applied state without pending units or an active task.
+
+    Args:
+        client: Pinned authenticated HTTPS client.
+    """
+    review = client.json_request("GET", "/ui/management/appliance-apply/review")
+    status = client.json_request("GET", "/ui/management/appliance-apply/status?refresh=true")
+    if (review.get("pending_count") != 0 or review.get("units") != []
+            or review.get("initial_apply_required") is not False or review.get("active_task") is not None
+            or status.get("pending_count") != 0 or status.get("locked") is not False
+            or status.get("active_task") is not None):
+        raise OverlapPrerequisiteError("scenario requires a clean established applied baseline")
+    return {"pending_count": 0, "active_task": None, "initial_apply_required": False}
+
+
+def _setup(client: FixtureHttpClient) -> dict[str, Any]:
+    """Establish the fresh owned clone's initial baseline through reviewed global Apply.
+
+    Args:
+        client: Pinned authenticated HTTPS client for the admitted fresh appliance.
+    """
+    review = client.json_request("GET", "/ui/management/appliance-apply/review")
+    if review.get("initial_apply_required") is not True:
+        return {"already_applied": _clean(client)}
+    units = review.get("units")
+    if (review.get("active_task") is not None or not isinstance(units, list) or not units
+            or any(unit.get("valid") is not True or unit.get("format_volumes") for unit in units)):
+        raise OverlapPrerequisiteError("initial fixture Apply requires valid non-formatting units and no active task")
+    ids = [unit.get("id") for unit in units]
+    if any(not isinstance(unit, str) or not re.fullmatch(r"[a-z_]+", unit) for unit in ids):
+        raise OverlapPrerequisiteError("initial fixture Apply unit identity is invalid")
+    applied = _apply(client, ids)
+    return {"initial_apply": applied, "clean": _clean(client)}
+
+
+def _expiry(
+    connect: Callable[[], paramiko.SSHClient], server_action: Callable[[str], dict[str, Any]],
+    *, kind: str, addresses: list[str], interface: str, wait_seconds: int,
+) -> dict[str, Any]:
+    """Observe actual expiry in guest memory while control addressing is withdrawn.
+
+    Args:
+        connect: Fresh pinned SSH factory.
+        server_action: Admitted server controller.
+        kind: DHCP or RA service selector.
+        addresses: Previously proven acquired sources expected to expire.
+        interface: Independently admitted management interface.
+        wait_seconds: Finite lease or advertisement lifetime plus convergence grace.
+    """
+    if kind not in {"dhcp", "ra"} or not 1 <= wait_seconds <= 180 or not addresses:
+        raise OverlapPrerequisiteError("invalid bounded expiry request")
+    program = SNAPSHOT_PROGRAM + f'''
+expected = {addresses!r}
+interface = {interface!r}
+print("ready", flush=True)
+deadline = time.monotonic() + {wait_seconds + 20}
+result = None
+while time.monotonic() < deadline:
+    current = snapshot()
+    links = [r for r in current["links"] if r.get("ifname") == interface]
+    if len(links) != 1:
+        raise RuntimeError("interface identity missing")
+    active = [r["local"] for r in links[0].get("addr_info", [])]
+    rule_sources = [str(ipaddress.ip_interface(r["src"]).ip)
+                    for rows in current["rules"].values() for r in rows if r.get("src", "all") != "all"]
+    if not set(expected).intersection(active + rule_sources):
+        result = current
+        break
+    time.sleep(1)
+if result is None:
+    raise RuntimeError("expiry not observed")
+print(json.dumps(result), flush=True)
+'''
+    ssh = connect()
+    try:
+        _stdin, stdout, _stderr = ssh.exec_command(_command(program), timeout=wait_seconds + 50)
+        if stdout.readline(16).strip() != "ready":
+            raise OverlapPrerequisiteError("native expiry observer did not start")
+        try:
+            server_action(f"pause-{kind}")
+            # A DHCP withdrawal can temporarily prevent delivery of SSH output.
+            # Resume first, then require the original channel's real observation.
+            time.sleep(wait_seconds)
+        finally:
+            server_action(f"resume-{kind}")
+        raw = stdout.read(262145)
+        if len(raw) > 262144 or stdout.channel.recv_exit_status() != 0:
+            raise OverlapPrerequisiteError("native expiry observer failed")
+        snapshot = json.loads(raw)
+        if not isinstance(snapshot, dict):
+            raise OverlapPrerequisiteError("expiry observer returned invalid evidence")
+        verify_expired_sources(addresses, [row["local"] for row in _addresses(snapshot, interface)], _rules(snapshot))
+        return snapshot
+    finally:
+        ssh.close()
+
+
+def _lease(status: dict[str, Any], topology: AdmittedTopology) -> dict[str, Any]:
+    """Require an actual finite lease bound to this appliance's original MAC.
+
+    Args:
+        status: Live admitted dnsmasq controller observation.
+        topology: Independently admitted fixture identities.
+    """
+    matches = [row for row in status.get("leases", [])
+               if row.get("mac") == topology.link("appliance", 0).mac
+               and row.get("address") == "192.0.2.10" and row.get("unexpired") is True
+               and type(row.get("expires_at")) is int and 0 < row["expires_at"] - time.time() <= 125]
+    if len(matches) != 1:
+        raise OverlapPrerequisiteError("actual bounded appliance DHCP lease is missing")
+    return dict(matches[0])
+
+
+def _restore(
+    client: FixtureHttpClient, connect: Callable[[], paramiko.SSHClient],
+    server_action: Callable[[str], dict[str, Any]], baseline: dict[str, dict[str, Any]],
+) -> dict[str, Any]:
+    """Attempt every safe recovery step and require applied baseline readback.
+
+    Args:
+        client: Pinned authenticated HTTPS client.
+        connect: Fresh pinned SSH factory.
+        server_action: Admitted private server controller.
+        baseline: Supported desired fields captured before the first mutation.
+    """
+    errors = []
+    for action in ("resume-dhcp", "resume-ra"):
+        try:
+            server_action(action)
+        except Exception:  # noqa: BLE001 - continue independent restoration without logging secret-bearing errors.
+            errors.append(action)
+    for name, desired in baseline.items():
+        try:
+            client.json_request("PATCH", f"/api/v1/interfaces/physical/{name}", json_body=desired)
+        except Exception:  # noqa: BLE001 - attempt the other original interface before reporting bounded recovery failure.
+            errors.append("restore-interface")
+    if errors:
+        raise OverlapPrerequisiteError("baseline restoration incomplete: " + ", ".join(errors))
+    applied = _apply(client)
+    for name, desired in baseline.items():
+        actual = client.json_request("GET", f"/api/v1/interfaces/physical/{name}")
+        if any(actual[key] != value for key, value in desired.items()):
+            raise OverlapPrerequisiteError("baseline desired state was not restored")
+    native = _snapshot(connect)
+    for name, desired in baseline.items():
+        active = {row["local"] for row in _addresses(native, name) if row.get("scope") == "global"}
+        expected = {str(ipaddress.ip_interface(desired[key]).ip)
+                    for key in ("ip_cidr", "ipv6_cidr") if desired[key]}
+        if desired["ipv4_method"] == "dhcp" and desired["admin_state"] == "up":
+            expected.add("192.0.2.10")
+        if desired["admin_state"] == "down" or desired["role"] == "unused":
+            expected = set()
+        if active != expected:
+            raise OverlapPrerequisiteError("native baseline addresses were not restored")
+    return {"apply": applied, "native": native, "clean": _clean(client)}
+
+
+def run_scenario(
+    *, client: FixtureHttpClient, connect_appliance: Callable[[], paramiko.SSHClient],
+    topology: AdmittedTopology, server_action: Callable[[str], dict[str, Any]],
+    username: str, password: str,
+) -> dict[str, Any]:
+    """Apply overlapping domains, prove native lease lifecycles, and restore desired state.
+
+    Args:
+        client: Already admitted CA-validating private HTTPS transport.
+        connect_appliance: Factory returning fresh pinned root SSH sessions.
+        topology: Independently admitted original fixture topology.
+        server_action: Bound controller for the admitted private DHCP/RA server.
+        username: Appliance administrator username, never included in evidence.
+        password: In-memory administrator password, never included in evidence.
+    """
+    status, body, _headers = client.request("GET", "/ui/management/login")
+    if status != 200:
+        raise OverlapPrerequisiteError("canonical UI login unavailable")
+    status, _body, _headers = client.request(
+        "POST", "/ui/management/login",
+        form={"username": username, "password": password, "csrf": extract_csrf(body)}, follow_redirects=False,
+    )
+    if status not in {302, 303}:
+        raise OverlapPrerequisiteError("canonical UI authentication failed")
+    token = client.json_request(
+        "POST", "/api/v1/auth/login?" + urllib.parse.urlencode({"username": username, "password": password}),
+        json_body={"name": "private routing overlap lifecycle",
+                   "scopes": ["read:dashboard", "read:interfaces", "write:interfaces"]},
+    )
+    client.bearer_token = token["raw_token"]
+    try:
+        return _run_authenticated(client, connect_appliance, topology, server_action)
+    finally:
+        try:
+            client.json_request("POST", f'/api/v1/api-tokens/{int(token["token"]["id"])}/revoke')
+        finally:
+            client.bearer_token = ""
+
+
+def _run_authenticated(
+    client: FixtureHttpClient, connect_appliance: Callable[[], paramiko.SSHClient],
+    topology: AdmittedTopology, server_action: Callable[[str], dict[str, Any]],
+) -> dict[str, Any]:
+    """Run the scenario after authentication while preserving all baseline fields.
+
+    Args:
+        client: Pinned authenticated HTTPS client.
+        connect_appliance: Fresh pinned root SSH factory.
+        topology: Independently admitted fixture topology.
+        server_action: Admitted private DHCP/RA server controller.
+    """
+    management, lab = (topology.link("appliance", index).interface for index in (0, 1))
+    setup = _setup(client)
+    clean = _clean(client)
+    baseline = {
+        name: {key: row[key] for key in FIELDS}
+        for name in (management, lab)
+        for row in [client.json_request("GET", f"/api/v1/interfaces/physical/{name}")]
+    }
+    evidence: dict[str, Any] = {"schema": 1, "setup": setup, "baseline": clean,
+                                "covered": ["native-dhcp", "native-slaac", "expiry", "source-domains"],
+                                "not_covered": ["retained-static-same-address-lease", "dad-conflict"]}
+    if baseline[management]["ipv6_enabled"] or baseline[lab]["role"] != "unused":
+        raise OverlapPrerequisiteError("scenario requires original IPv4 management and unused lab baseline")
+    restore_allowed = True
+    try:
+        client.json_request("PATCH", f"/api/v1/interfaces/physical/{management}", json_body={
+            "role": "management", "mode": "access", "ipv4_method": "dhcp", "ip_cidr": None,
+            "gateway": None, "ipv6_enabled": True, "ipv6_cidr": None, "ipv6_gateway": None, "admin_state": "up",
+        })
+        client.json_request("PATCH", f"/api/v1/interfaces/physical/{lab}", json_body={
+            "role": "access", "mode": "access", "ipv4_method": "static", "ip_cidr": "192.0.2.20/24",
+            "gateway": None, "ipv6_enabled": True, "ipv6_cidr": "fd74:1::20/64", "ipv6_gateway": None,
+            "admin_state": "up", "access_management_ui_enabled": False,
+        })
+        evidence["apply"] = _apply(client)
+        initial = _ready(connect_appliance, topology)
+        evidence["lease"] = _lease(server_action("status"), topology)
+        sources = _prove(initial, topology)
+        routes = {}
+        for source, table in sources.items():
+            interface = management if table == 100 else lab
+            family = ipaddress.ip_address(source).version
+            peer = "192.0.2.1" if family == 4 else "fd74:1::1"
+            observed = _observe(connect_appliance, SNAPSHOT_PROGRAM +
+                                f'\nprint(json.dumps({{"routes": command(["ip","-j","-N","-{family}",'
+                                f'"route","get","{peer}","from","{source}"])}}))\n')["routes"]
+            verify_route_selection(source, table, interface, observed)
+            routes[source] = observed
+        evidence["acquired"] = initial
+        evidence["route_selection"] = routes
+        slaac = [source for source, table in sources.items() if table == 100 and ":" in source]
+        evidence["ra_expired"] = _expiry(connect_appliance, server_action, kind="ra", addresses=slaac,
+                                          interface=management, wait_seconds=90)
+        evidence["ra_reacquired"] = _ready(connect_appliance, topology)
+        evidence["dhcp_expired"] = _expiry(connect_appliance, server_action, kind="dhcp", addresses=["192.0.2.10"],
+                                            interface=management, wait_seconds=155)
+        evidence["dhcp_reacquired"] = _ready(connect_appliance, topology)
+    except ApplyOutcomeUnknown:
+        restore_allowed = False
+        raise
+    finally:
+        if restore_allowed:
+            evidence["restored"] = _restore(client, connect_appliance, server_action, baseline)
+    return evidence
