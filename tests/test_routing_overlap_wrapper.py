@@ -14,6 +14,33 @@ ROOT = Path(__file__).resolve().parents[1]
 pytestmark = pytest.mark.skipif(os.name != 'nt' or not shutil.which('pwsh'), reason='Windows provider identities')
 
 
+def test_client_vmx_provides_canonical_pcie_bridges_for_vmxnet3():
+    """Evaluate VMX generation without host writes and admit the PCIe scaffold."""
+    runner = ROOT / 'scripts/windows/vmware/run-lifecycle-test.ps1'
+    command = ("$ErrorActionPreference='Stop'; $tokens=$null; $errors=$null; "
+        f"$ast=[Management.Automation.Language.Parser]::ParseFile({ps_literal(runner)},[ref]$tokens,[ref]$errors); "
+        "if ($errors.Count) { throw 'PowerShell parse failed' }; "
+        "$Name='fixture'; $diskTarget='fixture.vmdk'; $SeedIso='seed.iso'; "
+        "function ConvertTo-VmxString { param($Value) return '\"' + $Value + '\"' }; "
+        "$result=@{}; foreach ($nameOfFunction in @('New-ClientVm','New-EsxiPxeVm')) { "
+        "$definition=$ast.Find({param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] "
+        "-and $node.Name -eq $nameOfFunction},$true); "
+        "$assignment=$definition.Body.Find({param($node) $node -is [Management.Automation.Language.AssignmentStatementAst] "
+        "-and $node.Left.Extent.Text -eq '$lines'},$true); "
+        ". ([scriptblock]::Create($assignment.Extent.Text)); "
+        "$result[$nameOfFunction]=@($lines | Where-Object { $_ -like 'pciBridge*' }) }; "
+        "ConvertTo-Json -InputObject $result -Compress")
+    result = subprocess.run(['pwsh', '-NoProfile', '-Command', command], capture_output=True, text=True, timeout=60, check=True)
+    bridges = json.loads(result.stdout)
+    expected = ['pciBridge0.present = "TRUE"']
+    for index in range(4, 8):
+        expected.extend([f'pciBridge{index}.present = "TRUE"',
+                         f'pciBridge{index}.virtualDev = "pcieRootPort"',
+                         f'pciBridge{index}.functions = "8"'])
+    assert bridges['New-ClientVm'] == expected
+    assert bridges['New-ClientVm'] == bridges['New-EsxiPxeVm']
+
+
 @pytest.mark.parametrize('fault', [None, 'duplicate', 'generated', 'disconnected'])
 def test_provider_mapping_reads_actual_vmx_and_refuses_ambiguity(tmp_path, fault):
     """Admit only explicit observed provider adapter identities under a file pin.
