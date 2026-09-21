@@ -17571,6 +17571,10 @@ def test_vcf_helper_page_renders_domain_dropdown(client):
     assert 'href="/ui/management/vcf-helper"' in response.text
     visible_workspace = response.text.split('<section class="split-workspace vcf-helper-workspace"', 1)[1].split('<dialog ', 1)[0]
     assert "VCF Certificate Trust" in visible_workspace
+    fallback = next(block for block in visible_workspace.split("<noscript>")[1:]
+                    if "data-vcf-lab-fallback" in block.split("</noscript>", 1)[0])
+    assert "Lab / Non-production Overrides requires JavaScript." in fallback
+    assert "No changes are made by opening this page." in fallback
     assert "Review DNS" not in visible_workspace
     assert visible_workspace.count('class="info-band vcf-helper-action-band"') == 9
     assert "Import passwords into a vault" in visible_workspace
