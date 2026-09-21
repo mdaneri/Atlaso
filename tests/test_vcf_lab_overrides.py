@@ -523,8 +523,9 @@ def test_worker_rechecks_administrator_before_remote_credentials(
         "stopped_revert",
     ],
 )
+@pytest.mark.parametrize("layout", ["regular", "vcf_alias"])
 def test_remote_transaction_permissions_restart_and_readback(
-    tmp_path, monkeypatch, mode
+    tmp_path, monkeypatch, mode, layout
 ):
     """Run the actual transaction with only Linux OS/service boundaries substituted.
 
@@ -532,6 +533,7 @@ def test_remote_transaction_permissions_restart_and_readback(
         tmp_path: Isolated temporary directory for transaction fixtures.
         monkeypatch: Pytest fixture replacing external boundaries for this test.
         mode: Transaction scenario or permission bits under test.
+        layout: Direct file or the supported VCF sibling alias.
     """
     import os
     import stat
@@ -541,11 +543,15 @@ def test_remote_transaction_permissions_restart_and_readback(
 
     from atlaso.app.services import vcf_lab_remote as remote
 
-    path = tmp_path / "application-prod.properties"
+    configured = tmp_path / "application-prod.properties"
+    path = configured if layout == "regular" else tmp_path / "application.properties"
+    if layout == "vcf_alias":
+        configured.symlink_to("application.properties")
     path.write_bytes(b"vendor.setting=untouched\n")
+    alias_info = configured.lstat()
     if mode == "noop":
         path.write_bytes(edit_properties(path.read_bytes(), {"esa": "true"}))
-    monkeypatch.setattr(remote, "CONFIG_PATH", str(path))
+    monkeypatch.setattr(remote, "CONFIG_PATH", str(configured))
     monkeypatch.setattr(os, "geteuid", lambda: 0, raising=False)
     monkeypatch.setattr(os, "O_NOFOLLOW", 0, raising=False)
     monkeypatch.setattr(os, "O_DIRECTORY", 0, raising=False)
@@ -680,6 +686,81 @@ def test_remote_transaction_permissions_restart_and_readback(
         assert owners == [(before.st_uid, before.st_gid)]
         assert modes == [stat.S_IMODE(before.st_mode)]
         assert attributes == [("user.test", b"attribute")]
+    if layout == "vcf_alias":
+        assert configured.is_symlink()
+        assert configured.lstat().st_ino == alias_info.st_ino
+        assert os.readlink(configured) == "application.properties"
+    if mode == "success":
+        restored = remote.operate(
+            {
+                "action": "write",
+                "revision": outcome["revision"],
+                "desired": {"esa": None},
+                "recovery": True,
+            }
+        )
+        assert restored["ok"] and restored["changed"]
+        assert path.read_bytes() == b"vendor.setting=untouched\n"
+        assert configured.is_symlink() == (layout == "vcf_alias")
+
+
+@pytest.mark.parametrize(
+    "layout", ["other", "absolute", "chain", "hardlink", "ancestor"]
+)
+def test_remote_configuration_rejects_other_link_layouts(tmp_path, layout):
+    """Reject aliases outside the single supported VCF layout.
+
+    Args:
+        tmp_path: Isolated filesystem fixture.
+        layout: Unsupported link layout to reject.
+    """
+    import os
+
+    from atlaso.app.services import vcf_lab_remote as remote
+
+    target = tmp_path / "application.properties"
+    target.write_bytes(b"vendor.setting=untouched\n")
+    configured = tmp_path / "application-prod.properties"
+    if layout == "other":
+        configured.symlink_to("other.properties")
+    elif layout == "absolute":
+        configured.symlink_to(target)
+    elif layout == "chain":
+        target.unlink()
+        target.symlink_to("other.properties")
+        configured.symlink_to("application.properties")
+    elif layout == "hardlink":
+        os.link(target, tmp_path / "duplicate")
+        configured.symlink_to("application.properties")
+    else:
+        (tmp_path / "alias").symlink_to(tmp_path, target_is_directory=True)
+        configured = tmp_path / "alias/application.properties"
+    with pytest.raises(PropertyError):
+        remote.read_state(configured)
+
+
+def test_remote_revision_binds_alias_identity(tmp_path, monkeypatch):
+    """Replacing the allowed alias invalidates review even with unchanged bytes.
+
+    Args:
+        tmp_path: Isolated filesystem fixture.
+        monkeypatch: Fixture replacing the service-status query.
+    """
+    from atlaso.app.services import vcf_lab_remote as remote
+
+    target = tmp_path / "application.properties"
+    target.write_bytes(b"vendor.setting=untouched\n")
+    configured = tmp_path / "application-prod.properties"
+    configured.symlink_to("application.properties")
+    monkeypatch.setattr(remote, "CONFIG_PATH", str(configured))
+    monkeypatch.setattr(remote, "active", lambda: True)
+    # read_state is platform-neutral; operate's Linux flock import is unnecessary here.
+    content, info, _, binding = remote.read_state(configured)
+    before = remote.snapshot(content, info, binding)
+    configured.rename(tmp_path / "old-alias")
+    configured.symlink_to("application.properties")
+    content, info, _, binding = remote.read_state(configured)
+    assert remote.snapshot(content, info, binding) != before
 
 
 def test_remote_fingerprint_mismatch_never_authenticates(db, values, monkeypatch):

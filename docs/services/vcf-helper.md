@@ -81,8 +81,11 @@ the operator; it does not substitute a different path or claim that this covers 
    failures are reported without remote terminal output. Check the separate root credential after a su
    authentication failure; do not change sudo policy or enable root SSH.
 
-Atlaso preserves unrelated file content, ownership, permissions and extended attributes. It refuses symbolic links,
-hard-linked configuration and competing Atlaso operations on the same pinned SSH host/port. Restart is bounded to 90
+Atlaso preserves unrelated file content, ownership, permissions and extended attributes. It accepts a regular
+`application-prod.properties` file or the exact sibling alias `application-prod.properties -> application.properties`.
+The alias remains intact; edits atomically replace its regular target. Review binds the alias identity as well as
+the target's identity and content. Other symbolic links, linked parent directories, hard-linked configuration and
+competing Atlaso operations on the same pinned SSH host/port are refused. Restart is bounded to 90
 seconds, service readiness to
 180 seconds and subsequent API readiness to a bounded retry window. Never interpret property readback as a live
 VCF workflow acceptance test; verify the intended VCF workflow separately on the lab appliance.

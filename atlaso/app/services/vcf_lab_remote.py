@@ -176,15 +176,60 @@ def read_configuration(path: Path) -> tuple[bytes, os.stat_result]:
     return content, info
 
 
-def snapshot(content: bytes, info: os.stat_result) -> str:
+def configuration_path(path: Path) -> tuple[Path, str]:
+    """Admit only the fixed sibling link used by VCF, retaining its identity.
+
+    Args:
+        path: Fixed public property-file path.
+    """
+    for ancestor in path.parents:
+        if ancestor.is_symlink():
+            raise PropertyError("Configuration path contains a symbolic link.")
+    info = path.lstat()
+    if not stat.S_ISLNK(info.st_mode):
+        return path, ""
+    if (
+        path.name != "application-prod.properties"
+        or os.readlink(path) != "application.properties"
+    ):
+        raise PropertyError("Configuration symbolic link has an unsupported target.")
+    identity = (
+        info.st_dev,
+        info.st_ino,
+        info.st_mode,
+        info.st_uid,
+        info.st_gid,
+        info.st_mtime_ns,
+        info.st_ctime_ns,
+    )
+    return path.with_name("application.properties"), repr(identity)
+
+
+def read_state(path: Path) -> tuple[bytes, os.stat_result, Path, str]:
+    """Read a regular target while detecting changes to its permitted alias.
+
+    Args:
+        path: Fixed public property-file path.
+    """
+    resolved, binding = configuration_path(path)
+    content, info = read_configuration(resolved)
+    if configuration_path(path) != (resolved, binding):
+        raise PropertyError("Configuration link changed during inspection.")
+    return content, info, resolved, binding
+
+
+def snapshot(content: bytes, info: os.stat_result, binding: str = "") -> str:
     """Bind review to bytes, identity, ownership and permissions.
 
     Args:
         content: Original property-file bytes, never returned to the browser.
         info: Original file metadata bound into the review revision.
+        binding: Identity of the permitted VCF property-file alias, if present.
     """
     metadata = (info.st_dev, info.st_ino, info.st_mode, info.st_uid, info.st_gid)
-    return hashlib.sha256(repr(metadata).encode() + content).hexdigest()
+    return hashlib.sha256(
+        repr(metadata).encode() + binding.encode() + content
+    ).hexdigest()
 
 
 def active() -> bool:
@@ -218,11 +263,11 @@ def operate(request: dict[str, Any]) -> dict[str, Any]:
     if request["action"] == "inspect":
         # Inspection never creates a lock file or mutates the appliance. Try as
         # vcf first; only a permission refusal warrants the separate su boundary.
-        content, info = read_configuration(Path(CONFIG_PATH))
+        content, info, _, binding = read_state(Path(CONFIG_PATH))
         return {
             "ok": True,
             "values": properties(content)[0],
-            "revision": snapshot(content, info),
+            "revision": snapshot(content, info, binding),
             "service_active": active(),
             "changed": False,
         }
@@ -240,13 +285,13 @@ def operate(request: dict[str, Any]) -> dict[str, Any]:
             raise PropertyError(
                 "Another property operation is active on this appliance."
             ) from exc
-        path = Path(CONFIG_PATH)
-        content, info = read_configuration(path)
+        configured = Path(CONFIG_PATH)
+        content, info, path, binding = read_state(configured)
         values, _ = properties(content)
         result: dict[str, Any] = {
             "ok": True,
             "values": values,
-            "revision": snapshot(content, info),
+            "revision": snapshot(content, info, binding),
             "service_active": active(),
             "changed": False,
         }
@@ -271,8 +316,12 @@ def operate(request: dict[str, Any]) -> dict[str, Any]:
                 os.fsync(stream.fileno())
             for attribute in posix.listxattr(path):
                 posix.setxattr(temporary, attribute, posix.getxattr(path, attribute))
-            latest, latest_info = read_configuration(path)
-            if snapshot(latest, latest_info) != result["revision"]:
+            latest, latest_info, latest_path, latest_binding = read_state(configured)
+            if (
+                latest_path != path
+                or latest_binding != binding
+                or snapshot(latest, latest_info, latest_binding) != result["revision"]
+            ):
                 raise PropertyError(
                     "Configuration changed during the operation; no changes written."
                 )
@@ -283,10 +332,16 @@ def operate(request: dict[str, Any]) -> dict[str, Any]:
             finally:
                 os.close(directory)
             result["changed"] = True
-            observed, observed_info = read_configuration(path)
+            observed, observed_info, observed_path, observed_binding = read_state(
+                configured
+            )
+            if (observed_path, observed_binding) != (path, binding):
+                raise PropertyError(
+                    "Configuration link changed during property update."
+                )
             result.update(
                 values=properties(observed)[0],
-                revision=snapshot(observed, observed_info),
+                revision=snapshot(observed, observed_info, binding),
             )
             if observed != updated or any(
                 result["values"][key] != value
