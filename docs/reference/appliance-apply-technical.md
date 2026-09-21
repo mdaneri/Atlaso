@@ -271,6 +271,20 @@ HTTP/HTTPS behavior beside the candidate listener until candidate readiness succ
 separate snapshotted certificate and key files, including when the protocol remains HTTPS while the candidate
 certificate rotates.
 
+When DHCP offers the same IPv4 address as a retained static management address, address presence alone is not lease
+proof. Atlaso also requires a live networkd DHCP client, matching interface-index lease address and netmask, and a
+configured DHCP route with the same preferred source and DHCP server. Missing, expired, or inconsistent evidence keeps
+the candidate unready and preserves rollback. The address may still be reported as static by networkd during this
+overlap; Atlaso records the independent DHCP evidence without changing that native source classification.
+
+After retiring holdovers, Atlaso waits again for three consecutive ready address observations before persisting WAN
+gateways. `networkctl reconfigure` can return while native duplicate-address detection is still running, including for
+an unchanged address. An earlier readiness result cannot authorize routes after that reconfiguration. A conflict or
+readiness timeout at this boundary rolls back instead of advancing the applied baseline.
+Static management gateways that have passed Atlaso's on-link validation are rendered with `GatewayOnLink=yes`.
+This prevents networkd from failing the link when it installs a gateway while ACD temporarily withholds the connected
+address; it does not waive address readiness, duplicate detection, or candidate listener verification.
+
 If a management-to-access desired-state mutation introduces or enables a default route that differs from the
 last-applied WAN baseline, Routing & WAN becomes a sixth handoff participant. A standalone Routes & WAN
 submission also initiates the handoff when it adds, edits, disables, or removes a default mirrored through an effective
