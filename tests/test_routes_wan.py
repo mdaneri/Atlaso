@@ -64,8 +64,8 @@ def test_feature_settings_render_full_saved_intent_with_effective_gates():
     assert "ip route replace 10.20.0.0/24" not in config
     assert "ip route replace 192.0.2.0/24 dev eth1 table 200" in config
     assert "rule add iif" not in config
-    assert 'for priority in $(seq 2000 2099); do ip rule del priority "$priority"' in config
-    assert 'for priority in $(seq 2000 2099); do ip -6 rule del priority "$priority"' in config
+    assert "owned IPv4/IPv6 lab ingress lookups and terminal guards to an empty set" in config
+    assert "rule del priority" not in config
     assert "masquerade comment \"Lab NAT\"" not in config
     assert "nft -f /etc/atlaso/nftables.d/atlaso-nat.nft" not in config
     assert "tc qdisc replace dev eth1 root netem delay 100ms" in config
@@ -715,7 +715,7 @@ def test_render_wan_config_uses_ipv6_route_commands():
 
     assert "  ipv6_cidr=2001:db8:50::1/64" in config
     assert "  routing_domain=lab" in config
-    assert "ip -6 rule add iif eth2.50 table 200 priority 2000" in config
+    assert "ip -6 rule add iif eth2.50 table 200 priority 2000 protocol 2" in config
     assert "ip -6 route replace 2001:db8:100::/64 via 2001:db8:50::fe dev eth2.50 metric 120 table 200" in config
 
 
@@ -753,7 +753,7 @@ def test_render_wan_config_keeps_management_and_lab_route_tables_separate():
     assert "ip route replace 192.168.49.0/24 dev eth0 table 100" in config
     assert "ip route replace default via 192.168.49.254 dev eth0\n" in config
     assert "ip route replace default via 192.168.49.254 dev eth0 table 100" in config
-    assert "ip rule add iif eth1 table 200 priority 2001" in config
+    assert "ip rule add iif eth1 table 200 priority 2000 protocol 2" in config
     assert "ip route replace 172.20.0.0/24 dev eth1 table 200" in config
     assert "ip route replace 0.0.0.0/0 via 172.20.0.254 dev eth1 metric 100 table 200" in config
 
@@ -814,8 +814,8 @@ def test_render_wan_config_preserves_overlapping_prefixes_in_both_domains():
     assert "ip route replace 192.168.1.0/24 dev eth0 table 100" in config
     assert "ip rule add from 192.168.1.0/24 table 200" not in config
     assert "ip route replace 192.168.1.0/24 dev eth1.1 table 200" in config
-    assert "ip rule add iif eth1.1 table 200 priority 2001" in config
-    assert "ip -6 rule add iif eth1.1 table 200 priority 2001" in config
+    assert "ip rule add iif eth1.1 table 200 priority 2000 protocol 2" in config
+    assert "ip -6 rule add iif eth1.1 table 200 priority 2000 protocol 2" in config
 
 
 def test_render_wan_config_keeps_gatewayless_management_connected_route():

@@ -35,6 +35,7 @@ LAB_ROUTE_TABLE_ID = 200
 MANAGEMENT_ROUTE_RULE_PRIORITY = 1000
 LAB_ROUTE_RULE_PRIORITY = 2000
 ROUTE_RULE_PRIORITY_WINDOW = 100
+LAB_ROUTE_GUARD_PRIORITY = LAB_ROUTE_RULE_PRIORITY + ROUTE_RULE_PRIORITY_WINDOW
 MANAGEMENT_ROUTE_TABLE_NAME = "atlaso_mgmt"
 LAB_ROUTE_TABLE_NAME = "atlaso_lab"
 DEFAULT_ROUTE_DESTINATIONS = {4: "0.0.0.0/0", 6: "::/0"}
@@ -1142,17 +1143,17 @@ def render_wan_config(
         f"sysctl -w net.ipv6.conf.all.forwarding={forwarding_value}  # global Routing switch"
     )
     if not settings.routing_enabled:
-        final_lab_priority = LAB_ROUTE_RULE_PRIORITY + ROUTE_RULE_PRIORITY_WINDOW - 1
-        lines.append(
-            f"for priority in $(seq {LAB_ROUTE_RULE_PRIORITY} {final_lab_priority}); do "
-            'ip rule del priority "$priority" 2>/dev/null || true; done'
-            "  # disabled Routing lab policy cleanup"
-        )
-        lines.append(
-            f"for priority in $(seq {LAB_ROUTE_RULE_PRIORITY} {final_lab_priority}); do "
-            'ip -6 rule del priority "$priority" 2>/dev/null || true; done'
-            "  # disabled Routing IPv6 lab policy cleanup"
-        )
+        lines.append("# Routing disabled: reconcile owned IPv4/IPv6 lab ingress lookups and terminal guards to an empty set.")
+        lines.append("# Local source-address rules remain reconciled from applied Network intent.")
+    else:
+        ingress_names = sorted({target["name"] for target in targets if target.get("routing_domain") != "management"})
+        # The helper installs terminal guards before introducing lab lookups.
+        for name in ingress_names:
+            for route_family in ("", "-6 "):
+                lines.append(f"ip {route_family}rule add iif {name} unreachable priority {LAB_ROUTE_GUARD_PRIORITY} protocol 2")
+        for index, name in enumerate(ingress_names):
+            for route_family in ("", "-6 "):
+                lines.append(f"ip {route_family}rule add iif {name} table {LAB_ROUTE_TABLE_ID} priority {LAB_ROUTE_RULE_PRIORITY + index} protocol 2")
     target_network_owners = _target_network_owners(targets)
     for interface_name, network in sorted(retired_target_networks):
         route_family = "-6 " if ip_network(network, strict=False).version == 6 else ""
@@ -1166,7 +1167,6 @@ def render_wan_config(
     for index, target in enumerate(targets):
         management = target.get("routing_domain") == "management"
         table = MANAGEMENT_ROUTE_TABLE_ID if management else LAB_ROUTE_TABLE_ID
-        priority = (MANAGEMENT_ROUTE_RULE_PRIORITY if management else LAB_ROUTE_RULE_PRIORITY) + index
         gateways = [
             str(target.get(key, "") or "").strip()
             for key in ("gateway", "ipv6_gateway")
@@ -1186,9 +1186,6 @@ def render_wan_config(
                 continue
             route_family = "-6 " if network.version == 6 else ""
             lines.append(f"ip {route_family}route replace {network} dev {target['name']} table {table}")
-        if not management and settings.routing_enabled:
-            for route_family in ("", "-6 "):
-                lines.append(f"ip {route_family}rule add iif {target['name']} table {table} priority {priority}")
         lines.append(f"# Local source-address rules for {target['name']} are reconciled from applied Network intent.")
         if management and gateways:
             for version, gateway in sorted(gateway_by_version.items()):
