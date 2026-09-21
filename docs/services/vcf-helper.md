@@ -452,6 +452,9 @@ Fetch and no-JavaScript form responses report the current edited FQDN set as cre
 rows with assigned addresses, plus validation or allocation errors. All mutations use the existing authenticated
 session, CSRF validation, audit logging, and DNS desired state model.
 
+Connection failures distinguish hostname resolution, TCP connectivity, and TLS handshake/certificate retrieval.
+For an unresolved Atlaso-managed name, verify local DNS and host resolver configuration before retrying TLS confirmation.
+
 <!-- BEGIN GENERATED ADDITIONAL SCREENSHOTS -->
 ## Additional verified states
 
@@ -464,6 +467,3 @@ These captures show responsive layouts and useful operational states referenced 
 *Figure: VCF Helper in the verified clean-appliance responsive state.*
 
 <!-- END GENERATED ADDITIONAL SCREENSHOTS -->
-
-Connection failures distinguish hostname resolution, TCP connectivity, and TLS handshake/certificate retrieval.
-For an unresolved Atlaso-managed name, verify local DNS and host resolver configuration before retrying TLS confirmation.
