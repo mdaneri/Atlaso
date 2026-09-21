@@ -2820,7 +2820,11 @@ def test_management_handoff_candidate_durability_gates_ack(
         lambda *_args, **_kwargs: {"stable_samples": 3},
     )
     def candidate_ca(*_args):
-        """Inject an uncovered acquired address before candidate publication."""
+        """Inject an uncovered acquired address before candidate publication.
+
+        Args:
+            *_args: Candidate payload and public certificate inputs unused by this failure stub.
+        """
         if candidate_sync_error == "certificate":
             raise ValueError("management HTTPS certificate does not authenticate candidate address 198.51.100.10")
         return tmp_path / "ca.pem"
