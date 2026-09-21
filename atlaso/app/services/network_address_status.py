@@ -88,7 +88,8 @@ def project_status(
         records = link.get("addresses", [])
         assigned = [row["address"] for row in records if row["state"] == "assigned"]
         dhcp4_addresses = [row["address"] for row in records
-                           if row["state"] == "assigned" and row.get("source") == "DHCPv4"]
+                           if row["state"] == "assigned"
+                           and (row.get("source") == "DHCPv4" or row.get("dhcp4_lease") is True)]
         auto6_addresses = [row["address"] for row in records if row["state"] == "assigned"
                            and row.get("source") in {"DHCPv6", "NDisc"}
                            and ip_address(row["address"]).version == 6

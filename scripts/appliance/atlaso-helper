@@ -9153,14 +9153,19 @@ def _systemd_networkd_files(path: Path) -> tuple[dict[str, str], list[str], list
                     ]
                 )
             for gateway in usable_gateways:
+                # The gateway is already validated against the intended link.
+                # During ACD, its connected address may not exist yet; do not
+                # let early route installation fail the entire networkd link.
                 lines.extend(
                     [
                         "",
                         "[Route]",
                         f"Gateway={gateway}",
+                        "GatewayOnLink=yes",
                         "",
                         "[Route]",
                         f"Gateway={gateway}",
+                        "GatewayOnLink=yes",
                         f"Table={MANAGEMENT_ROUTE_TABLE_ID}",
                     ]
                 )
@@ -9722,6 +9727,68 @@ def _retain_network_conflicts(path: Path, observation: dict, started_at: str) ->
         temporary.unlink(missing_ok=True)
 
 
+def _native_dhcp4_cidrs(link: dict, ifindex: int) -> set[str]:
+    """Prove DHCP ownership independently of a retained static address object.
+
+    Args:
+        link: One networkd Describe interface, including its live DHCP client and routes.
+        ifindex: Kernel interface identity from the same observation.
+
+    Returns:
+        Exact lease CIDRs supported by a live client, lease file, and DHCP route.
+    """
+    if type(ifindex) is not int or ifindex <= 0 or link.get("Index") != ifindex or link.get("AdministrativeState") != "configured":
+        return set()
+    client = link.get("DHCPv4Client")
+    lease = client.get("Lease") if isinstance(client, dict) else None
+    if not isinstance(lease, dict) or not hasattr(time, "CLOCK_BOOTTIME"):
+        return set()
+    acquired, renewal = lease.get("LeaseTimestampUSec"), lease.get("Timeout2USec")
+    if type(acquired) is not int or type(renewal) is not int:
+        return set()
+    # Describe's timestamps use CLOCK_BOOTTIME. A stale on-disk lease, an offer,
+    # or an expired renewal window cannot establish readiness for a holdover.
+    now = time.clock_gettime(time.CLOCK_BOOTTIME) * 1000000
+    if not 0 < acquired <= now < renewal:
+        return set()
+    # networkd can retain a static address object (and a foreign connected route)
+    # when DHCP leases the same address. Its lease file supplies the exact mask;
+    # neither that file alone nor a retained kernel address proves a live lease.
+    try:
+        with (SYSTEMD_NETWORK_LEASE_DIR / str(ifindex)).open(encoding="utf-8") as stream:
+            lease_text = stream.read(65537)
+        if len(lease_text) > 65536:
+            return set()
+        fields = {}
+        for line in lease_text.splitlines():
+            key, separator, value = line.partition("=")
+            if separator and key in {"ADDRESS", "NETMASK", "SERVER_ADDRESS"}:
+                if key in fields:
+                    return set()
+                fields[key] = value
+        leased = ip_interface(f"{fields['ADDRESS']}/{fields['NETMASK']}")
+        server = ip_address(fields["SERVER_ADDRESS"])
+        if leased.version != 4 or server.version != 4 or leased.network.prefixlen == 0:
+            return set()
+        if leased.ip.is_unspecified or leased.ip.is_multicast or leased.ip.is_link_local:
+            return set()
+    except (OSError, UnicodeError, KeyError, ValueError):
+        return set()
+    for route in link.get("Routes", [])[:256]:
+        if not isinstance(route, dict) or route.get("ConfigSource") != "DHCPv4":
+            continue
+        if route.get("ConfigState") != "configured":
+            continue
+        try:
+            address = ip_address(bytes(route["PreferredSource"]))
+            provider = ip_address(bytes(route["ConfigProvider"]))
+            if address == leased.ip and provider == server:
+                return {str(leased)}
+        except (KeyError, TypeError, ValueError):
+            continue
+    return set()
+
+
 def _network_address_observation() -> dict:
     """Return bounded, sanitized native address and conflict evidence without probing links."""
     observed_at = datetime.now(timezone.utc).isoformat()
@@ -9755,6 +9822,7 @@ def _network_address_observation() -> dict:
             if not _valid_network_interface_name(name):
                 continue
             native_link = native_links.get(name, {})
+            dhcp4_cidrs = _native_dhcp4_cidrs(native_link, row.get("ifindex"))
             sources = {}
             for item in native_link.get("Addresses", [])[:32]:
                 try:
@@ -9779,7 +9847,9 @@ def _network_address_observation() -> dict:
                     cidr = str(ip_interface(f"{address}/{info['prefixlen']}"))
                 except (ValueError, KeyError):
                     cidr = ""
-                records.append({"address": address, "cidr": cidr, "source": sources.get(cidr, ""), "state": "conflict" if "dadfailed" in flags else "checking" if "tentative" in flags else "assigned"})
+                records.append({"address": address, "cidr": cidr, "source": sources.get(cidr, ""),
+                                "dhcp4_lease": cidr in dhcp4_cidrs,
+                                "state": "conflict" if "dadfailed" in flags else "checking" if "tentative" in flags else "assigned"})
             mac = str(row.get("address", "")).lower()
             link_info = row.get("linkinfo") or {}
             vlan_data = link_info.get("info_data") or {}
@@ -9876,13 +9946,16 @@ def _network_detection_preflight(path: Path) -> None:
             raise ValueError(f"Unable to check IPv4 addresses on {name}: Ethernet link identity unavailable")
 
 
-def _wait_network_addresses(path: Path, *, attempts: int = 31, started_at: str | None = None) -> dict:
+def _wait_network_addresses(
+    path: Path, *, attempts: int = 31, started_at: str | None = None, stable_samples: int = 1,
+) -> dict:
     """Wait for candidate addresses without treating a missing result as a conflict.
 
     Args:
         path: Exact staged intent whose activation must be proven.
         attempts: Sample limit; the default permits the full 30-second readiness window.
         started_at: Candidate activation start, excluding failures from earlier attempts.
+        stable_samples: Consecutive ready samples required after asynchronous reconfiguration.
     """
     physical, vlans, _removed = _parse_network_config(path)
     requirements = []
@@ -9901,6 +9974,7 @@ def _wait_network_addresses(path: Path, *, attempts: int = 31, started_at: str |
     missing = []
     started_at = started_at or datetime.now(timezone.utc).isoformat()
     deadline = time.monotonic() + 30
+    ready_samples = 0
     for attempt in range(max(1, attempts)):
         observation = _network_address_observation()
         _retain_network_conflicts(path, observation, started_at)
@@ -9917,7 +9991,8 @@ def _wait_network_addresses(path: Path, *, attempts: int = 31, started_at: str |
                 address in {"dhcp4", "auto6"}
                 and ip_address(item["address"]).version == (4 if address == "dhcp4" else 6)
                 and not ip_address(item["address"]).is_link_local
-                and item.get("source") in ({"DHCPv4"} if address == "dhcp4" else {"DHCPv6", "NDisc"}))]
+                and (item.get("source") in ({"DHCPv4"} if address == "dhcp4" else {"DHCPv6", "NDisc"})
+                     or (address == "dhcp4" and item.get("dhcp4_lease") is True)))]
             candidate_ip = str(ip_interface(address).ip) if "/" in address else ""
             if any(item["state"] == "conflict" for item in records
                    if item in matches or item["address"] == candidate_ip):
@@ -9925,7 +10000,11 @@ def _wait_network_addresses(path: Path, *, attempts: int = 31, started_at: str |
             if not observation.get("complete") or not links.get(name, {}).get("configured") or not any(item["state"] == "assigned" for item in matches):
                 missing.append((name, address))
         if not missing:
-            return observation
+            ready_samples += 1
+            if ready_samples >= max(1, stable_samples):
+                return observation
+        else:
+            ready_samples = 0
         if time.monotonic() >= deadline:
             break
         if attempt + 1 < attempts:
@@ -9935,7 +10014,8 @@ def _wait_network_addresses(path: Path, *, attempts: int = 31, started_at: str |
         candidate_ip = str(ip_interface(address).ip) if "/" in address else address
         if (name, candidate_ip) in conflicts:
             raise ValueError(f"IP conflict on {name}: {address}")
-    raise ValueError("Unable to verify candidate addresses: " + ", ".join(f"{name} {address}" for name, address in missing))
+    detail = ", ".join(f"{name} {address}" for name, address in missing) or "address readiness did not stabilize"
+    raise ValueError("Unable to verify candidate addresses: " + detail)
 
 
 @contextmanager
@@ -24523,6 +24603,7 @@ def _management_handoff_addresses(
     *,
     previous_addresses: set[str] | None = None,
     previous_dynamic_families: set[tuple[str, str]] | None = None,
+    address_observation: dict | None = None,
     discovery_attempts: int = 45,
 ) -> list[str]:
     """Return configured candidate management listener addresses.
@@ -24531,6 +24612,7 @@ def _management_handoff_addresses(
         network_path: Candidate staged network configuration.
         previous_addresses: Addresses retained only for the old-path transition.
         previous_dynamic_families: Interface/address families that were already dynamic.
+        address_observation: Successful candidate activation evidence for a same-address DHCP lease.
         discovery_attempts: Bounded runtime-address discovery attempts.
 
     Returns:
@@ -24557,6 +24639,13 @@ def _management_handoff_addresses(
         str(ip_address(address)) for address in (previous_addresses or set())
     }
     previous_dynamic_families = previous_dynamic_families or set()
+    proven_dhcp4 = {
+        (link["name"], record["address"])
+        for link in (address_observation or {}).get("links", [])
+        if (address_observation or {}).get("complete") and link.get("configured")
+        for record in link.get("addresses", [])
+        if record.get("state") == "assigned" and record.get("dhcp4_lease") is True
+    }
     dynamic_requirements: list[tuple[str, set[str]]] = []
     for row in rows:
         for key in ("ip_cidr", "ipv6_cidr"):
@@ -24602,6 +24691,7 @@ def _management_handoff_addresses(
                     if (
                         normalized in previous_addresses
                         and (interface, family) not in previous_dynamic_families
+                        and not (family == "inet" and (interface, normalized) in proven_dhcp4)
                     ):
                         continue
                     discovered.setdefault((interface, family), []).append(normalized)
@@ -25793,7 +25883,7 @@ def _apply_management_handoff(payload: dict) -> int:
         activation_started = datetime.now(timezone.utc).isoformat()
         _apply_management_candidate_network(Path(str(payload["network_config_path"])), state)
         failing_layer = "address activation"
-        _wait_network_addresses(Path(str(payload["network_config_path"])), started_at=activation_started)
+        address_observation = _wait_network_addresses(Path(str(payload["network_config_path"])), started_at=activation_started)
         previous_firewall = FIREWALL_CONFIG_PATH.read_text(encoding="utf-8") if FIREWALL_CONFIG_PATH.is_file() else ""
         candidate_firewall_path = Path(str(payload["firewall_config_path"]))
         candidate_firewall = candidate_firewall_path.read_text(encoding="utf-8")
@@ -25846,6 +25936,7 @@ def _apply_management_handoff(payload: dict) -> int:
             raise ValueError("candidate nginx validation failed")
         candidate_addresses = _management_handoff_addresses(
             Path(str(payload["network_config_path"])),
+            address_observation=address_observation,
             previous_addresses=set(state["previous_management_addresses"]),
             previous_dynamic_families={
                 (str(path.get("name") or ""), family)
@@ -25888,12 +25979,20 @@ def _apply_management_handoff(payload: dict) -> int:
         )
         reconfigure_interfaces = _management_handoff_previous_link_interfaces(state)
         reconfigure_interfaces.update(str(row.get("name") or "") for row in candidate_physical)
+        retirement_started = datetime.now(timezone.utc).isoformat()
         for interface in sorted(reconfigure_interfaces):
             if not interface or not _link_exists(interface):
                 continue
             reconfigure = _run(["networkctl", "reconfigure", str(interface)])
             if reconfigure.returncode != 0:
                 raise ValueError(f"networkd could not retire the previous path on {interface}")
+        # Reconfigure acknowledges the request before IPv4 ACD finishes. Even an
+        # unchanged address can temporarily lose its connected route, so the
+        # earlier Network apply readiness cannot authorize gateway installation.
+        failing_layer = "post-retirement address activation"
+        _wait_network_addresses(
+            Path(str(payload["network_config_path"])), started_at=retirement_started, stable_samples=3,
+        )
         if payload.get("wan_config_path"):
             # The final Network regeneration intentionally replaces networkd
             # runtime. Reapply the coupled route intent afterwards so policy

@@ -2757,7 +2757,8 @@ def test_management_handoff_keeps_previous_https_identity(monkeypatch, tmp_path,
     assert "X-Forwarded-Proto https" in holdover
 
 
-@pytest.mark.parametrize("candidate_sync_error", [False, True], ids=["durable", "sync-failure"])
+@pytest.mark.parametrize("candidate_sync_error", [False, True, "address-timeout", "address-conflict"],
+                         ids=["durable", "sync-failure", "address-timeout", "address-conflict"])
 @pytest.mark.parametrize("paired_publishing", [False, True], ids=["source-only", "port-forward-pair"])
 @pytest.mark.parametrize("mapping_change", ["unchanged", "target", "removed"])
 def test_management_handoff_candidate_durability_gates_ack(
@@ -2796,6 +2797,22 @@ def test_management_handoff_candidate_durability_gates_ack(
     nginx_readiness_options: list[bool] = []
     retirement_operations: list[str] = []
     wan_calls: list[str] = []
+    def wait_addresses(_path, **kwargs):
+        """Reject unstable or conflicting final addresses before WAN and durable ACK.
+
+        Args:
+            _path: Candidate network intent.
+            **kwargs: Readiness boundary selected by the handoff.
+        """
+        if kwargs.get("stable_samples") == 3:
+            retirement_operations.append("address-ready")
+            if candidate_sync_error == "address-timeout":
+                raise ValueError("Unable to verify candidate addresses: eth1 192.0.2.20/24")
+            if candidate_sync_error == "address-conflict":
+                raise ValueError("IP conflict on eth1: 192.0.2.20/24")
+        return {}
+
+    monkeypatch.setattr(helper, "_wait_network_addresses", wait_addresses)
     monkeypatch.setattr(helper, "_snapshot_management_handoff", lambda _payload: state)
     monkeypatch.setattr(
         helper,
@@ -2883,7 +2900,7 @@ def test_management_handoff_candidate_durability_gates_ack(
             _payload: Candidate management handoff payload.
         """
         durability_calls.append(True)
-        if candidate_sync_error:
+        if candidate_sync_error is True:
             raise OSError("candidate sync failed")
 
     monkeypatch.setattr(helper, "_sync_management_handoff_candidate", sync_candidate)
@@ -2959,6 +2976,15 @@ def test_management_handoff_candidate_durability_gates_ack(
         }
     )
 
+    if candidate_sync_error in {"address-timeout", "address-conflict"}:
+        assert result == 1
+        assert not durability_calls and not wan_calls and not paired_calls
+        assert "awaiting-application-commit" not in phases
+        assert restored == [True] and cleared == [True]
+        payload = json.loads(capsys.readouterr().err.splitlines()[-1])
+        assert payload["management_handoff"] == "rolled back"
+        assert payload["failing_layer"] == "post-retirement address activation"
+        return
     assert durability_calls == [True]
     assert paired_calls == ([(nat.read_text(), "captured nat")] if paired_publishing else [])
     if candidate_sync_error:
@@ -2978,7 +3004,7 @@ def test_management_handoff_candidate_durability_gates_ack(
     assert restored == []
     assert resolver_calls == ["eth1", "eth1"]
     assert wan_calls == ["candidate-wan"]
-    assert retirement_operations == ["resolver", "final-network", "resolver", "wan"]
+    assert retirement_operations == ["resolver", "final-network", "resolver", "address-ready", "wan"]
     assert len(applied_firewalls) == 2
     assert candidate_rule in applied_firewalls[0]
     assert 'iifname "eth0"' in applied_firewalls[0]
@@ -6947,6 +6973,7 @@ def test_network_helper_renders_explicit_management_gateway_without_runtime_fall
     assert "From=192.168.49.0/24" in rendered
     assert "Destination=192.168.49.0/24\nScope=link\nTable=100" in rendered
     assert rendered.count("Gateway=192.168.49.254") == 2
+    assert rendered.count("Gateway=192.168.49.254\nGatewayOnLink=yes") == 2
     assert "Table=100" in rendered
 
 
@@ -6977,7 +7004,7 @@ def test_network_helper_persists_management_connected_route_for_reboot(monkeypat
     assert "Address=192.168.167.134/24" in rendered
     assert "Destination=192.168.167.0/24\nScope=link\nTable=100" in rendered
     assert "From=192.168.167.0/24\nTable=100" in rendered
-    assert "Gateway=192.168.167.2\nTable=100" in rendered
+    assert "Gateway=192.168.167.2\nGatewayOnLink=yes\nTable=100" in rendered
 
 
 def test_network_helper_rejects_static_management_without_ipv4(tmp_path):
