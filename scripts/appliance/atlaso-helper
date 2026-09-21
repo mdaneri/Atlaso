@@ -21273,13 +21273,16 @@ def _console_recovery_command(label: str, command: list[str]) -> subprocess.Comp
     return result
 
 
-def _console_management_http_status(curl: str, url: str, *, insecure: bool = False) -> str:
+def _console_management_http_status(
+    curl: str, url: str, *, insecure: bool = False, ca_certificate: Path | None = None,
+) -> str:
     """Return one bounded management readiness status code.
 
     Args:
         curl: Absolute curl executable path.
         url: Loopback URL to probe.
         insecure: Whether to skip certificate trust for the local HTTPS probe.
+        ca_certificate: Explicit transaction trust anchor, overriding insecure probing.
     """
     command = [
         curl,
@@ -21294,7 +21297,9 @@ def _console_management_http_status(curl: str, url: str, *, insecure: bool = Fal
         "--max-time",
         "3",
     ]
-    if insecure:
+    if ca_certificate is not None:
+        command.extend(["--cacert", str(ca_certificate)])
+    elif insecure:
         command.append("--insecure")
     result = _run([*command, url])
     return result.stdout.strip() if result.returncode == 0 else "000"
@@ -24718,11 +24723,68 @@ def _management_handoff_addresses(
     return list(dict.fromkeys(addresses))
 
 
+def _management_handoff_candidate_ca(
+    payload: dict, settings: dict, addresses: list[str],
+) -> Path | None:
+    """Authenticate acquired candidate addresses before publishing their listener.
+
+    Args:
+        payload: Validated management handoff transaction paths.
+        settings: Candidate appliance settings.
+        addresses: Actual candidate IPv4 and IPv6 listener addresses.
+
+    Returns:
+        Explicit staged trust anchor for HTTPS, or None for HTTP.
+
+    Raises:
+        ValueError: If staged certificate identity cannot cover the candidate.
+    """
+    if not settings.get("management_https_enabled"):
+        return None
+    ca_path = Path(str(payload.get("ca_config_path") or ""))
+    staged = _load_ca_payload(ca_path)
+    root = staged.get("root") or {}
+    root_path = _ca_managed_path(str(root.get("root_cert_path") or ""), "root_cert_path")
+    cert_path = _ca_managed_path(str(settings.get("management_https_cert_path") or ""), "management_https_cert_path")
+    key_path = _ca_managed_path(str(settings.get("management_https_key_path") or ""), "management_https_key_path")
+    certificate, _ = _staged_management_https_material(ca_path, cert_path, key_path)
+    for path, expected in ((root_path, str(root.get("certificate_pem") or "")), (cert_path, certificate)):
+        with path.open("rb") as stream:
+            deployed = stream.read(1024 * 1024 + 1)
+        if not expected or len(deployed) > 1024 * 1024 or b"".join(deployed.split()) != b"".join(expected.encode().split()):
+            raise ValueError("management HTTPS certificate deployment does not match the staged transaction")
+    openssl = shutil.which("openssl")
+    if not openssl or not addresses:
+        raise ValueError("management HTTPS certificate prerequisite requires OpenSSL and candidate addresses")
+    deadline = time.monotonic() + 10
+    for address in addresses:
+        candidate = str(ip_address(address))
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise ValueError("management HTTPS certificate prerequisite timed out")
+        try:
+            result = subprocess.run(
+                [openssl, "verify", "-CAfile", str(root_path), "-no-CApath", "-no-CAstore",
+                 "-purpose", "sslserver", "-verify_ip", candidate, str(cert_path)],
+                capture_output=True, timeout=min(5, remaining), check=False,
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise ValueError("management HTTPS certificate prerequisite timed out") from exc
+        if result.returncode:
+            raise ValueError(
+                f"management HTTPS certificate does not authenticate candidate address {candidate}; "
+                "new DHCP/SLAAC addresses require certificate coverage before handoff. "
+                "Restore the static address or use a DHCP reservation covered by the managed certificate."
+            )
+    return root_path
+
+
 def _management_handoff_readiness(
     addresses: list[str],
     https_enabled: bool,
     public_port: int,
     *,
+    tls_ca_paths: dict[str, Path] | None = None,
     samples: int = 3,
     upstream_host: str = "127.0.0.1",
     upstream_port: int = 8000,
@@ -24733,6 +24795,7 @@ def _management_handoff_readiness(
         addresses: Management listener addresses to probe.
         https_enabled: Whether the applied management front door uses HTTPS.
         public_port: Configured host-facing management listener port.
+        tls_ca_paths: Candidate addresses requiring explicit transaction CA trust.
         samples: Required consecutive successful samples.
         upstream_host: Atlaso application endpoint host behind nginx.
         upstream_port: Atlaso application endpoint port behind nginx.
@@ -24761,11 +24824,16 @@ def _management_handoff_readiness(
         for address in addresses:
             host = f"[{address}]" if ":" in address else address
             scheme = "https" if https_enabled else "http"
-            statuses[f"management {address}"] = _console_management_http_status(
-                curl,
-                f"{scheme}://{host}:{public_port}/openapi.json",
-                insecure=https_enabled,
-            )
+            trust = (tls_ca_paths or {}).get(address) if https_enabled else None
+            if trust is not None:
+                status = _console_management_http_status(
+                    curl, f"{scheme}://{host}:{public_port}/openapi.json", ca_certificate=trust,
+                )
+            else:
+                status = _console_management_http_status(
+                    curl, f"{scheme}://{host}:{public_port}/openapi.json", insecure=https_enabled,
+                )
+            statuses[f"management {address}"] = status
         if all(status == "200" for status in statuses.values()):
             consecutive += 1
             if consecutive >= samples:
@@ -25922,18 +25990,7 @@ def _apply_management_handoff(payload: dict) -> int:
         if resolver.returncode != 0:
             raise ValueError("candidate management resolver apply failed")
         protocol_holdover = _management_handoff_protocol_holdover(state, settings_payload)
-        failing_layer = "nginx management front door"
-        management_https_result, _restart_delay_seconds = _configure_atlaso_management_https(
-            settings_payload,
-            site_suffix=protocol_holdover,
-            verify_front_door=False,
-        )
-        if management_https_result != 0:
-            raise ValueError("candidate management nginx apply failed")
-        if _handle_public_services("apply", [str(payload["public_services_config_path"])]) != 0:
-            raise ValueError("candidate public-services nginx apply failed")
-        if _nginx_test_command().returncode != 0:
-            raise ValueError("candidate nginx validation failed")
+        failing_layer = "candidate address discovery"
         candidate_addresses = _management_handoff_addresses(
             Path(str(payload["network_config_path"])),
             address_observation=address_observation,
@@ -25952,6 +26009,20 @@ def _apply_management_handoff(payload: dict) -> int:
                 )
             },
         )
+        failing_layer = "certificate prerequisite"
+        candidate_ca = _management_handoff_candidate_ca(payload, settings_payload, candidate_addresses)
+        failing_layer = "nginx management front door"
+        management_https_result, _restart_delay_seconds = _configure_atlaso_management_https(
+            settings_payload,
+            site_suffix=protocol_holdover,
+            verify_front_door=False,
+        )
+        if management_https_result != 0:
+            raise ValueError("candidate management nginx apply failed")
+        if _handle_public_services("apply", [str(payload["public_services_config_path"])]) != 0:
+            raise ValueError("candidate public-services nginx apply failed")
+        if _nginx_test_command().returncode != 0:
+            raise ValueError("candidate nginx validation failed")
         failing_layer = "old-path preservation"
         old_readiness = _management_handoff_readiness(
             list(state["previous_management_addresses"]),
@@ -25963,6 +26034,10 @@ def _apply_management_handoff(payload: dict) -> int:
             candidate_addresses,
             candidate_https,
             candidate_public_port,
+            tls_ca_paths={
+                address: candidate_ca for address in candidate_addresses
+                if candidate_ca is not None and address not in state["previous_management_addresses"]
+            },
         )
         _write_management_handoff_state(state, "candidate-ready")
         failing_layer = "previous-path retirement"
@@ -26033,6 +26108,10 @@ def _apply_management_handoff(payload: dict) -> int:
             candidate_addresses,
             candidate_https,
             candidate_public_port,
+            tls_ca_paths={
+                address: candidate_ca for address in candidate_addresses
+                if candidate_ca is not None
+            },
         )
         failing_layer = "candidate durability"
         _sync_management_handoff_candidate(state, payload)

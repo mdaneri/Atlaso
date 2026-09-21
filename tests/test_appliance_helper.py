@@ -2757,8 +2757,8 @@ def test_management_handoff_keeps_previous_https_identity(monkeypatch, tmp_path,
     assert "X-Forwarded-Proto https" in holdover
 
 
-@pytest.mark.parametrize("candidate_sync_error", [False, True, "address-timeout", "address-conflict"],
-                         ids=["durable", "sync-failure", "address-timeout", "address-conflict"])
+@pytest.mark.parametrize("candidate_sync_error", [False, True, "address-timeout", "address-conflict", "certificate"],
+                         ids=["durable", "sync-failure", "address-timeout", "address-conflict", "certificate"])
 @pytest.mark.parametrize("paired_publishing", [False, True], ids=["source-only", "port-forward-pair"])
 @pytest.mark.parametrize("mapping_change", ["unchanged", "target", "removed"])
 def test_management_handoff_candidate_durability_gates_ack(
@@ -2819,6 +2819,13 @@ def test_management_handoff_candidate_durability_gates_ack(
         "_management_handoff_readiness",
         lambda *_args, **_kwargs: {"stable_samples": 3},
     )
+    def candidate_ca(*_args):
+        """Inject an uncovered acquired address before candidate publication."""
+        if candidate_sync_error == "certificate":
+            raise ValueError("management HTTPS certificate does not authenticate candidate address 198.51.100.10")
+        return tmp_path / "ca.pem"
+
+    monkeypatch.setattr(helper, "_management_handoff_candidate_ca", candidate_ca)
     monkeypatch.setattr(helper, "_management_handoff_upstream_readiness", lambda: {"stable_samples": 3})
     monkeypatch.setattr(helper, "_install_management_holdovers", lambda _state, _payload: [])
     monkeypatch.setattr(helper, "_write_management_handoff_state", lambda _state, phase: phases.append(phase))
@@ -2984,6 +2991,15 @@ def test_management_handoff_candidate_durability_gates_ack(
         payload = json.loads(capsys.readouterr().err.splitlines()[-1])
         assert payload["management_handoff"] == "rolled back"
         assert payload["failing_layer"] == "post-retirement address activation"
+        return
+    if candidate_sync_error == "certificate":
+        assert result == 1
+        assert not durability_calls and not wan_calls and not paired_calls and not nginx_suffixes
+        assert "candidate-ready" not in phases and "awaiting-application-commit" not in phases
+        assert restored == [True] and cleared == [True]
+        failure = json.loads(capsys.readouterr().err.splitlines()[-1])
+        assert failure["management_handoff"] == "rolled back"
+        assert failure["failing_layer"] == "certificate prerequisite"
         return
     assert durability_calls == [True]
     assert paired_calls == ([(nat.read_text(), "captured nat")] if paired_publishing else [])
