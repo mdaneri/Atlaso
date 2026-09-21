@@ -84,8 +84,16 @@ ssh_pwauth: true"""
     ssh_authorized_keys:
       - {args.public_key}"""
 
-    fixture_packages = "\n  - dnsmasq\n  - radvd\n  - python3\n  - nftables\n  - ethtool" if getattr(args, "routing_overlap_guest", False) else ""
     fixture_mode = bool(getattr(args, "routing_overlap_guest", False))
+    fixture_packages = (
+        "\n  - dnsmasq\n  - radvd\n  - python3\n  - nftables\n  - ethtool"
+        "\n  - sudo\n  - open-vm-tools\n  - open-vm-tools-openrc"
+        if fixture_mode else ""
+    )
+    fixture_services = (
+        "\n  - rc-update add open-vm-tools default\n  - rc-service open-vm-tools start"
+        if fixture_mode else ""
+    )
     refresh_command = "true" if fixture_mode else "/usr/local/sbin/atlaso-refresh-test-dhcp || true"
 
     user_data = f"""#cloud-config
@@ -122,7 +130,7 @@ write_files:
       done
 runcmd:
   - rc-update add sshd default || true
-  - rc-service sshd restart || true
+  - rc-service sshd restart || true{fixture_services}
   - {refresh_command}
 """
 

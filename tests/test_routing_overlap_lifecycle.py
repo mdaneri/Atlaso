@@ -153,8 +153,12 @@ def test_client_seed_installs_fixture_tools_only_when_requested(enabled):
     files = cloud_init_files(Namespace(hostname="fixture", user="alpine", public_key="synthetic-public-key",
                                       password="", routing_overlap_guest=enabled))
     data = files["user-data"]
-    for package in ("dnsmasq", "radvd", "python3", "nftables", "ethtool"):
+    for package in ("dnsmasq", "radvd", "python3", "nftables", "ethtool", "sudo",
+                    "open-vm-tools", "open-vm-tools-openrc"):
         assert (f"  - {package}\n" in data) == enabled
+    for command in ("rc-update add open-vm-tools default", "rc-service open-vm-tools start"):
+        assert (f"  - {command}\n" in data) == enabled
+        assert f"{command} || true" not in data
     assert "rc-service dnsmasq" not in data and "rc-service radvd" not in data
     assert "rc-update add dnsmasq" not in data and "rc-update add radvd" not in data
     assert "NOPASSWD:ALL" in data
