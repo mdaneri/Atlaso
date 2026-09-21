@@ -24723,14 +24723,45 @@ def _management_handoff_addresses(
     return list(dict.fromkeys(addresses))
 
 
-def _management_handoff_candidate_ca(
-    payload: dict, settings: dict, addresses: list[str],
-) -> Path | None:
-    """Authenticate acquired candidate addresses before publishing their listener.
+def _management_handoff_public_certificate(
+    payload: dict, settings: dict,
+) -> tuple[Path, str, Path, str] | None:
+    """Capture immutable public certificate intent before CA consumes its stage.
 
     Args:
-        payload: Validated management handoff transaction paths.
-        settings: Candidate appliance settings.
+        payload: Validated handoff paths, including the disposable CA stage.
+        settings: Candidate management listener settings.
+
+    Returns:
+        Validated root and leaf paths and public PEM, or None for HTTP.
+
+    Raises:
+        ValueError: If the stage does not own the candidate certificate pair.
+    """
+    if not settings.get("management_https_enabled"):
+        return None
+    staged = _load_ca_payload(Path(str(payload.get("ca_config_path") or "")))
+    root = staged.get("root") or {}
+    root_path = _ca_managed_path(str(root.get("root_cert_path") or ""), "root_cert_path")
+    cert_path = _ca_managed_path(str(settings.get("management_https_cert_path") or ""), "management_https_cert_path")
+    key_path = _ca_managed_path(str(settings.get("management_https_key_path") or ""), "management_https_key_path")
+    for certificate in staged.get("certificates", []):
+        if not isinstance(certificate, dict):
+            continue
+        if (certificate.get("cert_path") and certificate.get("key_path")
+                and _ca_managed_path(str(certificate["cert_path"]), "cert_path") == cert_path
+                and _ca_managed_path(str(certificate["key_path"]), "key_path") == key_path):
+            return root_path, str(root.get("certificate_pem") or ""), cert_path, str(certificate.get("certificate_pem") or "")
+    raise ValueError("staged CA payload does not contain the configured management HTTPS certificate and key")
+
+
+def _management_handoff_candidate_ca(
+    public_certificate: tuple[Path, str, Path, str] | None, addresses: list[str],
+) -> Path | None:
+    """Authenticate acquired addresses against the captured public certificate.
+
+    Args:
+        public_certificate: Immutable public intent retained before CA stage cleanup.
         addresses: Actual candidate IPv4 and IPv6 listener addresses.
 
     Returns:
@@ -24739,16 +24770,10 @@ def _management_handoff_candidate_ca(
     Raises:
         ValueError: If staged certificate identity cannot cover the candidate.
     """
-    if not settings.get("management_https_enabled"):
+    if public_certificate is None:
         return None
-    ca_path = Path(str(payload.get("ca_config_path") or ""))
-    staged = _load_ca_payload(ca_path)
-    root = staged.get("root") or {}
-    root_path = _ca_managed_path(str(root.get("root_cert_path") or ""), "root_cert_path")
-    cert_path = _ca_managed_path(str(settings.get("management_https_cert_path") or ""), "management_https_cert_path")
-    key_path = _ca_managed_path(str(settings.get("management_https_key_path") or ""), "management_https_key_path")
-    certificate, _ = _staged_management_https_material(ca_path, cert_path, key_path)
-    for path, expected in ((root_path, str(root.get("certificate_pem") or "")), (cert_path, certificate)):
+    root_path, root_pem, cert_path, certificate = public_certificate
+    for path, expected in ((root_path, root_pem), (cert_path, certificate)):
         with path.open("rb") as stream:
             deployed = stream.read(1024 * 1024 + 1)
         if not expected or len(deployed) > 1024 * 1024 or b"".join(deployed.split()) != b"".join(expected.encode().split()):
@@ -25934,12 +25959,13 @@ def _apply_management_handoff(payload: dict) -> int:
         holdovers = _install_management_holdovers(state, payload)
         _write_management_handoff_state(state, "old-path-retained")
         failing_layer = "certificate"
-        ca_path = str(payload.get("ca_config_path") or "")
-        if ca_path and _handle_ca("apply", [ca_path]) != 0:
-            raise ValueError("candidate management certificate apply failed")
         settings_payload = _load_appliance_settings_config(
             Path(str(payload["appliance_settings_config_path"]))
         )
+        public_certificate = _management_handoff_public_certificate(payload, settings_payload)
+        ca_path = str(payload.get("ca_config_path") or "")
+        if ca_path and _handle_ca("apply", [ca_path]) != 0:
+            raise ValueError("candidate management certificate apply failed")
         candidate_https = bool(settings_payload.get("management_https_enabled"))
         candidate_public_port = int(
             settings_payload.get(
@@ -26010,7 +26036,7 @@ def _apply_management_handoff(payload: dict) -> int:
             },
         )
         failing_layer = "certificate prerequisite"
-        candidate_ca = _management_handoff_candidate_ca(payload, settings_payload, candidate_addresses)
+        candidate_ca = _management_handoff_candidate_ca(public_certificate, candidate_addresses)
         failing_layer = "nginx management front door"
         management_https_result, _restart_delay_seconds = _configure_atlaso_management_https(
             settings_payload,

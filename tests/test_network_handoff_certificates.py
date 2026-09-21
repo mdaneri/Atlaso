@@ -71,10 +71,10 @@ def test_actual_address_certificate_coverage(candidate, addresses, accepted):
         pytest.skip("OpenSSL is required for certificate verification")
     helper, settings, _staged, root = candidate
     if accepted:
-        assert helper._management_handoff_candidate_ca({}, settings, addresses) == root
+        assert helper._management_handoff_candidate_ca(helper._management_handoff_public_certificate({}, settings), addresses) == root
     else:
         with pytest.raises(ValueError, match="does not authenticate candidate address"):
-            helper._management_handoff_candidate_ca({}, settings, addresses)
+            helper._management_handoff_candidate_ca(helper._management_handoff_public_certificate({}, settings), addresses)
 
 
 @pytest.mark.parametrize("staged_matches", [False, True])
@@ -94,12 +94,14 @@ def test_staged_ca_mismatch(candidate, staged_matches):
         staged["root"]["certificate_pem"] = replacement
     message = "does not authenticate" if staged_matches else "does not match the staged transaction"
     with pytest.raises(ValueError, match=message):
-        helper._management_handoff_candidate_ca({}, settings, ["192.0.2.10"])
+        helper._management_handoff_candidate_ca(helper._management_handoff_public_certificate({}, settings), ["192.0.2.10"])
 
 
 def test_http_requires_no_certificate():
     """Keep HTTP handoffs independent of managed certificate material."""
-    assert load_helper_module()._management_handoff_candidate_ca({}, {}, ["192.0.2.11"]) is None
+    helper = load_helper_module()
+    assert helper._management_handoff_public_certificate({}, {}) is None
+    assert helper._management_handoff_candidate_ca(None, ["192.0.2.11"]) is None
 
 
 def test_explicit_ca_never_uses_insecure(candidate, monkeypatch):
@@ -137,3 +139,35 @@ def test_readiness_uses_candidate_trust_only_for_selected_addresses(candidate, m
     helper._management_handoff_readiness(["192.0.2.10", "192.0.2.11"], True, 443,
                                          samples=1, tls_ca_paths={address: root for address in ["192.0.2.10", "192.0.2.11"]})
     assert all(options == {"ca_certificate": root} for _url, options in calls[1:])
+
+
+def test_public_certificate_survives_actual_ca_stage_cleanup(candidate, tmp_path, monkeypatch):
+    """Verify acquired SANs after the real CA wrapper consumes its staged JSON.
+
+    Args:
+        candidate: Synthetic public certificate fixture.
+        tmp_path: Owned test directory.
+        monkeypatch: Reversible validation substitutions for synthetic public material.
+    """
+    import json
+
+    if not shutil.which("openssl"):
+        pytest.skip("OpenSSL is required for certificate verification")
+    helper, settings, staged, root = candidate
+    staged["root"].update(legacy_root_cert_path=str(tmp_path / "legacy.pem"),
+                          ca_bundle_path=str(tmp_path / "bundle.pem"))
+    stage = tmp_path / "ca.json"
+    stage.write_text(json.dumps(staged))
+    # Restore the actual JSON reader: an in-memory loader would mask stage deletion.
+    monkeypatch.setattr(helper, "_load_ca_payload", load_helper_module()._load_ca_payload)
+    monkeypatch.setattr(helper, "_validate_ca_config_path", lambda _path: stage)
+    monkeypatch.setattr(helper, "_ca_payload_errors", lambda _path: [])
+    snapshot = helper._management_handoff_public_certificate({"ca_config_path": str(stage)}, settings)
+    assert isinstance(snapshot, tuple) and len(snapshot) == 4
+    assert snapshot[1].startswith("-----BEGIN CERTIFICATE-----")
+    assert snapshot[3].startswith("-----BEGIN CERTIFICATE-----")
+    assert helper._handle_ca("apply", [str(stage)]) == 0
+    assert not stage.exists()
+    assert helper._management_handoff_candidate_ca(snapshot, ["192.0.2.10", "2001:db8::10"]) == root
+    with pytest.raises(ValueError, match="does not authenticate candidate address"):
+        helper._management_handoff_candidate_ca(snapshot, ["192.0.2.11"])

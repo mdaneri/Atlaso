@@ -2825,6 +2825,7 @@ def test_management_handoff_candidate_durability_gates_ack(
             raise ValueError("management HTTPS certificate does not authenticate candidate address 198.51.100.10")
         return tmp_path / "ca.pem"
 
+    monkeypatch.setattr(helper, "_management_handoff_public_certificate", lambda *_args: None)
     monkeypatch.setattr(helper, "_management_handoff_candidate_ca", candidate_ca)
     monkeypatch.setattr(helper, "_management_handoff_upstream_readiness", lambda: {"stable_samples": 3})
     monkeypatch.setattr(helper, "_install_management_holdovers", lambda _state, _payload: [])
