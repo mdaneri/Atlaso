@@ -738,6 +738,11 @@ track the missing capability separately. A successful VM-removal command does no
 
 ## Cleanup Safety
 
+The synthetic lifecycle storage fixture exercises the runner's cleanup statements inside their containing try body,
+without executing the outer resource-release block. It checks both refusal before any provider call when diagnostic
+termination is unproven and admission to mocked providers when termination is proven. A fixture parse failure is
+reported separately from a cleanup-guard failure; this validation requires no live VMware resources or credentials.
+
 Workstation cleanup is authoritative only for an exact Atlaso artifact root. It rejects filesystem roots, sibling or
 parent targets, and any root or descendant containing a reparse point. Every recursively discovered VMX must be a strict
 descendant of that root and must match the caller's validated target set. Cleanup captures the root and descendant

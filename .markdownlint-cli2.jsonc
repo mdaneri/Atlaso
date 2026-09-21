@@ -20,6 +20,10 @@
   },
   "globs": [
     "**/*.md",
+    // Exclude only root task state, not every Git-ignored or nested namesake directory.
+    // Explicit arguments combine with these globs; opt in to fixture validation with:
+    // npm run lint:markdown -- --no-globs .atlaso-local/example/fixture.md
+    "!.atlaso-local/**",
     "!node_modules/**",
     "!site/**",
     "!.venv*/**",
