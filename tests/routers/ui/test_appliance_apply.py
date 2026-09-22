@@ -1602,16 +1602,20 @@ def test_management_move_forces_partial_dependency_selection_into_handoff(client
     from sqlalchemy import select
 
     from atlaso.app.database import SessionLocal
-    from atlaso.app.models import Job, PhysicalInterface
+    from atlaso.app.models import DnsSettings, Job, PhysicalInterface
     from atlaso.app.ui import appliance_apply_units, update_appliance_apply_baselines
 
     login(client)
     with SessionLocal() as db:
+        dns = db.query(DnsSettings).one()
+        dns.enabled = False
+        db.commit()
         units = appliance_apply_units(db)
         update_appliance_apply_baselines(db, units, {unit["id"] for unit in units})
         management = db.scalar(select(PhysicalInterface).where(PhysicalInterface.name == "eth0"))
         assert management is not None
         management.ip_cidr = "192.168.49.21/24"
+        dns.enabled = True
         db.commit()
     page = client.get("/dashboard")
     csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
@@ -1634,7 +1638,14 @@ def test_management_move_forces_partial_dependency_selection_into_handoff(client
             "firewall",
             "appliance_settings",
             "public_services",
+            "dnsmasq",
         }
+        settings = next(
+            unit
+            for unit in payload["captured_units"]
+            if unit["unit_id"] == "appliance_settings"
+        )
+        assert json.loads(settings["config_preview"])["resolver_servers"] == ["127.0.0.1"]
         assert all(
             unit["management_handoff"]["management_handoff"] == "committed"
             for unit in payload["units"]

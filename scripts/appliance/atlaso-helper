@@ -24080,12 +24080,16 @@ def _management_handoff_validation_errors(payload: dict) -> list[str]:
         errors.extend(f"certificate: {error}" for error in _ca_payload_errors(staged_ca_path))
     dnsmasq_path = str(payload.get("dnsmasq_config_path") or "")
     if dnsmasq_path:
-        dnsmasq_validation = _validate_dnsmasq_config(Path(dnsmasq_path))
-        if dnsmasq_validation.returncode != 0:
-            errors.append(
-                "DNS/DHCP: "
-                + (dnsmasq_validation.stderr or dnsmasq_validation.stdout).strip()
-            )
+        dnssec_ready, dnssec_error = _prepare_dnsmasq_dnssec(Path(dnsmasq_path))
+        if not dnssec_ready:
+            errors.append(f"DNS/DHCP: {dnssec_error}")
+        else:
+            dnsmasq_validation = _validate_dnsmasq_config(Path(dnsmasq_path))
+            if dnsmasq_validation.returncode != 0:
+                errors.append(
+                    "DNS/DHCP: "
+                    + (dnsmasq_validation.stderr or dnsmasq_validation.stdout).strip()
+                )
     for label, field in (
         ("WAN candidate", "wan_config_path"),
         ("WAN rollback", "wan_rollback_config_path"),

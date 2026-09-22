@@ -13085,6 +13085,51 @@ def test_appliance_settings_handoff_accepts_staged_https_cert_files(monkeypatch,
     assert any("management HTTPS private key does not exist" in error for error in deployed_errors)
 
 
+def test_management_handoff_prepares_dnssec_before_dnsmasq_validation(monkeypatch, tmp_path):
+    """Prepare managed trust anchors before validating bundled DNS configuration.
+
+    Args:
+        monkeypatch: Pytest fixture used to isolate handoff validators.
+        tmp_path: Temporary directory containing the staged DNS configuration.
+    """
+    helper = load_helper_module()
+    dnsmasq_path = tmp_path / "atlaso.conf"
+    dnsmasq_path.write_text("dnssec\n", encoding="utf-8")
+    events: list[str] = []
+    monkeypatch.setattr(helper, "_network_config_errors", lambda _path: [])
+    monkeypatch.setattr(
+        helper,
+        "_validate_firewall_config",
+        lambda _path: subprocess.CompletedProcess(["nft", "--check"], 0, "", ""),
+    )
+    monkeypatch.setattr(helper, "_appliance_settings_config_errors", lambda _path, **_kwargs: [])
+    monkeypatch.setattr(helper, "_public_services_config_errors", lambda _path, **_kwargs: [])
+    monkeypatch.setattr(
+        helper,
+        "_prepare_dnsmasq_dnssec",
+        lambda _path: events.append("prepare") or (True, ""),
+    )
+
+    def validate_dnsmasq(_path):
+        """Require trust-anchor preparation before syntax validation."""
+        assert events == ["prepare"]
+        events.append("validate")
+        return subprocess.CompletedProcess(["dnsmasq", "--test"], 0, "", "")
+
+    monkeypatch.setattr(helper, "_validate_dnsmasq_config", validate_dnsmasq)
+
+    assert helper._management_handoff_validation_errors(
+        {
+            "network_config_path": str(tmp_path / "network.conf"),
+            "firewall_config_path": str(tmp_path / "firewall.nft"),
+            "appliance_settings_config_path": str(tmp_path / "settings.json"),
+            "public_services_config_path": str(tmp_path / "public-services.conf"),
+            "dnsmasq_config_path": str(dnsmasq_path),
+        }
+    ) == []
+    assert events == ["prepare", "validate"]
+
+
 def test_public_services_handoff_accepts_staged_https_cert_files(monkeypatch, tmp_path):
     """Validate bundled Public Services TLS material before CA apply installs it.
 

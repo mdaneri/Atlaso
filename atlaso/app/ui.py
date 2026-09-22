@@ -16766,8 +16766,6 @@ def _submit_appliance_apply(
     dns_resolver_activation = bool("dnsmasq" in selected_ids and getattr(dns_settings_for_apply, "enabled", False))
     if dns_resolver_activation:
         selected_ids.add("appliance_settings")
-        units = appliance_apply_units(db, applying_dns=True)
-        unit_map = {unit["id"]: unit for unit in units}
     local_dns_disable_requires_resolver = bool(
         "dnsmasq" in selected_ids
         and not getattr(dns_settings_for_apply, "enabled", False)
@@ -16883,6 +16881,14 @@ def _submit_appliance_apply(
     )
     if management_handoff_dnsmasq:
         selected_ids.add("dnsmasq")
+    dns_resolver_activation = bool(
+        "dnsmasq" in selected_ids
+        and getattr(dns_settings_for_apply, "enabled", False)
+    )
+    if dns_resolver_activation:
+        selected_ids.add("appliance_settings")
+        units = appliance_apply_units(db, applying_dns=True)
+        unit_map = {unit["id"]: unit for unit in units}
     if selected_ids.intersection({"wan", "network", "firewall"}) and "nat" in unit_map:
         selected_ids.add("nat")
     if not selected_ids:
