@@ -61,3 +61,26 @@ def test_source_intent_allows_only_public_network_fields(tmp_path, monkeypatch, 
         assert 'must-not-appear' not in str(error.value)
     else:
         assert inspection.public_intent(path) == {**payload, 'held_addresses': []}
+
+
+@pytest.mark.parametrize('flag', [True, False, None, 'true', 1, 0, {}, []])
+def test_source_intent_validates_optional_management_flag(tmp_path, monkeypatch, flag):
+    """Accept emitted Boolean eligibility without widening the public allowlist.
+
+    Args:
+        tmp_path: Owned validation output directory.
+        monkeypatch: Supply the Linux no-follow constant on Windows.
+        flag: Candidate management eligibility value.
+    """
+    monkeypatch.setattr(inspection.os, 'O_NOFOLLOW', getattr(inspection.os, 'O_NOFOLLOW', 0), raising=False)
+    row = {'name': 'eth1', 'mac': '02:00:00:00:00:01', 'table': 200, 'management_ui': flag}
+    payload = {'schema': 1, 'interfaces': [row], 'held_addresses': []}
+    path = tmp_path / 'routing-intent.json'
+    path.write_text(json.dumps(payload), encoding='utf-8')
+    if type(flag) is bool:
+        assert inspection.public_intent(path) == payload
+        row['unexpected'] = 'must-not-appear'
+        path.write_text(json.dumps(payload), encoding='utf-8')
+    with pytest.raises(ValueError) as error:
+        inspection.public_intent(path)
+    assert 'must-not-appear' not in str(error.value)

@@ -43,12 +43,17 @@ def public_intent(path: Path = INTENT) -> dict[str, Any] | None:
         checked = []
         for row in rows:
             keys = {'name', 'mac', 'table'} | ({'address'} if field == 'held_addresses' else set())
-            if (not isinstance(row, dict) or set(row) != keys
+            allowed_keys = (keys, keys | {'management_ui'}) if field == 'interfaces' else (keys,)
+            if (not isinstance(row, dict) or set(row) not in allowed_keys
                     or not isinstance(row['name'], str) or not re.fullmatch(r'[A-Za-z0-9_.:-]{1,15}', row['name'])
                     or not isinstance(row['mac'], str) or not re.fullmatch(r'(?:[0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}', row['mac'])
                     or type(row['table']) is not int or row['table'] not in {100, 200}):
                 raise ValueError('source routing intent row is invalid')
             item = {key: row[key] for key in ('name', 'mac', 'table')}
+            if 'management_ui' in row:
+                if type(row['management_ui']) is not bool:
+                    raise ValueError('source routing management eligibility is invalid')
+                item['management_ui'] = row['management_ui']
             if 'address' in keys:
                 item['address'] = str(ipaddress.ip_address(row['address']))
             checked.append(item)
