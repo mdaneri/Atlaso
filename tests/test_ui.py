@@ -3302,7 +3302,7 @@ def test_ntp_page_autosave_updates_desired_state_and_preview(client, monkeypatch
     assert ".ntp-main-panel" in app_css.text
     assert "flex: 1 1 0;" in app_css.text
     assert ".atlaso-help-tooltip" in app_css.text
-    assert ".help-icon::after" not in app_css.text
+    assert "html:not(.atlaso-help-ready) .help-icon[data-help]::after" in app_css.text
 
     health = client.get("/ntp/source-health")
     assert health.status_code == 200

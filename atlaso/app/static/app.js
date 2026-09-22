@@ -12818,6 +12818,7 @@ function initializeHelpTooltips() {
   }, true);
   window.addEventListener("resize", place);
   window.addEventListener("scroll", place, true);
+  document.documentElement.classList.add("atlaso-help-ready");
 }
 
 function initializeSecretToggles() {

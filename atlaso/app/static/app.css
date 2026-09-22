@@ -4036,6 +4036,37 @@ label > span,
   cursor: help;
 }
 
+/* Keep help readable if the shared browser overlay cannot initialize. */
+html:not(.atlaso-help-ready) .help-icon[data-help]::after {
+  position: fixed;
+  z-index: 10000;
+  bottom: 12px;
+  left: 12px;
+  box-sizing: border-box;
+  width: max-content;
+  max-width: min(320px, calc(100vw - 24px));
+  max-height: calc(100vh - 24px);
+  overflow-wrap: anywhere;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  padding: 8px 10px;
+  background: #0f172a;
+  color: white;
+  box-shadow: 0 12px 24px rgba(15, 23, 42, 0.18);
+  content: attr(data-help);
+  font-size: 12px;
+  font-weight: 650;
+  line-height: 1.35;
+  text-transform: none;
+  visibility: hidden;
+  pointer-events: none;
+}
+
+html:not(.atlaso-help-ready) .help-icon[data-help]:hover::after,
+html:not(.atlaso-help-ready) .help-icon[data-help]:focus-visible::after {
+  visibility: visible;
+}
+
 .atlaso-help-tooltip {
   position: fixed;
   inset: auto;

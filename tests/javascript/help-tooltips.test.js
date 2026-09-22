@@ -86,6 +86,7 @@ function fixture() {
   label.append(title); label.append(button); body.append(label);
   const document = new Element("document");
   document.body = body;
+  document.documentElement = { classList: { names: new Set(), add(name) { this.names.add(name); } } };
   document.querySelectorAll = (selector) => body.querySelectorAll(selector);
   document.createElement = (tag) => new Element(tag);
   document.activeElement = body;
@@ -102,6 +103,7 @@ test("only the help button opens the tooltip; hover exit closes it", () => {
   const { body, button, document, tooltip, event } = fixture();
   assert.equal(button.getAttribute("tabindex"), null);
   assert.equal(button.getAttribute("aria-label"), "Help for Server address");
+  assert.equal(document.documentElement.classList.names.has("atlaso-help-ready"), true);
   document.emit("pointerover", event(body));
   assert.equal(tooltip.hidden, true);
   document.emit("pointerover", event(button));
@@ -147,7 +149,8 @@ test("viewport placement flips and shifts the top-layer tooltip", () => {
   assert.equal(tooltip.hidden, true);
   const css = fs.readFileSync("atlaso/app/static/app.css", "utf8");
   assert.match(css, /\.atlaso-help-tooltip\s*\{[^}]*position: fixed;/s);
-  assert.doesNotMatch(css, /\.help-icon::after/);
+  assert.match(css, /html:not\(\.atlaso-help-ready\) \.help-icon\[data-help\]::after/);
+  assert.match(css, /content: attr\(data-help\);/);
 });
 
 test("help inside a modal stays in the modal's accessible subtree", () => {

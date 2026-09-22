@@ -323,7 +323,8 @@ Use the OIDC scope-choice structure for this pattern:
 Every configurable setting has an adjacent `i` help control using `.field-label` and `.help-icon`. The shared help overlay
 opens from the button on hover, keyboard focus, or click/tap; Escape or an outside click dismisses it. The overlay
 repositions within the viewport above panels and dialogs, while the button provides the accessible name and tooltip
-association. The tooltip explains what changes, where it applies, and any safety boundary. Use explicit action labels
+association. Without JavaScript, the button still shows its help text in a fixed viewport fallback on hover or focus.
+The tooltip explains what changes, where it applies, and any safety boundary. Use explicit action labels
 such as **Review appliance changes** or **Submit appliance changes** instead of generic **Save** or **Apply**.
 
 Destructive actions use the shared `data-confirm-modal` pattern. The confirmation names the object, explains what is
