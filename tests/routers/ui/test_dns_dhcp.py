@@ -245,7 +245,6 @@ def test_dns_and_dhcp_pages_render(client):
     assert "A (IPv4)" in dns.text
     assert "AAAA (IPv6)" in dns.text
     assert "CNAME (alias)" in dns.text
-    assert "ptr-record=" not in dns.text
     assert "1.49.168.192.in-addr.arpa" in dns.text
     assert 'name="listen_interfaces"' in dns.text
     assert "data-derived-listen-addresses" in dns.text

@@ -684,7 +684,11 @@ def test_local_dns_disable_forces_resolver_move_before_dns_stop(client):
 
 
 def test_management_handoff_keeps_dns_shutdown_after_resolver_move(client):
-    """Bundle local DNS shutdown with a protected management-address change."""
+    """Bundle local DNS shutdown with a protected management-address change.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+    """
     from sqlalchemy import select
 
     from atlaso.app.database import SessionLocal

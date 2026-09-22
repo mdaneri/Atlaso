@@ -7214,7 +7214,12 @@ def test_network_helper_preserves_flagged_access_resolver(monkeypatch, tmp_path,
 
 
 def test_network_helper_prefers_eth0_for_flagged_access_resolver(monkeypatch, tmp_path):
-    """Match Appliance Settings precedence when several flagged physical paths work."""
+    """Match Appliance Settings precedence when several flagged physical paths work.
+
+    Args:
+        monkeypatch: Pytest fixture used to isolate generated networkd files.
+        tmp_path: Temporary directory containing staged and installed network state.
+    """
     helper = load_helper_module()
     config_path = tmp_path / "atlaso-network.conf"
     config_path.write_text(
@@ -14900,7 +14905,11 @@ def test_resolver_persistence_blocks_default_ra_dns_on_static_ipv4_network():
 
 @pytest.mark.parametrize("ra_value", ["yes", "true"])
 def test_resolver_persistence_blocks_explicitly_enabled_router_advertisement_dns(ra_value):
-    """Recognize each accepted true value when disabling RA-provided DNS."""
+    """Recognize each accepted true value when disabling RA-provided DNS.
+
+    Args:
+        ra_value: Accepted enabled value for router advertisements.
+    """
     helper = load_helper_module()
     original = (
         "[Match]\nName=eth0\n[Network]\nAddress=192.0.2.10/24\n"
@@ -14914,7 +14923,11 @@ def test_resolver_persistence_blocks_explicitly_enabled_router_advertisement_dns
 
 @pytest.mark.parametrize("ra_value", ["no", "false"])
 def test_resolver_persistence_respects_disabled_router_advertisements(ra_value):
-    """Do not add RA resolver policy when networkd explicitly rejects RAs."""
+    """Do not add RA resolver policy when networkd explicitly rejects RAs.
+
+    Args:
+        ra_value: Accepted disabled value for router advertisements.
+    """
     helper = load_helper_module()
     original = (
         "[Match]\nName=eth0\n[Network]\nAddress=192.0.2.10/24\n"
@@ -14933,7 +14946,13 @@ def test_runtime_management_address_rejects_unusable_ipv6_status(
     status,
     representation,
 ):
-    """Ignore tentative and duplicate IPv6 addresses in either ip JSON form."""
+    """Ignore tentative and duplicate IPv6 addresses in either ip JSON form.
+
+    Args:
+        monkeypatch: Pytest fixture used to isolate address discovery.
+        status: Unusable IPv6 address status under test.
+        representation: JSON representation of the address status.
+    """
     helper = load_helper_module()
     monkeypatch.setattr(helper.shutil, "which", lambda command: "/usr/sbin/ip" if command == "ip" else None)
     address = {"local": "2001:db8::10"}
