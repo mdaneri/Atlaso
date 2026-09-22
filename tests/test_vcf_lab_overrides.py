@@ -96,7 +96,8 @@ def db(monkeypatch):
         session.flush()
         for identifier, username, uri in [
             (1, "admin@local", "https://vcf.example.test"),
-            (2, "root", "ssh://vcf.example.test"),
+            (2, "vcf", "ssh://vcf.example.test"),
+            (3, "root", "ssh://vcf.example.test"),
         ]:
             session.add(
                 VaultEntry(
@@ -124,14 +125,13 @@ def db(monkeypatch):
 @pytest.fixture
 def values():
     return {
-        "api_entry_id": 1,
-        "api_uri_index": 1,
         "ssh_entry_id": 2,
         "ssh_uri_index": 1,
-        "tls_fingerprint": "confirmed-tls",
+        "root_entry_id": 3,
+        "root_uri_index": 1,
         "ssh_fingerprint": "confirmed-ssh",
         "confirmed": True,
-        "selections": ["esa", "nic"],
+        "desired": {"esa": "true", "nic": "false"},
     }
 
 
@@ -165,97 +165,56 @@ def test_matching_vault_endpoints_required(db, values):
     """
     assert lab.target_from_values(db, values).host == "vcf.example.test"
     db.get(VaultEntry, 2).uris_json = '["ssh://other.example.test"]'
-    with pytest.raises(lab.LabOverrideError, match="same hostname"):
+    with pytest.raises(lab.LabOverrideError, match="same (hostname|SSH endpoint)"):
         lab.target_from_values(db, values)
 
 
-@pytest.mark.parametrize("role", ["VcfInstaller", "SddcManager"])
 @pytest.mark.parametrize(
-    "version", ["9.0.0.0", "9.0.1.0.24962180", "9.0.2", "9.1.0", "9.1.1"]
+    "version", ["9.0.0.0", "9.0.1.0.24962180", "9.1.0.0400.25570101", "9.1.1"]
 )
-def test_supported_families_and_roles(db, values, monkeypatch, role, version):
-    """Exercise supported families and roles.
+def test_supported_versions_over_ssh(db, values, monkeypatch, version):
+    """Detect supported versions without resolving API credentials.
 
     Args:
-        db: Database session for credential metadata and durable task state.
-        values: Selected credential references and confirmed review inputs.
-        monkeypatch: Pytest fixture replacing external boundaries for this test.
-        role: Detected VCF appliance role.
-        version: Detected VCF release string.
+        db: Test session.
+        values: SSH selection.
+        monkeypatch: Remote transport replacement.
+        version: Native sos release.
     """
 
-    class Api:
-        def __init__(self, *args, **kwargs):
-            """Exercise   init  .
+    def remote(_db, target, fingerprint, request):
+        """Return the fixed version operation result.
 
-            Args:
-                *args: Positional arguments supplied by the replaced boundary.
-                **kwargs: Keyword arguments supplied by the replaced boundary.
-            """
-            assert kwargs["expected_fingerprint"] == "confirmed-tls"
+        Args:
+            _db: Session.
+            target: SSH target.
+            fingerprint: Confirmed host key.
+            request: Fixed operation.
+        """
+        assert fingerprint == values["ssh_fingerprint"]
+        assert request == {"action": "version"}
+        return {"ok": True, "version": version}
 
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *args):
-            """Exercise   exit  .
-
-            Args:
-                *args: Positional arguments supplied by the replaced boundary.
-            """
-            pass
-
-        def appliance_info(self):
-            return {"role": role, "version": version}
-
-    monkeypatch.setattr(lab, "VcfDepotApiClient", Api)
-    monkeypatch.setattr(lab, "decrypt_secret", lambda value: "test-only-secret")
-    assert lab.appliance_info(
-        db, lab.target_from_values(db, values), "confirmed-tls"
-    ) == {"role": role, "version": version}
+    monkeypatch.setattr(lab, "remote", remote)
+    assert (
+        lab.appliance_info(
+            db, lab.target_from_values(db, values), values["ssh_fingerprint"]
+        )["version"]
+        == version
+    )
 
 
 @pytest.mark.parametrize(
     "version", ["9.2.0", "9.10.0", "8.0.0", "9.1", "unknown", "9.1.1 malicious"]
 )
-def test_unsupported_versions(db, values, monkeypatch, version):
-    """Exercise unsupported versions.
+def test_unsupported_versions(version):
+    """Reject versions outside the explicit supported families.
 
     Args:
-        db: Database session for credential metadata and durable task state.
-        values: Selected credential references and confirmed review inputs.
-        monkeypatch: Pytest fixture replacing external boundaries for this test.
-        version: Detected VCF release string.
+        version: Unsupported release string.
     """
-
-    class Api:
-        def __init__(self, *args, **kwargs):
-            """Exercise   init  .
-
-            Args:
-                *args: Positional arguments supplied by the replaced boundary.
-                **kwargs: Keyword arguments supplied by the replaced boundary.
-            """
-            pass
-
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *args):
-            """Exercise   exit  .
-
-            Args:
-                *args: Positional arguments supplied by the replaced boundary.
-            """
-            pass
-
-        def appliance_info(self):
-            return {"role": "VcfInstaller", "version": version}
-
-    monkeypatch.setattr(lab, "VcfDepotApiClient", Api)
-    monkeypatch.setattr(lab, "decrypt_secret", lambda value: "test-only-secret")
     with pytest.raises(lab.LabOverrideError, match="Only detected"):
-        lab.appliance_info(db, lab.target_from_values(db, values), "confirmed-tls")
+        lab.supported_catalog("VCF", version)
 
 
 def test_review_binds_actor_and_is_single_use(db, values, state):
@@ -290,7 +249,7 @@ def test_tampered_expired_and_unconfirmed_reviews(db, values, state, monkeypatch
         monkeypatch: Pytest fixture replacing external boundaries for this test.
     """
     target = lab.target_from_values(db, values)
-    with pytest.raises(lab.LabOverrideError, match="Confirm both"):
+    with pytest.raises(lab.LabOverrideError, match="Confirm the SSH"):
         lab.review(db, "admin", target, {**values, "confirmed": False})
     reviewed = lab.review(db, "admin", target, values)
     with pytest.raises(lab.LabOverrideError, match="expired or changed"):
@@ -353,53 +312,9 @@ def test_job_outcomes_preserve_recovery_state(db, values, state, monkeypatch, fa
     )
     assert json.loads(job.task_config_json)["previous"] == {"esa": None, "nic": "true"}
     assert bool(calls) == (failure != "drift")
-    for key in ("esa", "nic"):
-        owner = db.scalar(
-            select(Setting).where(
-                Setting.key
-                == lab._property_owner_key(
-                    values["ssh_fingerprint"], key, lab.target_from_values(db, values)
-                )
-            )
-        )
-        assert (owner.value if owner else None) == (job.id if calls else None)
     if failure == "restart":
         assert json.loads(job.result)["property_verified"] is True
         assert json.loads(job.result)["service_active"] is False
-
-
-def test_revert_preserves_original_default_and_refuses_drift(db, values, state):
-    """Exercise revert preserves original default and refuses drift.
-
-    Args:
-        db: Database session for credential metadata and durable task state.
-        values: Selected credential references and confirmed review inputs.
-        state: Mutable inspected-state fixture used to simulate remote changes.
-    """
-    target = lab.target_from_values(db, values)
-    reviewed = lab.review(db, "admin", target, values)
-    job = lab.enqueue(db, "admin", reviewed["token"])
-    job.status = "failed"  # Restart failure can still need a revert.
-    job.result = json.dumps({"changed": True, "property_verified": True})
-    for key in ("esa", "nic"):
-        db.add(
-            Setting(
-                key=lab._property_owner_key(
-                    values["ssh_fingerprint"], key, lab.target_from_values(db, values)
-                ),
-                value=job.id,
-            )
-        )
-    db.commit()
-    state["values"] = {"esa": "true", "nic": "false"}
-    revert = lab.review(db, "admin", target, {**values, "source_job_id": job.id})
-    assert {change["id"]: change["value"] for change in revert["changes"]} == {
-        "esa": None,
-        "nic": "true",
-    }
-    state["values"] = {"esa": "false", "nic": "false"}
-    with pytest.raises(lab.LabOverrideError, match="overwrite another edit"):
-        lab.review(db, "admin", target, {**values, "source_job_id": job.id})
 
 
 def test_review_requires_nonempty_allowlisted_selection(db, values, state):
@@ -411,33 +326,13 @@ def test_review_requires_nonempty_allowlisted_selection(db, values, state):
         state: Mutable inspected-state fixture used to simulate remote changes.
     """
     target = lab.target_from_values(db, values)
-    for selected in [[], ["arbitrary"], ["esa", "esa"]]:
+    for selected in [{}, {"arbitrary": "true"}, {"esa": "invalid"}, {"nic": []}]:
         with pytest.raises(lab.LabOverrideError):
-            lab.review(db, "admin", target, {**values, "selections": selected})
-
-
-def test_unverified_write_is_not_claimed_as_revertible(db, values, state):
-    """Exercise unverified write is not claimed as revertible.
-
-    Args:
-        db: Database session for credential metadata and durable task state.
-        values: Selected credential references and confirmed review inputs.
-        state: Mutable inspected-state fixture used to simulate remote changes.
-    """
-    target = lab.target_from_values(db, values)
-    job = lab.enqueue(db, "admin", lab.review(db, "admin", target, values)["token"])
-    job.status = "failed"
-    db.commit()
-    state["values"] = {"esa": "true", "nic": "false"}
-    with pytest.raises(lab.LabOverrideError, match="no verified managed change"):
-        lab.review(db, "admin", target, {**values, "source_job_id": job.id})
+            lab.review(db, "admin", target, {**values, "desired": selected})
 
 
 @pytest.mark.parametrize("dispatched", [False, True])
-@pytest.mark.parametrize("revert", [False, True])
-def test_restart_recovery_never_replays_remote_changes(
-    db, values, state, dispatched, revert
-):
+def test_restart_recovery_never_replays_remote_changes(db, values, state, dispatched):
     """Exercise restart recovery never replays remote changes.
 
     Args:
@@ -445,16 +340,11 @@ def test_restart_recovery_never_replays_remote_changes(
         values: Selected credential references and confirmed review inputs.
         state: Mutable inspected-state fixture used to simulate remote changes.
         dispatched: Whether the interrupted task already started running.
-        revert: Whether the interrupted task is a revert operation.
     """
     target = lab.target_from_values(db, values)
     job = lab.enqueue(db, "admin", lab.review(db, "admin", target, values)["token"])
     if dispatched:
         job.status = "running"
-    if revert:
-        plan = json.loads(job.task_config_json)
-        plan["source_job_id"] = "original-operation"
-        job.task_config_json = json.dumps(plan)
     job.result = '{"error":"sensitive-remote-output"}'
     db.commit()
     assert lab.recover_interrupted_jobs(db) == 1
@@ -464,9 +354,7 @@ def test_restart_recovery_never_replays_remote_changes(
     assert "Interrupted" in job.error
     event = db.scalar(select(AuditEvent).where(AuditEvent.resource_id == job.id))
     assert event.actor == "admin" and event.success is False
-    assert event.action == (
-        "revert_vcf_lab_overrides" if revert else "apply_vcf_lab_overrides"
-    )
+    assert event.action == "apply_vcf_lab_overrides"
     detail = json.loads(event.detail)
     assert detail["target"] == target.host
     assert detail["version"] == state["version"]
@@ -520,8 +408,9 @@ def test_worker_rechecks_administrator_before_remote_credentials(
         "stopped_revert",
     ],
 )
+@pytest.mark.parametrize("layout", ["regular", "vcf_alias"])
 def test_remote_transaction_permissions_restart_and_readback(
-    tmp_path, monkeypatch, mode
+    tmp_path, monkeypatch, mode, layout
 ):
     """Run the actual transaction with only Linux OS/service boundaries substituted.
 
@@ -529,6 +418,7 @@ def test_remote_transaction_permissions_restart_and_readback(
         tmp_path: Isolated temporary directory for transaction fixtures.
         monkeypatch: Pytest fixture replacing external boundaries for this test.
         mode: Transaction scenario or permission bits under test.
+        layout: Direct file or the supported VCF sibling alias.
     """
     import os
     import stat
@@ -538,11 +428,15 @@ def test_remote_transaction_permissions_restart_and_readback(
 
     from atlaso.app.services import vcf_lab_remote as remote
 
-    path = tmp_path / "application-prod.properties"
+    configured = tmp_path / "application-prod.properties"
+    path = configured if layout == "regular" else tmp_path / "application.properties"
+    if layout == "vcf_alias":
+        configured.symlink_to("application.properties")
     path.write_bytes(b"vendor.setting=untouched\n")
+    alias_info = configured.lstat()
     if mode == "noop":
         path.write_bytes(edit_properties(path.read_bytes(), {"esa": "true"}))
-    monkeypatch.setattr(remote, "CONFIG_PATH", str(path))
+    monkeypatch.setattr(remote, "CONFIG_PATH", str(configured))
     monkeypatch.setattr(os, "geteuid", lambda: 0, raising=False)
     monkeypatch.setattr(os, "O_NOFOLLOW", 0, raising=False)
     monkeypatch.setattr(os, "O_DIRECTORY", 0, raising=False)
@@ -677,6 +571,81 @@ def test_remote_transaction_permissions_restart_and_readback(
         assert owners == [(before.st_uid, before.st_gid)]
         assert modes == [stat.S_IMODE(before.st_mode)]
         assert attributes == [("user.test", b"attribute")]
+    if layout == "vcf_alias":
+        assert configured.is_symlink()
+        assert configured.lstat().st_ino == alias_info.st_ino
+        assert os.readlink(configured) == "application.properties"
+    if mode == "success":
+        restored = remote.operate(
+            {
+                "action": "write",
+                "revision": outcome["revision"],
+                "desired": {"esa": None},
+                "recovery": True,
+            }
+        )
+        assert restored["ok"] and restored["changed"]
+        assert path.read_bytes() == b"vendor.setting=untouched\n"
+        assert configured.is_symlink() == (layout == "vcf_alias")
+
+
+@pytest.mark.parametrize(
+    "layout", ["other", "absolute", "chain", "hardlink", "ancestor"]
+)
+def test_remote_configuration_rejects_other_link_layouts(tmp_path, layout):
+    """Reject aliases outside the single supported VCF layout.
+
+    Args:
+        tmp_path: Isolated filesystem fixture.
+        layout: Unsupported link layout to reject.
+    """
+    import os
+
+    from atlaso.app.services import vcf_lab_remote as remote
+
+    target = tmp_path / "application.properties"
+    target.write_bytes(b"vendor.setting=untouched\n")
+    configured = tmp_path / "application-prod.properties"
+    if layout == "other":
+        configured.symlink_to("other.properties")
+    elif layout == "absolute":
+        configured.symlink_to(target)
+    elif layout == "chain":
+        target.unlink()
+        target.symlink_to("other.properties")
+        configured.symlink_to("application.properties")
+    elif layout == "hardlink":
+        os.link(target, tmp_path / "duplicate")
+        configured.symlink_to("application.properties")
+    else:
+        (tmp_path / "alias").symlink_to(tmp_path, target_is_directory=True)
+        configured = tmp_path / "alias/application.properties"
+    with pytest.raises(PropertyError):
+        remote.read_state(configured)
+
+
+def test_remote_revision_binds_alias_identity(tmp_path, monkeypatch):
+    """Replacing the allowed alias invalidates review even with unchanged bytes.
+
+    Args:
+        tmp_path: Isolated filesystem fixture.
+        monkeypatch: Fixture replacing the service-status query.
+    """
+    from atlaso.app.services import vcf_lab_remote as remote
+
+    target = tmp_path / "application.properties"
+    target.write_bytes(b"vendor.setting=untouched\n")
+    configured = tmp_path / "application-prod.properties"
+    configured.symlink_to("application.properties")
+    monkeypatch.setattr(remote, "CONFIG_PATH", str(configured))
+    monkeypatch.setattr(remote, "active", lambda: True)
+    # read_state is platform-neutral; operate's Linux flock import is unnecessary here.
+    content, info, _, binding = remote.read_state(configured)
+    before = remote.snapshot(content, info, binding)
+    configured.rename(tmp_path / "old-alias")
+    configured.symlink_to("application.properties")
+    content, info, _, binding = remote.read_state(configured)
+    assert remote.snapshot(content, info, binding) != before
 
 
 def test_remote_fingerprint_mismatch_never_authenticates(db, values, monkeypatch):
@@ -769,7 +738,12 @@ def test_ui_requires_admin_csrf_and_explicit_acknowledgement(client, monkeypatch
         user.roles_json = roles_to_json(["service-admin"])
         session.commit()
     assert (
-        client.get("/ui/management/vcf-helper/lab-overrides/history").status_code == 403
+        client.post(
+            "/ui/management/vcf-helper/lab-overrides/inspect",
+            json={},
+            headers={"X-CSRF-Token": csrf},
+        ).status_code
+        == 403
     )
     assert client.post(path, json={}, headers={"X-CSRF-Token": csrf}).status_code == 403
 
@@ -795,103 +769,22 @@ def test_long_escaped_unrelated_keys_are_preserved(suffix):
     assert edit_properties(original, {"esa": "true"}).endswith(original)
 
 
-def test_probe_keeps_ssh_recovery_available_without_tls(db, values, monkeypatch):
-    """Exercise probe keeps ssh recovery available without tls.
+def test_probe_uses_only_ssh_without_credentials(db, values, monkeypatch):
+    """Probe the SSH identity without resolving any password.
 
     Args:
-        db: Database session for credential metadata and durable task state.
-        values: Selected credential references and confirmed review inputs.
-        monkeypatch: Pytest fixture replacing external boundaries for this test.
+        db: Database session containing saved credential metadata.
+        values: Selected credential references.
+        monkeypatch: External boundary replacement fixture.
     """
     monkeypatch.setattr(lab, "probe_remote_ssh_host", lambda *args: "confirmed-ssh")
-
-    def unavailable(*args):
-        """Exercise unavailable.
-
-        Args:
-            *args: Positional arguments supplied by the replaced boundary.
-        """
-        raise OSError("offline")
-
-    monkeypatch.setattr(lab, "tls_sha256_fingerprint", unavailable)
-    assert lab.probe(lab.target_from_values(db, values))["tls_fingerprint"] == ""
-
-
-@pytest.mark.parametrize("role", ["VcfInstaller", "SddcManager"])
-def test_revert_reviews_and_executes_without_api(db, values, state, monkeypatch, role):
-    """Exercise revert reviews and executes without api.
-
-    Args:
-        db: Database session for credential metadata and durable task state.
-        values: Selected credential references and confirmed review inputs.
-        state: Mutable inspected-state fixture used to simulate remote changes.
-        monkeypatch: Pytest fixture replacing external boundaries for this test.
-        role: Detected VCF appliance role.
-    """
-    state["role"] = role
-    target = lab.target_from_values(db, values)
-    job = lab.enqueue(db, "admin", lab.review(db, "admin", target, values)["token"])
-    job.status = "failed"
-    job.result = json.dumps({"changed": True, "property_verified": True})
-    for key in ("esa", "nic"):
-        db.add(
-            Setting(
-                key=lab._property_owner_key(
-                    values["ssh_fingerprint"], key, lab.target_from_values(db, values)
-                ),
-                value=job.id,
-            )
-        )
-    for lock in db.scalars(select(Setting).where(Setting.key.like("vcf_lab_lock:%"))):
-        db.delete(lock)
-    db.commit()
-    state["values"] = {"esa": "true", "nic": "false"}
-    state["service_active"] = False
-
-    def unavailable(*args):
-        """Exercise unavailable.
-
-        Args:
-            *args: Positional arguments supplied by the replaced boundary.
-        """
-        raise lab.LabOverrideError("API unavailable")
-
-    monkeypatch.setattr(lab, "inspect_target", unavailable)
-    monkeypatch.setattr(lab, "appliance_info", unavailable)
-    reviewed = lab.review(
-        db, "admin", target, {**values, "source_job_id": job.id, "tls_fingerprint": ""}
+    monkeypatch.setattr(
+        lab, "_credential", lambda *args: pytest.fail("credential access")
     )
-    assert "original verified" in reviewed["identity_source"]
-    recovery = lab.enqueue(db, "admin", reviewed["token"])
-    assert json.loads(recovery.task_config_json)["tls_fingerprint"] == "confirmed-tls"
-    calls = []
-
-    def restore(*args, before_dispatch):
-        """Exercise restore.
-
-        Args:
-            *args: Positional arguments supplied by the replaced boundary.
-            before_dispatch: Callback recording ownership at dispatch.
-        """
-        before_dispatch()
-        calls.append(args[-1])
-        return {
-            "ok": True,
-            "changed": True,
-            "values": {"esa": None, "nic": "true"},
-            "service_active": True,
-        }
-
-    monkeypatch.setattr(lab, "remote", restore)
-    ticks = iter([0, 121])
-    monkeypatch.setattr(lab.time, "monotonic", lambda: next(ticks))
-    lab.run_job(recovery.id)
-    db.refresh(recovery)
-    assert calls[0]["desired"] == {"esa": None, "nic": "true"}
-    assert recovery.status == "failed"
-    result = json.loads(recovery.result)
-    assert result["property_verified"] is True
-    assert result["api_ready"] is False
+    assert lab.probe(lab.target_from_values(db, values)) == {
+        "target": "vcf.example.test",
+        "ssh_fingerprint": "confirmed-ssh",
+    }
 
 
 def test_apply_rechecks_service_before_writing(db, values, state, monkeypatch):
@@ -913,120 +806,6 @@ def test_apply_rechecks_service_before_writing(db, values, state, monkeypatch):
     assert "stopped after review" in job.error
     assert calls == []
     assert json.loads(job.result)["property_verified"] is False
-
-
-@pytest.mark.parametrize("superseded_key", ["esa", "nic"])
-def test_revert_rejects_superseded_property_with_matching_values(
-    db, values, state, superseded_key
-):
-    """Exercise revert rejects superseded property with matching values.
-
-    Args:
-        db: Database session for credential metadata and durable task state.
-        values: Selected credential references and confirmed review inputs.
-        state: Mutable inspected-state fixture used to simulate remote changes.
-        superseded_key: Property whose later mutation invalidates the baseline.
-    """
-    target = lab.target_from_values(db, values)
-    job = lab.enqueue(db, "admin", lab.review(db, "admin", target, values)["token"])
-    job.status = "succeeded"
-    job.result = json.dumps({"changed": True, "property_verified": True})
-    state["values"] = {"esa": "true", "nic": "false"}
-    for key in ("esa", "nic"):
-        db.add(
-            Setting(
-                key=lab._property_owner_key(
-                    values["ssh_fingerprint"], key, lab.target_from_values(db, values)
-                ),
-                value=job.id,
-            )
-        )
-    db.commit()
-    reviewed = lab.review(db, "admin", target, {**values, "source_job_id": job.id})
-    db.scalar(
-        select(Setting).where(
-            Setting.key
-            == lab._property_owner_key(
-                values["ssh_fingerprint"], superseded_key, target
-            )
-        )
-    ).value = "later-write-or-revert"
-    db.commit()
-    with pytest.raises(lab.LabOverrideError, match="superseded"):
-        lab.review(db, "admin", target, {**values, "source_job_id": job.id})
-    for lock in db.scalars(select(Setting).where(Setting.key.like("vcf_lab_lock:%"))):
-        db.delete(lock)
-    db.commit()
-    recovery = lab.enqueue(db, "admin", reviewed["token"])
-    lab.run_job(recovery.id)
-    assert recovery.status == "failed"
-    assert "superseded" in recovery.error
-
-
-def test_history_retains_old_property_owners_beyond_recent_limit(db, values, state):
-    """Exercise history retains old property owners beyond recent limit.
-
-    Args:
-        db: Database session for credential metadata and durable task state.
-        values: Selected credential references and confirmed review inputs.
-        state: Mutable inspected-state fixture used to simulate remote changes.
-    """
-    from datetime import timedelta
-
-    from atlaso.app.models import Job, utcnow
-
-    target = lab.target_from_values(db, values)
-    baseline = lab.enqueue(
-        db, "admin", lab.review(db, "admin", target, values)["token"]
-    )
-    baseline.created_at = utcnow() - timedelta(days=10)
-    baseline.status = "succeeded"
-    for key in ("esa", "nic"):
-        db.add(
-            Setting(
-                key=lab._property_owner_key(
-                    values["ssh_fingerprint"], key, lab.target_from_values(db, values)
-                ),
-                value=baseline.id,
-            )
-        )
-    for index in range(55):
-        db.add(
-            Job(
-                id=f"recent-{index:02}",
-                type=lab.JOB_TYPE,
-                status="failed",
-                created_by="admin",
-                task_config_json=baseline.task_config_json,
-                created_at=utcnow() + timedelta(seconds=index),
-            )
-        )
-    db.commit()
-    history = lab.history(db)
-    identifiers = [job["id"] for job in history]
-    assert len(identifiers) == 51
-    assert identifiers.count(baseline.id) == 1
-    assert identifiers[-1] == baseline.id
-    assert "recent-00" not in identifiers
-    assert "recent-54" in identifiers
-
-
-@pytest.mark.parametrize("scheme", ["http", "https"])
-@pytest.mark.parametrize("port", [None, 8443])
-def test_vault_api_uri_preserves_explicit_port(db, values, scheme, port):
-    """Exercise vault api uri preserves explicit port.
-
-    Args:
-        db: Database session for credential metadata and durable task state.
-        values: Selected credential references and confirmed review inputs.
-        scheme: Saved URI scheme under test; API transport remains HTTPS.
-        port: Selected remote TCP port.
-    """
-    uri = f"{scheme}://vcf.example.test" + (f":{port}" if port else "")
-    db.get(VaultEntry, 1).uris_json = json.dumps([uri])
-    target = lab.target_from_values(db, values)
-    assert target.host == "vcf.example.test"
-    assert target.api_port == (port or 443)
 
 
 def test_terminal_outcome_and_audit_share_commit(db, values, state, monkeypatch):
@@ -1075,52 +854,6 @@ def test_terminal_outcome_and_audit_share_commit(db, values, state, monkeypatch)
     assert len(terminal_commits) == 1
 
 
-def test_recovery_accepts_replacement_credentials_for_same_endpoint(db, values, state):
-    """Exercise recovery accepts replacement credentials for same endpoint.
-
-    Args:
-        db: Database session for credential metadata and durable task state.
-        values: Selected credential references and confirmed review inputs.
-        state: Mutable inspected-state fixture used to simulate remote changes.
-    """
-    target = lab.target_from_values(db, values)
-    job = lab.enqueue(db, "admin", lab.review(db, "admin", target, values)["token"])
-    job.status = "succeeded"
-    job.result = json.dumps({"changed": True, "property_verified": True})
-    for key in ("esa", "nic"):
-        db.add(
-            Setting(
-                key=lab._property_owner_key(
-                    values["ssh_fingerprint"], key, lab.target_from_values(db, values)
-                ),
-                value=job.id,
-            )
-        )
-    api, ssh = db.get(VaultEntry, 1), db.get(VaultEntry, 2)
-    api.id, ssh.id = 11, 12
-    api.uris_json = '["https://other.test", "https://vcf.example.test"]'
-    ssh.uris_json = '["ssh://other.test", "ssh://vcf.example.test"]'
-    db.commit()
-    replacement = {
-        **values,
-        "api_entry_id": 11,
-        "ssh_entry_id": 12,
-        "api_uri_index": 2,
-        "ssh_uri_index": 2,
-        "source_job_id": job.id,
-    }
-    state["values"] = {"esa": "true", "nic": "false"}
-    target = lab.target_from_values(db, replacement)
-    reviewed = lab.review(db, "admin", target, replacement)
-    plan = lab._signer().loads(reviewed["token"])
-    assert plan["target"]["ssh_entry_id"] == 12
-    assert plan["target"]["api_uri_index"] == 2
-    ssh.uris_json = '["ssh://other.test", "ssh://vcf.example.test:2222"]'
-    db.commit()
-    with pytest.raises(lab.LabOverrideError, match="identity differs"):
-        lab.review(db, "admin", lab.target_from_values(db, replacement), replacement)
-
-
 def test_settings_restore_preserves_local_lab_runtime_state_without_export(db):
     """Exercise settings restore preserves local lab runtime state without export.
 
@@ -1144,68 +877,6 @@ def test_settings_restore_preserves_local_lab_runtime_state_without_export(db):
     retained = set(db.scalars(select(Setting.key)))
     assert set(keys) <= retained
     assert "ordinary-desired-state" not in retained
-
-
-def test_cloned_ssh_keys_do_not_share_property_ownership(db, values):
-    """Exercise cloned ssh keys do not share property ownership.
-
-    Args:
-        db: Database session for credential metadata and durable task state.
-        values: Selected credential references and confirmed review inputs.
-    """
-    from dataclasses import replace
-
-    first = lab.target_from_values(db, values)
-    second = replace(first, host="clone.example.test")
-    third = replace(first, ssh_port=2222)
-    for index, target in enumerate((first, second, third)):
-        db.add(
-            Setting(
-                key=lab._property_owner_key("same-host-key", "esa", target),
-                value=f"job-{index}",
-            )
-        )
-    db.commit()
-    for index, target in enumerate((first, second, third)):
-        lab._require_property_owner(
-            db, "same-host-key", ["esa"], f"job-{index}", target
-        )
-
-
-@pytest.mark.parametrize("changed_key", ["esa", "nic"])
-def test_revert_ignores_later_edits_to_original_noop_selection(
-    db, values, state, changed_key
-):
-    """Exercise revert ignores later edits to original noop selection.
-
-    Args:
-        db: Database session for credential metadata and durable task state.
-        values: Selected credential references and confirmed review inputs.
-        state: Mutable inspected-state fixture used to simulate remote changes.
-        changed_key: Selected property that actually changes in the source task.
-    """
-    target = lab.target_from_values(db, values)
-    desired = {"esa": "true", "nic": "false"}
-    state["values"] = {**desired, changed_key: None}
-    job = lab.enqueue(db, "admin", lab.review(db, "admin", target, values)["token"])
-    job.status = "succeeded"
-    job.result = json.dumps({"changed": True, "property_verified": True})
-    db.add(
-        Setting(
-            key=lab._property_owner_key(values["ssh_fingerprint"], changed_key, target),
-            value=job.id,
-        )
-    )
-    db.commit()
-    noop_key = "nic" if changed_key == "esa" else "esa"
-    state["values"] = {**desired, noop_key: None}
-    reviewed = lab.review(db, "admin", target, {**values, "source_job_id": job.id})
-    assert [(change["id"], change["value"]) for change in reviewed["changes"]] == [
-        (changed_key, None)
-    ]
-    state["values"][changed_key] = "false" if changed_key == "esa" else "true"
-    with pytest.raises(lab.LabOverrideError, match="overwrite another edit"):
-        lab.review(db, "admin", target, {**values, "source_job_id": job.id})
 
 
 @pytest.mark.parametrize(
@@ -1232,6 +903,7 @@ def test_reservations_isolate_cloned_ssh_keys(db, values, state, clone_uri):
         [f"https://{urlsplit(clone_uri).hostname}"]
     )
     db.get(VaultEntry, 2).uris_json = json.dumps([clone_uri])
+    db.get(VaultEntry, 3).uris_json = json.dumps([clone_uri])
     db.commit()
     second = lab.enqueue(
         db,
@@ -1253,140 +925,592 @@ def test_reservations_isolate_cloned_ssh_keys(db, values, state, clone_uri):
     assert third.id != second.id
 
 
-@pytest.mark.parametrize(
-    "failure", ["connection", "host_key", "authentication", "session", "dispatch"]
-)
-def test_revert_preserves_owner_until_authenticated_dispatch(
-    db, values, state, monkeypatch, failure
-):
-    """Keep recovery retryable for failures known to precede remote dispatch.
+@pytest.mark.parametrize("username", ["root", "admin", "sudo-user"])
+def test_ssh_requires_vcf_not_root_or_sudo(db, values, username):
+    """Reject accounts that bypass the supported vcf privilege boundary.
 
     Args:
-        db: Database session for retained recovery state.
-        values: Confirmed target and credential references.
-        state: Inspected target state fixture.
-        monkeypatch: External boundary replacement fixture.
-        failure: SSH setup or dispatch failure stage.
+        db: Credential fixture session.
+        values: Selected credential references.
+        username: Unsupported SSH identity.
     """
-    target = lab.target_from_values(db, values)
-    source = lab.enqueue(db, "admin", lab.review(db, "admin", target, values)["token"])
-    source.status = "succeeded"
-    source.result = json.dumps({"changed": True, "property_verified": True})
-    for key in ("esa", "nic"):
-        db.add(
-            Setting(
-                key=lab._property_owner_key(values["ssh_fingerprint"], key, target),
-                value=source.id,
-            )
-        )
-    for lock in db.scalars(select(Setting).where(Setting.key.like("vcf_lab_lock:%"))):
-        db.delete(lock)
-    db.commit()
-    state["values"] = {"esa": "true", "nic": "false"}
-    recovery_values = {**values, "source_job_id": source.id}
-    recovery = lab.enqueue(
-        db, "admin", lab.review(db, "admin", target, recovery_values)["token"]
-    )
+    db.get(VaultEntry, 2).username = username
+    with pytest.raises(lab.LabOverrideError, match="separate vcf"):
+        lab.target_from_values(db, values)
 
-    def fail_at(stage):
-        """Raise at the selected transport boundary.
+
+def test_root_credential_is_required_and_bound_to_review(db, values, state):
+    """Bind the separate elevation reference without persisting its value.
+
+    Args:
+        db: Credential fixture session.
+        values: Selected credential references.
+        state: Nonmutating inspected-state fixture.
+    """
+    missing = {key: value for key, value in values.items() if key != "root_entry_id"}
+    with pytest.raises(lab.LabOverrideError, match="separate root"):
+        lab.target_from_values(db, missing)
+    plan = lab.review(db, "admin", lab.target_from_values(db, values), values)
+    job = lab.enqueue(db, "admin", plan["token"])
+    assert json.loads(job.task_config_json)["target"]["root_entry_id"] == 3
+    assert "never-decrypt-this" not in job.task_config_json
+
+
+def test_readable_inspection_never_elevates(monkeypatch):
+    """Readable properties stay at vcf privilege and never consume root input.
+
+    Args:
+        monkeypatch: External boundary replacement fixture.
+    """
+    from atlaso.app.services import vcf_lab_remote as remote
+
+    monkeypatch.setattr(remote, "operate", lambda request: {"ok": True})
+    assert remote.dispatch({"request": {"action": "inspect"}}) == {"ok": True}
+
+
+def test_permission_refusal_requests_separate_elevation(monkeypatch):
+    """An unreadable file requests a retry without accessing a root secret.
+
+    Args:
+        monkeypatch: Fixture replacing the unprivileged file read.
+    """
+    from atlaso.app.services import vcf_lab_remote as remote
+
+    def denied(request):
+        """Simulate the unprivileged read refusal.
 
         Args:
-            stage: Transport stage reached by the test.
+            request: Fixed inspection request.
         """
-        if failure == stage:
-            raise OSError("private transport detail")
+        raise PermissionError
+
+    monkeypatch.setattr(remote, "operate", denied)
+    assert remote.dispatch({"request": {"action": "inspect"}}) == {
+        "elevation_required": True
+    }
+
+
+@pytest.mark.parametrize("retain_credentials", [True, False])
+def test_manual_credentials_are_bound_but_never_persisted(
+    db, values, state, monkeypatch, retain_credentials
+):
+    """Manual passwords remain request-local and changed inputs invalidate review.
+
+    Args:
+        db: Test database session.
+        values: Confirmed review inputs.
+        state: Nonmutating remote inspection fixture.
+        monkeypatch: Worker boundary replacements.
+        retain_credentials: Whether process-local credentials remain available.
+    """
+    credentials = {
+        "ssh": "manual-vcf-sentinel",
+        "root": "manual-root-sentinel",
+    }
+    supplied = {
+        **values,
+        "credential_mode": "manual",
+        "host": "vcf.example.test",
+        "credentials": credentials,
+    }
+    target = lab.target_from_values(db, supplied)
+    assert not any(
+        secret in repr(target) + json.dumps(target.fields())
+        for secret in credentials.values()
+    )
+    reviewed = lab.review(db, "admin", target, supplied)
+    plan = lab._signer().loads(reviewed["token"])
+    assert "credentials" not in plan["target"]
+    assert not any(secret in json.dumps(plan) for secret in credentials.values())
+    with pytest.raises(lab.LabOverrideError, match="changed"):
+        lab.enqueue(
+            db, "admin", reviewed["token"], {**credentials, "root": "changed-root"}
+        )
+    with pytest.raises(lab.LabOverrideError, match="changed"):
+        lab.enqueue(db, "admin", reviewed["token"])
+    job = lab.enqueue(db, "admin", reviewed["token"], credentials)
+    assert "credential_revision" not in json.loads(job.task_config_json)["target"]
+    assert target.credential_revision not in job.task_config_json
+    assert not any(
+        secret in job.task_config_json + job.result for secret in credentials.values()
+    )
+
+    def remote(_db, received, _fingerprint, request, *, before_dispatch):
+        """Verify credentials reach only the in-memory worker boundary.
+
+        Args:
+            _db: Worker database session.
+            received: Request-local target.
+            _fingerprint: Confirmed identity.
+            request: Fixed write request.
+            before_dispatch: Durable ownership callback.
+        """
+        assert retain_credentials
+        assert received.credentials == credentials
+        before_dispatch()
+        return {
+            "ok": True,
+            "changed": True,
+            "service_active": True,
+            "values": request["desired"],
+        }
+
+    monkeypatch.setattr(lab, "remote", remote)
+    monkeypatch.setattr(
+        lab,
+        "appliance_info",
+        lambda *args: {"role": state["role"], "version": state["version"]},
+    )
+    lab.run_job(job.id, credentials if retain_credentials else None)
+    db.refresh(job)
+    assert job.status == ("succeeded" if retain_credentials else "failed")
+    if not retain_credentials:
+        assert "Manual credentials are unavailable" in job.error
+    persisted = job.task_config_json + job.result + (job.error or "")
+    persisted += "".join(event.detail or "" for event in db.scalars(select(AuditEvent)))
+    assert not any(secret in persisted for secret in credentials.values())
+    assert target.credential_revision not in persisted
+
+
+def test_manual_probe_has_no_password_requirement(db):
+    """Endpoint selection and fingerprint probing do not require login secrets.
+
+    Args:
+        db: Test database session.
+    """
+    target = lab.target_from_values(
+        db, {"credential_mode": "manual", "host": "192.0.2.1"}
+    )
+    assert target.credentials == {}
+    assert target.ssh_port == 22
+    with pytest.raises(lab.LabOverrideError, match="manual credentials"):
+        lab._credential(db, target, "root")
+
+
+def test_su_command_excludes_secret_and_runs_only_fixed_editor(monkeypatch):
+    """The root secret is separate from every generated command and source.
+
+    Args:
+        monkeypatch: External boundary replacement fixture.
+    """
+    import base64
+    import shlex
+    from pathlib import Path
+
+    from atlaso.app.services import vcf_lab_remote as remote
+
+    captured = []
+    monkeypatch.setattr(
+        remote,
+        "elevated",
+        lambda command, password, **kwargs: (
+            captured.append((command, password)) or {"ok": True}
+        ),
+    )
+    source = Path(remote.__file__).read_bytes()
+    request = {"action": "write", "desired": {"nic": "false"}, "revision": "a" * 64}
+    assert remote.dispatch(
+        {
+            "request": request,
+            "editor": base64.b64encode(source).decode(),
+            "root_password": "root-sentinel-only",
+        }
+    ) == {"ok": True}
+    command, password = captured[0]
+    assert password == "root-sentinel-only"
+    assert password not in command
+    assert "sudo -n" not in command
+    args = shlex.split(command)
+    assert args[:8] == ["cd", "/", "&&", "exec", "/usr/bin/python3", "-I", "-S", "-c"]
+    compile(args[8], "<generated-root-program>", "exec")
+
+
+@pytest.mark.parametrize(
+    "mode",
+    ["success", "wrong_password", "echo", "timeout", "disconnect", "unavailable"],
+)
+def test_su_terminal_exchange_is_bounded_and_non_echoing(monkeypatch, mode):
+    """Only a non-echoing password prompt accepts the secret; output stays private.
+
+    Args:
+        monkeypatch: External boundary replacement fixture.
+        mode: Native-terminal outcome being simulated.
+    """
+    import sys
+    from types import SimpleNamespace
+
+    from atlaso.app.services import vcf_lab_remote as remote
+
+    chunks = [b"Password:"]
+    if mode == "success":
+        chunks += [b"ATLASO_ROOT_READY\r\n", b'ATLASO_RESULT:{"ok": true}\r\n']
+    elif mode == "wrong_password":
+        chunks += [b"su: Authentication failure root-sentinel-only\r\n"]
+    elif mode == "disconnect":
+        chunks += [b"ATLASO_ROOT_READY\r\n"]
+    writes = []
+    monkeypatch.setitem(sys.modules, "pty", SimpleNamespace(fork=lambda: (123, 9)))
+    monkeypatch.setitem(
+        sys.modules,
+        "termios",
+        SimpleNamespace(
+            tcgetattr=lambda fd: [0, 0, 0, 8 if mode == "echo" else 0],
+            ECHO=8,
+            ECHONL=64,
+        ),
+    )
+    monkeypatch.setattr(remote.Path, "is_file", lambda path: mode != "unavailable")
+    import select
+
+    monkeypatch.setattr(select, "select", lambda *args: ([9], [], []))
+    monkeypatch.setattr(
+        remote.os, "read", lambda *args: chunks.pop(0) if chunks else b""
+    )
+    monkeypatch.setattr(
+        remote.os, "write", lambda fd, value: writes.append(value) or len(value)
+    )
+    monkeypatch.setattr(remote.os, "close", lambda fd: None)
+    monkeypatch.setattr(remote.os, "waitpid", lambda *args: (0, 0), raising=False)
+    monkeypatch.setattr(remote.os, "WNOHANG", 1, raising=False)
+    monkeypatch.setattr(remote.os, "kill", lambda *args: None)
+    import signal
+
+    monkeypatch.setattr(signal, "SIGKILL", 9, raising=False)
+    clock = iter([0, 21] if mode == "timeout" else range(100))
+    monkeypatch.setattr(remote.time, "monotonic", lambda: next(clock))
+    result = remote.elevated("fixed-nonsecret-command", "root-sentinel-only")
+    expected = {
+        "success": None,
+        "wrong_password": "authentication",
+        "echo": "echo",
+        "timeout": "timeout",
+        "disconnect": "execution",
+        "unavailable": "unavailable",
+    }[mode]
+    assert result.get("elevation_error") == expected
+    assert "root-sentinel-only" not in json.dumps(result)
+    assert writes == (
+        [] if mode in {"echo", "timeout", "unavailable"} else [b"root-sentinel-only\n"]
+    )
+
+
+@pytest.mark.parametrize("mode", ["inspect", "elevated_inspect", "write", "su_failure"])
+def test_remote_uses_vcf_and_sends_root_secret_only_over_stdin(
+    db, values, monkeypatch, mode
+):
+    """Keep the distinct root secret out of commands, authentication and results.
+
+    Args:
+        db: Credential fixture session.
+        values: Selected credential references.
+        monkeypatch: External boundary replacement fixture.
+        mode: Inspection, authenticated write or failed root authentication.
+    """
+    captured = {"handoff": False, "decryptions": [], "envelopes": []}
+    chunks = (
+        [b'{"ready":true}\n', b'{"ok":true}\n']
+        if mode == "write"
+        else [b'{"elevation_error":"authentication"}\n']
+        if mode == "su_failure"
+        else [b'{"ok":true}\n']
+    )
+    db.get(VaultEntry, 2).encrypted_value = "ssh-cipher"
+    db.get(VaultEntry, 3).encrypted_value = "root-cipher"
+
+    class Channel:
+        """Bounded non-PTY SSH channel fixture."""
+
+        available = True
+
+        def settimeout(self, timeout):
+            """Accept the channel bound.
+
+            Args:
+                timeout: Configured deadline.
+            """
+            assert timeout == 10
+
+        def exec_command(self, command):
+            """Capture only the non-secret command.
+
+            Args:
+                command: Fixed remote adapter command.
+            """
+            captured["command"] = command
+
+        def sendall(self, payload):
+            """Capture encrypted channel input privately in this test.
+
+            Args:
+                payload: Serialized operation envelope.
+            """
+            if payload == b"ATLASO_APPLY\n":
+                assert captured["handoff"]
+                captured["authorized"] = True
+            else:
+                captured["input"] = json.loads(payload)
+                captured["envelopes"].append(captured["input"])
+
+        def shutdown_write(self):
+            """Finish the request stream."""
+
+        def recv_ready(self):
+            """Report the one bounded result chunk."""
+            return bool(chunks)
+
+        def recv(self, size):
+            """Return sanitized editor output.
+
+            Args:
+                size: Maximum read size.
+            """
+            return chunks.pop(0)
+
+        def recv_stderr_ready(self):
+            return False
+
+        def exit_status_ready(self):
+            return not chunks
+
+        def recv_exit_status(self):
+            return 0
 
     class Transport:
+        """SSH transport recording the login identity."""
+
         def __init__(self, sock):
-            """Accept the synthetic socket.
+            """Accept the connected fixture socket.
 
             Args:
-                sock: Test socket placeholder.
+                sock: In-memory socket stand-in.
             """
 
-        def start_client(self, **kwargs):
-            """Simulate an SSH handshake.
+        def start_client(self, timeout):
+            """Accept the handshake bound.
 
             Args:
-                **kwargs: Bounded transport options.
+                timeout: Handshake deadline.
             """
 
         def get_remote_server_key(self):
             return object()
 
-        def auth_password(self, *args):
-            """Simulate authentication failure.
+        def auth_password(self, username, password):
+            """Record vcf authentication separately from root elevation.
 
             Args:
-                *args: Vault authentication inputs.
+                username: SSH login identity.
+                password: SSH-only secret.
             """
-            fail_at("authentication")
+            captured["auth"] = (username, password)
 
-        def open_session(self, **kwargs):
-            """Create the command channel.
+        def open_session(self, timeout):
+            """Create a non-PTY command channel.
 
             Args:
-                **kwargs: Bounded channel options.
+                timeout: Channel setup deadline.
             """
-            fail_at("session")
-            return self
-
-        def settimeout(self, timeout):
-            """Accept the channel deadline.
-
-            Args:
-                timeout: Bounded channel timeout.
-            """
-
-        def exec_command(self, command):
-            """Check that ownership is durable before uncertain dispatch.
-
-            Args:
-                command: Fixed remote editor command.
-            """
-            for key in ("esa", "nic"):
-                owner = db.scalar(
-                    select(Setting).where(
-                        Setting.key
-                        == lab._property_owner_key(
-                            values["ssh_fingerprint"], key, target
-                        )
-                    )
-                )
-                assert owner.value == recovery.id
-            fail_at("dispatch")
+            if mode == "elevated_inspect" and not captured["envelopes"]:
+                chunks[:] = [b'{"elevation_required":true}\n']
+            elif mode == "elevated_inspect":
+                chunks[:] = [b'{"ok":true}\n']
+            return Channel()
 
         def close(self):
-            pass
+            captured["closed"] = True
 
     monkeypatch.setattr(
-        lab.socket, "create_connection", lambda *args, **kwargs: fail_at("connection")
+        lab.socket, "create_connection", lambda *args, **kwargs: object()
     )
     monkeypatch.setattr(lab.paramiko, "Transport", Transport)
+    monkeypatch.setattr(lab, "ssh_fingerprint", lambda key: values["ssh_fingerprint"])
     monkeypatch.setattr(
         lab,
-        "ssh_fingerprint",
-        lambda key: "wrong" if failure == "host_key" else values["ssh_fingerprint"],
+        "decrypt_secret",
+        lambda value: (
+            captured["decryptions"].append(value)
+            or {"ssh-cipher": "ssh-sentinel", "root-cipher": "root-sentinel"}[value]
+        ),
     )
-    monkeypatch.setattr(lab, "decrypt_secret", lambda value: "synthetic-password")
-    lab.run_job(recovery.id)
-    db.expire_all()
-    assert recovery.status == "failed"
-    assert "private transport detail" not in recovery.error
-    for key in ("esa", "nic"):
-        owner = db.scalar(
-            select(Setting).where(
-                Setting.key
-                == lab._property_owner_key(values["ssh_fingerprint"], key, target)
-            )
+
+    def run():
+        """Exercise the real adapter with a synthetic SSH channel."""
+        return lab.remote(
+            db,
+            lab.target_from_values(db, values),
+            values["ssh_fingerprint"],
+            {
+                "action": "inspect"
+                if mode in {"inspect", "elevated_inspect"}
+                else "write"
+            },
+            before_dispatch=lambda: captured.update(handoff=True),
         )
-        assert owner.value == (recovery.id if failure == "dispatch" else source.id)
-    if failure != "dispatch":
-        retry = lab.enqueue(
-            db, "admin", lab.review(db, "admin", target, recovery_values)["token"]
-        )
-        assert retry.id != recovery.id
+
+    if mode == "su_failure":
+        with pytest.raises(lab.LabOverrideError, match="su authentication failed"):
+            run()
+        assert not captured["handoff"]
     else:
-        with pytest.raises(lab.LabOverrideError, match="superseded"):
-            lab.review(db, "admin", target, recovery_values)
+        assert run() == {"ok": True}
+        assert captured["handoff"] == (mode == "write")
+    assert captured["auth"] == ("vcf", "ssh-sentinel")
+    if mode == "inspect":
+        assert "root_password" not in captured["input"]
+        assert captured["decryptions"] == ["ssh-cipher"]
+    else:
+        assert captured["input"]["root_password"] == "root-sentinel"
+    if mode == "elevated_inspect":
+        assert len(captured["envelopes"]) == 2
+        assert "root_password" not in captured["envelopes"][0]
+        assert captured["decryptions"] == ["ssh-cipher", "ssh-cipher", "root-cipher"]
+    assert "root-sentinel" not in captured["command"]
+    assert "ssh-sentinel" not in captured["command"]
+    assert "sudo" not in captured["command"]
+    assert captured["command"].startswith("cd / && exec /usr/bin/python3 -I -S -c ")
+    assert captured["closed"]
+
+
+@pytest.mark.parametrize("acknowledgement", ["ATLASO_APPLY\n", "wrong\n"])
+def test_generated_privileged_program_waits_for_write_authorization(
+    monkeypatch, capsys, acknowledgement
+):
+    """Authenticate first and require Atlaso's durable handoff before mutation.
+
+    Args:
+        monkeypatch: External boundary replacement fixture.
+        capsys: Captured safe protocol output.
+        acknowledgement: Valid or invalid durable write authorization.
+    """
+    import base64
+    import io
+    import shlex
+    import signal
+    import sys
+
+    from atlaso.app.services import vcf_lab_remote as remote
+
+    source = b'import json\ndef safe_operate(request):\n print("EDITOR_RAN",flush=True)\n return {"ok":True}\n'
+    monkeypatch.setattr(remote.os, "geteuid", lambda: 0, raising=False)
+    monkeypatch.setattr(signal, "alarm", lambda timeout: None, raising=False)
+    monkeypatch.setattr(sys, "stdin", io.StringIO(acknowledgement))
+
+    def execute(command, password, **kwargs):
+        """Execute the generated program against a harmless editor fixture.
+
+        Args:
+            command: Fixed privileged Python program.
+            password: Separate synthetic root password.
+            **kwargs: Write-handshake selection.
+        """
+        assert kwargs["authorize_write"] is True
+        exec(shlex.split(command)[8], {})
+        return {"ok": True}
+
+    monkeypatch.setattr(remote, "elevated", execute)
+    envelope = {
+        "request": {"action": "write"},
+        "editor": base64.b64encode(source).decode(),
+        "root_password": "synthetic-root",
+    }
+    if acknowledgement == "wrong\n":
+        with pytest.raises(AssertionError):
+            remote.dispatch(envelope)
+        assert "EDITOR_RAN" not in capsys.readouterr().out
+    else:
+        assert remote.dispatch(envelope) == {"ok": True}
+        assert "EDITOR_RAN" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("module_name", ["base64", "signal"])
+def test_remote_python_ignores_caller_modules_and_pythonpath(tmp_path, module_name):
+    """Exercise isolated imports with a hostile cwd and environment path.
+
+    Args:
+        tmp_path: Owned temporary fixture directory.
+        module_name: Standard-library module shadowed by an untrusted file.
+    """
+    import os
+    import shlex
+    import subprocess
+    import sys
+
+    from atlaso.app.services import vcf_lab_remote as remote
+
+    (tmp_path / f"{module_name}.py").write_text(
+        "raise RuntimeError('caller-module-loaded')\n", encoding="utf-8"
+    )
+    environment = {
+        **os.environ,
+        "PYTHONPATH": str(tmp_path),
+        "PYTHONUSERBASE": str(tmp_path),
+    }
+    program = f"import {module_name}; print('trusted-import')"
+    unsafe = subprocess.run(
+        [sys.executable, "-c", program],
+        cwd=tmp_path,
+        env=environment,
+        capture_output=True,
+        text=True,
+        timeout=15,
+        check=False,
+    )
+    assert unsafe.returncode != 0 and "caller-module-loaded" in unsafe.stderr
+    command = shlex.split(remote.PYTHON_COMMAND)
+    assert command[:5] == ["cd", "/", "&&", "exec", "/usr/bin/python3"]
+    # Run the actual selected interpreter flags on this host; no root privileges
+    # or VCF mutation are needed to verify Python's import isolation boundary.
+    safe = subprocess.run(
+        [sys.executable, *command[5:], program],
+        cwd=tmp_path,
+        env=environment,
+        capture_output=True,
+        text=True,
+        timeout=15,
+        check=False,
+    )
+    assert safe.returncode == 0
+    assert safe.stdout.strip() == "trusted-import"
+    assert "caller-module-loaded" not in safe.stderr
+
+
+@pytest.mark.parametrize(
+    "output,code,valid",
+    [
+        (b"9.1.0.0400.25570101\n", 0, True),
+        (b"diagnostics", 0, False),
+        (b"9.1.0", 1, False),
+        (b"9." + b"1" * 300, 0, False),
+    ],
+)
+def test_sos_version_command_is_fixed_and_validated(monkeypatch, output, code, valid):
+    """Accept only a successful bounded version response from the fixed command.
+
+    Args:
+        monkeypatch: Replaces the subprocess boundary.
+        output: Synthetic sos output.
+        code: Synthetic exit code.
+        valid: Whether the response is an acceptable release.
+    """
+    from types import SimpleNamespace
+
+    from atlaso.app.services import vcf_lab_remote as remote
+
+    def run(command, **kwargs):
+        """Capture the fixed command and supply synthetic output.
+
+        Args:
+            command: Fixed argv for sos.
+            **kwargs: Bounded process options.
+        """
+        assert command == ["/opt/vmware/sddc-support/sos", "-v"]
+        assert kwargs["timeout"] == 30
+        kwargs["stdout"].write(output)
+        return SimpleNamespace(returncode=code)
+
+    monkeypatch.setattr(remote.subprocess, "run", run)
+    if valid:
+        assert remote.version() == {"ok": True, "version": output.decode().strip()}
+    else:
+        with pytest.raises(remote.PropertyError):
+            remote.version()

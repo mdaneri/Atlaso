@@ -193,7 +193,7 @@ are explicitly inventoried so route/template changes cannot silently escape the 
   `esx-storage-share-modal`.
 - Routing and WAN: `routes-wan-route-dialog`, `routes-wan-routing-dialog`, `routes-wan-nat-dialog`, and
   `routes-wan-policy-dialog`, and `port-forward-dialog` (Traffic Publishing).
-- VCF workflows: `vcf-fqdn-modal`, `vcf-ldap-modal`, `vcf-trust-modal`, `vcf-sddc-deploy-modal`, `vcf-target-depot-modal`,
+- VCF workflows: `vcf-fqdn-modal`, `vcf-ldap-modal`, `vcf-trust-modal`, `vcf-lab-modal`, `vcf-sddc-deploy-modal`, `vcf-target-depot-modal`,
   `vcf-vault-import-modal`, `vcf-depot-profile-dialog`, `vcf-depot-tool-package-dialog`,
   `vcf-depot-configuration-dialog`, `vcf-depot-tool-reset-modal`, `vcf-depot-schedule-modal`, and
   `vcf-registry-bundle-dialog`.
@@ -244,11 +244,17 @@ The matrix is complete only while E1–E8 pass on the same pull-request head. A 
 same change or tracked by a separately labeled issue linked to #115; a new `custom/other` interaction also requires
 explicit maintainer approval before implementation.
 
-### VCF lab overrides (#849)
+### VCF lab overrides (#849, #873)
 
-`partials/vcf_lab_overrides.html` uses the existing VCF Helper non-grid settings layout, shared form controls,
-explicit fingerprint confirmation, reviewed changes, lab acknowledgement and task-result links. Administrator-only
-operations use encrypted Vault references; the browser receives no credential values. Controls expose keyboard focus,
-errors and progress, and disable apply until inspection and acknowledgement. JavaScript-disabled pages explain the
-requirement without applying changes. Desktop and narrow browser fixtures verified selection, review, recovery,
-keyboard submission and result visibility; live VCF appliance interoperability remains unverified.
+`partials/vcf_lab_overrides.html` uses the approved custom/other VCF Certificate Trust tile/modal reference,
+`AtlasoUiPatterns.createWizard`, and the generic wizard DOM contract. Administrator-only operations support
+saved Vault references and manual credentials.
+Saved passwords stay server-side and never enter the browser. Manual vcf/root passwords are entered after trust
+confirmation, sent only with the operation requests, and held in request/process memory rather than persisted in
+Vault, signed plans, jobs or audits. Password fields clear on close or successful submission.
+Fingerprint confirmation precedes authentication,
+and navigation never writes remote properties or restarts services. JavaScript is required for the workflow.
+Local Edge checks cover review invalidation, recoverable submission errors,
+automatic credential-free SSH probing, explicit approval, current-value editing, and automatic task-details
+navigation after successful submission at desktop and narrow viewports. Native VCF acceptance and
+deployed-appliance UI verification remain outstanding.

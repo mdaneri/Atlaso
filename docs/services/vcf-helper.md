@@ -54,66 +54,54 @@ the operator; it does not substitute a different path or claim that this covers 
 
 ### Review and apply
 
-1. Save the target API credential with an HTTP/HTTPS URI and SSH credential with an SSH/SFTP URI in an existing
-   Atlaso Vault. Both must identify the same hostname or IP. The API connection always uses HTTPS and preserves an
-   explicit URI port (default 443). The SSH account
-   must be root or have passwordless sudo permission to run the bounded editor; Python 3.10 or newer and `systemctl`
-   are required.
-   Atlaso does not enable root SSH, change sudo policy, or attempt password-based privilege escalation.
-2. Open **VCF Helper > Lab / Non-production Overrides** and select the two credentials. Credential values stay in
-   the existing encrypted Vault custody and never enter the page.
-3. Select **Probe target fingerprints**, verify both fingerprints out of band, and confirm the target. Probing sends
-   no credentials. A changed target clears confirmation; a changed SSH key or TLS certificate blocks authentication.
-4. Select **Inspect current properties**. Atlaso verifies the VCF role/version, fixed file, property values and
-   service state. Missing files, duplicate/continued managed properties, non-boolean values and unsafe file types
-   are refused. Repair ambiguous configuration on the target before continuing.
-5. Select either or both options, then **Review selected changes**. Review the target, release, previous values,
-   proposed values and restart requirement. An absent value means the property is not explicitly configured.
-6. Acknowledge the lab-only warning and choose **Apply reviewed changes**. Review expires after ten minutes and
-   is bound to the operator, target and inspected configuration. Any configuration drift requires a new review.
-   Apply rechecks service activity inside the remote lock and refuses an inactive `domainmanager`; revert remains
-   available for recovery.
-7. Follow **Open task details**. A changed file triggers only `domainmanager` restart. Atlaso separately reports
-   property readback, service activity and VCF API readiness. An already matching configuration requires no restart.
+1. Open **Lab / Non-production Overrides** and choose saved Vault credentials or a one-time manual login.
+   Saved credentials require a **vcf** SSH/SFTP identity and a separate **root** identity for the same host and port.
+   Python 3.10 or newer, `su`, and `systemctl` must be available. No VCF API login is needed.
+2. Review the saved SSH endpoint, or enter the hostname and SSH port for manual login.
+3. The **Fingerprints** step automatically probes the SSH identity without credentials. Verify the displayed
+   fingerprint out of band and select the confirmation checkbox. Changed endpoints clear confirmation.
+   SSH host keys are checked before authentication. If probing fails, go Back and return to retry.
+4. Saved credentials skip **Login** with manual controls disabled. For manual login, enter the `vcf` and root
+   passwords after confirming trust. Passwords stay in request/process memory, never in Vault, review tokens,
+   jobs, logs or audits. Closing the wizard or queuing the task clears its password fields.
+5. In **Changes**, select **Verify login and inspect properties**. Atlaso runs
+   `/opt/vmware/sddc-support/sos -v` as `vcf` to detect the version, then reads the fixed properties and service state.
+   Readable inspection never resolves or sends the root secret. A permission refusal starts a separate pinned SSH
+   exchange for a root-only read through `su`. The root secret travels over encrypted SSH stdin into a private,
+   non-echoing terminal only for elevation; never through command arguments, files or output.
+6. Each setting shows its actual current value. Choose **True**, **False**, or **Not configured** for the desired
+   value. Not configured removes the explicit property. Choose **Next** to review the target, release, current and
+   desired values, and restart requirement. Navigation and review never write properties or restart services.
+7. Acknowledge the lab-only warning and choose **Apply reviewed changes**. The signed review expires after ten
+   minutes and binds the operator, credentials, SSH identity and inspected configuration. Changed inputs invalidate
+   review. Manual credential bindings are removed before the task plan is stored. Apply rechecks the configuration
+   and service activity under a remote lock, refuses inactive `domainmanager`, and uses `su` for writes and restart.
+8. After successful submission, the wizard closes and opens the new task details automatically.
+   Closing the wizard while submission is pending does not cancel the authorized task; its successful response
+   still opens task details. Changed values trigger only `domainmanager` restart; matching values
+   need no restart. Property readback and service activity are reported separately. There is no API readiness check.
+   Authentication, host identity, elevation, timeout and property failures are sanitized without terminal output.
 
-Atlaso preserves unrelated file content, ownership, permissions and extended attributes. It refuses symbolic links,
-hard-linked configuration and competing Atlaso operations on the same pinned SSH host/port. Restart is bounded to 90
-seconds, service readiness to
-180 seconds and subsequent API readiness to a bounded retry window. Never interpret property readback as a live
-VCF workflow acceptance test; verify the intended VCF workflow separately on the lab appliance.
+Atlaso preserves unrelated file content, ownership, permissions and extended attributes. It accepts a regular
+`application-prod.properties` file or the exact sibling alias `application-prod.properties -> application.properties`.
+The alias remains intact; edits atomically replace its regular target. Review binds both identities and content.
+Other links, linked parent directories, hard-linked configuration and competing operations on the same pinned
+SSH host/port are refused. Restart is bounded to 90 seconds and service readiness to 180 seconds.
+Verify the intended VCF workflow separately on the lab appliance; property readback is not acceptance evidence.
 
-### Revert and recovery
+### Adjusting values and interrupted tasks
 
-Choose credentials for the same host and ports, probe and confirm the SSH fingerprint, then choose a
-**Previous managed operation**.
-Replacement Vault entries or reordered URI lists are accepted when the pinned endpoint is unchanged.
-Select **Review revert** and acknowledge the reviewed restoration. Revert restores only properties the operation
-actually changed; selections that were already correct stay untouched. Originally absent properties are removed.
-Unrelated current configuration remains intact. A changed target identity or managed property
-blocks revert instead of overwriting another edit. Ownership is scoped to the host, ports and SSH fingerprint. A
-later dispatched managed write or revert invalidates the
-older baseline for each affected property, even if values later match again. Uncertain writes require manual recovery.
-Recovery inspects the current file over pinned SSH and uses the
-original operation's verified role/version, explicitly labelled in review; it does not require a working VCF API or
-successful API inspection. If TLS probing fails, only recovery remains available. API readiness is checked after
-restoration using the original TLS fingerprint and reported separately from property verification.
+There is no previous-operation rollback selector. Inspect the current settings again and submit the desired values
+through the same review flow. Task details retain previous and desired values for reference.
+If connectivity fails during mutation, reconcile the actual remote state before another operation. An interrupted
+worker retains its target reservation until maintainer recovery reconciles it. Never blindly resubmit an unknown
+outcome. Interrupted tasks record sanitized audits distinguishing undispatched work from unknown remote outcomes.
+Settings restore preserves local task provenance, reservations and consumed reviews; these are not desired state.
 
-Settings restore preserves local VCF task provenance, reservations and consumed reviews; these records are never
-exported or imported as desired state.
-
-History retains current property-owner operations alongside the 50 most recent tasks so older recovery baselines
-remain selectable. A verified property change remains revertible if service/API recovery failed. A no-op task or a task
-without verified write evidence cannot be automatically reverted. If connectivity failed during mutation, inspect
-the target using
-the retained previous/desired values and recover manually before submitting another operation. An interrupted Atlaso
-worker retains its target reservation: reconcile the task and remote state before clearing that reservation through
-maintainer recovery. Interrupted tasks record a sanitized failed audit outcome, distinguishing undispatched tasks
-from unknown remote outcomes. Do not blindly resubmit a task whose outcome is unknown.
-
-The browser-only operations are beneath `/ui/management/vcf-helper/lab-overrides`: POST `probe`, `inspect`, `review`
-and `execute`, plus GET `history` and `tasks/{job_id}`. Execution and revert require admin authorization, CSRF and an
-acknowledged signed review. They are explicit remote tasks, separate from global Appliance Apply. Audit events record
-actor, target, version, selected previous/desired values and outcome, without credentials or raw remote configuration.
+Browser-only operations are beneath `/ui/management/vcf-helper/lab-overrides`: POST `probe`, `inspect`, `review`
+and `execute`, plus GET `tasks/{job_id}`. They require administrator authorization; mutations require CSRF, and
+execution requires an acknowledged signed review. These remote tasks are separate from global Appliance Apply.
+Audits record actor, target, version, previous/desired values and outcome without credentials or raw configuration.
 
 Administrators can also use **Import passwords into a vault** for VCF 9 SDDC Manager and VCF Installer appliances.
 The wizard chooses vault or manual credentials first, confirms the server second, and then opens a dedicated TLS page.

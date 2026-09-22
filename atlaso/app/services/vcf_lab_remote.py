@@ -4,10 +4,12 @@ Only this module's fixed path, keys and service are writable. No configuration
 contents or command stderr cross the SSH boundary. Also importable for tests.
 """
 
+import base64
 import hashlib
 import json
 import os
 import re
+import shlex
 import stat
 import subprocess
 import sys
@@ -23,6 +25,8 @@ KEYS = {
 }
 VALUES = {"esa": "true", "nic": "false"}
 MAX_BYTES = 1024 * 1024
+# Neither credential handling nor privileged execution may import caller files.
+PYTHON_COMMAND = "cd / && exec /usr/bin/python3 -I -S -c "
 
 
 class PropertyError(ValueError):
@@ -172,15 +176,60 @@ def read_configuration(path: Path) -> tuple[bytes, os.stat_result]:
     return content, info
 
 
-def snapshot(content: bytes, info: os.stat_result) -> str:
+def configuration_path(path: Path) -> tuple[Path, str]:
+    """Admit only the fixed sibling link used by VCF, retaining its identity.
+
+    Args:
+        path: Fixed public property-file path.
+    """
+    for ancestor in path.parents:
+        if ancestor.is_symlink():
+            raise PropertyError("Configuration path contains a symbolic link.")
+    info = path.lstat()
+    if not stat.S_ISLNK(info.st_mode):
+        return path, ""
+    if (
+        path.name != "application-prod.properties"
+        or os.readlink(path) != "application.properties"
+    ):
+        raise PropertyError("Configuration symbolic link has an unsupported target.")
+    identity = (
+        info.st_dev,
+        info.st_ino,
+        info.st_mode,
+        info.st_uid,
+        info.st_gid,
+        info.st_mtime_ns,
+        info.st_ctime_ns,
+    )
+    return path.with_name("application.properties"), repr(identity)
+
+
+def read_state(path: Path) -> tuple[bytes, os.stat_result, Path, str]:
+    """Read a regular target while detecting changes to its permitted alias.
+
+    Args:
+        path: Fixed public property-file path.
+    """
+    resolved, binding = configuration_path(path)
+    content, info = read_configuration(resolved)
+    if configuration_path(path) != (resolved, binding):
+        raise PropertyError("Configuration link changed during inspection.")
+    return content, info, resolved, binding
+
+
+def snapshot(content: bytes, info: os.stat_result, binding: str = "") -> str:
     """Bind review to bytes, identity, ownership and permissions.
 
     Args:
         content: Original property-file bytes, never returned to the browser.
         info: Original file metadata bound into the review revision.
+        binding: Identity of the permitted VCF property-file alias, if present.
     """
     metadata = (info.st_dev, info.st_ino, info.st_mode, info.st_uid, info.st_gid)
-    return hashlib.sha256(repr(metadata).encode() + content).hexdigest()
+    return hashlib.sha256(
+        repr(metadata).encode() + binding.encode() + content
+    ).hexdigest()
 
 
 def active() -> bool:
@@ -197,6 +246,26 @@ def active() -> bool:
     )
 
 
+def version() -> dict[str, Any]:
+    """Run the fixed VCF sos version command without root or API credentials."""
+    # A file-backed capture bounds process memory; never return diagnostics.
+    with tempfile.TemporaryFile() as output:
+        completed = subprocess.run(
+            ["/opt/vmware/sddc-support/sos", "-v"],
+            timeout=30,
+            stdout=output,
+            stderr=subprocess.DEVNULL,
+            check=False,
+        )
+        output.seek(0)
+        release = output.read(257).decode("ascii", errors="replace").strip()
+    if completed.returncode != 0 or not re.fullmatch(
+        r"[0-9]+(?:\.[0-9]+){2,5}(?:[-+][0-9]+)?", release
+    ):
+        raise PropertyError("Could not read a valid VCF release from sos -v.")
+    return {"ok": True, "version": release}
+
+
 def operate(request: dict[str, Any]) -> dict[str, Any]:
     """Inspect or compare-and-replace fixed properties under a remote lock.
 
@@ -209,12 +278,23 @@ def operate(request: dict[str, Any]) -> dict[str, Any]:
     posix: Any = os
     locking: Any = fcntl
 
-    if posix.geteuid() != 0:
-        raise PropertyError(
-            "SSH requires root or passwordless sudo for this operation."
-        )
+    if request.get("action") == "version":
+        return version()
     if request.get("action") not in {"inspect", "write"}:
         raise PropertyError("Unsupported operation.")
+    if request["action"] == "inspect":
+        # Inspection never creates a lock file or mutates the appliance. Try as
+        # vcf first; only a permission refusal warrants the separate su boundary.
+        content, info, _, binding = read_state(Path(CONFIG_PATH))
+        return {
+            "ok": True,
+            "values": properties(content)[0],
+            "revision": snapshot(content, info, binding),
+            "service_active": active(),
+            "changed": False,
+        }
+    if posix.geteuid() != 0:
+        raise PermissionError("Root elevation is required for property writes.")
     lock_fd = os.open(
         "/run/lock/atlaso-vcf-lab.lock",
         os.O_CREAT | os.O_RDWR | posix.O_NOFOLLOW,
@@ -227,13 +307,13 @@ def operate(request: dict[str, Any]) -> dict[str, Any]:
             raise PropertyError(
                 "Another property operation is active on this appliance."
             ) from exc
-        path = Path(CONFIG_PATH)
-        content, info = read_configuration(path)
+        configured = Path(CONFIG_PATH)
+        content, info, path, binding = read_state(configured)
         values, _ = properties(content)
         result: dict[str, Any] = {
             "ok": True,
             "values": values,
-            "revision": snapshot(content, info),
+            "revision": snapshot(content, info, binding),
             "service_active": active(),
             "changed": False,
         }
@@ -258,8 +338,12 @@ def operate(request: dict[str, Any]) -> dict[str, Any]:
                 os.fsync(stream.fileno())
             for attribute in posix.listxattr(path):
                 posix.setxattr(temporary, attribute, posix.getxattr(path, attribute))
-            latest, latest_info = read_configuration(path)
-            if snapshot(latest, latest_info) != result["revision"]:
+            latest, latest_info, latest_path, latest_binding = read_state(configured)
+            if (
+                latest_path != path
+                or latest_binding != binding
+                or snapshot(latest, latest_info, latest_binding) != result["revision"]
+            ):
                 raise PropertyError(
                     "Configuration changed during the operation; no changes written."
                 )
@@ -270,10 +354,16 @@ def operate(request: dict[str, Any]) -> dict[str, Any]:
             finally:
                 os.close(directory)
             result["changed"] = True
-            observed, observed_info = read_configuration(path)
+            observed, observed_info, observed_path, observed_binding = read_state(
+                configured
+            )
+            if (observed_path, observed_binding) != (path, binding):
+                raise PropertyError(
+                    "Configuration link changed during property update."
+                )
             result.update(
                 values=properties(observed)[0],
-                revision=snapshot(observed, observed_info),
+                revision=snapshot(observed, observed_info, binding),
             )
             if observed != updated or any(
                 result["values"][key] != value
@@ -302,7 +392,7 @@ def operate(request: dict[str, Any]) -> dict[str, Any]:
                 result.update(
                     ok=False,
                     service_active=False,
-                    error="Properties verified, but service restart failed or timed out. Review target health or revert.",
+                    error="Properties verified, but service restart failed or timed out. Review target health and inspect current values.",
                 )
                 return result
             deadline = time.monotonic() + 180
@@ -326,11 +416,180 @@ def operate(request: dict[str, Any]) -> dict[str, Any]:
                 os.unlink(temporary)
 
 
+def elevated(
+    command: str, password: str, *, authorize_write: bool = False
+) -> dict[str, Any]:
+    """Run the fixed editor through a private, unlogged, non-echoing su terminal.
+
+    Args:
+        command: Internally generated editor command containing no credentials.
+        password: Separate root secret received through encrypted SSH stdin only.
+        authorize_write: Require a durable Atlaso handoff before allowing mutation.
+    """
+    import pty
+    import select
+    import signal
+    import termios
+
+    posix: Any = os
+    terminals: Any = termios
+    pseudoterminals: Any = pty
+    signals: Any = signal
+    if (
+        not password
+        or len(password.encode()) > 1024
+        or any(ord(char) < 32 or ord(char) == 127 for char in password)
+    ):
+        return {"elevation_error": "authentication"}
+    if not Path("/usr/bin/su").is_file() and not Path("/bin/su").is_file():
+        return {"elevation_error": "unavailable"}
+    su = "/usr/bin/su" if Path("/usr/bin/su").is_file() else "/bin/su"
+    pid, terminal = pseudoterminals.fork()
+    if pid == 0:
+        try:
+            # The child owns the controlling terminal; turn echo off before su
+            # starts. The parent checks it again immediately before secret input.
+            settings = terminals.tcgetattr(0)
+            settings[3] &= ~(terminals.ECHO | terminals.ECHONL)
+            terminals.tcsetattr(0, terminals.TCSANOW, settings)
+            posix.execve(
+                su,
+                [su, "-s", "/bin/sh", "-c", command, "root"],
+                {"PATH": "/usr/sbin:/usr/bin:/sbin:/bin", "LC_ALL": "C"},
+            )
+        except (OSError, terminals.error):
+            posix._exit(126)
+    output = bytearray()
+    sent = False
+    ready = False
+    reaped = False
+    deadline = time.monotonic() + 20
+    try:
+        while time.monotonic() < deadline:
+            if select.select([terminal], [], [], 0.1)[0]:
+                try:
+                    data = os.read(terminal, 4096)
+                except OSError:
+                    data = b""
+                if not data:
+                    break
+                output.extend(data)
+                if len(output) > 32768:
+                    return {"elevation_error": "execution"}
+                if (
+                    not sent
+                    and bytes(output).rsplit(b"\n", 1)[-1].strip().lower()
+                    == b"password:"
+                ):
+                    if terminals.tcgetattr(terminal)[3] & (
+                        terminals.ECHO | terminals.ECHONL
+                    ):
+                        return {"elevation_error": "echo"}
+                    os.write(terminal, password.encode() + b"\n")
+                    password = ""
+                    sent = True
+                    output.clear()
+                if b"ATLASO_ROOT_READY" in output and not ready:
+                    ready = True
+                    deadline = time.monotonic() + 310
+                    if authorize_write:
+                        print(json.dumps({"ready": True}), flush=True)
+                        if not select.select([sys.stdin], [], [], 15)[0]:
+                            return {"elevation_error": "timeout"}
+                        if sys.stdin.buffer.readline(32) != b"ATLASO_APPLY\n":
+                            return {"elevation_error": "execution"}
+                        os.write(terminal, b"ATLASO_APPLY\n")
+                marker = b"ATLASO_RESULT:"
+                if marker in output:
+                    result_line = bytes(output).split(marker, 1)[1].split(b"\n", 1)
+                    if len(result_line) == 2:
+                        result = json.loads(result_line[0])
+                        if isinstance(result, dict) and ready:
+                            return result
+                        return {"elevation_error": "execution"}
+            exited = 0
+            if not reaped:
+                exited, _ = posix.waitpid(pid, posix.WNOHANG)
+            if exited:
+                reaped = True
+                # Drain a final ready chunk on the next iteration.
+                if not select.select([terminal], [], [], 0)[0]:
+                    break
+        else:
+            return {"elevation_error": "timeout"}
+        return {"elevation_error": "execution" if ready else "authentication"}
+    finally:
+        password = ""
+        output.clear()
+        os.close(terminal)
+        if not reaped:
+            try:
+                posix.kill(pid, signals.SIGKILL)
+            except (ProcessLookupError, PermissionError):
+                pass
+            posix.waitpid(pid, posix.WNOHANG)
+
+
+def safe_operate(request: dict[str, Any]) -> dict[str, Any]:
+    """Return safe editor failures without a traceback or remote configuration.
+
+    Args:
+        request: Fixed property inspection or mutation request.
+    """
+    try:
+        return operate(request)
+    except PropertyError as exc:
+        return {"ok": False, "error": str(exc), "phase": "property"}
+    except (OSError, ValueError, TypeError, subprocess.SubprocessError):
+        return {
+            "ok": False,
+            "phase": "property",
+            "error": "Property operation failed; inspect the target before recovery.",
+        }
+
+
+def dispatch(envelope: dict[str, Any]) -> dict[str, Any]:
+    """Keep readable inspection unprivileged; elevate only the fixed editor.
+
+    Args:
+        envelope: Request, editor source and transient root secret from SSH stdin.
+    """
+    request = envelope["request"]
+    if request.get("action") == "version":
+        return operate(request)
+    if request.get("action") == "inspect" and not envelope.get("elevate"):
+        try:
+            return operate(request)
+        except PermissionError:
+            return {"elevation_required": True}
+    # Only source and the non-secret operation enter su's argv. No password is
+    # inserted into this program, its arguments, a file, or a shell environment.
+    source = base64.b64decode(envelope["editor"], validate=True).decode()
+    program = (
+        "import os,signal,sys;signal.alarm(300);"
+        "assert os.geteuid()==0;print('ATLASO_ROOT_READY',flush=True);"
+        + (
+            "assert sys.stdin.readline()=='ATLASO_APPLY\\n';"
+            if request.get("action") == "write"
+            else ""
+        )
+        + f"exec(compile({source!r},'<atlaso-vcf-lab>','exec'),globals());"
+        f"print('ATLASO_RESULT:'+json.dumps(safe_operate({request!r})),flush=True)"
+    )
+    # Suppress the module's stdin entrypoint inside the privileged interpreter.
+    program = "__name__='atlaso_vcf_editor';" + program
+    return elevated(
+        PYTHON_COMMAND + shlex.quote(program),
+        envelope["root_password"],
+        authorize_write=request.get("action") == "write",
+    )
+
+
 def main() -> None:
     """Return bounded structured evidence, never raw configuration or stderr."""
     try:
-        request = json.loads(sys.stdin.buffer.readline(16385))
-        result = operate(request)
+        envelope = json.loads(sys.stdin.buffer.readline(131073))
+        result = dispatch(envelope)
     except PropertyError as exc:
         result = {"ok": False, "error": str(exc)}
     except (OSError, ValueError, TypeError, subprocess.SubprocessError):
