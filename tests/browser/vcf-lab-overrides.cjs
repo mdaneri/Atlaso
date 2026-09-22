@@ -97,7 +97,14 @@ const html = `<html><head><style>${fs.readFileSync("atlaso/app/static/app.css", 
       await page.locator('[name="confirmed"]').check(); await next.click();
       assert(await page.locator('[data-atlaso-wizard-step="login"]').isVisible());
       assert(!(await page.locator('[name="ssh_password"]').isDisabled()));
-      for (const kind of ['ssh', 'root']) await page.locator(`[name="${kind}_password"]`).fill(`synthetic-${kind}`);
+      const inspectionsBeforeLogin = calls.filter(call => call.operation === 'inspect').length;
+      await next.click();
+      assert(await page.locator('[data-atlaso-wizard-step="login"]').isVisible());
+      await page.locator('[name="ssh_password"]').fill('synthetic-ssh');
+      await next.click();
+      assert(await page.locator('[data-atlaso-wizard-step="login"]').isVisible());
+      assert.equal(calls.filter(call => call.operation === 'inspect').length, inspectionsBeforeLogin);
+      await page.locator('[name="root_password"]').fill('synthetic-root');
       await next.click();
       await page.locator('[data-lab-action="inspect"]').click();
       await page.waitForFunction(() => document.querySelector('[data-lab-observed]').textContent.includes('VcfInstaller'));
