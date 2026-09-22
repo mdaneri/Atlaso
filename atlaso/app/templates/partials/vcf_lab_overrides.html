@@ -8,7 +8,7 @@
 <li><button class="vcf-sddc-step-button" type="button" data-atlaso-wizard-nav="target"><span>2</span><strong>Server</strong><small>Review the SSH endpoint</small></button></li>
 <li><button class="vcf-sddc-step-button" type="button" data-atlaso-wizard-nav="trust"><span>3</span><strong>Fingerprints</strong><small>Confirm before authentication</small></button></li>
 <li><button class="vcf-sddc-step-button" type="button" data-atlaso-wizard-nav="login"><span>4</span><strong>Login</strong><small>Manual credentials</small></button></li>
-<li><button class="vcf-sddc-step-button" type="button" data-atlaso-wizard-nav="options"><span>5</span><strong>Changes</strong><small>Select changes or revert</small></button></li>
+<li><button class="vcf-sddc-step-button" type="button" data-atlaso-wizard-nav="options"><span>5</span><strong>Changes</strong><small>Inspect and edit values</small></button></li>
 <li><button class="vcf-sddc-step-button" type="button" data-atlaso-wizard-nav="review"><span>6</span><strong>Review</strong><small>Queue the remote task</small></button></li></ol></aside>
 <div class="vcf-sddc-wizard-main"><div class="confirm-modal-body vcf-sddc-wizard-body">
 <div class="vcf-sddc-wizard-heading"><p class="kicker" data-atlaso-wizard-kicker></p><h3 data-atlaso-wizard-title></h3><p id="vcf-lab-description" class="muted" data-atlaso-wizard-description></p></div>
@@ -16,31 +16,26 @@
 <section class="vcf-sddc-step-page" data-atlaso-wizard-step="credential">
 <label>Credential source<select name="credential_mode"><option value="vault">Saved Vault credentials</option><option value="manual">Enter credentials for this operation</option></select></label>
 <div data-lab-saved>
-<p class="muted">Choose existing Vault credentials for the same appliance. Passwords stay in server-side custody and are never loaded into this page.</p>
-<div class="form-grid"><label><span class="field-label"><span>VCF API credential</span><button class="help-icon" type="button" data-help="HTTP/HTTPS Vault credential used to detect VCF version and verify API recovery after TLS confirmation.">i</button></span><select name="api_credential" required><option value="">Choose a credential</option></select></label>
-<label><span class="field-label"><span>vcf SSH credential</span><button class="help-icon" type="button" data-help="SSH/SFTP Vault credential whose username is vcf. Direct root SSH and sudo are not used.">i</button></span><select name="ssh_credential" required><option value="">Choose a credential</option></select></label>
+<p class="muted">Choose existing vcf and root Vault credentials for the same appliance. Passwords stay in server-side custody and are never loaded into this page.</p>
+<div class="form-grid"><label><span class="field-label"><span>vcf SSH credential</span><button class="help-icon" type="button" data-help="SSH/SFTP Vault credential whose username is vcf. Direct root SSH and sudo are not used.">i</button></span><select name="ssh_credential" required><option value="">Choose a credential</option></select></label>
 <label><span class="field-label"><span>Root elevation credential</span><button class="help-icon" type="button" data-help="Separate root Vault credential for this SSH endpoint. Used only through non-echoing su when a privileged operation is needed.">i</button></span><select name="root_credential" required><option value="">Choose a credential</option></select></label></div>
 </div>
 </section>
 <section class="vcf-sddc-step-page hidden" data-atlaso-wizard-step="target">
 <div class="form-grid hidden" data-lab-manual-server>
 <label>Server hostname or IP<input name="host" autocomplete="off"></label>
-<label>HTTPS port<input name="api_port" type="number" min="1" max="65535" value="443"></label>
 <label>SSH port<input name="ssh_port" type="number" min="1" max="65535" value="22"></label>
 </div>
 <div class="settings-list compact-settings-list"><div><span>Server</span><strong data-lab-target></strong></div><div><span>SSH login</span><strong>vcf</strong></div><div><span>Privileged operations</span><strong>su with separate root credential</strong></div></div>
-<p class="muted">VCF Installer or SDDC Manager 9.0.x / 9.1.x with Python 3.10 or newer. The API credential is used only for version detection and readiness; property operations use SSH.</p>
+<p class="muted">VCF Installer or SDDC Manager 9.0.x / 9.1.x with Python 3.10 or newer. Version detection uses sos -v over SSH; property operations use SSH and su.</p>
 </section>
 <section class="vcf-sddc-step-page hidden" data-atlaso-wizard-step="trust">
-<button class="button secondary" type="button" data-lab-action="probe">Probe target fingerprints</button>
-<div class="settings-list compact-settings-list"><div><span>TLS SHA-256</span><code data-lab-tls>Not probed</code></div><div><span>SSH SHA-256</span><code data-lab-ssh>Not probed</code></div></div>
-<label><input name="confirmed" type="checkbox"> I verified the displayed fingerprints out of band and confirm this target.</label>
-<p class="muted">Probing sends no credentials. If TLS is unavailable, only SSH recovery of a previous verified operation is available.</p>
+<div class="settings-list compact-settings-list"><div><span>SSH SHA-256</span><code data-lab-ssh class="vcf-lab-fingerprint">Probing SSH identity…</code></div></div>
+<label class="checkbox-row"><input name="confirmed" type="checkbox"><span>I verified the displayed SSH fingerprint out of band and confirm this target.</span></label>
+<p class="muted">The fingerprint is probed automatically without credentials. Approve it before continuing.</p>
 </section>
 <section class="vcf-sddc-step-page hidden" data-atlaso-wizard-step="login">
 <div class="form-grid hidden" data-lab-manual-login>
-<label>API username<input name="api_username" autocomplete="off"></label>
-<label>API password<input name="api_password" type="password" autocomplete="off"></label>
 <label>vcf SSH password<input name="ssh_password" type="password" autocomplete="off"></label>
 <label>Root su password<input name="root_password" type="password" autocomplete="off"></label>
 <p class="muted">Used only for this operation; never saved to Vault or task history. Re-enter credentials if Atlaso restarts.</p>
@@ -50,23 +45,21 @@
 <p class="muted">Connect as vcf and inspect the two properties. If the file is root-only, Atlaso uses the separate root credential through su. Inspection does not edit properties or restart services.</p>
 <button class="button secondary" type="button" data-lab-action="inspect">Verify login and inspect properties</button>
 <p data-lab-observed role="status">Current properties have not been inspected.</p>
-<p class="muted">To recover an earlier verified operation while the API is unavailable, select that operation below. Recovery inspection uses the confirmed SSH identity.</p>
+
 
 <p class="alert warning">Lab / PoC only. These changes do not make hardware certified or production-supported. VCF 9.1.1 and later provide native ESA handling; this legacy property edit does not replace that workflow.</p>
-    <fieldset class="scope-choice-fieldset" data-lab-options>
-      <legend>Select changes</legend>
-      <div class="scope-choice-grid">
-        <label class="scope-choice"><input type="checkbox" name="esa"><span class="scope-choice-copy"><strong>Allow non-HCL vSAN ESA devices</strong><small>Set vsan.esa.sddc.managed.disk.claim=true.</small></span></label>
-        <label class="scope-choice"><input type="checkbox" name="nic"><span class="scope-choice-copy"><strong>Disable 10GbE physical NIC validation</strong><small>Set enable.speed.of.physical.nics.validation=false.</small></span></label>
-      </div>
-      <p class="muted">Choose either or both. Unselected properties stay unchanged. This edits only <code>/etc/vmware/vcf/domainmanager/application-prod.properties</code> and restarts <code>domainmanager</code> when needed.</p>
-    </fieldset>
-
-<label><span class="field-label"><span>Previous managed operation</span><button class="help-icon" type="button" data-help="Select a verified operation to restore its previous values instead of applying the checkboxes above. Changed target identities and conflicting property edits are refused.">i</button></span><select name="source_job_id"><option value="">Apply selected changes</option></select></label>
+<fieldset data-lab-options disabled>
+<legend>Current settings</legend>
+<p class="muted">Inspect first, then choose the desired value. Not configured removes the explicit property.</p>
+<div class="form-grid">
+<label>Allow non-HCL vSAN ESA devices<small>Current: <strong data-lab-esa-current>Not inspected</strong></small><select name="esa"><option value="absent">Not configured</option><option value="true">True</option><option value="false">False</option></select><small>vsan.esa.sddc.managed.disk.claim</small></label>
+<label>Physical NIC speed validation<small>Current: <strong data-lab-nic-current>Not inspected</strong></small><select name="nic"><option value="absent">Not configured</option><option value="true">True</option><option value="false">False</option></select><small>enable.speed.of.physical.nics.validation</small></label>
+</div>
+</fieldset>
 </section>
 <section class="vcf-sddc-step-page hidden" data-atlaso-wizard-step="review">
 <p data-lab-review-target></p><ul data-lab-changes></ul><p data-lab-restart></p>
-<label><input name="acknowledged" type="checkbox"> I acknowledge this is a lab / PoC / non-production change and authorize the reviewed remote changes and required service restart.</label>
+<label class="checkbox-row"><input name="acknowledged" type="checkbox"><span>I acknowledge this is a lab / PoC / non-production change and authorize the reviewed remote changes and required service restart.</span></label>
 </section>
 <p data-lab-status role="status" aria-live="polite"></p><a class="hidden" data-lab-task hidden>Open task details</a>
 </div><div class="confirm-modal-actions vcf-sddc-wizard-actions">

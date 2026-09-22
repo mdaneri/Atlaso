@@ -246,6 +246,26 @@ def active() -> bool:
     )
 
 
+def version() -> dict[str, Any]:
+    """Run the fixed VCF sos version command without root or API credentials."""
+    # A file-backed capture bounds process memory; never return diagnostics.
+    with tempfile.TemporaryFile() as output:
+        completed = subprocess.run(
+            ["/opt/vmware/sddc-support/sos", "-v"],
+            timeout=30,
+            stdout=output,
+            stderr=subprocess.DEVNULL,
+            check=False,
+        )
+        output.seek(0)
+        release = output.read(257).decode("ascii", errors="replace").strip()
+    if completed.returncode != 0 or not re.fullmatch(
+        r"[0-9]+(?:\.[0-9]+){2,5}(?:[-+][0-9]+)?", release
+    ):
+        raise PropertyError("Could not read a valid VCF release from sos -v.")
+    return {"ok": True, "version": release}
+
+
 def operate(request: dict[str, Any]) -> dict[str, Any]:
     """Inspect or compare-and-replace fixed properties under a remote lock.
 
@@ -258,6 +278,8 @@ def operate(request: dict[str, Any]) -> dict[str, Any]:
     posix: Any = os
     locking: Any = fcntl
 
+    if request.get("action") == "version":
+        return version()
     if request.get("action") not in {"inspect", "write"}:
         raise PropertyError("Unsupported operation.")
     if request["action"] == "inspect":
@@ -370,7 +392,7 @@ def operate(request: dict[str, Any]) -> dict[str, Any]:
                 result.update(
                     ok=False,
                     service_active=False,
-                    error="Properties verified, but service restart failed or timed out. Review target health or revert.",
+                    error="Properties verified, but service restart failed or timed out. Review target health and inspect current values.",
                 )
                 return result
             deadline = time.monotonic() + 180
@@ -533,6 +555,8 @@ def dispatch(envelope: dict[str, Any]) -> dict[str, Any]:
         envelope: Request, editor source and transient root secret from SSH stdin.
     """
     request = envelope["request"]
+    if request.get("action") == "version":
+        return operate(request)
     if request.get("action") == "inspect" and not envelope.get("elevate"):
         try:
             return operate(request)

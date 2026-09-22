@@ -107,7 +107,7 @@ def register_routes(router: APIRouter, verify_csrf: Callable[..., Any]) -> None:
                 return await run_in_threadpool(lab.probe, target)
             if values.get("confirmed") is not True:
                 raise lab.LabOverrideError(
-                    "Confirm both fingerprints before authentication."
+                    "Confirm the SSH fingerprint before authentication."
                 )
             record_audit(
                 db,
@@ -117,7 +117,6 @@ def register_routes(router: APIRouter, verify_csrf: Callable[..., Any]) -> None:
                 detail=json.dumps(
                     {
                         "target": target.host,
-                        "api_entry_id": target.api_entry_id,
                         "ssh_entry_id": target.ssh_entry_id,
                         "root_entry_id": target.root_entry_id,
                         "operation": operation,
@@ -129,7 +128,6 @@ def register_routes(router: APIRouter, verify_csrf: Callable[..., Any]) -> None:
                     lab.inspect_target,
                     db,
                     target,
-                    str(values.get("tls_fingerprint", "")),
                     str(values.get("ssh_fingerprint", "")),
                 )
             return await run_in_threadpool(
@@ -140,26 +138,13 @@ def register_routes(router: APIRouter, verify_csrf: Callable[..., Any]) -> None:
                 409 if operation == "execute" else 422, str(exc)
             ) from None
 
-    @router.get("/vcf-helper/lab-overrides/history", include_in_schema=False)
-    def lab_history(
-        identity: Identity = Depends(require_admin),
-        db: Session = Depends(get_db),
-    ) -> dict[str, Any]:
-        """Return managed operation choices for review and revert.
-
-        Args:
-            identity: Authenticated operator identity used for authorization.
-            db: Database session for credential metadata and durable task state.
-        """
-        return {"jobs": lab.history(db)}
-
     @router.get("/vcf-helper/lab-overrides/tasks/{job_id}", include_in_schema=False)
     def lab_task(
         job_id: str,
         identity: Identity = Depends(require_admin),
         db: Session = Depends(get_db),
     ) -> dict[str, Any]:
-        """Report property verification separately from service/API recovery.
+        """Report property verification separately from service readiness.
 
         Args:
             job_id: Durable task identifier.

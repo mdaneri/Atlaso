@@ -14,12 +14,11 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlsplit
 from uuid import uuid4
 
 import paramiko  # type: ignore[import-untyped]  # Paramiko has no bundled typing stubs.
 from itsdangerous import BadData, URLSafeTimedSerializer
-from sqlalchemy import delete, or_, select, update
+from sqlalchemy import delete, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -35,9 +34,6 @@ from atlaso.app.services.remote_ssh import (
     remote_entry_target,
     ssh_fingerprint,
 )
-from atlaso.app.services.vaults import vault_entry_uris
-from atlaso.app.services.vcf_depot_target import VcfDepotApiClient
-from atlaso.app.services.vcf_sddc_deployment import tls_sha256_fingerprint
 
 JOB_TYPE = "vcf-lab-overrides"
 CATALOG = (
@@ -68,7 +64,7 @@ def supported_catalog(role: str, version: str) -> tuple[dict[str, str], ...]:
         role: Detected VCF appliance role.
         version: Detected VCF release string.
     """
-    if role not in {"VcfInstaller", "SddcManager"}:
+    if role not in {"VCF", "VcfInstaller", "SddcManager"}:
         raise LabOverrideError(
             "Only VCF Installer and SDDC Manager targets are eligible."
         )
@@ -88,16 +84,12 @@ class Target:
     """Credential-free target identity bound into a signed review."""
 
     host: str
-    api_port: int
     ssh_port: int
-    api_entry_id: int
-    api_uri_index: int
     ssh_entry_id: int
     ssh_uri_index: int
     root_entry_id: int
     root_uri_index: int
     credential_mode: str = "vault"
-    api_username: str = ""
     credential_revision: str = ""
     credentials: dict[str, str] = field(default_factory=dict, repr=False, compare=False)
 
@@ -109,7 +101,7 @@ class Target:
 
 
 def target_from_values(db: Session, values: dict[str, Any]) -> Target:
-    """Resolve matching API/SSH endpoints from existing encrypted Vault entries.
+    """Resolve matching SSH endpoints from existing encrypted Vault entries.
 
     Args:
         db: Database session for credential metadata and durable task state.
@@ -120,18 +112,11 @@ def target_from_values(db: Session, values: dict[str, Any]) -> Target:
             host = str(values.get("host", "")).strip().lower().rstrip(".")
             if not host or len(host) > 253 or not re.fullmatch(r"[a-z0-9.:\-]+", host):
                 raise ValueError
-            api_port, ssh_port = (
-                int(values.get("api_port", 443)),
-                int(values.get("ssh_port", 22)),
-            )
-            if not 1 <= api_port <= 65535 or not 1 <= ssh_port <= 65535:
-                raise ValueError
-            username = str(values.get("api_username", "")).strip()
-            if len(username) > 256 or any(ord(c) < 32 for c in username):
+            ssh_port = int(values.get("ssh_port", 22))
+            if not 1 <= ssh_port <= 65535:
                 raise ValueError
             credentials = values.get("credentials", {})
             if not isinstance(credentials, dict) or set(credentials) - {
-                "api",
                 "ssh",
                 "root",
             }:
@@ -155,39 +140,10 @@ def target_from_values(db: Session, values: dict[str, Any]) -> Target:
                 else ""
             )
             return Target(
-                host,
-                api_port,
-                ssh_port,
-                0,
-                0,
-                0,
-                0,
-                0,
-                0,
-                "manual",
-                username,
-                revision,
-                dict(credentials),
+                host, ssh_port, 0, 0, 0, 0, "manual", revision, dict(credentials)
             )
-        api_id, ssh_id = int(values["api_entry_id"]), int(values["ssh_entry_id"])
-        api_index, ssh_index = (
-            int(values["api_uri_index"]),
-            int(values["ssh_uri_index"]),
-        )
-        api_entry, ssh_entry = db.get(VaultEntry, api_id), db.get(VaultEntry, ssh_id)
-        if api_entry is None or ssh_entry is None:
-            raise ValueError
-        uris = vault_entry_uris(api_entry)
-        if not 1 <= api_index <= len(uris) or not api_entry.username:
-            raise ValueError
-        api_uri = urlsplit(uris[api_index - 1])
-        if (
-            api_uri.scheme not in {"http", "https"}
-            or not api_uri.hostname
-            or api_uri.username
-            or api_uri.password
-        ):
-            raise ValueError
+        ssh_id, ssh_index = int(values["ssh_entry_id"]), int(values["ssh_uri_index"])
+        ssh_entry = _entry(db, ssh_id)
         host, ssh_port, _ = remote_entry_target(ssh_entry, ssh_index)
         root_id, root_index = (
             int(values["root_entry_id"]),
@@ -210,28 +166,14 @@ def target_from_values(db: Session, values: dict[str, Any]) -> Target:
             raise LabOverrideError(
                 "Root elevation credentials must identify the same SSH endpoint."
             )
-        if host.lower().rstrip(".") != api_uri.hostname.lower().rstrip("."):
-            raise LabOverrideError(
-                "API and SSH credentials must identify the same hostname or IP."
-            )
-        # The API always uses TLS, preserving any explicitly selected port.
-        api_port = api_uri.port or 443
         return Target(
-            host.lower().rstrip("."),
-            api_port,
-            ssh_port,
-            api_id,
-            api_index,
-            ssh_id,
-            ssh_index,
-            root_id,
-            root_index,
+            host.lower().rstrip("."), ssh_port, ssh_id, ssh_index, root_id, root_index
         )
     except (KeyError, TypeError, ValueError) as exc:
         if isinstance(exc, LabOverrideError):
             raise
         raise LabOverrideError(
-            "Choose valid API, vcf SSH and separate root credentials for the target."
+            "Choose valid vcf SSH and separate root credentials for the target."
         ) from None
 
 
@@ -254,12 +196,10 @@ def _credential(db: Session, target: Target, kind: str) -> tuple[str, str]:
     Args:
         db: Current Vault session.
         target: Endpoint with optional request-local credentials.
-        kind: API, SSH, or root identity to resolve.
+        kind: SSH or root identity to resolve.
     """
     if target.credential_mode == "manual":
-        username = (
-            target.api_username if kind == "api" else "vcf" if kind == "ssh" else "root"
-        )
+        username = "vcf" if kind == "ssh" else "root"
         password = target.credentials.get(kind)
         if not username or not password:
             raise LabOverrideError(
@@ -267,7 +207,6 @@ def _credential(db: Session, target: Target, kind: str) -> tuple[str, str]:
             )
         return username, password
     identifier = {
-        "api": target.api_entry_id,
         "ssh": target.ssh_entry_id,
         "root": target.root_entry_id,
     }[kind]
@@ -276,7 +215,7 @@ def _credential(db: Session, target: Target, kind: str) -> tuple[str, str]:
 
 
 def probe(target: Target) -> dict[str, str]:
-    """Return unauthenticated TLS and SSH fingerprints for explicit confirmation.
+    """Return the unauthenticated SSH fingerprint for explicit confirmation.
 
     Args:
         target: Resolved endpoint and encrypted Vault credential references.
@@ -285,50 +224,23 @@ def probe(target: Target) -> dict[str, str]:
         ssh = probe_remote_ssh_host(target.host, target.ssh_port)
     except Exception as exc:
         raise LabOverrideError("Could not probe the target SSH host key.") from exc
-    try:
-        tls = tls_sha256_fingerprint(target.host, target.api_port)
-    except Exception:  # noqa: BLE001 - pinned SSH recovery remains available when TLS is down.
-        tls = ""
-    return {"target": target.host, "tls_fingerprint": tls, "ssh_fingerprint": ssh}
+    return {"target": target.host, "ssh_fingerprint": ssh}
 
 
 def appliance_info(db: Session, target: Target, fingerprint: str) -> dict[str, str]:
-    """Authenticate only after certificate pinning and gate exact version families.
+    """Read the VCF release using the fixed sos command over pinned SSH.
 
     Args:
-        db: Database session for credential metadata and durable task state.
-        target: Resolved endpoint and encrypted Vault credential references.
-        fingerprint: Expected remote fingerprint checked before authentication.
+        db: Current credential session.
+        target: Selected SSH endpoint.
+        fingerprint: Confirmed SSH host-key fingerprint.
     """
-    if not fingerprint:
-        raise LabOverrideError("Confirm the TLS fingerprint before authentication.")
-    try:
-        # The API client pins TLS before its login request; defer manual/Vault resolution
-        # until the same pre-authentication fingerprint check has succeeded.
-        if (
-            tls_sha256_fingerprint(target.host, target.api_port).upper()
-            != fingerprint.upper()
-        ):
-            raise LabOverrideError(
-                "The VCF appliance TLS certificate changed after confirmation."
-            )
-        username, password = _credential(db, target, "api")
-        with VcfDepotApiClient(
-            target.host,
-            username,
-            password,
-            port=target.api_port,
-            expected_fingerprint=fingerprint,
-        ) as api:
-            info = api.appliance_info()
-        supported_catalog(info["role"], info["version"])
-        return info
-    except LabOverrideError:
-        raise
-    except Exception as exc:
-        raise LabOverrideError(
-            "Could not verify VCF role/version using the confirmed API endpoint."
-        ) from exc
+    result = remote(db, target, fingerprint, {"action": "version"})
+    version = result.get("version")
+    if result.get("ok") is not True or not isinstance(version, str):
+        raise LabOverrideError("Could not read the VCF release using sos -v.")
+    supported_catalog("VCF", version)
+    return {"role": "VCF", "version": version}
 
 
 def remote(
@@ -464,21 +376,20 @@ def remote(
             transport.close()
 
 
-def inspect_target(db: Session, target: Target, tls: str, ssh: str) -> dict[str, Any]:
+def inspect_target(db: Session, target: Target, ssh: str) -> dict[str, Any]:
     """Return only bounded boolean state and verified appliance identity.
 
     Args:
         db: Database session for credential metadata and durable task state.
         target: Resolved endpoint and encrypted Vault credential references.
-        tls: Confirmed API TLS certificate fingerprint.
         ssh: Confirmed SSH host-key fingerprint.
     """
-    info = appliance_info(db, target, tls)
+    info = appliance_info(db, target, ssh)
     return {**inspect_properties(db, target, ssh), **info}
 
 
 def inspect_properties(db: Session, target: Target, ssh: str) -> dict[str, Any]:
-    """Inspect pinned SSH state independently of domainmanager API readiness.
+    """Inspect pinned SSH state through the confirmed SSH identity.
 
     Args:
         db: Database session for credential metadata and durable task state.
@@ -509,43 +420,9 @@ def inspect_properties(db: Session, target: Target, ssh: str) -> dict[str, Any]:
     }
 
 
-def _property_owner_key(ssh: str, key: str, target: Target) -> str:
-    """Identify the latest dispatched mutation for a pinned target/property.
-
-    Args:
-        ssh: Confirmed SSH host-key fingerprint.
-        key: Allowlisted managed property identifier.
-        target: Resolved endpoint and encrypted Vault credential references.
-    """
-    identity = json.dumps([target.host, target.api_port, target.ssh_port, ssh])
-    return "vcf_lab_owner:" + hashlib.sha256(identity.encode()).hexdigest() + ":" + key
-
-
-def _require_property_owner(
-    db: Session, ssh: str, keys: Any, job_id: str, target: Target
-) -> None:
-    """Reject stale baselines even when later writes restore identical values.
-
-    Args:
-        db: Database session for credential metadata and durable task state.
-        ssh: Confirmed SSH host-key fingerprint.
-        keys: Property identifiers whose current ownership must match.
-        job_id: Durable task identifier.
-        target: Resolved endpoint and encrypted Vault credential references.
-    """
-    for key in keys:
-        owner = db.scalar(
-            select(Setting).where(Setting.key == _property_owner_key(ssh, key, target))
-        )
-        if owner is None or owner.value != job_id:
-            raise LabOverrideError(
-                "A later managed mutation superseded this operation; select the latest operation or recover manually."
-            )
-
-
 def _signer() -> URLSafeTimedSerializer:
     """Bind review tokens to the appliance secret and this workflow only."""
-    return URLSafeTimedSerializer(get_settings().secret_key, salt="vcf-lab-review-v1")
+    return URLSafeTimedSerializer(get_settings().secret_key, salt="vcf-lab-review-v2")
 
 
 def review(
@@ -561,88 +438,38 @@ def review(
     """
     if values.get("confirmed") is not True:
         raise LabOverrideError(
-            "Confirm both fingerprints out of band before inspecting the target."
+            "Confirm the SSH fingerprint out of band before inspecting the target."
         )
-    tls, ssh = (
-        str(values.get("tls_fingerprint", "")),
-        str(values.get("ssh_fingerprint", "")),
-    )
-    source_id = values.get("source_job_id")
-    if source_id:
-        source = db.get(Job, str(source_id))
-        if source is None or source.type != JOB_TYPE:
-            raise LabOverrideError("The selected managed operation does not exist.")
-        previous = json.loads(source.task_config_json)
-        evidence = json.loads(source.result or "{}")
-        if previous.get("source_job_id") or source.status in {"pending", "running"}:
-            raise LabOverrideError(
-                "Select a completed property-change operation to revert."
-            )
-        if (
-            evidence.get("changed") is not True
-            or evidence.get("property_verified") is not True
-        ):
-            raise LabOverrideError(
-                "This task has no verified managed change to revert. Inspect uncertain outcomes on the target before recovery."
-            )
-        if (
-            any(
-                previous["target"][key] != target.fields()[key]
-                for key in ("host", "api_port", "ssh_port")
-            )
-            or previous.get("ssh_fingerprint") != ssh
-        ):
-            raise LabOverrideError(
-                "The target identity differs from the original operation."
-            )
-        supported_catalog(previous["role"], previous["version"])
-        state = {
-            **inspect_properties(db, target, ssh),
-            "role": previous["role"],
-            "version": previous["version"],
-            "identity_source": "original verified operation; recovery uses pinned SSH",
-        }
-        tls = previous["tls_fingerprint"]
-        desired = {
-            key: value
-            for key, value in previous["previous"].items()
-            if value != previous["desired"][key]
-        }
-        if any(state["values"][key] != previous["desired"][key] for key in desired):
-            raise LabOverrideError(
-                "Managed properties changed since the operation; revert would overwrite another edit."
-            )
-        _require_property_owner(db, ssh, desired, source.id, target)
-    else:
-        state = inspect_target(db, target, tls, ssh)
-        allowed = {
-            item["id"]: item["value"]
-            for item in supported_catalog(state["role"], state["version"])
-        }
-        selected = values.get("selections")
-        if (
-            not isinstance(selected, list)
-            or not selected
-            or any(not isinstance(key, str) or key not in allowed for key in selected)
-            or len(set(selected)) != len(selected)
-        ):
-            raise LabOverrideError("Select one or both lab overrides.")
-        desired = {key: allowed[key] for key in selected}
-        if not state["service_active"]:
-            raise LabOverrideError(
-                "domainmanager is not active. Restore service health before applying overrides."
-            )
+    ssh = str(values.get("ssh_fingerprint", ""))
+    if values.get("source_job_id"):
+        raise LabOverrideError(
+            "Inspect current values and submit the desired settings instead."
+        )
+    state = inspect_target(db, target, ssh)
+    supported_catalog(state["role"], state["version"])
+    desired = values.get("desired")
+    if (
+        not isinstance(desired, dict)
+        or not desired
+        or set(desired) - set(vcf_lab_remote.KEYS)
+        or any(value not in (None, "true", "false") for value in desired.values())
+    ):
+        raise LabOverrideError(
+            "Choose true, false or not configured for the supported settings."
+        )
+    if not state["service_active"]:
+        raise LabOverrideError(
+            "domainmanager is not active. Restore service health before applying settings."
+        )
     plan = {
         "actor": actor,
         "target": target.fields(),
-        "tls_fingerprint": tls,
         "ssh_fingerprint": ssh,
         "role": state["role"],
         "version": state["version"],
         "revision": state["revision"],
         "desired": desired,
         "previous": {key: state["values"][key] for key in desired},
-        "source_job_id": str(source_id) if source_id else None,
         "nonce": str(uuid4()),
     }
     return {
@@ -732,7 +559,7 @@ def enqueue(
 
 
 def run_job(job_id: str, credentials: dict[str, str] | None = None) -> None:
-    """Execute and retain truthful partial outcomes plus a safe revert baseline.
+    """Execute and retain truthful partial outcomes with inspected previous values.
 
     Args:
         job_id: Durable task identifier.
@@ -762,7 +589,6 @@ def run_job(job_id: str, credentials: dict[str, str] | None = None) -> None:
             "desired": plan["desired"],
             "property_verified": False,
             "service_active": False,
-            "api_ready": False,
         }
         try:
             actor = db.scalar(select(User).where(User.username == job.created_by))
@@ -782,49 +608,18 @@ def run_job(job_id: str, credentials: dict[str, str] | None = None) -> None:
                 worker_fields.pop("credential_revision", None)
             if worker_fields != plan["target"]:
                 raise LabOverrideError("Endpoint or credentials changed after review.")
-            if plan["source_job_id"]:
-                # API availability must not be a recovery prerequisite.
-                state = {
-                    **inspect_properties(db, target, plan["ssh_fingerprint"]),
-                    "role": plan["role"],
-                    "version": plan["version"],
-                }
-            else:
-                state = inspect_target(
-                    db, target, plan["tls_fingerprint"], plan["ssh_fingerprint"]
-                )
+            state = inspect_target(db, target, plan["ssh_fingerprint"])
             if any(state[key] != plan[key] for key in ("role", "version", "revision")):
                 raise LabOverrideError(
                     "Target version or configuration changed after review."
                 )
-            if not plan["source_job_id"] and not state["service_active"]:
+            if not state["service_active"]:
                 raise LabOverrideError(
                     "domainmanager stopped after review. Restore service health and review again."
                 )
-            if plan["source_job_id"]:
-                _require_property_owner(
-                    db,
-                    plan["ssh_fingerprint"],
-                    plan["desired"],
-                    plan["source_job_id"],
-                    target,
-                )
 
             def handoff_ownership() -> None:
-                """Persist provenance only once SSH is ready to dispatch the editor."""
-                # Dispatch failures remain uncertain; earlier connection failures
-                # leave the original recovery baseline available for retry.
-                for key, value in plan["desired"].items():
-                    if value == plan["previous"][key]:
-                        continue
-                    owner_key = _property_owner_key(
-                        plan["ssh_fingerprint"], key, target
-                    )
-                    owner = db.scalar(select(Setting).where(Setting.key == owner_key))
-                    if owner is None:
-                        db.add(Setting(key=owner_key, value=job.id))
-                    else:
-                        owner.value = job.id
+                """Record authenticated dispatch progress before authorizing writes."""
                 job.progress_percent = 30
                 db.commit()
 
@@ -834,7 +629,6 @@ def run_job(job_id: str, credentials: dict[str, str] | None = None) -> None:
                 plan["ssh_fingerprint"],
                 {
                     "action": "write",
-                    "recovery": bool(plan["source_job_id"]),
                     "revision": plan["revision"],
                     "desired": plan["desired"],
                 },
@@ -857,26 +651,9 @@ def run_job(job_id: str, credentials: dict[str, str] | None = None) -> None:
                 or not result["service_active"]
             ):
                 raise LabOverrideError(
-                    "Properties verified, but domainmanager recovery failed. Inspect target health or review a revert."
+                    "Properties verified, but domainmanager recovery failed. Inspect target health and re-inspect current values."
                     if result["property_verified"]
                     else "Property write or readback failed. Inspect the target before recovery; changes may have occurred."
-                )
-            deadline = time.monotonic() + 120
-            while time.monotonic() < deadline:
-                try:
-                    info = appliance_info(db, target, plan["tls_fingerprint"])
-                    if (
-                        info["role"] == plan["role"]
-                        and info["version"] == plan["version"]
-                    ):
-                        result["api_ready"] = True
-                        break
-                except LabOverrideError:
-                    pass
-                time.sleep(3)
-            if not result["api_ready"]:
-                raise LabOverrideError(
-                    "Properties verified, but the VCF API did not recover before the deadline. Review target health or revert."
                 )
             job.status = JobStatus.SUCCEEDED.value
         except Exception as exc:  # noqa: BLE001 - retain a sanitized terminal outcome for every worker failure.
@@ -884,7 +661,7 @@ def run_job(job_id: str, credentials: dict[str, str] | None = None) -> None:
             job.error = (
                 str(exc)
                 if isinstance(exc, LabOverrideError)
-                else "Operation interrupted; inspect the target before retrying or reverting."
+                else "Operation interrupted; inspect the target before retrying."
             )
         finally:
             job.result, job.finished_at, job.progress_percent = (
@@ -898,9 +675,7 @@ def run_job(job_id: str, credentials: dict[str, str] | None = None) -> None:
             record_audit(
                 db,
                 actor=job.created_by,
-                action="revert_vcf_lab_overrides"
-                if plan["source_job_id"]
-                else "apply_vcf_lab_overrides",
+                action="apply_vcf_lab_overrides",
                 resource_type=JOB_TYPE,
                 resource_id=job.id,
                 success=job.status == JobStatus.SUCCEEDED.value,
@@ -915,35 +690,6 @@ def run_job(job_id: str, credentials: dict[str, str] | None = None) -> None:
                 ),
                 post_commit_best_effort=True,
             )
-
-
-def history(db: Session) -> list[dict[str, str]]:
-    """List recent history plus every retained property owner for recovery.
-
-    Args:
-        db: Database session for credential metadata and durable task state.
-    """
-    recent = (
-        select(Job.id)
-        .where(Job.type == JOB_TYPE)
-        .order_by(Job.created_at.desc(), Job.id.desc())
-        .limit(50)
-    )
-    owners = select(Setting.value).where(Setting.key.like("vcf_lab_owner:%"))
-    jobs = db.scalars(
-        select(Job)
-        .where(Job.type == JOB_TYPE, or_(Job.id.in_(recent), Job.id.in_(owners)))
-        .order_by(Job.created_at.desc(), Job.id.desc())
-    )
-    return [
-        {
-            "id": job.id,
-            "target": json.loads(job.task_config_json)["target"]["host"],
-            "status": job.status,
-            "created_at": job.created_at.isoformat(),
-        }
-        for job in jobs
-    ]
 
 
 def recover_interrupted_jobs(db: Session) -> int:
@@ -977,9 +723,7 @@ def recover_interrupted_jobs(db: Session) -> int:
         record_audit(
             db,
             actor=job.created_by,
-            action="revert_vcf_lab_overrides"
-            if plan["source_job_id"]
-            else "apply_vcf_lab_overrides",
+            action="apply_vcf_lab_overrides",
             resource_type=JOB_TYPE,
             resource_id=job.id,
             success=False,

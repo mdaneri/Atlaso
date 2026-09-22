@@ -51,7 +51,7 @@
     {% endif %}
     <noscript><p class="muted">Enable JavaScript to upload an SDDC Manager OVA using the reviewed upload wizard.</p></noscript>
     <noscript>
-      <p class="muted" data-vcf-lab-fallback>Lab / Non-production Overrides requires JavaScript. Enable it to select separate API, vcf SSH and root credentials, confirm target fingerprints, inspect the two domainmanager properties, and review an apply or revert operation. Administrator access is required. No changes are made by opening this page.</p>
+      <p class="muted" data-vcf-lab-fallback>Lab / Non-production Overrides requires JavaScript. Enable it to select separate vcf SSH and root credentials, confirm target fingerprints, inspect the two domainmanager properties, and review the desired setting values. Administrator access is required. No changes are made by opening this page.</p>
     </noscript>
     <div class="vcf-helper-subjects">
       <div class="vcf-helper-subject-group" aria-labelledby="vcf-helper-platform-title">
@@ -70,7 +70,7 @@
         </span>
           </button>
           <button class="info-band vcf-helper-action-band" type="button" data-vcf-lab-open aria-haspopup="dialog" aria-controls="vcf-lab-modal" {% if not identity.has_role('admin') %}disabled{% endif %}>
-            <span class="vcf-helper-action-copy"><span class="vcf-helper-action-title">Lab / Non-production Overrides</span><span class="muted">Review, apply, verify or revert two domainmanager properties using vcf SSH and separate root elevation. Administrator access required.</span></span>
+            <span class="vcf-helper-action-copy"><span class="vcf-helper-action-title">Lab / Non-production Overrides</span><span class="muted">Inspect and edit two domainmanager properties using vcf SSH and separate root elevation. Administrator access required.</span></span>
           </button>
           <button class="info-band vcf-helper-action-band" type="button" onclick="document.getElementById('vcf-trust-modal').showModal()" aria-haspopup="dialog" aria-controls="vcf-trust-modal" {% if vcf_trust_ca_error %}disabled{% endif %}>
         <span class="vcf-helper-action-copy">
@@ -235,5 +235,5 @@
     </div>
   </form>
 </dialog>
-<script src="/static/vcf-lab-overrides.js?v=issue-873-3" defer></script>
+<script src="/static/vcf-lab-overrides.js?v=issue-873-4" defer></script>
 {% endblock %}
