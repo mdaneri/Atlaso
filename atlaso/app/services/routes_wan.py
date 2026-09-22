@@ -998,7 +998,7 @@ def render_wan_config(
         source_groups: Source Groups available to the rule.
         previous_config_preview: Last-applied configuration used to retire prior host defaults.
         settings: Saved global activation state. Omission preserves the legacy active behavior.
-        applied_network_ingress: Lab interfaces from the last-applied Network baseline for UI review.
+        applied_network_ingress: Applied lab interfaces; None projects targets for initial Network-first Apply.
 
     Returns:
         The rendered wan config.
@@ -1180,6 +1180,8 @@ def render_wan_config(
             lines.append("# If Network is applied first in the same task, ingress uses that successfully applied Network intent instead.")
             if not applied_network_ingress:
                 lines.append("# No modern ingress selectors are available from this baseline; pre-migration baselines retain legacy WAN handling.")
+        else:
+            lines.append("# Projected ingress commands require Network to be applied first; no applied Network baseline is available.")
         ingress_names = sorted(set(applied_network_ingress)) if applied_network_ingress is not None else sorted(
             {target["name"] for target in targets if target.get("routing_domain") != "management"})
         # The helper installs terminal guards before introducing lab lookups.

@@ -265,6 +265,8 @@ Before starting either Network transaction, a read-only ownership check rejects 
 local-source priority window. An existing conflict is reported before network files, VLANs, or addresses change.
 WAN review shows ingress commands for the current applied Network baseline, rather than pending interface edits.
 When Network and WAN are applied together, WAN uses the Network intent established by the successful Network step.
+On a fresh appliance without a Network baseline, review shows projected ingress rules from desired interfaces and
+labels them as requiring Network to be applied first. An existing pre-migration baseline remains distinct.
 Canonical lab ingress rules also use protocol `kernel` within the existing `2000–2099` window so networkd reload does
 not remove forwarding selectors. Other selectors or protocol/range combinations are not adopted by migration.
 

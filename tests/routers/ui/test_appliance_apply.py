@@ -41,12 +41,21 @@ def test_wan_review_uses_applied_network_ingress_with_pending_network(client, ba
         wan = next(unit for unit in units if unit["id"] == "wan")
         for preview in (page["wan_config_preview"], wan["config_preview"]):
             commands = [line for line in preview.splitlines() if "rule add iif " in line]
-            assert len(commands) == (4 if baseline_kind == "modern" else 0)
-            assert all(" iif eth9 " in line for line in commands)
-            assert "not pending Network edits" in preview
-            assert "If Network is applied first in the same task" in preview
-            if baseline_kind != "modern":
-                assert "pre-migration baselines retain legacy WAN handling" in preview
+            if baseline_kind == "missing":
+                names = {target["name"] for target in page["wan_all_targets"]
+                         if target.get("routing_domain") != "management"}
+                assert names
+                assert len(commands) == 4 * len(names)
+                assert {line.split(" iif ", 1)[1].split()[0] for line in commands} == names
+                assert "Projected ingress commands require Network to be applied first" in preview
+                assert "pre-migration baselines" not in preview
+            else:
+                assert len(commands) == (4 if baseline_kind == "modern" else 0)
+                assert all(" iif eth9 " in line for line in commands)
+                assert "not pending Network edits" in preview
+                assert "If Network is applied first in the same task" in preview
+                if baseline_kind == "legacy":
+                    assert "pre-migration baselines retain legacy WAN handling" in preview
 
 
 @pytest.mark.parametrize("apply_succeeds", [False, True])

@@ -9855,13 +9855,15 @@ def network_interface_entries(config_preview: str) -> list[dict[str, str]]:
     return rows
 
 
-def wan_applied_network_ingress(db: Session) -> list[str]:
+def wan_applied_network_ingress(db: Session) -> list[str] | None:
     """Project WAN ingress selectors from the saved Network baseline.
 
     Args:
         db: Active database session containing successful Apply baselines.
     """
-    baseline = load_appliance_apply_baselines(db).get("network", {})
+    baseline = load_appliance_apply_baselines(db).get("network")
+    if baseline is None:
+        return None
     preview = str(baseline.get("config_preview") or "")
     if "# Network runtime revision: exact-source-routing-v1." not in preview.splitlines():
         return []
