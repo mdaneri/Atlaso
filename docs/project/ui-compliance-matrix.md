@@ -247,8 +247,12 @@ explicit maintainer approval before implementation.
 ### VCF lab overrides (#849, #873)
 
 `partials/vcf_lab_overrides.html` uses the approved custom/other VCF Certificate Trust tile/modal reference,
-`AtlasoUiPatterns.createWizard`, and the generic wizard DOM contract. Administrator-only operations use encrypted
-Vault references; the browser receives no credential values. Fingerprint confirmation precedes authentication,
+`AtlasoUiPatterns.createWizard`, and the generic wizard DOM contract. Administrator-only operations support
+saved Vault references and manual credentials.
+Saved passwords stay server-side and never enter the browser. Manual vcf/root passwords are entered after trust
+confirmation, sent only with the operation requests, and held in request/process memory rather than persisted in
+Vault, signed plans, jobs or audits. Password fields clear on close or successful submission.
+Fingerprint confirmation precedes authentication,
 and navigation never writes remote properties or restarts services. JavaScript is required for the workflow.
 Local Edge checks cover review invalidation, recoverable submission errors,
 automatic credential-free SSH probing, explicit approval, current-value editing, and automatic task-details
