@@ -745,6 +745,7 @@ def test_authoritative_dns_lifecycle_probe_covers_authority_reverse_nxdomain_and
     assert '("interop-appliance." + domain, 1, 0, 1, True)' in script
     assert 'query("missing-authoritative." + domain, 1)' in script
     assert "assert 6 in sections[1]" in script
+    assert 'query("example.com", 1, tcp=tcp)' in script
 
     recursive_command = lifecycle.recursive_dns_probe_command("127.0.0.1", "192.168.50.1")
     recursive_script = base64.b64decode(recursive_command.split()[2]).decode("utf-8")

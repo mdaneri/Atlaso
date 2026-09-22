@@ -21,6 +21,7 @@ from atlaso.app.models import (
 DNS_CONDITIONAL_FORWARDERS_SETTING_KEY = "dns.conditional_forwarders"
 DNSMASQ_LEASE_FILE_PATH = "/var/lib/atlaso/dnsmasq/dhcp.leases"
 DNSMASQ_DNSSEC_TRUST_ANCHORS_PATH = "/var/lib/atlaso/apply/dnsmasq/atlaso-trust-anchors.conf"
+DNSMASQ_AUTHORITATIVE_LOOPBACK_ADDRESS = "127.0.0.2"
 DHCP_DENY_RESERVATION_DESCRIPTION_PREFIX = "Deny DHCP for "
 DNS_RECORD_TYPES = {"A", "AAAA", "CNAME", "TXT", "SRV", "MX", "CAA", "PTR"}
 DNS_HOSTNAME_PATTERN = re.compile(r"^(?=.{1,253}$)([a-z0-9_](?:[a-z0-9_-]{0,61}[a-z0-9_])?\.)*[a-z0-9_](?:[a-z0-9_-]{0,61}[a-z0-9_])?$")
@@ -1491,6 +1492,7 @@ def render_dnsmasq_config(
             lines.append(f"local=/{domain}/")
     if dns_settings.authoritative:
         server = authoritative_server_name(dns_settings)
+        lines.append(f"auth-server={server},{DNSMASQ_AUTHORITATIVE_LOOPBACK_ADDRESS}")
         lines.append(
             "auth-soa="
             f"{dns_settings.authoritative_serial},{authoritative_contact_name(dns_settings)},"
