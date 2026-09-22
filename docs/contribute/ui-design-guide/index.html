@@ -4547,7 +4547,12 @@ the authenticated sidebar's existing typography, width, link order, active state
   the mobile breakpoint without clipping labels or adding horizontal overflow.</li>
 </ul>
 <h3 id="vcf-helper-remote-credential-wizard-contract">VCF Helper remote-credential wizard contract<a class="headerlink" href="#vcf-helper-remote-credential-wizard-contract" title="Permanent link">&para;</a></h3>
-<p>Every VCF Helper wizard that connects to a remote VCF component uses the same first four steps:</p>
+<p>VCF Helper wizards use the shared sequence below. The SSH-only <strong>Lab / Non-production Overrides</strong> workflow
+uses vcf/root SSH credentials, an automatically probed SSH fingerprint with explicit operator confirmation,
+and manual vcf/root Login. It does not request API credentials or probe TLS; version detection runs <code>sos -v</code>
+over pinned SSH. Saved credentials skip Login. Its Changes step displays current values for editing, without
+a previous-operation rollback selector.</p>
+<p>Other VCF Helper wizards that connect to a remote VCF component use these first four steps:</p>
 <ol>
 <li><strong>Credential</strong> — choose a saved vault and key, or continue with manual credentials.</li>
 <li><strong>Server</strong> — show the remote server address. A saved vault key fills this value from the HTTP or HTTPS URI selected
