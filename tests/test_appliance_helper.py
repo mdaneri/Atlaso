@@ -1637,15 +1637,19 @@ def test_management_handoff_rollback_continues_after_missing_snapshot(monkeypatc
     assert ["systemctl", "reload-or-restart", "nginx.service"] in commands
 
 
-def test_management_handoff_rollback_restores_dnsmasq_runtime_and_boot_policy(monkeypatch):
+def test_management_handoff_rollback_restores_dnsmasq_runtime_and_boot_policy(monkeypatch, tmp_path):
     """Restore the previous DNS service state after a failed listener handoff.
 
     Args:
         monkeypatch: Pytest fixture used to isolate host rollback dependencies.
+        tmp_path: Temporary directory containing the candidate authoritative unit.
     """
     helper = load_helper_module()
     commands: list[list[str]] = []
     events: list[str] = []
+    authoritative_service = tmp_path / "atlaso-dns-authoritative.service"
+    authoritative_service.write_text("[Service]\n", encoding="utf-8")
+    monkeypatch.setattr(helper, "DNSMASQ_AUTHORITATIVE_SERVICE_PATH", authoritative_service)
     for name in (
         "_quiesce_management_handoff_firewall",
         "_restore_management_handoff_resolver",
@@ -1682,11 +1686,14 @@ def test_management_handoff_rollback_restores_dnsmasq_runtime_and_boot_policy(mo
             "dnsmasq_included": True,
             "previous_dnsmasq_active": False,
             "previous_dnsmasq_enabled": True,
+            "previous_dnsmasq_authoritative_present": False,
         }
     )
 
+    assert ["systemctl", "disable", "--now", "atlaso-dns-authoritative.service"] in commands
     assert ["systemctl", "stop", "dnsmasq.service"] in commands
     assert ["systemctl", "enable", "dnsmasq.service"] in commands
+    assert events.index("systemctl disable --now atlaso-dns-authoritative.service") < events.index("links")
     assert events.index("links") < events.index("systemctl stop dnsmasq.service")
 
 

@@ -1067,6 +1067,14 @@ def validate_dns_settings(
             errors.append(f"conditional forwarder domain {domain} must not contain whitespace.")
         if not domain or "." not in domain:
             errors.append(f"conditional forwarder domain {domain or '(blank)'} must be a DNS domain.")
+        if settings.authoritative and any(
+            domain == managed_domain or domain.endswith(f".{managed_domain}")
+            for managed_domain in split_domains(settings.domain)
+        ):
+            errors.append(
+                f"conditional forwarder {domain} overlaps an authoritative managed domain; "
+                "remove the forwarder or disable authoritative DNS."
+            )
         _validate_forwarder_server(server, f"conditional forwarder {domain} server", errors)
     for record in records:
         if record.enabled is not False:
@@ -1580,6 +1588,11 @@ def render_dnsmasq_config(
     for server in effective_dns_upstream_servers(dns_settings, fallback_upstream_servers):
         lines.append(f"server={server}")
     for forwarder in split_conditional_forwarders(conditional_forwarders):
+        if dns_settings.authoritative and any(
+            forwarder["domain"] == domain or forwarder["domain"].endswith(f".{domain}")
+            for domain in domains
+        ):
+            continue
         lines.append(f"server=/{forwarder['domain']}/{forwarder['server']}")
     for record in dns_records:
         if record.enabled is False:

@@ -230,6 +230,40 @@ def test_authoritative_validation_rejects_bad_identity_timers_and_conflicting_gl
     assert validate_authoritative_dns_record(settings, "ns1.atlaso.internal", "A", "192.168.50.1") == []
 
 
+def test_authoritative_dns_rejects_and_omits_shadowing_conditional_forwarders():
+    """Keep managed authoritative zones pinned to the isolated backend."""
+    settings = DnsSettings(
+        enabled=True,
+        listen_interface="eth1",
+        listen_address="192.168.50.1",
+        domain="atlaso.internal",
+        authoritative=True,
+        authoritative_server="ns1.atlaso.internal",
+        authoritative_contact="hostmaster.atlaso.internal",
+        authoritative_ttl=3600,
+        authoritative_serial=2026092201,
+        authoritative_refresh=1200,
+        authoritative_retry=180,
+        authoritative_expire=1209600,
+    )
+    forwarders = "atlaso.internal=192.0.2.53\nsite.atlaso.internal=192.0.2.54\ncorp.example=192.0.2.55"
+
+    errors = validate_dns_settings(settings, [], forwarders)
+    config = render_dnsmasq_config(
+        dns_settings=settings,
+        dns_records=[],
+        dhcp_settings=DhcpSettings(enabled=False),
+        dhcp_reservations=[],
+        conditional_forwarders=forwarders,
+    )
+
+    assert any("conditional forwarder atlaso.internal overlaps" in error for error in errors)
+    assert any("conditional forwarder site.atlaso.internal overlaps" in error for error in errors)
+    assert "server=/atlaso.internal/192.0.2.53" not in config
+    assert "server=/site.atlaso.internal/192.0.2.54" not in config
+    assert "server=/corp.example/192.0.2.55" in config
+
+
 def test_authoritative_zone_file_round_trip_ignores_matching_structural_records():
     """Verify that authoritative zone file round trip ignores matching structural records."""
     settings = DnsSettings(

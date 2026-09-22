@@ -25668,6 +25668,26 @@ def _restore_management_handoff(state: dict) -> dict:
         "firewall service quiesce",
         lambda: _quiesce_management_handoff_firewall(state, commands),
     )
+    if (
+        state.get("dnsmasq_included")
+        and not state.get("previous_dnsmasq_authoritative_present")
+        and DNSMASQ_AUTHORITATIVE_SERVICE_PATH.exists()
+    ):
+        def disable_candidate_authoritative_dns() -> None:
+            """Disable the candidate-only authoritative service before removing its unit."""
+            command = ["systemctl", "disable", "--now", "atlaso-dns-authoritative.service"]
+            result = _run(command)
+            commands.append(
+                {
+                    "stage": "Authoritative DNS candidate rollback",
+                    "command": command,
+                    "returncode": result.returncode,
+                }
+            )
+            if result.returncode != 0:
+                raise ValueError("candidate authoritative DNS disable failed")
+
+        attempt("Authoritative DNS candidate rollback", disable_candidate_authoritative_dns)
     for path in NETWORKD_CONFIG_DIR.glob(f"{MANAGEMENT_HANDOFF_HOLDOVER_PREFIX}*.network"):
         attempt(
             "network holdover removal",
@@ -25742,9 +25762,6 @@ def _restore_management_handoff(state: dict) -> dict:
                 )
                 if authoritative_boot.returncode != 0:
                     raise ValueError("authoritative DNS boot-policy rollback failed")
-            else:
-                # The candidate backend may still be loaded after its unit file was removed.
-                _run(["systemctl", "stop", "atlaso-dns-authoritative.service"])
             runtime_operation = "restart" if state.get("previous_dnsmasq_active") else "stop"
             runtime = _run(["systemctl", runtime_operation, "dnsmasq.service"])
             commands.append(
