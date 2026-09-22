@@ -16,6 +16,9 @@ from atlaso.app.models import (
 )
 from atlaso.app.services.dnsmasq import (
     DHCP_DENY_RESERVATION_DESCRIPTION_PREFIX,
+    DNSMASQ_AUTHORITATIVE_CONFIG_PREFIX,
+    DNSMASQ_AUTHORITATIVE_LOOPBACK_ADDRESS,
+    DNSMASQ_AUTHORITATIVE_PORT,
     DNSMASQ_DNSSEC_TRUST_ANCHORS_PATH,
     DNSMASQ_LEASE_FILE_PATH,
     compact_dhcp_range_expression,
@@ -167,19 +170,34 @@ def test_dnsmasq_renderer_emits_shared_authoritative_zones_and_generated_glue():
         dhcp_settings=DhcpSettings(enabled=False),
         dhcp_reservations=[],
     )
+    main_lines = [
+        line for line in config.splitlines()
+        if not line.startswith(DNSMASQ_AUTHORITATIVE_CONFIG_PREFIX)
+    ]
+    authoritative_lines = [
+        line[len(DNSMASQ_AUTHORITATIVE_CONFIG_PREFIX):]
+        for line in config.splitlines()
+        if line.startswith(DNSMASQ_AUTHORITATIVE_CONFIG_PREFIX)
+    ]
 
-    assert "auth-zone=atlaso.internal" in config
-    assert "auth-zone=sitea.internal" in config
+    assert "auth-zone=atlaso.internal" in authoritative_lines
+    assert "auth-zone=sitea.internal" in authoritative_lines
     assert "local=/atlaso.internal/" not in config
-    assert "auth-server=ns1.atlaso.internal,127.0.0.2" in config.splitlines()
-    assert "auth-server=ns1.atlaso.internal" not in config.splitlines()
-    assert "auth-server=ns1.atlaso.internal,lo" not in config.splitlines()
-    assert "bind-dynamic" in config.splitlines()
-    assert "auth-soa=2026072201,hostmaster.atlaso.internal,1200,180,1209600" in config
-    assert "auth-ttl=3600" in config
-    assert "host-record=ns1.atlaso.internal,192.168.50.1" in config
-    assert "host-record=ns1.atlaso.internal,2001:db8::53" in config
-    assert "host-record=app.sitea.internal,192.168.50.20" in config
+    assert f"server=/atlaso.internal/{DNSMASQ_AUTHORITATIVE_LOOPBACK_ADDRESS}#{DNSMASQ_AUTHORITATIVE_PORT}" in main_lines
+    assert f"server=/sitea.internal/{DNSMASQ_AUTHORITATIVE_LOOPBACK_ADDRESS}#{DNSMASQ_AUTHORITATIVE_PORT}" in main_lines
+    assert "auth-server=ns1.atlaso.internal,127.0.0.2" in authoritative_lines
+    assert "auth-server=ns1.atlaso.internal" not in authoritative_lines
+    assert "auth-server=ns1.atlaso.internal,lo" not in authoritative_lines
+    assert "bind-dynamic" in main_lines
+    assert "bind-interfaces" in authoritative_lines
+    assert "port=5353" in authoritative_lines
+    assert "auth-soa=2026072201,hostmaster.atlaso.internal,1200,180,1209600" in authoritative_lines
+    assert "auth-ttl=3600" in authoritative_lines
+    assert "host-record=ns1.atlaso.internal,192.168.50.1" in authoritative_lines
+    assert "host-record=ns1.atlaso.internal,2001:db8::53" in authoritative_lines
+    assert "host-record=app.sitea.internal,192.168.50.20" in authoritative_lines
+    assert "host-record=app.sitea.internal,192.168.50.20" not in main_lines
+    assert "ptr-record=20.50.168.192.in-addr.arpa,app.sitea.internal" in main_lines
 
 
 def test_authoritative_validation_rejects_bad_identity_timers_and_conflicting_glue():

@@ -842,15 +842,17 @@ disable actions update that desired state; direct Routing start, stop, and resta
 Appliance Apply may mutate forwarding runtime state. The WAN status API likewise counts only globally active, enabled
 WAN assignments and effective NAT interfaces instead of preserved inactive rows.
 
-DNS and DHCP share one `DNS/DHCP (dnsmasq)` apply unit because they render and reload the same dnsmasq config. The
-Services page shows DNS and DHCP as separate desired-state rows, but their runtime status comes from the shared
-`dnsmasq.service`. DNS listen addresses are derived from selected access physical or enabled VLAN interface CIDRs,
-including both IPv4 and IPv6 when present. When Authoritative DNS is enabled, every managed forward domain emits
-`auth-zone`, with `auth-server=<primary-nameserver>,127.0.0.2` on a dedicated authoritative-only loopback activation
-socket and shared `auth-soa` and `auth-ttl` directives; Atlaso generates
-read-only SOA/NS records and A/AAAA nameserver glue from the selected listen addresses and advances the SOA serial on
-DNS mutations. Selected listeners provide authoritative managed-zone answers, existing PTR behavior, and recursion
-through configured upstreams. Listener selection and firewall policy limit client access. Generated reverse zones retain
+DNS and DHCP share one `DNS/DHCP (dnsmasq)` apply unit because they render one staged bundle and use a coordinated
+service reload boundary. The Services page shows DNS and DHCP as separate desired-state rows. Their runtime status comes
+from the client-facing `dnsmasq.service`, which is bound to the authoritative backend whenever that backend is enabled.
+DNS listen addresses are derived from selected access physical or enabled VLAN interface CIDRs,
+including both IPv4 and IPv6 when present. When Authoritative DNS is enabled, Atlaso runs an isolated dnsmasq backend
+on `127.0.0.2:5353` with every managed forward domain as an `auth-zone`, an address-qualified
+`auth-server=<primary-nameserver>,127.0.0.2`, and shared `auth-soa` and `auth-ttl` directives. The ordinary dnsmasq
+service forwards managed domains to that backend, so selected listeners preserve authoritative positive and negative
+answers while retaining existing PTR behavior and recursion through configured upstreams. Atlaso generates read-only
+SOA/NS records and A/AAAA nameserver glue from the selected listen addresses and advances the SOA serial on DNS
+mutations. Listener selection and firewall policy limit client access. Generated reverse zones retain
 their existing PTR behavior. When the appliance resolver is still in DHCP mode and DNS upstream servers are blank, the
 DNS page and rendered dnsmasq preview use the management interface's observed DHCP DNS servers as fallback forwarders;
 converting a management DHCP lease to static copies those observed DNS servers into Appliance Settings external DNS and

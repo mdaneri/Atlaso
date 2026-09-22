@@ -438,21 +438,24 @@ runtime and recovery record. Global Apply expands NAT dependencies before classi
 
 The real DNS/DHCP apply path is dnsmasq-backed. The `dnsmasq` apply unit stages Atlaso's rendered dnsmasq config at
 `/var/lib/atlaso/apply/dnsmasq/atlaso.conf`, validates it with `dnsmasq --test`, installs
-`/etc/atlaso/dnsmasq.d/atlaso.conf`, enables `dnsmasq`, and reloads or restarts the service through `atlaso-helper`. DNS
-and DHCP remain one global apply unit because they share one dnsmasq config and service reload boundary. The Services
-page keeps separate DNS and DHCP rows for desired-state visibility, while their runtime state is read from the shared
-`dnsmasq.service`.
+`/etc/atlaso/dnsmasq.d/atlaso.conf`, enables `dnsmasq`, and reloads or restarts the service through `atlaso-helper`.
+Authoritative mode adds the extracted backend configuration and service described below. DNS and DHCP remain one global
+apply unit because they share one staged configuration bundle and coordinated service reload boundary. The Services
+page keeps separate DNS and DHCP rows for desired-state visibility. The client-facing
+`dnsmasq.service` is bound to the authoritative backend whenever that backend is enabled, so its runtime state also
+reflects a failed authoritative dependency.
 
 #### Authoritative DNS
 
-Authoritative DNS remains inside that same unit. When enabled, the renderer emits one `auth-zone=<domain>` for each
-managed forward domain, `auth-server=<primary-nameserver>,127.0.0.2` on a dedicated authoritative-only loopback socket, shared
-`auth-soa=<serial>,<administrator>,<refresh>,<retry>,<expiry>`, and `auth-ttl=<seconds>`. Generated `host-record` lines
-provide A/AAAA glue for every selected DNS listen address. Selected listeners provide complete authoritative positive
-and negative answers for managed zones, ordinary PTR responses, and recursion through configured upstreams. Listener
-selection and firewall policy limit client access. Validate the installed state with
-`sudo grep -E '^(auth-zone|auth-server|auth-soa|auth-ttl|host-record=ns)' /etc/atlaso/dnsmasq.d/atlaso.conf`,
-`systemctl is-active dnsmasq`, authoritative queries such as `dig @<selected-listener> <zone> SOA`,
+Authoritative DNS remains inside that same unit. When enabled, the renderer embeds an isolated backend configuration
+with one `auth-zone=<domain>` per managed forward domain, `auth-server=<primary-nameserver>,127.0.0.2`,
+`auth-soa=<serial>,<administrator>,<refresh>,<retry>,<expiry>`, and `auth-ttl=<seconds>`. The helper extracts that
+configuration to `/etc/atlaso/dnsmasq.d/atlaso-authoritative.conf` and runs it on `127.0.0.2:5353` through
+`atlaso-dns-authoritative.service`. The ordinary dnsmasq service forwards managed domains to that backend, preserving
+complete authoritative positive and negative answers while retaining PTR responses and upstream recursion on selected
+listeners. Listener selection and firewall policy limit client access. Validate the installed state with
+`sudo grep -E '^(auth-zone|auth-server|auth-soa|auth-ttl|host-record=ns)' /etc/atlaso/dnsmasq.d/atlaso-authoritative.conf`,
+`systemctl is-active atlaso-dns-authoritative dnsmasq`, authoritative queries such as `dig @<selected-listener> <zone> SOA`,
 `dig @<selected-listener> <zone> NS`, `dig @<selected-listener> <nameserver> A`, and
 `dig @<selected-listener> missing.<zone> A`, then recursive-path queries such as `dig @127.0.0.1 -x <record-address>`
 and `dig @<selected-listener> example.com A`. The missing-name result should be authoritative NXDOMAIN with the generated

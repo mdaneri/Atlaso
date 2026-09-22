@@ -29,7 +29,7 @@ import tempfile
 import threading
 import time
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager, nullcontext
 from datetime import datetime, timezone
 from ipaddress import IPv4Network, IPv6Network, ip_address, ip_interface, ip_network
@@ -343,6 +343,7 @@ CONSOLE_MANAGED_SERVICE_UNITS = (
     "nginx.service",
     "sshd.service",
     "dnsmasq.service",
+    "atlaso-dns-authoritative.service",
     "ntpd.service",
     "slapd.service",
     "atlaso-kmip.service",
@@ -361,6 +362,9 @@ DNSMASQ_CONFIG_DIR = Path("/etc/atlaso/dnsmasq.d")
 DNSMASQ_CONFIG_PATH = DNSMASQ_CONFIG_DIR / "atlaso.conf"
 DNSMASQ_SERVICE_DROPIN_DIR = Path("/etc/systemd/system/dnsmasq.service.d")
 DNSMASQ_SERVICE_DROPIN_PATH = DNSMASQ_SERVICE_DROPIN_DIR / "atlaso.conf"
+DNSMASQ_AUTHORITATIVE_CONFIG_PREFIX = "# atlaso-authoritative-config: "
+DNSMASQ_AUTHORITATIVE_CONFIG_PATH = DNSMASQ_CONFIG_DIR / "atlaso-authoritative.conf"
+DNSMASQ_AUTHORITATIVE_SERVICE_PATH = Path("/etc/systemd/system/atlaso-dns-authoritative.service")
 DNSMASQ_DNSSEC_TRUST_ANCHORS_PATH = DNSMASQ_APPLY_DIR / "atlaso-trust-anchors.conf"
 DNSMASQ_DNSSEC_TRUST_ANCHOR_CANDIDATES = [
     Path("/usr/share/dnsmasq/trust-anchors.conf"),
@@ -1531,6 +1535,36 @@ def _handle_ca(action: str, args: list[str]) -> int:
 
 
 
+@contextmanager
+def _dnsmasq_config_bundle_paths(path: Path) -> Iterator[tuple[Path, Path | None]]:
+    """Yield the recursive and optional authoritative dnsmasq configurations.
+
+    Args:
+        path: Staged combined dnsmasq configuration.
+
+    Yields:
+        Paths to the recursive configuration and optional authoritative configuration.
+    """
+    raw_lines = path.read_text(encoding="utf-8").splitlines()
+    authoritative_lines: list[str] = []
+    main_lines: list[str] = []
+    for line in raw_lines:
+        if line.startswith(DNSMASQ_AUTHORITATIVE_CONFIG_PREFIX):
+            authoritative_lines.append(line[len(DNSMASQ_AUTHORITATIVE_CONFIG_PREFIX):])
+        else:
+            main_lines.append(line)
+    if not authoritative_lines:
+        yield path, None
+        return
+    with tempfile.TemporaryDirectory(prefix=".dnsmasq-bundle-", dir=path.parent) as temporary:
+        temporary_dir = Path(temporary)
+        main_path = temporary_dir / "atlaso.conf"
+        authoritative_path = temporary_dir / "atlaso-authoritative.conf"
+        main_path.write_text("\n".join(main_lines).rstrip() + "\n", encoding="utf-8")
+        authoritative_path.write_text("\n".join(authoritative_lines).rstrip() + "\n", encoding="utf-8")
+        yield main_path, authoritative_path
+
+
 def _validate_dnsmasq_config(path: Path) -> subprocess.CompletedProcess[str]:
     """Validate dnsmasq config.
 
@@ -1675,18 +1709,55 @@ def _prepare_dnsmasq_tftp_roots(path: Path) -> None:
             pass
 
 
-def _install_dnsmasq_service_dropin() -> None:
+def _install_dnsmasq_service_dropin(*, authoritative: bool = False) -> None:
     """Perform install dnsmasq service dropin.
 
+    Args:
+        authoritative: Couple the client-facing service to the authoritative backend.
     """
     dnsmasq = shutil.which("dnsmasq") or "/usr/sbin/dnsmasq"
     DNSMASQ_SERVICE_DROPIN_DIR.mkdir(parents=True, exist_ok=True)
+    unit_lines = ["[Unit]"]
+    if authoritative:
+        unit_lines.extend(
+            [
+                "BindsTo=atlaso-dns-authoritative.service",
+                "After=atlaso-dns-authoritative.service",
+            ]
+        )
+    unit_lines.extend(["", "[Service]"])
     DNSMASQ_SERVICE_DROPIN_PATH.write_text(
         "\n".join(
             [
-                "[Service]",
+                *unit_lines,
                 "ExecStart=",
                 f"ExecStart={dnsmasq} --keep-in-foreground --conf-file={DNSMASQ_CONFIG_PATH}",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+
+def _install_dnsmasq_authoritative_service() -> None:
+    """Install the isolated authoritative dnsmasq systemd unit."""
+    dnsmasq = shutil.which("dnsmasq") or "/usr/sbin/dnsmasq"
+    DNSMASQ_AUTHORITATIVE_SERVICE_PATH.parent.mkdir(parents=True, exist_ok=True)
+    DNSMASQ_AUTHORITATIVE_SERVICE_PATH.write_text(
+        "\n".join(
+            [
+                "[Unit]",
+                "Description=Atlaso authoritative DNS backend",
+                "After=network.target",
+                "Before=dnsmasq.service",
+                "",
+                "[Service]",
+                "Type=simple",
+                f"ExecStart={dnsmasq} --keep-in-foreground --conf-file={DNSMASQ_AUTHORITATIVE_CONFIG_PATH}",
+                "Restart=on-failure",
+                "",
+                "[Install]",
+                "WantedBy=multi-user.target",
                 "",
             ]
         ),
@@ -2927,27 +2998,47 @@ def _handle_dnsmasq(action: str, args: list[str]) -> int:
         if not dnssec_ready:
             print(dnssec_error, file=sys.stderr)
             return 2
-        validation = _validate_dnsmasq_config(config_path)
-        print(validation.stdout, end="")
-        print(validation.stderr, end="", file=sys.stderr)
-        if action == "validate" or validation.returncode != 0:
-            return validation.returncode
+        with _dnsmasq_config_bundle_paths(config_path) as (main_config_path, authoritative_config_path):
+            for candidate in (main_config_path, authoritative_config_path):
+                if candidate is None:
+                    continue
+                validation = _validate_dnsmasq_config(candidate)
+                print(validation.stdout, end="")
+                print(validation.stderr, end="", file=sys.stderr)
+                if validation.returncode != 0:
+                    return validation.returncode
+            if action == "validate":
+                return 0
 
-        try:
-            _prepare_dnsmasq_tftp_roots(config_path)
-        except ValueError as exc:
-            print(str(exc), file=sys.stderr)
-            return 2
+            try:
+                _prepare_dnsmasq_tftp_roots(main_config_path)
+            except ValueError as exc:
+                print(str(exc), file=sys.stderr)
+                return 2
 
-        DNSMASQ_CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-        DNSMASQ_STATE_DIR.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(config_path, DNSMASQ_CONFIG_PATH)
-        _install_dnsmasq_service_dropin()
+            DNSMASQ_CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+            DNSMASQ_STATE_DIR.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(main_config_path, DNSMASQ_CONFIG_PATH)
+            _install_dnsmasq_service_dropin(authoritative=authoritative_config_path is not None)
+            if authoritative_config_path is not None:
+                shutil.copy2(authoritative_config_path, DNSMASQ_AUTHORITATIVE_CONFIG_PATH)
+                _install_dnsmasq_authoritative_service()
+
         daemon_reload = _run(["systemctl", "daemon-reload"])
         print(daemon_reload.stdout, end="")
         print(daemon_reload.stderr, end="", file=sys.stderr)
         if daemon_reload.returncode != 0:
             return daemon_reload.returncode
+        if authoritative_config_path is not None:
+            for command in (
+                ["systemctl", "enable", "atlaso-dns-authoritative.service"],
+                ["systemctl", "restart", "atlaso-dns-authoritative.service"],
+            ):
+                result = _run(command)
+                print(result.stdout, end="")
+                print(result.stderr, end="", file=sys.stderr)
+                if result.returncode != 0:
+                    return result.returncode
         enable = _run(["systemctl", "enable", "dnsmasq"])
         print(enable.stdout, end="")
         print(enable.stderr, end="", file=sys.stderr)
@@ -2956,7 +3047,23 @@ def _handle_dnsmasq(action: str, args: list[str]) -> int:
         restart = _run(["systemctl", "restart", "dnsmasq"])
         print(restart.stdout, end="")
         print(restart.stderr, end="", file=sys.stderr)
-        return restart.returncode
+        if restart.returncode != 0:
+            return restart.returncode
+        if authoritative_config_path is None and (
+            DNSMASQ_AUTHORITATIVE_CONFIG_PATH.exists() or DNSMASQ_AUTHORITATIVE_SERVICE_PATH.exists()
+        ):
+            disable = _run(["systemctl", "disable", "--now", "atlaso-dns-authoritative.service"])
+            print(disable.stdout, end="")
+            print(disable.stderr, end="", file=sys.stderr)
+            if disable.returncode != 0:
+                return disable.returncode
+            DNSMASQ_AUTHORITATIVE_CONFIG_PATH.unlink(missing_ok=True)
+            DNSMASQ_AUTHORITATIVE_SERVICE_PATH.unlink(missing_ok=True)
+            daemon_reload = _run(["systemctl", "daemon-reload"])
+            print(daemon_reload.stdout, end="")
+            print(daemon_reload.stderr, end="", file=sys.stderr)
+            return daemon_reload.returncode
+        return 0
 
     if action == "reload":
         daemon_reload = _run(["systemctl", "daemon-reload"])
@@ -2964,6 +3071,12 @@ def _handle_dnsmasq(action: str, args: list[str]) -> int:
         print(daemon_reload.stderr, end="", file=sys.stderr)
         if daemon_reload.returncode != 0:
             return daemon_reload.returncode
+        if DNSMASQ_AUTHORITATIVE_CONFIG_PATH.is_file():
+            authoritative_restart = _run(["systemctl", "restart", "atlaso-dns-authoritative.service"])
+            print(authoritative_restart.stdout, end="")
+            print(authoritative_restart.stderr, end="", file=sys.stderr)
+            if authoritative_restart.returncode != 0:
+                return authoritative_restart.returncode
         restart = _run(["systemctl", "restart", "dnsmasq"])
         print(restart.stdout, end="")
         print(restart.stderr, end="", file=sys.stderr)
@@ -9074,12 +9187,12 @@ def _read_existing_management_network_values(
 
     """
     empty: dict[str, list[str]] = {"Gateway": [], "DNS": [], "Domains": [], "Name": []}
-    candidates = [NETWORKD_MGMT_CONFIG_PATH]
-    candidates.extend(
+    candidates = [
         NETWORKD_CONFIG_DIR / _networkd_managed_filename(name, "network")
         for name in interface_names or []
         if _valid_network_interface_name(name)
-    )
+    ]
+    candidates.append(NETWORKD_MGMT_CONFIG_PATH)
     parsed_candidates: list[dict[str, list[str]]] = []
     for path in dict.fromkeys(candidates):
         values = {key: list(entries) for key, entries in empty.items()}
@@ -9183,18 +9296,18 @@ def _systemd_networkd_files(path: Path) -> tuple[dict[str, str], list[str], list
             or _network_row_has_usable_runtime_management_address(management)
         )
     )
+    resolver_name = (str(management_name) if management_is_effective else None) or next(
+        iter(flagged_management_names),
+        management_name,
+    )
     resolver_source_names = list(
         dict.fromkeys(
-            ([str(management_name)] if management_name else [])
+            ([str(resolver_name)] if resolver_name else [])
+            + ([str(management_name)] if management_name else [])
             + flagged_management_names
         )
     )
     preserved_management = _read_existing_management_network_values(resolver_source_names)
-    preserved_names = set(preserved_management.get("Name", []))
-    resolver_name = (str(management_name) if management_is_effective else None) or next(
-        (name for name in flagged_management_names if name in preserved_names),
-        flagged_management_names[0] if flagged_management_names else management_name,
-    )
     files: dict[str, str] = {}
     reconfigure_links: list[str] = []
     admin_down_links: list[str] = []
@@ -24179,12 +24292,16 @@ def _management_handoff_validation_errors(payload: dict) -> list[str]:
         if not dnssec_ready:
             errors.append(f"DNS/DHCP: {dnssec_error}")
         else:
-            dnsmasq_validation = _validate_dnsmasq_config(Path(dnsmasq_path))
-            if dnsmasq_validation.returncode != 0:
-                errors.append(
-                    "DNS/DHCP: "
-                    + (dnsmasq_validation.stderr or dnsmasq_validation.stdout).strip()
-                )
+            with _dnsmasq_config_bundle_paths(Path(dnsmasq_path)) as dnsmasq_paths:
+                for candidate in dnsmasq_paths:
+                    if candidate is None:
+                        continue
+                    dnsmasq_validation = _validate_dnsmasq_config(candidate)
+                    if dnsmasq_validation.returncode != 0:
+                        errors.append(
+                            "DNS/DHCP: "
+                            + (dnsmasq_validation.stderr or dnsmasq_validation.stdout).strip()
+                        )
     for label, field in (
         ("WAN candidate", "wan_config_path"),
         ("WAN rollback", "wan_rollback_config_path"),
@@ -24296,6 +24413,8 @@ def _management_handoff_runtime_paths(payload: dict) -> list[Path]:
         ATLASO_SERVICE_HTTPS_DROPIN_PATH,
         DNSMASQ_CONFIG_PATH,
         DNSMASQ_SERVICE_DROPIN_PATH,
+        DNSMASQ_AUTHORITATIVE_CONFIG_PATH,
+        DNSMASQ_AUTHORITATIVE_SERVICE_PATH,
         DNSMASQ_DNSSEC_TRUST_ANCHORS_PATH,
         WAN_NAT_CONFIG_PATH,
         WAN_NAT_SERVICE_PATH,
@@ -24497,6 +24616,21 @@ def _snapshot_management_handoff(payload: dict) -> dict:
         "previous_dnsmasq_enabled": (
             _run(["systemctl", "is-enabled", "dnsmasq.service"]).returncode == 0
             if payload.get("dnsmasq_config_path")
+            else False
+        ),
+        "previous_dnsmasq_authoritative_present": (
+            DNSMASQ_AUTHORITATIVE_SERVICE_PATH.is_file()
+            if payload.get("dnsmasq_config_path")
+            else False
+        ),
+        "previous_dnsmasq_authoritative_active": (
+            _run(["systemctl", "is-active", "atlaso-dns-authoritative.service"]).returncode == 0
+            if payload.get("dnsmasq_config_path") and DNSMASQ_AUTHORITATIVE_SERVICE_PATH.is_file()
+            else False
+        ),
+        "previous_dnsmasq_authoritative_enabled": (
+            _run(["systemctl", "is-enabled", "atlaso-dns-authoritative.service"]).returncode == 0
+            if payload.get("dnsmasq_config_path") and DNSMASQ_AUTHORITATIVE_SERVICE_PATH.is_file()
             else False
         ),
         "wan_rollback_config_path": str(payload.get("wan_rollback_config_path") or ""),
@@ -25569,6 +25703,48 @@ def _restore_management_handoff(state: dict) -> dict:
     if state.get("dnsmasq_included"):
         def restore_dnsmasq() -> None:
             """Restore DNS after the previous listener addresses are active."""
+            if state.get("previous_dnsmasq_authoritative_present"):
+                authoritative_runtime_operation = (
+                    "restart" if state.get("previous_dnsmasq_authoritative_active") else "stop"
+                )
+                authoritative_runtime = _run(
+                    ["systemctl", authoritative_runtime_operation, "atlaso-dns-authoritative.service"]
+                )
+                commands.append(
+                    {
+                        "stage": "Authoritative DNS rollback",
+                        "command": [
+                            "systemctl",
+                            authoritative_runtime_operation,
+                            "atlaso-dns-authoritative.service",
+                        ],
+                        "returncode": authoritative_runtime.returncode,
+                    }
+                )
+                if authoritative_runtime.returncode != 0:
+                    raise ValueError("authoritative DNS runtime rollback failed")
+                authoritative_boot_operation = (
+                    "enable" if state.get("previous_dnsmasq_authoritative_enabled") else "disable"
+                )
+                authoritative_boot = _run(
+                    ["systemctl", authoritative_boot_operation, "atlaso-dns-authoritative.service"]
+                )
+                commands.append(
+                    {
+                        "stage": "Authoritative DNS rollback",
+                        "command": [
+                            "systemctl",
+                            authoritative_boot_operation,
+                            "atlaso-dns-authoritative.service",
+                        ],
+                        "returncode": authoritative_boot.returncode,
+                    }
+                )
+                if authoritative_boot.returncode != 0:
+                    raise ValueError("authoritative DNS boot-policy rollback failed")
+            else:
+                # The candidate backend may still be loaded after its unit file was removed.
+                _run(["systemctl", "stop", "atlaso-dns-authoritative.service"])
             runtime_operation = "restart" if state.get("previous_dnsmasq_active") else "stop"
             runtime = _run(["systemctl", runtime_operation, "dnsmasq.service"])
             commands.append(

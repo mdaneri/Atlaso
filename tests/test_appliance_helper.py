@@ -7333,6 +7333,70 @@ def test_network_helper_retains_resolver_on_management_dhcp_without_fallback(
     assert "UseDNS=no" in rendered
 
 
+def test_network_helper_prefers_effective_flagged_resolver_over_stale_management(
+    monkeypatch,
+    tmp_path,
+):
+    """Keep the newest resolver state on the effective fallback path.
+
+    Args:
+        monkeypatch: Pytest fixture used to isolate generated and runtime state.
+        tmp_path: Temporary directory containing staged and installed network files.
+    """
+    helper = load_helper_module()
+    config_path = tmp_path / "atlaso-network.conf"
+    config_path.write_text(
+        "\n".join(
+            [
+                "[physical_interfaces]",
+                "interface=eth0",
+                "  role=management",
+                "  mode=access",
+                "  access_management_ui_enabled=false",
+                "  ipv4_method=dhcp",
+                "  ip_cidr=",
+                "  ipv6_enabled=false",
+                "  ipv6_cidr=",
+                "  admin_state=up",
+                "interface=eth1",
+                "  role=access",
+                "  mode=access",
+                "  access_management_ui_enabled=true",
+                "  ipv4_method=static",
+                "  ip_cidr=192.168.50.1/24",
+                "  ipv6_enabled=false",
+                "  ipv6_cidr=",
+                "  admin_state=up",
+                "",
+                "[vlan_interfaces]",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    networkd_dir = tmp_path / "networkd"
+    networkd_dir.mkdir()
+    management_path = networkd_dir / "00-atlaso-mgmt.network"
+    management_path.write_text(
+        "[Match]\nName=eth0\n\n[Network]\nDHCP=ipv4\nDNS=127.0.0.1\nDomains=~.\n",
+        encoding="utf-8",
+    )
+    (networkd_dir / "10-atlaso-eth1.network").write_text(
+        "[Match]\nName=eth1\n\n[Network]\nDNS=192.0.2.53\nDomains=corp.example\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(helper, "NETWORKD_CONFIG_DIR", networkd_dir)
+    monkeypatch.setattr(helper, "NETWORKD_MGMT_CONFIG_PATH", management_path)
+    monkeypatch.setattr(helper.shutil, "which", lambda _command: None)
+
+    files, _links, _admin_down = helper._systemd_networkd_files(config_path)
+
+    rendered = files["10-atlaso-eth1.network"]
+    assert "DNS=192.0.2.53" in rendered
+    assert "Domains=corp.example" in rendered
+    assert "DNS=127.0.0.1" not in rendered
+
+
 def test_network_helper_rejects_flagged_access_without_usable_address(tmp_path):
     """Verify that staged access flags require a usable non-link-local listener address.
 
@@ -10871,6 +10935,94 @@ def test_dnsmasq_helper_apply_installs_config_dropin_and_enables_service(monkeyp
     assert "DNS=1.1.1.1" in mgmt_network.read_text(encoding="utf-8")
     assert "DNS=127.0.0.1" not in mgmt_network.read_text(encoding="utf-8")
     assert "Domains=~." not in mgmt_network.read_text(encoding="utf-8")
+
+
+def test_dnsmasq_helper_apply_installs_isolated_authoritative_backend(monkeypatch, tmp_path):
+    """Install and start the authoritative backend before the recursive listener.
+
+    Args:
+        monkeypatch: Pytest fixture used to isolate installed files and commands.
+        tmp_path: Temporary directory containing staged and installed DNS state.
+    """
+    helper = load_helper_module()
+    apply_dir = tmp_path / "apply" / "dnsmasq"
+    state_dir = tmp_path / "var" / "lib" / "atlaso" / "dnsmasq"
+    config_dir = tmp_path / "etc" / "atlaso" / "dnsmasq.d"
+    systemd_dir = tmp_path / "etc" / "systemd" / "system"
+    dropin_dir = systemd_dir / "dnsmasq.service.d"
+    apply_dir.mkdir(parents=True)
+    config_path = apply_dir / "atlaso.conf"
+    config_path.write_text(
+        "\n".join(
+            [
+                "no-resolv",
+                "server=/atlaso.internal/127.0.0.2#5353",
+                "# Embedded configuration for atlaso-dns-authoritative.service.",
+                "# atlaso-authoritative-config: port=5353",
+                "# atlaso-authoritative-config: no-resolv",
+                "# atlaso-authoritative-config: bind-interfaces",
+                "# atlaso-authoritative-config: listen-address=127.0.0.2",
+                "# atlaso-authoritative-config: auth-zone=atlaso.internal",
+                "# atlaso-authoritative-config: auth-server=ns1.atlaso.internal,127.0.0.2",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    commands: list[list[str]] = []
+    validated: list[str] = []
+
+    def validate(path):
+        """Capture each split dnsmasq configuration.
+
+        Args:
+            path: Temporary recursive or authoritative configuration path.
+        """
+        validated.append(path.read_text(encoding="utf-8"))
+        return subprocess.CompletedProcess(["dnsmasq", "--test"], 0, "", "")
+
+    def fake_run(command):
+        """Capture service-management commands.
+
+        Args:
+            command: Command and arguments to execute.
+        """
+        commands.append(command)
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    monkeypatch.setattr(helper, "DNSMASQ_APPLY_DIR", apply_dir)
+    monkeypatch.setattr(helper, "DNSMASQ_STATE_DIR", state_dir)
+    monkeypatch.setattr(helper, "DNSMASQ_CONFIG_DIR", config_dir)
+    monkeypatch.setattr(helper, "DNSMASQ_CONFIG_PATH", config_dir / "atlaso.conf")
+    monkeypatch.setattr(helper, "DNSMASQ_AUTHORITATIVE_CONFIG_PATH", config_dir / "atlaso-authoritative.conf")
+    monkeypatch.setattr(helper, "DNSMASQ_SERVICE_DROPIN_DIR", dropin_dir)
+    monkeypatch.setattr(helper, "DNSMASQ_SERVICE_DROPIN_PATH", dropin_dir / "atlaso.conf")
+    monkeypatch.setattr(
+        helper,
+        "DNSMASQ_AUTHORITATIVE_SERVICE_PATH",
+        systemd_dir / "atlaso-dns-authoritative.service",
+    )
+    monkeypatch.setattr(helper, "_validate_dnsmasq_config", validate)
+    monkeypatch.setattr(helper.shutil, "which", lambda command: "/usr/sbin/dnsmasq" if command == "dnsmasq" else None)
+    monkeypatch.setattr(helper, "_run", fake_run)
+
+    assert helper._handle_dnsmasq("apply", [str(config_path)]) == 0
+
+    assert len(validated) == 2
+    assert "server=/atlaso.internal/127.0.0.2#5353" in validated[0]
+    assert "auth-zone=atlaso.internal" in validated[1]
+    assert helper.DNSMASQ_AUTHORITATIVE_CONFIG_PREFIX not in validated[0]
+    assert (config_dir / "atlaso-authoritative.conf").read_text(encoding="utf-8") == validated[1]
+    installed_main = (config_dir / "atlaso.conf").read_text(encoding="utf-8")
+    assert "server=/atlaso.internal/127.0.0.2#5353" in installed_main
+    assert helper.DNSMASQ_AUTHORITATIVE_CONFIG_PREFIX not in installed_main
+    service = (systemd_dir / "atlaso-dns-authoritative.service").read_text(encoding="utf-8")
+    assert f"--conf-file={config_dir / 'atlaso-authoritative.conf'}" in service
+    main_dropin = (dropin_dir / "atlaso.conf").read_text(encoding="utf-8")
+    assert "BindsTo=atlaso-dns-authoritative.service" in main_dropin
+    assert commands.index(["systemctl", "restart", "atlaso-dns-authoritative.service"]) < commands.index(
+        ["systemctl", "restart", "dnsmasq"]
+    )
 
 
 def test_dnsmasq_helper_apply_creates_allowlisted_tftp_root(monkeypatch, tmp_path):

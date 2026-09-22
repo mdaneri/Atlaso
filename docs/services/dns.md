@@ -46,18 +46,20 @@ from that interface's active systemd-networkd lease. This lease fallback remains
 resolver has been redirected to local dnsmasq and `resolvectl` therefore reports only `127.0.0.1`; applying DNS must not
 regenerate dnsmasq without the DHCP-provided forwarders.
 
-With **Authoritative** on, every managed forward domain renders as `auth-zone=domain`. A dedicated `127.0.0.2`
-authoritative-only loopback socket activates dnsmasq authoritative mode, while the ordinary selected listeners retain
-managed-zone authority and upstream recursion. All managed zones share one primary nameserver, SOA administrator, TTL,
-refresh, retry, expiry, and serial. v1 does not configure secondary nameservers, AXFR, or a separate DNS server.
-Generated reverse zones remain normal dnsmasq PTR behavior rather than authoritative reverse zones.
+With **Authoritative** on, Atlaso runs an isolated authoritative dnsmasq backend on `127.0.0.2:5353`. The ordinary
+dnsmasq service forwards each managed forward domain to that backend and continues to answer clients on every selected
+listener. This preserves the backend's AA flag and authoritative negative answers while the same client-facing sockets
+retain upstream recursion. All managed zones share one primary nameserver, SOA administrator, TTL, refresh, retry,
+expiry, and serial. v1 does not configure secondary nameservers or AXFR. Generated reverse zones remain normal dnsmasq
+PTR behavior rather than authoritative reverse zones.
 
 The authoritative renderer emits:
 
-- `auth-server=<primary-nameserver>,127.0.0.2` for the dedicated authoritative activation socket;
+- `auth-server=<primary-nameserver>,127.0.0.2` in the isolated authoritative backend;
 - one `auth-zone` per managed forward domain;
 - shared `auth-soa` and `auth-ttl` values;
-- A/AAAA `host-record` glue mapping the primary nameserver to every selected DNS listen address.
+- A/AAAA `host-record` glue mapping the primary nameserver to every selected DNS listen address;
+- `server=/<managed-domain>/127.0.0.2#5353` in the recursive client-facing service.
 
 The primary nameserver must belong to a managed domain. Its glue identity is generated and cannot conflict with operator
 CNAME or A/AAAA data. SOA expiry must be greater than refresh and retry, and all timer values must be positive 32-bit
@@ -119,13 +121,17 @@ remains scoped to the selected managed domain.
 ## Apply and verification
 
 Review the DNS validation card and rendered config, then submit only the global DNS/DHCP unit when that is the intended
-changed unit. The helper stages and validates `/var/lib/atlaso/apply/dnsmasq/atlaso.conf`, installs
-`/etc/atlaso/dnsmasq.d/atlaso.conf`, and reloads or restarts `dnsmasq.service`.
+changed unit. The helper stages and validates `/var/lib/atlaso/apply/dnsmasq/atlaso.conf`, installs the recursive
+configuration at `/etc/atlaso/dnsmasq.d/atlaso.conf`, and, when authoritative mode is enabled, installs the extracted
+backend configuration at `/etc/atlaso/dnsmasq.d/atlaso-authoritative.conf`. It starts
+`atlaso-dns-authoritative.service` before restarting `dnsmasq.service`.
 
 On an applied appliance, verify the installed directives and query behavior:
 
 ```sh
-sudo grep -E '^(auth-zone|auth-server|auth-soa|auth-ttl|host-record=ns)' /etc/atlaso/dnsmasq.d/atlaso.conf
+sudo grep -E '^(auth-zone|auth-server|auth-soa|auth-ttl|host-record=ns)' /etc/atlaso/dnsmasq.d/atlaso-authoritative.conf
+sudo grep -E '^server=/.+/127\.0\.0\.2#5353$' /etc/atlaso/dnsmasq.d/atlaso.conf
+systemctl is-active atlaso-dns-authoritative
 systemctl is-active dnsmasq
 dig @192.168.50.1 atlaso.internal SOA
 dig @192.168.50.1 atlaso.internal NS
@@ -136,11 +142,9 @@ dig @127.0.0.1 -x 192.168.50.20
 dig @127.0.0.1 example.com A
 ```
 
-The missing managed name should return authoritative NXDOMAIN with SOA authority. The loopback queries verify that
-existing PTR behavior and configured upstream recursion remain available on a non-authoritative listener. Replace
-addresses and names with the appliance's selected listener and managed data. To provide recursion on an external
-address, leave Authoritative off for that listener or select a separate DNS interface that is not part of the
-authoritative interface set.
+The missing managed name should return authoritative NXDOMAIN with SOA authority. The loopback queries verify existing
+PTR behavior and configured upstream recursion. Replace addresses and names with the appliance's selected listener and
+managed data.
 
 ### DHCP upstream preservation
 

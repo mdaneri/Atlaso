@@ -1234,15 +1234,19 @@ preserved with their affected subsystem below. Keep new requirements at their to
 - Real DNS/DHCP apply stages rendered dnsmasq config under `/var/lib/atlaso/apply/dnsmasq/atlaso.conf` as the `atlaso`
   service user before invoking the root helper. The helper validates with `dnsmasq --test`, installs
   `/etc/atlaso/dnsmasq.d/atlaso.conf`, manages the Atlaso dnsmasq systemd drop-in, enables `dnsmasq`, and
-  reloads/restarts the service. DNSSEC validation renders `dnssec` plus a Atlaso-managed trust-anchor include under the
+  reloads/restarts the service. When authoritative mode is enabled, it also extracts, validates, installs, and manages
+  the isolated authoritative configuration and service described below. DNSSEC validation renders `dnssec` plus a
+  Atlaso-managed trust-anchor include under the
   dnsmasq apply directory; the helper must verify installed dnsmasq DNSSEC support and copy package-provided trust
   anchors before `dnsmasq --test`. Rebind protection renders `stop-dns-rebind` plus explicit `rebind-domain-ok`
   exemptions, and query logging uses `log-queries=extra` only as a temporary troubleshooting setting because query names
   may be sensitive. Operator DNS records support A, AAAA, CNAME, TXT, SRV, MX, CAA, and explicit PTR, while A/AAAA still
-  generate PTR answers through dnsmasq `host-record`. Authoritative mode is activated on a dedicated, address-qualified
-  loopback `auth-server` socket and renders every managed forward zone with shared SOA policy and generated NS/glue.
-  Dnsmasq exposes those zones through the ordinary selected service listeners, which retain local authority, PTR, and
-  upstream-recursive behavior within the existing listener and firewall boundaries.
+  generate PTR answers through dnsmasq `host-record`. Authoritative mode uses an isolated dnsmasq backend on
+  `127.0.0.2:5353`, with an address-qualified `auth-server` and every managed forward zone rendered with shared SOA
+  policy and generated NS/glue. The ordinary dnsmasq service forwards managed domains to that backend so selected
+  service listeners preserve authoritative positive and negative answers while retaining PTR and upstream-recursive
+  behavior within the existing listener and firewall boundaries. Apply, rollback, and reboot policy must manage both
+  dnsmasq services as one DNS/DHCP unit.
   When Appliance Settings resolver mode is DHCP and DNS upstreams are empty, use the management interface's observed
   DHCP DNS servers as dnsmasq forwarder fallback. If local DNS makes resolvectl loopback-only, resolve the exact
   management interface ifindex and read only its systemd-networkd lease through the constrained helper; filter loopback,
