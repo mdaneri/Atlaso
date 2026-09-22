@@ -7213,6 +7213,51 @@ def test_network_helper_preserves_flagged_access_resolver(monkeypatch, tmp_path,
     assert "Domains=~." in rendered
 
 
+def test_network_helper_prefers_eth0_for_flagged_access_resolver(monkeypatch, tmp_path):
+    """Match Appliance Settings precedence when several flagged physical paths work."""
+    helper = load_helper_module()
+    config_path = tmp_path / "atlaso-network.conf"
+    config_path.write_text(
+        "\n".join(
+            [
+                "[physical_interfaces]",
+                "interface=eno1",
+                "  role=access",
+                "  mode=access",
+                "  access_management_ui_enabled=true",
+                "  ipv4_method=static",
+                "  ip_cidr=192.168.10.1/24",
+                "  admin_state=up",
+                "interface=eth0",
+                "  role=access",
+                "  mode=access",
+                "  access_management_ui_enabled=true",
+                "  ipv4_method=static",
+                "  ip_cidr=192.168.20.1/24",
+                "  admin_state=up",
+                "",
+                "[vlan_interfaces]",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    networkd_dir = tmp_path / "networkd"
+    networkd_dir.mkdir()
+    (networkd_dir / "10-atlaso-eth0.network").write_text(
+        "[Match]\nName=eth0\n\n[Network]\nDNS=192.0.2.53\nDomains=corp.example\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(helper, "NETWORKD_CONFIG_DIR", networkd_dir)
+    monkeypatch.setattr(helper, "NETWORKD_MGMT_CONFIG_PATH", networkd_dir / "00-atlaso-mgmt.network")
+
+    files, _links, _admin_down = helper._systemd_networkd_files(config_path)
+
+    assert "DNS=192.0.2.53" in files["10-atlaso-eth0.network"]
+    assert "Domains=corp.example" in files["10-atlaso-eth0.network"]
+    assert "DNS=192.0.2.53" not in files["10-atlaso-eno1.network"]
+
+
 def test_network_helper_uses_slaac_flagged_resolver_when_management_dhcp_has_no_lease(
     monkeypatch,
     tmp_path,
@@ -7388,10 +7433,13 @@ def test_network_helper_prefers_effective_flagged_resolver_over_stale_management
         "[Match]\nName=eth0\n\n[Network]\nDHCP=ipv4\nDNS=127.0.0.1\nDomains=~.\n",
         encoding="utf-8",
     )
-    (networkd_dir / "10-atlaso-eth1.network").write_text(
+    fallback_path = networkd_dir / "10-atlaso-eth1.network"
+    fallback_path.write_text(
         "[Match]\nName=eth1\n\n[Network]\nDNS=192.0.2.53\nDomains=corp.example\n",
         encoding="utf-8",
     )
+    os.utime(management_path, ns=(1_000_000_000, 1_000_000_000))
+    os.utime(fallback_path, ns=(2_000_000_000, 2_000_000_000))
     monkeypatch.setattr(helper, "NETWORKD_CONFIG_DIR", networkd_dir)
     monkeypatch.setattr(helper, "NETWORKD_MGMT_CONFIG_PATH", management_path)
     monkeypatch.setattr(helper.shutil, "which", lambda _command: None)

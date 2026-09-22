@@ -9298,7 +9298,10 @@ def _systemd_networkd_files(path: Path) -> tuple[dict[str, str], list[str], list
     management_name = management.get("name") if management else None
     flagged_management_names = [
         row.get("name", "")
-        for row in physical_interfaces
+        for row in sorted(
+            physical_interfaces,
+            key=lambda row: (row.get("name") != "eth0", row.get("name", "")),
+        )
         if row.get("role") == "access"
         and row.get("mode") == "access"
         and row.get("admin_state") == "up"
@@ -9310,7 +9313,10 @@ def _systemd_networkd_files(path: Path) -> tuple[dict[str, str], list[str], list
     ]
     flagged_management_names.extend(
         row.get("name", "")
-        for row in vlan_interfaces
+        for row in sorted(
+            vlan_interfaces,
+            key=lambda row: (row.get("parent", ""), int(row.get("vlan_id", "0"))),
+        )
         if row.get("role") == "access"
         and row.get("enabled", "true").strip().lower() == "true"
         and row.get("access_management_ui_enabled", "false").strip().lower() == "true"
