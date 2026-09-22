@@ -11026,7 +11026,8 @@ def test_dnsmasq_helper_apply_installs_isolated_authoritative_backend(monkeypatc
     service = (systemd_dir / "atlaso-dns-authoritative.service").read_text(encoding="utf-8")
     assert f"--conf-file={config_dir / 'atlaso-authoritative.conf'}" in service
     main_dropin = (dropin_dir / "atlaso.conf").read_text(encoding="utf-8")
-    assert "BindsTo=atlaso-dns-authoritative.service" in main_dropin
+    assert "Wants=atlaso-dns-authoritative.service" in main_dropin
+    assert "BindsTo=atlaso-dns-authoritative.service" not in main_dropin
     assert commands.index(["systemctl", "restart", "atlaso-dns-authoritative.service"]) < commands.index(
         ["systemctl", "restart", "dnsmasq"]
     )

@@ -844,7 +844,8 @@ WAN assignments and effective NAT interfaces instead of preserved inactive rows.
 
 DNS and DHCP share one `DNS/DHCP (dnsmasq)` apply unit because they render one staged bundle and use a coordinated
 service reload boundary. The Services page shows DNS and DHCP as separate desired-state rows. Their runtime status comes
-from the client-facing `dnsmasq.service`, which is bound to the authoritative backend whenever that backend is enabled.
+from the client-facing `dnsmasq.service`, which starts after and wants the authoritative backend whenever that backend
+is enabled. The client-facing service remains available for DHCP and recursive DNS while a failed backend restarts.
 DNS listen addresses are derived from selected access physical or enabled VLAN interface CIDRs,
 including both IPv4 and IPv6 when present. When Authoritative DNS is enabled, Atlaso runs an isolated dnsmasq backend
 on `127.0.0.2:5353` with every managed forward domain as an `auth-zone`, an address-qualified

@@ -1713,7 +1713,7 @@ def _install_dnsmasq_service_dropin(*, authoritative: bool = False) -> None:
     """Perform install dnsmasq service dropin.
 
     Args:
-        authoritative: Couple the client-facing service to the authoritative backend.
+        authoritative: Start the authoritative backend with the client-facing service.
     """
     dnsmasq = shutil.which("dnsmasq") or "/usr/sbin/dnsmasq"
     DNSMASQ_SERVICE_DROPIN_DIR.mkdir(parents=True, exist_ok=True)
@@ -1721,7 +1721,7 @@ def _install_dnsmasq_service_dropin(*, authoritative: bool = False) -> None:
     if authoritative:
         unit_lines.extend(
             [
-                "BindsTo=atlaso-dns-authoritative.service",
+                "Wants=atlaso-dns-authoritative.service",
                 "After=atlaso-dns-authoritative.service",
             ]
         )

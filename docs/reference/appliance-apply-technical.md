@@ -442,8 +442,9 @@ The real DNS/DHCP apply path is dnsmasq-backed. The `dnsmasq` apply unit stages 
 Authoritative mode adds the extracted backend configuration and service described below. DNS and DHCP remain one global
 apply unit because they share one staged configuration bundle and coordinated service reload boundary. The Services
 page keeps separate DNS and DHCP rows for desired-state visibility. The client-facing
-`dnsmasq.service` is bound to the authoritative backend whenever that backend is enabled, so its runtime state also
-reflects a failed authoritative dependency.
+`dnsmasq.service` starts after and wants the authoritative backend whenever that backend is enabled. If the backend
+restarts after a runtime failure, the client-facing service remains available for DHCP, host resolution, and recursive
+DNS while managed authoritative zones temporarily return a backend error.
 
 #### Authoritative DNS
 
