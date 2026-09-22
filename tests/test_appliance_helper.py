@@ -1645,13 +1645,18 @@ def test_management_handoff_rollback_restores_dnsmasq_runtime_and_boot_policy(mo
     """
     helper = load_helper_module()
     commands: list[list[str]] = []
+    events: list[str] = []
     for name in (
         "_quiesce_management_handoff_firewall",
         "_restore_management_handoff_resolver",
-        "_restore_management_handoff_links",
         "_restore_management_handoff_firewall",
     ):
         monkeypatch.setattr(helper, name, lambda *_args: None)
+    monkeypatch.setattr(
+        helper,
+        "_restore_management_handoff_links",
+        lambda *_args: events.append("links"),
+    )
     monkeypatch.setattr(helper, "_nginx_binary", lambda: "nginx")
     monkeypatch.setattr(
         helper,
@@ -1661,7 +1666,8 @@ def test_management_handoff_rollback_restores_dnsmasq_runtime_and_boot_policy(mo
     monkeypatch.setattr(
         helper,
         "_run",
-        lambda command: commands.append(command)
+        lambda command: events.append(" ".join(command))
+        or commands.append(command)
         or subprocess.CompletedProcess(command, 0, "", ""),
     )
     monkeypatch.setattr(
@@ -1681,6 +1687,7 @@ def test_management_handoff_rollback_restores_dnsmasq_runtime_and_boot_policy(mo
 
     assert ["systemctl", "stop", "dnsmasq.service"] in commands
     assert ["systemctl", "enable", "dnsmasq.service"] in commands
+    assert events.index("links") < events.index("systemctl stop dnsmasq.service")
 
 
 

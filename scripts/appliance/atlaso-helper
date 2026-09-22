@@ -25469,9 +25469,11 @@ def _restore_management_handoff(state: dict) -> dict:
                 raise ValueError(f"rollback command failed: {' '.join(command)}")
 
         attempt(f"{' '.join(command)}", run_reload)
+    attempt("resolver restore", lambda: _restore_management_handoff_resolver(state, commands))
+    attempt("network link restore", lambda: _restore_management_handoff_links(state, commands))
     if state.get("dnsmasq_included"):
         def restore_dnsmasq() -> None:
-            """Restore the snapshotted DNS service runtime and boot policy."""
+            """Restore DNS after the previous listener addresses are active."""
             runtime_operation = "restart" if state.get("previous_dnsmasq_active") else "stop"
             runtime = _run(["systemctl", runtime_operation, "dnsmasq.service"])
             commands.append(
@@ -25496,8 +25498,6 @@ def _restore_management_handoff(state: dict) -> dict:
                 raise ValueError("DNS/DHCP boot-policy rollback failed")
 
         attempt("DNS/DHCP rollback", restore_dnsmasq)
-    attempt("resolver restore", lambda: _restore_management_handoff_resolver(state, commands))
-    attempt("network link restore", lambda: _restore_management_handoff_links(state, commands))
 
     attempt(
         "Routes & WAN rollback",
