@@ -18359,7 +18359,9 @@ function applianceApplyReviewRow(unit) {
   const details = document.createElement("details");
   details.className = "config-diff";
   const detailsSummary = document.createElement("summary");
-  detailsSummary.textContent = unit.config_diff ? "Config diff" : "Current config preview";
+  detailsSummary.textContent = unit.network_candidate_preview && unit.network_candidate_preview !== unit.config_preview
+    ? "Routing & WAN when Network is not applied"
+    : (unit.config_diff ? "Config diff" : "Current config preview");
   const pre = document.createElement("pre");
   const code = document.createElement("code");
   code.className = unit.config_diff ? "language-diff" : "";
@@ -18368,6 +18370,20 @@ function applianceApplyReviewRow(unit) {
   details.append(detailsSummary, pre);
   row.append(details);
   highlightConfigPreviewElement(code);
+  if (unit.network_candidate_preview && unit.network_candidate_preview !== unit.config_preview) {
+    const candidateDetails = document.createElement("details");
+    candidateDetails.className = "config-diff";
+    const candidateSummary = document.createElement("summary");
+    candidateSummary.textContent = "Routing & WAN when Network is applied in this task";
+    const candidatePre = document.createElement("pre");
+    const candidateCode = document.createElement("code");
+    candidateCode.className = unit.network_candidate_diff ? "language-diff" : "";
+    candidateCode.textContent = unit.network_candidate_diff || unit.network_candidate_preview;
+    candidatePre.append(candidateCode);
+    candidateDetails.append(candidateSummary, candidatePre);
+    row.append(candidateDetails);
+    highlightConfigPreviewElement(candidateCode);
+  }
   return row;
 }
 

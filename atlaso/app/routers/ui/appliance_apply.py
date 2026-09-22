@@ -91,6 +91,14 @@ def build_router(dependencies: ApplianceApplyUiDependencies) -> ApplianceApplyUi
                 "config_path": unit["config_path"],
                 "config_preview": unit["config_preview"],
                 "config_diff": unit["config_diff"],
+                "network_candidate_preview": (
+                    unit["network_candidate_variant"]["config_preview"]
+                    if unit.get("network_candidate_variant") else None
+                ),
+                "network_candidate_diff": (
+                    unit["network_candidate_variant"]["config_diff"]
+                    if unit.get("network_candidate_variant") else None
+                ),
                 "has_baseline": unit["has_baseline"],
                 "selected": unit["valid"],
                 "format_volumes": [

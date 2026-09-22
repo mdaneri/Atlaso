@@ -9885,14 +9885,17 @@ def wan_network_ingress_from_preview(preview: str) -> list[str]:
                    and row.get("mode") != "trunk" and row.get("admin_state") != "down"})
 
 
-def wan_network_owned_targets(db: Session) -> list[dict[str, str]] | None:
+def wan_network_owned_targets(db: Session, *, network_preview: str | None = None) -> list[dict[str, str]] | None:
     """Project modern Network ownership without consuming pending WAN targets.
 
     Args:
         db: Active database session containing desired and applied Network state.
+        network_preview: Candidate Network rendering when both units are selected.
     """
     baseline = load_appliance_apply_baselines(db).get("network")
-    if baseline is None:
+    if network_preview is not None:
+        preview = network_preview
+    elif baseline is None:
         preview = render_network_config(interfaces=list(db.scalars(select(PhysicalInterface))),
                                         vlans=list(db.scalars(select(VlanInterface))))
     else:
@@ -11140,6 +11143,31 @@ def appliance_apply_units(db: Session, *, reconcile: bool = True) -> list[dict[s
         config_preview=wan["wan_config_preview"],
         baseline=wan_baseline,
     )
+    # A combined Apply publishes Network before WAN. Keep the applied-Network
+    # rendering for WAN-only Apply, and capture the candidate rendering for the
+    # review selection, submit snapshot, and execution snapshot.
+    candidate_wan_preview = render_wan_config(
+        wan["routes"], wan["policies"], wan["nat_rules"], wan["wan_all_targets"],
+        wan["routing_rules"], removed_routes=wan_removed_routes,
+        source_groups=wan["wan_source_groups"],
+        previous_config_preview=str((wan_baseline or {}).get("config_preview") or ""),
+        settings=wan["routes_wan_settings"],
+        applied_network_ingress=wan_applied_network_ingress(db),
+        desired_network_ingress=wan_network_ingress_from_preview(network["network_config_preview"]),
+        network_owned_targets=wan_network_owned_targets(
+            db, network_preview=network["network_config_preview"]
+        ),
+    )
+    candidate_wan = make_appliance_apply_unit(
+        unit_id="wan", label="Routing & WAN", page_url="/routes-wan",
+        context={**wan, "wan_config_preview": candidate_wan_preview},
+        summary=wan_summary, validation_errors=wan["wan_validation_errors"],
+        config_path=wan["wan_config_path"], config_preview=candidate_wan_preview,
+        baseline=wan_baseline,
+    )
+    wan_unit["network_candidate_variant"] = candidate_wan
+    if network_unit["changed"] and candidate_wan["changed"]:
+        wan_unit["changed"] = True
     gateway_route_migrations = management_gateway_route_migrations(
         network_unit,
         network_baseline,
@@ -11636,6 +11664,18 @@ def appliance_apply_context(db: Session) -> dict[str, Any]:
         "submitted_apply_unit_ids": submitted_ids,
         "initial_apply_required": initial_apply_required,
     }
+
+
+def appliance_apply_units_for_selection(
+    units: list[dict[str, Any]], selected_ids: set[str]
+) -> list[dict[str, Any]]:
+    """Use the Network candidate WAN snapshot only when both units apply."""
+    if not {"network", "wan"}.issubset(selected_ids):
+        return units
+    return [
+        unit.get("network_candidate_variant", unit) if unit["id"] == "wan" else unit
+        for unit in units
+    ]
 
 
 def dashboard_appliance_apply_units(db: Session) -> list[dict[str, Any]]:
@@ -15783,7 +15823,9 @@ def run_appliance_apply_job(job_id: str, *, force_real: bool = False) -> None:
             }
             invalidate_observed_management_dhcp_dns()
             invalidate_appliance_apply_status_projection()
-            current_units = appliance_apply_units(db)
+            current_units = appliance_apply_units_for_selection(
+                appliance_apply_units(db), set(selected_order)
+            )
             current_by_id = {unit["id"]: unit for unit in current_units}
             missing_ids = [unit_id for unit_id in selected_order if unit_id not in current_by_id]
             if missing_ids:
@@ -16780,6 +16822,8 @@ def _submit_appliance_apply(
     if not selected_ids:
         detail = "Select at least one appliance change to submit."
         return JSONResponse({"detail": detail}, status_code=422) if wants_json else Response(detail, status_code=422, media_type="text/plain")
+    units = appliance_apply_units_for_selection(units, selected_ids)
+    unit_map = {unit["id"]: unit for unit in units}
     invalid_units = [unit for unit in units if unit["id"] in selected_ids and unit["validation_errors"]]
     if invalid_units:
         detail = "Resolve validation errors before submitting appliance changes."
