@@ -567,7 +567,11 @@ def test_appliance_settings_uses_last_applied_dns_state_for_resolver(client):
 
 
 def test_local_dns_enable_applies_listener_before_host_resolver(client):
-    """DNS-only Apply includes the resolver after successful listener activation."""
+    """DNS-only Apply includes the resolver after successful listener activation.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+    """
     from atlaso.app import ui
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import DnsSettings, Job
@@ -659,7 +663,12 @@ def test_ldap_dependency_dns_disable_includes_resolver_move(client, monkeypatch)
     real_units = ui.appliance_apply_units
 
     def units_with_ldap_dependency(db, **kwargs):
-        """Mark LDAP active so its changed DNS dependency is selected."""
+        """Mark LDAP active so its changed DNS dependency is selected.
+
+        Args:
+            db: Active database session used to build apply units.
+            **kwargs: Additional appliance apply unit options.
+        """
         units = real_units(db, **kwargs)
         unit_map = {unit["id"]: unit for unit in units}
         unit_map["ldap"]["context"]["ldap_organizations"] = [object()]

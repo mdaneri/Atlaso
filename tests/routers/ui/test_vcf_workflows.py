@@ -186,7 +186,13 @@ def test_vcf_trust_rejects_mismatched_confirmed_tls_fingerprint(client, monkeypa
 
 @pytest.mark.parametrize("stage", ["dns", "tcp", "tls", "tls_timeout"])
 def test_vcf_trust_reports_connection_failure_stage(client, monkeypatch, stage):
-    """Connection errors identify the failing stage before credentials are sent."""
+    """Connection errors identify the failing stage before credentials are sent.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+        stage: Connection stage whose failure is injected.
+    """
     import socket
     import ssl
 
@@ -201,7 +207,12 @@ def test_vcf_trust_reports_connection_failure_stage(client, monkeypatch, stage):
         ensure_root_ca_material(settings)
         db.commit()
     def fail(_address, _port):
-        """Inject an isolated pre-authentication connection failure."""
+        """Inject an isolated pre-authentication connection failure.
+
+        Args:
+            _address: Target address ignored by the injected failure.
+            _port: Target port ignored by the injected failure.
+        """
         raise {
             "dns": socket.gaierror("name unavailable"),
             "tcp": ConnectionRefusedError("refused"),
@@ -227,7 +238,11 @@ def test_vcf_trust_reports_connection_failure_stage(client, monkeypatch, stage):
 
 
 def test_tls_fingerprint_classifies_handshake_timeout(monkeypatch):
-    """Translate a connected-socket timeout into a TLS-stage failure."""
+    """Translate a connected-socket timeout into a TLS-stage failure.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace network dependencies.
+    """
     import ssl
 
     from atlaso.app.services import vcf_sddc_deployment
@@ -240,14 +255,23 @@ def test_tls_fingerprint_classifies_handshake_timeout(monkeypatch):
             return self
 
         def __exit__(self, *_args):
-            """Close the placeholder without suppressing failures."""
+            """Close the placeholder without suppressing failures.
+
+            Args:
+                *_args: Context-manager exit arguments.
+            """
             return False
 
     class TimeoutContext:
         """Fail only after TCP connection while starting the TLS handshake."""
 
         def wrap_socket(self, _socket, *, server_hostname):
-            """Raise the timeout emitted by the standard TLS wrapper."""
+            """Raise the timeout emitted by the standard TLS wrapper.
+
+            Args:
+                _socket: Connected socket placeholder.
+                server_hostname: TLS server name supplied to the wrapper.
+            """
             assert server_hostname == "target.example.test"
             raise TimeoutError("handshake timed out")
 
@@ -267,7 +291,11 @@ def test_tls_fingerprint_classifies_handshake_timeout(monkeypatch):
 
 
 def test_tls_fingerprint_classifies_handshake_reset(monkeypatch):
-    """Translate a connected-socket reset into a TLS-stage failure."""
+    """Translate a connected-socket reset into a TLS-stage failure.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace network dependencies.
+    """
     import ssl
 
     from atlaso.app.services import vcf_sddc_deployment
@@ -280,14 +308,23 @@ def test_tls_fingerprint_classifies_handshake_reset(monkeypatch):
             return self
 
         def __exit__(self, *_args):
-            """Close the placeholder without suppressing failures."""
+            """Close the placeholder without suppressing failures.
+
+            Args:
+                *_args: Context-manager exit arguments.
+            """
             return False
 
     class ResetContext:
         """Fail only after TCP connection while starting the TLS handshake."""
 
         def wrap_socket(self, _socket, *, server_hostname):
-            """Raise the reset emitted while negotiating TLS."""
+            """Raise the reset emitted while negotiating TLS.
+
+            Args:
+                _socket: Connected socket placeholder.
+                server_hostname: TLS server name supplied to the wrapper.
+            """
             assert server_hostname == "target.example.test"
             raise ConnectionResetError("connection reset by peer")
 

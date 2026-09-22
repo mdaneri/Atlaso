@@ -2261,6 +2261,11 @@ def test_management_handoff_stops_when_networkd_reconfigure_fails(monkeypatch, t
     monkeypatch.setattr(helper, "NETWORKD_MGMT_CONFIG_PATH", network_path)
 
     def fake_run(command):
+        """Return a controlled networkd command result.
+
+        Args:
+            command: Command and arguments to execute.
+        """
         commands.append(command)
         return subprocess.CompletedProcess(
             command,
@@ -7256,7 +7261,11 @@ def test_network_helper_uses_slaac_flagged_resolver_when_management_dhcp_has_no_
     monkeypatch.setattr(helper.shutil, "which", lambda command: "/usr/sbin/ip" if command == "ip" else None)
 
     def runtime_addresses(command):
-        """Expose stale SLAAC on disabled eth0 and effective SLAAC on eth1."""
+        """Expose stale SLAAC on disabled eth0 and effective SLAAC on eth1.
+
+        Args:
+            command: Address-discovery command and arguments.
+        """
         interface_name = command[-1]
         assert interface_name in {"eth0", "eth1"}
         payload = [{"addr_info": [{"local": f"2001:db8::{1 if interface_name == 'eth0' else 2}"}]}]
@@ -13194,7 +13203,11 @@ def test_management_handoff_prepares_dnssec_before_dnsmasq_validation(monkeypatc
     )
 
     def validate_dnsmasq(_path):
-        """Require trust-anchor preparation before syntax validation."""
+        """Require trust-anchor preparation before syntax validation.
+
+        Args:
+            _path: Generated dnsmasq configuration path.
+        """
         assert events == ["prepare"]
         events.append("validate")
         return subprocess.CompletedProcess(["dnsmasq", "--test"], 0, "", "")

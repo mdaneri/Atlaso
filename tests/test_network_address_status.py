@@ -289,7 +289,11 @@ def test_native_rendering_keeps_ipv6_dad_and_dhcp_lease_retention(tmp_path, monk
     from tests.test_appliance_helper import load_helper_module, network_config_text
 
     helper = load_helper_module()
-    monkeypatch.setattr(helper, "_read_existing_management_network_values", lambda: {"DNS": [], "Gateway": []})
+    monkeypatch.setattr(
+        helper,
+        "_read_existing_management_network_values",
+        lambda _interfaces: {"DNS": [], "Gateway": []},
+    )
     monkeypatch.setattr(helper.shutil, "which", lambda _command: None)
     path = tmp_path / "network.conf"
     text = network_config_text(dual_stack=True)
