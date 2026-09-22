@@ -7404,6 +7404,87 @@ def test_network_helper_prefers_effective_flagged_resolver_over_stale_management
     assert "DNS=127.0.0.1" not in rendered
 
 
+def test_network_helper_keeps_newer_flagged_resolver_after_management_lease_recovery(
+    monkeypatch,
+    tmp_path,
+):
+    """Do not revive stale dedicated-link DNS when its DHCP lease returns.
+
+    Args:
+        monkeypatch: Pytest fixture used to isolate generated and runtime state.
+        tmp_path: Temporary directory containing staged and installed network files.
+    """
+    helper = load_helper_module()
+    config_path = tmp_path / "atlaso-network.conf"
+    config_path.write_text(
+        "\n".join(
+            [
+                "[physical_interfaces]",
+                "interface=eth0",
+                "  role=management",
+                "  mode=access",
+                "  access_management_ui_enabled=false",
+                "  ipv4_method=dhcp",
+                "  ip_cidr=",
+                "  ipv6_enabled=false",
+                "  ipv6_cidr=",
+                "  admin_state=up",
+                "interface=eth1",
+                "  role=access",
+                "  mode=access",
+                "  access_management_ui_enabled=true",
+                "  ipv4_method=static",
+                "  ip_cidr=192.168.50.1/24",
+                "  ipv6_enabled=false",
+                "  ipv6_cidr=",
+                "  admin_state=up",
+                "",
+                "[vlan_interfaces]",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    networkd_dir = tmp_path / "networkd"
+    networkd_dir.mkdir()
+    management_path = networkd_dir / "00-atlaso-mgmt.network"
+    management_path.write_text(
+        "[Match]\nName=eth0\n\n[Network]\nDHCP=ipv4\nDNS=127.0.0.1\nDomains=~.\n",
+        encoding="utf-8",
+    )
+    fallback_path = networkd_dir / "10-atlaso-eth1.network"
+    fallback_path.write_text(
+        "[Match]\nName=eth1\n\n[Network]\nDNS=192.0.2.53\nDomains=corp.example\n",
+        encoding="utf-8",
+    )
+    os.utime(management_path, ns=(1_000_000_000, 1_000_000_000))
+    os.utime(fallback_path, ns=(2_000_000_000, 2_000_000_000))
+    monkeypatch.setattr(helper, "NETWORKD_CONFIG_DIR", networkd_dir)
+    monkeypatch.setattr(helper, "NETWORKD_MGMT_CONFIG_PATH", management_path)
+    monkeypatch.setattr(
+        helper.shutil,
+        "which",
+        lambda command: "/usr/sbin/ip" if command == "ip" else None,
+    )
+    monkeypatch.setattr(
+        helper,
+        "_run",
+        lambda command: subprocess.CompletedProcess(
+            command,
+            0,
+            json.dumps([{"addr_info": [{"local": "192.168.49.20"}]}]),
+            "",
+        ),
+    )
+
+    files, _links, _admin_down = helper._systemd_networkd_files(config_path)
+
+    rendered = files["00-atlaso-mgmt.network"]
+    assert "DNS=192.0.2.53" in rendered
+    assert "Domains=corp.example" in rendered
+    assert "DNS=127.0.0.1" not in rendered
+
+
 def test_network_helper_rejects_flagged_access_without_usable_address(tmp_path):
     """Verify that staged access flags require a usable non-link-local listener address.
 

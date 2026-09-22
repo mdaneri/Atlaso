@@ -17080,6 +17080,7 @@ def test_services_live_dns_dhcp_runtime_uses_dnsmasq_systemd(client, monkeypatch
     with SessionLocal() as db:
         dns_settings = db.execute(select(DnsSettings)).scalar_one()
         dns_settings.enabled = True
+        dns_settings.authoritative = True
         dhcp_settings = db.execute(select(DhcpSettings)).scalar_one()
         dhcp_settings.enabled = True
         for service_name in ("dns", "dhcp"):
@@ -17095,13 +17096,18 @@ def test_services_live_dns_dhcp_runtime_uses_dnsmasq_systemd(client, monkeypatch
     service_rows = json.loads(html.unescape(page.text.split("data-services='", 1)[1].split("'", 1)[0]))
     dns_row = next(row for row in service_rows if row["service"] == "dns")
     dhcp_row = next(row for row in service_rows if row["service"] == "dhcp")
-    assert dns_row["running"] is True
+    assert dns_row["running"] is False
     assert dns_row["enabled"] is True
     assert dhcp_row["running"] is True
     assert dhcp_row["enabled"] is True
 
     token = create_api_token(client, ["read:services"])
-    assert client.get("/api/v1/services/dns", headers={"Authorization": f"Bearer {token}"}).json()["running"] is True
+    dns_api_row = client.get(
+        "/api/v1/services/dns",
+        headers={"Authorization": f"Bearer {token}"},
+    ).json()
+    assert dns_api_row["running"] is False
+    assert dns_api_row["health"] == "degraded"
     assert client.get("/api/v1/services/dhcp", headers={"Authorization": f"Bearer {token}"}).json()["running"] is True
 
 

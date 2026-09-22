@@ -9193,11 +9193,12 @@ def _read_existing_management_network_values(
         if _valid_network_interface_name(name)
     ]
     candidates.append(NETWORKD_MGMT_CONFIG_PATH)
-    parsed_candidates: list[dict[str, list[str]]] = []
-    for path in dict.fromkeys(candidates):
+    parsed_candidates: list[tuple[int, int, dict[str, list[str]]]] = []
+    for candidate_index, path in enumerate(dict.fromkeys(candidates)):
         values = {key: list(entries) for key, entries in empty.items()}
         try:
             lines = path.read_text(encoding="utf-8").splitlines()
+            modified_ns = path.stat().st_mtime_ns
         except OSError:
             continue
         current_section = ""
@@ -9217,11 +9218,14 @@ def _read_existing_management_network_values(
                 values[key].append(value)
         if interface_names and not set(values["Name"]).intersection(interface_names):
             continue
-        parsed_candidates.append(values)
-    return next(
-        (values for values in parsed_candidates if values["DNS"] or values["Domains"]),
-        parsed_candidates[0] if parsed_candidates else empty,
-    )
+        parsed_candidates.append((modified_ns, candidate_index, values))
+    resolver_candidates = [
+        candidate for candidate in parsed_candidates
+        if candidate[2]["DNS"] or candidate[2]["Domains"]
+    ]
+    if resolver_candidates:
+        return max(resolver_candidates, key=lambda candidate: (candidate[0], candidate[1]))[2]
+    return parsed_candidates[0][2] if parsed_candidates else empty
 
 
 def _usable_management_default_gateways(networks: list[str], candidates: list[str]) -> list[str]:
