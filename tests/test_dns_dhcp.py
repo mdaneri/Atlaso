@@ -171,7 +171,7 @@ def test_dnsmasq_renderer_emits_shared_authoritative_zones_and_generated_glue():
     assert "auth-zone=atlaso.internal" in config
     assert "auth-zone=sitea.internal" in config
     assert "local=/atlaso.internal/" not in config
-    assert "auth-server=ns1.atlaso.internal" in config.splitlines()
+    assert not any(line.startswith("auth-server=") for line in config.splitlines())
     assert "bind-dynamic" in config.splitlines()
     assert "auth-soa=2026072201,hostmaster.atlaso.internal,1200,180,1209600" in config
     assert "auth-ttl=3600" in config

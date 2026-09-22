@@ -2708,7 +2708,6 @@ def _management_resolver_candidate(
         raise ValueError("management networkd config is missing a [Network] section")
     # Networkd otherwise adds DHCP/RA DNS to the explicit loopback resolver after
     # reboot or lease renewal, allowing local-zone queries to escape to upstreams.
-    network_text = "\n".join(updated)
     relevant_sections = {
         section
         for section in ("DHCP", "DHCPv4", "DHCPv6", "IPv6AcceptRA")
@@ -2723,7 +2722,12 @@ def _management_resolver_candidate(
         relevant_sections.add("DHCPv4")
     if dhcp_modes & {"yes", "true", "both", "ipv6"}:
         relevant_sections.add("DHCPv6")
-    if "ipv6acceptra=yes" in network_text.replace(" ", "").lower():
+    ra_modes = {
+        line.partition("=")[2].strip().lower()
+        for line in updated
+        if line.strip().lower().startswith("ipv6acceptra=")
+    }
+    if not ra_modes or ra_modes & {"yes", "true"}:
         relevant_sections.add("IPv6AcceptRA")
     for section in ("DHCP", "DHCPv4", "DHCPv6", "IPv6AcceptRA"):
         if section not in relevant_sections:
@@ -9385,6 +9389,12 @@ def _network_interface_has_usable_runtime_address(
         return False
     for interface in interfaces if isinstance(interfaces, list) else []:
         for item in interface.get("addr_info", []) if isinstance(interface, dict) else []:
+            flags = {
+                str(flag).strip().lower()
+                for flag in (item.get("flags") or [])
+            }
+            if item.get("tentative") or item.get("dadfailed") or flags & {"tentative", "dadfailed"}:
+                continue
             try:
                 address = ip_address(str(item.get("local") or ""))
             except ValueError:

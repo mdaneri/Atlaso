@@ -14555,16 +14555,72 @@ def test_resolver_persistence_excludes_dynamic_upstreams_and_restores_dhcp():
     assert "UseDNS=no" not in restored and "UseDNS=yes" in restored
 
 
-def test_resolver_persistence_does_not_add_dynamic_sections_to_static_network():
-    """Static management networks must not gain irrelevant DHCP or RA sections."""
+def test_resolver_persistence_blocks_default_ra_dns_on_static_ipv4_network():
+    """Default-enabled RAs must not add upstream DNS beside the local resolver."""
     helper = load_helper_module()
     original = "[Match]\nName=eth0\n[Network]\nAddress=192.0.2.10/24\nGateway=192.0.2.1\n"
     candidate = helper._management_resolver_candidate(original, ["127.0.0.1"], ["~."])
     assert "DNS=127.0.0.1" in candidate
     assert "Domains=~." in candidate
-    assert "UseDNS=" not in candidate
+    assert "UseDNS=no" in candidate
     assert "[DHCP" not in candidate
+    assert "[IPv6AcceptRA]\nUseDNS=no" in candidate
+
+
+@pytest.mark.parametrize("ra_value", ["yes", "true"])
+def test_resolver_persistence_blocks_explicitly_enabled_router_advertisement_dns(ra_value):
+    """Recognize each accepted true value when disabling RA-provided DNS."""
+    helper = load_helper_module()
+    original = (
+        "[Match]\nName=eth0\n[Network]\nAddress=192.0.2.10/24\n"
+        f"IPv6AcceptRA={ra_value}\n"
+    )
+
+    candidate = helper._management_resolver_candidate(original, ["127.0.0.1"], ["~."])
+
+    assert "[IPv6AcceptRA]\nUseDNS=no" in candidate
+
+
+@pytest.mark.parametrize("ra_value", ["no", "false"])
+def test_resolver_persistence_respects_disabled_router_advertisements(ra_value):
+    """Do not add RA resolver policy when networkd explicitly rejects RAs."""
+    helper = load_helper_module()
+    original = (
+        "[Match]\nName=eth0\n[Network]\nAddress=192.0.2.10/24\n"
+        f"IPv6AcceptRA={ra_value}\n"
+    )
+
+    candidate = helper._management_resolver_candidate(original, ["127.0.0.1"], ["~."])
+
     assert "[IPv6AcceptRA]" not in candidate
+
+
+@pytest.mark.parametrize("status", ["tentative", "dadfailed"])
+@pytest.mark.parametrize("representation", ["boolean", "flags"])
+def test_runtime_management_address_rejects_unusable_ipv6_status(
+    monkeypatch,
+    status,
+    representation,
+):
+    """Ignore tentative and duplicate IPv6 addresses in either ip JSON form."""
+    helper = load_helper_module()
+    monkeypatch.setattr(helper.shutil, "which", lambda command: "/usr/sbin/ip" if command == "ip" else None)
+    address = {"local": "2001:db8::10"}
+    address[status if representation == "boolean" else "flags"] = (
+        True if representation == "boolean" else [status]
+    )
+    payload = json.dumps([{"addr_info": [address]}])
+    monkeypatch.setattr(
+        helper,
+        "_run",
+        lambda command: subprocess.CompletedProcess(command, 0, payload, ""),
+    )
+
+    assert not helper._network_interface_has_usable_runtime_address(
+        "eth0",
+        ipv4_enabled=False,
+        ipv6_enabled=True,
+    )
 
 
 def test_appliance_settings_helper_applies_local_resolver_without_timesyncd(monkeypatch, tmp_path):

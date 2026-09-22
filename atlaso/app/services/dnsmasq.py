@@ -1491,9 +1491,6 @@ def render_dnsmasq_config(
             lines.append(f"local=/{domain}/")
     if dns_settings.authoritative:
         server = authoritative_server_name(dns_settings)
-        # The ordinary listeners serve both local zones and upstream recursion.
-        # An interface-qualified auth-server makes that interface authoritative-only.
-        lines.append(f"auth-server={server}")
         lines.append(
             "auth-soa="
             f"{dns_settings.authoritative_serial},{authoritative_contact_name(dns_settings)},"
