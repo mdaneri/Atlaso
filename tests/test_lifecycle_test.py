@@ -393,6 +393,64 @@ def test_appliance_console_geometry_requires_deployed_framebuffer_and_tty1(monke
         lifecycle.appliance_console_geometry(argparse.Namespace(appliance_ssh_host="192.0.2.10"))
 
 
+def test_authentication_lifetime_uses_appliance_issuance_clock(monkeypatch):
+    """Verify token policy from server timestamps when host and appliance clocks differ.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace lifecycle dependencies.
+    """
+    lifecycle = load_lifecycle_module()
+    policy = {"browser_session_idle_timeout_minutes": 30, "api_token_max_lifetime_days": 90}
+
+    class PolicyClient:
+        """Serve policy reads and immediate autosave writes."""
+
+        def json_request(self, method, path):  # type: ignore[no-untyped-def]  # Fake mirrors the lifecycle HTTP client.
+            """Return the currently persisted policy."""
+            assert method == "GET" and path == "/api/v1/settings"
+            return policy.copy()
+
+        def request(self, method, path, *, form=None, headers=None):  # type: ignore[no-untyped-def]  # Fake mirrors the lifecycle HTTP client.
+            """Serve the settings page and autosave endpoint."""
+            if method == "GET":
+                assert path == "/settings"
+                return 200, "settings", {}
+            assert method == "POST" and path == "/settings/authentication-lifetimes"
+            assert form and headers == {"X-Atlaso-Autosave": "1"}
+            policy["browser_session_idle_timeout_minutes"] = form["browser_session_idle_timeout_minutes"]
+            policy["api_token_max_lifetime_days"] = form["api_token_max_lifetime_days"]
+            return 200, "saved", {}
+
+    class IssuanceClient:
+        """Serve a seven-day token issued by an appliance clock one day ahead."""
+
+        def __init__(self, base_url):  # type: ignore[no-untyped-def]  # Fake mirrors the lifecycle HTTP client.
+            """Retain the selected appliance URL."""
+            assert base_url == "https://192.0.2.10"
+
+        def json_request(self, method, path, *, json_body):  # type: ignore[no-untyped-def]  # Fake mirrors the lifecycle HTTP client.
+            """Return server-side creation and expiration timestamps."""
+            assert method == "POST" and path.startswith("/api/v1/auth/login?")
+            assert json_body["scopes"] == ["read:dashboard"]
+            return {"token": {"created_at": "2026-09-23T00:00:00+00:00", "expires_at": "2026-09-30T00:00:00+00:00"}}
+
+        def request(self, method, path, *, json_body):  # type: ignore[no-untyped-def]  # Fake mirrors the lifecycle HTTP client.
+            """Reject an explicit expiry beyond the seven-day policy."""
+            assert method == "POST" and path.startswith("/api/v1/auth/login?")
+            assert json_body["expires_at"] == "2026-10-01T00:00:00+00:00"
+            return 422, "configured maximum lifetime of 7 days", {}
+
+    monkeypatch.setattr(lifecycle, "authenticated_ui_client", lambda client, args: PolicyClient())
+    monkeypatch.setattr(lifecycle, "extract_csrf", lambda page: "csrf")
+    monkeypatch.setattr(lifecycle, "HttpClient", IssuanceClient)
+    evidence = lifecycle.authentication_lifetime_policy_check(
+        argparse.Namespace(base_url="https://192.0.2.10", username="admin", password="test"),
+        argparse.Namespace(username="admin", password="test"),
+    )
+    assert evidence["issued_lifetime_seconds"] == 7 * 24 * 60 * 60
+    assert policy == {"browser_session_idle_timeout_minutes": 30, "api_token_max_lifetime_days": 90}
+
+
 def test_reboot_appliance_waits_for_new_boot_and_host_facing_readiness(monkeypatch):
     """Verify reboot coverage requires a changed boot ID and recovered nginx front door.
 

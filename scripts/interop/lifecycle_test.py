@@ -930,7 +930,6 @@ def authentication_lifetime_policy_check(
                 {"username": args.username, "password": args.password}
             )
         )
-        issued_at = datetime.now(timezone.utc)
         created = issuance_client.json_request(
             "POST",
             login_path,
@@ -939,11 +938,14 @@ def authentication_lifetime_policy_check(
                 "scopes": ["read:dashboard"],
             },
         )
+        issued_at = datetime.fromisoformat(created["token"]["created_at"])
         expires_at = datetime.fromisoformat(created["token"]["expires_at"])
+        if issued_at.tzinfo is None:
+            issued_at = issued_at.replace(tzinfo=timezone.utc)
         if expires_at.tzinfo is None:
             expires_at = expires_at.replace(tzinfo=timezone.utc)
         lifetime = expires_at - issued_at
-        if not timedelta(days=7) <= lifetime <= timedelta(days=7, seconds=30):
+        if not timedelta(days=7) <= lifetime <= timedelta(days=7, seconds=1):
             raise LifecycleError("Omitted API-token expiry did not use the deployed seven-day policy.")
 
         too_late = (issued_at + timedelta(days=8)).isoformat()
