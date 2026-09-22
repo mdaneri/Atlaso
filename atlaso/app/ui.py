@@ -5744,6 +5744,8 @@ def routes_wan_context(db: Session) -> dict:
         source_groups=source_groups,
         settings=feature_settings,
         applied_network_ingress=wan_applied_network_ingress(db),
+        desired_network_ingress=wan_network_ingress_from_preview(render_network_config(
+            interfaces=list(db.scalars(select(PhysicalInterface))), vlans=list(db.scalars(select(VlanInterface))))),
     )
     return {
         "routes": routes,
@@ -9867,6 +9869,15 @@ def wan_applied_network_ingress(db: Session) -> list[str] | None:
     preview = str(baseline.get("config_preview") or "")
     if "# Network runtime revision: exact-source-routing-v1." not in preview.splitlines():
         return []
+    return wan_network_ingress_from_preview(preview)
+
+
+def wan_network_ingress_from_preview(preview: str) -> list[str]:
+    """Match the helper's ingress ownership predicate on rendered Network rows.
+
+    Args:
+        preview: Rendered applied or desired Network configuration.
+    """
     rows = network_interface_entries(preview)
     return sorted({row["name"] for row in rows
                    if row.get("role") in {"access", "route"}
@@ -11082,6 +11093,7 @@ def appliance_apply_units(db: Session, *, reconcile: bool = True) -> list[dict[s
         previous_config_preview=str((wan_baseline or {}).get("config_preview") or ""),
         settings=wan["routes_wan_settings"],
         applied_network_ingress=wan_applied_network_ingress(db),
+        desired_network_ingress=wan_network_ingress_from_preview(network["network_config_preview"]),
     )
     wan_summary = [
         f"{len(wan['routes'])} routes",

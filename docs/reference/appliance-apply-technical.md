@@ -265,7 +265,9 @@ Before starting either Network transaction, a read-only ownership check rejects 
 local-source priority window. An existing conflict is reported before network files, VLANs, or addresses change.
 WAN review shows ingress commands for the current applied Network baseline, rather than pending interface edits.
 When Network and WAN are applied together, WAN uses the Network intent established by the successful Network step.
-On a fresh appliance without a Network baseline, review shows projected ingress rules from desired interfaces and
+On a fresh appliance without a Network baseline, review derives projected ingress rules from the staged Network
+configuration: Access/Route links that are not trunks or administratively down, including dynamic links without an
+address yet. It excludes unused and management links, matching runtime eligibility, and
 labels them as requiring Network to be applied first. Initial WAN submission includes Network even when only WAN
 is selected; dependency validation and protected management handoff still run before submission. Existing modern and
 pre-migration baselines do not pull unrelated pending Network edits into WAN-only Apply.

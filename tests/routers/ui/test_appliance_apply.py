@@ -120,9 +120,8 @@ def test_wan_review_uses_applied_network_ingress_with_pending_network(client, ba
         for preview in (page["wan_config_preview"], wan["config_preview"]):
             commands = [line for line in preview.splitlines() if "rule add iif " in line]
             if baseline_kind == "missing":
-                names = {target["name"] for target in page["wan_all_targets"]
-                         if target.get("routing_domain") != "management"}
-                assert names
+                network = next(unit for unit in units if unit["id"] == "network")
+                names = set(ui.wan_network_ingress_from_preview(network["config_preview"]))
                 assert len(commands) == 4 * len(names)
                 assert {line.split(" iif ", 1)[1].split()[0] for line in commands} == names
                 assert "Initial WAN Apply automatically includes Network first" in preview
@@ -134,6 +133,60 @@ def test_wan_review_uses_applied_network_ingress_with_pending_network(client, ba
                 assert "If Network is applied first in the same task" in preview
                 if baseline_kind == "legacy":
                     assert "pre-migration baselines retain legacy WAN handling" in preview
+
+
+def test_fresh_wan_ingress_matches_helper_for_mixed_network_links(client, tmp_path):
+    """Project active addressless links without admitting down or unused targets.
+
+    Args:
+        client: Isolated application database fixture.
+        tmp_path: Owned test directory for the helper's read-only Network input.
+    """
+    from atlaso.app import ui
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import PhysicalInterface, VlanInterface
+    from atlaso.app.services.routes_wan import save_routes_wan_settings
+    from tests.test_appliance_helper import load_helper_module
+
+    with SessionLocal() as db:
+        for interface in db.query(PhysicalInterface):
+            interface.role = "unused"
+        for vlan in db.query(VlanInterface):
+            vlan.enabled = False
+        for name, role, mode, state, address in [
+            ("active", "access", "access", "up", "192.0.2.10/24"),
+            ("dynamic", "route", "access", "up", ""),
+            ("down", "access", "access", "down", "192.0.3.10/24"),
+            ("unused", "unused", "access", "up", "192.0.4.10/24"),
+            ("trunk", "access", "trunk", "up", ""),
+            ("mgmt", "management", "access", "up", "192.0.5.10/24"),
+        ]:
+            db.add(PhysicalInterface(name=name, role=role, mode=mode, admin_state=state,
+                                     mac_address="02:00:00:00:00:01", driver="vmxnet3", speed="1 Gbps",
+                                     ipv4_method="static" if address else "dhcp", ip_cidr=address,
+                                     ipv6_enabled=True))
+        db.add(VlanInterface(name="trunk.42", parent_interface="trunk", vlan_id=42,
+                             role="route", enabled=True, ip_cidr="", ipv6_cidr=""))
+        db.add(VlanInterface(name="trunk.43", parent_interface="trunk", vlan_id=43,
+                             role="access", enabled=False, ip_cidr="192.0.6.10/24"))
+        baselines = ui.load_appliance_apply_baselines(db)
+        baselines.pop("network", None)
+        ui.save_appliance_apply_baselines(db, baselines)
+        save_routes_wan_settings(db, routing_enabled=True, nat_enabled=False, wan_simulation_enabled=False)
+        db.commit()
+        page = ui.routes_wan_context(db)
+        units = ui.appliance_apply_units(db)
+        network = next(unit for unit in units if unit["id"] == "network")
+        config_path = tmp_path / "network.conf"
+        config_path.write_text(network["config_preview"], encoding="utf-8")
+        expected = load_helper_module()._route_domain_ingress_interfaces(config_path)
+        assert expected == ["active", "dynamic", "trunk.42"]
+        wan = next(unit for unit in units if unit["id"] == "wan")
+        for preview in (page["wan_config_preview"], wan["config_preview"]):
+            commands = [line for line in preview.splitlines() if "rule add iif " in line]
+            assert len(commands) == 4 * len(expected)
+            assert {line.split(" iif ", 1)[1].split()[0] for line in commands} == set(expected)
+            assert "Initial WAN Apply automatically includes Network first" in preview
 
 
 @pytest.mark.parametrize("apply_succeeds", [False, True])

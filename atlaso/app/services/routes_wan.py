@@ -985,6 +985,7 @@ def render_wan_config(
     previous_config_preview: str = "",
     settings: RoutesWanSettings | None = None,
     applied_network_ingress: list[str] | None = None,
+    desired_network_ingress: list[str] | None = None,
 ) -> str:
     """Render wan config.
 
@@ -999,6 +1000,7 @@ def render_wan_config(
         previous_config_preview: Last-applied configuration used to retire prior host defaults.
         settings: Saved global activation state. Omission preserves the legacy active behavior.
         applied_network_ingress: Applied lab interfaces; None projects targets for initial Network-first Apply.
+        desired_network_ingress: Fresh Network-first projection from rendered desired Network intent.
 
     Returns:
         The rendered wan config.
@@ -1182,7 +1184,8 @@ def render_wan_config(
                 lines.append("# No modern ingress selectors are available from this baseline; pre-migration baselines retain legacy WAN handling.")
         else:
             lines.append("# Initial WAN Apply automatically includes Network first; no applied Network baseline is available.")
-        ingress_names = sorted(set(applied_network_ingress)) if applied_network_ingress is not None else sorted(
+        ingress_projection = applied_network_ingress if applied_network_ingress is not None else desired_network_ingress
+        ingress_names = sorted(set(ingress_projection)) if ingress_projection is not None else sorted(
             {target["name"] for target in targets if target.get("routing_domain") != "management"})
         # The helper installs terminal guards before introducing lab lookups.
         for name in ingress_names:
