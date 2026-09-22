@@ -12723,7 +12723,9 @@ function initializeHelpTooltips() {
     if (button.hasAttribute("aria-label")) return;
     const label = button.closest(".field-label") || button.parentElement;
     const heading = label?.querySelector(":scope > span:first-child");
-    const name = heading?.textContent?.trim() || Array.from(label?.childNodes || [])
+    const labeledControl = heading?.querySelector("[aria-label], [title]");
+    const name = labeledControl?.getAttribute("aria-label") || labeledControl?.getAttribute("title")
+      || heading?.textContent?.trim() || Array.from(label?.childNodes || [])
       .filter((node) => node !== button)
       .map((node) => node instanceof Element
         ? node.getAttribute("aria-label") || node.getAttribute("title") || node.textContent || ""

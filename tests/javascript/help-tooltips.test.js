@@ -51,7 +51,17 @@ class Element {
     for (let current = other; current; current = current.parent) if (current === this) return true;
     return false;
   }
-  querySelector(selector) { return selector === ":scope > span:first-child" ? this.children.find((child) => child.tag === "span") : null; }
+  querySelector(selector) {
+    if (selector === ":scope > span:first-child") return this.children.find((child) => child.tag === "span") || null;
+    if (selector === "[aria-label], [title]") {
+      for (const child of this.children) {
+        if (child.hasAttribute("aria-label") || child.hasAttribute("title")) return child;
+        const nested = child.querySelector(selector);
+        if (nested) return nested;
+      }
+    }
+    return null;
+  }
   querySelectorAll(selector) {
     const found = [];
     for (const child of this.children) {
@@ -162,4 +172,17 @@ test("icon-only sibling actions name their help from the action's accessible lab
   document.activeElement = help;
   document.emit("focusin", event(help));
   assert.equal(help.getAttribute("aria-label"), "Help for Synchronize repositories");
+});
+
+test("zoom help uses the nested input's accessible label instead of its percent suffix", () => {
+  const { body, document, event } = fixture();
+  const label = new Element("span"); label.className = "field-label";
+  const display = new Element("span"); display.textContent = "%";
+  const input = new Element("input"); input.setAttribute("aria-label", "Chart zoom percentage");
+  display.append(input);
+  const help = new HTMLButtonElement(); help.dataset.help = "Zoom details";
+  label.append(display); label.append(help); body.append(label);
+  document.activeElement = help;
+  document.emit("focusin", event(help));
+  assert.equal(help.getAttribute("aria-label"), "Help for Chart zoom percentage");
 });
