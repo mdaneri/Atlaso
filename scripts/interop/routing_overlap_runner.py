@@ -166,6 +166,48 @@ def write_evidence(path: Path, value: dict[str, Any]) -> None:
         os.fsync(stream.fileno())
 
 
+def run_client_phase(fixture: FixtureSession, phase: str) -> dict[str, dict[str, Any]]:
+    """Start or stop admitted clients without leaving a known started peer behind.
+
+    Args:
+        fixture: Session bound to the canonical task-owned clients.
+        phase: Bootstrap or stop phase selected by the wrapper.
+
+    Returns:
+        Verified per-client results for successful phase operations.
+    """
+    states: dict[str, dict[str, Any]] = {}
+    if phase == "bootstrap":
+        try:
+            for role in ("client-b", "client-a"):
+                states[role] = fixture.action(role, "start")
+        except Exception:
+            # Only a validated start receipt proves ownership of a running
+            # controller. A failed start might have run remotely, but guessing
+            # its state is not authority to mutate that guest.
+            rollback_failed = False
+            for role in reversed(states):
+                try:
+                    fixture.action(role, "stop")
+                except Exception:  # noqa: BLE001 - continue rollback after any controller failure
+                    rollback_failed = True
+            if rollback_failed:
+                raise ValueError("fixture bootstrap rollback failed; preserve owned clients") from None
+            raise
+    elif phase == "stop":
+        failed = False
+        for role in ("client-a", "client-b"):
+            try:
+                states[role] = fixture.action(role, "stop")
+            except Exception:  # noqa: BLE001 - both owned guests must be attempted
+                failed = True
+        if failed:
+            raise ValueError("fixture client stop failed; preserve owned clients")
+    else:
+        raise ValueError("unsupported fixture phase")
+    return states
+
+
 def main() -> int:
     """Consume the canonical wrapper's bindings and credential stdin envelope."""
     parser = argparse.ArgumentParser(description=__doc__)
@@ -189,9 +231,7 @@ def main() -> int:
     fixture = FixtureSession(json.loads(raw), owner, args.client_user, secrets["ssh_password"])
     try:
         if args.action in {"bootstrap", "stop"}:
-            states = {}
-            for role in (("client-b", "client-a") if args.action == "bootstrap" else ("client-a", "client-b")):
-                states[role] = fixture.action(role, "start" if args.action == "bootstrap" else "stop")
+            states = run_client_phase(fixture, args.action)
             evidence = {"schema": 1, "phase": args.action, "topology_sha256": fixture.digest, "states": states}
         else:
             if args.trust is None:

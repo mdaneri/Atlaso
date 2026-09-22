@@ -527,6 +527,7 @@ from atlaso.app.services.routes_wan import (
     route_to_dict,
     routing_rule_to_dict,
     validate_wan_state,
+    wan_config_target_entries,
     wan_policy_to_dict,
 )
 from atlaso.app.services.service_dns_defaults import (
@@ -9913,6 +9914,38 @@ def wan_network_owned_targets(db: Session, *, network_preview: str | None = None
     return targets
 
 
+def wan_apply_comparison_preview(preview: str, *, network_projection_only: bool) -> str:
+    """Exclude Network-owned render projections from WAN pending detection.
+
+    Args:
+        preview: Applied or desired WAN configuration rendering.
+        network_projection_only: Whether changed targets are unreferenced by WAN rows.
+
+    Returns:
+        Stable WAN intent while retaining commands that may need WAN Apply.
+    """
+    excluded_comments = (
+        "# Initial WAN Apply automatically includes Network first",
+        "# Ingress commands below reflect the last-applied Network baseline",
+        "# Ingress commands below reflect the candidate Network intent",
+        "# If Network is applied first in the same task",
+        "# No modern ingress selectors are available from this baseline",
+    )
+    lines: list[str] = []
+    section = ""
+    for line in preview.splitlines():
+        if line.startswith("[") and line.endswith("]"):
+            section = line
+        if network_projection_only and section in {"[targets]", "[retired_targets]"} and not line.startswith("["):
+            continue
+        if line.startswith(excluded_comments):
+            continue
+        if network_projection_only and (line.startswith("ip rule add iif ") or line.startswith("ip -6 rule add iif ")):
+            continue
+        lines.append(line)
+    return "\n".join(lines)
+
+
 def network_management_paths(config_preview: str) -> list[dict[str, str]]:
     """Return every effective management browser path in a network preview.
 
@@ -11143,6 +11176,40 @@ def appliance_apply_units(db: Session, *, reconcile: bool = True) -> list[dict[s
         config_preview=wan["wan_config_preview"],
         baseline=wan_baseline,
     )
+    previous_targets = {
+        row["name"]: row for row in wan_config_target_entries(
+            str((wan_baseline or {}).get("config_preview") or "")
+        )
+    }
+    current_targets = {
+        row["name"]: row for row in wan_config_target_entries(wan_unit["config_preview"])
+    }
+    changed_target_names = {
+        name for name in previous_targets.keys() | current_targets.keys()
+        if previous_targets.get(name) != current_targets.get(name)
+    }
+    wan_referenced_targets = {
+        *(route.interface_name for route in wan["routes"]),
+        *(rule.source_interface for rule in wan["routing_rules"]),
+        *(rule.destination_interface for rule in wan["routing_rules"]),
+        *(rule.outbound_interface for rule in wan["nat_rules"]),
+    }
+    network_projection_only = changed_target_names.isdisjoint(wan_referenced_targets)
+    if (
+        wan_baseline is not None
+        and wan_unit["changed"]
+        and wan_unit["summary"] == wan_baseline.get("summary")
+        and wan_unit["config_path"] == wan_baseline.get("config_path")
+        and wan_apply_comparison_preview(
+            wan_unit["config_preview"],
+            network_projection_only=network_projection_only,
+        ) == wan_apply_comparison_preview(
+            str(wan_baseline.get("config_preview") or ""),
+            network_projection_only=network_projection_only,
+        )
+    ):
+        wan_unit["changed"] = False
+        wan_unit["config_diff"] = ""
     # A combined Apply publishes Network before WAN. Keep the applied-Network
     # rendering for WAN-only Apply, and capture the candidate rendering for the
     # review selection, submit snapshot, and execution snapshot.
@@ -11668,7 +11735,15 @@ def appliance_apply_context(db: Session) -> dict[str, Any]:
 def appliance_apply_units_for_selection(
     units: list[dict[str, Any]], selected_ids: set[str]
 ) -> list[dict[str, Any]]:
-    """Use the Network candidate WAN snapshot only when both units apply."""
+    """Use the Network candidate WAN snapshot only when both units apply.
+
+    Args:
+        units: Rendered appliance Apply units and WAN variants.
+        selected_ids: Final expanded set of units selected for this task.
+
+    Returns:
+        Units with the WAN snapshot matching the selected Network state.
+    """
     if not {"network", "wan"}.issubset(selected_ids):
         return units
     return [

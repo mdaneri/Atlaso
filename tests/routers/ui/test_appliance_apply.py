@@ -1827,7 +1827,13 @@ def test_appliance_apply_review_returns_management_address_connection_warning(cl
 
 @pytest.mark.parametrize("network_selected", [False, True])
 def test_wan_apply_preview_uses_selected_network_ownership(client, monkeypatch, network_selected):
-    """Review and submitted WAN snapshot agree on applied versus candidate Network."""
+    """Review and submitted WAN snapshot agree on applied versus candidate Network.
+
+    Args:
+        client: Isolated HTTP application fixture.
+        monkeypatch: Keep the submitted task pending for snapshot inspection.
+        network_selected: Whether Network is explicitly selected in the request.
+    """
     from sqlalchemy import select
 
     from atlaso.app import ui
@@ -1876,6 +1882,42 @@ def test_wan_apply_preview_uses_selected_network_ownership(client, monkeypatch, 
     captured = next(unit for unit in payload["captured_units"] if unit["unit_id"] == "wan")
     assert captured["snapshot_hash"] == expected["snapshot_hash"]
     assert captured["config_preview"] == expected["config_preview"]
+
+
+def test_network_only_ingress_reconciliation_does_not_leave_wan_pending(client):
+    """Network-owned ingress changes do not create an independent WAN Apply.
+
+    Args:
+        client: Isolated HTTP application fixture.
+    """
+    from sqlalchemy import select
+
+    from atlaso.app import ui
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import PhysicalInterface
+    from atlaso.app.services.routes_wan import save_routes_wan_settings
+
+    with SessionLocal() as db:
+        save_routes_wan_settings(db, routing_enabled=True, nat_enabled=False, wan_simulation_enabled=False)
+        interface = db.scalar(select(PhysicalInterface).where(PhysicalInterface.name == "eth2"))
+        assert interface is not None
+        interface.role = "access"
+        interface.mode = "access"
+        interface.admin_state = "down"
+        db.commit()
+        units = ui.appliance_apply_units(db)
+        applied = ui.appliance_apply_units_for_selection(
+            units, {unit["id"] for unit in units}
+        )
+        ui.update_appliance_apply_baselines(db, applied, {unit["id"] for unit in applied})
+        interface.admin_state = "up"
+        db.commit()
+        before = ui.appliance_apply_units(db)
+        assert next(unit for unit in before if unit["id"] == "network")["changed"]
+        ui.update_appliance_apply_baselines(db, before, {"network"})
+        after = ui.appliance_apply_units(db)
+        assert not next(unit for unit in after if unit["id"] == "network")["changed"]
+        assert not next(unit for unit in after if unit["id"] == "wan")["changed"]
 
 
 def test_management_move_forces_partial_dependency_selection_into_handoff(client):

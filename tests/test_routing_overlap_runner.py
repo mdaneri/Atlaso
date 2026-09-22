@@ -6,7 +6,11 @@ import json
 
 import pytest
 
-from scripts.interop.routing_overlap_runner import FixtureSession, bounded_json_command
+from scripts.interop.routing_overlap_runner import (
+    FixtureSession,
+    bounded_json_command,
+    run_client_phase,
+)
 from tests import test_routing_overlap_lifecycle
 
 
@@ -64,6 +68,83 @@ def test_session_admission_is_side_effect_free(descriptor):
     assert not session.clients
     assert len(session.digest) == 64
     session.close()
+
+
+def test_bootstrap_rolls_back_only_client_with_validated_start_receipt():
+    """A missing client-a receipt still stops already started client-b."""
+    from unittest.mock import Mock
+
+    fixture = Mock()
+
+    def action(role, operation):
+        """Return a receipt except for the client-a start.
+
+        Args:
+            role: Client role selected by the phase.
+            operation: Requested client controller operation.
+        """
+        if (role, operation) == ('client-a', 'start'):
+            raise TimeoutError('missing receipt')
+        return {'role': role, 'operation': operation}
+
+    fixture.action.side_effect = action
+    with pytest.raises(TimeoutError, match='missing receipt'):
+        run_client_phase(fixture, 'bootstrap')
+    assert fixture.action.call_args_list == [
+        (('client-b', 'start'),), (('client-a', 'start'),), (('client-b', 'stop'),),
+    ]
+
+
+def test_stop_attempts_other_client_after_first_failure():
+    """A failed client-a stop cannot prevent client-b cleanup."""
+    from unittest.mock import Mock
+
+    fixture = Mock()
+
+    def action(role, operation):
+        """Fail client-a stop while permitting client-b stop.
+
+        Args:
+            role: Client role selected by the phase.
+            operation: Requested client controller operation.
+        """
+        if role == 'client-a':
+            raise TimeoutError('unavailable')
+        return {'role': role, 'operation': operation}
+
+    fixture.action.side_effect = action
+    with pytest.raises(ValueError, match='fixture client stop failed'):
+        run_client_phase(fixture, 'stop')
+    assert fixture.action.call_args_list == [
+        (('client-a', 'stop'),), (('client-b', 'stop'),),
+    ]
+
+
+def test_bootstrap_reports_failed_rollback_without_trusting_missing_receipt():
+    """A failed rollback stays explicit and never targets the uncertain peer."""
+    from unittest.mock import Mock
+
+    fixture = Mock()
+
+    def action(role, operation):
+        """Fail the uncertain start and the proven peer rollback.
+
+        Args:
+            role: Client role selected by the phase.
+            operation: Requested client controller operation.
+        """
+        if (role, operation) == ('client-a', 'start'):
+            raise TimeoutError('missing receipt')
+        if (role, operation) == ('client-b', 'stop'):
+            raise TimeoutError('stop unavailable')
+        return {'role': role, 'operation': operation}
+
+    fixture.action.side_effect = action
+    with pytest.raises(ValueError, match='fixture bootstrap rollback failed'):
+        run_client_phase(fixture, 'bootstrap')
+    assert fixture.action.call_args_list == [
+        (('client-b', 'start'),), (('client-a', 'start'),), (('client-b', 'stop'),),
+    ]
 
 
 class Channel:
