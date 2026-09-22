@@ -9161,7 +9161,7 @@ def _systemd_networkd_files(path: Path) -> tuple[dict[str, str], list[str], list
         and row.get("access_management_ui_enabled", "false").strip().lower() == "true"
         and (
             _network_row_has_usable_management_address(row)
-            or _network_interface_has_usable_runtime_address(row.get("name", ""))
+            or _network_row_has_usable_runtime_management_address(row)
         )
     ]
     flagged_management_names.extend(
@@ -9176,7 +9176,7 @@ def _systemd_networkd_files(path: Path) -> tuple[dict[str, str], list[str], list
         management
         and (
             _network_row_has_usable_management_address(management)
-            or _network_interface_has_usable_runtime_address(str(management_name))
+            or _network_row_has_usable_runtime_management_address(management)
         )
     )
     management_candidates = (
@@ -9357,11 +9357,18 @@ def _network_row_has_usable_management_address(row: dict[str, str]) -> bool:
     return False
 
 
-def _network_interface_has_usable_runtime_address(interface_name: str) -> bool:
+def _network_interface_has_usable_runtime_address(
+    interface_name: str,
+    *,
+    ipv4_enabled: bool,
+    ipv6_enabled: bool,
+) -> bool:
     """Return whether a live interface currently owns a usable address.
 
     Args:
         interface_name: Host network-interface name inspected at runtime.
+        ipv4_enabled: Whether candidate state accepts observed IPv4 addresses.
+        ipv6_enabled: Whether candidate state accepts observed IPv6 addresses.
     """
     if not _valid_network_interface_name(interface_name) or shutil.which("ip") is None:
         return False
@@ -9381,6 +9388,10 @@ def _network_interface_has_usable_runtime_address(interface_name: str) -> bool:
                 address = ip_address(str(item.get("local") or ""))
             except ValueError:
                 continue
+            if (address.version == 4 and not ipv4_enabled) or (
+                address.version == 6 and not ipv6_enabled
+            ):
+                continue
             if not (
                 address.is_link_local
                 or address.is_loopback
@@ -9389,6 +9400,26 @@ def _network_interface_has_usable_runtime_address(interface_name: str) -> bool:
             ):
                 return True
     return False
+
+
+def _network_row_has_usable_runtime_management_address(row: dict[str, str]) -> bool:
+    """Inspect only address families that candidate dynamic state keeps enabled.
+
+    Args:
+        row: Parsed staged network interface values.
+    """
+    ipv4_dynamic = (row.get("ipv4_method") or "static").strip().lower() == "dhcp"
+    ipv6_dynamic = (
+        row.get("ipv6_enabled", "false").strip().lower() == "true"
+        and not row.get("ipv6_cidr", "").strip()
+    )
+    if not (ipv4_dynamic or ipv6_dynamic):
+        return False
+    return _network_interface_has_usable_runtime_address(
+        row.get("name", ""),
+        ipv4_enabled=ipv4_dynamic,
+        ipv6_enabled=ipv6_dynamic,
+    )
 
 
 def _network_config_errors(path: Path) -> list[str]:
@@ -9421,7 +9452,7 @@ def _network_config_errors(path: Path) -> list[str]:
             and interface.get("mode") == "access"
             and not (
                 _network_row_has_usable_management_address(interface)
-                or _network_interface_has_usable_runtime_address(name)
+                or _network_row_has_usable_runtime_management_address(interface)
             )
         ):
             errors.append(

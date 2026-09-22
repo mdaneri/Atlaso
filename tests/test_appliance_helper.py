@@ -7253,11 +7253,16 @@ def test_network_helper_uses_slaac_flagged_resolver_when_management_dhcp_has_no_
         "NETWORKD_MGMT_CONFIG_PATH",
         networkd_dir / "00-atlaso-mgmt.network",
     )
-    monkeypatch.setattr(
-        helper,
-        "_network_interface_has_usable_runtime_address",
-        lambda name: name == "eth1",
-    )
+    monkeypatch.setattr(helper.shutil, "which", lambda command: "/usr/sbin/ip" if command == "ip" else None)
+
+    def runtime_addresses(command):
+        """Expose stale SLAAC on disabled eth0 and effective SLAAC on eth1."""
+        interface_name = command[-1]
+        assert interface_name in {"eth0", "eth1"}
+        payload = [{"addr_info": [{"local": f"2001:db8::{1 if interface_name == 'eth0' else 2}"}]}]
+        return subprocess.CompletedProcess(command, 0, json.dumps(payload), "")
+
+    monkeypatch.setattr(helper, "_run", runtime_addresses)
 
     assert helper._network_config_errors(config_path) == []
     files, _links, _admin_down = helper._systemd_networkd_files(config_path)

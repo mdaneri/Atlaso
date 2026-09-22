@@ -1417,6 +1417,7 @@ def validate_dhcp_scope(scope: DhcpScope) -> tuple[list[str], object | None]:
         if address and (
             address.is_loopback or address.is_unspecified or address.is_multicast
             or address.is_link_local or address.is_reserved
+            or (address.version == 4 and address in ip_network("0.0.0.0/8"))
             or (network and address == network.network_address)
             or (network and address.version == 4 and address == network.broadcast_address)
         ):

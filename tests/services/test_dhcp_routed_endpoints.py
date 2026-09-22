@@ -29,7 +29,7 @@ def test_scope_routed_service_endpoints_are_rendered(family, gateway, prefix, le
     assert validate_dhcp_scope(scope)[0]
 
 
-@pytest.mark.parametrize("endpoint", ["bad", "::1", "2001:db8::1", "127.0.0.1", "0.0.0.0",
+@pytest.mark.parametrize("endpoint", ["bad", "::1", "2001:db8::1", "127.0.0.1", "0.0.0.0", "0.0.0.1",
                                        "224.0.0.1", "255.255.255.255", "169.254.1.2", "192.168.4.255"])
 @pytest.mark.parametrize("field", ["dns_server", "ntp_server"])
 def test_scope_rejects_invalid_service_endpoint(field, endpoint):
