@@ -2542,13 +2542,25 @@ def test_management_handoff_exception_reconciliation_selects_transaction_boundar
     assert adapter.calls == ["recover", "acknowledge:job-after-commit"]
 
 
-def test_appliance_apply_json_submission_returns_master_with_live_child_status(client):
+@pytest.mark.parametrize("existing_baseline", [False, True])
+def test_appliance_apply_json_submission_returns_master_with_live_child_status(client, existing_baseline):
     """Verify JSON submission returns the master and live child status.
 
     Args:
         client: HTTP test client used to exercise the Atlaso application.
+        existing_baseline: Whether Network has already been successfully applied.
     """
+    from atlaso.app import ui
+    from atlaso.app.database import SessionLocal
+
     login(client)
+    if existing_baseline:
+        with SessionLocal() as db:
+            ui.update_appliance_apply_baselines(db, ui.appliance_apply_units(db), {"network"})
+            db.commit()
+    expected_components = ["wan", "nat"] if existing_baseline else [
+        "appliance_settings", "network", "firewall", "wan", "nat", "ca", "public_services",
+    ]
     page = client.get("/dashboard")
     csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
 
@@ -2564,7 +2576,7 @@ def test_appliance_apply_json_submission_returns_master_with_live_child_status(c
     assert payload["status_url"] == f"/tasks/{payload['job_id']}/status"
     assert payload["task"]["type"] == "appliance-apply"
     assert [(step["component_key"], step["status"]) for step in payload["task"]["_children"]] == [
-        ("wan", "pending"), ("nat", "pending")
+        (component, "pending") for component in expected_components
     ]
 
     status_response = client.get(payload["status_url"])
@@ -2572,7 +2584,7 @@ def test_appliance_apply_json_submission_returns_master_with_live_child_status(c
     task = status_response.json()["task"]
     assert task["status"] == "succeeded"
     assert [(step["component_key"], step["status"]) for step in task["_children"]] == [
-        ("wan", "succeeded"), ("nat", "succeeded")
+        (component, "succeeded") for component in expected_components
     ]
 
 
