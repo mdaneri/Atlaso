@@ -153,6 +153,7 @@ def test_client_seed_installs_fixture_tools_only_when_requested(enabled):
     files = cloud_init_files(Namespace(hostname="fixture", user="alpine", public_key="synthetic-public-key",
                                       password="", routing_overlap_guest=enabled))
     data = files["user-data"]
+    assert f"package_update: {'false' if enabled else 'true'}\n" in data
     for package in ("dnsmasq", "radvd", "python3", "nftables", "ethtool", "sudo",
                     "open-vm-tools", "open-vm-tools-openrc"):
         assert (f"  - {package}\n" in data) == enabled
