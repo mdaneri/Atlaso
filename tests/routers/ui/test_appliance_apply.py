@@ -635,6 +635,62 @@ def test_local_dns_disable_forces_resolver_move_before_dns_stop(client):
     ]
 
 
+def test_ldap_dependency_dns_disable_includes_resolver_move(client, monkeypatch):
+    """Move the resolver when LDAP dependency expansion selects DNS shutdown.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+        monkeypatch: Pytest fixture used to isolate background execution.
+    """
+    from atlaso.app import ui
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import DnsSettings, Job
+
+    login(client)
+    with SessionLocal() as db:
+        dns = db.query(DnsSettings).one()
+        dns.enabled = True
+        db.commit()
+        units = ui.appliance_apply_units(db)
+        ui.update_appliance_apply_baselines(db, units, {unit["id"] for unit in units})
+        dns.enabled = False
+        db.commit()
+
+    real_units = ui.appliance_apply_units
+
+    def units_with_ldap_dependency(db, **kwargs):
+        """Mark LDAP active so its changed DNS dependency is selected."""
+        units = real_units(db, **kwargs)
+        unit_map = {unit["id"]: unit for unit in units}
+        unit_map["ldap"]["context"]["ldap_organizations"] = [object()]
+        unit_map["ldap"]["changed"] = True
+        return units
+
+    monkeypatch.setattr(ui, "appliance_apply_units", units_with_ldap_dependency)
+    monkeypatch.setattr(ui, "run_appliance_apply_job", lambda _job_id: None)
+    csrf = client.get("/dashboard").text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+
+    response = client.post(
+        "/appliance-apply",
+        data={"csrf": csrf, "selected_units": "ldap"},
+        headers={"Accept": "application/json"},
+    )
+
+    assert response.status_code == 202, response.text
+    with SessionLocal() as db:
+        job = db.get(Job, response.json()["job_id"])
+        assert job is not None
+        payload = json.loads(job.result or "{}")
+    assert "dnsmasq" in payload["selected_units"]
+    assert payload["selected_units"].index("appliance_settings") < payload["selected_units"].index("dnsmasq")
+    settings = next(
+        unit
+        for unit in payload["captured_units"]
+        if unit["unit_id"] == "appliance_settings"
+    )
+    assert json.loads(settings["config_preview"])["resolver_servers"] != ["127.0.0.1"]
+
+
 def test_management_handoff_fails_closed_without_network_baseline():
     """Require the handoff path when no known-good baseline can identify the old listener."""
     from atlaso.app.ui import management_handoff_required

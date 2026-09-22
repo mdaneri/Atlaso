@@ -16889,6 +16889,15 @@ def _submit_appliance_apply(
         selected_ids.add("appliance_settings")
         units = appliance_apply_units(db, applying_dns=True)
         unit_map = {unit["id"]: unit for unit in units}
+    local_dns_disable_requires_resolver = bool(
+        "dnsmasq" in selected_ids
+        and not getattr(dns_settings_for_apply, "enabled", False)
+        and applied_local_dns_enabled(
+            load_appliance_apply_baselines(db).get("dnsmasq")
+        )
+    )
+    if local_dns_disable_requires_resolver and "appliance_settings" in unit_map:
+        selected_ids.add("appliance_settings")
     if selected_ids.intersection({"wan", "network", "firewall"}) and "nat" in unit_map:
         selected_ids.add("nat")
     if not selected_ids:
