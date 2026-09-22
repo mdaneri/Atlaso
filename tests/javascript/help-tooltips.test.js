@@ -151,3 +151,15 @@ test("help inside a modal stays in the modal's accessible subtree", () => {
   assert.equal(tooltip.popoverOpen, true);
   assert.equal(button.getAttribute("aria-describedby"), tooltip.id);
 });
+
+test("icon-only sibling actions name their help from the action's accessible label", () => {
+  const { body, document, event } = fixture();
+  const label = new Element("span"); label.className = "field-label";
+  const action = new Element("button"); action.textContent = "↻";
+  action.setAttribute("aria-label", "Synchronize repositories");
+  const help = new HTMLButtonElement(); help.dataset.help = "Synchronization details";
+  label.append(action); label.append(help); body.append(label);
+  document.activeElement = help;
+  document.emit("focusin", event(help));
+  assert.equal(help.getAttribute("aria-label"), "Help for Synchronize repositories");
+});

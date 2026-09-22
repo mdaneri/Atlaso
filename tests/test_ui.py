@@ -1119,6 +1119,7 @@ def test_shared_ui_pattern_shell_and_wizard_contracts(client):
         assert shell.index(
             "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-10"
         ) < shell.index(app_asset)
+    assert "/static/app.css?v=tooltip-848-1" in public_base
 
     wizard_templates = [
         templates / "automation.html",

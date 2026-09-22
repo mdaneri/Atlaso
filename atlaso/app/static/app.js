@@ -12724,7 +12724,11 @@ function initializeHelpTooltips() {
     const label = button.closest(".field-label") || button.parentElement;
     const heading = label?.querySelector(":scope > span:first-child");
     const name = heading?.textContent?.trim() || Array.from(label?.childNodes || [])
-      .filter((node) => node !== button).map((node) => node.textContent || "").join(" ").trim();
+      .filter((node) => node !== button)
+      .map((node) => node instanceof Element
+        ? node.getAttribute("aria-label") || node.getAttribute("title") || node.textContent || ""
+        : node.textContent || "")
+      .join(" ").trim();
     button.setAttribute("aria-label", name ? `Help for ${name}` : "Help information");
   };
   const setUpButtons = (root) => {
