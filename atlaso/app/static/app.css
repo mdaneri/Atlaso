@@ -9246,3 +9246,9 @@ dialog.has-expanded-monaco .confirm-modal-panel {
 }
 #factory-reset-password-modal .help-icon:hover::after,
 #factory-reset-password-modal .help-icon:focus-visible::after { visibility: visible; }
+
+/* SSH fingerprints must wrap inside the remote maintenance wizard. */
+.vcf-lab-fingerprint {
+  overflow-wrap: anywhere;
+  min-width: 0;
+}
