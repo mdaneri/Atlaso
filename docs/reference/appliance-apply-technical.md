@@ -467,8 +467,9 @@ SOA in authority.
 DNSSEC validation, rebind protection, and query logging are desired-state dnsmasq settings. DNSSEC renders `dnssec` plus
 a Atlaso-managed trust-anchor include under `/var/lib/atlaso/apply/dnsmasq/`; the helper verifies installed dnsmasq
 DNSSEC support and copies package-provided trust anchors before running `dnsmasq --test`. Rebind protection renders
-`stop-dns-rebind` and explicit `rebind-domain-ok` exemptions. Query logging renders `log-queries=extra` only when
-enabled and should be treated as temporary troubleshooting because it can expose client query names.
+`stop-dns-rebind`, explicit `rebind-domain-ok` exemptions, and automatic exemptions for managed zones forwarded to the
+isolated authoritative backend. Query logging renders `log-queries=extra` only when enabled and should be treated as
+temporary troubleshooting because it can expose client query names.
 
 #### Service endpoint records
 

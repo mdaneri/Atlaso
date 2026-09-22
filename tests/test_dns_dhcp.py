@@ -162,6 +162,8 @@ def test_dnsmasq_renderer_emits_shared_authoritative_zones_and_generated_glue():
         authoritative_refresh=1200,
         authoritative_retry=180,
         authoritative_expire=1209600,
+        rebind_protection_enabled=True,
+        rebind_domain_exemptions="corp.example\natlaso.internal",
     )
 
     config = render_dnsmasq_config(
@@ -198,6 +200,9 @@ def test_dnsmasq_renderer_emits_shared_authoritative_zones_and_generated_glue():
     assert "host-record=app.sitea.internal,192.168.50.20" in authoritative_lines
     assert "host-record=app.sitea.internal,192.168.50.20" not in main_lines
     assert "ptr-record=20.50.168.192.in-addr.arpa,app.sitea.internal" in main_lines
+    assert main_lines.count("rebind-domain-ok=/atlaso.internal/") == 1
+    assert "rebind-domain-ok=/sitea.internal/" in main_lines
+    assert "rebind-domain-ok=/corp.example/" in main_lines
 
 
 def test_authoritative_validation_rejects_bad_identity_timers_and_conflicting_glue():

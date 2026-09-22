@@ -1427,8 +1427,9 @@ def validate_dhcp_scope(scope: DhcpScope) -> tuple[list[str], object | None]:
     for service, address in (("DNS", dns_server), ("NTP", ntp_server)):
         if address and (
             address.is_loopback or address.is_unspecified or address.is_multicast
-            or address.is_link_local or address.is_reserved
+            or address.is_link_local
             or (address.version == 4 and address in ip_network("0.0.0.0/8"))
+            or (address.version == 4 and address == ip_address("255.255.255.255"))
             or (network and address == network.network_address)
             or (network and address.version == 4 and address == network.broadcast_address)
         ):
@@ -1534,7 +1535,10 @@ def render_dnsmasq_config(
         lines.append(f"conf-file={DNSMASQ_DNSSEC_TRUST_ANCHORS_PATH}")
     if dns_settings.rebind_protection_enabled:
         lines.append("stop-dns-rebind")
-        for domain in split_domains(dns_settings.rebind_domain_exemptions):
+        rebind_exemptions = split_domains(dns_settings.rebind_domain_exemptions)
+        if dns_settings.authoritative:
+            rebind_exemptions.extend(domain for domain in domains if domain not in rebind_exemptions)
+        for domain in rebind_exemptions:
             lines.append(f"rebind-domain-ok=/{domain}/")
     authoritative_lines: list[str] = []
     for domain in domains:

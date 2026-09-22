@@ -858,7 +858,8 @@ their existing PTR behavior. When the appliance resolver is still in DHCP mode a
 DNS page and rendered dnsmasq preview use the management interface's observed DHCP DNS servers as fallback forwarders;
 converting a management DHCP lease to static copies those observed DNS servers into Appliance Settings external DNS and
 into DNS service upstreams when either side was relying on DHCP. DNS can render DNSSEC validation with
-package-provided trust anchors, rebind protection with explicit domain exemptions, temporary `log-queries=extra`
+package-provided trust anchors, rebind protection with explicit domain exemptions plus automatic managed authoritative
+zone exemptions, temporary `log-queries=extra`
 troubleshooting, and
 operator-managed A/AAAA/CNAME/TXT/SRV/MX/CAA/PTR records. See [`docs/dns.md`](../services/dns.md) for authoritative
 behavior and verification. DHCP IP zones can be IPv4 or IPv6: IPv4 zones bind to interfaces with IPv4 CIDR, IPv6 zones

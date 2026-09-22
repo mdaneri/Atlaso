@@ -10,6 +10,8 @@ from atlaso.app.services.dnsmasq import render_dnsmasq_config, validate_dhcp_sco
     ("ipv4", "192.168.4.254", 24, "192.168.4.100-150", "192.168.1.250"),
     ("ipv4", "192.168.4.254", 24, "192.168.4.100-150", "192.168.4.250"),
     ("ipv6", "2001:db8:4::1", 64, "2001:db8:4::100-2001:db8:4::150", "2001:db8:1::250"),
+    ("ipv6", "2001:db8:4::1", 64, "2001:db8:4::100-2001:db8:4::150", "64:ff9b::808:808"),
+    ("ipv6", "2001:db8:4::1", 64, "2001:db8:4::100-2001:db8:4::150", "64:ff9b:1::808:808"),
 ])
 def test_scope_routed_service_endpoints_are_rendered(family, gateway, prefix, lease, endpoint):
     """DNS/NTP endpoints need no local ownership or subnet membership.
