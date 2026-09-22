@@ -446,18 +446,17 @@ page keeps separate DNS and DHCP rows for desired-state visibility, while their 
 #### Authoritative DNS
 
 Authoritative DNS remains inside that same unit. When enabled, the renderer emits one `auth-zone=<domain>` for each
-managed forward domain, one `auth-server=<primary-nameserver>,<selected-interface>...`, shared
+managed forward domain, one service-level `auth-server=<primary-nameserver>`, shared
 `auth-soa=<serial>,<administrator>,<refresh>,<retry>,<expiry>`, and `auth-ttl=<seconds>`. Generated `host-record` lines
-provide A/AAAA glue for every selected DNS listen address. dnsmasq makes interfaces named by `auth-server`
-authoritative-only: those listeners provide complete authoritative positive and negative answers but refuse unrelated
-recursion and non-authoritative reverse zones. The same process continues PTR and upstream-recursive service on
-non-authoritative listeners such as loopback. Validate the installed state with
+provide A/AAAA glue for every selected DNS listen address. Selected listeners provide complete authoritative positive
+and negative answers for managed zones, ordinary PTR responses, and recursion through configured upstreams. Listener
+selection and firewall policy limit client access. Validate the installed state with
 `sudo grep -E '^(auth-zone|auth-server|auth-soa|auth-ttl|host-record=ns)' /etc/atlaso/dnsmasq.d/atlaso.conf`,
 `systemctl is-active dnsmasq`, authoritative queries such as `dig @<selected-listener> <zone> SOA`,
 `dig @<selected-listener> <zone> NS`, `dig @<selected-listener> <nameserver> A`, and
 `dig @<selected-listener> missing.<zone> A`, then recursive-path queries such as `dig @127.0.0.1 -x <record-address>`
-and `dig @127.0.0.1 example.com A`. The missing-name result should be authoritative NXDOMAIN with the generated SOA in
-authority.
+and `dig @<selected-listener> example.com A`. The missing-name result should be authoritative NXDOMAIN with the generated
+SOA in authority.
 
 #### DNS security and logging
 

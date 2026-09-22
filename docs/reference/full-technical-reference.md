@@ -846,15 +846,16 @@ DNS and DHCP share one `DNS/DHCP (dnsmasq)` apply unit because they render and r
 Services page shows DNS and DHCP as separate desired-state rows, but their runtime status comes from the shared
 `dnsmasq.service`. DNS listen addresses are derived from selected access physical or enabled VLAN interface CIDRs,
 including both IPv4 and IPv6 when present. When Authoritative DNS is enabled, every managed forward domain emits
-`auth-zone`, with shared interface-bound `auth-server`, `auth-soa`, and `auth-ttl` directives; Atlaso generates
+`auth-zone`, with shared service-level `auth-server`, `auth-soa`, and `auth-ttl` directives; Atlaso generates
 read-only SOA/NS records and A/AAAA nameserver glue from the selected listen addresses and advances the SOA serial on
-DNS mutations. dnsmasq treats those selected interfaces as authoritative-only, while non-authoritative listeners such as
-loopback retain existing PTR and upstream-recursive behavior. Generated reverse zones retain their existing PTR
-behavior. When the appliance resolver is still in DHCP mode and DNS upstream servers are blank, the DNS page and
-rendered dnsmasq preview use the management interface's observed DHCP DNS servers as fallback forwarders; converting a
-management DHCP lease to static copies those observed DNS servers into Appliance Settings external DNS and into DNS
-service upstreams when either side was relying on DHCP. DNS can render DNSSEC validation with package-provided trust
-anchors, rebind protection with explicit domain exemptions, temporary `log-queries=extra` troubleshooting, and
+DNS mutations. Selected listeners provide authoritative managed-zone answers, existing PTR behavior, and recursion
+through configured upstreams. Listener selection and firewall policy limit client access. Generated reverse zones retain
+their existing PTR behavior. When the appliance resolver is still in DHCP mode and DNS upstream servers are blank, the
+DNS page and rendered dnsmasq preview use the management interface's observed DHCP DNS servers as fallback forwarders;
+converting a management DHCP lease to static copies those observed DNS servers into Appliance Settings external DNS and
+into DNS service upstreams when either side was relying on DHCP. DNS can render DNSSEC validation with
+package-provided trust anchors, rebind protection with explicit domain exemptions, temporary `log-queries=extra`
+troubleshooting, and
 operator-managed A/AAAA/CNAME/TXT/SRV/MX/CAA/PTR records. See [`docs/dns.md`](../services/dns.md) for authoritative
 behavior and verification. DHCP IP zones can be IPv4 or IPv6: IPv4 zones bind to interfaces with IPv4 CIDR, IPv6 zones
 bind to interfaces with IPv6 CIDR and render dnsmasq DHCPv6/RA config. Each DHCP zone uses one comma-separated range

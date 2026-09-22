@@ -9058,31 +9058,51 @@ def _networkd_managed_filename(name: str, suffix: str) -> str:
     return f"{NETWORKD_MANAGED_PREFIX}{name}.{suffix}"
 
 
-def _read_existing_management_network_values() -> dict[str, list[str]]:
+def _read_existing_management_network_values(
+    interface_names: list[str] | None = None,
+) -> dict[str, list[str]]:
     """Read existing management network values.
 
+    Args:
+        interface_names: Effective management interfaces eligible for preservation.
+
     """
-    values: dict[str, list[str]] = {"Gateway": [], "DNS": [], "Domains": [], "Name": []}
-    try:
-        lines = NETWORKD_MGMT_CONFIG_PATH.read_text(encoding="utf-8").splitlines()
-    except OSError:
-        return values
-    current_section = ""
-    for raw_line in lines:
-        line = raw_line.strip()
-        if line.startswith("[") and line.endswith("]"):
-            current_section = line.strip("[]")
+    empty: dict[str, list[str]] = {"Gateway": [], "DNS": [], "Domains": [], "Name": []}
+    candidates = [NETWORKD_MGMT_CONFIG_PATH]
+    candidates.extend(
+        NETWORKD_CONFIG_DIR / _networkd_managed_filename(name, "network")
+        for name in interface_names or []
+        if _valid_network_interface_name(name)
+    )
+    parsed_candidates: list[dict[str, list[str]]] = []
+    for path in dict.fromkeys(candidates):
+        values = {key: list(entries) for key, entries in empty.items()}
+        try:
+            lines = path.read_text(encoding="utf-8").splitlines()
+        except OSError:
             continue
-        if current_section not in {"Match", "Network", "Route"} or "=" not in line:
+        current_section = ""
+        for raw_line in lines:
+            line = raw_line.strip()
+            if line.startswith("[") and line.endswith("]"):
+                current_section = line.strip("[]")
+                continue
+            if current_section not in {"Match", "Network", "Route"} or "=" not in line:
+                continue
+            key, value = [part.strip() for part in line.split("=", 1)]
+            if key == "Name" and current_section == "Match" and value:
+                values[key].append(value)
+            if key in {"DNS", "Domains"} and current_section == "Network" and value:
+                values[key].append(value)
+            if key == "Gateway" and value:
+                values[key].append(value)
+        if interface_names and not set(values["Name"]).intersection(interface_names):
             continue
-        key, value = [part.strip() for part in line.split("=", 1)]
-        if key == "Name" and current_section == "Match" and value:
-            values[key].append(value)
-        if key in {"DNS", "Domains"} and current_section == "Network" and value:
-            values[key].append(value)
-        if key == "Gateway" and value:
-            values[key].append(value)
-    return values
+        parsed_candidates.append(values)
+    return next(
+        (values for values in parsed_candidates if values["DNS"] or values["Domains"]),
+        parsed_candidates[0] if parsed_candidates else empty,
+    )
 
 
 def _usable_management_default_gateways(networks: list[str], candidates: list[str]) -> list[str]:
@@ -9130,7 +9150,30 @@ def _systemd_networkd_files(path: Path) -> tuple[dict[str, str], list[str], list
 
     management = next((row for row in physical_interfaces if row.get("role") == "management"), None)
     management_name = management.get("name") if management else None
-    preserved_management = _read_existing_management_network_values()
+    flagged_management_names = [
+        row.get("name", "")
+        for row in physical_interfaces
+        if row.get("role") == "access"
+        and row.get("mode") == "access"
+        and row.get("admin_state") == "up"
+        and row.get("access_management_ui_enabled", "false").strip().lower() == "true"
+        and _network_row_has_usable_management_address(row)
+    ]
+    flagged_management_names.extend(
+        row.get("name", "")
+        for row in vlan_interfaces
+        if row.get("role") == "access"
+        and row.get("enabled", "true").strip().lower() == "true"
+        and row.get("access_management_ui_enabled", "false").strip().lower() == "true"
+        and _network_row_has_usable_management_address(row)
+    )
+    management_candidates = [management_name] if management_name else flagged_management_names
+    preserved_management = _read_existing_management_network_values(management_candidates)
+    preserved_names = set(preserved_management.get("Name", []))
+    resolver_name = management_name or next(
+        (name for name in flagged_management_names if name in preserved_names),
+        None,
+    )
     files: dict[str, str] = {}
     reconfigure_links: list[str] = []
     admin_down_links: list[str] = []
@@ -9162,7 +9205,7 @@ def _systemd_networkd_files(path: Path) -> tuple[dict[str, str], list[str], list
 
         else:
             lines.extend(["IPv6AcceptRA=yes", "LinkLocalAddressing=ipv6"])
-        if name == management_name:
+        if name == resolver_name:
             for dns in preserved_management["DNS"]:
                 lines.append(f"DNS={dns}")
         if mode == "trunk":
@@ -9230,7 +9273,7 @@ def _systemd_networkd_files(path: Path) -> tuple[dict[str, str], list[str], list
                 lines.extend(["", "[Address]", f"Address={interface[key]}", f"DuplicateAddressDetection={detection}"])
         filename = "00-atlaso-mgmt.network" if name == management_name else _networkd_managed_filename(name, "network")
         files[filename] = "\n".join(lines).strip() + "\n"
-        if name == management_name and preserved_management["DNS"]:
+        if name == resolver_name and preserved_management["DNS"]:
             files[filename] = _management_resolver_candidate(
                 files[filename], preserved_management["DNS"], preserved_management["Domains"],
             )
@@ -9266,7 +9309,14 @@ def _systemd_networkd_files(path: Path) -> tuple[dict[str, str], list[str], list
                 network_lines.extend(["", "[Address]", f"Address={vlan[key]}", f"DuplicateAddressDetection={detection}"])
         if not vlan.get("ip_cidr") and not vlan.get("ipv6_cidr"):
             network_lines.append("LinkLocalAddressing=no")
-        files[_networkd_managed_filename(name, "network")] = "\n".join(network_lines).strip() + "\n"
+        network_filename = _networkd_managed_filename(name, "network")
+        files[network_filename] = "\n".join(network_lines).strip() + "\n"
+        if name == resolver_name and preserved_management["DNS"]:
+            files[network_filename] = _management_resolver_candidate(
+                files[network_filename],
+                preserved_management["DNS"],
+                preserved_management["Domains"],
+            )
         reconfigure_links.append(name)
 
     return files, reconfigure_links, admin_down_links

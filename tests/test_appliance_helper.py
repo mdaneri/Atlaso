@@ -7102,6 +7102,52 @@ def test_network_helper_accepts_flagged_access_without_dedicated_management(tmp_
     assert helper._network_config_errors(config_path) == []
 
 
+@pytest.mark.parametrize("resolver_interface", ["eth0", "eth2.20"])
+def test_network_helper_preserves_flagged_access_resolver(monkeypatch, tmp_path, resolver_interface):
+    """Keep resolver persistence on the effective flagged physical or VLAN path.
+
+    Args:
+        monkeypatch: Pytest fixture used to isolate generated networkd files.
+        tmp_path: Temporary directory containing staged and installed network state.
+        resolver_interface: Flagged physical or VLAN management path under test.
+    """
+    helper = load_helper_module()
+    config_path = tmp_path / "atlaso-network.conf"
+    config = network_config_text().replace("  role=management", "  role=access", 1)
+    if resolver_interface == "eth0":
+        config = config.replace(
+            "  mode=access",
+            "  mode=access\n  access_management_ui_enabled=true",
+            1,
+        )
+    else:
+        config = config.replace(
+            "  mtu=1500\n  role=access",
+            "  mtu=1500\n  role=access\n  access_management_ui_enabled=true",
+            1,
+        )
+    config_path.write_text(config, encoding="utf-8")
+    networkd_dir = tmp_path / "networkd"
+    networkd_dir.mkdir()
+    installed = networkd_dir / f"10-atlaso-{resolver_interface}.network"
+    installed.write_text(
+        f"[Match]\nName={resolver_interface}\n\n[Network]\nDNS=127.0.0.1\nDomains=~.\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(helper, "NETWORKD_CONFIG_DIR", networkd_dir)
+    monkeypatch.setattr(
+        helper,
+        "NETWORKD_MGMT_CONFIG_PATH",
+        networkd_dir / "00-atlaso-mgmt.network",
+    )
+
+    files, _links, _admin_down = helper._systemd_networkd_files(config_path)
+
+    rendered = files[f"10-atlaso-{resolver_interface}.network"]
+    assert "DNS=127.0.0.1" in rendered
+    assert "Domains=~." in rendered
+
+
 def test_network_helper_rejects_flagged_access_without_usable_address(tmp_path):
     """Verify that staged access flags require a usable non-link-local listener address.
 
@@ -7160,7 +7206,7 @@ def test_network_helper_does_not_assign_management_routing_without_dedicated_rol
     monkeypatch.setattr(
         helper,
         "_read_existing_management_network_values",
-        lambda: {"DNS": ["192.0.2.53"], "Gateway": ["192.168.49.254"]},
+        lambda _interfaces: {"DNS": ["192.0.2.53"], "Gateway": ["192.168.49.254"]},
     )
 
     files, reconfigure_links, admin_down_links = helper._systemd_networkd_files(config_path)
