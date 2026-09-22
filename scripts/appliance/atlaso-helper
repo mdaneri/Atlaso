@@ -9179,16 +9179,17 @@ def _systemd_networkd_files(path: Path) -> tuple[dict[str, str], list[str], list
             or _network_row_has_usable_runtime_management_address(management)
         )
     )
-    management_candidates = (
-        [str(management_name)]
-        if management_is_effective
-        else flagged_management_names
+    resolver_source_names = list(
+        dict.fromkeys(
+            ([str(management_name)] if management_name else [])
+            + flagged_management_names
+        )
     )
-    preserved_management = _read_existing_management_network_values(management_candidates)
+    preserved_management = _read_existing_management_network_values(resolver_source_names)
     preserved_names = set(preserved_management.get("Name", []))
     resolver_name = (str(management_name) if management_is_effective else None) or next(
         (name for name in flagged_management_names if name in preserved_names),
-        flagged_management_names[0] if flagged_management_names else None,
+        flagged_management_names[0] if flagged_management_names else management_name,
     )
     files: dict[str, str] = {}
     reconfigure_links: list[str] = []

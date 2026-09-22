@@ -7247,9 +7247,9 @@ def test_network_helper_uses_slaac_flagged_resolver_when_management_dhcp_has_no_
     config_path.write_text(config, encoding="utf-8")
     networkd_dir = tmp_path / "networkd"
     networkd_dir.mkdir()
-    flagged_path = networkd_dir / "10-atlaso-eth1.network"
-    flagged_path.write_text(
-        "[Match]\nName=eth1\n\n[Network]\nDNS=127.0.0.1\nDomains=~.\n",
+    management_path = networkd_dir / "00-atlaso-mgmt.network"
+    management_path.write_text(
+        "[Match]\nName=eth0\n\n[Network]\nDHCP=ipv4\nDNS=127.0.0.1\nDomains=~.\n",
         encoding="utf-8",
     )
     monkeypatch.setattr(helper, "NETWORKD_CONFIG_DIR", networkd_dir)
@@ -7278,7 +7278,59 @@ def test_network_helper_uses_slaac_flagged_resolver_when_management_dhcp_has_no_
 
     assert "DNS=127.0.0.1" in files["10-atlaso-eth1.network"]
     assert "Domains=~." in files["10-atlaso-eth1.network"]
+    assert "UseDNS=no" in files["10-atlaso-eth1.network"]
     assert "DNS=127.0.0.1" not in files["00-atlaso-mgmt.network"]
+
+
+def test_network_helper_retains_resolver_on_management_dhcp_without_fallback(
+    monkeypatch,
+    tmp_path,
+):
+    """Retain resolver intent on a lease-less DHCP management NIC without a fallback.
+
+    Args:
+        monkeypatch: Pytest fixture used to isolate generated and runtime state.
+        tmp_path: Temporary directory containing staged and installed network files.
+    """
+    helper = load_helper_module()
+    config_path = tmp_path / "atlaso-network.conf"
+    config_path.write_text(
+        "\n".join(
+            [
+                "[physical_interfaces]",
+                "interface=eth0",
+                "  role=management",
+                "  mode=access",
+                "  access_management_ui_enabled=false",
+                "  ipv4_method=dhcp",
+                "  ip_cidr=",
+                "  ipv6_enabled=false",
+                "  ipv6_cidr=",
+                "  admin_state=up",
+                "",
+                "[vlan_interfaces]",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    networkd_dir = tmp_path / "networkd"
+    networkd_dir.mkdir()
+    management_path = networkd_dir / "00-atlaso-mgmt.network"
+    management_path.write_text(
+        "[Match]\nName=eth0\n\n[Network]\nDHCP=ipv4\nDNS=127.0.0.1\nDomains=~.\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(helper, "NETWORKD_CONFIG_DIR", networkd_dir)
+    monkeypatch.setattr(helper, "NETWORKD_MGMT_CONFIG_PATH", management_path)
+    monkeypatch.setattr(helper.shutil, "which", lambda _command: None)
+
+    files, _links, _admin_down = helper._systemd_networkd_files(config_path)
+
+    rendered = files["00-atlaso-mgmt.network"]
+    assert "DNS=127.0.0.1" in rendered
+    assert "Domains=~." in rendered
+    assert "UseDNS=no" in rendered
 
 
 def test_network_helper_rejects_flagged_access_without_usable_address(tmp_path):
