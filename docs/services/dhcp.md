@@ -40,8 +40,8 @@ DNS and NTP options may name reachable service endpoints outside the served subn
 not own. For example, a `192.168.4.0/24` scope can advertise `192.168.1.250` for both services. Configure routing and
 firewall access separately. Each scope field accepts one usable unicast address of the scope's family, including routed
 NAT64 endpoints. Loopback, unspecified, multicast, link-local, IPv4 this-network and limited-broadcast addresses, and
-the scope's network or IPv4 broadcast address are rejected. Gateway and lease-range subnet rules remain unchanged.
-Global and per-zone option rows retain their existing option-list syntax.
+IPv4-mapped IPv6 addresses, plus the scope's network or IPv4 broadcast address, are rejected. Gateway and lease-range
+subnet rules remain unchanged. Global and per-zone option rows retain their existing option-list syntax.
 
 Changing a scope does not serve leases until the global apply task succeeds. Interface changes also affect generated
 firewall bootstrap rules, so confirm the intended bind target in the review. Existing zones can be enabled or disabled
