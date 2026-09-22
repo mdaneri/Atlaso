@@ -7201,7 +7201,7 @@ def test_network_helper_preserves_flagged_access_resolver(monkeypatch, tmp_path,
     assert "Domains=~." in rendered
 
 
-def test_network_helper_uses_flagged_resolver_when_management_dhcp_has_no_lease(
+def test_network_helper_uses_slaac_flagged_resolver_when_management_dhcp_has_no_lease(
     monkeypatch,
     tmp_path,
 ):
@@ -7213,21 +7213,38 @@ def test_network_helper_uses_flagged_resolver_when_management_dhcp_has_no_lease(
     """
     helper = load_helper_module()
     config_path = tmp_path / "atlaso-network.conf"
-    config = network_config_text().replace(
-        "  ipv4_method=static\n  ip_cidr=192.168.49.1/24",
-        "  ipv4_method=dhcp\n  ip_cidr=",
-        1,
-    ).replace(
-        "  mtu=1500\n  role=access",
-        "  mtu=1500\n  role=access\n  access_management_ui_enabled=true",
-        1,
+    config = "\n".join(
+        [
+            "[physical_interfaces]",
+            "interface=eth0",
+            "  role=management",
+            "  mode=access",
+            "  access_management_ui_enabled=false",
+            "  ipv4_method=dhcp",
+            "  ip_cidr=",
+            "  ipv6_enabled=false",
+            "  ipv6_cidr=",
+            "  admin_state=up",
+            "interface=eth1",
+            "  role=access",
+            "  mode=access",
+            "  access_management_ui_enabled=true",
+            "  ipv4_method=static",
+            "  ip_cidr=",
+            "  ipv6_enabled=true",
+            "  ipv6_cidr=",
+            "  admin_state=up",
+            "",
+            "[vlan_interfaces]",
+            "",
+        ]
     )
     config_path.write_text(config, encoding="utf-8")
     networkd_dir = tmp_path / "networkd"
     networkd_dir.mkdir()
-    flagged_path = networkd_dir / "10-atlaso-eth2.20.network"
+    flagged_path = networkd_dir / "10-atlaso-eth1.network"
     flagged_path.write_text(
-        "[Match]\nName=eth2.20\n\n[Network]\nDNS=127.0.0.1\nDomains=~.\n",
+        "[Match]\nName=eth1\n\n[Network]\nDNS=127.0.0.1\nDomains=~.\n",
         encoding="utf-8",
     )
     monkeypatch.setattr(helper, "NETWORKD_CONFIG_DIR", networkd_dir)
@@ -7239,13 +7256,14 @@ def test_network_helper_uses_flagged_resolver_when_management_dhcp_has_no_lease(
     monkeypatch.setattr(
         helper,
         "_network_interface_has_usable_runtime_address",
-        lambda _name: False,
+        lambda name: name == "eth1",
     )
 
+    assert helper._network_config_errors(config_path) == []
     files, _links, _admin_down = helper._systemd_networkd_files(config_path)
 
-    assert "DNS=127.0.0.1" in files["10-atlaso-eth2.20.network"]
-    assert "Domains=~." in files["10-atlaso-eth2.20.network"]
+    assert "DNS=127.0.0.1" in files["10-atlaso-eth1.network"]
+    assert "Domains=~." in files["10-atlaso-eth1.network"]
     assert "DNS=127.0.0.1" not in files["00-atlaso-mgmt.network"]
 
 
