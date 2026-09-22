@@ -217,7 +217,13 @@ the authenticated sidebar's existing typography, width, link order, active state
 
 ### VCF Helper remote-credential wizard contract
 
-Every VCF Helper wizard that connects to a remote VCF component uses the same first four steps:
+VCF Helper wizards use the shared sequence below. The SSH-only **Lab / Non-production Overrides** workflow
+uses vcf/root SSH credentials, an automatically probed SSH fingerprint with explicit operator confirmation,
+and manual vcf/root Login. It does not request API credentials or probe TLS; version detection runs `sos -v`
+over pinned SSH. Saved credentials skip Login. Its Changes step displays current values for editing, without
+a previous-operation rollback selector.
+
+Other VCF Helper wizards that connect to a remote VCF component use these first four steps:
 
 1. **Credential** — choose a saved vault and key, or continue with manual credentials.
 2. **Server** — show the remote server address. A saved vault key fills this value from the HTTP or HTTPS URI selected
