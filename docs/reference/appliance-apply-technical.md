@@ -266,7 +266,9 @@ local-source priority window. An existing conflict is reported before network fi
 WAN review shows ingress commands for the current applied Network baseline, rather than pending interface edits.
 When Network and WAN are applied together, WAN uses the Network intent established by the successful Network step.
 On a fresh appliance without a Network baseline, review shows projected ingress rules from desired interfaces and
-labels them as requiring Network to be applied first. An existing pre-migration baseline remains distinct.
+labels them as requiring Network to be applied first. Initial WAN submission includes Network even when only WAN
+is selected; dependency validation and protected management handoff still run before submission. Existing modern and
+pre-migration baselines do not pull unrelated pending Network edits into WAN-only Apply.
 Canonical lab ingress rules also use protocol `kernel` within the existing `2000–2099` window so networkd reload does
 not remove forwarding selectors. Other selectors or protocol/range combinations are not adopted by migration.
 

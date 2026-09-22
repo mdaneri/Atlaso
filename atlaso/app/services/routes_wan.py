@@ -1181,7 +1181,7 @@ def render_wan_config(
             if not applied_network_ingress:
                 lines.append("# No modern ingress selectors are available from this baseline; pre-migration baselines retain legacy WAN handling.")
         else:
-            lines.append("# Projected ingress commands require Network to be applied first; no applied Network baseline is available.")
+            lines.append("# Initial WAN Apply automatically includes Network first; no applied Network baseline is available.")
         ingress_names = sorted(set(applied_network_ingress)) if applied_network_ingress is not None else sorted(
             {target["name"] for target in targets if target.get("routing_domain") != "management"})
         # The helper installs terminal guards before introducing lab lookups.

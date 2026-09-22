@@ -9,6 +9,84 @@ import pytest
 from tests.routers.ui.helpers import login
 
 
+@pytest.mark.parametrize("baseline_kind", ["missing", "legacy", "modern"])
+@pytest.mark.parametrize("selection", ["wan", "nat"])
+@pytest.mark.parametrize("invalid_network", [False, True])
+def test_initial_wan_submission_includes_network_dependency(client, monkeypatch, baseline_kind, selection, invalid_network, handoff=False):
+    """Expand fresh WAN dependencies before validation without coupling upgrades.
+
+    Args:
+        client: Isolated HTTP application fixture.
+        monkeypatch: Keep jobs pending and inject controlled unit validation.
+        baseline_kind: Saved Network baseline migration state.
+        selection: Direct WAN selection or NAT that adds WAN transitively.
+        invalid_network: Whether the Network dependency has a validation error.
+        handoff: Whether Network requires the protected management transaction.
+    """
+    from atlaso.app import ui
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Job
+
+    login(client)
+    page = client.get("/dashboard")
+    csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    with SessionLocal() as db:
+        baselines = ui.load_appliance_apply_baselines(db)
+        baselines.pop("network", None)
+        if baseline_kind != "missing":
+            preview = "[physical_interfaces]\n"
+            if baseline_kind == "modern":
+                preview = "# Network runtime revision: exact-source-routing-v1.\n" + preview
+            baselines["network"] = {"snapshot_hash": "prior-network", "config_preview": preview}
+        ui.save_appliance_apply_baselines(db, baselines)
+        db.commit()
+        units = ui.appliance_apply_units(db)
+        count_before = db.query(Job).count()
+    for unit in units:
+        if unit["id"] == "network":
+            # Test the fresh dependency independently of NAT's changed-state rule.
+            unit["changed"] = False
+            unit["management_handoff_required"] = handoff
+            unit["management_default_mirror_change"] = False
+            unit["validation_errors"] = ["invalid Network dependency"] if invalid_network else []
+        elif unit["id"] == "wan":
+            unit["changed"] = True
+            unit["validation_errors"] = []
+        elif unit["id"] == "nat":
+            unit["context"]["traffic_publishing_settings"] = SimpleNamespace(effective_nat_enabled=selection == "nat")
+            unit["context"]["port_forward_effective"] = False
+            unit["validation_errors"] = []
+    monkeypatch.setattr(ui, "appliance_apply_units", lambda _db: units)
+    monkeypatch.setattr(ui, "run_appliance_apply_job", lambda _job_id: None)
+    response = client.post("/appliance-apply", data={"csrf": csrf, "selected_units": selection},
+                           headers={"Accept": "application/json"})
+    blocked = baseline_kind == "missing" and invalid_network
+    assert response.status_code == (422 if blocked else 202)
+    with SessionLocal() as db:
+        assert db.query(Job).count() == count_before + (0 if blocked else 1)
+        if not blocked:
+            job = db.get(Job, response.json()["job_id"])
+            payload = json.loads(job.result)
+            selected = payload["selected_units"]
+            assert payload["management_handoff"] is handoff
+            if handoff:
+                assert set(ui.MANAGEMENT_HANDOFF_UNIT_IDS).issubset(selected)
+            assert ("network" in selected) is (baseline_kind == "missing")
+            assert "wan" in selected
+            if baseline_kind == "missing":
+                assert selected.index("network") < selected.index("wan")
+
+
+def test_initial_wan_dependency_expands_protected_management_handoff(client, monkeypatch):
+    """Compute protected handoff after adding the initial Network dependency.
+
+    Args:
+        client: Isolated HTTP application fixture.
+        monkeypatch: Replace host execution and the Network handoff requirement.
+    """
+    test_initial_wan_submission_includes_network_dependency(client, monkeypatch, "missing", "wan", False, handoff=True)
+
+
 @pytest.mark.parametrize("baseline_kind", ["modern", "legacy", "missing"])
 def test_wan_review_uses_applied_network_ingress_with_pending_network(client, baseline_kind):
     """Keep WAN-only selectors on applied intent and label combined Apply correctly.
@@ -47,7 +125,7 @@ def test_wan_review_uses_applied_network_ingress_with_pending_network(client, ba
                 assert names
                 assert len(commands) == 4 * len(names)
                 assert {line.split(" iif ", 1)[1].split()[0] for line in commands} == names
-                assert "Projected ingress commands require Network to be applied first" in preview
+                assert "Initial WAN Apply automatically includes Network first" in preview
                 assert "pre-migration baselines" not in preview
             else:
                 assert len(commands) == (4 if baseline_kind == "modern" else 0)

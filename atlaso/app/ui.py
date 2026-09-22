@@ -16709,6 +16709,11 @@ def _submit_appliance_apply(
         for dependency in ("network", "wan"):
             if unit_map.get(dependency, {}).get("changed"):
                 selected_ids.add(dependency)
+    # A fresh WAN preview includes desired ingress selectors. Establish their
+    # Network intent first, including when NAT added WAN transitively above.
+    # Existing baselines retain independent WAN Apply and its applied intent.
+    if "wan" in selected_ids and load_appliance_apply_baselines(db).get("network") is None:
+        selected_ids.add("network")
     management_handoff = bool(
         (
             selected_ids.intersection(MANAGEMENT_HANDOFF_UNIT_IDS)
