@@ -358,6 +358,7 @@ FIREWALL_SERVICE_PATH = Path("/etc/systemd/system/atlaso-firewall.service")
 DNSMASQ_APPLY_DIR = Path("/var/lib/atlaso/apply/dnsmasq")
 DNSMASQ_STATE_DIR = Path("/var/lib/atlaso/dnsmasq")
 DNSMASQ_LEASE_FILE_PATH = DNSMASQ_STATE_DIR / "dhcp.leases"
+DNSMASQ_AUTHORITATIVE_LEASE_HOSTS_DIR = DNSMASQ_STATE_DIR / "authoritative-leases"
 DNSMASQ_CONFIG_DIR = Path("/etc/atlaso/dnsmasq.d")
 DNSMASQ_CONFIG_PATH = DNSMASQ_CONFIG_DIR / "atlaso.conf"
 DNSMASQ_SERVICE_DROPIN_DIR = Path("/etc/systemd/system/dnsmasq.service.d")
@@ -2932,15 +2933,15 @@ def _configure_dhcp_resolver(interface_name: str) -> subprocess.CompletedProcess
         interface_name: Host network-interface name affected by the operation.
     """
     network_path = _write_management_resolver(interface_name, [], [])
-    result = _run(["resolvectl", "revert", interface_name])
-    print(result.stdout, end="")
-    print(result.stderr, end="", file=sys.stderr)
-    if result.returncode != 0:
-        return result
+    # Keep the active resolver until networkd has accepted the restored DHCP/RA
+    # policy. Revert discards every transient per-link DNS setting.
     reload_result = _reload_management_resolver(interface_name, network_path)
     if reload_result is not None and reload_result.returncode != 0:
         return reload_result
-    return reload_result or result
+    result = _run(["resolvectl", "revert", interface_name])
+    print(result.stdout, end="")
+    print(result.stderr, end="", file=sys.stderr)
+    return result
 
 
 def _configure_management_handoff_resolver(payload: dict) -> subprocess.CompletedProcess[str]:
@@ -2973,6 +2974,91 @@ def _configure_local_resolver() -> subprocess.CompletedProcess[str]:
 
     """
     return _configure_resolver("eth0", ["127.0.0.1"], ["~."])
+
+
+def _prepare_authoritative_lease_hosts() -> None:
+    """Validate the root-owned lease mirror before starting the DNS backend."""
+    hosts_dir = DNSMASQ_AUTHORITATIVE_LEASE_HOSTS_DIR
+    if hosts_dir.is_symlink():
+        raise ValueError("The authoritative lease hosts directory is unsafe.")
+    hosts_dir.mkdir(parents=True, exist_ok=True)
+    if not hosts_dir.is_dir():
+        raise ValueError("The authoritative lease hosts directory is invalid.")
+    for entry in hosts_dir.iterdir():
+        if not re.fullmatch(r"lease-[0-9a-f]{8,32}\.hosts", entry.name) or entry.is_symlink() or not entry.is_file():
+            raise ValueError("The authoritative lease hosts directory contains an unexpected entry.")
+
+
+def _authoritative_lease_domains() -> list[str]:
+    """Read the installed authoritative zone names for lease hostname filtering."""
+    try:
+        if DNSMASQ_AUTHORITATIVE_CONFIG_PATH.stat().st_size > 1_048_576:
+            return []
+        lines = DNSMASQ_AUTHORITATIVE_CONFIG_PATH.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return []
+    return [
+        domain
+        for line in lines
+        if line.startswith("auth-zone=")
+        if HOSTNAME_PATTERN.fullmatch(domain := line.removeprefix("auth-zone=").lower())
+    ]
+
+
+def _handle_dnsmasq_lease_event(argv: list[str]) -> int:
+    """Mirror a DHCP lease name into the live authoritative hosts directory.
+
+    Args:
+        argv: dnsmasq lease-script action and lease fields.
+    """
+    action = argv[1]
+    if action not in {"add", "old", "del"} or len(argv) not in {4, 5}:
+        return 0
+    try:
+        address = ip_address(argv[3])
+    except ValueError:
+        return 0
+    if address.is_link_local or address.is_loopback or address.is_multicast or address.is_unspecified:
+        return 0
+    hosts_dir = DNSMASQ_AUTHORITATIVE_LEASE_HOSTS_DIR
+    if not hosts_dir.is_dir() or hosts_dir.is_symlink():
+        return 0
+    destination = hosts_dir / f"lease-{address.packed.hex()}.hosts"
+    hostname = argv[4].strip().strip(".").lower() if len(argv) == 5 else ""
+    if not hostname:
+        hostname = os.environ.get("DNSMASQ_SUPPLIED_HOSTNAME", "").strip().strip(".").lower()
+    if action == "old" and not hostname:
+        # Ignored client names are absent from the persisted dnsmasq lease
+        # row. Keep the mirrored name until renewal or an expiry "del" event.
+        return 0
+    domain = os.environ.get("DNSMASQ_DOMAIN", "").strip().strip(".").lower()
+    fqdn = hostname if "." in hostname else f"{hostname}.{domain}" if hostname and domain else ""
+    zones = _authoritative_lease_domains()
+    publish = (
+        action != "del"
+        and bool(HOSTNAME_PATTERN.fullmatch(fqdn))
+        and any(fqdn.endswith(f".{zone}") for zone in zones)
+    )
+    try:
+        if not publish:
+            destination.unlink(missing_ok=True)
+            return 0
+        temporary_path: Path | None = None
+        try:
+            with tempfile.NamedTemporaryFile(
+                mode="w", encoding="utf-8", prefix=".lease-sync-", dir=DNSMASQ_STATE_DIR, delete=False
+            ) as temporary:
+                temporary_path = Path(temporary.name)
+                temporary.write(f"{address} {fqdn}\n")
+            temporary_path.chmod(0o644)
+            os.replace(temporary_path, destination)
+        finally:
+            if temporary_path is not None:
+                temporary_path.unlink(missing_ok=True)
+    except OSError:
+        print("Unable to synchronize an authoritative DHCP lease name.", file=sys.stderr)
+        return 1
+    return 0
 
 
 def _handle_dnsmasq(action: str, args: list[str]) -> int:
@@ -3024,6 +3110,12 @@ def _handle_dnsmasq(action: str, args: list[str]) -> int:
 
             DNSMASQ_CONFIG_DIR.mkdir(parents=True, exist_ok=True)
             DNSMASQ_STATE_DIR.mkdir(parents=True, exist_ok=True)
+            if authoritative_config_path is not None:
+                try:
+                    _prepare_authoritative_lease_hosts()
+                except (OSError, ValueError) as exc:
+                    print(str(exc), file=sys.stderr)
+                    return 2
             shutil.copy2(main_config_path, DNSMASQ_CONFIG_PATH)
             _install_dnsmasq_service_dropin(authoritative=authoritative_config_path is not None)
             if authoritative_config_path is not None:
@@ -9771,12 +9863,18 @@ def _network_config_errors(path: Path) -> list[str]:
         and row.get("mode") == "access"
         and row.get("admin_state") == "up"
         and row.get("access_management_ui_enabled", "false").strip().lower() == "true"
-        and _network_row_has_usable_management_address(row)
+        and (
+            _network_row_has_usable_management_address(row)
+            or _network_row_has_usable_runtime_management_address(row)
+        )
         for row in physical_interfaces
     ) or any(
         row.get("role") == "access"
         and row.get("access_management_ui_enabled", "false").strip().lower() == "true"
-        and _network_row_has_usable_management_address(row)
+        and (
+            _network_row_has_usable_management_address(row)
+            or _network_row_has_usable_runtime_management_address(row)
+        )
         for row in vlan_interfaces
     )
     if not effective_management:
@@ -26911,6 +27009,10 @@ def main(argv: list[str]) -> int:
     Args:
         argv: Command-line arguments to parse, or ``None`` to use the process arguments.
     """
+    if len(argv) >= 2 and argv[1] in {
+        "add", "old", "del", "init", "arp-add", "arp-del", "relay-snoop", "tftp"
+    }:
+        return _handle_dnsmasq_lease_event(argv)
     if len(argv) < 3:
         return _usage()
 

@@ -20,6 +20,8 @@ from atlaso.app.models import (
 
 DNS_CONDITIONAL_FORWARDERS_SETTING_KEY = "dns.conditional_forwarders"
 DNSMASQ_LEASE_FILE_PATH = "/var/lib/atlaso/dnsmasq/dhcp.leases"
+DNSMASQ_AUTHORITATIVE_LEASE_HOSTS_DIR = "/var/lib/atlaso/dnsmasq/authoritative-leases"
+DNSMASQ_DHCP_LEASE_SYNC_PATH = "/opt/atlaso/bin/atlaso-helper"
 DNSMASQ_DNSSEC_TRUST_ANCHORS_PATH = "/var/lib/atlaso/apply/dnsmasq/atlaso-trust-anchors.conf"
 DNSMASQ_AUTHORITATIVE_LOOPBACK_ADDRESS = "127.0.0.1"
 DNSMASQ_AUTHORITATIVE_PORT = 5353
@@ -1566,6 +1568,7 @@ def render_dnsmasq_config(
                 "bind-interfaces",
                 f"listen-address={DNSMASQ_AUTHORITATIVE_LOOPBACK_ADDRESS}",
                 f"dhcp-leasefile={DNSMASQ_LEASE_FILE_PATH}",
+                f"hostsdir={DNSMASQ_AUTHORITATIVE_LEASE_HOSTS_DIR}",
             ]
         )
         for domain in domains:
@@ -1579,12 +1582,19 @@ def render_dnsmasq_config(
         authoritative_lines.append(f"auth-ttl={dns_settings.authoritative_ttl}")
         for listen_address in split_addresses(dns_settings.listen_address):
             authoritative_lines.append(f"host-record={server},{listen_address}")
+            # Reverse queries stay on the client-facing DNS/DHCP instance.
+            lines.append(f"ptr-record={ip_address(listen_address).reverse_pointer},{server}")
     if dns_settings.expand_hosts:
         lines.append("expand-hosts")
         if authoritative_lines:
             authoritative_lines.append("expand-hosts")
     if dhcp_settings.enabled and dhcp_settings.authoritative:
         lines.append("dhcp-authoritative")
+    if dns_settings.authoritative and dhcp_settings.enabled:
+        # Keep lease names out of the recursive instance so managed-zone
+        # queries take the authoritative backend route.
+        lines.append("dhcp-ignore-names")
+        lines.append(f"dhcp-script={DNSMASQ_DHCP_LEASE_SYNC_PATH}")
     dhcp_interfaces = [scope.interface_name for scope in scopes if dhcp_settings.enabled and scope.enabled is not False]
     dns_interfaces = split_interfaces(dns_settings.listen_interface)
     if dns_settings.enabled:
@@ -1809,7 +1819,12 @@ def render_dnsmasq_config(
                 except ValueError:
                     reserved_ip = None
                 reservation_ip = f"[{reservation.ip_address}]" if reserved_ip and reserved_ip.version == 6 else reservation.ip_address
-                lines.append(f"dhcp-host={reservation.mac_address},{reservation.hostname},{reservation_ip}")
+                if dns_settings.authoritative:
+                    reservation_tag = "atlaso-name-" + re.sub(r"[^0-9a-f]", "", reservation.mac_address.lower())
+                    lines.append(f"dhcp-host={reservation.mac_address},set:{reservation_tag},{reservation_ip}")
+                    lines.append(f"dhcp-option=tag:{reservation_tag},option:host-name,{reservation.hostname}")
+                else:
+                    lines.append(f"dhcp-host={reservation.mac_address},{reservation.hostname},{reservation_ip}")
     if authoritative_lines:
         lines.extend(["", "# Embedded configuration for atlaso-dns-authoritative.service."])
         lines.extend(f"{DNSMASQ_AUTHORITATIVE_CONFIG_PREFIX}{line}" for line in authoritative_lines)

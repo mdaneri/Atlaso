@@ -62,6 +62,12 @@ The authoritative renderer emits:
 - A/AAAA `host-record` glue mapping the primary nameserver to every selected DNS listen address;
 - `server=/<managed-domain>/127.0.0.1#5353` and `cache-size=0` in the recursive client-facing service.
 
+When DHCP is enabled, lease changes update a managed hosts directory read by the authoritative backend. Newly learned
+client names and removals therefore reach the same authoritative path as saved records. The recursive instance does not
+register client-supplied or reserved DHCP names locally in this mode; reserved clients still receive their saved
+hostname through DHCP. The recursive service keeps
+reverse lookup, including PTR records for generated nameserver glue.
+
 The primary nameserver must belong to a managed domain. Its glue identity is generated and cannot conflict with operator
 CNAME or A/AAAA data. SOA expiry must be greater than refresh and retry, and all timer values must be positive 32-bit
 seconds.
@@ -131,7 +137,7 @@ On an applied appliance, verify the installed directives and query behavior:
 
 ```sh
 sudo grep -E '^(auth-zone|auth-server|auth-soa|auth-ttl|host-record=ns)' /etc/atlaso/dnsmasq.d/atlaso-authoritative.conf
-sudo grep -E '^server=/.+/127\.0\.0\.2#5353$' /etc/atlaso/dnsmasq.d/atlaso.conf
+sudo grep -E '^server=/.+/127\.0\.0\.1#5353$' /etc/atlaso/dnsmasq.d/atlaso.conf
 systemctl is-active atlaso-dns-authoritative
 systemctl is-active dnsmasq
 dig @192.168.50.1 atlaso.internal SOA

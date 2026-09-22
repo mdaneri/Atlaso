@@ -32,6 +32,7 @@ from atlaso.app.services.routes_wan import save_routing_enabled_state
 from atlaso.app.services.service_registry import (
     SERVICE_STATE_IDS,
     SERVICE_SYSTEMD_UNITS,
+    dns_requires_authoritative_backend,
 )
 from atlaso.app.services.vcf_backups import vcf_backup_service_state
 from atlaso.app.services.vcf_depot_downloads import (
@@ -358,7 +359,9 @@ def build_router(dependencies: OperationsUiDependencies) -> OperationsUiRouter:
                 db,
                 dns_settings.enabled,
                 dhcp_settings.enabled,
-                dns_settings.authoritative,
+                dns_requires_authoritative_backend(
+                    db, desired_authoritative=dns_settings.authoritative
+                ),
             )
             for row in rows
         ]

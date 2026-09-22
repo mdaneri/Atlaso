@@ -406,12 +406,24 @@ def test_authentication_lifetime_uses_appliance_issuance_clock(monkeypatch):
         """Serve policy reads and immediate autosave writes."""
 
         def json_request(self, method, path):  # type: ignore[no-untyped-def]  # Fake mirrors the lifecycle HTTP client.
-            """Return the currently persisted policy."""
+            """Return the currently persisted policy.
+
+            Args:
+                method: HTTP method requested by the lifecycle check.
+                path: API path requested by the lifecycle check.
+            """
             assert method == "GET" and path == "/api/v1/settings"
             return policy.copy()
 
         def request(self, method, path, *, form=None, headers=None):  # type: ignore[no-untyped-def]  # Fake mirrors the lifecycle HTTP client.
-            """Serve the settings page and autosave endpoint."""
+            """Serve the settings page and autosave endpoint.
+
+            Args:
+                method: HTTP method requested by the lifecycle check.
+                path: UI path requested by the lifecycle check.
+                form: Submitted settings values, when present.
+                headers: Request headers, when present.
+            """
             if method == "GET":
                 assert path == "/settings"
                 return 200, "settings", {}
@@ -425,17 +437,33 @@ def test_authentication_lifetime_uses_appliance_issuance_clock(monkeypatch):
         """Serve a seven-day token issued by an appliance clock one day ahead."""
 
         def __init__(self, base_url):  # type: ignore[no-untyped-def]  # Fake mirrors the lifecycle HTTP client.
-            """Retain the selected appliance URL."""
+            """Retain the selected appliance URL.
+
+            Args:
+                base_url: Appliance URL selected by the lifecycle check.
+            """
             assert base_url == "https://192.0.2.10"
 
         def json_request(self, method, path, *, json_body):  # type: ignore[no-untyped-def]  # Fake mirrors the lifecycle HTTP client.
-            """Return server-side creation and expiration timestamps."""
+            """Return server-side creation and expiration timestamps.
+
+            Args:
+                method: HTTP method requested by the lifecycle check.
+                path: API path requested by the lifecycle check.
+                json_body: Login request payload.
+            """
             assert method == "POST" and path.startswith("/api/v1/auth/login?")
             assert json_body["scopes"] == ["read:dashboard"]
             return {"token": {"created_at": "2026-09-23T00:00:00+00:00", "expires_at": "2026-09-30T00:00:00+00:00"}}
 
         def request(self, method, path, *, json_body):  # type: ignore[no-untyped-def]  # Fake mirrors the lifecycle HTTP client.
-            """Reject an explicit expiry beyond the seven-day policy."""
+            """Reject an explicit expiry beyond the seven-day policy.
+
+            Args:
+                method: HTTP method requested by the lifecycle check.
+                path: API path requested by the lifecycle check.
+                json_body: Login request payload.
+            """
             assert method == "POST" and path.startswith("/api/v1/auth/login?")
             assert json_body["expires_at"] == "2026-10-01T00:00:00+00:00"
             return 422, "configured maximum lifetime of 7 days", {}
@@ -820,6 +848,13 @@ def test_authoritative_dns_lifecycle_probe_covers_authority_reverse_nxdomain_and
     assert 'query("missing-authoritative." + domain, 1)' in script
     assert "assert 6 in sections[1]" in script
     assert 'query("example.com", 1, tcp=tcp)' in script
+
+    dynamic_command = lifecycle.authoritative_dns_probe_command(
+        "atlaso.internal", "192.168.50.1", "192.168.50.1", "interop-client"
+    )
+    dynamic_script = base64.b64decode(dynamic_command.split()[2]).decode("utf-8")
+    assert "dynamic_hostname = 'interop-client'" in dynamic_script
+    assert 'expected.append((dynamic_hostname + "." + domain, 1, 0, 1, True))' in dynamic_script
 
     recursive_command = lifecycle.recursive_dns_probe_command("127.0.0.1", "192.168.50.1")
     recursive_script = base64.b64decode(recursive_command.split()[2]).decode("utf-8")

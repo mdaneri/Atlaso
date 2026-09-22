@@ -196,16 +196,41 @@ def test_dnsmasq_renderer_emits_shared_authoritative_zones_and_generated_glue():
     assert "cache-size=0" in main_lines
     assert "bind-interfaces" in authoritative_lines
     assert "port=5353" in authoritative_lines
+    assert "hostsdir=/var/lib/atlaso/dnsmasq/authoritative-leases" in authoritative_lines
     assert "auth-soa=2026072201,hostmaster.atlaso.internal,1200,180,1209600" in authoritative_lines
     assert "auth-ttl=3600" in authoritative_lines
     assert "host-record=ns1.atlaso.internal,192.168.50.1" in authoritative_lines
     assert "host-record=ns1.atlaso.internal,2001:db8::53" in authoritative_lines
+    assert "ptr-record=1.50.168.192.in-addr.arpa,ns1.atlaso.internal" in main_lines
+    assert f"ptr-record={ip_address('2001:db8::53').reverse_pointer},ns1.atlaso.internal" in main_lines
     assert "host-record=app.sitea.internal,192.168.50.20" in authoritative_lines
     assert "host-record=app.sitea.internal,192.168.50.20" not in main_lines
     assert "ptr-record=20.50.168.192.in-addr.arpa,app.sitea.internal" in main_lines
     assert main_lines.count("rebind-domain-ok=/atlaso.internal/") == 1
     assert "rebind-domain-ok=/sitea.internal/" in main_lines
     assert "rebind-domain-ok=/corp.example/" in main_lines
+
+
+def test_authoritative_dns_with_dhcp_subscribes_to_lease_changes():
+    """Keep dynamic DHCP names in the isolated authoritative backend."""
+    config = render_dnsmasq_config(
+        dns_settings=DnsSettings(enabled=True, authoritative=True, domain="atlaso.internal"),
+        dns_records=[],
+        dhcp_settings=DhcpSettings(enabled=True),
+        dhcp_reservations=[
+            DhcpReservation(
+                hostname="reserved",
+                mac_address="02:15:5d:00:20:20",
+                ip_address="192.168.50.120",
+            )
+        ],
+    )
+
+    assert "dhcp-ignore-names" in config.splitlines()
+    assert "dhcp-script=/opt/atlaso/bin/atlaso-helper" in config.splitlines()
+    assert "dhcp-host=02:15:5d:00:20:20,set:atlaso-name-02155d002020,192.168.50.120" in config
+    assert "dhcp-option=tag:atlaso-name-02155d002020,option:host-name,reserved" in config
+    assert "dhcp-host=02:15:5d:00:20:20,reserved,192.168.50.120" not in config
 
 
 def test_authoritative_validation_rejects_bad_identity_timers_and_conflicting_glue():

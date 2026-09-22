@@ -2187,9 +2187,9 @@ def test_management_handoff_persists_flagged_access_resolver(
             "dhcp",
             [],
             [
-                ["resolvectl", "revert", "eth0"],
                 ["networkctl", "reload"],
                 ["networkctl", "reconfigure", "eth0"],
+                ["resolvectl", "revert", "eth0"],
             ],
         ),
     ],
@@ -2296,6 +2296,53 @@ def test_management_handoff_stops_when_networkd_reconfigure_fails(monkeypatch, t
         ["networkctl", "reload"],
         ["networkctl", "reconfigure", "eth0"],
     ]
+
+
+@pytest.mark.parametrize(
+    "failed_command",
+    [
+        ["networkctl", "reload"],
+        ["networkctl", "reconfigure", "eth0"],
+    ],
+)
+def test_dhcp_resolver_keeps_active_dns_when_networkd_transition_fails(
+    monkeypatch, tmp_path, failed_command
+):
+    """A failed networkd transition must leave the transient resolver intact.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace helper dependencies.
+        tmp_path: Temporary networkd configuration directory.
+        failed_command: networkctl command selected to fail.
+    """
+    helper = load_helper_module()
+    networkd_dir = tmp_path / "networkd"
+    networkd_dir.mkdir()
+    network_path = networkd_dir / "00-atlaso-mgmt.network"
+    network_path.write_text(
+        "[Match]\nName=eth0\n\n[Network]\nDHCP=ipv4\nDNS=127.0.0.1\n[DHCPv4]\nUseDNS=no\n",
+        encoding="utf-8",
+    )
+    commands: list[list[str]] = []
+    monkeypatch.setattr(helper, "NETWORKD_CONFIG_DIR", networkd_dir)
+    monkeypatch.setattr(helper, "NETWORKD_MGMT_CONFIG_PATH", network_path)
+
+    def fake_run(command):
+        """Record a command and fail the selected networkd step.
+
+        Args:
+            command: Command invoked by the helper.
+        """
+        commands.append(command)
+        return subprocess.CompletedProcess(command, int(command == failed_command), "", "")
+
+    monkeypatch.setattr(helper, "_run", fake_run)
+
+    result = helper._configure_dhcp_resolver("eth0")
+
+    assert result.returncode == 1
+    assert ["resolvectl", "revert", "eth0"] not in commands
+    assert "UseDNS=yes" in network_path.read_text(encoding="utf-8")
 
 
 def test_management_handoff_rejects_unpersisted_resolver(monkeypatch):
@@ -7599,6 +7646,47 @@ def test_network_helper_rejects_flagged_access_without_usable_address(tmp_path):
     assert "Network config must keep a management interface or enable the management UI on at least one access interface." in errors
 
 
+def test_network_helper_accepts_sole_flagged_access_with_live_slaac(monkeypatch, tmp_path):
+    """The final management gate accepts a usable observed dynamic address.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace runtime address discovery.
+        tmp_path: Temporary network configuration directory.
+    """
+    helper = load_helper_module()
+    config_path = tmp_path / "atlaso-network.conf"
+    config_path.write_text(
+        "\n".join(
+            [
+                "[physical_interfaces]",
+                "interface=eth0",
+                "  role=access",
+                "  mode=access",
+                "  admin_state=up",
+                "  access_management_ui_enabled=true",
+                "  ipv4_method=static",
+                "  ip_cidr=",
+                "  ipv6_enabled=true",
+                "  ipv6_cidr=",
+                "  mtu=1500",
+                "",
+                "[vlan_interfaces]",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        helper,
+        "_network_interface_has_usable_runtime_address",
+        lambda name, *, ipv4_enabled, ipv6_enabled: (
+            name == "eth0" and not ipv4_enabled and ipv6_enabled
+        ),
+    )
+
+    assert helper._network_config_errors(config_path) == []
+
+
 def test_network_helper_does_not_assign_management_routing_without_dedicated_role(monkeypatch, tmp_path):
     """Verify that an access-only configuration keeps every physical link on ordinary access routing.
 
@@ -11176,6 +11264,7 @@ def test_dnsmasq_helper_apply_installs_isolated_authoritative_backend(monkeypatc
 
     monkeypatch.setattr(helper, "DNSMASQ_APPLY_DIR", apply_dir)
     monkeypatch.setattr(helper, "DNSMASQ_STATE_DIR", state_dir)
+    monkeypatch.setattr(helper, "DNSMASQ_AUTHORITATIVE_LEASE_HOSTS_DIR", state_dir / "authoritative-leases")
     monkeypatch.setattr(helper, "DNSMASQ_CONFIG_DIR", config_dir)
     monkeypatch.setattr(helper, "DNSMASQ_CONFIG_PATH", config_dir / "atlaso.conf")
     monkeypatch.setattr(helper, "DNSMASQ_AUTHORITATIVE_CONFIG_PATH", config_dir / "atlaso-authoritative.conf")
@@ -11207,6 +11296,55 @@ def test_dnsmasq_helper_apply_installs_isolated_authoritative_backend(monkeypatc
     assert "BindsTo=atlaso-dns-authoritative.service" not in main_dropin
     assert commands.index(["systemctl", "restart", "atlaso-dns-authoritative.service"]) < commands.index(
         ["systemctl", "restart", "dnsmasq"]
+    )
+
+
+def test_dnsmasq_lease_events_mirror_only_managed_names(monkeypatch, tmp_path):
+    """Lease add, rename, and removal update the backend's hosts directory.
+
+    Args:
+        monkeypatch: Pytest fixture used to set lease event paths and environment.
+        tmp_path: Temporary dnsmasq state directory.
+    """
+    helper = load_helper_module()
+    state_dir = tmp_path / "dnsmasq"
+    state_dir.mkdir()
+    hosts_dir = state_dir / "authoritative-leases"
+    config_path = tmp_path / "atlaso-authoritative.conf"
+    config_path.write_text("auth-zone=atlaso.internal\n", encoding="utf-8")
+    monkeypatch.setattr(helper, "DNSMASQ_STATE_DIR", state_dir)
+    monkeypatch.setattr(helper, "DNSMASQ_AUTHORITATIVE_LEASE_HOSTS_DIR", hosts_dir)
+    monkeypatch.setattr(helper, "DNSMASQ_AUTHORITATIVE_CONFIG_PATH", config_path)
+    monkeypatch.setenv("DNSMASQ_DOMAIN", "atlaso.internal")
+    helper._prepare_authoritative_lease_hosts()
+
+    event = ["atlaso-helper", "add", "02:00:00:00:00:01", "192.168.50.21", "client"]
+    assert helper.main(event) == 0
+    hosts = list(hosts_dir.iterdir())
+    assert len(hosts) == 1
+    assert hosts[0].read_text(encoding="utf-8") == "192.168.50.21 client.atlaso.internal\n"
+
+    assert helper.main(["atlaso-helper", "old", "02:00:00:00:00:01", "192.168.50.21"]) == 0
+    assert hosts[0].read_text(encoding="utf-8") == "192.168.50.21 client.atlaso.internal\n"
+
+    event[1], event[4] = "old", "renamed"
+    assert helper.main(event) == 0
+    assert hosts[0].read_text(encoding="utf-8") == "192.168.50.21 renamed.atlaso.internal\n"
+
+    event[1], event[4] = "add", "not;valid"
+    assert helper.main(event) == 0
+    assert list(hosts_dir.iterdir()) == []
+
+    event[1], event[4] = "add", "client"
+    assert helper.main(event) == 0
+    event[1] = "del"
+    assert helper.main(event) == 0
+    assert list(hosts_dir.iterdir()) == []
+
+    monkeypatch.setenv("DNSMASQ_SUPPLIED_HOSTNAME", "supplied")
+    assert helper.main(["atlaso-helper", "add", "02:00:00:00:00:01", "192.168.50.21"]) == 0
+    assert next(hosts_dir.iterdir()).read_text(encoding="utf-8") == (
+        "192.168.50.21 supplied.atlaso.internal\n"
     )
 
 

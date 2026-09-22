@@ -855,7 +855,10 @@ service forwards managed domains to that backend, so selected listeners preserve
 answers while retaining existing PTR behavior and recursion through configured upstreams. It disables the client-facing
 cache in authoritative mode because cached forwarded replies lose the AA flag. Atlaso generates read-only
 SOA/NS records and A/AAAA nameserver glue from the selected listen addresses and advances the SOA serial on DNS
-mutations. Listener selection and firewall policy limit client access. Generated reverse zones retain
+mutations. Its recursive instance retains PTR records for generated glue and mirrors live DHCP lease names into a
+backend hosts directory when DHCP is enabled. DNS health requires the backend while either the saved settings or the
+last-applied DNS configuration is authoritative. Listener selection and firewall policy limit client access. Generated
+reverse zones retain
 their existing PTR behavior. When the appliance resolver is still in DHCP mode and DNS upstream servers are blank, the
 DNS page and rendered dnsmasq preview use the management interface's observed DHCP DNS servers as fallback forwarders;
 converting a management DHCP lease to static copies those observed DNS servers into Appliance Settings external DNS and

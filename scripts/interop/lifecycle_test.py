@@ -3542,20 +3542,25 @@ if expected_ip not in answers:
     return f"printf %s {encoded} | base64 -d | python3 -"
 
 
-def authoritative_dns_probe_command(domain: str, server: str, expected_ip: str) -> str:
+def authoritative_dns_probe_command(
+    domain: str, server: str, expected_ip: str, dynamic_hostname: str = ""
+) -> str:
     """Return authoritative dns probe command.
 
     Args:
         domain: Domain consumed by authoritative DNS probe command.
         server: Server consumed by authoritative DNS probe command.
         expected_ip: Expected IP used to verify the result.
+        dynamic_hostname: DHCP-learned client name expected to retain AA.
     """
     script = f'''
 import random
 import socket
 import struct
+import time
 
 server = {server!r}
+dynamic_hostname = {dynamic_hostname!r}
 
 def skip_name(data, offset):
     while True:
@@ -3610,6 +3615,15 @@ expected = [
     ("ns1." + domain, 1, 0, 1, True),
     ("interop-appliance." + domain, 1, 0, 1, True),
 ]
+if dynamic_hostname:
+    for attempt in range(15):
+        flags, sections = query(dynamic_hostname + "." + domain, 1)
+        if flags & 0x000F == 0 and flags & 0x0400 and 1 in sections[0]:
+            break
+        time.sleep(1)
+    else:
+        raise AssertionError((dynamic_hostname, flags, sections))
+    expected.append((dynamic_hostname + "." + domain, 1, 0, 1, True))
 for tcp in (False, True):
     for name, qtype, expected_rcode, expected_type, authoritative in expected:
         for _ in range(2):
@@ -4041,10 +4055,20 @@ def authoritative_dns_state_check(args: argparse.Namespace) -> dict[str, Any]:
     site_ip = str(ip_interface(args.site_cidr).ip)
     if args.skip_client_checks or not args.client_a_host:
         return {"skipped": "client A host not provided"}
+    refresh = ssh_command(
+        args.client_a_host,
+        args,
+        'ELEV="$(command -v sudo || true)"; ${ELEV:+$ELEV }/usr/local/sbin/atlaso-refresh-test-dhcp; hostname -s',
+        role="client",
+    )
+    require_success(refresh, "client A DHCP hostname refresh")
+    client_hostname = refresh["stdout"].splitlines()[-1].strip().lower()
+    if not re.fullmatch(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?", client_hostname):
+        raise LifecycleError("Client A DHCP hostname is invalid for the authoritative DNS probe.")
     authoritative = ssh_command(
         args.client_a_host,
         args,
-        authoritative_dns_probe_command(args.domain, site_ip, site_ip),
+        authoritative_dns_probe_command(args.domain, site_ip, site_ip, client_hostname),
         role="client",
     )
     require_success(authoritative, "client A authoritative DNS probe")

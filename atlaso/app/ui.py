@@ -14518,6 +14518,7 @@ def update_appliance_apply_baselines(db: Session, units: list[dict[str, Any]], s
             baseline["runtime_config_preview"] = runtime_config_preview
         if unit["id"] == "dnsmasq":
             baseline["dns_enabled"] = bool(unit["context"]["dns_settings"].enabled)
+            baseline["dns_authoritative"] = bool(unit["context"]["dns_settings"].authoritative)
         baselines[unit["id"]] = baseline
     save_appliance_apply_baselines(db, baselines)
 

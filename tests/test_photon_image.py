@@ -3435,6 +3435,7 @@ def test_nocloud_seed_helper_writes_client_cloud_init_contract():
     assert "sshpass" in script
     assert "chrony-nts" in script
     assert "atlaso-refresh-test-dhcp" in script
+    assert 'udhcpc -i "$iface" -H "$(hostname -s)"' in script
     assert "joliet_path=f\"/{name}\"" in script
 
 
