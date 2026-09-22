@@ -250,6 +250,7 @@ explicit maintainer approval before implementation.
 `AtlasoUiPatterns.createWizard`, and the generic wizard DOM contract. Administrator-only operations use encrypted
 Vault references; the browser receives no credential values. Fingerprint confirmation precedes authentication,
 and navigation never writes remote properties or restarts services. JavaScript is required for the workflow.
-Local Edge checks cover fingerprint confirmation, review invalidation, recoverable submission errors, task links,
-focus restoration, and API-unavailable revert review at desktop and narrow viewports. Native VCF acceptance and
+Local Edge checks cover review invalidation, recoverable submission errors,
+automatic credential-free SSH probing, explicit approval, current-value editing, and automatic task-details
+navigation after successful submission at desktop and narrow viewports. Native VCF acceptance and
 deployed-appliance UI verification remain outstanding.

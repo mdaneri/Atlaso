@@ -144,9 +144,9 @@
       if (!token || submitted) return "Inspect and review again before submitting.";
       const result = await request("/execute", {token, acknowledged: true, ...(manual() ? {credentials: credentials()} : {})});
       submitted = true; clearPasswords(); invalidate();
-      node("status").textContent = "Remote task queued. Tasks reports progress, property readback and service recovery separately.";
-      node("task").href = `${form.dataset.tasksRoot}?job_id=${encodeURIComponent(result.job_id)}`;
-      node("task").hidden = false; node("task").classList.remove("hidden"); node("task").focus();
+      wizard.markClean();
+      wizard.close("submit");
+      window.location.assign(`${form.dataset.tasksRoot}?job_id=${encodeURIComponent(result.job_id)}`);
       return {close: false};
     },
   });

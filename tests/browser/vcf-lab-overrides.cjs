@@ -18,12 +18,19 @@ const html = `<html><head><style>${fs.readFileSync("atlaso/app/static/app.css", 
       const page = await browser.newPage({viewport});
       const errors = [], calls = [];
       let rejectSubmit = true;
+      const departures = [];
+      await page.exposeFunction('recordDeparture', (data) => departures.push(data));
+      await page.addInitScript(() => document.addEventListener('DOMContentLoaded', () => {
+        document.querySelector('#vcf-lab-modal')?.addEventListener('close', () => window.recordDeparture({open: document.querySelector('#vcf-lab-modal').open, passwords: [...document.querySelectorAll('input[type="password"]')].map(el => el.value)}));
+      }));
       page.on("pageerror", (error) => errors.push(error.message));
       await page.route("http://atlaso.test/**", async (route) => {
+        if (route.request().url().includes('/tasks?job_id=')) {
+          return route.fulfill({contentType: 'text/html', body: '<p>Task details fixture</p>'});
+        }
         const operation = route.request().url().split("/").pop();
         if (operation === "") return route.fulfill({contentType: "text/html", body: html});
         calls.push({operation, body: route.request().postDataJSON()});
-        if (operation === "history") return route.fulfill({json: {jobs: [{id: "previous", target: "vcf.example.test", status: "succeeded", created_at: "fixture"}]}});
         if (operation === "probe") return route.fulfill({json: {target: "vcf.example.test", ssh_fingerprint: "ssh-fixture"}});
         if (operation === "inspect") return route.fulfill({json: {target: "vcf.example.test", role: "VcfInstaller", version: "9.1.1", values: {esa: null, nic: "true"}, service_active: true}});
         if (operation === "review") return route.fulfill({json: {token: "review-fixture", target: "vcf.example.test", role: "VcfInstaller", version: "9.1.1", changes: [{key: "enable.speed.of.physical.nics.validation", previous: "true", value: "false"}], restart_required: true}});
@@ -75,12 +82,9 @@ const html = `<html><head><style>${fs.readFileSync("atlaso/app/static/app.css", 
       await page.waitForFunction(() => document.querySelector('[data-atlaso-wizard-error]').textContent.includes('Transient'));
       assert(await modal.isVisible()); assert(await page.locator('[name="acknowledged"]').isChecked());
       await page.locator('[data-atlaso-wizard-submit]').click();
-      await page.locator('[data-lab-task]').waitFor({state: "visible"});
-      assert.match(await page.locator('[data-lab-task]').getAttribute('href'), /fixture-task/);
-      assert.equal(await page.evaluate(() => localStorage.length + sessionStorage.length), 0);
-      assert.equal(await modal.evaluate((element) => element.scrollWidth <= element.clientWidth + 1), true);
-      await page.locator('[data-atlaso-wizard-cancel]').click();
-      await page.waitForFunction(() => document.activeElement?.hasAttribute('data-vcf-lab-open'));
+      await page.waitForURL('**/tasks?job_id=fixture-task');
+      assert.deepEqual(departures.at(-1), {open: false, passwords: ['', '']});
+      await page.goto('http://atlaso.test/');
       await page.locator('[data-vcf-lab-open]').click();
       assert.equal(await page.locator('[name="ssh_credential"]').inputValue(), "");
       assert.equal(await page.locator('[name="confirmed"]').isChecked(), false);
@@ -102,9 +106,9 @@ const html = `<html><head><style>${fs.readFileSync("atlaso/app/static/app.css", 
       assert.equal(calls.filter((call) => call.operation === 'review').at(-1).body.credential_mode, 'manual');
       await page.locator('[name="acknowledged"]').check();
       await page.locator('[data-atlaso-wizard-submit]').click();
-      await page.locator('[data-lab-task]').waitFor({state:'visible'});
+      await page.waitForURL('**/tasks?job_id=fixture-task');
+      assert.deepEqual(departures.at(-1), {open: false, passwords: ['', '']});
       assert.deepEqual(calls.filter((call) => call.operation === 'execute').at(-1).body.credentials, {ssh:'synthetic-ssh',root:'synthetic-root'});
-      for (const kind of ['ssh', 'root']) assert.equal(await page.locator(`[name="${kind}_password"]`).inputValue(), '');
       assert.equal(await page.evaluate(() => localStorage.length + sessionStorage.length), 0);
       assert.deepEqual(errors, []);
       console.log(`PASS shared lab wizard ${viewport.width}x${viewport.height}`);
