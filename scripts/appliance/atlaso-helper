@@ -9169,12 +9169,23 @@ def _systemd_networkd_files(path: Path) -> tuple[dict[str, str], list[str], list
         and row.get("access_management_ui_enabled", "false").strip().lower() == "true"
         and _network_row_has_usable_management_address(row)
     )
-    management_candidates = [management_name] if management_name else flagged_management_names
+    management_is_effective = bool(
+        management
+        and (
+            _network_row_has_usable_management_address(management)
+            or _network_interface_has_usable_runtime_address(str(management_name))
+        )
+    )
+    management_candidates = (
+        [str(management_name)]
+        if management_is_effective
+        else flagged_management_names
+    )
     preserved_management = _read_existing_management_network_values(management_candidates)
     preserved_names = set(preserved_management.get("Name", []))
-    resolver_name = management_name or next(
+    resolver_name = (str(management_name) if management_is_effective else None) or next(
         (name for name in flagged_management_names if name in preserved_names),
-        None,
+        flagged_management_names[0] if flagged_management_names else None,
     )
     files: dict[str, str] = {}
     reconfigure_links: list[str] = []
@@ -9340,6 +9351,40 @@ def _network_row_has_usable_management_address(row: dict[str, str]) -> bool:
             continue
         if not (address.is_link_local or address.is_loopback or address.is_multicast or address.is_unspecified):
             return True
+    return False
+
+
+def _network_interface_has_usable_runtime_address(interface_name: str) -> bool:
+    """Return whether a live interface currently owns a usable address.
+
+    Args:
+        interface_name: Host network-interface name inspected at runtime.
+    """
+    if not _valid_network_interface_name(interface_name) or shutil.which("ip") is None:
+        return False
+    try:
+        result = _run(["ip", "-j", "address", "show", "dev", interface_name])
+    except OSError:
+        return False
+    if result.returncode != 0:
+        return False
+    try:
+        interfaces = json.loads(result.stdout or "[]")
+    except json.JSONDecodeError:
+        return False
+    for interface in interfaces if isinstance(interfaces, list) else []:
+        for item in interface.get("addr_info", []) if isinstance(interface, dict) else []:
+            try:
+                address = ip_address(str(item.get("local") or ""))
+            except ValueError:
+                continue
+            if not (
+                address.is_link_local
+                or address.is_loopback
+                or address.is_multicast
+                or address.is_unspecified
+            ):
+                return True
     return False
 
 

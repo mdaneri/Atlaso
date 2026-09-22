@@ -7201,6 +7201,54 @@ def test_network_helper_preserves_flagged_access_resolver(monkeypatch, tmp_path,
     assert "Domains=~." in rendered
 
 
+def test_network_helper_uses_flagged_resolver_when_management_dhcp_has_no_lease(
+    monkeypatch,
+    tmp_path,
+):
+    """Preserve resolver state on the effective flagged path during DHCP loss.
+
+    Args:
+        monkeypatch: Pytest fixture used to isolate generated and runtime state.
+        tmp_path: Temporary directory containing staged and installed network files.
+    """
+    helper = load_helper_module()
+    config_path = tmp_path / "atlaso-network.conf"
+    config = network_config_text().replace(
+        "  ipv4_method=static\n  ip_cidr=192.168.49.1/24",
+        "  ipv4_method=dhcp\n  ip_cidr=",
+        1,
+    ).replace(
+        "  mtu=1500\n  role=access",
+        "  mtu=1500\n  role=access\n  access_management_ui_enabled=true",
+        1,
+    )
+    config_path.write_text(config, encoding="utf-8")
+    networkd_dir = tmp_path / "networkd"
+    networkd_dir.mkdir()
+    flagged_path = networkd_dir / "10-atlaso-eth2.20.network"
+    flagged_path.write_text(
+        "[Match]\nName=eth2.20\n\n[Network]\nDNS=127.0.0.1\nDomains=~.\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(helper, "NETWORKD_CONFIG_DIR", networkd_dir)
+    monkeypatch.setattr(
+        helper,
+        "NETWORKD_MGMT_CONFIG_PATH",
+        networkd_dir / "00-atlaso-mgmt.network",
+    )
+    monkeypatch.setattr(
+        helper,
+        "_network_interface_has_usable_runtime_address",
+        lambda _name: False,
+    )
+
+    files, _links, _admin_down = helper._systemd_networkd_files(config_path)
+
+    assert "DNS=127.0.0.1" in files["10-atlaso-eth2.20.network"]
+    assert "Domains=~." in files["10-atlaso-eth2.20.network"]
+    assert "DNS=127.0.0.1" not in files["00-atlaso-mgmt.network"]
+
+
 def test_network_helper_rejects_flagged_access_without_usable_address(tmp_path):
     """Verify that staged access flags require a usable non-link-local listener address.
 
@@ -7259,7 +7307,12 @@ def test_network_helper_does_not_assign_management_routing_without_dedicated_rol
     monkeypatch.setattr(
         helper,
         "_read_existing_management_network_values",
-        lambda _interfaces: {"DNS": ["192.0.2.53"], "Gateway": ["192.168.49.254"]},
+        lambda _interfaces: {
+            "DNS": ["192.0.2.53"],
+            "Domains": [],
+            "Gateway": ["192.168.49.254"],
+            "Name": ["eth1"],
+        },
     )
 
     files, reconfigure_links, admin_down_links = helper._systemd_networkd_files(config_path)
@@ -7269,7 +7322,7 @@ def test_network_helper_does_not_assign_management_routing_without_dedicated_rol
     assert reconfigure_links == ["eth1"]
     rendered = files["10-atlaso-eth1.network"]
     assert "Address=192.168.50.1/24" in rendered
-    assert "DNS=" not in rendered
+    assert "DNS=192.0.2.53" in rendered
     assert "Gateway=" not in rendered
     assert "Table=100" not in rendered
 
