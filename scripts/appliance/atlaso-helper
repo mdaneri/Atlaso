@@ -9687,6 +9687,7 @@ def _install_route_domain_intent(
         if live is None:
             raise ValueError("candidate routing-domain interface is missing")
         intent["interfaces"].append({"name": name, "mac": live["address"],
+                                     "management_ui": row.get("role") == "access" and row.get("access_management_ui_enabled", "false").lower() == "true",
                                      "table": MANAGEMENT_ROUTE_TABLE_ID if row.get("role") == "management" else LAB_ROUTE_TABLE_ID})
     ROUTE_DOMAIN_CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
     _durable_management_handoff_state_write(intent, ROUTE_DOMAIN_CONFIG_PATH)
@@ -11929,6 +11930,68 @@ def _management_default_gateways_for_target(target: dict[str, str]) -> list[str]
     return _usable_management_default_gateways(target_networks, candidates)
 
 
+def _applied_wan_network_state() -> dict | None:
+    """Read canonical applied identity and native connected ownership for WAN.
+
+    The isolated installed module validates intent and MAC-bound usable sources;
+    no pending Network or WAN target can supply this ownership evidence.
+    """
+    if not ROUTE_DOMAIN_CONFIG_PATH.exists() and not ROUTE_DOMAIN_CONFIG_PATH.is_symlink():
+        return None
+    if ROUTE_DOMAIN_CONFIG_PATH.is_symlink() or not ROUTE_DOMAIN_CONFIG_PATH.is_file():
+        raise ValueError("applied routing-domain intent is unsafe")
+    program = (
+        "import json\nfrom dataclasses import asdict\n"
+        "from atlaso.route_domains import read_intent, read_native, source_tables, reconciliation_lock\n"
+        "with reconciliation_lock():\n"
+        " intent = read_intent()\n addresses = read_native(['address', 'show'])\n"
+        " sources, incomplete = source_tables(intent, addresses)\n"
+        " routes = {str(f): read_native([f'-{f}', 'route', 'show', 'table', '200']) for f in (4, 6)}\n"
+        " print(json.dumps({'intent': asdict(intent), 'addresses': addresses, 'sources': sources,"
+        " 'incomplete': incomplete, 'routes': routes}))\n"
+    )
+    result = _network_observation_command(
+        ["/opt/atlaso/.venv/bin/python", "-I", "-c", program], timeout=45,
+    )
+    if result.returncode:
+        raise ValueError("applied Network ownership observation failed; reapply Network before WAN")
+    snapshot = json.loads(result.stdout)
+    if snapshot["incomplete"] or any(table is None for table in snapshot["sources"].values()):
+        raise ValueError("applied Network interface identity is unavailable or ambiguous")
+    interfaces = {row["name"]: row for row in snapshot["intent"]["interfaces"]}
+    for hold in snapshot["intent"]["held_addresses"]:
+        row = hold["interface"]
+        interfaces.setdefault(row["name"], row)
+    prefixes = set()
+    for link in snapshot["addresses"]:
+        admitted = interfaces.get(link["ifname"])
+        if admitted is None or link.get("address", "").lower() != admitted["mac"]:
+            continue
+        for address in link.get("addr_info", []):
+            source = str(ip_address(address["local"]))
+            if snapshot["sources"].get(source) == LAB_ROUTE_TABLE_ID:
+                prefixes.add((link["ifname"], str(ip_network(f"{source}/{address['prefixlen']}", strict=False))))
+    connected: dict[tuple[str, str], set[int]] = {}
+    for family in (4, 6):
+        for route in snapshot["routes"][str(family)]:
+            destination = route.get("dst", "default")
+            if destination == "default" or route.get("gateway") or route.get("type", "unicast") != "unicast":
+                continue
+            network = str(ip_network(destination, strict=False))
+            key = (route.get("dev", ""), network)
+            metric = route.get("metric", 0 if family == 4 else 1024)
+            if type(metric) is not int or metric < 0:
+                raise ValueError("invalid applied connected-route metric")
+            # Networkd protocols, plus the former helper's unmetriced connected
+            # route during migration. Distinct boot-protocol statics are WAN's.
+            protocol = str(route.get("protocol", ""))
+            if key in prefixes and (protocol in {"2", "4", "9", "16", "kernel", "static", "ra", "dhcp"}
+                                    or (protocol in {"3", "boot", ""} and metric == (0 if family == 4 else 1024))):
+                connected.setdefault(key, set()).add(metric)
+    return {"connected": connected, "prefixes": prefixes,
+            "management_ui": {name: row.get("management_ui") for name, row in interfaces.items()}}
+
+
 def _apply_wan_target_routes(
     parsed: dict[str, list[dict[str, str]]],
     previous_parsed: dict[str, list[dict[str, str]]] | None = None,
@@ -11942,6 +12005,11 @@ def _apply_wan_target_routes(
     if shutil.which("ip") is None:
         print("ip command not found", file=sys.stderr)
         return 127
+    if ROUTE_DOMAIN_CONFIG_PATH.exists() or ROUTE_DOMAIN_CONFIG_PATH.is_symlink():
+        # Networkd owns connected and dedicated-management defaults after the
+        # Network migration. Never replace them with pending WAN target rows.
+        _applied_wan_network_state()
+        return 0
     targets = parsed["targets"]
     current_lab_routes = {
         (target.get("name", ""), network)
@@ -12137,16 +12205,26 @@ def _run_route_delete(
     return result.returncode
 
 
-def _retire_wan_static_route(route: dict[str, str], targets: dict[str, dict[str, str]]) -> int:
+def _retire_wan_static_route(
+    route: dict[str, str], targets: dict[str, dict[str, str]], applied: dict | None = None,
+) -> int:
     """Retire a static identity without selecting its Network-owned connected route.
 
     Args:
         route: Disabled or removed saved static route.
         targets: Current connected targets already installed by WAN reconciliation.
+        applied: Modern applied Network/native ownership, or legacy target fallback.
     """
     destination, name = route["destination_cidr"], route["interface"]
     target = targets.get(name, {})
     network = ip_network(destination, strict=False)
+    if applied is not None:
+        metric = int(route.get("metric", "100") or "100")
+        effective_metric = metric or (1024 if network.version == 6 else 0)
+        gateway = route.get("gateway", "")
+        if not gateway and effective_metric in applied["connected"].get((name, str(network)), set()):
+            return 0
+        return _run_route_delete(destination, name, metric=metric, gateway=gateway)
     connected = target.get("routing_domain", "lab") != "management" and str(network) in _target_networks(target)
     if connected:
         ordered = list(targets.values())
@@ -12210,11 +12288,35 @@ def _apply_wan_routes_and_qdiscs(
         return 127
     targets = {target.get("name", ""): target for target in parsed["targets"]}
     feature_settings = _wan_feature_settings(parsed)
+    applied = _applied_wan_network_state()
     routing_enabled = feature_settings["routing_enabled"]
     wan_simulation_enabled = feature_settings["wan_simulation_enabled"]
     previously_mirrored_defaults = _mirrored_wan_default_keys(previous_parsed)
     policies = {policy["name"]: policy for policy in parsed["wan_policies"]}
     touched_qdisc_targets: set[str] = set()
+    if applied is not None:
+        for row in parsed["routes"]:
+            network = ip_network(row["destination_cidr"], strict=False)
+            name = row["interface"]
+            saved = _wan_bool(row.get("enabled", ""), default=True)
+            metric = int(row.get("metric", "100") or "100") or (1024 if network.version == 6 else 0)
+            if saved and routing_enabled and row.get("gateway") and metric in applied["connected"].get((name, str(network)), set()):
+                raise ValueError("static route would replace a Network-owned connected route; choose a distinct metric")
+            if network.prefixlen == 0:
+                eligibility = applied["management_ui"].get(name, False)
+                if eligibility is None:
+                    raise ValueError("applied management UI eligibility is unavailable; reapply Network before WAN")
+                if eligibility and saved:
+                    gateway = ip_address(row.get("gateway", ""))
+                    if gateway.version != network.version or not (
+                        (gateway.version == 6 and gateway.is_link_local)
+                        or any(interface == name and gateway.version == ip_network(prefix).version
+                               and gateway in ip_network(prefix) for interface, prefix in applied["prefixes"])
+                    ):
+                        raise ValueError("management default gateway is not on the applied Network interface")
+        for row in parsed["removed_routes"]:
+            if ip_network(row["destination_cidr"], strict=False).prefixlen == 0 and applied["management_ui"].get(row["interface"], False) is None:
+                raise ValueError("applied management UI eligibility is unavailable; reapply Network before WAN")
     for route in parsed["routes"]:
         destination = route["destination_cidr"]
         interface_name = route["interface"]
@@ -12229,12 +12331,17 @@ def _apply_wan_routes_and_qdiscs(
                 targets.get(interface_name, {}).get("management_ui", "false")
             )
         )
+        if applied is not None and destination_network is not None and destination_network.prefixlen == 0:
+            eligibility = applied["management_ui"].get(interface_name, False)
+            if eligibility is None:
+                raise ValueError("applied management UI eligibility is unavailable; reapply Network before WAN")
+            management_ui_default = eligibility
         previously_mirrored_default = (
             str(destination_network),
             interface_name,
         ) in previously_mirrored_defaults if destination_network is not None else False
         saved_enabled = _wan_bool(route.get("enabled", ""), default=True)
-        enabled = saved_enabled and routing_enabled
+        enabled = saved_enabled and (routing_enabled or management_ui_default)
         if not enabled:
             # A disabled feature may preserve an enabled route whose target is
             # omitted from current intent. Skip a genuinely absent link, whose
@@ -12242,7 +12349,7 @@ def _apply_wan_routes_and_qdiscs(
             # interface that merely became ineligible (for example, a trunk).
             if interface_name not in targets and not _link_exists(interface_name):
                 continue
-            delete_result = _retire_wan_static_route(route, targets)
+            delete_result = _retire_wan_static_route(route, targets, applied)
             if delete_result != 0:
                 return delete_result
             if not saved_enabled and (management_ui_default or previously_mirrored_default):
@@ -12251,23 +12358,6 @@ def _apply_wan_routes_and_qdiscs(
                 )
                 if main_delete.returncode not in {0, 2}:
                     return main_delete.returncode
-            elif saved_enabled and management_ui_default:
-                main_command = [*_route_command_prefix(destination), "replace", destination]
-                if route.get("gateway"):
-                    main_command.extend(["via", route["gateway"]])
-                main_command.extend(
-                    [
-                        "dev",
-                        interface_name,
-                        "metric",
-                        str(int(route.get("metric", "100") or "100")),
-                    ]
-                )
-                main_result = _run(main_command)
-                print(main_result.stdout, end="")
-                print(main_result.stderr, end="", file=sys.stderr)
-                if main_result.returncode != 0:
-                    return main_result.returncode
             elif previously_mirrored_default:
                 main_delete = _run(
                     [*_route_command_prefix(destination), "del", destination, "dev", interface_name]
@@ -12276,6 +12366,11 @@ def _apply_wan_routes_and_qdiscs(
                     return main_delete.returncode
             touched_qdisc_targets.add(interface_name)
             continue
+        if applied is not None and not route.get("gateway") and destination_network is not None:
+            metric = int(route.get("metric", "100") or "100") or (1024 if destination_network.version == 6 else 0)
+            if metric in applied["connected"].get((interface_name, str(destination_network)), set()):
+                touched_qdisc_targets.add(interface_name)
+                continue
         command = [*_route_command_prefix(destination), "replace", destination]
         if route.get("gateway"):
             command.extend(["via", route["gateway"]])
@@ -12303,7 +12398,12 @@ def _apply_wan_routes_and_qdiscs(
         interface_name = route["interface"]
         if interface_name not in targets and not _link_exists(interface_name):
             continue
-        delete_result = _retire_wan_static_route(route, targets)
+        removed_management_ui = _wan_bool(targets.get(interface_name, {}).get("management_ui", "false"))
+        if applied is not None and ip_network(route["destination_cidr"], strict=False).prefixlen == 0:
+            removed_management_ui = applied["management_ui"].get(interface_name, False)
+            if removed_management_ui is None:
+                raise ValueError("applied management UI eligibility is unavailable; reapply Network before WAN")
+        delete_result = _retire_wan_static_route(route, targets, applied)
         if delete_result != 0:
             return delete_result
         try:
@@ -12318,9 +12418,7 @@ def _apply_wan_routes_and_qdiscs(
             removed_destination is not None
             and removed_destination.prefixlen == 0
             and (
-                _wan_bool(
-                    targets.get(route["interface"], {}).get("management_ui", "false")
-                )
+                removed_management_ui
                 or removed_key in previously_mirrored_defaults
             )
         ):

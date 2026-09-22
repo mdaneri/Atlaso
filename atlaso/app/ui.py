@@ -5746,6 +5746,7 @@ def routes_wan_context(db: Session) -> dict:
         applied_network_ingress=wan_applied_network_ingress(db),
         desired_network_ingress=wan_network_ingress_from_preview(render_network_config(
             interfaces=list(db.scalars(select(PhysicalInterface))), vlans=list(db.scalars(select(VlanInterface))))),
+        network_owned_targets=wan_network_owned_targets(db),
     )
     return {
         "routes": routes,
@@ -9884,6 +9885,31 @@ def wan_network_ingress_from_preview(preview: str) -> list[str]:
                    and row.get("mode") != "trunk" and row.get("admin_state") != "down"})
 
 
+def wan_network_owned_targets(db: Session) -> list[dict[str, str]] | None:
+    """Project modern Network ownership without consuming pending WAN targets.
+
+    Args:
+        db: Active database session containing desired and applied Network state.
+    """
+    baseline = load_appliance_apply_baselines(db).get("network")
+    if baseline is None:
+        preview = render_network_config(interfaces=list(db.scalars(select(PhysicalInterface))),
+                                        vlans=list(db.scalars(select(VlanInterface))))
+    else:
+        preview = str(baseline.get("config_preview") or "")
+        if "# Network runtime revision: exact-source-routing-v1." not in preview.splitlines():
+            return None
+    targets = []
+    for row in network_interface_entries(preview):
+        if row.get("role") not in {"management", "access", "route"} or row.get("mode") == "trunk" or row.get("admin_state") == "down":
+            continue
+        targets.append({**row, "routing_domain": "management" if row.get("role") == "management" else "lab",
+                        "management_ui": "true" if row.get("role") == "access" and row.get("access_management_ui_enabled") == "true" else "",
+                        "ip_cidr": row.get("ip_cidr", "") if row.get("ipv4_method", "static") != "dhcp" else "",
+                        "ipv6_cidr": row.get("ipv6_cidr", "") if row.get("ipv6_enabled", "true") == "true" else ""})
+    return targets
+
+
 def network_management_paths(config_preview: str) -> list[dict[str, str]]:
     """Return every effective management browser path in a network preview.
 
@@ -11094,6 +11120,7 @@ def appliance_apply_units(db: Session, *, reconcile: bool = True) -> list[dict[s
         settings=wan["routes_wan_settings"],
         applied_network_ingress=wan_applied_network_ingress(db),
         desired_network_ingress=wan_network_ingress_from_preview(network["network_config_preview"]),
+        network_owned_targets=wan_network_owned_targets(db),
     )
     wan_summary = [
         f"{len(wan['routes'])} routes",

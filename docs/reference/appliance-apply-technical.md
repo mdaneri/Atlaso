@@ -447,9 +447,17 @@ Through `atlaso-helper wan validate|apply`, the helper validates staged routes, 
 and netem policy values only for their active global feature. The staged `[feature_settings]` section carries
 `routing_enabled` and `wan_simulation_enabled` while retaining every saved resource row. Routing on
 sets `net.ipv4.ip_forward=1` and `net.ipv6.conf.all.forwarding=1`; Routing off sets both to `0`, removes forwarded lab
-rules and explicit static routes, and retains connected routes and local-source rules in both domains.
+rules and ordinary static routes, and retains connected routes and local-source rules in both domains. Enabled defaults
+for Access interfaces exposing management remain in table 200 as well as main, preserving off-subnet management replies
+without enabling forwarding. Applied intent records management exposure separately from pending settings. Older intent
+without that metadata requires Network to be reapplied before WAN can classify a management default.
+After migration, Network owns connected routes and dedicated-management defaults; WAN-only
+Apply does not rewrite them from pending Network edits.
 Static-route removal uses the saved metric and next hop when its destination and interface overlap a connected route;
-an entry that aliases the connected route does not remove that Network-owned path.
+an entry that aliases the connected route does not remove that Network-owned path. Modern cleanup verifies applied
+interface ownership and live connected-route identity; review describes this runtime decision rather than inventing
+exact deletion commands for dynamic addresses. A static addition that would replace a live connected-route identity
+is rejected; a redundant no-gateway alias leaves the Network-owned route intact.
 NAT is effective only when Routing and
 NAT are both on; the `nat` unit otherwise clears Atlaso's NAT rules without changing saved intent. WAN Simulation
 independently applies or removes root `tc/netem` qdiscs. After Network migration, WAN Apply applies ingress rules with

@@ -407,7 +407,8 @@ source rules, route selection, DHCP and RA expiry, and ordinary Apply restoratio
 static-to-DHCP transition while the original server lease remains unexpired, requiring the measured appliance
 helper's independent current client-lease proof, exact interface identity, and source rules. A static-classified
 address alone or a server reservation alone cannot satisfy this phase. An uncertain Apply outcome
-preserves the running fixture and public job identity for reconciliation before any further cleanup.
+preserves the running fixture and public job identity for reconciliation before any further cleanup. Failed temporary
+token revocation cannot replace that unknown-outcome signal or authorize stopping the fixture.
 Negative DAD Apply and reboot are separate acceptance cases and are not claimed by this mode.
 Do not launch ad hoc DHCP/RA servers on shared VMnets or mark native acceptance passed from
 unit-test results alone.

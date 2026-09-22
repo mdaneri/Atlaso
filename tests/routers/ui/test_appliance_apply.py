@@ -102,6 +102,7 @@ def test_wan_review_uses_applied_network_ingress_with_pending_network(client, ba
     with SessionLocal() as db:
         save_routes_wan_settings(db, routing_enabled=True, nat_enabled=False, wan_simulation_enabled=False)
         baseline_preview = "[physical_interfaces]\ninterface=eth9\n  role=access\n  mode=access\n  admin_state=up\n"
+        baseline_preview += "  ip_cidr=192.0.2.10/24\n  ipv6_enabled=true\n  ipv6_cidr=2001:db8:1::10/64\n"
         baseline_preview += "interface=eth8\n  role=route\n  mode=access\n  admin_state=down\n"
         baseline_preview += "interface=eth7\n  role=access\n  mode=trunk\n  admin_state=up\n"
         baseline_preview += "interface=eth6\n  role=management\n  mode=access\n  admin_state=up\n"
@@ -131,6 +132,12 @@ def test_wan_review_uses_applied_network_ingress_with_pending_network(client, ba
                 assert all(" iif eth9 " in line for line in commands)
                 assert "not pending Network edits" in preview
                 assert "If Network is applied first in the same task" in preview
+                if baseline_kind == "modern":
+                    assert "Connected routes and dedicated-management defaults are maintained by Network" in preview
+                    assert "route replace 192.0.2.0/24" not in preview
+                    assert "route del 192.0.2.0/24" not in preview
+                    assert "route replace 2001:db8:1::/64" not in preview
+                    assert "route del 2001:db8:1::/64" not in preview
                 if baseline_kind == "legacy":
                     assert "pre-migration baselines retain legacy WAN handling" in preview
 

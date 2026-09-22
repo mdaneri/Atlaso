@@ -483,11 +483,58 @@ def test_flagged_management_default_route_also_preserves_host_default():
     }
 
 
-def test_disabled_routing_preview_keeps_flagged_management_host_default():
-    """Render the protected main-table mutation independently of lab Routing."""
+@pytest.mark.parametrize("family", [4, 6])
+def test_modern_wan_preview_keeps_applied_network_ownership(family):
+    """Pending prefixes and management flags cannot rewrite applied ownership.
+
+    Args:
+        family: Address family for connected and default routes.
+    """
+    old = "192.0.2.10/24" if family == 4 else "2001:db8:1::10/64"
+    new = "198.51.100.10/24" if family == 4 else "2001:db8:2::10/64"
+    prefix = "192.0.2.0/24" if family == 4 else "2001:db8:1::/64"
+    new_prefix = "198.51.100.0/24" if family == 4 else "2001:db8:2::/64"
+    destination = "0.0.0.0/0" if family == 4 else "::/0"
+    gateway = "192.0.2.1" if family == 4 else "2001:db8:1::1"
+    key = "ip_cidr" if family == 4 else "ipv6_cidr"
+    applied = {"name": "eth1", "routing_domain": "lab", key: old, "management_ui": True}
+    pending = {**applied, key: new, "management_ui": False}
+    previous = render_wan_config([], targets=[applied])
+    routes = [Route(destination_cidr=destination, interface_name="eth1", gateway=gateway, metric=90, enabled=True),
+              Route(destination_cidr=prefix, interface_name="eth1", metric=100, enabled=False)]
+    preview = render_wan_config(routes, targets=[pending], previous_config_preview=previous,
+                               network_owned_targets=[applied], settings=RoutesWanSettings(False, False, False))
+    family_flag = "-6 " if family == 6 else ""
+    command = f"ip {family_flag}route replace {destination} via {gateway} dev eth1 metric 90"
+    assert command + " table 200" in preview
+    assert command + "  # flagged-management host default" in preview
+    for connected in (prefix, new_prefix):
+        assert f"ip {family_flag}route del {connected}" not in preview
+        assert f"ip {family_flag}route replace {connected}" not in preview
+    assert "after resolving native Network connected ownership" in preview
+    assert "combined Apply uses the newly applied Network intent" in preview
+    assert "older runtime intent without management eligibility requires Network reapply" in preview
+    combined = render_wan_config(routes, targets=[pending], network_owned_targets=[pending],
+                                 settings=RoutesWanSettings(False, False, False))
+    assert command + " table 200" not in combined
+    pending_flag_only = render_wan_config(routes, targets=[applied], network_owned_targets=[pending],
+                                         settings=RoutesWanSettings(False, False, False))
+    assert command + " table 200" not in pending_flag_only
+    assert command + "  # flagged-management host default" not in pending_flag_only
+
+
+@pytest.mark.parametrize("family", [4, 6])
+def test_disabled_routing_preview_keeps_flagged_management_host_default(family):
+    """Retain the management default in both main and source-selected tables.
+
+    Args:
+        family: Management default address family.
+    """
+    destination = "0.0.0.0/0" if family == 4 else "::/0"
+    gateway = "192.0.2.1" if family == 4 else "2001:db8::1"
     route = Route(
-        destination_cidr="0.0.0.0/0",
-        gateway="192.0.2.1",
+        destination_cidr=destination,
+        gateway=gateway,
         interface_name="eth1",
         metric=90,
         enabled=True,
@@ -508,11 +555,10 @@ def test_disabled_routing_preview_keeps_flagged_management_host_default():
         settings=RoutesWanSettings(False, False, False),
     )
 
-    assert "ip route replace 0.0.0.0/0 via 192.0.2.1 dev eth1 metric 90 table 200" not in config
-    assert (
-        "ip route replace 0.0.0.0/0 via 192.0.2.1 dev eth1 metric 90"
-        "  # flagged-management host default"
-    ) in config
+    command = f"ip {'-6 ' if family == 6 else ''}route replace {destination} via {gateway} dev eth1 metric 90"
+    assert command + " table 200" in config
+    assert command + "  # flagged-management host default" in config
+    assert f"route del {destination} dev eth1 table 200" not in config
 
 
 def test_flagged_management_default_cleanup_uses_last_applied_mirroring():

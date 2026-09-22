@@ -479,11 +479,21 @@ def run_scenario(
                    "scopes": ["read:dashboard", "read:interfaces", "write:interfaces"]},
     )
     client.bearer_token = token["raw_token"]
+    unknown_outcome: ApplyOutcomeUnknown | None = None
     try:
         return _run_authenticated(client, connect_appliance, topology, server_action)
+    except ApplyOutcomeUnknown as failure:
+        unknown_outcome = failure
+        raise
     finally:
         try:
             client.json_request("POST", f'/api/v1/api-tokens/{int(token["token"]["id"])}/revoke')
+        except Exception:
+            if unknown_outcome is None:
+                raise
+            # Keep exit-code 3 and the running fixture even if HTTPS is down.
+            # Never attach the transport exception, which may contain secrets.
+            unknown_outcome.add_note("Temporary token revocation failed; retain the fixture for recovery.")
         finally:
             client.bearer_token = ""
 

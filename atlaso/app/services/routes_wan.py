@@ -986,6 +986,7 @@ def render_wan_config(
     settings: RoutesWanSettings | None = None,
     applied_network_ingress: list[str] | None = None,
     desired_network_ingress: list[str] | None = None,
+    network_owned_targets: list[dict[str, str]] | None = None,
 ) -> str:
     """Render wan config.
 
@@ -1001,6 +1002,7 @@ def render_wan_config(
         settings: Saved global activation state. Omission preserves the legacy active behavior.
         applied_network_ingress: Applied lab interfaces; None projects targets for initial Network-first Apply.
         desired_network_ingress: Fresh Network-first projection from rendered desired Network intent.
+        network_owned_targets: Modern Network-owned targets; None retains pre-migration WAN behavior.
 
     Returns:
         The rendered wan config.
@@ -1195,7 +1197,13 @@ def render_wan_config(
             for route_family in ("", "-6 "):
                 lines.append(f"ip {route_family}rule add iif {name} table {LAB_ROUTE_TABLE_ID} priority {LAB_ROUTE_RULE_PRIORITY + index} protocol 2")
     target_network_owners = _target_network_owners(targets)
-    for interface_name, network in sorted(retired_target_networks):
+    if network_owned_targets is not None:
+        lines.append("# Connected routes and dedicated-management defaults are maintained by Network, not pending WAN targets.")
+        lines.append("# Static cleanup below reflects applied Network intent; combined Apply uses the newly applied Network intent.")
+        lines.append("# Dynamic connected-route identities are resolved from applied Network ownership and native addresses at execution.")
+        lines.append("# Static additions cannot replace a native Network connected-route identity; redundant no-gateway aliases are retained.")
+        lines.append("# Default-route classification on older runtime intent without management eligibility requires Network reapply.")
+    for interface_name, network in sorted(retired_target_networks if network_owned_targets is None else set()):
         route_family = "-6 " if ip_network(network, strict=False).version == 6 else ""
         lines.append(
             _link_guarded_cleanup(
@@ -1204,7 +1212,7 @@ def render_wan_config(
             )
             + "  # retired omitted or ineligible WAN target"
         )
-    for index, target in enumerate(targets):
+    for index, target in enumerate(targets if network_owned_targets is None else []):
         management = target.get("routing_domain") == "management"
         table = MANAGEMENT_ROUTE_TABLE_ID if management else LAB_ROUTE_TABLE_ID
         gateways = [
@@ -1242,7 +1250,8 @@ def render_wan_config(
         destination = ip_network(destination_cidr, strict=False)
         route_family = "-6 " if destination.version == 6 else ""
         route_target = next(
-            (target for target in targets if target.get("name") == route.interface_name),
+            (target for target in (targets if network_owned_targets is None else network_owned_targets)
+             if target.get("name") == route.interface_name),
             {},
         )
         management_ui_default = bool(
@@ -1252,18 +1261,15 @@ def render_wan_config(
             destination_cidr,
             route.interface_name,
         ) in previously_mirrored_defaults
-        route_effective = route.enabled and settings.routing_enabled
+        route_effective = route.enabled and (settings.routing_enabled or management_ui_default)
         if not route_effective:
-            cleanup_command = _static_route_cleanup_preview(
-                destination_cidr, route.interface_name, route.metric, route.gateway or "", route_target, targets)
+            cleanup_command = (
+                _static_route_cleanup_preview(destination_cidr, route.interface_name, route.metric, route.gateway or "", route_target, targets)
+                if network_owned_targets is None else
+                f"# Retire static route {destination_cidr} dev {route.interface_name} metric {route.metric} via {route.gateway or 'none'} after resolving native Network connected ownership"
+            )
             lines.append(cleanup_command + "  # disabled desired route")
-            if route.enabled and management_ui_default:
-                main_command = ["ip", "-6", "route", "replace", destination_cidr] if destination.version == 6 else ["ip", "route", "replace", destination_cidr]
-                if route.gateway:
-                    main_command.extend(["via", route.gateway])
-                main_command.extend(["dev", route.interface_name, "metric", str(route.metric)])
-                lines.append(" ".join(main_command) + "  # flagged-management host default")
-            elif (not route.enabled) and (management_ui_default or previously_mirrored_default):
+            if (not route.enabled) and (management_ui_default or previously_mirrored_default):
                 lines.append(
                     f"ip {route_family}route del {destination_cidr} dev {route.interface_name}"
                     "  # disabled flagged-management default"
@@ -1302,15 +1308,18 @@ def render_wan_config(
         route_target = next(
             (
                 target
-                for target in targets
+                for target in (targets if network_owned_targets is None else network_owned_targets)
                 if target.get("name") == route.get("interface_name", "")
             ),
             {},
         )
         interface_name = str(route.get("interface_name", ""))
-        cleanup_command = _static_route_cleanup_preview(
-            str(route.get("destination_cidr", "")), interface_name,
-            int(str(route.get("metric", "100")) or "100"), str(route.get("gateway") or ""), route_target, targets)
+        cleanup_command = (
+            _static_route_cleanup_preview(str(route.get("destination_cidr", "")), interface_name,
+                                          int(str(route.get("metric", "100")) or "100"), str(route.get("gateway") or ""), route_target, targets)
+            if network_owned_targets is None else
+            f"# Retire static route {route.get('destination_cidr', '')} dev {interface_name} metric {route.get('metric', '100')} via {route.get('gateway') or 'none'} after resolving native Network connected ownership"
+        )
         lines.append(cleanup_command + "  # removed managed route")
         removed_key = (
             canonical_route_destination(str(route.get("destination_cidr", ""))),

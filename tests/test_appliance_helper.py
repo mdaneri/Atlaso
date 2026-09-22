@@ -7684,7 +7684,7 @@ route=0.0.0.0/0
         "metric",
         "100",
     ] in commands
-    assert not any(
+    assert any(
         command[:3] == ["ip", "route", "replace"]
         and command[-2:] == ["table", "200"]
         for command in commands
@@ -8028,14 +8028,15 @@ def test_wan_helper_preserves_management_default_gateway(monkeypatch, tmp_path):
     assert ["ip", "route", "replace", "default", "via", "192.168.49.254", "dev", "eth0", "table", "100"] in commands
 
 
-def test_wan_helper_replaces_stale_preserved_management_gateway_with_runtime_gateway(monkeypatch, tmp_path):
-    """Verify that wan helper replaces stale preserved management gateway with runtime gateway.
+def test_wan_helper_leaves_modern_management_gateway_to_network(monkeypatch, tmp_path):
+    """Modern WAN must not rewrite Network's dedicated-management routes.
 
     Args:
         monkeypatch: Pytest fixture used to replace dependencies for the test.
         tmp_path: Temporary directory provided by pytest for isolated filesystem state.
     """
     helper = load_helper_module()
+    monkeypatch.setattr(helper, "_applied_wan_network_state", lambda: {})
     applied_domains = tmp_path / "route-domains.json"
     applied_domains.write_text('{"schema": 1, "interfaces": [{"name": "eth0", "table": 100, "mac": "00:11:22:33:44:01"}]}', encoding="utf-8")
     monkeypatch.setattr(helper, "ROUTE_DOMAIN_CONFIG_PATH", applied_domains)
@@ -8096,8 +8097,7 @@ def test_wan_helper_replaces_stale_preserved_management_gateway_with_runtime_gat
     assert helper._management_default_gateways_for_target(parsed["targets"][0]) == ["192.168.1.1"]
     assert helper._apply_wan_target_routes(parsed) == 0
     assert helper._apply_wan_policy_rules(parsed) == 0
-    assert ["ip", "route", "replace", "default", "via", "192.168.1.1", "dev", "eth0"] in commands
-    assert ["ip", "route", "replace", "default", "via", "192.168.1.1", "dev", "eth0", "table", "100"] in commands
+    assert not any("replace" in command or "del" in command for command in commands)
     assert ["ip", "route", "replace", "default", "via", "192.168.167.2", "dev", "eth0", "table", "100"] not in commands
     assert not any("add" in command and "from" in command for command in commands)
 
@@ -8211,6 +8211,7 @@ def test_wan_helper_preserves_overlapping_prefixes_in_both_domains(monkeypatch, 
         tmp_path: Temporary directory provided by pytest for isolated filesystem state.
     """
     helper = load_helper_module()
+    monkeypatch.setattr(helper, "_applied_wan_network_state", lambda: {})
     applied_domains = tmp_path / "route-domains.json"
     applied_domains.write_text('{"schema": 1, "interfaces": [{"name": "eth0", "table": 100, "mac": "00:11:22:33:44:01"}, {"name": "eth1.1", "table": 200, "mac": "00:11:22:33:44:01"}]}', encoding="utf-8")
     monkeypatch.setattr(helper, "ROUTE_DOMAIN_CONFIG_PATH", applied_domains)
@@ -8260,8 +8261,7 @@ def test_wan_helper_preserves_overlapping_prefixes_in_both_domains(monkeypatch, 
 
     assert helper._apply_wan_target_routes(parsed) == 0
     assert helper._apply_wan_policy_rules(parsed) == 0
-    assert ["ip", "route", "replace", "192.168.1.0/24", "dev", "eth0", "table", "100"] in commands
-    assert ["ip", "route", "replace", "192.168.1.0/24", "dev", "eth1.1", "table", "200"] in commands
+    assert not any("route" in command for command in commands)
     assert ["ip", "route", "del", "192.168.1.0/24", "dev", "eth1.1", "table", "200"] not in commands
     assert ["ip", "-4", "rule", "add", "iif", "eth1.1", "table", "200", "priority", "2000", "protocol", "2"] in commands
     assert not any("add" in command and "from" in command for command in commands)
@@ -8982,6 +8982,7 @@ def test_wan_helper_apply_routes_nat_and_netem(monkeypatch, tmp_path):
         tmp_path: Temporary directory provided by pytest for isolated filesystem state.
     """
     helper = load_helper_module()
+    monkeypatch.setattr(helper, "_applied_wan_network_state", lambda: {"connected": {}, "prefixes": set(), "management_ui": {}})
     applied_domains = tmp_path / "route-domains.json"
     applied_domains.write_text('{"schema": 1, "interfaces": [{"name": "eth1.20", "table": 200, "mac": "00:11:22:33:44:01"}]}', encoding="utf-8")
     monkeypatch.setattr(helper, "ROUTE_DOMAIN_CONFIG_PATH", applied_domains)
@@ -9044,7 +9045,7 @@ def test_wan_helper_apply_routes_nat_and_netem(monkeypatch, tmp_path):
     assert 'oifname "eth1.20" masquerade' in input_commands[0][1]
     assert ["sysctl", "-w", "net.ipv4.ip_forward=1"] in commands
     assert ["nft", "-f", str(nat_dir / "atlaso-nat.nft")] in commands
-    assert ["ip", "route", "replace", "192.168.20.0/24", "dev", "eth1.20", "table", "200"] in commands
+    assert ["ip", "route", "replace", "192.168.20.0/24", "dev", "eth1.20", "table", "200"] not in commands
     assert ["ip", "-4", "rule", "add", "iif", "eth1.20", "table", "200", "priority", "2000", "protocol", "2"] in commands
     assert ["ip", "route", "replace", "10.20.0.0/24", "dev", "eth1.20", "metric", "120", "table", "200"] in commands
     assert ["tc", "qdisc", "replace", "dev", "eth1.20", "root", "netem", "delay", "100ms", "10ms", "loss", "0.5%", "rate", "100mbit"] in commands

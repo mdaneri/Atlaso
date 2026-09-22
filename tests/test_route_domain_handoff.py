@@ -238,17 +238,20 @@ def test_candidate_reconfiguration_waits_routes_without_installing_source_rules(
     assert calls == [["networkctl", "reconfigure", "eth0"], ["networkctl", "reconfigure", "eth1"], "routes-ready"]
 
 
-def test_candidate_new_address_never_becomes_a_held_old_source(monkeypatch, tmp_path):
+@pytest.mark.parametrize("management_ui", [False, True])
+def test_candidate_new_address_never_becomes_a_held_old_source(monkeypatch, tmp_path, management_ui):
     """Publishing after DHCP/RA acquisition uses only immutable pre-mutation holds.
 
     Args:
         monkeypatch: Pytest fixture replacing native operations with controlled observations.
         tmp_path: Isolated temporary directory for test-owned state.
+        management_ui: Validated candidate access-listener eligibility to publish.
     """
     helper = load_helper_module()
     monkeypatch.setattr(helper, "ROUTE_DOMAIN_CONFIG_PATH", tmp_path / "route-domains.json")
     monkeypatch.setattr(helper, "ROUTE_DOMAIN_SERVICE_PATH", tmp_path / "route-domains.service")
-    monkeypatch.setattr(helper, "_parse_network_config", lambda _path: ([{"name": "eth0", "role": "access"}], [], []))
+    monkeypatch.setattr(helper, "_parse_network_config", lambda _path: ([{"name": "eth0", "role": "access",
+                        "access_management_ui_enabled": str(management_ui).lower()}], [], []))
     monkeypatch.setattr(helper, "_read_existing_management_network_values", lambda: {"Name": ["eth0"]})
     inventory = [{"ifname": "eth0", "address": "02:00:00:00:00:01", "addr_info": [
         {"scope": "global", "local": "192.0.2.10"}, {"scope": "global", "local": "198.51.100.10"}]}]
@@ -261,4 +264,4 @@ def test_candidate_new_address_never_becomes_a_held_old_source(monkeypatch, tmp_
     old = {"name": "eth0", "mac": "02:00:00:00:00:01", "address": "192.0.2.10", "table": 100}
     helper._install_route_domain_intent(Path("candidate.conf"), held_addresses=[old])
     assert published[0]["held_addresses"] == [old]
-    assert published[0]["interfaces"] == [{"name": "eth0", "mac": "02:00:00:00:00:01", "table": 200}]
+    assert published[0]["interfaces"] == [{"name": "eth0", "mac": "02:00:00:00:00:01", "table": 200, "management_ui": management_ui}]

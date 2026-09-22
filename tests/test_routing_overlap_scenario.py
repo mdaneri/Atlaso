@@ -464,3 +464,52 @@ def test_same_address_rejects_missing_or_mismatched_client_proof(monkeypatch, to
     monkeypatch.setattr(scenario, "_observe", lambda connect, program: lease_native)
     with pytest.raises(OverlapPrerequisiteError):
         scenario._same_address_native(lambda: None, topology)
+
+
+@pytest.mark.parametrize("unknown", [False, True])
+def test_revocation_failure_preserves_unknown_apply_outcome(monkeypatch, topology, unknown):
+    """Revocation failure cannot downgrade the running-fixture recovery signal.
+
+    Args:
+        monkeypatch: Replace scenario and transport failure boundaries.
+        topology: Admitted fixture identities.
+        unknown: Whether the accepted Apply outcome remains unknown.
+    """
+    client = FakeClient()
+    original_request = client.json_request
+    sentinel = scenario.ApplyOutcomeUnknown("Apply job_abc still running")
+
+    def revoke_fails(method, path, *, json_body=None):
+        """Fail only revocation after recording its attempt.
+
+        Args:
+            method: Requested HTTP method.
+            path: Canonical relative endpoint.
+            json_body: Optional request body.
+        """
+        result = original_request(method, path, json_body=json_body)
+        if path.endswith("/revoke"):
+            raise OSError("synthetic transport failure")
+        return result
+
+    def run_authenticated(*_args):
+        """Return success or preserve the exact accepted-Apply sentinel.
+
+        Args:
+            *_args: Admitted scenario dependencies.
+        """
+        if unknown:
+            raise sentinel
+        return {"status": "succeeded"}
+
+    monkeypatch.setattr(client, "json_request", revoke_fails)
+    monkeypatch.setattr(scenario, "_run_authenticated", run_authenticated)
+    expected = scenario.ApplyOutcomeUnknown if unknown else OSError
+    with pytest.raises(expected) as caught:
+        scenario.run_scenario(client=client, connect_appliance=lambda: None, topology=topology,
+                              server_action=lambda _action: {}, username="test", password="synthetic")
+    if unknown:
+        assert caught.value is sentinel
+        assert sentinel.__notes__ == ["Temporary token revocation failed; retain the fixture for recovery."]
+    assert client.calls[-1][:2] == ("POST", "/api/v1/api-tokens/1/revoke")
+    assert client.bearer_token == ""

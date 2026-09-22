@@ -67,6 +67,7 @@ class Interface:
     name: str
     mac: str
     table: int
+    management_ui: bool | None = None
 
 
 @dataclass(frozen=True)
@@ -127,7 +128,7 @@ def parse_interface(row: Any) -> Interface:
     Args:
         row: Interface ownership record.
     """
-    if not isinstance(row, dict) or set(row) != {"name", "mac", "table"}:
+    if not isinstance(row, dict) or set(row) not in ({"name", "mac", "table"}, {"name", "mac", "table", "management_ui"}):
         raise ReconcileError("invalid interface intent")
     name, mac, table = row["name"], row["mac"], row["table"]
     if not isinstance(name, str) or not INTERFACE_PATTERN.fullmatch(name) or name in {".", "..", "lo"}:
@@ -139,7 +140,9 @@ def parse_interface(row: Any) -> Interface:
         raise ReconcileError("invalid interface identity")
     if type(table) is not int or table not in {100, 200}:
         raise ReconcileError("invalid routing table")
-    return Interface(name, mac, table)
+    if "management_ui" in row and type(row["management_ui"]) is not bool:
+        raise ReconcileError("invalid applied management UI eligibility")
+    return Interface(name, mac, table, row.get("management_ui"))
 
 
 def parse_intent(value: Any) -> Intent:
