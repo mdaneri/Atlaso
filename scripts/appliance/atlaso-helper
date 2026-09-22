@@ -23968,6 +23968,11 @@ def _load_management_handoff_manifest(path: Path) -> dict:
         if not ca_path.is_file() or not ca_path.is_relative_to(CA_APPLY_DIR):
             raise ValueError(f"management handoff ca_config_path must name a staged file under {CA_APPLY_DIR}")
         payload["ca_config_path"] = str(ca_path)
+    dnsmasq_value = str(payload.get("dnsmasq_config_path") or "")
+    if dnsmasq_value:
+        payload["dnsmasq_config_path"] = str(
+            _validate_dnsmasq_config_path(dnsmasq_value)
+        )
     wan_value = str(payload.get("wan_config_path") or "")
     nat_value = str(payload.get("nat_config_path") or "")
     if nat_value:
@@ -24073,6 +24078,14 @@ def _management_handoff_validation_errors(payload: dict) -> list[str]:
     )
     if staged_ca_path is not None:
         errors.extend(f"certificate: {error}" for error in _ca_payload_errors(staged_ca_path))
+    dnsmasq_path = str(payload.get("dnsmasq_config_path") or "")
+    if dnsmasq_path:
+        dnsmasq_validation = _validate_dnsmasq_config(Path(dnsmasq_path))
+        if dnsmasq_validation.returncode != 0:
+            errors.append(
+                "DNS/DHCP: "
+                + (dnsmasq_validation.stderr or dnsmasq_validation.stdout).strip()
+            )
     for label, field in (
         ("WAN candidate", "wan_config_path"),
         ("WAN rollback", "wan_rollback_config_path"),
@@ -24182,6 +24195,9 @@ def _management_handoff_runtime_paths(payload: dict) -> list[Path]:
         NGINX_PUBLIC_SERVICES_SITE_PATH,
         VCF_DEPOT_HTPASSWD_PATH,
         ATLASO_SERVICE_HTTPS_DROPIN_PATH,
+        DNSMASQ_CONFIG_PATH,
+        DNSMASQ_SERVICE_DROPIN_PATH,
+        DNSMASQ_DNSSEC_TRUST_ANCHORS_PATH,
         WAN_NAT_CONFIG_PATH,
         WAN_NAT_SERVICE_PATH,
         WAN_SYSCTL_PATH,
@@ -24373,6 +24389,17 @@ def _snapshot_management_handoff(payload: dict) -> dict:
         "publishing_retire_rule_ids": [],
         "previous_nat_enabled": (_run(["systemctl", "is-enabled", "atlaso-nat.service"]).returncode == 0
                                  if payload.get("nat_config_path") else False),
+        "dnsmasq_included": bool(payload.get("dnsmasq_config_path")),
+        "previous_dnsmasq_active": (
+            _run(["systemctl", "is-active", "dnsmasq.service"]).returncode == 0
+            if payload.get("dnsmasq_config_path")
+            else False
+        ),
+        "previous_dnsmasq_enabled": (
+            _run(["systemctl", "is-enabled", "dnsmasq.service"]).returncode == 0
+            if payload.get("dnsmasq_config_path")
+            else False
+        ),
         "wan_rollback_config_path": str(payload.get("wan_rollback_config_path") or ""),
     }
     _durable_management_handoff_state_write(state, MANAGEMENT_HANDOFF_STATE_PATH)
@@ -25438,6 +25465,33 @@ def _restore_management_handoff(state: dict) -> dict:
                 raise ValueError(f"rollback command failed: {' '.join(command)}")
 
         attempt(f"{' '.join(command)}", run_reload)
+    if state.get("dnsmasq_included"):
+        def restore_dnsmasq() -> None:
+            """Restore the snapshotted DNS service runtime and boot policy."""
+            runtime_operation = "restart" if state.get("previous_dnsmasq_active") else "stop"
+            runtime = _run(["systemctl", runtime_operation, "dnsmasq.service"])
+            commands.append(
+                {
+                    "stage": "DNS/DHCP rollback",
+                    "command": ["systemctl", runtime_operation, "dnsmasq.service"],
+                    "returncode": runtime.returncode,
+                }
+            )
+            if runtime.returncode != 0:
+                raise ValueError("DNS/DHCP runtime rollback failed")
+            boot_operation = "enable" if state.get("previous_dnsmasq_enabled") else "disable"
+            boot = _run(["systemctl", boot_operation, "dnsmasq.service"])
+            commands.append(
+                {
+                    "stage": "DNS/DHCP rollback",
+                    "command": ["systemctl", boot_operation, "dnsmasq.service"],
+                    "returncode": boot.returncode,
+                }
+            )
+            if boot.returncode != 0:
+                raise ValueError("DNS/DHCP boot-policy rollback failed")
+
+        attempt("DNS/DHCP rollback", restore_dnsmasq)
     attempt("resolver restore", lambda: _restore_management_handoff_resolver(state, commands))
     attempt("network link restore", lambda: _restore_management_handoff_links(state, commands))
 
@@ -26002,6 +26056,11 @@ def _apply_management_handoff(payload: dict) -> int:
             candidate_firewall,
             candidate_management_rules=candidate_management_rules,
         )
+        dnsmasq_path = str(payload.get("dnsmasq_config_path") or "")
+        if dnsmasq_path:
+            failing_layer = "DNS/DHCP listener"
+            if _handle_dnsmasq("apply", [dnsmasq_path]) != 0:
+                raise ValueError("candidate DNS/DHCP apply failed")
         transition_path = FIREWALL_APPLY_DIR / "atlaso-management-handoff.nft"
         transition_path.write_text(
             _management_handoff_firewall_text(

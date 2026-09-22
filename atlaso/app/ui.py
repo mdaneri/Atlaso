@@ -14199,6 +14199,7 @@ def execute_management_handoff(
     db: Session,
     include_wan: bool | None = None,
     include_nat: bool = False,
+    include_dnsmasq: bool = False,
 ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     """Execute management-affecting apply units as one recoverable transaction.
 
@@ -14209,6 +14210,7 @@ def execute_management_handoff(
         db: Active database session.
         include_wan: Whether the captured WAN unit participates in the transaction.
         include_nat: Whether the captured Firewall/NAT pair shares this wider recovery.
+        include_dnsmasq: Whether DNS listener activation shares this wider recovery.
 
     Returns:
         The group result and one truthful result per bundled apply unit.
@@ -14229,8 +14231,10 @@ def execute_management_handoff(
     )
     wan = units_by_id["wan"] if wan_required else None
     nat = units_by_id["nat"] if include_nat else None
+    dnsmasq = units_by_id["dnsmasq"] if include_dnsmasq else None
     handoff_unit_ids = (
         *MANAGEMENT_HANDOFF_UNIT_IDS,
+        *(("dnsmasq",) if include_dnsmasq else ()),
         *(("wan",) if wan_required else ()),
         *(("nat",) if include_nat else ()),
     )
@@ -14276,8 +14280,14 @@ def execute_management_handoff(
         wan_path = ""
         wan_rollback_path = ""
         nat_path = ""
+        dnsmasq_path = ""
         if nat is not None:
             nat_path = stage_appliance_apply_config(NAT_CONFIG_PATH, nat["raw_config_preview"])
+        if dnsmasq is not None:
+            dnsmasq_path = stage_appliance_apply_config(
+                DNSMASQ_STAGED_CONFIG_PATH,
+                dnsmasq["raw_config_preview"],
+            )
         if wan is not None:
             wan_path = stage_appliance_apply_config(
                 str(wan["config_path"]),
@@ -14312,6 +14322,7 @@ def execute_management_handoff(
                 "wan_config_path": wan_path,
                 "wan_rollback_config_path": wan_rollback_path,
                 "nat_config_path": nat_path,
+                "dnsmasq_config_path": dnsmasq_path,
                 "previous_management_interfaces": previous_interfaces,
                 "previous_management_parent_interfaces": previous_parent_interfaces,
                 "previous_management_addresses": list(dict.fromkeys(previous_addresses)),
@@ -15919,7 +15930,7 @@ def run_appliance_apply_job(job_id: str, *, force_real: bool = False) -> None:
                         continue
                     bundled_units = [
                         current_by_id[unit_id]
-                        for unit_id in (*MANAGEMENT_HANDOFF_UNIT_IDS, "wan", "nat")
+                        for unit_id in (*MANAGEMENT_HANDOFF_UNIT_IDS, "dnsmasq", "wan", "nat")
                         if unit_id in handoff_unit_ids
                     ]
                     if not set(MANAGEMENT_HANDOFF_UNIT_IDS).issubset(
@@ -15952,6 +15963,7 @@ def run_appliance_apply_job(job_id: str, *, force_real: bool = False) -> None:
                         db=db,
                         include_wan="wan" in handoff_unit_ids,
                         include_nat="nat" in handoff_unit_ids,
+                        include_dnsmasq="dnsmasq" in handoff_unit_ids,
                     )
                     if not group_result.get("success") and group_result.get("rollback_proven"):
                         handoff_runtime_pending = False
@@ -15995,7 +16007,7 @@ def run_appliance_apply_job(job_id: str, *, force_real: bool = False) -> None:
                             )
                         applied = [
                             current_by_id[unit_id]
-                            for unit_id in (*MANAGEMENT_HANDOFF_UNIT_IDS, "wan", "nat")
+                            for unit_id in (*MANAGEMENT_HANDOFF_UNIT_IDS, "dnsmasq", "wan", "nat")
                             if unit_id in handoff_unit_ids
                         ]
                         applied_ids = set(handoff_unit_ids)
@@ -16861,6 +16873,16 @@ def _submit_appliance_apply(
             and "wan" in unit_map
         ):
             selected_ids.add("wan")
+    management_handoff_dnsmasq = bool(
+        management_handoff
+        and getattr(dns_settings_for_apply, "enabled", False)
+        and (
+            "dnsmasq" in selected_ids
+            or bool(unit_map.get("dnsmasq", {}).get("changed"))
+        )
+    )
+    if management_handoff_dnsmasq:
+        selected_ids.add("dnsmasq")
     if selected_ids.intersection({"wan", "network", "firewall"}) and "nat" in unit_map:
         selected_ids.add("nat")
     if not selected_ids:
@@ -16886,7 +16908,12 @@ def _submit_appliance_apply(
     if publishing_pair_required and "nat" in selected_ids:
         # Release selected service sockets before the paired live-listener check.
         # Handoff publishes as one group at its first member, not at the NAT row.
-        grouped = set(MANAGEMENT_HANDOFF_UNIT_IDS) if management_handoff else {"firewall", "nat"}
+        grouped = (
+            set(MANAGEMENT_HANDOFF_UNIT_IDS)
+            | ({"dnsmasq"} if management_handoff_dnsmasq else set())
+            if management_handoff
+            else {"firewall", "nat"}
+        )
         release_ids = listener_units - grouped
         if management_handoff:
             # Only shutdowns can precede the CA-bearing group. Enabled consumers
@@ -16914,7 +16941,7 @@ def _submit_appliance_apply(
         publication_index = next(index for index, unit in enumerate(selected_ordered_units)
                                  if unit["id"] in grouped)
         selected_ordered_units[publication_index:publication_index] = releases
-    if dns_resolver_activation:
+    if dns_resolver_activation and not management_handoff_dnsmasq:
         # Dynamic binding permits future VLAN addresses. DNS must start successfully
         # before the resolver switches, including before a management handoff group.
         selected_ordered_units = [unit_map["dnsmasq"], *[
@@ -16973,8 +17000,9 @@ def _submit_appliance_apply(
         "traffic_publishing_pair": traffic_publishing_pair,
         "management_handoff_units": [
             unit_id
-            for unit_id in (*MANAGEMENT_HANDOFF_UNIT_IDS, "wan", "nat")
+            for unit_id in (*MANAGEMENT_HANDOFF_UNIT_IDS, "dnsmasq", "wan", "nat")
             if management_handoff and unit_id in selected_ids
+            and (unit_id != "dnsmasq" or management_handoff_dnsmasq)
             and (unit_id != "nat" or publishing_pair_required)
         ],
     }

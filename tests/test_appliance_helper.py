@@ -1637,6 +1637,52 @@ def test_management_handoff_rollback_continues_after_missing_snapshot(monkeypatc
     assert ["systemctl", "reload-or-restart", "nginx.service"] in commands
 
 
+def test_management_handoff_rollback_restores_dnsmasq_runtime_and_boot_policy(monkeypatch):
+    """Restore the previous DNS service state after a failed listener handoff.
+
+    Args:
+        monkeypatch: Pytest fixture used to isolate host rollback dependencies.
+    """
+    helper = load_helper_module()
+    commands: list[list[str]] = []
+    for name in (
+        "_quiesce_management_handoff_firewall",
+        "_restore_management_handoff_resolver",
+        "_restore_management_handoff_links",
+        "_restore_management_handoff_firewall",
+    ):
+        monkeypatch.setattr(helper, name, lambda *_args: None)
+    monkeypatch.setattr(helper, "_nginx_binary", lambda: "nginx")
+    monkeypatch.setattr(
+        helper,
+        "_nginx_test_command",
+        lambda: subprocess.CompletedProcess(["nginx", "-t"], 0, "", ""),
+    )
+    monkeypatch.setattr(
+        helper,
+        "_run",
+        lambda command: commands.append(command)
+        or subprocess.CompletedProcess(command, 0, "", ""),
+    )
+    monkeypatch.setattr(
+        helper,
+        "_management_handoff_readiness",
+        lambda *_args: {"stable_samples": 3},
+    )
+
+    helper._restore_management_handoff(
+        {
+            "snapshots": [],
+            "dnsmasq_included": True,
+            "previous_dnsmasq_active": False,
+            "previous_dnsmasq_enabled": True,
+        }
+    )
+
+    assert ["systemctl", "stop", "dnsmasq.service"] in commands
+    assert ["systemctl", "enable", "dnsmasq.service"] in commands
+
+
 
 @pytest.mark.parametrize("prior_firewall", [False, True])
 @pytest.mark.parametrize("publication", ["before", "unchanged", "changed", "legacy"])

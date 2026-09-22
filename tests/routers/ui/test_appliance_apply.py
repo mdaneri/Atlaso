@@ -884,7 +884,7 @@ def test_management_handoff_timeout_stops_and_recovers_indeterminate_helper(monk
     }
     units = {
         unit_id: {**unit_defaults, "id": unit_id}
-        for unit_id in ui.MANAGEMENT_HANDOFF_UNIT_IDS
+        for unit_id in (*ui.MANAGEMENT_HANDOFF_UNIT_IDS, "dnsmasq")
     }
     units["network"]["previous_management_paths"] = [
         {
@@ -921,6 +921,7 @@ def test_management_handoff_timeout_stops_and_recovers_indeterminate_helper(monk
         job_id="job_timeout435",
         adapter=adapter,
         db=object(),
+        include_dnsmasq=True,
     )
 
     assert adapter.actions == ["validate", "apply", "recover"]
@@ -930,6 +931,11 @@ def test_management_handoff_timeout_stops_and_recovers_indeterminate_helper(monk
     assert group["management_handoff"]["failing_layer"] == "handoff helper wait"
     assert all(result["rolled_back"] is True for result in results)
     manifest = json.loads(staged[str(ui.MANAGEMENT_HANDOFF_STAGED_MANIFEST_PATH)])
+    assert manifest["dnsmasq_config_path"] == str(ui.DNSMASQ_STAGED_CONFIG_PATH)
+    assert {result["unit_id"] for result in results} == {
+        *ui.MANAGEMENT_HANDOFF_UNIT_IDS,
+        "dnsmasq",
+    }
     assert manifest["previous_management_interfaces"] == ["eth0.20"]
     assert manifest["previous_management_parent_interfaces"] == ["eth0"]
     assert manifest["previous_management_paths"] == [

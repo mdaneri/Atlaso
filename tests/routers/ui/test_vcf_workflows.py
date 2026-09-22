@@ -184,7 +184,7 @@ def test_vcf_trust_rejects_mismatched_confirmed_tls_fingerprint(client, monkeypa
     assert response.json()["fingerprint"] == "AA:BB"
 
 
-@pytest.mark.parametrize("stage", ["dns", "tcp", "tls"])
+@pytest.mark.parametrize("stage", ["dns", "tcp", "tls", "tls_timeout"])
 def test_vcf_trust_reports_connection_failure_stage(client, monkeypatch, stage):
     """Connection errors identify the failing stage before credentials are sent."""
     import socket
@@ -202,8 +202,12 @@ def test_vcf_trust_reports_connection_failure_stage(client, monkeypatch, stage):
         db.commit()
     def fail(_address, _port):
         """Inject an isolated pre-authentication connection failure."""
-        raise {"dns": socket.gaierror("name unavailable"), "tcp": ConnectionRefusedError("refused"),
-               "tls": ssl.SSLError("handshake failed")}[stage]
+        raise {
+            "dns": socket.gaierror("name unavailable"),
+            "tcp": ConnectionRefusedError("refused"),
+            "tls": ssl.SSLError("handshake failed"),
+            "tls_timeout": ssl.SSLError("TLS handshake timed out"),
+        }[stage]
     monkeypatch.setattr("atlaso.app.routers.ui.vcf_workflows.tls_sha256_fingerprint", fail)
     csrf = client.get("/vcf-helper").text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
     response = client.post("/vcf-trust/root-ca", data={"address": "target.example.test",
@@ -211,6 +215,52 @@ def test_vcf_trust_reports_connection_failure_stage(client, monkeypatch, stage):
                            headers={"X-Atlaso-VCF-Trust": "1"})
     assert response.status_code == 422
     assert any(
-        {"dns": "Unable to resolve", "tcp": "Unable to connect", "tls": "TLS handshake"}[stage] in error
+        {
+            "dns": "Unable to resolve",
+            "tcp": "Unable to connect",
+            "tls": "TLS handshake",
+            "tls_timeout": "TLS handshake",
+        }[stage]
+        in error
         for error in response.json()["errors"]
     )
+
+
+def test_tls_fingerprint_classifies_handshake_timeout(monkeypatch):
+    """Translate a connected-socket timeout into a TLS-stage failure."""
+    import ssl
+
+    from atlaso.app.services import vcf_sddc_deployment
+
+    class ConnectedSocket:
+        """Provide the context-manager contract used by the fingerprint helper."""
+
+        def __enter__(self):
+            """Return the connected socket placeholder."""
+            return self
+
+        def __exit__(self, *_args):
+            """Close the placeholder without suppressing failures."""
+            return False
+
+    class TimeoutContext:
+        """Fail only after TCP connection while starting the TLS handshake."""
+
+        def wrap_socket(self, _socket, *, server_hostname):
+            """Raise the timeout emitted by the standard TLS wrapper."""
+            assert server_hostname == "target.example.test"
+            raise TimeoutError("handshake timed out")
+
+    monkeypatch.setattr(
+        vcf_sddc_deployment.socket,
+        "create_connection",
+        lambda *_args, **_kwargs: ConnectedSocket(),
+    )
+    monkeypatch.setattr(
+        vcf_sddc_deployment,
+        "_fingerprint_tls_context",
+        lambda: TimeoutContext(),
+    )
+
+    with pytest.raises(ssl.SSLError, match="TLS handshake timed out"):
+        vcf_sddc_deployment.tls_sha256_fingerprint("target.example.test")
