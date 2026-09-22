@@ -533,11 +533,11 @@ def dispatch(envelope: dict[str, Any]) -> dict[str, Any]:
         envelope: Request, editor source and transient root secret from SSH stdin.
     """
     request = envelope["request"]
-    if request.get("action") == "inspect":
+    if request.get("action") == "inspect" and not envelope.get("elevate"):
         try:
             return operate(request)
         except PermissionError:
-            pass
+            return {"elevation_required": True}
     # Only source and the non-secret operation enter su's argv. No password is
     # inserted into this program, its arguments, a file, or a shell environment.
     source = base64.b64decode(envelope["editor"], validate=True).decode()

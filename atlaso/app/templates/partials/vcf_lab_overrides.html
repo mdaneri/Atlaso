@@ -4,7 +4,7 @@
 <input type="hidden" name="csrf" value="{{ csrf_token }}">
 <aside class="vcf-sddc-wizard-rail" aria-label="VCF lab override steps">
 <p class="kicker">Remote VCF maintenance</p><h2 id="vcf-lab-title">Lab / Non-production Overrides</h2>
-<ol class="vcf-sddc-step-list"><li><button class="vcf-sddc-step-button" type="button" data-atlaso-wizard-nav="credential"><span>1</span><strong>Credentials</strong><small>Separate saved credentials</small></button></li>
+<ol class="vcf-sddc-step-list"><li><button class="vcf-sddc-step-button" type="button" data-atlaso-wizard-nav="credential"><span>1</span><strong>Credentials</strong><small>Vault or manual</small></button></li>
 <li><button class="vcf-sddc-step-button" type="button" data-atlaso-wizard-nav="target"><span>2</span><strong>Server</strong><small>Review the SSH endpoint</small></button></li>
 <li><button class="vcf-sddc-step-button" type="button" data-atlaso-wizard-nav="trust"><span>3</span><strong>Fingerprints</strong><small>Confirm before authentication</small></button></li>
 <li><button class="vcf-sddc-step-button" type="button" data-atlaso-wizard-nav="login"><span>4</span><strong>Login</strong><small>Inspect without changes</small></button></li>
@@ -14,12 +14,20 @@
 <div class="vcf-sddc-wizard-heading"><p class="kicker" data-atlaso-wizard-kicker></p><h3 data-atlaso-wizard-title></h3><p id="vcf-lab-description" class="muted" data-atlaso-wizard-description></p></div>
 <p class="alert error hidden" data-atlaso-wizard-error></p>
 <section class="vcf-sddc-step-page" data-atlaso-wizard-step="credential">
+<label>Credential source<select name="credential_mode"><option value="vault">Saved Vault credentials</option><option value="manual">Enter credentials for this operation</option></select></label>
+<div data-lab-saved>
 <p class="muted">Choose existing Vault credentials for the same appliance. Passwords stay in server-side custody and are never loaded into this page.</p>
 <div class="form-grid"><label><span class="field-label"><span>VCF API credential</span><button class="help-icon" type="button" data-help="HTTP/HTTPS Vault credential used to detect VCF version and verify API recovery after TLS confirmation.">i</button></span><select name="api_credential" required><option value="">Choose a credential</option></select></label>
 <label><span class="field-label"><span>vcf SSH credential</span><button class="help-icon" type="button" data-help="SSH/SFTP Vault credential whose username is vcf. Direct root SSH and sudo are not used.">i</button></span><select name="ssh_credential" required><option value="">Choose a credential</option></select></label>
 <label><span class="field-label"><span>Root elevation credential</span><button class="help-icon" type="button" data-help="Separate root Vault credential for this SSH endpoint. Used only through non-echoing su when a privileged operation is needed.">i</button></span><select name="root_credential" required><option value="">Choose a credential</option></select></label></div>
+</div>
 </section>
 <section class="vcf-sddc-step-page hidden" data-atlaso-wizard-step="target">
+<div class="form-grid hidden" data-lab-manual-server>
+<label>Server hostname or IP<input name="host" autocomplete="off"></label>
+<label>HTTPS port<input name="api_port" type="number" min="1" max="65535" value="443"></label>
+<label>SSH port<input name="ssh_port" type="number" min="1" max="65535" value="22"></label>
+</div>
 <div class="settings-list compact-settings-list"><div><span>Server</span><strong data-lab-target></strong></div><div><span>SSH login</span><strong>vcf</strong></div><div><span>Privileged operations</span><strong>su with separate root credential</strong></div></div>
 <p class="muted">VCF Installer or SDDC Manager 9.0.x / 9.1.x with Python 3.10 or newer. The API credential is used only for version detection and readiness; property operations use SSH.</p>
 </section>
@@ -30,6 +38,13 @@
 <p class="muted">Probing sends no credentials. If TLS is unavailable, only SSH recovery of a previous verified operation is available.</p>
 </section>
 <section class="vcf-sddc-step-page hidden" data-atlaso-wizard-step="login">
+<div class="form-grid hidden" data-lab-manual-login>
+<label>API username<input name="api_username" autocomplete="off"></label>
+<label>API password<input name="api_password" type="password" autocomplete="off"></label>
+<label>vcf SSH password<input name="ssh_password" type="password" autocomplete="off"></label>
+<label>Root su password<input name="root_password" type="password" autocomplete="off"></label>
+<p class="muted">Used only for this operation; never saved to Vault or task history. Re-enter credentials if Atlaso restarts.</p>
+</div>
 <p class="muted">Connect as vcf and inspect the two properties. If the file is root-only, Atlaso uses the separate root credential through su. Inspection does not edit properties or restart services.</p>
 <button class="button secondary" type="button" data-lab-action="inspect">Verify login and inspect properties</button>
 <p data-lab-observed role="status">Current properties have not been inspected.</p>

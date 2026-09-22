@@ -84,7 +84,12 @@ def register_routes(router: APIRouter, verify_csrf: Callable[..., Any]) -> None:
                     raise lab.LabOverrideError(
                         "Explicit lab-only acknowledgement is required."
                     )
-                job = lab.enqueue(db, identity.username, str(values.get("token", "")))
+                credentials = values.get("credentials")
+                if credentials is not None and not isinstance(credentials, dict):
+                    raise lab.LabOverrideError("Invalid manual credentials.")
+                job = lab.enqueue(
+                    db, identity.username, str(values.get("token", "")), credentials
+                )
                 record_audit(
                     db,
                     actor=identity.username,
@@ -92,7 +97,7 @@ def register_routes(router: APIRouter, verify_csrf: Callable[..., Any]) -> None:
                     resource_type=lab.JOB_TYPE,
                     resource_id=job.id,
                 )
-                background_tasks.add_task(lab.run_job, job.id)
+                background_tasks.add_task(lab.run_job, job.id, credentials)
                 return {
                     "job_id": job.id,
                     "status_url": f"{router.prefix}/vcf-helper/lab-overrides/tasks/{job.id}",

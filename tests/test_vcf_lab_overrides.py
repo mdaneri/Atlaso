@@ -212,6 +212,7 @@ def test_supported_families_and_roles(db, values, monkeypatch, role, version):
             return {"role": role, "version": version}
 
     monkeypatch.setattr(lab, "VcfDepotApiClient", Api)
+    monkeypatch.setattr(lab, "tls_sha256_fingerprint", lambda *args: "confirmed-tls")
     monkeypatch.setattr(lab, "decrypt_secret", lambda value: "test-only-secret")
     assert lab.appliance_info(
         db, lab.target_from_values(db, values), "confirmed-tls"
@@ -256,6 +257,7 @@ def test_unsupported_versions(db, values, monkeypatch, version):
             return {"role": "VcfInstaller", "version": version}
 
     monkeypatch.setattr(lab, "VcfDepotApiClient", Api)
+    monkeypatch.setattr(lab, "tls_sha256_fingerprint", lambda *args: "confirmed-tls")
     monkeypatch.setattr(lab, "decrypt_secret", lambda value: "test-only-secret")
     with pytest.raises(lab.LabOverrideError, match="Only detected"):
         lab.appliance_info(db, lab.target_from_values(db, values), "confirmed-tls")
@@ -1521,6 +1523,119 @@ def test_readable_inspection_never_elevates(monkeypatch):
     assert remote.dispatch({"request": {"action": "inspect"}}) == {"ok": True}
 
 
+def test_permission_refusal_requests_separate_elevation(monkeypatch):
+    """An unreadable file requests a retry without accessing a root secret.
+
+    Args:
+        monkeypatch: Fixture replacing the unprivileged file read.
+    """
+    from atlaso.app.services import vcf_lab_remote as remote
+
+    def denied(request):
+        """Simulate the unprivileged read refusal.
+
+        Args:
+            request: Fixed inspection request.
+        """
+        raise PermissionError
+
+    monkeypatch.setattr(remote, "operate", denied)
+    assert remote.dispatch({"request": {"action": "inspect"}}) == {
+        "elevation_required": True
+    }
+
+
+def test_manual_credentials_are_bound_but_never_persisted(
+    db, values, state, monkeypatch
+):
+    """Manual passwords remain request-local and changed inputs invalidate review.
+
+    Args:
+        db: Test database session.
+        values: Confirmed review inputs.
+        state: Nonmutating remote inspection fixture.
+        monkeypatch: Worker boundary replacements.
+    """
+    credentials = {
+        "api": "manual-api-sentinel",
+        "ssh": "manual-vcf-sentinel",
+        "root": "manual-root-sentinel",
+    }
+    supplied = {
+        **values,
+        "credential_mode": "manual",
+        "host": "vcf.example.test",
+        "api_username": "admin@local",
+        "credentials": credentials,
+    }
+    target = lab.target_from_values(db, supplied)
+    assert not any(
+        secret in repr(target) + json.dumps(target.fields())
+        for secret in credentials.values()
+    )
+    reviewed = lab.review(db, "admin", target, supplied)
+    plan = lab._signer().loads(reviewed["token"])
+    assert "credentials" not in plan["target"]
+    assert not any(secret in json.dumps(plan) for secret in credentials.values())
+    with pytest.raises(lab.LabOverrideError, match="changed"):
+        lab.enqueue(
+            db, "admin", reviewed["token"], {**credentials, "root": "changed-root"}
+        )
+    with pytest.raises(lab.LabOverrideError, match="changed"):
+        lab.enqueue(db, "admin", reviewed["token"])
+    job = lab.enqueue(db, "admin", reviewed["token"], credentials)
+    assert not any(
+        secret in job.task_config_json + job.result for secret in credentials.values()
+    )
+
+    def remote(_db, received, _fingerprint, request, *, before_dispatch):
+        """Verify credentials reach only the in-memory worker boundary.
+
+        Args:
+            _db: Worker database session.
+            received: Request-local target.
+            _fingerprint: Confirmed identity.
+            request: Fixed write request.
+            before_dispatch: Durable ownership callback.
+        """
+        assert received.credentials == credentials
+        before_dispatch()
+        return {
+            "ok": True,
+            "changed": True,
+            "service_active": True,
+            "values": request["desired"],
+        }
+
+    monkeypatch.setattr(lab, "remote", remote)
+    monkeypatch.setattr(
+        lab,
+        "appliance_info",
+        lambda *args: {"role": state["role"], "version": state["version"]},
+    )
+    lab.run_job(job.id, credentials)
+    db.refresh(job)
+    assert job.status == "succeeded"
+    persisted = job.task_config_json + job.result + (job.error or "")
+    persisted += "".join(event.detail or "" for event in db.scalars(select(AuditEvent)))
+    assert not any(secret in persisted for secret in credentials.values())
+
+
+def test_manual_probe_has_no_password_requirement(db):
+    """Endpoint selection and fingerprint probing do not require login secrets.
+
+    Args:
+        db: Test database session.
+    """
+    target = lab.target_from_values(
+        db, {"credential_mode": "manual", "host": "192.0.2.1"}
+    )
+    assert target.credentials == {}
+    assert (target.api_port, target.ssh_port) == (443, 22)
+    with pytest.raises(lab.LabOverrideError, match="manual credentials"):
+        lab._credential(db, target, "root")
+
+
 def test_su_command_excludes_secret_and_runs_only_fixed_editor(monkeypatch):
     """The root secret is separate from every generated command and source.
 
@@ -1628,7 +1743,7 @@ def test_su_terminal_exchange_is_bounded_and_non_echoing(monkeypatch, mode):
     )
 
 
-@pytest.mark.parametrize("mode", ["inspect", "write", "su_failure"])
+@pytest.mark.parametrize("mode", ["inspect", "elevated_inspect", "write", "su_failure"])
 def test_remote_uses_vcf_and_sends_root_secret_only_over_stdin(
     db, values, monkeypatch, mode
 ):
@@ -1640,7 +1755,7 @@ def test_remote_uses_vcf_and_sends_root_secret_only_over_stdin(
         monkeypatch: External boundary replacement fixture.
         mode: Inspection, authenticated write or failed root authentication.
     """
-    captured = {"handoff": False}
+    captured = {"handoff": False, "decryptions": [], "envelopes": []}
     chunks = (
         [b'{"ready":true}\n', b'{"ok":true}\n']
         if mode == "write"
@@ -1683,6 +1798,7 @@ def test_remote_uses_vcf_and_sends_root_secret_only_over_stdin(
                 captured["authorized"] = True
             else:
                 captured["input"] = json.loads(payload)
+                captured["envelopes"].append(captured["input"])
 
         def shutdown_write(self):
             """Finish the request stream."""
@@ -1743,6 +1859,10 @@ def test_remote_uses_vcf_and_sends_root_secret_only_over_stdin(
             Args:
                 timeout: Channel setup deadline.
             """
+            if mode == "elevated_inspect" and not captured["envelopes"]:
+                chunks[:] = [b'{"elevation_required":true}\n']
+            elif mode == "elevated_inspect":
+                chunks[:] = [b'{"ok":true}\n']
             return Channel()
 
         def close(self):
@@ -1756,9 +1876,10 @@ def test_remote_uses_vcf_and_sends_root_secret_only_over_stdin(
     monkeypatch.setattr(
         lab,
         "decrypt_secret",
-        lambda value: {"ssh-cipher": "ssh-sentinel", "root-cipher": "root-sentinel"}[
-            value
-        ],
+        lambda value: (
+            captured["decryptions"].append(value)
+            or {"ssh-cipher": "ssh-sentinel", "root-cipher": "root-sentinel"}[value]
+        ),
     )
 
     def run():
@@ -1767,7 +1888,11 @@ def test_remote_uses_vcf_and_sends_root_secret_only_over_stdin(
             db,
             lab.target_from_values(db, values),
             values["ssh_fingerprint"],
-            {"action": "inspect" if mode == "inspect" else "write"},
+            {
+                "action": "inspect"
+                if mode in {"inspect", "elevated_inspect"}
+                else "write"
+            },
             before_dispatch=lambda: captured.update(handoff=True),
         )
 
@@ -1779,7 +1904,15 @@ def test_remote_uses_vcf_and_sends_root_secret_only_over_stdin(
         assert run() == {"ok": True}
         assert captured["handoff"] == (mode == "write")
     assert captured["auth"] == ("vcf", "ssh-sentinel")
-    assert captured["input"]["root_password"] == "root-sentinel"
+    if mode == "inspect":
+        assert "root_password" not in captured["input"]
+        assert captured["decryptions"] == ["ssh-cipher"]
+    else:
+        assert captured["input"]["root_password"] == "root-sentinel"
+    if mode == "elevated_inspect":
+        assert len(captured["envelopes"]) == 2
+        assert "root_password" not in captured["envelopes"][0]
+        assert captured["decryptions"] == ["ssh-cipher", "ssh-cipher", "root-cipher"]
     assert "root-sentinel" not in captured["command"]
     assert "ssh-sentinel" not in captured["command"]
     assert "sudo" not in captured["command"]

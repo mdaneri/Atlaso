@@ -54,18 +54,26 @@ the operator; it does not substitute a different path or claim that this covers 
 
 ### Review and apply
 
-1. Save three separate credentials in an existing Atlaso Vault: an API identity with an HTTP/HTTPS URI,
+1. Choose saved Vault credentials or a one-time manual login. For saved credentials, use an API identity with an
+   HTTP/HTTPS URI,
    a **vcf** identity with an SSH/SFTP URI, and a **root** identity with the same SSH host and port.
    All must identify the same hostname or IP. API authentication uses HTTPS (default port 443).
    Python 3.10 or newer, `su`, and `systemctl` must be available on the target. Root SSH and sudo are not required.
 2. Open the **Lab / Non-production Overrides** tile in **VCF Helper**. Its modal wizard reuses the
-   **VCF Certificate Trust** presentation, but property operations use SSH. Select the three credentials and
-   review the server. Passwords remain in encrypted Vault custody and never enter browser state.
+   **VCF Certificate Trust** presentation, but property operations use SSH. Select the three saved credentials and
+   review the server, or choose manual credentials and enter the
+   hostname and API/SSH ports. Saved passwords remain in encrypted Vault custody and never enter browser state.
 3. Select **Probe target fingerprints**, verify both fingerprints out of band, and confirm the target.
    Probing sends no credentials. Changed selections clear confirmation. SSH host keys are checked before SSH
    authentication; API TLS certificates are checked before API authentication.
-4. Select **Verify login and inspect properties**. Atlaso connects as `vcf`, verifies role/version through the API,
-   and reads the fixed properties and service state. Readable inspection runs as `vcf`; root-only reads use `su`.
+4. For manual login, enter the API username and separate API, `vcf`, and root passwords in **Login**, after
+   confirming trust. Manual passwords stay in request/process memory and are never persisted in Vault, review
+   tokens, jobs, logs, or audits. Closing the wizard or queuing the task clears its password fields; an interrupted
+   task requires re-entry and review. Select **Verify login and inspect properties**. Atlaso connects as `vcf`,
+   verifies role/version through the API,
+   and reads the fixed properties and service state. Readable inspection runs as `vcf` without decrypting or sending
+   the root secret. A permission refusal triggers
+   a separate pinned SSH exchange for a root-only read through `su`.
    The distinct root secret travels over encrypted SSH stdin into a private, non-echoing terminal only for `su`.
    It never enters command arguments, scripts, files, logs, audits, or task output.
 5. Select either or both properties, then choose **Next** to review the exact target, release, previous values,

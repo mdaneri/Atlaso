@@ -4,13 +4,14 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import hmac
 import json
 import re
 import shlex
 import socket
 import time
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
@@ -95,10 +96,16 @@ class Target:
     ssh_uri_index: int
     root_entry_id: int
     root_uri_index: int
+    credential_mode: str = "vault"
+    api_username: str = ""
+    credential_revision: str = ""
+    credentials: dict[str, str] = field(default_factory=dict, repr=False, compare=False)
 
     def fields(self) -> dict[str, Any]:
         """Return stable review input fields."""
-        return dict(self.__dict__)
+        return {
+            key: value for key, value in self.__dict__.items() if key != "credentials"
+        }
 
 
 def target_from_values(db: Session, values: dict[str, Any]) -> Target:
@@ -109,6 +116,59 @@ def target_from_values(db: Session, values: dict[str, Any]) -> Target:
         values: Selected credential references and confirmed review inputs.
     """
     try:
+        if values.get("credential_mode") == "manual":
+            host = str(values.get("host", "")).strip().lower().rstrip(".")
+            if not host or len(host) > 253 or not re.fullmatch(r"[a-z0-9.:\-]+", host):
+                raise ValueError
+            api_port, ssh_port = (
+                int(values.get("api_port", 443)),
+                int(values.get("ssh_port", 22)),
+            )
+            if not 1 <= api_port <= 65535 or not 1 <= ssh_port <= 65535:
+                raise ValueError
+            username = str(values.get("api_username", "")).strip()
+            if len(username) > 256 or any(ord(c) < 32 for c in username):
+                raise ValueError
+            credentials = values.get("credentials", {})
+            if not isinstance(credentials, dict) or set(credentials) - {
+                "api",
+                "ssh",
+                "root",
+            }:
+                raise ValueError
+            if any(
+                not isinstance(v, str)
+                or not v
+                or len(v.encode()) > 1024
+                or any(ord(c) < 32 for c in v)
+                for v in credentials.values()
+            ):
+                raise ValueError
+            revision = (
+                hmac.new(
+                    get_settings().secret_key.encode(),
+                    b"vcf-lab-manual-v1:"
+                    + json.dumps(credentials, sort_keys=True).encode(),
+                    hashlib.sha256,
+                ).hexdigest()
+                if credentials
+                else ""
+            )
+            return Target(
+                host,
+                api_port,
+                ssh_port,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                "manual",
+                username,
+                revision,
+                dict(credentials),
+            )
         api_id, ssh_id = int(values["api_entry_id"]), int(values["ssh_entry_id"])
         api_index, ssh_index = (
             int(values["api_uri_index"]),
@@ -171,7 +231,7 @@ def target_from_values(db: Session, values: dict[str, Any]) -> Target:
         if isinstance(exc, LabOverrideError):
             raise
         raise LabOverrideError(
-            "Choose valid API, vcf SSH and separate root Vault credentials for the target."
+            "Choose valid API, vcf SSH and separate root credentials for the target."
         ) from None
 
 
@@ -186,6 +246,33 @@ def _entry(db: Session, identifier: int) -> VaultEntry:
     if entry is None or not entry.username:
         raise LabOverrideError("A selected credential is no longer available.")
     return entry
+
+
+def _credential(db: Session, target: Target, kind: str) -> tuple[str, str]:
+    """Resolve one credential only at the authenticated boundary that needs it.
+
+    Args:
+        db: Current Vault session.
+        target: Endpoint with optional request-local credentials.
+        kind: API, SSH, or root identity to resolve.
+    """
+    if target.credential_mode == "manual":
+        username = (
+            target.api_username if kind == "api" else "vcf" if kind == "ssh" else "root"
+        )
+        password = target.credentials.get(kind)
+        if not username or not password:
+            raise LabOverrideError(
+                "Enter the required manual credentials in Login and review again."
+            )
+        return username, password
+    identifier = {
+        "api": target.api_entry_id,
+        "ssh": target.ssh_entry_id,
+        "root": target.root_entry_id,
+    }[kind]
+    entry = _entry(db, identifier)
+    return entry.username, decrypt_secret(entry.encrypted_value)
 
 
 def probe(target: Target) -> dict[str, str]:
@@ -215,12 +302,21 @@ def appliance_info(db: Session, target: Target, fingerprint: str) -> dict[str, s
     """
     if not fingerprint:
         raise LabOverrideError("Confirm the TLS fingerprint before authentication.")
-    entry = _entry(db, target.api_entry_id)
     try:
+        # The API client pins TLS before its login request; defer manual/Vault resolution
+        # until the same pre-authentication fingerprint check has succeeded.
+        if (
+            tls_sha256_fingerprint(target.host, target.api_port).upper()
+            != fingerprint.upper()
+        ):
+            raise LabOverrideError(
+                "The VCF appliance TLS certificate changed after confirmation."
+            )
+        username, password = _credential(db, target, "api")
         with VcfDepotApiClient(
             target.host,
-            entry.username,
-            decrypt_secret(entry.encrypted_value),
+            username,
+            password,
             port=target.api_port,
             expected_fingerprint=fingerprint,
         ) as api:
@@ -242,6 +338,7 @@ def remote(
     request: dict[str, Any],
     *,
     before_dispatch: Callable[[], None] | None = None,
+    _elevate: bool = False,
 ) -> dict[str, Any]:
     """Execute the fixed editor over pinned SSH with bounded input/output/time.
 
@@ -251,15 +348,14 @@ def remote(
         fingerprint: Expected remote fingerprint checked before authentication.
         request: Bounded request carrying only allowed operation inputs.
         before_dispatch: Durable provenance handoff after SSH setup and before execution.
+        _elevate: Internal retry after an unprivileged permission refusal.
     """
     if not fingerprint:
         raise LabOverrideError("Confirm the SSH host key before authentication.")
-    entry = _entry(db, target.ssh_entry_id)
-    root_entry = _entry(db, target.root_entry_id)
-    if (
-        entry.username != "vcf"
-        or root_entry.username != "root"
-        or entry.id == root_entry.id
+    if target.credential_mode != "manual" and (
+        _entry(db, target.ssh_entry_id).username != "vcf"
+        or _entry(db, target.root_entry_id).username != "root"
+        or target.ssh_entry_id == target.root_entry_id
     ):
         raise LabOverrideError(
             "Choose separate vcf SSH and root elevation credentials."
@@ -273,7 +369,8 @@ def remote(
         if ssh_fingerprint(transport.get_remote_server_key()) != fingerprint:
             raise LabOverrideError("SSH host key changed after confirmation.")
         stage = "SSH authentication"
-        transport.auth_password(entry.username, decrypt_secret(entry.encrypted_value))
+        username, password = _credential(db, target, "ssh")
+        transport.auth_password(username, password)
         source = base64.b64encode(Path(vcf_lab_remote.__file__).read_bytes()).decode(
             "ascii"
         )
@@ -286,16 +383,12 @@ def remote(
         channel.exec_command(command)
         # No SSH PTY: the secret travels only over encrypted channel stdin. The
         # remote adapter supplies it to su only after verifying terminal echo is off.
-        channel.sendall(
-            json.dumps(
-                {
-                    "request": request,
-                    "editor": source,
-                    "root_password": decrypt_secret(root_entry.encrypted_value),
-                }
-            ).encode()
-            + b"\n"
-        )
+        envelope: dict[str, Any] = {"request": request, "editor": source}
+        if request.get("action") == "write" or _elevate:
+            envelope.update(
+                elevate=True, root_password=_credential(db, target, "root")[1]
+            )
+        channel.sendall(json.dumps(envelope).encode() + b"\n")
         output = bytearray()
         authorized = False
         total = 0
@@ -334,6 +427,11 @@ def remote(
                 payload = json.loads(output)
                 if not isinstance(payload, dict):
                     raise ValueError
+                if payload.get("elevation_required") is True:
+                    if request.get("action") != "inspect" or _elevate:
+                        raise LabOverrideError("Unexpected root elevation request.")
+                    transport.close()
+                    return remote(db, target, fingerprint, request, _elevate=True)
                 elevation_error = payload.get("elevation_error")
                 if elevation_error:
                     messages = {
@@ -575,13 +673,16 @@ def _reservation_key(plan: dict[str, Any]) -> str:
     return "vcf_lab_lock:" + hashlib.sha256(identity.encode()).hexdigest()
 
 
-def enqueue(db: Session, actor: str, token: str) -> Job:
+def enqueue(
+    db: Session, actor: str, token: str, credentials: dict[str, str] | None = None
+) -> Job:
     """Atomically consume a review and reserve the SSH identity across workers.
 
     Args:
         db: Database session for credential metadata and durable task state.
         actor: Authenticated administrator submitting the operation.
         token: Signed, expiring review token.
+        credentials: Request-local manual passwords, never persisted with the job.
     """
     try:
         plan = _signer().loads(token, max_age=600)
@@ -591,9 +692,11 @@ def enqueue(db: Session, actor: str, token: str) -> Job:
         ) from None
     if plan.get("actor") != actor:
         raise LabOverrideError("This review belongs to another operator.")
-    target = target_from_values(db, plan["target"])
+    target = target_from_values(
+        db, {**plan["target"], "credentials": credentials or {}}
+    )
     if target.fields() != plan["target"]:
-        raise LabOverrideError("Vault endpoint changed; review again.")
+        raise LabOverrideError("Endpoint or credentials changed; review again.")
     job_id = str(uuid4())
     lock_key = _reservation_key(plan)
     used_key = "vcf_lab_used:" + plan["nonce"]
@@ -624,11 +727,12 @@ def enqueue(db: Session, actor: str, token: str) -> Job:
     return job
 
 
-def run_job(job_id: str) -> None:
+def run_job(job_id: str, credentials: dict[str, str] | None = None) -> None:
     """Execute and retain truthful partial outcomes plus a safe revert baseline.
 
     Args:
         job_id: Durable task identifier.
+        credentials: Request-local manual passwords passed only in process memory.
     """
     with SessionLocal() as db:
         job = db.get(Job, job_id)
@@ -662,9 +766,11 @@ def run_job(job_id: str) -> None:
                 raise LabOverrideError(
                     "The submitting administrator is no longer authorized."
                 )
-            target = target_from_values(db, plan["target"])
+            target = target_from_values(
+                db, {**plan["target"], "credentials": credentials or {}}
+            )
             if target.fields() != plan["target"]:
-                raise LabOverrideError("Vault endpoint changed after review.")
+                raise LabOverrideError("Endpoint or credentials changed after review.")
             if plan["source_job_id"]:
                 # API availability must not be a recovery prerequisite.
                 state = {

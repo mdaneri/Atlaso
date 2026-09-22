@@ -1,4 +1,4 @@
-/* Remote maintenance uses the shared wizard; credentials remain in the Vault. */
+/* Remote maintenance uses the shared wizard; manual credentials remain request-local. */
 (() => {
   "use strict";
   const form = document.querySelector("[data-vcf-lab-form]");
@@ -13,16 +13,28 @@
   let busy = false;
   let submitted = false;
   const steps = [
-    {id: "credential", title: "Choose separate credentials", description: "Select saved API, vcf SSH and root elevation credentials for one appliance."},
-    {id: "target", title: "Review the server", description: "Confirm the endpoint selected by the saved credentials."},
+    {id: "credential", title: "Choose separate credentials", description: "Use saved credentials or enter a one-time login after confirming target trust."},
+    {id: "target", title: "Review the server", description: "Confirm the saved endpoint or enter the target hostname and ports."},
     {id: "trust", title: "Confirm target fingerprints", description: "Verify SSH and API identities out of band before credentials are sent."},
     {id: "login", title: "Verify login and inspect", description: "Read current properties without changing the target."},
     {id: "options", title: "Select property changes", description: "Apply selected changes or recover a previous managed operation."},
     {id: "review", title: "Review the remote task", description: "Only the final submission can change properties and restart domainmanager."},
   ];
-  function inputs() {
+  const manual = () => field("credential_mode").value === "manual";
+  const credentials = () => Object.fromEntries(["api", "ssh", "root"].map((key) => [key, field(`${key}_password`).value]));
+  function clearPasswords() { ["api", "ssh", "root"].forEach((key) => { field(`${key}_password`).value = ""; }); }
+  function modeChanged() {
+    node("saved").classList.toggle("hidden", manual());
+    node("manual-server").classList.toggle("hidden", !manual());
+    node("manual-login").classList.toggle("hidden", !manual());
+    ["api_credential", "ssh_credential", "root_credential"].forEach((name) => { field(name).disabled = manual(); });
+  }
+  function inputs(withPasswords = true) {
     const selected = {};
-    for (const [name, prefix] of [["api_credential", "api"], ["ssh_credential", "ssh"], ["root_credential", "root"]]) {
+    if (manual()) {
+      Object.assign(selected, {credential_mode: "manual", host: field("host").value.trim(), api_port: Number(field("api_port").value), ssh_port: Number(field("ssh_port").value), api_username: field("api_username").value.trim()});
+      if (withPasswords) selected.credentials = credentials();
+    } else for (const [name, prefix] of [["api_credential", "api"], ["ssh_credential", "ssh"], ["root_credential", "root"]]) {
       const pair = field(name).value.split(":").map(Number);
       if (pair.length !== 2 || pair.some((value) => !Number.isInteger(value) || value < 1)) throw new Error("Choose API, vcf SSH and separate root credentials.");
       selected[`${prefix}_entry_id`] = pair[0];
@@ -61,7 +73,7 @@
     trust = null;
     inspected = false;
     field("confirmed").checked = false;
-    const result = await request("/probe", inputs());
+    const result = await request("/probe", inputs(false));
     trust = result;
     node("tls").textContent = result.tls_fingerprint || "Unavailable; only SSH recovery is available.";
     node("ssh").textContent = result.ssh_fingerprint;
@@ -83,7 +95,7 @@
   const wizard = window.AtlasoUiPatterns.createWizard({
     form, dialog, steps, closeOnSubmit: false,
     async onOpen() {
-      trust = null; inspected = false; submitted = false; invalidate();
+      trust = null; inspected = false; submitted = false; clearPasswords(); modeChanged(); invalidate();
       node("options").disabled = false;
       node("tls").textContent = "Not probed"; node("ssh").textContent = "Not probed";
       node("observed").textContent = "Current properties have not been inspected.";
@@ -91,11 +103,12 @@
       node("task").hidden = true; node("task").classList.add("hidden");
       try { await history(); } catch { node("status").textContent = "Operation history is unavailable. Reopen to retry."; }
     },
-    onClose() { invalidate(); },
+    onClose() { clearPasswords(); invalidate(); },
     validateStep({step}) {
       if (busy) return "Wait for the current request to finish.";
       if (submitted) return "This task is already queued. Open Tasks for progress and results, or reopen the wizard for another operation.";
-      if (step.id === "credential") { inputs(); }
+      if (step.id === "credential" && !manual()) { inputs(false); }
+      if (step.id === "target" && manual() && !field("host").value.trim()) return "Enter the target hostname or IP.";
       if (["trust", "login", "options", "review"].includes(step.id) && (!trust || !field("confirmed").checked)) return "Probe and confirm target fingerprints before continuing.";
       if (step.id === "options" && !field("source_job_id").value && !inspected) return {valid: false, message: "Verify login and inspect current properties before applying changes.", step: "login"};
       if (step.id === "options" && !field("source_job_id").value && !field("esa").checked && !field("nic").checked) return "Select one or both properties, or a previous operation to revert.";
@@ -105,7 +118,7 @@
     onStepChange({step}) {
       if (step.id === "target") {
         const select = field("ssh_credential");
-        node("target").textContent = select.selectedOptions[0]?.dataset.endpoint || "Choose a vcf SSH credential";
+        node("target").textContent = manual() ? "Enter the shared API and SSH hostname below." : select.selectedOptions[0]?.dataset.endpoint || "Choose a vcf SSH credential";
       }
     },
     async prepareReview() {
@@ -131,8 +144,8 @@
     },
     async onSubmit() {
       if (!token || submitted) return "Inspect and review again before submitting.";
-      const result = await request("/execute", {token, acknowledged: true});
-      submitted = true; invalidate();
+      const result = await request("/execute", {token, acknowledged: true, ...(manual() ? {credentials: credentials()} : {})});
+      submitted = true; clearPasswords(); invalidate();
       node("status").textContent = "Remote task queued. Tasks reports progress, property readback and service/API recovery separately.";
       node("task").href = `${form.dataset.tasksRoot}?job_id=${encodeURIComponent(result.job_id)}`;
       node("task").hidden = false; node("task").classList.remove("hidden"); node("task").focus();
@@ -145,12 +158,20 @@
   form.addEventListener("change", (event) => {
     if (event.target.name === "acknowledged") return;
     invalidate();
-    if (["api_credential", "ssh_credential", "root_credential"].includes(event.target.name)) {
+    if (event.target.name === "credential_mode") { clearPasswords(); modeChanged(); }
+    if (["credential_mode", "host", "api_port", "ssh_port", "api_credential", "ssh_credential", "root_credential"].includes(event.target.name)) {
       trust = null; inspected = false; field("confirmed").checked = false;
       node("tls").textContent = "Not probed"; node("ssh").textContent = "Not probed";
     }
     if (event.target.name === "confirmed") inspected = false;
+    if (["api_username", "api_password", "ssh_password", "root_password"].includes(event.target.name)) inspected = false;
     node("options").disabled = Boolean(field("source_job_id").value);
+  });
+  form.addEventListener("input", (event) => {
+    if (["api_username", "api_password", "ssh_password", "root_password", "host", "api_port", "ssh_port"].includes(event.target.name)) {
+      invalidate(); inspected = false;
+      if (["host", "api_port", "ssh_port"].includes(event.target.name)) { trust = null; field("confirmed").checked = false; }
+    }
   });
   try {
     const vaults = JSON.parse(document.getElementById("vcf-vault-credential-options").textContent);
