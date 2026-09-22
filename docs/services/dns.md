@@ -46,14 +46,15 @@ from that interface's active systemd-networkd lease. This lease fallback remains
 resolver has been redirected to local dnsmasq and `resolvectl` therefore reports only `127.0.0.1`; applying DNS must not
 regenerate dnsmasq without the DHCP-provided forwarders.
 
-With **Authoritative** on, every managed forward domain renders as `auth-zone=domain`. dnsmasq has service-level
-authoritative settings, so all managed zones share one primary nameserver, SOA administrator, TTL, refresh, retry,
-expiry, and serial. v1 does not configure secondary nameservers, AXFR, or a separate DNS server. Generated reverse zones
-remain normal dnsmasq PTR behavior rather than authoritative reverse zones.
+With **Authoritative** on, every managed forward domain renders as `auth-zone=domain`. A dedicated `127.0.0.2`
+authoritative-only loopback socket activates dnsmasq authoritative mode, while the ordinary selected listeners retain
+managed-zone authority and upstream recursion. All managed zones share one primary nameserver, SOA administrator, TTL,
+refresh, retry, expiry, and serial. v1 does not configure secondary nameservers, AXFR, or a separate DNS server.
+Generated reverse zones remain normal dnsmasq PTR behavior rather than authoritative reverse zones.
 
 The authoritative renderer emits:
 
-- `auth-server` for the configured primary nameserver, without an authoritative-only interface;
+- `auth-server=<primary-nameserver>,127.0.0.2` for the dedicated authoritative activation socket;
 - one `auth-zone` per managed forward domain;
 - shared `auth-soa` and `auth-ttl` values;
 - A/AAAA `host-record` glue mapping the primary nameserver to every selected DNS listen address.

@@ -846,7 +846,8 @@ DNS and DHCP share one `DNS/DHCP (dnsmasq)` apply unit because they render and r
 Services page shows DNS and DHCP as separate desired-state rows, but their runtime status comes from the shared
 `dnsmasq.service`. DNS listen addresses are derived from selected access physical or enabled VLAN interface CIDRs,
 including both IPv4 and IPv6 when present. When Authoritative DNS is enabled, every managed forward domain emits
-`auth-zone`, with shared service-level `auth-server`, `auth-soa`, and `auth-ttl` directives; Atlaso generates
+`auth-zone`, with `auth-server=<primary-nameserver>,127.0.0.2` on a dedicated authoritative-only loopback activation
+socket and shared `auth-soa` and `auth-ttl` directives; Atlaso generates
 read-only SOA/NS records and A/AAAA nameserver glue from the selected listen addresses and advances the SOA serial on
 DNS mutations. Selected listeners provide authoritative managed-zone answers, existing PTR behavior, and recursion
 through configured upstreams. Listener selection and firewall policy limit client access. Generated reverse zones retain

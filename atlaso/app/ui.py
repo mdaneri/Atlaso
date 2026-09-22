@@ -16898,6 +16898,10 @@ def _submit_appliance_apply(
     )
     if local_dns_disable_requires_resolver and "appliance_settings" in unit_map:
         selected_ids.add("appliance_settings")
+        if management_handoff:
+            # Keep listener shutdown inside the protected group so its resolver
+            # move and runtime snapshot can roll back together.
+            management_handoff_dnsmasq = True
     if selected_ids.intersection({"wan", "network", "firewall"}) and "nat" in unit_map:
         selected_ids.add("nat")
     if not selected_ids:

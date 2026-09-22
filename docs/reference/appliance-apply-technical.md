@@ -446,7 +446,7 @@ page keeps separate DNS and DHCP rows for desired-state visibility, while their 
 #### Authoritative DNS
 
 Authoritative DNS remains inside that same unit. When enabled, the renderer emits one `auth-zone=<domain>` for each
-managed forward domain, one service-level `auth-server=<primary-nameserver>`, shared
+managed forward domain, `auth-server=<primary-nameserver>,127.0.0.2` on a dedicated authoritative-only loopback socket, shared
 `auth-soa=<serial>,<administrator>,<refresh>,<retry>,<expiry>`, and `auth-ttl=<seconds>`. Generated `host-record` lines
 provide A/AAAA glue for every selected DNS listen address. Selected listeners provide complete authoritative positive
 and negative answers for managed zones, ordinary PTR responses, and recursion through configured upstreams. Listener
