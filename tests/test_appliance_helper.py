@@ -2180,9 +2180,9 @@ def test_management_handoff_persists_flagged_access_resolver(
             "dhcp",
             [],
             [
+                ["resolvectl", "revert", "eth0"],
                 ["networkctl", "reload"],
                 ["networkctl", "reconfigure", "eth0"],
-                ["resolvectl", "revert", "eth0"],
             ],
         ),
     ],

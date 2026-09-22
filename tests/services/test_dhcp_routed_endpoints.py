@@ -39,3 +39,23 @@ def test_scope_rejects_invalid_service_endpoint(field, endpoint):
                       dns_server="192.168.1.250", ntp_server="192.168.1.250")
     setattr(scope, field, endpoint)
     assert validate_dhcp_scope(scope)[0]
+
+
+@pytest.mark.parametrize("field", ["dns_server", "ntp_server"])
+def test_ipv6_scope_rejects_subnet_router_anycast_service_endpoint(field):
+    """Reject the subnet-router anycast address as a DHCP service endpoint."""
+    scope = DhcpScope(
+        name="IPv6 routed",
+        interface_name="eth1",
+        address_family="ipv6",
+        site_address="2001:4860:1::1",
+        prefix_length=64,
+        range_expression="2001:4860:1::100-2001:4860:1::150",
+        dns_server="2001:4860:1::53",
+        ntp_server="2001:4860:1::123",
+    )
+    setattr(scope, field, "2001:4860:1::")
+
+    errors, _network = validate_dhcp_scope(scope)
+
+    assert any(f"{field.split('_')[0].upper()} server must be a usable unicast IPv6" in error for error in errors)

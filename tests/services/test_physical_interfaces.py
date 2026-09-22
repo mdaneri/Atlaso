@@ -486,11 +486,24 @@ def test_mutation_rebases_one_unambiguous_reservation_and_owned_dns_record(clien
         assert operator_record.address == "192.168.50.10"
 
 
-def test_mutation_preserves_routed_dhcp_service_endpoints(client):
-    """Keep routed DNS and NTP endpoints when an interface subnet changes.
+@pytest.mark.parametrize(
+    ("dns_server", "ntp_server"),
+    [
+        ("192.0.2.53", "198.51.100.123"),
+        ("192.168.50.53", "192.168.50.123"),
+    ],
+)
+def test_mutation_preserves_operator_owned_dhcp_service_endpoints(
+    client,
+    dns_server,
+    ntp_server,
+):
+    """Keep routed and formerly on-link operator endpoints during readdressing.
 
     Args:
         client: Application fixture that initializes an isolated seeded database.
+        dns_server: Operator-owned DNS endpoint under test.
+        ntp_server: Operator-owned NTP endpoint under test.
     """
     with SessionLocal() as db:
         db.query(DhcpScope).delete()
@@ -507,8 +520,8 @@ def test_mutation_preserves_routed_dhcp_service_endpoints(client):
                 site_address="192.168.50.1",
                 prefix_length=24,
                 range_expression="192.168.50.100-192.168.50.120",
-                dns_server="192.0.2.53",
-                ntp_server="198.51.100.123",
+                dns_server=dns_server,
+                ntp_server=ntp_server,
                 enabled=True,
             )
         )
@@ -529,8 +542,8 @@ def test_mutation_preserves_routed_dhcp_service_endpoints(client):
         ).scalar_one()
         assert scope.site_address == "192.168.60.1"
         assert scope.range_expression == "192.168.60.100-192.168.60.120"
-        assert scope.dns_server == "192.0.2.53"
-        assert scope.ntp_server == "198.51.100.123"
+        assert scope.dns_server == dns_server
+        assert scope.ntp_server == ntp_server
 
 
 def test_mutation_includes_child_vlan_dependencies_and_legacy_dhcp_is_inactive(client):

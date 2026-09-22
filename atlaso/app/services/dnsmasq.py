@@ -1417,7 +1417,8 @@ def validate_dhcp_scope(scope: DhcpScope) -> tuple[list[str], object | None]:
         if address and (
             address.is_loopback or address.is_unspecified or address.is_multicast
             or address.is_link_local or address.is_reserved
-            or (network and address.version == 4 and address in (network.network_address, network.broadcast_address))
+            or (network and address == network.network_address)
+            or (network and address.version == 4 and address == network.broadcast_address)
         ):
             errors.append(f"{label} {service} server must be a usable unicast IPv{required_version} address.")
     return errors, network

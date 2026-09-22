@@ -2851,13 +2851,15 @@ def _configure_dhcp_resolver(interface_name: str) -> subprocess.CompletedProcess
         interface_name: Host network-interface name affected by the operation.
     """
     network_path = _write_management_resolver(interface_name, [], [])
-    reload_result = _reload_management_resolver(interface_name, network_path)
-    if reload_result is not None and reload_result.returncode != 0:
-        return reload_result
     result = _run(["resolvectl", "revert", interface_name])
     print(result.stdout, end="")
     print(result.stderr, end="", file=sys.stderr)
-    return result
+    if result.returncode != 0:
+        return result
+    reload_result = _reload_management_resolver(interface_name, network_path)
+    if reload_result is not None and reload_result.returncode != 0:
+        return reload_result
+    return reload_result or result
 
 
 def _configure_management_handoff_resolver(payload: dict) -> subprocess.CompletedProcess[str]:
