@@ -1007,7 +1007,7 @@ reachability, service apply behavior, tty1 console ownership with tty2 left avai
 portability, and host/client integration where separate vmnets are equivalent. Tagged-trunk acceptance requires a
 compatible upstream virtual-network configuration and recorded topology evidence.
 
-For the four-adapter lifecycle appliance, `set-test-nics.ps1` assigns explicit VMware PCI slots so Photon enumerates
+For the four-adapter lifecycle appliance, `run-lifecycle-test.ps1` assigns explicit VMware PCI slots so Photon enumerates
 management as `eth0`, site A as `eth1`, trunk as `eth2`, and site B as `eth3`. Without those slots, Workstation can
 enumerate the isolated site B adapter as `eth0`; the management DHCP configuration then binds to the wrong network
 and lifecycle startup cannot reach the appliance. The management-only test VM path retains its existing slot layout.
