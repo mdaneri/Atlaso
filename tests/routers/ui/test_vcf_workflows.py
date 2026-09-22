@@ -264,3 +264,43 @@ def test_tls_fingerprint_classifies_handshake_timeout(monkeypatch):
 
     with pytest.raises(ssl.SSLError, match="TLS handshake timed out"):
         vcf_sddc_deployment.tls_sha256_fingerprint("target.example.test")
+
+
+def test_tls_fingerprint_classifies_handshake_reset(monkeypatch):
+    """Translate a connected-socket reset into a TLS-stage failure."""
+    import ssl
+
+    from atlaso.app.services import vcf_sddc_deployment
+
+    class ConnectedSocket:
+        """Provide the context-manager contract used by the fingerprint helper."""
+
+        def __enter__(self):
+            """Return the connected socket placeholder."""
+            return self
+
+        def __exit__(self, *_args):
+            """Close the placeholder without suppressing failures."""
+            return False
+
+    class ResetContext:
+        """Fail only after TCP connection while starting the TLS handshake."""
+
+        def wrap_socket(self, _socket, *, server_hostname):
+            """Raise the reset emitted while negotiating TLS."""
+            assert server_hostname == "target.example.test"
+            raise ConnectionResetError("connection reset by peer")
+
+    monkeypatch.setattr(
+        vcf_sddc_deployment.socket,
+        "create_connection",
+        lambda *_args, **_kwargs: ConnectedSocket(),
+    )
+    monkeypatch.setattr(
+        vcf_sddc_deployment,
+        "_fingerprint_tls_context",
+        lambda: ResetContext(),
+    )
+
+    with pytest.raises(ssl.SSLError, match="TLS handshake or certificate retrieval failed"):
+        vcf_sddc_deployment.tls_sha256_fingerprint("target.example.test")
