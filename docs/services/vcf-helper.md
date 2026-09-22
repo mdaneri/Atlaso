@@ -83,6 +83,7 @@ the operator; it does not substitute a different path or claim that this covers 
    Navigation and review never write properties, create target lock files, or restart services.
 6. Acknowledge the lab-only warning and choose **Apply reviewed changes**. The signed review expires after ten
    minutes and binds the operator, credentials, target and inspected configuration. Changes invalidate review.
+   Manual credential bindings are validated at submission and removed before the task plan is stored.
    Apply rechecks service activity inside the remote lock and refuses inactive `domainmanager`; revert remains
    available for recovery. Privileged writes and the necessary restart run through `su`.
 7. Follow **Open task details** for progress and results. A changed file triggers only `domainmanager` restart.

@@ -697,6 +697,10 @@ def enqueue(
     )
     if target.fields() != plan["target"]:
         raise LabOverrideError("Endpoint or credentials changed; review again.")
+    # The password-derived review binding has served its purpose. Never retain
+    # a verifier in durable jobs; the worker receives credentials only in memory.
+    if target.credential_mode == "manual":
+        plan["target"].pop("credential_revision", None)
     job_id = str(uuid4())
     lock_key = _reservation_key(plan)
     used_key = "vcf_lab_used:" + plan["nonce"]
@@ -769,7 +773,14 @@ def run_job(job_id: str, credentials: dict[str, str] | None = None) -> None:
             target = target_from_values(
                 db, {**plan["target"], "credentials": credentials or {}}
             )
-            if target.fields() != plan["target"]:
+            worker_fields = target.fields()
+            if target.credential_mode == "manual":
+                if not credentials:
+                    raise LabOverrideError(
+                        "Manual credentials are unavailable; inspect and review again."
+                    )
+                worker_fields.pop("credential_revision", None)
+            if worker_fields != plan["target"]:
                 raise LabOverrideError("Endpoint or credentials changed after review.")
             if plan["source_job_id"]:
                 # API availability must not be a recovery prerequisite.

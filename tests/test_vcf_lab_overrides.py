@@ -1545,8 +1545,9 @@ def test_permission_refusal_requests_separate_elevation(monkeypatch):
     }
 
 
+@pytest.mark.parametrize("retain_credentials", [True, False])
 def test_manual_credentials_are_bound_but_never_persisted(
-    db, values, state, monkeypatch
+    db, values, state, monkeypatch, retain_credentials
 ):
     """Manual passwords remain request-local and changed inputs invalidate review.
 
@@ -1555,6 +1556,7 @@ def test_manual_credentials_are_bound_but_never_persisted(
         values: Confirmed review inputs.
         state: Nonmutating remote inspection fixture.
         monkeypatch: Worker boundary replacements.
+        retain_credentials: Whether process-local credentials remain available.
     """
     credentials = {
         "api": "manual-api-sentinel",
@@ -1584,6 +1586,8 @@ def test_manual_credentials_are_bound_but_never_persisted(
     with pytest.raises(lab.LabOverrideError, match="changed"):
         lab.enqueue(db, "admin", reviewed["token"])
     job = lab.enqueue(db, "admin", reviewed["token"], credentials)
+    assert "credential_revision" not in json.loads(job.task_config_json)["target"]
+    assert target.credential_revision not in job.task_config_json
     assert not any(
         secret in job.task_config_json + job.result for secret in credentials.values()
     )
@@ -1598,6 +1602,7 @@ def test_manual_credentials_are_bound_but_never_persisted(
             request: Fixed write request.
             before_dispatch: Durable ownership callback.
         """
+        assert retain_credentials
         assert received.credentials == credentials
         before_dispatch()
         return {
@@ -1613,12 +1618,15 @@ def test_manual_credentials_are_bound_but_never_persisted(
         "appliance_info",
         lambda *args: {"role": state["role"], "version": state["version"]},
     )
-    lab.run_job(job.id, credentials)
+    lab.run_job(job.id, credentials if retain_credentials else None)
     db.refresh(job)
-    assert job.status == "succeeded"
+    assert job.status == ("succeeded" if retain_credentials else "failed")
+    if not retain_credentials:
+        assert "Manual credentials are unavailable" in job.error
     persisted = job.task_config_json + job.result + (job.error or "")
     persisted += "".join(event.detail or "" for event in db.scalars(select(AuditEvent)))
     assert not any(secret in persisted for secret in credentials.values())
+    assert target.credential_revision not in persisted
 
 
 def test_manual_probe_has_no_password_requirement(db):
