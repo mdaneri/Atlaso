@@ -313,9 +313,11 @@ Desired DNS disablement immediately stages the non-loopback resolver projection.
 last-applied baseline enabled local DNS, submission also selects Appliance Settings; unit order moves the resolver
 before dnsmasq removes the loopback listener.
 The resolver interface follows the effective listener precedence: dedicated management first, then a flagged access
-physical interface, then a flagged access VLAN. When resolver persistence exists on more than one eligible path during
-a dynamic-listener transition, Network regeneration preserves the most recently updated DNS-bearing networkd file so
-lease recovery cannot revive older loopback or external resolver intent.
+physical interface, then a flagged access VLAN. Each resolver write marks the selected generated networkd file with its
+configured or DHCP resolver mode. When persistence exists on more than one eligible path during a dynamic-listener
+transition, Network regeneration preserves the most recently updated marked source, including an intentionally empty
+DHCP source, so lease recovery cannot revive older loopback or external resolver intent. Existing unmarked files use
+the most recently updated DNS-bearing source as a migration fallback.
 If another Appliance Settings field differs from its baseline, that unit remains pending after a successful handoff so
 the full hostname, resolver, SSH, Web Terminal trust, and telemetry apply remains pending. A staged resolver-mode or
 server change is part of the successful handoff's Appliance Settings baseline when all unrelated settings already

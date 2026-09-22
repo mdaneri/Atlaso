@@ -485,6 +485,7 @@ LOCAL_USERS_ALLOWED_SHELLS = {"/sbin/nologin", "/bin/bash", "/bin/sh", "/usr/bin
 NETWORKD_CONFIG_DIR = Path("/etc/systemd/network")
 NETWORKD_MGMT_CONFIG_PATH = NETWORKD_CONFIG_DIR / "00-atlaso-mgmt.network"
 NETWORKD_MANAGED_PREFIX = "10-atlaso-"
+MANAGEMENT_RESOLVER_MODE_PREFIX = "# Atlaso management resolver mode="
 NETWORKD_DEFAULT_APPLIANCE_FILES = {
     "50-static-en.network",
     "99-dhcp-en.network",
@@ -2753,6 +2754,8 @@ def _management_resolver_candidate(
         Updated networkd content used by factory-reset preflight.
     """
     lines = text.splitlines()
+    resolver_mode = "configured" if servers or domains else "dhcp"
+    resolver_marker = f"{MANAGEMENT_RESOLVER_MODE_PREFIX}{resolver_mode}"
     updated: list[str] = []
     in_network = False
     inserted = False
@@ -2761,6 +2764,9 @@ def _management_resolver_candidate(
         if stripped == "[Network]":
             in_network = True
             updated.append(line)
+            updated.append(resolver_marker)
+            continue
+        if stripped.startswith(MANAGEMENT_RESOLVER_MODE_PREFIX):
             continue
         if in_network and stripped.startswith("[") and stripped.endswith("]"):
             if not inserted:
@@ -9193,7 +9199,7 @@ def _read_existing_management_network_values(
         if _valid_network_interface_name(name)
     ]
     candidates.append(NETWORKD_MGMT_CONFIG_PATH)
-    parsed_candidates: list[tuple[int, int, dict[str, list[str]]]] = []
+    parsed_candidates: list[tuple[bool, int, int, dict[str, list[str]]]] = []
     for candidate_index, path in enumerate(dict.fromkeys(candidates)):
         values = {key: list(entries) for key, entries in empty.items()}
         try:
@@ -9202,8 +9208,14 @@ def _read_existing_management_network_values(
         except OSError:
             continue
         current_section = ""
+        resolver_mode_marked = False
         for raw_line in lines:
             line = raw_line.strip()
+            if line.startswith(MANAGEMENT_RESOLVER_MODE_PREFIX):
+                resolver_mode_marked = line.removeprefix(
+                    MANAGEMENT_RESOLVER_MODE_PREFIX
+                ) in {"configured", "dhcp"}
+                continue
             if line.startswith("[") and line.endswith("]"):
                 current_section = line.strip("[]")
                 continue
@@ -9218,14 +9230,25 @@ def _read_existing_management_network_values(
                 values[key].append(value)
         if interface_names and not set(values["Name"]).intersection(interface_names):
             continue
-        parsed_candidates.append((modified_ns, candidate_index, values))
+        parsed_candidates.append(
+            (resolver_mode_marked, modified_ns, candidate_index, values)
+        )
+    marked_candidates = [candidate for candidate in parsed_candidates if candidate[0]]
+    if marked_candidates:
+        return max(
+            marked_candidates,
+            key=lambda candidate: (candidate[1], candidate[2]),
+        )[3]
     resolver_candidates = [
         candidate for candidate in parsed_candidates
-        if candidate[2]["DNS"] or candidate[2]["Domains"]
+        if candidate[3]["DNS"] or candidate[3]["Domains"]
     ]
     if resolver_candidates:
-        return max(resolver_candidates, key=lambda candidate: (candidate[0], candidate[1]))[2]
-    return parsed_candidates[0][2] if parsed_candidates else empty
+        return max(
+            resolver_candidates,
+            key=lambda candidate: (candidate[1], candidate[2]),
+        )[3]
+    return parsed_candidates[0][3] if parsed_candidates else empty
 
 
 def _usable_management_default_gateways(networks: list[str], candidates: list[str]) -> list[str]:

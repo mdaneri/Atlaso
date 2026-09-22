@@ -7485,6 +7485,48 @@ def test_network_helper_keeps_newer_flagged_resolver_after_management_lease_reco
     assert "DNS=127.0.0.1" not in rendered
 
 
+def test_network_helper_preserves_newer_marked_dhcp_resolver_state(
+    monkeypatch,
+    tmp_path,
+):
+    """Prefer an explicit empty DHCP resolver source over stale loopback DNS.
+
+    Args:
+        monkeypatch: Pytest fixture used to isolate installed networkd files.
+        tmp_path: Temporary directory containing simulated resolver sources.
+    """
+    helper = load_helper_module()
+    networkd_dir = tmp_path / "networkd"
+    networkd_dir.mkdir()
+    management_path = networkd_dir / "00-atlaso-mgmt.network"
+    management_path.write_text(
+        "[Match]\nName=eth0\n\n[Network]\nDHCP=ipv4\nDNS=127.0.0.1\nDomains=~.\n",
+        encoding="utf-8",
+    )
+    fallback_path = networkd_dir / "10-atlaso-eth1.network"
+    fallback_path.write_text(
+        helper._management_resolver_candidate(
+            "[Match]\nName=eth1\n\n[Network]\nAddress=192.168.50.1/24\n",
+            [],
+            [],
+        ),
+        encoding="utf-8",
+    )
+    os.utime(management_path, ns=(1_000_000_000, 1_000_000_000))
+    os.utime(fallback_path, ns=(2_000_000_000, 2_000_000_000))
+    monkeypatch.setattr(helper, "NETWORKD_CONFIG_DIR", networkd_dir)
+    monkeypatch.setattr(helper, "NETWORKD_MGMT_CONFIG_PATH", management_path)
+
+    preserved = helper._read_existing_management_network_values(["eth0", "eth1"])
+
+    assert helper.MANAGEMENT_RESOLVER_MODE_PREFIX + "dhcp" in fallback_path.read_text(
+        encoding="utf-8"
+    )
+    assert preserved["DNS"] == []
+    assert preserved["Domains"] == []
+    assert preserved["Name"] == ["eth1"]
+
+
 def test_network_helper_rejects_flagged_access_without_usable_address(tmp_path):
     """Verify that staged access flags require a usable non-link-local listener address.
 
