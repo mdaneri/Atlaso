@@ -74,4 +74,4 @@ Atlaso reference, and obtain explicit maintainer approval for `custom/other` bef
 
 See [progressive policy](docs/contribute/progressive-policy.md) for measurement.
 
-VCF property edits/recovery: [VCF Helper](docs/services/vcf-helper.md).
+VCF `vcf` SSH / `su` edits/recovery: [VCF Helper](docs/services/vcf-helper.md).

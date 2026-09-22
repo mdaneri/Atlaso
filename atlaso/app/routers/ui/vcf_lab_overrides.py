@@ -84,7 +84,12 @@ def register_routes(router: APIRouter, verify_csrf: Callable[..., Any]) -> None:
                     raise lab.LabOverrideError(
                         "Explicit lab-only acknowledgement is required."
                     )
-                job = lab.enqueue(db, identity.username, str(values.get("token", "")))
+                credentials = values.get("credentials")
+                if credentials is not None and not isinstance(credentials, dict):
+                    raise lab.LabOverrideError("Invalid manual credentials.")
+                job = lab.enqueue(
+                    db, identity.username, str(values.get("token", "")), credentials
+                )
                 record_audit(
                     db,
                     actor=identity.username,
@@ -92,7 +97,7 @@ def register_routes(router: APIRouter, verify_csrf: Callable[..., Any]) -> None:
                     resource_type=lab.JOB_TYPE,
                     resource_id=job.id,
                 )
-                background_tasks.add_task(lab.run_job, job.id)
+                background_tasks.add_task(lab.run_job, job.id, credentials)
                 return {
                     "job_id": job.id,
                     "status_url": f"{router.prefix}/vcf-helper/lab-overrides/tasks/{job.id}",
@@ -102,7 +107,7 @@ def register_routes(router: APIRouter, verify_csrf: Callable[..., Any]) -> None:
                 return await run_in_threadpool(lab.probe, target)
             if values.get("confirmed") is not True:
                 raise lab.LabOverrideError(
-                    "Confirm both fingerprints before authentication."
+                    "Confirm the SSH fingerprint before authentication."
                 )
             record_audit(
                 db,
@@ -112,8 +117,8 @@ def register_routes(router: APIRouter, verify_csrf: Callable[..., Any]) -> None:
                 detail=json.dumps(
                     {
                         "target": target.host,
-                        "api_entry_id": target.api_entry_id,
                         "ssh_entry_id": target.ssh_entry_id,
+                        "root_entry_id": target.root_entry_id,
                         "operation": operation,
                     }
                 ),
@@ -123,7 +128,6 @@ def register_routes(router: APIRouter, verify_csrf: Callable[..., Any]) -> None:
                     lab.inspect_target,
                     db,
                     target,
-                    str(values.get("tls_fingerprint", "")),
                     str(values.get("ssh_fingerprint", "")),
                 )
             return await run_in_threadpool(
@@ -134,26 +138,13 @@ def register_routes(router: APIRouter, verify_csrf: Callable[..., Any]) -> None:
                 409 if operation == "execute" else 422, str(exc)
             ) from None
 
-    @router.get("/vcf-helper/lab-overrides/history", include_in_schema=False)
-    def lab_history(
-        identity: Identity = Depends(require_admin),
-        db: Session = Depends(get_db),
-    ) -> dict[str, Any]:
-        """Return managed operation choices for review and revert.
-
-        Args:
-            identity: Authenticated operator identity used for authorization.
-            db: Database session for credential metadata and durable task state.
-        """
-        return {"jobs": lab.history(db)}
-
     @router.get("/vcf-helper/lab-overrides/tasks/{job_id}", include_in_schema=False)
     def lab_task(
         job_id: str,
         identity: Identity = Depends(require_admin),
         db: Session = Depends(get_db),
     ) -> dict[str, Any]:
-        """Report property verification separately from service/API recovery.
+        """Report property verification separately from service readiness.
 
         Args:
             job_id: Durable task identifier.
