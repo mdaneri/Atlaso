@@ -9872,6 +9872,31 @@ def applied_local_dns_enabled(baseline: dict[str, Any] | None) -> bool:
     return bool(isinstance(summary, list) and summary and summary[0] == "DNS enabled")
 
 
+def applied_resolver_uses_local_dns(baseline: dict[str, Any] | None) -> bool:
+    """Return whether applied Appliance Settings point the host resolver at local DNS.
+
+    Args:
+        baseline: Last-applied Appliance Settings unit baseline.
+
+    Returns:
+        Whether the applied resolver mode is local DNS.
+    """
+    if not baseline:
+        return False
+    preview = baseline.get("config_preview")
+    if not isinstance(preview, str):
+        return False
+    try:
+        payload = json.loads(preview)
+    except json.JSONDecodeError:
+        return False
+    return bool(
+        isinstance(payload, dict)
+        and payload.get("resolver_mode") == "local_dns"
+        and payload.get("resolver_servers") == ["127.0.0.1"]
+    )
+
+
 def save_appliance_apply_baselines(db: Session, baselines: dict[str, dict[str, Any]]) -> None:
     """Persist appliance apply baselines.
 
@@ -16762,14 +16787,21 @@ def _submit_appliance_apply(
     )
     if ca_required_for_nts:
         selected_ids.add("ca")
+    apply_baselines = load_appliance_apply_baselines(db)
     dns_settings_for_apply = unit_map.get("dnsmasq", {}).get("context", {}).get("dns_settings")
-    dns_resolver_activation = bool("dnsmasq" in selected_ids and getattr(dns_settings_for_apply, "enabled", False))
+    dns_resolver_activation = bool(
+        "dnsmasq" in selected_ids
+        and getattr(dns_settings_for_apply, "enabled", False)
+        and not applied_resolver_uses_local_dns(
+            apply_baselines.get("appliance_settings")
+        )
+    )
     if dns_resolver_activation:
         selected_ids.add("appliance_settings")
     local_dns_disable_requires_resolver = bool(
         "dnsmasq" in selected_ids
         and not getattr(dns_settings_for_apply, "enabled", False)
-        and applied_local_dns_enabled(load_appliance_apply_baselines(db).get("dnsmasq"))
+        and applied_local_dns_enabled(apply_baselines.get("dnsmasq"))
     )
     if local_dns_disable_requires_resolver and "appliance_settings" in unit_map:
         selected_ids.add("appliance_settings")
@@ -16884,6 +16916,9 @@ def _submit_appliance_apply(
     dns_resolver_activation = bool(
         "dnsmasq" in selected_ids
         and getattr(dns_settings_for_apply, "enabled", False)
+        and not applied_resolver_uses_local_dns(
+            apply_baselines.get("appliance_settings")
+        )
     )
     if dns_resolver_activation:
         selected_ids.add("appliance_settings")
@@ -16892,9 +16927,7 @@ def _submit_appliance_apply(
     local_dns_disable_requires_resolver = bool(
         "dnsmasq" in selected_ids
         and not getattr(dns_settings_for_apply, "enabled", False)
-        and applied_local_dns_enabled(
-            load_appliance_apply_baselines(db).get("dnsmasq")
-        )
+        and applied_local_dns_enabled(apply_baselines.get("dnsmasq"))
     )
     if local_dns_disable_requires_resolver and "appliance_settings" in unit_map:
         selected_ids.add("appliance_settings")

@@ -57,7 +57,7 @@ def test_scope_rejects_invalid_service_endpoint(field, endpoint):
 
 
 @pytest.mark.parametrize("field", ["dns_server", "ntp_server"])
-@pytest.mark.parametrize("endpoint", ["2001:4860:1::", "::ffff:8.8.8.8"])
+@pytest.mark.parametrize("endpoint", ["2001:4860:1::", "::ffff:8.8.8.8", "100::1"])
 def test_ipv6_scope_rejects_unusable_service_endpoint(field, endpoint):
     """Reject subnet-router anycast and IPv4-mapped DHCPv6 endpoints.
 

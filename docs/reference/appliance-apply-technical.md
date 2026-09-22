@@ -308,7 +308,9 @@ and runtime resolver apply before reconfiguring the links. This persistence appl
 `00-atlaso-mgmt.network` and flagged-access physical/VLAN files.
 The staged resolver mode derives local-DNS availability from the last-applied DNS/DHCP baseline, not unapplied desired
 state. Enabling DNS without applying its unit therefore leaves the resolver change pending and cannot point the
-management link at loopback before dnsmasq is active.
+management link at loopback before dnsmasq is active. A DNS/DHCP submission adds Appliance Settings only when its
+last-applied resolver projection still needs to move to local DNS; later record, DHCP, or DNS-setting submissions leave
+unrelated pending Appliance Settings fields untouched.
 Desired DNS disablement immediately stages the non-loopback resolver projection. If DNS/DHCP is selected while its
 last-applied baseline enabled local DNS, submission also selects Appliance Settings; unit order moves the resolver
 before dnsmasq removes the loopback listener.
