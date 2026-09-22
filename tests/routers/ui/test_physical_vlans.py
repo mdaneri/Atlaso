@@ -331,8 +331,8 @@ def test_physical_and_vlan_pages_render(client):
     assert "/var/lib/atlaso/apply/network/atlaso-network.conf" in vlans.text
 
 
-def test_management_interface_dual_stack_gateways_are_saved_and_drive_main_and_table_100(client):
-    """Verify that management interface dual stack gateways are saved and drive main and table 100.
+def test_management_interface_dual_stack_gateways_are_saved_and_owned_by_network(client):
+    """Verify saved dual-stack gateways remain owned by Network rather than WAN.
 
     Args:
         client: HTTP test client used to exercise the Atlaso application.
@@ -377,10 +377,9 @@ def test_management_interface_dual_stack_gateways_are_saved_and_drive_main_and_t
     assert "Static management gateways install in the main table and management policy table 100." in refreshed.text
     routes_wan = client.get("/routes-wan")
     assert "gateway=192.168.49.254" in routes_wan.text
-    assert "ip route replace default via 192.168.49.254 dev eth0\n" in routes_wan.text
-    assert "ip route replace default via 192.168.49.254 dev eth0 table 100" in routes_wan.text
-    assert "ip -6 route replace default via fe80::1 dev eth0\n" in routes_wan.text
-    assert "ip -6 route replace default via fe80::1 dev eth0 table 100" in routes_wan.text
+    assert "Connected routes and dedicated-management defaults are maintained by Network" in routes_wan.text
+    assert "ip route replace default via 192.168.49.254 dev eth0" not in routes_wan.text
+    assert "ip -6 route replace default via fe80::1 dev eth0" not in routes_wan.text
     with SessionLocal() as db:
         row = db.scalar(select(PhysicalInterface).where(PhysicalInterface.id == management["id"]))
         assert row is not None
