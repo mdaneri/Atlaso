@@ -96,7 +96,6 @@ ssh_pwauth: true"""
     )
     refresh_command = "true" if fixture_mode else "/usr/local/sbin/atlaso-refresh-test-dhcp || true"
 
-    package_update = "false" if fixture_mode else "true"
     user_data = f"""#cloud-config
 hostname: {args.hostname}
 manage_etc_hosts: true
@@ -110,7 +109,7 @@ users:
     sudo: ALL=(ALL) NOPASSWD:ALL
     lock_passwd: false
 {key_block}
-package_update: {package_update}
+package_update: true
 packages:
   - bind-tools
   - chrony-nts

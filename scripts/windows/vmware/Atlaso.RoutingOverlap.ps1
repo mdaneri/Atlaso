@@ -29,7 +29,7 @@ function Get-RoutingOverlapGuest {
     $hostOutput = Join-Path $resultRoot "$Role-$Phase.json"
     if (Test-Path -LiteralPath $hostOutput) { throw 'Guest observation output already exists.' }
     $prefix = @('-T', 'ws', '-gu', $guestUser, '-gp', $guestPassword)
-    $deadline = [DateTimeOffset]::UtcNow.AddMinutes(10)
+    $deadline = [DateTimeOffset]::UtcNow.AddMinutes(3)
     do {
         try {
             $null = Invoke-AtlasoBoundedStreamingProcess -FilePath $resolvedVmrun -DiscardOutput -ArgumentList ($prefix + @(
