@@ -2727,24 +2727,6 @@ textarea {
   white-space: nowrap;
 }
 
-#ldap-generate-modal .field-label,
-#ldap-bind-secret-modal .field-label {
-  position: relative;
-}
-
-#ldap-generate-modal .help-icon,
-#ldap-bind-secret-modal .help-icon {
-  position: static;
-}
-
-#ldap-generate-modal .help-icon::after,
-#ldap-bind-secret-modal .help-icon::after {
-  right: auto;
-  left: 0;
-  width: min(280px, 100%);
-  transform: none;
-}
-
 #ldap-bind-secret-modal .settings-list > div {
   grid-template-columns: 96px minmax(0, 1fr);
   min-width: 0;
@@ -4042,6 +4024,7 @@ label > span,
   place-items: center;
   width: 16px;
   height: 16px;
+  flex: 0 0 16px;
   border: 0;
   border-radius: 50%;
   padding: 0;
@@ -4053,38 +4036,36 @@ label > span,
   cursor: help;
 }
 
-.help-icon::after {
-  position: absolute;
-  z-index: 20;
-  left: 50%;
-  bottom: calc(100% + 8px);
-  width: min(280px, 72vw);
-  transform: translateX(-50%);
+.atlaso-help-tooltip {
+  position: fixed;
+  inset: auto;
+  z-index: 10000;
+  box-sizing: border-box;
+  margin: 0;
+  width: max-content;
+  max-width: min(320px, calc(100vw - 16px));
+  max-height: calc(100vh - 16px);
+  overflow: auto;
+  overflow-wrap: anywhere;
   border: 1px solid var(--border);
   border-radius: 7px;
   padding: 8px 10px;
   background: #0f172a;
   color: white;
   box-shadow: 0 12px 24px rgba(15, 23, 42, 0.18);
-  content: attr(data-help);
   font-size: 12px;
   font-weight: 650;
   line-height: 1.35;
-  opacity: 0;
-  pointer-events: none;
   text-transform: none;
-  transition: opacity 0.12s ease;
 }
 
-.help-icon:hover::after,
-.help-icon:focus-visible::after {
-  opacity: 1;
+.atlaso-help-tooltip[hidden] {
+  display: none;
 }
 
-.side-stack .help-icon::after {
-  right: 0;
-  left: auto;
-  transform: none;
+.help-icon:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
 }
 
 input,
@@ -7187,21 +7168,6 @@ textarea {
   overflow-wrap: anywhere;
 }
 
-#diagnostics-wizard .field-label {
-  position: relative;
-}
-
-#diagnostics-wizard .help-icon {
-  position: static;
-}
-
-#diagnostics-wizard .help-icon::after {
-  left: 0;
-  width: min(280px, 100%);
-  box-sizing: border-box;
-  transform: none;
-}
-
 @media (max-width: 600px) {
   #diagnostics-wizard .form-grid,
   #diagnostics-wizard .scope-choice-grid {
@@ -7276,19 +7242,6 @@ textarea {
 .vcf-fqdn-modal .vcf-fqdn-table input[name="hostname"] {
   min-width: 0;
   width: 100%;
-}
-
-.vcf-fqdn-controls > label:first-child .help-icon::after {
-  left: 0;
-  transform: none;
-}
-
-.vcf-fqdn-controls > label:last-child .help-icon::after {
-  top: calc(100% + 8px);
-  right: 0;
-  bottom: auto;
-  left: auto;
-  transform: none;
 }
 
 .vcf-fqdn-modal .confirm-modal-actions [data-vcf-fqdn-delete] {
@@ -8680,14 +8633,6 @@ dialog.has-expanded-monaco .confirm-modal-panel {
   margin-bottom: 0;
 }
 
-.monitor-chart-zoom-field .help-icon::after {
-  bottom: auto;
-  left: auto;
-  right: 0;
-  top: calc(100% + 8px);
-  transform: none;
-}
-
 .monitor-chart-zoom-input input {
   appearance: textfield;
   border: 0;
@@ -9233,19 +9178,6 @@ dialog.has-expanded-monaco .confirm-modal-panel {
   max-width: 100%;
   overflow: hidden;
 }
-
-/* Anchor reset help to the label width inside the dialog, not the icon center. */
-#factory-reset-password-modal .field-label { position: relative; }
-#factory-reset-password-modal .help-icon { position: static; }
-#factory-reset-password-modal .help-icon::after {
-  left: 0;
-  width: min(280px, 100%);
-  box-sizing: border-box;
-  transform: none;
-  visibility: hidden;
-}
-#factory-reset-password-modal .help-icon:hover::after,
-#factory-reset-password-modal .help-icon:focus-visible::after { visibility: visible; }
 
 /* SSH fingerprints must wrap inside the remote maintenance wizard. */
 .vcf-lab-fingerprint {

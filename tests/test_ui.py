@@ -1035,7 +1035,7 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     assert "ATLASO_CACHE" in service_worker.text
     assert "atlaso-management-pwa-v" in service_worker.text
     assert "ATLASO_CACHE_PREFIX" in service_worker.text
-    assert 'const ATLASO_CACHE = `${ATLASO_CACHE_PREFIX}343`;' in service_worker.text
+    assert 'const ATLASO_CACHE = `${ATLASO_CACHE_PREFIX}344`;' in service_worker.text
     assert 'fetch(asset, { cache: "reload" })' in service_worker.text
     assert "Required precache request failed" in service_worker.text
     assert "key.startsWith(ATLASO_CACHE_PREFIX)" in service_worker.text
@@ -1051,11 +1051,11 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     assert 'accept.includes("text/html")' in service_worker.text
     assert '!hasDownloadLikePath(url)' in service_worker.text
     assert "/static/vendor/monaco/atlaso-monaco.min.js?v=atlaso-monaco-20260806-7" in service_worker.text
-    assert "/static/app.css?v=issue-873-1" in service_worker.text
+    assert "/static/app.css?v=tooltip-848-1" in service_worker.text
     assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-10" in service_worker.text
     assert "/static/appliance-apply-polling.js?v=issue-420-6" in service_worker.text
     assert "/static/ui-routes.js?v=issue-287-1" in service_worker.text
-    assert "/static/app.js?v=vcf-lab-873-1" in service_worker.text
+    assert "/static/app.js?v=tooltip-848-1" in service_worker.text
     assert "/static/terminal.js?v=issue-287-2" in service_worker.text
     assert "/static/pwa.js?v=issue-287-2" in service_worker.text
     assert "vcfdt-configuration-248-20260807-14" not in service_worker.text
@@ -1081,7 +1081,7 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     )
     assert offline_stylesheet is not None
     assert offline_stylesheet.group(1) == (
-        "/static/app.css?v=issue-873-1"
+        "/static/app.css?v=tooltip-848-1"
     )
     assert f'"{offline_stylesheet.group(1)}"' in service_worker.text
 
@@ -1109,8 +1109,8 @@ def test_shared_ui_pattern_shell_and_wizard_contracts(client):
     base = (templates / "base.html").read_text(encoding="utf-8")
     public_base = (templates / "public_portal_base.html").read_text(encoding="utf-8")
     for shell, app_asset in (
-        (base, "/static/app.js?v=vcf-lab-873-1"),
-        (public_base, "/static/app.js?v=vcf-lab-873-1"),
+        (base, "/static/app.js?v=tooltip-848-1"),
+        (public_base, "/static/app.js?v=tooltip-848-1"),
         (base, "/static/appliance-apply-polling.js?v=issue-420-6"),
     ):
         assert shell.index("/static/vendor/tabulator/tabulator.min.js") < shell.index(
@@ -1155,7 +1155,8 @@ def test_shared_ui_pattern_shell_and_wizard_contracts(client):
     app_js = client.get("/static/app.js")
     assert app_js.status_code == 200
     assert 'control.setAttribute("tabindex", "-1")' in app_js.text
-    assert 'event.target.closest(".help-icon")' in app_js.text
+    assert 'target.closest("button.help-icon[data-help]")' in app_js.text
+    assert 'button.removeAttribute("tabindex")' in app_js.text
     app_css = client.get("/static/app.css")
     assert app_css.status_code == 200
     assert "height: min(720px, calc(100vh - 48px));" in app_css.text
@@ -1776,9 +1777,9 @@ def test_monitor_page_renders_template_and_browser_assets(client):
     assert "Loading devices" not in page.text
     assert "<th>Device</th><th>Read/s</th><th>Write/s</th>" in page.text
     assert "swagger-link-icon" in page.text
-    assert "/static/app.css?v=issue-873-1" in page.text
+    assert "/static/app.css?v=tooltip-848-1" in page.text
     assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-10" in page.text
-    assert "/static/app.js?v=vcf-lab-873-1" in page.text
+    assert "/static/app.js?v=tooltip-848-1" in page.text
     app_css = client.get("/static/app.css")
     assert app_css.status_code == 200
     assert ".split-workspace > .wide-panel" in app_css.text
@@ -1793,7 +1794,7 @@ def test_monitor_page_renders_template_and_browser_assets(client):
     assert "align-self: stretch;" in app_css.text
     assert ".monitor-disk-usage-panel" not in app_css.text
     assert ".monitor-chart-zoom-controls" in app_css.text
-    assert ".monitor-chart-zoom-field .help-icon::after" in app_css.text
+    assert ".atlaso-help-tooltip" in app_css.text
     assert "position: absolute;" in app_css.text
     app_js = client.get("/static/app.js").text
     assert '{ name: "Total", points: payload.cpu, aggregate: true' in app_js
@@ -3299,8 +3300,8 @@ def test_ntp_page_autosave_updates_desired_state_and_preview(client, monkeypatch
     assert ".invalid-ntp-source-cell" in app_css.text
     assert ".ntp-main-panel" in app_css.text
     assert "flex: 1 1 0;" in app_css.text
-    assert ".side-stack .help-icon::after" in app_css.text
-    assert "right: 0;" in app_css.text
+    assert ".atlaso-help-tooltip" in app_css.text
+    assert ".help-icon::after" not in app_css.text
 
     health = client.get("/ntp/source-health")
     assert health.status_code == 200
