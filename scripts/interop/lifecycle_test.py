@@ -3423,17 +3423,16 @@ def appliance_console_geometry(args: argparse.Namespace) -> dict[str, Any]:
     result = ssh_command(
         args.appliance_ssh_host,
         args,
-        "framebuffer=$(cat /sys/class/graphics/fb0/virtual_size) && "
-        "console=$(stty -F /dev/tty1 size) && "
-        "printf 'framebuffer=%s\\nconsole=%s\\n' \"$framebuffer\" \"$console\" && "
-        "test \"$framebuffer\" = '1280,800' && test \"$console\" = '50 160'",
+        "cat /sys/class/graphics/fb0/virtual_size && stty -F /dev/tty1 size",
         role="appliance",
     )
     require_success(result, "appliance console geometry")
-    observed = dict(line.split("=", 1) for line in result["stdout"].splitlines() if "=" in line)
+    observed = [line.strip() for line in result["stdout"].splitlines() if line.strip()]
+    if observed != ["1280,800", "50 160"]:
+        raise LifecycleError("appliance console geometry did not match the required 1280x800 framebuffer and 50x160 tty1")
     return {
-        "framebuffer_virtual_size": observed.get("framebuffer", ""),
-        "tty1_rows_columns": observed.get("console", ""),
+        "framebuffer_virtual_size": observed[0],
+        "tty1_rows_columns": observed[1],
         "ssh": result,
     }
 

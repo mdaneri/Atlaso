@@ -359,7 +359,7 @@ def test_appliance_console_geometry_requires_deployed_framebuffer_and_tty1(monke
         commands.append(command)
         return {
             "returncode": 0,
-            "stdout": "framebuffer=1280,800\nconsole=50 160\n",
+            "stdout": "1280,800\n50 160\n",
             "stderr": "",
             "command": "redacted",
         }
@@ -372,10 +372,25 @@ def test_appliance_console_geometry_requires_deployed_framebuffer_and_tty1(monke
 
     assert "/sys/class/graphics/fb0/virtual_size" in commands[0]
     assert "stty -F /dev/tty1 size" in commands[0]
-    assert "test \"$framebuffer\" = '1280,800'" in commands[0]
-    assert "test \"$console\" = '50 160'" in commands[0]
+    assert "printf" not in commands[0]
     assert evidence["framebuffer_virtual_size"] == "1280,800"
     assert evidence["tty1_rows_columns"] == "50 160"
+
+    def wrong_geometry(host, command_args, command, *, role):  # type: ignore[no-untyped-def]  # Fake mirrors the lifecycle SSH helper.
+        """Return a healthy command with the wrong tty1 dimensions.
+
+        Args:
+            host: Appliance host selected by the lifecycle test.
+            command_args: Parsed lifecycle command arguments.
+            command: Remote shell command issued by the check.
+            role: Lifecycle SSH role used for the command.
+        """
+        assert host and command_args and command and role
+        return {"returncode": 0, "stdout": "1280,800\n48 160\n", "stderr": "", "command": "redacted"}
+
+    monkeypatch.setattr(lifecycle, "ssh_command", wrong_geometry)
+    with pytest.raises(lifecycle.LifecycleError, match="console geometry did not match"):
+        lifecycle.appliance_console_geometry(argparse.Namespace(appliance_ssh_host="192.0.2.10"))
 
 
 def test_reboot_appliance_waits_for_new_boot_and_host_facing_readiness(monkeypatch):
