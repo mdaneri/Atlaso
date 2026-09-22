@@ -118,6 +118,14 @@ def test_wan_review_uses_applied_network_ingress_with_pending_network(client, ba
         units = ui.appliance_apply_units(db)
         assert next(unit for unit in units if unit["id"] == "network")["changed"]
         wan = next(unit for unit in units if unit["id"] == "wan")
+        candidate = wan["network_candidate_variant"]["config_preview"]
+        candidate_names = set(ui.wan_network_ingress_from_preview(
+            next(unit for unit in units if unit["id"] == "network")["config_preview"]
+        ))
+        candidate_commands = [line for line in candidate.splitlines() if "rule add iif " in line]
+        assert len(candidate_commands) == 4 * len(candidate_names)
+        assert {line.split(" iif ", 1)[1].split()[0] for line in candidate_commands} == candidate_names
+        assert "candidate Network intent applied before WAN" in candidate
         for preview in (page["wan_config_preview"], wan["config_preview"]):
             commands = [line for line in preview.splitlines() if "rule add iif " in line]
             if baseline_kind == "missing":

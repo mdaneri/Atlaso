@@ -11152,8 +11152,7 @@ def appliance_apply_units(db: Session, *, reconcile: bool = True) -> list[dict[s
         source_groups=wan["wan_source_groups"],
         previous_config_preview=str((wan_baseline or {}).get("config_preview") or ""),
         settings=wan["routes_wan_settings"],
-        applied_network_ingress=wan_applied_network_ingress(db),
-        desired_network_ingress=wan_network_ingress_from_preview(network["network_config_preview"]),
+        candidate_network_ingress=wan_network_ingress_from_preview(network["network_config_preview"]),
         network_owned_targets=wan_network_owned_targets(
             db, network_preview=network["network_config_preview"]
         ),

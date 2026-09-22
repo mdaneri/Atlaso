@@ -986,6 +986,7 @@ def render_wan_config(
     settings: RoutesWanSettings | None = None,
     applied_network_ingress: list[str] | None = None,
     desired_network_ingress: list[str] | None = None,
+    candidate_network_ingress: list[str] | None = None,
     network_owned_targets: list[dict[str, str]] | None = None,
 ) -> str:
     """Render wan config.
@@ -1002,6 +1003,7 @@ def render_wan_config(
         settings: Saved global activation state. Omission preserves the legacy active behavior.
         applied_network_ingress: Applied lab interfaces; None projects targets for initial Network-first Apply.
         desired_network_ingress: Fresh Network-first projection from rendered desired Network intent.
+        candidate_network_ingress: Effective ingress after Network applies in this task.
         network_owned_targets: Modern Network-owned targets; None retains pre-migration WAN behavior.
 
     Returns:
@@ -1179,14 +1181,20 @@ def render_wan_config(
         lines.append("# Routing disabled: reconcile owned IPv4/IPv6 lab ingress lookups and terminal guards to an empty set.")
         lines.append("# Local source-address rules remain reconciled from applied Network intent.")
     else:
-        if applied_network_ingress is not None:
+        if candidate_network_ingress is not None:
+            lines.append("# Ingress commands below reflect the candidate Network intent applied before WAN in this task.")
+        elif applied_network_ingress is not None:
             lines.append("# Ingress commands below reflect the last-applied Network baseline, not pending Network edits.")
             lines.append("# If Network is applied first in the same task, ingress uses that successfully applied Network intent instead.")
             if not applied_network_ingress:
                 lines.append("# No modern ingress selectors are available from this baseline; pre-migration baselines retain legacy WAN handling.")
         else:
             lines.append("# Initial WAN Apply automatically includes Network first; no applied Network baseline is available.")
-        ingress_projection = applied_network_ingress if applied_network_ingress is not None else desired_network_ingress
+        ingress_projection = (
+            candidate_network_ingress if candidate_network_ingress is not None
+            else applied_network_ingress if applied_network_ingress is not None
+            else desired_network_ingress
+        )
         ingress_names = sorted(set(ingress_projection)) if ingress_projection is not None else sorted(
             {target["name"] for target in targets if target.get("routing_domain") != "management"})
         # The helper installs terminal guards before introducing lab lookups.
