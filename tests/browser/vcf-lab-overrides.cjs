@@ -45,9 +45,11 @@ const html = `<html><head><style>${fs.readFileSync("atlaso/app/static/app.css", 
       await page.locator('[data-lab-action="probe"]').click();
       await page.waitForFunction(() => document.querySelector('[data-lab-ssh]').textContent === 'ssh-fixture');
       await page.locator('[name="confirmed"]').check(); await next.click();
+      assert(await page.locator('[data-atlaso-wizard-step="options"]').isVisible());
+      assert(await page.locator('[name="api_password"]').isDisabled());
       await page.locator('[data-lab-action="inspect"]').click();
       await page.waitForFunction(() => document.querySelector('[data-lab-observed]').textContent.includes('VcfInstaller'));
-      await next.click(); await page.locator('[name="nic"]').check(); await next.click();
+      await page.locator('[name="nic"]').check(); await next.click();
       await page.locator('[data-atlaso-wizard-step="review"]').waitFor({state: "visible"});
       assert(!calls.some((call) => call.operation === "execute"));
       const review = calls.find((call) => call.operation === "review");
@@ -78,7 +80,7 @@ const html = `<html><head><style>${fs.readFileSync("atlaso/app/static/app.css", 
       await next.click(); await next.click();
       await page.locator('[data-lab-action="probe"]').click();
       await page.waitForFunction(() => document.querySelector('[data-lab-tls]').textContent.includes('Unavailable'));
-      await page.locator('[name="confirmed"]').check(); await next.click(); await next.click();
+      await page.locator('[name="confirmed"]').check(); await next.click();
       await page.locator('[name="source_job_id"]').selectOption('previous');
       await next.click();
       await page.locator('[data-atlaso-wizard-step="review"]').waitFor({state: "visible"});
@@ -96,10 +98,13 @@ const html = `<html><head><style>${fs.readFileSync("atlaso/app/static/app.css", 
       assert.equal(calls.filter((call) => call.operation === 'probe').at(-1).body.credentials, undefined);
       await page.locator('[name="confirmed"]').check(); await next.click();
       await page.locator('[name="api_username"]').fill('admin@local');
+      assert(await page.locator('[data-atlaso-wizard-step="login"]').isVisible());
+      assert(!(await page.locator('[name="api_password"]').isDisabled()));
       for (const kind of ['api', 'ssh', 'root']) await page.locator(`[name="${kind}_password"]`).fill(`synthetic-${kind}`);
+      await next.click();
       await page.locator('[data-lab-action="inspect"]').click();
       await page.waitForFunction(() => document.querySelector('[data-lab-observed]').textContent.includes('VcfInstaller'));
-      await next.click(); await page.locator('[name="esa"]').check(); await next.click();
+      await page.locator('[name="esa"]').check(); await next.click();
       await page.locator('[data-atlaso-wizard-step="review"]').waitFor({state:'visible'});
       assert.equal(calls.filter((call) => call.operation === 'review').at(-1).body.credential_mode, 'manual');
       await page.locator('[name="acknowledged"]').check();

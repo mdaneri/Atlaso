@@ -66,10 +66,12 @@ the operator; it does not substitute a different path or claim that this covers 
 3. Select **Probe target fingerprints**, verify both fingerprints out of band, and confirm the target.
    Probing sends no credentials. Changed selections clear confirmation. SSH host keys are checked before SSH
    authentication; API TLS certificates are checked before API authentication.
-4. For manual login, enter the API username and separate API, `vcf`, and root passwords in **Login**, after
+4. Saved credentials skip **Login** with its manual controls disabled. For manual login, enter the API username and
+   separate API, `vcf`, and root passwords in **Login**, after
    confirming trust. Manual passwords stay in request/process memory and are never persisted in Vault, review
    tokens, jobs, logs, or audits. Closing the wizard or queuing the task clears its password fields; an interrupted
-   task requires re-entry and review. Select **Verify login and inspect properties**. Atlaso connects as `vcf`,
+   task requires re-entry and review. In **Changes**, select **Verify login and inspect properties**. Atlaso
+   connects as `vcf`,
    verifies role/version through the API,
    and reads the fixed properties and service state. Readable inspection runs as `vcf` without decrypting or sending
    the root secret. A permission refusal triggers

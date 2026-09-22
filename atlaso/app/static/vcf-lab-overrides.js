@@ -16,14 +16,16 @@
     {id: "credential", title: "Choose separate credentials", description: "Use saved credentials or enter a one-time login after confirming target trust."},
     {id: "target", title: "Review the server", description: "Confirm the saved endpoint or enter the target hostname and ports."},
     {id: "trust", title: "Confirm target fingerprints", description: "Verify SSH and API identities out of band before credentials are sent."},
-    {id: "login", title: "Verify login and inspect", description: "Read current properties without changing the target."},
-    {id: "options", title: "Select property changes", description: "Apply selected changes or recover a previous managed operation."},
+    {id: "login", title: "Enter manual credentials", description: "Supply one-time API, vcf SSH and root credentials."},
+    {id: "options", title: "Select property changes", description: "Inspect current properties, then select changes or recover a previous operation."},
     {id: "review", title: "Review the remote task", description: "Only the final submission can change properties and restart domainmanager."},
   ];
   const manual = () => field("credential_mode").value === "manual";
   const credentials = () => Object.fromEntries(["api", "ssh", "root"].map((key) => [key, field(`${key}_password`).value]));
   function clearPasswords() { ["api", "ssh", "root"].forEach((key) => { field(`${key}_password`).value = ""; }); }
   function modeChanged() {
+    wizard.setSkippedSteps(manual() ? [] : ["login"]);
+    ["api_username", "api_password", "ssh_password", "root_password"].forEach((name) => { field(name).disabled = !manual(); });
     node("saved").classList.toggle("hidden", manual());
     node("manual-server").classList.toggle("hidden", !manual());
     node("manual-login").classList.toggle("hidden", !manual());
@@ -110,7 +112,7 @@
       if (step.id === "credential" && !manual()) { inputs(false); }
       if (step.id === "target" && manual() && !field("host").value.trim()) return "Enter the target hostname or IP.";
       if (["trust", "login", "options", "review"].includes(step.id) && (!trust || !field("confirmed").checked)) return "Probe and confirm target fingerprints before continuing.";
-      if (step.id === "options" && !field("source_job_id").value && !inspected) return {valid: false, message: "Verify login and inspect current properties before applying changes.", step: "login"};
+      if (step.id === "options" && !field("source_job_id").value && !inspected) return {valid: false, message: "Verify login and inspect current properties before applying changes.", step: "options"};
       if (step.id === "options" && !field("source_job_id").value && !field("esa").checked && !field("nic").checked) return "Select one or both properties, or a previous operation to revert.";
       if (step.id === "review" && (!token || !field("acknowledged").checked)) return "Review the current changes and acknowledge the lab-only operation.";
       return true;
@@ -125,7 +127,7 @@
       try {
       if (!trust || !field("confirmed").checked) return "Confirm the fingerprints again before review.";
       const source = field("source_job_id").value;
-      if (!source && !inspected) return {valid: false, step: "login", message: "Inspect current properties first."};
+      if (!source && !inspected) return {valid: false, step: "options", message: "Inspect current properties first."};
       token = null;
       const result = await request("/review", {...inputs(), ...(source ? {source_job_id: source} : {})});
       token = result.token;

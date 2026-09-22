@@ -7,7 +7,7 @@
 <ol class="vcf-sddc-step-list"><li><button class="vcf-sddc-step-button" type="button" data-atlaso-wizard-nav="credential"><span>1</span><strong>Credentials</strong><small>Vault or manual</small></button></li>
 <li><button class="vcf-sddc-step-button" type="button" data-atlaso-wizard-nav="target"><span>2</span><strong>Server</strong><small>Review the SSH endpoint</small></button></li>
 <li><button class="vcf-sddc-step-button" type="button" data-atlaso-wizard-nav="trust"><span>3</span><strong>Fingerprints</strong><small>Confirm before authentication</small></button></li>
-<li><button class="vcf-sddc-step-button" type="button" data-atlaso-wizard-nav="login"><span>4</span><strong>Login</strong><small>Inspect without changes</small></button></li>
+<li><button class="vcf-sddc-step-button" type="button" data-atlaso-wizard-nav="login"><span>4</span><strong>Login</strong><small>Manual credentials</small></button></li>
 <li><button class="vcf-sddc-step-button" type="button" data-atlaso-wizard-nav="options"><span>5</span><strong>Changes</strong><small>Select changes or revert</small></button></li>
 <li><button class="vcf-sddc-step-button" type="button" data-atlaso-wizard-nav="review"><span>6</span><strong>Review</strong><small>Queue the remote task</small></button></li></ol></aside>
 <div class="vcf-sddc-wizard-main"><div class="confirm-modal-body vcf-sddc-wizard-body">
@@ -45,12 +45,13 @@
 <label>Root su password<input name="root_password" type="password" autocomplete="off"></label>
 <p class="muted">Used only for this operation; never saved to Vault or task history. Re-enter credentials if Atlaso restarts.</p>
 </div>
+</section>
+<section class="vcf-sddc-step-page hidden" data-atlaso-wizard-step="options">
 <p class="muted">Connect as vcf and inspect the two properties. If the file is root-only, Atlaso uses the separate root credential through su. Inspection does not edit properties or restart services.</p>
 <button class="button secondary" type="button" data-lab-action="inspect">Verify login and inspect properties</button>
 <p data-lab-observed role="status">Current properties have not been inspected.</p>
-<p class="muted">To recover an earlier verified operation while the API is unavailable, continue and select that operation. Recovery inspection uses the confirmed SSH identity.</p>
-</section>
-<section class="vcf-sddc-step-page hidden" data-atlaso-wizard-step="options">
+<p class="muted">To recover an earlier verified operation while the API is unavailable, select that operation below. Recovery inspection uses the confirmed SSH identity.</p>
+
 <p class="alert warning">Lab / PoC only. These changes do not make hardware certified or production-supported. VCF 9.1.1 and later provide native ESA handling; this legacy property edit does not replace that workflow.</p>
     <fieldset class="scope-choice-fieldset" data-lab-options>
       <legend>Select changes</legend>
