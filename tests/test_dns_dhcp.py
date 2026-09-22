@@ -61,6 +61,7 @@ def test_dnsmasq_renderer_binds_dhcp_to_sitea_interface_only():
         listen_address="192.168.50.1\n192.168.60.1",
         domain="atlaso.internal\ncorp.lab",
         upstream_servers="1.1.1.1\n9.9.9.9",
+        cache_size=500,
     )
     dhcp_settings = DhcpSettings(
         enabled=True,
@@ -120,6 +121,7 @@ def test_dnsmasq_renderer_binds_dhcp_to_sitea_interface_only():
     assert "cname=www.atlaso.internal,app.atlaso.internal" in config
     assert "server=/sddc.internal/192.168.10.10" in config
     assert "server=/corp.example/192.168.20.10#5353" in config
+    assert "cache-size=500" in config
     assert "ptr-record=" not in config
     assert f"dhcp-leasefile={DNSMASQ_LEASE_FILE_PATH}" in config
     assert "dhcp-host=02:15:5d:00:20:20,client1,192.168.50.120" in config
@@ -187,10 +189,11 @@ def test_dnsmasq_renderer_emits_shared_authoritative_zones_and_generated_glue():
     assert "local=/atlaso.internal/" not in config
     assert f"server=/atlaso.internal/{DNSMASQ_AUTHORITATIVE_LOOPBACK_ADDRESS}#{DNSMASQ_AUTHORITATIVE_PORT}" in main_lines
     assert f"server=/sitea.internal/{DNSMASQ_AUTHORITATIVE_LOOPBACK_ADDRESS}#{DNSMASQ_AUTHORITATIVE_PORT}" in main_lines
-    assert "auth-server=ns1.atlaso.internal,127.0.0.2" in authoritative_lines
+    assert "auth-server=ns1.atlaso.internal,127.0.0.1" in authoritative_lines
     assert "auth-server=ns1.atlaso.internal" not in authoritative_lines
     assert "auth-server=ns1.atlaso.internal,lo" not in authoritative_lines
     assert "bind-dynamic" in main_lines
+    assert "cache-size=0" in main_lines
     assert "bind-interfaces" in authoritative_lines
     assert "port=5353" in authoritative_lines
     assert "auth-soa=2026072201,hostmaster.atlaso.internal,1200,180,1209600" in authoritative_lines

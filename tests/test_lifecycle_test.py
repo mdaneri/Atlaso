@@ -816,6 +816,7 @@ def test_authoritative_dns_lifecycle_probe_covers_authority_reverse_nxdomain_and
     assert '(domain, 2, 0, 2, True)' in script
     assert '("ns1." + domain, 1, 0, 1, True)' in script
     assert '("interop-appliance." + domain, 1, 0, 1, True)' in script
+    assert "for _ in range(2):" in script
     assert 'query("missing-authoritative." + domain, 1)' in script
     assert "assert 6 in sections[1]" in script
     assert 'query("example.com", 1, tcp=tcp)' in script

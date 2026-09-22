@@ -1242,11 +1242,12 @@ preserved with their affected subsystem below. Keep new requirements at their to
   exemptions, and query logging uses `log-queries=extra` only as a temporary troubleshooting setting because query names
   may be sensitive. Operator DNS records support A, AAAA, CNAME, TXT, SRV, MX, CAA, and explicit PTR, while A/AAAA still
   generate PTR answers through dnsmasq `host-record`. Authoritative mode uses an isolated dnsmasq backend on
-  `127.0.0.2:5353`, with an address-qualified `auth-server` and every managed forward zone rendered with shared SOA
+  `127.0.0.1:5353`, with an address-qualified `auth-server` and every managed forward zone rendered with shared SOA
   policy and generated NS/glue. The ordinary dnsmasq service forwards managed domains to that backend so selected
   service listeners preserve authoritative positive and negative answers while retaining PTR and upstream-recursive
-  behavior within the existing listener and firewall boundaries. Apply, rollback, and reboot policy must manage both
-  dnsmasq services as one DNS/DHCP unit.
+  behavior within the existing listener and firewall boundaries. The client-facing cache must be disabled in
+  authoritative mode because cached forwarded answers lose their AA flag. Apply, rollback, and reboot policy must manage
+  both dnsmasq services as one DNS/DHCP unit.
   When Appliance Settings resolver mode is DHCP and DNS upstreams are empty, use the management interface's observed
   DHCP DNS servers as dnsmasq forwarder fallback. If local DNS makes resolvectl loopback-only, resolve the exact
   management interface ifindex and read only its systemd-networkd lease through the constrained helper; filter loopback,

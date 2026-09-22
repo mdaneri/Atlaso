@@ -3612,18 +3612,20 @@ expected = [
 ]
 for tcp in (False, True):
     for name, qtype, expected_rcode, expected_type, authoritative in expected:
-        flags, sections = query(name, qtype, tcp=tcp)
-        assert flags & 0x000F == expected_rcode, (name, flags, sections)
-        assert expected_type in sections[0], (name, flags, sections)
-        if authoritative:
-            assert flags & 0x0400, (name, flags, sections)
+        for _ in range(2):
+            flags, sections = query(name, qtype, tcp=tcp)
+            assert flags & 0x000F == expected_rcode, (name, flags, sections)
+            assert expected_type in sections[0], (name, flags, sections)
+            if authoritative:
+                assert flags & 0x0400, (name, flags, sections)
     flags, sections = query("example.com", 1, tcp=tcp)
     assert flags & 0x000F == 0 and sections[0], (flags, sections)
 
-flags, sections = query("missing-authoritative." + domain, 1)
-assert flags & 0x000F == 3, (flags, sections)
-assert flags & 0x0400, (flags, sections)
-assert 6 in sections[1], (flags, sections)
+for _ in range(2):
+    flags, sections = query("missing-authoritative." + domain, 1)
+    assert flags & 0x000F == 3, (flags, sections)
+    assert flags & 0x0400, (flags, sections)
+    assert 6 in sections[1], (flags, sections)
 
 print("authoritative DNS lifecycle probes passed")
 '''

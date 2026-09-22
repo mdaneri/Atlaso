@@ -46,20 +46,21 @@ from that interface's active systemd-networkd lease. This lease fallback remains
 resolver has been redirected to local dnsmasq and `resolvectl` therefore reports only `127.0.0.1`; applying DNS must not
 regenerate dnsmasq without the DHCP-provided forwarders.
 
-With **Authoritative** on, Atlaso runs an isolated authoritative dnsmasq backend on `127.0.0.2:5353`. The ordinary
+With **Authoritative** on, Atlaso runs an isolated authoritative dnsmasq backend on `127.0.0.1:5353`. The ordinary
 dnsmasq service forwards each managed forward domain to that backend and continues to answer clients on every selected
-listener. This preserves the backend's AA flag and authoritative negative answers while the same client-facing sockets
+listener. The client-facing cache is disabled in this mode because cached forwarded replies lose the backend's AA flag;
+this preserves authoritative positive and negative answers on repeated queries. The same client-facing sockets
 retain upstream recursion. All managed zones share one primary nameserver, SOA administrator, TTL, refresh, retry,
 expiry, and serial. v1 does not configure secondary nameservers or AXFR. Generated reverse zones remain normal dnsmasq
 PTR behavior rather than authoritative reverse zones.
 
 The authoritative renderer emits:
 
-- `auth-server=<primary-nameserver>,127.0.0.2` in the isolated authoritative backend;
+- `auth-server=<primary-nameserver>,127.0.0.1` in the isolated authoritative backend;
 - one `auth-zone` per managed forward domain;
 - shared `auth-soa` and `auth-ttl` values;
 - A/AAAA `host-record` glue mapping the primary nameserver to every selected DNS listen address;
-- `server=/<managed-domain>/127.0.0.2#5353` in the recursive client-facing service.
+- `server=/<managed-domain>/127.0.0.1#5353` and `cache-size=0` in the recursive client-facing service.
 
 The primary nameserver must belong to a managed domain. Its glue identity is generated and cannot conflict with operator
 CNAME or A/AAAA data. SOA expiry must be greater than refresh and retry, and all timer values must be positive 32-bit

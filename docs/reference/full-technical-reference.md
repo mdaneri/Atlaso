@@ -849,10 +849,11 @@ from the client-facing `dnsmasq.service`; when authoritative DNS is desired, DNS
 for DHCP and recursive DNS while a failed backend restarts.
 DNS listen addresses are derived from selected access physical or enabled VLAN interface CIDRs,
 including both IPv4 and IPv6 when present. When Authoritative DNS is enabled, Atlaso runs an isolated dnsmasq backend
-on `127.0.0.2:5353` with every managed forward domain as an `auth-zone`, an address-qualified
-`auth-server=<primary-nameserver>,127.0.0.2`, and shared `auth-soa` and `auth-ttl` directives. The ordinary dnsmasq
+on `127.0.0.1:5353` with every managed forward domain as an `auth-zone`, an address-qualified
+`auth-server=<primary-nameserver>,127.0.0.1`, and shared `auth-soa` and `auth-ttl` directives. The ordinary dnsmasq
 service forwards managed domains to that backend, so selected listeners preserve authoritative positive and negative
-answers while retaining existing PTR behavior and recursion through configured upstreams. Atlaso generates read-only
+answers while retaining existing PTR behavior and recursion through configured upstreams. It disables the client-facing
+cache in authoritative mode because cached forwarded replies lose the AA flag. Atlaso generates read-only
 SOA/NS records and A/AAAA nameserver glue from the selected listen addresses and advances the SOA serial on DNS
 mutations. Listener selection and firewall policy limit client access. Generated reverse zones retain
 their existing PTR behavior. When the appliance resolver is still in DHCP mode and DNS upstream servers are blank, the

@@ -11139,14 +11139,15 @@ def test_dnsmasq_helper_apply_installs_isolated_authoritative_backend(monkeypatc
         "\n".join(
             [
                 "no-resolv",
-                "server=/atlaso.internal/127.0.0.2#5353",
+                "server=/atlaso.internal/127.0.0.1#5353",
+                "cache-size=0",
                 "# Embedded configuration for atlaso-dns-authoritative.service.",
                 "# atlaso-authoritative-config: port=5353",
                 "# atlaso-authoritative-config: no-resolv",
                 "# atlaso-authoritative-config: bind-interfaces",
-                "# atlaso-authoritative-config: listen-address=127.0.0.2",
+                "# atlaso-authoritative-config: listen-address=127.0.0.1",
                 "# atlaso-authoritative-config: auth-zone=atlaso.internal",
-                "# atlaso-authoritative-config: auth-server=ns1.atlaso.internal,127.0.0.2",
+                "# atlaso-authoritative-config: auth-server=ns1.atlaso.internal,127.0.0.1",
                 "",
             ]
         ),
@@ -11192,12 +11193,12 @@ def test_dnsmasq_helper_apply_installs_isolated_authoritative_backend(monkeypatc
     assert helper._handle_dnsmasq("apply", [str(config_path)]) == 0
 
     assert len(validated) == 2
-    assert "server=/atlaso.internal/127.0.0.2#5353" in validated[0]
+    assert "server=/atlaso.internal/127.0.0.1#5353" in validated[0]
     assert "auth-zone=atlaso.internal" in validated[1]
     assert helper.DNSMASQ_AUTHORITATIVE_CONFIG_PREFIX not in validated[0]
     assert (config_dir / "atlaso-authoritative.conf").read_text(encoding="utf-8") == validated[1]
     installed_main = (config_dir / "atlaso.conf").read_text(encoding="utf-8")
-    assert "server=/atlaso.internal/127.0.0.2#5353" in installed_main
+    assert "server=/atlaso.internal/127.0.0.1#5353" in installed_main
     assert helper.DNSMASQ_AUTHORITATIVE_CONFIG_PREFIX not in installed_main
     service = (systemd_dir / "atlaso-dns-authoritative.service").read_text(encoding="utf-8")
     assert f"--conf-file={config_dir / 'atlaso-authoritative.conf'}" in service

@@ -455,12 +455,13 @@ DNS while managed authoritative zones temporarily return a backend error.
 #### Authoritative DNS
 
 Authoritative DNS remains inside that same unit. When enabled, the renderer embeds an isolated backend configuration
-with one `auth-zone=<domain>` per managed forward domain, `auth-server=<primary-nameserver>,127.0.0.2`,
+with one `auth-zone=<domain>` per managed forward domain, `auth-server=<primary-nameserver>,127.0.0.1`,
 `auth-soa=<serial>,<administrator>,<refresh>,<retry>,<expiry>`, and `auth-ttl=<seconds>`. The helper extracts that
-configuration to `/etc/atlaso/dnsmasq.d/atlaso-authoritative.conf` and runs it on `127.0.0.2:5353` through
+configuration to `/etc/atlaso/dnsmasq.d/atlaso-authoritative.conf` and runs it on `127.0.0.1:5353` through
 `atlaso-dns-authoritative.service`. The ordinary dnsmasq service forwards managed domains to that backend, preserving
 complete authoritative positive and negative answers while retaining PTR responses and upstream recursion on selected
-listeners. Listener selection and firewall policy limit client access. Validate the installed state with
+listeners. The client-facing cache is disabled in authoritative mode so repeated forwarded answers retain AA.
+Listener selection and firewall policy limit client access. Validate the installed state with
 `sudo grep -E '^(auth-zone|auth-server|auth-soa|auth-ttl|host-record=ns)' /etc/atlaso/dnsmasq.d/atlaso-authoritative.conf`,
 `systemctl is-active atlaso-dns-authoritative dnsmasq`, authoritative queries such as `dig @<selected-listener> <zone> SOA`,
 `dig @<selected-listener> <zone> NS`, `dig @<selected-listener> <nameserver> A`, and

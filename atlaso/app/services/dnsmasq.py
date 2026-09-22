@@ -21,7 +21,7 @@ from atlaso.app.models import (
 DNS_CONDITIONAL_FORWARDERS_SETTING_KEY = "dns.conditional_forwarders"
 DNSMASQ_LEASE_FILE_PATH = "/var/lib/atlaso/dnsmasq/dhcp.leases"
 DNSMASQ_DNSSEC_TRUST_ANCHORS_PATH = "/var/lib/atlaso/apply/dnsmasq/atlaso-trust-anchors.conf"
-DNSMASQ_AUTHORITATIVE_LOOPBACK_ADDRESS = "127.0.0.2"
+DNSMASQ_AUTHORITATIVE_LOOPBACK_ADDRESS = "127.0.0.1"
 DNSMASQ_AUTHORITATIVE_PORT = 5353
 DNSMASQ_AUTHORITATIVE_CONFIG_PREFIX = "# atlaso-authoritative-config: "
 DHCP_DENY_RESERVATION_DESCRIPTION_PREFIX = "Deny DHCP for "
@@ -1519,6 +1519,11 @@ def render_dnsmasq_config(
         if domain not in domains
     ]
     scopes = dhcp_scopes if dhcp_scopes else [_legacy_scope(dhcp_settings)]
+    # Cached forwarded replies lose AA, including authoritative NXDOMAIN.
+    # Preserve the backend's authority on every client-facing answer.
+    cache_size = 0 if dns_settings.authoritative else (
+        dns_settings.cache_size if dns_settings.cache_size is not None else 1000
+    )
     lines = [
         "# Managed by Atlaso. Local changes may be overwritten.",
         "domain-needed",
@@ -1526,7 +1531,7 @@ def render_dnsmasq_config(
         "no-resolv",
         "bind-dynamic",
         f"dhcp-leasefile={DNSMASQ_LEASE_FILE_PATH}",
-        f"cache-size={dns_settings.cache_size if dns_settings.cache_size is not None else 1000}",
+        f"cache-size={cache_size}",
     ]
     if require_dhcp_upstream:
         lines.insert(1, "# atlaso-dhcp-upstream-required")
