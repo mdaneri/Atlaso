@@ -77,7 +77,8 @@ the operator; it does not substitute a different path or claim that this covers 
    review. Manual credential bindings are removed before the task plan is stored. Apply rechecks the configuration
    and service activity under a remote lock, refuses inactive `domainmanager`, and uses `su` for writes and restart.
 8. After successful submission, the wizard closes and opens the new task details automatically.
-   Changed values trigger only `domainmanager` restart; matching values
+   Closing the wizard while submission is pending does not cancel the authorized task; its successful response
+   still opens task details. Changed values trigger only `domainmanager` restart; matching values
    need no restart. Property readback and service activity are reported separately. There is no API readiness check.
    Authentication, host identity, elevation, timeout and property failures are sanitized without terminal output.
 

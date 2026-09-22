@@ -55,13 +55,13 @@
     if (!response.ok) throw new Error(typeof result.detail === "string" ? result.detail : "The operation could not complete. Inspect the target and try again.");
     return result;
   }
-  async function request(path, values) {
+  async function request(path, values, committed = false) {
     if (busy) throw new Error("Wait for the current request to finish.");
     busy = true;
     const current = revision;
     try {
       const result = await call(path, values);
-      if (current !== revision || !dialog.open) throw new Error("Inputs changed. Repeat inspection and review.");
+      if (!committed && (current !== revision || !dialog.open)) throw new Error("Inputs changed. Repeat inspection and review.");
       return result;
     } finally { busy = false; }
   }
@@ -142,7 +142,8 @@
     },
     async onSubmit() {
       if (!token || submitted) return "Inspect and review again before submitting.";
-      const result = await request("/execute", {token, acknowledged: true, ...(manual() ? {credentials: credentials()} : {})});
+      // A queued mutation belongs to the submitted snapshot even if the dialog closes.
+      const result = await request("/execute", {token, acknowledged: true, ...(manual() ? {credentials: credentials()} : {})}, true);
       submitted = true; clearPasswords(); invalidate();
       wizard.markClean();
       wizard.close("submit");

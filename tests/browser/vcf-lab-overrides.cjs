@@ -18,6 +18,8 @@ const html = `<html><head><style>${fs.readFileSync("atlaso/app/static/app.css", 
       const page = await browser.newPage({viewport});
       const errors = [], calls = [];
       let rejectSubmit = true;
+      let holdExecute;
+      const heldExecute = new Promise(resolve => { holdExecute = resolve; });
       const departures = [];
       await page.exposeFunction('recordDeparture', (data) => departures.push(data));
       await page.addInitScript(() => document.addEventListener('DOMContentLoaded', () => {
@@ -35,6 +37,7 @@ const html = `<html><head><style>${fs.readFileSync("atlaso/app/static/app.css", 
         if (operation === "inspect") return route.fulfill({json: {target: "vcf.example.test", role: "VcfInstaller", version: "9.1.1", values: {esa: null, nic: "true"}, service_active: true}});
         if (operation === "review") return route.fulfill({json: {token: "review-fixture", target: "vcf.example.test", role: "VcfInstaller", version: "9.1.1", changes: [{key: "enable.speed.of.physical.nics.validation", previous: "true", value: "false"}], restart_required: true}});
         if (operation === "execute" && rejectSubmit) { rejectSubmit = false; return route.fulfill({status: 409, json: {detail: "Transient fixture failure; retry."}}); }
+        if (operation === "execute" && route.request().postDataJSON().credentials) { holdExecute(route); return; }
         if (operation === "execute") return route.fulfill({json: {job_id: "fixture-task"}});
         throw new Error(`Unexpected request: ${operation}`);
       });
@@ -113,6 +116,13 @@ const html = `<html><head><style>${fs.readFileSync("atlaso/app/static/app.css", 
       assert.equal(calls.filter((call) => call.operation === 'review').at(-1).body.credential_mode, 'manual');
       await page.locator('[name="acknowledged"]').check();
       await page.locator('[data-atlaso-wizard-submit]').click();
+      const pendingExecute = await heldExecute;
+      if (viewport.width === 900) await page.keyboard.press('Escape');
+      else await page.locator('[data-atlaso-wizard-cancel]').click();
+      await modal.waitFor({state: 'hidden'});
+      assert.equal(calls.filter(call => call.operation === 'execute').length, 3);
+      await pendingExecute.fulfill({json: {job_id: 'fixture-task'}});
+
       await page.waitForURL('**/tasks?job_id=fixture-task');
       assert.deepEqual(departures.at(-1), {open: false, passwords: ['', '']});
       assert.deepEqual(calls.filter((call) => call.operation === 'execute').at(-1).body.credentials, {ssh:'synthetic-ssh',root:'synthetic-root'});
