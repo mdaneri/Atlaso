@@ -34,10 +34,13 @@ This verified appliance view provides visual orientation before you begin.
 4. Inspect the rendered NTPsec preview.
 5. Submit the NTPsec unit through [Appliance Apply](../operate/appliance-apply.md). In NTS server mode, Atlaso always
    includes Certificate Authority first so missing or stale runtime certificate files are repaired; the CA does not
-   need a public portal interface for this internal certificate deployment. If managed LDAP is active, Atlaso also
-   includes any changed CA, DNS/DHCP, Firewall, and Managed LDAP dependency units in the same task.
+   need a public portal interface for this internal certificate deployment. Atlaso also publishes the shared NTP/NTS
+   hostname through the DNS/DHCP unit after NTP succeeds when its managed record changed. If managed LDAP is active,
+   Atlaso also includes any changed CA, DNS/DHCP, Firewall, and Managed LDAP dependency units in the same task.
 
 Appliance Settings does not own time enforcement. DNS/DHCP also does not apply NTP configuration.
+The configured NTP hostname serves both NTP and NTS; Atlaso creates one managed CNAME with A and AAAA targets for
+the selected listener addresses. Disable NTP to remove those owned records while preserving operator DNS rows.
 Web Terminal enablement and interface autosave are isolated to Appliance Settings and never change NTP/NTS sources,
 server mode, certificate ownership, rendered configuration, or NTP apply selection.
 
