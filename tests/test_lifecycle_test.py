@@ -840,10 +840,11 @@ def test_authoritative_dns_lifecycle_probe_covers_authority_reverse_nxdomain_and
     encoded = command.split()[2]
     script = base64.b64decode(encoded).decode("utf-8")
 
-    assert '(domain, 6, 0, 6, True)' in script
-    assert '(domain, 2, 0, 2, True)' in script
-    assert '("ns1." + domain, 1, 0, 1, True)' in script
-    assert '("interop-appliance." + domain, 1, 0, 1, True)' in script
+    compile(script, "<authoritative-dns-probe>", "exec")
+    assert '(domain, 6, 0, 6, True, None)' in script
+    assert '(domain, 2, 0, 2, True, None)' in script
+    assert '("ns1." + domain, 1, 0, 1, True, \'192.168.50.1\')' in script
+    assert '("interop-appliance." + domain, 1, 0, 1, True, \'192.168.50.1\')' in script
     assert "for _ in range(2):" in script
     assert 'query("missing-authoritative." + domain, 1)' in script
     assert "assert 6 in sections[1]" in script
@@ -853,9 +854,12 @@ def test_authoritative_dns_lifecycle_probe_covers_authority_reverse_nxdomain_and
         "atlaso.internal", "192.168.50.1", "192.168.50.1", "interop-client", "192.168.50.105"
     )
     dynamic_script = base64.b64decode(dynamic_command.split()[2]).decode("utf-8")
+    compile(dynamic_script, "<dynamic-dns-probe>", "exec")
     assert "dynamic_hostname = 'interop-client'" in dynamic_script
-    assert 'expected.append((dynamic_hostname + "." + domain, 1, 0, 1, True))' in dynamic_script
-    assert 'expected.append((ip_address(dynamic_ip).reverse_pointer, 12, 0, 12, False))' in dynamic_script
+    assert '(1, dynamic_ip) in values[0]' in dynamic_script
+    assert 'expected.append((dynamic_hostname + "." + domain, 1, 0, 1, True, dynamic_ip))' in dynamic_script
+    assert 'expected.append((ip_address(dynamic_ip).reverse_pointer, 12, 0, 12, False,' in dynamic_script
+    assert 'assert (expected_type, expected_value) in values[0]' in dynamic_script
 
     recursive_command = lifecycle.recursive_dns_probe_command("127.0.0.1", "192.168.50.1")
     recursive_script = base64.b64decode(recursive_command.split()[2]).decode("utf-8")
@@ -865,6 +869,30 @@ def test_authoritative_dns_lifecycle_probe_covers_authority_reverse_nxdomain_and
     source = Path(lifecycle.__file__).read_text(encoding="utf-8")
     assert 'run_step(results, "authoritative-dns-state-check", authoritative_dns_state_check, args)' in source
     assert 'run_step(results, "recursive-dns-state-check", recursive_dns_state_check, args)' in source
+
+
+def test_lifecycle_enables_routing_before_wan_apply(monkeypatch):
+    """The WAN lab must turn on its global gates before applying routes."""
+    lifecycle = load_lifecycle_module()
+    calls = []
+
+    class Client:
+        def json_request(self, method, path, *, json_body):
+            calls.append((method, path, json_body))
+            return json_body
+
+    monkeypatch.setattr(lifecycle, "configure_firewall", lambda *_args: {})
+    monkeypatch.setattr(lifecycle, "configure_wan_policy", lambda *_args: {"id": 1})
+    monkeypatch.setattr(lifecycle, "configure_routes_nat", lambda *_args: {})
+    monkeypatch.setattr(lifecycle, "configure_routing_permissions", lambda *_args: {})
+
+    result = lifecycle.configure_firewall_wan(Client(), argparse.Namespace())
+
+    assert calls == [(
+        "PUT", "/api/v1/routes-wan/settings",
+        {"routing_enabled": True, "nat_enabled": True, "wan_simulation_enabled": True},
+    )]
+    assert result["settings"] == calls[0][2]
 
 
 def test_apply_units_retries_once_when_desired_state_drifts(monkeypatch):

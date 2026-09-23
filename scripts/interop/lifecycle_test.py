@@ -1631,11 +1631,15 @@ def configure_firewall_wan(client: HttpClient, args: argparse.Namespace) -> dict
     Returns:
         The configure firewall wan result.
     """
+    settings = client.json_request(
+        "PUT", "/api/v1/routes-wan/settings",
+        json_body={"routing_enabled": True, "nat_enabled": True, "wan_simulation_enabled": True},
+    )
     firewall = configure_firewall(client, args)
     policy = configure_wan_policy(client, args)
     routes_nat = configure_routes_nat(client, args, policy)
     routing = configure_routing_permissions(client, args)
-    return {"firewall": firewall, "wan_policy": policy, **routes_nat, "routing": routing}
+    return {"settings": settings, "firewall": firewall, "wan_policy": policy, **routes_nat, "routing": routing}
 
 
 def wan_policy_payload(*, packet_loss_percent: float) -> dict[str, Any]:
@@ -3599,15 +3603,27 @@ server = {server!r}
 dynamic_hostname = {dynamic_hostname!r}
 dynamic_ip = {dynamic_ip!r}
 
-def skip_name(data, offset):
-    while True:
+def decode_name(data, offset):
+    labels = []
+    following = None
+    for _ in range(128):
         length = data[offset]
         if length & 0xC0 == 0xC0:
-            return offset + 2
+            pointer = ((length & 0x3F) << 8) | data[offset + 1]
+            if following is None:
+                following = offset + 2
+            offset = pointer
+            continue
+        assert length & 0xC0 == 0
         offset += 1
         if length == 0:
-            return offset
+            return ".".join(labels).lower(), following if following is not None else offset
+        labels.append(data[offset:offset + length].decode("ascii").lower())
         offset += length
+    raise AssertionError("DNS name compression loop")
+
+def skip_name(data, offset):
+    return decode_name(data, offset)[1]
 
 def query(name, qtype, target=server, tcp=False):
     query_id = random.randrange(0, 65536)
@@ -3635,47 +3651,59 @@ def query(name, qtype, target=server, tcp=False):
     for _ in range(qd):
         offset = skip_name(data, offset) + 4
     types = []
+    values = []
     for count in (an, ns, ar):
         section = []
+        section_values = []
         for _ in range(count):
             offset = skip_name(data, offset)
             rtype, _rclass, _ttl, rdlen = struct.unpack("!HHIH", data[offset:offset + 10])
-            offset += 10 + rdlen
+            offset += 10
+            value = None
+            if rtype == 1 and rdlen == 4:
+                value = socket.inet_ntoa(data[offset:offset + rdlen])
+            elif rtype == 12:
+                value, _ = decode_name(data, offset)
+            offset += rdlen
             section.append(rtype)
+            section_values.append((rtype, value))
         types.append(section)
-    return flags, types
+        values.append(section_values)
+    return flags, types, values
 
 domain = {domain!r}
 expected = [
-    (domain, 6, 0, 6, True),
-    (domain, 2, 0, 2, True),
-    ("ns1." + domain, 1, 0, 1, True),
-    ("interop-appliance." + domain, 1, 0, 1, True),
+    (domain, 6, 0, 6, True, None),
+    (domain, 2, 0, 2, True, None),
+    ("ns1." + domain, 1, 0, 1, True, {expected_ip!r}),
+    ("interop-appliance." + domain, 1, 0, 1, True, {expected_ip!r}),
 ]
 if dynamic_hostname:
     for attempt in range(15):
-        flags, sections = query(dynamic_hostname + "." + domain, 1)
-        if flags & 0x000F == 0 and flags & 0x0400 and 1 in sections[0]:
+        flags, sections, values = query(dynamic_hostname + "." + domain, 1)
+        if flags & 0x000F == 0 and flags & 0x0400 and (1, dynamic_ip) in values[0]:
             break
         time.sleep(1)
     else:
-        raise AssertionError((dynamic_hostname, flags, sections))
-    expected.append((dynamic_hostname + "." + domain, 1, 0, 1, True))
+        raise AssertionError((dynamic_hostname, dynamic_ip, flags, values))
+    expected.append((dynamic_hostname + "." + domain, 1, 0, 1, True, dynamic_ip))
     if dynamic_ip:
-        expected.append((ip_address(dynamic_ip).reverse_pointer, 12, 0, 12, False))
+        expected.append((ip_address(dynamic_ip).reverse_pointer, 12, 0, 12, False, dynamic_hostname + "." + domain))
 for tcp in (False, True):
-    for name, qtype, expected_rcode, expected_type, authoritative in expected:
+    for name, qtype, expected_rcode, expected_type, authoritative, expected_value in expected:
         for _ in range(2):
-            flags, sections = query(name, qtype, tcp=tcp)
+            flags, sections, values = query(name, qtype, tcp=tcp)
             assert flags & 0x000F == expected_rcode, (name, flags, sections)
             assert expected_type in sections[0], (name, flags, sections)
+            if expected_value is not None:
+                assert (expected_type, expected_value) in values[0], (name, expected_value, values)
             if authoritative:
                 assert flags & 0x0400, (name, flags, sections)
-    flags, sections = query("example.com", 1, tcp=tcp)
+    flags, sections, _ = query("example.com", 1, tcp=tcp)
     assert flags & 0x000F == 0 and sections[0], (flags, sections)
 
 for _ in range(2):
-    flags, sections = query("missing-authoritative." + domain, 1)
+    flags, sections, _ = query("missing-authoritative." + domain, 1)
     assert flags & 0x000F == 3, (flags, sections)
     assert flags & 0x0400, (flags, sections)
     assert 6 in sections[1], (flags, sections)
