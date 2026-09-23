@@ -853,7 +853,8 @@ on `127.0.0.1:5353` with every managed forward domain as an `auth-zone`, an addr
 `auth-server=<primary-nameserver>,127.0.0.1`, and shared `auth-soa` and `auth-ttl` directives. The ordinary dnsmasq
 service forwards managed domains to that backend, so selected listeners preserve authoritative positive and negative
 answers while retaining existing PTR behavior and recursion through configured upstreams. It disables the client-facing
-cache in authoritative mode because cached forwarded replies lose the AA flag. Atlaso generates read-only
+cache in authoritative mode because cached forwarded replies lose the AA flag. DNSSEC instead requires at least 150
+cache entries, so cached forwarded answers may lose AA in that mode. Atlaso generates read-only
 SOA/NS records and A/AAAA nameserver glue from the selected listen addresses and advances the SOA serial on DNS
 mutations. Its recursive instance retains PTR records for generated glue and forwards managed-scope reverse queries
 to the backend. Managed DHCP lease names are mirrored into the backend hosts directory, surfaced in DHCP lease reads,

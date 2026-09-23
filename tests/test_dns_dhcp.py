@@ -3,6 +3,8 @@
 import re
 from ipaddress import ip_address
 
+import pytest
+
 from atlaso.app.models import (
     DhcpOption,
     DhcpReservation,
@@ -209,6 +211,29 @@ def test_dnsmasq_renderer_emits_shared_authoritative_zones_and_generated_glue():
     assert main_lines.count("rebind-domain-ok=/atlaso.internal/") == 1
     assert "rebind-domain-ok=/sitea.internal/" in main_lines
     assert "rebind-domain-ok=/corp.example/" in main_lines
+
+
+@pytest.mark.parametrize("authoritative", [False, True])
+@pytest.mark.parametrize("configured_cache_size,expected_cache_size", [(0, 150), (500, 500)])
+def test_dnssec_renderer_keeps_required_cache(authoritative, configured_cache_size, expected_cache_size):
+    """DNSSEC validation must retain enough cache in either listener mode."""
+    config = render_dnsmasq_config(
+        dns_settings=DnsSettings(
+            enabled=True,
+            listen_interface="eth1",
+            listen_address="192.168.50.1",
+            domain="atlaso.internal",
+            authoritative=authoritative,
+            dnssec_enabled=True,
+            cache_size=configured_cache_size,
+        ),
+        dns_records=[],
+        dhcp_settings=DhcpSettings(enabled=False),
+        dhcp_reservations=[],
+    )
+
+    assert f"cache-size={expected_cache_size}" in config.splitlines()
+    assert "dnssec" in config.splitlines()
 
 
 def test_authoritative_dns_with_dhcp_subscribes_to_lease_changes():

@@ -1522,10 +1522,12 @@ def render_dnsmasq_config(
         if domain not in domains
     ]
     scopes = dhcp_scopes if dhcp_scopes else [_legacy_scope(dhcp_settings)]
-    # Cached forwarded replies lose AA, including authoritative NXDOMAIN.
-    # Preserve the backend's authority on every client-facing answer.
-    cache_size = 0 if dns_settings.authoritative else (
-        dns_settings.cache_size if dns_settings.cache_size is not None else 1000
+    configured_cache_size = dns_settings.cache_size if dns_settings.cache_size is not None else 1000
+    # The shared authoritative listener normally avoids caching forwarded
+    # answers so the backend's AA bit survives. dnsmasq requires a cache for
+    # DNSSEC validation, including when authoritative mode is also enabled.
+    cache_size = max(configured_cache_size, 150) if dns_settings.dnssec_enabled else (
+        0 if dns_settings.authoritative else configured_cache_size
     )
     lines = [
         "# Managed by Atlaso. Local changes may be overwritten.",

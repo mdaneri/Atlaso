@@ -460,7 +460,8 @@ with one `auth-zone=<domain>` per managed forward domain, `auth-server=<primary-
 configuration to `/etc/atlaso/dnsmasq.d/atlaso-authoritative.conf` and runs it on `127.0.0.1:5353` through
 `atlaso-dns-authoritative.service`. The ordinary dnsmasq service forwards managed domains to that backend, preserving
 complete authoritative positive and negative answers while retaining PTR responses and upstream recursion on selected
-listeners. The client-facing cache is disabled in authoritative mode so repeated forwarded answers retain AA.
+listeners. The client-facing cache is normally disabled in authoritative mode so repeated forwarded answers retain AA;
+when DNSSEC is enabled, dnsmasq requires at least 150 cache entries, and cached forwarded answers may lose AA.
 When DHCP is enabled, managed-suffix lease events update the backend's hosts directory so live client names retain AA.
 The recursive instance forwards their reverse lookups to that backend, keeps PTR records for generated nameserver glue,
 and retains ordinary local names for scopes outside the managed zones. The helper restores suppressed managed lease
