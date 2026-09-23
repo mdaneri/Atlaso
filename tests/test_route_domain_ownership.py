@@ -35,6 +35,40 @@ def test_source_conflict_precedes_transaction_artifacts(tmp_path, monkeypatch, p
     assert commands == [["/opt/atlaso/.venv/bin/python", "-I", "-m", "atlaso.route_domains", "--preflight"]]
 
 
+@pytest.mark.parametrize("protected", [False, True])
+def test_invalid_applied_intent_precedes_network_mutation(tmp_path, monkeypatch, protected):
+    """Both Network paths reject corrupt applied intent before creating state.
+
+    Args:
+        tmp_path: Owned validation directory.
+        monkeypatch: Reversible native dependency replacement.
+        protected: Select protected management or ordinary Network admission.
+    """
+    helper = load_helper_module()
+    config = tmp_path / "network.conf"
+    config.write_text("# atlaso-network-task: test\n")
+    monkeypatch.setattr(helper, "_network_transaction_state", lambda: {})
+    monkeypatch.setattr(helper, "MANAGEMENT_HANDOFF_STATE_PATH", tmp_path / "state.json")
+    commands = []
+
+    def run(command):
+        commands.append(command)
+        return subprocess.CompletedProcess(command, 0 if len(commands) == 1 else 1, "", "")
+
+    monkeypatch.setattr(helper, "_run", run)
+    before = list(tmp_path.iterdir())
+    with pytest.raises(ValueError, match="applied routing-domain intent preflight failed"):
+        if protected:
+            helper._snapshot_management_handoff({})
+        else:
+            with helper._network_apply_transaction(config):
+                pytest.fail("candidate mutation entered")
+    assert list(tmp_path.iterdir()) == before
+    assert commands[0] == ["/opt/atlaso/.venv/bin/python", "-I", "-m", "atlaso.route_domains", "--preflight"]
+    assert commands[1] == ["/opt/atlaso/.venv/bin/python", "-I", "-c",
+                           "from atlaso.route_domains import read_intent\nread_intent()\n"]
+
+
 @pytest.mark.parametrize("family", [4, 6])
 @pytest.mark.parametrize("operation", ["disabled", "removed", "routing-off"])
 @pytest.mark.parametrize("metric,gateway", [(0, False), (100, False), (1024, False), (1024, True)])
