@@ -578,7 +578,9 @@ For focused deployed OIDC acceptance independent of the full service-network top
 clones the selected appliance, connects one site adapter, installs the exact branch wheel, and proves appliance readiness.
 The runner addresses that access listener, applies its network state, configures the CA, enables the provider through
 its managed-certificate settings flow, and applies the CA and public listener before the OIDC Authorization Code check.
-It skips unrelated service configuration, client VM creation and probes, and the backup/restore pass.
+The final apply also refreshes the provider's firewall admission, and the check connects to the site address with
+hostname and certificate verification against the downloaded CA root. It skips unrelated service configuration,
+client VM creation and probes, and the backup/restore pass.
 
 Useful commands:
 
