@@ -207,7 +207,18 @@ def _apply(client: FixtureHttpClient, units: list[str] | None = None) -> dict[st
             result = task.get("result")
             units = result.get("units", []) if isinstance(result, dict) else []
             failed_units = [
-                {"unit_id": unit.get("unit_id"), "success": unit.get("success")}
+                {
+                    "unit_id": unit.get("unit_id"),
+                    "steps": [
+                        {"index": index, "returncode": command.get("returncode"),
+                         "stderr_markers": [marker for marker in (
+                             "No such device", "No such file", "Invalid argument", "File exists",
+                             "Network is unreachable", "Permission denied", "route-domain",
+                             "routing-domain", "capacity", "timeout", "failed",
+                         ) if marker.casefold() in str(command.get("stderr", "")).casefold()]}
+                        for index, command in enumerate(unit.get("commands", [])) if isinstance(command, dict)
+                    ],
+                }
                 for unit in units if isinstance(unit, dict) and unit.get("success") is False
             ] if isinstance(units, list) else []
             raise OverlapPrerequisiteError(
