@@ -114,6 +114,9 @@ $repoRoot = Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..\..')
 if ($OidcOnly -and $SiteANetwork.StartsWith('lan:', [StringComparison]::OrdinalIgnoreCase)) {
     throw '-OidcOnly requires a host-reachable SiteANetwork; VMware LAN segments cannot carry the host-side verified OIDC probe.'
 }
+if ($OidcOnly -and $SiteInterface -ne 'eth1') {
+    throw '-OidcOnly requires SiteInterface eth1 because its Site A vmnet is attached to the appliance second adapter.'
+}
 <#
 .SYNOPSIS
 Refuse consumer output after any snapshot namespace or security change.
