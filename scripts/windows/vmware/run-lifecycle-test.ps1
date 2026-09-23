@@ -30,6 +30,8 @@ Optional override for appliance URL.
 Interface name used for site routing in workload checks.
 .PARAMETER SiteCidr
 Site A IPv4 CIDR used in test harness arguments.
+.PARAMETER BridgedInterfaceAlias
+Host interface selected for bridged VMware VMnet0 discovery.
 .PARAMETER AdminUsername
 Atlaso web admin username.
 .PARAMETER SecretBundlePath
@@ -88,6 +90,7 @@ param(
     [string]$ApplianceUrl = '',
     [string]$SiteInterface = 'eth1',
     [string]$SiteCidr = '192.168.12.1/24',
+    [string]$BridgedInterfaceAlias = '',
     [string]$AdminUsername = 'admin',
     [string]$SecretBundlePath = '',
     [string]$ApplianceSshUser = 'admin',
@@ -775,8 +778,20 @@ if ($OidcOnly) {
         New-Module -Name Atlaso.OidcSiteNetwork -ScriptBlock ([scriptblock]::Create(($siteNetworkSource -join "`n"))) |
             Import-Module -Force
     }
-    Assert-AtlasoOidcSiteNetwork -SiteANetwork $SiteANetwork -SiteCidr $SiteCidr `
-        -PrepareNetworksPath (Join-Path $PSScriptRoot 'prepare-networks.ps1') -VmrunPath $VmrunPath
+    $siteNetworkArgs = @{
+        SiteANetwork = $SiteANetwork
+        SiteCidr = $SiteCidr
+        VmrunPath = $VmrunPath
+        BridgedInterfaceAlias = $BridgedInterfaceAlias
+    }
+    if ($PlanOnly) {
+        $siteNetworkArgs['PrepareNetworksPath'] = Join-Path $PSScriptRoot 'prepare-networks.ps1'
+    } else {
+        $prepareNetworksSource = @(& git -C $repoRoot show "${sourceCommit}:scripts/windows/vmware/prepare-networks.ps1")
+        if ($LASTEXITCODE -ne 0) { throw 'Cannot load the admitted VMware network inventory script.' }
+        $siteNetworkArgs['PrepareNetworksScript'] = [scriptblock]::Create(($prepareNetworksSource -join "`n"))
+    }
+    Assert-AtlasoOidcSiteNetwork @siteNetworkArgs
 }
 if ($PlanOnly) {
     Import-Module (Join-Path $PSScriptRoot 'Atlaso.VmwareTestIdentity.psm1') -Force
@@ -2278,6 +2293,7 @@ $plan = [ordered]@{
     result_root           = $resultRoot
     lifecycle_appliance_vmx = (Join-Path $vmRoot "$applianceName\$applianceName.vmx")
     management_network    = $ManagementNetwork
+    bridged_interface_alias = $BridgedInterfaceAlias
     site_a_network        = $SiteANetwork
     trunk_network         = $TrunkNetwork
     site_b_network        = $SiteBNetwork

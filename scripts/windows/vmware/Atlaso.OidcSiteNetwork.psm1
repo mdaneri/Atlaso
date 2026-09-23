@@ -28,6 +28,8 @@ VMware network attached to the appliance site adapter.
 IPv4 address and prefix configured on the appliance site adapter.
 .PARAMETER PrepareNetworksPath
 Path to the VMware network inventory script in the admitted source checkout.
+.PARAMETER PrepareNetworksScript
+Parsed VMware network inventory script from the admitted source commit.
 .PARAMETER VmrunPath
 Optional VMware vmrun executable path.
 .PARAMETER BridgedInterfaceAlias
@@ -37,7 +39,8 @@ function Assert-AtlasoOidcSiteNetwork {
     param(
         [Parameter(Mandatory = $true)][string]$SiteANetwork,
         [Parameter(Mandatory = $true)][string]$SiteCidr,
-        [Parameter(Mandatory = $true)][string]$PrepareNetworksPath,
+        [string]$PrepareNetworksPath = '',
+        [scriptblock]$PrepareNetworksScript = $null,
         [string]$VmrunPath = '',
         [string]$BridgedInterfaceAlias = ''
     )
@@ -49,7 +52,14 @@ function Assert-AtlasoOidcSiteNetwork {
     }
     if ($VmrunPath) { $networkArgs['VmrunPath'] = $VmrunPath }
     if ($BridgedInterfaceAlias) { $networkArgs['BridgedInterfaceAlias'] = $BridgedInterfaceAlias }
-    $planText = (& $PrepareNetworksPath @networkArgs | Out-String).Trim()
+    if ([bool]$PrepareNetworksPath -eq [bool]$PrepareNetworksScript) {
+        throw 'Provide exactly one VMware network inventory source.'
+    }
+    $planText = if ($PrepareNetworksScript) {
+        (& $PrepareNetworksScript @networkArgs | Out-String).Trim()
+    } else {
+        (& $PrepareNetworksPath @networkArgs | Out-String).Trim()
+    }
     if (-not $?) { throw 'VMware Workstation network discovery failed.' }
     $networkPlan = $planText | ConvertFrom-Json
     $siteNetwork = @($networkPlan.discovered_networks | Where-Object { $_.Name -eq $SiteANetwork.ToLowerInvariant() }) | Select-Object -First 1

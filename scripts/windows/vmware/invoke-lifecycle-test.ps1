@@ -490,6 +490,7 @@ if (-not $PlanOnly) { $arguments += @('-SecretBundlePath', $secretBundlePath) }
 if ($ApplianceIPAddress) { $arguments += @('-ApplianceIPAddress', $ApplianceIPAddress) }
 if ($effectiveApplianceUrl) { $arguments += @('-ApplianceUrl', $effectiveApplianceUrl) }
 if ($VmrunPath) { $arguments += @('-VmrunPath', $VmrunPath) }
+if ($BridgedInterfaceAlias) { $arguments += @('-BridgedInterfaceAlias', $BridgedInterfaceAlias) }
 if (-not $KeepVms) { $arguments += '-CleanupCreatedLab' }
 if ($AllowDryRunApply) { $arguments += '-AllowDryRunApply' }
 if ($effectiveSkipBackupRestoreTest) { $arguments += '-SkipBackupRestoreTest' }

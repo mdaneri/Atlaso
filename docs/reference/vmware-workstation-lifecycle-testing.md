@@ -586,6 +586,8 @@ It also requires `-SiteInterface eth1`, because the focused runner attaches Site
 Both entry points check that `-SiteCidr` matches the selected vmnet's discovered IPv4 subnet and that an active host adapter
 has an address on that subnet before prompting for credentials or creating a lab. If the local VMnet2 subnet differs
 from the default `192.168.12.1/24`, pass a matching site CIDR with an unused host address.
+For bridged VMnet0, the wrapper forwards `-BridgedInterfaceAlias` to the direct runner so both checks use the selected
+host interface; runtime discovery executes the network script from the admitted source commit.
 
 Useful commands:
 
