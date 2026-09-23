@@ -11661,6 +11661,35 @@ def test_dnsmasq_lease_events_mirror_only_managed_names(monkeypatch, tmp_path, c
     assert "192.168.50.21 reserved" in capsys.readouterr().out
 
 
+def test_authoritative_lease_event_rejects_cross_scope_client_name(monkeypatch, tmp_path):
+    """A client name cannot publish into another scope without a reservation tag."""
+    helper = load_helper_module()
+    state_dir = tmp_path / "dnsmasq"
+    state_dir.mkdir()
+    hosts_dir = state_dir / "authoritative-leases"
+    hosts_dir.mkdir()
+    authoritative = tmp_path / "authoritative.conf"
+    authoritative.write_text("auth-zone=sitea.internal\nauth-zone=siteb.internal\n", encoding="utf-8")
+    main = tmp_path / "atlaso.conf"
+    main.write_text("", encoding="utf-8")
+    monkeypatch.setattr(helper, "DNSMASQ_STATE_DIR", state_dir)
+    monkeypatch.setattr(helper, "DNSMASQ_AUTHORITATIVE_LEASE_HOSTS_DIR", hosts_dir)
+    monkeypatch.setattr(helper, "DNSMASQ_AUTHORITATIVE_CONFIG_PATH", authoritative)
+    monkeypatch.setattr(helper, "DNSMASQ_CONFIG_PATH", main)
+    monkeypatch.setattr(helper, "_reload_authoritative_lease_hosts", lambda: None)
+    monkeypatch.setenv("DNSMASQ_DOMAIN", "sitea.internal")
+    monkeypatch.delenv("DNSMASQ_TAGS", raising=False)
+    event = ["atlaso-helper", "add", "02:00:00:00:00:01", "192.168.50.21", "wrong.siteb.internal"]
+
+    assert helper.main(event) == 0
+    assert list(hosts_dir.iterdir()) == []
+
+    main.write_text("dhcp-option=tag:reservation,option:host-name,chosen.siteb.internal\n", encoding="utf-8")
+    monkeypatch.setenv("DNSMASQ_TAGS", "reservation")
+    assert helper.main(event) == 0
+    assert "chosen.siteb.internal" in next(hosts_dir.iterdir()).read_text(encoding="utf-8")
+
+
 @pytest.mark.parametrize(
     ("lease_name", "expected_name"),
     [("client", "client.atlaso.internal"), ("atlaso.internal", "atlaso.internal")],
@@ -11698,6 +11727,39 @@ def test_authoritative_enable_seeds_existing_named_lease_mirror(
     helper._prepare_authoritative_lease_hosts(authoritative, main)
     assert mirror.exists()
     assert not (hosts_dir / "lease-c0a83216.hosts").exists()
+
+
+def test_authoritative_enable_does_not_seed_unproven_ipv6_reservation(monkeypatch, tmp_path):
+    """A lease DUID/IAID cannot prove ownership of a MAC-keyed reservation."""
+    helper = load_helper_module()
+    state_dir = tmp_path / "dnsmasq"
+    state_dir.mkdir()
+    hosts_dir = tmp_path / "authoritative-leases"
+    lease_file = state_dir / "dhcp.leases"
+    lease_file.write_text(
+        "1893456000 17 2001:db8:50::21 other 00:01:00:01:ab:cd\n"
+        "1893456000 18 2001:db8:50::22 ordinary 00:01:00:01:ef:01\n",
+        encoding="utf-8",
+    )
+    main = tmp_path / "candidate.conf"
+    main.write_text(
+        "# atlaso-authoritative-lease-scope=2001:db8:50::/64,atlaso.internal\n"
+        "dhcp-host=02:00:00:00:00:01,set:atlaso-name-020000000001,[2001:db8:50::21]\n"
+        "dhcp-option=tag:atlaso-name-020000000001,option:host-name,reserved\n",
+        encoding="utf-8",
+    )
+    authoritative = tmp_path / "authoritative.conf"
+    authoritative.write_text("auth-zone=atlaso.internal\n", encoding="utf-8")
+    monkeypatch.setattr(helper, "DNSMASQ_STATE_DIR", state_dir)
+    monkeypatch.setattr(helper, "DNSMASQ_LEASE_FILE_PATH", lease_file)
+    monkeypatch.setattr(helper, "DNSMASQ_AUTHORITATIVE_LEASE_HOSTS_DIR", hosts_dir)
+
+    helper._prepare_authoritative_lease_hosts(authoritative, main)
+
+    reserved = hosts_dir / f"lease-{helper.ip_address('2001:db8:50::21').packed.hex()}.hosts"
+    ordinary = hosts_dir / f"lease-{helper.ip_address('2001:db8:50::22').packed.hex()}.hosts"
+    assert not reserved.exists()
+    assert "ordinary.atlaso.internal" in ordinary.read_text(encoding="utf-8")
 
 
 def test_recursive_transition_preserves_suppressed_lease_until_native_name(monkeypatch, tmp_path):

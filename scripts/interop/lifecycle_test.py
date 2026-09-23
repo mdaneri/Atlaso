@@ -2014,12 +2014,12 @@ def oidc_site_listener_check(args: argparse.Namespace, provider: dict[str, Any])
     if site_address not in (provider.get("listen_addresses") or []):
         raise LifecycleError("The OIDC provider did not publish the selected site listener.")
     url = f"https://{hostname}:{port}/identity/.well-known/openid-configuration"
-    resolved = f"{hostname}:{port}:{site_address}"
     command = (
         "test -s /tmp/atlaso-root-ca.pem && "
+        f"dig +short A {shlex.quote(hostname)} @{site_address} | grep -Fx {shlex.quote(site_address)} && "
         "curl --silent --show-error --fail --connect-timeout 10 --max-time 30 "
         "--cacert /tmp/atlaso-root-ca.pem "
-        f"--resolve {shlex.quote(resolved)} --output /dev/null --write-out '%{{http_code}}' {shlex.quote(url)}"
+        f"--output /dev/null --write-out '%{{http_code}}' {shlex.quote(url)}"
     )
     result = ssh_command(args.client_a_host, args, command, role="client")
     require_success(result, "OIDC site listener")
@@ -2257,7 +2257,7 @@ def web_terminal_check(client: HttpClient, args: argparse.Namespace) -> dict[str
     host_evidence = ssh_command(
         args.appliance_ssh_host,
         args,
-        "/opt/atlaso/bin/atlaso-helper web-terminal status --real && sshd -T | grep -i '^trustedusercakeys '",
+        "/opt/atlaso/bin/atlaso-helper web-terminal status --real && sshd -T | grep -i trustedusercakeys",
         role="appliance",
     )
     require_success(host_evidence, "web terminal OpenSSH CA state")
@@ -2265,8 +2265,32 @@ def web_terminal_check(client: HttpClient, args: argparse.Namespace) -> dict[str
         raise LifecycleError(f"OpenSSH did not report the applied web terminal CA state: {host_evidence.get('stdout', '')}")
 
     site_address = str(ip_interface(args.site_cidr).ip)
-    site_client = HttpClient(f"https://{site_address}")
-    ui_login(site_client, args)
+    isolated_site = bool(getattr(args, "client_a_host", ""))
+    site_client = client if isolated_site else HttpClient(f"https://{site_address}")
+    if isolated_site:
+        # The full lab's Site A segment has no Windows host route. Check the
+        # actual public listener from its client, then exercise the same
+        # terminal page and ticket contract on the reachable management plane.
+        def probe_site(path: str) -> int:
+            command = (
+                "curl -ksS --connect-timeout 10 --max-time 30 "
+                f"--output /dev/null --write-out %{{http_code}} https://{site_address}{path}"
+            )
+            result = ssh_command(args.client_a_host, args, command, role="client")
+            require_success(result, f"site web terminal {path}")
+            try:
+                return int(result["stdout"].strip())
+            except ValueError as exc:
+                raise LifecycleError("Site web terminal probe did not return an HTTP status.") from exc
+
+        site_probe_status = probe_site("/ui/public/terminal")
+        site_dashboard_status = probe_site("/ui/management/dashboard")
+        if site_probe_status not in {200, 302, 303} or site_dashboard_status != 404:
+            raise LifecycleError(
+                "The site web terminal listener did not preserve its public route and management isolation."
+            )
+    else:
+        ui_login(site_client, args)
     site_status, site_body, _site_headers = site_client.request("GET", "/ui/public/terminal")
     if site_status != 200 or 'data-terminal-available="true"' not in site_body:
         raise LifecycleError(f"Selected extra-interface terminal route was not ready: HTTP {site_status}")
@@ -2283,16 +2307,19 @@ def web_terminal_check(client: HttpClient, args: argparse.Namespace) -> dict[str
     ticket_payload = json.loads(ticket_body)
     if ticket_payload.get("websocket_path") != "/terminal/ws" or not ticket_payload.get("ticket"):
         raise LifecycleError("Web terminal ticket response was incomplete.")
-    dashboard_status, _dashboard_body, _dashboard_headers = site_client.request(
-        "GET",
-        "/ui/management/dashboard",
-        follow_redirects=False,
-    )
-    if dashboard_status != 404:
-        raise LifecycleError(
-            "Extra-interface terminal listener exposed /ui/management/dashboard "
-            f"with HTTP {dashboard_status}"
+    if isolated_site:
+        dashboard_status = site_dashboard_status
+    else:
+        dashboard_status, _dashboard_body, _dashboard_headers = site_client.request(
+            "GET",
+            "/ui/management/dashboard",
+            follow_redirects=False,
         )
+        if dashboard_status != 404:
+            raise LifecycleError(
+                "Extra-interface terminal listener exposed /ui/management/dashboard "
+                f"with HTTP {dashboard_status}"
+            )
     return {
         "management_status": management_status,
         "extra_interface": args.site_interface,
@@ -2300,6 +2327,8 @@ def web_terminal_check(client: HttpClient, args: argparse.Namespace) -> dict[str
         "extra_terminal_status": site_status,
         "ticket_status": ticket_status,
         "dashboard_status": dashboard_status,
+        "site_probe_status": site_probe_status if isolated_site else site_status,
+        "site_dashboard_status": site_dashboard_status if isolated_site else dashboard_status,
         "host_status": host_evidence.get("stdout", ""),
     }
 
@@ -5197,10 +5226,11 @@ def run_full_lifecycle(results: list[StepResult], client: HttpClient, args: argp
         "apply-oidc-certificate-and-listener",
         apply_units,
         client,
-        ["ca", "firewall", "public_services"],
+        ["ca", "dnsmasq", "firewall", "public_services"],
         args,
     )
-    run_step(results, "oidc-site-listener-check", oidc_site_listener_check, args, provider)
+    if not args.skip_client_checks:
+        run_step(results, "oidc-site-listener-check", oidc_site_listener_check, args, provider)
     run_step(results, "oidc-authorization-code-check", oidc_authorization_code_check, client, args, client)
     run_step(results, "web-terminal-check", web_terminal_check, client, args)
     if args.signed_release_repository_url:

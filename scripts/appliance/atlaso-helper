@@ -3256,7 +3256,10 @@ def _prepare_authoritative_lease_hosts(
         leased_ip = ip_address(address)
         scope_domain = next((domain for network, domain in scopes if leased_ip in network), "")
         reservation = reservation_names.get(address)
-        if reservation and leased_ip.version == 4 and identity != reservation[1]:
+        # A DHCPv6 lease exposes DUID/IAID, while a reservation is keyed by
+        # MAC. The lease file cannot prove that they identify the same client;
+        # wait for dnsmasq's reservation-tagged renewal instead of seeding it.
+        if reservation and (leased_ip.version == 6 or identity != reservation[1]):
             continue
         if reservation:
             fqdn = reservation[0]
@@ -3447,6 +3450,7 @@ def _handle_dnsmasq_lease_event(argv: list[str]) -> int:
         action != "del"
         and bool(HOSTNAME_PATTERN.fullmatch(fqdn))
         and any(fqdn == zone or fqdn.endswith(f".{zone}") for zone in zones)
+        and (bool(reserved_hostname) or (bool(domain) and (fqdn == domain or fqdn.endswith(f".{domain}"))))
     )
     try:
         if not publish:

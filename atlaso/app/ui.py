@@ -6886,26 +6886,42 @@ def ntp_owned_dns_is_only_pending_change(db: Session, dns_unit: dict[str, Any]) 
         """Unwrap a directive staged for the isolated authoritative backend."""
         return line.removeprefix("# atlaso-authoritative-config: ")
 
+    def generated_ptr_lines(config_lines: set[str], target: str) -> set[str]:
+        """Match PTR owners derived from this service's A and AAAA records."""
+        ptr_lines = set()
+        prefix = f"host-record={target},"
+        for line in config_lines:
+            directive = rendered_directive(line)
+            if not directive.startswith(prefix):
+                continue
+            try:
+                reverse_owner = ip_address(directive.removeprefix(prefix)).reverse_pointer
+            except ValueError:
+                continue
+            ptr_lines.add(f"ptr-record={reverse_owner},{target}")
+        return ptr_lines
+
     if not current_lines and (not prior_cname or not any(
         rendered_directive(line) == prior_cname for line in previous_dns.splitlines()
     )):
         # A clean disable can be attributed to the previously applied NTP
         # alias. Without that evidence, leave DNS selection with the operator.
         return False
+    previous_ptr_lines = generated_ptr_lines(set(previous_dns.splitlines()), prior_target) if prior_target else set()
+    current_ptr_lines: set[str] = set()
+    for target in current_targets:
+        current_ptr_lines.update(generated_ptr_lines(current_lines, target))
     previous_lines = {
         line for line in previous_dns.splitlines()
         if prior_target and (
             rendered_directive(line) == prior_cname
             or rendered_directive(line).startswith(f"host-record={prior_target},")
-            or rendered_directive(line).startswith("ptr-record=")
-            and rendered_directive(line).endswith(f",{prior_target}")
+            or rendered_directive(line) in previous_ptr_lines
         )
     }
     current_rendered_lines = {
         line for line in current_dns.splitlines()
-        if rendered_directive(line) in current_lines
-        or rendered_directive(line).startswith("ptr-record=")
-        and any(rendered_directive(line).endswith(f",{target}") for target in current_targets)
+        if rendered_directive(line) in current_lines or rendered_directive(line) in current_ptr_lines
     }
     if previous_lines == current_rendered_lines:
         return False
@@ -16894,16 +16910,23 @@ def _submit_appliance_apply(
     )
     if ca_required_for_nts:
         selected_ids.add("ca")
+    apply_baselines = load_appliance_apply_baselines(db)
     settings_for_apply = unit_map.get("appliance_settings", {}).get("context", {}).get("appliance_settings")
+    applied_settings_preview = str((apply_baselines.get("appliance_settings") or {}).get("config_preview") or "")
+    applied_ca_preview = str((apply_baselines.get("ca") or {}).get("config_preview") or "")
+    management_https_activation = not management_tls_binding_signature(applied_settings_preview).get(
+        "management_https_enabled", False
+    )
+    management_certificate_unapplied = not management_certificate_signature(applied_ca_preview).get("fingerprint")
     https_ca_required = bool(
         "appliance_settings" in selected_ids
         and getattr(settings_for_apply, "management_https_enabled", False)
         and unit_map.get("ca", {}).get("changed")
+        and (management_https_activation or management_certificate_unapplied)
     )
     if https_ca_required:
         # The CA unit materializes newly issued management TLS files.
         selected_ids.add("ca")
-    apply_baselines = load_appliance_apply_baselines(db)
     if "ca" in selected_ids:
         ca_consumers = rotated_ca_certificate_consumers(
             unit_map["ca"], apply_baselines.get("ca")

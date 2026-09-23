@@ -592,9 +592,12 @@ host interface; runtime discovery executes the network script from the admitted 
 
 The full lifecycle uses `oidc.atlaso.internal` because management HTTPS already owns
 `core.atlaso.internal`. Its first Apply includes the configured CA certificate consumers, then it
-applies the OIDC certificate and public listener. Site Client A verifies the OIDC discovery endpoint
-over TLS against the applied CA root; the Authorization Code flow uses the management listener,
+applies the OIDC certificate, DNS record, and public listener. Site Client A resolves the OIDC
+hostname through the site DNS listener and verifies the discovery endpoint over TLS against the
+applied CA root; the Authorization Code flow uses the management listener,
 which remains reachable from the Windows harness when Site A is an isolated `lan:<name>` segment.
+The web-terminal check likewise probes the site route and management-path isolation from Site Client A,
+while exercising the authenticated page and ticket flow through the reachable management listener.
 
 Useful commands:
 

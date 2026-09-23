@@ -851,7 +851,9 @@ def test_full_oidc_site_listener_uses_client_and_verifies_ca(monkeypatch):
     assert calls[0][0] == args.client_a_host
     assert calls[0][2] == "client"
     assert "--cacert /tmp/atlaso-root-ca.pem" in calls[0][1]
-    assert "--resolve oidc.atlaso.internal:443:192.168.12.1" in calls[0][1]
+    assert "dig +short A oidc.atlaso.internal @192.168.12.1" in calls[0][1]
+    assert "--resolve" not in calls[0][1]
+    assert "https://oidc.atlaso.internal:443/identity/.well-known/openid-configuration" in calls[0][1]
     assert " -k" not in calls[0][1]
 
 
@@ -949,6 +951,46 @@ def test_web_terminal_check_probes_canonical_browser_planes(monkeypatch):
     assert ("GET", "/ui/public/terminal", None) in calls
     assert ("GET", "/ui/management/dashboard", False) in calls
     assert ("POST", "/terminal/tickets", None) in calls
+
+
+def test_web_terminal_check_uses_site_client_on_isolated_lab(monkeypatch):
+    """The full lab checks site routing from Client A without a Windows host route."""
+    lifecycle = load_lifecycle_module()
+    commands = []
+
+    class ManagementClient:
+        def request(self, method, path, **_kwargs):
+            if (method, path) == ("GET", "/ui/management/terminal"):
+                return 200, '<main data-terminal-available="true"></main>', {}
+            if (method, path) == ("GET", "/ui/public/terminal"):
+                return 200, '<main data-terminal-available="true" data-csrf="csrf-323"></main>', {}
+            if (method, path) == ("POST", "/terminal/tickets"):
+                return 200, '{"websocket_path": "/terminal/ws", "ticket": "ticket-323"}', {}
+            raise AssertionError((method, path))
+
+    def fake_ssh_command(host, _args, command, *, role):
+        commands.append((host, command, role))
+        if role == "appliance":
+            return {"returncode": 0, "stdout": '{"enabled": true, "ca_public_key": "web-terminal-ca.pub"}', "stderr": ""}
+        status = "404" if "/ui/management/dashboard" in command else "302"
+        return {"returncode": 0, "stdout": status, "stderr": ""}
+
+    monkeypatch.setattr(lifecycle, "ssh_command", fake_ssh_command)
+    monkeypatch.setattr(lifecycle, "HttpClient", lambda _url: (_ for _ in ()).throw(AssertionError("direct host route")))
+    monkeypatch.setattr(lifecycle, "ui_login", lambda *_args: (_ for _ in ()).throw(AssertionError("new login")))
+    args = argparse.Namespace(
+        appliance_ssh_host="192.0.2.10", client_a_host="192.0.2.11",
+        site_cidr="192.168.12.1/24", site_interface="eth1",
+    )
+
+    evidence = lifecycle.web_terminal_check(ManagementClient(), args)
+
+    assert evidence["extra_terminal_status"] == 200
+    assert evidence["site_probe_status"] == 302
+    assert evidence["dashboard_status"] == 404
+    assert len(commands) == 3
+    assert "grep -i trustedusercakeys" in commands[0][1]
+    assert all(host == args.client_a_host and role == "client" for host, _command, role in commands[1:])
 
 
 def test_release_database_identity_uses_privileged_appliance_command(monkeypatch):
@@ -1565,6 +1607,25 @@ def test_full_lifecycle_selects_resolver_settings_with_initial_dns_apply(monkeyp
     assert call_names.index("oidc-site-listener-check") < call_names.index("oidc-authorization-code-check")
     oidc_call = next(arguments for name, arguments in calls if name == "oidc-authorization-code-check")
     assert oidc_call[2] is management_client
+    oidc_apply = next(arguments for name, arguments in calls if name == "apply-oidc-certificate-and-listener")
+    assert "dnsmasq" in oidc_apply[1]
+
+
+def test_full_lifecycle_skips_oidc_site_probe_without_client_checks(monkeypatch):
+    """No-client mode must not rely on a site client or its installed CA root."""
+    lifecycle = load_lifecycle_module()
+    args = lifecycle.parse_args(["--secret-stdin", "--skip-client-checks"])
+    calls = []
+
+    def fake_run_step(_results, name, _operation, *_operation_args):
+        calls.append(name)
+        return {}
+
+    monkeypatch.setattr(lifecycle, "run_step", fake_run_step)
+    lifecycle.run_full_lifecycle([], object(), args)
+
+    assert "apply-oidc-certificate-and-listener" in calls
+    assert "oidc-site-listener-check" not in calls
 
 
 def test_configure_esxi_pxe_selects_dhcp_scope_and_proves_reservation():
