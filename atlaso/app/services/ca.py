@@ -635,6 +635,8 @@ def issue_certificate(settings: CaSettings, profiles: list[CaProfile], certifica
         .not_valid_after(min(root_certificate.not_valid_after_utc, now + timedelta(days=max(profile.validity_days, 1))))
         .add_extension(x509.BasicConstraints(ca=False, path_length=None), critical=True)
         .add_extension(_key_usage(profile.key_usage), critical=True)
+        .add_extension(x509.SubjectKeyIdentifier.from_public_key(public_key), critical=False)
+        .add_extension(x509.AuthorityKeyIdentifier.from_issuer_public_key(root_private_key.public_key()), critical=False)
     )
     if san_values:
         builder = builder.add_extension(x509.SubjectAlternativeName(san_values), critical=False)

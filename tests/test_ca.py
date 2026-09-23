@@ -132,6 +132,11 @@ def test_shared_development_root_import_issues_unique_vm_leaf_certificates():
         )
         assert issue_certificate(settings, [profile], leaf) is True
         parsed = x509.load_pem_x509_certificate(leaf.certificate_pem.encode("ascii"))
+        issuer = x509.load_pem_x509_certificate(settings.root_certificate_pem.encode("ascii"))
+        aki = parsed.extensions.get_extension_for_class(x509.AuthorityKeyIdentifier).value
+        expected_key_id = x509.SubjectKeyIdentifier.from_public_key(issuer.public_key()).digest
+        assert aki.key_identifier == expected_key_id
+        assert parsed.extensions.get_extension_for_class(x509.SubjectKeyIdentifier).value.digest
         san = parsed.extensions.get_extension_for_class(x509.SubjectAlternativeName).value
         assert f"test-vm-{index}.atlaso.internal" in san.get_values_for_type(x509.DNSName)
         assert f"192.0.2.{index}" in [str(value) for value in san.get_values_for_type(x509.IPAddress)]

@@ -486,6 +486,7 @@ def test_oidc_only_plan_is_focused_and_mutually_exclusive():
     assert plan["routing_wan_only"] is False
     assert plan["checks"] == [
         "appliance health",
+        "addressed OIDC access listener and applied managed certificate",
         (
             "OIDC Authorization Code, explicit Local selection, client-specific "
             "local-role group mapping, scope-filtered claims, PKCE S256, signed "
@@ -493,10 +494,83 @@ def test_oidc_only_plan_is_focused_and_mutually_exclusive():
             "replay rejection, and exact logout redirect"
         ),
     ]
+    assert plan["apply_units"] == ["network", "firewall", "ca", "public_services"]
     with pytest.raises(SystemExit):
         lifecycle.parse_args(
             ["--password", "test", "--oidc-only", "--routing-wan-only"]
         )
+
+
+def test_focused_oidc_prepares_applied_listener_and_certificate_before_authorization(monkeypatch):
+    """A fresh clone must acquire its network and managed certificate before OIDC readiness."""
+    lifecycle = load_lifecycle_module()
+    calls = []
+
+    def capture_step(_results, name, _func, *_args):  # type: ignore[no-untyped-def]  # Lifecycle steps have heterogeneous arguments.
+        calls.append(name)
+
+    monkeypatch.setattr(lifecycle, "run_step", capture_step)
+    lifecycle.run_oidc_lifecycle([], object(), lifecycle.parse_args(["--password", "test", "--oidc-only"]))
+    assert calls == [
+        "appliance-health",
+        "configure-oidc-listener",
+        "apply-oidc-network",
+        "configure-ca",
+        "configure-oidc-provider",
+        "apply-oidc-certificate-and-listener",
+        "oidc-authorization-code-check",
+    ]
+
+
+def test_focused_oidc_provider_rejects_unready_certificate():
+    """The focused setup must fail if provider enablement still lacks its certificate."""
+    lifecycle = load_lifecycle_module()
+
+    class Client:
+        def json_request(self, method, path, **_kwargs):  # type: ignore[no-untyped-def]  # Test client mirrors dynamic HTTP calls.
+            if path == "/api/v1/oidc/signing-keys":
+                return [{"status": "active"}]
+            if path == "/api/v1/oidc/provider":
+                return {"port": 443}
+            raise AssertionError((method, path))
+
+        def request(self, method, path, **_kwargs):  # type: ignore[no-untyped-def]  # Test client mirrors dynamic HTTP calls.
+            if method == "GET":
+                return 200, '<input name="csrf" value="test-token">', {}
+            assert path == "/authentication/oidc/provider"
+            return 200, json.dumps({"enabled": False, "valid": False, "validation_errors": ["certificate unavailable"]}), {}
+
+    with pytest.raises(lifecycle.LifecycleError, match="certificate unavailable"):
+        lifecycle.configure_oidc_provider(Client(), lifecycle.parse_args(["--password", "test", "--oidc-only"]))
+
+
+def test_focused_oidc_provider_sets_access_listener_before_enabling():
+    """Provider setup must send an addressed listener to the certificate reconciliation flow."""
+    lifecycle = load_lifecycle_module()
+    submitted = {}
+
+    class Client:
+        def json_request(self, method, path, **_kwargs):  # type: ignore[no-untyped-def]  # Test client mirrors dynamic HTTP calls.
+            if path == "/api/v1/oidc/signing-keys":
+                return [{"status": "active"}]
+            if path == "/api/v1/oidc/provider":
+                return {"port": 443}
+            raise AssertionError((method, path))
+
+        def request(self, method, path, **kwargs):  # type: ignore[no-untyped-def]  # Test client mirrors dynamic HTTP calls.
+            if method == "GET":
+                return 200, '<input name="csrf" value="test-token">', {}
+            assert path == "/authentication/oidc/provider"
+            submitted.update(kwargs["form"])
+            return 200, json.dumps({"enabled": True, "valid": True, "hostname": "core.atlaso.internal", "listen_addresses": ["192.0.2.1"]}), {}
+
+    result = lifecycle.configure_oidc_provider(
+        Client(), lifecycle.parse_args(["--password", "test", "--oidc-only", "--site-interface", "eth1"])
+    )
+    assert result["enabled"] is True
+    assert submitted["listen_interfaces"] == ["eth1"]
+    assert submitted["hostname"] == "core.atlaso.internal"
+    assert submitted["csrf"] == "test-token"
 
 
 def test_full_lifecycle_plan_includes_passwordless_web_terminal_acceptance():
