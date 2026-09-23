@@ -13,11 +13,13 @@ import hashlib
 import html
 import http.cookiejar
 import json
+import queue
 import random
 import re
 import ssl
 import subprocess
 import sys
+import threading
 import time
 import urllib.error
 import urllib.parse
@@ -3829,8 +3831,8 @@ def managed_ldap_helper_authentication_check(args: argparse.Namespace) -> dict[s
         args: Parsed command-line options consumed by the operation.
     """
     user_dn = "uid=operator,ou=users,dc=lifecycle-org-a,dc=ldap,dc=atlaso,dc=internal"
-    # The helper reads one password line directly from stdin. Avoid a nested
-    # remote shell and printf, whose quotes are reparsed by plink and sudo.
+    # The helper reads one password line directly from stdin. Send it only
+    # after its unbuffered audit record proves sudo has finished reading.
     helper_command = f"/opt/atlaso/bin/atlaso-helper ldap authenticate --real {user_dn}"
     user = ssh_username(args, "appliance")
     host = args.appliance_ssh_host
@@ -3841,8 +3843,8 @@ def managed_ldap_helper_authentication_check(args: argparse.Namespace) -> dict[s
         remote_command = helper_command
         input_text = f"{LIFECYCLE_LDAP_PASSWORD}\n"
     elif appliance_password:
-        remote_command = f"sudo -S -p '' {helper_command}"
-        input_text = f"{appliance_password}\n{LIFECYCLE_LDAP_PASSWORD}\n"
+        remote_command = f"sudo -S -p '' env PYTHONUNBUFFERED=1 {helper_command}"
+        input_text = None
     else:
         remote_command = f"sudo -n {helper_command}"
         input_text = f"{LIFECYCLE_LDAP_PASSWORD}\n"
@@ -3859,15 +3861,56 @@ def managed_ldap_helper_authentication_check(args: argparse.Namespace) -> dict[s
         command.extend([f"{user}@{host}", remote_command])
         redacted_command = redact_sequence(command, secrets)
     try:
-        completed = subprocess.run(
-            command,
-            input=input_text,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            capture_output=True,
-            timeout=120,
-        )
+        if input_text is None:
+            with subprocess.Popen(
+                command,
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+            ) as process:
+                assert process.stdin is not None and process.stdout is not None
+                process.stdin.write(f"{appliance_password}\n")
+                process.stdin.flush()
+                first_line: queue.Queue[str] = queue.Queue(maxsize=1)
+                reader = threading.Thread(
+                    target=lambda: first_line.put(process.stdout.readline()), daemon=True
+                )
+                reader.start()
+                audit_line = ""
+                try:
+                    audit_line = first_line.get(timeout=30)
+                    audit = json.loads(audit_line)
+                    if not isinstance(audit, dict) or audit.get("helper") != "atlaso-helper" or audit.get("action") != "authenticate":
+                        raise ValueError("Unexpected LDAP helper startup record")
+                    stdout, stderr = process.communicate(
+                        input=f"{LIFECYCLE_LDAP_PASSWORD}\n", timeout=90
+                    )
+                    completed = subprocess.CompletedProcess(
+                        command, process.returncode, audit_line + stdout, stderr
+                    )
+                except (queue.Empty, ValueError, TypeError):
+                    process.kill()
+                    stdout, stderr = process.communicate(timeout=10)
+                    completed = subprocess.CompletedProcess(
+                        command, 1, audit_line + stdout, stderr
+                    )
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                    process.communicate(timeout=10)
+                    raise
+        else:
+            completed = subprocess.run(
+                command,
+                input=input_text,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                capture_output=True,
+                timeout=120,
+            )
         result = {
             "command": redacted_command,
             "returncode": completed.returncode,

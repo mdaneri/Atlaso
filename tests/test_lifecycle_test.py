@@ -1118,21 +1118,34 @@ def test_managed_ldap_lifecycle_check_sends_directory_password_only_through_stdi
     )
     captured = {}
 
-    def fake_run(command, **kwargs):
-        """Return fake run.
+    class FakeProcess:
+        """Model sudo finishing before the LDAP helper reads its password."""
 
-        Args:
-            command: Command and arguments to execute.
-            **kwargs: Additional keyword arguments accepted by the callable.
-        """
-        captured["command"] = command
-        captured["input"] = kwargs.get("input")
-        return lifecycle.subprocess.CompletedProcess(command, 0, "", "")
+        def __init__(self, command, **kwargs):
+            del kwargs
+            captured["command"] = command
+            self.stdin = io.StringIO()
+            self.stdout = io.StringIO('{"helper":"atlaso-helper","action":"authenticate"}\n')
+            self.stderr = io.StringIO()
+            self.returncode = 0
 
-    monkeypatch.setattr(lifecycle.subprocess, "run", fake_run)
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def communicate(self, input=None, timeout=None):
+            del timeout
+            captured["sudo_input"] = self.stdin.getvalue()
+            captured["ldap_input"] = input
+            return "", ""
+
+    monkeypatch.setattr(lifecycle.subprocess, "Popen", FakeProcess)
     evidence = lifecycle.managed_ldap_helper_authentication_check(args)
 
-    assert lifecycle.LIFECYCLE_LDAP_PASSWORD in captured["input"]
+    assert captured["sudo_input"] == "appliance-secret\n"
+    assert captured["ldap_input"] == f"{lifecycle.LIFECYCLE_LDAP_PASSWORD}\n"
     assert lifecycle.LIFECYCLE_LDAP_PASSWORD not in " ".join(captured["command"])
     assert lifecycle.LIFECYCLE_LDAP_PASSWORD not in json.dumps(evidence)
     assert evidence["password_transport"] == "stdin-only"
@@ -1140,7 +1153,7 @@ def test_managed_ldap_lifecycle_check_sends_directory_password_only_through_stdi
     assert "atlaso-helper ldap authenticate --real" in " ".join(captured["command"])
     assert "printf" not in captured["command"][-1]
     assert "sh -lc" not in captured["command"][-1]
-    assert captured["command"][-1].startswith("sudo -S -p '' /opt/atlaso/bin/atlaso-helper")
+    assert captured["command"][-1].startswith("sudo -S -p '' env PYTHONUNBUFFERED=1 /opt/atlaso/bin/atlaso-helper")
 
 
 def test_appliance_user_ssh_command_does_not_wrap_with_sudo(monkeypatch):
