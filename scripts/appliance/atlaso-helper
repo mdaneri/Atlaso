@@ -10760,6 +10760,7 @@ def _handle_network_locked(action: str, args: list[str]) -> int:
         return 0
     try:
         _network_detection_preflight(config_path)
+        _route_domain_ingress_desired_rules(config_path)
     except (ValueError, OSError, subprocess.TimeoutExpired) as exc:
         print(str(exc), file=sys.stderr)
         return 2

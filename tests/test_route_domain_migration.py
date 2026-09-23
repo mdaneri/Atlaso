@@ -378,6 +378,28 @@ def test_ingress_capacity_preflight_applies_only_with_routing(helper, monkeypatc
         assert helper._route_domain_ingress_desired_rules(tmp_path / "network.conf") == []
 
 
+def test_network_apply_rejects_ingress_capacity_before_transaction(helper, monkeypatch, tmp_path, capsys):
+    """A full route rule set must fail before ordinary Network Apply mutates the host.
+
+    Args:
+        helper: Loaded appliance helper with isolated test dependencies.
+        monkeypatch: Pytest fixture used to replace native operations.
+        tmp_path: Temporary directory for a staged network configuration.
+        capsys: Pytest fixture used to capture the preflight error.
+    """
+    config = tmp_path / "network.conf"
+    config.write_text("[network]\n", encoding="utf-8")
+    monkeypatch.setattr(helper, "_validate_network_config_path", lambda _path: config)
+    monkeypatch.setattr(helper, "_network_config_errors", lambda _path: [])
+    monkeypatch.setattr(helper, "_network_detection_preflight", lambda _path: None)
+    monkeypatch.setattr(helper, "_route_domain_ingress_desired_rules", lambda _path: (_ for _ in ()).throw(
+        ValueError("route-domain ingress rules exceed rule capacity")))
+    monkeypatch.setattr(helper, "_network_apply_transaction", lambda _path: pytest.fail("mutation began"))
+
+    assert helper._handle_network_locked("apply", [str(config)]) == 2
+    assert "exceed rule capacity" in capsys.readouterr().err
+
+
 def test_failed_lookup_install_retains_guards_and_allows_exact_rollback(helper, monkeypatch):
     """Guards precede legacy retirement and survive an interrupted lookup addition.
 
