@@ -309,9 +309,22 @@ def _setup(client: FixtureHttpClient) -> dict[str, Any]:
                 or remaining[0].get("valid") is not True or remaining[0].get("format_volumes")
                 or status.get("pending_count") != 1 or status.get("active_task") is not None
                 or status.get("locked") is not False):
-            raise
+            valid = remaining[0].get("valid") if isinstance(remaining, list) and len(remaining) == 1 and isinstance(remaining[0], dict) else None
+            raise OverlapPrerequisiteError(
+                "initial Apply left an unadmitted dependent DNS state "
+                f"(unit_valid={valid if type(valid) is bool else 'invalid'}, "
+                f"review_pending={pending.get('pending_count') if type(pending.get('pending_count')) is int else 'invalid'}, "
+                f"status_pending={status.get('pending_count') if type(status.get('pending_count')) is int else 'invalid'})"
+            ) from None
         dependent = _apply(client, ["dnsmasq"])
-        return {"initial_apply": applied, "dependent_dnsmasq_apply": dependent, "clean": _clean(client)}
+        try:
+            clean = _clean(client)
+        except OverlapPrerequisiteError as failure:
+            raise OverlapPrerequisiteError(
+                f"dependent DNS Apply did not establish a clean baseline "
+                f"(dry_run_units={dependent.get('dry_run_units', [])}): {failure}"
+            ) from None
+        return {"initial_apply": applied, "dependent_dnsmasq_apply": dependent, "clean": clean}
     return {"initial_apply": applied, "clean": clean}
 
 
