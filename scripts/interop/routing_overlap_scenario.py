@@ -200,9 +200,14 @@ def _apply(client: FixtureHttpClient, units: list[str] | None = None) -> dict[st
             time.sleep(1)
             continue
         if task.get("status") == "succeeded":
-            if task.get("result", {}).get("dry_run"):
-                raise OverlapPrerequisiteError("native Apply unexpectedly reported dry-run")
-            return {"job_id": job, "status": "succeeded"}
+            result = task.get("result")
+            if not isinstance(result, dict) or not isinstance(result.get("units"), list):
+                raise OverlapPrerequisiteError("native Apply lacks component execution evidence")
+            dry_units = [unit.get("unit_id") for unit in result["units"]
+                         if isinstance(unit, dict) and unit.get("dry_run") is True]
+            if result.get("dry_run") and (not dry_units or {"network", "firewall", "wan"}.intersection(dry_units)):
+                raise OverlapPrerequisiteError(f"native networking Apply unexpectedly reported dry-run ({dry_units})")
+            return {"job_id": job, "status": "succeeded", "dry_run_units": dry_units}
         if task.get("status") in {"failed", "cancelled"}:
             result = task.get("result")
             units = result.get("units", []) if isinstance(result, dict) else []

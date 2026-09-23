@@ -313,6 +313,32 @@ def test_apply_deadline_preserves_identity(monkeypatch):
         scenario._apply(client)
 
 
+@pytest.mark.parametrize("dry_unit,accepted", [("dns", True), ("network", False), ("wan", False)])
+def test_apply_requires_real_networking_units(monkeypatch, dry_unit, accepted):
+    """An unrelated simulated unit must not mask real network execution.
+
+    Args:
+        monkeypatch: Replace the bounded task transport.
+        dry_unit: Component reported as simulated by the appliance.
+        accepted: Whether native networking evidence remains valid.
+    """
+    client = FakeClient()
+    monkeypatch.setattr(client, "request", lambda method, path, **kwargs:
+                        (200, '<input name="csrf" value="synthetic">', {}) if method == "GET"
+                        else (202, '{"job_id":"job_abc"}', {}))
+    monkeypatch.setattr(client, "json_request", lambda method, path: {"task": {
+        "status": "succeeded", "result": {"dry_run": True, "units": [
+            {"unit_id": "network", "dry_run": dry_unit == "network"},
+            {"unit_id": "wan", "dry_run": dry_unit == "wan"},
+            {"unit_id": "dns", "dry_run": dry_unit == "dns"},
+        ]}}})
+    if accepted:
+        assert scenario._apply(client)["dry_run_units"] == [dry_unit]
+    else:
+        with pytest.raises(OverlapPrerequisiteError, match="networking Apply unexpectedly reported dry-run"):
+            scenario._apply(client)
+
+
 @pytest.mark.parametrize("status,body", [(202, "null"), (202, '{"job_id":null}'), (202, "[]"),
                                        (202, "not-json"), (503, "unavailable")])
 def test_ambiguous_submission_prohibits_recovery_mutation(monkeypatch, topology, status, body):
