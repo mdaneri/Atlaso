@@ -99,7 +99,14 @@ Wait for first-boot HTTPS to publish a CA before pinning private fixture trust.
 function Wait-RoutingOverlapTrust {
     param([string]$Vmx)
 
+    Assert-LifecycleSourcePins -Pins $runtimeConsumerPins
     $prefix = @('-T', 'ws', '-gu', 'root', '-gp', $RootGuestPassword)
+    $guestScript = "/tmp/atlaso-firstboot-retry-$([guid]::NewGuid().ToString('N')).py"
+    $retrySource = Join-Path $runtimeSourceRoot 'scripts/interop/routing_appliance_firstboot_retry.py'
+    $null = Invoke-AtlasoBoundedStreamingProcess -FilePath $resolvedVmrun -DiscardOutput -ArgumentList ($prefix + @(
+        'copyFileFromHostToGuest', $Vmx, $retrySource, $guestScript
+    )) -TimeoutSeconds 30 -Action 'Private first-boot review helper upload'
+    $retrySubmitted = $false
     $deadline = [DateTimeOffset]::UtcNow.AddMinutes(5)
     do {
         try {
@@ -115,6 +122,24 @@ function Wait-RoutingOverlapTrust {
                     throw 'Private appliance CA readiness termination is unproven; preserve the fixture.'
                 }
                 $failure = $failure.InnerException
+            }
+            if (-not $retrySubmitted) {
+                try {
+                    $null = Invoke-AtlasoBoundedStreamingProcess -FilePath $resolvedVmrun -DiscardOutput -ArgumentList ($prefix + @(
+                        'runScriptInGuest', $Vmx, '/bin/sh',
+                        "set -a; . /etc/atlaso/atlaso.env; set +a; /opt/atlaso/.venv/bin/python -I '$guestScript'"
+                    )) -TimeoutSeconds 20 -Action 'Private first-boot DHCP review retry'
+                    $retrySubmitted = $true
+                } catch {
+                    $retryFailure = $_.Exception
+                    while ($null -ne $retryFailure) {
+                        if ($retryFailure.Data['AtlasoProcessTreeTerminationUnproven']) {
+                            $script:diagnosticTerminationUnproven = $true
+                            throw 'Private first-boot retry termination is unproven; preserve the fixture.'
+                        }
+                        $retryFailure = $retryFailure.InnerException
+                    }
+                }
             }
             if ([DateTimeOffset]::UtcNow -ge $deadline) {
                 throw 'Private appliance CA was not published by first-boot HTTPS; preserve the fixture.'

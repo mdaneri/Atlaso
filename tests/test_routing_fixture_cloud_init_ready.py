@@ -8,7 +8,11 @@ from scripts.interop.routing_fixture_cloud_init_ready import provisioned
 
 
 def status(**changes):
-    """Build a minimal cloud-init status document."""
+    """Build a minimal cloud-init status document.
+
+    Args:
+        **changes: Status fields that replace the default document values.
+    """
     document = {
         "status": "done",
         "extended_status": "done",

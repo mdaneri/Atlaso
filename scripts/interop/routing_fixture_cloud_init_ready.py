@@ -14,7 +14,12 @@ from typing import Any
 
 
 def provisioned(returncode: int, output: str) -> bool:
-    """Accept clean completion or only the known seed-detachment fallback."""
+    """Accept clean completion or only the known seed-detachment fallback.
+
+    Args:
+        returncode: Cloud-init status exit code.
+        output: Bounded JSON status output.
+    """
     if returncode not in (0, 2) or len(output) > 65536:
         return False
     try:

@@ -400,8 +400,11 @@ The original guard handles are removed only after restoration readback. The tran
 channels to
 only the private appliance's SSH and HTTPS ports, opens no host listener, and verifies HTTPS with the explicit
 appliance CA and private target identity. It does not follow redirects to another origin or load ambient SSH keys.
-The private lifecycle waits for first-boot HTTPS to publish a nonempty CA before pinning its trust observation;
-an appliance still waiting for console network review fails that bounded readiness check instead of probing with null trust.
+The private lifecycle waits for first-boot HTTPS to publish a nonempty CA before pinning its trust observation.
+If the owned fixture's first-boot console reports the known transient DHCP activation review while `eth0` already
+holds its reserved `192.0.2.10` address, the lifecycle submits the unchanged DHCP/disabled-IPv6 settings through
+the supported console correction path once. An unexpected review or a CA still absent after the bounded wait
+fails instead of probing with null trust.
 
 The wrapper publishes pinned provider readback and public guest NIC/SSH identities before bootstrap. The private
 clients have no DHCP or RA client on their fixture NIC. Their controller receipts bind original directory, link,

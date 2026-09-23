@@ -357,7 +357,14 @@ def test_ingress_guard_capacity_remains_one_hundred_interfaces(helper):
 
 @pytest.mark.parametrize("enabled", [False, True])
 def test_ingress_capacity_preflight_applies_only_with_routing(helper, monkeypatch, tmp_path, enabled):
-    """A large valid Network intent is rejected before mutation only when Routing needs rules."""
+    """Reject a large Network intent before mutation only when Routing needs rules.
+
+    Args:
+        helper: Loaded appliance helper with isolated test dependencies.
+        monkeypatch: Pytest fixture used to replace the applied WAN path.
+        tmp_path: Temporary directory for the applied WAN snapshot.
+        enabled: Whether applied WAN Routing requires ingress rules.
+    """
     wan = tmp_path / "applied-wan.conf"
     wan.write_text(f"[feature_settings]\nrouting_enabled={str(enabled).lower()}\n" + wan_config_text(),
                    encoding="utf-8")

@@ -9930,6 +9930,7 @@ def _route_domain_ingress_interfaces(
     Args:
         path: Staged candidate Network file, or None for persisted applied intent.
         held_management_interfaces: Old management links retained until retirement.
+        enforce_capacity: Reject ingress sets larger than the owned priority window.
     """
     excluded = set(held_management_interfaces or set())
     if path is not None:
@@ -10014,7 +10015,12 @@ def _route_domain_ingress_desired_rules(
 def _apply_route_domain_ingress(
     path: Path | None = None, *, held_management_interfaces: set[str] | None = None,
 ) -> None:
-    """Migrate legacy rules using preflighted applied WAN forwarding policy."""
+    """Migrate legacy rules using preflighted applied WAN forwarding policy.
+
+    Args:
+        path: Candidate Network file, or None for persisted applied intent.
+        held_management_interfaces: Old management links retained until retirement.
+    """
     _restore_route_domain_rules(_route_domain_ingress_desired_rules(
         path, held_management_interfaces=held_management_interfaces))
 

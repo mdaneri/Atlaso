@@ -3120,6 +3120,7 @@ def test_management_handoff_failure_rolls_back_with_truthful_layer(monkeypatch, 
     monkeypatch.setattr(helper, "_management_handoff_held_addresses", lambda *_args: [])
     monkeypatch.setattr(helper, "_reconcile_route_domains", lambda: None)
     monkeypatch.setattr(helper, "_network_detection_preflight", lambda _path: None)
+    monkeypatch.setattr(helper, "_route_domain_ingress_desired_rules", lambda *_args, **_kwargs: [])
     monkeypatch.setattr(helper, "_wait_network_addresses", lambda _path, **_kwargs: (_ for _ in ()).throw(ValueError("IP conflict on eth0: 192.0.2.20")) if failing_layer == "address activation" else {})
     state = {
         "previous_management_interfaces": ["eth0"],
@@ -3196,6 +3197,7 @@ def test_management_handoff_resolver_failure_rolls_back_before_nginx(
     monkeypatch.setattr(helper, "_management_handoff_held_addresses", lambda *_args: [])
     monkeypatch.setattr(helper, "_reconcile_route_domains", lambda: None)
     monkeypatch.setattr(helper, "_network_detection_preflight", lambda _path: None)
+    monkeypatch.setattr(helper, "_route_domain_ingress_desired_rules", lambda *_args, **_kwargs: [])
     monkeypatch.setattr(helper, "_wait_network_addresses", lambda _path, **_kwargs: {})
     state = {
         "previous_management_interfaces": ["eth0"],
@@ -3281,6 +3283,7 @@ def test_management_handoff_never_activates_nginx_with_unhealthy_upstream(monkey
     monkeypatch.setattr(helper, "_management_handoff_held_addresses", lambda *_args: [])
     monkeypatch.setattr(helper, "_reconcile_route_domains", lambda: None)
     monkeypatch.setattr(helper, "_network_detection_preflight", lambda _path: None)
+    monkeypatch.setattr(helper, "_route_domain_ingress_desired_rules", lambda *_args, **_kwargs: [])
     monkeypatch.setattr(helper, "_wait_network_addresses", lambda _path, **_kwargs: {})
     state = {
         "previous_management_interfaces": ["eth0"],
