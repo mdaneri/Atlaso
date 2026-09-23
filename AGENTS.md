@@ -67,7 +67,7 @@ material new evidence; relevant commits still require re-review under that contr
 
 A delegating agent includes the startup gate, exact resolved worktree/state roots, owned files, applicable routes,
 expected result, and focused checks in each prompt, then verifies compliance and the returned diff before using it.
-Delegation never expands permissions. The implementation route owns the Spark contract and unavailable-worker fallback.
+Delegation never expands permissions. The implementation route owns the Luna contract and unavailable-worker fallback.
 
 For UI work complete the **Mandatory UI Design Guide Gate** in the UI guide: classify the interaction, name the reused
 Atlaso reference, and obtain explicit maintainer approval for `custom/other` before implementation.

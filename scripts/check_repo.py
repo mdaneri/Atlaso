@@ -98,21 +98,21 @@ FORBIDDEN_PAGE_WIZARD_CONTROLLER_MARKERS = (
     "dataset.atlasoWizardNav",
 )
 
-SPARK_WORKER_AGENT_PATH = Path(".codex/agents/spark-worker.toml")
-SPARK_WORKER_REQUIRED_VALUES = {
-    "name": "spark_worker",
-    "model": "gpt-5.3-codex-spark",
-    "model_reasoning_effort": "medium",
+LUNA_WORKER_AGENT_PATH = Path(".codex/agents/luna-worker.toml")
+LUNA_WORKER_REQUIRED_VALUES = {
+    "name": "luna_worker",
+    "model": "gpt-6-luna",
+    "model_reasoning_effort": "high",
 }
-SPARK_WORKER_ALLOWED_KEYS = frozenset(
-    (*SPARK_WORKER_REQUIRED_VALUES, "description", "developer_instructions")
+LUNA_WORKER_ALLOWED_KEYS = frozenset(
+    (*LUNA_WORKER_REQUIRED_VALUES, "description", "developer_instructions")
 )
-SPARK_WORKER_OVERRIDE_MESSAGES = {
-    "approval_policy": "Spark worker must inherit the parent approval policy",
-    "sandbox_mode": "Spark worker must inherit the parent sandbox mode",
-    "tools": "Spark worker must inherit the parent tools",
+LUNA_WORKER_OVERRIDE_MESSAGES = {
+    "approval_policy": "Luna worker must inherit the parent approval policy",
+    "sandbox_mode": "Luna worker must inherit the parent sandbox mode",
+    "tools": "Luna worker must inherit the parent tools",
 }
-SPARK_WORKER_REQUIRED_INSTRUCTION_MARKERS = (
+LUNA_WORKER_REQUIRED_INSTRUCTION_MARKERS = (
     "Mandatory Agent Startup Gate",
     "Mandatory UI Design Guide Gate",
     "Do not make architecture decisions.",
@@ -235,10 +235,10 @@ REQUIRED_POLICY_MARKERS = {
         "Short description · Issue #<issue> · PR #<pr>",
         "### Unsupported title controls",
         "### Schema-constrained reporting",
-        "## Sol and Spark Delegation",
-        "`spark_worker`",
-        "`gpt-5.3-codex-spark`",
-        "never substitutes another model",
+        "## Sol and Luna Delegation",
+        "`luna_worker`",
+        "`gpt-6-luna`",
+        "never substitutes an unapproved model",
         "### Unrelated issue discoveries",
         "supported Codex configuration",
         "`git-worktree-root`",
@@ -3260,54 +3260,54 @@ def check_validation_resource_policy(root: Path) -> list[Finding]:
     return findings
 
 
-def check_spark_worker_agent(root: Path) -> list[Finding]:
-    """Require Atlaso's project-scoped Spark worker contract.
+def check_luna_worker_agent(root: Path) -> list[Finding]:
+    """Require Atlaso's project-scoped Luna worker contract.
 
     Args:
         root: Repository or filesystem root searched by the operation.
     """
-    path = root / SPARK_WORKER_AGENT_PATH
+    path = root / LUNA_WORKER_AGENT_PATH
     text, error = read_text(path)
     if error is not None:
-        return [Finding(path, "required Spark worker agent is missing or unreadable")]
+        return [Finding(path, "required Luna worker agent is missing or unreadable")]
     assert text is not None
 
     try:
         config = tomllib.loads(text)
     except tomllib.TOMLDecodeError as exc:
-        return [Finding(path, f"invalid Spark worker TOML: {exc}")]
+        return [Finding(path, f"invalid Luna worker TOML: {exc}")]
 
     findings: list[Finding] = []
-    for key, expected in SPARK_WORKER_REQUIRED_VALUES.items():
+    for key, expected in LUNA_WORKER_REQUIRED_VALUES.items():
         if config.get(key) != expected:
             findings.append(
-                Finding(path, f"Spark worker {key} must equal {expected!r}")
+                Finding(path, f"Luna worker {key} must equal {expected!r}")
             )
 
     description = config.get("description")
     if not isinstance(description, str) or not description.strip():
-        findings.append(Finding(path, "Spark worker description must be non-empty"))
+        findings.append(Finding(path, "Luna worker description must be non-empty"))
 
     instructions = config.get("developer_instructions")
     if not isinstance(instructions, str) or not instructions.strip():
         findings.append(
-            Finding(path, "Spark worker developer_instructions must be non-empty")
+            Finding(path, "Luna worker developer_instructions must be non-empty")
         )
     else:
-        for marker in SPARK_WORKER_REQUIRED_INSTRUCTION_MARKERS:
+        for marker in LUNA_WORKER_REQUIRED_INSTRUCTION_MARKERS:
             if marker not in instructions:
                 findings.append(
                     Finding(
                         path,
-                        "required Spark worker instruction marker is missing: "
+                        "required Luna worker instruction marker is missing: "
                         + marker,
                     )
                 )
 
-    for key in sorted(config.keys() - SPARK_WORKER_ALLOWED_KEYS):
-        message = SPARK_WORKER_OVERRIDE_MESSAGES.get(
+    for key in sorted(config.keys() - LUNA_WORKER_ALLOWED_KEYS):
+        message = LUNA_WORKER_OVERRIDE_MESSAGES.get(
             key,
-            f"Spark worker contains unsupported top-level key: {key}",
+            f"Luna worker contains unsupported top-level key: {key}",
         )
         findings.append(Finding(path, message))
     return findings
@@ -5918,7 +5918,7 @@ def main(argv: list[str] | None = None) -> int:
     findings.extend(check_validation_resource_policy(ROOT))
     findings.extend(check_completed_task_command_policy(ROOT))
     findings.extend(check_merge_authority_transfer_fixtures(ROOT))
-    findings.extend(check_spark_worker_agent(ROOT))
+    findings.extend(check_luna_worker_agent(ROOT))
     findings.extend(check_ui_pattern_foundation(ROOT))
     findings.extend(check_virtualization_legacy(ROOT))
     findings.extend(check_protected_workflow_caches(ROOT))
