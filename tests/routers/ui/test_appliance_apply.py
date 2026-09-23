@@ -1914,6 +1914,9 @@ def test_network_only_ingress_reconciliation_does_not_leave_wan_pending(client):
         db.commit()
         before = ui.appliance_apply_units(db)
         assert next(unit for unit in before if unit["id"] == "network")["changed"]
+        wan_before = next(unit for unit in before if unit["id"] == "wan")
+        assert not wan_before["changed"]
+        assert not wan_before["network_candidate_variant"]["changed"]
         ui.update_appliance_apply_baselines(db, before, {"network"})
         after = ui.appliance_apply_units(db)
         assert not next(unit for unit in after if unit["id"] == "network")["changed"]

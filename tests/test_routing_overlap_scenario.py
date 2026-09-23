@@ -393,10 +393,13 @@ def test_rejected_apply_reports_only_bounded_validation_identity(monkeypatch):
                         (422, json.dumps({"detail": "Resolve validation errors before submitting appliance changes.",
                                           "preview": "private appliance address"}), {}))
     monkeypatch.setattr(client, "json_request", lambda method, path: {
-        "units": [{"id": "wan", "valid": False, "validation_errors": ["private appliance address"]}]})
-    with pytest.raises(OverlapPrerequisiteError, match="unit-validation; invalid_units=\\['wan'\\]") as error:
+        "units": [{"id": "wan", "valid": False, "validation_errors": ["private appliance address"]},
+                  {"id": "appliance_settings", "valid": False,
+                   "validation_errors": ["Web terminal interfaces are unavailable or have no address: private"]}]})
+    with pytest.raises(OverlapPrerequisiteError, match="unit-validation; invalid_units=\\['appliance_settings', 'wan'\\]") as error:
         scenario._apply(client)
     assert "private appliance address" not in str(error.value)
+    assert "known_causes=['web-terminal-address']" in str(error.value)
 
 
 def test_initial_setup_uses_reviewed_nonformatting_units(monkeypatch):

@@ -11408,6 +11408,29 @@ def appliance_apply_units(db: Session, *, reconcile: bool = True) -> list[dict[s
         config_path=wan["wan_config_path"], config_preview=candidate_wan_preview,
         baseline=wan_baseline,
     )
+    candidate_targets = {
+        row["name"]: row for row in wan_config_target_entries(candidate_wan_preview)
+    }
+    candidate_target_changes = {
+        name for name in previous_targets.keys() | candidate_targets.keys()
+        if previous_targets.get(name) != candidate_targets.get(name)
+    }
+    candidate_network_projection_only = candidate_target_changes.isdisjoint(wan_referenced_targets)
+    if (
+        wan_baseline is not None
+        and candidate_wan["changed"]
+        and candidate_wan["summary"] == wan_baseline.get("summary")
+        and candidate_wan["config_path"] == wan_baseline.get("config_path")
+        and wan_apply_comparison_preview(
+            candidate_wan_preview,
+            network_projection_only=candidate_network_projection_only,
+        ) == wan_apply_comparison_preview(
+            str(wan_baseline.get("config_preview") or ""),
+            network_projection_only=candidate_network_projection_only,
+        )
+    ):
+        candidate_wan["changed"] = False
+        candidate_wan["config_diff"] = ""
     wan_unit["network_candidate_variant"] = candidate_wan
     if network_unit["changed"] and candidate_wan["changed"]:
         wan_unit["changed"] = True

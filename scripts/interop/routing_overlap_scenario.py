@@ -201,6 +201,7 @@ def _apply(client: FixtureHttpClient, units: list[str] | None = None) -> dict[st
         except (AttributeError, ValueError, TypeError):
             pass
         invalid: list[str] = []
+        causes: list[str] = []
         try:
             review = client.json_request("GET", "/ui/management/appliance-apply/review")
             rows = review.get("units")
@@ -208,10 +209,24 @@ def _apply(client: FixtureHttpClient, units: list[str] | None = None) -> dict[st
                 invalid = sorted({row["id"] for row in rows if isinstance(row, dict)
                                   and row.get("valid") is False and isinstance(row.get("id"), str)
                                   and re.fullmatch(r"[a-z_]+", row["id"])})
+                settings = next((row for row in rows if isinstance(row, dict)
+                                 and row.get("id") == "appliance_settings"), None)
+                if settings is not None and isinstance(settings.get("validation_errors"), list):
+                    labels = (
+                        ("Local DNS registration requires", "local-dns-address"),
+                        ("External DNS servers are required", "external-dns"),
+                        ("Management UI HTTPS requires", "https-certificate"),
+                        ("Web terminal interfaces are unavailable", "web-terminal-address"),
+                        ("Web terminal access requires", "web-terminal-policy"),
+                    )
+                    causes = sorted({label for error in settings["validation_errors"]
+                                     if isinstance(error, str) for prefix, label in labels
+                                     if error.startswith(prefix)})
         except Exception:  # noqa: BLE001 - diagnostics never replace the known submission refusal.
             pass
         raise OverlapPrerequisiteError(
-            f"global Apply submission failed with HTTP {status} ({reason}; invalid_units={invalid})"
+            f"global Apply submission failed with HTTP {status} "
+            f"({reason}; invalid_units={invalid}; known_causes={causes})"
         )
     try:
         submission = json.loads(body)

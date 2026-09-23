@@ -10024,6 +10024,31 @@ def _route_domain_ingress_desired_rules(
     return _route_domain_ingress_rules(names if enabled else [])
 
 
+def _stage_candidate_ingress_guards(
+    path: Path, *, held_management_interfaces: set[str] | None = None,
+) -> None:
+    """Add missing terminal guards before Network can activate candidate lab links.
+
+    This runs only after the Network or handoff rollback journal is durable.
+    Existing rules stay in place until the ordinary reconciliation after address
+    activation; a failed addition is restored from the journal's rule snapshot.
+    """
+    desired = _route_domain_ingress_desired_rules(
+        path, held_management_interfaces=held_management_interfaces,
+    )
+    guards = [row for row in desired if row["table"] is None]
+    if not guards:
+        return
+    current = _snapshot_route_domain_rules()
+    for row in guards:
+        if row in current:
+            continue
+        command = ["ip", f"-{row['family']}", "rule", "add", "iif", row["incoming_interface"],
+                   "unreachable", "priority", str(row["priority"]), "protocol", str(row["protocol"])]
+        if _run(command).returncode:
+            raise ValueError("candidate routing-domain ingress guard installation failed")
+
+
 def _apply_route_domain_ingress(
     path: Path | None = None, *, held_management_interfaces: set[str] | None = None,
 ) -> None:
@@ -10778,6 +10803,7 @@ def _handle_network_locked(action: str, args: list[str]) -> int:
         return 2
     try:
         with _network_apply_transaction(config_path):
+            _stage_candidate_ingress_guards(config_path)
             activation_started = datetime.now(timezone.utc).isoformat()
             install_returncode, installed, reconfigure_links, admin_down_links = _install_systemd_networkd_files(config_path)
             if install_returncode != 0:
@@ -13726,19 +13752,32 @@ def _handle_wan_config(action: str, config_path: Path, *, replay: bool = False) 
         nat_result = _apply_wan_nat(parsed, allow_identity_quarantine=True) if replay else _apply_wan_nat(parsed)
         if nat_result:
             return nat_result
-    forwarding_result = _apply_wan_forwarding(parsed)
-    if forwarding_result != 0:
-        return forwarding_result
+    # On enable, terminal ingress guards must exist before either family can
+    # forward. On disable, turn forwarding off before retiring those guards.
+    if not feature_settings["routing_enabled"]:
+        forwarding_result = _apply_wan_forwarding(parsed)
+        if forwarding_result != 0:
+            return forwarding_result
+    if feature_settings["routing_enabled"]:
+        rule_result = _apply_wan_policy_rules(
+            parsed, current_domain_rules=current_domain_rules, preflighted_ingress=preflighted_ingress,
+        )
+        if rule_result != 0:
+            return rule_result
+        forwarding_result = _apply_wan_forwarding(parsed)
+        if forwarding_result != 0:
+            return forwarding_result
     target_route_result = _apply_wan_target_routes(
         parsed, previous_parsed, applied_network_state=applied_network_state,
     )
     if target_route_result != 0:
         return target_route_result
-    rule_result = _apply_wan_policy_rules(
-        parsed, current_domain_rules=current_domain_rules, preflighted_ingress=preflighted_ingress,
-    )
-    if rule_result != 0:
-        return rule_result
+    if not feature_settings["routing_enabled"]:
+        rule_result = _apply_wan_policy_rules(
+            parsed, current_domain_rules=current_domain_rules, preflighted_ingress=preflighted_ingress,
+        )
+        if rule_result != 0:
+            return rule_result
     route_result = _apply_wan_routes_and_qdiscs(
         parsed, previous_parsed, applied_network_state=applied_network_state,
     )
@@ -26727,6 +26766,11 @@ def _apply_management_handoff(payload: dict) -> int:
         )
         failing_layer = "network"
         activation_started = datetime.now(timezone.utc).isoformat()
+        _stage_candidate_ingress_guards(
+            Path(str(payload["network_config_path"])),
+            held_management_interfaces={name for name, table in state.get("previous_route_domains", {}).items()
+                                        if table == MANAGEMENT_ROUTE_TABLE_ID},
+        )
         _apply_management_candidate_network(Path(str(payload["network_config_path"])), state)
         failing_layer = "address activation"
         address_observation = _wait_network_addresses(Path(str(payload["network_config_path"])), started_at=activation_started)

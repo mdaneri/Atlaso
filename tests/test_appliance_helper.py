@@ -2787,6 +2787,7 @@ def test_management_handoff_candidate_durability_gates_ack(
         mapping_change: Effective forwarding difference in the candidate handoff.
     """
     helper = load_helper_module()
+    monkeypatch.setattr(helper, "_stage_candidate_ingress_guards", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(helper, "_wait_management_handoff_routes", lambda *_args: None)
     monkeypatch.setattr(helper, "_apply_route_domain_ingress", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(helper, "_install_route_domain_intent", lambda *_args, **_kwargs: None)
@@ -3114,6 +3115,7 @@ def test_management_handoff_failure_rolls_back_with_truthful_layer(monkeypatch, 
         failing_layer: Network activation or downstream firewall failure under test.
     """
     helper = load_helper_module()
+    monkeypatch.setattr(helper, "_stage_candidate_ingress_guards", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(helper, "_wait_management_handoff_routes", lambda *_args: None)
     monkeypatch.setattr(helper, "_apply_route_domain_ingress", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(helper, "_install_route_domain_intent", lambda *_args, **_kwargs: None)
@@ -3191,6 +3193,7 @@ def test_management_handoff_resolver_failure_rolls_back_before_nginx(
         capsys: Pytest fixture used to inspect bounded helper output.
     """
     helper = load_helper_module()
+    monkeypatch.setattr(helper, "_stage_candidate_ingress_guards", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(helper, "_wait_management_handoff_routes", lambda *_args: None)
     monkeypatch.setattr(helper, "_apply_route_domain_ingress", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(helper, "_install_route_domain_intent", lambda *_args, **_kwargs: None)
@@ -3277,6 +3280,7 @@ def test_management_handoff_never_activates_nginx_with_unhealthy_upstream(monkey
         capsys: Pytest fixture used to capture bounded helper output.
     """
     helper = load_helper_module()
+    monkeypatch.setattr(helper, "_stage_candidate_ingress_guards", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(helper, "_wait_management_handoff_routes", lambda *_args: None)
     monkeypatch.setattr(helper, "_apply_route_domain_ingress", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(helper, "_install_route_domain_intent", lambda *_args, **_kwargs: None)
@@ -9089,7 +9093,56 @@ def test_wan_apply_reuses_preflighted_native_snapshots(monkeypatch, tmp_path):
     monkeypatch.setattr(helper, "_install_wan_runtime", lambda path: observed.append("install"))
 
     assert helper._handle_wan_config("apply", config_path) == 0
-    assert observed == ["network", "rules", "ingress", "forwarding", "targets", "policy", "routes", "install"]
+    assert observed == ["network", "rules", "ingress", "policy", "forwarding", "targets", "routes", "install"]
+
+
+@pytest.mark.parametrize("routing_enabled", [True, False])
+def test_wan_forwarding_changes_on_guarded_side_of_policy_rules(monkeypatch, tmp_path, routing_enabled):
+    """Enable after guard installation and disable before guard retirement."""
+    helper = load_helper_module()
+    path = tmp_path / "wan.conf"
+    path.write_text(f"[feature_settings]\nrouting_enabled={str(routing_enabled).lower()}\n", encoding="utf-8")
+    domain = tmp_path / "route-domains.json"
+    domain.write_text("{}", encoding="utf-8")
+    steps: list[str] = []
+    monkeypatch.setattr(helper, "ROUTE_DOMAIN_CONFIG_PATH", domain)
+    monkeypatch.setattr(helper, "WAN_RUNTIME_CONFIG_PATH", tmp_path / "absent.conf")
+    monkeypatch.setattr(helper, "_wan_config_errors", lambda *args, **kwargs: [])
+    monkeypatch.setattr(helper, "_applied_wan_network_state", lambda: {})
+    monkeypatch.setattr(helper, "_snapshot_route_domain_rules", lambda: [])
+    monkeypatch.setattr(helper, "_route_domain_ingress_interfaces", lambda *, enforce_capacity: ["eth1"])
+    monkeypatch.setattr(helper, "_apply_wan_policy_rules", lambda *args, **kwargs: steps.append("rules") or 0)
+    monkeypatch.setattr(helper, "_apply_wan_forwarding", lambda *args: steps.append("forwarding") or 0)
+    monkeypatch.setattr(helper, "_apply_wan_target_routes", lambda *args, **kwargs: 0)
+    monkeypatch.setattr(helper, "_apply_wan_routes_and_qdiscs", lambda *args, **kwargs: 0)
+    monkeypatch.setattr(helper, "_install_wan_runtime", lambda *args: None)
+
+    assert helper._handle_wan_config("apply", path) == 0
+    assert steps == (["rules", "forwarding"] if routing_enabled else ["forwarding", "rules"])
+
+
+def test_candidate_ingress_guards_add_only_and_fail_before_activation(monkeypatch, tmp_path):
+    """An admitted candidate guard is staged without retiring existing rules."""
+    helper = load_helper_module()
+    path = tmp_path / "network.conf"
+    path.write_text("[physical_interfaces]\ninterface=eth1\n  role=route\n  mode=access\n  admin_state=up\n", encoding="utf-8")
+    existing = helper._route_domain_ingress_rules(["eth0"])
+    commands: list[list[str]] = []
+    monkeypatch.setattr(helper, "_route_domain_ingress_desired_rules", lambda *args, **kwargs:
+                        helper._route_domain_ingress_rules(["eth0", "eth1"]))
+    monkeypatch.setattr(helper, "_snapshot_route_domain_rules", lambda: existing)
+    monkeypatch.setattr(helper, "_run", lambda command: commands.append(command)
+                        or subprocess.CompletedProcess(command, 0, "", ""))
+
+    helper._stage_candidate_ingress_guards(path)
+    assert len(commands) == 2
+    assert all(command[3:6] == ["add", "iif", "eth1"] for command in commands)
+    assert all("unreachable" in command for command in commands)
+    assert not any("del" in command for command in commands)
+
+    monkeypatch.setattr(helper, "_run", lambda command: subprocess.CompletedProcess(command, 1, "", "failed"))
+    with pytest.raises(ValueError, match="guard installation failed"):
+        helper._stage_candidate_ingress_guards(path)
 
 
 def test_wan_helper_apply_routes_nat_and_netem(monkeypatch, tmp_path):
