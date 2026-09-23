@@ -24924,7 +24924,7 @@ def _wait_management_handoff_routes(state: dict, *, attempts: int = 31) -> None:
                     observed.append((row, ip_network(destination, strict=False)))
                 for route in expected:
                     destination = ip_network(route["destination"])
-                    if not any(row.get("dev") == name
+                    if not any(row.get("dev", name) == name
                                and row.get("type", "unicast") == "unicast"
                                and observed_destination == destination
                                and str(row.get("gateway") or "") == route["gateway"]

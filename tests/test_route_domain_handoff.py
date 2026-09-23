@@ -171,7 +171,8 @@ def test_holdover_renders_snapshotted_standby_routes_without_changing_candidate_
     assert "Destination=::/0\nTable=100\nMetric=2049\nGateway=fe80::1\nGatewayOnLink=yes" in text
 
 
-def test_route_readiness_requires_standby_copy_not_merely_previous_native_route(monkeypatch):
+@pytest.mark.parametrize("include_dev", [True, False])
+def test_route_readiness_requires_standby_copy_not_merely_previous_native_route(monkeypatch, include_dev):
     """Existing native route presence cannot race standby installation.
 
     Args:
@@ -180,11 +181,15 @@ def test_route_readiness_requires_standby_copy_not_merely_previous_native_route(
     helper = load_helper_module()
     observe_snapshot(helper, monkeypatch, v6_routes=[], addresses=[{"local": "192.0.2.10", "prefixlen": 24, "scope": "global"}])
     evidence = helper._snapshot_management_handoff_routing(["eth0"], {"eth0": 100})
-    snapshots = iter([
+    snapshots = [
         [{"dst": "192.0.2.0/24", "dev": "eth0"}, {"dst": "default", "dev": "eth0", "gateway": "192.0.2.1", "metric": 1024}],
         [{"dst": "192.0.2.0/24", "dev": "eth0", "metric": 1025},
          {"dst": "default", "dev": "eth0", "gateway": "192.0.2.1", "metric": 2049}],
-    ])
+    ]
+    if not include_dev:
+        snapshots = [[{key: value for key, value in row.items() if key != "dev"} for row in rows]
+                     for rows in snapshots]
+    snapshots = iter(snapshots)
     commands = []
     monkeypatch.setattr(helper, "_network_observation_command", lambda command: commands.append(command) or
                         subprocess.CompletedProcess(command, 0, json.dumps(next(snapshots)), ""))
