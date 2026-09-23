@@ -220,6 +220,46 @@ def test_fresh_seed_and_lazy_service_defaults_use_appliance_domain(monkeypatch):
         get_settings.cache_clear()
 
 
+def test_ntp_domain_migration_preserves_operator_txt_at_new_alias():
+    """An operator TXT record prevents migration of the managed NTP CNAME."""
+    from atlaso.app.models import ApplianceSettings, DnsRecord, NtpSettings
+    from atlaso.app.seed import seed_initial_data
+    from atlaso.app.services.service_dns_defaults import (
+        NTP_DNS_DESCRIPTION,
+        reconcile_factory_service_identities,
+    )
+
+    with _session_factory()() as db:
+        seed_initial_data(db, include_examples=False, commit=False)
+        appliance = db.execute(select(ApplianceSettings)).scalar_one()
+        appliance.fqdn = "atlaso.lab.internal"
+        db.add_all([
+            DnsRecord(
+                hostname="ntp.atlaso.internal", record_type="CNAME",
+                address="ntp-service.atlaso.internal",
+                description=NTP_DNS_DESCRIPTION, enabled=True,
+            ),
+            DnsRecord(
+                hostname="ntp.lab.internal", record_type="TXT",
+                address="operator-owned", description="Operator", enabled=True,
+            ),
+        ])
+        db.flush()
+
+        changes = reconcile_factory_service_identities(db)
+        records = db.execute(select(DnsRecord)).scalars().all()
+        ntp = db.execute(select(NtpSettings)).scalar_one()
+
+        assert ntp.hostname == "ntp.lab.internal"
+        assert changes["ntp"]["dns_conflicts"] == 1
+        assert not any(row.record_type == "CNAME" and row.description == NTP_DNS_DESCRIPTION for row in records)
+        assert any(
+            row.hostname == "ntp.lab.internal" and row.record_type == "TXT"
+            and row.description == "Operator" and row.address == "operator-owned"
+            for row in records
+        )
+
+
 def test_reconcile_factory_identities_preserves_operator_state_and_dns_conflicts():
     """Domain reconciliation touches only proven factory-owned state."""
 

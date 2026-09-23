@@ -236,18 +236,15 @@ def _migrate_owned_dns_records(
                 )
                 or record.address
             )
-        conflicting_record_types = (
-            ["A", "AAAA", "CNAME"]
-            if record.record_type == "CNAME"
-            else [record.record_type, "CNAME"]
+        destination_query = select(DnsRecord).where(
+            DnsRecord.hostname == renamed_hostname,
+            DnsRecord.id != record.id,
         )
-        destination_records = db.execute(
-            select(DnsRecord).where(
-                DnsRecord.hostname == renamed_hostname,
-                DnsRecord.record_type.in_(conflicting_record_types),
-                DnsRecord.id != record.id,
+        if record.record_type != "CNAME":
+            destination_query = destination_query.where(
+                DnsRecord.record_type.in_([record.record_type, "CNAME"])
             )
-        ).scalars().all()
+        destination_records = db.execute(destination_query).scalars().all()
         if any(candidate.description != description for candidate in destination_records):
             # An operator-owned destination prevents this factory migration from
             # claiming the name. Remove exact-marker destination rows as well as
