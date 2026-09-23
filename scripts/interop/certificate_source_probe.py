@@ -27,7 +27,11 @@ SETTING_KEYS = (
 
 
 def snapshot(database: str = DATABASE) -> dict[str, object]:
-    """Return absence proof from one read-only SQLite transaction, or fail closed."""
+    """Return absence proof from one read-only SQLite transaction, or fail closed.
+
+    Args:
+        database: Path to the cloned guest's SQLite database.
+    """
     connection = sqlite3.connect(f"file:{database}?mode=ro", uri=True, timeout=5)
     try:
         connection.execute("PRAGMA query_only = ON")

@@ -9,6 +9,11 @@ from scripts.interop.certificate_source_probe import snapshot
 
 @pytest.fixture
 def source_database(tmp_path):
+    """Create a minimal source database for routing-intent probes.
+
+    Args:
+        tmp_path: Temporary directory supplied by pytest.
+    """
     path = tmp_path / "atlaso.db"
     with sqlite3.connect(path) as connection:
         connection.executescript(
@@ -28,6 +33,11 @@ def source_database(tmp_path):
 
 
 def test_empty_source_proves_absence_without_exposing_rows(source_database):
+    """Report absence without returning database rows.
+
+    Args:
+        source_database: Minimal source database fixture.
+    """
     result = snapshot(str(source_database))
     assert result["state"] == "proven-absent"
     assert set(result["counts"].values()) == {0}
@@ -50,6 +60,13 @@ def test_empty_source_proves_absence_without_exposing_rows(source_database):
     ],
 )
 def test_any_route_domain_intent_refuses_absence(source_database, statement, expected):
+    """Reject absence whenever an allowlisted routing signal is present.
+
+    Args:
+        source_database: Minimal source database fixture.
+        statement: SQL statement that adds one routing signal.
+        expected: Aggregate signal expected in the probe output.
+    """
     with sqlite3.connect(source_database) as connection:
         connection.execute(statement)
     result = snapshot(str(source_database))
@@ -63,6 +80,11 @@ def test_any_route_domain_intent_refuses_absence(source_database, statement, exp
 
 
 def test_missing_schema_and_unknown_setting_fail_closed(source_database):
+    """Reject incomplete schemas and unrecognized routing settings.
+
+    Args:
+        source_database: Minimal source database fixture.
+    """
     with sqlite3.connect(source_database) as connection:
         connection.execute("DROP TABLE routing_rules")
     with pytest.raises(ValueError, match="schema"):
