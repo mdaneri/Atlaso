@@ -79,6 +79,7 @@ class Element {
 class HTMLButtonElement extends Element { constructor() { super("button"); this.className = "help-icon"; this.textContent = "i"; } }
 
 function fixture() {
+  let notifyMutation;
   const body = new Element("body");
   const label = new Element("label"); label.className = "field-label";
   const title = new Element("span"); title.textContent = "Server address";
@@ -91,12 +92,15 @@ function fixture() {
   document.createElement = (tag) => new Element(tag);
   document.activeElement = body;
   const window = new Element("window"); window.innerWidth = 320; window.innerHeight = 240;
-  const context = { document, window, Element, HTMLButtonElement, MutationObserver: class { observe() {} } };
+  const context = { document, window, Element, HTMLButtonElement, MutationObserver: class {
+    constructor(callback) { notifyMutation = callback; }
+    observe() {}
+  } };
   vm.runInNewContext(initialize, context);
   const tooltip = body.children.at(-1);
   const event = (target, relatedTarget = null) => ({ target, relatedTarget, prevented: false,
     preventDefault() { this.prevented = true; }, stopPropagation() {} });
-  return { body, button, document, window, tooltip, event };
+  return { body, button, document, window, tooltip, event, notifyMutation };
 }
 
 test("only the help button opens the tooltip; hover exit closes it", () => {
@@ -120,7 +124,9 @@ test("focus exposes help, Escape dismisses it, and click can pin or toggle it", 
   document.activeElement = button;
   document.emit("focusin", event(button));
   assert.equal(tooltip.hidden, false);
-  document.emit("keydown", { key: "Escape", stopPropagation() {} });
+  const escape = { key: "Escape", prevented: false, preventDefault() { this.prevented = true; }, stopPropagation() {} };
+  document.emit("keydown", escape);
+  assert.equal(escape.prevented, true);
   assert.equal(tooltip.hidden, true);
   const click = event(button);
   document.emit("click", click);
@@ -165,6 +171,26 @@ test("help inside a modal stays in the modal's accessible subtree", () => {
   assert.equal(tooltip.parentElement, dialog);
   assert.equal(tooltip.popoverOpen, true);
   assert.equal(button.getAttribute("aria-describedby"), tooltip.id);
+  const escape = { key: "Escape", prevented: false, preventDefault() { this.prevented = true; }, stopPropagation() {} };
+  document.emit("keydown", escape);
+  assert.equal(escape.prevented, true);
+  assert.equal(tooltip.hidden, true);
+  assert.equal(dialog.hasAttribute("open"), true);
+});
+
+test("generated help names follow changing headings while authored names stay intact", () => {
+  const { button, document, event, notifyMutation } = fixture();
+  assert.equal(button.getAttribute("aria-label"), "Help for Server address");
+  button.parent.children[0].textContent = "Signed release base URL";
+  notifyMutation([{ target: button.parent.children[0], addedNodes: [] }]);
+  assert.equal(button.getAttribute("aria-label"), "Help for Signed release base URL");
+  button.parent.children[0].textContent = "Another URL label";
+  document.emit("pointerover", event(button));
+  assert.equal(button.getAttribute("aria-label"), "Help for Another URL label");
+  button.setAttribute("aria-label", "Authored help name");
+  button.parent.children[0].textContent = "Repository URL";
+  document.emit("focusin", event(button));
+  assert.equal(button.getAttribute("aria-label"), "Authored help name");
 });
 
 test("icon-only sibling actions name their help from the action's accessible label", () => {

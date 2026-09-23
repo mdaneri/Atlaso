@@ -12716,11 +12716,12 @@ function initializeHelpTooltips() {
 
   let active = null;
   let pinned = false;
+  const generatedLabels = new WeakMap();
   const helpButton = (target) => target instanceof Element ? target.closest("button.help-icon[data-help]") : null;
   const setUpButton = (button) => {
     if (!(button instanceof HTMLButtonElement)) return;
     button.removeAttribute("tabindex");
-    if (button.hasAttribute("aria-label")) return;
+    if (button.hasAttribute("aria-label") && button.getAttribute("aria-label") !== generatedLabels.get(button)) return;
     const label = button.closest(".field-label") || button.parentElement;
     const heading = label?.querySelector(":scope > span:first-child");
     const labeledControl = heading?.querySelector("[aria-label], [title]");
@@ -12731,7 +12732,9 @@ function initializeHelpTooltips() {
         ? node.getAttribute("aria-label") || node.getAttribute("title") || node.textContent || ""
         : node.textContent || "")
       .join(" ").trim();
-    button.setAttribute("aria-label", name ? `Help for ${name}` : "Help information");
+    const generatedLabel = name ? `Help for ${name}` : "Help information";
+    button.setAttribute("aria-label", generatedLabel);
+    generatedLabels.set(button, generatedLabel);
   };
   const setUpButtons = (root) => {
     if (root instanceof HTMLButtonElement && root.matches(".help-icon[data-help]")) setUpButton(root);
@@ -12739,9 +12742,15 @@ function initializeHelpTooltips() {
   };
   setUpButtons(document);
   new MutationObserver((records) => {
-    records.forEach((record) => record.addedNodes.forEach((node) => {
-      if (node instanceof Element) setUpButtons(node);
-    }));
+    records.forEach((record) => {
+      record.addedNodes.forEach((node) => {
+        if (node instanceof Element) setUpButtons(node);
+      });
+      if (record.target instanceof Element) {
+        const field = record.target.closest(".field-label");
+        if (field) setUpButtons(field);
+      }
+    });
   }).observe(document.body, { childList: true, subtree: true });
 
   const place = () => {
@@ -12814,7 +12823,7 @@ function initializeHelpTooltips() {
     } else if (pinned && !tooltip.contains(event.target)) hide();
   });
   document.addEventListener("keydown", (event) => {
-    if (event.key === "Escape" && active) { hide(); event.stopPropagation(); }
+    if (event.key === "Escape" && active) { event.preventDefault(); hide(); event.stopPropagation(); }
   }, true);
   window.addEventListener("resize", place);
   window.addEventListener("scroll", place, true);
