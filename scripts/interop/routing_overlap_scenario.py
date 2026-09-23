@@ -277,29 +277,14 @@ def _clean(client: FixtureHttpClient) -> dict[str, Any]:
     return {"pending_count": 0, "active_task": None, "initial_apply_required": False}
 
 
-def _setup(client: FixtureHttpClient) -> dict[str, Any]:
-    """Establish the fresh owned clone's initial baseline through reviewed global Apply.
-
-    Args:
-        client: Pinned authenticated HTTPS client for the admitted fresh appliance.
-    """
-    review = client.json_request("GET", "/ui/management/appliance-apply/review")
-    if review.get("initial_apply_required") is not True:
-        return {"already_applied": _clean(client)}
-    units = review.get("units")
-    if (review.get("active_task") is not None or not isinstance(units, list) or not units
-            or any(unit.get("valid") is not True or unit.get("format_volumes") for unit in units)):
-        raise OverlapPrerequisiteError("initial fixture Apply requires valid non-formatting units and no active task")
-    ids = [unit.get("id") for unit in units]
-    if any(not isinstance(unit, str) or not re.fullmatch(r"[a-z_]+", unit) for unit in ids):
-        raise OverlapPrerequisiteError("initial fixture Apply unit identity is invalid")
-    applied = _apply(client, ids)
+def _settle_dependent_dns(client: FixtureHttpClient) -> dict[str, Any]:
+    """Admit at most one reviewed DNS delta before requiring a clean baseline."""
     try:
         clean = _clean(client)
     except OverlapPrerequisiteError:
-        # The first Apply can change the generated DNS preview after its
-        # captured snapshot. Admit only that reviewed, non-formatting unit for
-        # one follow-up Apply; any other pending state remains a hard failure.
+        # Deployment or the first Apply can change the generated DNS preview.
+        # Admit only that reviewed, non-formatting unit for one Apply; any
+        # other pending state remains a hard failure.
         pending = client.json_request("GET", "/ui/management/appliance-apply/review")
         status = client.json_request("GET", "/ui/management/appliance-apply/status?refresh=true")
         remaining = pending.get("units")
@@ -311,7 +296,7 @@ def _setup(client: FixtureHttpClient) -> dict[str, Any]:
                 or status.get("locked") is not False):
             valid = remaining[0].get("valid") if isinstance(remaining, list) and len(remaining) == 1 and isinstance(remaining[0], dict) else None
             raise OverlapPrerequisiteError(
-                "initial Apply left an unadmitted dependent DNS state "
+                "scenario requires a clean established baseline; unadmitted dependent DNS state "
                 f"(unit_valid={valid if type(valid) is bool else 'invalid'}, "
                 f"review_pending={pending.get('pending_count') if type(pending.get('pending_count')) is int else 'invalid'}, "
                 f"status_pending={status.get('pending_count') if type(status.get('pending_count')) is int else 'invalid'})"
@@ -324,8 +309,29 @@ def _setup(client: FixtureHttpClient) -> dict[str, Any]:
                 f"dependent DNS Apply did not establish a clean baseline "
                 f"(dry_run_units={dependent.get('dry_run_units', [])}): {failure}"
             ) from None
-        return {"initial_apply": applied, "dependent_dnsmasq_apply": dependent, "clean": clean}
-    return {"initial_apply": applied, "clean": clean}
+        return {"dependent_dnsmasq_apply": dependent, "clean": clean}
+    return {"clean": clean}
+
+
+def _setup(client: FixtureHttpClient) -> dict[str, Any]:
+    """Establish the fresh owned clone's baseline through reviewed global Apply.
+
+    Args:
+        client: Pinned authenticated HTTPS client for the admitted fresh appliance.
+    """
+    review = client.json_request("GET", "/ui/management/appliance-apply/review")
+    if review.get("initial_apply_required") is not True:
+        settled = _settle_dependent_dns(client)
+        return {"already_applied": settled.pop("clean"), **settled}
+    units = review.get("units")
+    if (review.get("active_task") is not None or not isinstance(units, list) or not units
+            or any(unit.get("valid") is not True or unit.get("format_volumes") for unit in units)):
+        raise OverlapPrerequisiteError("initial fixture Apply requires valid non-formatting units and no active task")
+    ids = [unit.get("id") for unit in units]
+    if any(not isinstance(unit, str) or not re.fullmatch(r"[a-z_]+", unit) for unit in ids):
+        raise OverlapPrerequisiteError("initial fixture Apply unit identity is invalid")
+    applied = _apply(client, ids)
+    return {"initial_apply": applied, **_settle_dependent_dns(client)}
 
 
 def _expiry(
