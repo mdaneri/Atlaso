@@ -456,7 +456,8 @@ def _restore(
             expected = set()
         if active != expected:
             raise OverlapPrerequisiteError("native baseline addresses were not restored")
-    return {"apply": applied, "native": native, "clean": _clean(client)}
+    settled = _settle_dependent_dns(client)
+    return {"apply": applied, "native": native, **settled}
 
 
 def _same_address_native(

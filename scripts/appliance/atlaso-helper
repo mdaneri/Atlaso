@@ -9709,7 +9709,11 @@ def _install_route_domain_intent(
     os.chmod(ROUTE_DOMAIN_SERVICE_PATH, 0o644)
     _fsync_file(ROUTE_DOMAIN_SERVICE_PATH)
     _fsync_directory(ROUTE_DOMAIN_SERVICE_PATH.parent)
-    for command in (["systemctl", "daemon-reload"], ["systemctl", "enable", "--now", ROUTE_DOMAIN_SERVICE_PATH.name]):
+    # enable --now starts a new unit but leaves an already-running watcher on
+    # its old imported Python code after an appliance upgrade.
+    for command in (["systemctl", "daemon-reload"],
+                    ["systemctl", "enable", "--now", ROUTE_DOMAIN_SERVICE_PATH.name],
+                    ["systemctl", "restart", ROUTE_DOMAIN_SERVICE_PATH.name]):
         if _run(command).returncode:
             raise ValueError("routing-domain service activation failed")
     _reconcile_route_domains()

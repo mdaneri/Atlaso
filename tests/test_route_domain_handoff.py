@@ -309,7 +309,8 @@ def test_candidate_new_address_never_becomes_a_held_old_source(monkeypatch, tmp_
     inventory = [{"ifname": "eth0", "address": "02:00:00:00:00:01", "addr_info": [
         {"scope": "global", "local": "192.0.2.10"}, {"scope": "global", "local": "198.51.100.10"}]}]
     monkeypatch.setattr(helper, "_network_observation_command", lambda command: subprocess.CompletedProcess(command, 0, json.dumps(inventory), ""))
-    monkeypatch.setattr(helper, "_run", lambda command: subprocess.CompletedProcess(command, 0, "", ""))
+    commands = []
+    monkeypatch.setattr(helper, "_run", lambda command: commands.append(command) or subprocess.CompletedProcess(command, 0, "", ""))
     monkeypatch.setattr(helper, "_fsync_file", lambda _path: None)
     monkeypatch.setattr(helper, "_fsync_directory", lambda _path: None)
     published = []
@@ -318,3 +319,6 @@ def test_candidate_new_address_never_becomes_a_held_old_source(monkeypatch, tmp_
     helper._install_route_domain_intent(Path("candidate.conf"), held_addresses=[old])
     assert published[0]["held_addresses"] == [old]
     assert published[0]["interfaces"] == [{"name": "eth0", "mac": "02:00:00:00:00:01", "table": 200, "management_ui": management_ui}]
+    assert commands[:3] == [["systemctl", "daemon-reload"],
+                            ["systemctl", "enable", "--now", "route-domains.service"],
+                            ["systemctl", "restart", "route-domains.service"]]
