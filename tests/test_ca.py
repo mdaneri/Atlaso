@@ -9,6 +9,7 @@ from atlaso.app.models import CaCertificate, CaProfile, CaSettings, utcnow
 from atlaso.app.secrets import decrypt_secret, encrypt_secret
 from atlaso.app.services.ca import (
     ca_certificate_to_dict,
+    certificate_needs_issue,
     ensure_root_ca_material,
     import_root_ca_material,
     issue_certificate,
@@ -146,6 +147,70 @@ def test_shared_development_root_import_issues_unique_vm_leaf_certificates():
     assert issued[0][1].fingerprint != issued[1][1].fingerprint
     assert issued[0][1].serial_number != issued[1][1].serial_number
     assert issued[0][1].private_key_encrypted != issued[1][1].private_key_encrypted
+
+
+def test_ca_reconciliation_reissues_legacy_managed_leaf_without_key_identifiers():
+    """Reissue a long-lived managed leaf missing strict-chain key identifiers once."""
+    from cryptography import x509
+    from cryptography.hazmat.primitives import hashes, serialization
+
+    certificate_pem, private_key_pem = development_root_material()
+    settings = CaSettings(enabled=True, storage_path="/etc/atlaso/ca")
+    import_root_ca_material(
+        settings,
+        certificate_pem,
+        private_key_pem,
+        expected_common_name="Atlaso Development Root CA",
+    )
+    profile = CaProfile(
+        id=43,
+        name="Service TLS",
+        certificate_type="server",
+        validity_days=180,
+        key_algorithm="RSA",
+        key_size=2048,
+        key_usage="digitalSignature,keyEncipherment",
+        extended_key_usage="serverAuth",
+        enabled=True,
+    )
+    leaf = CaCertificate(
+        common_name="oidc.atlaso.internal",
+        subject_alt_names="oidc.atlaso.internal",
+        profile_id=profile.id,
+        managed_owner="oidc:provider",
+        status="planned",
+        enabled=True,
+    )
+    assert issue_certificate(settings, [profile], leaf) is True
+    modern = x509.load_pem_x509_certificate(leaf.certificate_pem.encode("ascii"))
+    root = x509.load_pem_x509_certificate(settings.root_certificate_pem.encode("ascii"))
+    root_key = serialization.load_pem_private_key(private_key_pem.encode("ascii"), password=None)
+    legacy = (
+        x509.CertificateBuilder()
+        .subject_name(modern.subject)
+        .issuer_name(root.subject)
+        .public_key(modern.public_key())
+        .serial_number(x509.random_serial_number())
+        .not_valid_before(modern.not_valid_before_utc)
+        .not_valid_after(modern.not_valid_after_utc)
+        .add_extension(x509.BasicConstraints(ca=False, path_length=None), critical=True)
+        .sign(root_key, hashes.SHA256())
+    )
+    leaf.certificate_pem = legacy.public_bytes(serialization.Encoding.PEM).decode("ascii")
+    leaf.fingerprint = legacy.fingerprint(hashes.SHA256()).hex()
+    legacy_fingerprint = leaf.fingerprint
+
+    leaf.managed_owner = ""
+    assert certificate_needs_issue(leaf) is False
+    leaf.managed_owner = "oidc:provider"
+    assert certificate_needs_issue(leaf) is True
+    assert issue_certificate(settings, [profile], leaf) is True
+    assert leaf.fingerprint != legacy_fingerprint
+    reissued = x509.load_pem_x509_certificate(leaf.certificate_pem.encode("ascii"))
+    assert reissued.extensions.get_extension_for_class(x509.SubjectKeyIdentifier).value.digest
+    assert reissued.extensions.get_extension_for_class(x509.AuthorityKeyIdentifier).value.key_identifier
+    assert certificate_needs_issue(leaf) is False
+    assert issue_certificate(settings, [profile], leaf) is False
 
 
 def test_development_root_import_normalizes_windows_pem_line_endings():

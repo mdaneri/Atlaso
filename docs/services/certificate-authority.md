@@ -36,6 +36,9 @@ and never expose private keys in documentation, screenshots, tasks, or logs.
 
 An enabled CA with no listen interface still writes its root bundle and managed service certificates through global
 appliance apply. It does not add the CA portal to access-interface DNS, firewall, or public-service configuration.
+On the first CA apply after upgrading, Atlaso reissues managed service certificates that lack Subject Key Identifier
+or Authority Key Identifier extensions. This replaces their leaf certificates and private keys while retaining the
+existing root CA; export or reload any service trust material that pins an individual leaf.
 
 ## Review requests
 
