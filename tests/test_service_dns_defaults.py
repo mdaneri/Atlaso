@@ -121,9 +121,10 @@ def test_ntp_apply_blocks_operator_owned_hostname_and_target_conflicts():
     from atlaso.app.seed import seed_initial_data
     from atlaso.app.ui import ntp_context, service_target_hostname
 
-    for conflicting_hostname in (
-        "time.example.internal",
-        service_target_hostname("time.example.internal", "service"),
+    for conflicting_hostname, record_type, value in (
+        ("time.example.internal", "A", "192.0.2.99"),
+        ("time.example.internal", "TXT", "operator-note"),
+        (service_target_hostname("time.example.internal", "service"), "A", "192.0.2.99"),
     ):
         with _session_factory()() as db:
             seed_initial_data(db, include_examples=False, commit=False)
@@ -137,7 +138,7 @@ def test_ntp_apply_blocks_operator_owned_hostname_and_target_conflicts():
             settings.listen_interface = "eth9"
             settings.listen_address = "192.0.2.10"
             db.add(DnsRecord(
-                hostname=conflicting_hostname, record_type="A", address="192.0.2.99",
+                hostname=conflicting_hostname, record_type=record_type, address=value,
                 description="Operator", enabled=True,
             ))
             db.flush()
@@ -145,9 +146,14 @@ def test_ntp_apply_blocks_operator_owned_hostname_and_target_conflicts():
             context = ntp_context(db)
             assert any("operator-owned DNS record" in error for error in context["ntp_validation_errors"])
             manual = db.execute(select(DnsRecord).where(
-                DnsRecord.hostname == conflicting_hostname, DnsRecord.description == "Operator",
+                DnsRecord.hostname == conflicting_hostname, DnsRecord.record_type == record_type,
+                DnsRecord.description == "Operator",
             )).scalar_one()
-            assert manual.address == "192.0.2.99"
+            assert manual.address == value
+            if conflicting_hostname == settings.hostname:
+                assert db.execute(select(DnsRecord).where(
+                    DnsRecord.hostname == settings.hostname, DnsRecord.record_type == "CNAME",
+                )).scalars().all() == []
 
 
 def test_fresh_seed_and_lazy_service_defaults_use_appliance_domain(monkeypatch):

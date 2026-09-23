@@ -1825,8 +1825,9 @@ def test_selected_wan_change_executes_inside_existing_management_handoff(client)
     assert any(unit["unit_id"] == "wan" for unit in payload["units"])
 
 
-def test_ntp_apply_includes_generated_dns_after_ntp(client, monkeypatch):
-    """Enabling NTP captures its owned DNS records in the same ordered task."""
+@pytest.mark.parametrize("initially_enabled", [False, True])
+def test_ntp_apply_includes_generated_dns_after_ntp(client, monkeypatch, initially_enabled):
+    """NTP enable and disable capture only their owned DNS delta after NTP."""
     from sqlalchemy import select
 
     from atlaso.app import ui
@@ -1845,11 +1846,11 @@ def test_ntp_apply_includes_generated_dns_after_ntp(client, monkeypatch):
         interface.ip_cidr = "192.168.49.20/24"
         settings.listen_interface = "eth2"
         settings.listen_address = "192.168.49.20"
-        settings.enabled = False
+        settings.enabled = initially_enabled
         db.commit()
         units = ui.appliance_apply_units(db)
         ui.update_appliance_apply_baselines(db, units, {unit["id"] for unit in units})
-        settings.enabled = True
+        settings.enabled = not initially_enabled
         db.commit()
         changed = {unit["id"]: unit for unit in ui.appliance_apply_units(db)}
         assert ui.ntp_owned_dns_is_only_pending_change(db, changed["dnsmasq"])

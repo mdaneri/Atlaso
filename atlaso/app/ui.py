@@ -6410,13 +6410,11 @@ def ensure_interface_dns_alias(
     label_prefix = f"{normalized_hostname.split('.', 1)[0]}-"
 
     canonical_records = db.execute(
-        select(DnsRecord).where(
-            DnsRecord.hostname == normalized_hostname,
-            DnsRecord.record_type.in_(["A", "AAAA", "CNAME"]),
-        )
+        select(DnsRecord).where(DnsRecord.hostname == normalized_hostname)
     ).scalars().all()
     canonical_record_conflict = any(
-        record.description != description for record in canonical_records
+        record.description != description or record.record_type not in {"A", "AAAA", "CNAME"}
+        for record in canonical_records
     )
     generated_target_conflict = False
     for target in targets:
@@ -6827,14 +6825,22 @@ def ntp_dns_record_conflict(db: Session, settings: NtpSettings) -> bool:
         db, hostname=hostname, listen_interface=settings.listen_interface,
         listen_address=settings.listen_address, shared_target_token="service",
     )
-    names = {hostname, *(target["hostname"] for target in targets)}
-    records = db.execute(
+    canonical_records = db.execute(
+        select(DnsRecord).where(DnsRecord.hostname == hostname)
+    ).scalars().all()
+    if any(
+        record.description != NTP_DNS_DESCRIPTION or record.record_type not in {"A", "AAAA", "CNAME"}
+        for record in canonical_records
+    ):
+        return True
+    target_names = {target["hostname"] for target in targets}
+    target_records = db.execute(
         select(DnsRecord).where(
-            DnsRecord.hostname.in_(names),
+            DnsRecord.hostname.in_(target_names),
             DnsRecord.record_type.in_(["A", "AAAA", "CNAME"]),
         )
     ).scalars().all()
-    return any(record.description != NTP_DNS_DESCRIPTION for record in records)
+    return any(record.description != NTP_DNS_DESCRIPTION for record in target_records)
 
 
 def ntp_owned_dns_is_only_pending_change(db: Session, dns_unit: dict[str, Any]) -> bool:
@@ -6846,10 +6852,6 @@ def ntp_owned_dns_is_only_pending_change(db: Session, dns_unit: dict[str, Any]) 
         return False
 
     owned = db.execute(select(DnsRecord).where(DnsRecord.description == NTP_DNS_DESCRIPTION)).scalars().all()
-    if not owned:
-        # A disabled NTP service has no current ownership proof. Leave DNS
-        # selection with the operator rather than attributing manual edits.
-        return False
     current_lines = {
         f"cname={row.hostname},{row.address.strip().strip('.').lower()}"
         if row.record_type == "CNAME" else f"host-record={row.hostname},{row.address}"
@@ -6862,10 +6864,15 @@ def ntp_owned_dns_is_only_pending_change(db: Session, dns_unit: dict[str, Any]) 
     )
     prior_enabled = "# Atlaso NTP enabled: true" in previous_ntp.splitlines()
     prior_target = service_target_hostname(prior_hostname, "service") if prior_enabled and prior_hostname else ""
+    prior_cname = f"cname={prior_hostname},{prior_target}" if prior_target else ""
+    if not current_lines and (not prior_cname or prior_cname not in previous_dns.splitlines()):
+        # A clean disable can be attributed to the previously applied NTP
+        # alias. Without that evidence, leave DNS selection with the operator.
+        return False
     previous_lines = {
         line for line in previous_dns.splitlines()
         if prior_target and (
-            line == f"cname={prior_hostname},{prior_target}"
+            line == prior_cname
             or line.startswith(f"host-record={prior_target},")
         )
     }
