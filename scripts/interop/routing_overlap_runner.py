@@ -34,6 +34,10 @@ from scripts.interop.routing_overlap_transport import (
 )
 
 
+class ControllerFailure(ValueError):
+    """Public role/action and digest of a private controller refusal."""
+
+
 def bounded_json_command(client: paramiko.SSHClient, command: str, payload: dict[str, Any]) -> dict[str, Any]:
     """Exchange one bounded controller command without exposing guest stderr.
 
@@ -67,6 +71,15 @@ def bounded_json_command(client: paramiko.SSHClient, command: str, payload: dict
                 raise TimeoutError("fixture controller did not finish within its bound")
             time.sleep(0.05)
         if channel.recv_exit_status() != 0:
+            try:
+                failure = json.loads(output)
+            except (ValueError, UnicodeDecodeError):
+                failure = None
+            if (isinstance(failure, dict) and failure.get("schema") == 1
+                    and failure.get("ok") is False and isinstance(failure.get("error"), str)
+                    and 0 < len(failure["error"]) <= 256):
+                digest = hashlib.sha256(failure["error"].encode()).hexdigest()[:16]
+                raise ControllerFailure(f"fixture controller refusal digest {digest}; preserve the owned VM")
             raise ValueError("fixture controller rejected the operation; preserve the owned VM")
         value = json.loads(output)
         if not isinstance(value, dict) or value.get("schema") != 1 or value.get("ok") is not True:
@@ -140,7 +153,10 @@ class FixtureSession:
             "private": {"name": private.interface, "mac": private.mac},
             "ipv4_prefix": self.topology.ipv4_prefix, "ipv6_prefix": self.topology.ipv6_prefix,
             "appliance_mac": self.topology.link("appliance", 0).mac}
-        result = bounded_json_command(self.clients[role], f"sudo -n python3 -I {peer['controller']}", request)
+        try:
+            result = bounded_json_command(self.clients[role], f"sudo -n python3 -I {peer['controller']}", request)
+        except ControllerFailure as failure:
+            raise ControllerFailure(f"{role} {action}: {failure}") from None
         if result.get("role") != role or result.get("topology_sha256") != self.digest:
             raise ValueError("fixture controller result lost its topology binding")
         return result
@@ -195,14 +211,14 @@ def run_client_phase(fixture: FixtureSession, phase: str) -> dict[str, dict[str,
                 raise ValueError("fixture bootstrap rollback failed; preserve owned clients") from None
             raise
     elif phase == "stop":
-        failed = False
+        failures: list[str] = []
         for role in ("client-a", "client-b"):
             try:
                 states[role] = fixture.action(role, "stop")
-            except Exception:  # noqa: BLE001 - both owned guests must be attempted
-                failed = True
-        if failed:
-            raise ValueError("fixture client stop failed; preserve owned clients")
+            except Exception as failure:  # noqa: BLE001 - both owned guests must be attempted
+                failures.append(str(failure) if isinstance(failure, ControllerFailure) else role)
+        if failures:
+            raise ValueError(f"fixture client stop failed ({', '.join(failures)}); preserve owned clients")
     else:
         raise ValueError("unsupported fixture phase")
     return states
@@ -279,6 +295,7 @@ def main() -> int:
 if __name__ == "__main__":
     try:
         raise SystemExit(main())
-    except (ValueError, OSError, KeyError, TypeError, RuntimeError, paramiko.SSHException):
-        print("Private lifecycle operation failed; preserve canonical artifacts for diagnosis.", file=sys.stderr)
+    except (ValueError, OSError, KeyError, TypeError, RuntimeError, paramiko.SSHException) as failure:
+        detail = f" ({failure})" if isinstance(failure, ControllerFailure) else ""
+        print(f"Private lifecycle operation failed{detail}; preserve canonical artifacts for diagnosis.", file=sys.stderr)
         raise SystemExit(2) from None

@@ -7,6 +7,7 @@ import json
 import pytest
 
 from scripts.interop.routing_overlap_runner import (
+    ControllerFailure,
     FixtureSession,
     bounded_json_command,
     run_client_phase,
@@ -233,4 +234,20 @@ def test_controller_errors_close_without_echoing_output(output, code, ok):
         with pytest.raises(ValueError) as failure:
             bounded_json_command(client, 'fixed', {})
         assert 'private error' not in str(failure.value)
+    assert channel.closed
+
+
+def test_controller_refusal_exposes_only_digest():
+    """A guest refusal is correlatable without copying guest text to logs."""
+    import hashlib
+    from unittest.mock import Mock
+
+    private = 'fixture requires an initially non-forwarding client'
+    channel = Channel(json.dumps({'schema': 1, 'ok': False, 'error': private}).encode(), 2)
+    client = Mock()
+    client.get_transport.return_value.open_session.return_value = channel
+    with pytest.raises(ControllerFailure) as failure:
+        bounded_json_command(client, 'fixed', {})
+    assert hashlib.sha256(private.encode()).hexdigest()[:16] in str(failure.value)
+    assert private not in str(failure.value)
     assert channel.closed
