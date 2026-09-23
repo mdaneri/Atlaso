@@ -416,7 +416,8 @@ def test_initial_setup_applies_only_one_reviewed_dependent_dnsmasq_unit(monkeypa
         next(reviews) if path.endswith("/review") else
         {"pending_count": 1, "active_task": None, "locked": False}))
     monkeypatch.setattr(scenario, "_apply", lambda current, units: calls.append(units) or {"job_id": "job_abc"})
-    clean_calls = iter([scenario.OverlapPrerequisiteError("pending"), {"pending_count": 0}])
+    clean_calls = iter([scenario.OverlapPrerequisiteError("pending"),
+                        {"pending_count": 0}, {"pending_count": 0}])
 
     def clean(_client):
         outcome = next(clean_calls)
@@ -439,7 +440,8 @@ def test_established_setup_applies_only_reviewed_dependent_dnsmasq_unit(monkeypa
     monkeypatch.setattr(client, "json_request", lambda method, path: review if path.endswith("/review") else
                         {"pending_count": 1, "active_task": None, "locked": False})
     monkeypatch.setattr(scenario, "_apply", lambda current, units: calls.append(units) or {"job_id": "job_dns"})
-    outcomes = iter([scenario.OverlapPrerequisiteError("pending"), {"pending_count": 0}])
+    outcomes = iter([scenario.OverlapPrerequisiteError("pending"),
+                     {"pending_count": 0}, {"pending_count": 0}])
 
     def clean(_client):
         outcome = next(outcomes)
@@ -451,7 +453,30 @@ def test_established_setup_applies_only_reviewed_dependent_dnsmasq_unit(monkeypa
     result = scenario._setup(client)
     assert calls == [["dnsmasq"]]
     assert result == {"already_applied": {"pending_count": 0},
-                      "dependent_dnsmasq_apply": {"job_id": "job_dns"}}
+                      "dependent_dnsmasq_applies": [{"job_id": "job_dns"}]}
+
+
+def test_established_setup_rechecks_clean_projection_before_acceptance(monkeypatch):
+    """A clean first read followed by DNS drift still needs audited Apply."""
+    client = FakeClient()
+    review = {"initial_apply_required": False, "active_task": None, "pending_count": 1,
+              "units": [{"id": "dnsmasq", "valid": True, "format_volumes": []}]}
+    monkeypatch.setattr(client, "json_request", lambda method, path: review if path.endswith("/review") else
+                        {"pending_count": 1, "active_task": None, "locked": False})
+    applies = []
+    monkeypatch.setattr(scenario, "_apply", lambda current, units: applies.append(units) or {"job_id": "job_dns"})
+    outcomes = iter([{"pending_count": 0}, scenario.OverlapPrerequisiteError("pending"),
+                     {"pending_count": 0}, {"pending_count": 0}])
+
+    def clean(_client):
+        outcome = next(outcomes)
+        if isinstance(outcome, Exception):
+            raise outcome
+        return outcome
+
+    monkeypatch.setattr(scenario, "_clean", clean)
+    assert scenario._setup(client)["already_applied"] == {"pending_count": 0}
+    assert applies == [["dnsmasq"]]
 
 
 @pytest.mark.parametrize("changed", [False, True])

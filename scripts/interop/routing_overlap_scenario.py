@@ -278,19 +278,30 @@ def _clean(client: FixtureHttpClient) -> dict[str, Any]:
 
 
 def _settle_dependent_dns(client: FixtureHttpClient) -> dict[str, Any]:
-    """Admit at most one reviewed DNS delta before requiring a clean baseline."""
-    try:
-        clean = _clean(client)
-    except OverlapPrerequisiteError:
+    """Admit at most two reviewed DNS deltas before requiring stable clean reads."""
+    applications: list[dict[str, Any]] = []
+    for attempt in range(3):
+        try:
+            # Two consecutive uncached reads are required. A single clean
+            # projection can precede a dependent generated DNS delta.
+            _clean(client)
+            clean = _clean(client)
+            return {"dependent_dnsmasq_applies": applications, "clean": clean}
+        except OverlapPrerequisiteError as failure:
+            if attempt == 2:
+                raise OverlapPrerequisiteError(
+                    f"dependent DNS baseline did not stabilize after {len(applications)} audited Applies: {failure}"
+                ) from None
         # Deployment or the first Apply can change the generated DNS preview.
-        # Admit only that reviewed, non-formatting unit for one Apply; any
-        # other pending state remains a hard failure.
+        # Admit only that reviewed, non-formatting unit for up to two Applies;
+        # any other pending state remains a hard failure.
         pending = client.json_request("GET", "/ui/management/appliance-apply/review")
         status = client.json_request("GET", "/ui/management/appliance-apply/status?refresh=true")
         remaining = pending.get("units")
         if (pending.get("initial_apply_required") is not False or pending.get("active_task") is not None
                 or pending.get("pending_count") != 1 or not isinstance(remaining, list)
-                or len(remaining) != 1 or remaining[0].get("id") != "dnsmasq"
+                or len(remaining) != 1 or not isinstance(remaining[0], dict)
+                or remaining[0].get("id") != "dnsmasq"
                 or remaining[0].get("valid") is not True or remaining[0].get("format_volumes")
                 or status.get("pending_count") != 1 or status.get("active_task") is not None
                 or status.get("locked") is not False):
@@ -301,16 +312,8 @@ def _settle_dependent_dns(client: FixtureHttpClient) -> dict[str, Any]:
                 f"review_pending={pending.get('pending_count') if type(pending.get('pending_count')) is int else 'invalid'}, "
                 f"status_pending={status.get('pending_count') if type(status.get('pending_count')) is int else 'invalid'})"
             ) from None
-        dependent = _apply(client, ["dnsmasq"])
-        try:
-            clean = _clean(client)
-        except OverlapPrerequisiteError as failure:
-            raise OverlapPrerequisiteError(
-                f"dependent DNS Apply did not establish a clean baseline "
-                f"(dry_run_units={dependent.get('dry_run_units', [])}): {failure}"
-            ) from None
-        return {"dependent_dnsmasq_apply": dependent, "clean": clean}
-    return {"clean": clean}
+        applications.append(_apply(client, ["dnsmasq"]))
+    raise AssertionError("bounded DNS setup loop did not terminate")
 
 
 def _setup(client: FixtureHttpClient) -> dict[str, Any]:
@@ -603,7 +606,9 @@ def _run_authenticated(
     """
     management, lab = (topology.link("appliance", index).interface for index in (0, 1))
     setup = _setup(client)
-    clean = _clean(client)
+    clean = setup.get("clean", setup.get("already_applied"))
+    if not isinstance(clean, dict) or clean.get("pending_count") != 0:
+        raise OverlapPrerequisiteError("scenario setup did not produce a clean applied baseline")
     baseline = {
         name: {key: row[key] for key in FIELDS}
         for name in (management, lab)
