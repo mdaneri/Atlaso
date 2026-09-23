@@ -24814,6 +24814,9 @@ def _snapshot_management_handoff_routing(interfaces: list[str], tables: dict[str
             observed_route_counts[family] = {
                 "all": len(entries),
                 "interface": sum(isinstance(route, dict) and route.get("dev") == name for route in entries),
+                "missing_dev": sum(isinstance(route, dict) and not route.get("dev") for route in entries),
+                "other_dev": sum(isinstance(route, dict) and bool(route.get("dev")) and route.get("dev") != name
+                                 for route in entries),
                 "main": sum(isinstance(route, dict) and str(route.get("table", "main")) in {"main", "254"}
                             for route in entries),
                 "domain": sum(isinstance(route, dict) and str(route.get("table")) == str(tables[name])
