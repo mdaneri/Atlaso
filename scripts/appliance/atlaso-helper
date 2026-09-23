@@ -24855,7 +24855,7 @@ def _snapshot_management_handoff_routing(interfaces: list[str], tables: dict[str
             route["holdover_metric"] = route["metric"] + offset
         for family in {ip_interface(cidr).version for cidr in cidrs}:
             if not any(ip_network(route["destination"]).version == family for route in routes.values()):
-                raise ValueError("previous routing-domain family has no observed usable route")
+                raise ValueError(f"previous routing-domain IPv{family} family has no observed usable route")
         captured[name] = {"mac": mac, "table": tables[name], "cidrs": sorted(set(cidrs)),
                           "routes": list(routes.values())}
     return captured
