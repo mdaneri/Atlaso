@@ -324,6 +324,7 @@ Every configurable setting has an adjacent `i` help control using `.field-label`
 opens from the button on hover, keyboard focus, or click/tap; Escape or an outside click dismisses it. The overlay
 repositions within the viewport above panels and dialogs, while the button provides the accessible name and tooltip
 association. Without JavaScript, the button still shows its help text in a fixed viewport fallback on hover or focus.
+Click or focus the button to keep long fallback help visible while scrolling it at high zoom or on short viewports.
 The tooltip explains what changes, where it applies, and any safety boundary. Use explicit action labels
 such as **Review appliance changes** or **Submit appliance changes** instead of generic **Save** or **Apply**.
 

@@ -4046,6 +4046,7 @@ html:not(.atlaso-help-ready) .help-icon[data-help]::after {
   width: max-content;
   max-width: min(320px, calc(100vw - 24px));
   max-height: calc(100vh - 24px);
+  overflow-y: auto;
   overflow-wrap: anywhere;
   border: 1px solid var(--border);
   border-radius: 7px;
@@ -4063,8 +4064,9 @@ html:not(.atlaso-help-ready) .help-icon[data-help]::after {
 }
 
 html:not(.atlaso-help-ready) .help-icon[data-help]:hover::after,
-html:not(.atlaso-help-ready) .help-icon[data-help]:focus-visible::after {
+html:not(.atlaso-help-ready) .help-icon[data-help]:focus::after {
   visibility: visible;
+  pointer-events: auto;
 }
 
 .atlaso-help-tooltip {

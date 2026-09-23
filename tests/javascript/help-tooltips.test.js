@@ -151,6 +151,8 @@ test("viewport placement flips and shifts the top-layer tooltip", () => {
   assert.match(css, /\.atlaso-help-tooltip\s*\{[^}]*position: fixed;/s);
   assert.match(css, /html:not\(\.atlaso-help-ready\) \.help-icon\[data-help\]::after/);
   assert.match(css, /content: attr\(data-help\);/);
+  assert.match(css, /html:not\(\.atlaso-help-ready\) \.help-icon\[data-help\]::after\s*\{[^}]*max-height:[^;]+;[^}]*overflow-y: auto;/s);
+  assert.match(css, /html:not\(\.atlaso-help-ready\) \.help-icon\[data-help\]:focus::after\s*\{[^}]*visibility: visible;[^}]*pointer-events: auto;/s);
 });
 
 test("help inside a modal stays in the modal's accessible subtree", () => {
