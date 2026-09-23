@@ -2016,7 +2016,7 @@ def oidc_site_listener_check(args: argparse.Namespace, provider: dict[str, Any])
     url = f"https://{hostname}:{port}/identity/.well-known/openid-configuration"
     command = (
         "test -s /tmp/atlaso-root-ca.pem && "
-        f"dig +short A {shlex.quote(hostname)} @{site_address} | grep -Fx {shlex.quote(site_address)} && "
+        f"dig +short A {shlex.quote(hostname)} @{site_address} | grep -qFx {shlex.quote(site_address)} && "
         "curl --silent --show-error --fail --connect-timeout 10 --max-time 30 "
         "--cacert /tmp/atlaso-root-ca.pem "
         f"--output /dev/null --write-out '%{{http_code}}' {shlex.quote(url)}"

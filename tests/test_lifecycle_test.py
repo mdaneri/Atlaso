@@ -852,6 +852,7 @@ def test_full_oidc_site_listener_uses_client_and_verifies_ca(monkeypatch):
     assert calls[0][2] == "client"
     assert "--cacert /tmp/atlaso-root-ca.pem" in calls[0][1]
     assert "dig +short A oidc.atlaso.internal @192.168.12.1" in calls[0][1]
+    assert "grep -qFx 192.168.12.1" in calls[0][1]
     assert "--resolve" not in calls[0][1]
     assert "https://oidc.atlaso.internal:443/identity/.well-known/openid-configuration" in calls[0][1]
     assert " -k" not in calls[0][1]

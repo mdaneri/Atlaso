@@ -112,58 +112,63 @@ if ((Test-Path -LiteralPath $vmdkPath) -and -not $Force) {
     }
 }
 
-$minimumVirtualSize = [int64]2GB
-$imageInfoJson = qemu-img info --output=json -f vmdk $vmdkPath
-if ($LASTEXITCODE -ne 0) {
-    throw "qemu-img could not inspect the VMware client disk before capacity validation."
-}
-$virtualSize = [int64](($imageInfoJson -join "`n") | ConvertFrom-Json).'virtual-size'
-if ($virtualSize -lt $minimumVirtualSize) {
-    if (-not $PSCmdlet.ShouldProcess($vmdkPath, 'Expand the powered-off VMware client disk to 2 GiB')) {
-        return
+try {
+    $minimumVirtualSize = [int64]2GB
+    $imageInfoJson = qemu-img info --output=json -f vmdk $vmdkPath
+    if ($LASTEXITCODE -ne 0) {
+        throw "qemu-img could not inspect the VMware client disk before capacity validation."
     }
-    $diskManagerCommand = Get-Command vmware-vdiskmanager.exe -ErrorAction SilentlyContinue
-    $diskManagerPath = if ($diskManagerCommand) { $diskManagerCommand.Source } else { '' }
-    if (-not $diskManagerPath) {
-        foreach ($candidate in @(
-            'C:\Program Files\VMware\VMware Workstation\vmware-vdiskmanager.exe',
-            'C:\Program Files (x86)\VMware\VMware Workstation\vmware-vdiskmanager.exe'
-        )) {
-            if (Test-Path -LiteralPath $candidate) {
-                $diskManagerPath = $candidate
-                break
+    $virtualSize = [int64](($imageInfoJson -join "`n") | ConvertFrom-Json).'virtual-size'
+    if ($virtualSize -lt $minimumVirtualSize) {
+        if (-not $PSCmdlet.ShouldProcess($vmdkPath, 'Expand the powered-off VMware client disk to 2 GiB')) {
+            return
+        }
+        $diskManagerCommand = Get-Command vmware-vdiskmanager.exe -ErrorAction SilentlyContinue
+        $diskManagerPath = if ($diskManagerCommand) { $diskManagerCommand.Source } else { '' }
+        if (-not $diskManagerPath) {
+            foreach ($candidate in @(
+                'C:\Program Files\VMware\VMware Workstation\vmware-vdiskmanager.exe',
+                'C:\Program Files (x86)\VMware\VMware Workstation\vmware-vdiskmanager.exe'
+            )) {
+                if (Test-Path -LiteralPath $candidate) {
+                    $diskManagerPath = $candidate
+                    break
+                }
             }
         }
+        if (-not $diskManagerPath) {
+            throw 'vmware-vdiskmanager.exe is required to expand the powered-off VMware client disk.'
+        }
+        & $diskManagerPath -x 2GB $vmdkPath
+        if ($LASTEXITCODE -ne 0) {
+            throw "vmware-vdiskmanager could not expand the VMware client disk to 2 GiB."
+        }
     }
-    if (-not $diskManagerPath) {
-        throw 'vmware-vdiskmanager.exe is required to expand the powered-off VMware client disk.'
-    }
-    & $diskManagerPath -x 2GB $vmdkPath
-    if ($LASTEXITCODE -ne 0) {
-        throw "vmware-vdiskmanager could not expand the VMware client disk to 2 GiB."
-    }
-}
 
-$info = qemu-img info $vmdkPath
-$infoExitCode = $LASTEXITCODE
-if ($infoExitCode -ne 0) {
+    $info = qemu-img info $vmdkPath
+    $infoExitCode = $LASTEXITCODE
+    if ($infoExitCode -ne 0) {
+        throw "qemu-img info failed with exit code $infoExitCode."
+    }
+    $verifiedInfoJson = qemu-img info --output=json -f vmdk $vmdkPath
+    if ($LASTEXITCODE -ne 0 -or [int64](($verifiedInfoJson -join "`n") | ConvertFrom-Json).'virtual-size' -lt $minimumVirtualSize) {
+        throw "The VMware client disk is smaller than the required 2 GiB virtual capacity."
+    }
+    [pscustomobject]@{
+        version       = $Version
+        qcow2         = (Resolve-Path -LiteralPath $qcowPath).Path
+        sha512        = $actual
+        vmdk          = (Resolve-Path -LiteralPath $vmdkPath).Path
+        qemu_img_info = ($info -join "`n")
+    } | ConvertTo-Json -Depth 3
+} catch {
+    $inspectionError = $_
     if ($convertedThisRun -and (Test-Path -LiteralPath $vmdkPath)) {
         try {
             Remove-Item -LiteralPath $vmdkPath -Force -ErrorAction Stop
         } catch {
-            throw "qemu-img info failed with exit code $infoExitCode, and the unverified VMDK could not be removed: $($_.Exception.Message)"
+            throw "VMware client disk verification failed, and the newly converted VMDK could not be removed: $($_.Exception.Message)"
         }
     }
-    throw "qemu-img info failed with exit code $infoExitCode."
+    throw $inspectionError
 }
-$verifiedInfoJson = qemu-img info --output=json -f vmdk $vmdkPath
-if ($LASTEXITCODE -ne 0 -or [int64](($verifiedInfoJson -join "`n") | ConvertFrom-Json).'virtual-size' -lt $minimumVirtualSize) {
-    throw "The VMware client disk is smaller than the required 2 GiB virtual capacity."
-}
-[pscustomobject]@{
-    version       = $Version
-    qcow2         = (Resolve-Path -LiteralPath $qcowPath).Path
-    sha512        = $actual
-    vmdk          = (Resolve-Path -LiteralPath $vmdkPath).Path
-    qemu_img_info = ($info -join "`n")
-} | ConvertTo-Json -Depth 3

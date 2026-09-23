@@ -651,8 +651,9 @@ def test_dns_change_keeps_unrelated_settings_pending_when_resolver_is_already_lo
     assert payload["selected_units"] == ["dnsmasq"]
 
 
-def test_management_https_applies_pending_ca_before_settings(client, monkeypatch):
-    """A newly issued management certificate must be installed before HTTPS is enabled."""
+@pytest.mark.parametrize("ca_changed", [False, True])
+def test_management_https_applies_pending_ca_before_settings(client, monkeypatch, ca_changed):
+    """HTTPS activation installs its certificate even if CA preview is unchanged."""
     from atlaso.app import ui
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import ApplianceSettings, CaSettings, Job
@@ -671,7 +672,7 @@ def test_management_https_applies_pending_ca_before_settings(client, monkeypatch
 
     def units_with_pending_ca(db, *, reconcile=True, applying_dns=False):
         units = real_units(db, reconcile=reconcile, applying_dns=applying_dns)
-        next(unit for unit in units if unit["id"] == "ca")["changed"] = True
+        next(unit for unit in units if unit["id"] == "ca")["changed"] = ca_changed
         return units
 
     monkeypatch.setattr(ui, "appliance_apply_units", units_with_pending_ca)

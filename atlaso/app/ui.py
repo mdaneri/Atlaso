@@ -16921,7 +16921,6 @@ def _submit_appliance_apply(
     https_ca_required = bool(
         "appliance_settings" in selected_ids
         and getattr(settings_for_apply, "management_https_enabled", False)
-        and unit_map.get("ca", {}).get("changed")
         and (management_https_activation or management_certificate_unapplied)
     )
     if https_ca_required:
