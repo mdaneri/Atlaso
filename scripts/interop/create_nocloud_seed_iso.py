@@ -94,7 +94,8 @@ ssh_pwauth: true"""
         "\n  - rc-update add open-vm-tools default\n  - rc-service open-vm-tools start"
         if fixture_mode else ""
     )
-    refresh_command = "true" if fixture_mode else "/usr/local/sbin/atlaso-refresh-test-dhcp || true"
+    # YAML treats a bare `true` as a boolean; cloud-init runcmd requires strings.
+    refresh_command = "'true'" if fixture_mode else "/usr/local/sbin/atlaso-refresh-test-dhcp || true"
 
     user_data = f"""#cloud-config
 hostname: {args.hostname}

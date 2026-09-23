@@ -5,6 +5,7 @@ import hashlib
 import json
 
 import pytest
+import yaml
 
 from scripts.interop.routing_overlap import (
     FixtureOwner,
@@ -153,6 +154,8 @@ def test_client_seed_installs_fixture_tools_only_when_requested(enabled):
     files = cloud_init_files(Namespace(hostname="fixture", user="alpine", public_key="synthetic-public-key",
                                       password="", routing_overlap_guest=enabled))
     data = files["user-data"]
+    commands = yaml.safe_load(data)["runcmd"]
+    assert all(isinstance(command, str) for command in commands)
     for package in ("dnsmasq", "radvd", "python3", "nftables", "ethtool", "sudo",
                     "open-vm-tools", "open-vm-tools-openrc"):
         assert (f"  - {package}\n" in data) == enabled
