@@ -212,6 +212,22 @@ def test_installed_core_projection_serializes_held_identity(helper, modern, monk
     assert observed["management_ui"] == {"eth1": None}
 
 
+def test_wan_projection_reports_bounded_failed_stage(helper, modern, monkeypatch):
+    """A failed isolated ownership read identifies its stage without raw stderr.
+
+    Args:
+        helper: Loaded privileged helper.
+        modern: Admitted applied-intent fixture.
+        monkeypatch: Reversible native observation boundary.
+    """
+    _state, _commands = modern
+    monkeypatch.setattr(helper, "_network_observation_command", lambda command, *, timeout:
+                        subprocess.CompletedProcess(command, 1, '{"stage":"addresses","reason":"ReconcileError"}', ""))
+
+    with pytest.raises(ValueError, match=r"observation failed at addresses \(ReconcileError\)"):
+        helper._applied_wan_network_state()
+
+
 @pytest.mark.parametrize("family", [4, 6])
 @pytest.mark.parametrize("gateway", [False, True])
 def test_enabled_static_cannot_replace_connected_identity(helper, modern, family, gateway):

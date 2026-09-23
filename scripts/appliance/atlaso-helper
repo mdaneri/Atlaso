@@ -11960,19 +11960,35 @@ def _applied_wan_network_state() -> dict | None:
         raise ValueError("applied routing-domain intent is unsafe")
     program = (
         "import json\nfrom dataclasses import asdict\n"
-        "from atlaso.route_domains import read_intent, read_native, source_tables, reconciliation_lock\n"
-        "with reconciliation_lock():\n"
-        " intent = read_intent()\n addresses = read_native(['address', 'show'])\n"
-        " sources, incomplete = source_tables(intent, addresses)\n"
-        " routes = {str(f): read_native([f'-{f}', 'route', 'show', 'table', '200']) for f in (4, 6)}\n"
-        " print(json.dumps({'intent': asdict(intent), 'addresses': addresses, 'sources': sources,"
+        "from atlaso.route_domains import ReconcileError, read_intent, read_native, source_tables, reconciliation_lock\n"
+        "stage = 'lock'\n"
+        "try:\n"
+        " with reconciliation_lock():\n"
+        "  stage = 'intent'\n  intent = read_intent()\n"
+        "  stage = 'addresses'\n  addresses = read_native(['address', 'show'])\n"
+        "  stage = 'sources'\n  sources, incomplete = source_tables(intent, addresses)\n"
+        "  stage = 'routes'\n"
+        "  routes = {str(f): read_native([f'-{f}', 'route', 'show', 'table', '200']) for f in (4, 6)}\n"
+        "  stage = 'serialize'\n"
+        "  print(json.dumps({'intent': asdict(intent), 'addresses': addresses, 'sources': sources,"
         " 'incomplete': incomplete, 'routes': routes}))\n"
+        "except Exception as exc:\n"
+        " print(json.dumps({'stage': stage, 'reason': str(exc) if isinstance(exc, ReconcileError)"
+        " else type(exc).__name__}))\n"
+        " raise SystemExit(1)\n"
     )
     result = _network_observation_command(
         ["/opt/atlaso/.venv/bin/python", "-I", "-c", program], timeout=45,
     )
     if result.returncode:
-        raise ValueError("applied Network ownership observation failed; reapply Network before WAN")
+        try:
+            failure = json.loads(result.stdout)
+            stage, reason = failure["stage"], failure["reason"]
+            if stage not in {"lock", "intent", "addresses", "sources", "routes", "serialize"} or not isinstance(reason, str):
+                raise ValueError("invalid failure classification")
+        except (ValueError, KeyError, TypeError):
+            stage, reason = "unknown", "unclassified"
+        raise ValueError(f"applied Network ownership observation failed at {stage} ({reason}); reapply Network before WAN")
     snapshot = json.loads(result.stdout)
     if snapshot["incomplete"] or any(table is None for table in snapshot["sources"].values()):
         raise ValueError("applied Network interface identity is unavailable or ambiguous")
