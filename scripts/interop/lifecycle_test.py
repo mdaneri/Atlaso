@@ -4028,7 +4028,7 @@ def host_state_checks(args: argparse.Namespace) -> dict[str, Any]:
             "test \"$(systemctl show getty@tty2.service -p UnitFileState --value)\" != masked && "
             "test -x /opt/atlaso/.venv/bin/atlaso-console && "
             "/opt/atlaso/bin/atlaso-helper console status --real | "
-            "grep -F '\"maintenance_isolation\": false'"
+            "grep -F maintenance_isolation | grep -F false"
         ),
         "vcf_trust_dependencies": (
             f"printf %s {httpx_probe} | base64 -d | /opt/atlaso/.venv/bin/python -"

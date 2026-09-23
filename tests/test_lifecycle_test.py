@@ -1063,6 +1063,7 @@ def test_host_state_checks_verify_vcf_trust_runtime_dependencies(monkeypatch):
     assert "-verify_hostname ldap.atlaso.internal" in captured["ldap_tls"]
     assert encoded_powercli_probe in captured["vcf_powercli_user"]
     assert execution_contexts["vcf_powercli_user"] is False
+    assert "console status --real | grep -F maintenance_isolation | grep -F false" in captured["local_console"]
 
 
 def test_managed_ldap_lifecycle_check_sends_directory_password_only_through_stdin(monkeypatch):

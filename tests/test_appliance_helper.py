@@ -2379,26 +2379,25 @@ def test_management_handoff_stops_when_networkd_reconfigure_fails(monkeypatch, t
     [
         ["networkctl", "reload"],
         ["networkctl", "reconfigure", "eth0"],
+        ["resolvectl", "revert", "eth0"],
     ],
 )
-def test_dhcp_resolver_keeps_active_dns_when_networkd_transition_fails(
+def test_dhcp_resolver_restores_networkd_file_when_transition_fails(
     monkeypatch, tmp_path, failed_command
 ):
-    """A failed networkd transition must leave the transient resolver intact.
+    """A failed transition restores the durable file and prior active DNS.
 
     Args:
         monkeypatch: Pytest fixture used to replace helper dependencies.
         tmp_path: Temporary networkd configuration directory.
-        failed_command: networkctl command selected to fail.
+        failed_command: Resolver transition command selected to fail.
     """
     helper = load_helper_module()
     networkd_dir = tmp_path / "networkd"
     networkd_dir.mkdir()
     network_path = networkd_dir / "00-atlaso-mgmt.network"
-    network_path.write_text(
-        "[Match]\nName=eth0\n\n[Network]\nDHCP=ipv4\nDNS=127.0.0.1\n[DHCPv4]\nUseDNS=no\n",
-        encoding="utf-8",
-    )
+    original = "[Match]\nName=eth0\n\n[Network]\nDHCP=ipv4\nDNS=127.0.0.1\n[DHCPv4]\nUseDNS=no\n"
+    network_path.write_text(original, encoding="utf-8")
     commands: list[list[str]] = []
     monkeypatch.setattr(helper, "NETWORKD_CONFIG_DIR", networkd_dir)
     monkeypatch.setattr(helper, "NETWORKD_MGMT_CONFIG_PATH", network_path)
@@ -2417,8 +2416,10 @@ def test_dhcp_resolver_keeps_active_dns_when_networkd_transition_fails(
     result = helper._configure_dhcp_resolver("eth0")
 
     assert result.returncode == 1
-    assert ["resolvectl", "revert", "eth0"] not in commands
-    assert "UseDNS=yes" in network_path.read_text(encoding="utf-8")
+    if failed_command[0] == "networkctl":
+        assert ["resolvectl", "revert", "eth0"] not in commands
+    assert network_path.read_text(encoding="utf-8") == original
+    assert commands.count(["networkctl", "reload"]) == 2
 
 
 def test_management_handoff_rejects_unpersisted_resolver(monkeypatch):
@@ -11643,6 +11644,49 @@ def test_dnsmasq_ipv6_lease_mirror_uses_duid_and_iaid(monkeypatch, tmp_path, cap
         "1893456000 18 2001:db8:50::21 * 00:01:00:01:ab:cd\n", encoding="utf-8"
     )
     helper._prepare_authoritative_lease_hosts(authoritative)
+    assert not mirror.exists()
+
+
+def test_explicit_managed_reservation_survives_unmanaged_dhcp_scope(monkeypatch, tmp_path):
+    """Keep a managed FQDN reservation even without DHCP scope metadata.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace helper paths.
+        tmp_path: Temporary directory for isolated DNS state.
+    """
+    helper = load_helper_module()
+    state_dir = tmp_path / "dnsmasq"
+    state_dir.mkdir()
+    hosts_dir = tmp_path / "authoritative-leases"
+    hosts_dir.mkdir()
+    mirror = hosts_dir / "lease-c0a83215.hosts"
+    mirror.write_text(
+        "192.168.50.21 reserved.atlaso.internal\n"
+        "# mac=02:00:00:00:00:01\n# reservation\n",
+        encoding="utf-8",
+    )
+    (state_dir / "dhcp.leases").write_text(
+        "1893456000 02:00:00:00:00:01 192.168.50.21 * *\n", encoding="utf-8"
+    )
+    authoritative = tmp_path / "authoritative.conf"
+    authoritative.write_text("auth-zone=atlaso.internal\n", encoding="utf-8")
+    installed = tmp_path / "installed.conf"
+    installed.write_text(
+        "dhcp-host=02:00:00:00:00:01,set:atlaso-name-020000000001,192.168.50.21\n"
+        "dhcp-option=tag:atlaso-name-020000000001,option:host-name,reserved.atlaso.internal\n",
+        encoding="utf-8",
+    )
+    candidate = tmp_path / "candidate.conf"
+    candidate.write_text("", encoding="utf-8")
+    monkeypatch.setattr(helper, "DNSMASQ_STATE_DIR", state_dir)
+    monkeypatch.setattr(helper, "DNSMASQ_LEASE_FILE_PATH", state_dir / "dhcp.leases")
+    monkeypatch.setattr(helper, "DNSMASQ_AUTHORITATIVE_LEASE_HOSTS_DIR", hosts_dir)
+    monkeypatch.setattr(helper, "DNSMASQ_CONFIG_PATH", installed)
+
+    helper._prepare_authoritative_lease_hosts(authoritative, installed)
+    assert mirror.exists()
+
+    helper._prepare_authoritative_lease_hosts(authoritative, candidate)
     assert not mirror.exists()
 
 

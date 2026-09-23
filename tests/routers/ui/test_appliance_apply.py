@@ -1792,8 +1792,8 @@ def test_appliance_apply_review_returns_management_address_connection_warning(cl
     assert "from 192.168.49.1/24 to 192.168.49.20/24" in network["connection_warnings"][0]
 
 
-def test_management_move_forces_partial_dependency_selection_into_handoff(client):
-    """Bundle every runtime layer when Firewall alone is selected for a pending move.
+def test_management_move_leaves_unselected_dns_enablement_pending(client):
+    """Bundle required handoff units without applying pending DNS enablement.
 
     Args:
         client: HTTP test client used to exercise the Atlaso application.
@@ -1837,14 +1837,17 @@ def test_management_move_forces_partial_dependency_selection_into_handoff(client
             "firewall",
             "appliance_settings",
             "public_services",
-            "dnsmasq",
         }
+        assert "dnsmasq" not in payload["selected_units"]
+        assert "dnsmasq" in {unit["unit_id"] for unit in payload["skipped_changed_units"]}
         settings = next(
             unit
             for unit in payload["captured_units"]
             if unit["unit_id"] == "appliance_settings"
         )
-        assert json.loads(settings["config_preview"])["resolver_servers"] == ["127.0.0.1"]
+        resolver = json.loads(settings["config_preview"])
+        assert resolver["resolver_mode"] != "local_dns"
+        assert resolver["resolver_servers"] != ["127.0.0.1"]
         assert all(
             unit["management_handoff"]["management_handoff"] == "committed"
             for unit in payload["units"]

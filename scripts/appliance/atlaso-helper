@@ -2901,7 +2901,7 @@ def _write_management_resolver(
     interface_name: str,
     servers: list[str],
     domains: list[str],
-) -> Path | None:
+) -> tuple[Path | None, str | None]:
     """Write management resolver.
 
     Args:
@@ -2913,7 +2913,8 @@ def _write_management_resolver(
     if network_path is not None:
         text = network_path.read_text(encoding="utf-8")
         network_path.write_text(_management_resolver_candidate(text, servers, domains), encoding="utf-8")
-    return network_path
+        return network_path, text
+    return None, None
 
 
 def _reload_management_resolver(
@@ -2945,6 +2946,25 @@ def _reload_management_resolver(
     return result
 
 
+def _restore_management_resolver(
+    interface_name: str,
+    network_path: Path | None,
+    previous_text: str | None,
+) -> None:
+    """Restore the prior networkd file after a failed resolver transition.
+
+    Args:
+        interface_name: Host network-interface name affected by the operation.
+        network_path: Generated networkd file changed for the transition.
+        previous_text: Exact file content from before the transition.
+    """
+    if network_path is None or previous_text is None:
+        return
+    network_path.write_text(previous_text, encoding="utf-8")
+    # Reload again in case the first reload accepted the candidate before a
+    # later reconfigure failed. The original failure remains authoritative.
+    _reload_management_resolver(interface_name, network_path)
+
 
 def _configure_resolver(interface_name: str, servers: list[str], domains: list[str]) -> subprocess.CompletedProcess[str]:
     """Perform configure resolver.
@@ -2954,9 +2974,10 @@ def _configure_resolver(interface_name: str, servers: list[str], domains: list[s
         servers: Servers consumed by configure resolver.
         domains: Domains consumed by configure resolver.
     """
-    network_path = _write_management_resolver(interface_name, servers, domains)
+    network_path, previous_text = _write_management_resolver(interface_name, servers, domains)
     reload_result = _reload_management_resolver(interface_name, network_path)
     if reload_result is not None and reload_result.returncode != 0:
+        _restore_management_resolver(interface_name, network_path, previous_text)
         return reload_result
     commands = [
         ["resolvectl", "dns", interface_name, *servers],
@@ -2967,6 +2988,7 @@ def _configure_resolver(interface_name: str, servers: list[str], domains: list[s
         print(result.stdout, end="")
         print(result.stderr, end="", file=sys.stderr)
         if result.returncode != 0:
+            _restore_management_resolver(interface_name, network_path, previous_text)
             return result
     return subprocess.CompletedProcess(commands[-1], 0, "", "")
 
@@ -2977,15 +2999,18 @@ def _configure_dhcp_resolver(interface_name: str) -> subprocess.CompletedProcess
     Args:
         interface_name: Host network-interface name affected by the operation.
     """
-    network_path = _write_management_resolver(interface_name, [], [])
+    network_path, previous_text = _write_management_resolver(interface_name, [], [])
     # Keep the active resolver until networkd has accepted the restored DHCP/RA
     # policy. Revert discards every transient per-link DNS setting.
     reload_result = _reload_management_resolver(interface_name, network_path)
     if reload_result is not None and reload_result.returncode != 0:
+        _restore_management_resolver(interface_name, network_path, previous_text)
         return reload_result
     result = _run(["resolvectl", "revert", interface_name])
     print(result.stdout, end="")
     print(result.stderr, end="", file=sys.stderr)
+    if result.returncode != 0:
+        _restore_management_resolver(interface_name, network_path, previous_text)
     return result
 
 
@@ -3187,7 +3212,7 @@ def _prepare_authoritative_lease_hosts(
             or not lease[0]
             or rows[1] != lease[0]
             or not any(hostname.endswith(f".{zone}") for zone in zones)
-            or (scopes is not None and not any(
+            or (scopes is not None and not current_reservation_matches and not any(
                 lease_address in network and hostname.endswith(f".{domain}")
                 for network, domain in scopes
             ))
