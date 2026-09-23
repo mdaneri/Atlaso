@@ -1896,6 +1896,9 @@ def render_dnsmasq_config(
                 if managed_reservation:
                     reservation_tag = "atlaso-name-" + re.sub(r"[^0-9a-f]", "", reservation.mac_address.lower())
                     lines.append(f"dhcp-host={reservation.mac_address},set:{reservation_tag},{reservation_ip}")
+                    # A reservation in an unmanaged DHCP scope still must not
+                    # let recursive dnsmasq learn the managed name locally.
+                    lines.append(f"dhcp-ignore-names=tag:{reservation_tag}")
                     lines.append(f"dhcp-option=tag:{reservation_tag},option:host-name,{reservation.hostname}")
                 else:
                     lines.append(f"dhcp-host={reservation.mac_address},{reservation.hostname},{reservation_ip}")

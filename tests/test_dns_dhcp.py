@@ -233,6 +233,7 @@ def test_authoritative_dns_with_dhcp_subscribes_to_lease_changes():
     assert "dhcp-script=/opt/atlaso/bin/atlaso-helper" in config.splitlines()
     assert "script-on-renewal" in config.splitlines()
     assert "dhcp-host=02:15:5d:00:20:20,set:atlaso-name-02155d002020,192.168.50.120" in config
+    assert "dhcp-ignore-names=tag:atlaso-name-02155d002020" in config.splitlines()
     assert "dhcp-option=tag:atlaso-name-02155d002020,option:host-name,reserved" in config
     assert "dhcp-host=02:15:5d:00:20:20,reserved,192.168.50.120" not in config
 
@@ -265,8 +266,10 @@ def test_authoritative_dns_with_dhcp_subscribes_to_lease_changes():
         ],
     )
     assert "dhcp-host=02:15:5d:00:20:21,guest-reserved,192.168.60.120" in unmanaged
+    assert "dhcp-ignore-names=tag:atlaso-name-02155d002021" not in unmanaged.splitlines()
     assert "dhcp-option=tag:atlaso-name-02155d002021,option:host-name,guest-reserved" not in unmanaged
     assert "dhcp-host=02:15:5d:00:20:22,set:atlaso-name-02155d002022,192.168.60.121" in unmanaged
+    assert "dhcp-ignore-names=tag:atlaso-name-02155d002022" in unmanaged.splitlines()
     assert "dhcp-option=tag:atlaso-name-02155d002022,option:host-name,managed.atlaso.internal" in unmanaged
     assert "dhcp-host=02:15:5d:00:20:22,managed.atlaso.internal,192.168.60.121" not in unmanaged
 

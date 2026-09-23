@@ -70,6 +70,8 @@ records locally. DHCP names in other suffixes retain normal recursive-instance b
 names from the mirror for the DHCP UI and API, and reconciles the mirror against current leases, reservation names,
 client identities, and reservation provenance before re-enabling authoritative DNS. Departed clients or rolled-back
 reservations cannot regain stale A records. Reserved clients still receive their saved hostname through DHCP.
+An explicit reservation name in a managed zone suppresses client-supplied names even when its DHCP scope uses an
+unmanaged suffix, so the recursive instance cannot learn a competing local answer.
 
 The primary nameserver must belong to a managed domain. Its glue identity is generated and cannot conflict with operator
 CNAME or A/AAAA data. SOA expiry must be greater than refresh and retry, and all timer values must be positive 32-bit

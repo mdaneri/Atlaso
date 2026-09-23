@@ -1138,6 +1138,9 @@ def test_managed_ldap_lifecycle_check_sends_directory_password_only_through_stdi
     assert evidence["password_transport"] == "stdin-only"
     assert evidence["bind_transport"] == "ldapi:///"
     assert "atlaso-helper ldap authenticate --real" in " ".join(captured["command"])
+    assert "printf" not in captured["command"][-1]
+    assert "sh -lc" not in captured["command"][-1]
+    assert captured["command"][-1].startswith("sudo -S -p '' /opt/atlaso/bin/atlaso-helper")
 
 
 def test_appliance_user_ssh_command_does_not_wrap_with_sudo(monkeypatch):

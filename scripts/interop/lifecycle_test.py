@@ -3829,24 +3829,22 @@ def managed_ldap_helper_authentication_check(args: argparse.Namespace) -> dict[s
         args: Parsed command-line options consumed by the operation.
     """
     user_dn = "uid=operator,ou=users,dc=lifecycle-org-a,dc=ldap,dc=atlaso,dc=internal"
-    helper_command = (
-        "IFS= read -r ldap_password; "
-        "printf '%s\\n' \"$ldap_password\" | "
-        f"/opt/atlaso/bin/atlaso-helper ldap authenticate --real {shell_single_quote(user_dn)}"
-    )
+    # The helper reads one password line directly from stdin. Avoid a nested
+    # remote shell and printf, whose quotes are reparsed by plink and sudo.
+    helper_command = f"/opt/atlaso/bin/atlaso-helper ldap authenticate --real {user_dn}"
     user = ssh_username(args, "appliance")
     host = args.appliance_ssh_host
     hostkey = ssh_hostkey(host, args, "appliance")
     appliance_password = ssh_password(args, "appliance")
     secrets = [appliance_password, LIFECYCLE_LDAP_PASSWORD]
     if user == "root":
-        remote_command = f"sh -lc {shell_single_quote(helper_command)}"
+        remote_command = helper_command
         input_text = f"{LIFECYCLE_LDAP_PASSWORD}\n"
     elif appliance_password:
-        remote_command = f"sudo -S -p '' sh -lc {shell_single_quote(helper_command)}"
+        remote_command = f"sudo -S -p '' {helper_command}"
         input_text = f"{appliance_password}\n{LIFECYCLE_LDAP_PASSWORD}\n"
     else:
-        remote_command = f"sudo -n sh -lc {shell_single_quote(helper_command)}"
+        remote_command = f"sudo -n {helper_command}"
         input_text = f"{LIFECYCLE_LDAP_PASSWORD}\n"
 
     if appliance_password:
