@@ -17,6 +17,58 @@ def _session_factory():
     )
 
 
+def test_ntp_and_nts_share_owned_dual_stack_dns_and_preserve_manual_records():
+    """NTP/NTS use one hostname and reconcile only their owned addresses."""
+    from atlaso.app.models import DnsRecord, NtpSettings, PhysicalInterface
+    from atlaso.app.seed import seed_initial_data
+    from atlaso.app.services.dnsmasq import render_hosts_records
+    from atlaso.app.services.service_dns_defaults import NTP_DNS_DESCRIPTION
+    from atlaso.app.ui import ensure_dns_for_ntp
+
+    with _session_factory()() as db:
+        seed_initial_data(db, include_examples=False, commit=False)
+        interface = PhysicalInterface(
+            name="eth9", mac_address="00:50:56:00:00:19", role="access", mode="access",
+            ip_cidr="192.0.2.10/24", ipv6_cidr="2001:db8::10/64",
+            admin_state="up", oper_state="up",
+        )
+        db.add(interface)
+        settings = db.execute(select(NtpSettings)).scalar_one()
+        settings.enabled = True
+        settings.nts_server_enabled = False
+        settings.hostname = "time.example.internal"
+        settings.listen_interface = "eth9"
+        settings.listen_address = "192.0.2.10\n2001:db8::10"
+        db.flush()
+        assert ensure_dns_for_ntp(db, settings, None) == "created"
+        owned = db.execute(select(DnsRecord).where(DnsRecord.description == NTP_DNS_DESCRIPTION)).scalars().all()
+        assert len(owned) == 3
+        assert {(row.record_type, row.address) for row in owned if row.record_type != "CNAME"} == {
+            ("A", "192.0.2.10"), ("AAAA", "2001:db8::10")
+        }
+        assert "192.0.2.10" in render_hosts_records(owned)
+        settings.nts_server_enabled = True
+        assert ensure_dns_for_ntp(db, settings, None) == "unchanged"
+        assert len(db.execute(select(DnsRecord).where(DnsRecord.description == NTP_DNS_DESCRIPTION)).scalars().all()) == 3
+        db.add(DnsRecord(hostname="manual.example.internal", record_type="A", address="192.0.2.99", description="Operator", enabled=True))
+        interface.ip_cidr = "192.0.2.11/24"
+        settings.listen_address = "192.0.2.11\n2001:db8::10"
+        db.flush()
+        assert "removed-old" in ensure_dns_for_ntp(db, settings, None)
+        owned = db.execute(select(DnsRecord).where(DnsRecord.description == NTP_DNS_DESCRIPTION)).scalars().all()
+        assert not any(row.address == "192.0.2.10" for row in owned)
+        assert any(row.address == "192.0.2.11" for row in owned)
+        settings.enabled = False
+        assert ensure_dns_for_ntp(db, settings, None) == "removed-old"
+        assert db.execute(select(DnsRecord).where(DnsRecord.description == NTP_DNS_DESCRIPTION)).scalars().all() == []
+        assert db.execute(select(DnsRecord).where(DnsRecord.hostname == "manual.example.internal")).scalar_one().address == "192.0.2.99"
+        settings.enabled = True
+        assert ensure_dns_for_ntp(db, settings, None) == "created"
+        assert any(row.address == "192.0.2.11" for row in db.execute(
+            select(DnsRecord).where(DnsRecord.description == NTP_DNS_DESCRIPTION)
+        ).scalars().all())
+
+
 def test_fresh_seed_and_lazy_service_defaults_use_appliance_domain(monkeypatch):
     """Fresh and OVF-derived first boot state uses one canonical domain source.
 

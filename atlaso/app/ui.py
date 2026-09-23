@@ -530,11 +530,12 @@ from atlaso.app.services.routes_wan import (
     wan_policy_to_dict,
 )
 from atlaso.app.services.service_dns_defaults import (
-    appliance_domain_from_fqdn as canonical_appliance_domain_from_fqdn,
-)
-from atlaso.app.services.service_dns_defaults import (
+    NTP_DNS_DESCRIPTION,
     factory_service_hostname,
     reconcile_factory_service_identities,
+)
+from atlaso.app.services.service_dns_defaults import (
+    appliance_domain_from_fqdn as canonical_appliance_domain_from_fqdn,
 )
 from atlaso.app.services.service_registry import (
     SERVICE_STATE_IDS,
@@ -2207,6 +2208,10 @@ def ntp_context(db: Session, *, include_runtime_health: bool = False, reconcile:
     if reconcile and normalize_service_bind_settings(db, settings):
         db.commit()
         db.refresh(settings)
+    if reconcile:
+        dns_action = ensure_dns_for_ntp(db, settings, actor=None, previous_hostname=settings.hostname)
+        if dns_action not in {None, "unchanged", "conflict"}:
+            db.commit()
     capability_result = SystemAdapter().read_ntpd_capabilities()
     ntp_capabilities = ntpd_capabilities_payload(capability_result)
     ntp_nts_capability_known = "nts" in ntp_capabilities
@@ -6785,6 +6790,30 @@ def ensure_dns_for_oidc(
     )
 
 
+def ensure_dns_for_ntp(db: Session, settings: NtpSettings, actor: str | None, *, previous_hostname: str | None = None) -> str | None:
+    """Reconcile the shared NTP/NTS hostname to owned listener addresses.
+
+    Args:
+        db: Active database session.
+        settings: Desired NTP and NTS settings.
+        actor: Optional audit actor.
+        previous_hostname: Previously configured service hostname.
+    """
+    hostname = normalize_dns_hostname(settings.hostname or NTP_DEFAULT_HOSTNAME)
+    settings.hostname = hostname
+    return ensure_interface_dns_alias(
+        db,
+        hostname=hostname,
+        listen_interface=settings.listen_interface,
+        listen_address=settings.listen_address,
+        description=NTP_DNS_DESCRIPTION,
+        actor=actor,
+        audit_prefix="ntp",
+        previous_hostname=previous_hostname,
+        enabled=settings.enabled,
+    )
+
+
 def remove_dns_for_vcf_offline_depot_hostname(db: Session, hostname: str, actor: str) -> str | None:
     """Remove dns for vcf offline depot hostname.
 
@@ -6926,6 +6955,12 @@ def refresh_interface_service_dns_aliases(db: Session, actor: str | None = None)
                 actor=actor,
                 previous_hostname=oidc_settings.hostname,
             ),
+        )
+    ntp_settings = db.execute(select(NtpSettings)).scalar_one_or_none()
+    if ntp_settings:
+        mark(
+            "NTP / NTS",
+            ensure_dns_for_ntp(db, ntp_settings, actor=actor, previous_hostname=ntp_settings.hostname),
         )
     depot_settings = db.execute(select(VcfOfflineDepotSettings)).scalar_one_or_none()
     if depot_settings:
@@ -10992,13 +11027,13 @@ def appliance_apply_units(db: Session, *, reconcile: bool = True) -> list[dict[s
     firewall = firewall_context(db, reconcile=reconcile)
     # Apply units consume desired previews and validation, not detail-page tables.
     # Keep validation probes (including NTP capabilities and DHCP upstreams) live.
+    ntp = ntp_context(db, reconcile=reconcile)
     dnsmasq = dnsmasq_context(db, reconcile=reconcile, include_leases=False)
     esxi_pxe = esxi_pxe_context(db)
     esx_storage = esx_storage_context(db, reconcile=reconcile, include_disk_inventory=False)
     ca = ca_context(db, reconcile=reconcile)
     kms = kms_context(db, reconcile=reconcile, include_runtime_counts=False)
     ldap = ldap_context(db, reconcile=reconcile)
-    ntp = ntp_context(db, reconcile=reconcile)
     vcf_backup = vcf_backup_context(db, reconcile=reconcile)
     vcf_depot = vcf_offline_depot_context(db, reconcile=reconcile)
     vcf_registry = vcf_private_registry_context(db, reconcile=reconcile)
@@ -16594,6 +16629,12 @@ def _submit_appliance_apply(
     units = appliance_apply_units(db)
     unit_map = {unit["id"]: unit for unit in units}
     selected_ids = {unit_id for unit_id in selected_units if unit_id in APPLIANCE_APPLY_UNIT_IDS}
+    if (
+        unit_map.get("ntpd", {}).get("changed")
+        and unit_map.get("dnsmasq", {}).get("changed")
+        and selected_ids.intersection({"ntpd", "dnsmasq"})
+    ):
+        selected_ids.update({"ntpd", "dnsmasq"})
     refresh_vcf_depot_software_depot_id = bool(
         refresh_vcf_depot_software_depot_id and "vcf_offline_depot" in selected_ids
     )
@@ -16722,6 +16763,11 @@ def _submit_appliance_apply(
         return JSONResponse({"detail": detail}, status_code=422) if wants_json else Response(detail, status_code=422, media_type="text/plain")
 
     selected_ordered_units = [unit for unit in units if unit["id"] in selected_ids]
+    if "ntpd" in selected_ids and "dnsmasq" in selected_ids:
+        dns_unit = unit_map["dnsmasq"]
+        selected_ordered_units.remove(dns_unit)
+        ntp_index = next(index for index, unit in enumerate(selected_ordered_units) if unit["id"] == "ntpd")
+        selected_ordered_units.insert(ntp_index + 1, dns_unit)
     traffic_publishing_pair = publishing_pair_required and not management_handoff and {"firewall", "nat"}.issubset(selected_ids)
     if traffic_publishing_pair:
         # Network/WAN must finish before either member publishes its captured pair.
@@ -17313,6 +17359,7 @@ retire_vsphere_certificate_from_ui = _certificate_trust_ui.endpoints["retire_vsp
 _ntp_ui = build_ntp_ui_router(
     NtpUiDependencies(
         ensure_ca_state=lambda *args, **kwargs: ensure_ca_state(*args, **kwargs),
+        ensure_dns_for_ntp=lambda *args, **kwargs: ensure_dns_for_ntp(*args, **kwargs),
         get_ntp_settings_row=lambda *args, **kwargs: get_ntp_settings_row(*args, **kwargs),
         normalize_dns_hostname=lambda *args, **kwargs: normalize_dns_hostname(*args, **kwargs),
         ntp_context=lambda *args, **kwargs: ntp_context(*args, **kwargs),

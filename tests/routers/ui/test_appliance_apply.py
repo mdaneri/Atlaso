@@ -1825,6 +1825,49 @@ def test_selected_wan_change_executes_inside_existing_management_handoff(client)
     assert any(unit["unit_id"] == "wan" for unit in payload["units"])
 
 
+def test_ntp_apply_includes_generated_dns_after_ntp(client, monkeypatch):
+    """Enabling NTP captures its owned DNS records in the same ordered task."""
+    from sqlalchemy import select
+
+    from atlaso.app import ui
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Job, NtpSettings, PhysicalInterface
+
+    login(client)
+    with SessionLocal() as db:
+        interface = db.scalar(select(PhysicalInterface).where(PhysicalInterface.name == "eth2"))
+        settings = db.scalar(select(NtpSettings))
+        assert interface is not None and settings is not None
+        interface.role = "access"
+        interface.mode = "access"
+        interface.admin_state = "up"
+        interface.oper_state = "up"
+        interface.ip_cidr = "192.168.49.20/24"
+        settings.listen_interface = "eth2"
+        settings.listen_address = "192.168.49.20"
+        settings.enabled = False
+        db.commit()
+        units = ui.appliance_apply_units(db)
+        ui.update_appliance_apply_baselines(db, units, {unit["id"] for unit in units})
+        settings.enabled = True
+        db.commit()
+
+    monkeypatch.setattr(ui, "run_appliance_apply_job", lambda _job_id: None)
+    page = client.get("/dashboard")
+    csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    response = client.post(
+        "/appliance-apply",
+        data={"csrf": csrf, "selected_units": "ntpd"},
+        headers={"Accept": "application/json"},
+    )
+    assert response.status_code == 202, response.text
+    with SessionLocal() as db:
+        job = db.get(Job, response.json()["job_id"])
+        assert job is not None
+        selected = json.loads(job.result or "{}")["selected_units"]
+    assert selected.index("ntpd") < selected.index("dnsmasq")
+
+
 def test_management_move_rechecks_handoff_after_ldap_dependency_expansion(client, monkeypatch):
     """Protect a Firewall unit added indirectly by the LDAP dependency closure.
 

@@ -36,6 +36,7 @@ class NtpUiDependencies:
     """Provide facade-owned NTP transport dependencies."""
 
     ensure_ca_state: Endpoint
+    ensure_dns_for_ntp: Endpoint
     get_ntp_settings_row: Endpoint
     normalize_dns_hostname: Endpoint
     ntp_context: Endpoint
@@ -195,6 +196,7 @@ def build_router(dependencies: NtpUiDependencies) -> NtpUiRouter:
         """
         dependencies.verify_csrf(request, csrf)
         settings = dependencies.get_ntp_settings_row(db)
+        previous_hostname = settings.hostname
         capability_result = (
             dependencies.system_adapter_factory().read_ntpd_capabilities()
         )
@@ -336,6 +338,9 @@ def build_router(dependencies: NtpUiDependencies) -> NtpUiRouter:
         settings.config_path = NTP_STAGED_CONFIG_PATH
         settings.updated_at = utcnow()
         db.add(settings)
+        dependencies.ensure_dns_for_ntp(
+            db, settings, identity.username, previous_hostname=previous_hostname
+        )
         db.commit()
         if settings.nts_server_enabled:
             dependencies.ensure_ca_state(db)

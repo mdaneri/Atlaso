@@ -1121,6 +1121,17 @@ def _submit_console_apply(required_ids: set[str]) -> str:
                     f"VCFDT task {active_vcf_job.id} is already {active_vcf_job.status}."
                 )
         units = appliance_apply_units(db)
+        unit_map = {unit["id"]: unit for unit in units}
+        if (
+            unit_map.get("ntpd", {}).get("changed")
+            and unit_map.get("dnsmasq", {}).get("changed")
+            and selected_ids.intersection({"ntpd", "dnsmasq"})
+        ):
+            selected_ids.update({"ntpd", "dnsmasq"})
+            dns_unit = unit_map["dnsmasq"]
+            units.remove(dns_unit)
+            ntp_index = next(index for index, unit in enumerate(units) if unit["id"] == "ntpd")
+            units.insert(ntp_index + 1, dns_unit)
         selected, payload = _captured_apply_payload(units, selected_ids)
         job_id = f"job_{uuid4().hex[:12]}"
         job = Job(

@@ -33,6 +33,7 @@ ESX_STORAGE_DNS_DESCRIPTION = "Created from ESX Storage endpoint."
 ESXI_PXE_DNS_DESCRIPTION = "Created from ESXi PXE boot endpoint."
 KMS_DNS_DESCRIPTION = "Atlaso app-owned KMS/KMIP endpoint record."
 LDAP_DNS_DESCRIPTION = "Managed by Atlaso LDAP service"
+NTP_DNS_DESCRIPTION = "Created from NTP/NTS endpoint."
 OIDC_DNS_DESCRIPTION = "Created from OpenID Connect provider endpoint."
 VCF_DEPOT_DNS_DESCRIPTION = "Created from VCF Offline Depot endpoint."
 VCF_REGISTRY_DNS_DESCRIPTION = "Created from VCF private registry endpoint."
@@ -59,6 +60,7 @@ FACTORY_SERVICE_IDENTITIES = (
         NtpSettings,
         "hostname",
         "ntp",
+        dns_description=NTP_DNS_DESCRIPTION,
         certificate_owner="ntp:nts",
     ),
     FactoryServiceIdentity(
