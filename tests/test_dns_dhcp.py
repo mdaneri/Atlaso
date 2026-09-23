@@ -196,7 +196,7 @@ def test_dnsmasq_renderer_emits_shared_authoritative_zones_and_generated_glue():
     assert "cache-size=0" in main_lines
     assert "bind-interfaces" in authoritative_lines
     assert "port=5353" in authoritative_lines
-    assert "hostsdir=/var/lib/atlaso/dnsmasq/authoritative-leases" in authoritative_lines
+    assert "hostsdir=/var/lib/atlaso-dns-authoritative-leases" in authoritative_lines
     assert "auth-soa=2026072201,hostmaster.atlaso.internal,1200,180,1209600" in authoritative_lines
     assert "auth-ttl=3600" in authoritative_lines
     assert "host-record=ns1.atlaso.internal,192.168.50.1" in authoritative_lines
@@ -245,7 +245,12 @@ def test_authoritative_dns_with_dhcp_subscribes_to_lease_changes():
                 hostname="guest-reserved",
                 mac_address="02:15:5d:00:20:21",
                 ip_address="192.168.60.120",
-            )
+            ),
+            DhcpReservation(
+                hostname="managed.atlaso.internal",
+                mac_address="02:15:5d:00:20:22",
+                ip_address="192.168.60.121",
+            ),
         ],
         dhcp_scopes=[
             DhcpScope(
@@ -261,6 +266,9 @@ def test_authoritative_dns_with_dhcp_subscribes_to_lease_changes():
     )
     assert "dhcp-host=02:15:5d:00:20:21,guest-reserved,192.168.60.120" in unmanaged
     assert "dhcp-option=tag:atlaso-name-02155d002021,option:host-name,guest-reserved" not in unmanaged
+    assert "dhcp-host=02:15:5d:00:20:22,set:atlaso-name-02155d002022,192.168.60.121" in unmanaged
+    assert "dhcp-option=tag:atlaso-name-02155d002022,option:host-name,managed.atlaso.internal" in unmanaged
+    assert "dhcp-host=02:15:5d:00:20:22,managed.atlaso.internal,192.168.60.121" not in unmanaged
 
     guest = render_dnsmasq_config(
         dns_settings=DnsSettings(enabled=True, authoritative=True, domain="atlaso.internal"),

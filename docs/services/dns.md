@@ -62,7 +62,9 @@ The authoritative renderer emits:
 - A/AAAA `host-record` glue mapping the primary nameserver to every selected DNS listen address;
 - `server=/<managed-domain>/127.0.0.1#5353` and `cache-size=0` in the recursive client-facing service.
 
-When DHCP is enabled, leases in a managed DNS suffix update a managed hosts directory read by the authoritative backend.
+When DHCP is enabled, leases in a managed DNS suffix update the derived-name directory
+`/var/lib/atlaso-dns-authoritative-leases`, which the authoritative backend can read after dropping privileges.
+The DHCP lease file remains under the restricted Atlaso state directory.
 The recursive instance forwards those leases' reverse lookups to the backend and keeps generated nameserver glue PTR
 records locally. DHCP names in other suffixes retain normal recursive-instance behavior. Atlaso reads the managed lease
 names from the mirror for the DHCP UI and API, and reconciles the mirror against current leases before re-enabling

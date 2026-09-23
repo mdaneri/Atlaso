@@ -366,7 +366,7 @@ FIREWALL_SERVICE_PATH = Path("/etc/systemd/system/atlaso-firewall.service")
 DNSMASQ_APPLY_DIR = Path("/var/lib/atlaso/apply/dnsmasq")
 DNSMASQ_STATE_DIR = Path("/var/lib/atlaso/dnsmasq")
 DNSMASQ_LEASE_FILE_PATH = DNSMASQ_STATE_DIR / "dhcp.leases"
-DNSMASQ_AUTHORITATIVE_LEASE_HOSTS_DIR = DNSMASQ_STATE_DIR / "authoritative-leases"
+DNSMASQ_AUTHORITATIVE_LEASE_HOSTS_DIR = Path("/var/lib/atlaso-dns-authoritative-leases")
 DNSMASQ_CONFIG_DIR = Path("/etc/atlaso/dnsmasq.d")
 DNSMASQ_CONFIG_PATH = DNSMASQ_CONFIG_DIR / "atlaso.conf"
 DNSMASQ_SERVICE_DROPIN_DIR = Path("/etc/systemd/system/dnsmasq.service.d")
@@ -3046,11 +3046,17 @@ def _prepare_authoritative_lease_hosts(
     # retained names before re-enabling so released or reassigned addresses
     # cannot reappear as authoritative answers.
     hosts_dir = DNSMASQ_AUTHORITATIVE_LEASE_HOSTS_DIR
+    if DNSMASQ_STATE_DIR.is_symlink():
+        raise ValueError("The dnsmasq state directory is unsafe.")
     if hosts_dir.is_symlink():
         raise ValueError("The authoritative lease hosts directory is unsafe.")
     hosts_dir.mkdir(parents=True, exist_ok=True)
     if not hosts_dir.is_dir():
         raise ValueError("The authoritative lease hosts directory is invalid.")
+    # dnsmasq drops privileges after startup and rereads hostsdir on HUP.
+    # This derived-name directory is outside the restricted Atlaso state
+    # tree; the DHCP lease file retains its own protected path and mode.
+    hosts_dir.chmod(0o755)
     lease_path = DNSMASQ_LEASE_FILE_PATH
     if lease_path.is_symlink() or not lease_path.resolve().is_relative_to(DNSMASQ_STATE_DIR.resolve()):
         raise ValueError("The dnsmasq lease file path is unsafe.")

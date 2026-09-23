@@ -20,7 +20,7 @@ from atlaso.app.models import (
 
 DNS_CONDITIONAL_FORWARDERS_SETTING_KEY = "dns.conditional_forwarders"
 DNSMASQ_LEASE_FILE_PATH = "/var/lib/atlaso/dnsmasq/dhcp.leases"
-DNSMASQ_AUTHORITATIVE_LEASE_HOSTS_DIR = "/var/lib/atlaso/dnsmasq/authoritative-leases"
+DNSMASQ_AUTHORITATIVE_LEASE_HOSTS_DIR = "/var/lib/atlaso-dns-authoritative-leases"
 DNSMASQ_DHCP_LEASE_SYNC_PATH = "/opt/atlaso/bin/atlaso-helper"
 DNSMASQ_DNSSEC_TRUST_ANCHORS_PATH = "/var/lib/atlaso/apply/dnsmasq/atlaso-trust-anchors.conf"
 DNSMASQ_AUTHORITATIVE_LOOPBACK_ADDRESS = "127.0.0.1"
@@ -1604,7 +1604,6 @@ def render_dnsmasq_config(
                 "no-resolv",
                 "bind-interfaces",
                 f"listen-address={DNSMASQ_AUTHORITATIVE_LOOPBACK_ADDRESS}",
-                f"dhcp-leasefile={DNSMASQ_LEASE_FILE_PATH}",
                 f"hostsdir={DNSMASQ_AUTHORITATIVE_LEASE_HOSTS_DIR}",
             ]
         )
@@ -1879,8 +1878,14 @@ def render_dnsmasq_config(
                     (reservation_scope.domain_name or domains[0]).strip().strip(".").lower()
                     if reservation_scope else ""
                 )
+                reservation_hostname = reservation.hostname.strip().strip(".").lower()
+                reservation_fqdn = (
+                    reservation_hostname if "." in reservation_hostname
+                    else f"{reservation_hostname}.{reservation_domain}" if reservation_domain
+                    else reservation_hostname
+                )
                 managed_reservation = dns_settings.authoritative and any(
-                    reservation_domain == domain or reservation_domain.endswith(f".{domain}")
+                    reservation_fqdn == domain or reservation_fqdn.endswith(f".{domain}")
                     for domain in domains
                 )
                 if managed_reservation:

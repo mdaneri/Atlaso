@@ -11356,6 +11356,8 @@ def test_dnsmasq_lease_events_mirror_only_managed_names(monkeypatch, tmp_path, c
         return subprocess.CompletedProcess(command, 0, "", "")
     monkeypatch.setattr(helper, "_run", fake_run)
     helper._prepare_authoritative_lease_hosts(config_path)
+    if os.name == "posix":
+        assert hosts_dir.stat().st_mode & 0o777 == 0o755
 
     event = ["atlaso-helper", "add", "02:00:00:00:00:01", "192.168.50.21", "client"]
     assert helper.main(event) == 0

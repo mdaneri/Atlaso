@@ -4121,8 +4121,10 @@ def authoritative_dns_state_check(args: argparse.Namespace) -> dict[str, Any]:
         commands = {
             "config": "cat /etc/atlaso/dnsmasq.d/atlaso.conf",
             "lease": "cat /var/lib/atlaso/dnsmasq/dhcp.leases",
-            "mirrors": "cat /var/lib/atlaso/dnsmasq/authoritative-leases/*.hosts",
+            "mirrors": "cat /var/lib/atlaso-dns-authoritative-leases/*.hosts",
+            "mirror_modes": "stat -c '%a %U:%G %n' /var/lib/atlaso /var/lib/atlaso/dnsmasq /var/lib/atlaso-dns-authoritative-leases /var/lib/atlaso-dns-authoritative-leases/*.hosts",
             "journal": "journalctl -u dnsmasq.service --no-pager -n 100",
+            "backend_journal": "journalctl -u atlaso-dns-authoritative.service --no-pager -n 60",
             "backend": "systemctl is-active atlaso-dns-authoritative.service",
         }
         diagnostic = {"client_refresh": {
@@ -4130,7 +4132,7 @@ def authoritative_dns_state_check(args: argparse.Namespace) -> dict[str, Any]:
             "stderr": refresh.get("stderr", "")[-500:],
         }}
         for key, command in commands.items():
-            remote_command = appliance_ssh_command(args, command) if key in {"lease", "mirrors"} else command
+            remote_command = appliance_ssh_command(args, command) if key in {"lease", "mirrors", "mirror_modes", "backend_journal"} else command
             result = ssh_command(
                 args.appliance_ssh_host, args, remote_command, role="appliance", appliance_as_root=False
             )
