@@ -1092,10 +1092,13 @@ def test_physical_interface_grid_menu_actions_are_available(client):
     assert "initializePublicAddressModeToggle" in js.text
 
 
-@pytest.mark.parametrize("role", ["management", "access"])
+@pytest.mark.parametrize(
+    ("role", "missing_dedicated"),
+    [("management", False), ("access", False), ("access", True)],
+)
 @pytest.mark.parametrize("dns_enabled,explicit_dns", [(False, ""), (True, ""), (False, "192.0.2.53")])
 def test_management_dhcp_interface_can_be_saved_as_static_from_observed_addresses(
-    client, monkeypatch, role, dns_enabled, explicit_dns,
+    client, monkeypatch, role, missing_dedicated, dns_enabled, explicit_dns,
 ):
     """Verify that management dhcp interface can be saved as static from observed addresses.
 
@@ -1103,6 +1106,7 @@ def test_management_dhcp_interface_can_be_saved_as_static_from_observed_addresse
         client: HTTP test client used to exercise the Atlaso application.
         monkeypatch: Pytest fixture used to replace dependencies for the test.
         role: Dedicated management or flagged Access listener.
+        missing_dedicated: Whether a stale dedicated row coexists with Access.
         dns_enabled: Whether the local DNS service is enabled.
         explicit_dns: Existing explicit DNS configuration to retain.
     """
@@ -1131,6 +1135,12 @@ def test_management_dhcp_interface_can_be_saved_as_static_from_observed_addresse
         eth0.ip_cidr = None
         eth0.host_ip_cidr = "192.168.167.219/24"
         eth0.host_ipv6_cidr = "fd00:167::219/64"
+        if missing_dedicated:
+            db.add(PhysicalInterface(
+                name="missing_management_dns", mac_address="02:00:00:00:85:21",
+                role="management", mode="access", admin_state="up", oper_state="missing",
+                ipv4_method="static", ip_cidr="192.168.168.1/24",
+            ))
         db.commit()
 
     page = client.get("/physical-interfaces")
