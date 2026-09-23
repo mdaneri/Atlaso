@@ -158,7 +158,32 @@ test("viewport placement flips and shifts the top-layer tooltip", () => {
   assert.match(css, /html:not\(\.atlaso-help-ready\) \.help-icon\[data-help\]::after/);
   assert.match(css, /content: attr\(data-help\);/);
   assert.match(css, /html:not\(\.atlaso-help-ready\) \.help-icon\[data-help\]::after\s*\{[^}]*max-height:[^;]+;[^}]*overflow-y: auto;/s);
-  assert.match(css, /html:not\(\.atlaso-help-ready\) \.help-icon\[data-help\]:focus::after\s*\{[^}]*visibility: visible;[^}]*pointer-events: auto;/s);
+  assert.match(css, /html:not\(\.atlaso-help-ready\) \.help-icon\[data-help\]:focus\s*\{[^}]*max-height:[^;]+;[^}]*overflow-y: auto;/s);
+  assert.match(css, /html:not\(\.atlaso-help-ready\) \.help-icon\[data-help\]:focus::after\s*\{[^}]*position: static;[^}]*overflow: visible;[^}]*pointer-events: none;/s);
+});
+
+test("focused help buttons scroll clipped JavaScript tooltips with keyboard keys", () => {
+  const { button, document, tooltip, event } = fixture();
+  document.activeElement = button;
+  document.emit("focusin", event(button));
+  tooltip.scrollTop = 0;
+  tooltip.clientHeight = 60;
+  tooltip.scrollHeight = 220;
+  const keydown = (key) => {
+    const keyEvent = { key, prevented: false, preventDefault() { this.prevented = true; }, stopPropagation() {} };
+    document.emit("keydown", keyEvent);
+    return keyEvent.prevented;
+  };
+  assert.equal(keydown("ArrowDown"), true);
+  assert.equal(tooltip.scrollTop, 40);
+  assert.equal(keydown("PageDown"), true);
+  assert.equal(tooltip.scrollTop, 84);
+  assert.equal(keydown("Home"), true);
+  assert.equal(tooltip.scrollTop, 0);
+  assert.equal(keydown("End"), true);
+  assert.equal(tooltip.scrollTop, 220);
+  document.activeElement = document.body;
+  assert.equal(keydown("ArrowUp"), false);
 });
 
 test("help inside a modal stays in the modal's accessible subtree", () => {

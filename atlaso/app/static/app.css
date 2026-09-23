@@ -4069,6 +4069,42 @@ html:not(.atlaso-help-ready) .help-icon[data-help]:focus::after {
   pointer-events: auto;
 }
 
+/* With no script, keep keyboard focus on the scrollable button itself. */
+html:not(.atlaso-help-ready) .help-icon[data-help]:focus {
+  position: fixed;
+  z-index: 10000;
+  bottom: 12px;
+  left: 12px;
+  display: block;
+  box-sizing: border-box;
+  width: min(320px, calc(100vw - 24px));
+  height: auto;
+  max-height: calc(100vh - 24px);
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  padding: 8px 10px;
+  background: #0f172a;
+  color: white;
+  box-shadow: 0 12px 24px rgba(15, 23, 42, 0.18);
+  font-size: 0;
+  text-align: left;
+}
+
+html:not(.atlaso-help-ready) .help-icon[data-help]:focus::after {
+  position: static;
+  display: block;
+  width: auto;
+  max-width: none;
+  max-height: none;
+  overflow: visible;
+  border: 0;
+  padding: 0;
+  box-shadow: none;
+  background: transparent;
+  pointer-events: none;
+}
+
 .atlaso-help-tooltip {
   position: fixed;
   inset: auto;

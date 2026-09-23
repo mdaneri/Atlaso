@@ -12823,7 +12823,18 @@ function initializeHelpTooltips() {
     } else if (pinned && !tooltip.contains(event.target)) hide();
   });
   document.addEventListener("keydown", (event) => {
-    if (event.key === "Escape" && active) { event.preventDefault(); hide(); event.stopPropagation(); }
+    if (!active) return;
+    if (event.key === "Escape") { event.preventDefault(); hide(); event.stopPropagation(); return; }
+    if (document.activeElement !== active || tooltip.scrollHeight <= tooltip.clientHeight) return;
+    const page = Math.max(40, tooltip.clientHeight - 16);
+    const moves = { ArrowDown: 40, ArrowUp: -40, PageDown: page, PageUp: -page };
+    if (Object.hasOwn(moves, event.key)) {
+      event.preventDefault();
+      tooltip.scrollTop += moves[event.key];
+    } else if (event.key === "Home" || event.key === "End") {
+      event.preventDefault();
+      tooltip.scrollTop = event.key === "Home" ? 0 : tooltip.scrollHeight;
+    }
   }, true);
   window.addEventListener("resize", place);
   window.addEventListener("scroll", place, true);
