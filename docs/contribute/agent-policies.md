@@ -1243,7 +1243,9 @@ preserved with their affected subsystem below. Keep new requirements at their to
   may be sensitive. Operator DNS records support A, AAAA, CNAME, TXT, SRV, MX, CAA, and explicit PTR, while A/AAAA still
   generate PTR answers through dnsmasq `host-record`. Authoritative mode uses an isolated dnsmasq backend on
   `127.0.0.1:5353`, with an address-qualified `auth-server` and every managed forward zone rendered with shared SOA
-  policy and generated NS/glue. The ordinary dnsmasq service forwards managed domains to that backend so selected
+  policy and generated NS/glue. Each authoritative zone includes its managed DHCP subnets and the addresses of
+  explicit A/AAAA records and generated glue; dnsmasq serves host-file addresses only within those subnets. The
+  ordinary dnsmasq service forwards managed domains to that backend so selected
   service listeners preserve authoritative positive and negative answers while retaining PTR and upstream-recursive
   behavior within the existing listener and firewall boundaries. The client-facing cache must be disabled in
   authoritative mode because cached forwarded answers lose their AA flag. Apply, rollback, and reboot policy must manage

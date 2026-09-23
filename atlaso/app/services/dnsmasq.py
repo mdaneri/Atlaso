@@ -1561,6 +1561,42 @@ def render_dnsmasq_config(
             lines.append(f"local=/{domain}/")
     if dns_settings.authoritative:
         server = authoritative_server_name(dns_settings)
+        ordered_domains = sorted(domains, key=len, reverse=True)
+
+        def zone_for_name(name: str) -> str | None:
+            return next(
+                (domain for domain in ordered_domains if name == domain or name.endswith(f".{domain}")),
+                None,
+            )
+
+        zone_networks = {domain: [] for domain in domains}
+        if dhcp_settings.enabled:
+            for scope in scopes:
+                if scope.enabled is False:
+                    continue
+                scope_domain = (scope.domain_name or domains[0]).strip().strip(".").lower()
+                zone = zone_for_name(scope_domain)
+                network = _dhcp_scope_network(scope)
+                if zone and network is not None and network not in zone_networks[zone]:
+                    zone_networks[zone].append(network)
+        for record in dns_records:
+            if record.enabled is False or record.record_type.upper() not in {"A", "AAAA"}:
+                continue
+            hostname = record.hostname.strip().strip(".").lower()
+            if any(hostname == domain or hostname.endswith(f".{domain}") for domain in disabled_domains):
+                continue
+            zone = zone_for_name(hostname)
+            if not zone:
+                continue
+            address = ip_address(record.address)
+            if not any(address in network for network in zone_networks[zone]):
+                zone_networks[zone].append(ip_network(f"{address}/{address.max_prefixlen}"))
+        server_zone = zone_for_name(server)
+        if server_zone:
+            for listen_address in split_addresses(dns_settings.listen_address):
+                address = ip_address(listen_address)
+                if not any(address in network for network in zone_networks[server_zone]):
+                    zone_networks[server_zone].append(ip_network(f"{address}/{address.max_prefixlen}"))
         authoritative_lines.extend(
             [
                 "# Managed by Atlaso. Local changes may be overwritten.",
@@ -1573,7 +1609,8 @@ def render_dnsmasq_config(
             ]
         )
         for domain in domains:
-            authoritative_lines.extend([f"domain={domain}", f"auth-zone={domain}"])
+            subnets = "".join(f",{network}" for network in zone_networks[domain])
+            authoritative_lines.extend([f"domain={domain}", f"auth-zone={domain}{subnets}"])
         authoritative_lines.append(f"auth-server={server},{DNSMASQ_AUTHORITATIVE_LOOPBACK_ADDRESS}")
         authoritative_lines.append(
             "auth-soa="

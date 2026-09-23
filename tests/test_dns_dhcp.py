@@ -184,8 +184,8 @@ def test_dnsmasq_renderer_emits_shared_authoritative_zones_and_generated_glue():
         if line.startswith(DNSMASQ_AUTHORITATIVE_CONFIG_PREFIX)
     ]
 
-    assert "auth-zone=atlaso.internal" in authoritative_lines
-    assert "auth-zone=sitea.internal" in authoritative_lines
+    assert "auth-zone=atlaso.internal,192.168.50.1/32,2001:db8::53/128" in authoritative_lines
+    assert "auth-zone=sitea.internal,192.168.50.20/32" in authoritative_lines
     assert "local=/atlaso.internal/" not in config
     assert f"server=/atlaso.internal/{DNSMASQ_AUTHORITATIVE_LOOPBACK_ADDRESS}#{DNSMASQ_AUTHORITATIVE_PORT}" in main_lines
     assert f"server=/sitea.internal/{DNSMASQ_AUTHORITATIVE_LOOPBACK_ADDRESS}#{DNSMASQ_AUTHORITATIVE_PORT}" in main_lines
@@ -227,6 +227,7 @@ def test_authoritative_dns_with_dhcp_subscribes_to_lease_changes():
     )
 
     assert "dhcp-ignore-names=tag:sitea" in config.splitlines()
+    assert "# atlaso-authoritative-config: auth-zone=atlaso.internal,192.168.50.0/24" in config
     assert "# atlaso-authoritative-lease-scope=192.168.50.0/24,atlaso.internal" in config.splitlines()
     assert "rev-server=192.168.50.0/24,127.0.0.1#5353" in config.splitlines()
     assert "dhcp-script=/opt/atlaso/bin/atlaso-helper" in config.splitlines()

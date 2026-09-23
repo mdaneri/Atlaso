@@ -3120,7 +3120,7 @@ def _authoritative_lease_domains(config_path: Path | None = None) -> list[str]:
         domain
         for line in lines
         if line.startswith("auth-zone=")
-        if HOSTNAME_PATTERN.fullmatch(domain := line.removeprefix("auth-zone=").lower())
+        if HOSTNAME_PATTERN.fullmatch(domain := line.removeprefix("auth-zone=").split(",", 1)[0].lower())
     ]
 
 

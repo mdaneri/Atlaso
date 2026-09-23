@@ -11344,7 +11344,7 @@ def test_dnsmasq_lease_events_mirror_only_managed_names(monkeypatch, tmp_path, c
     state_dir.mkdir()
     hosts_dir = state_dir / "authoritative-leases"
     config_path = tmp_path / "atlaso-authoritative.conf"
-    config_path.write_text("auth-zone=atlaso.internal\n", encoding="utf-8")
+    config_path.write_text("auth-zone=atlaso.internal,192.168.50.0/24\n", encoding="utf-8")
     monkeypatch.setattr(helper, "DNSMASQ_STATE_DIR", state_dir)
     monkeypatch.setattr(helper, "DNSMASQ_LEASE_FILE_PATH", state_dir / "dhcp.leases")
     monkeypatch.setattr(helper, "DNSMASQ_AUTHORITATIVE_LEASE_HOSTS_DIR", hosts_dir)
