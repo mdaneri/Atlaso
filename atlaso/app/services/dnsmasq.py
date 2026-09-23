@@ -1536,6 +1536,10 @@ def render_dnsmasq_config(
         f"dhcp-leasefile={DNSMASQ_LEASE_FILE_PATH}",
         f"cache-size={cache_size}",
     ]
+    if dns_settings.enabled and dhcp_settings.enabled and not dns_settings.authoritative:
+        # Existing authoritative leases may have '*' in the lease file. Keep
+        # their mirrored names visible until ordinary DHCP renewals take over.
+        lines.append(f"hostsdir={DNSMASQ_AUTHORITATIVE_LEASE_HOSTS_DIR}")
     if require_dhcp_upstream:
         lines.insert(1, "# atlaso-dhcp-upstream-required")
     if dns_settings.query_logging_mode == "queries-extra":
@@ -1632,23 +1636,25 @@ def render_dnsmasq_config(
             authoritative_lines.append("expand-hosts")
     if dhcp_settings.enabled and dhcp_settings.authoritative:
         lines.append("dhcp-authoritative")
-    if dns_settings.authoritative and dhcp_settings.enabled:
-        # Managed-zone leases use the authoritative backend. Other DHCP
-        # suffixes keep dnsmasq's ordinary local lease-name behavior.
+    if dns_settings.enabled and dhcp_settings.enabled:
+        # The hook retires transition mirrors as ordinary lease names resume
+        # after authoritative mode is disabled.
         for scope in scopes:
             if scope.enabled is False:
                 continue
             scope_domain = (scope.domain_name or domains[0]).strip().strip(".").lower()
             if not any(scope_domain == domain or scope_domain.endswith(f".{domain}") for domain in domains):
                 continue
-            tag = dnsmasq_tag(scope.name)
-            lines.append(f"dhcp-ignore-names=tag:{tag}")
+            if dns_settings.authoritative:
+                tag = dnsmasq_tag(scope.name)
+                lines.append(f"dhcp-ignore-names=tag:{tag}")
             network = _dhcp_scope_network(scope)
             if network is not None:
                 lines.append(f"# atlaso-authoritative-lease-scope={network},{scope_domain}")
-                lines.append(
-                    f"rev-server={network},{DNSMASQ_AUTHORITATIVE_LOOPBACK_ADDRESS}#{DNSMASQ_AUTHORITATIVE_PORT}"
-                )
+                if dns_settings.authoritative:
+                    lines.append(
+                        f"rev-server={network},{DNSMASQ_AUTHORITATIVE_LOOPBACK_ADDRESS}#{DNSMASQ_AUTHORITATIVE_PORT}"
+                    )
         lines.append(f"dhcp-script={DNSMASQ_DHCP_LEASE_SYNC_PATH}")
         # Existing leases keep their address when the service is restarted.
         # Renewals must still re-publish client-supplied names that were

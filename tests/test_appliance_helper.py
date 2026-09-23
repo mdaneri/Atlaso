@@ -11655,6 +11655,78 @@ def test_dnsmasq_lease_events_mirror_only_managed_names(monkeypatch, tmp_path, c
     assert "192.168.50.21 reserved" in capsys.readouterr().out
 
 
+def test_authoritative_enable_seeds_existing_named_lease_mirror(monkeypatch, tmp_path):
+    """An active ordinary lease must resolve before its next DHCP renewal."""
+    helper = load_helper_module()
+    state_dir = tmp_path / "dnsmasq"
+    state_dir.mkdir()
+    hosts_dir = tmp_path / "authoritative-leases"
+    lease_file = state_dir / "dhcp.leases"
+    lease_file.write_text(
+        "1893456000 02:00:00:00:00:01 192.168.50.21 client *\n"
+        "1 02:00:00:00:00:02 192.168.50.22 expired *\n",
+        encoding="utf-8",
+    )
+    main = tmp_path / "candidate.conf"
+    main.write_text("# atlaso-authoritative-lease-scope=192.168.50.0/24,atlaso.internal\n", encoding="utf-8")
+    authoritative = tmp_path / "authoritative.conf"
+    authoritative.write_text("auth-zone=atlaso.internal,192.168.50.0/24\n", encoding="utf-8")
+    monkeypatch.setattr(helper, "DNSMASQ_STATE_DIR", state_dir)
+    monkeypatch.setattr(helper, "DNSMASQ_LEASE_FILE_PATH", lease_file)
+    monkeypatch.setattr(helper, "DNSMASQ_AUTHORITATIVE_LEASE_HOSTS_DIR", hosts_dir)
+
+    helper._prepare_authoritative_lease_hosts(authoritative, main)
+
+    mirror = hosts_dir / "lease-c0a83215.hosts"
+    assert mirror.read_text(encoding="utf-8") == (
+        "192.168.50.21 client.atlaso.internal\n"
+        "# mac=02:00:00:00:00:01\n"
+        "# scope-domain=atlaso.internal\n"
+    )
+    assert not (hosts_dir / "lease-c0a83216.hosts").exists()
+
+
+def test_recursive_transition_preserves_suppressed_lease_until_native_name(monkeypatch, tmp_path):
+    """A recursive restart must retain '*' names and retire them on renewal."""
+    helper = load_helper_module()
+    state_dir = tmp_path / "dnsmasq"
+    state_dir.mkdir()
+    hosts_dir = tmp_path / "authoritative-leases"
+    hosts_dir.mkdir()
+    mirror = hosts_dir / "lease-c0a83215.hosts"
+    mirror.write_text(
+        "192.168.50.21 client.atlaso.internal\n"
+        "# mac=02:00:00:00:00:01\n"
+        "# scope-domain=atlaso.internal\n",
+        encoding="utf-8",
+    )
+    lease_file = state_dir / "dhcp.leases"
+    lease_file.write_text("1893456000 02:00:00:00:00:01 192.168.50.21 * *\n", encoding="utf-8")
+    main = tmp_path / "recursive.conf"
+    main.write_text(
+        f"hostsdir={hosts_dir}\n"
+        "domain=atlaso.internal\n"
+        "# atlaso-authoritative-lease-scope=192.168.50.0/24,atlaso.internal\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(helper, "DNSMASQ_STATE_DIR", state_dir)
+    monkeypatch.setattr(helper, "DNSMASQ_LEASE_FILE_PATH", lease_file)
+    monkeypatch.setattr(helper, "DNSMASQ_AUTHORITATIVE_LEASE_HOSTS_DIR", hosts_dir)
+    monkeypatch.setattr(helper, "DNSMASQ_CONFIG_PATH", main)
+
+    helper._prepare_authoritative_lease_hosts(main, main, recursive_mode=True)
+    assert mirror.exists()
+    assert helper.main(["atlaso-helper", "old", "02:00:00:00:00:01", "192.168.50.21"]) == 0
+    assert mirror.exists()
+    assert helper.main(["atlaso-helper", "add", "02:00:00:00:00:01", "192.168.50.21", "client"]) == 0
+    assert not mirror.exists()
+
+    mirror.write_text("192.168.50.21 client.atlaso.internal\n# mac=02:00:00:00:00:01\n", encoding="utf-8")
+    lease_file.write_text("1893456000 02:00:00:00:00:02 192.168.50.21 * *\n", encoding="utf-8")
+    helper._prepare_authoritative_lease_hosts(main, main, recursive_mode=True)
+    assert not mirror.exists()
+
+
 @pytest.mark.parametrize("change", ["deleted", "moved"])
 @pytest.mark.parametrize("legacy_mirror", [False, True])
 def test_authoritative_reservation_change_removes_old_lease_name(

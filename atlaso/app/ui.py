@@ -11745,6 +11745,25 @@ def appliance_apply_context(db: Session) -> dict[str, Any]:
         if initial_apply_required
         else changed_units
     )
+    unit_map = {unit["id"]: unit for unit in units}
+    dns_unit = unit_map.get("dnsmasq", {})
+    settings_unit = unit_map.get("appliance_settings", {})
+    dns_settings = dns_unit.get("context", {}).get("dns_settings")
+    if (
+        not initial_apply_required
+        and dns_unit.get("changed")
+        and getattr(dns_settings, "enabled", False)
+        and not settings_unit.get("changed")
+        and not applied_resolver_uses_local_dns(load_appliance_apply_baselines(db).get("appliance_settings"))
+        and "appliance_settings" not in submitted_ids
+    ):
+        projected = next(
+            unit for unit in appliance_apply_units(db, reconcile=False, applying_dns=True)
+            if unit["id"] == "appliance_settings"
+        )
+        projected["requires_dns_selection"] = True
+        projected["summary"] = [*projected["summary"], "Selected with DNS to activate the host resolver"]
+        review_units = [projected, *review_units]
     return {
         "apply_units": units,
         "changed_apply_units": changed_units,
@@ -16784,6 +16803,7 @@ def _submit_appliance_apply(
     units = appliance_apply_units(db)
     unit_map = {unit["id"]: unit for unit in units}
     selected_ids = {unit_id for unit_id in selected_units if unit_id in APPLIANCE_APPLY_UNIT_IDS}
+    requested_ids = set(selected_ids)
     appliance_settings_selected = "appliance_settings" in selected_ids
     ntp_dns_dependency = bool(
         unit_map.get("ntpd", {}).get("changed")
@@ -16822,6 +16842,7 @@ def _submit_appliance_apply(
         "dnsmasq" in selected_ids
         and not getattr(dns_settings_for_apply, "enabled", False)
         and applied_local_dns_enabled(apply_baselines.get("dnsmasq"))
+        and applied_resolver_uses_local_dns(apply_baselines.get("appliance_settings"))
     )
     if local_dns_disable_requires_resolver and not appliance_settings_selected:
         detail = "Select Appliance Settings with DNS to approve the host resolver change and all pending settings."
@@ -16928,9 +16949,9 @@ def _submit_appliance_apply(
             selected_ids.add("wan")
     management_handoff_dnsmasq = bool(
         management_handoff
-        and getattr(dns_settings_for_apply, "enabled", False)
         # A pending DNS edit is not consent to apply it with a Network handoff.
         and "dnsmasq" in selected_ids
+        and (getattr(dns_settings_for_apply, "enabled", False) or "dnsmasq" in requested_ids)
     )
     if management_handoff_dnsmasq:
         selected_ids.add("dnsmasq")
@@ -16952,6 +16973,7 @@ def _submit_appliance_apply(
         "dnsmasq" in selected_ids
         and not getattr(dns_settings_for_apply, "enabled", False)
         and applied_local_dns_enabled(apply_baselines.get("dnsmasq"))
+        and applied_resolver_uses_local_dns(apply_baselines.get("appliance_settings"))
     )
     if local_dns_disable_requires_resolver and not appliance_settings_selected:
         detail = "Select Appliance Settings with DNS to approve the host resolver change and all pending settings."

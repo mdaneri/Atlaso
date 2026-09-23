@@ -3117,18 +3117,18 @@ def _authoritative_reservation_names(
 
 
 def _prepare_authoritative_lease_hosts(
-    candidate_config_path: Path, candidate_main_config_path: Path | None = None
+    candidate_config_path: Path, candidate_main_config_path: Path | None = None, *, recursive_mode: bool = False
 ) -> None:
     """Validate and reconcile the lease mirror before starting the DNS backend.
 
     Args:
         candidate_config_path: New authoritative configuration containing managed zones.
         candidate_main_config_path: New main configuration containing reservation names, if available.
+        recursive_mode: Preserve only suppressed lease names while leaving authoritative mode.
     """
 
-    # The lease hook is absent while authoritative DNS is disabled. Reconcile
-    # retained names before re-enabling so released or reassigned addresses
-    # cannot reappear as authoritative answers.
+    # Reconcile retained names before switching modes so released or
+    # reassigned addresses cannot reappear as answers.
     hosts_dir = DNSMASQ_AUTHORITATIVE_LEASE_HOSTS_DIR
     if DNSMASQ_STATE_DIR.is_symlink():
         raise ValueError("The dnsmasq state directory is unsafe.")
@@ -3162,7 +3162,15 @@ def _prepare_authoritative_lease_hosts(
             continue
         if expires == 0 or expires > time.time():
             active_leases[address] = (_dnsmasq_lease_identity(fields, ip_address(address)), fields[3].lower())
-    zones = _authoritative_lease_domains(candidate_config_path)
+    zones = (
+        [
+            domain
+            for line in candidate_config_path.read_text(encoding="utf-8").splitlines()
+            if line.startswith("domain=")
+            and HOSTNAME_PATTERN.fullmatch(domain := line.removeprefix("domain=").lower())
+        ]
+        if recursive_mode else _authoritative_lease_domains(candidate_config_path)
+    )
     scopes = _authoritative_lease_scopes(candidate_main_config_path) if candidate_main_config_path else None
     reservation_names = _authoritative_reservation_names(candidate_main_config_path, scopes) if scopes is not None else {}
     previous_reservations: dict[str, tuple[str, str]] = {}
@@ -3225,17 +3233,65 @@ def _prepare_authoritative_lease_hosts(
             or not lease[0]
             or rows[1] != lease[0]
             or not any(hostname.endswith(f".{zone}") for zone in zones)
+            or (recursive_mode and lease[1] != "*")
             or (scopes is not None and not current_reservation_matches and not any(
                 lease_address in network and hostname.endswith(f".{domain}")
                 for network, domain in scopes
             ))
             or (lease[1] != "*" and hostname.split(".", 1)[0] != lease[1])
-            or (current_reservation is not None and not current_reservation_matches)
-            or (reserved_mirror and not current_reservation_matches)
-            or (previous_reservation_matches and not current_reservation_matches)
+            or (not recursive_mode and current_reservation is not None and not current_reservation_matches)
+            or (not recursive_mode and reserved_mirror and not current_reservation_matches)
+            or (not recursive_mode and previous_reservation_matches and not current_reservation_matches)
             or (scope_markers and scopes is not None and not exact_scope_matches and not current_reservation_matches)
         ):
             entry.unlink()
+
+    if recursive_mode or scopes is None:
+        return
+    # Turning authority on must publish names from existing ordinary leases;
+    # those clients may not renew immediately after the backend starts.
+    for address, (identity, lease_name) in active_leases.items():
+        if not identity or not lease_name or lease_name == "*":
+            continue
+        leased_ip = ip_address(address)
+        scope_domain = next((domain for network, domain in scopes if leased_ip in network), "")
+        reservation = reservation_names.get(address)
+        if reservation and leased_ip.version == 4 and identity != reservation[1]:
+            continue
+        if reservation:
+            fqdn = reservation[0]
+        elif scope_domain:
+            name = lease_name.strip(".")
+            fqdn = name if "." in name else f"{name}.{scope_domain}"
+            if not fqdn.endswith(f".{scope_domain}"):
+                continue
+        else:
+            continue
+        if not HOSTNAME_PATTERN.fullmatch(fqdn) or not any(fqdn.endswith(f".{zone}") for zone in zones):
+            continue
+        destination = hosts_dir / f"lease-{leased_ip.packed.hex()}.hosts"
+        if destination.exists():
+            continue
+        temporary_path: Path | None = None
+        try:
+            with tempfile.NamedTemporaryFile(
+                mode="w", encoding="utf-8", prefix=".lease-seed-", dir=DNSMASQ_STATE_DIR, delete=False
+            ) as temporary:
+                temporary_path = Path(temporary.name)
+                temporary.write(f"{address} {fqdn}\n{identity}\n")
+                if reservation:
+                    temporary.write("# reservation\n")
+                if scope_domain:
+                    temporary.write(f"# scope-domain={scope_domain}\n")
+            temporary_path.chmod(0o644)
+            try:
+                os.link(temporary_path, destination)
+            except FileExistsError:
+                # A concurrent lease hook owns its newer name.
+                pass
+        finally:
+            if temporary_path is not None:
+                temporary_path.unlink(missing_ok=True)
 
 
 @contextmanager
@@ -3360,6 +3416,22 @@ def _handle_dnsmasq_lease_event(argv: list[str]) -> int:
         hostname = argv[4].strip().strip(".").lower() if len(argv) == 5 else ""
     if not hostname or hostname == "*":
         hostname = os.environ.get("DNSMASQ_SUPPLIED_HOSTNAME", "").strip().strip(".").lower()
+    try:
+        recursive_mirrors = DNSMASQ_CONFIG_PATH.is_file() and _recursive_lease_mirrors_in_config(DNSMASQ_CONFIG_PATH)
+    except OSError:
+        return 0
+    if recursive_mirrors:
+        # Ordinary dnsmasq serves new named leases itself. Keep only a
+        # same-client '*' mirror until that lease renews or expires.
+        try:
+            if destination.is_symlink():
+                return 1
+            existing_identity = destination.read_text(encoding="utf-8").splitlines()[1] if destination.is_file() else ""
+            if action == "del" or hostname or existing_identity != identity:
+                destination.unlink(missing_ok=True)
+        except (OSError, IndexError):
+            return 1
+        return 0
     if action == "old" and not hostname:
         # Ignored client names are absent from the persisted dnsmasq lease
         # row. Keep the mirrored name until renewal or an expiry "del" event.
@@ -3412,6 +3484,11 @@ def _reload_authoritative_lease_hosts() -> None:
         raise OSError("Unable to reload authoritative DHCP lease records.")
 
 
+def _recursive_lease_mirrors_in_config(config_path: Path) -> bool:
+    """Return whether the recursive listener serves transition lease mirrors."""
+    return f"hostsdir={DNSMASQ_AUTHORITATIVE_LEASE_HOSTS_DIR}" in config_path.read_text(encoding="utf-8").splitlines()
+
+
 def _handle_dnsmasq(action: str, args: list[str]) -> int:
     """Handle dnsmasq.
 
@@ -3444,7 +3521,10 @@ def _handle_dnsmasq(action: str, args: list[str]) -> int:
         with (
             _dnsmasq_config_bundle_paths(config_path) as (main_config_path, authoritative_config_path),
             _restore_pruned_lease_hosts_on_failure(
-                action == "apply" and authoritative_config_path is not None
+                action == "apply" and (
+                    authoritative_config_path is not None
+                    or _recursive_lease_mirrors_in_config(main_config_path)
+                )
             ) as commit_mirrors,
         ):
             for candidate in (main_config_path, authoritative_config_path):
@@ -3469,6 +3549,12 @@ def _handle_dnsmasq(action: str, args: list[str]) -> int:
             if authoritative_config_path is not None:
                 try:
                     _prepare_authoritative_lease_hosts(authoritative_config_path, main_config_path)
+                except (OSError, ValueError) as exc:
+                    print(str(exc), file=sys.stderr)
+                    return 2
+            elif _recursive_lease_mirrors_in_config(main_config_path):
+                try:
+                    _prepare_authoritative_lease_hosts(main_config_path, main_config_path, recursive_mode=True)
                 except (OSError, ValueError) as exc:
                     print(str(exc), file=sys.stderr)
                     return 2

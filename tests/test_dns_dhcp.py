@@ -294,6 +294,23 @@ def test_authoritative_dns_with_dhcp_subscribes_to_lease_changes():
     assert "rev-server=192.168.60.0/24,127.0.0.1#5353" not in guest
 
 
+def test_recursive_dns_keeps_transition_mirrors_until_native_lease_names_resume():
+    """Recursive mode must serve suppressed active names from the mirror directory."""
+    config = render_dnsmasq_config(
+        dns_settings=DnsSettings(enabled=True, authoritative=False, domain="atlaso.internal"),
+        dns_records=[],
+        dhcp_settings=DhcpSettings(enabled=True, site_address="192.168.50.1", prefix_length=24),
+        dhcp_reservations=[],
+    )
+
+    assert "hostsdir=/var/lib/atlaso-dns-authoritative-leases" in config.splitlines()
+    assert "# atlaso-authoritative-lease-scope=192.168.50.0/24,atlaso.internal" in config.splitlines()
+    assert "dhcp-script=/opt/atlaso/bin/atlaso-helper" in config.splitlines()
+    assert "script-on-renewal" in config.splitlines()
+    assert not any(line.startswith("dhcp-ignore-names=") for line in config.splitlines())
+    assert "# atlaso-authoritative-config: auth-zone=atlaso.internal,192.168.50.0/24" not in config
+
+
 def test_authoritative_validation_rejects_bad_identity_timers_and_conflicting_glue():
     """Verify that authoritative validation rejects bad identity timers and conflicting glue."""
     settings = DnsSettings(

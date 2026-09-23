@@ -70,6 +70,11 @@ records locally. DHCP names in other suffixes retain normal recursive-instance b
 names from the mirror for the DHCP UI and API, and reconciles the mirror against current leases, reservation names,
 client identities, and reservation provenance before re-enabling authoritative DNS. Departed clients or rolled-back
 reservations cannot regain stale A records. Reserved clients still receive their saved hostname through DHCP.
+When authoritative DNS is enabled over existing DHCP leases, Atlaso seeds valid active lease names before starting the
+backend so clients do not need to renew first. When it is disabled, the recursive listener temporarily serves mirrored
+names for active leases whose stored hostname is `*`; the lease hook removes each mirror when the client renews with an
+ordinary name, releases its address, or changes identity. This avoids dropping names during the mode change while
+preventing stale mirrors from outliving their leases.
 Each new mirror records the exact DHCP scope domain that emitted it. If a protected management handoff rolls back,
 Atlaso preserves valid renewals of existing names under the old scope and rejects candidate names from a different
 scope, including nested suffixes that also match the old authoritative zone.
@@ -89,9 +94,13 @@ appear after dnsmasq starts, including VLANs created during Network Apply.
 
 When enabling or disabling local DNS changes the host resolver, select both **DNS/DHCP** and **Appliance Settings**
 in Appliance Apply. Selecting Appliance Settings approves its complete pending configuration; DNS selection alone is
-rejected so unrelated pending settings cannot be applied implicitly. The task starts dnsmasq before directing the host's
-systemd-resolved resolver to `127.0.0.1` with the catch-all routing domain `~.`. DNS startup failure skips the resolver
-change. Disabling DNS moves the host back to configured external or management DHCP DNS before stopping local DNS.
+rejected so unrelated pending settings cannot be applied implicitly. When DNS activation is the only pending edit, the
+review still shows the projected Appliance Settings resolver change and selects it together with DNS. The task starts
+dnsmasq before directing the host's systemd-resolved resolver to `127.0.0.1` with the catch-all routing domain `~.`.
+DNS startup failure skips the resolver change. Disabling DNS moves the host back to configured external or management
+DHCP DNS before stopping local DNS.
+If that resolver change committed but the DNS step failed, a DNS-only retry is accepted because the host no longer
+depends on local DNS.
 The managed networkd file persists the selection across reboot and excludes DHCP/RA DNS while explicit DNS is active.
 The systemd-resolved stub in `/etc/resolv.conf` remains in use; dnsmasq uses explicit upstreams with `no-resolv` to avoid
 resolver loops. Apply restarts dnsmasq because a SIGHUP reload does not reread its configuration.
