@@ -10,6 +10,10 @@ from scripts.check_repo import (
     DEFAULT_MERGE_AUTHORITY_SECTION_MARKERS,
     LEGACY_TABULATOR_MARKER,
     LOCAL_TASK_BRANCH_ABSENT_MARKER,
+    LUNA_WORKER_AGENT_PATH,
+    LUNA_WORKER_ALLOWED_KEYS,
+    LUNA_WORKER_REQUIRED_INSTRUCTION_MARKERS,
+    LUNA_WORKER_REQUIRED_VALUES,
     MAINTAINER_BREAK_GLASS_SHARED_MARKERS,
     MERGE_AUTHORITY_TRANSFER_FIXTURE_PATH,
     NON_TASK_OWNED_CHECKOUT_PRESERVED_MARKER,
@@ -27,10 +31,6 @@ from scripts.check_repo import (
     SCHEDULED_PR_MONITORING_SECTION_ANCHORS,
     SCHEDULED_PR_MONITORING_SECTION_END_ANCHORS,
     SCHEDULED_PR_MONITORING_SECTION_MARKERS,
-    SPARK_WORKER_AGENT_PATH,
-    SPARK_WORKER_ALLOWED_KEYS,
-    SPARK_WORKER_REQUIRED_INSTRUCTION_MARKERS,
-    SPARK_WORKER_REQUIRED_VALUES,
     TERMINAL_CLEANUP_ORDER_ANCHOR,
     TERMINAL_CLEANUP_ORDER_LINES,
     TERMINAL_CLEANUP_SECTION_ANCHORS,
@@ -39,9 +39,9 @@ from scripts.check_repo import (
     WORKTREE_REMOVAL_REMOTE_GATE_MARKER,
     WORKTREE_REMOVAL_RESUME_MARKER,
     check_agent_policy_gate,
+    check_luna_worker_agent,
     check_merge_authority_transfer_fixtures,
     check_protected_workflow_caches,
-    check_spark_worker_agent,
     check_ui_pattern_foundation,
     check_virtualization_legacy,
     collect_files,
@@ -429,7 +429,7 @@ jobs:
     assert check_protected_workflow_caches(tmp_path) == []
 
 
-def write_spark_worker_agent(
+def write_luna_worker_agent(
     root: Path,
     *,
     values: dict[str, str] | None = None,
@@ -440,7 +440,7 @@ def write_spark_worker_agent(
     approval_policy: str | None = None,
     extra_key: str | None = None,
 ) -> None:
-    """Persist a Spark worker fixture.
+    """Persist a Luna worker fixture.
 
     Args:
         root: Repository or filesystem root searched by the operation.
@@ -452,11 +452,11 @@ def write_spark_worker_agent(
         approval_policy: Optional approval override used to exercise inheritance checks.
         extra_key: Optional unsupported key used to exercise the exact allowlist.
     """
-    config_values = {**SPARK_WORKER_REQUIRED_VALUES, **(values or {})}
+    config_values = {**LUNA_WORKER_REQUIRED_VALUES, **(values or {})}
     instruction_text = instructions or "\n".join(
-        SPARK_WORKER_REQUIRED_INSTRUCTION_MARKERS
+        LUNA_WORKER_REQUIRED_INSTRUCTION_MARKERS
     )
-    path = root / SPARK_WORKER_AGENT_PATH
+    path = root / LUNA_WORKER_AGENT_PATH
     path.parent.mkdir(parents=True, exist_ok=True)
     lines = [
         f'name = "{config_values["name"]}"',
@@ -1852,47 +1852,47 @@ def test_generated_withdrawal_cannot_invent_source_hold(tmp_path: Path) -> None:
     )
 
 
-def test_spark_worker_agent_accepts_required_contract(tmp_path: Path) -> None:
-    """Verify that the project Spark worker contract is accepted.
+def test_luna_worker_agent_accepts_required_contract(tmp_path: Path) -> None:
+    """Verify that the project Luna worker contract is accepted.
 
     Args:
         tmp_path: Temporary directory provided by pytest for isolated filesystem state.
     """
-    write_spark_worker_agent(tmp_path)
+    write_luna_worker_agent(tmp_path)
 
-    assert check_spark_worker_agent(tmp_path) == []
+    assert check_luna_worker_agent(tmp_path) == []
 
 
-def test_spark_worker_agent_rejects_missing_file(tmp_path: Path) -> None:
-    """Verify that the project Spark worker must remain checked in.
+def test_luna_worker_agent_rejects_missing_file(tmp_path: Path) -> None:
+    """Verify that the project Luna worker must remain checked in.
 
     Args:
         tmp_path: Temporary directory provided by pytest for isolated filesystem state.
     """
-    findings = check_spark_worker_agent(tmp_path)
+    findings = check_luna_worker_agent(tmp_path)
 
     assert len(findings) == 1
-    assert findings[0].path == tmp_path / SPARK_WORKER_AGENT_PATH
-    assert findings[0].message == "required Spark worker agent is missing or unreadable"
+    assert findings[0].path == tmp_path / LUNA_WORKER_AGENT_PATH
+    assert findings[0].message == "required Luna worker agent is missing or unreadable"
 
 
-def test_spark_worker_agent_rejects_invalid_toml(tmp_path: Path) -> None:
+def test_luna_worker_agent_rejects_invalid_toml(tmp_path: Path) -> None:
     """Verify that malformed custom-agent configuration fails clearly.
 
     Args:
         tmp_path: Temporary directory provided by pytest for isolated filesystem state.
     """
-    path = tmp_path / SPARK_WORKER_AGENT_PATH
+    path = tmp_path / LUNA_WORKER_AGENT_PATH
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text('name = "unterminated\n', encoding="utf-8")
 
-    findings = check_spark_worker_agent(tmp_path)
+    findings = check_luna_worker_agent(tmp_path)
 
     assert len(findings) == 1
-    assert findings[0].message.startswith("invalid Spark worker TOML:")
+    assert findings[0].message.startswith("invalid Luna worker TOML:")
 
 
-def test_spark_worker_agent_rejects_incorrect_required_values(
+def test_luna_worker_agent_rejects_incorrect_required_values(
     tmp_path: Path,
 ) -> None:
     """Verify that the worker keeps its stable identity, model, and effort.
@@ -1903,37 +1903,37 @@ def test_spark_worker_agent_rejects_incorrect_required_values(
     replacements = {
         "name": "other_worker",
         "model": "gpt-5.6-luna",
-        "model_reasoning_effort": "low",
+        "model_reasoning_effort": "medium",
     }
 
     for key, replacement in replacements.items():
-        write_spark_worker_agent(tmp_path, values={key: replacement})
+        write_luna_worker_agent(tmp_path, values={key: replacement})
 
-        findings = check_spark_worker_agent(tmp_path)
+        findings = check_luna_worker_agent(tmp_path)
 
         assert len(findings) == 1
         assert findings[0].message == (
-            f"Spark worker {key} must equal {SPARK_WORKER_REQUIRED_VALUES[key]!r}"
+            f"Luna worker {key} must equal {LUNA_WORKER_REQUIRED_VALUES[key]!r}"
         )
 
 
-def test_spark_worker_agent_rejects_blank_required_text(tmp_path: Path) -> None:
+def test_luna_worker_agent_rejects_blank_required_text(tmp_path: Path) -> None:
     """Verify that the agent description and instructions remain substantive.
 
     Args:
         tmp_path: Temporary directory provided by pytest for isolated filesystem state.
     """
-    write_spark_worker_agent(tmp_path, description="", instructions=" ")
+    write_luna_worker_agent(tmp_path, description="", instructions=" ")
 
-    findings = check_spark_worker_agent(tmp_path)
+    findings = check_luna_worker_agent(tmp_path)
 
     assert {finding.message for finding in findings} == {
-        "Spark worker description must be non-empty",
-        "Spark worker developer_instructions must be non-empty",
+        "Luna worker description must be non-empty",
+        "Luna worker developer_instructions must be non-empty",
     }
 
 
-def test_spark_worker_agent_rejects_missing_safety_instruction(
+def test_luna_worker_agent_rejects_missing_safety_instruction(
     tmp_path: Path,
 ) -> None:
     """Verify that the worker cannot lose a required scope restriction.
@@ -1944,76 +1944,76 @@ def test_spark_worker_agent_rejects_missing_safety_instruction(
     missing_marker = "Do not make architecture decisions."
     instructions = "\n".join(
         marker
-        for marker in SPARK_WORKER_REQUIRED_INSTRUCTION_MARKERS
+        for marker in LUNA_WORKER_REQUIRED_INSTRUCTION_MARKERS
         if marker != missing_marker
     )
-    write_spark_worker_agent(tmp_path, instructions=instructions)
+    write_luna_worker_agent(tmp_path, instructions=instructions)
 
-    findings = check_spark_worker_agent(tmp_path)
+    findings = check_luna_worker_agent(tmp_path)
 
     assert len(findings) == 1
     assert findings[0].message == (
-        "required Spark worker instruction marker is missing: " + missing_marker
+        "required Luna worker instruction marker is missing: " + missing_marker
     )
 
 
-def test_spark_worker_agent_rejects_sandbox_override(tmp_path: Path) -> None:
+def test_luna_worker_agent_rejects_sandbox_override(tmp_path: Path) -> None:
     """Verify that the worker inherits the parent permission mode.
 
     Args:
         tmp_path: Temporary directory provided by pytest for isolated filesystem state.
     """
-    write_spark_worker_agent(tmp_path, sandbox_mode="workspace-write")
+    write_luna_worker_agent(tmp_path, sandbox_mode="workspace-write")
 
-    findings = check_spark_worker_agent(tmp_path)
+    findings = check_luna_worker_agent(tmp_path)
 
     assert len(findings) == 1
-    assert findings[0].message == "Spark worker must inherit the parent sandbox mode"
+    assert findings[0].message == "Luna worker must inherit the parent sandbox mode"
 
 
-def test_spark_worker_agent_rejects_tool_override(tmp_path: Path) -> None:
+def test_luna_worker_agent_rejects_tool_override(tmp_path: Path) -> None:
     """Verify that the worker inherits the parent tool capabilities.
 
     Args:
         tmp_path: Temporary directory provided by pytest for isolated filesystem state.
     """
-    write_spark_worker_agent(tmp_path, tools=[])
+    write_luna_worker_agent(tmp_path, tools=[])
 
-    findings = check_spark_worker_agent(tmp_path)
+    findings = check_luna_worker_agent(tmp_path)
 
     assert len(findings) == 1
-    assert findings[0].message == "Spark worker must inherit the parent tools"
+    assert findings[0].message == "Luna worker must inherit the parent tools"
 
 
-def test_spark_worker_agent_rejects_approval_policy_override(tmp_path: Path) -> None:
+def test_luna_worker_agent_rejects_approval_policy_override(tmp_path: Path) -> None:
     """Verify that the worker inherits the parent approval policy.
 
     Args:
         tmp_path: Temporary directory provided by pytest for isolated filesystem state.
     """
-    write_spark_worker_agent(tmp_path, approval_policy="never")
+    write_luna_worker_agent(tmp_path, approval_policy="never")
 
-    findings = check_spark_worker_agent(tmp_path)
+    findings = check_luna_worker_agent(tmp_path)
 
     assert len(findings) == 1
-    assert findings[0].message == "Spark worker must inherit the parent approval policy"
+    assert findings[0].message == "Luna worker must inherit the parent approval policy"
 
 
-def test_spark_worker_agent_rejects_any_unsupported_key(tmp_path: Path) -> None:
+def test_luna_worker_agent_rejects_any_unsupported_key(tmp_path: Path) -> None:
     """Verify that future top-level overrides fail closed.
 
     Args:
         tmp_path: Temporary directory provided by pytest for isolated filesystem state.
     """
     extra_key = "future_permission_override"
-    assert extra_key not in SPARK_WORKER_ALLOWED_KEYS
-    write_spark_worker_agent(tmp_path, extra_key=extra_key)
+    assert extra_key not in LUNA_WORKER_ALLOWED_KEYS
+    write_luna_worker_agent(tmp_path, extra_key=extra_key)
 
-    findings = check_spark_worker_agent(tmp_path)
+    findings = check_luna_worker_agent(tmp_path)
 
     assert len(findings) == 1
     assert findings[0].message == (
-        "Spark worker contains unsupported top-level key: " + extra_key
+        "Luna worker contains unsupported top-level key: " + extra_key
     )
 
 
@@ -2381,10 +2381,10 @@ def test_agent_policy_gate_rejects_cleanup_root_in_link_title(
         )
 
 
-def test_agent_policy_gate_rejects_missing_spark_delegation_policy(
+def test_agent_policy_gate_rejects_missing_luna_delegation_policy(
     tmp_path: Path,
 ) -> None:
-    """Verify that Sol and Spark responsibilities remain in canonical policy.
+    """Verify that Sol and Luna responsibilities remain in canonical policy.
 
     Args:
         tmp_path: Temporary directory provided by pytest for isolated filesystem state.
@@ -2393,7 +2393,7 @@ def test_agent_policy_gate_rejects_missing_spark_delegation_policy(
     agents_path = tmp_path / "docs/contribute/agent-workflow.md"
     agents_path.write_text(
         agents_path.read_text(encoding="utf-8").replace(
-            "## Sol and Spark Delegation", ""
+            "## Sol and Luna Delegation", ""
         ),
         encoding="utf-8",
     )
@@ -2403,14 +2403,14 @@ def test_agent_policy_gate_rejects_missing_spark_delegation_policy(
     assert len(findings) == 1
     assert findings[0].path == agents_path
     assert findings[0].message == (
-        "required agent policy marker is missing: ## Sol and Spark Delegation"
+        "required agent policy marker is missing: ## Sol and Luna Delegation"
     )
 
 
-def test_agent_policy_gate_rejects_missing_spark_model_substitution_policy(
+def test_agent_policy_gate_rejects_missing_luna_model_substitution_policy(
     tmp_path: Path,
 ) -> None:
-    """Verify that Spark fallback never substitutes another model.
+    """Verify that Luna fallback never substitutes an unapproved model.
 
     Args:
         tmp_path: Temporary directory provided by pytest for isolated filesystem state.
@@ -2419,7 +2419,7 @@ def test_agent_policy_gate_rejects_missing_spark_model_substitution_policy(
     agents_path = tmp_path / "docs/contribute/agent-workflow.md"
     agents_path.write_text(
         agents_path.read_text(encoding="utf-8").replace(
-            "never substitutes another model", ""
+            "never substitutes an unapproved model", ""
         ),
         encoding="utf-8",
     )
@@ -2429,7 +2429,7 @@ def test_agent_policy_gate_rejects_missing_spark_model_substitution_policy(
     assert len(findings) == 1
     assert findings[0].path == agents_path
     assert findings[0].message == (
-        "required agent policy marker is missing: never substitutes another model"
+        "required agent policy marker is missing: never substitutes an unapproved model"
     )
 
 
