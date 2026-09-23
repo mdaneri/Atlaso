@@ -156,6 +156,7 @@ def test_client_seed_installs_fixture_tools_only_when_requested(enabled):
     data = files["user-data"]
     config = yaml.safe_load(data)
     commands = config["runcmd"]
+    assert (config.get("ssh") == {"emit_keys_to_console": False}) == enabled
     assert all(isinstance(command, str) for command in commands)
     for package in ("dnsmasq", "radvd", "python3", "nftables", "ethtool", "sudo",
                     "open-vm-tools", "open-vm-tools-openrc", "open-vm-tools-vix"):

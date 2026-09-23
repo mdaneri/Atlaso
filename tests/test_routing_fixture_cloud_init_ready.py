@@ -26,7 +26,7 @@ def test_clean_nocloud_boot_is_ready():
 
 def test_detached_seed_fallback_is_ready_only_with_exact_warning():
     fallback = status(
-        datasource="DataSourceNone",
+        datasource="none",
         extended_status="degraded done",
         recoverable_errors={"WARNING": ["Used fallback datasource"]},
     )

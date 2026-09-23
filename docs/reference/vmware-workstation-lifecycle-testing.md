@@ -617,6 +617,8 @@ The clients also install Alpine's VIX guest-operations plugin; the base VMware T
 runner's authenticated `vmrun` inventory and controller operations.
 Provisioning readiness requires completed cloud-init with no errors. After seed removal, the fixture accepts only
 cloud-init's known `DataSourceNone` fallback warning; other recoverable warnings still refuse the run.
+The fixture suppresses optional SSH-key console output so an Alpine cloud-init image missing that console helper does
+not report a provisioning warning for an otherwise completed first boot.
 For a full ESXi PXE install, the consumer rotates
 the encrypted `Lifecycle ESXi` vault entry and persists only
 `{{vault.lifecycle_esxi.esx.lifecycle.root.password}}` in the Kickstart source; Atlaso resolves that marker for the

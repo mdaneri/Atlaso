@@ -85,6 +85,9 @@ ssh_pwauth: true"""
       - {args.public_key}"""
 
     fixture_mode = bool(getattr(args, "routing_overlap_guest", False))
+    # Alpine cloud-init 26.1 may warn when its optional console-fingerprint
+    # helper is absent; the private fixture never needs to print host keys.
+    fixture_ssh_policy = "\nssh:\n  emit_keys_to_console: false" if fixture_mode else ""
     fixture_packages = (
         "\n  - dnsmasq\n  - radvd\n  - python3\n  - nftables\n  - ethtool"
         "\n  - sudo\n  - open-vm-tools\n  - open-vm-tools-openrc\n  - open-vm-tools-vix"
@@ -111,7 +114,7 @@ ssh_pwauth: true"""
 hostname: {args.hostname}
 manage_etc_hosts: true
 disable_root: true
-{password_block}
+{password_block}{fixture_ssh_policy}
 users:
   - default
   - name: {args.user}

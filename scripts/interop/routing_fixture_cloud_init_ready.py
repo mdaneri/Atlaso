@@ -28,7 +28,7 @@ def provisioned(returncode: int, output: str) -> bool:
         return warnings in ({}, None) and status.get("extended_status") == "done"
     return (
         status.get("extended_status") == "degraded done"
-        and status.get("datasource") == "DataSourceNone"
+        and status.get("datasource") == "none"
         and warnings == {"WARNING": ["Used fallback datasource"]}
     )
 
