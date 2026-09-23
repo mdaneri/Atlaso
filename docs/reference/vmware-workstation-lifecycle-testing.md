@@ -615,6 +615,8 @@ Once their credential-bearing seeds are detached, this prevents later boots from
 metadata services before SSH and VMware Tools become available.
 The clients also install Alpine's VIX guest-operations plugin; the base VMware Tools daemon alone cannot satisfy the
 runner's authenticated `vmrun` inventory and controller operations.
+Provisioning readiness requires completed cloud-init with no errors. After seed removal, the fixture accepts only
+cloud-init's known `DataSourceNone` fallback warning; other recoverable warnings still refuse the run.
 For a full ESXi PXE install, the consumer rotates
 the encrypted `Lifecycle ESXi` vault entry and persists only
 `{{vault.lifecycle_esxi.esx.lifecycle.root.password}}` in the Kickstart source; Atlaso resolves that marker for the

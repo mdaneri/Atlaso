@@ -50,8 +50,13 @@ function Get-RoutingOverlapGuest {
         }
     } while ($true)
     if ($InstallController) {
+        $readinessPath = Join-Path $runtimeSourceRoot 'scripts/interop/routing_fixture_cloud_init_ready.py'
+        $guestReadiness = "/tmp/atlaso-cloud-init-ready-$nonce.py"
         $null = Invoke-AtlasoBoundedStreamingProcess -FilePath $resolvedVmrun -DiscardOutput -ArgumentList ($prefix + @(
-            'runScriptInGuest', $Vmx, '/bin/sh', 'sudo -n cloud-init status --wait'
+            'copyFileFromHostToGuest', $Vmx, $readinessPath, $guestReadiness
+        )) -TimeoutSeconds 30 -Action 'Private fixture provisioning checker upload'
+        $null = Invoke-AtlasoBoundedStreamingProcess -FilePath $resolvedVmrun -DiscardOutput -ArgumentList ($prefix + @(
+            'runScriptInGuest', $Vmx, '/bin/sh', "/usr/bin/python3 -I '$guestReadiness'"
         )) -TimeoutSeconds 300 -Action 'Private fixture client provisioning readiness'
     }
     $inspector = Join-Path $runtimeSourceRoot 'scripts/interop/routing_guest_inventory.py'
