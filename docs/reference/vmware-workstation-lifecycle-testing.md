@@ -400,6 +400,8 @@ The original guard handles are removed only after restoration readback. The tran
 channels to
 only the private appliance's SSH and HTTPS ports, opens no host listener, and verifies HTTPS with the explicit
 appliance CA and private target identity. It does not follow redirects to another origin or load ambient SSH keys.
+The private lifecycle waits for first-boot HTTPS to publish a nonempty CA before pinning its trust observation;
+an appliance still waiting for console network review fails that bounded readiness check instead of probing with null trust.
 
 The wrapper publishes pinned provider readback and public guest NIC/SSH identities before bootstrap. The private
 clients have no DHCP or RA client on their fixture NIC. Their controller receipts bind original directory, link,

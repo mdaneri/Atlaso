@@ -2185,6 +2185,121 @@ def test_selected_wan_change_executes_inside_existing_management_handoff(client)
     assert any(unit["unit_id"] == "wan" for unit in payload["units"])
 
 
+@pytest.mark.parametrize("initially_enabled", [False, True])
+def test_ntp_apply_includes_generated_dns_after_ntp(client, monkeypatch, initially_enabled):
+    """NTP enable and disable capture only their owned DNS delta after NTP.
+
+    Args:
+        client: HTTP test client.
+        monkeypatch: Pytest fixture used to replace dependencies.
+        initially_enabled: Whether NTP starts enabled.
+    """
+    from sqlalchemy import select
+
+    from atlaso.app import ui
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Job, NtpSettings, PhysicalInterface
+
+    login(client)
+    with SessionLocal() as db:
+        interface = db.scalar(select(PhysicalInterface).where(PhysicalInterface.name == "eth2"))
+        settings = db.scalar(select(NtpSettings))
+        assert interface is not None and settings is not None
+        interface.role = "access"
+        interface.mode = "access"
+        interface.admin_state = "up"
+        interface.oper_state = "up"
+        interface.ip_cidr = "192.168.49.20/24"
+        settings.listen_interface = "eth2"
+        settings.listen_address = "192.168.49.20"
+        settings.enabled = initially_enabled
+        db.commit()
+        units = ui.appliance_apply_units(db)
+        ui.update_appliance_apply_baselines(db, units, {unit["id"] for unit in units})
+        settings.enabled = not initially_enabled
+        db.commit()
+        changed = {unit["id"]: unit for unit in ui.appliance_apply_units(db)}
+        assert ui.ntp_owned_dns_is_only_pending_change(db, changed["dnsmasq"])
+
+    monkeypatch.setattr(ui, "run_appliance_apply_job", lambda _job_id: None)
+    page = client.get("/dashboard")
+    csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    response = client.post(
+        "/appliance-apply",
+        data={"csrf": csrf, "selected_units": "ntpd"},
+        headers={"Accept": "application/json"},
+    )
+    assert response.status_code == 202, response.text
+    with SessionLocal() as db:
+        job = db.get(Job, response.json()["job_id"])
+        assert job is not None
+        selected = json.loads(job.result or "{}")["selected_units"]
+    assert selected.index("ntpd") < selected.index("dnsmasq")
+
+
+@pytest.mark.parametrize(
+    ("initially_enabled", "selected_id"),
+    [(True, "dnsmasq"), (False, "dnsmasq"), (False, "ntpd"),
+     (False, ["dnsmasq", "ntpd"])],
+)
+def test_ntp_and_unrelated_dns_changes_keep_explicit_selection(
+    client, monkeypatch, initially_enabled, selected_id,
+):
+    """A manual DNS edit must not silently expand the operator's Apply selection.
+
+    Args:
+        client: HTTP test client.
+        monkeypatch: Pytest fixture used to replace dependencies.
+        initially_enabled: Whether NTP starts enabled.
+        selected_id: Apply unit or units selected by the operator.
+    """
+    from sqlalchemy import select
+
+    from atlaso.app import ui
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import DnsRecord, Job, NtpSettings, PhysicalInterface
+
+    login(client)
+    with SessionLocal() as db:
+        interface = db.scalar(select(PhysicalInterface).where(PhysicalInterface.name == "eth2"))
+        settings = db.scalar(select(NtpSettings))
+        assert interface is not None and settings is not None
+        interface.role = "access"
+        interface.mode = "access"
+        interface.admin_state = "up"
+        interface.oper_state = "up"
+        interface.ip_cidr = "192.168.49.20/24"
+        settings.listen_interface = "eth2"
+        settings.listen_address = "192.168.49.20"
+        settings.enabled = initially_enabled
+        db.commit()
+        units = ui.appliance_apply_units(db)
+        ui.update_appliance_apply_baselines(db, units, {unit["id"] for unit in units})
+        settings.enabled = not initially_enabled
+        db.add(DnsRecord(
+            hostname="manual.example.internal", record_type="A", address="192.0.2.77",
+            description="Operator", enabled=True,
+        ))
+        db.commit()
+        changed = {unit["id"]: unit for unit in ui.appliance_apply_units(db)}
+        assert not ui.ntp_owned_dns_is_only_pending_change(db, changed["dnsmasq"])
+
+    monkeypatch.setattr(ui, "run_appliance_apply_job", lambda _job_id: None)
+    page = client.get("/dashboard")
+    csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    response = client.post(
+        "/appliance-apply",
+        data={"csrf": csrf, "selected_units": selected_id},
+        headers={"Accept": "application/json"},
+    )
+    assert response.status_code == 202, response.text
+    with SessionLocal() as db:
+        job = db.get(Job, response.json()["job_id"])
+        assert job is not None
+        selected = json.loads(job.result or "{}")["selected_units"]
+    assert selected == ([selected_id] if isinstance(selected_id, str) else selected_id)
+
+
 def test_management_move_rechecks_handoff_after_ldap_dependency_expansion(client, monkeypatch):
     """Protect a Firewall unit added indirectly by the LDAP dependency closure.
 

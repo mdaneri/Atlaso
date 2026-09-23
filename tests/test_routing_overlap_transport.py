@@ -205,6 +205,13 @@ def test_ssh_reject_policy_and_exact_public_key():
     client.close()
 
 
+def test_gateway_refuses_missing_first_boot_ca_without_traceback():
+    """An unready appliance cannot supply a private HTTPS trust anchor."""
+    key = public_ssh_key()
+    with pytest.raises(FixtureTransportError, match="explicit trust anchor"):
+        PinnedFixtureGateway("192.168.167.50", "192.0.2.10", key, key, None)
+
+
 def test_gateway_has_fixed_targets_and_cleans_channels(tls_material):
     """Never forward an arbitrary address/port or leave owned channels alive.
 

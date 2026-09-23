@@ -94,6 +94,43 @@ function Get-RoutingOverlapGuest {
 
 <#
 .SYNOPSIS
+Wait for first-boot HTTPS to publish a CA before pinning private fixture trust.
+#>
+function Wait-RoutingOverlapTrust {
+    param([string]$Vmx)
+
+    $prefix = @('-T', 'ws', '-gu', 'root', '-gp', $RootGuestPassword)
+    $deadline = [DateTimeOffset]::UtcNow.AddMinutes(5)
+    do {
+        try {
+            $null = Invoke-AtlasoBoundedStreamingProcess -FilePath $resolvedVmrun -DiscardOutput -ArgumentList ($prefix + @(
+                'runScriptInGuest', $Vmx, '/bin/sh', 'test -s /etc/atlaso/ca/root.crt'
+            )) -TimeoutSeconds 15 -Action 'Private appliance CA readiness'
+            break
+        } catch {
+            $failure = $_.Exception
+            while ($null -ne $failure) {
+                if ($failure.Data['AtlasoProcessTreeTerminationUnproven']) {
+                    $script:diagnosticTerminationUnproven = $true
+                    throw 'Private appliance CA readiness termination is unproven; preserve the fixture.'
+                }
+                $failure = $failure.InnerException
+            }
+            if ([DateTimeOffset]::UtcNow -ge $deadline) {
+                throw 'Private appliance CA was not published by first-boot HTTPS; preserve the fixture.'
+            }
+            Start-Sleep -Seconds 3
+        }
+    } while ($true)
+    $trust = Get-RoutingOverlapGuest -Vmx $Vmx -Role appliance -Phase trust
+    if ($trust.Inventory.ca_pem -isnot [string] -or -not $trust.Inventory.ca_pem.Trim()) {
+        throw 'Private appliance CA observation is absent; preserve the fixture.'
+    }
+    return $trust.Path
+}
+
+<#
+.SYNOPSIS
 Read actual enabled provider NIC mappings without inferring them from the plan.
 .PARAMETER Vmx
 Exact owned VMX path whose current adapter mapping is observed.

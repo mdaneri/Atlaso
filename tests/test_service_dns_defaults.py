@@ -17,6 +17,145 @@ def _session_factory():
     )
 
 
+def test_ntp_and_nts_share_owned_dual_stack_dns_and_preserve_manual_records():
+    """NTP/NTS use one hostname and reconcile only their owned addresses."""
+    from atlaso.app.models import DnsRecord, NtpSettings, PhysicalInterface
+    from atlaso.app.seed import seed_initial_data
+    from atlaso.app.services.dnsmasq import render_hosts_records
+    from atlaso.app.services.service_dns_defaults import NTP_DNS_DESCRIPTION
+    from atlaso.app.ui import ensure_dns_for_ntp
+
+    with _session_factory()() as db:
+        seed_initial_data(db, include_examples=False, commit=False)
+        interface = PhysicalInterface(
+            name="eth9", mac_address="00:50:56:00:00:19", role="access", mode="access",
+            ip_cidr="192.0.2.10/24", ipv6_cidr="2001:db8::10/64",
+            admin_state="up", oper_state="up",
+        )
+        db.add(interface)
+        settings = db.execute(select(NtpSettings)).scalar_one()
+        settings.enabled = True
+        settings.nts_server_enabled = False
+        settings.hostname = "time.example.internal"
+        settings.listen_interface = "eth9"
+        settings.listen_address = "192.0.2.10\n2001:db8::10"
+        db.flush()
+        assert ensure_dns_for_ntp(db, settings, None) == "created"
+        owned = db.execute(select(DnsRecord).where(DnsRecord.description == NTP_DNS_DESCRIPTION)).scalars().all()
+        assert len(owned) == 3
+        cname = next(row for row in owned if row.record_type == "CNAME")
+        assert cname.hostname == settings.hostname
+        assert {row.hostname for row in owned if row.record_type in {"A", "AAAA"}} == {cname.address}
+        assert {(row.record_type, row.address) for row in owned if row.record_type != "CNAME"} == {
+            ("A", "192.0.2.10"), ("AAAA", "2001:db8::10")
+        }
+        assert "192.0.2.10" in render_hosts_records(owned)
+        settings.nts_server_enabled = True
+        assert ensure_dns_for_ntp(db, settings, None) == "unchanged"
+        assert len(db.execute(select(DnsRecord).where(DnsRecord.description == NTP_DNS_DESCRIPTION)).scalars().all()) == 3
+        db.add(DnsRecord(hostname="manual.example.internal", record_type="A", address="192.0.2.99", description="Operator", enabled=True))
+        interface.ip_cidr = "192.0.2.11/24"
+        settings.listen_address = "192.0.2.11\n2001:db8::10"
+        db.flush()
+        assert "removed-old" in ensure_dns_for_ntp(db, settings, None)
+        owned = db.execute(select(DnsRecord).where(DnsRecord.description == NTP_DNS_DESCRIPTION)).scalars().all()
+        assert not any(row.address == "192.0.2.10" for row in owned)
+        assert any(row.address == "192.0.2.11" for row in owned)
+        settings.enabled = False
+        assert ensure_dns_for_ntp(db, settings, None) == "removed-old"
+        assert db.execute(select(DnsRecord).where(DnsRecord.description == NTP_DNS_DESCRIPTION)).scalars().all() == []
+        assert db.execute(select(DnsRecord).where(DnsRecord.hostname == "manual.example.internal")).scalar_one().address == "192.0.2.99"
+        settings.enabled = True
+        assert ensure_dns_for_ntp(db, settings, None) == "created"
+        assert any(row.address == "192.0.2.11" for row in db.execute(
+            select(DnsRecord).where(DnsRecord.description == NTP_DNS_DESCRIPTION)
+        ).scalars().all())
+
+
+def test_ntp_dns_migrates_address_named_targets_to_shared_dual_stack_target():
+    """Previously generated per-address targets converge on one resolvable alias."""
+    from atlaso.app.models import DnsRecord, NtpSettings, PhysicalInterface
+    from atlaso.app.seed import seed_initial_data
+    from atlaso.app.services.service_dns_defaults import NTP_DNS_DESCRIPTION
+    from atlaso.app.ui import ensure_dns_for_ntp, service_interface_dns_targets
+
+    with _session_factory()() as db:
+        seed_initial_data(db, include_examples=False, commit=False)
+        db.add(PhysicalInterface(
+            name="eth9", mac_address="00:50:56:00:00:19", role="access", mode="access",
+            ip_cidr="192.0.2.10/24", ipv6_cidr="2001:db8::10/64",
+            admin_state="up", oper_state="up",
+        ))
+        settings = db.execute(select(NtpSettings)).scalar_one()
+        settings.enabled = True
+        settings.hostname = "time.example.internal"
+        settings.listen_interface = "eth9"
+        settings.listen_address = "192.0.2.10\n2001:db8::10"
+        db.flush()
+        old_targets = service_interface_dns_targets(
+            db, hostname=settings.hostname, listen_interface=settings.listen_interface,
+            listen_address=settings.listen_address,
+        )
+        db.add(DnsRecord(
+            hostname=settings.hostname, record_type="CNAME",
+            address=old_targets[0]["hostname"], description=NTP_DNS_DESCRIPTION, enabled=True,
+        ))
+        for target in old_targets:
+            db.add(DnsRecord(
+                hostname=target["hostname"], record_type=target["record_type"],
+                address=target["address"], description=NTP_DNS_DESCRIPTION, enabled=True,
+            ))
+        db.flush()
+
+        assert "removed-old" in ensure_dns_for_ntp(db, settings, None)
+        owned = db.execute(select(DnsRecord).where(DnsRecord.description == NTP_DNS_DESCRIPTION)).scalars().all()
+        cname = next(row for row in owned if row.record_type == "CNAME")
+        assert len(owned) == 3
+        assert cname.address not in {target["hostname"] for target in old_targets}
+        assert {row.hostname for row in owned if row.record_type != "CNAME"} == {cname.address}
+
+
+def test_ntp_apply_blocks_operator_owned_hostname_and_target_conflicts():
+    """Manual DNS ownership remains intact and makes NTP Apply invalid."""
+    from atlaso.app.models import DnsRecord, NtpSettings, PhysicalInterface
+    from atlaso.app.seed import seed_initial_data
+    from atlaso.app.ui import ntp_context, service_target_hostname
+
+    for conflicting_hostname, record_type, value in (
+        ("time.example.internal", "A", "192.0.2.99"),
+        ("time.example.internal", "TXT", "operator-note"),
+        (service_target_hostname("time.example.internal", "service"), "A", "192.0.2.99"),
+    ):
+        with _session_factory()() as db:
+            seed_initial_data(db, include_examples=False, commit=False)
+            db.add(PhysicalInterface(
+                name="eth9", mac_address="00:50:56:00:00:19", role="access", mode="access",
+                ip_cidr="192.0.2.10/24", admin_state="up", oper_state="up",
+            ))
+            settings = db.execute(select(NtpSettings)).scalar_one()
+            settings.enabled = True
+            settings.hostname = "time.example.internal"
+            settings.listen_interface = "eth9"
+            settings.listen_address = "192.0.2.10"
+            db.add(DnsRecord(
+                hostname=conflicting_hostname, record_type=record_type, address=value,
+                description="Operator", enabled=True,
+            ))
+            db.flush()
+
+            context = ntp_context(db)
+            assert any("operator-owned DNS record" in error for error in context["ntp_validation_errors"])
+            manual = db.execute(select(DnsRecord).where(
+                DnsRecord.hostname == conflicting_hostname, DnsRecord.record_type == record_type,
+                DnsRecord.description == "Operator",
+            )).scalar_one()
+            assert manual.address == value
+            if conflicting_hostname == settings.hostname:
+                assert db.execute(select(DnsRecord).where(
+                    DnsRecord.hostname == settings.hostname, DnsRecord.record_type == "CNAME",
+                )).scalars().all() == []
+
+
 def test_fresh_seed_and_lazy_service_defaults_use_appliance_domain(monkeypatch):
     """Fresh and OVF-derived first boot state uses one canonical domain source.
 
@@ -79,6 +218,46 @@ def test_fresh_seed_and_lazy_service_defaults_use_appliance_domain(monkeypatch):
             assert esxi_pxe_boot_settings(db)["hostname"] == "esxi-pxe.lab.internal"
     finally:
         get_settings.cache_clear()
+
+
+def test_ntp_domain_migration_preserves_operator_txt_at_new_alias():
+    """An operator TXT record prevents migration of the managed NTP CNAME."""
+    from atlaso.app.models import ApplianceSettings, DnsRecord, NtpSettings
+    from atlaso.app.seed import seed_initial_data
+    from atlaso.app.services.service_dns_defaults import (
+        NTP_DNS_DESCRIPTION,
+        reconcile_factory_service_identities,
+    )
+
+    with _session_factory()() as db:
+        seed_initial_data(db, include_examples=False, commit=False)
+        appliance = db.execute(select(ApplianceSettings)).scalar_one()
+        appliance.fqdn = "atlaso.lab.internal"
+        db.add_all([
+            DnsRecord(
+                hostname="ntp.atlaso.internal", record_type="CNAME",
+                address="ntp-service.atlaso.internal",
+                description=NTP_DNS_DESCRIPTION, enabled=True,
+            ),
+            DnsRecord(
+                hostname="ntp.lab.internal", record_type="TXT",
+                address="operator-owned", description="Operator", enabled=True,
+            ),
+        ])
+        db.flush()
+
+        changes = reconcile_factory_service_identities(db)
+        records = db.execute(select(DnsRecord)).scalars().all()
+        ntp = db.execute(select(NtpSettings)).scalar_one()
+
+        assert ntp.hostname == "ntp.lab.internal"
+        assert changes["ntp"]["dns_conflicts"] == 1
+        assert not any(row.record_type == "CNAME" and row.description == NTP_DNS_DESCRIPTION for row in records)
+        assert any(
+            row.hostname == "ntp.lab.internal" and row.record_type == "TXT"
+            and row.description == "Operator" and row.address == "operator-owned"
+            for row in records
+        )
 
 
 def test_reconcile_factory_identities_preserves_operator_state_and_dns_conflicts():

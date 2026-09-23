@@ -2858,7 +2858,7 @@ try {
     }
     if ($RoutingOverlapOnly) {
         if ($ApplianceIPAddress -cne '192.0.2.10') { throw 'Private DHCP reservation was not observed on the appliance.' }
-        $overlapTrust = (Get-RoutingOverlapGuest -Vmx $applianceVmx -Role appliance -Phase trust).Path
+        $overlapTrust = Wait-RoutingOverlapTrust -Vmx $applianceVmx
     }
     [pscustomobject]@{
         appliance_ip  = $ApplianceIPAddress

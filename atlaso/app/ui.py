@@ -531,11 +531,12 @@ from atlaso.app.services.routes_wan import (
     wan_policy_to_dict,
 )
 from atlaso.app.services.service_dns_defaults import (
-    appliance_domain_from_fqdn as canonical_appliance_domain_from_fqdn,
-)
-from atlaso.app.services.service_dns_defaults import (
+    NTP_DNS_DESCRIPTION,
     factory_service_hostname,
     reconcile_factory_service_identities,
+)
+from atlaso.app.services.service_dns_defaults import (
+    appliance_domain_from_fqdn as canonical_appliance_domain_from_fqdn,
 )
 from atlaso.app.services.service_registry import (
     SERVICE_STATE_IDS,
@@ -2208,6 +2209,10 @@ def ntp_context(db: Session, *, include_runtime_health: bool = False, reconcile:
     if reconcile and normalize_service_bind_settings(db, settings):
         db.commit()
         db.refresh(settings)
+    if reconcile:
+        dns_action = ensure_dns_for_ntp(db, settings, actor=None, previous_hostname=settings.hostname)
+        if dns_action not in {None, "unchanged", "conflict"}:
+            db.commit()
     capability_result = SystemAdapter().read_ntpd_capabilities()
     ntp_capabilities = ntpd_capabilities_payload(capability_result)
     ntp_nts_capability_known = "nts" in ntp_capabilities
@@ -2257,6 +2262,8 @@ def ntp_context(db: Session, *, include_runtime_health: bool = False, reconcile:
     config_preview = render_ntp_config(settings)
     ca_state_errors = ensure_ca_state(db) if reconcile and settings.nts_server_enabled else []
     validation_errors = [*ca_state_errors, *validate_ntp_state(settings, {interface["name"] for interface in available_interfaces})]
+    if settings.enabled and ntp_dns_record_conflict(db, settings):
+        validation_errors.append("NTP hostname or generated target conflicts with an operator-owned DNS record.")
     if settings.nts_server_enabled:
         ca_settings = get_ca_settings_row(db)
         if not ca_settings.enabled:
@@ -6296,6 +6303,7 @@ def service_interface_dns_targets(
     listen_interface: str,
     listen_address: str | None,
     bind_options: list[dict[str, Any]] | None = None,
+    shared_target_token: str | None = None,
 ) -> list[dict[str, str]]:
     """Return service interface dns targets.
 
@@ -6305,6 +6313,7 @@ def service_interface_dns_targets(
         listen_interface: Interface on which the service should listen.
         listen_address: Address on which the service should listen.
         bind_options: Bind options supplied by the caller.
+        shared_target_token: Optional stable token for a shared DNS target.
     """
     selected_addresses = split_addresses(listen_address)
     if not selected_addresses:
@@ -6323,7 +6332,7 @@ def service_interface_dns_targets(
                 parsed_address = ip_address(address)
             except ValueError:
                 continue
-            target_token = service_dns_target_token(naming_strategy, interface_name, str(parsed_address))
+            target_token = shared_target_token or service_dns_target_token(naming_strategy, interface_name, str(parsed_address))
             target_hostname = service_target_hostname(hostname, target_token)
             targets.append(
                 {
@@ -6369,6 +6378,7 @@ def ensure_interface_dns_alias(
     previous_hostname: str | None = None,
     enabled: bool = True,
     bind_options: list[dict[str, Any]] | None = None,
+    shared_target_token: str | None = None,
 ) -> str | None:
     """Ensure interface dns alias.
 
@@ -6383,6 +6393,7 @@ def ensure_interface_dns_alias(
         previous_hostname: Hostname previously owned by the resource.
         enabled: Whether the requested behavior is enabled.
         bind_options: Bind options supplied by the caller.
+        shared_target_token: Optional stable token for a shared DNS target.
 
     Returns:
         The ensure interface dns alias result.
@@ -6390,7 +6401,11 @@ def ensure_interface_dns_alias(
     normalized_hostname = normalize_dns_hostname(hostname)
     if not enabled:
         return remove_interface_dns_alias(db, hostname=previous_hostname or normalized_hostname, description=description, actor=actor, audit_prefix=audit_prefix)
-    targets = service_interface_dns_targets(db, hostname=normalized_hostname, listen_interface=listen_interface, listen_address=listen_address, bind_options=bind_options)
+    targets = service_interface_dns_targets(
+        db, hostname=normalized_hostname, listen_interface=listen_interface,
+        listen_address=listen_address, bind_options=bind_options,
+        shared_target_token=shared_target_token,
+    )
     if not normalized_hostname:
         return None
     if not targets:
@@ -6402,13 +6417,11 @@ def ensure_interface_dns_alias(
     label_prefix = f"{normalized_hostname.split('.', 1)[0]}-"
 
     canonical_records = db.execute(
-        select(DnsRecord).where(
-            DnsRecord.hostname == normalized_hostname,
-            DnsRecord.record_type.in_(["A", "AAAA", "CNAME"]),
-        )
+        select(DnsRecord).where(DnsRecord.hostname == normalized_hostname)
     ).scalars().all()
     canonical_record_conflict = any(
-        record.description != description for record in canonical_records
+        record.description != description or record.record_type not in {"A", "AAAA", "CNAME"}
+        for record in canonical_records
     )
     generated_target_conflict = False
     for target in targets:
@@ -6496,11 +6509,8 @@ def ensure_interface_dns_alias(
             actions.append("conflict")
             continue
         existing = next(
-            (
-                record
-                for record in matching_records
-                if record.record_type == record_type
-            ),
+            (record for record in matching_records
+             if record.record_type == record_type and record.address == address),
             None,
         )
         if existing:
@@ -6790,6 +6800,125 @@ def ensure_dns_for_oidc(
     )
 
 
+def ensure_dns_for_ntp(db: Session, settings: NtpSettings, actor: str | None, *, previous_hostname: str | None = None) -> str | None:
+    """Reconcile the shared NTP/NTS hostname to owned listener addresses.
+
+    Args:
+        db: Active database session.
+        settings: Desired NTP and NTS settings.
+        actor: Optional audit actor.
+        previous_hostname: Previously configured service hostname.
+    """
+    hostname = normalize_dns_hostname(settings.hostname or NTP_DEFAULT_HOSTNAME)
+    settings.hostname = hostname
+    return ensure_interface_dns_alias(
+        db,
+        hostname=hostname,
+        listen_interface=settings.listen_interface,
+        listen_address=settings.listen_address,
+        description=NTP_DNS_DESCRIPTION,
+        actor=actor,
+        audit_prefix="ntp",
+        previous_hostname=previous_hostname,
+        enabled=settings.enabled,
+        shared_target_token="service",
+    )
+
+
+def ntp_dns_record_conflict(db: Session, settings: NtpSettings) -> bool:
+    """Detect manual records occupying the NTP alias or its shared target.
+
+    Args:
+        db: Active database session.
+        settings: Desired NTP service settings.
+    """
+    hostname = normalize_dns_hostname(settings.hostname or NTP_DEFAULT_HOSTNAME)
+    targets = service_interface_dns_targets(
+        db, hostname=hostname, listen_interface=settings.listen_interface,
+        listen_address=settings.listen_address, shared_target_token="service",
+    )
+    canonical_records = db.execute(
+        select(DnsRecord).where(DnsRecord.hostname == hostname)
+    ).scalars().all()
+    if any(
+        record.description != NTP_DNS_DESCRIPTION or record.record_type not in {"A", "AAAA", "CNAME"}
+        for record in canonical_records
+    ):
+        return True
+    target_names = {target["hostname"] for target in targets}
+    target_records = db.execute(
+        select(DnsRecord).where(
+            DnsRecord.hostname.in_(target_names),
+            DnsRecord.record_type.in_(["A", "AAAA", "CNAME"]),
+        )
+    ).scalars().all()
+    return any(record.description != NTP_DNS_DESCRIPTION for record in target_records)
+
+
+def ntp_owned_dns_is_only_pending_change(db: Session, dns_unit: dict[str, Any]) -> bool:
+    """Couple NTP and DNS only when their generated records explain the DNS delta.
+
+    Args:
+        db: Active database session.
+        dns_unit: Captured DNS Apply unit.
+    """
+    baselines = load_appliance_apply_baselines(db)
+    previous_dns = str((baselines.get("dnsmasq") or {}).get("config_preview") or "")
+    current_dns = str(dns_unit.get("config_preview") or "")
+    if not previous_dns or previous_dns == current_dns:
+        return False
+
+    owned = db.execute(select(DnsRecord).where(DnsRecord.description == NTP_DNS_DESCRIPTION)).scalars().all()
+    current_lines = {
+        f"cname={row.hostname},{row.address.strip().strip('.').lower()}"
+        if row.record_type == "CNAME" else f"host-record={row.hostname},{row.address}"
+        for row in owned if row.enabled and row.record_type in {"A", "AAAA", "CNAME"}
+    }
+    previous_ntp = str((baselines.get("ntpd") or {}).get("config_preview") or "")
+    prior_hostname = next(
+        (line.partition(": ")[2] for line in previous_ntp.splitlines()
+         if line.startswith("# Atlaso NTP hostname: ")), "",
+    )
+    prior_enabled = "# Atlaso NTP enabled: true" in previous_ntp.splitlines()
+    prior_target = service_target_hostname(prior_hostname, "service") if prior_enabled and prior_hostname else ""
+    prior_cname = f"cname={prior_hostname},{prior_target}" if prior_target else ""
+    if not current_lines and (not prior_cname or prior_cname not in previous_dns.splitlines()):
+        # A clean disable can be attributed to the previously applied NTP
+        # alias. Without that evidence, leave DNS selection with the operator.
+        return False
+    previous_lines = {
+        line for line in previous_dns.splitlines()
+        if prior_target and (
+            line == prior_cname
+            or line.startswith(f"host-record={prior_target},")
+        )
+    }
+    if previous_lines == current_lines:
+        return False
+
+    def non_ntp_lines(config: str, omitted: set[str]) -> list[str]:
+        """Return config lines after excluding NTP-owned records.
+
+        Args:
+            config: DNS configuration preview.
+            omitted: NTP-owned lines to exclude.
+        """
+        lines = []
+        for line in config.splitlines():
+            if line in omitted:
+                continue
+            if line.startswith("auth-soa="):
+                # DNS record mutations advance the server-managed SOA serial.
+                line = "auth-soa=<serial>," + line.partition(",")[2]
+            lines.append(line)
+        return sorted(lines)
+
+    return (
+        non_ntp_lines(previous_dns, previous_lines)
+        == non_ntp_lines(current_dns, current_lines)
+    )
+
+
 def remove_dns_for_vcf_offline_depot_hostname(db: Session, hostname: str, actor: str) -> str | None:
     """Remove dns for vcf offline depot hostname.
 
@@ -6931,6 +7060,12 @@ def refresh_interface_service_dns_aliases(db: Session, actor: str | None = None)
                 actor=actor,
                 previous_hostname=oidc_settings.hostname,
             ),
+        )
+    ntp_settings = db.execute(select(NtpSettings)).scalar_one_or_none()
+    if ntp_settings:
+        mark(
+            "NTP / NTS",
+            ensure_dns_for_ntp(db, ntp_settings, actor=actor, previous_hostname=ntp_settings.hostname),
         )
     depot_settings = db.execute(select(VcfOfflineDepotSettings)).scalar_one_or_none()
     if depot_settings:
@@ -11084,13 +11219,13 @@ def appliance_apply_units(db: Session, *, reconcile: bool = True) -> list[dict[s
     firewall = firewall_context(db, reconcile=reconcile)
     # Apply units consume desired previews and validation, not detail-page tables.
     # Keep validation probes (including NTP capabilities and DHCP upstreams) live.
+    ntp = ntp_context(db, reconcile=reconcile)
     dnsmasq = dnsmasq_context(db, reconcile=reconcile, include_leases=False)
     esxi_pxe = esxi_pxe_context(db)
     esx_storage = esx_storage_context(db, reconcile=reconcile, include_disk_inventory=False)
     ca = ca_context(db, reconcile=reconcile)
     kms = kms_context(db, reconcile=reconcile, include_runtime_counts=False)
     ldap = ldap_context(db, reconcile=reconcile)
-    ntp = ntp_context(db, reconcile=reconcile)
     vcf_backup = vcf_backup_context(db, reconcile=reconcile)
     vcf_depot = vcf_offline_depot_context(db, reconcile=reconcile)
     vcf_registry = vcf_private_registry_context(db, reconcile=reconcile)
@@ -16769,6 +16904,14 @@ def _submit_appliance_apply(
     units = appliance_apply_units(db)
     unit_map = {unit["id"]: unit for unit in units}
     selected_ids = {unit_id for unit_id in selected_units if unit_id in APPLIANCE_APPLY_UNIT_IDS}
+    ntp_dns_dependency = bool(
+        unit_map.get("ntpd", {}).get("changed")
+        and unit_map.get("dnsmasq", {}).get("changed")
+        and selected_ids.intersection({"ntpd", "dnsmasq"})
+        and ntp_owned_dns_is_only_pending_change(db, unit_map["dnsmasq"])
+    )
+    if ntp_dns_dependency:
+        selected_ids.update({"ntpd", "dnsmasq"})
     refresh_vcf_depot_software_depot_id = bool(
         refresh_vcf_depot_software_depot_id and "vcf_offline_depot" in selected_ids
     )
@@ -16904,6 +17047,11 @@ def _submit_appliance_apply(
         return JSONResponse({"detail": detail}, status_code=422) if wants_json else Response(detail, status_code=422, media_type="text/plain")
 
     selected_ordered_units = [unit for unit in units if unit["id"] in selected_ids]
+    if ntp_dns_dependency:
+        dns_unit = unit_map["dnsmasq"]
+        selected_ordered_units.remove(dns_unit)
+        ntp_index = next(index for index, unit in enumerate(selected_ordered_units) if unit["id"] == "ntpd")
+        selected_ordered_units.insert(ntp_index + 1, dns_unit)
     traffic_publishing_pair = publishing_pair_required and not management_handoff and {"firewall", "nat"}.issubset(selected_ids)
     if traffic_publishing_pair:
         # Network/WAN must finish before either member publishes its captured pair.
@@ -17495,6 +17643,7 @@ retire_vsphere_certificate_from_ui = _certificate_trust_ui.endpoints["retire_vsp
 _ntp_ui = build_ntp_ui_router(
     NtpUiDependencies(
         ensure_ca_state=lambda *args, **kwargs: ensure_ca_state(*args, **kwargs),
+        ensure_dns_for_ntp=lambda *args, **kwargs: ensure_dns_for_ntp(*args, **kwargs),
         get_ntp_settings_row=lambda *args, **kwargs: get_ntp_settings_row(*args, **kwargs),
         normalize_dns_hostname=lambda *args, **kwargs: normalize_dns_hostname(*args, **kwargs),
         ntp_context=lambda *args, **kwargs: ntp_context(*args, **kwargs),

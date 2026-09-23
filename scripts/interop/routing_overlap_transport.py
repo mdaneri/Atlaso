@@ -197,7 +197,7 @@ class PinnedFixtureGateway:
             address = ipaddress.ip_address(value)
             if address.is_loopback or address.is_multicast or address.is_unspecified:
                 raise FixtureTransportError("fixture peers require admitted unicast addresses")
-        if gateway == target or not ca_pem.strip():
+        if gateway == target or not isinstance(ca_pem, str) or not ca_pem.strip():
             raise FixtureTransportError("fixture target and explicit trust anchor are required")
         self.gateway = gateway
         self.target = target
