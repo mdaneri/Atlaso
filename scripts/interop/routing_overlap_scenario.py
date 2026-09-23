@@ -205,9 +205,13 @@ def _apply(client: FixtureHttpClient, units: list[str] | None = None) -> dict[st
             return {"job_id": job, "status": "succeeded"}
         if task.get("status") in {"failed", "cancelled"}:
             result = task.get("result")
-            fields = sorted(result) if isinstance(result, dict) else []
+            units = result.get("units", []) if isinstance(result, dict) else []
+            failed_units = [
+                {"unit_id": unit.get("unit_id"), "success": unit.get("success")}
+                for unit in units if isinstance(unit, dict) and unit.get("success") is False
+            ] if isinstance(units, list) else []
             raise OverlapPrerequisiteError(
-                f"native Apply {job} did not succeed (result fields: {fields})"
+                f"native Apply {job} did not succeed (failed units: {failed_units})"
             )
         time.sleep(1)
     raise ApplyOutcomeUnknown(f"Apply {job} did not reach a known terminal state; preserve fixture before restoration")
