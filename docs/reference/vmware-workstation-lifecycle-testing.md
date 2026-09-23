@@ -590,6 +590,12 @@ from the default `192.168.12.1/24`, pass a matching site CIDR with an unused hos
 For bridged VMnet0, the wrapper forwards `-BridgedInterfaceAlias` to the direct runner so both checks use the selected
 host interface; runtime discovery executes the network script from the admitted source commit.
 
+The full lifecycle uses `oidc.atlaso.internal` because management HTTPS already owns
+`core.atlaso.internal`. Its first Apply includes the configured CA certificate consumers, then it
+applies the OIDC certificate and public listener. Site Client A verifies the OIDC discovery endpoint
+over TLS against the applied CA root; the Authorization Code flow uses the management listener,
+which remains reachable from the Windows harness when Site A is an isolated `lan:<name>` segment.
+
 Useful commands:
 
 ```powershell

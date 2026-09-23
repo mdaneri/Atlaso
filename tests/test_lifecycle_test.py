@@ -743,8 +743,9 @@ def test_focused_oidc_authorization_uses_public_listener_after_management_setup(
             if (method, path) == ("POST", "/api/v1/oidc/group-mappings"):
                 return {}
             if (method, path) == ("GET", "/api/v1/oidc/provider"):
-                return {"port": 443}
+                return {"port": 443, "hostname": "core.atlaso.internal"}
             if (method, path) == ("PUT", "/api/v1/oidc/provider"):
+                assert _kwargs["json_body"]["issuer_url"] == "https://core.atlaso.internal/identity"
                 return {"enabled": True, "valid": True}
             raise AssertionError((method, path))
 
@@ -781,8 +782,12 @@ def test_focused_oidc_authorization_uses_public_listener_after_management_setup(
         )
 
 
-def test_focused_oidc_provider_sets_access_listener_before_enabling():
-    """Provider setup must send an addressed listener to the certificate reconciliation flow."""
+@pytest.mark.parametrize(
+    ("mode", "expected_hostname"),
+    [(["--oidc-only"], "core.atlaso.internal"), ([], "oidc.atlaso.internal")],
+)
+def test_oidc_provider_sets_access_listener_before_enabling(mode, expected_hostname):
+    """Provider setup must send a distinct full-lifecycle name and addressed listener."""
     lifecycle = load_lifecycle_module()
     submitted = {}
 
@@ -813,16 +818,41 @@ def test_focused_oidc_provider_sets_access_listener_before_enabling():
                 return 200, '<input name="csrf" value="test-token">', {}
             assert path == "/authentication/oidc/provider"
             submitted.update(kwargs["form"])
-            return 200, json.dumps({"enabled": True, "valid": True, "hostname": "core.atlaso.internal", "listen_addresses": ["192.0.2.1"]}), {}
+            return 200, json.dumps({"enabled": True, "valid": True, "hostname": expected_hostname, "listen_addresses": ["192.0.2.1"]}), {}
 
     result = lifecycle.configure_oidc_provider(
-        Client(), lifecycle.parse_args(["--password", "test", "--oidc-only", "--site-interface", "eth1"])
+        Client(), lifecycle.parse_args(["--password", "test", *mode, "--site-interface", "eth1"])
     )
     assert result["enabled"] is True
     assert result["port"] == 443
     assert submitted["listen_interfaces"] == ["eth1"]
-    assert submitted["hostname"] == "core.atlaso.internal"
+    assert submitted["hostname"] == expected_hostname
     assert submitted["csrf"] == "test-token"
+
+
+def test_full_oidc_site_listener_uses_client_and_verifies_ca(monkeypatch):
+    """The full lab must probe the site-only listener from its reachable client."""
+    lifecycle = load_lifecycle_module()
+    args = lifecycle.parse_args(["--password", "test", "--site-cidr", "192.168.12.1/24"])
+    args.client_a_host = "192.0.2.10"
+    calls = []
+
+    def fake_ssh_command(host, _args, command, *, role):
+        calls.append((host, command, role))
+        return {"returncode": 0, "stdout": "200", "stderr": ""}
+
+    monkeypatch.setattr(lifecycle, "ssh_command", fake_ssh_command)
+    result = lifecycle.oidc_site_listener_check(
+        args,
+        {"hostname": "oidc.atlaso.internal", "port": 443, "listen_addresses": ["192.168.12.1"]},
+    )
+
+    assert result == {"site_address": "192.168.12.1", "http_status": 200, "tls_verified": True}
+    assert calls[0][0] == args.client_a_host
+    assert calls[0][2] == "client"
+    assert "--cacert /tmp/atlaso-root-ca.pem" in calls[0][1]
+    assert "--resolve oidc.atlaso.internal:443:192.168.12.1" in calls[0][1]
+    assert " -k" not in calls[0][1]
 
 
 def test_full_lifecycle_plan_includes_passwordless_web_terminal_acceptance():
@@ -1521,12 +1551,20 @@ def test_full_lifecycle_selects_resolver_settings_with_initial_dns_apply(monkeyp
         return {}
 
     monkeypatch.setattr(lifecycle, "run_step", fake_run_step)
-    lifecycle.run_full_lifecycle([], object(), args)
+    management_client = object()
+    lifecycle.run_full_lifecycle([], management_client, args)
 
     connectivity = next(arguments for name, arguments in calls if name == "apply-connectivity-units")
     assert "dnsmasq" in connectivity[1]
     assert "appliance_settings" in connectivity[1]
     assert {"ca", "ldap", "ntpd", "vcf_offline_depot", "public_services"}.issubset(connectivity[1])
+    call_names = [name for name, _arguments in calls]
+    assert call_names.index("management-https-check") < call_names.index("configure-oidc-provider")
+    assert call_names.index("configure-oidc-provider") < call_names.index("apply-oidc-certificate-and-listener")
+    assert call_names.index("apply-oidc-certificate-and-listener") < call_names.index("oidc-site-listener-check")
+    assert call_names.index("oidc-site-listener-check") < call_names.index("oidc-authorization-code-check")
+    oidc_call = next(arguments for name, arguments in calls if name == "oidc-authorization-code-check")
+    assert oidc_call[2] is management_client
 
 
 def test_configure_esxi_pxe_selects_dhcp_scope_and_proves_reservation():

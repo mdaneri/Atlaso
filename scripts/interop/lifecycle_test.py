@@ -15,6 +15,7 @@ import http.cookiejar
 import json
 import random
 import re
+import shlex
 import ssl
 import subprocess
 import sys
@@ -1967,12 +1968,13 @@ def configure_oidc_provider(client: HttpClient, args: argparse.Namespace) -> dic
     if status >= 400:
         raise LifecycleError(f"GET /openid-connect failed with HTTP {status}")
     provider = client.json_request("GET", "/api/v1/oidc/provider")
+    hostname = "core.atlaso.internal" if args.oidc_only else "oidc.atlaso.internal"
     status, response_body, _headers = client.request(
         "POST",
         "/authentication/oidc/provider",
         form={
             "enabled": "on",
-            "hostname": "core.atlaso.internal",
+            "hostname": hostname,
             "listen_interfaces_present": "1",
             "listen_interfaces": [args.site_interface],
             "port": str(provider["port"]),
@@ -1991,6 +1993,39 @@ def configure_oidc_provider(client: HttpClient, args: argparse.Namespace) -> dic
         "listen_addresses": payload.get("listen_addresses"),
         "port": provider["port"],
     }
+
+
+def verified_oidc_public_client(client: HttpClient, args: argparse.Namespace, provider: dict[str, Any]) -> HttpClient:
+    """Bind OIDC browser traffic to the selected site listener and applied CA."""
+    site_address = str(ip_interface(args.site_cidr).ip)
+    if site_address not in (provider.get("listen_addresses") or []):
+        raise LifecycleError("The OIDC provider did not publish the selected site listener.")
+    status, root_ca_pem, _headers = client.request("GET", "/certificate-authority/downloads/root-ca.pem")
+    if status != 200 or "BEGIN CERTIFICATE" not in root_ca_pem:
+        raise LifecycleError("The applied CA root was unavailable for OIDC listener verification.")
+    return HttpClient(f"https://{site_address}:{provider['port']}", trusted_ca_pem=root_ca_pem)
+
+
+def oidc_site_listener_check(args: argparse.Namespace, provider: dict[str, Any]) -> dict[str, Any]:
+    """Verify the full lab's site-only OIDC listener from its site client."""
+    hostname = str(provider["hostname"])
+    port = int(provider["port"])
+    site_address = str(ip_interface(args.site_cidr).ip)
+    if site_address not in (provider.get("listen_addresses") or []):
+        raise LifecycleError("The OIDC provider did not publish the selected site listener.")
+    url = f"https://{hostname}:{port}/identity/.well-known/openid-configuration"
+    resolved = f"{hostname}:{port}:{site_address}"
+    command = (
+        "test -s /tmp/atlaso-root-ca.pem && "
+        "curl --silent --show-error --fail --connect-timeout 10 --max-time 30 "
+        "--cacert /tmp/atlaso-root-ca.pem "
+        f"--resolve {shlex.quote(resolved)} --output /dev/null --write-out '%{{http_code}}' {shlex.quote(url)}"
+    )
+    result = ssh_command(args.client_a_host, args, command, role="client")
+    require_success(result, "OIDC site listener")
+    if result["stdout"].strip() != "200":
+        raise LifecycleError("OIDC site listener did not return a successful discovery response.")
+    return {"site_address": site_address, "http_status": 200, "tls_verified": True}
 
 
 def oidc_authorization_code_check(
@@ -2042,7 +2077,7 @@ def oidc_authorization_code_check(
     )
     provider = client.json_request("GET", "/api/v1/oidc/provider")
     provider["enabled"] = True
-    provider["issuer_url"] = "https://core.atlaso.internal/identity"
+    provider["issuer_url"] = f"https://{provider['hostname']}/identity"
     for read_only in (
         "authorization_flow_available",
         "valid",
@@ -5156,7 +5191,17 @@ def run_full_lifecycle(results: list[StepResult], client: HttpClient, args: argp
     run_step(results, "configure-management-https", configure_management_https, client, args)
     run_step(results, "apply-appliance-settings-unit", apply_units, client, ["appliance_settings", "firewall", "public_services"], args)
     run_step(results, "management-https-check", management_https_check, client, args)
-    run_step(results, "oidc-authorization-code-check", oidc_authorization_code_check, client, args)
+    provider = run_step(results, "configure-oidc-provider", configure_oidc_provider, client, args)
+    run_step(
+        results,
+        "apply-oidc-certificate-and-listener",
+        apply_units,
+        client,
+        ["ca", "firewall", "public_services"],
+        args,
+    )
+    run_step(results, "oidc-site-listener-check", oidc_site_listener_check, args, provider)
+    run_step(results, "oidc-authorization-code-check", oidc_authorization_code_check, client, args, client)
     run_step(results, "web-terminal-check", web_terminal_check, client, args)
     if args.signed_release_repository_url:
         run_step(results, "signed-release-update-check", signed_release_update_check, client, args)
@@ -5202,15 +5247,7 @@ def run_oidc_lifecycle(results: list[StepResult], client: HttpClient, args: argp
     run_step(results, "configure-ca", configure_ca, client, args)
     provider = run_step(results, "configure-oidc-provider", configure_oidc_provider, client, args)
     run_step(results, "apply-oidc-certificate-and-listener", apply_units, client, ["ca", "firewall", "public_services"], args)
-    site_address = str(ip_interface(args.site_cidr).ip)
-    if site_address not in (provider.get("listen_addresses") or []):
-        raise LifecycleError("The OIDC provider did not publish the selected site listener.")
-    status, root_ca_pem, _headers = client.request("GET", "/certificate-authority/downloads/root-ca.pem")
-    if status != 200 or "BEGIN CERTIFICATE" not in root_ca_pem:
-        raise LifecycleError("The applied CA root was unavailable for OIDC listener verification.")
-    public_client = HttpClient(
-        f"https://{site_address}:{provider['port']}", trusted_ca_pem=root_ca_pem
-    )
+    public_client = verified_oidc_public_client(client, args, provider)
     run_step(results, "oidc-authorization-code-check", oidc_authorization_code_check, client, args, public_client)
 
 
