@@ -15931,6 +15931,17 @@ def run_appliance_apply_job(job_id: str, *, force_real: bool = False) -> None:
                 if job_result.get("management_handoff")
                 else []
             )
+            ca_reload_units: set[str] = set()
+            deferred_ca_baseline: dict[str, Any] | None = None
+            if "ca" in current_by_id and "ca" in selected_order and "ca" not in handoff_unit_ids:
+                baselines = load_appliance_apply_baselines(db)
+                ca_reload_units = rotated_ca_certificate_consumers(current_by_id["ca"], baselines.get("ca"))
+                ca_reload_units.intersection_update(baselines.keys())
+                if not ca_reload_units.issubset(selected_order):
+                    raise ApplianceApplyJobError(
+                        "A rotated CA certificate has an applied listener missing from this task. "
+                        "Submit the appliance changes again."
+                    )
             for index, unit in enumerate(selected_units, start=1):
                 # A bundled transaction already completed these rows. A later request
                 # must not turn their successful final result into cancellation.
@@ -16350,7 +16361,17 @@ def run_appliance_apply_job(job_id: str, *, force_real: bool = False) -> None:
                             **applied_unit,
                             "runtime_config_preview": runtime_config_preview,
                         }
-                    update_appliance_apply_baselines(db, [applied_unit], {unit["id"]})
+                    if unit["id"] == "ca" and ca_reload_units:
+                        # Keep the previous CA fingerprints durable until every
+                        # consuming listener has reloaded. A failed or interrupted
+                        # task can then discover and replay those listeners.
+                        deferred_ca_baseline = applied_unit
+                    else:
+                        update_appliance_apply_baselines(db, [applied_unit], {unit["id"]})
+                        ca_reload_units.discard(unit["id"])
+                        if deferred_ca_baseline is not None and not ca_reload_units:
+                            update_appliance_apply_baselines(db, [deferred_ca_baseline], {"ca"})
+                            deferred_ca_baseline = None
                 else:
                     failed = True
                     for remaining_unit in selected_units[index:]:
