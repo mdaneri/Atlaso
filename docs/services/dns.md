@@ -70,6 +70,9 @@ records locally. DHCP names in other suffixes retain normal recursive-instance b
 names from the mirror for the DHCP UI and API, and reconciles the mirror against current leases, reservation names,
 client identities, and reservation provenance before re-enabling authoritative DNS. Departed clients or rolled-back
 reservations cannot regain stale A records. Reserved clients still receive their saved hostname through DHCP.
+Each new mirror records the exact DHCP scope domain that emitted it. If a protected management handoff rolls back,
+Atlaso preserves valid renewals of existing names under the old scope and rejects candidate names from a different
+scope, including nested suffixes that also match the old authoritative zone.
 An explicit reservation name in a managed zone suppresses client-supplied names even when its DHCP scope uses an
 unmanaged suffix, so the recursive instance cannot learn a competing local answer.
 
@@ -84,7 +87,9 @@ appear after dnsmasq starts, including VLANs created during Network Apply.
 
 ### Appliance host resolution
 
-Applying enabled DNS also selects Appliance Settings. The task starts dnsmasq before directing the host's
+When enabling or disabling local DNS changes the host resolver, select both **DNS/DHCP** and **Appliance Settings**
+in Appliance Apply. Selecting Appliance Settings approves its complete pending configuration; DNS selection alone is
+rejected so unrelated pending settings cannot be applied implicitly. The task starts dnsmasq before directing the host's
 systemd-resolved resolver to `127.0.0.1` with the catch-all routing domain `~.`. DNS startup failure skips the resolver
 change. Disabling DNS moves the host back to configured external or management DHCP DNS before stopping local DNS.
 The managed networkd file persists the selection across reboot and excludes DHCP/RA DNS while explicit DNS is active.

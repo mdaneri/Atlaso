@@ -1496,9 +1496,9 @@ def test_management_handoff_preserves_valid_post_snapshot_lease(monkeypatch, tmp
     hosts_dir = tmp_path / "authoritative-leases"
     hosts_dir.mkdir()
     valid = hosts_dir / "lease-c0a83215.hosts"
-    valid.write_text("192.168.50.21 client.atlaso.internal\n# mac=02:00:00:00:00:01\n", encoding="utf-8")
+    valid.write_text("192.168.50.21 client.atlaso.internal\n# mac=02:00:00:00:00:01\n# scope-domain=atlaso.internal\n", encoding="utf-8")
     candidate = hosts_dir / "lease-c0a83216.hosts"
-    candidate.write_text("192.168.50.22 candidate.atlaso.internal\n# mac=02:00:00:00:00:02\n", encoding="utf-8")
+    candidate.write_text("192.168.50.22 candidate.atlaso.internal\n# mac=02:00:00:00:00:02\n# scope-domain=atlaso.internal\n", encoding="utf-8")
     (state_dir / "dhcp.leases").write_text(
         "1893456000 02:00:00:00:00:01 192.168.50.21 * *\n"
         "1893456000 02:00:00:00:00:02 192.168.50.22 * *\n",
@@ -1526,6 +1526,85 @@ def test_management_handoff_preserves_valid_post_snapshot_lease(monkeypatch, tmp
 
     assert valid.exists()
     assert not candidate.exists()
+
+
+def test_management_handoff_rollback_keeps_old_scope_renewal_only(monkeypatch, tmp_path):
+    """Keep a renewed old-scope name but reject nested candidate names."""
+    helper = load_helper_module()
+    state_dir = tmp_path / "dnsmasq"
+    state_dir.mkdir()
+    hosts_dir = tmp_path / "authoritative-leases"
+    hosts_dir.mkdir()
+    backups = tmp_path / "handoff-backups"
+    backups.mkdir()
+    authoritative = tmp_path / "authoritative.conf"
+    authoritative.write_text("auth-zone=atlaso.internal,192.168.50.0/24\n", encoding="utf-8")
+    main = tmp_path / "main.conf"
+    main.write_text(
+        "# atlaso-authoritative-lease-scope=192.168.50.0/24,atlaso.internal\n",
+        encoding="utf-8",
+    )
+    (state_dir / "dhcp.leases").write_text(
+        "1893456000 02:00:00:00:00:01 192.168.50.21 * *\n"
+        "1893456000 02:00:00:00:00:02 192.168.50.22 * *\n"
+        "1893456000 02:00:00:00:00:03 192.168.50.23 * *\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(helper, "DNSMASQ_STATE_DIR", state_dir)
+    monkeypatch.setattr(helper, "DNSMASQ_LEASE_FILE_PATH", state_dir / "dhcp.leases")
+    monkeypatch.setattr(helper, "DNSMASQ_AUTHORITATIVE_LEASE_HOSTS_DIR", hosts_dir)
+    monkeypatch.setattr(helper, "DNSMASQ_AUTHORITATIVE_CONFIG_PATH", authoritative)
+    monkeypatch.setattr(helper, "DNSMASQ_CONFIG_PATH", main)
+    monkeypatch.setattr(helper, "MANAGEMENT_HANDOFF_BACKUP_DIR", backups)
+    monkeypatch.setattr(helper, "MANAGEMENT_HANDOFF_STATE_PATH", tmp_path / "handoff-state.json")
+    monkeypatch.setattr(helper.os, "chown", lambda *_args: None, raising=False)
+    monkeypatch.setattr(helper, "_fsync_file", lambda _path: None)
+    monkeypatch.setattr(helper, "_fsync_directory", lambda _path: None)
+    old_scope = hosts_dir / "lease-c0a83215.hosts"
+    old_scope.write_text(
+        "192.168.50.21 old.atlaso.internal\n# mac=02:00:00:00:00:01\n# scope-domain=atlaso.internal\n",
+        encoding="utf-8",
+    )
+    overwritten = hosts_dir / "lease-c0a83216.hosts"
+    overwritten.write_text(
+        "192.168.50.22 old2.atlaso.internal\n# mac=02:00:00:00:00:02\n# scope-domain=atlaso.internal\n",
+        encoding="utf-8",
+    )
+    snapshots = []
+    for index, path in enumerate((old_scope, overwritten)):
+        backup = backups / f"{index:03d}.bin"
+        backup.write_bytes(path.read_bytes())
+        snapshots.append({
+            "path": str(path), "backup": str(backup), "existed": True,
+            "mode": 0o644, "uid": 0, "gid": 0,
+        })
+    old_scope.write_text(
+        "192.168.50.21 renewed.atlaso.internal\n# mac=02:00:00:00:00:01\n# scope-domain=atlaso.internal\n",
+        encoding="utf-8",
+    )
+    overwritten.write_text(
+        "192.168.50.22 candidate.site.atlaso.internal\n# mac=02:00:00:00:00:02\n# scope-domain=site.atlaso.internal\n",
+        encoding="utf-8",
+    )
+    candidate = hosts_dir / "lease-c0a83217.hosts"
+    candidate.write_text(
+        "192.168.50.23 candidate.site.atlaso.internal\n# mac=02:00:00:00:00:03\n# scope-domain=site.atlaso.internal\n",
+        encoding="utf-8",
+    )
+    state = {
+        "dnsmasq_included": True,
+        "previous_dnsmasq_authoritative_present": True,
+        "snapshots": snapshots,
+    }
+    helper._capture_management_handoff_lease_updates(state)
+    assert len(state["lease_mirror_updates"]) == 2
+    for snapshot in snapshots:
+        helper._restore_management_handoff_snapshot(snapshot)
+    helper._reconcile_management_handoff_lease_mirrors(state)
+    assert "renewed.atlaso.internal" in old_scope.read_text(encoding="utf-8")
+    assert "old2.atlaso.internal" in overwritten.read_text(encoding="utf-8")
+    assert not candidate.exists()
+    assert helper._read_dnsmasq_leases() == 0
 
 
 def test_management_handoff_rollback_restores_absent_firewall(monkeypatch, tmp_path):
@@ -11419,15 +11498,15 @@ def test_dnsmasq_lease_events_mirror_only_managed_names(monkeypatch, tmp_path, c
     assert helper.main(event) == 0
     hosts = list(hosts_dir.iterdir())
     assert len(hosts) == 1
-    assert hosts[0].read_text(encoding="utf-8") == "192.168.50.21 client.atlaso.internal\n# mac=02:00:00:00:00:01\n"
+    assert hosts[0].read_text(encoding="utf-8") == "192.168.50.21 client.atlaso.internal\n# mac=02:00:00:00:00:01\n# scope-domain=atlaso.internal\n"
     assert ["systemctl", "kill", "--kill-whom=main", "--signal=HUP", "atlaso-dns-authoritative.service"] in commands
 
     assert helper.main(["atlaso-helper", "old", "02:00:00:00:00:01", "192.168.50.21"]) == 0
-    assert hosts[0].read_text(encoding="utf-8") == "192.168.50.21 client.atlaso.internal\n# mac=02:00:00:00:00:01\n"
+    assert hosts[0].read_text(encoding="utf-8") == "192.168.50.21 client.atlaso.internal\n# mac=02:00:00:00:00:01\n# scope-domain=atlaso.internal\n"
 
     event[1], event[4] = "old", "renamed"
     assert helper.main(event) == 0
-    assert hosts[0].read_text(encoding="utf-8") == "192.168.50.21 renamed.atlaso.internal\n# mac=02:00:00:00:00:01\n"
+    assert hosts[0].read_text(encoding="utf-8") == "192.168.50.21 renamed.atlaso.internal\n# mac=02:00:00:00:00:01\n# scope-domain=atlaso.internal\n"
 
     event[1], event[4] = "add", "not;valid"
     assert helper.main(event) == 0
@@ -11442,7 +11521,7 @@ def test_dnsmasq_lease_events_mirror_only_managed_names(monkeypatch, tmp_path, c
     monkeypatch.setenv("DNSMASQ_SUPPLIED_HOSTNAME", "supplied")
     assert helper.main(["atlaso-helper", "add", "02:00:00:00:00:01", "192.168.50.21"]) == 0
     assert next(hosts_dir.iterdir()).read_text(encoding="utf-8") == (
-        "192.168.50.21 supplied.atlaso.internal\n# mac=02:00:00:00:00:01\n"
+        "192.168.50.21 supplied.atlaso.internal\n# mac=02:00:00:00:00:01\n# scope-domain=atlaso.internal\n"
     )
     assert helper.main(["atlaso-helper", "old", "02:00:00:00:00:01", "192.168.50.21", "*"]) == 0
     assert "supplied.atlaso.internal" in next(hosts_dir.iterdir()).read_text(encoding="utf-8")
@@ -11470,7 +11549,7 @@ def test_dnsmasq_lease_events_mirror_only_managed_names(monkeypatch, tmp_path, c
     monkeypatch.setenv("DNSMASQ_TAGS", "sitea atlaso-name-020000000001")
     assert helper.main(["atlaso-helper", "add", "02:00:00:00:00:01", "192.168.50.21"]) == 0
     assert next(hosts_dir.iterdir()).read_text(encoding="utf-8") == (
-        "192.168.50.21 reserved.atlaso.internal\n# mac=02:00:00:00:00:01\n# reservation\n"
+        "192.168.50.21 reserved.atlaso.internal\n# mac=02:00:00:00:00:01\n# reservation\n# scope-domain=atlaso.internal\n"
     )
     lease_file.write_text("1893456000 02:00:00:00:00:01 192.168.50.21 * *\n", encoding="utf-8")
     assert helper._handle_dnsmasq("leases", []) == 0
@@ -11639,6 +11718,7 @@ def test_dnsmasq_ipv6_lease_mirror_uses_duid_and_iaid(monkeypatch, tmp_path, cap
     assert mirror.read_text(encoding="utf-8") == (
         "2001:db8:50::21 v6client.atlaso.internal\n"
         "# duid=00:01:00:01:ab:cd iaid=17\n"
+        "# scope-domain=atlaso.internal\n"
     )
     helper._prepare_authoritative_lease_hosts(authoritative)
     assert mirror.exists()

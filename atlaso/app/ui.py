@@ -6870,6 +6870,10 @@ def ntp_owned_dns_is_only_pending_change(db: Session, dns_unit: dict[str, Any]) 
         if row.record_type == "CNAME" else f"host-record={row.hostname},{row.address}"
         for row in owned if row.enabled and row.record_type in {"A", "AAAA", "CNAME"}
     }
+    current_targets = {
+        row.address.strip().strip(".").lower()
+        for row in owned if row.enabled and row.record_type == "CNAME"
+    }
     previous_ntp = str((baselines.get("ntpd") or {}).get("config_preview") or "")
     prior_hostname = next(
         (line.partition(": ")[2] for line in previous_ntp.splitlines()
@@ -6878,18 +6882,32 @@ def ntp_owned_dns_is_only_pending_change(db: Session, dns_unit: dict[str, Any]) 
     prior_enabled = "# Atlaso NTP enabled: true" in previous_ntp.splitlines()
     prior_target = service_target_hostname(prior_hostname, "service") if prior_enabled and prior_hostname else ""
     prior_cname = f"cname={prior_hostname},{prior_target}" if prior_target else ""
-    if not current_lines and (not prior_cname or prior_cname not in previous_dns.splitlines()):
+    def rendered_directive(line: str) -> str:
+        """Unwrap a directive staged for the isolated authoritative backend."""
+        return line.removeprefix("# atlaso-authoritative-config: ")
+
+    if not current_lines and (not prior_cname or not any(
+        rendered_directive(line) == prior_cname for line in previous_dns.splitlines()
+    )):
         # A clean disable can be attributed to the previously applied NTP
         # alias. Without that evidence, leave DNS selection with the operator.
         return False
     previous_lines = {
         line for line in previous_dns.splitlines()
         if prior_target and (
-            line == prior_cname
-            or line.startswith(f"host-record={prior_target},")
+            rendered_directive(line) == prior_cname
+            or rendered_directive(line).startswith(f"host-record={prior_target},")
+            or rendered_directive(line).startswith("ptr-record=")
+            and rendered_directive(line).endswith(f",{prior_target}")
         )
     }
-    if previous_lines == current_lines:
+    current_rendered_lines = {
+        line for line in current_dns.splitlines()
+        if rendered_directive(line) in current_lines
+        or rendered_directive(line).startswith("ptr-record=")
+        and any(rendered_directive(line).endswith(f",{target}") for target in current_targets)
+    }
+    if previous_lines == current_rendered_lines:
         return False
 
     def non_ntp_lines(config: str, omitted: set[str]) -> list[str]:
@@ -6903,16 +6921,13 @@ def ntp_owned_dns_is_only_pending_change(db: Session, dns_unit: dict[str, Any]) 
         for line in config.splitlines():
             if line in omitted:
                 continue
-            if line.startswith("auth-soa="):
+            if rendered_directive(line).startswith("auth-soa="):
                 # DNS record mutations advance the server-managed SOA serial.
-                line = "auth-soa=<serial>," + line.partition(",")[2]
+                line = "auth-soa=<serial>," + rendered_directive(line).partition(",")[2]
             lines.append(line)
         return sorted(lines)
 
-    return (
-        non_ntp_lines(previous_dns, previous_lines)
-        == non_ntp_lines(current_dns, current_lines)
-    )
+    return non_ntp_lines(previous_dns, previous_lines) == non_ntp_lines(current_dns, current_rendered_lines)
 
 
 def remove_dns_for_vcf_offline_depot_hostname(db: Session, hostname: str, actor: str) -> str | None:
@@ -16769,6 +16784,7 @@ def _submit_appliance_apply(
     units = appliance_apply_units(db)
     unit_map = {unit["id"]: unit for unit in units}
     selected_ids = {unit_id for unit_id in selected_units if unit_id in APPLIANCE_APPLY_UNIT_IDS}
+    appliance_settings_selected = "appliance_settings" in selected_ids
     ntp_dns_dependency = bool(
         unit_map.get("ntpd", {}).get("changed")
         and unit_map.get("dnsmasq", {}).get("changed")
@@ -16797,6 +16813,9 @@ def _submit_appliance_apply(
             apply_baselines.get("appliance_settings")
         )
     )
+    if dns_resolver_activation and not appliance_settings_selected:
+        detail = "Select Appliance Settings with DNS to approve the host resolver change and all pending settings."
+        return JSONResponse({"detail": detail}, status_code=422) if wants_json else Response(detail, status_code=422, media_type="text/plain")
     if dns_resolver_activation:
         selected_ids.add("appliance_settings")
     local_dns_disable_requires_resolver = bool(
@@ -16804,6 +16823,9 @@ def _submit_appliance_apply(
         and not getattr(dns_settings_for_apply, "enabled", False)
         and applied_local_dns_enabled(apply_baselines.get("dnsmasq"))
     )
+    if local_dns_disable_requires_resolver and not appliance_settings_selected:
+        detail = "Select Appliance Settings with DNS to approve the host resolver change and all pending settings."
+        return JSONResponse({"detail": detail}, status_code=422) if wants_json else Response(detail, status_code=422, media_type="text/plain")
     if local_dns_disable_requires_resolver and "appliance_settings" in unit_map:
         selected_ids.add("appliance_settings")
     ldap_related_units = {"ca", "dnsmasq", "firewall", "ldap"}
@@ -16919,6 +16941,9 @@ def _submit_appliance_apply(
             apply_baselines.get("appliance_settings")
         )
     )
+    if dns_resolver_activation and not appliance_settings_selected:
+        detail = "Select Appliance Settings with DNS to approve the host resolver change and all pending settings."
+        return JSONResponse({"detail": detail}, status_code=422) if wants_json else Response(detail, status_code=422, media_type="text/plain")
     if dns_resolver_activation:
         selected_ids.add("appliance_settings")
         units = appliance_apply_units(db, applying_dns=True)
@@ -16928,6 +16953,9 @@ def _submit_appliance_apply(
         and not getattr(dns_settings_for_apply, "enabled", False)
         and applied_local_dns_enabled(apply_baselines.get("dnsmasq"))
     )
+    if local_dns_disable_requires_resolver and not appliance_settings_selected:
+        detail = "Select Appliance Settings with DNS to approve the host resolver change and all pending settings."
+        return JSONResponse({"detail": detail}, status_code=422) if wants_json else Response(detail, status_code=422, media_type="text/plain")
     if local_dns_disable_requires_resolver and "appliance_settings" in unit_map:
         selected_ids.add("appliance_settings")
         if management_handoff:

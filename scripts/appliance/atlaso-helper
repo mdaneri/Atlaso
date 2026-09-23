@@ -1817,10 +1817,13 @@ def _read_dnsmasq_leases() -> int:
                     try:
                         mirror_lines = mirror.read_text(encoding="utf-8").splitlines()
                         if (
-                            len(mirror_lines) in {2, 3}
+                            len(mirror_lines) in {2, 3, 4}
                             and mirror_lines[0].startswith(f"{address} ")
                             and mirror_lines[1] == _dnsmasq_lease_identity(fields, address)
-                            and (len(mirror_lines) == 2 or mirror_lines[2] == "# reservation")
+                            and all(
+                                line == "# reservation" or line.startswith("# scope-domain=")
+                                for line in mirror_lines[2:]
+                            )
                         ):
                             fields[3] = mirror_lines[0].split()[1].split(".", 1)[0]
                     except (OSError, IndexError):
@@ -3177,10 +3180,13 @@ def _prepare_authoritative_lease_hosts(
             raise ValueError("The authoritative lease hosts directory contains an unexpected entry.")
         rows = entry.read_text(encoding="utf-8").splitlines()
         parts = rows[0].split() if rows else []
-        reserved_mirror = len(rows) == 3 and rows[2] == "# reservation"
+        metadata = rows[2:]
+        reserved_mirror = "# reservation" in metadata
+        scope_markers = [line.removeprefix("# scope-domain=") for line in metadata if line.startswith("# scope-domain=")]
         if (
-            len(rows) not in {2, 3}
-            or (len(rows) == 3 and not reserved_mirror)
+            len(rows) not in {2, 3, 4}
+            or len(scope_markers) > 1
+            or any(line != "# reservation" and not line.startswith("# scope-domain=") for line in metadata)
             or len(parts) != 2
             or not rows[1].startswith(("# mac=", "# duid="))
         ):
@@ -3207,6 +3213,13 @@ def _prepare_authoritative_lease_hosts(
             and hostname == previous_reservation[0]
             and (lease_address.version == 6 or rows[1] == previous_reservation[1])
         )
+        exact_scope_matches = bool(
+            scope_markers
+            and any(
+                lease_address in network and domain == scope_markers[0]
+                for network, domain in (scopes or [])
+            )
+        )
         if (
             lease is None
             or not lease[0]
@@ -3220,6 +3233,7 @@ def _prepare_authoritative_lease_hosts(
             or (current_reservation is not None and not current_reservation_matches)
             or (reserved_mirror and not current_reservation_matches)
             or (previous_reservation_matches and not current_reservation_matches)
+            or (scope_markers and scopes is not None and not exact_scope_matches and not current_reservation_matches)
         ):
             entry.unlink()
 
@@ -3330,6 +3344,8 @@ def _handle_dnsmasq_lease_event(argv: list[str]) -> int:
                 temporary.write(f"{address} {fqdn}\n{identity}\n")
                 if reserved_hostname:
                     temporary.write("# reservation\n")
+                if domain and HOSTNAME_PATTERN.fullmatch(domain):
+                    temporary.write(f"# scope-domain={domain}\n")
             temporary_path.chmod(0o644)
             os.replace(temporary_path, destination)
             _reload_authoritative_lease_hosts()
@@ -25975,6 +25991,44 @@ def _restore_management_handoff_snapshot(item: dict) -> None:
         temporary.unlink(missing_ok=True)
 
 
+def _capture_management_handoff_lease_updates(state: dict) -> None:
+    """Durably retain changed existing mirrors before restoring their snapshots."""
+    if not state.get("dnsmasq_included") or "lease_mirror_updates" in state:
+        return
+    if not any(
+        isinstance(item, dict)
+        and Path(str(item.get("path", ""))).parent == DNSMASQ_AUTHORITATIVE_LEASE_HOSTS_DIR
+        and item.get("existed")
+        for item in state.get("snapshots", [])
+    ):
+        return
+    updates: list[dict[str, object]] = []
+    for index, item in enumerate(state.get("snapshots", [])):
+        path = Path(str(item.get("path", "")))
+        if (
+            path.parent != DNSMASQ_AUTHORITATIVE_LEASE_HOSTS_DIR
+            or not item.get("existed")
+            or not re.fullmatch(r"lease-[0-9a-f]{8,32}\.hosts", path.name)
+            or not path.is_file()
+            or path.is_symlink()
+        ):
+            continue
+        previous = Path(str(item["backup"]))
+        if path.stat().st_size > 512 or path.read_bytes() == previous.read_bytes():
+            continue
+        backup = MANAGEMENT_HANDOFF_BACKUP_DIR / f"lease-update-{index:03d}.bin"
+        shutil.copy2(path, backup)
+        _fsync_file(backup)
+        stat = path.stat()
+        updates.append({
+            "path": str(path), "backup": str(backup), "existed": True,
+            "mode": stat.st_mode & 0o777, "uid": stat.st_uid, "gid": stat.st_gid,
+        })
+    _fsync_directory(MANAGEMENT_HANDOFF_BACKUP_DIR)
+    state["lease_mirror_updates"] = updates
+    _durable_management_handoff_state_write(state, MANAGEMENT_HANDOFF_STATE_PATH)
+
+
 def _reconcile_management_handoff_lease_mirrors(state: dict) -> None:
     """Keep valid post-snapshot leases when rolling back authoritative DNS.
 
@@ -25982,6 +26036,38 @@ def _reconcile_management_handoff_lease_mirrors(state: dict) -> None:
         state: Durable management-handoff transaction state.
     """
     if state.get("previous_dnsmasq_authoritative_present"):
+        previous_scopes = _authoritative_lease_scopes(DNSMASQ_CONFIG_PATH)
+        original = {
+            Path(str(item["path"]))
+            for item in state.get("snapshots", [])
+            if isinstance(item, dict)
+            and Path(str(item.get("path", ""))).parent == DNSMASQ_AUTHORITATIVE_LEASE_HOSTS_DIR
+            and item.get("existed")
+        }
+        for item in state.get("lease_mirror_updates", []):
+            path = Path(str(item.get("path", "")))
+            backup = Path(str(item.get("backup", "")))
+            if path not in original or not backup.is_file() or backup.stat().st_size > 512:
+                continue
+            rows = backup.read_text(encoding="utf-8").splitlines()
+            scope_markers = [line.removeprefix("# scope-domain=") for line in rows[2:] if line.startswith("# scope-domain=")]
+            try:
+                address = ip_address(rows[0].split()[0])
+            except (IndexError, ValueError):
+                continue
+            if len(scope_markers) == 1 and any(
+                address in network and domain == scope_markers[0]
+                for network, domain in previous_scopes
+            ):
+                _restore_management_handoff_snapshot(item)
+        # A new mirror cannot be trusted without its exact source scope. Old
+        # snapshotted mirrors may predate the provenance marker.
+        for path in _authoritative_lease_mirror_paths():
+            if path in original:
+                continue
+            rows = path.read_text(encoding="utf-8").splitlines()
+            if not any(line.startswith("# scope-domain=") for line in rows[2:]):
+                _durable_management_handoff_unlink(path)
         _prepare_authoritative_lease_hosts(DNSMASQ_AUTHORITATIVE_CONFIG_PATH, DNSMASQ_CONFIG_PATH)
         return
     original = {
@@ -26109,6 +26195,9 @@ def _restore_management_handoff(state: dict) -> dict:
     """
     commands: list[dict[str, object]] = []
     errors: list[str] = []
+    # Preserve renewals before any snapshot restore can overwrite them. A
+    # failed capture leaves the handoff journal intact for a later recovery.
+    _capture_management_handoff_lease_updates(state)
 
     def attempt(stage: str, operation: Callable[[], None]) -> None:
         """Run one rollback stage without preventing later restoration work.
