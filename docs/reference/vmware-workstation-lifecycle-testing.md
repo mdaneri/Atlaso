@@ -613,6 +613,8 @@ verification, then restarts a retained lab. Failure cleanup also stops affected 
 The isolated routing-overlap clients install a fixture-only cloud-init datasource list containing NoCloud and None.
 Once their credential-bearing seeds are detached, this prevents later boots from waiting for unrelated network
 metadata services before SSH and VMware Tools become available.
+The clients also install Alpine's VIX guest-operations plugin; the base VMware Tools daemon alone cannot satisfy the
+runner's authenticated `vmrun` inventory and controller operations.
 For a full ESXi PXE install, the consumer rotates
 the encrypted `Lifecycle ESXi` vault entry and persists only
 `{{vault.lifecycle_esxi.esx.lifecycle.root.password}}` in the Kickstart source; Atlaso resolves that marker for the

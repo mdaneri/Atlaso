@@ -87,7 +87,7 @@ ssh_pwauth: true"""
     fixture_mode = bool(getattr(args, "routing_overlap_guest", False))
     fixture_packages = (
         "\n  - dnsmasq\n  - radvd\n  - python3\n  - nftables\n  - ethtool"
-        "\n  - sudo\n  - open-vm-tools\n  - open-vm-tools-openrc"
+        "\n  - sudo\n  - open-vm-tools\n  - open-vm-tools-openrc\n  - open-vm-tools-vix"
         if fixture_mode else ""
     )
     fixture_services = (
