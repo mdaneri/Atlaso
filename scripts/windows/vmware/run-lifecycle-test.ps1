@@ -766,6 +766,18 @@ if (-not $PlanOnly) {
     Assert-LifecycleRunnerSource -RepositoryRoot $repoRoot -Commit $sourceCommit `
         -ParsedScript $MyInvocation.MyCommand.ScriptBlock.Ast.Extent.Text
 }
+if ($OidcOnly) {
+    if ($PlanOnly) {
+        Import-Module (Join-Path $PSScriptRoot 'Atlaso.OidcSiteNetwork.psm1') -Force
+    } else {
+        $siteNetworkSource = @(& git -C $repoRoot show "${sourceCommit}:scripts/windows/vmware/Atlaso.OidcSiteNetwork.psm1")
+        if ($LASTEXITCODE -ne 0) { throw 'Cannot load the admitted OIDC site network helper.' }
+        New-Module -Name Atlaso.OidcSiteNetwork -ScriptBlock ([scriptblock]::Create(($siteNetworkSource -join "`n"))) |
+            Import-Module -Force
+    }
+    Assert-AtlasoOidcSiteNetwork -SiteANetwork $SiteANetwork -SiteCidr $SiteCidr `
+        -PrepareNetworksPath (Join-Path $PSScriptRoot 'prepare-networks.ps1') -VmrunPath $VmrunPath
+}
 if ($PlanOnly) {
     Import-Module (Join-Path $PSScriptRoot 'Atlaso.VmwareTestIdentity.psm1') -Force
 } else {

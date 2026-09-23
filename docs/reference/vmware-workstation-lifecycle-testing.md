@@ -583,7 +583,7 @@ hostname and certificate verification against the downloaded CA root. It skips u
 client VM creation and probes, and the backup/restore pass. Because this verified probe runs on the Windows host,
 `-OidcOnly` requires a host-reachable Site A vmnet; an isolated `lan:<name>` Site A segment is rejected before lab creation.
 It also requires `-SiteInterface eth1`, because the focused runner attaches Site A to the appliance's second adapter.
-The wrapper checks that `-SiteCidr` matches the selected vmnet's discovered IPv4 subnet and that an active host adapter
+Both entry points check that `-SiteCidr` matches the selected vmnet's discovered IPv4 subnet and that an active host adapter
 has an address on that subnet before prompting for credentials or creating a lab. If the local VMnet2 subnet differs
 from the default `192.168.12.1/24`, pass a matching site CIDR with an unused host address.
 
