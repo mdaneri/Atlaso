@@ -235,6 +235,13 @@ $ErrorActionPreference = 'Stop'
 $repoRoot = Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..\..')
 $applianceIpWasPassed = $PSBoundParameters.ContainsKey('ApplianceIPAddress')
 Import-Module (Join-Path $PSScriptRoot 'Atlaso.VmwareTestIdentity.psm1') -Force
+Import-Module (Join-Path $PSScriptRoot 'Atlaso.OidcSiteNetwork.psm1') -Force
+if ($OidcOnly -and $SiteANetwork.StartsWith('lan:', [StringComparison]::OrdinalIgnoreCase)) {
+    throw '-OidcOnly requires a host-reachable SiteANetwork; VMware LAN segments cannot carry the host-side verified OIDC probe.'
+}
+if ($OidcOnly -and $SiteInterface -ne 'eth1') {
+    throw '-OidcOnly requires SiteInterface eth1 because its Site A vmnet is attached to the appliance second adapter.'
+}
 
 <#
 .SYNOPSIS
@@ -381,6 +388,12 @@ if ($PSCmdlet.ParameterSetName -eq 'CleanupVms') {
     return
 }
 
+if ($OidcOnly) {
+    Assert-AtlasoOidcSiteNetwork -SiteANetwork $SiteANetwork -SiteCidr $SiteCidr `
+        -PrepareNetworksPath (Join-Path $PSScriptRoot 'prepare-networks.ps1') `
+        -VmrunPath $VmrunPath -BridgedInterfaceAlias $BridgedInterfaceAlias
+}
+
 if (-not $PlanOnly) {
     if ($null -eq $AdminPassword) {
         $AdminPassword = Read-Host -Prompt 'Atlaso lifecycle administrator password' -AsSecureString
@@ -477,6 +490,7 @@ if (-not $PlanOnly) { $arguments += @('-SecretBundlePath', $secretBundlePath) }
 if ($ApplianceIPAddress) { $arguments += @('-ApplianceIPAddress', $ApplianceIPAddress) }
 if ($effectiveApplianceUrl) { $arguments += @('-ApplianceUrl', $effectiveApplianceUrl) }
 if ($VmrunPath) { $arguments += @('-VmrunPath', $VmrunPath) }
+if ($BridgedInterfaceAlias) { $arguments += @('-BridgedInterfaceAlias', $BridgedInterfaceAlias) }
 if (-not $KeepVms) { $arguments += '-CleanupCreatedLab' }
 if ($AllowDryRunApply) { $arguments += '-AllowDryRunApply' }
 if ($effectiveSkipBackupRestoreTest) { $arguments += '-SkipBackupRestoreTest' }
