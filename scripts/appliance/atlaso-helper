@@ -9895,14 +9895,15 @@ def _validated_route_domain_rule_snapshot(snapshot: list[dict]) -> list[dict]:
     return validated
 
 
-def _restore_route_domain_rules(snapshot: list[dict]) -> None:
+def _restore_route_domain_rules(snapshot: list[dict], *, current_rules: list[dict] | None = None) -> None:
     """Replace only admitted legacy-window rules; callers journal before entry.
 
     Args:
         snapshot: Exact validated prior rules, or canonical candidate ingress rules.
+        current_rules: Previously admitted native rule inventory, if available.
     """
     desired = _validated_route_domain_rule_snapshot(snapshot)
-    current = _snapshot_route_domain_rules()
+    current = _snapshot_route_domain_rules() if current_rules is None else current_rules
     additions = [row for row in desired if row not in current]
     removals = [row for row in current if row not in desired]
     # Install terminal guards first. Failed lookup replacement then remains
@@ -12030,12 +12031,14 @@ def _applied_wan_network_state() -> dict | None:
 def _apply_wan_target_routes(
     parsed: dict[str, list[dict[str, str]]],
     previous_parsed: dict[str, list[dict[str, str]]] | None = None,
+    *, applied_network_state: dict | None = None,
 ) -> int:
     """Perform apply WAN target routes.
 
     Args:
         parsed: Parsed consumed by apply WAN target routes.
         previous_parsed: Parsed last-applied state used to retire stale target routes.
+        applied_network_state: Previously admitted Network ownership, if available.
     """
     if shutil.which("ip") is None:
         print("ip command not found", file=sys.stderr)
@@ -12043,7 +12046,8 @@ def _apply_wan_target_routes(
     if ROUTE_DOMAIN_CONFIG_PATH.exists() or ROUTE_DOMAIN_CONFIG_PATH.is_symlink():
         # Networkd owns connected and dedicated-management defaults after the
         # Network migration. Never replace them with pending WAN target rows.
-        _applied_wan_network_state()
+        if applied_network_state is None:
+            _applied_wan_network_state()
         return 0
     targets = parsed["targets"]
     current_lab_routes = {
@@ -12177,11 +12181,14 @@ def _cleanup_wan_policy_rules() -> int:
     return 0
 
 
-def _apply_wan_policy_rules(parsed: dict[str, list[dict[str, str]]]) -> int:
+def _apply_wan_policy_rules(
+    parsed: dict[str, list[dict[str, str]]], *, current_domain_rules: list[dict] | None = None,
+) -> int:
     """Perform apply WAN policy rules.
 
     Args:
         parsed: Parsed consumed by apply WAN policy rules.
+        current_domain_rules: Previously admitted native rule inventory, if available.
     """
     if shutil.which("ip") is None:
         print("ip command not found", file=sys.stderr)
@@ -12190,7 +12197,7 @@ def _apply_wan_policy_rules(parsed: dict[str, list[dict[str, str]]]) -> int:
     if ROUTE_DOMAIN_CONFIG_PATH.exists():
         names = _route_domain_ingress_interfaces(enforce_capacity=routing_enabled)
         desired = _route_domain_ingress_rules(names if routing_enabled else [])
-        _restore_route_domain_rules(desired)
+        _restore_route_domain_rules(desired, current_rules=current_domain_rules)
         return 0
     # A WAN-only Apply before the first Network migration must retain the old
     # local-source behavior. Network Apply journals and retires these rules.
@@ -12308,12 +12315,14 @@ def _mirrored_wan_default_keys(
 def _apply_wan_routes_and_qdiscs(
     parsed: dict[str, list[dict[str, str]]],
     previous_parsed: dict[str, list[dict[str, str]]] | None = None,
+    *, applied_network_state: dict | None = None,
 ) -> int:
     """Perform apply WAN routes and qdiscs.
 
     Args:
         parsed: Parsed consumed by apply WAN routes and qdiscs.
         previous_parsed: Parsed last-applied state used to retire host defaults.
+        applied_network_state: Previously admitted Network ownership, if available.
     """
     if shutil.which("ip") is None:
         print("ip command not found", file=sys.stderr)
@@ -12323,7 +12332,7 @@ def _apply_wan_routes_and_qdiscs(
         return 127
     targets = {target.get("name", ""): target for target in parsed["targets"]}
     feature_settings = _wan_feature_settings(parsed)
-    applied = _applied_wan_network_state()
+    applied = _applied_wan_network_state() if applied_network_state is None else applied_network_state
     routing_enabled = feature_settings["routing_enabled"]
     wan_simulation_enabled = feature_settings["wan_simulation_enabled"]
     previously_mirrored_defaults = _mirrored_wan_default_keys(previous_parsed)
@@ -13686,6 +13695,15 @@ def _handle_wan_config(action: str, config_path: Path, *, replay: bool = False) 
         if WAN_RUNTIME_CONFIG_PATH.is_file()
         else None
     )
+    applied_network_state = None
+    current_domain_rules = None
+    if ROUTE_DOMAIN_CONFIG_PATH.exists() or ROUTE_DOMAIN_CONFIG_PATH.is_symlink():
+        # Both observations can reject an unsafe or ambiguous native baseline.
+        # Admit them before forwarding, routes, NAT, or rules change host state.
+        applied_network_state = _applied_wan_network_state()
+        if applied_network_state is None:
+            raise ValueError("applied Network ownership is unavailable; reapply Network before WAN")
+        current_domain_rules = _snapshot_route_domain_rules()
     if legacy_nat:
         nat_result = _apply_wan_nat(parsed, allow_identity_quarantine=True) if replay else _apply_wan_nat(parsed)
         if nat_result:
@@ -13693,13 +13711,17 @@ def _handle_wan_config(action: str, config_path: Path, *, replay: bool = False) 
     forwarding_result = _apply_wan_forwarding(parsed)
     if forwarding_result != 0:
         return forwarding_result
-    target_route_result = _apply_wan_target_routes(parsed, previous_parsed)
+    target_route_result = _apply_wan_target_routes(
+        parsed, previous_parsed, applied_network_state=applied_network_state,
+    )
     if target_route_result != 0:
         return target_route_result
-    rule_result = _apply_wan_policy_rules(parsed)
+    rule_result = _apply_wan_policy_rules(parsed, current_domain_rules=current_domain_rules)
     if rule_result != 0:
         return rule_result
-    route_result = _apply_wan_routes_and_qdiscs(parsed, previous_parsed)
+    route_result = _apply_wan_routes_and_qdiscs(
+        parsed, previous_parsed, applied_network_state=applied_network_state,
+    )
     if route_result != 0:
         return route_result
     if action == "apply":

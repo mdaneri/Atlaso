@@ -8977,6 +8977,89 @@ def test_ca_helper_removes_invalid_apply_payload(monkeypatch, tmp_path, capsys, 
     assert not config_path.exists()
 
 
+@pytest.mark.parametrize("failed_observation", ["network", "network_missing", "rules"])
+def test_wan_apply_preflights_native_state_before_forwarding(monkeypatch, tmp_path, failed_observation):
+    """An unsafe applied Network or rule inventory leaves forwarding unchanged."""
+    helper = load_helper_module()
+    config_path = tmp_path / "wan.conf"
+    config_path.write_text("[feature_settings]\nrouting_enabled=true\n", encoding="utf-8")
+    domain_path = tmp_path / "route-domains.json"
+    domain_path.write_text("{}", encoding="utf-8")
+    sysctl_path = tmp_path / "90-atlaso-routing-wan.conf"
+    sysctl_path.write_text("original forwarding settings\n", encoding="utf-8")
+    observed: list[str] = []
+    commands: list[list[str]] = []
+
+    def network_state():
+        observed.append("network")
+        if failed_observation == "network":
+            raise ValueError("unsafe applied Network")
+        if failed_observation == "network_missing":
+            return None
+        return {"connected": {}, "prefixes": set(), "management_ui": {}}
+
+    def domain_rules():
+        observed.append("rules")
+        if failed_observation == "rules":
+            raise ValueError("unsafe routing-domain rules")
+        return []
+
+    monkeypatch.setattr(helper, "ROUTE_DOMAIN_CONFIG_PATH", domain_path)
+    monkeypatch.setattr(helper, "WAN_RUNTIME_CONFIG_PATH", tmp_path / "absent-runtime.conf")
+    monkeypatch.setattr(helper, "WAN_SYSCTL_PATH", sysctl_path)
+    monkeypatch.setattr(helper, "_wan_config_errors", lambda *args, **kwargs: [])
+    monkeypatch.setattr(helper, "_applied_wan_network_state", network_state)
+    monkeypatch.setattr(helper, "_snapshot_route_domain_rules", domain_rules)
+    monkeypatch.setattr(
+        helper, "_run",
+        lambda command: commands.append(command) or subprocess.CompletedProcess(command, 0, "", ""),
+    )
+
+    with pytest.raises(ValueError, match="unsafe|unavailable"):
+        helper._handle_wan_config("apply", config_path)
+
+    assert observed == (["network", "rules"] if failed_observation == "rules" else ["network"])
+    assert sysctl_path.read_text(encoding="utf-8") == "original forwarding settings\n"
+    assert commands == []
+
+
+def test_wan_apply_reuses_preflighted_native_snapshots(monkeypatch, tmp_path):
+    """Downstream WAN stages receive the admitted baseline without reobserving it."""
+    helper = load_helper_module()
+    config_path = tmp_path / "wan.conf"
+    config_path.write_text("[feature_settings]\nrouting_enabled=true\n", encoding="utf-8")
+    domain_path = tmp_path / "route-domains.json"
+    domain_path.write_text("{}", encoding="utf-8")
+    network_state = {"connected": {}, "prefixes": set(), "management_ui": {}}
+    domain_rules: list[dict] = []
+    observed: list[str] = []
+
+    def read_network():
+        observed.append("network")
+        return network_state
+
+    def read_rules():
+        observed.append("rules")
+        return domain_rules
+
+    monkeypatch.setattr(helper, "ROUTE_DOMAIN_CONFIG_PATH", domain_path)
+    monkeypatch.setattr(helper, "WAN_RUNTIME_CONFIG_PATH", tmp_path / "absent-runtime.conf")
+    monkeypatch.setattr(helper, "_wan_config_errors", lambda *args, **kwargs: [])
+    monkeypatch.setattr(helper, "_applied_wan_network_state", read_network)
+    monkeypatch.setattr(helper, "_snapshot_route_domain_rules", read_rules)
+    monkeypatch.setattr(helper, "_apply_wan_forwarding", lambda parsed: observed.append("forwarding") or 0)
+    monkeypatch.setattr(helper, "_apply_wan_target_routes", lambda parsed, previous, *, applied_network_state:
+                        observed.append("targets") or (0 if applied_network_state is network_state else 1))
+    monkeypatch.setattr(helper, "_apply_wan_policy_rules", lambda parsed, *, current_domain_rules:
+                        observed.append("policy") or (0 if current_domain_rules is domain_rules else 1))
+    monkeypatch.setattr(helper, "_apply_wan_routes_and_qdiscs", lambda parsed, previous, *, applied_network_state:
+                        observed.append("routes") or (0 if applied_network_state is network_state else 1))
+    monkeypatch.setattr(helper, "_install_wan_runtime", lambda path: observed.append("install"))
+
+    assert helper._handle_wan_config("apply", config_path) == 0
+    assert observed == ["network", "rules", "forwarding", "targets", "policy", "routes", "install"]
+
+
 def test_wan_helper_apply_routes_nat_and_netem(monkeypatch, tmp_path):
     """Verify that wan helper apply routes nat and netem.
 
