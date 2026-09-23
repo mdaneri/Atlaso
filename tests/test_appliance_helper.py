@@ -2757,8 +2757,10 @@ def test_management_handoff_keeps_previous_https_identity(monkeypatch, tmp_path,
     assert "X-Forwarded-Proto https" in holdover
 
 
-@pytest.mark.parametrize("candidate_sync_error", [False, True, "address-timeout", "address-conflict", "certificate"],
-                         ids=["durable", "sync-failure", "address-timeout", "address-conflict", "certificate"])
+@pytest.mark.parametrize("candidate_sync_error", [False, True, "address-timeout", "address-conflict", "certificate",
+                                                  "late-certificate"],
+                         ids=["durable", "sync-failure", "address-timeout", "address-conflict", "certificate",
+                              "late-certificate"])
 @pytest.mark.parametrize("paired_publishing", [False, True], ids=["source-only", "port-forward-pair"])
 @pytest.mark.parametrize("mapping_change", ["unchanged", "target", "removed"])
 def test_management_handoff_candidate_durability_gates_ack(
@@ -2810,7 +2812,7 @@ def test_management_handoff_candidate_durability_gates_ack(
                 raise ValueError("Unable to verify candidate addresses: eth1 192.0.2.20/24")
             if candidate_sync_error == "address-conflict":
                 raise ValueError("IP conflict on eth1: 192.0.2.20/24")
-        return {}
+        return {"final": True} if kwargs.get("stable_samples") == 3 else {}
 
     monkeypatch.setattr(helper, "_wait_network_addresses", wait_addresses)
     monkeypatch.setattr(helper, "_snapshot_management_handoff", lambda _payload: state)
@@ -2825,7 +2827,8 @@ def test_management_handoff_candidate_durability_gates_ack(
         Args:
             *_args: Candidate payload and public certificate inputs unused by this failure stub.
         """
-        if candidate_sync_error == "certificate":
+        if candidate_sync_error == "certificate" or (candidate_sync_error == "late-certificate"
+                                                    and "198.51.100.11" in _args[1]):
             raise ValueError("management HTTPS certificate does not authenticate candidate address 198.51.100.10")
         return tmp_path / "ca.pem"
 
@@ -2894,7 +2897,10 @@ def test_management_handoff_candidate_durability_gates_ack(
         "_nginx_test_command",
         lambda: subprocess.CompletedProcess(["nginx", "-t"], 0, "", ""),
     )
-    monkeypatch.setattr(helper, "_management_handoff_addresses", lambda *_args, **_kwargs: ["198.51.100.10"])
+    monkeypatch.setattr(helper, "_management_handoff_addresses", lambda *_args, **kwargs:
+                        ["198.51.100.10", "198.51.100.11"]
+                        if candidate_sync_error == "late-certificate" and kwargs.get("address_observation", {}).get("final")
+                        else ["198.51.100.10"])
     monkeypatch.setattr(helper, "_parse_network_config", lambda _path: ([], [], []))
     monkeypatch.setattr(helper, "_link_exists", lambda _interface: False)
     monkeypatch.setattr(helper, "_clear_management_handoff_state", lambda **_kwargs: cleared.append(True))
@@ -3005,6 +3011,15 @@ def test_management_handoff_candidate_durability_gates_ack(
         failure = json.loads(capsys.readouterr().err.splitlines()[-1])
         assert failure["management_handoff"] == "rolled back"
         assert failure["failing_layer"] == "certificate prerequisite"
+        return
+    if candidate_sync_error == "late-certificate":
+        assert result == 1
+        assert not durability_calls and not wan_calls and not paired_calls
+        assert "candidate-ready" in phases and "awaiting-application-commit" not in phases
+        assert restored == [True] and cleared == [True]
+        failure = json.loads(capsys.readouterr().err.splitlines()[-1])
+        assert failure["management_handoff"] == "rolled back"
+        assert failure["failing_layer"] == "post-retirement certificate prerequisite"
         return
     assert durability_calls == [True]
     assert paired_calls == ([(nat.read_text(), "captured nat")] if paired_publishing else [])

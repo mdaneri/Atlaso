@@ -26017,23 +26017,20 @@ def _apply_management_handoff(payload: dict) -> int:
             raise ValueError("candidate management resolver apply failed")
         protocol_holdover = _management_handoff_protocol_holdover(state, settings_payload)
         failing_layer = "candidate address discovery"
+        previous_dynamic_families = {
+            (str(path.get("name") or ""), family)
+            for path in state.get("previous_management_paths", [])
+            for family in (
+                (["inet"] if path.get("ipv4_method") == "dhcp" else [])
+                + (["inet6"] if str(path.get("ipv6_enabled") or "").lower() == "true"
+                   and not str(path.get("ipv6_cidr") or "") else [])
+            )
+        }
         candidate_addresses = _management_handoff_addresses(
             Path(str(payload["network_config_path"])),
             address_observation=address_observation,
             previous_addresses=set(state["previous_management_addresses"]),
-            previous_dynamic_families={
-                (str(path.get("name") or ""), family)
-                for path in state.get("previous_management_paths", [])
-                for family in (
-                    (["inet"] if path.get("ipv4_method") == "dhcp" else [])
-                    + (
-                        ["inet6"]
-                        if str(path.get("ipv6_enabled") or "").lower() == "true"
-                        and not str(path.get("ipv6_cidr") or "")
-                        else []
-                    )
-                )
-            },
+            previous_dynamic_families=previous_dynamic_families,
         )
         failing_layer = "certificate prerequisite"
         candidate_ca = _management_handoff_candidate_ca(public_certificate, candidate_addresses)
@@ -26091,9 +26088,17 @@ def _apply_management_handoff(payload: dict) -> int:
         # unchanged address can temporarily lose its connected route, so the
         # earlier Network apply readiness cannot authorize gateway installation.
         failing_layer = "post-retirement address activation"
-        _wait_network_addresses(
+        final_address_observation = _wait_network_addresses(
             Path(str(payload["network_config_path"])), started_at=retirement_started, stable_samples=3,
         )
+        failing_layer = "post-retirement certificate prerequisite"
+        candidate_addresses = _management_handoff_addresses(
+            Path(str(payload["network_config_path"])),
+            address_observation=final_address_observation,
+            previous_addresses=set(state["previous_management_addresses"]),
+            previous_dynamic_families=previous_dynamic_families,
+        )
+        candidate_ca = _management_handoff_candidate_ca(public_certificate, candidate_addresses)
         if payload.get("wan_config_path"):
             # The final Network regeneration intentionally replaces networkd
             # runtime. Reapply the coupled route intent afterwards so policy

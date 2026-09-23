@@ -363,7 +363,8 @@ listener, also confirm `ip route show default` (or `ip -6 route show default`) n
 that `atlaso-wan.service` is enabled for reboot replay.
 
 HTTPS management handoffs check the staged certificate against every acquired IPv4 and IPv6 address before
-publishing the candidate listener. A new DHCP or SLAAC address missing from the certificate fails at the certificate
+publishing the candidate listener and check the addresses again after the final network reconfigure. A new DHCP or
+SLAAC address missing from the certificate fails at the certificate
 prerequisite and restores the previous applied path. Automatic certificate issuance for a newly acquired address is
 not part of this transaction; restore the static address or use a DHCP reservation covered by the managed certificate
 before retrying. Candidate HTTPS readiness verifies the transaction's CA and address identity before completion.
