@@ -2397,9 +2397,9 @@ Exact cloned appliance VMX whose guest state is queried.
 function Get-CertificateSourceGuestState {
     param([Parameter(Mandatory)][string]$ApplianceVmx)
 
-    $guestPath = "/tmp/$LabName-source-network.txt"
-    $hostPath = Join-Path $resultRoot 'source-network-readback.txt'
-    $script = "systemctl show atlaso-routing-domains.service --property=LoadState,ActiveState > '$guestPath'"
+    $guestPath = "/tmp/$LabName-source-app.txt"
+    $hostPath = Join-Path $resultRoot 'source-app-readback.txt'
+    $script = "systemctl show atlaso.service --property=LoadState,ActiveState > '$guestPath'"
     $password = ConvertFrom-SecureString -SecureString $adminPasswordSecure -AsPlainText
     try {
         $query = Invoke-VmrunBounded -Arguments @(
@@ -2683,8 +2683,8 @@ with WindowsFiles().opened(Path(sys.argv[1]), directory=True) as (_, identity, _
         $certificateSource = Write-CertificateLabReceipt -Name 'predeployment-network.json' -Value ([ordered]@{
             schema = 1; phase = 'before-lifecycle-deployment'
             task_id = $env:CODEX_THREAD_ID; vmx_path = $applianceVmx
-            source_commit = $sourceCommit; routing_service = $sourceGuestState
-            # The service query alone cannot prove database route intent.
+            source_commit = $sourceCommit; app_service = $sourceGuestState
+            # The app service query cannot prove database route intent.
             routing_intent_state = 'unproven'
         })
     }

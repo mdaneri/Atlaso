@@ -583,11 +583,14 @@ For certificate handoff preparation, pass `-CertificateOnly -KeepVms` with a tas
 clones and boots only the appliance, installs the admitted source commit's helper and wheel, and leaves the appliance
 running for a separate native certificate scenario. The runner publishes immutable creation intent and original VM
 directory identity under `test-results/certificate-native-evidence/<lab>` before VMware populates that directory.
-It also records a bounded guest service-state readback before deployment and the actual helper/wheel digests afterward.
-The service readback does not prove an empty route-intent database, and a discovered DHCP address does not prove
-exclusive address control. The certificate scenario must refuse mutation until independent producers establish those
-two facts and bind them to the retained VM and exact deployed commit. Keep the original receipts outside the lab
-removal root; clean up only through the exact lifecycle VM removal and artifact-root procedures below.
+It also records a bounded `atlaso.service` readback before deployment and the actual helper/wheel digests afterward.
+Routing intent is stored in Atlaso's database, so the app service readback does not prove that routes, routing rules,
+NAT rules, or route-role interfaces are absent. A discovered DHCP address does not prove exclusive address control.
+The certificate scenario must refuse mutation until a predeployment guest-state producer proves absent routing intent
+and a controlled network producer proves the candidate static address or DHCP reservation belongs to the clone.
+For the negative case, the authenticated CA inventory must bind the chosen ID and fingerprint to the live
+`appliance:https` certificate before and after the desired edit. Keep the original receipts outside the lab removal
+root; clean up only through the exact lifecycle VM removal and artifact-root procedures below.
 
 Useful commands:
 
