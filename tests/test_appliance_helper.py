@@ -11600,6 +11600,12 @@ def test_dnsmasq_lease_events_mirror_only_managed_names(monkeypatch, tmp_path, c
     assert hosts[0].read_text(encoding="utf-8") == "192.168.50.21 client.atlaso.internal\n# mac=02:00:00:00:00:01\n# scope-domain=atlaso.internal\n"
     assert ["systemctl", "kill", "--kill-whom=main", "--signal=HUP", "atlaso-dns-authoritative.service"] in commands
 
+    event[4] = "atlaso.internal"
+    assert helper.main(event) == 0
+    assert hosts[0].read_text(encoding="utf-8").splitlines()[0] == "192.168.50.21 atlaso.internal"
+    event[4] = "client"
+    assert helper.main(event) == 0
+
     assert helper.main(["atlaso-helper", "old", "02:00:00:00:00:01", "192.168.50.21"]) == 0
     assert hosts[0].read_text(encoding="utf-8") == "192.168.50.21 client.atlaso.internal\n# mac=02:00:00:00:00:01\n# scope-domain=atlaso.internal\n"
 
@@ -11655,7 +11661,13 @@ def test_dnsmasq_lease_events_mirror_only_managed_names(monkeypatch, tmp_path, c
     assert "192.168.50.21 reserved" in capsys.readouterr().out
 
 
-def test_authoritative_enable_seeds_existing_named_lease_mirror(monkeypatch, tmp_path):
+@pytest.mark.parametrize(
+    ("lease_name", "expected_name"),
+    [("client", "client.atlaso.internal"), ("atlaso.internal", "atlaso.internal")],
+)
+def test_authoritative_enable_seeds_existing_named_lease_mirror(
+    monkeypatch, tmp_path, lease_name, expected_name
+):
     """An active ordinary lease must resolve before its next DHCP renewal."""
     helper = load_helper_module()
     state_dir = tmp_path / "dnsmasq"
@@ -11663,7 +11675,7 @@ def test_authoritative_enable_seeds_existing_named_lease_mirror(monkeypatch, tmp
     hosts_dir = tmp_path / "authoritative-leases"
     lease_file = state_dir / "dhcp.leases"
     lease_file.write_text(
-        "1893456000 02:00:00:00:00:01 192.168.50.21 client *\n"
+        f"1893456000 02:00:00:00:00:01 192.168.50.21 {lease_name} *\n"
         "1 02:00:00:00:00:02 192.168.50.22 expired *\n",
         encoding="utf-8",
     )
@@ -11679,10 +11691,12 @@ def test_authoritative_enable_seeds_existing_named_lease_mirror(monkeypatch, tmp
 
     mirror = hosts_dir / "lease-c0a83215.hosts"
     assert mirror.read_text(encoding="utf-8") == (
-        "192.168.50.21 client.atlaso.internal\n"
+        f"192.168.50.21 {expected_name}\n"
         "# mac=02:00:00:00:00:01\n"
         "# scope-domain=atlaso.internal\n"
     )
+    helper._prepare_authoritative_lease_hosts(authoritative, main)
+    assert mirror.exists()
     assert not (hosts_dir / "lease-c0a83216.hosts").exists()
 
 

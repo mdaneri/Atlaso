@@ -16824,6 +16824,15 @@ def _submit_appliance_apply(
     )
     if ca_required_for_nts:
         selected_ids.add("ca")
+    settings_for_apply = unit_map.get("appliance_settings", {}).get("context", {}).get("appliance_settings")
+    https_ca_required = bool(
+        "appliance_settings" in selected_ids
+        and getattr(settings_for_apply, "management_https_enabled", False)
+        and unit_map.get("ca", {}).get("changed")
+    )
+    if https_ca_required:
+        # The CA unit materializes newly issued management TLS files.
+        selected_ids.add("ca")
     apply_baselines = load_appliance_apply_baselines(db)
     dns_settings_for_apply = unit_map.get("dnsmasq", {}).get("context", {}).get("dns_settings")
     dns_resolver_activation = bool(
@@ -17048,6 +17057,12 @@ def _submit_appliance_apply(
         selected_ordered_units = [unit_map["dnsmasq"], *[
             unit for unit in selected_ordered_units if unit["id"] != "dnsmasq"
         ]]
+    if https_ca_required and not management_handoff:
+        # Settings validates the management certificate files on disk; publish
+        # the pending CA state before enabling HTTPS.
+        selected_ordered_units = [unit for unit in selected_ordered_units if unit["id"] != "ca"]
+        settings_index = next(index for index, unit in enumerate(selected_ordered_units) if unit["id"] == "appliance_settings")
+        selected_ordered_units.insert(settings_index, unit_map["ca"])
     skipped_changed_units = [
         {"unit_id": unit["id"], "label": unit["label"], "summary": unit["summary"]}
         for unit in units

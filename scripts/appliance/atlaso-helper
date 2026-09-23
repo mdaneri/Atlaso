@@ -3232,13 +3232,13 @@ def _prepare_authoritative_lease_hosts(
             lease is None
             or not lease[0]
             or rows[1] != lease[0]
-            or not any(hostname.endswith(f".{zone}") for zone in zones)
+            or not any(hostname == zone or hostname.endswith(f".{zone}") for zone in zones)
             or (recursive_mode and lease[1] != "*")
             or (scopes is not None and not current_reservation_matches and not any(
-                lease_address in network and hostname.endswith(f".{domain}")
+                lease_address in network and (hostname == domain or hostname.endswith(f".{domain}"))
                 for network, domain in scopes
             ))
-            or (lease[1] != "*" and hostname.split(".", 1)[0] != lease[1])
+            or (lease[1] != "*" and hostname != lease[1] and hostname.split(".", 1)[0] != lease[1])
             or (not recursive_mode and current_reservation is not None and not current_reservation_matches)
             or (not recursive_mode and reserved_mirror and not current_reservation_matches)
             or (not recursive_mode and previous_reservation_matches and not current_reservation_matches)
@@ -3263,11 +3263,13 @@ def _prepare_authoritative_lease_hosts(
         elif scope_domain:
             name = lease_name.strip(".")
             fqdn = name if "." in name else f"{name}.{scope_domain}"
-            if not fqdn.endswith(f".{scope_domain}"):
+            if fqdn != scope_domain and not fqdn.endswith(f".{scope_domain}"):
                 continue
         else:
             continue
-        if not HOSTNAME_PATTERN.fullmatch(fqdn) or not any(fqdn.endswith(f".{zone}") for zone in zones):
+        if not HOSTNAME_PATTERN.fullmatch(fqdn) or not any(
+            fqdn == zone or fqdn.endswith(f".{zone}") for zone in zones
+        ):
             continue
         destination = hosts_dir / f"lease-{leased_ip.packed.hex()}.hosts"
         if destination.exists():
@@ -3444,7 +3446,7 @@ def _handle_dnsmasq_lease_event(argv: list[str]) -> int:
     publish = (
         action != "del"
         and bool(HOSTNAME_PATTERN.fullmatch(fqdn))
-        and any(fqdn.endswith(f".{zone}") for zone in zones)
+        and any(fqdn == zone or fqdn.endswith(f".{zone}") for zone in zones)
     )
     try:
         if not publish:

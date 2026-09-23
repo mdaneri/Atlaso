@@ -651,6 +651,46 @@ def test_dns_change_keeps_unrelated_settings_pending_when_resolver_is_already_lo
     assert payload["selected_units"] == ["dnsmasq"]
 
 
+def test_management_https_applies_pending_ca_before_settings(client, monkeypatch):
+    """A newly issued management certificate must be installed before HTTPS is enabled."""
+    from atlaso.app import ui
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import ApplianceSettings, CaSettings, Job
+
+    login(client)
+    with SessionLocal() as db:
+        settings = db.query(ApplianceSettings).one()
+        db.query(CaSettings).one().enabled = True
+        db.commit()
+        baseline_units = ui.appliance_apply_units(db)
+        ui.update_appliance_apply_baselines(db, baseline_units, {unit["id"] for unit in baseline_units})
+        settings.management_https_enabled = True
+        db.commit()
+        ui.ca_context(db)
+    real_units = ui.appliance_apply_units
+
+    def units_with_pending_ca(db, *, reconcile=True, applying_dns=False):
+        units = real_units(db, reconcile=reconcile, applying_dns=applying_dns)
+        next(unit for unit in units if unit["id"] == "ca")["changed"] = True
+        return units
+
+    monkeypatch.setattr(ui, "appliance_apply_units", units_with_pending_ca)
+    monkeypatch.setattr(ui, "run_appliance_apply_job", lambda _job_id: None)
+    csrf = client.get("/dashboard").text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    response = client.post(
+        "/appliance-apply",
+        data={"csrf": csrf, "selected_units": "appliance_settings"},
+        headers={"Accept": "application/json"},
+    )
+
+    assert response.status_code == 202, response.text
+    with SessionLocal() as db:
+        job = db.get(Job, response.json()["job_id"])
+        assert job is not None
+        selected = json.loads(job.result or "{}")["selected_units"]
+    assert selected.index("ca") < selected.index("appliance_settings")
+
+
 def test_local_dns_disable_forces_resolver_move_before_dns_stop(client):
     """Move the resolver before an applied local DNS listener is disabled.
 

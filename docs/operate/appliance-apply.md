@@ -148,6 +148,9 @@ keeps the last-applied external or DHCP resolver active until the DNS/DHCP unit 
 selection cannot redirect the appliance to loopback prematurely.
 When disabling applied local DNS, selecting **DNS/DHCP (dnsmasq)** automatically includes **Appliance Settings** first.
 That ordering moves the management resolver away from `127.0.0.1` before the local listener stops.
+When enabling Management HTTPS creates a pending CA-managed certificate, Atlaso includes **Certificate Authority** and
+installs its certificate files before applying **Appliance Settings**. The protected management handoff performs the same
+ordering within its grouped operation.
 
 Examples include checking service health, resolving a managed DNS name, reaching the intended listener, or confirming
 the installed configuration from the appliance console. Use the service-specific verification procedure rather than

@@ -74,7 +74,8 @@ When authoritative DNS is enabled over existing DHCP leases, Atlaso seeds valid 
 backend so clients do not need to renew first. When it is disabled, the recursive listener temporarily serves mirrored
 names for active leases whose stored hostname is `*`; the lease hook removes each mirror when the client renews with an
 ordinary name, releases its address, or changes identity. This avoids dropping names during the mode change while
-preventing stale mirrors from outliving their leases.
+preventing stale mirrors from outliving their leases. A valid DHCP name equal to the managed zone apex follows the same
+mirror and reconciliation rules as names beneath that zone.
 Each new mirror records the exact DHCP scope domain that emitted it. If a protected management handoff rolls back,
 Atlaso preserves valid renewals of existing names under the old scope and rejects candidate names from a different
 scope, including nested suffixes that also match the old authoritative zone.
