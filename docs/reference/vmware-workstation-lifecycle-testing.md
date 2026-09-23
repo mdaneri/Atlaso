@@ -580,7 +580,8 @@ The runner addresses that access listener, applies its network state, configures
 its managed-certificate settings flow, and applies the CA and public listener before the OIDC Authorization Code check.
 The final apply also refreshes the provider's firewall admission, and the check connects to the site address with
 hostname and certificate verification against the downloaded CA root. It skips unrelated service configuration,
-client VM creation and probes, and the backup/restore pass.
+client VM creation and probes, and the backup/restore pass. Because this verified probe runs on the Windows host,
+`-OidcOnly` requires a host-reachable Site A vmnet; an isolated `lan:<name>` Site A segment is rejected before lab creation.
 
 Useful commands:
 
