@@ -6296,6 +6296,7 @@ def service_interface_dns_targets(
     listen_interface: str,
     listen_address: str | None,
     bind_options: list[dict[str, Any]] | None = None,
+    shared_target_token: str | None = None,
 ) -> list[dict[str, str]]:
     """Return service interface dns targets.
 
@@ -6323,7 +6324,7 @@ def service_interface_dns_targets(
                 parsed_address = ip_address(address)
             except ValueError:
                 continue
-            target_token = service_dns_target_token(naming_strategy, interface_name, str(parsed_address))
+            target_token = shared_target_token or service_dns_target_token(naming_strategy, interface_name, str(parsed_address))
             target_hostname = service_target_hostname(hostname, target_token)
             targets.append(
                 {
@@ -6369,6 +6370,7 @@ def ensure_interface_dns_alias(
     previous_hostname: str | None = None,
     enabled: bool = True,
     bind_options: list[dict[str, Any]] | None = None,
+    shared_target_token: str | None = None,
 ) -> str | None:
     """Ensure interface dns alias.
 
@@ -6390,7 +6392,11 @@ def ensure_interface_dns_alias(
     normalized_hostname = normalize_dns_hostname(hostname)
     if not enabled:
         return remove_interface_dns_alias(db, hostname=previous_hostname or normalized_hostname, description=description, actor=actor, audit_prefix=audit_prefix)
-    targets = service_interface_dns_targets(db, hostname=normalized_hostname, listen_interface=listen_interface, listen_address=listen_address, bind_options=bind_options)
+    targets = service_interface_dns_targets(
+        db, hostname=normalized_hostname, listen_interface=listen_interface,
+        listen_address=listen_address, bind_options=bind_options,
+        shared_target_token=shared_target_token,
+    )
     if not normalized_hostname:
         return None
     if not targets:
@@ -6496,11 +6502,8 @@ def ensure_interface_dns_alias(
             actions.append("conflict")
             continue
         existing = next(
-            (
-                record
-                for record in matching_records
-                if record.record_type == record_type
-            ),
+            (record for record in matching_records
+             if record.record_type == record_type and record.address == address),
             None,
         )
         if existing:
@@ -6811,6 +6814,7 @@ def ensure_dns_for_ntp(db: Session, settings: NtpSettings, actor: str | None, *,
         audit_prefix="ntp",
         previous_hostname=previous_hostname,
         enabled=settings.enabled,
+        shared_target_token="service",
     )
 
 

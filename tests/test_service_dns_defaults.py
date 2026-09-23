@@ -43,6 +43,9 @@ def test_ntp_and_nts_share_owned_dual_stack_dns_and_preserve_manual_records():
         assert ensure_dns_for_ntp(db, settings, None) == "created"
         owned = db.execute(select(DnsRecord).where(DnsRecord.description == NTP_DNS_DESCRIPTION)).scalars().all()
         assert len(owned) == 3
+        cname = next(row for row in owned if row.record_type == "CNAME")
+        assert cname.hostname == settings.hostname
+        assert {row.hostname for row in owned if row.record_type in {"A", "AAAA"}} == {cname.address}
         assert {(row.record_type, row.address) for row in owned if row.record_type != "CNAME"} == {
             ("A", "192.0.2.10"), ("AAAA", "2001:db8::10")
         }
@@ -67,6 +70,49 @@ def test_ntp_and_nts_share_owned_dual_stack_dns_and_preserve_manual_records():
         assert any(row.address == "192.0.2.11" for row in db.execute(
             select(DnsRecord).where(DnsRecord.description == NTP_DNS_DESCRIPTION)
         ).scalars().all())
+
+
+def test_ntp_dns_migrates_address_named_targets_to_shared_dual_stack_target():
+    """Previously generated per-address targets converge on one resolvable alias."""
+    from atlaso.app.models import DnsRecord, NtpSettings, PhysicalInterface
+    from atlaso.app.seed import seed_initial_data
+    from atlaso.app.services.service_dns_defaults import NTP_DNS_DESCRIPTION
+    from atlaso.app.ui import ensure_dns_for_ntp, service_interface_dns_targets
+
+    with _session_factory()() as db:
+        seed_initial_data(db, include_examples=False, commit=False)
+        db.add(PhysicalInterface(
+            name="eth9", mac_address="00:50:56:00:00:19", role="access", mode="access",
+            ip_cidr="192.0.2.10/24", ipv6_cidr="2001:db8::10/64",
+            admin_state="up", oper_state="up",
+        ))
+        settings = db.execute(select(NtpSettings)).scalar_one()
+        settings.enabled = True
+        settings.hostname = "time.example.internal"
+        settings.listen_interface = "eth9"
+        settings.listen_address = "192.0.2.10\n2001:db8::10"
+        db.flush()
+        old_targets = service_interface_dns_targets(
+            db, hostname=settings.hostname, listen_interface=settings.listen_interface,
+            listen_address=settings.listen_address,
+        )
+        db.add(DnsRecord(
+            hostname=settings.hostname, record_type="CNAME",
+            address=old_targets[0]["hostname"], description=NTP_DNS_DESCRIPTION, enabled=True,
+        ))
+        for target in old_targets:
+            db.add(DnsRecord(
+                hostname=target["hostname"], record_type=target["record_type"],
+                address=target["address"], description=NTP_DNS_DESCRIPTION, enabled=True,
+            ))
+        db.flush()
+
+        assert "removed-old" in ensure_dns_for_ntp(db, settings, None)
+        owned = db.execute(select(DnsRecord).where(DnsRecord.description == NTP_DNS_DESCRIPTION)).scalars().all()
+        cname = next(row for row in owned if row.record_type == "CNAME")
+        assert len(owned) == 3
+        assert cname.address not in {target["hostname"] for target in old_targets}
+        assert {row.hostname for row in owned if row.record_type != "CNAME"} == {cname.address}
 
 
 def test_fresh_seed_and_lazy_service_defaults_use_appliance_domain(monkeypatch):
