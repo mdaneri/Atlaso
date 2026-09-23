@@ -68,8 +68,8 @@ The DHCP lease file remains under the restricted Atlaso state directory.
 The recursive instance forwards those leases' reverse lookups to the backend and keeps generated nameserver glue PTR
 records locally. DHCP names in other suffixes retain normal recursive-instance behavior. Atlaso reads the managed lease
 names from the mirror for the DHCP UI and API, and reconciles the mirror against current leases and saved reservation
-names before re-enabling authoritative DNS so departed clients or rolled-back reservations do not regain stale A records. Reserved clients still receive their saved
-hostname through DHCP.
+names before re-enabling authoritative DNS so departed clients or rolled-back reservations do not regain stale A
+records. Reserved clients still receive their saved hostname through DHCP.
 
 The primary nameserver must belong to a managed domain. Its glue identity is generated and cannot conflict with operator
 CNAME or A/AAAA data. SOA expiry must be greater than refresh and retry, and all timer values must be positive 32-bit
