@@ -193,6 +193,8 @@ def admit_topology(
         links.append(FixtureLink(role, adapter, interface, mac, network[0], network[1]))
         seen.add(key)
         macs.add(mac)
+    if len(guest_links) != len(links):
+        raise OverlapPrerequisiteError("unmatched guest interface in isolated topology")
     return AdmittedTopology(owner, ids["management"], ids["lab"], tuple(links), str(v4), str(v6))
 
 

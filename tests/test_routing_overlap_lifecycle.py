@@ -63,7 +63,7 @@ def test_private_server_configuration(topology_inputs):
 
 
 @pytest.mark.parametrize("fault", ["receipt-hash", "owner", "reused", "shared-id", "shared-network", "extra-nic",
-                                   "missing-nic", "mac-mismatch", "duplicate-mac", "ambiguous-guest", "interface",
+                                   "missing-nic", "mac-mismatch", "duplicate-mac", "ambiguous-guest", "extra-guest", "interface",
                                    "ipv4-control-overlap", "ipv6-control-overlap", "missing-control-prefix"])
 def test_topology_refuses_unproven_isolation(topology_inputs, fault):
     """Fail admission without making provider or guest calls.
@@ -94,6 +94,8 @@ def test_topology_refuses_unproven_isolation(topology_inputs, fault):
         inputs["provider_nics"][1]["mac"] = inputs["provider_nics"][0]["mac"]
     elif fault == "ambiguous-guest":
         inputs["guest_links"].append(copy.deepcopy(inputs["guest_links"][0]))
+    elif fault == "extra-guest":
+        inputs["guest_links"].append({"role": "appliance", "interface": "eth2", "mac": "00:50:56:00:01:ff"})
     elif fault == "interface":
         inputs["guest_links"][0]["interface"] = "eth0;reboot"
     elif fault == "ipv4-control-overlap":

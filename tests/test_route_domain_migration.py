@@ -355,6 +355,22 @@ def test_ingress_guard_capacity_remains_one_hundred_interfaces(helper):
     assert max(row["priority"] for row in desired if row["table"] == 200) == 2099
 
 
+@pytest.mark.parametrize("enabled", [False, True])
+def test_ingress_capacity_preflight_applies_only_with_routing(helper, monkeypatch, tmp_path, enabled):
+    """A large valid Network intent is rejected before mutation only when Routing needs rules."""
+    wan = tmp_path / "applied-wan.conf"
+    wan.write_text(f"[feature_settings]\nrouting_enabled={str(enabled).lower()}\n" + wan_config_text(),
+                   encoding="utf-8")
+    monkeypatch.setattr(helper, "WAN_RUNTIME_CONFIG_PATH", wan)
+    monkeypatch.setattr(helper, "_route_domain_ingress_interfaces", lambda *_args, **_kwargs:
+                        [f"eth{index}" for index in range(101)])
+    if enabled:
+        with pytest.raises(ValueError, match="exceed rule capacity"):
+            helper._route_domain_ingress_desired_rules(tmp_path / "network.conf")
+    else:
+        assert helper._route_domain_ingress_desired_rules(tmp_path / "network.conf") == []
+
+
 def test_failed_lookup_install_retains_guards_and_allows_exact_rollback(helper, monkeypatch):
     """Guards precede legacy retirement and survive an interrupted lookup addition.
 

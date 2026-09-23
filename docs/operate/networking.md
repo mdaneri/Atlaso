@@ -231,7 +231,9 @@ The **Routing & WAN Settings** card controls Routing and WAN Simulation. Routing
 forwarded lab ingress rules, routing permissions, and IPv4/IPv6 forwarding. Connected routes and exact local-source
 rules remain active in both routing domains while Routing is off, preserving appliance replies without enabling
 forwarding. WAN Simulation independently owns saved `tc/netem` assignments. Traffic Publishing owns
-NAT enablement and remains suspended while Routing is off. Fresh installs and factory reset start all switches off;
+NAT enablement and remains suspended while Routing is off. When Routing is on, Apply checks the 100-interface
+lab ingress rule capacity before changing candidate networking; Routing off needs no lab ingress rules.
+Fresh installs and factory reset start all switches off;
 disabling them preserves their saved rows. Saving does not change Photon. Submit the **Routing & WAN** (`wan`) and
 **Traffic Publishing** (`nat`) units through global Appliance Apply after reviewing their configuration.
 The Routing row on the Services page and local console changes the same saved **Routing enabled** switch. Direct
