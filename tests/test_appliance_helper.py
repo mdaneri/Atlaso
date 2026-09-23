@@ -11443,6 +11443,49 @@ def test_authoritative_lease_scope_change_removes_stale_name(monkeypatch, tmp_pa
     assert not mirror.exists()
 
 
+def test_dnsmasq_ipv6_lease_mirror_uses_duid_and_iaid(monkeypatch, tmp_path, capsys):
+    """DHCPv6 lease readback and reconciliation use both client identifiers."""
+    helper = load_helper_module()
+    state_dir = tmp_path / "dnsmasq"
+    state_dir.mkdir()
+    hosts_dir = state_dir / "authoritative-leases"
+    hosts_dir.mkdir()
+    authoritative = tmp_path / "authoritative.conf"
+    authoritative.write_text("auth-zone=atlaso.internal\n", encoding="utf-8")
+    lease_file = state_dir / "dhcp.leases"
+    lease_file.write_text(
+        "1893456000 17 2001:db8:50::21 * 00:01:00:01:ab:cd\n", encoding="utf-8"
+    )
+    monkeypatch.setattr(helper, "DNSMASQ_STATE_DIR", state_dir)
+    monkeypatch.setattr(helper, "DNSMASQ_LEASE_FILE_PATH", lease_file)
+    monkeypatch.setattr(helper, "DNSMASQ_AUTHORITATIVE_LEASE_HOSTS_DIR", hosts_dir)
+    monkeypatch.setattr(helper, "DNSMASQ_AUTHORITATIVE_CONFIG_PATH", authoritative)
+    monkeypatch.setenv("DNSMASQ_DOMAIN", "atlaso.internal")
+    monkeypatch.setenv("DNSMASQ_IAID", "17")
+    monkeypatch.setattr(
+        helper, "_run", lambda command: subprocess.CompletedProcess(command, 0, "", "")
+    )
+
+    assert helper.main([
+        "atlaso-helper", "add", "00:01:00:01:ab:cd", "2001:db8:50::21", "v6client"
+    ]) == 0
+    mirror = next(hosts_dir.iterdir())
+    assert mirror.read_text(encoding="utf-8") == (
+        "2001:db8:50::21 v6client.atlaso.internal\n"
+        "# duid=00:01:00:01:ab:cd iaid=17\n"
+    )
+    helper._prepare_authoritative_lease_hosts(authoritative)
+    assert mirror.exists()
+    assert helper._read_dnsmasq_leases() == 0
+    assert "2001:db8:50::21 v6client" in capsys.readouterr().out
+
+    lease_file.write_text(
+        "1893456000 18 2001:db8:50::21 * 00:01:00:01:ab:cd\n", encoding="utf-8"
+    )
+    helper._prepare_authoritative_lease_hosts(authoritative)
+    assert not mirror.exists()
+
+
 def test_dnsmasq_helper_apply_creates_allowlisted_tftp_root(monkeypatch, tmp_path):
     """Verify that dnsmasq helper apply creates allowlisted tftp root.
 

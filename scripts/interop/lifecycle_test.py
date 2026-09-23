@@ -4118,45 +4118,40 @@ def authoritative_dns_state_check(args: argparse.Namespace) -> dict[str, Any]:
         # Preserve bounded appliance evidence before the lifecycle runner
         # cleans its VMs; a DNS reply alone cannot distinguish a missing
         # lease callback from a backend hostsdir or reload failure.
-        diagnostic_script = f'''
-import json
-import subprocess
-from pathlib import Path
-
-address = {address_match[1]!r}
-state = Path("/var/lib/atlaso/dnsmasq")
-config = Path("/etc/atlaso/dnsmasq.d/atlaso.conf")
-lines = config.read_text(encoding="utf-8").splitlines() if config.is_file() else []
-leases = state / "dhcp.leases"
-mirror_dir = state / "authoritative-leases"
-journal = subprocess.run(
-    ["journalctl", "-u", "dnsmasq.service", "--no-pager", "-n", "100"],
-    text=True, capture_output=True, check=False,
-)
-print(json.dumps({{
-    "config": [line for line in lines if line.startswith((
-        "dhcp-script=", "script-on-renewal", "dhcp-ignore-names=", "dhcp-range=",
-        "dhcp-option=tag:",
-    ))][:25],
-    "lease": [line for line in leases.read_text(encoding="utf-8").splitlines()
-              if address in line][:4] if leases.is_file() else [],
-    "mirrors": [{{"name": item.name, "content": item.read_text(encoding="utf-8")}}
-                for item in sorted(mirror_dir.glob("lease-*.hosts"))][:8]
-               if mirror_dir.is_dir() else [],
-    "journal": [line for line in journal.stdout.splitlines()
-                if any(word in line.lower() for word in ("script", "lease", "error"))][-20:],
-}}, sort_keys=True))
-'''
-        encoded = base64.b64encode(diagnostic_script.strip().encode("utf-8")).decode("ascii")
-        diagnostic = ssh_command(
-            args.appliance_ssh_host,
-            args,
-            appliance_ssh_command(args, f"printf %s {encoded} | base64 -d | python3 -"),
-            role="appliance",
-        )
+        commands = {
+            "config": "cat /etc/atlaso/dnsmasq.d/atlaso.conf",
+            "lease": "cat /var/lib/atlaso/dnsmasq/dhcp.leases",
+            "mirrors": "cat /var/lib/atlaso/dnsmasq/authoritative-leases/*.hosts",
+            "journal": "journalctl -u dnsmasq.service --no-pager -n 100",
+            "backend": "systemctl is-active atlaso-dns-authoritative.service",
+        }
+        diagnostic = {"client_refresh": {
+            "stdout": refresh.get("stdout", "")[-500:],
+            "stderr": refresh.get("stderr", "")[-500:],
+        }}
+        for key, command in commands.items():
+            result = ssh_command(
+                args.appliance_ssh_host, args, command, role="appliance", appliance_as_root=False
+            )
+            lines = result.get("stdout", "").splitlines()
+            if key == "config":
+                lines = [line for line in lines if line.startswith((
+                    "dhcp-script=", "script-on-renewal", "dhcp-ignore-names=", "dhcp-range=",
+                    "dhcp-option=tag:",
+                ))][:25]
+            elif key == "lease":
+                lines = [line for line in lines if address_match[1] in line][:4]
+            elif key == "journal":
+                lines = [line for line in lines if any(
+                    word in line.lower() for word in ("script", "lease", "error")
+                )][-20:]
+            else:
+                lines = lines[:20]
+            diagnostic[key] = {"exit": result["returncode"], "lines": lines,
+                               "stderr": result.get("stderr", "")[-300:]}
         raise LifecycleError(
             f"client A authoritative DNS probe failed: {authoritative.get('stderr', '').strip()}; "
-            f"appliance diagnostic: {diagnostic.get('stdout', '').strip() or diagnostic.get('stderr', '').strip()}"
+            f"appliance diagnostic: {json.dumps(diagnostic, sort_keys=True)}"
         )
     require_success(authoritative, "client A authoritative DNS probe")
     return {"authoritative": authoritative}

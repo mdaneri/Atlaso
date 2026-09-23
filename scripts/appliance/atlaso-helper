@@ -32,7 +32,15 @@ import uuid
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager, nullcontext
 from datetime import datetime, timezone
-from ipaddress import IPv4Network, IPv6Network, ip_address, ip_interface, ip_network
+from ipaddress import (
+    IPv4Address,
+    IPv4Network,
+    IPv6Address,
+    IPv6Network,
+    ip_address,
+    ip_interface,
+    ip_network,
+)
 from pathlib import Path, PurePosixPath
 from urllib.parse import quote, unquote, urljoin, urlparse
 from urllib.request import HTTPRedirectHandler, Request, build_opener, urlopen
@@ -1767,6 +1775,15 @@ def _install_dnsmasq_authoritative_service() -> None:
     )
 
 
+def _dnsmasq_lease_identity(fields: list[str], address: IPv4Address | IPv6Address) -> str:
+    """Return the identity stored in an authoritative lease mirror."""
+    if address.version == 4:
+        return f"# mac={fields[1].lower()}"
+    if len(fields) < 5 or fields[4] == "*":
+        return ""
+    return f"# duid={fields[4].lower()} iaid={fields[1].lower()}"
+
+
 def _read_dnsmasq_leases() -> int:
     """Read dnsmasq leases.
 
@@ -1797,7 +1814,7 @@ def _read_dnsmasq_leases() -> int:
                         if (
                             len(mirror_lines) == 2
                             and mirror_lines[0].startswith(f"{address} ")
-                            and mirror_lines[1] == f"# mac={fields[1].lower()}"
+                            and mirror_lines[1] == _dnsmasq_lease_identity(fields, address)
                         ):
                             fields[3] = mirror_lines[0].split()[1].split(".", 1)[0]
                     except (OSError, IndexError):
@@ -3054,7 +3071,7 @@ def _prepare_authoritative_lease_hosts(
         except ValueError:
             continue
         if expires == 0 or expires > time.time():
-            active_leases[address] = (fields[1].lower(), fields[3].lower())
+            active_leases[address] = (_dnsmasq_lease_identity(fields, ip_address(address)), fields[3].lower())
     zones = _authoritative_lease_domains(candidate_config_path)
     scopes = _authoritative_lease_scopes(candidate_main_config_path) if candidate_main_config_path else None
     for entry in hosts_dir.iterdir():
@@ -3062,7 +3079,7 @@ def _prepare_authoritative_lease_hosts(
             raise ValueError("The authoritative lease hosts directory contains an unexpected entry.")
         rows = entry.read_text(encoding="utf-8").splitlines()
         parts = rows[0].split() if rows else []
-        if len(rows) != 2 or len(parts) != 2 or not rows[1].startswith("# mac="):
+        if len(rows) != 2 or len(parts) != 2 or not rows[1].startswith(("# mac=", "# duid=")):
             entry.unlink()
             continue
         address, hostname = parts
@@ -3074,7 +3091,8 @@ def _prepare_authoritative_lease_hosts(
             continue
         if (
             lease is None
-            or rows[1] != f"# mac={lease[0]}"
+            or not lease[0]
+            or rows[1] != lease[0]
             or not any(hostname.endswith(f".{zone}") for zone in zones)
             or (scopes is not None and not any(
                 lease_address in network and hostname.endswith(f".{domain}")
@@ -3150,6 +3168,13 @@ def _handle_dnsmasq_lease_event(argv: list[str]) -> int:
     if not hosts_dir.is_dir() or hosts_dir.is_symlink():
         return 0
     destination = hosts_dir / f"lease-{address.packed.hex()}.hosts"
+    if address.version == 6:
+        iaid = os.environ.get("DNSMASQ_IAID", "").strip().lower()
+        if not re.fullmatch(r"t?[0-9]{1,10}", iaid):
+            return 0
+        identity = f"# duid={argv[2].lower()} iaid={iaid}"
+    else:
+        identity = f"# mac={argv[2].lower()}"
     hostname = _lease_option_from_tags("option:host-name")
     if not hostname:
         hostname = argv[4].strip().strip(".").lower() if len(argv) == 5 else ""
@@ -3180,7 +3205,7 @@ def _handle_dnsmasq_lease_event(argv: list[str]) -> int:
                 mode="w", encoding="utf-8", prefix=".lease-sync-", dir=DNSMASQ_STATE_DIR, delete=False
             ) as temporary:
                 temporary_path = Path(temporary.name)
-                temporary.write(f"{address} {fqdn}\n# mac={argv[2].lower()}\n")
+                temporary.write(f"{address} {fqdn}\n{identity}\n")
             temporary_path.chmod(0o644)
             os.replace(temporary_path, destination)
             _reload_authoritative_lease_hosts()
