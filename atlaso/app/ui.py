@@ -9869,6 +9869,48 @@ def load_appliance_apply_baselines(db: Session) -> dict[str, dict[str, Any]]:
     return baselines
 
 
+def rotated_ca_certificate_consumers(ca_unit: dict[str, Any], ca_baseline: dict[str, Any] | None) -> set[str]:
+    """Return applied listener units whose managed CA leaf changed.
+
+    Args:
+        ca_unit: Current Certificate Authority apply unit.
+        ca_baseline: Last successfully applied Certificate Authority baseline.
+
+    Returns:
+        Listener unit IDs that need to reload the rotated managed certificate.
+    """
+    if not ca_baseline:
+        return set()
+    current = json.loads(ca_unit["config_preview"])
+    try:
+        previous = json.loads(str(ca_baseline.get("config_preview") or ""))
+    except (TypeError, ValueError):
+        previous = {}
+    previous_fingerprints = {
+        row.get("managed_owner"): row.get("fingerprint")
+        for row in previous.get("certificates", [])
+        if isinstance(row, dict) and row.get("managed_owner")
+    }
+    owner_units = {
+        "appliance:https": "public_services",
+        "oidc:https": "public_services",
+        "ca_portal:https": "public_services",
+        "vcf_offline_depot:https": "public_services",
+        "kms:server": "kms",
+        "ldap:ldaps": "ldap",
+        "ntp:nts": "ntpd",
+        "vcf_private_registry:https": "vcf_private_registry",
+    }
+    return {
+        owner_units[row["managed_owner"]]
+        for row in current.get("certificates", [])
+        if isinstance(row, dict)
+        and row.get("managed_owner") in owner_units
+        and row.get("fingerprint")
+        and row["fingerprint"] != previous_fingerprints.get(row["managed_owner"])
+    }
+
+
 def applied_local_dns_enabled(baseline: dict[str, Any] | None) -> bool:
     """Return whether the last-applied DNS unit enabled local DNS.
 
@@ -15962,6 +16004,17 @@ def run_appliance_apply_job(job_id: str, *, force_real: bool = False) -> None:
                 if job_result.get("management_handoff")
                 else []
             )
+            ca_reload_units: set[str] = set()
+            deferred_ca_baseline: dict[str, Any] | None = None
+            if "ca" in current_by_id and "ca" in selected_order:
+                baselines = load_appliance_apply_baselines(db)
+                ca_reload_units = rotated_ca_certificate_consumers(current_by_id["ca"], baselines.get("ca"))
+                ca_reload_units.intersection_update(baselines.keys())
+                if not ca_reload_units.issubset(selected_order):
+                    raise ApplianceApplyJobError(
+                        "A rotated CA certificate has an applied listener missing from this task. "
+                        "Submit the appliance changes again."
+                    )
             for index, unit in enumerate(selected_units, start=1):
                 # A bundled transaction already completed these rows. A later request
                 # must not turn their successful final result into cancellation.
@@ -16085,6 +16138,13 @@ def run_appliance_apply_job(job_id: str, *, force_real: bool = False) -> None:
                         )
                         if not settings_complete:
                             applied_ids.discard("appliance_settings")
+                        # The handoff reloads its bundled Public Services listener,
+                        # but other consumers run later as separate steps. Keep the
+                        # old CA fingerprints until those listeners also succeed.
+                        ca_reload_units.difference_update(handoff_unit_ids)
+                        if ca_reload_units:
+                            applied_ids.discard("ca")
+                            deferred_ca_baseline = current_by_id["ca"]
                         settings_result = next(
                             (result for result in unit_results if result["unit_id"] == "appliance_settings"),
                             None,
@@ -16382,7 +16442,17 @@ def run_appliance_apply_job(job_id: str, *, force_real: bool = False) -> None:
                             **applied_unit,
                             "runtime_config_preview": runtime_config_preview,
                         }
-                    update_appliance_apply_baselines(db, [applied_unit], {unit["id"]})
+                    if unit["id"] == "ca" and ca_reload_units:
+                        # Keep the previous CA fingerprints durable until every
+                        # consuming listener has reloaded. A failed or interrupted
+                        # task can then discover and replay those listeners.
+                        deferred_ca_baseline = applied_unit
+                    else:
+                        update_appliance_apply_baselines(db, [applied_unit], {unit["id"]})
+                        ca_reload_units.discard(unit["id"])
+                        if deferred_ca_baseline is not None and not ca_reload_units:
+                            update_appliance_apply_baselines(db, [deferred_ca_baseline], {"ca"})
+                            deferred_ca_baseline = None
                 else:
                     failed = True
                     for remaining_unit in selected_units[index:]:
@@ -16834,6 +16904,26 @@ def _submit_appliance_apply(
         # The CA unit materializes newly issued management TLS files.
         selected_ids.add("ca")
     apply_baselines = load_appliance_apply_baselines(db)
+    if "ca" in selected_ids:
+        ca_consumers = rotated_ca_certificate_consumers(
+            unit_map["ca"], apply_baselines.get("ca")
+        )
+        pending_ca_consumers = {
+            unit_id for unit_id in ca_consumers
+            if unit_id in unit_map and unit_map[unit_id]["has_baseline"]
+            and unit_map[unit_id]["changed"] and unit_id not in selected_ids
+        }
+        if pending_ca_consumers:
+            detail = "Select the changed listener units before applying rotated CA certificates."
+            return JSONResponse({"detail": detail}, status_code=422) if wants_json else Response(
+                detail, status_code=422, media_type="text/plain"
+            )
+        # Replay unchanged applied listeners, without silently admitting any
+        # pending service edits that the operator did not select.
+        selected_ids.update(
+            unit_id for unit_id in ca_consumers
+            if unit_id in unit_map and unit_map[unit_id]["has_baseline"] and not unit_map[unit_id]["changed"]
+        )
     dns_settings_for_apply = unit_map.get("dnsmasq", {}).get("context", {}).get("dns_settings")
     dns_resolver_activation = bool(
         "dnsmasq" in selected_ids

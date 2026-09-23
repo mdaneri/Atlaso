@@ -576,9 +576,19 @@ After customization, appliance guest operations use that applied admin password 
 to the client VMs, so callers may continue to supply different appliance and client credentials.
 
 For focused deployed OIDC acceptance independent of the full service-network topology, pass `-OidcOnly`. The wrapper
-still clones the selected appliance, installs the exact branch wheel, proves appliance readiness, and runs the OIDC
-Authorization Code acceptance check. It skips unrelated multi-NIC service configuration, client VM creation and probes,
-and the backup/restore pass.
+clones the selected appliance, connects one site adapter, installs the exact branch wheel, and proves appliance readiness.
+The runner addresses that access listener, applies its network state, configures the CA, enables the provider through
+its managed-certificate settings flow, and applies the CA and public listener before the OIDC Authorization Code check.
+The final apply also refreshes the provider's firewall admission, and the check connects to the site address with
+hostname and certificate verification against the downloaded CA root. It skips unrelated service configuration,
+client VM creation and probes, and the backup/restore pass. Because this verified probe runs on the Windows host,
+`-OidcOnly` requires a host-reachable Site A vmnet; an isolated `lan:<name>` Site A segment is rejected before lab creation.
+It also requires `-SiteInterface eth1`, because the focused runner attaches Site A to the appliance's second adapter.
+Both entry points check that `-SiteCidr` matches the selected vmnet's discovered IPv4 subnet and that an active host adapter
+has an address on that subnet before prompting for credentials or creating a lab. If the local VMnet2 subnet differs
+from the default `192.168.12.1/24`, pass a matching site CIDR with an unused host address.
+For bridged VMnet0, the wrapper forwards `-BridgedInterfaceAlias` to the direct runner so both checks use the selected
+host interface; runtime discovery executes the network script from the admitted source commit.
 
 Useful commands:
 

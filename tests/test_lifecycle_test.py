@@ -7,11 +7,17 @@ import base64
 import importlib.util
 import io
 import json
+import ssl
 import subprocess
 import sys
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
+from cryptography import x509
+from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives.asymmetric import rsa
+from cryptography.x509.oid import NameOID
 
 
 def load_lifecycle_module():
@@ -589,6 +595,7 @@ def test_oidc_only_plan_is_focused_and_mutually_exclusive():
     assert plan["routing_wan_only"] is False
     assert plan["checks"] == [
         "appliance health",
+        "addressed OIDC access listener and applied managed certificate",
         (
             "OIDC Authorization Code, explicit Local selection, client-specific "
             "local-role group mapping, scope-filtered claims, PKCE S256, signed "
@@ -596,10 +603,226 @@ def test_oidc_only_plan_is_focused_and_mutually_exclusive():
             "replay rejection, and exact logout redirect"
         ),
     ]
+    assert plan["apply_units"] == ["network", "firewall", "ca", "public_services"]
     with pytest.raises(SystemExit):
         lifecycle.parse_args(
             ["--password", "test", "--oidc-only", "--routing-wan-only"]
         )
+
+
+def test_focused_oidc_prepares_applied_listener_and_certificate_before_authorization(monkeypatch):
+    """Verify the focused check uses the applied site listener with trusted TLS and firewall.
+
+    Args:
+        monkeypatch: Fixture used to capture lifecycle steps without appliance calls.
+    """
+    lifecycle = load_lifecycle_module()
+    calls = []
+    applied_units = []
+    checked_client = []
+    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    subject = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "Lifecycle test root")])
+    now = datetime.now(timezone.utc)
+    root_ca_pem = (
+        x509.CertificateBuilder()
+        .subject_name(subject)
+        .issuer_name(subject)
+        .public_key(key.public_key())
+        .serial_number(x509.random_serial_number())
+        .not_valid_before(now - timedelta(minutes=1))
+        .not_valid_after(now + timedelta(days=1))
+        .add_extension(x509.BasicConstraints(ca=True, path_length=None), critical=True)
+        .sign(key, hashes.SHA256())
+        .public_bytes(serialization.Encoding.PEM)
+        .decode("ascii")
+    )
+
+    class ManagementClient:
+        def request(self, method, path):  # type: ignore[no-untyped-def]  # Focused management transport stub.
+            """Return the test CA root from the management download endpoint.
+
+            Args:
+                method: HTTP method requested by the lifecycle setup.
+                path: Management API path requested by the lifecycle setup.
+            """
+            assert (method, path) == ("GET", "/certificate-authority/downloads/root-ca.pem")
+            return 200, root_ca_pem, {}
+
+    def capture_step(_results, name, _func, *_args):  # type: ignore[no-untyped-def]  # Lifecycle steps have heterogeneous arguments.
+        """Capture the ordered focused steps and their relevant arguments.
+
+        Args:
+            _results: Result collection unused by this stub.
+            name: Lifecycle step name under test.
+            _func: Step callable bypassed by this stub.
+            *_args: Step arguments inspected for listener and apply behavior.
+        """
+        calls.append(name)
+        if name == "configure-oidc-provider":
+            return {"listen_addresses": ["192.168.12.1"], "port": 443}
+        if name == "apply-oidc-certificate-and-listener":
+            applied_units.extend(_args[1])
+        if name == "oidc-authorization-code-check":
+            checked_client.append(_args[2])
+
+    monkeypatch.setattr(lifecycle, "run_step", capture_step)
+    lifecycle.run_oidc_lifecycle(
+        [],
+        ManagementClient(),
+        lifecycle.parse_args(["--password", "test", "--oidc-only", "--site-cidr", "192.168.12.1/24"]),
+    )
+    assert calls == [
+        "appliance-health",
+        "configure-oidc-listener",
+        "apply-oidc-network",
+        "configure-ca",
+        "configure-oidc-provider",
+        "apply-oidc-certificate-and-listener",
+        "oidc-authorization-code-check",
+    ]
+    assert applied_units == ["ca", "firewall", "public_services"]
+    assert checked_client[0].base_url == "https://192.168.12.1:443"
+    assert checked_client[0].https_context.verify_mode == ssl.CERT_REQUIRED
+    assert checked_client[0].https_context.check_hostname is True
+    assert checked_client[0].https_context.get_ca_certs()
+
+
+def test_focused_oidc_provider_rejects_unready_certificate():
+    """The focused setup must fail if provider enablement still lacks its certificate."""
+    lifecycle = load_lifecycle_module()
+
+    class Client:
+        def json_request(self, method, path, **_kwargs):  # type: ignore[no-untyped-def]  # Test client mirrors dynamic HTTP calls.
+            """Return signing-key and provider state for the focused test.
+
+            Args:
+                method: HTTP method requested by provider setup.
+                path: API path requested by provider setup.
+                **_kwargs: Additional request options unused by this stub.
+            """
+            if path == "/api/v1/oidc/signing-keys":
+                return [{"status": "active"}]
+            if path == "/api/v1/oidc/provider":
+                return {"port": 443}
+            raise AssertionError((method, path))
+
+        def request(self, method, path, **_kwargs):  # type: ignore[no-untyped-def]  # Test client mirrors dynamic HTTP calls.
+            """Return an unready provider form after the CSRF request.
+
+            Args:
+                method: HTTP method requested by provider setup.
+                path: Provider form path requested by setup.
+                **_kwargs: Additional request options unused by this stub.
+            """
+            if method == "GET":
+                return 200, '<input name="csrf" value="test-token">', {}
+            assert path == "/authentication/oidc/provider"
+            return 200, json.dumps({"enabled": False, "valid": False, "validation_errors": ["certificate unavailable"]}), {}
+
+    with pytest.raises(lifecycle.LifecycleError, match="certificate unavailable"):
+        lifecycle.configure_oidc_provider(Client(), lifecycle.parse_args(["--password", "test", "--oidc-only"]))
+
+
+def test_focused_oidc_authorization_uses_public_listener_after_management_setup():
+    """The browser flow must leave the management listener after client registration."""
+    lifecycle = load_lifecycle_module()
+
+    class ManagementClient:
+        def json_request(self, method, path, **_kwargs):  # type: ignore[no-untyped-def]  # Focused API transport stub.
+            """Return management API state needed before the public request.
+
+            Args:
+                method: HTTP method used for setup.
+                path: Management API path used for setup.
+                **_kwargs: Additional request options unused by this stub.
+            """
+            if (method, path) == ("GET", "/api/v1/oidc/signing-keys"):
+                return [{"status": "active"}]
+            if (method, path) == ("POST", "/api/v1/oidc/clients"):
+                return {"client": {"id": 1, "client_id": "lifecycle"}, "client_secret": "test-secret"}
+            if (method, path) == ("POST", "/api/v1/oidc/group-mappings"):
+                return {}
+            if (method, path) == ("GET", "/api/v1/oidc/provider"):
+                return {"port": 443}
+            if (method, path) == ("PUT", "/api/v1/oidc/provider"):
+                return {"enabled": True, "valid": True}
+            raise AssertionError((method, path))
+
+        def request(self, *_args, **_kwargs):  # type: ignore[no-untyped-def]  # Public OIDC traffic must not use this client.
+            """Reject any browser request sent to the management listener.
+
+            Args:
+                *_args: Positional request values forbidden on this client.
+                **_kwargs: Keyword request values forbidden on this client.
+            """
+            raise AssertionError("OIDC browser traffic used the management listener")
+
+    class ReachedPublicListener(Exception):
+        pass
+
+    class PublicClient:
+        def request(self, method, path, **_kwargs):  # type: ignore[no-untyped-def]  # Stops at the first public request.
+            """Confirm the authorization request reaches the public listener.
+
+            Args:
+                method: HTTP method used by the browser flow.
+                path: Public OIDC path requested by the browser flow.
+                **_kwargs: Additional request options unused by this stub.
+            """
+            assert method == "GET"
+            assert path.startswith("/identity/authorize?")
+            raise ReachedPublicListener
+
+    with pytest.raises(ReachedPublicListener):
+        lifecycle.oidc_authorization_code_check(
+            ManagementClient(),
+            lifecycle.parse_args(["--password", "test", "--oidc-only"]),
+            PublicClient(),
+        )
+
+
+def test_focused_oidc_provider_sets_access_listener_before_enabling():
+    """Provider setup must send an addressed listener to the certificate reconciliation flow."""
+    lifecycle = load_lifecycle_module()
+    submitted = {}
+
+    class Client:
+        def json_request(self, method, path, **_kwargs):  # type: ignore[no-untyped-def]  # Test client mirrors dynamic HTTP calls.
+            """Return provider and signing-key state for listener setup.
+
+            Args:
+                method: HTTP method requested by provider setup.
+                path: API path requested by provider setup.
+                **_kwargs: Additional request options unused by this stub.
+            """
+            if path == "/api/v1/oidc/signing-keys":
+                return [{"status": "active"}]
+            if path == "/api/v1/oidc/provider":
+                return {"port": 443}
+            raise AssertionError((method, path))
+
+        def request(self, method, path, **kwargs):  # type: ignore[no-untyped-def]  # Test client mirrors dynamic HTTP calls.
+            """Capture the addressed listener submitted through the provider form.
+
+            Args:
+                method: HTTP method requested by provider setup.
+                path: Provider form path requested by setup.
+                **kwargs: Request options containing the submitted form.
+            """
+            if method == "GET":
+                return 200, '<input name="csrf" value="test-token">', {}
+            assert path == "/authentication/oidc/provider"
+            submitted.update(kwargs["form"])
+            return 200, json.dumps({"enabled": True, "valid": True, "hostname": "core.atlaso.internal", "listen_addresses": ["192.0.2.1"]}), {}
+
+    result = lifecycle.configure_oidc_provider(
+        Client(), lifecycle.parse_args(["--password", "test", "--oidc-only", "--site-interface", "eth1"])
+    )
+    assert result["enabled"] is True
+    assert result["port"] == 443
+    assert submitted["listen_interfaces"] == ["eth1"]
+    assert submitted["hostname"] == "core.atlaso.internal"
+    assert submitted["csrf"] == "test-token"
 
 
 def test_full_lifecycle_plan_includes_passwordless_web_terminal_acceptance():

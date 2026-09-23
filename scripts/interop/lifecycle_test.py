@@ -253,17 +253,19 @@ class HttpClient:
         opener: Opener maintained by this httpclient.
         bearer_token: Bearer token maintained by this httpclient.
     """
-    def __init__(self, base_url: str) -> None:
+    def __init__(self, base_url: str, *, trusted_ca_pem: str | None = None) -> None:
         """Initialize the http client.
 
         Args:
             base_url: URL used for base.
+            trusted_ca_pem: Optional root CA for strict public-listener verification.
         """
         self.base_url = base_url.rstrip("/")
         self.cookie_jar = http.cookiejar.CookieJar()
-        self.https_context = ssl.create_default_context()
-        self.https_context.check_hostname = False
-        self.https_context.verify_mode = ssl.CERT_NONE
+        self.https_context = ssl.create_default_context(cadata=trusted_ca_pem)
+        if trusted_ca_pem is None:
+            self.https_context.check_hostname = False
+            self.https_context.verify_mode = ssl.CERT_NONE
         self.opener = urllib.request.build_opener(
             urllib.request.HTTPCookieProcessor(self.cookie_jar),
             urllib.request.HTTPSHandler(context=self.https_context),
@@ -757,7 +759,7 @@ def lifecycle_plan(args: argparse.Namespace) -> dict[str, Any]:
         "replay rejection, and exact logout redirect"
     )
     checks = (
-        ["appliance health", oidc_check]
+        ["appliance health", "addressed OIDC access listener and applied managed certificate", oidc_check]
         if args.oidc_only
         else [
             "appliance health",
@@ -792,7 +794,7 @@ def lifecycle_plan(args: argparse.Namespace) -> dict[str, Any]:
                 "url": args.client_ca_request_url or args.appliance_url,
             },
         },
-        "apply_units": ["local_users", "network", "firewall", "wan", "dnsmasq", "esxi_pxe", "esx_storage", "ca", "ntpd", "kms", "ldap", "appliance_settings", "vcf_backups", "vcf_offline_depot", "public_services"],
+        "apply_units": (["network", "firewall", "ca", "public_services"] if args.oidc_only else ["local_users", "network", "firewall", "wan", "dnsmasq", "esxi_pxe", "esx_storage", "ca", "ntpd", "kms", "ldap", "appliance_settings", "vcf_backups", "vcf_offline_depot", "public_services"]),
         "esx_storage": {
             "enabled": bool(args.esx_storage_test),
             "device_id": args.esx_storage_device_id,
@@ -1924,12 +1926,82 @@ def management_https_check(client: HttpClient, args: argparse.Namespace) -> dict
     return {"http_status": http_status, "redirect_location": location, "https_status": https_status, "https_url": https_url}
 
 
-def oidc_authorization_code_check(client: HttpClient, args: argparse.Namespace) -> dict[str, Any]:
+def configure_oidc_listener(client: HttpClient, args: argparse.Namespace) -> dict[str, Any]:
+    """Address the focused lab's access listener without changing management reachability.
+
+    Args:
+        client: Authenticated appliance client.
+        args: Focused lifecycle network selection.
+    """
+    client.json_request("POST", "/api/v1/interfaces/refresh")
+    if "." in args.site_interface:
+        raise LifecycleError("Focused OIDC requires an untagged physical site interface.")
+    return client.json_request(
+        "PATCH",
+        f"/api/v1/interfaces/physical/{args.site_interface}",
+        json_body={
+            "admin_state": "up",
+            "mode": "access",
+            "role": "access",
+            "ip_cidr": args.site_cidr,
+            "ipv6_enabled": False,
+            "ipv6_cidr": "",
+        },
+    )
+
+
+def configure_oidc_provider(client: HttpClient, args: argparse.Namespace) -> dict[str, Any]:
+    """Issue the managed OIDC certificate through the supported provider settings flow.
+
+    Args:
+        client: Authenticated appliance client.
+        args: Focused lifecycle network selection.
+
+    Raises:
+        LifecycleError: If the provider or its certificate is not ready.
+    """
+    signing_keys = client.json_request("GET", "/api/v1/oidc/signing-keys")
+    if not any(row.get("status") == "active" for row in signing_keys):
+        client.json_request("POST", "/api/v1/oidc/signing-keys")
+    status, body, _headers = client.request("GET", "/openid-connect")
+    if status >= 400:
+        raise LifecycleError(f"GET /openid-connect failed with HTTP {status}")
+    provider = client.json_request("GET", "/api/v1/oidc/provider")
+    status, response_body, _headers = client.request(
+        "POST",
+        "/authentication/oidc/provider",
+        form={
+            "enabled": "on",
+            "hostname": "core.atlaso.internal",
+            "listen_interfaces_present": "1",
+            "listen_interfaces": [args.site_interface],
+            "port": str(provider["port"]),
+            "csrf": extract_csrf(body),
+        },
+        headers={"X-Atlaso-Autosave": "1"},
+    )
+    if status >= 400:
+        raise LifecycleError(f"OIDC provider setup failed with HTTP {status}: {summarize_html_response(response_body)}")
+    payload = json.loads(response_body)
+    if not payload.get("enabled") or not payload.get("valid"):
+        raise LifecycleError(f"OIDC provider prerequisites did not become ready: {payload.get('validation_errors')}")
+    return {
+        "enabled": True,
+        "hostname": payload.get("hostname"),
+        "listen_addresses": payload.get("listen_addresses"),
+        "port": provider["port"],
+    }
+
+
+def oidc_authorization_code_check(
+    client: HttpClient, args: argparse.Namespace, public_client: HttpClient | None = None
+) -> dict[str, Any]:
     """Return oidc authorization code check.
 
     Args:
         client: Client consumed by OIDC authorization code check.
         args: Parsed command-line options consumed by the operation.
+        public_client: Optional verified OIDC public-listener client.
 
 
     Raises:
@@ -2006,7 +2078,8 @@ def oidc_authorization_code_check(client: HttpClient, args: argparse.Namespace) 
             "login_hint": args.username,
         }
     )
-    status, body, headers = client.request(
+    browser_client = public_client if public_client is not None else client
+    status, body, headers = browser_client.request(
         "GET", f"/identity/authorize?{query}", follow_redirects=False
     )
     if status != 200:
@@ -2021,7 +2094,7 @@ def oidc_authorization_code_check(client: HttpClient, args: argparse.Namespace) 
     cookie_lower = cookie.lower()
     if not all(flag in cookie_lower for flag in ("secure", "httponly", "samesite=lax")):
         raise LifecycleError("OIDC browser cookie did not retain Secure, HttpOnly, and SameSite=Lax.")
-    login_status, _login_body, login_headers = client.request(
+    login_status, _login_body, login_headers = browser_client.request(
         "POST",
         "/identity/authorize",
         form={
@@ -2049,7 +2122,7 @@ def oidc_authorization_code_check(client: HttpClient, args: argparse.Namespace) 
         "redirect_uri": redirect_uri,
         "code_verifier": verifier,
     }
-    token_status, token_body, _token_headers = client.request(
+    token_status, token_body, _token_headers = browser_client.request(
         "POST",
         "/identity/token",
         form=token_form,
@@ -2079,7 +2152,7 @@ def oidc_authorization_code_check(client: HttpClient, args: argparse.Namespace) 
             raise LifecycleError(
                 f"OIDC ID token claim {claim_name} was {id_claims.get(claim_name)!r}, expected {expected_value!r}."
             )
-    userinfo_status, userinfo_body, _userinfo_headers = client.request(
+    userinfo_status, userinfo_body, _userinfo_headers = browser_client.request(
         "GET",
         "/identity/userinfo",
         headers={"Authorization": f"Bearer {tokens['access_token']}"},
@@ -2093,7 +2166,7 @@ def oidc_authorization_code_check(client: HttpClient, args: argparse.Namespace) 
             raise LifecycleError(
                 f"OIDC UserInfo claim {claim_name} was {userinfo.get(claim_name)!r}, expected {expected_value!r}."
             )
-    replay_status, _replay_body, _replay_headers = client.request(
+    replay_status, _replay_body, _replay_headers = browser_client.request(
         "POST",
         "/identity/token",
         form=token_form,
@@ -2109,7 +2182,7 @@ def oidc_authorization_code_check(client: HttpClient, args: argparse.Namespace) 
             "state": "lifecycle-logout-state",
         }
     )
-    logout_status, _logout_body, logout_headers = client.request(
+    logout_status, _logout_body, logout_headers = browser_client.request(
         "GET", f"/identity/logout?{logout_query}", follow_redirects=False
     )
     expected_logout = f"{logout_uri}?state=lifecycle-logout-state"
@@ -5121,7 +5194,21 @@ def run_oidc_lifecycle(results: list[StepResult], client: HttpClient, args: argp
         args: Parsed command-line options consumed by the operation.
     """
     run_step(results, "appliance-health", appliance_health, client, args)
-    run_step(results, "oidc-authorization-code-check", oidc_authorization_code_check, client, args)
+    run_step(results, "configure-oidc-listener", configure_oidc_listener, client, args)
+    run_step(results, "apply-oidc-network", apply_units, client, ["network", "firewall"], args)
+    run_step(results, "configure-ca", configure_ca, client, args)
+    provider = run_step(results, "configure-oidc-provider", configure_oidc_provider, client, args)
+    run_step(results, "apply-oidc-certificate-and-listener", apply_units, client, ["ca", "firewall", "public_services"], args)
+    site_address = str(ip_interface(args.site_cidr).ip)
+    if site_address not in (provider.get("listen_addresses") or []):
+        raise LifecycleError("The OIDC provider did not publish the selected site listener.")
+    status, root_ca_pem, _headers = client.request("GET", "/certificate-authority/downloads/root-ca.pem")
+    if status != 200 or "BEGIN CERTIFICATE" not in root_ca_pem:
+        raise LifecycleError("The applied CA root was unavailable for OIDC listener verification.")
+    public_client = HttpClient(
+        f"https://{site_address}:{provider['port']}", trusted_ca_pem=root_ca_pem
+    )
+    run_step(results, "oidc-authorization-code-check", oidc_authorization_code_check, client, args, public_client)
 
 
 def run_restored_lifecycle(results: list[StepResult], client: HttpClient, args: argparse.Namespace) -> None:
