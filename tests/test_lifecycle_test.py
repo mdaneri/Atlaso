@@ -872,12 +872,23 @@ def test_authoritative_dns_lifecycle_probe_covers_authority_reverse_nxdomain_and
 
 
 def test_lifecycle_enables_routing_before_wan_apply(monkeypatch):
-    """The WAN lab must turn on its global gates before applying routes."""
+    """The WAN lab must turn on its global gates before applying routes.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace network setup helpers.
+    """
     lifecycle = load_lifecycle_module()
     calls = []
 
     class Client:
         def json_request(self, method, path, *, json_body):
+            """Record a settings request and return its supplied state.
+
+            Args:
+                method: HTTP method used for the request.
+                path: API path receiving the request.
+                json_body: Settings payload to record.
+            """
             calls.append((method, path, json_body))
             return json_body
 

@@ -1564,6 +1564,11 @@ def render_dnsmasq_config(
         ordered_domains = sorted(domains, key=len, reverse=True)
 
         def zone_for_name(name: str) -> str | None:
+            """Find the managed zone containing a DNS name.
+
+            Args:
+                name: Fully qualified DNS name to match against managed zones.
+            """
             return next(
                 (domain for domain in ordered_domains if name == domain or name.endswith(f".{domain}")),
                 None,

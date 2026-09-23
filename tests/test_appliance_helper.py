@@ -1484,7 +1484,12 @@ def test_management_handoff_restores_authoritative_lease_mirrors(monkeypatch, tm
 
 
 def test_management_handoff_preserves_valid_post_snapshot_lease(monkeypatch, tmp_path):
-    """Rollback keeps an old-service lease event absent from the snapshot."""
+    """Rollback keeps an old-service lease event absent from the snapshot.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace helper paths.
+        tmp_path: Temporary directory for isolated DNS state.
+    """
     helper = load_helper_module()
     state_dir = tmp_path / "dnsmasq"
     state_dir.mkdir()
@@ -11392,6 +11397,11 @@ def test_dnsmasq_lease_events_mirror_only_managed_names(monkeypatch, tmp_path, c
     monkeypatch.setenv("DNSMASQ_DOMAIN", "atlaso.internal")
     commands = []
     def fake_run(command):
+        """Capture helper commands without invoking system services.
+
+        Args:
+            command: Command and arguments to capture.
+        """
         commands.append(command)
         return subprocess.CompletedProcess(command, 0, "", "")
     monkeypatch.setattr(helper, "_run", fake_run)
@@ -11453,13 +11463,115 @@ def test_dnsmasq_lease_events_mirror_only_managed_names(monkeypatch, tmp_path, c
     monkeypatch.delenv("DNSMASQ_SUPPLIED_HOSTNAME")
     monkeypatch.setenv("DNSMASQ_TAGS", "sitea atlaso-name-020000000001")
     assert helper.main(["atlaso-helper", "add", "02:00:00:00:00:01", "192.168.50.21"]) == 0
-    assert next(hosts_dir.iterdir()).read_text(encoding="utf-8").startswith(
-        "192.168.50.21 reserved.atlaso.internal\n"
+    assert next(hosts_dir.iterdir()).read_text(encoding="utf-8") == (
+        "192.168.50.21 reserved.atlaso.internal\n# mac=02:00:00:00:00:01\n# reservation\n"
     )
+    lease_file.write_text("1893456000 02:00:00:00:00:01 192.168.50.21 * *\n", encoding="utf-8")
+    assert helper._handle_dnsmasq("leases", []) == 0
+    assert "192.168.50.21 reserved" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("change", ["deleted", "moved"])
+@pytest.mark.parametrize("legacy_mirror", [False, True])
+def test_authoritative_reservation_change_removes_old_lease_name(
+    monkeypatch, tmp_path, change, legacy_mirror
+):
+    """An active lease cannot retain a deleted or moved reservation name.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace helper paths.
+        tmp_path: Temporary directory for isolated DNS state.
+        change: Reservation change to apply.
+        legacy_mirror: Whether the mirror predates reservation provenance markers.
+    """
+    helper = load_helper_module()
+    state_dir = tmp_path / "dnsmasq"
+    state_dir.mkdir()
+    hosts_dir = tmp_path / "authoritative-leases"
+    hosts_dir.mkdir()
+    mirror = hosts_dir / "lease-c0a83215.hosts"
+    marker = "" if legacy_mirror else "# reservation\n"
+    mirror.write_text(
+        "192.168.50.21 reserved.atlaso.internal\n# mac=02:00:00:00:00:01\n" + marker,
+        encoding="utf-8",
+    )
+    (state_dir / "dhcp.leases").write_text(
+        "1893456000 02:00:00:00:00:01 192.168.50.21 * *\n", encoding="utf-8"
+    )
+    authoritative = tmp_path / "authoritative.conf"
+    authoritative.write_text("auth-zone=atlaso.internal\n", encoding="utf-8")
+    old_main = tmp_path / "installed.conf"
+    old_main.write_text(
+        "# atlaso-authoritative-lease-scope=192.168.50.0/24,atlaso.internal\n"
+        "dhcp-host=02:00:00:00:00:01,set:atlaso-name-020000000001,192.168.50.21\n"
+        "dhcp-option=tag:atlaso-name-020000000001,option:host-name,reserved\n",
+        encoding="utf-8",
+    )
+    candidate = tmp_path / "candidate.conf"
+    new_reservation = (
+        "dhcp-host=02:00:00:00:00:01,set:atlaso-name-020000000001,192.168.50.22\n"
+        "dhcp-option=tag:atlaso-name-020000000001,option:host-name,reserved\n"
+        if change == "moved" else ""
+    )
+    candidate.write_text(
+        "# atlaso-authoritative-lease-scope=192.168.50.0/24,atlaso.internal\n" + new_reservation,
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(helper, "DNSMASQ_STATE_DIR", state_dir)
+    monkeypatch.setattr(helper, "DNSMASQ_LEASE_FILE_PATH", state_dir / "dhcp.leases")
+    monkeypatch.setattr(helper, "DNSMASQ_AUTHORITATIVE_LEASE_HOSTS_DIR", hosts_dir)
+    monkeypatch.setattr(helper, "DNSMASQ_CONFIG_PATH", old_main)
+
+    helper._prepare_authoritative_lease_hosts(authoritative, candidate)
+
+    assert not mirror.exists()
+
+
+def test_handoff_rollback_removes_candidate_only_reservation_mirror(monkeypatch, tmp_path):
+    """Rollback rejects a tagged name absent from the restored reservation config.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace helper paths.
+        tmp_path: Temporary directory for isolated DNS state.
+    """
+    helper = load_helper_module()
+    state_dir = tmp_path / "dnsmasq"
+    state_dir.mkdir()
+    hosts_dir = tmp_path / "authoritative-leases"
+    hosts_dir.mkdir()
+    mirror = hosts_dir / "lease-c0a83215.hosts"
+    mirror.write_text(
+        "192.168.50.21 candidate.atlaso.internal\n# mac=02:00:00:00:00:01\n# reservation\n",
+        encoding="utf-8",
+    )
+    (state_dir / "dhcp.leases").write_text(
+        "1893456000 02:00:00:00:00:01 192.168.50.21 * *\n", encoding="utf-8"
+    )
+    authoritative = tmp_path / "authoritative.conf"
+    authoritative.write_text("auth-zone=atlaso.internal\n", encoding="utf-8")
+    restored_main = tmp_path / "installed.conf"
+    restored_main.write_text(
+        "# atlaso-authoritative-lease-scope=192.168.50.0/24,atlaso.internal\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(helper, "DNSMASQ_STATE_DIR", state_dir)
+    monkeypatch.setattr(helper, "DNSMASQ_LEASE_FILE_PATH", state_dir / "dhcp.leases")
+    monkeypatch.setattr(helper, "DNSMASQ_AUTHORITATIVE_LEASE_HOSTS_DIR", hosts_dir)
+    monkeypatch.setattr(helper, "DNSMASQ_AUTHORITATIVE_CONFIG_PATH", authoritative)
+    monkeypatch.setattr(helper, "DNSMASQ_CONFIG_PATH", restored_main)
+
+    helper._reconcile_management_handoff_lease_mirrors({"previous_dnsmasq_authoritative_present": True})
+
+    assert not mirror.exists()
 
 
 def test_authoritative_lease_scope_change_removes_stale_name(monkeypatch, tmp_path):
-    """An active lease cannot keep its former authoritative suffix after Apply."""
+    """An active lease cannot keep its former authoritative suffix after Apply.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace helper paths.
+        tmp_path: Temporary directory for isolated DNS state.
+    """
     helper = load_helper_module()
     state_dir = tmp_path / "dnsmasq"
     state_dir.mkdir()
@@ -11486,7 +11598,13 @@ def test_authoritative_lease_scope_change_removes_stale_name(monkeypatch, tmp_pa
 
 
 def test_dnsmasq_ipv6_lease_mirror_uses_duid_and_iaid(monkeypatch, tmp_path, capsys):
-    """DHCPv6 lease readback and reconciliation use both client identifiers."""
+    """DHCPv6 lease readback and reconciliation use both client identifiers.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace helper paths.
+        tmp_path: Temporary directory for isolated DNS state.
+        capsys: Pytest fixture used to capture lease readback.
+    """
     helper = load_helper_module()
     state_dir = tmp_path / "dnsmasq"
     state_dir.mkdir()
