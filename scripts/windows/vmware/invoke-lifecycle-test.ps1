@@ -58,6 +58,8 @@ IPv4 CIDR used by the simulated WAN scenario.
 Run only the routing and WAN lifecycle scenario.
 .PARAMETER OidcOnly
 Run only the OIDC lifecycle scenario.
+.PARAMETER CertificateOnly
+Prepare a retained appliance clone for the certificate handoff acceptance scenario.
 .PARAMETER FullEsxiPxeInstall
 Include the full ESXi PXE installation scenario.
 .PARAMETER PxeInstallerIsoPath
@@ -196,6 +198,10 @@ param(
     [Parameter(ParameterSetName = 'Run')]
     [Parameter(ParameterSetName = 'Plan')]
     [switch]$OidcOnly,
+
+    [Parameter(ParameterSetName = 'Run')]
+    [Parameter(ParameterSetName = 'Plan')]
+    [switch]$CertificateOnly,
 
     [Parameter(ParameterSetName = 'Run')]
     [Parameter(ParameterSetName = 'Plan')]
@@ -388,15 +394,18 @@ if (-not $PlanOnly) {
     if ($null -eq $SshPassword) {
         $SshPassword = $AdminPassword
     }
-    if (-not ($OidcOnly -or $RoutingWanOnly) -and $null -eq $VcfBackupPassword) {
+    if (-not ($OidcOnly -or $RoutingWanOnly -or $CertificateOnly) -and $null -eq $VcfBackupPassword) {
         $VcfBackupPassword = Read-Host -Prompt 'VCF Backup lifecycle password' -AsSecureString
     }
     if ($FullEsxiPxeInstall -and $null -eq $EsxiPassword) {
         $EsxiPassword = Read-Host -Prompt 'ESXi root password for lifecycle probing' -AsSecureString
     }
 }
-if (($RoutingWanOnly -and $FullEsxiPxeInstall) -or ($OidcOnly -and ($RoutingWanOnly -or $FullEsxiPxeInstall))) {
-    throw "-OidcOnly, -RoutingWanOnly, and -FullEsxiPxeInstall are mutually exclusive."
+if (@(@($OidcOnly, $RoutingWanOnly, $CertificateOnly, $FullEsxiPxeInstall) | Where-Object { $_ }).Count -gt 1) {
+    throw "-OidcOnly, -RoutingWanOnly, -CertificateOnly, and -FullEsxiPxeInstall are mutually exclusive."
+}
+if ($CertificateOnly -and -not $KeepVms -and -not $PlanOnly) {
+    throw '-CertificateOnly requires -KeepVms so the retained appliance can undergo native acceptance.'
 }
 if (-not $ApplianceVmxPath) {
     if ($PlanOnly) {
@@ -416,7 +425,7 @@ if (-not $applianceIpWasPassed) {
 }
 if (-not $PlanOnly -and $PSCmdlet.ParameterSetName -eq 'Run') {
     $usesLanSegments = @($SiteANetwork, $SiteBNetwork, $TrunkNetwork) | Where-Object { $_.StartsWith('lan:') }
-    if (-not $usesLanSegments) {
+    if (-not $usesLanSegments -and -not $CertificateOnly) {
         $lifecycleNetworkPlan = Get-ManagementNetworkPlan -NetworkName $ManagementNetwork -Vmrun $VmrunPath -BridgeAlias $BridgedInterfaceAlias -AllLifecycleNetworks
         if ($lifecycleNetworkPlan.missing_networks.Count -gt 0) {
             throw "Missing VMware Workstation lifecycle networks: $($lifecycleNetworkPlan.missing_networks -join ', '). Create them in Virtual Network Editor, pass lan:<segment-name> for isolated Workstation LAN segments, or run -PrepareNetworksOnly after configuring Workstation host-only vmnets."
@@ -425,20 +434,38 @@ if (-not $PlanOnly -and $PSCmdlet.ParameterSetName -eq 'Run') {
 }
 $effectiveApplianceUrl = if ($ApplianceUrl) { $ApplianceUrl } elseif ($ApplianceIPAddress) { "https://${ApplianceIPAddress}" } else { "" }
 
-if (-not $SkipClientPrepare -and -not $PlanOnly) {
+if (-not $SkipClientPrepare -and -not $CertificateOnly -and -not $PlanOnly) {
     & (Join-Path $PSScriptRoot 'prepare-tiny-linux-client.ps1')
     if (-not $?) {
         throw "Tiny Linux VMware client preparation failed."
     }
 }
 
-$effectiveSkipBackupRestoreTest = [bool]($SkipBackupRestoreTest -or $RoutingWanOnly -or $OidcOnly)
+$effectiveSkipBackupRestoreTest = [bool]($SkipBackupRestoreTest -or $RoutingWanOnly -or $OidcOnly -or $CertificateOnly)
 $powerShell7Path = Resolve-PowerShell7Path
 
 $secretBundlePath = ''
 try {
     if (-not $PlanOnly) {
-        $secretBundlePath = Join-Path ([System.IO.Path]::GetTempPath()) "atlaso-vmware-lifecycle-$([guid]::NewGuid().ToString('N')).clixml"
+        $localStateRoot = Join-Path $repoRoot '.atlaso-local'
+        $localState = Get-Item -LiteralPath $localStateRoot -Force -ErrorAction Stop
+        $localStateAcl = Get-Acl -LiteralPath $localStateRoot
+        $currentSid = [Security.Principal.WindowsIdentity]::GetCurrent().User
+        if (-not $localState.PSIsContainer -or
+            ($localState.Attributes -band [IO.FileAttributes]::ReparsePoint) -or
+            -not $localStateAcl.AreAccessRulesProtected -or
+            $localStateAcl.GetOwner([Security.Principal.SecurityIdentifier]).Value -cne $currentSid.Value) {
+            throw 'Task-local credential staging requires an ordinary private .atlaso-local directory.'
+        }
+        foreach ($entry in $localStateAcl.Access) {
+            $entrySid = $entry.IdentityReference.Translate([Security.Principal.SecurityIdentifier])
+            if ($entrySid.Value -cne $currentSid.Value -and $entrySid.Value -cne 'S-1-5-18') {
+                throw 'Task-local credential staging directory grants access outside the current user and SYSTEM.'
+            }
+        }
+        $secretBundleRoot = Join-Path $repoRoot '.atlaso-local/lifecycle-secret-bundles'
+        [IO.Directory]::CreateDirectory($secretBundleRoot) | Out-Null
+        $secretBundlePath = Join-Path $secretBundleRoot "atlaso-vmware-lifecycle-$([guid]::NewGuid().ToString('N')).clixml"
         # Enter the cleanup scope before serialization because Export-Clixml
         # can leave a partial current-user-decryptable file when it fails.
         [pscustomobject]@{
@@ -481,6 +508,7 @@ if (-not $KeepVms) { $arguments += '-CleanupCreatedLab' }
 if ($AllowDryRunApply) { $arguments += '-AllowDryRunApply' }
 if ($effectiveSkipBackupRestoreTest) { $arguments += '-SkipBackupRestoreTest' }
 if ($OidcOnly) { $arguments += '-OidcOnly' }
+if ($CertificateOnly) { $arguments += '-CertificateOnly' }
 if ($RoutingWanOnly) { $arguments += '-RoutingWanOnly' }
 if ($FullEsxiPxeInstall) { $arguments += '-FullEsxiPxeInstall' }
 if ($PxeInstallerIsoPath) { $arguments += @('-PxeInstallerIsoPath', $PxeInstallerIsoPath) }

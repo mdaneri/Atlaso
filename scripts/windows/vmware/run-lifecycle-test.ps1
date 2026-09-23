@@ -50,6 +50,8 @@ Permit dry-run apply mode for the Python lifecycle harness.
 Skip backup/restore validation pass.
 .PARAMETER OidcOnly
 Run only OIDC scenario path.
+.PARAMETER CertificateOnly
+Prepare only a retained appliance for the certificate handoff acceptance scenario.
 .PARAMETER RoutingWanOnly
 Run only WAN routing scenario.
 .PARAMETER FullEsxiPxeInstall
@@ -98,6 +100,7 @@ param(
     [switch]$AllowDryRunApply,
     [switch]$SkipBackupRestoreTest,
     [switch]$OidcOnly,
+    [switch]$CertificateOnly,
     [switch]$RoutingWanOnly,
     [switch]$FullEsxiPxeInstall,
     [string]$PxeInstallerIsoPath = '',
@@ -820,7 +823,7 @@ if (-not $PlanOnly) {
             throw "Lifecycle secret bundle property is missing or invalid: $propertyName"
         }
     }
-    $focusedRun = $OidcOnly -or $RoutingWanOnly
+    $focusedRun = $OidcOnly -or $RoutingWanOnly -or $CertificateOnly
     if (-not $focusedRun -and $secretBundle.VcfBackupPassword -isnot [SecureString]) {
         throw 'Lifecycle secret bundle property is missing or invalid: VcfBackupPassword'
     }
@@ -852,6 +855,13 @@ if ($RoutingWanOnly) {
 }
 if ($OidcOnly) {
     $SkipBackupRestoreTest = $true
+}
+if ($CertificateOnly) {
+    $SkipBackupRestoreTest = $true
+    if (-not $PlanOnly) {
+        if ($CleanupCreatedLab) { throw 'Certificate preparation must retain its appliance until native acceptance and owned cleanup.' }
+        if (-not $env:CODEX_THREAD_ID) { throw 'Certificate preparation requires the originating task ID before resource creation.' }
+    }
 }
 
 <#
@@ -1238,12 +1248,15 @@ Source VMX path.
 Destination directory for the copied appliance.
 .PARAMETER Name
 Lifecycle VM name.
+.PARAMETER PreparedDirectoryIdentity
+Original identity of an empty certificate VM directory recorded before cloning.
 #>
 function Copy-VmDirectory {
     param(
         [string]$SourceVmx,
         [string]$DestinationDirectory,
-        [string]$Name
+        [string]$Name,
+        [string]$PreparedDirectoryIdentity = ''
     )
 
     Assert-SafeLifecycleName -Name $Name
@@ -1251,7 +1264,13 @@ function Copy-VmDirectory {
     Assert-AtlasoTemplatePoweredOff -VmxPath $resolvedSourceVmx -VmrunPath $resolvedVmrun
     Assert-AtlasoVmwarePayloadProvenance -VmxPath $resolvedSourceVmx | Out-Null
     if (Test-Path -LiteralPath $DestinationDirectory) {
-        throw "Lifecycle VM directory already exists: $DestinationDirectory"
+        if (-not $PreparedDirectoryIdentity -or
+            (Get-AtlasoPathIdentity -Path $DestinationDirectory -Description 'prepared certificate VM directory') -cne $PreparedDirectoryIdentity -or
+            @(Get-ChildItem -LiteralPath $DestinationDirectory -Force).Count) {
+            throw "Lifecycle VM directory already exists or changed: $DestinationDirectory"
+        }
+    } elseif ($PreparedDirectoryIdentity) {
+        throw 'Prepared certificate VM directory disappeared before cloning.'
     }
     $targetVmx = Join-Path $DestinationDirectory "$Name.vmx"
     if ($PSCmdlet.ShouldProcess($DestinationDirectory, "Clone Workstation VM $Name with dedicated storage")) {
@@ -2231,8 +2250,8 @@ function Add-LifecycleResultStep {
 }
 
 $resolvedVmrun = Resolve-VmrunPath
-if (($RoutingWanOnly -and $FullEsxiPxeInstall) -or ($OidcOnly -and ($RoutingWanOnly -or $FullEsxiPxeInstall))) {
-    throw "-OidcOnly, -RoutingWanOnly, and -FullEsxiPxeInstall are mutually exclusive."
+if (@(@($OidcOnly, $RoutingWanOnly, $CertificateOnly, $FullEsxiPxeInstall) | Where-Object { $_ }).Count -gt 1) {
+    throw "-OidcOnly, -RoutingWanOnly, -CertificateOnly, and -FullEsxiPxeInstall are mutually exclusive."
 }
 $applianceName = "$LabName-Appliance"
 $clientAName = "$LabName-ClientA"
@@ -2264,6 +2283,7 @@ $plan = [ordered]@{
     trunk_network         = $TrunkNetwork
     site_b_network        = $SiteBNetwork
     oidc_only             = [bool]$OidcOnly
+    certificate_only      = [bool]$CertificateOnly
     routing_wan_only      = [bool]$RoutingWanOnly
     full_esxi_pxe_install = [bool]$FullEsxiPxeInstall
     pxe_installer_iso     = $PxeInstallerIsoPath
@@ -2338,6 +2358,114 @@ function Write-LifecycleIdentityEvidence {
     if ($preflightGuard) { $preflightGuard.Published($identityTempPath, $identityPath) }
     # Failed publication retains its exact stage for ownership-aware recovery;
     # never delete a reopened staging pathname after releasing its creation handle.
+}
+
+<#
+.SYNOPSIS
+Publish one immutable certificate-lab receipt outside its disposable VM root.
+.PARAMETER Name
+Unique receipt filename beneath this lab's durable evidence directory.
+.PARAMETER Value
+Non-secret structured evidence to serialize and flush.
+#>
+function Write-CertificateLabReceipt {
+    param([Parameter(Mandatory)][string]$Name, [Parameter(Mandatory)]$Value)
+
+    if (-not $CertificateOnly -or $Name -notmatch '^[a-z][a-z0-9-]*\.json$') {
+        throw 'Certificate evidence publication was requested outside its supported mode.'
+    }
+    $evidenceRoot = Join-Path $repoRoot "test-results/certificate-native-evidence/$LabName"
+    [IO.Directory]::CreateDirectory($evidenceRoot) | Out-Null
+    $target = Join-Path $evidenceRoot $Name
+    if (Test-Path -LiteralPath $target) { throw "Certificate evidence already exists: $target" }
+    $stage = Join-Path $evidenceRoot ('.' + [guid]::NewGuid().ToString('N') + '.pending')
+    $writer = [Atlaso.WorkstationDurablePublisherV3]::CreateStage($stage)
+    try {
+        $bytes = [Text.UTF8Encoding]::new($false).GetBytes(($Value | ConvertTo-Json -Depth 8))
+        $writer.Write($bytes)
+        [Atlaso.WorkstationDurablePublisherV3]::PublishDurableFile($writer, $target, $false)
+    } finally { $writer.Dispose() }
+    return [pscustomobject]@{ Path = $target; Sha256 = (Get-FileHash -LiteralPath $target -Algorithm SHA256).Hash.ToLowerInvariant() }
+}
+
+<#
+.SYNOPSIS
+Capture bounded guest service state before certificate-lab helper and wheel deployment.
+.PARAMETER ApplianceVmx
+Exact cloned appliance VMX whose guest state is queried.
+#>
+function Get-CertificateSourceGuestState {
+    param([Parameter(Mandatory)][string]$ApplianceVmx)
+
+    $guestPath = "/tmp/$LabName-source-network.txt"
+    $hostPath = Join-Path $resultRoot 'source-network-readback.txt'
+    $script = "systemctl show atlaso-routing-domains.service --property=LoadState,ActiveState > '$guestPath'"
+    $password = ConvertFrom-SecureString -SecureString $adminPasswordSecure -AsPlainText
+    try {
+        $query = Invoke-VmrunBounded -Arguments @(
+            '-T', 'ws', '-gu', $ApplianceSshUser, '-gp', $password,
+            'runScriptInGuest', $ApplianceVmx, '/bin/sh', $script
+        ) -TimeoutSeconds 20
+        if ($query.TimedOut -or $query.ExitCode -ne 0) { throw 'Certificate source guest query failed.' }
+        $readback = Invoke-VmrunBounded -Arguments @(
+            '-T', 'ws', '-gu', $ApplianceSshUser, '-gp', $password,
+            'copyFileFromGuestToHost', $ApplianceVmx, $guestPath, $hostPath
+        ) -TimeoutSeconds 20
+        if ($readback.TimedOut -or $readback.ExitCode -ne 0) { throw 'Certificate source guest readback failed.' }
+        if (-not (Test-Path -LiteralPath $hostPath -PathType Leaf) -or (Get-Item -LiteralPath $hostPath).Length -gt 1024) {
+            throw 'Certificate source guest readback is missing or oversized.'
+        }
+        $values = @{}
+        foreach ($line in Get-Content -LiteralPath $hostPath) {
+            if ($line -notmatch '^(LoadState|ActiveState)=([a-z-]{1,40})$' -or $values.ContainsKey($Matches[1])) {
+                throw 'Certificate source guest readback is invalid.'
+            }
+            $values[$Matches[1]] = $Matches[2]
+        }
+        if ($values.Count -ne 2) { throw 'Certificate source guest state is incomplete.' }
+        return $values
+    } finally {
+        $password = $null
+        if (Test-Path -LiteralPath $hostPath) { Remove-Item -LiteralPath $hostPath -Force -ErrorAction Stop }
+    }
+}
+
+<#
+.SYNOPSIS
+Measure the installed appliance helper by a bounded guest readback.
+.PARAMETER ApplianceVmx
+Exact cloned appliance VMX whose helper is measured.
+#>
+function Get-CertificateInstalledHelperSha256 {
+    param([Parameter(Mandatory)][string]$ApplianceVmx)
+
+    $guestPath = "/tmp/$LabName-helper-sha256.txt"
+    $hostPath = Join-Path $resultRoot 'helper-sha256-readback.txt'
+    $script = "sha256sum /opt/atlaso/bin/atlaso-helper > '$guestPath'"
+    $password = ConvertFrom-SecureString -SecureString $adminPasswordSecure -AsPlainText
+    try {
+        $query = Invoke-VmrunBounded -Arguments @(
+            '-T', 'ws', '-gu', $ApplianceSshUser, '-gp', $password,
+            'runScriptInGuest', $ApplianceVmx, '/bin/sh', $script
+        ) -TimeoutSeconds 20
+        if ($query.TimedOut -or $query.ExitCode -ne 0) { throw 'Installed appliance helper measurement failed.' }
+        $readback = Invoke-VmrunBounded -Arguments @(
+            '-T', 'ws', '-gu', $ApplianceSshUser, '-gp', $password,
+            'copyFileFromGuestToHost', $ApplianceVmx, $guestPath, $hostPath
+        ) -TimeoutSeconds 20
+        if ($readback.TimedOut -or $readback.ExitCode -ne 0) { throw 'Installed appliance helper readback failed.' }
+        if (-not (Test-Path -LiteralPath $hostPath -PathType Leaf) -or (Get-Item -LiteralPath $hostPath).Length -gt 256) {
+            throw 'Installed appliance helper digest is missing or oversized.'
+        }
+        $lines = @(Get-Content -LiteralPath $hostPath)
+        if ($lines.Count -ne 1 -or $lines[0] -notmatch '^([a-f0-9]{64})  /opt/atlaso/bin/atlaso-helper$') {
+            throw 'Installed appliance helper digest is invalid.'
+        }
+        return $Matches[1]
+    } finally {
+        $password = $null
+        if (Test-Path -LiteralPath $hostPath) { Remove-Item -LiteralPath $hostPath -Force -ErrorAction Stop }
+    }
 }
 
 <#
@@ -2420,16 +2548,50 @@ $clientASeedIso = ''
 $clientBSeedIso = ''
 $clientAVmx = ''
 $clientBVmx = ''
-$seedArtifactsRetired = [bool]$OidcOnly
+$seedArtifactsRetired = [bool]($OidcOnly -or $CertificateOnly)
 $scenarioFailure = $null
 try {
-    if (-not $OidcOnly) {
+    if (-not ($OidcOnly -or $CertificateOnly)) {
         $clientASeedIso = Join-Path $seedRoot "$clientAName-seed.iso"
         $clientBSeedIso = Join-Path $seedRoot "$clientBName-seed.iso"
         New-CloudInitSeedIso -Path $clientASeedIso -HostName ($clientAName.ToLowerInvariant())
         New-CloudInitSeedIso -Path $clientBSeedIso -HostName ($clientBName.ToLowerInvariant())
     }
     $applianceDirectory = Join-Path $vmRoot $applianceName
+    $preparedApplianceDirectoryIdentity = ''
+    if ($CertificateOnly) {
+        # The immutable intent precedes directory creation. The second receipt
+        # captures the directory's original identity before vmrun can populate it.
+        $certificateIntent = Write-CertificateLabReceipt -Name 'vm-creation-intent.json' -Value ([ordered]@{
+            schema = 1; kind = 'vm-creation-intent'; task_id = $env:CODEX_THREAD_ID
+            repository = 'mdaneri/Atlaso'; pr = $PullRequestNumber
+            source_commit = $sourceCommit; path = (Join-Path $applianceDirectory "$applianceName.vmx")
+            root_path = $applianceDirectory; lab_root = $resultRoot
+        })
+        New-Item -ItemType Directory -Path $applianceDirectory -ErrorAction Stop | Out-Null
+        $identityCode = @'
+import json, sys
+from pathlib import Path
+sys.path.insert(0, sys.argv[2])
+from scripts.completed_task_files import WindowsFiles
+with WindowsFiles().opened(Path(sys.argv[1]), directory=True) as (_, identity, _):
+    print(json.dumps(list(identity)))
+'@
+        $identityOutput = @(& python -I -c $identityCode $applianceDirectory $runtimeSourceRoot)
+        if ($LASTEXITCODE -ne 0 -or $identityOutput.Count -ne 1) {
+            throw 'Certificate VM directory creation identity could not be captured.'
+        }
+        $originalDirectoryIdentity = @($identityOutput[0] | ConvertFrom-Json)
+        if ($originalDirectoryIdentity.Count -ne 3) { throw 'Certificate VM directory identity is invalid.' }
+        $preparedApplianceDirectoryIdentity = Get-AtlasoPathIdentity -Path $applianceDirectory -Description 'certificate VM directory'
+        $certificateOwnership = Write-CertificateLabReceipt -Name 'vm-original-ownership.json' -Value ([ordered]@{
+            schema = 1; kind = 'vm'; task_id = $env:CODEX_THREAD_ID
+            repository = 'mdaneri/Atlaso'; pr = $PullRequestNumber
+            source_commit = $sourceCommit; path = (Join-Path $applianceDirectory "$applianceName.vmx")
+            root_path = $applianceDirectory; root_identity = $originalDirectoryIdentity
+            intent_sha256 = $certificateIntent.Sha256; lab_root = $resultRoot
+        })
+    }
     $applianceVmx = Invoke-TrackedLifecycleVmCreation `
         -Role 'appliance' `
         -DisplayName $applianceName `
@@ -2438,11 +2600,12 @@ try {
             Copy-VmDirectory `
                 -SourceVmx $ApplianceVmxPath `
                 -DestinationDirectory $applianceDirectory `
-                -Name $applianceName
+                -Name $applianceName `
+                -PreparedDirectoryIdentity $preparedApplianceDirectoryIdentity
         }
     Set-VmxNetworkAdapter -Path $applianceVmx -Index 0 -Vmnet $ManagementNetwork
     Set-AtlasoWorkstationOvfEnvironment -VmxPath $applianceVmx -OvfEnvironment $firstBootOvfEnvironment
-    if (-not $OidcOnly) {
+    if (-not ($OidcOnly -or $CertificateOnly)) {
         Set-VmxNetworkAdapter -Path $applianceVmx -Index 1 -Vmnet $SiteANetwork
         Set-VmxNetworkAdapter -Path $applianceVmx -Index 2 -Vmnet $TrunkNetwork
         Set-VmxNetworkAdapter -Path $applianceVmx -Index 3 -Vmnet $SiteBNetwork
@@ -2494,7 +2657,7 @@ try {
     }
 
     $vmxsToStart = @($applianceVmx)
-    if (-not $OidcOnly) {
+    if (-not ($OidcOnly -or $CertificateOnly)) {
         $vmxsToStart += @($clientAVmx, $clientBVmx)
     }
     foreach ($vmx in $vmxsToStart) {
@@ -2515,6 +2678,16 @@ try {
         appliance_ip  = $ApplianceIPAddress
         appliance_url = $ApplianceUrl
     } | ConvertTo-Json -Depth 3 | Set-Content -LiteralPath (Join-Path $resultRoot 'discovered-appliance.json') -Encoding UTF8
+    if ($CertificateOnly) {
+        $sourceGuestState = Get-CertificateSourceGuestState -ApplianceVmx $applianceVmx
+        $certificateSource = Write-CertificateLabReceipt -Name 'predeployment-network.json' -Value ([ordered]@{
+            schema = 1; phase = 'before-lifecycle-deployment'
+            task_id = $env:CODEX_THREAD_ID; vmx_path = $applianceVmx
+            source_commit = $sourceCommit; routing_service = $sourceGuestState
+            # The service query alone cannot prove database route intent.
+            routing_intent_state = 'unproven'
+        })
+    }
     try {
         Sync-ApplianceHelperScript -ApplianceVmx $applianceVmx
         $applianceWheelPath = Sync-ApplianceApplicationWheel -ApplianceVmx $applianceVmx
@@ -2527,12 +2700,33 @@ try {
             $deploymentFailure.Exception
         )
     }
+    if ($CertificateOnly) {
+        $sourceHelperSha256 = (Get-FileHash -LiteralPath (Join-Path $runtimeSourceRoot 'scripts/appliance/atlaso-helper') -Algorithm SHA256).Hash.ToLowerInvariant()
+        $installedHelperSha256 = Get-CertificateInstalledHelperSha256 -ApplianceVmx $applianceVmx
+        if ($installedHelperSha256 -cne $sourceHelperSha256) {
+            throw 'Installed appliance helper digest differs from the admitted source helper.'
+        }
+        $certificateRuntime = Write-CertificateLabReceipt -Name 'deployed-runtime.json' -Value ([ordered]@{
+            schema = 1; task_id = $env:CODEX_THREAD_ID; repository = 'mdaneri/Atlaso'
+            pr = $PullRequestNumber; vmx_path = $applianceVmx
+            vm_ownership_sha256 = $certificateOwnership.Sha256
+            predeployment_sha256 = $certificateSource.Sha256
+            deployed_commit = $sourceCommit
+            wheel_sha256 = (Get-FileHash -LiteralPath $applianceWheelPath -Algorithm SHA256).Hash.ToLowerInvariant()
+            helper_sha256 = $installedHelperSha256
+            url = $ApplianceUrl; interface = 'eth0'
+            mac = (Get-VmxEthernetMacAddress -Path $applianceVmx -Index 0)
+            observed_address = $ApplianceIPAddress
+            address_ownership_state = 'unproven'
+        })
+        Write-Host "Certificate clone evidence: $($certificateRuntime.Path)"
+    } else {
     $applianceHostKey = Get-PlinkHostKey -HostName $ApplianceIPAddress -UserName $ApplianceSshUser -Password $adminPasswordSecure
     $clientAHost = ''
     $clientBHost = ''
     $clientAHostKey = ''
     $clientBHostKey = ''
-    if (-not $OidcOnly) {
+    if (-not ($OidcOnly -or $CertificateOnly)) {
         $clientAHost = Wait-GuestIPv4 -Path $clientAVmx -GuestUser $ClientSshUser -GuestPassword $sshPasswordSecure -Name $clientAName
         $clientBHost = Wait-GuestIPv4 -Path $clientBVmx -GuestUser $ClientSshUser -GuestPassword $sshPasswordSecure -Name $clientBName
         if (-not $clientAHost -or -not $clientBHost) {
@@ -2641,7 +2835,8 @@ try {
             }
         }
     }
-    if (-not $OidcOnly) {
+    }
+    if (-not ($OidcOnly -or $CertificateOnly)) {
         # Successful lifecycle client access proves cloud-init consumed both
         # seeds. Leave retained labs running only after verified deletion.
         Remove-ClientSeedArtifacts `

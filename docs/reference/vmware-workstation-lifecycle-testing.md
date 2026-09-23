@@ -579,6 +579,16 @@ still clones the selected appliance, installs the exact branch wheel, proves app
 Authorization Code acceptance check. It skips unrelated multi-NIC service configuration, client VM creation and probes,
 and the backup/restore pass.
 
+For certificate handoff preparation, pass `-CertificateOnly -KeepVms` with a task-owned PR identity. This mode
+clones and boots only the appliance, installs the admitted source commit's helper and wheel, and leaves the appliance
+running for a separate native certificate scenario. The runner publishes immutable creation intent and original VM
+directory identity under `test-results/certificate-native-evidence/<lab>` before VMware populates that directory.
+It also records a bounded guest service-state readback before deployment and the actual helper/wheel digests afterward.
+The service readback does not prove an empty route-intent database, and a discovered DHCP address does not prove
+exclusive address control. The certificate scenario must refuse mutation until independent producers establish those
+two facts and bind them to the retained VM and exact deployed commit. Keep the original receipts outside the lab
+removal root; clean up only through the exact lifecycle VM removal and artifact-root procedures below.
+
 Useful commands:
 
 ```powershell
