@@ -1297,6 +1297,26 @@ def test_restored_esxi_lifecycle_recreates_vault_secret_before_apply(monkeypatch
     assert stage_index < call_names.index("apply-connectivity-units")
     assert calls[stage_index][1] is lifecycle.ensure_lifecycle_esxi_vault_secret
     assert calls[stage_index][2] == (client, args.esxi_password)
+    connectivity = next(arguments for name, _operation, arguments in calls if name == "apply-connectivity-units")
+    assert "appliance_settings" in connectivity[1]
+
+
+def test_full_lifecycle_selects_resolver_settings_with_initial_dns_apply(monkeypatch):
+    """The first DNS Apply must explicitly include its host resolver selection."""
+    lifecycle = load_lifecycle_module()
+    args = lifecycle.parse_args(["--secret-stdin"])
+    calls = []
+
+    def fake_run_step(_results, name, _operation, *operation_args):
+        calls.append((name, operation_args))
+        return {}
+
+    monkeypatch.setattr(lifecycle, "run_step", fake_run_step)
+    lifecycle.run_full_lifecycle([], object(), args)
+
+    connectivity = next(arguments for name, arguments in calls if name == "apply-connectivity-units")
+    assert "dnsmasq" in connectivity[1]
+    assert "appliance_settings" in connectivity[1]
 
 
 def test_configure_esxi_pxe_selects_dhcp_scope_and_proves_reservation():

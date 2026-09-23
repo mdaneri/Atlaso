@@ -5098,7 +5098,7 @@ def run_full_lifecycle(results: list[StepResult], client: HttpClient, args: argp
         "apply-connectivity-units",
         apply_units,
         client,
-        ["local_users", "network", "firewall", "wan", "dnsmasq", "esxi_pxe", "vcf_backups", "ldap"],
+        ["local_users", "network", "firewall", "wan", "dnsmasq", "appliance_settings", "esxi_pxe", "vcf_backups", "ldap"],
         args,
     )
     if args.esx_storage_test:
@@ -5210,7 +5210,7 @@ def run_restored_lifecycle(results: list[StepResult], client: HttpClient, args: 
         "apply-connectivity-units",
         apply_units,
         client,
-        ["local_users", "network", "firewall", "wan", "dnsmasq", "esxi_pxe", "vcf_backups", "ldap"],
+        ["local_users", "network", "firewall", "wan", "dnsmasq", "appliance_settings", "esxi_pxe", "vcf_backups", "ldap"],
         args,
     )
     if args.esx_storage_test:
