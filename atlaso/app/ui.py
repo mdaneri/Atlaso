@@ -2261,6 +2261,8 @@ def ntp_context(db: Session, *, include_runtime_health: bool = False, reconcile:
     config_preview = render_ntp_config(settings)
     ca_state_errors = ensure_ca_state(db) if reconcile and settings.nts_server_enabled else []
     validation_errors = [*ca_state_errors, *validate_ntp_state(settings, {interface["name"] for interface in available_interfaces})]
+    if settings.enabled and ntp_dns_record_conflict(db, settings):
+        validation_errors.append("NTP hostname or generated target conflicts with an operator-owned DNS record.")
     if settings.nts_server_enabled:
         ca_settings = get_ca_settings_row(db)
         if not ca_settings.enabled:
@@ -6815,6 +6817,75 @@ def ensure_dns_for_ntp(db: Session, settings: NtpSettings, actor: str | None, *,
         previous_hostname=previous_hostname,
         enabled=settings.enabled,
         shared_target_token="service",
+    )
+
+
+def ntp_dns_record_conflict(db: Session, settings: NtpSettings) -> bool:
+    """Detect manual records occupying the NTP alias or its shared target."""
+    hostname = normalize_dns_hostname(settings.hostname or NTP_DEFAULT_HOSTNAME)
+    targets = service_interface_dns_targets(
+        db, hostname=hostname, listen_interface=settings.listen_interface,
+        listen_address=settings.listen_address, shared_target_token="service",
+    )
+    names = {hostname, *(target["hostname"] for target in targets)}
+    records = db.execute(
+        select(DnsRecord).where(
+            DnsRecord.hostname.in_(names),
+            DnsRecord.record_type.in_(["A", "AAAA", "CNAME"]),
+        )
+    ).scalars().all()
+    return any(record.description != NTP_DNS_DESCRIPTION for record in records)
+
+
+def ntp_owned_dns_is_only_pending_change(db: Session, dns_unit: dict[str, Any]) -> bool:
+    """Couple NTP and DNS only when their generated records explain the DNS delta."""
+    baselines = load_appliance_apply_baselines(db)
+    previous_dns = str((baselines.get("dnsmasq") or {}).get("config_preview") or "")
+    current_dns = str(dns_unit.get("config_preview") or "")
+    if not previous_dns or previous_dns == current_dns:
+        return False
+
+    owned = db.execute(select(DnsRecord).where(DnsRecord.description == NTP_DNS_DESCRIPTION)).scalars().all()
+    if not owned:
+        # A disabled NTP service has no current ownership proof. Leave DNS
+        # selection with the operator rather than attributing manual edits.
+        return False
+    current_lines = {
+        f"cname={row.hostname},{row.address.strip().strip('.').lower()}"
+        if row.record_type == "CNAME" else f"host-record={row.hostname},{row.address}"
+        for row in owned if row.enabled and row.record_type in {"A", "AAAA", "CNAME"}
+    }
+    previous_ntp = str((baselines.get("ntpd") or {}).get("config_preview") or "")
+    prior_hostname = next(
+        (line.partition(": ")[2] for line in previous_ntp.splitlines()
+         if line.startswith("# Atlaso NTP hostname: ")), "",
+    )
+    prior_enabled = "# Atlaso NTP enabled: true" in previous_ntp.splitlines()
+    prior_target = service_target_hostname(prior_hostname, "service") if prior_enabled and prior_hostname else ""
+    previous_lines = {
+        line for line in previous_dns.splitlines()
+        if prior_target and (
+            line == f"cname={prior_hostname},{prior_target}"
+            or line.startswith(f"host-record={prior_target},")
+        )
+    }
+    if previous_lines == current_lines:
+        return False
+
+    def non_ntp_lines(config: str, omitted: set[str]) -> list[str]:
+        lines = []
+        for line in config.splitlines():
+            if line in omitted:
+                continue
+            if line.startswith("auth-soa="):
+                # DNS record mutations advance the server-managed SOA serial.
+                line = "auth-soa=<serial>," + line.partition(",")[2]
+            lines.append(line)
+        return sorted(lines)
+
+    return (
+        non_ntp_lines(previous_dns, previous_lines)
+        == non_ntp_lines(current_dns, current_lines)
     )
 
 
@@ -16637,6 +16708,7 @@ def _submit_appliance_apply(
         unit_map.get("ntpd", {}).get("changed")
         and unit_map.get("dnsmasq", {}).get("changed")
         and selected_ids.intersection({"ntpd", "dnsmasq"})
+        and ntp_owned_dns_is_only_pending_change(db, unit_map["dnsmasq"])
     ):
         selected_ids.update({"ntpd", "dnsmasq"})
     refresh_vcf_depot_software_depot_id = bool(

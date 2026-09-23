@@ -115,6 +115,41 @@ def test_ntp_dns_migrates_address_named_targets_to_shared_dual_stack_target():
         assert {row.hostname for row in owned if row.record_type != "CNAME"} == {cname.address}
 
 
+def test_ntp_apply_blocks_operator_owned_hostname_and_target_conflicts():
+    """Manual DNS ownership remains intact and makes NTP Apply invalid."""
+    from atlaso.app.models import DnsRecord, NtpSettings, PhysicalInterface
+    from atlaso.app.seed import seed_initial_data
+    from atlaso.app.ui import ntp_context, service_target_hostname
+
+    for conflicting_hostname in (
+        "time.example.internal",
+        service_target_hostname("time.example.internal", "service"),
+    ):
+        with _session_factory()() as db:
+            seed_initial_data(db, include_examples=False, commit=False)
+            db.add(PhysicalInterface(
+                name="eth9", mac_address="00:50:56:00:00:19", role="access", mode="access",
+                ip_cidr="192.0.2.10/24", admin_state="up", oper_state="up",
+            ))
+            settings = db.execute(select(NtpSettings)).scalar_one()
+            settings.enabled = True
+            settings.hostname = "time.example.internal"
+            settings.listen_interface = "eth9"
+            settings.listen_address = "192.0.2.10"
+            db.add(DnsRecord(
+                hostname=conflicting_hostname, record_type="A", address="192.0.2.99",
+                description="Operator", enabled=True,
+            ))
+            db.flush()
+
+            context = ntp_context(db)
+            assert any("operator-owned DNS record" in error for error in context["ntp_validation_errors"])
+            manual = db.execute(select(DnsRecord).where(
+                DnsRecord.hostname == conflicting_hostname, DnsRecord.description == "Operator",
+            )).scalar_one()
+            assert manual.address == "192.0.2.99"
+
+
 def test_fresh_seed_and_lazy_service_defaults_use_appliance_domain(monkeypatch):
     """Fresh and OVF-derived first boot state uses one canonical domain source.
 

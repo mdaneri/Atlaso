@@ -1104,6 +1104,7 @@ def _submit_console_apply(required_ids: set[str]) -> str:
         active_appliance_apply_job,
         active_vcf_depot_execution_job,
         appliance_apply_units,
+        ntp_owned_dns_is_only_pending_change,
         run_appliance_apply_job,
     )
 
@@ -1126,6 +1127,7 @@ def _submit_console_apply(required_ids: set[str]) -> str:
             unit_map.get("ntpd", {}).get("changed")
             and unit_map.get("dnsmasq", {}).get("changed")
             and selected_ids.intersection({"ntpd", "dnsmasq"})
+            and ntp_owned_dns_is_only_pending_change(db, unit_map["dnsmasq"])
         ):
             selected_ids.update({"ntpd", "dnsmasq"})
             dns_unit = unit_map["dnsmasq"]
