@@ -100,6 +100,21 @@ def test_snapshot_ignores_other_domains_local_routes_and_duplicate_native_copies
     assert [row["destination"] for row in evidence["routes"] if ":" not in row["destination"]] == ["192.0.2.0/24"]
 
 
+def test_device_filtered_snapshot_accepts_omitted_dev_but_rejects_explicit_other_dev(monkeypatch):
+    """An omitted JSON device is allowed only because the native query filters by it."""
+    helper = load_helper_module()
+    commands = observe_snapshot(
+        helper, monkeypatch,
+        v4_routes=[{"dst": "192.0.2.0/24", "scope": "link"},
+                   {"dst": "203.0.113.0/24", "dev": "eth1"}],
+        v6_routes=[],
+        addresses=[{"local": "192.0.2.10", "prefixlen": 24, "scope": "global"}],
+    )
+    evidence = helper._snapshot_management_handoff_routing(["eth0"], {"eth0": 100})["eth0"]
+    assert [route["destination"] for route in evidence["routes"]] == ["192.0.2.0/24"]
+    assert all(command[-2:] == ["dev", "eth0"] for command in commands)
+
+
 @pytest.mark.parametrize("bad_route", [
     {"metric": 0xFFFFFFFF}, {"metric": -1}, {"metric": True},
     {"nhid": 12}, {"multipath": [{"gateway": "192.0.2.1"}]}, {"from": "192.0.2.10/32"},

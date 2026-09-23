@@ -24826,7 +24826,9 @@ def _snapshot_management_handoff_routing(interfaces: list[str], tables: dict[str
                 if not isinstance(route, dict):
                     raise ValueError("previous routing-domain route is malformed")
                 table = str(route.get("table", "main"))
-                if route.get("dev") != name or table not in {"main", "254", str(tables[name])}:
+                # The native `dev name` selector already constrains this query.
+                # iproute2 can omit `dev` from its JSON rows after filtering.
+                if route.get("dev", name) != name or table not in {"main", "254", str(tables[name])}:
                     continue
                 if route.get("type", "unicast") != "unicast":
                     raise ValueError("previous routing-domain route type cannot be preserved")
