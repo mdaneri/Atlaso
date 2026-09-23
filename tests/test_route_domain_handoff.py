@@ -9,7 +9,7 @@ import pytest
 from tests.test_appliance_helper import load_helper_module
 
 
-def observe_snapshot(helper, monkeypatch, *, v4_routes=None, v6_routes=None, addresses=None):
+def observe_snapshot(helper, monkeypatch, *, v4_routes=None, v6_routes=None, addresses=None, nexthops=None):
     """Provide bounded native route/address snapshots without touching the host.
 
     Args:
@@ -28,6 +28,8 @@ def observe_snapshot(helper, monkeypatch, *, v4_routes=None, v6_routes=None, add
     if v6_routes is None:
         v6_routes = [{"dst": "2001:db8::/64", "dev": "eth0", "metric": 256, "protocol": "ra"},
                      {"dst": "default", "dev": "eth0", "gateway": "fe80::1", "metric": 1024, "protocol": "ra"}]
+    if nexthops is None:
+        nexthops = {}
     commands = []
 
     def observation(command):
@@ -37,7 +39,9 @@ def observe_snapshot(helper, monkeypatch, *, v4_routes=None, v6_routes=None, add
             command: Native command being recorded or simulated.
         """
         commands.append(command)
-        if "address" in command:
+        if "nexthop" in command:
+            rows = nexthops.get(int(command[-1]), [])
+        elif "address" in command:
             rows = [{"ifname": "eth0", "address": "02:00:00:00:00:01", "addr_info": addresses}]
         else:
             rows = v4_routes if "-4" in command else v6_routes
@@ -113,6 +117,35 @@ def test_device_filtered_snapshot_accepts_omitted_dev_but_rejects_explicit_other
     evidence = helper._snapshot_management_handoff_routing(["eth0"], {"eth0": 100})["eth0"]
     assert [route["destination"] for route in evidence["routes"]] == ["192.0.2.0/24"]
     assert all(command[-2:] == ["dev", "eth0"] for command in commands)
+
+
+def test_snapshot_resolves_single_ipv6_nexthop_on_previous_device(monkeypatch):
+    """A native nexthop ID may represent the RA gateway held during Apply."""
+    helper = load_helper_module()
+    commands = observe_snapshot(
+        helper, monkeypatch,
+        v6_routes=[{"dst": "default", "nhid": 7, "metric": 1024, "protocol": "ra"}],
+        nexthops={7: [{"id": 7, "dev": "eth0", "gateway": "fe80::1"}]},
+    )
+    evidence = helper._snapshot_management_handoff_routing(["eth0"], {"eth0": 100})["eth0"]
+    assert any(route["gateway"] == "fe80::1" and route["destination"] == "::/0"
+               for route in evidence["routes"])
+    assert ["ip", "-j", "nexthop", "show", "id", "7"] in commands
+
+
+@pytest.mark.parametrize("nexthop", [
+    {"id": 7, "dev": "eth1", "gateway": "fe80::1"},
+    {"id": 7, "dev": "eth0", "group": [{"id": 8}]},
+    {"id": 7, "dev": "eth0", "blackhole": None},
+])
+def test_snapshot_refuses_unsupported_ipv6_nexthop(monkeypatch, nexthop):
+    """An unresolved or non-single-device nexthop cannot authorize holdover."""
+    helper = load_helper_module()
+    observe_snapshot(helper, monkeypatch,
+                     v6_routes=[{"dst": "default", "nhid": 7, "metric": 1024}],
+                     nexthops={7: [nexthop]})
+    with pytest.raises(ValueError, match="nexthop cannot be preserved"):
+        helper._snapshot_management_handoff_routing(["eth0"], {"eth0": 100})
 
 
 @pytest.mark.parametrize("bad_route", [

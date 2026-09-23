@@ -24837,17 +24837,34 @@ def _snapshot_management_handoff_routing(interfaces: list[str], tables: dict[str
                     raise ValueError("previous routing-domain route flags are malformed")
                 if set(flags) & {"dead", "linkdown"}:
                     continue
-                unsupported_nhid = bool(route.get("nhid"))
                 unsupported_multipath = bool(route.get("multipath"))
                 unsupported_source = route.get("from", "all") != "all"
-                if unsupported_nhid or unsupported_multipath or unsupported_source:
+                if unsupported_multipath or unsupported_source:
                     raise ValueError("previous routing-domain route requires unsupported nexthop or source preservation "
-                                     f"(IPv{family}, nhid={unsupported_nhid}, multipath={unsupported_multipath}, "
+                                     f"(IPv{family}, nhid=False, multipath={unsupported_multipath}, "
                                      f"source={unsupported_source})")
                 destination = str(route.get("dst") or "default")
                 destination = ("0.0.0.0/0" if family == 4 else "::/0") if destination == "default" else destination
                 network = ip_network(destination, strict=False)
                 gateway = str(route.get("gateway") or "")
+                nhid = route.get("nhid")
+                if nhid is not None:
+                    if type(nhid) is not int or not 0 < nhid <= 0xFFFFFFFF:
+                        raise ValueError("previous routing-domain nexthop ID is invalid")
+                    nexthop_result = _network_observation_command(["ip", "-j", "nexthop", "show", "id", str(nhid)])
+                    if nexthop_result.returncode:
+                        raise ValueError("previous routing-domain nexthop could not be captured")
+                    nexthops = json.loads(nexthop_result.stdout)
+                    if not isinstance(nexthops, list) or len(nexthops) != 1 or not isinstance(nexthops[0], dict):
+                        raise ValueError("previous routing-domain nexthop inventory is ambiguous")
+                    nexthop = nexthops[0]
+                    if (nexthop.get("id") != nhid or nexthop.get("dev") != name
+                            or any(key in nexthop for key in ("group", "blackhole", "fdb", "encap"))):
+                        raise ValueError("previous routing-domain nexthop cannot be preserved")
+                    resolved_gateway = str(nexthop.get("gateway") or "")
+                    if gateway and gateway != resolved_gateway:
+                        raise ValueError("previous routing-domain route and nexthop gateways differ")
+                    gateway = resolved_gateway
                 metric = route.get("metric", 0)
                 scope = str(route.get("scope", "global"))
                 if (network.version != family or type(metric) is not int or not 0 <= metric <= 0xFFFFFFFF
