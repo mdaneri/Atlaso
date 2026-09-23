@@ -1248,8 +1248,9 @@ preserved with their affected subsystem below. Keep new requirements at their to
   behavior within the existing listener and firewall boundaries. The client-facing cache must be disabled in
   authoritative mode because cached forwarded answers lose their AA flag. Apply, rollback, and reboot policy must manage
   both dnsmasq services as one DNS/DHCP unit. Generated nameserver glue must retain recursive PTR answers, and live DHCP
-  lease names must be synchronized into the authoritative backend when DHCP is enabled. DNS health must require that
-  backend while either desired or last-applied DNS configuration is authoritative.
+  names in managed-suffix DHCP scopes must be synchronized into the authoritative backend, retain DHCP lease UI/API
+  visibility and reverse lookup, and be reconciled against active leases before backend startup. DNS health must require
+  that backend while either desired or last-applied DNS configuration is authoritative.
   When Appliance Settings resolver mode is DHCP and DNS upstreams are empty, use the management interface's observed
   DHCP DNS servers as dnsmasq forwarder fallback. If local DNS makes resolvectl loopback-only, resolve the exact
   management interface ifindex and read only its systemd-networkd lease through the constrained helper; filter loopback,

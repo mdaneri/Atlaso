@@ -1591,9 +1591,21 @@ def render_dnsmasq_config(
     if dhcp_settings.enabled and dhcp_settings.authoritative:
         lines.append("dhcp-authoritative")
     if dns_settings.authoritative and dhcp_settings.enabled:
-        # Keep lease names out of the recursive instance so managed-zone
-        # queries take the authoritative backend route.
-        lines.append("dhcp-ignore-names")
+        # Managed-zone leases use the authoritative backend. Other DHCP
+        # suffixes keep dnsmasq's ordinary local lease-name behavior.
+        for scope in scopes:
+            if scope.enabled is False:
+                continue
+            scope_domain = (scope.domain_name or domains[0]).strip().strip(".").lower()
+            if not any(scope_domain == domain or scope_domain.endswith(f".{domain}") for domain in domains):
+                continue
+            tag = dnsmasq_tag(scope.name)
+            lines.append(f"dhcp-ignore-names=tag:{tag}")
+            network = _dhcp_scope_network(scope)
+            if network is not None:
+                lines.append(
+                    f"rev-server={network},{DNSMASQ_AUTHORITATIVE_LOOPBACK_ADDRESS}#{DNSMASQ_AUTHORITATIVE_PORT}"
+                )
         lines.append(f"dhcp-script={DNSMASQ_DHCP_LEASE_SYNC_PATH}")
     dhcp_interfaces = [scope.interface_name for scope in scopes if dhcp_settings.enabled and scope.enabled is not False]
     dns_interfaces = split_interfaces(dns_settings.listen_interface)

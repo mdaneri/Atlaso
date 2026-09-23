@@ -1780,7 +1780,29 @@ def _read_dnsmasq_leases() -> int:
     if not lease_path.is_file():
         print(f"dnsmasq lease path is not a regular file: {lease_path}", file=sys.stderr)
         return 2
-    print(lease_path.read_text(encoding="utf-8"), end="")
+    for line in lease_path.read_text(encoding="utf-8").splitlines():
+        fields = line.split()
+        if len(fields) >= 4 and fields[3] == "*":
+            try:
+                address = ip_address(fields[2])
+                expires = int(fields[0])
+            except ValueError:
+                address = None
+                expires = -1
+            if address is not None and (expires == 0 or expires > time.time()):
+                mirror = DNSMASQ_AUTHORITATIVE_LEASE_HOSTS_DIR / f"lease-{address.packed.hex()}.hosts"
+                if mirror.is_file() and not mirror.is_symlink():
+                    try:
+                        mirror_lines = mirror.read_text(encoding="utf-8").splitlines()
+                        if (
+                            len(mirror_lines) == 2
+                            and mirror_lines[0].startswith(f"{address} ")
+                            and mirror_lines[1] == f"# mac={fields[1].lower()}"
+                        ):
+                            fields[3] = mirror_lines[0].split()[1].split(".", 1)[0]
+                    except (OSError, IndexError):
+                        pass
+        print(" ".join(fields) if fields else line)
     return 0
 
 
@@ -2976,25 +2998,74 @@ def _configure_local_resolver() -> subprocess.CompletedProcess[str]:
     return _configure_resolver("eth0", ["127.0.0.1"], ["~."])
 
 
-def _prepare_authoritative_lease_hosts() -> None:
-    """Validate the root-owned lease mirror before starting the DNS backend."""
+def _prepare_authoritative_lease_hosts(candidate_config_path: Path) -> None:
+    """Validate and reconcile the lease mirror before starting the DNS backend.
+
+    Args:
+        candidate_config_path: New authoritative configuration containing managed zones.
+    """
+
+    # The lease hook is absent while authoritative DNS is disabled. Reconcile
+    # retained names before re-enabling so released or reassigned addresses
+    # cannot reappear as authoritative answers.
     hosts_dir = DNSMASQ_AUTHORITATIVE_LEASE_HOSTS_DIR
     if hosts_dir.is_symlink():
         raise ValueError("The authoritative lease hosts directory is unsafe.")
     hosts_dir.mkdir(parents=True, exist_ok=True)
     if not hosts_dir.is_dir():
         raise ValueError("The authoritative lease hosts directory is invalid.")
+    lease_path = DNSMASQ_LEASE_FILE_PATH
+    if lease_path.is_symlink() or not lease_path.resolve().is_relative_to(DNSMASQ_STATE_DIR.resolve()):
+        raise ValueError("The dnsmasq lease file path is unsafe.")
+    if lease_path.exists() and not lease_path.is_file():
+        raise ValueError("The dnsmasq lease file path is invalid.")
+    try:
+        lease_rows = lease_path.read_text(encoding="utf-8").splitlines()
+    except FileNotFoundError:
+        lease_rows = []
+    active_leases: dict[str, tuple[str, str]] = {}
+    for row in lease_rows:
+        fields = row.split()
+        if len(fields) < 4:
+            continue
+        try:
+            expires = int(fields[0])
+            address = str(ip_address(fields[2]))
+        except ValueError:
+            continue
+        if expires == 0 or expires > time.time():
+            active_leases[address] = (fields[1].lower(), fields[3].lower())
+    zones = _authoritative_lease_domains(candidate_config_path)
     for entry in hosts_dir.iterdir():
         if not re.fullmatch(r"lease-[0-9a-f]{8,32}\.hosts", entry.name) or entry.is_symlink() or not entry.is_file():
             raise ValueError("The authoritative lease hosts directory contains an unexpected entry.")
+        rows = entry.read_text(encoding="utf-8").splitlines()
+        parts = rows[0].split() if rows else []
+        if len(rows) != 2 or len(parts) != 2 or not rows[1].startswith("# mac="):
+            entry.unlink()
+            continue
+        address, hostname = parts
+        lease = active_leases.get(address)
+        if (
+            lease is None
+            or rows[1] != f"# mac={lease[0]}"
+            or not any(hostname.endswith(f".{zone}") for zone in zones)
+            or (lease[1] != "*" and hostname.split(".", 1)[0] != lease[1])
+        ):
+            entry.unlink()
 
 
-def _authoritative_lease_domains() -> list[str]:
-    """Read the installed authoritative zone names for lease hostname filtering."""
+def _authoritative_lease_domains(config_path: Path | None = None) -> list[str]:
+    """Read authoritative zone names for lease hostname filtering.
+
+    Args:
+        config_path: Authoritative configuration to inspect, or the installed one.
+    """
+    config_path = config_path or DNSMASQ_AUTHORITATIVE_CONFIG_PATH
     try:
-        if DNSMASQ_AUTHORITATIVE_CONFIG_PATH.stat().st_size > 1_048_576:
+        if config_path.stat().st_size > 1_048_576:
             return []
-        lines = DNSMASQ_AUTHORITATIVE_CONFIG_PATH.read_text(encoding="utf-8").splitlines()
+        lines = config_path.read_text(encoding="utf-8").splitlines()
     except OSError:
         return []
     return [
@@ -3003,6 +3074,31 @@ def _authoritative_lease_domains() -> list[str]:
         if line.startswith("auth-zone=")
         if HOSTNAME_PATTERN.fullmatch(domain := line.removeprefix("auth-zone=").lower())
     ]
+
+
+def _lease_option_from_tags(option_name: str) -> str:
+    """Find a DHCP option associated with the lease event's matched tags.
+
+    Args:
+        option_name: dnsmasq option name to locate.
+    """
+    tags = set(os.environ.get("DNSMASQ_TAGS", "").split())
+    if not tags:
+        return ""
+    try:
+        if DNSMASQ_CONFIG_PATH.stat().st_size > 1_048_576:
+            return ""
+        lines = DNSMASQ_CONFIG_PATH.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return ""
+    for line in lines:
+        prefix = "dhcp-option=tag:"
+        if not line.startswith(prefix):
+            continue
+        fields = line.removeprefix(prefix).split(",", 2)
+        if len(fields) == 3 and fields[0] in tags and fields[1] == option_name:
+            return fields[2].strip().strip(".").lower()
+    return ""
 
 
 def _handle_dnsmasq_lease_event(argv: list[str]) -> int:
@@ -3024,7 +3120,9 @@ def _handle_dnsmasq_lease_event(argv: list[str]) -> int:
     if not hosts_dir.is_dir() or hosts_dir.is_symlink():
         return 0
     destination = hosts_dir / f"lease-{address.packed.hex()}.hosts"
-    hostname = argv[4].strip().strip(".").lower() if len(argv) == 5 else ""
+    hostname = _lease_option_from_tags("option:host-name")
+    if not hostname:
+        hostname = argv[4].strip().strip(".").lower() if len(argv) == 5 else ""
     if not hostname:
         hostname = os.environ.get("DNSMASQ_SUPPLIED_HOSTNAME", "").strip().strip(".").lower()
     if action == "old" and not hostname:
@@ -3032,6 +3130,8 @@ def _handle_dnsmasq_lease_event(argv: list[str]) -> int:
         # row. Keep the mirrored name until renewal or an expiry "del" event.
         return 0
     domain = os.environ.get("DNSMASQ_DOMAIN", "").strip().strip(".").lower()
+    if not domain:
+        domain = _lease_option_from_tags("option:domain-name") or _lease_option_from_tags("option6:domain-search")
     fqdn = hostname if "." in hostname else f"{hostname}.{domain}" if hostname and domain else ""
     zones = _authoritative_lease_domains()
     publish = (
@@ -3049,7 +3149,7 @@ def _handle_dnsmasq_lease_event(argv: list[str]) -> int:
                 mode="w", encoding="utf-8", prefix=".lease-sync-", dir=DNSMASQ_STATE_DIR, delete=False
             ) as temporary:
                 temporary_path = Path(temporary.name)
-                temporary.write(f"{address} {fqdn}\n")
+                temporary.write(f"{address} {fqdn}\n# mac={argv[2].lower()}\n")
             temporary_path.chmod(0o644)
             os.replace(temporary_path, destination)
         finally:
@@ -3112,7 +3212,7 @@ def _handle_dnsmasq(action: str, args: list[str]) -> int:
             DNSMASQ_STATE_DIR.mkdir(parents=True, exist_ok=True)
             if authoritative_config_path is not None:
                 try:
-                    _prepare_authoritative_lease_hosts()
+                    _prepare_authoritative_lease_hosts(authoritative_config_path)
                 except (OSError, ValueError) as exc:
                     print(str(exc), file=sys.stderr)
                     return 2

@@ -11264,6 +11264,7 @@ def test_dnsmasq_helper_apply_installs_isolated_authoritative_backend(monkeypatc
 
     monkeypatch.setattr(helper, "DNSMASQ_APPLY_DIR", apply_dir)
     monkeypatch.setattr(helper, "DNSMASQ_STATE_DIR", state_dir)
+    monkeypatch.setattr(helper, "DNSMASQ_LEASE_FILE_PATH", state_dir / "dhcp.leases")
     monkeypatch.setattr(helper, "DNSMASQ_AUTHORITATIVE_LEASE_HOSTS_DIR", state_dir / "authoritative-leases")
     monkeypatch.setattr(helper, "DNSMASQ_CONFIG_DIR", config_dir)
     monkeypatch.setattr(helper, "DNSMASQ_CONFIG_PATH", config_dir / "atlaso.conf")
@@ -11299,12 +11300,13 @@ def test_dnsmasq_helper_apply_installs_isolated_authoritative_backend(monkeypatc
     )
 
 
-def test_dnsmasq_lease_events_mirror_only_managed_names(monkeypatch, tmp_path):
+def test_dnsmasq_lease_events_mirror_only_managed_names(monkeypatch, tmp_path, capsys):
     """Lease add, rename, and removal update the backend's hosts directory.
 
     Args:
         monkeypatch: Pytest fixture used to set lease event paths and environment.
         tmp_path: Temporary dnsmasq state directory.
+        capsys: Pytest fixture used to capture the lease reader output.
     """
     helper = load_helper_module()
     state_dir = tmp_path / "dnsmasq"
@@ -11313,23 +11315,24 @@ def test_dnsmasq_lease_events_mirror_only_managed_names(monkeypatch, tmp_path):
     config_path = tmp_path / "atlaso-authoritative.conf"
     config_path.write_text("auth-zone=atlaso.internal\n", encoding="utf-8")
     monkeypatch.setattr(helper, "DNSMASQ_STATE_DIR", state_dir)
+    monkeypatch.setattr(helper, "DNSMASQ_LEASE_FILE_PATH", state_dir / "dhcp.leases")
     monkeypatch.setattr(helper, "DNSMASQ_AUTHORITATIVE_LEASE_HOSTS_DIR", hosts_dir)
     monkeypatch.setattr(helper, "DNSMASQ_AUTHORITATIVE_CONFIG_PATH", config_path)
     monkeypatch.setenv("DNSMASQ_DOMAIN", "atlaso.internal")
-    helper._prepare_authoritative_lease_hosts()
+    helper._prepare_authoritative_lease_hosts(config_path)
 
     event = ["atlaso-helper", "add", "02:00:00:00:00:01", "192.168.50.21", "client"]
     assert helper.main(event) == 0
     hosts = list(hosts_dir.iterdir())
     assert len(hosts) == 1
-    assert hosts[0].read_text(encoding="utf-8") == "192.168.50.21 client.atlaso.internal\n"
+    assert hosts[0].read_text(encoding="utf-8") == "192.168.50.21 client.atlaso.internal\n# mac=02:00:00:00:00:01\n"
 
     assert helper.main(["atlaso-helper", "old", "02:00:00:00:00:01", "192.168.50.21"]) == 0
-    assert hosts[0].read_text(encoding="utf-8") == "192.168.50.21 client.atlaso.internal\n"
+    assert hosts[0].read_text(encoding="utf-8") == "192.168.50.21 client.atlaso.internal\n# mac=02:00:00:00:00:01\n"
 
     event[1], event[4] = "old", "renamed"
     assert helper.main(event) == 0
-    assert hosts[0].read_text(encoding="utf-8") == "192.168.50.21 renamed.atlaso.internal\n"
+    assert hosts[0].read_text(encoding="utf-8") == "192.168.50.21 renamed.atlaso.internal\n# mac=02:00:00:00:00:01\n"
 
     event[1], event[4] = "add", "not;valid"
     assert helper.main(event) == 0
@@ -11344,7 +11347,33 @@ def test_dnsmasq_lease_events_mirror_only_managed_names(monkeypatch, tmp_path):
     monkeypatch.setenv("DNSMASQ_SUPPLIED_HOSTNAME", "supplied")
     assert helper.main(["atlaso-helper", "add", "02:00:00:00:00:01", "192.168.50.21"]) == 0
     assert next(hosts_dir.iterdir()).read_text(encoding="utf-8") == (
-        "192.168.50.21 supplied.atlaso.internal\n"
+        "192.168.50.21 supplied.atlaso.internal\n# mac=02:00:00:00:00:01\n"
+    )
+    lease_file = state_dir / "dhcp.leases"
+    lease_file.write_text("1893456000 02:00:00:00:00:01 192.168.50.21 * *\n", encoding="utf-8")
+    helper._prepare_authoritative_lease_hosts(config_path)
+    assert helper._handle_dnsmasq("leases", []) == 0
+    assert "192.168.50.21 supplied" in capsys.readouterr().out
+
+    # A release or reassignment while the authoritative service is disabled
+    # must not revive the former client's A record on the next Apply.
+    lease_file.write_text("1893456000 02:00:00:00:00:02 192.168.50.21 other *\n", encoding="utf-8")
+    helper._prepare_authoritative_lease_hosts(config_path)
+    assert list(hosts_dir.iterdir()) == []
+
+    main_config = tmp_path / "atlaso.conf"
+    main_config.write_text(
+        "dhcp-option=tag:sitea,option:domain-name,atlaso.internal\n"
+        "dhcp-option=tag:atlaso-name-020000000001,option:host-name,reserved\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(helper, "DNSMASQ_CONFIG_PATH", main_config)
+    monkeypatch.delenv("DNSMASQ_DOMAIN")
+    monkeypatch.delenv("DNSMASQ_SUPPLIED_HOSTNAME")
+    monkeypatch.setenv("DNSMASQ_TAGS", "sitea atlaso-name-020000000001")
+    assert helper.main(["atlaso-helper", "add", "02:00:00:00:00:01", "192.168.50.21"]) == 0
+    assert next(hosts_dir.iterdir()).read_text(encoding="utf-8").startswith(
+        "192.168.50.21 reserved.atlaso.internal\n"
     )
 
 

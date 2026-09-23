@@ -216,7 +216,7 @@ def test_authoritative_dns_with_dhcp_subscribes_to_lease_changes():
     config = render_dnsmasq_config(
         dns_settings=DnsSettings(enabled=True, authoritative=True, domain="atlaso.internal"),
         dns_records=[],
-        dhcp_settings=DhcpSettings(enabled=True),
+        dhcp_settings=DhcpSettings(enabled=True, site_address="192.168.50.1", prefix_length=24),
         dhcp_reservations=[
             DhcpReservation(
                 hostname="reserved",
@@ -226,11 +226,32 @@ def test_authoritative_dns_with_dhcp_subscribes_to_lease_changes():
         ],
     )
 
-    assert "dhcp-ignore-names" in config.splitlines()
+    assert "dhcp-ignore-names=tag:sitea" in config.splitlines()
+    assert "rev-server=192.168.50.0/24,127.0.0.1#5353" in config.splitlines()
     assert "dhcp-script=/opt/atlaso/bin/atlaso-helper" in config.splitlines()
     assert "dhcp-host=02:15:5d:00:20:20,set:atlaso-name-02155d002020,192.168.50.120" in config
     assert "dhcp-option=tag:atlaso-name-02155d002020,option:host-name,reserved" in config
     assert "dhcp-host=02:15:5d:00:20:20,reserved,192.168.50.120" not in config
+
+    guest = render_dnsmasq_config(
+        dns_settings=DnsSettings(enabled=True, authoritative=True, domain="atlaso.internal"),
+        dns_records=[],
+        dhcp_settings=DhcpSettings(enabled=True),
+        dhcp_scopes=[
+            DhcpScope(
+                name="Guest",
+                interface_name="eth2",
+                site_address="192.168.60.1",
+                prefix_length=24,
+                domain_name="guest.example",
+                range_expression="192.168.60.100-192.168.60.199",
+                enabled=True,
+            )
+        ],
+        dhcp_reservations=[],
+    )
+    assert "dhcp-ignore-names=tag:guest" not in guest
+    assert "rev-server=192.168.60.0/24,127.0.0.1#5353" not in guest
 
 
 def test_authoritative_validation_rejects_bad_identity_timers_and_conflicting_glue():

@@ -461,8 +461,10 @@ configuration to `/etc/atlaso/dnsmasq.d/atlaso-authoritative.conf` and runs it o
 `atlaso-dns-authoritative.service`. The ordinary dnsmasq service forwards managed domains to that backend, preserving
 complete authoritative positive and negative answers while retaining PTR responses and upstream recursion on selected
 listeners. The client-facing cache is disabled in authoritative mode so repeated forwarded answers retain AA.
-When DHCP is enabled, lease events update the backend's managed hosts directory so live client names retain AA;
-the recursive instance also serves PTR records for generated nameserver glue.
+When DHCP is enabled, managed-suffix lease events update the backend's hosts directory so live client names retain AA.
+The recursive instance forwards their reverse lookups to that backend, keeps PTR records for generated nameserver glue,
+and retains ordinary local names for scopes outside the managed zones. The helper restores suppressed managed lease
+names in DHCP API/UI reads and reconciles mirrored entries with current leases before the backend starts.
 Listener selection and firewall policy limit client access. Validate the installed state with
 `sudo grep -E '^(auth-zone|auth-server|auth-soa|auth-ttl|host-record=ns)' /etc/atlaso/dnsmasq.d/atlaso-authoritative.conf`,
 `systemctl is-active atlaso-dns-authoritative dnsmasq`, authoritative queries such as `dig @<selected-listener> <zone> SOA`,

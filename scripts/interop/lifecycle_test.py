@@ -2359,6 +2359,40 @@ def ca_client_certificate_request(client: HttpClient, args: argparse.Namespace) 
     }
 
 
+def client_package_readiness(args: argparse.Namespace) -> dict[str, Any]:
+    """Wait for client cloud-init packages and repair an incomplete install.
+
+    Args:
+        args: Parsed command-line options consumed by the operation.
+    """
+    if args.skip_client_checks:
+        return {"skipped": "client checks disabled"}
+    results: dict[str, Any] = {}
+    for label, host in (("client_a", args.client_a_host), ("client_b", args.client_b_host)):
+        if not host:
+            continue
+        required = "command -v curl && command -v dig && command -v chronyd && command -v openssl"
+        try:
+            results[label] = ssh_until_success(
+                host, args, required, role="client", label=f"{label} package readiness", timeout_seconds=60
+            )
+            continue
+        except LifecycleError:
+            pass
+        elevate = elevation_probe()
+        repair = ssh_command(
+            host,
+            args,
+            f'ELEV="$({elevate})"; test -n "$ELEV"; $ELEV apk add --no-cache bind-tools chrony-nts curl iproute2 iputils openssl openssh-client sshpass',
+            role="client",
+        )
+        require_success(repair, f"{label} package installation")
+        results[label] = ssh_until_success(
+            host, args, required, role="client", label=f"{label} package readiness", timeout_seconds=30
+        )
+    return results
+
+
 def ca_generated_certificate_request_check(client: HttpClient, args: argparse.Namespace) -> dict[str, Any]:
     """Return ca generated certificate request check.
 
@@ -3543,7 +3577,7 @@ if expected_ip not in answers:
 
 
 def authoritative_dns_probe_command(
-    domain: str, server: str, expected_ip: str, dynamic_hostname: str = ""
+    domain: str, server: str, expected_ip: str, dynamic_hostname: str = "", dynamic_ip: str = ""
 ) -> str:
     """Return authoritative dns probe command.
 
@@ -3552,15 +3586,18 @@ def authoritative_dns_probe_command(
         server: Server consumed by authoritative DNS probe command.
         expected_ip: Expected IP used to verify the result.
         dynamic_hostname: DHCP-learned client name expected to retain AA.
+        dynamic_ip: DHCP-learned client address expected to retain PTR lookup.
     """
     script = f'''
 import random
 import socket
 import struct
 import time
+from ipaddress import ip_address
 
 server = {server!r}
 dynamic_hostname = {dynamic_hostname!r}
+dynamic_ip = {dynamic_ip!r}
 
 def skip_name(data, offset):
     while True:
@@ -3624,6 +3661,8 @@ if dynamic_hostname:
     else:
         raise AssertionError((dynamic_hostname, flags, sections))
     expected.append((dynamic_hostname + "." + domain, 1, 0, 1, True))
+    if dynamic_ip:
+        expected.append((ip_address(dynamic_ip).reverse_pointer, 12, 0, 12, False))
 for tcp in (False, True):
     for name, qtype, expected_rcode, expected_type, authoritative in expected:
         for _ in range(2):
@@ -4058,17 +4097,21 @@ def authoritative_dns_state_check(args: argparse.Namespace) -> dict[str, Any]:
     refresh = ssh_command(
         args.client_a_host,
         args,
-        'ELEV="$(command -v sudo || true)"; ${ELEV:+$ELEV }/usr/local/sbin/atlaso-refresh-test-dhcp; hostname -s',
+        'ELEV="$(command -v sudo || true)"; ${ELEV:+$ELEV }/usr/local/sbin/atlaso-refresh-test-dhcp; printf "HOST=%s\\n" "$(hostname -s)"; ip -4 -o addr show dev eth1',
         role="client",
     )
     require_success(refresh, "client A DHCP hostname refresh")
-    client_hostname = refresh["stdout"].splitlines()[-1].strip().lower()
+    hostname_match = re.search(r"^HOST=([^\s]+)$", refresh["stdout"], re.MULTILINE)
+    client_hostname = hostname_match[1].lower() if hostname_match else ""
     if not re.fullmatch(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?", client_hostname):
         raise LifecycleError("Client A DHCP hostname is invalid for the authoritative DNS probe.")
+    address_match = re.search(r"\binet (\d+\.\d+\.\d+\.\d+)/\d+", refresh["stdout"])
+    if address_match is None:
+        raise LifecycleError("Client A has no IPv4 DHCP address for the authoritative DNS probe.")
     authoritative = ssh_command(
         args.client_a_host,
         args,
-        authoritative_dns_probe_command(args.domain, site_ip, site_ip, client_hostname),
+        authoritative_dns_probe_command(args.domain, site_ip, site_ip, client_hostname, address_match[1]),
         role="client",
     )
     require_success(authoritative, "client A authoritative DNS probe")
@@ -4946,6 +4989,7 @@ def run_full_lifecycle(results: list[StepResult], client: HttpClient, args: argp
     )
     if args.esx_storage_test:
         run_step(results, "apply-esx-storage-units", apply_units, client, ["esx_storage", "dnsmasq", "firewall"], args)
+    run_step(results, "client-package-readiness", client_package_readiness, args)
     run_step(results, "ca-client-certificate-request", ca_client_certificate_request, client, args)
     run_step(results, "ca-generated-certificate-request-check", ca_generated_certificate_request_check, client, args)
     run_step(results, "apply-ca-unit", apply_units, client, ["ca"], args)

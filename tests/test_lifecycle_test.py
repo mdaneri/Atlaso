@@ -850,11 +850,12 @@ def test_authoritative_dns_lifecycle_probe_covers_authority_reverse_nxdomain_and
     assert 'query("example.com", 1, tcp=tcp)' in script
 
     dynamic_command = lifecycle.authoritative_dns_probe_command(
-        "atlaso.internal", "192.168.50.1", "192.168.50.1", "interop-client"
+        "atlaso.internal", "192.168.50.1", "192.168.50.1", "interop-client", "192.168.50.105"
     )
     dynamic_script = base64.b64decode(dynamic_command.split()[2]).decode("utf-8")
     assert "dynamic_hostname = 'interop-client'" in dynamic_script
     assert 'expected.append((dynamic_hostname + "." + domain, 1, 0, 1, True))' in dynamic_script
+    assert 'expected.append((ip_address(dynamic_ip).reverse_pointer, 12, 0, 12, False))' in dynamic_script
 
     recursive_command = lifecycle.recursive_dns_probe_command("127.0.0.1", "192.168.50.1")
     recursive_script = base64.b64decode(recursive_command.split()[2]).decode("utf-8")
