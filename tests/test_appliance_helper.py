@@ -2328,7 +2328,7 @@ def test_management_handoff_updates_same_interface_resolver_holdover(
 
 
 def test_management_handoff_stops_when_networkd_reconfigure_fails(monkeypatch, tmp_path):
-    """Do not apply transient resolver state after networkd rejects persistence.
+    """Restore the networkd file without applying transient DNS on failure.
 
     Args:
         monkeypatch: Pytest fixture used to isolate networkd and runtime commands.
@@ -2338,7 +2338,8 @@ def test_management_handoff_stops_when_networkd_reconfigure_fails(monkeypatch, t
     networkd_dir = tmp_path / "networkd"
     networkd_dir.mkdir()
     network_path = networkd_dir / "00-atlaso-mgmt.network"
-    network_path.write_text("[Match]\nName=eth0\n\n[Network]\nDHCP=yes\n", encoding="utf-8")
+    original = "[Match]\nName=eth0\n\n[Network]\nDHCP=yes\n"
+    network_path.write_text(original, encoding="utf-8")
     commands: list[list[str]] = []
     monkeypatch.setattr(helper, "NETWORKD_CONFIG_DIR", networkd_dir)
     monkeypatch.setattr(helper, "NETWORKD_MGMT_CONFIG_PATH", network_path)
@@ -2371,7 +2372,11 @@ def test_management_handoff_stops_when_networkd_reconfigure_fails(monkeypatch, t
     assert commands == [
         ["networkctl", "reload"],
         ["networkctl", "reconfigure", "eth0"],
+        ["networkctl", "reload"],
+        ["networkctl", "reconfigure", "eth0"],
     ]
+    assert network_path.read_text(encoding="utf-8") == original
+    assert not any(command[0] == "resolvectl" for command in commands)
 
 
 @pytest.mark.parametrize(

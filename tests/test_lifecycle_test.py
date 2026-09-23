@@ -1012,6 +1012,37 @@ def test_routing_host_firewall_check_uses_default_drop_isolation():
     assert 'isolate-' not in command
 
 
+def test_host_checks_encode_shell_before_ssh_transport(monkeypatch):
+    """Preserve nested quotes and substitutions across plink and sudo parsing.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace remote execution.
+    """
+    lifecycle = load_lifecycle_module()
+    args = lifecycle.parse_args(["--password", "test"])
+    command = "test \"$(printf '%s' a)\" = a"
+    sent: list[str] = []
+
+    def fake_ssh_command(_host, _args, remote_command, **_kwargs):
+        """Capture the transport command without contacting an appliance.
+
+        Args:
+            _host: Ignored appliance host.
+            _args: Ignored lifecycle arguments.
+            remote_command: Command sent through the SSH transport.
+            **_kwargs: Ignored SSH options.
+        """
+        sent.append(remote_command)
+        return {"returncode": 0, "stdout": "", "stderr": ""}
+
+    monkeypatch.setattr(lifecycle, "ssh_command", fake_ssh_command)
+
+    lifecycle.run_host_checks(args, {"quoted": command})
+
+    encoded = lifecycle.base64.b64encode(command.encode("utf-8")).decode("ascii")
+    assert sent == [f"printf %s {encoded} | base64 -d | sh"]
+
+
 def test_host_state_checks_verify_vcf_trust_runtime_dependencies(monkeypatch):
     """Verify that host state checks verify vcf trust runtime dependencies.
 
@@ -1063,7 +1094,7 @@ def test_host_state_checks_verify_vcf_trust_runtime_dependencies(monkeypatch):
     assert "-verify_hostname ldap.atlaso.internal" in captured["ldap_tls"]
     assert encoded_powercli_probe in captured["vcf_powercli_user"]
     assert execution_contexts["vcf_powercli_user"] is False
-    assert "console status --real | grep -F maintenance_isolation | grep -F false" in captured["local_console"]
+    assert "console status --real | grep -F '\"maintenance_isolation\": false'" in captured["local_console"]
 
 
 def test_managed_ldap_lifecycle_check_sends_directory_password_only_through_stdin(monkeypatch):

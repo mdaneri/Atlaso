@@ -3807,10 +3807,13 @@ def run_host_checks(
     """
     evidence: dict[str, Any] = {}
     for name, command in checks.items():
+        # plink and sudo each parse the remote command. Pass only shell-safe
+        # base64 through those layers, then let one guest shell parse the check.
+        encoded = base64.b64encode(command.encode("utf-8")).decode("ascii")
         result = ssh_command(
             args.appliance_ssh_host,
             args,
-            command,
+            f"printf %s {encoded} | base64 -d | sh",
             role="appliance",
             appliance_as_root=appliance_as_root,
         )
@@ -4028,7 +4031,7 @@ def host_state_checks(args: argparse.Namespace) -> dict[str, Any]:
             "test \"$(systemctl show getty@tty2.service -p UnitFileState --value)\" != masked && "
             "test -x /opt/atlaso/.venv/bin/atlaso-console && "
             "/opt/atlaso/bin/atlaso-helper console status --real | "
-            "grep -F maintenance_isolation | grep -F false"
+            "grep -F '\"maintenance_isolation\": false'"
         ),
         "vcf_trust_dependencies": (
             f"printf %s {httpx_probe} | base64 -d | /opt/atlaso/.venv/bin/python -"
