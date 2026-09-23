@@ -3942,6 +3942,7 @@ def routing_host_check_commands(args: argparse.Namespace) -> dict[str, str]:
     return {
         "network": "ip -br addr && ip route",
         "routing_tables": (
+            'ip rule show && ip route show table 200 && '
             'ip rule show | grep -E "lookup (100|atlaso_mgmt)" && '
             'ip rule show | grep -E "lookup (200|atlaso_lab)" && '
             f'ip route show table 200 | grep -F "{wan_network}" && '

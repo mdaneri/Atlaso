@@ -25857,12 +25857,15 @@ def _restore_management_handoff_snapshot(item: dict) -> None:
         temporary.unlink(missing_ok=True)
 
 
-def _remove_candidate_authoritative_lease_mirrors(state: dict) -> None:
-    """Remove only mirror files created after the handoff snapshot.
+def _reconcile_management_handoff_lease_mirrors(state: dict) -> None:
+    """Keep valid post-snapshot leases when rolling back authoritative DNS.
 
     Args:
         state: Durable management-handoff transaction state.
     """
+    if state.get("previous_dnsmasq_authoritative_present"):
+        _prepare_authoritative_lease_hosts(DNSMASQ_AUTHORITATIVE_CONFIG_PATH, DNSMASQ_CONFIG_PATH)
+        return
     original = {
         Path(str(item["path"]))
         for item in state.get("snapshots", [])
@@ -26037,15 +26040,15 @@ def _restore_management_handoff(state: dict) -> dict:
                 "candidate network removal",
                 lambda path=path: _durable_management_handoff_unlink(path),
             )
-    if state.get("dnsmasq_included"):
-        attempt(
-            "candidate lease mirror removal",
-            lambda: _remove_candidate_authoritative_lease_mirrors(state),
-        )
     for index, item in enumerate(state.get("snapshots", [])):
         attempt(
             f"snapshot {index} restore",
             lambda item=item: _restore_management_handoff_snapshot(item),
+        )
+    if state.get("dnsmasq_included"):
+        attempt(
+            "authoritative lease mirror reconciliation",
+            lambda: _reconcile_management_handoff_lease_mirrors(state),
         )
     for command in (["networkctl", "reload"], ["systemctl", "daemon-reload"]):
         def run_reload(command: list[str] = command) -> None:

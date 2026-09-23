@@ -1476,10 +1476,45 @@ def test_management_handoff_restores_authoritative_lease_mirrors(monkeypatch, tm
     candidate = hosts_dir / "lease-c0a83216.hosts"
     candidate.write_text("192.168.50.22 new.atlaso.internal\n", encoding="utf-8")
     snapshot = {"path": str(previous), "backup": str(backup), "existed": True, "mode": 0o644, "uid": 0, "gid": 0}
-    helper._remove_candidate_authoritative_lease_mirrors({"snapshots": [snapshot]})
+    helper._reconcile_management_handoff_lease_mirrors({"snapshots": [snapshot]})
     helper._restore_management_handoff_snapshot(snapshot)
 
     assert previous.read_bytes() == backup.read_bytes()
+    assert not candidate.exists()
+
+
+def test_management_handoff_preserves_valid_post_snapshot_lease(monkeypatch, tmp_path):
+    """Rollback keeps an old-service lease event absent from the snapshot."""
+    helper = load_helper_module()
+    state_dir = tmp_path / "dnsmasq"
+    state_dir.mkdir()
+    hosts_dir = tmp_path / "authoritative-leases"
+    hosts_dir.mkdir()
+    valid = hosts_dir / "lease-c0a83215.hosts"
+    valid.write_text("192.168.50.21 client.atlaso.internal\n# mac=02:00:00:00:00:01\n", encoding="utf-8")
+    candidate = hosts_dir / "lease-c0a83216.hosts"
+    candidate.write_text("192.168.50.22 candidate.atlaso.internal\n# mac=02:00:00:00:00:02\n", encoding="utf-8")
+    (state_dir / "dhcp.leases").write_text(
+        "1893456000 02:00:00:00:00:01 192.168.50.21 * *\n", encoding="utf-8"
+    )
+    authoritative = tmp_path / "authoritative.conf"
+    authoritative.write_text("auth-zone=atlaso.internal,192.168.50.0/24\n", encoding="utf-8")
+    main = tmp_path / "main.conf"
+    main.write_text(
+        "# atlaso-authoritative-lease-scope=192.168.50.0/24,atlaso.internal\n", encoding="utf-8"
+    )
+    monkeypatch.setattr(helper, "DNSMASQ_STATE_DIR", state_dir)
+    monkeypatch.setattr(helper, "DNSMASQ_LEASE_FILE_PATH", state_dir / "dhcp.leases")
+    monkeypatch.setattr(helper, "DNSMASQ_AUTHORITATIVE_LEASE_HOSTS_DIR", hosts_dir)
+    monkeypatch.setattr(helper, "DNSMASQ_AUTHORITATIVE_CONFIG_PATH", authoritative)
+    monkeypatch.setattr(helper, "DNSMASQ_CONFIG_PATH", main)
+
+    helper._reconcile_management_handoff_lease_mirrors({
+        "previous_dnsmasq_authoritative_present": True,
+        "snapshots": [],
+    })
+
+    assert valid.exists()
     assert not candidate.exists()
 
 
