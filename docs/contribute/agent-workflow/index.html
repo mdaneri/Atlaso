@@ -3211,15 +3211,15 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#sol-and-spark-delegation" class="md-nav__link">
+  <a href="#sol-and-luna-delegation" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        Sol and Spark Delegation
+        Sol and Luna Delegation
       </span>
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="Sol and Spark Delegation">
+    <nav class="md-nav" aria-label="Sol and Luna Delegation">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
@@ -3940,15 +3940,15 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#sol-and-spark-delegation" class="md-nav__link">
+  <a href="#sol-and-luna-delegation" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        Sol and Spark Delegation
+        Sol and Luna Delegation
       </span>
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="Sol and Spark Delegation">
+    <nav class="md-nav" aria-label="Sol and Luna Delegation">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
@@ -4137,27 +4137,26 @@ blocking on the rename. Do not invent or depend on an undocumented CLI fallback.
 <p>Include every linked issue and pull-request identifier in the first progress update and final response only when those
 reporting surfaces accept free-form traceability metadata. When a required output schema does not permit extra metadata,
 follow the schema and do not block solely to add the identifiers.</p>
-<h2 id="sol-and-spark-delegation">Sol and Spark Delegation<a class="headerlink" href="#sol-and-spark-delegation" title="Permanent link">&para;</a></h2>
-<p>Atlaso defines the project-scoped <code>spark_worker</code> in <code>.codex/agents/spark-worker.toml</code> with
-<code>gpt-5.3-codex-spark</code> at medium reasoning effort. The primary Sol agent should delegate small, fully specified work to
-that worker when doing so materially improves speed or keeps noisy exploration and validation out of the primary
-context. Suitable work includes localized edits, repository searches, mechanical refactoring, isolated unit tests,
-Ruff or mypy cleanup, documentation and docstrings, and narrowly scoped UI tweaks whose interaction and reference are
-already decided.</p>
-<p>Sol retains architecture and design decisions, ambiguous or difficult debugging, cross-component and integration
-work, security-sensitive changes, task decomposition, review of every delegated result, final validation, and delivery.
+<h2 id="sol-and-luna-delegation">Sol and Luna Delegation<a class="headerlink" href="#sol-and-luna-delegation" title="Permanent link">&para;</a></h2>
+<p>The project-scoped <code>luna_worker</code> in <code>.codex/agents/luna-worker.toml</code> selects <code>gpt-6-luna</code> at high reasoning effort.
+GPT-6 Sol High is the lead; GPT-6 Luna High is the default worker for scoped implementation, investigation, tests,
+documentation, and parallel tasks. Sol owns architecture, difficult debugging, integration, security, final review,
+validation, and delivery.</p>
+<p>Escalate to Sol after repeated Luna failures or when the task needs architectural reasoning, non-obvious interactions
+across services, authentication or security, database/schema migration, or broader networking/routing/DHCP/DNS
+reasoning. Luna returns its evidence and the open decision to Sol.
 Every delegated prompt must state the exact scope, owned files, expected result, relevant checks, the Mandatory Agent
 Startup Gate, and the exact resolved Codex worktree root and permitted task-state roots. The delegating agent must
 verify the delegated worktree and task-owned mutable paths against those roots before relying on the result. UI prompts
-must also include the Mandatory UI Design Guide Gate, interaction classification, and reused Atlaso reference. Spark
+must also include the Mandatory UI Design Guide Gate, interaction classification, and reused Atlaso reference. Luna
 must not commit, push, change GitHub state, or delegate further.</p>
-<p>Run multiple Spark workers only for independent tasks with non-overlapping
+<p>Run multiple Luna workers only for independent tasks with non-overlapping
 file ownership. Sol must inspect and integrate every returned diff before
 relying on it.</p>
-<p>If Spark is unavailable, rate-limited, its usage allowance is exhausted,
+<p>If Luna is unavailable, rate-limited, its usage allowance is exhausted,
 or the worker cannot be started because of capacity/runtime limitations,
-Sol performs the work directly. Sol does not repeatedly retry Spark after a
-quota or rate-limit failure and never substitutes another model.
+Sol performs the work directly. Sol does not repeatedly retry Luna after a
+quota or rate-limit failure and never substitutes an unapproved model.
 Report the fallback once for the current task.</p>
 <h3 id="unrelated-issue-discoveries">Unrelated issue discoveries<a class="headerlink" href="#unrelated-issue-discoveries" title="Permanent link">&para;</a></h3>
 <p>Keep each pull request limited to its linked issue scope. When work reveals a reproducible or otherwise evidence-backed
