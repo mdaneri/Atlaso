@@ -206,6 +206,14 @@ def _apply(client: FixtureHttpClient, units: list[str] | None = None) -> dict[st
         if task.get("status") in {"failed", "cancelled"}:
             result = task.get("result")
             units = result.get("units", []) if isinstance(result, dict) else []
+            def safe_excerpt(command: dict[str, Any]) -> str:
+                """Return bounded, credential-redacted WAN helper diagnostics."""
+                value = str(command.get("stderr", ""))[:512]
+                for secret in (getattr(client, "diagnostic_secret", ""), client.bearer_token):
+                    if secret:
+                        value = value.replace(secret, "[redacted]")
+                return re.sub(r"(?i)\b(password|token|secret)\s*[:=]\s*\S+", r"\1=[redacted]", value)
+
             failed_units = [
                 {
                     "unit_id": unit.get("unit_id"),
@@ -216,6 +224,7 @@ def _apply(client: FixtureHttpClient, units: list[str] | None = None) -> dict[st
                              "Network is unreachable", "Permission denied", "route-domain",
                              "routing-domain", "capacity", "timeout", "failed",
                          ) if marker.casefold() in str(command.get("stderr", "")).casefold()]}
+                         | {"stderr_excerpt": safe_excerpt(command) if command.get("returncode") else ""}
                         for index, command in enumerate(unit.get("commands", [])) if isinstance(command, dict)
                     ],
                 }
@@ -498,6 +507,7 @@ def run_scenario(
                    "scopes": ["read:dashboard", "read:interfaces", "write:interfaces"]},
     )
     client.bearer_token = token["raw_token"]
+    client.diagnostic_secret = password
     unknown_outcome: ApplyOutcomeUnknown | None = None
     try:
         return _run_authenticated(client, connect_appliance, topology, server_action)
@@ -515,6 +525,7 @@ def run_scenario(
             unknown_outcome.add_note("Temporary token revocation failed; retain the fixture for recovery.")
         finally:
             client.bearer_token = ""
+            client.diagnostic_secret = ""
 
 
 def _run_authenticated(
