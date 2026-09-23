@@ -256,7 +256,21 @@ def _clean(client: FixtureHttpClient) -> dict[str, Any]:
             or review.get("initial_apply_required") is not False or review.get("active_task") is not None
             or status.get("pending_count") != 0 or status.get("locked") is not False
             or status.get("active_task") is not None):
-        raise OverlapPrerequisiteError("scenario requires a clean established applied baseline")
+        units = review.get("units")
+        unit_count = len(units) if isinstance(units, list) else -1
+        review_pending = review.get("pending_count")
+        status_pending = status.get("pending_count")
+        initial = review.get("initial_apply_required")
+        locked = status.get("locked")
+        raise OverlapPrerequisiteError(
+            "scenario requires a clean established applied baseline "
+            f"(review_pending={review_pending if type(review_pending) is int else 'invalid'}, units={unit_count}, "
+            f"initial={initial if type(initial) is bool else 'invalid'}, "
+            f"review_active={review.get('active_task') is not None}, "
+            f"status_pending={status_pending if type(status_pending) is int else 'invalid'}, "
+            f"locked={locked if type(locked) is bool else 'invalid'}, "
+            f"status_active={status.get('active_task') is not None})"
+        )
     return {"pending_count": 0, "active_task": None, "initial_apply_required": False}
 
 
