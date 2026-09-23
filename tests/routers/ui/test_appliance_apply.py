@@ -1827,7 +1827,13 @@ def test_selected_wan_change_executes_inside_existing_management_handoff(client)
 
 @pytest.mark.parametrize("initially_enabled", [False, True])
 def test_ntp_apply_includes_generated_dns_after_ntp(client, monkeypatch, initially_enabled):
-    """NTP enable and disable capture only their owned DNS delta after NTP."""
+    """NTP enable and disable capture only their owned DNS delta after NTP.
+
+    Args:
+        client: HTTP test client.
+        monkeypatch: Pytest fixture used to replace dependencies.
+        initially_enabled: Whether NTP starts enabled.
+    """
     from sqlalchemy import select
 
     from atlaso.app import ui
@@ -1873,12 +1879,20 @@ def test_ntp_apply_includes_generated_dns_after_ntp(client, monkeypatch, initial
 
 @pytest.mark.parametrize(
     ("initially_enabled", "selected_id"),
-    [(True, "dnsmasq"), (False, "dnsmasq"), (False, "ntpd")],
+    [(True, "dnsmasq"), (False, "dnsmasq"), (False, "ntpd"),
+     (False, ["dnsmasq", "ntpd"])],
 )
 def test_ntp_and_unrelated_dns_changes_keep_explicit_selection(
     client, monkeypatch, initially_enabled, selected_id,
 ):
-    """A manual DNS edit must not silently expand the operator's Apply selection."""
+    """A manual DNS edit must not silently expand the operator's Apply selection.
+
+    Args:
+        client: HTTP test client.
+        monkeypatch: Pytest fixture used to replace dependencies.
+        initially_enabled: Whether NTP starts enabled.
+        selected_id: Apply unit or units selected by the operator.
+    """
     from sqlalchemy import select
 
     from atlaso.app import ui
@@ -1923,7 +1937,7 @@ def test_ntp_and_unrelated_dns_changes_keep_explicit_selection(
         job = db.get(Job, response.json()["job_id"])
         assert job is not None
         selected = json.loads(job.result or "{}")["selected_units"]
-    assert selected == [selected_id]
+    assert selected == ([selected_id] if isinstance(selected_id, str) else selected_id)
 
 
 def test_management_move_rechecks_handoff_after_ldap_dependency_expansion(client, monkeypatch):

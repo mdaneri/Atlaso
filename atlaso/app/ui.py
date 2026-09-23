@@ -6308,6 +6308,7 @@ def service_interface_dns_targets(
         listen_interface: Interface on which the service should listen.
         listen_address: Address on which the service should listen.
         bind_options: Bind options supplied by the caller.
+        shared_target_token: Optional stable token for a shared DNS target.
     """
     selected_addresses = split_addresses(listen_address)
     if not selected_addresses:
@@ -6387,6 +6388,7 @@ def ensure_interface_dns_alias(
         previous_hostname: Hostname previously owned by the resource.
         enabled: Whether the requested behavior is enabled.
         bind_options: Bind options supplied by the caller.
+        shared_target_token: Optional stable token for a shared DNS target.
 
     Returns:
         The ensure interface dns alias result.
@@ -6819,7 +6821,12 @@ def ensure_dns_for_ntp(db: Session, settings: NtpSettings, actor: str | None, *,
 
 
 def ntp_dns_record_conflict(db: Session, settings: NtpSettings) -> bool:
-    """Detect manual records occupying the NTP alias or its shared target."""
+    """Detect manual records occupying the NTP alias or its shared target.
+
+    Args:
+        db: Active database session.
+        settings: Desired NTP service settings.
+    """
     hostname = normalize_dns_hostname(settings.hostname or NTP_DEFAULT_HOSTNAME)
     targets = service_interface_dns_targets(
         db, hostname=hostname, listen_interface=settings.listen_interface,
@@ -6844,7 +6851,12 @@ def ntp_dns_record_conflict(db: Session, settings: NtpSettings) -> bool:
 
 
 def ntp_owned_dns_is_only_pending_change(db: Session, dns_unit: dict[str, Any]) -> bool:
-    """Couple NTP and DNS only when their generated records explain the DNS delta."""
+    """Couple NTP and DNS only when their generated records explain the DNS delta.
+
+    Args:
+        db: Active database session.
+        dns_unit: Captured DNS Apply unit.
+    """
     baselines = load_appliance_apply_baselines(db)
     previous_dns = str((baselines.get("dnsmasq") or {}).get("config_preview") or "")
     current_dns = str(dns_unit.get("config_preview") or "")
@@ -6880,6 +6892,12 @@ def ntp_owned_dns_is_only_pending_change(db: Session, dns_unit: dict[str, Any]) 
         return False
 
     def non_ntp_lines(config: str, omitted: set[str]) -> list[str]:
+        """Return config lines after excluding NTP-owned records.
+
+        Args:
+            config: DNS configuration preview.
+            omitted: NTP-owned lines to exclude.
+        """
         lines = []
         for line in config.splitlines():
             if line in omitted:
@@ -16711,12 +16729,13 @@ def _submit_appliance_apply(
     units = appliance_apply_units(db)
     unit_map = {unit["id"]: unit for unit in units}
     selected_ids = {unit_id for unit_id in selected_units if unit_id in APPLIANCE_APPLY_UNIT_IDS}
-    if (
+    ntp_dns_dependency = bool(
         unit_map.get("ntpd", {}).get("changed")
         and unit_map.get("dnsmasq", {}).get("changed")
         and selected_ids.intersection({"ntpd", "dnsmasq"})
         and ntp_owned_dns_is_only_pending_change(db, unit_map["dnsmasq"])
-    ):
+    )
+    if ntp_dns_dependency:
         selected_ids.update({"ntpd", "dnsmasq"})
     refresh_vcf_depot_software_depot_id = bool(
         refresh_vcf_depot_software_depot_id and "vcf_offline_depot" in selected_ids
@@ -16846,7 +16865,7 @@ def _submit_appliance_apply(
         return JSONResponse({"detail": detail}, status_code=422) if wants_json else Response(detail, status_code=422, media_type="text/plain")
 
     selected_ordered_units = [unit for unit in units if unit["id"] in selected_ids]
-    if "ntpd" in selected_ids and "dnsmasq" in selected_ids:
+    if ntp_dns_dependency:
         dns_unit = unit_map["dnsmasq"]
         selected_ordered_units.remove(dns_unit)
         ntp_index = next(index for index, unit in enumerate(selected_ordered_units) if unit["id"] == "ntpd")
