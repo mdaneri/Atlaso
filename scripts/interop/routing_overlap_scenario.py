@@ -45,8 +45,9 @@ def snapshot():
     links = command(["ip", "-j", "address", "show"])
     rules = {str(f): command(["ip", "-j", "-N", "-details", "-"+str(f), "rule", "show"])
              for f in (4,6)}
-    routes = {str(f): command(["ip", "-j", "-N", "-"+str(f), "route", "show", "table", "100"])
-              for f in (4,6)}
+    routes = {str(f): [row for row in command(["ip", "-j", "-N", "-"+str(f),
+                                               "route", "show", "table", "all"])
+                       if str(row.get("table")) == "100"] for f in (4,6)}
     return {"links": links, "rules": rules, "management_routes": routes}
 '''
 

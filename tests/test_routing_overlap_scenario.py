@@ -2,6 +2,8 @@
 
 import copy
 import io
+import json
+import subprocess
 import time
 from types import SimpleNamespace
 
@@ -14,6 +16,30 @@ from scripts.interop.routing_overlap import (
     FixtureOwner,
     OverlapPrerequisiteError,
 )
+
+
+def test_native_snapshot_accepts_empty_management_route_table(monkeypatch):
+    """A missing table 100 remains an empty native route inventory.
+
+    Args:
+        monkeypatch: Reversible native iproute observation boundary.
+    """
+    def run(args, **_kwargs):
+        """Return numeric JSON from the table-all query without mutating routes."""
+        if "route" in args:
+            assert args[-2:] == ["table", "all"]
+            rows = [{"dst": "default", "table": "main"}]
+            if "-4" in args:
+                rows.append({"dst": "192.0.2.0/24", "table": 100})
+        else:
+            rows = []
+        return subprocess.CompletedProcess(args, 0, json.dumps(rows), "")
+
+    monkeypatch.setattr(subprocess, "run", run)
+    namespace = {}
+    exec(scenario.SNAPSHOT_PROGRAM, namespace)
+    result = namespace["snapshot"]()
+    assert result["management_routes"] == {"4": [{"dst": "192.0.2.0/24", "table": 100}], "6": []}
 
 
 @pytest.fixture
