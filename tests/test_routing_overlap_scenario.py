@@ -402,6 +402,34 @@ def test_initial_setup_uses_reviewed_nonformatting_units(monkeypatch):
     assert selected == ["network"]
 
 
+def test_initial_setup_applies_only_one_reviewed_dependent_dnsmasq_unit(monkeypatch):
+    """An initial Apply may expose one generated DNS change, then must become clean."""
+    client = FakeClient()
+    calls = []
+    reviews = iter([
+        {"initial_apply_required": True, "active_task": None,
+         "units": [{"id": "network", "valid": True, "format_volumes": []}]},
+        {"initial_apply_required": False, "active_task": None, "pending_count": 1,
+         "units": [{"id": "dnsmasq", "valid": True, "format_volumes": []}]},
+    ])
+    monkeypatch.setattr(client, "json_request", lambda method, path: (
+        next(reviews) if path.endswith("/review") else
+        {"pending_count": 1, "active_task": None, "locked": False}))
+    monkeypatch.setattr(scenario, "_apply", lambda current, units: calls.append(units) or {"job_id": "job_abc"})
+    clean_calls = iter([scenario.OverlapPrerequisiteError("pending"), {"pending_count": 0}])
+
+    def clean(_client):
+        outcome = next(clean_calls)
+        if isinstance(outcome, Exception):
+            raise outcome
+        return outcome
+
+    monkeypatch.setattr(scenario, "_clean", clean)
+    result = scenario._setup(client)
+    assert calls == [["network"], ["dnsmasq"]]
+    assert result["clean"] == {"pending_count": 0}
+
+
 @pytest.mark.parametrize("changed", [False, True])
 def test_same_address_requires_original_unexpired_server_lease(monkeypatch, topology, native, changed):
     """Only a retained real lease plus native static then dynamic ownership proves the case.

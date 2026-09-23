@@ -294,7 +294,25 @@ def _setup(client: FixtureHttpClient) -> dict[str, Any]:
     if any(not isinstance(unit, str) or not re.fullmatch(r"[a-z_]+", unit) for unit in ids):
         raise OverlapPrerequisiteError("initial fixture Apply unit identity is invalid")
     applied = _apply(client, ids)
-    return {"initial_apply": applied, "clean": _clean(client)}
+    try:
+        clean = _clean(client)
+    except OverlapPrerequisiteError:
+        # The first Apply can change the generated DNS preview after its
+        # captured snapshot. Admit only that reviewed, non-formatting unit for
+        # one follow-up Apply; any other pending state remains a hard failure.
+        pending = client.json_request("GET", "/ui/management/appliance-apply/review")
+        status = client.json_request("GET", "/ui/management/appliance-apply/status?refresh=true")
+        remaining = pending.get("units")
+        if (pending.get("initial_apply_required") is not False or pending.get("active_task") is not None
+                or pending.get("pending_count") != 1 or not isinstance(remaining, list)
+                or len(remaining) != 1 or remaining[0].get("id") != "dnsmasq"
+                or remaining[0].get("valid") is not True or remaining[0].get("format_volumes")
+                or status.get("pending_count") != 1 or status.get("active_task") is not None
+                or status.get("locked") is not False):
+            raise
+        dependent = _apply(client, ["dnsmasq"])
+        return {"initial_apply": applied, "dependent_dnsmasq_apply": dependent, "clean": _clean(client)}
+    return {"initial_apply": applied, "clean": clean}
 
 
 def _expiry(
