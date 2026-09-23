@@ -1507,10 +1507,11 @@ def test_restored_esxi_lifecycle_recreates_vault_secret_before_apply(monkeypatch
     assert calls[stage_index][2] == (client, args.esxi_password)
     connectivity = next(arguments for name, _operation, arguments in calls if name == "apply-connectivity-units")
     assert "appliance_settings" in connectivity[1]
+    assert {"ca", "ldap", "ntpd", "vcf_offline_depot", "public_services"}.issubset(connectivity[1])
 
 
 def test_full_lifecycle_selects_resolver_settings_with_initial_dns_apply(monkeypatch):
-    """The first DNS Apply must explicitly include its host resolver selection."""
+    """The first DNS Apply must include resolver consent and changed CA listeners."""
     lifecycle = load_lifecycle_module()
     args = lifecycle.parse_args(["--secret-stdin"])
     calls = []
@@ -1525,6 +1526,7 @@ def test_full_lifecycle_selects_resolver_settings_with_initial_dns_apply(monkeyp
     connectivity = next(arguments for name, arguments in calls if name == "apply-connectivity-units")
     assert "dnsmasq" in connectivity[1]
     assert "appliance_settings" in connectivity[1]
+    assert {"ca", "ldap", "ntpd", "vcf_offline_depot", "public_services"}.issubset(connectivity[1])
 
 
 def test_configure_esxi_pxe_selects_dhcp_scope_and_proves_reservation():
