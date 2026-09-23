@@ -95,6 +95,9 @@ change. Disabling DNS moves the host back to configured external or management D
 The managed networkd file persists the selection across reboot and excludes DHCP/RA DNS while explicit DNS is active.
 The systemd-resolved stub in `/etc/resolv.conf` remains in use; dnsmasq uses explicit upstreams with `no-resolv` to avoid
 resolver loops. Apply restarts dnsmasq because a SIGHUP reload does not reread its configuration.
+During a protected management handoff, disabling local DNS moves the resolver first, before replacing the listener;
+enabling it starts the listener first. If an ordinary DNS Apply fails after lease reconciliation, removed live lease
+names are restored and the authoritative backend is reloaded.
 
 After Apply and again after reboot, compare `dig @127.0.0.1 host.atlaso.internal`,
 `resolvectl query host.atlaso.internal`, `getent hosts host.atlaso.internal`, and a Python `socket.getaddrinfo()` lookup.

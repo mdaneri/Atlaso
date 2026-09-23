@@ -3569,6 +3569,54 @@ def test_management_handoff_resolver_failure_rolls_back_before_nginx(
     assert payload["management_handoff"] == "rolled back"
 
 
+@pytest.mark.parametrize("resolver_mode", ["external", "local_dns"])
+def test_management_handoff_orders_resolver_before_dns_shutdown(monkeypatch, tmp_path, resolver_mode):
+    """Leave loopback before shutdown but keep DNS enablement listener-first."""
+    helper = load_helper_module()
+    events: list[str] = []
+    state = {
+        "previous_management_addresses": ["192.0.2.10"],
+        "previous_https_enabled": True,
+        "previous_management_public_port": 443,
+        "candidate_management_interface": "eth1",
+        "resolver_apply_started": False,
+    }
+    firewall = tmp_path / "candidate.nft"
+    firewall.write_text("table inet atlaso {}\n", encoding="utf-8")
+    monkeypatch.setattr(helper, "_recover_management_front_door", lambda **_kwargs: 0)
+    monkeypatch.setattr(helper, "_snapshot_management_handoff", lambda _payload: state)
+    monkeypatch.setattr(helper, "_network_detection_preflight", lambda _path: None)
+    monkeypatch.setattr(helper, "_management_handoff_readiness", lambda *_args: {"ready": True})
+    monkeypatch.setattr(helper, "_install_management_holdovers", lambda *_args: [])
+    monkeypatch.setattr(helper, "_write_management_handoff_state", lambda *_args: None)
+    monkeypatch.setattr(helper, "_apply_management_candidate_network", lambda *_args: None)
+    monkeypatch.setattr(helper, "_wait_network_addresses", lambda *_args, **_kwargs: {})
+    monkeypatch.setattr(helper, "_management_handoff_candidate_firewall_rules", lambda *_args: [])
+    monkeypatch.setattr(helper, "_management_handoff_firewall_text", lambda *_args, **_kwargs: "table inet atlaso {}\n")
+    monkeypatch.setattr(helper, "FIREWALL_CONFIG_PATH", tmp_path / "previous.nft")
+    monkeypatch.setattr(helper, "FIREWALL_APPLY_DIR", tmp_path)
+    monkeypatch.setattr(helper, "_load_appliance_settings_config", lambda _path: {
+        "management_interface": "eth1", "resolver_mode": resolver_mode,
+        "resolver_servers": ["192.0.2.53"], "management_https_enabled": True,
+        "management_public_https_port": 443,
+    })
+    monkeypatch.setattr(helper, "_configure_management_handoff_resolver", lambda _payload: (
+        events.append("resolver") or subprocess.CompletedProcess([], 0, "", "")
+    ))
+    monkeypatch.setattr(helper, "_handle_dnsmasq", lambda *_args: events.append("dns") or 1)
+    monkeypatch.setattr(helper, "_restore_management_handoff", lambda _state: {"restored": True})
+    monkeypatch.setattr(helper, "_clear_management_handoff_state", lambda: None)
+    assert helper._apply_management_handoff({
+        "network_config_path": "candidate-network",
+        "firewall_config_path": str(firewall),
+        "appliance_settings_config_path": "candidate-settings",
+        "dnsmasq_config_path": "candidate-dns",
+        "public_services_config_path": "candidate-public",
+    }) == 1
+    assert events == (["resolver", "dns"] if resolver_mode == "external" else ["dns"])
+    assert state["resolver_apply_started"] is (resolver_mode == "external")
+
+
 def test_management_handoff_never_activates_nginx_with_unhealthy_upstream(monkeypatch, tmp_path, capsys):
     """Stop before candidate nginx activation when Atlaso loopback is unhealthy.
 
@@ -11459,6 +11507,57 @@ def test_dnsmasq_helper_apply_installs_isolated_authoritative_backend(monkeypatc
     assert commands.index(["systemctl", "restart", "atlaso-dns-authoritative.service"]) < commands.index(
         ["systemctl", "restart", "dnsmasq"]
     )
+
+
+@pytest.mark.parametrize("daemon_reload_fails", [False, True])
+def test_dnsmasq_failed_apply_restores_pruned_live_lease_name(monkeypatch, tmp_path, daemon_reload_fails):
+    """Do not lose a managed lease name when service activation fails."""
+    helper = load_helper_module()
+    apply_dir = tmp_path / "apply" / "dnsmasq"
+    state_dir = tmp_path / "var" / "lib" / "atlaso" / "dnsmasq"
+    config_dir = tmp_path / "etc" / "atlaso" / "dnsmasq.d"
+    systemd_dir = tmp_path / "etc" / "systemd" / "system"
+    apply_dir.mkdir(parents=True)
+    hosts_dir = state_dir / "authoritative-leases"
+    hosts_dir.mkdir(parents=True)
+    mirror = hosts_dir / "lease-c0a83215.hosts"
+    original = "192.168.50.21 client.atlaso.internal\n# mac=02:00:00:00:00:01\n# scope-domain=atlaso.internal\n"
+    mirror.write_text(original, encoding="utf-8")
+    config_path = apply_dir / "atlaso.conf"
+    config_path.write_text(
+        "no-resolv\nserver=/atlaso.internal/127.0.0.1#5353\n"
+        "# atlaso-authoritative-config: port=5353\n"
+        "# atlaso-authoritative-config: auth-zone=atlaso.internal\n",
+        encoding="utf-8",
+    )
+    commands: list[list[str]] = []
+
+    def fake_run(command):
+        commands.append(command)
+        failed = daemon_reload_fails and command == ["systemctl", "daemon-reload"]
+        return subprocess.CompletedProcess(command, 1 if failed else 0, "", "")
+
+    monkeypatch.setattr(helper, "DNSMASQ_APPLY_DIR", apply_dir)
+    monkeypatch.setattr(helper, "DNSMASQ_STATE_DIR", state_dir)
+    monkeypatch.setattr(helper, "DNSMASQ_AUTHORITATIVE_LEASE_HOSTS_DIR", hosts_dir)
+    monkeypatch.setattr(helper, "DNSMASQ_CONFIG_DIR", config_dir)
+    monkeypatch.setattr(helper, "DNSMASQ_CONFIG_PATH", config_dir / "atlaso.conf")
+    monkeypatch.setattr(helper, "DNSMASQ_AUTHORITATIVE_CONFIG_PATH", config_dir / "atlaso-authoritative.conf")
+    monkeypatch.setattr(helper, "DNSMASQ_SERVICE_DROPIN_DIR", systemd_dir / "dnsmasq.service.d")
+    monkeypatch.setattr(helper, "DNSMASQ_SERVICE_DROPIN_PATH", systemd_dir / "dnsmasq.service.d" / "atlaso.conf")
+    monkeypatch.setattr(helper, "DNSMASQ_AUTHORITATIVE_SERVICE_PATH", systemd_dir / "atlaso-dns-authoritative.service")
+    monkeypatch.setattr(helper, "_validate_dnsmasq_config", lambda _path: subprocess.CompletedProcess([], 0, "", ""))
+    monkeypatch.setattr(helper, "_prepare_authoritative_lease_hosts", lambda *_args: mirror.unlink())
+    monkeypatch.setattr(helper.shutil, "which", lambda command: "/usr/sbin/dnsmasq" if command == "dnsmasq" else None)
+    monkeypatch.setattr(helper, "_run", fake_run)
+
+    result = helper._handle_dnsmasq("apply", [str(config_path)])
+    assert result == (1 if daemon_reload_fails else 0)
+    if daemon_reload_fails:
+        assert mirror.read_text(encoding="utf-8") == original
+        assert ["systemctl", "kill", "--kill-whom=main", "--signal=HUP", "atlaso-dns-authoritative.service"] in commands
+    else:
+        assert not mirror.exists()
 
 
 def test_dnsmasq_lease_events_mirror_only_managed_names(monkeypatch, tmp_path, capsys):

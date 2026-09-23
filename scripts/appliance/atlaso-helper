@@ -3238,6 +3238,50 @@ def _prepare_authoritative_lease_hosts(
             entry.unlink()
 
 
+@contextmanager
+def _restore_pruned_lease_hosts_on_failure(enabled: bool):
+    """Restore only mirrors pruned by an unsuccessful ordinary DNS apply."""
+    previous: dict[Path, bytes] = {}
+    if enabled:
+        for path in _authoritative_lease_mirror_paths():
+            if path.stat().st_size > 512:
+                raise ValueError("An authoritative lease mirror exceeds its size bound.")
+            previous[path] = path.read_bytes()
+        if sum(len(content) for content in previous.values()) > 16_777_216:
+            raise ValueError("Authoritative lease mirror rollback exceeds its size bound.")
+    committed = False
+
+    def commit() -> None:
+        nonlocal committed
+        committed = True
+
+    try:
+        yield commit
+    finally:
+        if enabled and not committed:
+            restored = False
+            for path, content in previous.items():
+                # A renewal after preparation owns a newly created path; do
+                # not overwrite it with the older snapshot.
+                if path.exists():
+                    continue
+                if path.is_symlink():
+                    raise ValueError("The authoritative lease mirror path became unsafe.")
+                temporary = path.with_name(f".{path.name}.atlaso-restore")
+                try:
+                    with temporary.open("xb") as stream:
+                        stream.write(content)
+                        stream.flush()
+                        os.fsync(stream.fileno())
+                    temporary.chmod(0o644)
+                    temporary.replace(path)
+                    restored = True
+                finally:
+                    temporary.unlink(missing_ok=True)
+            if restored:
+                _reload_authoritative_lease_hosts()
+
+
 def _authoritative_lease_domains(config_path: Path | None = None) -> list[str]:
     """Read authoritative zone names for lease hostname filtering.
 
@@ -3397,7 +3441,12 @@ def _handle_dnsmasq(action: str, args: list[str]) -> int:
         if not dnssec_ready:
             print(dnssec_error, file=sys.stderr)
             return 2
-        with _dnsmasq_config_bundle_paths(config_path) as (main_config_path, authoritative_config_path):
+        with (
+            _dnsmasq_config_bundle_paths(config_path) as (main_config_path, authoritative_config_path),
+            _restore_pruned_lease_hosts_on_failure(
+                action == "apply" and authoritative_config_path is not None
+            ) as commit_mirrors,
+        ):
             for candidate in (main_config_path, authoritative_config_path):
                 if candidate is None:
                     continue
@@ -3429,46 +3478,48 @@ def _handle_dnsmasq(action: str, args: list[str]) -> int:
                 shutil.copy2(authoritative_config_path, DNSMASQ_AUTHORITATIVE_CONFIG_PATH)
                 _install_dnsmasq_authoritative_service()
 
-        daemon_reload = _run(["systemctl", "daemon-reload"])
-        print(daemon_reload.stdout, end="")
-        print(daemon_reload.stderr, end="", file=sys.stderr)
-        if daemon_reload.returncode != 0:
-            return daemon_reload.returncode
-        if authoritative_config_path is not None:
-            for command in (
-                ["systemctl", "enable", "atlaso-dns-authoritative.service"],
-                ["systemctl", "restart", "atlaso-dns-authoritative.service"],
-            ):
-                result = _run(command)
-                print(result.stdout, end="")
-                print(result.stderr, end="", file=sys.stderr)
-                if result.returncode != 0:
-                    return result.returncode
-        enable = _run(["systemctl", "enable", "dnsmasq"])
-        print(enable.stdout, end="")
-        print(enable.stderr, end="", file=sys.stderr)
-        if enable.returncode != 0:
-            return enable.returncode
-        restart = _run(["systemctl", "restart", "dnsmasq"])
-        print(restart.stdout, end="")
-        print(restart.stderr, end="", file=sys.stderr)
-        if restart.returncode != 0:
-            return restart.returncode
-        if authoritative_config_path is None and (
-            DNSMASQ_AUTHORITATIVE_CONFIG_PATH.exists() or DNSMASQ_AUTHORITATIVE_SERVICE_PATH.exists()
-        ):
-            disable = _run(["systemctl", "disable", "--now", "atlaso-dns-authoritative.service"])
-            print(disable.stdout, end="")
-            print(disable.stderr, end="", file=sys.stderr)
-            if disable.returncode != 0:
-                return disable.returncode
-            DNSMASQ_AUTHORITATIVE_CONFIG_PATH.unlink(missing_ok=True)
-            DNSMASQ_AUTHORITATIVE_SERVICE_PATH.unlink(missing_ok=True)
             daemon_reload = _run(["systemctl", "daemon-reload"])
             print(daemon_reload.stdout, end="")
             print(daemon_reload.stderr, end="", file=sys.stderr)
-            return daemon_reload.returncode
-        return 0
+            if daemon_reload.returncode != 0:
+                return daemon_reload.returncode
+            if authoritative_config_path is not None:
+                for command in (
+                    ["systemctl", "enable", "atlaso-dns-authoritative.service"],
+                    ["systemctl", "restart", "atlaso-dns-authoritative.service"],
+                ):
+                    result = _run(command)
+                    print(result.stdout, end="")
+                    print(result.stderr, end="", file=sys.stderr)
+                    if result.returncode != 0:
+                        return result.returncode
+            enable = _run(["systemctl", "enable", "dnsmasq"])
+            print(enable.stdout, end="")
+            print(enable.stderr, end="", file=sys.stderr)
+            if enable.returncode != 0:
+                return enable.returncode
+            restart = _run(["systemctl", "restart", "dnsmasq"])
+            print(restart.stdout, end="")
+            print(restart.stderr, end="", file=sys.stderr)
+            if restart.returncode != 0:
+                return restart.returncode
+            if authoritative_config_path is None and (
+                DNSMASQ_AUTHORITATIVE_CONFIG_PATH.exists() or DNSMASQ_AUTHORITATIVE_SERVICE_PATH.exists()
+            ):
+                disable = _run(["systemctl", "disable", "--now", "atlaso-dns-authoritative.service"])
+                print(disable.stdout, end="")
+                print(disable.stderr, end="", file=sys.stderr)
+                if disable.returncode != 0:
+                    return disable.returncode
+                DNSMASQ_AUTHORITATIVE_CONFIG_PATH.unlink(missing_ok=True)
+                DNSMASQ_AUTHORITATIVE_SERVICE_PATH.unlink(missing_ok=True)
+                daemon_reload = _run(["systemctl", "daemon-reload"])
+                print(daemon_reload.stdout, end="")
+                print(daemon_reload.stderr, end="", file=sys.stderr)
+                if daemon_reload.returncode != 0:
+                    return daemon_reload.returncode
+            commit_mirrors()
+            return 0
 
     if action == "reload":
         daemon_reload = _run(["systemctl", "daemon-reload"])
@@ -26901,6 +26952,26 @@ def _apply_management_handoff(payload: dict) -> int:
             candidate_management_rules=candidate_management_rules,
         )
         dnsmasq_path = str(payload.get("dnsmasq_config_path") or "")
+
+        def apply_candidate_resolver() -> None:
+            """Mark and apply the candidate resolver within the durable handoff."""
+            nonlocal failing_layer
+            resolver_interface = str(settings_payload.get("management_interface") or "")
+            if resolver_interface != str(state.get("candidate_management_interface") or ""):
+                raise ValueError("candidate management resolver interface changed after snapshot")
+            state["resolver_apply_started"] = True
+            _write_management_handoff_state(state, "resolver-applying")
+            failing_layer = "resolver"
+            resolver = _configure_management_handoff_resolver(settings_payload)
+            if resolver.returncode != 0:
+                raise ValueError("candidate management resolver apply failed")
+
+        # On DNS shutdown the candidate listener may no longer serve loopback.
+        # Move off local DNS before replacing that listener; enablement keeps
+        # the existing listener-first ordering.
+        resolver_before_dns = bool(dnsmasq_path and settings_payload.get("resolver_mode") != "local_dns")
+        if resolver_before_dns:
+            apply_candidate_resolver()
         if dnsmasq_path:
             failing_layer = "DNS/DHCP listener"
             if _handle_dnsmasq("apply", [dnsmasq_path]) != 0:
@@ -26920,15 +26991,8 @@ def _apply_management_handoff(payload: dict) -> int:
             raise ValueError("transitional nftables apply failed")
         failing_layer = "Atlaso upstream"
         upstream_readiness = _management_handoff_upstream_readiness()
-        resolver_interface = str(settings_payload.get("management_interface") or "")
-        if resolver_interface != str(state.get("candidate_management_interface") or ""):
-            raise ValueError("candidate management resolver interface changed after snapshot")
-        state["resolver_apply_started"] = True
-        _write_management_handoff_state(state, "resolver-applying")
-        failing_layer = "resolver"
-        resolver = _configure_management_handoff_resolver(settings_payload)
-        if resolver.returncode != 0:
-            raise ValueError("candidate management resolver apply failed")
+        if not resolver_before_dns:
+            apply_candidate_resolver()
         protocol_holdover = _management_handoff_protocol_holdover(state, settings_payload)
         failing_layer = "nginx management front door"
         management_https_result, _restart_delay_seconds = _configure_atlaso_management_https(
