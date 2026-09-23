@@ -3033,6 +3033,44 @@ def _authoritative_lease_scopes(config_path: Path) -> list[tuple[IPv4Network | I
     return scopes
 
 
+def _authoritative_reservation_names(
+    config_path: Path, scopes: list[tuple[IPv4Network | IPv6Network, str]]
+) -> dict[str, str]:
+    """Map reserved addresses to names committed in the selected DNS config."""
+    if config_path.stat().st_size > 1_048_576:
+        raise ValueError("The dnsmasq candidate configuration is too large.")
+    names_by_tag: dict[str, str] = {}
+    addresses_by_tag: dict[str, str] = {}
+    for line in config_path.read_text(encoding="utf-8").splitlines():
+        if line.startswith("dhcp-option=tag:atlaso-name-"):
+            fields = line.split(",", 2)
+            if len(fields) != 3 or fields[1] != "option:host-name":
+                raise ValueError("The authoritative reservation hostname option is invalid.")
+            names_by_tag[fields[0].removeprefix("dhcp-option=tag:")] = fields[2].strip().strip(".").lower()
+        elif line.startswith("dhcp-host=") and ",set:atlaso-name-" in line:
+            fields = line.split(",")
+            if len(fields) != 3 or not re.fullmatch(
+                r"(?:[0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}", fields[0].removeprefix("dhcp-host=")
+            ):
+                raise ValueError("The authoritative reservation host is invalid.")
+            tag = fields[1].removeprefix("set:")
+            try:
+                address = str(ip_address(fields[2].strip("[]")))
+            except ValueError as exc:
+                raise ValueError("The authoritative reservation address is invalid.") from exc
+            addresses_by_tag[tag] = address
+    expected: dict[str, str] = {}
+    for tag, address in addresses_by_tag.items():
+        name = names_by_tag.get(tag, "")
+        reserved_ip = ip_address(address)
+        domain = next((suffix for network, suffix in scopes if reserved_ip in network), "")
+        fqdn = name if "." in name else f"{name}.{domain}" if name and domain else ""
+        if not HOSTNAME_PATTERN.fullmatch(fqdn):
+            raise ValueError("The authoritative reservation name is invalid.")
+        expected[address] = fqdn
+    return expected
+
+
 def _prepare_authoritative_lease_hosts(
     candidate_config_path: Path, candidate_main_config_path: Path | None = None
 ) -> None:
@@ -3080,6 +3118,7 @@ def _prepare_authoritative_lease_hosts(
             active_leases[address] = (_dnsmasq_lease_identity(fields, ip_address(address)), fields[3].lower())
     zones = _authoritative_lease_domains(candidate_config_path)
     scopes = _authoritative_lease_scopes(candidate_main_config_path) if candidate_main_config_path else None
+    reservation_names = _authoritative_reservation_names(candidate_main_config_path, scopes) if scopes is not None else {}
     for entry in hosts_dir.iterdir():
         if not re.fullmatch(r"lease-[0-9a-f]{8,32}\.hosts", entry.name) or entry.is_symlink() or not entry.is_file():
             raise ValueError("The authoritative lease hosts directory contains an unexpected entry.")
@@ -3105,6 +3144,7 @@ def _prepare_authoritative_lease_hosts(
                 for network, domain in scopes
             ))
             or (lease[1] != "*" and hostname.split(".", 1)[0] != lease[1])
+            or (address in reservation_names and hostname != reservation_names[address])
         ):
             entry.unlink()
 

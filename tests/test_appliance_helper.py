@@ -1495,13 +1495,18 @@ def test_management_handoff_preserves_valid_post_snapshot_lease(monkeypatch, tmp
     candidate = hosts_dir / "lease-c0a83216.hosts"
     candidate.write_text("192.168.50.22 candidate.atlaso.internal\n# mac=02:00:00:00:00:02\n", encoding="utf-8")
     (state_dir / "dhcp.leases").write_text(
-        "1893456000 02:00:00:00:00:01 192.168.50.21 * *\n", encoding="utf-8"
+        "1893456000 02:00:00:00:00:01 192.168.50.21 * *\n"
+        "1893456000 02:00:00:00:00:02 192.168.50.22 * *\n",
+        encoding="utf-8",
     )
     authoritative = tmp_path / "authoritative.conf"
     authoritative.write_text("auth-zone=atlaso.internal,192.168.50.0/24\n", encoding="utf-8")
     main = tmp_path / "main.conf"
     main.write_text(
-        "# atlaso-authoritative-lease-scope=192.168.50.0/24,atlaso.internal\n", encoding="utf-8"
+        "# atlaso-authoritative-lease-scope=192.168.50.0/24,atlaso.internal\n"
+        "dhcp-host=02:00:00:00:00:02,set:atlaso-name-020000000002,192.168.50.22\n"
+        "dhcp-option=tag:atlaso-name-020000000002,option:host-name,old-reserved\n",
+        encoding="utf-8",
     )
     monkeypatch.setattr(helper, "DNSMASQ_STATE_DIR", state_dir)
     monkeypatch.setattr(helper, "DNSMASQ_LEASE_FILE_PATH", state_dir / "dhcp.leases")
