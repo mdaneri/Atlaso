@@ -36,6 +36,13 @@ and never expose private keys in documentation, screenshots, tasks, or logs.
 
 An enabled CA with no listen interface still writes its root bundle and managed service certificates through global
 appliance apply. It does not add the CA portal to access-interface DNS, firewall, or public-service configuration.
+On the first CA apply after upgrading, Atlaso reissues managed service certificates that lack Subject Key Identifier
+or Authority Key Identifier extensions. This replaces their leaf certificates and private keys while retaining the
+existing root CA. Global Apply includes already-applied listeners that consume rotated managed leaves, so they reload
+after CA deployment. If a consuming listener also has pending edits, select it in the same Apply review before submitting
+the CA unit. If a listener reload fails or Apply is interrupted, retry the CA unit; Atlaso keeps the previous CA apply
+baseline until all selected consumers reload, so the retry includes them again. Export or reload external service trust
+material that pins an individual leaf.
 
 ## Review requests
 
