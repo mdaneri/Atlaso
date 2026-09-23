@@ -214,7 +214,8 @@ def _apply(client: FixtureHttpClient, units: list[str] | None = None) -> dict[st
             units = result.get("units", []) if isinstance(result, dict) else []
             def safe_excerpt(command: dict[str, Any]) -> str:
                 """Return bounded, credential-redacted WAN helper diagnostics."""
-                value = str(command.get("stderr", ""))[-512:]
+                stderr = str(command.get("stderr", ""))
+                value = stderr if len(stderr) <= 768 else stderr[:512] + " ... " + stderr[-256:]
                 for secret in (getattr(client, "diagnostic_secret", ""), client.bearer_token):
                     if secret:
                         value = value.replace(secret, "[redacted]")
