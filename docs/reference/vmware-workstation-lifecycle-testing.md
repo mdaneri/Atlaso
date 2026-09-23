@@ -583,11 +583,13 @@ For certificate handoff preparation, pass `-CertificateOnly -KeepVms` with a tas
 clones and boots only the appliance, installs the admitted source commit's helper and wheel, and leaves the appliance
 running for a separate native certificate scenario. The runner publishes immutable creation intent and original VM
 directory identity under `test-results/certificate-native-evidence/<lab>` before VMware populates that directory.
-It also records a bounded `atlaso.service` readback before deployment and the actual helper/wheel digests afterward.
-Routing intent is stored in Atlaso's database, so the app service readback does not prove that routes, routing rules,
-NAT rules, or route-role interfaces are absent. A discovered DHCP address does not prove exclusive address control.
-The certificate scenario must refuse mutation until a predeployment guest-state producer proves absent routing intent
-and a controlled network producer proves the candidate static address or DHCP reservation belongs to the clone.
+It also records a bounded `atlaso.service` readback and runs a read-only SQLite source probe before deployment.
+The probe emits only aggregate counts and feature flags from one transaction, requiring absent routing service intent,
+disabled routing and WAN features, and no saved route, rule, NAT, port-forward, WAN-policy, or route-role interface rows.
+The runner admits and publishes that source receipt only when every required field proves absence. The actual helper
+and wheel digests are measured afterward. A discovered DHCP address does not prove exclusive address control.
+The certificate scenario must refuse mutation until a controlled network producer proves the candidate static address
+or DHCP reservation belongs to the clone.
 For the negative case, the authenticated CA inventory must bind the chosen ID and fingerprint to the live
 `appliance:https` certificate before and after the desired edit. Keep the original receipts outside the lab removal
 root; clean up only through the exact lifecycle VM removal and artifact-root procedures below.

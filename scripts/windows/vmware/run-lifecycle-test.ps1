@@ -2432,6 +2432,84 @@ function Get-CertificateSourceGuestState {
 
 <#
 .SYNOPSIS
+Read a bounded, read-only routing-intent snapshot from the cloned guest database before deployment.
+.PARAMETER ApplianceVmx
+Exact cloned appliance VMX whose source database is queried.
+#>
+function Get-CertificateSourceRoutingSnapshot {
+    param([Parameter(Mandatory)][string]$ApplianceVmx)
+
+    $localProbe = Join-Path $repoRoot 'scripts/interop/certificate_source_probe.py'
+    $probeSha256 = (Get-FileHash -LiteralPath $localProbe -Algorithm SHA256).Hash.ToLowerInvariant()
+    $probeToken = [guid]::NewGuid().ToString('N')
+    $guestProbe = "/root/atlaso-certificate-source-$probeToken.py"
+    $guestOutput = "/root/atlaso-certificate-source-$probeToken.json"
+    $hostOutput = Join-Path $resultRoot "source-routing-$probeToken.json"
+    if (Test-Path -LiteralPath $hostOutput) { throw 'Certificate source routing output already exists.' }
+    $password = ConvertFrom-SecureString -SecureString $adminPasswordSecure -AsPlainText
+    try {
+        $copy = Invoke-VmrunBounded -Arguments @(
+            '-T', 'ws', '-gu', 'root', '-gp', $password,
+            'copyFileFromHostToGuest', $ApplianceVmx, $localProbe, $guestProbe
+        ) -TimeoutSeconds 20
+        if ($copy.TimedOut -or $copy.ExitCode -ne 0) { throw 'Certificate source routing probe copy failed.' }
+        $script = "printf '%s  %s\n' '$probeSha256' '$guestProbe' | sha256sum -c - >/dev/null && python3 '$guestProbe' > '$guestOutput'"
+        $query = Invoke-VmrunBounded -Arguments @(
+            '-T', 'ws', '-gu', 'root', '-gp', $password,
+            'runScriptInGuest', $ApplianceVmx, '/bin/sh', $script
+        ) -TimeoutSeconds 20
+        if ($query.TimedOut -or $query.ExitCode -ne 0) { throw 'Certificate source routing probe failed.' }
+        $readback = Invoke-VmrunBounded -Arguments @(
+            '-T', 'ws', '-gu', 'root', '-gp', $password,
+            'copyFileFromGuestToHost', $ApplianceVmx, $guestOutput, $hostOutput
+        ) -TimeoutSeconds 20
+        if ($readback.TimedOut -or $readback.ExitCode -ne 0) { throw 'Certificate source routing readback failed.' }
+        if (-not (Test-Path -LiteralPath $hostOutput -PathType Leaf) -or (Get-Item -LiteralPath $hostOutput).Length -gt 4096) {
+            throw 'Certificate source routing readback is missing or oversized.'
+        }
+        $snapshot = Get-Content -LiteralPath $hostOutput -Raw | ConvertFrom-Json -AsHashtable
+        if ($snapshot.schema -ne 1 -or $snapshot.database -ne '/var/lib/atlaso/atlaso.db' -or
+            $snapshot.state -ne 'proven-absent') {
+            throw 'Certificate source routing intent is present or unproven.'
+        }
+        $expectedCounts = @('routes', 'routing_rules', 'nat_rules', 'port_forwards', 'wan_policies', 'route_physical_interfaces', 'route_vlan_interfaces')
+        if (@($snapshot.counts.Keys).Count -ne $expectedCounts.Count -or
+            @($snapshot.settings.Keys).Count -ne 4) {
+            throw 'Certificate source routing snapshot has an unexpected schema.'
+        }
+        foreach ($key in $expectedCounts) {
+            if (-not $snapshot.counts.ContainsKey($key) -or $snapshot.counts[$key] -isnot [long] -or $snapshot.counts[$key] -ne 0) {
+                throw 'Certificate source routing desired state is not empty.'
+            }
+        }
+        foreach ($key in @('routes_wan.routing_enabled', 'routes_wan.wan_simulation_enabled', 'routes_wan.nat_enabled', 'traffic_publishing.nat_enabled')) {
+            if (-not $snapshot.settings.ContainsKey($key) -or
+                ($null -ne $snapshot.settings[$key] -and $snapshot.settings[$key] -isnot [bool]) -or
+                $snapshot.settings[$key] -eq $true) {
+                throw 'Certificate source routing feature is enabled or unproven.'
+            }
+        }
+        if ($null -ne $snapshot.routing_service -and
+            (@($snapshot.routing_service.Keys).Count -ne 2 -or
+             $snapshot.routing_service.enabled -isnot [bool] -or $snapshot.routing_service.running -isnot [bool] -or
+             $snapshot.routing_service.enabled -or $snapshot.routing_service.running)) {
+            throw 'Certificate source routing service intent is present.'
+        }
+        $snapshot.probe_sha256 = $probeSha256
+        return $snapshot
+    } finally {
+        # These unique files exist only in this task-owned clone; the host receipt is published separately.
+        $null = Invoke-VmrunBounded -Arguments @(
+            '-T', 'ws', '-gu', 'root', '-gp', $password,
+            'runScriptInGuest', $ApplianceVmx, '/bin/sh', "rm -f -- '$guestProbe' '$guestOutput'"
+        ) -TimeoutSeconds 20
+        $password = $null
+        if (Test-Path -LiteralPath $hostOutput) { Remove-Item -LiteralPath $hostOutput -Force -ErrorAction Stop }
+    }
+}
+
+<#
+.SYNOPSIS
 Measure the installed appliance helper by a bounded guest readback.
 .PARAMETER ApplianceVmx
 Exact cloned appliance VMX whose helper is measured.
@@ -2680,12 +2758,12 @@ with WindowsFiles().opened(Path(sys.argv[1]), directory=True) as (_, identity, _
     } | ConvertTo-Json -Depth 3 | Set-Content -LiteralPath (Join-Path $resultRoot 'discovered-appliance.json') -Encoding UTF8
     if ($CertificateOnly) {
         $sourceGuestState = Get-CertificateSourceGuestState -ApplianceVmx $applianceVmx
+        $sourceRoutingSnapshot = Get-CertificateSourceRoutingSnapshot -ApplianceVmx $applianceVmx
         $certificateSource = Write-CertificateLabReceipt -Name 'predeployment-network.json' -Value ([ordered]@{
             schema = 1; phase = 'before-lifecycle-deployment'
             task_id = $env:CODEX_THREAD_ID; vmx_path = $applianceVmx
             source_commit = $sourceCommit; app_service = $sourceGuestState
-            # The app service query cannot prove database route intent.
-            routing_intent_state = 'unproven'
+            routing_intent_state = 'proven-absent'; route_snapshot = $sourceRoutingSnapshot
         })
     }
     try {
