@@ -351,6 +351,9 @@ last-applied baseline enabled local DNS, submission also selects Appliance Setti
 before dnsmasq removes the loopback listener.
 The resolver interface follows the effective listener precedence: dedicated management first, then a flagged access
 physical interface, then a flagged access VLAN.
+When a dedicated management link is switching to DHCP, review selects the DHCP resolver mode even before a lease
+exists. It does not invent a management address or observed DNS servers; address-dependent local DNS and Web Terminal
+validation still require an acquired address.
 If another Appliance Settings field differs from its baseline, that unit remains pending after a successful handoff so
 the full hostname, resolver, SSH, Web Terminal trust, and telemetry apply remains pending. A staged resolver-mode or
 server change is part of the successful handoff's Appliance Settings baseline when all unrelated settings already

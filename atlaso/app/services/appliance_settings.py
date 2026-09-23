@@ -415,7 +415,26 @@ def management_dhcp_dns_context(
         if vlans is not None
         else management_interface_context(interfaces)
     )
+    if not management.get("name"):
+        # A pending static-to-DHCP handoff has no observed lease yet. Keep its
+        # desired resolver method so Apply can acquire DHCP DNS, but do not
+        # claim an address or DNS observation before Network has activated it.
+        pending = [
+            interface for interface in interfaces
+            if normalize_interface_role(interface.role) == "management"
+            and normalize_interface_mode(interface.mode) == "access"
+            and interface.admin_state == "up"
+            and interface.oper_state != "missing"
+            and normalize_ipv4_method(interface.ipv4_method) == "dhcp"
+        ]
+        if len(pending) == 1:
+            management = {
+                "name": pending[0].name, "ip": "", "ip_cidr": "", "ipv4_cidr": "",
+                "ipv6_cidr": "", "addresses": [], "ipv4_method": "dhcp",
+            }
     if management.get("ipv4_method") != "dhcp":
+        return management, []
+    if not management.get("ip"):
         return management, []
     servers = []
     seen: set[str] = set()

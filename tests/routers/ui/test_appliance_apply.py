@@ -831,6 +831,38 @@ def test_appliance_settings_uses_last_applied_dns_state_for_resolver(client):
     assert disabling_preview["resolver_servers"] != ["127.0.0.1"]
 
 
+def test_pending_dhcp_management_does_not_require_external_dns(client):
+    """Review the desired DHCP resolver before the network handoff obtains its lease."""
+    from atlaso.app import ui
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import ApplianceSettings, DnsSettings, PhysicalInterface
+
+    with SessionLocal() as db:
+        interface = db.query(PhysicalInterface).filter_by(name="eth0").one()
+        settings = db.query(ApplianceSettings).one()
+        dns = db.query(DnsSettings).one()
+        interface.role = "management"
+        interface.mode = "access"
+        interface.admin_state = "up"
+        interface.oper_state = "up"
+        interface.ipv4_method = "dhcp"
+        interface.ip_cidr = None
+        interface.host_ip_cidr = None
+        settings.external_dns_servers = ""
+        dns.enabled = False
+        db.commit()
+
+        context = ui.appliance_settings_context(db, reconcile_dns=False)
+
+    assert context["management_interface"]["name"] == "eth0"
+    assert context["management_interface"]["ip"] == ""
+    assert context["appliance_settings_resolver_mode"] == "dhcp"
+    assert not any(
+        error.startswith("External DNS servers are required")
+        for error in context["appliance_settings_validation_errors"]
+    )
+
+
 def test_local_dns_disable_forces_resolver_move_before_dns_stop(client):
     """Move the resolver before an applied local DNS listener is disabled.
 

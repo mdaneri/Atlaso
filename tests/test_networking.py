@@ -1047,6 +1047,30 @@ def test_management_ui_context_prefers_dedicated_then_flagged_eth0_then_vlan(mon
     assert management_dhcp_dns_context([], [flagged_vlan])[0]["name"] == "eth1.20"
 
 
+def test_pending_dhcp_management_uses_dhcp_resolver_without_claiming_a_lease(monkeypatch):
+    """A protected handoff may review DHCP DNS before its first lease exists."""
+    pending = PhysicalInterface(
+        name="eth0", role="management", mode="access", ipv4_method="dhcp",
+        ip_cidr=None, host_ip_cidr=None, admin_state="up", oper_state="up",
+    )
+    monkeypatch.setattr(
+        appliance_settings_service,
+        "observed_management_dhcp_dns_servers",
+        lambda _name: pytest.fail("unacquired DHCP DNS must not be observed"),
+    )
+
+    management, servers = management_dhcp_dns_context([pending], [])
+
+    assert management["name"] == "eth0"
+    assert management["ipv4_method"] == "dhcp"
+    assert management["ip"] == ""
+    assert management["addresses"] == []
+    assert servers == []
+    assert appliance_settings_service.resolver_mode_for_settings(
+        local_dns_enabled=False, management_interface=management, external_servers=[],
+    ) == "dhcp"
+
+
 def test_validate_network_state_rejects_lockout_and_non_access_flag():
     """Verify that the flag cannot be used outside an effective access listener."""
     interface = PhysicalInterface(
