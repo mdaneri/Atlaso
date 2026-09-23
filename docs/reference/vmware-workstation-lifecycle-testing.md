@@ -346,7 +346,8 @@ from a pinned upstream QCOW2 source. The payload and SHA-512 metadata are cached
 a verified pair: corrupt entries are removed on an ordinary rerun, downloads stay in unique partial files until
 validation succeeds, and promotion is scoped to the exact expected cache files. The default Alpine artifact uses the
 versioned `v3.24` release URL and a repository-pinned SHA-512 digest; custom images must pass their own
-`-ExpectedSha512` pin.
+`-ExpectedSha512` pin. Preparation expands the powered-off client VMDK to at least 2 GiB with VMware Virtual Disk
+Manager; cloud-init grows its root partition and filesystem before installing lifecycle probe packages.
 
 Default vmnets:
 

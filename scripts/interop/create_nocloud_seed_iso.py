@@ -96,6 +96,10 @@ users:
     lock_passwd: false
 {key_block}
 package_update: true
+growpart:
+  mode: auto
+  devices: ['/']
+resize_rootfs: true
 packages:
   - bind-tools
   - chrony-nts

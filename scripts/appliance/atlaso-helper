@@ -24621,6 +24621,20 @@ def _management_handoff_previous_certificate_paths() -> list[Path]:
     return paths
 
 
+def _authoritative_lease_mirror_paths() -> list[Path]:
+    """Return only owned lease mirror files eligible for handoff snapshots."""
+    directory = DNSMASQ_AUTHORITATIVE_LEASE_HOSTS_DIR
+    if directory.is_symlink() or (directory.exists() and not directory.is_dir()):
+        raise ValueError("The authoritative lease hosts directory is unsafe.")
+    if not directory.exists():
+        return []
+    paths = sorted(directory.iterdir())
+    for path in paths:
+        if not re.fullmatch(r"lease-[0-9a-f]{8,32}\.hosts", path.name) or path.is_symlink() or not path.is_file():
+            raise ValueError("The authoritative lease hosts directory contains an unexpected entry.")
+    return paths
+
+
 def _management_handoff_runtime_paths(payload: dict) -> list[Path]:
     """Return runtime files that require exact rollback snapshots.
 
@@ -24647,6 +24661,7 @@ def _management_handoff_runtime_paths(payload: dict) -> list[Path]:
         DNSMASQ_AUTHORITATIVE_CONFIG_PATH,
         DNSMASQ_AUTHORITATIVE_SERVICE_PATH,
         DNSMASQ_DNSSEC_TRUST_ANCHORS_PATH,
+        *(_authoritative_lease_mirror_paths() if payload.get("dnsmasq_config_path") else []),
         WAN_NAT_CONFIG_PATH,
         WAN_NAT_SERVICE_PATH,
         WAN_SYSCTL_PATH,
@@ -25769,6 +25784,24 @@ def _restore_management_handoff_snapshot(item: dict) -> None:
         temporary.unlink(missing_ok=True)
 
 
+def _remove_candidate_authoritative_lease_mirrors(state: dict) -> None:
+    """Remove only mirror files created after the handoff snapshot.
+
+    Args:
+        state: Durable management-handoff transaction state.
+    """
+    original = {
+        Path(str(item["path"]))
+        for item in state.get("snapshots", [])
+        if isinstance(item, dict)
+        and Path(str(item.get("path", ""))).parent == DNSMASQ_AUTHORITATIVE_LEASE_HOSTS_DIR
+        and item.get("existed")
+    }
+    for path in _authoritative_lease_mirror_paths():
+        if path not in original:
+            _durable_management_handoff_unlink(path)
+
+
 def _apply_management_handoff_wan(payload: dict) -> None:
     """Apply the candidate Routes & WAN config when it joined the handoff.
 
@@ -25931,6 +25964,11 @@ def _restore_management_handoff(state: dict) -> dict:
                 "candidate network removal",
                 lambda path=path: _durable_management_handoff_unlink(path),
             )
+    if state.get("dnsmasq_included"):
+        attempt(
+            "candidate lease mirror removal",
+            lambda: _remove_candidate_authoritative_lease_mirrors(state),
+        )
     for index, item in enumerate(state.get("snapshots", [])):
         attempt(
             f"snapshot {index} restore",

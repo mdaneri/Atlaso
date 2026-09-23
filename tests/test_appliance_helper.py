@@ -1452,6 +1452,37 @@ def test_management_handoff_snapshot_covers_every_nginx_side_effect():
     }.issubset(paths)
 
 
+def test_management_handoff_restores_authoritative_lease_mirrors(monkeypatch, tmp_path):
+    """Rollback restores prior lease answers and removes candidate-only names.
+
+    Args:
+        monkeypatch: Pytest fixture used to isolate runtime paths and file ownership.
+        tmp_path: Temporary directory containing lease mirrors and a backup.
+    """
+    helper = load_helper_module()
+    hosts_dir = tmp_path / "authoritative-leases"
+    hosts_dir.mkdir()
+    previous = hosts_dir / "lease-c0a83215.hosts"
+    previous.write_text("192.168.50.21 old.atlaso.internal\n", encoding="utf-8")
+    backup = tmp_path / "previous.bin"
+    backup.write_bytes(previous.read_bytes())
+    monkeypatch.setattr(helper, "DNSMASQ_AUTHORITATIVE_LEASE_HOSTS_DIR", hosts_dir)
+    monkeypatch.setattr(helper.os, "chown", lambda *_args: None, raising=False)
+    monkeypatch.setattr(helper, "_fsync_file", lambda _path: None)
+    monkeypatch.setattr(helper, "_fsync_directory", lambda _path: None)
+
+    assert previous in helper._management_handoff_runtime_paths({"dnsmasq_config_path": "candidate"})
+    previous.write_text("192.168.50.21 new.atlaso.internal\n", encoding="utf-8")
+    candidate = hosts_dir / "lease-c0a83216.hosts"
+    candidate.write_text("192.168.50.22 new.atlaso.internal\n", encoding="utf-8")
+    snapshot = {"path": str(previous), "backup": str(backup), "existed": True, "mode": 0o644, "uid": 0, "gid": 0}
+    helper._remove_candidate_authoritative_lease_mirrors({"snapshots": [snapshot]})
+    helper._restore_management_handoff_snapshot(snapshot)
+
+    assert previous.read_bytes() == backup.read_bytes()
+    assert not candidate.exists()
+
+
 def test_management_handoff_rollback_restores_absent_firewall(monkeypatch, tmp_path):
     """Disable the candidate service and flush rules for a prior open state.
 
