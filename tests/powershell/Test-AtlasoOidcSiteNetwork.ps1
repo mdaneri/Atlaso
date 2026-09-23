@@ -24,12 +24,17 @@ try {
     & $module {
         Set-Item Function:script:Get-NetAdapter -Value {
             param($Name, $ErrorAction)
-            [pscustomobject]@{ Status = 'Up' }
+            [pscustomobject]@{ Status = 'Up'; InterfaceIndex = 24 }
         }
         Set-Item Function:script:Get-NetIPAddress -Value {
             param($InterfaceAlias, $AddressFamily, $ErrorAction)
             $script:fixtureAddresses
         }
+        Set-Item Function:script:Find-NetRoute -Value {
+            param($RemoteIPAddress, $ErrorAction)
+            [pscustomobject]@{ DestinationPrefix = '192.168.84.0/24'; InterfaceIndex = $script:fixtureRouteIndex }
+        }
+        $script:fixtureRouteIndex = 24
     }
 
     & $module {
@@ -49,7 +54,30 @@ try {
     }
 
     Assert-AtlasoOidcSiteNetwork -SiteANetwork VMnet2 -SiteCidr '192.168.84.3/24' -PrepareNetworksScript $networkPlan
-    Write-Output 'OIDC site-network host-address collision checks passed.'
+
+    & $module { $script:fixtureRouteIndex = 42 }
+    $wrongRoute = $null
+    try {
+        Assert-AtlasoOidcSiteNetwork -SiteANetwork VMnet2 -SiteCidr '192.168.84.3/24' -PrepareNetworksScript $networkPlan
+    } catch {
+        $wrongRoute = $_
+    }
+    if ($null -eq $wrongRoute -or $wrongRoute.Exception.Message -notlike '*does not route through the selected host adapter*') {
+        throw 'A competing Windows route was admitted.'
+    }
+
+    foreach ($unusableAddress in @('192.168.84.0/24', '192.168.84.255/24')) {
+        $invalid = $null
+        try {
+            Assert-AtlasoOidcSiteNetwork -SiteANetwork VMnet2 -SiteCidr $unusableAddress -PrepareNetworksScript $networkPlan
+        } catch {
+            $invalid = $_
+        }
+        if ($null -eq $invalid -or $invalid.Exception.Message -notlike '*must be a usable host address*') {
+            throw "An unusable subnet or broadcast address was admitted: $unusableAddress"
+        }
+    }
+    Write-Output 'OIDC site-network admission checks passed.'
 } finally {
     Remove-Module $module -ErrorAction SilentlyContinue
 }

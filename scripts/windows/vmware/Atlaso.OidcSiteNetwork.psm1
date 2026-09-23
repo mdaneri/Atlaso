@@ -81,6 +81,13 @@ function Assert-AtlasoOidcSiteNetwork {
     if ($networkMask -ne $expectedMask -or ($siteIp -band $networkMask) -ne ($networkIp -band $networkMask)) {
         throw "OIDC SiteCidr $SiteCidr does not match $SiteANetwork subnet $($siteNetwork.Subnet)/$($siteNetwork.Mask). Choose a matching SiteCidr or configure the vmnet."
     }
+    if ($prefix -le 30) {
+        $subnetIp = $networkIp -band $networkMask
+        $broadcastIp = $subnetIp -bor ([uint32]::MaxValue -bxor $networkMask)
+        if ($siteIp -eq $subnetIp -or $siteIp -eq $broadcastIp) {
+            throw "OIDC Site A address $SiteCidr must be a usable host address for $SiteANetwork."
+        }
+    }
 
     $hostAlias = if ($siteNetwork.PSObject.Properties['InterfaceAlias']) {
         $siteNetwork.InterfaceAlias
@@ -101,6 +108,11 @@ function Assert-AtlasoOidcSiteNetwork {
     }).Count -gt 0
     if (-not $reachable) {
         throw "OIDC Site A address $SiteCidr is not reachable from an active host adapter for $SiteANetwork ($hostAlias)."
+    }
+    $selectedRoute = @(Find-NetRoute -RemoteIPAddress $siteAddress.IPAddressToString -ErrorAction SilentlyContinue |
+        Where-Object { $_.DestinationPrefix }) | Select-Object -First 1
+    if (-not $selectedRoute -or $selectedRoute.InterfaceIndex -ne $hostAdapter.InterfaceIndex) {
+        throw "OIDC Site A address $SiteCidr does not route through the selected host adapter for $SiteANetwork ($hostAlias)."
     }
 }
 
