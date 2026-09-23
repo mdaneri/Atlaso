@@ -204,7 +204,11 @@ def _apply(client: FixtureHttpClient, units: list[str] | None = None) -> dict[st
                 raise OverlapPrerequisiteError("native Apply unexpectedly reported dry-run")
             return {"job_id": job, "status": "succeeded"}
         if task.get("status") in {"failed", "cancelled"}:
-            raise OverlapPrerequisiteError("native Apply did not succeed")
+            result = task.get("result")
+            fields = sorted(result) if isinstance(result, dict) else []
+            raise OverlapPrerequisiteError(
+                f"native Apply {job} did not succeed (result fields: {fields})"
+            )
         time.sleep(1)
     raise ApplyOutcomeUnknown(f"Apply {job} did not reach a known terminal state; preserve fixture before restoration")
 
