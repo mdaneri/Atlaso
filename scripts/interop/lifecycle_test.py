@@ -4130,8 +4130,9 @@ def authoritative_dns_state_check(args: argparse.Namespace) -> dict[str, Any]:
             "stderr": refresh.get("stderr", "")[-500:],
         }}
         for key, command in commands.items():
+            remote_command = appliance_ssh_command(args, command) if key in {"lease", "mirrors"} else command
             result = ssh_command(
-                args.appliance_ssh_host, args, command, role="appliance", appliance_as_root=False
+                args.appliance_ssh_host, args, remote_command, role="appliance", appliance_as_root=False
             )
             lines = result.get("stdout", "").splitlines()
             if key == "config":

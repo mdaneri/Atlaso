@@ -235,6 +235,32 @@ def test_authoritative_dns_with_dhcp_subscribes_to_lease_changes():
     assert "dhcp-option=tag:atlaso-name-02155d002020,option:host-name,reserved" in config
     assert "dhcp-host=02:15:5d:00:20:20,reserved,192.168.50.120" not in config
 
+    unmanaged = render_dnsmasq_config(
+        dns_settings=DnsSettings(enabled=True, authoritative=True, domain="atlaso.internal"),
+        dns_records=[],
+        dhcp_settings=DhcpSettings(enabled=True),
+        dhcp_reservations=[
+            DhcpReservation(
+                hostname="guest-reserved",
+                mac_address="02:15:5d:00:20:21",
+                ip_address="192.168.60.120",
+            )
+        ],
+        dhcp_scopes=[
+            DhcpScope(
+                name="Guest",
+                interface_name="eth2",
+                site_address="192.168.60.1",
+                prefix_length=24,
+                range_expression="192.168.60.100-150",
+                domain_name="guest.example",
+                dns_server="192.168.60.1",
+            )
+        ],
+    )
+    assert "dhcp-host=02:15:5d:00:20:21,guest-reserved,192.168.60.120" in unmanaged
+    assert "dhcp-option=tag:atlaso-name-02155d002021,option:host-name,guest-reserved" not in unmanaged
+
     guest = render_dnsmasq_config(
         dns_settings=DnsSettings(enabled=True, authoritative=True, domain="atlaso.internal"),
         dns_records=[],

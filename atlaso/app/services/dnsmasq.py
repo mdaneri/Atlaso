@@ -1837,7 +1837,16 @@ def render_dnsmasq_config(
                 except ValueError:
                     reserved_ip = None
                 reservation_ip = f"[{reservation.ip_address}]" if reserved_ip and reserved_ip.version == 6 else reservation.ip_address
-                if dns_settings.authoritative:
+                reservation_scope = _scope_for_ip(reserved_ip, scopes) if reserved_ip else None
+                reservation_domain = (
+                    (reservation_scope.domain_name or domains[0]).strip().strip(".").lower()
+                    if reservation_scope else ""
+                )
+                managed_reservation = dns_settings.authoritative and any(
+                    reservation_domain == domain or reservation_domain.endswith(f".{domain}")
+                    for domain in domains
+                )
+                if managed_reservation:
                     reservation_tag = "atlaso-name-" + re.sub(r"[^0-9a-f]", "", reservation.mac_address.lower())
                     lines.append(f"dhcp-host={reservation.mac_address},set:{reservation_tag},{reservation_ip}")
                     lines.append(f"dhcp-option=tag:{reservation_tag},option:host-name,{reservation.hostname}")
