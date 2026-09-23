@@ -558,7 +558,7 @@ def _key_usage(value: str) -> x509.KeyUsage:
 
 
 def certificate_needs_issue(certificate: CaCertificate) -> bool:
-    """Return certificate needs issue.
+    """Return whether issued material needs renewal or managed leaf migration.
 
     Args:
         certificate: Certificate record inspected for missing or stale issued material.
@@ -569,6 +569,17 @@ def certificate_needs_issue(certificate: CaCertificate) -> bool:
         return True
     if not certificate.csr_text and not certificate.private_key_encrypted:
         return True
+    if certificate.managed_owner:
+        # Existing managed leaves predate strict-chain key identifiers. Reissue
+        # them during ordinary CA reconciliation instead of waiting for expiry.
+        try:
+            issued = x509.load_pem_x509_certificate(certificate.certificate_pem.encode("ascii"))
+            ski = issued.extensions.get_extension_for_class(x509.SubjectKeyIdentifier).value
+            aki = issued.extensions.get_extension_for_class(x509.AuthorityKeyIdentifier).value
+        except (ValueError, x509.ExtensionNotFound):
+            return True
+        if not ski.digest or not aki.key_identifier:
+            return True
     expires_at = certificate.expires_at
     return bool(expires_at and ensure_aware(expires_at) <= utcnow() + timedelta(days=30))
 
@@ -635,6 +646,8 @@ def issue_certificate(settings: CaSettings, profiles: list[CaProfile], certifica
         .not_valid_after(min(root_certificate.not_valid_after_utc, now + timedelta(days=max(profile.validity_days, 1))))
         .add_extension(x509.BasicConstraints(ca=False, path_length=None), critical=True)
         .add_extension(_key_usage(profile.key_usage), critical=True)
+        .add_extension(x509.SubjectKeyIdentifier.from_public_key(public_key), critical=False)
+        .add_extension(x509.AuthorityKeyIdentifier.from_issuer_public_key(root_private_key.public_key()), critical=False)
     )
     if san_values:
         builder = builder.add_extension(x509.SubjectAlternativeName(san_values), critical=False)
