@@ -536,6 +536,9 @@ The wrapper has no password defaults. It prompts securely for the appliance admi
 client SSH reuses the administrator `SecureString` unless `-SshPassword` is supplied. `-FullEsxiPxeInstall` also
 requires the ESXi root password that matches the selected rendered Kickstart profile. The launcher sends these values to
 its child through a current-user DPAPI-protected temporary CLIXML bundle and removes that bundle after the child exits.
+The wrapper stages that bundle only in a dedicated checkout-local directory with protected current-user-and-SYSTEM
+ACLs. The ordinary `.atlaso-local` parent may retain the initializer's inherited ACL when no untrusted principal can
+mutate its children; an existing unsafe bundle directory is refused without automatic permission changes.
 The runner streams the complete password set for the main lifecycle Python consumer as one JSON envelope over standard
 input, so those values do not enter that child's process arguments. Client NoCloud seed generation likewise sends its
 SSH password as one bounded standard-input line to the repository-controlled helper; the helper rejects empty,

@@ -242,6 +242,7 @@ $repoRoot = Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..\..')
 $applianceIpWasPassed = $PSBoundParameters.ContainsKey('ApplianceIPAddress')
 Import-Module (Join-Path $PSScriptRoot 'Atlaso.VmwareTestIdentity.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'Atlaso.OidcSiteNetwork.psm1') -Force
+. (Join-Path $PSScriptRoot 'Atlaso.LifecycleSecretStaging.ps1')
 if ($OidcOnly -and $SiteANetwork.StartsWith('lan:', [StringComparison]::OrdinalIgnoreCase)) {
     throw '-OidcOnly requires a host-reachable SiteANetwork; VMware LAN segments cannot carry the host-side verified OIDC probe.'
 }
@@ -460,24 +461,7 @@ $powerShell7Path = Resolve-PowerShell7Path
 $secretBundlePath = ''
 try {
     if (-not $PlanOnly) {
-        $localStateRoot = Join-Path $repoRoot '.atlaso-local'
-        $localState = Get-Item -LiteralPath $localStateRoot -Force -ErrorAction Stop
-        $localStateAcl = Get-Acl -LiteralPath $localStateRoot
-        $currentSid = [Security.Principal.WindowsIdentity]::GetCurrent().User
-        if (-not $localState.PSIsContainer -or
-            ($localState.Attributes -band [IO.FileAttributes]::ReparsePoint) -or
-            -not $localStateAcl.AreAccessRulesProtected -or
-            $localStateAcl.GetOwner([Security.Principal.SecurityIdentifier]).Value -cne $currentSid.Value) {
-            throw 'Task-local credential staging requires an ordinary private .atlaso-local directory.'
-        }
-        foreach ($entry in $localStateAcl.Access) {
-            $entrySid = $entry.IdentityReference.Translate([Security.Principal.SecurityIdentifier])
-            if ($entrySid.Value -cne $currentSid.Value -and $entrySid.Value -cne 'S-1-5-18') {
-                throw 'Task-local credential staging directory grants access outside the current user and SYSTEM.'
-            }
-        }
-        $secretBundleRoot = Join-Path $repoRoot '.atlaso-local/lifecycle-secret-bundles'
-        [IO.Directory]::CreateDirectory($secretBundleRoot) | Out-Null
+        $secretBundleRoot = Initialize-AtlasoLifecycleSecretBundleRoot -RepositoryRoot $repoRoot
         $secretBundlePath = Join-Path $secretBundleRoot "atlaso-vmware-lifecycle-$([guid]::NewGuid().ToString('N')).clixml"
         # Enter the cleanup scope before serialization because Export-Clixml
         # can leave a partial current-user-decryptable file when it fails.
@@ -486,7 +470,8 @@ try {
             SshPassword       = $SshPassword
             VcfBackupPassword = $VcfBackupPassword
             EsxiPassword      = $EsxiPassword
-        } | Export-Clixml -LiteralPath $secretBundlePath -Force
+        } | Export-Clixml -LiteralPath $secretBundlePath -NoClobber
+        Protect-AtlasoLifecycleSecretBundleFile -Path $secretBundlePath
     }
 
 $arguments = @(
