@@ -1000,6 +1000,18 @@ def test_routing_probe_commands_cover_block_allow_and_route_role_paths():
     assert "ip route replace 192.168.60.0/24 via 172.31.50.1 dev eth1" in client_b
 
 
+def test_routing_host_firewall_check_uses_default_drop_isolation():
+    """The lab verifies its configured forward policy and explicit route rule."""
+    lifecycle = load_lifecycle_module()
+    args = lifecycle.parse_args(["--password", "test"])
+
+    command = lifecycle.routing_host_check_commands(args)["firewall"]
+
+    assert 'nft list chain inet atlaso forward | grep -F "policy drop;"' in command
+    assert 'comment \\"route-' in command
+    assert 'isolate-' not in command
+
+
 def test_host_state_checks_verify_vcf_trust_runtime_dependencies(monkeypatch):
     """Verify that host state checks verify vcf trust runtime dependencies.
 

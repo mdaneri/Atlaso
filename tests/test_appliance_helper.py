@@ -11646,6 +11646,54 @@ def test_dnsmasq_ipv6_lease_mirror_uses_duid_and_iaid(monkeypatch, tmp_path, cap
     assert not mirror.exists()
 
 
+def test_ipv6_reservation_mirror_uses_active_duid_before_removal(monkeypatch, tmp_path):
+    """Keep a valid DHCPv6 reservation mirror, then remove it with its reservation.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace helper paths.
+        tmp_path: Temporary directory for isolated DNS state.
+    """
+    helper = load_helper_module()
+    address = helper.ip_address("2001:db8:50::21")
+    state_dir = tmp_path / "dnsmasq"
+    state_dir.mkdir()
+    hosts_dir = tmp_path / "authoritative-leases"
+    hosts_dir.mkdir()
+    mirror = hosts_dir / f"lease-{address.packed.hex()}.hosts"
+    mirror.write_text(
+        "2001:db8:50::21 reserved.atlaso.internal\n"
+        "# duid=00:01:00:01:ab:cd iaid=17\n# reservation\n",
+        encoding="utf-8",
+    )
+    (state_dir / "dhcp.leases").write_text(
+        "1893456000 17 2001:db8:50::21 * 00:01:00:01:ab:cd\n", encoding="utf-8"
+    )
+    authoritative = tmp_path / "authoritative.conf"
+    authoritative.write_text("auth-zone=atlaso.internal\n", encoding="utf-8")
+    installed = tmp_path / "installed.conf"
+    installed.write_text(
+        "# atlaso-authoritative-lease-scope=2001:db8:50::/64,atlaso.internal\n"
+        "dhcp-host=02:00:00:00:00:01,set:atlaso-name-020000000001,[2001:db8:50::21]\n"
+        "dhcp-option=tag:atlaso-name-020000000001,option:host-name,reserved\n",
+        encoding="utf-8",
+    )
+    candidate = tmp_path / "candidate.conf"
+    candidate.write_text(
+        "# atlaso-authoritative-lease-scope=2001:db8:50::/64,atlaso.internal\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(helper, "DNSMASQ_STATE_DIR", state_dir)
+    monkeypatch.setattr(helper, "DNSMASQ_LEASE_FILE_PATH", state_dir / "dhcp.leases")
+    monkeypatch.setattr(helper, "DNSMASQ_AUTHORITATIVE_LEASE_HOSTS_DIR", hosts_dir)
+    monkeypatch.setattr(helper, "DNSMASQ_CONFIG_PATH", installed)
+
+    helper._prepare_authoritative_lease_hosts(authoritative, installed)
+    assert mirror.exists()
+
+    helper._prepare_authoritative_lease_hosts(authoritative, candidate)
+    assert not mirror.exists()
+
+
 def test_dnsmasq_helper_apply_creates_allowlisted_tftp_root(monkeypatch, tmp_path):
     """Verify that dnsmasq helper apply creates allowlisted tftp root.
 

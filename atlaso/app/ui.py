@@ -16907,10 +16907,8 @@ def _submit_appliance_apply(
     management_handoff_dnsmasq = bool(
         management_handoff
         and getattr(dns_settings_for_apply, "enabled", False)
-        and (
-            "dnsmasq" in selected_ids
-            or bool(unit_map.get("dnsmasq", {}).get("changed"))
-        )
+        # A pending DNS edit is not consent to apply it with a Network handoff.
+        and "dnsmasq" in selected_ids
     )
     if management_handoff_dnsmasq:
         selected_ids.add("dnsmasq")

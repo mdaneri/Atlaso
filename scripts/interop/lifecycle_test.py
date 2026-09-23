@@ -3977,8 +3977,8 @@ def routing_host_check_commands(args: argparse.Namespace) -> dict[str, str]:
             'sysctl -n net.ipv4.ip_forward | grep "^1$"'
         ),
         "firewall": (
+            'nft list chain inet atlaso forward | grep -F "policy drop;" && '
             "nft list ruleset | tee /tmp/atlaso-lifecycle-nft.txt | head -n 200 && "
-            'grep -F "comment \\"isolate-" /tmp/atlaso-lifecycle-nft.txt && '
             'grep -F "comment \\"route-" /tmp/atlaso-lifecycle-nft.txt && '
             'grep -F "masquerade" /tmp/atlaso-lifecycle-nft.txt'
         ),

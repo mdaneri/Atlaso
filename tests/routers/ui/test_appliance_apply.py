@@ -726,6 +726,53 @@ def test_management_handoff_keeps_dns_shutdown_after_resolver_move(client):
     assert payload["selected_units"].index("appliance_settings") < payload["selected_units"].index("dnsmasq")
 
 
+def test_management_handoff_leaves_unselected_dns_record_pending(client, monkeypatch):
+    """A Network handoff must not submit a separately staged DNS record.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+        monkeypatch: Pytest fixture used to isolate background execution.
+    """
+    from sqlalchemy import select
+
+    from atlaso.app import ui
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import DnsRecord, DnsSettings, Job, PhysicalInterface
+
+    login(client)
+    with SessionLocal() as db:
+        dns_settings = db.query(DnsSettings).one()
+        dns_settings.enabled = True
+        db.commit()
+        units = ui.appliance_apply_units(db)
+        ui.update_appliance_apply_baselines(db, units, {unit["id"] for unit in units})
+        management = db.scalar(select(PhysicalInterface).where(PhysicalInterface.name == "eth0"))
+        assert management is not None
+        management.ip_cidr = "192.168.49.22/24"
+        db.add(DnsRecord(hostname="pending.atlaso.internal", record_type="A", address="192.168.12.44"))
+        db.commit()
+    monkeypatch.setattr(ui, "run_appliance_apply_job", lambda _job_id: None)
+    csrf = client.get("/dashboard").text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+
+    response = client.post(
+        "/appliance-apply",
+        data={"csrf": csrf, "selected_units": "network"},
+        headers={"Accept": "application/json"},
+    )
+
+    assert response.status_code == 202, response.text
+    with SessionLocal() as db:
+        job = db.get(Job, response.json()["job_id"])
+        assert job is not None
+        payload = json.loads(job.result or "{}")
+        pending = next(unit for unit in ui.appliance_apply_units(db) if unit["id"] == "dnsmasq")
+    assert payload["management_handoff"] is True
+    assert "dnsmasq" not in payload["selected_units"]
+    assert "dnsmasq" not in payload["management_handoff_units"]
+    assert "dnsmasq" in {unit["unit_id"] for unit in payload["skipped_changed_units"]}
+    assert pending["changed"] is True
+
+
 def test_ldap_dependency_dns_disable_includes_resolver_move(client, monkeypatch):
     """Move the resolver when LDAP dependency expansion selects DNS shutdown.
 

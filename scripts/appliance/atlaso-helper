@@ -3170,6 +3170,18 @@ def _prepare_authoritative_lease_hosts(
         except ValueError:
             entry.unlink()
             continue
+        # DHCPv6 mirrors carry DUID and IAID from the active lease, not the
+        # MAC used to configure the reservation. The lease check below binds it.
+        current_reservation_matches = bool(
+            current_reservation
+            and hostname == current_reservation[0]
+            and (lease_address.version == 6 or rows[1] == current_reservation[1])
+        )
+        previous_reservation_matches = bool(
+            previous_reservation
+            and hostname == previous_reservation[0]
+            and (lease_address.version == 6 or rows[1] == previous_reservation[1])
+        )
         if (
             lease is None
             or not lease[0]
@@ -3180,9 +3192,9 @@ def _prepare_authoritative_lease_hosts(
                 for network, domain in scopes
             ))
             or (lease[1] != "*" and hostname.split(".", 1)[0] != lease[1])
-            or (current_reservation is not None and (hostname, rows[1]) != current_reservation)
-            or (reserved_mirror and (hostname, rows[1]) != current_reservation)
-            or (previous_reservation == (hostname, rows[1]) and previous_reservation != current_reservation)
+            or (current_reservation is not None and not current_reservation_matches)
+            or (reserved_mirror and not current_reservation_matches)
+            or (previous_reservation_matches and not current_reservation_matches)
         ):
             entry.unlink()
 
