@@ -24803,6 +24803,7 @@ def _snapshot_management_handoff_routing(interfaces: list[str], tables: dict[str
         if not cidrs:
             raise ValueError("previous routing-domain assigned addresses are missing")
         routes = {}
+        observed_route_counts: dict[int, dict[str, int]] = {}
         for family in (4, 6):
             result = _network_observation_command(["ip", "-j", f"-{family}", "route", "show", "table", "all", "dev", name])
             if result.returncode:
@@ -24810,6 +24811,14 @@ def _snapshot_management_handoff_routing(interfaces: list[str], tables: dict[str
             entries = json.loads(result.stdout)
             if not isinstance(entries, list) or len(entries) > 4096:
                 raise ValueError("previous routing-domain routes are malformed")
+            observed_route_counts[family] = {
+                "all": len(entries),
+                "interface": sum(isinstance(route, dict) and route.get("dev") == name for route in entries),
+                "main": sum(isinstance(route, dict) and str(route.get("table", "main")) in {"main", "254"}
+                            for route in entries),
+                "domain": sum(isinstance(route, dict) and str(route.get("table")) == str(tables[name])
+                              for route in entries),
+            }
             for route in entries:
                 if not isinstance(route, dict):
                     raise ValueError("previous routing-domain route is malformed")
@@ -24855,7 +24864,8 @@ def _snapshot_management_handoff_routing(interfaces: list[str], tables: dict[str
             route["holdover_metric"] = route["metric"] + offset
         for family in {ip_interface(cidr).version for cidr in cidrs}:
             if not any(ip_network(route["destination"]).version == family for route in routes.values()):
-                raise ValueError(f"previous routing-domain IPv{family} family has no observed usable route")
+                raise ValueError(f"previous routing-domain IPv{family} family has no observed usable route "
+                                 f"({observed_route_counts[family]})")
         captured[name] = {"mac": mac, "table": tables[name], "cidrs": sorted(set(cidrs)),
                           "routes": list(routes.values())}
     return captured
