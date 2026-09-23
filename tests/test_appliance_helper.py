@@ -11350,6 +11350,11 @@ def test_dnsmasq_lease_events_mirror_only_managed_names(monkeypatch, tmp_path, c
     monkeypatch.setattr(helper, "DNSMASQ_AUTHORITATIVE_LEASE_HOSTS_DIR", hosts_dir)
     monkeypatch.setattr(helper, "DNSMASQ_AUTHORITATIVE_CONFIG_PATH", config_path)
     monkeypatch.setenv("DNSMASQ_DOMAIN", "atlaso.internal")
+    commands = []
+    def fake_run(command):
+        commands.append(command)
+        return subprocess.CompletedProcess(command, 0, "", "")
+    monkeypatch.setattr(helper, "_run", fake_run)
     helper._prepare_authoritative_lease_hosts(config_path)
 
     event = ["atlaso-helper", "add", "02:00:00:00:00:01", "192.168.50.21", "client"]
@@ -11357,6 +11362,7 @@ def test_dnsmasq_lease_events_mirror_only_managed_names(monkeypatch, tmp_path, c
     hosts = list(hosts_dir.iterdir())
     assert len(hosts) == 1
     assert hosts[0].read_text(encoding="utf-8") == "192.168.50.21 client.atlaso.internal\n# mac=02:00:00:00:00:01\n"
+    assert ["systemctl", "kill", "--kill-whom=main", "--signal=HUP", "atlaso-dns-authoritative.service"] in commands
 
     assert helper.main(["atlaso-helper", "old", "02:00:00:00:00:01", "192.168.50.21"]) == 0
     assert hosts[0].read_text(encoding="utf-8") == "192.168.50.21 client.atlaso.internal\n# mac=02:00:00:00:00:01\n"
@@ -11380,6 +11386,8 @@ def test_dnsmasq_lease_events_mirror_only_managed_names(monkeypatch, tmp_path, c
     assert next(hosts_dir.iterdir()).read_text(encoding="utf-8") == (
         "192.168.50.21 supplied.atlaso.internal\n# mac=02:00:00:00:00:01\n"
     )
+    assert helper.main(["atlaso-helper", "old", "02:00:00:00:00:01", "192.168.50.21", "*"]) == 0
+    assert "supplied.atlaso.internal" in next(hosts_dir.iterdir()).read_text(encoding="utf-8")
     lease_file = state_dir / "dhcp.leases"
     lease_file.write_text("1893456000 02:00:00:00:00:01 192.168.50.21 * *\n", encoding="utf-8")
     helper._prepare_authoritative_lease_hosts(config_path)
@@ -11406,6 +11414,33 @@ def test_dnsmasq_lease_events_mirror_only_managed_names(monkeypatch, tmp_path, c
     assert next(hosts_dir.iterdir()).read_text(encoding="utf-8").startswith(
         "192.168.50.21 reserved.atlaso.internal\n"
     )
+
+
+def test_authoritative_lease_scope_change_removes_stale_name(monkeypatch, tmp_path):
+    """An active lease cannot keep its former authoritative suffix after Apply."""
+    helper = load_helper_module()
+    state_dir = tmp_path / "dnsmasq"
+    state_dir.mkdir()
+    hosts_dir = state_dir / "authoritative-leases"
+    hosts_dir.mkdir()
+    mirror = hosts_dir / "lease-c0a83215.hosts"
+    mirror.write_text("192.168.50.21 client.atlaso.internal\n# mac=02:00:00:00:00:01\n", encoding="utf-8")
+    (state_dir / "dhcp.leases").write_text(
+        "1893456000 02:00:00:00:00:01 192.168.50.21 * *\n", encoding="utf-8"
+    )
+    authoritative = tmp_path / "authoritative.conf"
+    authoritative.write_text("auth-zone=atlaso.internal\nauth-zone=sitea.internal\n", encoding="utf-8")
+    main = tmp_path / "main.conf"
+    main.write_text(
+        "# atlaso-authoritative-lease-scope=192.168.50.0/24,sitea.internal\n", encoding="utf-8"
+    )
+    monkeypatch.setattr(helper, "DNSMASQ_STATE_DIR", state_dir)
+    monkeypatch.setattr(helper, "DNSMASQ_LEASE_FILE_PATH", state_dir / "dhcp.leases")
+    monkeypatch.setattr(helper, "DNSMASQ_AUTHORITATIVE_LEASE_HOSTS_DIR", hosts_dir)
+
+    helper._prepare_authoritative_lease_hosts(authoritative, main)
+
+    assert not mirror.exists()
 
 
 def test_dnsmasq_helper_apply_creates_allowlisted_tftp_root(monkeypatch, tmp_path):

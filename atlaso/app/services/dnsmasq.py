@@ -1433,6 +1433,7 @@ def validate_dhcp_scope(scope: DhcpScope) -> tuple[list[str], object | None]:
             or (address.version == 4 and address in ip_network("0.0.0.0/8"))
             or (address.version == 4 and address == ip_address("255.255.255.255"))
             or (address.version == 6 and address.ipv4_mapped is not None)
+            or (address.version == 6 and address in ip_network("::/96"))
             or (address.version == 6 and address in ip_network("100::/64"))
             or (network and address == network.network_address)
             or (network and address.version == 4 and address == network.broadcast_address)
@@ -1603,6 +1604,7 @@ def render_dnsmasq_config(
             lines.append(f"dhcp-ignore-names=tag:{tag}")
             network = _dhcp_scope_network(scope)
             if network is not None:
+                lines.append(f"# atlaso-authoritative-lease-scope={network},{scope_domain}")
                 lines.append(
                     f"rev-server={network},{DNSMASQ_AUTHORITATIVE_LOOPBACK_ADDRESS}#{DNSMASQ_AUTHORITATIVE_PORT}"
                 )

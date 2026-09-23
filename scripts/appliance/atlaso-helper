@@ -2998,7 +2998,27 @@ def _configure_local_resolver() -> subprocess.CompletedProcess[str]:
     return _configure_resolver("eth0", ["127.0.0.1"], ["~."])
 
 
-def _prepare_authoritative_lease_hosts(candidate_config_path: Path) -> None:
+def _authoritative_lease_scopes(config_path: Path) -> list[tuple[IPv4Network | IPv6Network, str]]:
+    """Read the managed DHCP networks and suffixes from a candidate config."""
+    if config_path.stat().st_size > 1_048_576:
+        raise ValueError("The dnsmasq candidate configuration is too large.")
+    scopes = []
+    for line in config_path.read_text(encoding="utf-8").splitlines():
+        if not line.startswith("# atlaso-authoritative-lease-scope="):
+            continue
+        fields = line.removeprefix("# atlaso-authoritative-lease-scope=").split(",", 1)
+        if len(fields) != 2 or not HOSTNAME_PATTERN.fullmatch(fields[1]):
+            raise ValueError("The authoritative lease scope metadata is invalid.")
+        try:
+            scopes.append((ip_network(fields[0], strict=True), fields[1]))
+        except ValueError as exc:
+            raise ValueError("The authoritative lease scope network is invalid.") from exc
+    return scopes
+
+
+def _prepare_authoritative_lease_hosts(
+    candidate_config_path: Path, candidate_main_config_path: Path | None = None
+) -> None:
     """Validate and reconcile the lease mirror before starting the DNS backend.
 
     Args:
@@ -3036,6 +3056,7 @@ def _prepare_authoritative_lease_hosts(candidate_config_path: Path) -> None:
         if expires == 0 or expires > time.time():
             active_leases[address] = (fields[1].lower(), fields[3].lower())
     zones = _authoritative_lease_domains(candidate_config_path)
+    scopes = _authoritative_lease_scopes(candidate_main_config_path) if candidate_main_config_path else None
     for entry in hosts_dir.iterdir():
         if not re.fullmatch(r"lease-[0-9a-f]{8,32}\.hosts", entry.name) or entry.is_symlink() or not entry.is_file():
             raise ValueError("The authoritative lease hosts directory contains an unexpected entry.")
@@ -3046,10 +3067,19 @@ def _prepare_authoritative_lease_hosts(candidate_config_path: Path) -> None:
             continue
         address, hostname = parts
         lease = active_leases.get(address)
+        try:
+            lease_address = ip_address(address)
+        except ValueError:
+            entry.unlink()
+            continue
         if (
             lease is None
             or rows[1] != f"# mac={lease[0]}"
             or not any(hostname.endswith(f".{zone}") for zone in zones)
+            or (scopes is not None and not any(
+                lease_address in network and hostname.endswith(f".{domain}")
+                for network, domain in scopes
+            ))
             or (lease[1] != "*" and hostname.split(".", 1)[0] != lease[1])
         ):
             entry.unlink()
@@ -3123,7 +3153,7 @@ def _handle_dnsmasq_lease_event(argv: list[str]) -> int:
     hostname = _lease_option_from_tags("option:host-name")
     if not hostname:
         hostname = argv[4].strip().strip(".").lower() if len(argv) == 5 else ""
-    if not hostname:
+    if not hostname or hostname == "*":
         hostname = os.environ.get("DNSMASQ_SUPPLIED_HOSTNAME", "").strip().strip(".").lower()
     if action == "old" and not hostname:
         # Ignored client names are absent from the persisted dnsmasq lease
@@ -3142,6 +3172,7 @@ def _handle_dnsmasq_lease_event(argv: list[str]) -> int:
     try:
         if not publish:
             destination.unlink(missing_ok=True)
+            _reload_authoritative_lease_hosts()
             return 0
         temporary_path: Path | None = None
         try:
@@ -3152,6 +3183,7 @@ def _handle_dnsmasq_lease_event(argv: list[str]) -> int:
                 temporary.write(f"{address} {fqdn}\n# mac={argv[2].lower()}\n")
             temporary_path.chmod(0o644)
             os.replace(temporary_path, destination)
+            _reload_authoritative_lease_hosts()
         finally:
             if temporary_path is not None:
                 temporary_path.unlink(missing_ok=True)
@@ -3159,6 +3191,16 @@ def _handle_dnsmasq_lease_event(argv: list[str]) -> int:
         print("Unable to synchronize an authoritative DHCP lease name.", file=sys.stderr)
         return 1
     return 0
+
+
+def _reload_authoritative_lease_hosts() -> None:
+    """Discard backend records retained after a hostsdir file changes."""
+    unit = "atlaso-dns-authoritative.service"
+    if _run(["systemctl", "is-active", "--quiet", unit]).returncode != 0:
+        return
+    result = _run(["systemctl", "kill", "--kill-whom=main", "--signal=HUP", unit])
+    if result.returncode != 0:
+        raise OSError("Unable to reload authoritative DHCP lease records.")
 
 
 def _handle_dnsmasq(action: str, args: list[str]) -> int:
@@ -3212,7 +3254,7 @@ def _handle_dnsmasq(action: str, args: list[str]) -> int:
             DNSMASQ_STATE_DIR.mkdir(parents=True, exist_ok=True)
             if authoritative_config_path is not None:
                 try:
-                    _prepare_authoritative_lease_hosts(authoritative_config_path)
+                    _prepare_authoritative_lease_hosts(authoritative_config_path, main_config_path)
                 except (OSError, ValueError) as exc:
                     print(str(exc), file=sys.stderr)
                     return 2

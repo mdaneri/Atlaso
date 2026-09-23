@@ -227,6 +227,7 @@ def test_authoritative_dns_with_dhcp_subscribes_to_lease_changes():
     )
 
     assert "dhcp-ignore-names=tag:sitea" in config.splitlines()
+    assert "# atlaso-authoritative-lease-scope=192.168.50.0/24,atlaso.internal" in config.splitlines()
     assert "rev-server=192.168.50.0/24,127.0.0.1#5353" in config.splitlines()
     assert "dhcp-script=/opt/atlaso/bin/atlaso-helper" in config.splitlines()
     assert "script-on-renewal" in config.splitlines()
