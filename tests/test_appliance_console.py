@@ -1605,6 +1605,53 @@ def test_console_power_task_is_committed_before_real_helper_invocation(client, m
         assert job.created_by == "console:root"
 
 
+@pytest.mark.parametrize("owned_dns_only", [True, False])
+def test_console_ntp_apply_includes_only_owned_dns_dependency(client, monkeypatch, owned_dns_only):
+    """Console NTP Apply captures DNS only when its own records caused the delta.
+
+    Args:
+        client: HTTP test client.
+        monkeypatch: Pytest fixture used to replace dependencies.
+        owned_dns_only: Whether the DNS delta contains only NTP-owned changes.
+    """
+    from atlaso.app import appliance_console, ui
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Job, JobStatus
+
+    units = [
+        {
+            "id": unit_id, "label": unit_id, "changed": True,
+            "validation_errors": [], "validation_warnings": [],
+            "snapshot_hash": unit_id, "summary": [], "config_path": "/tmp/example",
+            "config_preview": unit_id, "config_diff": "",
+        }
+        for unit_id in ("dnsmasq", "ntpd")
+    ]
+    monkeypatch.setattr(ui, "appliance_apply_units", lambda _db: units)
+    monkeypatch.setattr(ui, "ntp_owned_dns_is_only_pending_change", lambda _db, _unit: owned_dns_only)
+
+    def finish(job_id, *, force_real):
+        """Mark the captured Apply job complete.
+
+        Args:
+            job_id: Identifier of the captured Apply job.
+            force_real: Whether real execution was requested.
+        """
+        assert force_real is True
+        with SessionLocal() as db:
+            job = db.get(Job, job_id)
+            job.status = JobStatus.SUCCEEDED.value
+            db.commit()
+
+    monkeypatch.setattr(ui, "run_appliance_apply_job", finish)
+    job_id = appliance_console._submit_console_apply({"ntpd"})
+    with SessionLocal() as db:
+        job = db.get(Job, job_id)
+        assert json.loads(job.result)["selected_units"] == (
+            ["ntpd", "dnsmasq"] if owned_dns_only else ["ntpd"]
+        )
+
+
 def test_forced_real_apply_seam_rejects_non_console_jobs(client):
     """Verify that forced real apply seam rejects non console jobs.
 
