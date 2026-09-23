@@ -385,6 +385,20 @@ def test_ambiguous_submission_prohibits_recovery_mutation(monkeypatch, topology,
     assert len([call for call in client.calls if call[0] == "PATCH"]) == 2
 
 
+def test_rejected_apply_reports_only_bounded_validation_identity(monkeypatch):
+    """A known 422 exposes the invalid unit without echoing the server preview."""
+    client = FakeClient()
+    monkeypatch.setattr(client, "request", lambda method, path, **kwargs:
+                        (200, '<input name="csrf" value="synthetic">', {}) if method == "GET" else
+                        (422, json.dumps({"detail": "Resolve validation errors before submitting appliance changes.",
+                                          "preview": "private appliance address"}), {}))
+    monkeypatch.setattr(client, "json_request", lambda method, path: {
+        "units": [{"id": "wan", "valid": False, "validation_errors": ["private appliance address"]}]})
+    with pytest.raises(OverlapPrerequisiteError, match="unit-validation; invalid_units=\\['wan'\\]") as error:
+        scenario._apply(client)
+    assert "private appliance address" not in str(error.value)
+
+
 def test_initial_setup_uses_reviewed_nonformatting_units(monkeypatch):
     """Initial setup uses the ordinary Apply then requires clean applied readback.
 

@@ -185,7 +185,34 @@ def _apply(client: FixtureHttpClient, units: list[str] | None = None) -> dict[st
     if status != 202:
         if not 400 <= status < 500:
             raise ApplyOutcomeUnknown(f"Apply submission returned ambiguous HTTP {status}; preserve fixture")
-        raise OverlapPrerequisiteError(f"global Apply submission failed with HTTP {status}")
+        # The server's detail and preview can contain appliance configuration.
+        # Retain only exact public validation labels and invalid unit IDs.
+        reason = "unclassified"
+        try:
+            detail = json.loads(body).get("detail")
+            known = {
+                "Select at least one appliance change to submit.": "no-selection",
+                "Resolve validation errors before submitting appliance changes.": "unit-validation",
+                "Cannot verify applied forwarding intent; restore helper readiness before submitting appliance changes.":
+                    "forwarding-intent",
+            }
+            if isinstance(detail, str):
+                reason = known.get(detail, "unclassified")
+        except (AttributeError, ValueError, TypeError):
+            pass
+        invalid: list[str] = []
+        try:
+            review = client.json_request("GET", "/ui/management/appliance-apply/review")
+            rows = review.get("units")
+            if isinstance(rows, list):
+                invalid = sorted({row["id"] for row in rows if isinstance(row, dict)
+                                  and row.get("valid") is False and isinstance(row.get("id"), str)
+                                  and re.fullmatch(r"[a-z_]+", row["id"])})
+        except Exception:  # noqa: BLE001 - diagnostics never replace the known submission refusal.
+            pass
+        raise OverlapPrerequisiteError(
+            f"global Apply submission failed with HTTP {status} ({reason}; invalid_units={invalid})"
+        )
     try:
         submission = json.loads(body)
     except ValueError:
