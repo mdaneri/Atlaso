@@ -109,8 +109,10 @@ function Assert-AtlasoOidcSiteNetwork {
     if (-not $reachable) {
         throw "OIDC Site A address $SiteCidr is not reachable from an active host adapter for $SiteANetwork ($hostAlias)."
     }
+    # Find-NetRoute emits a local address first and its selected route second.
+    # Check property presence because strict mode rejects reading it on the address.
     $selectedRoute = @(Find-NetRoute -RemoteIPAddress $siteAddress.IPAddressToString -ErrorAction SilentlyContinue |
-        Where-Object { $_.DestinationPrefix }) | Select-Object -First 1
+        Where-Object { $_.PSObject.Properties['DestinationPrefix'] }) | Select-Object -First 1
     if (-not $selectedRoute -or $selectedRoute.InterfaceIndex -ne $hostAdapter.InterfaceIndex) {
         throw "OIDC Site A address $SiteCidr does not route through the selected host adapter for $SiteANetwork ($hostAlias)."
     }

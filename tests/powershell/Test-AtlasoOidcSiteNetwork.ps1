@@ -32,6 +32,7 @@ try {
         }
         Set-Item Function:script:Find-NetRoute -Value {
             param($RemoteIPAddress, $ErrorAction)
+            [pscustomobject]@{ IPAddress = '192.168.84.1'; InterfaceIndex = 24 }
             [pscustomobject]@{ DestinationPrefix = '192.168.84.0/24'; InterfaceIndex = $script:fixtureRouteIndex }
         }
         $script:fixtureRouteIndex = 24
