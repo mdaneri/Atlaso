@@ -90,9 +90,14 @@ function Assert-AtlasoOidcSiteNetwork {
     $hostAdapter = Get-NetAdapter -Name $hostAlias -ErrorAction SilentlyContinue
     $hostAddresses = @(Get-NetIPAddress -InterfaceAlias $hostAlias -AddressFamily IPv4 -ErrorAction SilentlyContinue |
         Where-Object { $_.AddressState -eq 'Preferred' })
+    if (@($hostAddresses | Where-Object {
+        (ConvertTo-AtlasoIpv4Integer -Address ([System.Net.IPAddress]::Parse($_.IPAddress))) -eq $siteIp
+    }).Count -gt 0) {
+        throw "OIDC Site A address $SiteCidr is already assigned to the host adapter for $SiteANetwork ($hostAlias)."
+    }
     $reachable = $hostAdapter -and $hostAdapter.Status -eq 'Up' -and @($hostAddresses | Where-Object {
         $hostIp = ConvertTo-AtlasoIpv4Integer -Address ([System.Net.IPAddress]::Parse($_.IPAddress))
-        $_.PrefixLength -eq $prefix -and ($hostIp -band $networkMask) -eq ($siteIp -band $networkMask) -and $hostIp -ne $siteIp
+        $_.PrefixLength -eq $prefix -and ($hostIp -band $networkMask) -eq ($siteIp -band $networkMask)
     }).Count -gt 0
     if (-not $reachable) {
         throw "OIDC Site A address $SiteCidr is not reachable from an active host adapter for $SiteANetwork ($hostAlias)."
