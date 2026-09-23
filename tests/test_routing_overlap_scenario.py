@@ -196,7 +196,7 @@ def test_failed_acquisition_restores_both_interfaces_and_revokes(monkeypatch, to
         raise OverlapPrerequisiteError("native acquisition failed")
 
     monkeypatch.setattr(scenario, "_ready", fail_ready)
-    monkeypatch.setattr(scenario, "_apply", lambda current: applies.append(copy.deepcopy(current.rows)) or {"status": "succeeded"})
+    monkeypatch.setattr(scenario, "_apply", lambda current, **kwargs: applies.append(copy.deepcopy(current.rows)) or {"status": "succeeded"})
     monkeypatch.setattr(scenario, "_snapshot", lambda connect: {"links": [
         {"ifname": "eth0", "addr_info": [{"local": "192.0.2.10", "scope": "global"}]},
         {"ifname": "eth1", "addr_info": []}]})
@@ -306,7 +306,7 @@ def test_unknown_apply_outcome_does_not_start_restoration(monkeypatch, topology)
     """
     client = FakeClient()
 
-    def uncertain(current):
+    def uncertain(current, **kwargs):
         """Report the accepted task whose terminal status is unknown.
 
         Args:
@@ -413,7 +413,7 @@ def test_initial_setup_uses_reviewed_nonformatting_units(monkeypatch):
         "initial_apply_required": True, "active_task": None,
         "units": [{"id": "network", "valid": True, "format_volumes": []}],
     })
-    monkeypatch.setattr(scenario, "_apply", lambda current, units: selected.extend(units) or {"job_id": "job_abc"})
+    monkeypatch.setattr(scenario, "_apply", lambda current, units, **kwargs: selected.extend(units) or {"job_id": "job_abc"})
     monkeypatch.setattr(scenario, "_clean", lambda current: {"pending_count": 0})
     assert scenario._setup(client)["initial_apply"]["job_id"] == "job_abc"
     assert selected == ["network"]
@@ -432,7 +432,7 @@ def test_initial_setup_applies_only_one_reviewed_dependent_dnsmasq_unit(monkeypa
     monkeypatch.setattr(client, "json_request", lambda method, path: (
         next(reviews) if path.endswith("/review") else
         {"pending_count": 1, "active_task": None, "locked": False}))
-    monkeypatch.setattr(scenario, "_apply", lambda current, units: calls.append(units) or {"job_id": "job_abc"})
+    monkeypatch.setattr(scenario, "_apply", lambda current, units, **kwargs: calls.append(units) or {"job_id": "job_abc"})
     clean_calls = iter([scenario.OverlapPrerequisiteError("pending"),
                         {"pending_count": 0}, {"pending_count": 0}])
 
@@ -456,7 +456,7 @@ def test_established_setup_applies_only_reviewed_dependent_dnsmasq_unit(monkeypa
               "units": [{"id": "dnsmasq", "valid": True, "format_volumes": []}]}
     monkeypatch.setattr(client, "json_request", lambda method, path: review if path.endswith("/review") else
                         {"pending_count": 1, "active_task": None, "locked": False})
-    monkeypatch.setattr(scenario, "_apply", lambda current, units: calls.append(units) or {"job_id": "job_dns"})
+    monkeypatch.setattr(scenario, "_apply", lambda current, units, **kwargs: calls.append(units) or {"job_id": "job_dns"})
     outcomes = iter([scenario.OverlapPrerequisiteError("pending"),
                      {"pending_count": 0}, {"pending_count": 0}])
 
@@ -481,7 +481,7 @@ def test_established_setup_rechecks_clean_projection_before_acceptance(monkeypat
     monkeypatch.setattr(client, "json_request", lambda method, path: review if path.endswith("/review") else
                         {"pending_count": 1, "active_task": None, "locked": False})
     applies = []
-    monkeypatch.setattr(scenario, "_apply", lambda current, units: applies.append(units) or {"job_id": "job_dns"})
+    monkeypatch.setattr(scenario, "_apply", lambda current, units, **kwargs: applies.append(units) or {"job_id": "job_dns"})
     outcomes = iter([{"pending_count": 0}, scenario.OverlapPrerequisiteError("pending"),
                      {"pending_count": 0}, {"pending_count": 0}])
 
@@ -514,7 +514,7 @@ def test_same_address_requires_original_unexpired_server_lease(monkeypatch, topo
     static["links"][0]["addr_info"][0].pop("dynamic")
     monkeypatch.setattr(scenario, "_snapshot", lambda connect: static)
     monkeypatch.setattr(scenario, "_same_address_native", lambda connect, admitted: {"native": native})
-    monkeypatch.setattr(scenario, "_apply", lambda current: applies.append(copy.deepcopy(current.rows)) or {"status": "succeeded"})
+    monkeypatch.setattr(scenario, "_apply", lambda current, **kwargs: applies.append(copy.deepcopy(current.rows)) or {"status": "succeeded"})
     if changed:
         with pytest.raises(OverlapPrerequisiteError, match="not retained"):
             scenario._same_address_lease(client, lambda: None, topology, lambda action: {"leases": [next(observations)]})

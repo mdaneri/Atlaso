@@ -163,12 +163,15 @@ def _ready(connect: Callable[[], paramiko.SSHClient], topology: AdmittedTopology
             time.sleep(2)
 
 
-def _apply(client: FixtureHttpClient, units: list[str] | None = None) -> dict[str, Any]:
+def _apply(
+    client: FixtureHttpClient, units: list[str] | None = None, *, stage: str = "unspecified",
+) -> dict[str, Any]:
     """Submit changed networking units through the ordinary audited global Apply.
 
     Args:
         client: Authenticated private pinned HTTPS client.
         units: Explicit reviewed initial units, or the scenario's networking units.
+        stage: Fixed scenario stage label for safe failure diagnostics.
     """
     status, body, _headers = client.request("GET", "/ui/management/appliance-apply")
     if status != 200:
@@ -225,7 +228,7 @@ def _apply(client: FixtureHttpClient, units: list[str] | None = None) -> dict[st
         except Exception:  # noqa: BLE001 - diagnostics never replace the known submission refusal.
             pass
         raise OverlapPrerequisiteError(
-            f"global Apply submission failed with HTTP {status} "
+            f"global Apply submission failed at {stage} with HTTP {status} "
             f"({reason}; invalid_units={invalid}; known_causes={causes})"
         )
     try:
@@ -354,7 +357,7 @@ def _settle_dependent_dns(client: FixtureHttpClient) -> dict[str, Any]:
                 f"review_pending={pending.get('pending_count') if type(pending.get('pending_count')) is int else 'invalid'}, "
                 f"status_pending={status.get('pending_count') if type(status.get('pending_count')) is int else 'invalid'})"
             ) from None
-        applications.append(_apply(client, ["dnsmasq"]))
+        applications.append(_apply(client, ["dnsmasq"], stage="dependent-dns"))
     raise AssertionError("bounded DNS setup loop did not terminate")
 
 
@@ -375,7 +378,7 @@ def _setup(client: FixtureHttpClient) -> dict[str, Any]:
     ids = [unit.get("id") for unit in units]
     if any(not isinstance(unit, str) or not re.fullmatch(r"[a-z_]+", unit) for unit in ids):
         raise OverlapPrerequisiteError("initial fixture Apply unit identity is invalid")
-    applied = _apply(client, ids)
+    applied = _apply(client, ids, stage="baseline")
     return {"initial_apply": applied, **_settle_dependent_dns(client)}
 
 
@@ -482,7 +485,7 @@ def _restore(
             errors.append("restore-interface")
     if errors:
         raise OverlapPrerequisiteError("baseline restoration incomplete: " + ", ".join(errors))
-    applied = _apply(client)
+    applied = _apply(client, stage="restoration")
     for name, desired in baseline.items():
         actual = client.json_request("GET", f"/api/v1/interfaces/physical/{name}")
         if any(actual[key] != value for key, value in desired.items()):
@@ -560,7 +563,7 @@ def _same_address_lease(
     client.json_request("PATCH", path, json_body={
         "ipv4_method": "static", "ip_cidr": "192.0.2.10/24", "gateway": "192.0.2.1",
     })
-    static_apply = _apply(client)
+    static_apply = _apply(client, stage="same-address-static")
     static = _snapshot(connect)
     static_rows = [row for row in _addresses(static, interface) if row.get("local") == "192.0.2.10"]
     if len(static_rows) != 1 or static_rows[0].get("dynamic") is True:
@@ -573,7 +576,7 @@ def _same_address_lease(
     activation_lease = _lease(server_action("status"), topology)
     if activation_lease["expires_at"] != retained["expires_at"]:
         raise OverlapPrerequisiteError("retained DHCP lease changed before activation")
-    dhcp_apply = _apply(client)
+    dhcp_apply = _apply(client, stage="same-address-dhcp")
     acquired = _same_address_native(connect, topology)
     desired = client.json_request("GET", path)
     if desired.get("ipv4_method") != "dhcp" or desired.get("ip_cidr"):
@@ -674,7 +677,7 @@ def _run_authenticated(
             "gateway": None, "ipv6_enabled": True, "ipv6_cidr": "fd74:1::20/64", "ipv6_gateway": None,
             "admin_state": "up", "access_management_ui_enabled": False,
         })
-        evidence["apply"] = _apply(client)
+        evidence["apply"] = _apply(client, stage="route-activation")
         initial = _ready(connect_appliance, topology)
         evidence["lease"] = _lease(server_action("status"), topology)
         sources = _prove(initial, topology)
