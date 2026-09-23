@@ -1607,6 +1607,10 @@ def render_dnsmasq_config(
                     f"rev-server={network},{DNSMASQ_AUTHORITATIVE_LOOPBACK_ADDRESS}#{DNSMASQ_AUTHORITATIVE_PORT}"
                 )
         lines.append(f"dhcp-script={DNSMASQ_DHCP_LEASE_SYNC_PATH}")
+        # Existing leases keep their address when the service is restarted.
+        # Renewals must still re-publish client-supplied names that were
+        # intentionally omitted from the persisted lease by ignore-names.
+        lines.append("script-on-renewal")
     dhcp_interfaces = [scope.interface_name for scope in scopes if dhcp_settings.enabled and scope.enabled is not False]
     dns_interfaces = split_interfaces(dns_settings.listen_interface)
     if dns_settings.enabled:
