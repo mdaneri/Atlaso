@@ -15933,7 +15933,7 @@ def run_appliance_apply_job(job_id: str, *, force_real: bool = False) -> None:
             )
             ca_reload_units: set[str] = set()
             deferred_ca_baseline: dict[str, Any] | None = None
-            if "ca" in current_by_id and "ca" in selected_order and "ca" not in handoff_unit_ids:
+            if "ca" in current_by_id and "ca" in selected_order:
                 baselines = load_appliance_apply_baselines(db)
                 ca_reload_units = rotated_ca_certificate_consumers(current_by_id["ca"], baselines.get("ca"))
                 ca_reload_units.intersection_update(baselines.keys())
@@ -16064,6 +16064,13 @@ def run_appliance_apply_job(job_id: str, *, force_real: bool = False) -> None:
                         )
                         if not settings_complete:
                             applied_ids.discard("appliance_settings")
+                        # The handoff reloads its bundled Public Services listener,
+                        # but other consumers run later as separate steps. Keep the
+                        # old CA fingerprints until those listeners also succeed.
+                        ca_reload_units.difference_update(handoff_unit_ids)
+                        if ca_reload_units:
+                            applied_ids.discard("ca")
+                            deferred_ca_baseline = current_by_id["ca"]
                         settings_result = next(
                             (result for result in unit_results if result["unit_id"] == "appliance_settings"),
                             None,

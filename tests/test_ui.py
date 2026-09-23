@@ -17511,6 +17511,150 @@ def test_ca_baseline_waits_for_rotated_leaf_listener_reload(client, monkeypatch,
         assert ui.rotated_ca_certificate_consumers(units[0], baselines["ca"]) == set()
 
 
+def test_ca_handoff_keeps_reload_pending_after_later_consumer_failure(client, monkeypatch):
+    """A successful handoff must not hide a failed non-bundled listener reload.
+
+    Args:
+        client: HTTP test client that initializes the isolated database.
+        monkeypatch: Pytest fixture used to replace host apply operations.
+    """
+    import atlaso.app.ui as ui
+    from atlaso.app.adapters.system import AdapterResult
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Job, JobStatus, JobStep
+
+    old_preview = json.dumps({"certificates": [
+        {"managed_owner": "oidc:https", "fingerprint": "old-oidc"},
+        {"managed_owner": "kms:server", "fingerprint": "old-kms"},
+    ]})
+    new_preview = json.dumps({"certificates": [
+        {"managed_owner": "oidc:https", "fingerprint": "new-oidc"},
+        {"managed_owner": "kms:server", "fingerprint": "new-kms"},
+    ]})
+    unit_ids = [*ui.MANAGEMENT_HANDOFF_UNIT_IDS, "kms"]
+    units = [
+        {
+            "id": unit_id, "label": unit_id, "snapshot_hash": f"hash-{unit_id}",
+            "summary": [unit_id], "validation_errors": [], "validation_warnings": [],
+            "config_path": f"/tmp/{unit_id}.conf",
+            "config_preview": new_preview if unit_id == "ca" else "{}",
+            "config_diff": "", "context": {},
+        }
+        for unit_id in unit_ids
+    ]
+    with SessionLocal() as db:
+        ui.save_appliance_apply_baselines(
+            db,
+            {
+                unit_id: {"config_preview": old_preview if unit_id == "ca" else "{}"}
+                for unit_id in unit_ids
+            },
+        )
+        db.commit()
+
+    def handoff(units_by_id, **_kwargs):
+        """Report a successfully deployed bundled management path.
+
+        Args:
+            units_by_id: Captured Apply units.
+            **_kwargs: Other handoff arguments unused by this test.
+        """
+        results = [
+            {
+                "unit_id": unit_id, "label": unit_id, "status": "succeeded",
+                "success": True, "dry_run": True, "commands": [],
+                "summary": units_by_id[unit_id]["summary"],
+            }
+            for unit_id in ui.MANAGEMENT_HANDOFF_UNIT_IDS
+        ]
+        return {"success": True, "dry_run": True, "commands": [], "management_handoff": {}}, results
+
+    fail_kms = True
+
+    def execute(unit, *, adapter=None, db=None):
+        """Fail the first KMS reload, then permit a complete retry.
+
+        Args:
+            unit: Apply unit selected for execution.
+            adapter: Host adapter supplied by the runner.
+            db: Database session supplied by the runner.
+        """
+        success = unit["id"] != "kms" or not fail_kms
+        return {
+            "unit_id": unit["id"], "label": unit["label"],
+            "status": "succeeded" if success else "failed", "success": success,
+            "dry_run": True, "commands": [], "summary": unit["summary"],
+            "validation_errors": [], "validation_warnings": [],
+            "config_path": unit["config_path"], "config_preview": unit["config_preview"],
+            "config_diff": "", "error": "reload failed" if not success else "",
+        }
+
+    monkeypatch.setattr(ui, "appliance_apply_units", lambda _db, **_kwargs: units)
+    monkeypatch.setattr(ui, "execute_management_handoff", handoff)
+    monkeypatch.setattr(ui, "execute_appliance_apply_unit", execute)
+    monkeypatch.setattr(ui, "persist_vcf_depot_metadata_from_apply", lambda _db, _results: None)
+    monkeypatch.setattr(ui, "log_appliance_apply_failures", lambda _job_id, _results: None)
+    monkeypatch.setattr(ui, "log_appliance_apply_submission", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        ui.SystemAdapter, "acknowledge_management_handoff",
+        lambda _self, job_id: AdapterResult(
+            command=["atlaso-helper", "management-handoff", "acknowledge", job_id],
+            dry_run=True, stdout=json.dumps({"management_handoff": "committed"}),
+        ),
+    )
+
+    def submit_job(job_id, selected, *, management_handoff):
+        """Create and execute one synthetic Apply task.
+
+        Args:
+            job_id: Stable test task identifier.
+            selected: Ordered selected unit IDs.
+            management_handoff: Whether to execute the bundled path.
+        """
+        with SessionLocal() as db:
+            job = Job(
+                id=job_id, type="appliance-apply", status=JobStatus.PENDING.value,
+                created_by="admin", progress_percent=0,
+                result=json.dumps({
+                    "selected_units": selected,
+                    "captured_units": [
+                        {"unit_id": unit["id"], "snapshot_hash": unit["snapshot_hash"]}
+                        for unit in units if unit["id"] in selected
+                    ],
+                    "skipped_changed_units": [], "units": [], "dry_run": True,
+                    "management_handoff": management_handoff,
+                    "management_handoff_units": (
+                        list(ui.MANAGEMENT_HANDOFF_UNIT_IDS) if management_handoff else []
+                    ),
+                }),
+            )
+            db.add(job)
+            db.add_all(
+                JobStep(
+                    id=f"{job_id}:{unit_id}", job=job, component_key=unit_id,
+                    label=unit_id, position=index, status=JobStatus.PENDING.value,
+                    result=json.dumps({"summary": [unit_id]}),
+                )
+                for index, unit_id in enumerate(selected, start=1)
+            )
+            db.commit()
+        ui.run_appliance_apply_job(job_id)
+
+    submit_job("job_ca_handoff_reload_failed", unit_ids, management_handoff=True)
+    with SessionLocal() as db:
+        assert db.get(Job, "job_ca_handoff_reload_failed").status == JobStatus.FAILED.value
+        baselines = ui.load_appliance_apply_baselines(db)
+        assert baselines["ca"]["config_preview"] == old_preview
+        assert baselines["public_services"]["config_preview"] == "{}"
+        assert ui.rotated_ca_certificate_consumers(units[0], baselines["ca"]) == {"public_services", "kms"}
+
+    fail_kms = False
+    submit_job("job_ca_handoff_reload_retry", ["ca", "kms", "public_services"], management_handoff=False)
+    with SessionLocal() as db:
+        assert db.get(Job, "job_ca_handoff_reload_retry").status == JobStatus.SUCCEEDED.value
+        assert ui.load_appliance_apply_baselines(db)["ca"]["config_preview"] == new_preview
+
+
 def test_ca_live_apply_stages_decrypted_private_keys_without_leaking_job_output(client, monkeypatch, tmp_path):
     """Verify that ca live apply stages decrypted private keys without leaking job output.
 
