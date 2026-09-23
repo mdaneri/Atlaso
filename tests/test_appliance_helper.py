@@ -12464,7 +12464,7 @@ def test_ldap_helper_authenticates_with_mode_0600_password_file_and_redacts(monk
     ) == 0
     output = capsys.readouterr()
     assert seen["chmod"][1] == 0o600
-    assert seen["password"] == "Secret-Ldap-Password!\n"
+    assert seen["password"] == "Secret-Ldap-Password!"
     assert "Secret-Ldap-Password!" not in " ".join(seen["command"])
     assert "Secret-Ldap-Password!" not in output.out
     assert "Secret-Ldap-Password!" not in output.err

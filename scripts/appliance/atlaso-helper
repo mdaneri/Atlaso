@@ -5476,7 +5476,6 @@ def _handle_ldap_inner(action: str, args: list[str]) -> int:
                 delete=False,
             ) as password_file:
                 password_file.write(password)
-                password_file.write("\n")
                 password_path = Path(password_file.name)
             os.chmod(password_path, 0o600)
             result = _run(
