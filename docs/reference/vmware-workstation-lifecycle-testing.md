@@ -394,6 +394,8 @@ MAC and reservation; RA advertises a short-lived private IPv6 prefix. The fixtur
 and configures no NAT. To advertise a nonzero IPv6 router lifetime, client A temporarily enables global IPv6
 forwarding only after installing its own IPv6 forward-drop guard. It captures and restores all/default/per-interface
 forwarding and RA settings, keeps forwarding disabled on each admitted NIC, and refuses NICs with LRO enabled.
+The disposable Alpine client seed disables LRO on its two VMXNET3 NICs before fixture admission; failure to do so
+fails first-boot setup. The controller still verifies the live state before changing forwarding.
 The original guard handles are removed only after restoration readback. The transport uses in-process, pinned SSH
 channels to
 only the private appliance's SSH and HTTPS ports, opens no host listener, and verifies HTTPS with the explicit

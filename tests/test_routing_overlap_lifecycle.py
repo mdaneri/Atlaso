@@ -161,7 +161,8 @@ def test_client_seed_installs_fixture_tools_only_when_requested(enabled):
     for package in ("dnsmasq", "radvd", "python3", "nftables", "ethtool", "sudo",
                     "open-vm-tools", "open-vm-tools-openrc", "open-vm-tools-vix"):
         assert (f"  - {package}\n" in data) == enabled
-    for command in ("rc-update add open-vm-tools default", "rc-service open-vm-tools start"):
+    for command in ("rc-update add open-vm-tools default", "rc-service open-vm-tools start",
+                    "ethtool -K eth0 lro off", "ethtool -K eth1 lro off"):
         assert (f"  - {command}\n" in data) == enabled
         assert f"{command} || true" not in data
     assert "rc-service dnsmasq" not in data and "rc-service radvd" not in data

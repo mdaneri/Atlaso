@@ -95,6 +95,7 @@ ssh_pwauth: true"""
     )
     fixture_services = (
         "\n  - rc-update add open-vm-tools default\n  - rc-service open-vm-tools start"
+        "\n  - ethtool -K eth0 lro off\n  - ethtool -K eth1 lro off"
         if fixture_mode else ""
     )
     # The credential-bearing seed is detached after the first boot. Restrict
