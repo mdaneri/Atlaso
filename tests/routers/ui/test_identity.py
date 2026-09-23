@@ -327,9 +327,9 @@ def test_local_users_page_separates_ldap_authentication(client):
     )[0]
     assert "editor:" not in enabled_column_js
     assert "validatePasswordMatch" in app_js.text
-    assert "initializeNonTabbableHelperControls" in app_js.text
-    assert '".help-icon, .password-toggle"' in app_js.text
-    assert 'control.setAttribute("tabindex", "-1")' in app_js.text
+    assert "initializeHelpTooltips" in app_js.text
+    assert 'button.removeAttribute("tabindex")' in app_js.text
+    assert 'button.setAttribute("aria-describedby", tooltip.id)' in app_js.text
     assert 'field: "shell"' in app_js.text
     assert 'field: "web_terminal_access"' in app_js.text
     assert 'title: "Web SSH"' in app_js.text
