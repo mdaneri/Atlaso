@@ -1093,6 +1093,11 @@ def validate_dns_settings(
             errors.append(f"DNS rebind exemption {domain} must be a valid domain name.")
     if (settings.cache_size or 0) < 0:
         errors.append("DNS cache size must be zero or greater.")
+    if settings.authoritative and settings.dnssec_enabled:
+        errors.append(
+            "Authoritative DNS and DNSSEC validation cannot be enabled together: "
+            "DNSSEC caching would remove the authoritative AA flag from repeated managed-zone answers."
+        )
     return errors
 
 
@@ -1524,8 +1529,8 @@ def render_dnsmasq_config(
     scopes = dhcp_scopes if dhcp_scopes else [_legacy_scope(dhcp_settings)]
     configured_cache_size = dns_settings.cache_size if dns_settings.cache_size is not None else 1000
     # The shared authoritative listener normally avoids caching forwarded
-    # answers so the backend's AA bit survives. dnsmasq requires a cache for
-    # DNSSEC validation, including when authoritative mode is also enabled.
+    # answers so the backend's AA bit survives. DNSSEC needs a cache, so
+    # validation rejects enabling it together with authoritative mode.
     cache_size = max(configured_cache_size, 150) if dns_settings.dnssec_enabled else (
         0 if dns_settings.authoritative else configured_cache_size
     )

@@ -978,6 +978,42 @@ def test_dns_settings_autosave_returns_json(client):
     assert "sddc.internal=192.168.10.10,192.168.10.11" in refreshed.text
 
 
+def test_dns_settings_rejects_authoritative_dnssec_before_apply(client):
+    """Show the incompatible combination in review and block its Apply."""
+    login(client)
+    page = client.get("/dns")
+    csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    response = client.post(
+        "/dns/settings",
+        data={
+            "enabled": "on",
+            "listen_interfaces_present": "1",
+            "listen_addresses_present": "1",
+            "listen_interfaces": ["eth2"],
+            "listen_addresses": ["192.168.50.1"],
+            "upstream_servers": "8.8.8.8",
+            "cache_size": "500",
+            "authoritative": "on",
+            "dnssec_enabled": "on",
+            "csrf": csrf,
+        },
+        headers={"X-Atlaso-Autosave": "1"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["valid"] is False
+    assert any(
+        "Authoritative DNS and DNSSEC validation cannot be enabled together" in error
+        for error in response.json()["validation_errors"]
+    )
+    submission = client.post(
+        "/appliance-apply",
+        data={"csrf": csrf, "selected_units": "dnsmasq"},
+        headers={"Accept": "application/json"},
+    )
+    assert submission.status_code == 422
+
+
 def test_dns_settings_autosave_filters_invalid_listen_interfaces(client):
     """Verify that dns settings autosave filters invalid listen interfaces.
 

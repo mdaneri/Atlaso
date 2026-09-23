@@ -213,17 +213,15 @@ def test_dnsmasq_renderer_emits_shared_authoritative_zones_and_generated_glue():
     assert "rebind-domain-ok=/corp.example/" in main_lines
 
 
-@pytest.mark.parametrize("authoritative", [False, True])
 @pytest.mark.parametrize("configured_cache_size,expected_cache_size", [(0, 150), (500, 500)])
-def test_dnssec_renderer_keeps_required_cache(authoritative, configured_cache_size, expected_cache_size):
-    """DNSSEC validation must retain enough cache in either listener mode."""
+def test_dnssec_renderer_keeps_required_cache(configured_cache_size, expected_cache_size):
+    """Recursive DNSSEC validation must retain enough cache."""
     config = render_dnsmasq_config(
         dns_settings=DnsSettings(
             enabled=True,
             listen_interface="eth1",
             listen_address="192.168.50.1",
             domain="atlaso.internal",
-            authoritative=authoritative,
             dnssec_enabled=True,
             cache_size=configured_cache_size,
         ),
@@ -234,6 +232,22 @@ def test_dnssec_renderer_keeps_required_cache(authoritative, configured_cache_si
 
     assert f"cache-size={expected_cache_size}" in config.splitlines()
     assert "dnssec" in config.splitlines()
+
+
+def test_authoritative_dns_rejects_dnssec_before_apply():
+    """DNSSEC caching cannot preserve authoritative AA on repeated answers."""
+    settings = DnsSettings(
+        enabled=True,
+        listen_interface="eth1",
+        listen_address="192.168.50.1",
+        domain="atlaso.internal",
+        authoritative=True,
+        dnssec_enabled=True,
+    )
+
+    errors = validate_dns_settings(settings, [])
+
+    assert any("Authoritative DNS and DNSSEC validation cannot be enabled together" in error for error in errors)
 
 
 def test_authoritative_dns_with_dhcp_subscribes_to_lease_changes():

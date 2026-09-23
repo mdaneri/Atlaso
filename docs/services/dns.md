@@ -60,9 +60,10 @@ The authoritative renderer emits:
 - one `auth-zone` per managed forward domain;
 - shared `auth-soa` and `auth-ttl` values;
 - A/AAAA `host-record` glue mapping the primary nameserver to every selected DNS listen address;
-- `server=/<managed-domain>/127.0.0.1#5353` and normally `cache-size=0` in the recursive
-  client-facing service. DNSSEC keeps at least 150 cache entries because dnsmasq requires caching
-  to validate DNSSEC replies.
+- `server=/<managed-domain>/127.0.0.1#5353` and `cache-size=0` in the recursive client-facing
+  service. Authoritative DNS and DNSSEC validation cannot be enabled together: DNSSEC caching
+  removes the AA flag from repeated managed-zone answers. Without Authoritative DNS, DNSSEC keeps
+  at least 150 cache entries as dnsmasq requires.
 
 When DHCP is enabled, leases in a managed DNS suffix update the derived-name directory
 `/var/lib/atlaso-dns-authoritative-leases`, which the authoritative backend can read after dropping privileges.
