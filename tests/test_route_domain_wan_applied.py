@@ -32,8 +32,9 @@ def modern(helper, monkeypatch, tmp_path):
              "sources": {"192.0.2.10": 200, "2001:db8::10": 200},
              "addresses": [{"ifname": "eth1", "address": interface["mac"], "addr_info": [
                  {"local": "192.0.2.10", "prefixlen": 24}, {"local": "2001:db8::10", "prefixlen": 64}]}],
-             "routes": {"4": [{"dst": "192.0.2.0/24", "dev": "eth1", "protocol": "4"}],
-                        "6": [{"dst": "2001:db8::/64", "dev": "eth1", "metric": 1024, "protocol": "4"}]}}
+             "routes": {"4": [{"dst": "192.0.2.0/24", "dev": "eth1", "table": 200, "protocol": "4"}],
+                        "6": [{"dst": "2001:db8::/64", "dev": "eth1", "table": 200,
+                               "metric": 1024, "protocol": "4"}]}}
     path = tmp_path / "route-domains.json"
     path.write_text(json.dumps({"schema": 1, "interfaces": [interface]}))
     monkeypatch.setattr(helper, "ROUTE_DOMAIN_CONFIG_PATH", path)
@@ -190,8 +191,15 @@ def test_installed_core_projection_serializes_held_identity(helper, modern, monk
     admitted = route_domains.parse_intent({"schema": 1, "interfaces": [], "held_addresses": [held]})
     monkeypatch.setattr(route_domains, "read_intent", lambda: admitted)
     monkeypatch.setattr(route_domains, "reconciliation_lock", nullcontext)
-    monkeypatch.setattr(route_domains, "read_native", lambda arguments: state["addresses"]
-                        if arguments == ["address", "show"] else state["routes"][arguments[0][-1]])
+    def read_native(arguments):
+        """Return table 200 plus an unrelated main-table route for the projection."""
+        if arguments == ["address", "show"]:
+            return state["addresses"]
+        assert arguments[-2:] == ["table", "all"]
+        return [*state["routes"][arguments[0][-1]],
+                {"dst": "default", "table": "main", "dev": "eth0"}]
+
+    monkeypatch.setattr(route_domains, "read_native", read_native)
 
     def execute(command, *, timeout):
         """Run fixed source in-process with isolated mocked core observations.
