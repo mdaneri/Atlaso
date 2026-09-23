@@ -17284,6 +17284,101 @@ def test_ca_apply_task_captures_current_desired_state(client):
         assert "Atlaso Internal Root CA" in (job.result or "")
 
 
+def test_ca_apply_replays_applied_listeners_after_managed_leaf_rotation(client, monkeypatch):
+    """Keep an unchanged active listener paired with its rotated CA leaf.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+        monkeypatch: Pytest fixture used to replace the rotation detector.
+    """
+    from sqlalchemy import select
+
+    import atlaso.app.ui as ui
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Job
+
+    with SessionLocal() as db:
+        units = ui.appliance_apply_units(db)
+        ui.update_appliance_apply_baselines(db, units, {unit["id"] for unit in units})
+        db.commit()
+
+    monkeypatch.setattr(ui, "rotated_ca_certificate_consumers", lambda *_: {"public_services"})
+    login(client)
+    page = client.get("/certificate-authority")
+    csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    response = client.post("/appliance-apply", data={"csrf": csrf, "selected_units": "ca"})
+    assert_apply_redirect(response)
+
+    with SessionLocal() as db:
+        job = db.execute(select(Job).where(Job.type == "appliance-apply")).scalar_one()
+        selected = json.loads(job.result or "{}")["selected_units"]
+        assert selected.index("ca") < selected.index("public_services")
+
+
+def test_ca_apply_requires_review_of_pending_listener_edits(client, monkeypatch):
+    """Do not apply an unrelated pending listener edit with a rotated CA leaf.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+        monkeypatch: Pytest fixture used to simulate the pending listener edit.
+    """
+    import atlaso.app.ui as ui
+    from atlaso.app.database import SessionLocal
+
+    with SessionLocal() as db:
+        units = ui.appliance_apply_units(db)
+        ui.update_appliance_apply_baselines(db, units, {unit["id"] for unit in units})
+        db.commit()
+
+    original_units = ui.appliance_apply_units
+
+    def pending_public_services(db, *, reconcile=True):
+        """Return apply units with an unreviewed listener change.
+
+        Args:
+            db: Database session used for the apply projection.
+            reconcile: Whether the projection reconciles desired state.
+        """
+        units = original_units(db, reconcile=reconcile)
+        next(unit for unit in units if unit["id"] == "public_services")["changed"] = True
+        return units
+
+    monkeypatch.setattr(ui, "appliance_apply_units", pending_public_services)
+    monkeypatch.setattr(ui, "rotated_ca_certificate_consumers", lambda *_: {"public_services"})
+    login(client)
+    page = client.get("/certificate-authority")
+    csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    response = client.post(
+        "/appliance-apply", data={"csrf": csrf, "selected_units": "ca"}, headers={"accept": "application/json"}
+    )
+    assert response.status_code == 422
+    assert response.json()["detail"] == "Select the changed listener units before applying rotated CA certificates."
+
+
+def test_rotated_ca_certificate_consumers_only_selects_changed_managed_leaves():
+    """Map changed managed leaf fingerprints to the listener that reloads them."""
+    import atlaso.app.ui as ui
+
+    current = {
+        "certificates": [
+            {"managed_owner": "oidc:https", "fingerprint": "new-oidc"},
+            {"managed_owner": "ldap:ldaps", "fingerprint": "same-ldap"},
+            {"managed_owner": "ntp:nts", "fingerprint": "new-ntp"},
+            {"managed_owner": "manual", "fingerprint": "new-manual"},
+        ]
+    }
+    previous = {
+        "certificates": [
+            {"managed_owner": "oidc:https", "fingerprint": "old-oidc"},
+            {"managed_owner": "ldap:ldaps", "fingerprint": "same-ldap"},
+            {"managed_owner": "ntp:nts", "fingerprint": "old-ntp"},
+        ]
+    }
+    assert ui.rotated_ca_certificate_consumers(
+        {"config_preview": json.dumps(current)}, {"config_preview": json.dumps(previous)}
+    ) == {"public_services", "ntpd"}
+
+
 def test_ca_live_apply_stages_decrypted_private_keys_without_leaking_job_output(client, monkeypatch, tmp_path):
     """Verify that ca live apply stages decrypted private keys without leaking job output.
 

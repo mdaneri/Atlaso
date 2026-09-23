@@ -9853,6 +9853,48 @@ def load_appliance_apply_baselines(db: Session) -> dict[str, dict[str, Any]]:
     return baselines
 
 
+def rotated_ca_certificate_consumers(ca_unit: dict[str, Any], ca_baseline: dict[str, Any] | None) -> set[str]:
+    """Return applied listener units whose managed CA leaf changed.
+
+    Args:
+        ca_unit: Current Certificate Authority apply unit.
+        ca_baseline: Last successfully applied Certificate Authority baseline.
+
+    Returns:
+        Listener unit IDs that need to reload the rotated managed certificate.
+    """
+    if not ca_baseline:
+        return set()
+    current = json.loads(ca_unit["config_preview"])
+    try:
+        previous = json.loads(str(ca_baseline.get("config_preview") or ""))
+    except (TypeError, ValueError):
+        previous = {}
+    previous_fingerprints = {
+        row.get("managed_owner"): row.get("fingerprint")
+        for row in previous.get("certificates", [])
+        if isinstance(row, dict) and row.get("managed_owner")
+    }
+    owner_units = {
+        "appliance:https": "public_services",
+        "oidc:https": "public_services",
+        "ca_portal:https": "public_services",
+        "vcf_offline_depot:https": "public_services",
+        "kms:server": "kms",
+        "ldap:ldaps": "ldap",
+        "ntp:nts": "ntpd",
+        "vcf_private_registry:https": "vcf_private_registry",
+    }
+    return {
+        owner_units[row["managed_owner"]]
+        for row in current.get("certificates", [])
+        if isinstance(row, dict)
+        and row.get("managed_owner") in owner_units
+        and row.get("fingerprint")
+        and row["fingerprint"] != previous_fingerprints.get(row["managed_owner"])
+    }
+
+
 def applied_local_dns_enabled(baseline: dict[str, Any] | None) -> bool:
     """Return whether the last-applied DNS unit enabled local DNS.
 
@@ -16748,6 +16790,26 @@ def _submit_appliance_apply(
     )
     if ca_required_for_nts:
         selected_ids.add("ca")
+    if "ca" in selected_ids:
+        ca_consumers = rotated_ca_certificate_consumers(
+            unit_map["ca"], load_appliance_apply_baselines(db).get("ca")
+        )
+        pending_ca_consumers = {
+            unit_id for unit_id in ca_consumers
+            if unit_id in unit_map and unit_map[unit_id]["has_baseline"]
+            and unit_map[unit_id]["changed"] and unit_id not in selected_ids
+        }
+        if pending_ca_consumers:
+            detail = "Select the changed listener units before applying rotated CA certificates."
+            return JSONResponse({"detail": detail}, status_code=422) if wants_json else Response(
+                detail, status_code=422, media_type="text/plain"
+            )
+        # Replay unchanged applied listeners, without silently admitting any
+        # pending service edits that the operator did not select.
+        selected_ids.update(
+            unit_id for unit_id in ca_consumers
+            if unit_id in unit_map and unit_map[unit_id]["has_baseline"] and not unit_map[unit_id]["changed"]
+        )
     dns_settings_for_apply = unit_map.get("dnsmasq", {}).get("context", {}).get("dns_settings")
     local_dns_disable_requires_resolver = bool(
         "dnsmasq" in selected_ids
