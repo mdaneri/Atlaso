@@ -8,11 +8,11 @@ from tests.routers.ui.helpers import assert_apply_redirect, login
 
 
 @pytest.mark.parametrize(
-    ("previous_method", "ipv6_cidr"),
-    [("dhcp", ""), ("static", ""), ("static", "fd00:168::30/64")],
+    ("previous_method", "ipv6_cidr", "admin_state"),
+    [("dhcp", "", "up"), ("dhcp", "", "down"), ("static", "", "up"), ("static", "fd00:168::30/64", "up")],
 )
 def test_access_management_address_edit_matches_console_desired_state(
-    client, monkeypatch, previous_method, ipv6_cidr,
+    client, monkeypatch, previous_method, ipv6_cidr, admin_state,
 ):
     """Verify browser address edits and legacy conversion retain console-compatible intent.
 
@@ -21,6 +21,7 @@ def test_access_management_address_edit_matches_console_desired_state(
         monkeypatch: Replace console host mutation with bounded recording stubs.
         previous_method: Static intent or a legacy Access DHCP row to recover.
         ipv6_cidr: Requested static IPv6 CIDR, or disabled IPv6.
+        admin_state: Whether the legacy Access interface is administratively up.
     """
     from sqlalchemy import select
 
@@ -32,7 +33,7 @@ def test_access_management_address_edit_matches_console_desired_state(
     with SessionLocal() as db:
         interface = PhysicalInterface(
             name="access_management_test", mac_address="02:00:00:00:85:20",
-            role="access", mode="access", admin_state="up", oper_state="up",
+            role="access", mode="access", admin_state=admin_state, oper_state=admin_state,
             access_management_ui_enabled=True, ipv4_method=previous_method,
             ip_cidr="192.168.167.219/24" if previous_method == "static" else None,
             host_ip_cidr="192.168.167.219/24", ipv6_enabled=bool(ipv6_cidr),
@@ -49,7 +50,7 @@ def test_access_management_address_edit_matches_console_desired_state(
     response = client.post(
         f"/ui/management/physical-interfaces/{interface_id}/edit",
         data={
-            "role": "access", "mode": "access", "admin_state": "up",
+            "role": "access", "mode": "access", "admin_state": admin_state,
             "access_management_ui_enabled": "on", "ipv4_method": "static",
             "ip_cidr": "192.168.168.30/24", "gateway": "",
             "ipv6_enabled": str(bool(ipv6_cidr)).lower(), "ipv6_cidr": ipv6_cidr,
@@ -63,6 +64,7 @@ def test_access_management_address_edit_matches_console_desired_state(
         interface = db.get(PhysicalInterface, interface_id)
         browser_intent = tuple(getattr(interface, field) for field in fields)
         assert browser_intent == ("access", "access", True, "static", "192.168.168.30/24", None, bool(ipv6_cidr), ipv6_cidr or None, None)
+        assert interface.admin_state == admin_state
         assert interface.host_ip_cidr == "192.168.167.219/24"
         assert list(db.scalars(select(Job.id))) == before_jobs
         interface.ipv4_method = previous_method

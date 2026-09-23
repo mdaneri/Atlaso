@@ -101,6 +101,18 @@ test("legacy Access management DHCP can be converted without changing role or IP
   assert.match(result.confirmationOptions.message, /global appliance apply/i);
 });
 
+test("administratively down legacy Access DHCP can recover before being re-enabled", async () => {
+  const result = await conversionScenario({
+    role: "access", mode: "access", admin_up: false, access_management_ui_enabled: true,
+  });
+  assert.equal(result.saved, true);
+  assert.equal(result.data.admin_up, false);
+  assert.equal(result.data.role, "access");
+  assert.equal(result.data.ipv4_method, "static");
+  assert.equal(result.data.ip_cidr, "192.168.167.219/24");
+  assert.equal(result.data.gateway, "");
+});
+
 test("Access DHCP recovery cancellation and ineligible rows never save", async () => {
   const access = { role: "access", mode: "access", admin_up: true, access_management_ui_enabled: true };
   const cancelled = await conversionScenario(access, false);
@@ -112,7 +124,7 @@ test("Access DHCP recovery cancellation and ineligible rows never save", async (
   assert.equal(failed.data.ip_cidr, "");
   assert.equal(failed.data.role, "access");
   assert.equal(failed.data.access_management_ui_enabled, true);
-  for (const override of [{ access_management_ui_enabled: false }, { admin_up: false }, { mode: "trunk" }, { host_ip_cidr: "" }]) {
+  for (const override of [{ access_management_ui_enabled: false }, { mode: "trunk" }, { host_ip_cidr: "" }]) {
     const rejected = await conversionScenario({ ...access, ...override });
     assert.equal(rejected.saved, false);
     assert.equal(rejected.confirmationOptions, null);
@@ -158,6 +170,8 @@ test("Access DHCP row exposes recovery while retaining the unsupported-DHCP edit
   const conversion = options.rowContextMenu.find((item) => item.label === "Convert DHCP lease to static");
   assert.equal(conversion.disabled(row), false);
   assert.equal(options.columns.find((column) => column.field === "ipv4_method").editable({ getRow: () => row }), false);
+  data.admin_up = false;
+  assert.equal(conversion.disabled(row), false);
   data.access_management_ui_enabled = false;
   assert.equal(conversion.disabled(row), true);
 });

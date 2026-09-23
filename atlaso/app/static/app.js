@@ -9397,7 +9397,7 @@ async function togglePhysicalInterfaceFromMenu(row, csrf) {
 
 function canConvertPhysicalDhcpToStatic(data) {
   return data.ipv4_method === "dhcp" && (data.role === "management" || (
-    data.role === "access" && data.mode === "access" && data.admin_up && data.access_management_ui_enabled
+    data.role === "access" && data.mode === "access" && data.access_management_ui_enabled
   ));
 }
 
@@ -9410,7 +9410,7 @@ async function convertManagementDhcpInterfaceToStatic(row, csrf) {
   const observedGateway = ipv4GatewayIsOnLink(observedGatewayCandidate, observedIpv4) ? observedGatewayCandidate : "";
   const observedIpv6 = String(data.host_ipv6_cidr || "").trim();
   if (!canConvertPhysicalDhcpToStatic(data)) {
-    showNetworkMessage("physical-interface-error", "Only a management interface or an enabled Access interface with Management UI using IPv4 DHCP can be converted to static addressing.");
+    showNetworkMessage("physical-interface-error", "Only a management interface or an Access interface with Management UI using IPv4 DHCP can be converted to static addressing.");
     return;
   }
   if (!observedIpv4) {
