@@ -4638,9 +4638,14 @@ mutually exclusive.</p>
 </span><span id="__span-0-12"><a id="__codelineno-0-12" name="__codelineno-0-12" href="#__codelineno-0-12"></a>  <span class="p">&lt;/</span><span class="nt">div</span><span class="p">&gt;</span>
 </span><span id="__span-0-13"><a id="__codelineno-0-13" name="__codelineno-0-13" href="#__codelineno-0-13"></a><span class="p">&lt;/</span><span class="nt">fieldset</span><span class="p">&gt;</span>
 </span></code></pre></div>
-<p>Every configurable setting has an adjacent <code>i</code> help control using <code>.field-label</code> and <code>.help-icon</code>. The tooltip explains
-what changes, where it applies, and any safety boundary. Use explicit action labels such as <strong>Review appliance changes</strong>
-or <strong>Submit appliance changes</strong> instead of generic <strong>Save</strong> or <strong>Apply</strong>.</p>
+<p>Every configurable setting has an adjacent <code>i</code> help control using <code>.field-label</code> and <code>.help-icon</code>. The shared help overlay
+opens from the button on hover, keyboard focus, or click/tap; Escape or an outside click dismisses it. The overlay
+repositions within the viewport above panels and dialogs, while the button provides the accessible name and tooltip
+association. Without JavaScript, the button still shows its help text in a fixed viewport fallback on hover or focus.
+When help is longer than the available height, a focused button scrolls the content with arrow, Page Up/Down, Home,
+and End keys. Without JavaScript, the focused button itself becomes the scrollable fallback.
+The tooltip explains what changes, where it applies, and any safety boundary. Use explicit action labels
+such as <strong>Review appliance changes</strong> or <strong>Submit appliance changes</strong> instead of generic <strong>Save</strong> or <strong>Apply</strong>.</p>
 <p>Destructive actions use the shared <code>data-confirm-modal</code> pattern. The confirmation names the object, explains what is
 removed, and states whether the appliance changes immediately or only after global appliance apply. Do not use browser
 confirmation dialogs or immediate destructive submits.</p>
