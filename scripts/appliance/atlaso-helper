@@ -24837,8 +24837,13 @@ def _snapshot_management_handoff_routing(interfaces: list[str], tables: dict[str
                     raise ValueError("previous routing-domain route flags are malformed")
                 if set(flags) & {"dead", "linkdown"}:
                     continue
-                if route.get("nhid") or route.get("multipath") or route.get("from", "all") != "all":
-                    raise ValueError("previous routing-domain route requires unsupported nexthop or source preservation")
+                unsupported_nhid = bool(route.get("nhid"))
+                unsupported_multipath = bool(route.get("multipath"))
+                unsupported_source = route.get("from", "all") != "all"
+                if unsupported_nhid or unsupported_multipath or unsupported_source:
+                    raise ValueError("previous routing-domain route requires unsupported nexthop or source preservation "
+                                     f"(IPv{family}, nhid={unsupported_nhid}, multipath={unsupported_multipath}, "
+                                     f"source={unsupported_source})")
                 destination = str(route.get("dst") or "default")
                 destination = ("0.0.0.0/0" if family == 4 else "::/0") if destination == "default" else destination
                 network = ip_network(destination, strict=False)
