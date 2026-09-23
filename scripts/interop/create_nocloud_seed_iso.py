@@ -108,6 +108,29 @@ ssh_pwauth: true"""
         "\n      datasource_list: [ NoCloud, None ]"
         if fixture_mode else ""
     )
+    fixture_forwarding = (
+        "\n  - path: /etc/ssh/sshd_config.d/99-atlaso-private-fixture.conf"
+        "\n    permissions: '0644'"
+        "\n    content: |"
+        "\n      DisableForwarding no"
+        "\n      AllowTcpForwarding local"
+        "\n      PermitOpen 192.0.2.10:22 192.0.2.10:443"
+        "\n      GatewayPorts no"
+        "\n  - path: /usr/local/sbin/atlaso-private-fixture-sshd"
+        "\n    permissions: '0755'"
+        "\n    content: |"
+        "\n      #!/bin/sh"
+        "\n      set -eu"
+        "\n      config=/etc/ssh/sshd_config"
+        "\n      grep -q '^Include /etc/ssh/sshd_config.d/\\*.conf' \"$config\" || sed -i '1i Include /etc/ssh/sshd_config.d/*.conf' \"$config\""
+        "\n      sshd -t"
+        "\n      sshd -T | grep -q '^disableforwarding no$'"
+        "\n      sshd -T | grep -q '^allowtcpforwarding local$'"
+        "\n      sshd -T | grep -q 'permitopen .*192.0.2.10:22'"
+        "\n      sshd -T | grep -q 'permitopen .*192.0.2.10:443'"
+        if fixture_mode else ""
+    )
+    fixture_forwarding_command = "\n  - /usr/local/sbin/atlaso-private-fixture-sshd" if fixture_mode else ""
     # YAML treats a bare `true` as a boolean; cloud-init runcmd requires strings.
     refresh_command = "'true'" if fixture_mode else "/usr/local/sbin/atlaso-refresh-test-dhcp || true"
 
@@ -142,8 +165,8 @@ write_files:
       for iface in eth1 eth2; do
         ip link set "$iface" up 2>/dev/null || true
         udhcpc -i "$iface" -q -n -t 5 2>/dev/null || true
-      done{fixture_datasources}
-runcmd:
+      done{fixture_datasources}{fixture_forwarding}
+runcmd:{fixture_forwarding_command}
   - rc-update add sshd default || true
   - rc-service sshd restart || true{fixture_services}
   - {refresh_command}

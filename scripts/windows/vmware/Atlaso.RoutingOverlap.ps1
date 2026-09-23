@@ -95,6 +95,8 @@ function Get-RoutingOverlapGuest {
 <#
 .SYNOPSIS
 Wait for first-boot HTTPS to publish a CA before pinning private fixture trust.
+.PARAMETER Vmx
+Original owned appliance VMX path.
 #>
 function Wait-RoutingOverlapTrust {
     param([string]$Vmx)

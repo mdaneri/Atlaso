@@ -173,7 +173,14 @@ def test_client_seed_installs_fixture_tools_only_when_requested(enabled):
     datasource_files = [item for item in config["write_files"]
                         if item["path"] == "/etc/cloud/cloud.cfg.d/99-atlaso-fixture-datasources.cfg"]
     assert len(datasource_files) == int(enabled)
+    forwarding_files = [item for item in config["write_files"]
+                        if item["path"] == "/etc/ssh/sshd_config.d/99-atlaso-private-fixture.conf"]
+    assert len(forwarding_files) == int(enabled)
+    assert ("/usr/local/sbin/atlaso-private-fixture-sshd" in commands) == enabled
     if enabled:
+        assert "AllowTcpForwarding local" in forwarding_files[0]["content"]
+        assert "PermitOpen 192.0.2.10:22 192.0.2.10:443" in forwarding_files[0]["content"]
+        assert commands[0] == "/usr/local/sbin/atlaso-private-fixture-sshd"
         assert datasource_files[0]["content"].strip() == "datasource_list: [ NoCloud, None ]"
         assert "  - /usr/local/sbin/atlaso-refresh-test-dhcp" not in data
         assert "  eth1:\n    dhcp4: false\n    dhcp6: false\n    accept-ra: false" in files["network-config"]

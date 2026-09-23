@@ -400,6 +400,8 @@ The original guard handles are removed only after restoration readback. The tran
 channels to
 only the private appliance's SSH and HTTPS ports, opens no host listener, and verifies HTTPS with the explicit
 appliance CA and private target identity. It does not follow redirects to another origin or load ambient SSH keys.
+The Alpine control-client seed admits only local SSH forwarding to `192.0.2.10:22` and `192.0.2.10:443`, and checks
+the effective sshd policy before the fixture starts; all other forwarding destinations remain refused.
 The private lifecycle waits for first-boot HTTPS to publish a nonempty CA before pinning its trust observation.
 If the owned fixture's first-boot console reports the known transient DHCP activation review while `eth0` already
 holds its reserved `192.0.2.10` address, the lifecycle submits the unchanged DHCP/disabled-IPv6 settings through
