@@ -12704,18 +12704,141 @@ function initializeSwitchFields(root = document) {
   });
 }
 
-function initializeNonTabbableHelperControls() {
-  document.querySelectorAll(".help-icon, .password-toggle").forEach((control) => {
-    if (!(control instanceof HTMLElement)) {
+function initializeHelpTooltips() {
+  document.querySelectorAll(".password-toggle").forEach((control) => control.setAttribute("tabindex", "-1"));
+  const tooltip = document.createElement("div");
+  tooltip.id = "atlaso-help-tooltip";
+  tooltip.className = "atlaso-help-tooltip";
+  tooltip.setAttribute("role", "tooltip");
+  tooltip.setAttribute("popover", "manual");
+  tooltip.hidden = true;
+  document.body.append(tooltip);
+
+  let active = null;
+  let pinned = false;
+  const generatedLabels = new WeakMap();
+  const helpButton = (target) => target instanceof Element ? target.closest("button.help-icon[data-help]") : null;
+  const setUpButton = (button) => {
+    if (!(button instanceof HTMLButtonElement)) return;
+    button.removeAttribute("tabindex");
+    if (button.hasAttribute("aria-label") && button.getAttribute("aria-label") !== generatedLabels.get(button)) return;
+    const label = button.closest(".field-label") || button.parentElement;
+    const heading = label?.querySelector(":scope > span:first-child");
+    const labeledControl = heading?.querySelector("[aria-label], [title]");
+    const name = labeledControl?.getAttribute("aria-label") || labeledControl?.getAttribute("title")
+      || heading?.textContent?.trim() || Array.from(label?.childNodes || [])
+      .filter((node) => node !== button)
+      .map((node) => node instanceof Element
+        ? node.getAttribute("aria-label") || node.getAttribute("title") || node.textContent || ""
+        : node.textContent || "")
+      .join(" ").trim();
+    const generatedLabel = name ? `Help for ${name}` : "Help information";
+    button.setAttribute("aria-label", generatedLabel);
+    generatedLabels.set(button, generatedLabel);
+  };
+  const setUpButtons = (root) => {
+    if (root instanceof HTMLButtonElement && root.matches(".help-icon[data-help]")) setUpButton(root);
+    root.querySelectorAll?.("button.help-icon[data-help]").forEach(setUpButton);
+  };
+  setUpButtons(document);
+  new MutationObserver((records) => {
+    records.forEach((record) => {
+      record.addedNodes.forEach((node) => {
+        if (node instanceof Element) setUpButtons(node);
+      });
+      if (record.target instanceof Element) {
+        const field = record.target.closest(".field-label");
+        if (field) setUpButtons(field);
+      }
+    });
+  }).observe(document.body, { childList: true, subtree: true });
+
+  const place = () => {
+    if (!active || !active.isConnected) {
+      hide();
       return;
     }
-    control.setAttribute("tabindex", "-1");
+    const anchor = active.getBoundingClientRect();
+    if (anchor.bottom < 0 || anchor.top > window.innerHeight || anchor.right < 0 || anchor.left > window.innerWidth) {
+      hide();
+      return;
+    }
+    const width = tooltip.offsetWidth;
+    const height = tooltip.offsetHeight;
+    const margin = 8;
+    const gap = 8;
+    const above = anchor.top - margin - gap;
+    const below = window.innerHeight - anchor.bottom - margin - gap;
+    const top = above >= height || above > below
+      ? anchor.top - height - gap
+      : anchor.bottom + gap;
+    tooltip.style.left = `${Math.max(margin, Math.min(anchor.left + anchor.width / 2 - width / 2, window.innerWidth - width - margin))}px`;
+    tooltip.style.top = `${Math.max(margin, Math.min(top, window.innerHeight - height - margin))}px`;
+  };
+  const hide = () => {
+    if (!active) return;
+    active.removeAttribute("aria-describedby");
+    active = null;
+    pinned = false;
+    if (typeof tooltip.hidePopover === "function" && tooltip.matches(":popover-open")) tooltip.hidePopover();
+    tooltip.hidden = true;
+  };
+  const show = (button) => {
+    setUpButton(button);
+    if (active && active !== button) hide();
+    active = button;
+    const overlayRoot = button.closest("dialog[open]") || document.body;
+    if (tooltip.parentElement !== overlayRoot) overlayRoot.append(tooltip);
+    tooltip.textContent = button.dataset.help || "";
+    tooltip.hidden = false;
+    if (typeof tooltip.showPopover === "function" && !tooltip.matches(":popover-open")) tooltip.showPopover();
+    button.setAttribute("aria-describedby", tooltip.id);
+    place();
+  };
+  document.addEventListener("pointerover", (event) => {
+    const button = helpButton(event.target);
+    if (button && !button.contains(event.relatedTarget)) show(button);
   });
-  document.addEventListener("mousedown", (event) => {
-    if (event.target instanceof Element && event.target.closest(".help-icon")) {
+  document.addEventListener("pointerout", (event) => {
+    if (active && active.contains(event.target) && !active.contains(event.relatedTarget)
+        && !pinned && document.activeElement !== active && !tooltip.contains(event.relatedTarget)) hide();
+  });
+  tooltip.addEventListener("pointerleave", () => {
+    if (!pinned && document.activeElement !== active) hide();
+  });
+  document.addEventListener("focusin", (event) => {
+    const button = helpButton(event.target);
+    if (button) show(button);
+    else hide();
+  });
+  document.addEventListener("focusout", (event) => {
+    if (event.target === active && !pinned && !active.contains(event.relatedTarget)) hide();
+  });
+  document.addEventListener("click", (event) => {
+    const button = helpButton(event.target);
+    if (button) {
       event.preventDefault();
+      if (active === button && pinned) hide();
+      else { show(button); pinned = true; }
+    } else if (pinned && !tooltip.contains(event.target)) hide();
+  });
+  document.addEventListener("keydown", (event) => {
+    if (!active) return;
+    if (event.key === "Escape") { event.preventDefault(); hide(); event.stopPropagation(); return; }
+    if (document.activeElement !== active || tooltip.scrollHeight <= tooltip.clientHeight) return;
+    const page = Math.max(40, tooltip.clientHeight - 16);
+    const moves = { ArrowDown: 40, ArrowUp: -40, PageDown: page, PageUp: -page };
+    if (Object.hasOwn(moves, event.key)) {
+      event.preventDefault();
+      tooltip.scrollTop += moves[event.key];
+    } else if (event.key === "Home" || event.key === "End") {
+      event.preventDefault();
+      tooltip.scrollTop = event.key === "Home" ? 0 : tooltip.scrollHeight;
     }
   }, true);
+  window.addEventListener("resize", place);
+  window.addEventListener("scroll", place, true);
+  document.documentElement.classList.add("atlaso-help-ready");
 }
 
 function initializeSecretToggles() {
@@ -24338,7 +24461,7 @@ document.addEventListener("DOMContentLoaded", initializeConfirmationModals);
 document.addEventListener("DOMContentLoaded", initializePreviewModalControls);
 document.addEventListener("DOMContentLoaded", () => initializeCopyValueButtons());
 document.addEventListener("DOMContentLoaded", () => initializeDownloadValueButtons());
-document.addEventListener("DOMContentLoaded", initializeNonTabbableHelperControls);
+document.addEventListener("DOMContentLoaded", initializeHelpTooltips);
 document.addEventListener("DOMContentLoaded", initializeSecretToggles);
 document.addEventListener("DOMContentLoaded", () => initializeSwitchFields());
 document.addEventListener("DOMContentLoaded", () => initializeAutosaveForms());

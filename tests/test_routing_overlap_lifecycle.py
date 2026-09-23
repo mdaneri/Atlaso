@@ -154,7 +154,8 @@ def test_client_seed_installs_fixture_tools_only_when_requested(enabled):
     files = cloud_init_files(Namespace(hostname="fixture", user="alpine", public_key="synthetic-public-key",
                                       password="", routing_overlap_guest=enabled))
     data = files["user-data"]
-    commands = yaml.safe_load(data)["runcmd"]
+    config = yaml.safe_load(data)
+    commands = config["runcmd"]
     assert all(isinstance(command, str) for command in commands)
     for package in ("dnsmasq", "radvd", "python3", "nftables", "ethtool", "sudo",
                     "open-vm-tools", "open-vm-tools-openrc"):
@@ -165,7 +166,11 @@ def test_client_seed_installs_fixture_tools_only_when_requested(enabled):
     assert "rc-service dnsmasq" not in data and "rc-service radvd" not in data
     assert "rc-update add dnsmasq" not in data and "rc-update add radvd" not in data
     assert "NOPASSWD:ALL" in data
+    datasource_files = [item for item in config["write_files"]
+                        if item["path"] == "/etc/cloud/cloud.cfg.d/99-atlaso-fixture-datasources.cfg"]
+    assert len(datasource_files) == int(enabled)
     if enabled:
+        assert datasource_files[0]["content"].strip() == "datasource_list: [ NoCloud, None ]"
         assert "  - /usr/local/sbin/atlaso-refresh-test-dhcp" not in data
         assert "  eth1:\n    dhcp4: false\n    dhcp6: false\n    accept-ra: false" in files["network-config"]
         assert "eth2:" not in files["network-config"]

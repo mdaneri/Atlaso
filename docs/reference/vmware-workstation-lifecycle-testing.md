@@ -610,6 +610,9 @@ SSH password as one bounded standard-input line to the repository-controlled hel
 multiline, and oversized input before replacing an existing seed artifact. After successful lifecycle client access
 proves that cloud-init consumed each seed, the runner stops the clients, detaches and deletes both ISOs with absence
 verification, then restarts a retained lab. Failure cleanup also stops affected clients and requires verified seed absence.
+The isolated routing-overlap clients install a fixture-only cloud-init datasource list containing NoCloud and None.
+Once their credential-bearing seeds are detached, this prevents later boots from waiting for unrelated network
+metadata services before SSH and VMware Tools become available.
 For a full ESXi PXE install, the consumer rotates
 the encrypted `Lifecycle ESXi` vault entry and persists only
 `{{vault.lifecycle_esxi.esx.lifecycle.root.password}}` in the Kickstart source; Atlaso resolves that marker for the

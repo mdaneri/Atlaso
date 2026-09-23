@@ -69,31 +69,30 @@ Include every linked issue and pull-request identifier in the first progress upd
 reporting surfaces accept free-form traceability metadata. When a required output schema does not permit extra metadata,
 follow the schema and do not block solely to add the identifiers.
 
-## Sol and Spark Delegation
+## Sol and Luna Delegation
 
-Atlaso defines the project-scoped `spark_worker` in `.codex/agents/spark-worker.toml` with
-`gpt-5.3-codex-spark` at medium reasoning effort. The primary Sol agent should delegate small, fully specified work to
-that worker when doing so materially improves speed or keeps noisy exploration and validation out of the primary
-context. Suitable work includes localized edits, repository searches, mechanical refactoring, isolated unit tests,
-Ruff or mypy cleanup, documentation and docstrings, and narrowly scoped UI tweaks whose interaction and reference are
-already decided.
+The project-scoped `luna_worker` in `.codex/agents/luna-worker.toml` selects `gpt-6-luna` at high reasoning effort.
+GPT-6 Sol High is the lead; GPT-6 Luna High is the default worker for scoped implementation, investigation, tests,
+documentation, and parallel tasks. Sol owns architecture, difficult debugging, integration, security, final review,
+validation, and delivery.
 
-Sol retains architecture and design decisions, ambiguous or difficult debugging, cross-component and integration
-work, security-sensitive changes, task decomposition, review of every delegated result, final validation, and delivery.
+Escalate to Sol after repeated Luna failures or when the task needs architectural reasoning, non-obvious interactions
+across services, authentication or security, database/schema migration, or broader networking/routing/DHCP/DNS
+reasoning. Luna returns its evidence and the open decision to Sol.
 Every delegated prompt must state the exact scope, owned files, expected result, relevant checks, the Mandatory Agent
 Startup Gate, and the exact resolved Codex worktree root and permitted task-state roots. The delegating agent must
 verify the delegated worktree and task-owned mutable paths against those roots before relying on the result. UI prompts
-must also include the Mandatory UI Design Guide Gate, interaction classification, and reused Atlaso reference. Spark
+must also include the Mandatory UI Design Guide Gate, interaction classification, and reused Atlaso reference. Luna
 must not commit, push, change GitHub state, or delegate further.
 
-Run multiple Spark workers only for independent tasks with non-overlapping
+Run multiple Luna workers only for independent tasks with non-overlapping
 file ownership. Sol must inspect and integrate every returned diff before
 relying on it.
 
-If Spark is unavailable, rate-limited, its usage allowance is exhausted,
+If Luna is unavailable, rate-limited, its usage allowance is exhausted,
 or the worker cannot be started because of capacity/runtime limitations,
-Sol performs the work directly. Sol does not repeatedly retry Spark after a
-quota or rate-limit failure and never substitutes another model.
+Sol performs the work directly. Sol does not repeatedly retry Luna after a
+quota or rate-limit failure and never substitutes an unapproved model.
 Report the fallback once for the current task.
 
 ### Unrelated issue discoveries

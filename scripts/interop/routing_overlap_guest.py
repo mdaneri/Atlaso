@@ -62,7 +62,8 @@ def validate_request(request: Any) -> dict[str, Any]:
         raise Refusal("invalid fixture contract")
     for key, pattern in (("task_id", r"[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}"),
                          ("source_commit", r"[0-9a-f]{40}"), ("topology_sha256", r"[0-9a-f]{64}")):
-        if not isinstance(request[key], str) or not re.fullmatch(pattern, request[key]):
+        flags = re.IGNORECASE if key == "task_id" else 0
+        if not isinstance(request[key], str) or not re.fullmatch(pattern, request[key], flags=flags):
             raise Refusal("invalid ownership binding")
     macs = []
     for key in ("control", "private"):

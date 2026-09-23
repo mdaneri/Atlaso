@@ -224,6 +224,20 @@ def test_request_rejects_unbound_or_shared_inputs(override):
         guest.validate_request({**request(), **override})
 
 
+def test_request_accepts_uppercase_task_uuid_without_changing_binding():
+    """Human lifecycle task IDs retain their original case through guest admission."""
+    incoming = request()
+    incoming["task_id"] = incoming["task_id"].upper()
+    admitted = guest.validate_request(incoming)
+    assert guest.binding(admitted)["task_id"] == incoming["task_id"]
+
+
+def test_request_still_rejects_uppercase_source_commit():
+    """Only task UUID casing is relaxed; digest bindings remain canonical."""
+    with pytest.raises(guest.Refusal, match="invalid ownership binding"):
+        guest.validate_request({**request(), "source_commit": "A" * 40})
+
+
 def test_start_pause_resume_stop_preserves_control_and_records_originals(fixture):
     """Server and address use follows receipts; restoration leaves control intact.
 

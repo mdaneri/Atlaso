@@ -94,6 +94,16 @@ ssh_pwauth: true"""
         "\n  - rc-update add open-vm-tools default\n  - rc-service open-vm-tools start"
         if fixture_mode else ""
     )
+    # The credential-bearing seed is detached after the first boot. Restrict
+    # subsequent boots to the now-absent NoCloud source and its immediate None
+    # fallback instead of probing EC2 metadata for four minutes.
+    fixture_datasources = (
+        "\n  - path: /etc/cloud/cloud.cfg.d/99-atlaso-fixture-datasources.cfg"
+        "\n    permissions: '0644'"
+        "\n    content: |"
+        "\n      datasource_list: [ NoCloud, None ]"
+        if fixture_mode else ""
+    )
     # YAML treats a bare `true` as a boolean; cloud-init runcmd requires strings.
     refresh_command = "'true'" if fixture_mode else "/usr/local/sbin/atlaso-refresh-test-dhcp || true"
 
@@ -128,7 +138,7 @@ write_files:
       for iface in eth1 eth2; do
         ip link set "$iface" up 2>/dev/null || true
         udhcpc -i "$iface" -q -n -t 5 2>/dev/null || true
-      done
+      done{fixture_datasources}
 runcmd:
   - rc-update add sshd default || true
   - rc-service sshd restart || true{fixture_services}
