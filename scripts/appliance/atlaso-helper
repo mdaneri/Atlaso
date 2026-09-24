@@ -12405,7 +12405,10 @@ def _apply_wan_routes_and_qdiscs(
             name = row["interface"]
             saved = _wan_bool(row.get("enabled", ""), default=True)
             metric = int(row.get("metric", "100") or "100") or (1024 if network.version == 6 else 0)
-            if saved and routing_enabled and row.get("gateway") and metric in applied["connected"].get((name, str(network)), set()):
+            if saved and routing_enabled and row.get("gateway") and any(
+                prefix == str(network) and metric in metrics
+                for (_owner, prefix), metrics in applied["connected"].items()
+            ):
                 raise ValueError("static route would replace a Network-owned connected route; choose a distinct metric")
             if network.prefixlen == 0:
                 eligibility = applied["management_ui"].get(name, False)

@@ -11442,7 +11442,7 @@ def appliance_apply_units(db: Session, *, reconcile: bool = True) -> list[dict[s
     )
     network_unit["management_gateway_route_migrations"] = gateway_route_migrations
     network_unit["management_default_mirror_change"] = bool(
-        mirrored_management_default_routes(wan["wan_config_preview"])
+        mirrored_management_default_routes(candidate_wan_preview)
         != mirrored_management_default_routes(
             str((wan_baseline or {}).get("config_preview") or "")
         )
@@ -16126,7 +16126,10 @@ def run_appliance_apply_job(job_id: str, *, force_real: bool = False) -> None:
                 raise ApplianceApplyJobError(f"Desired state became invalid before execution: {', '.join(invalid_units)}.")
             if (
                 "network" in selected_order
-                and current_by_id["network"].get("management_domain_migration_required")
+                and (
+                    current_by_id["network"].get("management_domain_migration_required")
+                    or current_by_id["network"].get("management_default_mirror_change")
+                )
                 and not (
                     job_result.get("management_handoff")
                     and "wan" in selected_order
@@ -16134,7 +16137,7 @@ def run_appliance_apply_job(job_id: str, *, force_real: bool = False) -> None:
                 )
             ):
                 raise ApplianceApplyJobError(
-                    "The flagged management listener requires a protected Network and Routing & WAN migration. "
+                    "The management listener requires a protected Network and Routing & WAN migration. "
                     "Submit the appliance changes again."
                 )
             changed_after_submit = [

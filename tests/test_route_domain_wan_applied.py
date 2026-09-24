@@ -261,3 +261,34 @@ def test_enabled_static_cannot_replace_connected_identity(helper, modern, family
     else:
         assert helper._apply_wan_routes_and_qdiscs(parsed) == 0
         assert not any("route" in command for command in commands)
+
+
+@pytest.mark.parametrize("family", [4, 6])
+def test_nonowner_static_cannot_replace_connected_identity(helper, modern, family):
+    """A route on another lab link cannot replace the table-wide prefix owner.
+
+    Args:
+        helper: Loaded privileged helper.
+        modern: Admitted snapshot and captured mutations.
+        family: Connected route address family.
+    """
+    state, commands = modern
+    parsed = wan_input()
+    parsed["feature_settings"][0]["routing_enabled"] = "true"
+    parsed["targets"].append({"name": "eth2", "routing_domain": "lab"})
+    state["intent"]["interfaces"].append({"name": "eth2", "mac": "02:00:00:00:00:02",
+                                           "table": 200, "management_ui": False})
+    state["addresses"].append({"ifname": "eth2", "address": "02:00:00:00:00:02",
+                               "addr_info": [{"local": "192.0.2.20", "prefixlen": 24},
+                                             {"local": "2001:db8::20", "prefixlen": 64}]})
+    state["sources"].update({"192.0.2.20": 200, "2001:db8::20": 200})
+    network, next_hop, metric = (("192.0.2.0/24", "192.0.2.1", "0") if family == 4 else
+                                 ("2001:db8::/64", "2001:db8::1", "1024"))
+    parsed["routes"] = [
+        {"destination_cidr": "203.0.113.0/24", "interface": "eth2", "enabled": "true", "metric": "100"},
+        {"destination_cidr": network, "interface": "eth2", "gateway": next_hop,
+         "enabled": "true", "metric": metric},
+    ]
+    with pytest.raises(ValueError, match="Network-owned connected route"):
+        helper._apply_wan_routes_and_qdiscs(parsed)
+    assert commands == []

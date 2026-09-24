@@ -2138,6 +2138,57 @@ def test_mirror_changing_listener_edit_forces_wan_into_handoff(
     assert any(unit["unit_id"] == "wan" for unit in payload["units"])
 
 
+def test_modern_flagged_listener_enable_forces_candidate_wan_handoff(client, monkeypatch):
+    """A Network-only selection must install the new listener's default mirror.
+
+    Args:
+        client: HTTP test client used to submit the applied-state change.
+        monkeypatch: Prevent asynchronous execution while inspecting the queued job.
+    """
+    from sqlalchemy import select
+
+    from atlaso.app import ui
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Job, PhysicalInterface, Route
+
+    login(client)
+    with SessionLocal() as db:
+        db.query(Route).delete()
+        interface = db.scalar(select(PhysicalInterface).where(PhysicalInterface.name == "eth2"))
+        assert interface is not None
+        interface.role = "access"
+        interface.mode = "access"
+        interface.admin_state = "up"
+        interface.oper_state = "up"
+        interface.ipv4_method = "static"
+        interface.ip_cidr = "192.168.50.10/24"
+        interface.access_management_ui_enabled = False
+        db.add(Route(destination_cidr="0.0.0.0/0", gateway="192.168.50.1",
+                     interface_name="eth2", enabled=True))
+        db.commit()
+        units = ui.appliance_apply_units(db)
+        ui.update_appliance_apply_baselines(db, units, {unit["id"] for unit in units})
+        assert "# Network runtime revision: exact-source-routing-v1." in ui.load_appliance_apply_baselines(db)["network"]["config_preview"]
+        interface.access_management_ui_enabled = True
+        db.commit()
+        current = {unit["id"]: unit for unit in ui.appliance_apply_units(db)}
+        assert current["network"]["management_default_mirror_change"] is True
+        assert current["network"]["management_domain_migration_required"] is False
+        assert current["wan"]["network_candidate_variant"]["changed"] is True
+
+    monkeypatch.setattr(ui, "run_appliance_apply_job", lambda _job_id: None)
+    page = client.get("/dashboard")
+    csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    response = client.post("/appliance-apply", data={"csrf": csrf, "selected_units": "network"},
+                           headers={"Accept": "application/json"})
+    assert response.status_code == 202, response.text
+    with SessionLocal() as db:
+        payload = json.loads(db.get(Job, response.json()["job_id"]).result)
+    assert payload["management_handoff"] is True
+    assert set(ui.MANAGEMENT_HANDOFF_UNIT_IDS) | {"wan"} <= set(payload["management_handoff_units"])
+    assert "wan" in payload["selected_units"]
+
+
 @pytest.mark.parametrize("route_change", ["gateway", "metric", "disable", "remove"])
 def test_standalone_mirrored_default_edit_starts_management_handoff(
     client,
