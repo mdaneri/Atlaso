@@ -45,10 +45,12 @@ def link(row, *addresses):
 
 
 @pytest.mark.parametrize("source", ["192.0.2.10", "2001:db8::10"])
-def test_transition_seeds_live_management_lookup_before_global_guard(monkeypatch, source):
+@pytest.mark.parametrize("scope", ["global", 0])
+def test_transition_seeds_live_management_lookup_before_global_guard(monkeypatch, source, scope):
     """An old source without a legacy prefix selector keeps its working path."""
     management = interface()
     inventory = [link(management, source)]
+    inventory[0]["addr_info"][0]["scope"] = scope
     events: list[tuple[str, object]] = []
     monkeypatch.setattr(domains, "reconciliation_lock", nullcontext)
     monkeypatch.setattr(domains, "read_native", lambda args: inventory if args == ["address", "show"] else [])

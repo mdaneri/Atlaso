@@ -727,8 +727,13 @@ def _seed_transition_sources_locked(bindings: Any) -> None:
             if not isinstance(entries, list) or any(not isinstance(entry, dict) for entry in entries):
                 raise ReconcileError("invalid transition source addresses")
             for entry in entries:
-                if entry.get("scope") == "global" and entry.get("valid_life_time") != 0:
-                    appearances += usable_address(entry.get("local")) == source
+                if entry.get("valid_life_time") == 0:
+                    continue
+                try:
+                    observed_source = usable_address(entry.get("local"))
+                except ReconcileError:
+                    continue
+                appearances += observed_source == source
         if appearances != 1:
             raise ReconcileError("ambiguous previous management source")
     existing = owned_rules(read_native(["-4", "rule", "show"]), 4)
