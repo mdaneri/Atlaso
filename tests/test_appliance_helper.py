@@ -3140,7 +3140,8 @@ def test_management_handoff_candidate_durability_gates_ack(
     monkeypatch.setattr(helper, "_install_route_domain_intent", lambda *_args, **_kwargs: guard_events.append("source-intent"))
     monkeypatch.setattr(helper, "_transition_source_guard", lambda enabled: guard_events.append("guard-on" if enabled else "guard-off"))
     monkeypatch.setattr(helper, "_management_handoff_held_addresses", lambda *_args: [])
-    monkeypatch.setattr(helper, "_reconcile_route_domains", lambda: None)
+    monkeypatch.setattr(helper, "_reconcile_route_domains",
+                        lambda: retirement_operations.append("source-reconcile"))
     state = {
         "job_id": "job-435",
         "previous_management_interfaces": ["eth0"],
@@ -3384,8 +3385,8 @@ def test_management_handoff_candidate_durability_gates_ack(
     assert restored == []
     assert resolver_calls == ["eth1", "eth1"]
     assert wan_calls == ["candidate-wan"]
-    assert retirement_operations == ["resolver", "address-ready", "final-network", "resolver", "address-ready",
-                                     "seed-retirement", "wan"]
+    assert retirement_operations == ["source-reconcile", "resolver", "address-ready", "final-network",
+                                     "resolver", "address-ready", "source-reconcile", "seed-retirement", "wan"]
     assert len(applied_firewalls) == 2
     assert candidate_rule in applied_firewalls[0]
     assert 'iifname "eth0"' in applied_firewalls[0]

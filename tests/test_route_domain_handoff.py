@@ -424,6 +424,45 @@ def test_legacy_rollback_retires_seed_only_without_table_selector(
         assert state["transition_seed_routes"] == []
 
 
+@pytest.mark.parametrize("selector_present", [False, True])
+def test_same_address_domain_migration_retires_only_after_old_selector_disappears(
+    monkeypatch, tmp_path, selector_present,
+):
+    """The old address may remain on the same link after moving to Access.
+
+    Args:
+        monkeypatch: Replace native route and rule observations.
+        tmp_path: Isolated transaction marker directory.
+        selector_present: Whether a live rule can still select the old table.
+    """
+    helper = load_helper_module()
+    route = {"destination": "fe80::/64", "gateway": "", "metric": 0,
+             "scope": "link", "table": 100, "preferred_source": "",
+             "preference": "medium", "holdover_metric": 1}
+    state = {"previous_management_routing": {"eth0": {
+        "mac": "02:00:00:00:00:01", "table": 100,
+        "cidrs": ["fe80::10/64"], "routes": [route]}},
+        "transition_seed_routes": [{"name": "eth0", **route, "seed_metric": 2}]}
+    observed = [{"dst": "fe80::/64", "dev": "eth0", "metric": 2,
+                 "protocol": "kernel"}]
+    monkeypatch.setattr(helper, "_transition_route_rows", lambda *_args: observed)
+    monkeypatch.setattr(helper, "_transition_old_source_absent", lambda *_args: False)
+    monkeypatch.setattr(helper, "_transition_table_unselected", lambda *_args: not selector_present)
+    commands = []
+    monkeypatch.setattr(helper, "_run", lambda command: commands.append(command)
+                        or subprocess.CompletedProcess(command, 0, "", ""))
+    monkeypatch.setattr(helper, "_durable_management_handoff_state_write", lambda *_args: None)
+    if selector_present:
+        with pytest.raises(ValueError, match="replacement management route is not ready"):
+            helper._wait_and_retire_transition_routes(state, tmp_path / "state.json", attempts=1)
+        assert state["transition_seed_routes"]
+        assert not commands
+    else:
+        helper._wait_and_retire_transition_routes(state, tmp_path / "state.json", attempts=1)
+        assert state["transition_seed_routes"] == []
+        assert len(commands) == 1
+
+
 def test_legacy_rollback_requires_restored_marker_free_baseline(monkeypatch, tmp_path):
     """Selector-free retirement is unavailable while old domain intent existed.
 
@@ -502,8 +541,10 @@ def test_transition_retirement_waits_for_final_route_without_weakening_proof(mon
     monkeypatch.setattr(helper.time, "sleep", lambda _seconds: None)
     helper._wait_and_retire_transition_routes({}, tmp_path / "state.json", attempts=2)
     assert attempts == [
-        {"require_replacement": True, "allow_disappeared_source": True},
-        {"require_replacement": True, "allow_disappeared_source": True},
+        {"require_replacement": True, "allow_disappeared_source": True,
+         "allow_unselected_after_reconcile": True},
+        {"require_replacement": True, "allow_disappeared_source": True,
+         "allow_unselected_after_reconcile": True},
     ]
 
     attempts.clear()

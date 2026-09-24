@@ -26593,7 +26593,7 @@ def _seed_transition_routes(state: dict, bindings: list[dict], marker: Path) -> 
 
 def _retire_transition_routes(
     state: dict, marker: Path, *, require_replacement: bool, allow_disappeared_source: bool = False,
-    allow_unselected_legacy: bool = False,
+    allow_unselected_legacy: bool = False, allow_unselected_after_reconcile: bool = False,
 ) -> None:
     """Retire only durably recorded seed routes after replacement or rollback.
 
@@ -26603,6 +26603,7 @@ def _retire_transition_routes(
         require_replacement: Require a proven successor before deleting a seed.
         allow_disappeared_source: Permit retirement once the old source is absent.
         allow_unselected_legacy: Permit retirement when a proven restored legacy baseline has no table selector.
+        allow_unselected_after_reconcile: Permit retirement after final source-rule reconciliation proves no old-table selector.
     """
     rows = state.get("transition_seed_routes", [])
     if not isinstance(rows, list) or len(rows) > 256:
@@ -26636,9 +26637,9 @@ def _retire_transition_routes(
             old_source_absent = (allow_disappeared_source and _transition_old_source_absent(
                 row["name"], evidence["mac"], evidence["cidrs"], family,
             ))
-            legacy_unselected = (allow_unselected_legacy
-                                 and _transition_table_unselected(family, row["table"]))
-            if not old_source_absent and not legacy_unselected:
+            table_unselected = ((allow_unselected_legacy or allow_unselected_after_reconcile)
+                                and _transition_table_unselected(family, row["table"]))
+            if not old_source_absent and not table_unselected:
                 destination = ip_network(row["destination"])
                 matching_destination = []
                 for item in observed:
@@ -26687,6 +26688,7 @@ def _wait_and_retire_transition_routes(state: dict, marker: Path, *, attempts: i
         try:
             _retire_transition_routes(
                 state, marker, require_replacement=True, allow_disappeared_source=True,
+                allow_unselected_after_reconcile=True,
             )
             return
         except ValueError as exc:
@@ -28880,8 +28882,8 @@ def _apply_management_handoff(payload: dict) -> int:
             Path(str(payload["network_config_path"])), started_at=retirement_started, stable_samples=3,
         )
         failing_layer = "replacement management route"
-        _wait_and_retire_transition_routes(state, MANAGEMENT_HANDOFF_STATE_PATH)
         _reconcile_route_domains()
+        _wait_and_retire_transition_routes(state, MANAGEMENT_HANDOFF_STATE_PATH)
         if payload.get("wan_config_path"):
             # The final Network regeneration intentionally replaces networkd
             # runtime. Reapply the coupled route intent afterwards so policy
