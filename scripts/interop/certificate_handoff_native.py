@@ -174,6 +174,18 @@ class Client:
 FIELDS = ("role", "mode", "ipv4_method", "ip_cidr", "gateway", "ipv6_enabled", "ipv6_cidr", "ipv6_gateway", "mtu", "admin_state", "check_duplicate_ip_addresses", "access_management_ui_enabled")
 
 
+def same_mac(left, right):
+    """Compare VMware and appliance MAC spellings without accepting missing identities."""
+    def canonical(value):
+        if not isinstance(value, str) or not re.fullmatch(r"(?:[0-9a-fA-F]{2}[:-]){5}[0-9a-fA-F]{2}", value):
+            return ""
+        octets = value.replace("-", ":").lower().split(":")
+        return ":".join(octets)
+
+    first = canonical(left)
+    return bool(first) and first == canonical(right)
+
+
 def saved_fields(row):
     """Retain desired fields only; never POST inventory or audit properties."""
     result = {key: "" if row.get(key) is None else row[key] for key in FIELDS}
@@ -184,7 +196,7 @@ def saved_fields(row):
 def edit(client, name, fields, expected_mac):
     """Use the same atomic domain mutation and audit path as the UI."""
     current, csrf = client.interface(name)
-    if current.get("mac_address") != expected_mac:
+    if not same_mac(current.get("mac_address"), expected_mac):
         raise Refusal("interface_mac_changed")
     form = {key: "" if value is None else str(value).lower() if isinstance(value, bool) else value
             for key, value in fields.items()}
@@ -443,7 +455,7 @@ def admit_execution(plan):
             or runtime.get("vm_ownership_sha256") != plan["vm_ownership"]["sha256"]
             or runtime.get("deployed_commit") != deployed_commit
             or runtime.get("url") != plan["url"] or runtime.get("interface") != plan["interface"]
-            or runtime.get("mac") != plan["mac"]):
+            or not same_mac(runtime.get("mac"), plan["mac"])):
         raise Refusal("installed_runtime_binding_mismatch")
     for name in ("wheel_sha256", "helper_sha256"):
         if not re.fullmatch(r"[0-9a-f]{64}", runtime.get(name, "")) or runtime[name] != plan[name]:
@@ -538,7 +550,7 @@ def main():
             raise Refusal("private_live_preflight_unproven") from None
         original, _ = client.interface(plan["interface"])
         fields = saved_fields(original)
-        if fields["role"] != "management" or fields["ipv6_enabled"] or original.get("mac_address") != plan["mac"]:
+        if fields["role"] != "management" or fields["ipv6_enabled"] or not same_mac(original.get("mac_address"), plan["mac"]):
             raise Refusal("requires_exact_ipv4_management_interface")
         clean_baseline(client)
         original_dns = dns_baseline(client)

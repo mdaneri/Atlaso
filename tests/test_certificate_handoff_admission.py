@@ -37,6 +37,29 @@ def test_peer_credential_is_independent_of_admin(monkeypatch: pytest.MonkeyPatch
     assert handoff.admin_password() == "admin-password-123"
 
 
+def test_interface_edit_accepts_vmware_mac_spelling_only_for_same_device() -> None:
+    """The VMX uses hyphens while the authenticated UI inventory uses colons."""
+    class Client:
+        def __init__(self) -> None:
+            self.posts: list[tuple[str, dict]] = []
+
+        def interface(self, _name: str) -> tuple[dict, str]:
+            return {"id": 4, "mac_address": "00:50:56:AA:BB:CC"}, "csrf-value"
+
+        def request(self, path: str, form: dict) -> None:
+            self.posts.append((path, form))
+
+    client = Client()
+    handoff.edit(client, "eth0", {"access_management_ui_enabled": False}, "00-50-56-aa-bb-cc")
+    assert client.posts == [(
+        "/ui/management/physical-interfaces/4/edit",
+        {"access_management_ui_enabled": "off", "csrf": "csrf-value"},
+    )]
+    with pytest.raises(handoff.Refusal, match="interface_mac_changed"):
+        handoff.edit(client, "eth0", {"access_management_ui_enabled": False}, "00-50-56-aa-bb-cd")
+    assert len(client.posts) == 1
+
+
 @pytest.mark.parametrize("changed", ["task_id", "vmx_path", "source_commit", "digest"])
 def test_predeployment_snapshot_must_belong_to_exact_runtime(changed: str) -> None:
     """A clean snapshot from another lab cannot authorize this VM's mutation."""
