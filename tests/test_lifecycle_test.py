@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import html
 import importlib.util
 import io
 import json
@@ -40,6 +41,242 @@ def load_network_boot_lifecycle_module():
     sys.modules[spec.name] = module
     spec.loader.exec_module(module)
     return module
+
+
+def test_configure_signed_release_source_uses_wizard_edit_data():
+    """Update the source identified by the current edit button, not a removed inline form."""
+    lifecycle = load_lifecycle_module()
+    payload = {"id": 17, "kind": "atlaso", "name": "Signed & Verified", "priority": 42}
+    encoded_payload = html.escape(json.dumps(payload), quote=True)
+    page = (
+        '<input type="hidden" name="csrf" value="csrf-123">'
+        '<details data-update-source-group="photon"></details>'
+        '<details data-update-source-group="atlaso">'
+        '<button data-update-source-wizard-open data-update-source-mode="edit" '
+        'data-update-source-kind="atlaso" data-update-source=\'' + encoded_payload + "'></button>"
+        '</details>'
+    )
+
+    class FakeClient:
+        """Serve the rendered wizard data and check the submitted source fields."""
+
+        def request(self, method, path, **kwargs):  # type: ignore[no-untyped-def]  # Fake models the lifecycle client boundary.
+            """Serve the page or verify the source update.
+
+            Args:
+                method: HTTP method under test.
+                path: Request path under test.
+                **kwargs: Request form and options under test.
+            """
+            if (method, path) == ("GET", "/appliance-update"):
+                return 200, page, {}
+            assert (method, path) == ("POST", "/appliance-update/sources/17")
+            assert kwargs["form"] == {
+                "csrf": "csrf-123",
+                "name": "Signed & Verified",
+                "url": "https://release-fixture.example.test/updates",
+                "priority": "42",
+                "enabled_present": "1",
+                "enabled": "on",
+                "channel": "preview",
+            }
+            assert kwargs["headers"] == {"X-Atlaso-Autosave": "1", "Accept": "application/json"}
+            assert kwargs["follow_redirects"] is False
+            return 200, '{"status":"saved"}', {}
+
+    result = lifecycle._configure_signed_release_source(
+        FakeClient(),
+        argparse.Namespace(signed_release_repository_url="https://release-fixture.example.test/updates/"),
+        channel="preview",
+    )
+    assert result == {
+        "source_id": 17,
+        "source_name": "Signed & Verified",
+        "base_url": "https://release-fixture.example.test/updates",
+        "channel": "preview",
+    }
+
+
+def test_signed_release_availability_check_confirms_current_candidate(monkeypatch):
+    """Submit and await the exact Atlaso Release check before installation.
+
+    Args:
+        monkeypatch: Replace polling delay for the bounded fake task.
+    """
+    lifecycle = load_lifecycle_module()
+    monkeypatch.setattr(lifecycle.time, "sleep", lambda _seconds: None)
+
+    class FakeClient:
+        """Serve the browser check form and its exact task status."""
+
+        polls = 0
+
+        def request(self, method, path, **kwargs):  # type: ignore[no-untyped-def]  # Fake models the lifecycle client boundary.
+            """Serve the check form or verify check submission.
+
+            Args:
+                method: HTTP method under test.
+                path: Request path under test.
+                **kwargs: Request form and headers under test.
+            """
+            if (method, path) == ("GET", "/appliance-update"):
+                return 200, '<input type="hidden" name="csrf" value="csrf-123">', {}
+            assert (method, path) == ("POST", "/appliance-update/check")
+            assert kwargs["form"] == [("csrf", "csrf-123"), ("selected_streams", "atlaso_release")]
+            assert kwargs["headers"] == {"Accept": "application/json"}
+            return 202, '{"job_id":"job_abcdef123456"}', {}
+
+        def json_request(self, method, path):  # type: ignore[no-untyped-def]  # Fake returns the exact submitted task.
+            """Return the polled task state.
+
+            Args:
+                method: HTTP method under test.
+                path: Task status path under test.
+            """
+            assert (method, path) == ("GET", "/tasks/job_abcdef123456/status")
+            self.polls += 1
+            if self.polls == 1:
+                return {"task": {"status": "running"}}
+            return {"task": {
+                "status": "succeeded",
+                "_children": [{"component_key": "atlaso_release", "status": "succeeded"}],
+                "result": {"stream_results": {"atlaso_release": {"availability": {"update_available": True}}}},
+            }}
+
+    client = FakeClient()
+    assert lifecycle._check_signed_release_availability(client) == "job_abcdef123456"
+    assert client.polls == 2
+
+
+def test_signed_release_availability_check_rejects_up_to_date_candidate(monkeypatch):
+    """Do not install when a successful check reports no candidate.
+
+    Args:
+        monkeypatch: Replace the task submission with a deterministic fake.
+    """
+    lifecycle = load_lifecycle_module()
+
+    class FakeClient:
+        """Report a successful but up-to-date signed-release check."""
+
+        def request(self, method, path, **_kwargs):  # type: ignore[no-untyped-def]  # Fake models the lifecycle client boundary.
+            """Serve the check form or its submission.
+
+            Args:
+                method: HTTP method under test.
+                path: Request path under test.
+                **_kwargs: Unused request options.
+            """
+            if method == "GET":
+                return 200, '<input type="hidden" name="csrf" value="csrf-123">', {}
+            assert path == "/appliance-update/check"
+            return 202, '{"job_id":"job_abcdef123456"}', {}
+
+        def json_request(self, method, path):  # type: ignore[no-untyped-def]  # Fake returns the exact submitted task.
+            """Return the up-to-date task result.
+
+            Args:
+                method: HTTP method under test.
+                path: Task status path under test.
+            """
+            assert (method, path) == ("GET", "/tasks/job_abcdef123456/status")
+            return {"task": {
+                "status": "succeeded",
+                "_children": [{"component_key": "atlaso_release", "status": "succeeded"}],
+                "result": {"stream_results": {"atlaso_release": {"availability": {"update_available": False}}}},
+            }}
+
+    with pytest.raises(lifecycle.LifecycleError, match="did not confirm an available update"):
+        lifecycle._check_signed_release_availability(FakeClient())
+
+
+def test_signed_release_lifecycle_rechecks_after_channel_change(monkeypatch):
+    """Check each channel after configuring it and before its install.
+
+    Args:
+        monkeypatch: Replace appliance operations with deterministic evidence.
+    """
+    lifecycle = load_lifecycle_module()
+    events = []
+    before = {"current_release": "release-v1", "compatibility_venv": "venv", "schema_sha256": "schema", "users": []}
+    after = {**before, "current_release": "release-v2"}
+    identities = iter((before, after, after, after, after, after))
+    monkeypatch.setattr(lifecycle, "_release_database_identity", lambda _args: next(identities))
+    monkeypatch.setattr(lifecycle, "_configure_signed_release_source", lambda _client, _args, *, channel: events.append(f"source:{channel}") or {})
+    monkeypatch.setattr(lifecycle, "_check_signed_release_availability", lambda _client: events.append("check") or "job_abcdef123456")
+
+    def submit(_client, *, expected_status):  # type: ignore[no-untyped-def]  # Fake records the release task selected by the lifecycle.
+        """Record each install request and return its expected transaction.
+
+        Args:
+            _client: Unused lifecycle client.
+            expected_status: Expected release task outcome.
+        """
+        events.append(f"install:{expected_status}")
+        transaction = (
+            {"candidate_version": "0.9.2"}
+            if expected_status == "succeeded"
+            else {"rolled_back": True, "rollback_health": True, "failure_layer": "nginx_configuration"}
+        )
+        return {"id": "job_123456abcdef", "result": {"release_transaction": transaction}}
+
+    monkeypatch.setattr(lifecycle, "_submit_signed_release_update", submit)
+    monkeypatch.setattr(lifecycle, "appliance_health", lambda _client, _args: {"version": {"base_version": "0.9.2"}})
+    monkeypatch.setattr(lifecycle, "_reboot_appliance_and_wait", lambda _client, _args: events.append("reboot") or {})
+    monkeypatch.setattr(lifecycle, "_signed_release_console_check", lambda _args: events.append("console") or {"local_console": "ready"})
+    monkeypatch.setattr(lifecycle.time, "sleep", lambda _seconds: None)
+    args = argparse.Namespace(signed_release_repository_url="https://release-fixture.example.test/updates")
+
+    result = lifecycle.signed_release_update_check(object(), args)
+
+    assert events == [
+        "source:preview", "check", "install:succeeded", "reboot", "console",
+        "source:development", "check", "install:failed", "reboot", "console",
+    ]
+    assert result["preview_check_task_id"] == "job_abcdef123456"
+    assert result["development_check_task_id"] == "job_abcdef123456"
+    assert result["successful_post_reboot_console"] == {"local_console": "ready"}
+    assert result["rollback_post_reboot_console"] == {"local_console": "ready"}
+
+
+def test_signed_release_console_check_reuses_host_contract(monkeypatch):
+    """The post-reboot probe runs the same fail-closed console check as host state.
+
+    Args:
+        monkeypatch: Replace the host command executor with deterministic fakes.
+    """
+    lifecycle = load_lifecycle_module()
+    captured = {}
+
+    def fake_host_checks(_args, checks):  # type: ignore[no-untyped-def]  # Fake records the exact post-reboot host contract.
+        """Record the selected post-reboot host checks.
+
+        Args:
+            _args: Unused lifecycle arguments.
+            checks: Named host commands under test.
+        """
+        captured.update(checks)
+        return {"local_console": "ready"}
+
+    monkeypatch.setattr(lifecycle, "run_host_checks", fake_host_checks)
+    assert lifecycle._signed_release_console_check(object()) == {"local_console": "ready"}
+    assert captured == {"local_console": lifecycle._local_console_check_command()}
+    assert "systemctl is-active atlaso-console.service" in captured["local_console"]
+    assert "systemctl is-enabled atlaso-console.service" in captured["local_console"]
+    assert "test -x /opt/atlaso/.venv/bin/atlaso-console" in captured["local_console"]
+
+    def failed_host_checks(_args, _checks):  # type: ignore[no-untyped-def]  # Fake models a broken post-reboot console.
+        """Simulate a failed console probe.
+
+        Args:
+            _args: Unused lifecycle arguments.
+            _checks: Unused host commands.
+        """
+        raise lifecycle.LifecycleError("host local_console check failed")
+
+    monkeypatch.setattr(lifecycle, "run_host_checks", failed_host_checks)
+    with pytest.raises(lifecycle.LifecycleError, match="host local_console check failed"):
+        lifecycle._signed_release_console_check(object())
 
 
 def test_load_lifecycle_secrets_populates_passwords_from_stdin_envelope():
