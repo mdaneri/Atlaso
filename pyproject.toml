@@ -1,6 +1,6 @@
 [project]
 name = "atlaso"
-version = "0.9.372"
+version = "0.9.373"
 description = "Atlaso supports POC, lab, and test environments by simplifying deployment, maintenance, and validation."
 readme = "README.md"
 license = "MIT"
@@ -21,7 +21,7 @@ dependencies = [
   "python-multipart>=0.0.12",
   "sqlalchemy>=2.0.36",
   "uvicorn[standard]>=0.32.0",
-  "vcf-sdk==9.1.0.0",
+  "vcf-sdk==9.1.1.0",
 ]
 
 [project.scripts]
@@ -39,7 +39,7 @@ dev = [
   "markdown-it-py==4.2.0",
   "pre-commit>=4.2.0",
   "pyyaml==6.0.3",
-  "pymdown-extensions==11.0.2",
+  "pymdown-extensions==12.0.1",
   "pytest>=8.3.3",
   "pytest-asyncio>=0.24.0",
   'uvloop==0.22.1 ; sys_platform != "win32" and sys_platform != "cygwin" and platform_python_implementation != "PyPy"',
