@@ -3435,6 +3435,7 @@ def test_nocloud_seed_helper_writes_client_cloud_init_contract():
     assert "sshpass" in script
     assert "chrony-nts" in script
     assert "atlaso-refresh-test-dhcp" in script
+    assert 'udhcpc -i "$iface" -H "$(hostname -s)"' in script
     assert "joliet_path=f\"/{name}\"" in script
 
 
@@ -3570,7 +3571,8 @@ def test_lifecycle_runner_covers_ca_vcf_backups_wan_noise_and_console_summary():
     assert "vcf-backup-client-check" in script
     assert "sshpass -p" in script
     assert "redact_text" in script
-    assert '"local_users", "network", "firewall", "wan", "dnsmasq", "esxi_pxe", "vcf_backups"' in script
+    assert '"local_users", "network", "firewall", "wan", "dnsmasq", "appliance_settings"' in script
+    assert '"esxi_pxe", "vcf_backups", "ca"' in script
     assert "certificate_summary" in script
     assert "root_ca" in script
     assert "ca-client-certificate-request" in script

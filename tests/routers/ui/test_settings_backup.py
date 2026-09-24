@@ -3,6 +3,35 @@
 from tests.routers.ui.helpers import login
 
 
+def test_settings_restore_preserves_current_host_apply_baselines(client):
+    """Desired-state imports must retain trusted applied-state evidence from this host.
+
+    Args:
+        client: Isolated client for this scenario.
+    """
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.services.settings_archive import (
+        export_settings_archive,
+        restore_settings_archive,
+    )
+    from atlaso.app.ui import (
+        load_appliance_apply_baselines,
+        save_appliance_apply_baselines,
+    )
+
+    baselines = {
+        "network": {"config_preview": "current host network", "snapshot_hash": "trusted-network"},
+        "dnsmasq": {"config_preview": "current host DNS", "snapshot_hash": "trusted-dns"},
+    }
+    with SessionLocal() as db:
+        save_appliance_apply_baselines(db, baselines)
+        db.commit()
+        archive = export_settings_archive(db, actor="test")
+        assert all(row["key"] != "appliance_apply.baselines.v1" for row in archive["data"]["settings"])
+        restore_settings_archive(db, archive)
+        assert load_appliance_apply_baselines(db) == baselines
+
+
 def test_settings_backup_router_owns_exact_transport_set():
     """Keep Settings and Backup Restore route identities in established order."""
     from atlaso.app import ui

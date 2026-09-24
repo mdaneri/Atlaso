@@ -3,6 +3,8 @@
 import re
 from ipaddress import ip_address
 
+import pytest
+
 from atlaso.app.models import (
     DhcpOption,
     DhcpReservation,
@@ -16,6 +18,9 @@ from atlaso.app.models import (
 )
 from atlaso.app.services.dnsmasq import (
     DHCP_DENY_RESERVATION_DESCRIPTION_PREFIX,
+    DNSMASQ_AUTHORITATIVE_CONFIG_PREFIX,
+    DNSMASQ_AUTHORITATIVE_LOOPBACK_ADDRESS,
+    DNSMASQ_AUTHORITATIVE_PORT,
     DNSMASQ_DNSSEC_TRUST_ANCHORS_PATH,
     DNSMASQ_LEASE_FILE_PATH,
     compact_dhcp_range_expression,
@@ -58,6 +63,7 @@ def test_dnsmasq_renderer_binds_dhcp_to_sitea_interface_only():
         listen_address="192.168.50.1\n192.168.60.1",
         domain="atlaso.internal\ncorp.lab",
         upstream_servers="1.1.1.1\n9.9.9.9",
+        cache_size=500,
     )
     dhcp_settings = DhcpSettings(
         enabled=True,
@@ -117,6 +123,7 @@ def test_dnsmasq_renderer_binds_dhcp_to_sitea_interface_only():
     assert "cname=www.atlaso.internal,app.atlaso.internal" in config
     assert "server=/sddc.internal/192.168.10.10" in config
     assert "server=/corp.example/192.168.20.10#5353" in config
+    assert "cache-size=500" in config
     assert "ptr-record=" not in config
     assert f"dhcp-leasefile={DNSMASQ_LEASE_FILE_PATH}" in config
     assert "dhcp-host=02:15:5d:00:20:20,client1,192.168.50.120" in config
@@ -159,6 +166,8 @@ def test_dnsmasq_renderer_emits_shared_authoritative_zones_and_generated_glue():
         authoritative_refresh=1200,
         authoritative_retry=180,
         authoritative_expire=1209600,
+        rebind_protection_enabled=True,
+        rebind_domain_exemptions="corp.example\natlaso.internal",
     )
 
     config = render_dnsmasq_config(
@@ -167,16 +176,183 @@ def test_dnsmasq_renderer_emits_shared_authoritative_zones_and_generated_glue():
         dhcp_settings=DhcpSettings(enabled=False),
         dhcp_reservations=[],
     )
+    main_lines = [
+        line for line in config.splitlines()
+        if not line.startswith(DNSMASQ_AUTHORITATIVE_CONFIG_PREFIX)
+    ]
+    authoritative_lines = [
+        line[len(DNSMASQ_AUTHORITATIVE_CONFIG_PREFIX):]
+        for line in config.splitlines()
+        if line.startswith(DNSMASQ_AUTHORITATIVE_CONFIG_PREFIX)
+    ]
 
-    assert "auth-zone=atlaso.internal" in config
-    assert "auth-zone=sitea.internal" in config
+    assert "auth-zone=atlaso.internal,192.168.50.1/32,2001:db8::53/128" in authoritative_lines
+    assert "auth-zone=sitea.internal,192.168.50.20/32" in authoritative_lines
     assert "local=/atlaso.internal/" not in config
-    assert "auth-server=ns1.atlaso.internal,eth1,eth2" in config
-    assert "auth-soa=2026072201,hostmaster.atlaso.internal,1200,180,1209600" in config
-    assert "auth-ttl=3600" in config
-    assert "host-record=ns1.atlaso.internal,192.168.50.1" in config
-    assert "host-record=ns1.atlaso.internal,2001:db8::53" in config
-    assert "host-record=app.sitea.internal,192.168.50.20" in config
+    assert f"server=/atlaso.internal/{DNSMASQ_AUTHORITATIVE_LOOPBACK_ADDRESS}#{DNSMASQ_AUTHORITATIVE_PORT}" in main_lines
+    assert f"server=/sitea.internal/{DNSMASQ_AUTHORITATIVE_LOOPBACK_ADDRESS}#{DNSMASQ_AUTHORITATIVE_PORT}" in main_lines
+    assert "auth-server=ns1.atlaso.internal,127.0.0.1" in authoritative_lines
+    assert "auth-server=ns1.atlaso.internal" not in authoritative_lines
+    assert "auth-server=ns1.atlaso.internal,lo" not in authoritative_lines
+    assert "bind-dynamic" in main_lines
+    assert "cache-size=0" in main_lines
+    assert "bind-interfaces" in authoritative_lines
+    assert "port=5353" in authoritative_lines
+    assert "hostsdir=/var/lib/atlaso-dns-authoritative-leases" in authoritative_lines
+    assert "auth-soa=2026072201,hostmaster.atlaso.internal,1200,180,1209600" in authoritative_lines
+    assert "auth-ttl=3600" in authoritative_lines
+    assert "host-record=ns1.atlaso.internal,192.168.50.1" in authoritative_lines
+    assert "host-record=ns1.atlaso.internal,2001:db8::53" in authoritative_lines
+    assert "ptr-record=1.50.168.192.in-addr.arpa,ns1.atlaso.internal" in main_lines
+    assert f"ptr-record={ip_address('2001:db8::53').reverse_pointer},ns1.atlaso.internal" in main_lines
+    assert "host-record=app.sitea.internal,192.168.50.20" in authoritative_lines
+    assert "host-record=app.sitea.internal,192.168.50.20" not in main_lines
+    assert "ptr-record=20.50.168.192.in-addr.arpa,app.sitea.internal" in main_lines
+    assert main_lines.count("rebind-domain-ok=/atlaso.internal/") == 1
+    assert "rebind-domain-ok=/sitea.internal/" in main_lines
+    assert "rebind-domain-ok=/corp.example/" in main_lines
+
+
+@pytest.mark.parametrize("configured_cache_size,expected_cache_size", [(0, 150), (500, 500)])
+def test_dnssec_renderer_keeps_required_cache(configured_cache_size, expected_cache_size):
+    """Recursive DNSSEC validation must retain enough cache.
+
+    Args:
+        configured_cache_size: Configured DNS cache size.
+        expected_cache_size: Minimum effective DNS cache size.
+    """
+    config = render_dnsmasq_config(
+        dns_settings=DnsSettings(
+            enabled=True,
+            listen_interface="eth1",
+            listen_address="192.168.50.1",
+            domain="atlaso.internal",
+            dnssec_enabled=True,
+            cache_size=configured_cache_size,
+        ),
+        dns_records=[],
+        dhcp_settings=DhcpSettings(enabled=False),
+        dhcp_reservations=[],
+    )
+
+    assert f"cache-size={expected_cache_size}" in config.splitlines()
+    assert "dnssec" in config.splitlines()
+
+
+def test_authoritative_dns_rejects_dnssec_before_apply():
+    """DNSSEC caching cannot preserve authoritative AA on repeated answers."""
+    settings = DnsSettings(
+        enabled=True,
+        listen_interface="eth1",
+        listen_address="192.168.50.1",
+        domain="atlaso.internal",
+        authoritative=True,
+        dnssec_enabled=True,
+    )
+
+    errors = validate_dns_settings(settings, [])
+
+    assert any("Authoritative DNS and DNSSEC validation cannot be enabled together" in error for error in errors)
+
+
+def test_authoritative_dns_with_dhcp_subscribes_to_lease_changes():
+    """Keep dynamic DHCP names in the isolated authoritative backend."""
+    config = render_dnsmasq_config(
+        dns_settings=DnsSettings(enabled=True, authoritative=True, domain="atlaso.internal"),
+        dns_records=[],
+        dhcp_settings=DhcpSettings(enabled=True, site_address="192.168.50.1", prefix_length=24),
+        dhcp_reservations=[
+            DhcpReservation(
+                hostname="reserved",
+                mac_address="02:15:5d:00:20:20",
+                ip_address="192.168.50.120",
+            )
+        ],
+    )
+
+    assert "dhcp-ignore-names=tag:sitea" in config.splitlines()
+    assert "# atlaso-authoritative-config: auth-zone=atlaso.internal,192.168.50.0/24" in config
+    assert "# atlaso-authoritative-lease-scope=192.168.50.0/24,atlaso.internal" in config.splitlines()
+    assert "rev-server=192.168.50.0/24,127.0.0.1#5353" in config.splitlines()
+    assert "dhcp-script=/opt/atlaso/bin/atlaso-helper" in config.splitlines()
+    assert "script-on-renewal" in config.splitlines()
+    assert "dhcp-host=02:15:5d:00:20:20,set:atlaso-name-02155d002020,192.168.50.120" in config
+    assert "dhcp-ignore-names=tag:atlaso-name-02155d002020" in config.splitlines()
+    assert "dhcp-option=tag:atlaso-name-02155d002020,12,reserved" in config
+    assert "dhcp-host=02:15:5d:00:20:20,reserved,192.168.50.120" not in config
+
+    unmanaged = render_dnsmasq_config(
+        dns_settings=DnsSettings(enabled=True, authoritative=True, domain="atlaso.internal"),
+        dns_records=[],
+        dhcp_settings=DhcpSettings(enabled=True),
+        dhcp_reservations=[
+            DhcpReservation(
+                hostname="guest-reserved",
+                mac_address="02:15:5d:00:20:21",
+                ip_address="192.168.60.120",
+            ),
+            DhcpReservation(
+                hostname="managed.atlaso.internal",
+                mac_address="02:15:5d:00:20:22",
+                ip_address="192.168.60.121",
+            ),
+        ],
+        dhcp_scopes=[
+            DhcpScope(
+                name="Guest",
+                interface_name="eth2",
+                site_address="192.168.60.1",
+                prefix_length=24,
+                range_expression="192.168.60.100-150",
+                domain_name="guest.example",
+                dns_server="192.168.60.1",
+            )
+        ],
+    )
+    assert "dhcp-host=02:15:5d:00:20:21,guest-reserved,192.168.60.120" in unmanaged
+    assert "dhcp-ignore-names=tag:atlaso-name-02155d002021" not in unmanaged.splitlines()
+    assert "dhcp-option=tag:atlaso-name-02155d002021,12,guest-reserved" not in unmanaged
+    assert "dhcp-host=02:15:5d:00:20:22,set:atlaso-name-02155d002022,192.168.60.121" in unmanaged
+    assert "dhcp-ignore-names=tag:atlaso-name-02155d002022" in unmanaged.splitlines()
+    assert "dhcp-option=tag:atlaso-name-02155d002022,12,managed.atlaso.internal" in unmanaged
+    assert "dhcp-host=02:15:5d:00:20:22,managed.atlaso.internal,192.168.60.121" not in unmanaged
+
+    guest = render_dnsmasq_config(
+        dns_settings=DnsSettings(enabled=True, authoritative=True, domain="atlaso.internal"),
+        dns_records=[],
+        dhcp_settings=DhcpSettings(enabled=True),
+        dhcp_scopes=[
+            DhcpScope(
+                name="Guest",
+                interface_name="eth2",
+                site_address="192.168.60.1",
+                prefix_length=24,
+                domain_name="guest.example",
+                range_expression="192.168.60.100-192.168.60.199",
+                enabled=True,
+            )
+        ],
+        dhcp_reservations=[],
+    )
+    assert "dhcp-ignore-names=tag:guest" not in guest
+    assert "rev-server=192.168.60.0/24,127.0.0.1#5353" not in guest
+
+
+def test_recursive_dns_keeps_transition_mirrors_until_native_lease_names_resume():
+    """Recursive mode must serve suppressed active names from the mirror directory."""
+    config = render_dnsmasq_config(
+        dns_settings=DnsSettings(enabled=True, authoritative=False, domain="atlaso.internal"),
+        dns_records=[],
+        dhcp_settings=DhcpSettings(enabled=True, site_address="192.168.50.1", prefix_length=24),
+        dhcp_reservations=[],
+    )
+
+    assert "hostsdir=/var/lib/atlaso-dns-authoritative-leases" in config.splitlines()
+    assert "# atlaso-authoritative-lease-scope=192.168.50.0/24,atlaso.internal" in config.splitlines()
+    assert "dhcp-script=/opt/atlaso/bin/atlaso-helper" in config.splitlines()
+    assert "script-on-renewal" in config.splitlines()
+    assert not any(line.startswith("dhcp-ignore-names=") for line in config.splitlines())
+    assert "# atlaso-authoritative-config: auth-zone=atlaso.internal,192.168.50.0/24" not in config
 
 
 def test_authoritative_validation_rejects_bad_identity_timers_and_conflicting_glue():
@@ -207,6 +383,40 @@ def test_authoritative_validation_rejects_bad_identity_timers_and_conflicting_gl
     assert validate_authoritative_dns_record(settings, "ns1.atlaso.internal", "A", "192.168.50.99")
     assert validate_authoritative_dns_record(settings, "ns1.atlaso.internal", "CNAME", "other.atlaso.internal")
     assert validate_authoritative_dns_record(settings, "ns1.atlaso.internal", "A", "192.168.50.1") == []
+
+
+def test_authoritative_dns_rejects_and_omits_shadowing_conditional_forwarders():
+    """Keep managed authoritative zones pinned to the isolated backend."""
+    settings = DnsSettings(
+        enabled=True,
+        listen_interface="eth1",
+        listen_address="192.168.50.1",
+        domain="atlaso.internal",
+        authoritative=True,
+        authoritative_server="ns1.atlaso.internal",
+        authoritative_contact="hostmaster.atlaso.internal",
+        authoritative_ttl=3600,
+        authoritative_serial=2026092201,
+        authoritative_refresh=1200,
+        authoritative_retry=180,
+        authoritative_expire=1209600,
+    )
+    forwarders = "atlaso.internal=192.0.2.53\nsite.atlaso.internal=192.0.2.54\ncorp.example=192.0.2.55"
+
+    errors = validate_dns_settings(settings, [], forwarders)
+    config = render_dnsmasq_config(
+        dns_settings=settings,
+        dns_records=[],
+        dhcp_settings=DhcpSettings(enabled=False),
+        dhcp_reservations=[],
+        conditional_forwarders=forwarders,
+    )
+
+    assert any("conditional forwarder atlaso.internal overlaps" in error for error in errors)
+    assert any("conditional forwarder site.atlaso.internal overlaps" in error for error in errors)
+    assert "server=/atlaso.internal/192.0.2.53" not in config
+    assert "server=/site.atlaso.internal/192.0.2.54" not in config
+    assert "server=/corp.example/192.0.2.55" in config
 
 
 def test_authoritative_zone_file_round_trip_ignores_matching_structural_records():
@@ -947,7 +1157,7 @@ def test_dns_dhcp_validation_reports_bad_addresses():
     assert any("conditional forwarder sddc.internal server" in error for error in errors)
     assert any("conditional forwarder bad server port" in error for error in errors)
     assert any("range 192.168.51.10-192.168.50.20 must stay inside" in error for error in errors)
-    assert any("DNS server" in error for error in errors)
+    assert not any("DNS server" in error for error in errors)
 
 
 def test_dns_listen_target_validation_rejects_trunks_and_unknown_targets():

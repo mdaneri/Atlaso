@@ -32,6 +32,7 @@ from atlaso.app.services.routes_wan import save_routing_enabled_state
 from atlaso.app.services.service_registry import (
     SERVICE_STATE_IDS,
     SERVICE_SYSTEMD_UNITS,
+    dns_requires_authoritative_backend,
 )
 from atlaso.app.services.vcf_backups import vcf_backup_service_state
 from atlaso.app.services.vcf_depot_downloads import (
@@ -169,17 +170,24 @@ def build_router(dependencies: OperationsUiDependencies) -> OperationsUiRouter:
         return row
 
     def dnsmasq_backed_service_grid_row(
-        service: ServiceState, enabled: bool
+        service: ServiceState, enabled: bool, *, authoritative: bool = False
     ) -> dict[str, object]:
         """Return dnsmasq backed service grid row.
 
         Args:
             service: Atlaso or host service affected by the operation.
             enabled: Whether the associated resource or behavior is enabled.
+            authoritative: Whether DNS also requires the authoritative backend.
         """
         row = service_state_to_grid_row(service)
         if not get_settings().dry_run_system_adapters:
             active = backing_systemd_unit_active("dnsmasq.service")
+            if authoritative:
+                authoritative_active = backing_systemd_unit_active(
+                    "atlaso-dns-authoritative.service"
+                )
+                if authoritative_active is not True:
+                    active = False
             if active is not None:
                 row["running"] = active
         row["enabled"] = enabled
@@ -293,7 +301,11 @@ def build_router(dependencies: OperationsUiDependencies) -> OperationsUiRouter:
         return row
 
     def service_grid_row(
-        service: ServiceState, db: Session, dns_enabled: bool, dhcp_enabled: bool
+        service: ServiceState,
+        db: Session,
+        dns_enabled: bool,
+        dhcp_enabled: bool,
+        dns_authoritative: bool,
     ) -> dict[str, object]:
         """Return service grid row.
 
@@ -302,9 +314,14 @@ def build_router(dependencies: OperationsUiDependencies) -> OperationsUiRouter:
             db: Active database session.
             dns_enabled: Dns enabled supplied by the caller.
             dhcp_enabled: Dhcp enabled supplied by the caller.
+            dns_authoritative: Whether DNS requires its authoritative backend.
         """
         if service.service == "dns":
-            return dnsmasq_backed_service_grid_row(service, dns_enabled)
+            return dnsmasq_backed_service_grid_row(
+                service,
+                dns_enabled,
+                authoritative=dns_authoritative,
+            )
         if service.service == "dhcp":
             return dnsmasq_backed_service_grid_row(service, dhcp_enabled)
         if service.service == "esxi-pxe":
@@ -337,7 +354,15 @@ def build_router(dependencies: OperationsUiDependencies) -> OperationsUiRouter:
             .all()
         )
         service_rows = [
-            service_grid_row(row, db, dns_settings.enabled, dhcp_settings.enabled)
+            service_grid_row(
+                row,
+                db,
+                dns_settings.enabled,
+                dhcp_settings.enabled,
+                dns_requires_authoritative_backend(
+                    db, desired_authoritative=dns_settings.authoritative
+                ),
+            )
             for row in rows
         ]
         system_adapter_dry_run = get_settings().dry_run_system_adapters

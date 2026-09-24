@@ -245,7 +245,6 @@ def test_dns_and_dhcp_pages_render(client):
     assert "A (IPv4)" in dns.text
     assert "AAAA (IPv6)" in dns.text
     assert "CNAME (alias)" in dns.text
-    assert "ptr-record=" not in dns.text
     assert "1.49.168.192.in-addr.arpa" in dns.text
     assert 'name="listen_interfaces"' in dns.text
     assert "data-derived-listen-addresses" in dns.text
@@ -979,6 +978,46 @@ def test_dns_settings_autosave_returns_json(client):
     assert "sddc.internal=192.168.10.10,192.168.10.11" in refreshed.text
 
 
+def test_dns_settings_rejects_authoritative_dnssec_before_apply(client):
+    """Show the incompatible combination in review and block its Apply.
+
+    Args:
+        client: Isolated client for this scenario.
+    """
+    login(client)
+    page = client.get("/dns")
+    csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    response = client.post(
+        "/dns/settings",
+        data={
+            "enabled": "on",
+            "listen_interfaces_present": "1",
+            "listen_addresses_present": "1",
+            "listen_interfaces": ["eth2"],
+            "listen_addresses": ["192.168.50.1"],
+            "upstream_servers": "8.8.8.8",
+            "cache_size": "500",
+            "authoritative": "on",
+            "dnssec_enabled": "on",
+            "csrf": csrf,
+        },
+        headers={"X-Atlaso-Autosave": "1"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["valid"] is False
+    assert any(
+        "Authoritative DNS and DNSSEC validation cannot be enabled together" in error
+        for error in response.json()["validation_errors"]
+    )
+    submission = client.post(
+        "/appliance-apply",
+        data={"csrf": csrf, "selected_units": "dnsmasq"},
+        headers={"Accept": "application/json"},
+    )
+    assert submission.status_code == 422
+
+
 def test_dns_settings_autosave_filters_invalid_listen_interfaces(client):
     """Verify that dns settings autosave filters invalid listen interfaces.
 
@@ -1158,8 +1197,8 @@ def test_dhcp_scope_edit_form_updates_ip_zone(client):
             "range_expression": "192.168.50.110-210",
             "lease_time": "8h",
             "domain_name": "atlaso.internal",
-            "dns_server": "192.168.50.1",
-            "ntp_server": "192.168.50.1",
+            "dns_server": "192.168.1.250",
+            "ntp_server": "192.168.1.250",
             "description": "edited IP zone",
             "enabled": "on",
             "csrf": csrf,
@@ -1172,7 +1211,8 @@ def test_dhcp_scope_edit_form_updates_ip_zone(client):
     assert "SiteA-Lab" in refreshed.text
     assert "192.168.50.110" in refreshed.text
     assert "edited IP zone" in refreshed.text
-    assert '"ntp_server": "192.168.50.1"' in refreshed.text
+    assert '"dns_server": "192.168.1.250"' in refreshed.text
+    assert '"ntp_server": "192.168.1.250"' in refreshed.text
 
 
 def test_dhcp_vlan_scope_can_be_created_without_dns_server(client):

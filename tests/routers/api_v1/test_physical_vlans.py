@@ -684,8 +684,8 @@ def test_physical_interface_api_atomically_refreshes_ipv4_and_ipv6_dependencies(
         assert oidc_dns_addresses == {new_ipv4, new_ipv6}
         assert scopes["api-ipv4-dependency"].site_address == new_ipv4
         assert scopes["api-ipv4-dependency"].range_expression == "192.168.60.100-192.168.60.120"
-        assert scopes["api-ipv4-dependency"].dns_server == "192.168.60.53"
-        assert scopes["api-ipv4-dependency"].ntp_server == "192.168.60.54"
+        assert scopes["api-ipv4-dependency"].dns_server == "192.168.50.53"
+        assert scopes["api-ipv4-dependency"].ntp_server == "192.168.50.54"
         assert scopes["api-ipv6-dependency"].site_address == new_ipv6
         assert scopes["api-ipv6-dependency"].range_expression == "fd00:60::100-fd00:60::120"
         assert scopes["api-ipv6-dependency"].dns_server == new_ipv6
