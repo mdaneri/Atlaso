@@ -4230,14 +4230,14 @@ reload the affected page.</p>
 <li>Return to the affected service page and confirm its pending indicator cleared.</li>
 <li>Verify the resulting runtime behavior from the relevant service guide.</li>
 </ol>
-<p>When enabling local DNS, apply <strong>DNS/DHCP (dnsmasq)</strong> before the subsequent Appliance Settings resolver change. Atlaso
-keeps the last-applied external or DHCP resolver active until the DNS/DHCP unit is applied, so an unapplied local-DNS
-selection cannot redirect the appliance to loopback prematurely.
-When disabling applied local DNS, selecting <strong>DNS/DHCP (dnsmasq)</strong> automatically includes <strong>Appliance Settings</strong> first.
-That ordering moves the management resolver away from <code>127.0.0.1</code> before the local listener stops.</p>
+<p>When enabling local DNS, apply <strong>DNS/DHCP (dnsmasq)</strong> before the subsequent Appliance Settings resolver change. Atlaso keeps
+the last-applied external or DHCP resolver active until then, so an unapplied selection cannot redirect to loopback.
+When disabling applied local DNS, selecting <strong>DNS/DHCP (dnsmasq)</strong> includes <strong>Appliance Settings</strong> first, moving the
+management resolver away from <code>127.0.0.1</code> before the local listener stops.
+If enabling Management HTTPS creates a pending CA-managed certificate, the review includes <strong>Certificate Authority</strong> and
+installs its files before <strong>Appliance Settings</strong>. The protected management handoff uses the same ordering.</p>
 <p>Examples include checking service health, resolving a managed DNS name, reaching the intended listener, or confirming
-the installed configuration from the appliance console. Use the service-specific verification procedure rather than
-relying only on a green UI status.</p>
+installed configuration from the appliance console. Use the service-specific procedure; a green UI status is insufficient.</p>
 <p>In development, adapters normally run in dry-run mode. A successful dry-run proves that Atlaso validated and recorded
 the command intent; it does not prove that Photon services changed.</p>
 <h2 id="recover-from-a-failed-apply">Recover from a failed apply<a class="headerlink" href="#recover-from-a-failed-apply" title="Permanent link">&para;</a></h2>

@@ -4511,7 +4511,8 @@ from a pinned upstream QCOW2 source. The payload and SHA-512 metadata are cached
 a verified pair: corrupt entries are removed on an ordinary rerun, downloads stay in unique partial files until
 validation succeeds, and promotion is scoped to the exact expected cache files. The default Alpine artifact uses the
 versioned <code>v3.24</code> release URL and a repository-pinned SHA-512 digest; custom images must pass their own
-<code>-ExpectedSha512</code> pin.</p>
+<code>-ExpectedSha512</code> pin. Preparation expands the powered-off client VMDK to at least 2 GiB with VMware Virtual Disk
+Manager; cloud-init grows its root partition and filesystem before installing lifecycle probe packages.</p>
 <p>Default vmnets:</p>
 <ul>
 <li><code>VMnet8</code> for management, with the appliance address assigned by DHCP by default</li>
@@ -4724,6 +4725,18 @@ has an address on that subnet before prompting for credentials or creating a lab
 from the default <code>192.168.12.1/24</code>, pass a matching site CIDR with an unused host address.
 For bridged VMnet0, the wrapper forwards <code>-BridgedInterfaceAlias</code> to the direct runner so both checks use the selected
 host interface; runtime discovery executes the network script from the admitted source commit.</p>
+<p>The full lifecycle uses <code>oidc.atlaso.internal</code> because management HTTPS already owns
+<code>core.atlaso.internal</code>. Its first Apply includes the configured CA certificate consumers, then it
+applies the OIDC certificate, DNS record, and public listener. Site Client A resolves the OIDC
+hostname through the site DNS listener and verifies the discovery endpoint over TLS against the
+applied CA root; the Authorization Code flow uses the management listener,
+which remains reachable from the Windows harness when Site A is an isolated <code>lan:&lt;name&gt;</code> segment.
+The harness disables VMware Tools guest time synchronization before applying NTPsec, so the two clock
+controllers do not compete. Before the client NTS and ordinary NTP probes, it waits up to ten minutes
+for the appliance NTP server to clear its unsynchronized leap alarm; an active listener alone is not
+accepted as ready.
+The web-terminal check likewise probes the site route and management-path isolation from Site Client A,
+while exercising the authenticated page and ticket flow through the reachable management listener.</p>
 <p>Useful commands:</p>
 <div class="language-powershell highlight"><pre><span></span><code><span id="__span-8-1"><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="c"># Print selected paths and topology without creating VMs.</span>
 </span><span id="__span-8-2"><a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a><span class="n">pwsh</span> <span class="n">-ExecutionPolicy</span> <span class="n">Bypass</span> <span class="p">`</span>
@@ -5102,6 +5115,10 @@ External ESX 9 integration evidence remains required for IPv4 and IPv6 VMkernel 
 reachability, service apply behavior, tty1 console ownership with tty2 left available for normal login, backup/restore
 portability, and host/client integration where separate vmnets are equivalent. Tagged-trunk acceptance requires a
 compatible upstream virtual-network configuration and recorded topology evidence.</p>
+<p>For the four-adapter lifecycle appliance, <code>run-lifecycle-test.ps1</code> assigns explicit VMware PCI slots so Photon enumerates
+management as <code>eth0</code>, site A as <code>eth1</code>, trunk as <code>eth2</code>, and site B as <code>eth3</code>. Without those slots, Workstation can
+enumerate the isolated site B adapter as <code>eth0</code>; the management DHCP configuration then binds to the wrong network
+and lifecycle startup cannot reach the appliance. The management-only test VM path retains its existing slot layout.</p>
 <h2 id="recover-a-retained-builder-address">Recover a retained builder address<a class="headerlink" href="#recover-a-retained-builder-address" title="Permanent link">&para;</a></h2>
 <p>A failed image build can finish process cleanup while Workstation still holds its stopped VM tab open. The image
 wrapper saves its exact allocation and process-termination proof before attempting VMware deletion. Successful

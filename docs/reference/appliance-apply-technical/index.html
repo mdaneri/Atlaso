@@ -5171,12 +5171,18 @@ and runtime resolver apply before reconfiguring the links. This persistence appl
 <code>00-atlaso-mgmt.network</code> and flagged-access physical/VLAN files.
 The staged resolver mode derives local-DNS availability from the last-applied DNS/DHCP baseline, not unapplied desired
 state. Enabling DNS without applying its unit therefore leaves the resolver change pending and cannot point the
-management link at loopback before dnsmasq is active.
+management link at loopback before dnsmasq is active. A DNS/DHCP submission adds Appliance Settings only when its
+last-applied resolver projection still needs to move to local DNS; later record, DHCP, or DNS-setting submissions leave
+unrelated pending Appliance Settings fields untouched.
 Desired DNS disablement immediately stages the non-loopback resolver projection. If DNS/DHCP is selected while its
 last-applied baseline enabled local DNS, submission also selects Appliance Settings; unit order moves the resolver
 before dnsmasq removes the loopback listener.
 The resolver interface follows the effective listener precedence: dedicated management first, then a flagged access
-physical interface, then a flagged access VLAN.
+physical interface, then a flagged access VLAN. Each resolver write marks the selected generated networkd file with its
+configured or DHCP resolver mode. When persistence exists on more than one eligible path during a dynamic-listener
+transition, Network regeneration preserves the most recently updated marked source, including an intentionally empty
+DHCP source, so lease recovery cannot revive older loopback or external resolver intent. Existing unmarked files use
+the most recently updated DNS-bearing source as a migration fallback.
 If another Appliance Settings field differs from its baseline, that unit remains pending after a successful handoff so
 the full hostname, resolver, SSH, Web Terminal trust, and telemetry apply remains pending. A staged resolver-mode or
 server change is part of the successful handoff's Appliance Settings baseline when all unrelated settings already
@@ -5291,30 +5297,43 @@ runtime and recovery record. Global Apply expands NAT dependencies before classi
 <h3 id="dnsdhcp-apply">DNS/DHCP apply<a class="headerlink" href="#dnsdhcp-apply" title="Permanent link">&para;</a></h3>
 <p>The real DNS/DHCP apply path is dnsmasq-backed. The <code>dnsmasq</code> apply unit stages Atlaso's rendered dnsmasq config at
 <code>/var/lib/atlaso/apply/dnsmasq/atlaso.conf</code>, validates it with <code>dnsmasq --test</code>, installs
-<code>/etc/atlaso/dnsmasq.d/atlaso.conf</code>, enables <code>dnsmasq</code>, and reloads or restarts the service through <code>atlaso-helper</code>. DNS
-and DHCP remain one global apply unit because they share one dnsmasq config and service reload boundary. The Services
-page keeps separate DNS and DHCP rows for desired-state visibility, while their runtime state is read from the shared
-<code>dnsmasq.service</code>.</p>
+<code>/etc/atlaso/dnsmasq.d/atlaso.conf</code>, enables <code>dnsmasq</code>, and reloads or restarts the service through <code>atlaso-helper</code>.
+Authoritative mode adds the extracted backend configuration and service described below. DNS and DHCP remain one global
+apply unit because they share one staged configuration bundle and coordinated service reload boundary. The Services
+page keeps separate DNS and DHCP rows for desired-state visibility. The client-facing
+<code>dnsmasq.service</code> starts after and wants the authoritative backend whenever that backend is enabled. If the backend
+restarts after a runtime failure, the client-facing service remains available for DHCP, host resolution, and recursive
+DNS while managed authoritative zones temporarily return a backend error.</p>
 <h4 id="authoritative-dns">Authoritative DNS<a class="headerlink" href="#authoritative-dns" title="Permanent link">&para;</a></h4>
-<p>Authoritative DNS remains inside that same unit. When enabled, the renderer emits one <code>auth-zone=&lt;domain&gt;</code> for each
-managed forward domain, one <code>auth-server=&lt;primary-nameserver&gt;,&lt;selected-interface&gt;...</code>, shared
-<code>auth-soa=&lt;serial&gt;,&lt;administrator&gt;,&lt;refresh&gt;,&lt;retry&gt;,&lt;expiry&gt;</code>, and <code>auth-ttl=&lt;seconds&gt;</code>. Generated <code>host-record</code> lines
-provide A/AAAA glue for every selected DNS listen address. dnsmasq makes interfaces named by <code>auth-server</code>
-authoritative-only: those listeners provide complete authoritative positive and negative answers but refuse unrelated
-recursion and non-authoritative reverse zones. The same process continues PTR and upstream-recursive service on
-non-authoritative listeners such as loopback. Validate the installed state with
-<code>sudo grep -E '^(auth-zone|auth-server|auth-soa|auth-ttl|host-record=ns)' /etc/atlaso/dnsmasq.d/atlaso.conf</code>,
-<code>systemctl is-active dnsmasq</code>, authoritative queries such as <code>dig @&lt;selected-listener&gt; &lt;zone&gt; SOA</code>,
+<p>Authoritative DNS remains inside that same unit. When enabled, the renderer embeds an isolated backend configuration
+with one <code>auth-zone=&lt;domain&gt;</code> per managed forward domain, <code>auth-server=&lt;primary-nameserver&gt;,127.0.0.1</code>,
+<code>auth-soa=&lt;serial&gt;,&lt;administrator&gt;,&lt;refresh&gt;,&lt;retry&gt;,&lt;expiry&gt;</code>, and <code>auth-ttl=&lt;seconds&gt;</code>. The helper extracts that
+configuration to <code>/etc/atlaso/dnsmasq.d/atlaso-authoritative.conf</code> and runs it on <code>127.0.0.1:5353</code> through
+<code>atlaso-dns-authoritative.service</code>. The ordinary dnsmasq service forwards managed domains to that backend, preserving
+complete authoritative positive and negative answers while retaining PTR responses and upstream recursion on selected
+listeners. The client-facing cache is disabled in authoritative mode so repeated forwarded answers retain AA.
+Validation rejects combining Authoritative DNS with DNSSEC, whose required cache would strip AA from repeated answers.
+When DHCP is enabled, managed-suffix lease events update the backend's hosts directory so live client names retain AA.
+The recursive instance forwards their reverse lookups to that backend, keeps PTR records for generated nameserver glue,
+and retains ordinary local names for scopes outside the managed zones. The helper restores suppressed managed lease
+names in DHCP API/UI reads and reconciles mirrored entries with current leases before the backend starts.
+If activation fails after installing a candidate reservation, rollback first restores the previous DNS configuration,
+then reconciles concurrent lease-hook replacements against that configuration and active leases before restoring eligible
+older mirrors. A name read only from the unapplied candidate must not remain in the restored authoritative backend.
+Listener selection and firewall policy limit client access. Validate the installed state with
+<code>sudo grep -E '^(auth-zone|auth-server|auth-soa|auth-ttl|host-record=ns)' /etc/atlaso/dnsmasq.d/atlaso-authoritative.conf</code>,
+<code>systemctl is-active atlaso-dns-authoritative dnsmasq</code>, authoritative queries such as <code>dig @&lt;selected-listener&gt; &lt;zone&gt; SOA</code>,
 <code>dig @&lt;selected-listener&gt; &lt;zone&gt; NS</code>, <code>dig @&lt;selected-listener&gt; &lt;nameserver&gt; A</code>, and
 <code>dig @&lt;selected-listener&gt; missing.&lt;zone&gt; A</code>, then recursive-path queries such as <code>dig @127.0.0.1 -x &lt;record-address&gt;</code>
-and <code>dig @127.0.0.1 example.com A</code>. The missing-name result should be authoritative NXDOMAIN with the generated SOA in
-authority.</p>
+and <code>dig @&lt;selected-listener&gt; example.com A</code>. The missing-name result should be authoritative NXDOMAIN with the generated
+SOA in authority.</p>
 <h4 id="dns-security-and-logging">DNS security and logging<a class="headerlink" href="#dns-security-and-logging" title="Permanent link">&para;</a></h4>
 <p>DNSSEC validation, rebind protection, and query logging are desired-state dnsmasq settings. DNSSEC renders <code>dnssec</code> plus
 a Atlaso-managed trust-anchor include under <code>/var/lib/atlaso/apply/dnsmasq/</code>; the helper verifies installed dnsmasq
 DNSSEC support and copies package-provided trust anchors before running <code>dnsmasq --test</code>. Rebind protection renders
-<code>stop-dns-rebind</code> and explicit <code>rebind-domain-ok</code> exemptions. Query logging renders <code>log-queries=extra</code> only when
-enabled and should be treated as temporary troubleshooting because it can expose client query names.</p>
+<code>stop-dns-rebind</code>, explicit <code>rebind-domain-ok</code> exemptions, and automatic exemptions for managed zones forwarded to the
+isolated authoritative backend. Query logging renders <code>log-queries=extra</code> only when enabled and should be treated as
+temporary troubleshooting because it can expose client query names.</p>
 <h4 id="service-endpoint-records">Service endpoint records<a class="headerlink" href="#service-endpoint-records" title="Permanent link">&para;</a></h4>
 <p>Service-owned endpoint DNS uses a canonical alias plus generated target records. When a service such as KMS, ESXi PXE,
 VCF Offline Depot, or VCF Private Registry selects one or more listen interfaces, Atlaso creates direct A/AAAA records
@@ -5761,8 +5780,9 @@ its password.</p>
 preview and shows a unified config diff when available. On first apply, no baseline exists yet, so the page shows the
 current preview instead. If an appliance already has operator activity but its Network baseline is absent, Network
 apply fails closed before helper execution because Atlaso cannot prove which management path must remain reachable.
-Restore a known-good settings archive containing the apply baselines or complete maintainer-guided local-console
-recovery before retrying Network apply.</p>
+On the same host, settings restore retains its existing apply baselines and compares imported desired state against
+what is actually applied. Archives never transfer apply baselines to another host. If the current host has no Network
+baseline, complete maintainer-guided local-console recovery before retrying Network apply.</p>
 <p>Rendered previews and job results must redact sensitive-looking values such as passwords, tokens, credentials, private
 keys, robot accounts, activation codes, encrypted CA private material, and uploaded secret contents.</p>
 <p>Local Users, Certificate Authority, and Managed LDAP are the secret-bearing apply inputs with an explicit transient

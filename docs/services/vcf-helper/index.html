@@ -4856,6 +4856,8 @@ match the current catalog.</p>
 <p>Fetch and no-JavaScript form responses report the current edited FQDN set as created, skipped, deleted, or preserved
 rows with assigned addresses, plus validation or allocation errors. All mutations use the existing authenticated
 session, CSRF validation, audit logging, and DNS desired state model.</p>
+<p>Connection failures distinguish hostname resolution, TCP connectivity, and TLS handshake/certificate retrieval.
+For an unresolved Atlaso-managed name, verify local DNS and host resolver configuration before retrying TLS confirmation.</p>
 <!-- BEGIN GENERATED ADDITIONAL SCREENSHOTS -->
 <h2 id="additional-verified-states">Additional verified states<a class="headerlink" href="#additional-verified-states" title="Permanent link">&para;</a></h2>
 <p>These captures show responsive layouts and useful operational states referenced by this page.</p>
