@@ -11762,6 +11762,42 @@ def test_authoritative_enable_does_not_seed_unproven_ipv6_reservation(monkeypatc
     assert "ordinary.atlaso.internal" in ordinary.read_text(encoding="utf-8")
 
 
+@pytest.mark.parametrize("lease_hook_replaced_seed", [False, True])
+def test_failed_authoritative_apply_removes_only_its_new_lease_seed(monkeypatch, tmp_path, lease_hook_replaced_seed):
+    """Rollback cannot publish a staged name or erase a later lease event."""
+    helper = load_helper_module()
+    state_dir = tmp_path / "dnsmasq"
+    state_dir.mkdir()
+    hosts_dir = state_dir / "authoritative-leases"
+    hosts_dir.mkdir()
+    lease_file = state_dir / "dhcp.leases"
+    lease_file.write_text("1893456000 02:00:00:00:00:01 192.168.50.21 client *\n", encoding="utf-8")
+    main = tmp_path / "candidate.conf"
+    main.write_text("# atlaso-authoritative-lease-scope=192.168.50.0/24,atlaso.internal\n", encoding="utf-8")
+    authoritative = tmp_path / "authoritative.conf"
+    authoritative.write_text("auth-zone=atlaso.internal\n", encoding="utf-8")
+    monkeypatch.setattr(helper, "DNSMASQ_STATE_DIR", state_dir)
+    monkeypatch.setattr(helper, "DNSMASQ_LEASE_FILE_PATH", lease_file)
+    monkeypatch.setattr(helper, "DNSMASQ_AUTHORITATIVE_LEASE_HOSTS_DIR", hosts_dir)
+    monkeypatch.setattr(helper, "_reload_authoritative_lease_hosts", lambda: None)
+    destination = hosts_dir / "lease-c0a83215.hosts"
+
+    with helper._restore_pruned_lease_hosts_on_failure(True) as (_commit, seeded_inodes):
+        helper._prepare_authoritative_lease_hosts(authoritative, main, seeded_inodes)
+        assert destination in seeded_inodes
+        if lease_hook_replaced_seed:
+            replacement = state_dir / "lease-hook-replacement"
+            replacement.write_text(
+                "192.168.50.21 renewed.atlaso.internal\n# mac=02:00:00:00:00:01\n",
+                encoding="utf-8",
+            )
+            replacement.replace(destination)
+
+    assert destination.exists() is lease_hook_replaced_seed
+    if lease_hook_replaced_seed:
+        assert "renewed.atlaso.internal" in destination.read_text(encoding="utf-8")
+
+
 def test_recursive_transition_preserves_suppressed_lease_until_native_name(monkeypatch, tmp_path):
     """A recursive restart must retain '*' names and retire them on renewal."""
     helper = load_helper_module()

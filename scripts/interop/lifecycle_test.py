@@ -4777,6 +4777,18 @@ def ntp_client_checks(args: argparse.Namespace) -> dict[str, Any]:
         return {"skipped": "client checks disabled"}
     if not args.client_a_host:
         return {"skipped": "client A host not provided"}
+    # A freshly started ntpd can be active and listening while it still
+    # advertises leap_alarm. Chrony correctly refuses such a server, so wait
+    # for NTPsec to select a synchronized upstream before probing clients.
+    synchronization = ssh_until_success(
+        args.appliance_ssh_host,
+        args,
+        "ntpq -c rv | grep -q leap=00",
+        role="appliance",
+        label="appliance NTP synchronization",
+        timeout_seconds=600,
+        interval_seconds=15,
+    )
     site_ip = str(ip_interface(args.site_cidr).ip)
     hostname = f"ntp.{args.domain}"
     elevate = elevation_probe()
@@ -4792,7 +4804,12 @@ def ntp_client_checks(args: argparse.Namespace) -> dict[str, Any]:
     )
     result = ssh_command(args.client_a_host, args, command, role="client")
     require_success(result, "client A NTS-authenticated and ordinary NTP probes")
-    return {"client_a": result, "hostname": hostname, "ordinary_ntp_target": site_ip}
+    return {
+        "client_a": result,
+        "hostname": hostname,
+        "ordinary_ntp_target": site_ip,
+        "server_synchronization_attempts": synchronization["attempts"],
+    }
 
 
 def wan_packet_loss_check(client: HttpClient, args: argparse.Namespace) -> dict[str, Any]:

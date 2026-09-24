@@ -596,6 +596,8 @@ applies the OIDC certificate, DNS record, and public listener. Site Client A res
 hostname through the site DNS listener and verifies the discovery endpoint over TLS against the
 applied CA root; the Authorization Code flow uses the management listener,
 which remains reachable from the Windows harness when Site A is an isolated `lan:<name>` segment.
+Before the client NTS and ordinary NTP probes, the harness waits up to ten minutes for the appliance
+NTP server to clear its unsynchronized leap alarm; an active listener alone is not accepted as ready.
 The web-terminal check likewise probes the site route and management-path isolation from Site Client A,
 while exercising the authenticated page and ticket flow through the reachable management listener.
 

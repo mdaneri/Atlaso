@@ -3117,13 +3117,15 @@ def _authoritative_reservation_names(
 
 
 def _prepare_authoritative_lease_hosts(
-    candidate_config_path: Path, candidate_main_config_path: Path | None = None, *, recursive_mode: bool = False
+    candidate_config_path: Path, candidate_main_config_path: Path | None = None,
+    seeded_inodes: dict[Path, tuple[int, int]] | None = None, *, recursive_mode: bool = False
 ) -> None:
     """Validate and reconcile the lease mirror before starting the DNS backend.
 
     Args:
         candidate_config_path: New authoritative configuration containing managed zones.
         candidate_main_config_path: New main configuration containing reservation names, if available.
+        seeded_inodes: New mirrors owned by this Apply, identified by device and inode for rollback.
         recursive_mode: Preserve only suppressed lease names while leaving authoritative mode.
     """
 
@@ -3290,7 +3292,10 @@ def _prepare_authoritative_lease_hosts(
                     temporary.write(f"# scope-domain={scope_domain}\n")
             temporary_path.chmod(0o644)
             try:
+                temporary_stat = temporary_path.stat()
                 os.link(temporary_path, destination)
+                if seeded_inodes is not None:
+                    seeded_inodes[destination] = (temporary_stat.st_dev, temporary_stat.st_ino)
             except FileExistsError:
                 # A concurrent lease hook owns its newer name.
                 pass
@@ -3301,8 +3306,9 @@ def _prepare_authoritative_lease_hosts(
 
 @contextmanager
 def _restore_pruned_lease_hosts_on_failure(enabled: bool):
-    """Restore only mirrors pruned by an unsuccessful ordinary DNS apply."""
+    """Restore pruned mirrors and remove still-owned seeds after failed DNS Apply."""
     previous: dict[Path, bytes] = {}
+    seeded_inodes: dict[Path, tuple[int, int]] = {}
     if enabled:
         for path in _authoritative_lease_mirror_paths():
             if path.stat().st_size > 512:
@@ -3317,10 +3323,22 @@ def _restore_pruned_lease_hosts_on_failure(enabled: bool):
         committed = True
 
     try:
-        yield commit
+        yield commit, seeded_inodes
     finally:
         if enabled and not committed:
             restored = False
+            for path, seeded_identity in seeded_inodes.items():
+                try:
+                    current = path.lstat()
+                except FileNotFoundError:
+                    continue
+                if stat.S_ISLNK(current.st_mode) or not stat.S_ISREG(current.st_mode):
+                    raise ValueError("The authoritative lease mirror path became unsafe.")
+                # A lease hook publishes through os.replace; its new inode
+                # belongs to the live event and must survive Apply rollback.
+                if (current.st_dev, current.st_ino) == seeded_identity:
+                    path.unlink()
+                    restored = True
             for path, content in previous.items():
                 # A renewal after preparation owns a newly created path; do
                 # not overwrite it with the older snapshot.
@@ -3531,7 +3549,7 @@ def _handle_dnsmasq(action: str, args: list[str]) -> int:
                     authoritative_config_path is not None
                     or _recursive_lease_mirrors_in_config(main_config_path)
                 )
-            ) as commit_mirrors,
+            ) as (commit_mirrors, seeded_inodes),
         ):
             for candidate in (main_config_path, authoritative_config_path):
                 if candidate is None:
@@ -3554,7 +3572,7 @@ def _handle_dnsmasq(action: str, args: list[str]) -> int:
             DNSMASQ_STATE_DIR.mkdir(parents=True, exist_ok=True)
             if authoritative_config_path is not None:
                 try:
-                    _prepare_authoritative_lease_hosts(authoritative_config_path, main_config_path)
+                    _prepare_authoritative_lease_hosts(authoritative_config_path, main_config_path, seeded_inodes)
                 except (OSError, ValueError) as exc:
                     print(str(exc), file=sys.stderr)
                     return 2

@@ -858,6 +858,39 @@ def test_full_oidc_site_listener_uses_client_and_verifies_ca(monkeypatch):
     assert " -k" not in calls[0][1]
 
 
+@pytest.mark.parametrize("server_ready", [False, True])
+def test_ntp_client_check_waits_for_synchronized_server(monkeypatch, server_ready):
+    """Do not judge client NTS/NTP while a new server advertises leap_alarm."""
+    lifecycle = load_lifecycle_module()
+    args = lifecycle.parse_args([
+        "--password", "test", "--client-a-host", "192.0.2.11", "--appliance-ssh-host", "192.0.2.10",
+    ])
+    calls = []
+
+    def fake_wait(host, _args, command, **kwargs):
+        calls.append(("wait", host, command, kwargs))
+        if not server_ready:
+            raise lifecycle.LifecycleError("appliance NTP synchronization failed")
+        return {"attempts": 3}
+
+    def fake_ssh(host, _args, command, *, role):
+        calls.append(("client", host, command, role))
+        return {"returncode": 0, "stdout": "", "stderr": ""}
+
+    monkeypatch.setattr(lifecycle, "ssh_until_success", fake_wait)
+    monkeypatch.setattr(lifecycle, "ssh_command", fake_ssh)
+    if server_ready:
+        evidence = lifecycle.ntp_client_checks(args)
+        assert evidence["server_synchronization_attempts"] == 3
+        assert calls[1][0] == "client"
+    else:
+        with pytest.raises(lifecycle.LifecycleError, match="synchronization"):
+            lifecycle.ntp_client_checks(args)
+        assert len(calls) == 1
+    assert calls[0][0:3] == ("wait", args.appliance_ssh_host, "ntpq -c rv | grep -q leap=00")
+    assert calls[0][3]["timeout_seconds"] == 600
+
+
 def test_full_lifecycle_plan_includes_passwordless_web_terminal_acceptance():
     """Verify that full lifecycle plan includes passwordless web terminal acceptance."""
     lifecycle = load_lifecycle_module()
