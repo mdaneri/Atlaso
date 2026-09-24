@@ -254,8 +254,9 @@ def read_native(plan: dict, fixture: dict, peer: PinnedPeerTransport, appliance:
     ca_bytes = Path(plan["ca_path"]).read_bytes()
     if digest(ca_bytes) != plan["ca_sha256"].lower() or b"PRIVATE KEY" in ca_bytes or b"-----BEGIN CERTIFICATE-----" not in ca_bytes:
         raise Refusal("public_ca_pin_invalid")
-    context = ssl.create_default_context(cafile=plan["ca_path"])
+    context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
     context.minimum_version = ssl.TLSVersion.TLSv1_2
+    context.load_verify_locations(cafile=plan["ca_path"])
     connection = PeerHTTPSConnection(baseline, peer=peer, target_ip=baseline, context=context, timeout=12)
     try:
         connection.request("GET", "/openapi.json")

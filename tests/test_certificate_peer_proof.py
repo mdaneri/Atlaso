@@ -83,8 +83,11 @@ def test_read_native_requires_exact_unexpired_lease_before_tls(tmp_path: Path, m
     class FakeContext:
         minimum_version = None
 
+        def load_verify_locations(self, *, cafile: str) -> None:
+            assert cafile == str(ca)
+
     context = FakeContext()
-    monkeypatch.setattr(proof.ssl, "create_default_context", lambda **kwargs: context)
+    monkeypatch.setattr(proof.ssl, "SSLContext", lambda protocol: context)
     monkeypatch.setattr(proof, "PeerHTTPSConnection", FakeHTTPS)
     with pytest.raises(proof.Refusal, match="peer_original_mac_lease_expired_or_missing"):
         proof.read_native(plan, fixture, FakePeer(wrong_lease=True), FakeAppliance())
