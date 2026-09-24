@@ -3630,6 +3630,11 @@ def _reboot_appliance_and_wait(
     raise LifecycleError("Appliance reboot did not produce a new nginx-ready kernel boot within the lifecycle timeout.")
 
 
+def _signed_release_console_check(args: argparse.Namespace) -> dict[str, Any]:
+    """Verify the same local-console service and launcher contract after a release reboot."""
+    return run_host_checks(args, {"local_console": _local_console_check_command()})
+
+
 def signed_release_update_check(client: HttpClient, args: argparse.Namespace) -> dict[str, Any]:
     """Return signed release update check.
 
@@ -3662,6 +3667,7 @@ def signed_release_update_check(client: HttpClient, args: argparse.Namespace) ->
     success_post_reboot_health = appliance_health(client, args)
     if success_post_reboot_health["version"]["base_version"] != successful_version:
         raise LifecycleError("The successful candidate release did not remain active after reboot.")
+    success_post_reboot_console = _signed_release_console_check(args)
     after_success_reboot = _release_database_identity(args)
     if after_success_reboot["current_release"] != after_success["current_release"]:
         raise LifecycleError("The successful candidate release link changed after reboot.")
@@ -3687,6 +3693,7 @@ def signed_release_update_check(client: HttpClient, args: argparse.Namespace) ->
     rollback_post_reboot_health = appliance_health(client, args)
     if rollback_post_reboot_health["version"]["base_version"] != successful_version:
         raise LifecycleError("The rolled-back Atlaso version did not remain active after reboot.")
+    rollback_post_reboot_console = _signed_release_console_check(args)
     after_rollback_reboot = _release_database_identity(args)
     for key in ("current_release", "compatibility_venv", "schema_sha256", "users"):
         if after_rollback_reboot[key] != after_rollback[key]:
@@ -3707,9 +3714,11 @@ def signed_release_update_check(client: HttpClient, args: argparse.Namespace) ->
         "successful_version": successful_version,
         "successful_reboot": success_reboot,
         "successful_post_reboot_health": success_post_reboot_health,
+        "successful_post_reboot_console": success_post_reboot_console,
         "rollback_health": rollback_health,
         "rollback_reboot": rollback_reboot,
         "rollback_post_reboot_health": rollback_post_reboot_health,
+        "rollback_post_reboot_console": rollback_post_reboot_console,
     }
 
 
@@ -4261,6 +4270,20 @@ def routing_host_state_checks(args: argparse.Namespace) -> dict[str, Any]:
     return run_host_checks(args, routing_host_check_commands(args))
 
 
+def _local_console_check_command() -> str:
+    """Return the appliance console service and launcher readiness check."""
+    return (
+        "systemctl is-active atlaso-console.service && "
+        "systemctl is-enabled atlaso-console.service && "
+        "test \"$(systemctl is-enabled getty@tty1.service 2>/dev/null)\" = masked && "
+        "test \"$(systemctl show getty@tty2.service -p LoadState --value)\" = loaded && "
+        "test \"$(systemctl show getty@tty2.service -p UnitFileState --value)\" != masked && "
+        "test -x /opt/atlaso/.venv/bin/atlaso-console && "
+        "/opt/atlaso/bin/atlaso-helper console status --real | "
+        "grep -F '\"maintenance_isolation\": false'"
+    )
+
+
 def host_state_checks(args: argparse.Namespace) -> dict[str, Any]:
     """Return host state checks.
 
@@ -4282,16 +4305,7 @@ def host_state_checks(args: argparse.Namespace) -> dict[str, Any]:
     ).decode("ascii")
     checks = {
         **routing_host_check_commands(args),
-        "local_console": (
-            "systemctl is-active atlaso-console.service && "
-            "systemctl is-enabled atlaso-console.service && "
-            "test \"$(systemctl is-enabled getty@tty1.service 2>/dev/null)\" = masked && "
-            "test \"$(systemctl show getty@tty2.service -p LoadState --value)\" = loaded && "
-            "test \"$(systemctl show getty@tty2.service -p UnitFileState --value)\" != masked && "
-            "test -x /opt/atlaso/.venv/bin/atlaso-console && "
-            "/opt/atlaso/bin/atlaso-helper console status --real | "
-            "grep -F '\"maintenance_isolation\": false'"
-        ),
+        "local_console": _local_console_check_command(),
         "vcf_trust_dependencies": (
             f"printf %s {httpx_probe} | base64 -d | /opt/atlaso/.venv/bin/python -"
         ),

@@ -558,11 +558,12 @@ Use `-PlanOnly` to inspect whether the signed upgrade, rollback, and two audited
 The lifecycle runner checks Atlaso Release availability after selecting each channel and installs only when that check
 confirms an available update. It then proves that each release task
 exposes an Atlaso Release child step, proves the preview upgrade and exact host-facing candidate version, performs an
-audited appliance reboot, and requires the same candidate version and release link afterward. It then expects the
+audited appliance reboot, and requires the same candidate version, release link, and local console service/launcher
+readiness afterward. It then expects the
 development parent and child to fail with `rolled_back=true`, compares the active release, compatibility virtualenv,
 database schema hash, and user identities before and after rollback, and rechecks the previous version through the web,
 worker, console, internal `/openapi.json`, and host-facing API. A second audited reboot must preserve that healthy
-rollback identity and version. Omitting the URL skips only this externally supplied fixture.
+rollback identity, version, and local console readiness. Omitting the URL skips only this externally supplied fixture.
 
 ## Release operator workflow
 

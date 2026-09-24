@@ -183,18 +183,45 @@ def test_signed_release_lifecycle_rechecks_after_channel_change(monkeypatch):
 
     monkeypatch.setattr(lifecycle, "_submit_signed_release_update", submit)
     monkeypatch.setattr(lifecycle, "appliance_health", lambda _client, _args: {"version": {"base_version": "0.9.2"}})
-    monkeypatch.setattr(lifecycle, "_reboot_appliance_and_wait", lambda _client, _args: {})
+    monkeypatch.setattr(lifecycle, "_reboot_appliance_and_wait", lambda _client, _args: events.append("reboot") or {})
+    monkeypatch.setattr(lifecycle, "_signed_release_console_check", lambda _args: events.append("console") or {"local_console": "ready"})
     monkeypatch.setattr(lifecycle.time, "sleep", lambda _seconds: None)
     args = argparse.Namespace(signed_release_repository_url="https://release-fixture.example.test/updates")
 
     result = lifecycle.signed_release_update_check(object(), args)
 
     assert events == [
-        "source:preview", "check", "install:succeeded",
-        "source:development", "check", "install:failed",
+        "source:preview", "check", "install:succeeded", "reboot", "console",
+        "source:development", "check", "install:failed", "reboot", "console",
     ]
     assert result["preview_check_task_id"] == "job_abcdef123456"
     assert result["development_check_task_id"] == "job_abcdef123456"
+    assert result["successful_post_reboot_console"] == {"local_console": "ready"}
+    assert result["rollback_post_reboot_console"] == {"local_console": "ready"}
+
+
+def test_signed_release_console_check_reuses_host_contract(monkeypatch):
+    """The post-reboot probe runs the same fail-closed console check as host state."""
+    lifecycle = load_lifecycle_module()
+    captured = {}
+
+    def fake_host_checks(_args, checks):  # type: ignore[no-untyped-def]  # Fake records the exact post-reboot host contract.
+        captured.update(checks)
+        return {"local_console": "ready"}
+
+    monkeypatch.setattr(lifecycle, "run_host_checks", fake_host_checks)
+    assert lifecycle._signed_release_console_check(object()) == {"local_console": "ready"}
+    assert captured == {"local_console": lifecycle._local_console_check_command()}
+    assert "systemctl is-active atlaso-console.service" in captured["local_console"]
+    assert "systemctl is-enabled atlaso-console.service" in captured["local_console"]
+    assert "test -x /opt/atlaso/.venv/bin/atlaso-console" in captured["local_console"]
+
+    def failed_host_checks(_args, _checks):  # type: ignore[no-untyped-def]  # Fake models a broken post-reboot console.
+        raise lifecycle.LifecycleError("host local_console check failed")
+
+    monkeypatch.setattr(lifecycle, "run_host_checks", failed_host_checks)
+    with pytest.raises(lifecycle.LifecycleError, match="host local_console check failed"):
+        lifecycle._signed_release_console_check(object())
 
 
 def test_load_lifecycle_secrets_populates_passwords_from_stdin_envelope():
