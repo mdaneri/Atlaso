@@ -440,6 +440,11 @@ def test_transition_helper_supplies_proven_sources_before_guard(helper, monkeypa
     assert calls[0][0][-1] == "--transition-start-seeded"
     assert calls[0][1] == bindings
 
+    monkeypatch.setattr(helper, "_run_with_input", lambda command, _payload:
+                        subprocess.CompletedProcess(command, 1, "", "invalid transition source addresses\n"))
+    with pytest.raises(ValueError, match="invalid transition source addresses"):
+        helper._transition_source_guard(True, seed_interfaces=bindings)
+
 
 @pytest.mark.parametrize("enabled", [False, True])
 def test_ingress_capacity_preflight_applies_only_with_routing(helper, monkeypatch, tmp_path, enabled):

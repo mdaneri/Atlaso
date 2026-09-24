@@ -10740,6 +10740,18 @@ def _transition_source_guard(enable: bool, *, seed_interfaces: list[dict] | None
     else:
         result = _run(command)
     if result.returncode:
+        detail = (result.stderr or "").strip()
+        if detail in {
+            "invalid transition source bindings", "ambiguous transition source bindings",
+            "invalid transition source inventory", "ambiguous transition source inventory",
+            "previous management source identity unavailable", "invalid transition source addresses",
+            "ambiguous previous management source", "previous management source ownership conflicts with live rules",
+            "invalid interface identity", "invalid native addresses", "invalid source address",
+            "unusable source address", "native policy command failed",
+            "routing-domain priority capacity exhausted", "routing-domain priority ownership conflict",
+            "routing-domain system operation failed",
+        }:
+            raise ValueError(f"routing-domain transition source guard failed: {detail}")
         raise ValueError("routing-domain transition source guard could not reconcile")
 
 
