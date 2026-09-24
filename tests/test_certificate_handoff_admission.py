@@ -46,6 +46,24 @@ def test_peer_credential_is_independent_of_admin(monkeypatch: pytest.MonkeyPatch
     assert handoff.admin_password() == "admin-password-123"
 
 
+def test_admission_git_child_has_no_credential_bridge(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The head check must not pass either plaintext bridge value to Git."""
+    monkeypatch.setenv("ATLASO_NATIVE_ADMIN", "dummy-admin-password")
+    monkeypatch.setenv("ATLASO_NATIVE_PEER", "dummy-peer-password")
+    observed = []
+
+    def refuse_after_environment_check(_command, **kwargs):
+        observed.append(kwargs["env"])
+        raise RuntimeError("stop before reading plan artifacts")
+
+    monkeypatch.setattr(handoff.subprocess, "run", refuse_after_environment_check)
+    with pytest.raises(RuntimeError, match="stop before reading plan artifacts"):
+        handoff.admit_execution({"deployed_commit": "a" * 40})
+    assert len(observed) == 1
+    assert "ATLASO_NATIVE_ADMIN" not in observed[0]
+    assert "ATLASO_NATIVE_PEER" not in observed[0]
+
+
 def test_interface_edit_accepts_vmware_mac_spelling_only_for_same_device() -> None:
     """The VMX uses hyphens while the authenticated UI inventory uses colons."""
     class Client:

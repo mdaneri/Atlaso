@@ -22396,7 +22396,10 @@ def _console_management_readiness_checks() -> tuple[bool, tuple[tuple[str, str, 
         raise ValueError(f"reading the applied nginx management configuration failed: {exc}") from exc
     if not _console_management_config_contract_is_complete(management_config):
         raise ValueError("the applied nginx management configuration is incomplete")
-    https_enabled = bool(re.search(r"(?m)^\s*listen\s+\d+\s+ssl(?:\s+default_server)?;", management_config))
+    https_enabled = bool(re.search(
+        r"(?m)^\s*listen\s+(?:\d+|127\.0\.0\.1:\d+)\s+ssl(?:\s+default_server)?;",
+        management_config,
+    ))
     nginx_checks = (
         ("nginx HTTP redirect", "http://127.0.0.1/", False, "308"),
         ("nginx HTTPS readiness", "https://127.0.0.1/openapi.json", True, "200"),
@@ -22415,11 +22418,11 @@ def _console_management_config_contract_is_complete(config: str) -> bool:
     Returns:
         Whether the config contains a default listener and Atlaso proxy contract.
     """
-    if not re.search(r"(?m)^\s*listen\s+(?:\[::\]:)?\d+.*\bdefault_server\b", config):
+    if not re.search(r"(?m)^\s*listen\s+(?:\[::\]:\d+|\d+|127\.0\.0\.1:\d+).*\bdefault_server\b", config):
         return False
     if not re.search(r"(?m)^\s*proxy_pass\s+http://127\.0\.0\.1:\d+;", config):
         return False
-    https_enabled = bool(re.search(r"(?m)^\s*listen\s+(?:\[::\]:)?\d+\s+ssl\b", config))
+    https_enabled = bool(re.search(r"(?m)^\s*listen\s+(?:\[::\]:\d+|\d+|127\.0\.0\.1:\d+)\s+ssl\b", config))
     if not https_enabled:
         return True
     certificate_match = re.search(r"(?m)^\s*ssl_certificate\s+([^;]+);", config)
@@ -25331,6 +25334,9 @@ def _scope_management_handoff_old_listener(state: dict) -> None:
         raise ValueError("previous management listener addresses are invalid")
     scoped: list[str] = []
     listeners = 0
+    already_scoped: set[tuple[str, bool]] = set()
+    scoped_ports: dict[bool, set[int]] = {False: set(), True: set()}
+    allowed = {str(address) for address in addresses} | {"127.0.0.1", "::1"}
     for line in site.splitlines():
         ipv4 = re.fullmatch(r"(\s*)listen (\d+)( (?:ssl )?default_server);", line)
         ipv6 = re.fullmatch(r"(\s*)listen \[::\]:(\d+)( (?:ssl )?default_server);", line)
@@ -25343,9 +25349,39 @@ def _scope_management_handoff_old_listener(state: dict) -> None:
                     binding = str(address) if family == 4 else f"[{address}]"
                     scoped.append(f"{match.group(1)}listen {binding}:{match.group(2)}{match.group(3)};")
         elif re.match(r"\s*listen\s", line):
-            raise ValueError("previous management nginx listener is not canonical")
+            match = re.fullmatch(
+                r"\s*listen (?:([0-9.]+)|\[([0-9a-fA-F:]+)\]):(\d+)( ssl)? default_server;",
+                line,
+            )
+            if match is None:
+                raise ValueError("previous management nginx listener is not canonical")
+            try:
+                address = ip_address(match.group(1) or match.group(2))
+            except ValueError as exc:
+                raise ValueError("previous management nginx listener is not canonical") from exc
+            ssl = match.group(4) is not None
+            port = int(match.group(3))
+            key = (str(address), ssl)
+            if (str(address) not in allowed or address.version != (4 if match.group(1) else 6)
+                    or port < 1 or port > 65535 or ssl and not state["previous_https_enabled"]
+                    or key in already_scoped):
+                raise ValueError("previous management nginx listener is not canonical")
+            already_scoped.add(key)
+            scoped_ports[ssl].add(port)
+            scoped.append(line)
         else:
             scoped.append(line)
+    if already_scoped:
+        if listeners or any(len(ports) > 1 for ports in scoped_ports.values()) or any(
+            (str(address), ssl) not in already_scoped
+            for address in addresses for ssl in ((False, True) if state["previous_https_enabled"] else (False,))
+        ):
+            raise ValueError("previous management nginx listener is not canonical")
+        public_port = int(state.get("previous_management_public_port") or
+                          (443 if state["previous_https_enabled"] else 80))
+        if public_port not in scoped_ports[bool(state["previous_https_enabled"])]:
+            raise ValueError("previous management nginx listener is not canonical")
+        return
     expected_listeners = 4 if state["previous_https_enabled"] else 2
     if listeners != expected_listeners:
         raise ValueError("previous management nginx listener inventory is incomplete")
@@ -27556,7 +27592,7 @@ def _apply_management_handoff(payload: dict) -> int:
         management_https_result, _restart_delay_seconds = _configure_atlaso_management_https(
             settings_payload,
             verify_front_door=False,
-            listen_addresses=candidate_addresses,
+            listen_addresses=[*candidate_addresses, "127.0.0.1", "::1"],
         )
         if management_https_result != 0:
             raise ValueError("candidate nginx could not publish verified final listeners")

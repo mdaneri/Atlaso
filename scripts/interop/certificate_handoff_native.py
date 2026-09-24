@@ -516,9 +516,12 @@ def admit_execution(plan):
     Args:
         plan: Validated task plan bound to the owned test resources."""
     deployed_commit = plan.get("deployed_commit", "")
+    git_environment = os.environ.copy()
+    git_environment.pop("ATLASO_NATIVE_ADMIN", None)
+    git_environment.pop("ATLASO_NATIVE_PEER", None)
     current_head = subprocess.run(
         ["git", "-C", str(Path(__file__).resolve().parents[2]), "rev-parse", "HEAD"],
-        capture_output=True, text=True, check=True,
+        capture_output=True, text=True, check=True, env=git_environment,
     ).stdout.strip()
     if not re.fullmatch(r"[0-9a-f]{40}", deployed_commit) or deployed_commit != current_head:
         raise Refusal("wrong_deployed_commit")

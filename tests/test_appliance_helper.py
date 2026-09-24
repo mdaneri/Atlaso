@@ -2658,6 +2658,30 @@ def test_management_handoff_scopes_old_http_before_new_address_activation(monkey
     assert "listen [::]:80 default_server;" not in installed[0]
 
 
+def test_management_readiness_accepts_committed_scoped_loopback(monkeypatch, tmp_path):
+    """Console and update readiness retain their loopback path after handoff."""
+    helper = load_helper_module()
+    certificate = tmp_path / "site.crt"
+    key = tmp_path / "site.key"
+    certificate.write_text("test", encoding="utf-8")
+    key.write_text("test", encoding="utf-8")
+    site = tmp_path / "management.conf"
+    site.write_text(
+        "server {\n  listen 192.0.2.10:443 ssl default_server;\n"
+        "  listen 127.0.0.1:443 ssl default_server;\n"
+        "  listen 127.0.0.1:80 default_server;\n"
+        f"  ssl_certificate {certificate};\n  ssl_certificate_key {key};\n"
+        "  proxy_pass http://127.0.0.1:8000;\n}\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(helper, "NGINX_MANAGEMENT_SITE_PATH", site)
+
+    assert helper._console_management_config_contract_is_complete(site.read_text(encoding="utf-8"))
+    https_enabled, checks = helper._console_management_readiness_checks()
+    assert https_enabled is True
+    assert ("nginx HTTPS readiness", "https://127.0.0.1/openapi.json", True, "200") in checks
+
+
 def test_management_handoff_refuses_uncanonical_old_tls_site(monkeypatch, tmp_path):
     """Refuse a wildcard listener that cannot be safely scoped."""
     helper = load_helper_module()
@@ -2668,6 +2692,38 @@ def test_management_handoff_refuses_uncanonical_old_tls_site(monkeypatch, tmp_pa
         helper._scope_management_handoff_old_listener({
             "previous_https_enabled": True,
             "previous_management_addresses": ["192.0.2.10"],
+        })
+
+
+@pytest.mark.parametrize("https_enabled", [False, True])
+def test_management_handoff_accepts_previously_scoped_site(monkeypatch, tmp_path, https_enabled):
+    """A second handoff accepts the first handoff's address-specific site."""
+    helper = load_helper_module()
+    site = tmp_path / "management.conf"
+    site.write_text(
+        "# Managed by Atlaso. Local changes may be overwritten.\n"
+        "server {\n  listen 192.0.2.10:80 default_server;\n"
+        "  listen [2001:db8::10]:80 default_server;\n"
+        "  listen 127.0.0.1:80 default_server;\n  listen [::1]:80 default_server;\n}\n"
+        + ("server {\n  listen 192.0.2.10:443 ssl default_server;\n"
+           "  listen [2001:db8::10]:443 ssl default_server;\n"
+           "  listen 127.0.0.1:443 ssl default_server;\n"
+           "  listen [::1]:443 ssl default_server;\n}\n" if https_enabled else ""),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(helper, "NGINX_MANAGEMENT_SITE_PATH", site)
+    monkeypatch.setattr(helper, "_install_nginx_site", lambda *_args: pytest.fail("already scoped site changed"))
+
+    helper._scope_management_handoff_old_listener({
+        "previous_https_enabled": https_enabled,
+        "previous_management_addresses": ["192.0.2.10", "2001:db8::10"],
+    })
+
+    site.write_text(site.read_text(encoding="utf-8").replace("192.0.2.10", "192.0.2.11"), encoding="utf-8")
+    with pytest.raises(ValueError, match="not canonical"):
+        helper._scope_management_handoff_old_listener({
+            "previous_https_enabled": https_enabled,
+            "previous_management_addresses": ["192.0.2.10", "2001:db8::10"],
         })
 
 
@@ -3554,8 +3610,9 @@ def test_management_handoff_candidate_durability_gates_ack(
     assert nginx_readiness_options == [False, False]
     assert nginx_listen_addresses == [
         ["198.51.100.10"],
-        (["198.51.100.10", "198.51.100.11"] if candidate_sync_error == "late-covered"
-         else ["198.51.100.10"]),
+        (["198.51.100.10", "198.51.100.11", "127.0.0.1", "::1"]
+         if candidate_sync_error == "late-covered"
+         else ["198.51.100.10", "127.0.0.1", "::1"]),
     ]
     payload = json.loads(capsys.readouterr().out.splitlines()[-1])
     assert payload["management_handoff"] == "awaiting application commit"

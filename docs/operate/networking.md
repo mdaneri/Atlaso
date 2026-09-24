@@ -377,6 +377,10 @@ its certificate. Final reconfiguration cannot expose that certificate on a newly
 certificate check and listener update. Candidate HTTPS readiness verifies the transaction's CA and address identity
 before completion.
 
+The committed management site also keeps loopback listeners for console and update readiness. A later handoff accepts
+those address-scoped listeners as its proven previous site. A wildcard previous site is scoped before new addresses
+activate.
+
 A failed management handoff reports its non-secret failing layer and rolls back the captured network, coupled Routes &
 WAN runtime, firewall, nginx, certificate, and service state before the task becomes failed. Rollback also reconfigures
 interfaces introduced to the candidate and deletes candidate-only VLAN devices. If automatic rollback cannot restore
