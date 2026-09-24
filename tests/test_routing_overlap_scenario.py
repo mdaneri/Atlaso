@@ -504,37 +504,34 @@ def test_established_setup_rechecks_clean_projection_before_acceptance(monkeypat
     assert applies == [["dnsmasq"]]
 
 
-@pytest.mark.parametrize("changed", [False, True])
-def test_same_address_requires_original_unexpired_server_lease(monkeypatch, topology, native, changed):
-    """Only a retained real lease plus native static then dynamic ownership proves the case.
+@pytest.mark.parametrize("renewed", [False, True])
+def test_same_address_requires_live_server_lease(monkeypatch, topology, native, renewed):
+    """A renewed live lease plus native static then dynamic ownership proves the case.
 
     Args:
         monkeypatch: Substitute native observations and ordinary Apply.
         topology: Admitted original fixture identities.
         native: Acquired address and rule evidence.
-        changed: Whether the server lease changes during the static phase.
+        renewed: Whether the server lease renews during the static phase.
     """
     client, applies = FakeClient(), []
     lease = {"mac": topology.link("appliance", 0).mac, "address": "192.0.2.10",
              "expires_at": int(time.time()) + 100, "unexpired": True}
-    observations = iter([lease, {**lease, "expires_at": lease["expires_at"] + int(changed)}, lease, lease])
+    current = {**lease, "expires_at": lease["expires_at"] + int(renewed)}
+    observations = iter([lease, current, current, current])
     static = copy.deepcopy(native)
     static["links"][0]["addr_info"][0].pop("dynamic")
     monkeypatch.setattr(scenario, "_snapshot", lambda connect: static)
     monkeypatch.setattr(scenario, "_same_address_native", lambda connect, admitted: {"native": native})
     monkeypatch.setattr(scenario, "_apply", lambda current, units=None, **kwargs: applies.append(copy.deepcopy(current.rows)) or {"status": "succeeded"})
-    if changed:
-        with pytest.raises(OverlapPrerequisiteError, match="not retained"):
-            scenario._same_address_lease(client, lambda: None, topology, lambda action: {"leases": [next(observations)]}, [])
-        assert len(applies) == 1
-        assert client.external_dns_servers == ["192.0.2.1"]
-    else:
-        result = scenario._same_address_lease(client, lambda: None, topology, lambda action: {"leases": [next(observations)]}, [])
-        assert result["lease_before_activation"] == lease
-        assert [rows["eth0"]["ipv4_method"] for rows in applies] == ["static", "dhcp"]
-        assert client.external_dns_servers == []
-        assert [body["external_dns_servers"] for method, path, body in client.calls
-                if method == "PATCH" and path == "/api/v1/settings"] == [["192.0.2.1"], []]
+    result = scenario._same_address_lease(client, lambda: None, topology, lambda action: {"leases": [next(observations)]}, [])
+    assert result["original_lease"] == lease
+    assert result["static_phase_lease"] == current
+    assert result["lease_before_activation"] == current
+    assert [rows["eth0"]["ipv4_method"] for rows in applies] == ["static", "dhcp"]
+    assert client.external_dns_servers == []
+    assert [body["external_dns_servers"] for method, path, body in client.calls
+            if method == "PATCH" and path == "/api/v1/settings"] == [["192.0.2.1"], []]
 
 
 @pytest.fixture

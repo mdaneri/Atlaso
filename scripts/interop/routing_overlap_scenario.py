@@ -556,7 +556,7 @@ def _same_address_lease(
     topology: AdmittedTopology, server_action: Callable[[str], dict[str, Any]],
     baseline_dns_servers: list[str],
 ) -> dict[str, Any]:
-    """Prove DHCP activation against an unexpired lease retaining the same static address.
+    """Prove DHCP activation against a live lease for the same static address.
 
     Args:
         client: Pinned authenticated HTTPS client.
@@ -581,20 +581,19 @@ def _same_address_lease(
     if len(static_rows) != 1 or static_rows[0].get("dynamic") is True:
         raise OverlapPrerequisiteError("same-address phase did not establish native static ownership")
     retained = _lease(server_action("status"), topology)
-    if before["expires_at"] != retained["expires_at"] or retained["expires_at"] <= time.time():
-        raise OverlapPrerequisiteError("the original DHCP lease was not retained through static Apply")
+    # The same admitted MAC/address must still have a live server lease. Its
+    # expiry may move when the DHCP client renews during static Apply.
     client.json_request("PATCH", path, json_body={"ipv4_method": "dhcp", "ip_cidr": None, "gateway": None})
     client.json_request("PATCH", "/api/v1/settings", json_body={"external_dns_servers": baseline_dns_servers})
     # Record the actual still-unexpired server lease immediately before activation.
     activation_lease = _lease(server_action("status"), topology)
-    if activation_lease["expires_at"] != retained["expires_at"]:
-        raise OverlapPrerequisiteError("retained DHCP lease changed before activation")
     dhcp_apply = _apply(client, ["network", "firewall", "wan", "appliance_settings"], stage="same-address-dhcp")
     acquired = _same_address_native(connect, topology)
     desired = client.json_request("GET", path)
     if desired.get("ipv4_method") != "dhcp" or desired.get("ip_cidr"):
         raise OverlapPrerequisiteError("same-address activation did not retain desired DHCP")
-    return {"original_lease": before, "lease_before_activation": activation_lease,
+    return {"original_lease": before, "static_phase_lease": retained,
+            "lease_before_activation": activation_lease,
             "static_apply": static_apply, "static_native": static,
             "dhcp_apply": dhcp_apply, "acquired_native": acquired,
             "acquired_lease": _lease(server_action("status"), topology)}
