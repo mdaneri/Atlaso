@@ -718,7 +718,10 @@ def _run_authenticated(
             verify_route_selection(source, table, interface, observed)
             routes[source] = observed
         unbound = {}
-        for family, peer in ((4, "192.0.2.1"), (6, "fd74:1::1")):
+        # The fixture intentionally overlaps its on-link prefixes. An unbound
+        # on-link query may legitimately choose either connected interface;
+        # off-link destinations exercise the retained management defaults.
+        for family, peer in ((4, "203.0.113.1"), (6, "2001:db8::1")):
             observed = _observe(connect_appliance, SNAPSHOT_PROGRAM +
                                 f'\nprint(json.dumps({{"routes": command(["ip","-j","-N","-{family}",'
                                 f'"route","get","{peer}"])}}))\n')["routes"]
