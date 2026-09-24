@@ -413,16 +413,51 @@ def test_duplicate_native_priority_and_slot_ownership_are_rejected():
         domains.plan_rules({}, {domains.Rule(5000, "192.0.2.10", 100), domains.Rule(5001, "192.0.2.11", None)})
 
 
-def test_capacity_failure_does_not_retire_stale_rules_to_make_space(monkeypatch):
-    """Fail before mutation when add-before-retire cannot fit in the owned range.
+def test_full_capacity_reclaims_only_obsolete_source_slot(monkeypatch):
+    """Address churn can replace a stale pair when no spare slot remains.
 
     Args:
         monkeypatch: Pytest fixture replacing native operations with controlled observations.
     """
     monkeypatch.setattr(domains, "PRIORITY_END", 5004)
-    old = {domains.Rule(5000, "192.0.2.1", 100), domains.Rule(5002, "192.0.2.2", 100)}
+    old = domains.plan_rules({"192.0.2.1": 100, "192.0.2.2": 100}, set())
+    desired = domains.plan_rules({"192.0.2.1": 100, "192.0.2.3": 100}, old)
+    assert {rule.slot for rule in desired if rule.source == "192.0.2.1"} == {
+        rule.slot for rule in old if rule.source == "192.0.2.1"
+    }
+    assert {rule.slot for rule in desired if rule.source == "192.0.2.3"} == {
+        rule.slot for rule in old if rule.source == "192.0.2.2"
+    }
+    commands = capture_commands(monkeypatch)
+    domains.apply_rules(desired, old)
+    stale = [rule for rule in old if rule.source == "192.0.2.2"]
+    assert commands[:2] == [domains.rule_command("del", rule) for rule in sorted(stale, key=lambda r: r.table is None)]
+    assert all(command[3] == "add" for command in commands[2:])
+
+
+def test_full_capacity_never_reclaims_a_live_source_slot(monkeypatch):
+    """A third live source still fails capacity before native mutation.
+
+    Args:
+        monkeypatch: Pytest fixture replacing native operations with controlled observations.
+    """
+    monkeypatch.setattr(domains, "PRIORITY_END", 5004)
+    old = domains.plan_rules({"192.0.2.1": 100, "192.0.2.2": 100}, set())
+    commands = capture_commands(monkeypatch)
     with pytest.raises(domains.ReconcileError, match="capacity"):
-        domains.plan_rules({"192.0.2.3": 100}, old)
+        domains.plan_rules({"192.0.2.1": 100, "192.0.2.2": 100, "192.0.2.3": 100}, old)
+    assert commands == []
+
+
+def test_preflight_rejects_duplicate_candidate_before_native_reads(monkeypatch):
+    """The same address cannot be reserved by two candidate domains.
+
+    Args:
+        monkeypatch: Pytest fixture replacing native operations with controlled observations.
+    """
+    monkeypatch.setattr(domains, "read_native", lambda *_args: pytest.fail("read native"))
+    with pytest.raises(domains.ReconcileError, match="duplicate candidate"):
+        domains.preflight_capacity(["192.0.2.10", "192.0.2.10"])
 
 
 @pytest.mark.parametrize("fail_at", [1, 2])
@@ -492,6 +527,43 @@ def test_partial_renewal_mutation_is_recoverable_from_native_snapshot(monkeypatc
         domains.apply_rules(desired, set(native))
     domains.apply_rules(domains.plan_rules(desired_sources, native), set(native))
     assert {rule.source for rule in native} == {"192.0.2.11"}
+    assert len(native) == 2
+
+
+@pytest.mark.parametrize("failure_step", range(1, 5))
+def test_full_capacity_replacement_recovers_from_native_snapshot(monkeypatch, failure_step):
+    """Interrupted slot reuse converges from each exact partial pair state.
+
+    Args:
+        monkeypatch: Pytest fixture replacing native operations with controlled observations.
+        failure_step: Mutation ordinal at which simulated interruption occurs.
+    """
+    monkeypatch.setattr(domains, "PRIORITY_END", 5002)
+    native = domains.plan_rules({"192.0.2.10": 100}, set())
+    wanted = {"192.0.2.11": 100}
+    calls = 0
+
+    def execute(arguments):
+        """Apply an exact rule mutation after the one injected interruption."""
+        nonlocal calls
+        calls += 1
+        if calls == failure_step:
+            raise domains.ReconcileError("interrupted")
+        rule = domains.Rule(int(arguments[5]), arguments[7].split("/")[0],
+                            None if arguments[-1] == "unreachable" else int(arguments[-1]))
+        if arguments[3] == "add":
+            assert rule not in native
+            native.add(rule)
+        else:
+            assert rule in native
+            native.remove(rule)
+        return ""
+
+    monkeypatch.setattr(domains, "run_ip", execute)
+    with pytest.raises(domains.ReconcileError, match="interrupted"):
+        domains.apply_rules(domains.plan_rules(wanted, native), set(native))
+    domains.apply_rules(domains.plan_rules(wanted, native), set(native))
+    assert native == domains.plan_rules(wanted, native)
     assert len(native) == 2
 
 

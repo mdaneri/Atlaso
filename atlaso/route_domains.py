@@ -350,7 +350,7 @@ def owned_rules(rows: Any, family: int) -> set[Rule]:
 
 
 def plan_rules(sources: dict[str, int | None], existing: set[Rule]) -> set[Rule]:
-    """Allocate stable paired priorities without reusing stale occupied slots.
+    """Allocate stable paired priorities, reclaiming only obsolete sources at capacity.
 
     Args:
         sources: Exact assigned source addresses mapped to their owning table or quarantine.
@@ -365,6 +365,7 @@ def plan_rules(sources: dict[str, int | None], existing: set[Rule]) -> set[Rule]
             raise ReconcileError("ambiguous source rule allocation")
         slots[key], occupied[location] = rule.slot, rule.source
     desired: set[Rule] = set()
+    desired_sources = set(sources)
     for source, table in sorted(sources.items()):
         family = ipaddress.ip_address(source).version
         key = (family, source)
@@ -374,6 +375,13 @@ def plan_rules(sources: dict[str, int | None], existing: set[Rule]) -> set[Rule]
             start = int.from_bytes(hashlib.sha256(source.encode("ascii")).digest()[:4], "big") % capacity
             slot = next((PRIORITY_START + 2 * ((start + step) % capacity) for step in range(capacity)
                          if (family, PRIORITY_START + 2 * ((start + step) % capacity)) not in occupied), None)
+            if slot is None:
+                # A complete native inventory has already removed obsolete sources
+                # from ``sources``. Keep all live slots stable, but permit address
+                # churn when every slot was occupied before this reconciliation.
+                slot = next((PRIORITY_START + 2 * ((start + step) % capacity) for step in range(capacity)
+                             if occupied.get((family, PRIORITY_START + 2 * ((start + step) % capacity)))
+                             not in desired_sources), None)
             if slot is None:
                 raise ReconcileError("routing-domain priority capacity exhausted")
             occupied[(family, slot)] = source
@@ -463,20 +471,31 @@ def apply_rules(desired: set[Rule], existing: set[Rule]) -> None:
             rule: Exact source lookup or unreachable guard.
         """
         return rule.family, rule.priority, rule.source, rule.table or 0
-    # Ensure even partial prior executions have guards before changing lookups.
-    guards = {Rule(rule.slot + 1, rule.source, None) for rule in existing | desired}
-    for rule in sorted(guards - existing, key=sort_key):
-        run_ip(rule_command("add", rule))
+    desired_slots = {(rule.family, rule.slot): rule.source for rule in desired}
     desired_sources = {rule.source for rule in desired}
-    changing = {rule for rule in existing - desired if rule.table is not None and rule.source in desired_sources}
+    reclaimed = {rule for rule in existing
+                 if (replacement := desired_slots.get((rule.family, rule.slot))) is not None
+                 and replacement != rule.source}
+    if any(rule.source in desired_sources for rule in reclaimed):
+        raise ReconcileError("live source slot cannot be reclaimed")
+    # Remove only proven-obsolete exact pairs before reusing a full slot. The
+    # persistent terminal guard still blocks a source that reappears mid-scan.
+    for rule in sorted(reclaimed, key=lambda rule: (rule.table is None, *sort_key(rule))):
+        run_ip(rule_command("del", rule))
+    remaining = existing - reclaimed
+    # Ensure even partial prior executions have guards before changing lookups.
+    guards = {Rule(rule.slot + 1, rule.source, None) for rule in remaining | desired}
+    for rule in sorted(guards - remaining, key=sort_key):
+        run_ip(rule_command("add", rule))
+    changing = {rule for rule in remaining - desired if rule.table is not None and rule.source in desired_sources}
     # Table changes and ambiguous sources must never have parallel active lookups.
     for rule in sorted(changing, key=sort_key):
         run_ip(rule_command("del", rule))
-    for rule in sorted(desired - existing - guards, key=sort_key):
+    for rule in sorted(desired - remaining - guards, key=sort_key):
         run_ip(rule_command("add", rule))
-    for rule in sorted(existing - desired - changing, key=lambda rule: (rule.table is None, *sort_key(rule))):
+    for rule in sorted(remaining - desired - changing, key=lambda rule: (rule.table is None, *sort_key(rule))):
         run_ip(rule_command("del", rule))
-    for rule in sorted(guards - existing - desired, key=sort_key):
+    for rule in sorted(guards - remaining - desired, key=sort_key):
         run_ip(rule_command("del", rule))
 
 
@@ -613,6 +632,8 @@ def preflight_capacity(candidate_addresses: list[str]) -> None:
     if not isinstance(candidate_addresses, list) or len(candidate_addresses) > 512:
         raise ReconcileError("invalid candidate source inventory")
     candidates = {usable_address(address) for address in candidate_addresses}
+    if len(candidates) != len(candidate_addresses):
+        raise ReconcileError("duplicate candidate source address")
     with reconciliation_lock():
         existing: set[Rule] = set()
         for family in (4, 6):
