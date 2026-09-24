@@ -607,6 +607,49 @@ def test_local_dns_enable_applies_listener_before_host_resolver(client):
         assert json.loads(settings["config_preview"])["resolver_servers"] == ["127.0.0.1"]
 
 
+@pytest.mark.parametrize("previous_apply", [False, True])
+def test_dns_activation_review_projects_local_resolver_for_existing_settings_row(client, previous_apply):
+    """Initial and independently changed Settings rows show the executed resolver preview."""
+    from atlaso.app import ui
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import ApplianceSettings, DnsSettings, Job
+
+    login(client)
+    with SessionLocal() as db:
+        dns = db.query(DnsSettings).one()
+        dns.enabled = False
+        db.commit()
+        if previous_apply:
+            units = ui.appliance_apply_units(db)
+            ui.update_appliance_apply_baselines(db, units, {unit["id"] for unit in units})
+            db.add(Job(id="dns-review-previous-apply", type="appliance-apply", status="succeeded", created_by="admin"))
+        dns.enabled = True
+        if previous_apply:
+            settings = db.query(ApplianceSettings).one()
+            settings.root_ssh_enabled = not settings.root_ssh_enabled
+        db.commit()
+
+    review = client.get("/appliance-apply/review")
+    assert review.status_code == 200
+    settings_rows = [unit for unit in review.json()["units"] if unit["id"] == "appliance_settings"]
+    assert len(settings_rows) == 1
+    assert json.loads(settings_rows[0]["config_preview"])["resolver_servers"] == ["127.0.0.1"]
+    assert settings_rows[0]["requires_dns_selection"] is False
+
+    if previous_apply:
+        csrf = client.get("/dashboard").text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+        response = client.post(
+            "/appliance-apply",
+            data={"csrf": csrf, "selected_units": ["dnsmasq", "appliance_settings"]},
+            headers={"Accept": "application/json"},
+        )
+        assert response.status_code == 202
+        with SessionLocal() as db:
+            job = db.get(Job, response.json()["job_id"])
+            captured = next(unit for unit in json.loads(job.result)["captured_units"] if unit["unit_id"] == "appliance_settings")
+            assert captured["config_preview"] == settings_rows[0]["config_preview"]
+
+
 def test_dns_change_keeps_unrelated_settings_pending_when_resolver_is_already_local(
     client,
 ):

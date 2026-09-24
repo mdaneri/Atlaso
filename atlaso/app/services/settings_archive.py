@@ -1432,11 +1432,21 @@ def restore_settings_archive(db: Session, archive: dict[str, Any]) -> dict[str, 
     _validate_archive(prepared_archive)
     _validate_archive_database_relationships(db, prepared_archive["data"])
     from atlaso.app.services.network_boot import lock_esxi_host_reference_lifecycle
+    from atlaso.app.ui import (
+        load_appliance_apply_baselines,
+        save_appliance_apply_baselines,
+    )
 
     lock_esxi_host_reference_lifecycle(db)
+    # These baselines describe the current host's applied files, not the
+    # archive's desired state. Preserve only live host evidence; an imported
+    # archive must never claim that its settings were already applied here.
+    live_apply_baselines = deepcopy(load_appliance_apply_baselines(db))
     recovery_archives = db.execute(select(LdapRecoveryArchive)).scalars().all()
     try:
         counts = _restore_settings_archive_data(db, prepared_archive["data"])
+        if live_apply_baselines:
+            save_appliance_apply_baselines(db, live_apply_baselines)
         db.commit()
     except ValueError:
         db.rollback()

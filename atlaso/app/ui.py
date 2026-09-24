@@ -11808,20 +11808,26 @@ def appliance_apply_context(db: Session) -> dict[str, Any]:
     settings_unit = unit_map.get("appliance_settings", {})
     dns_settings = dns_unit.get("context", {}).get("dns_settings")
     if (
-        not initial_apply_required
-        and dns_unit.get("changed")
+        (initial_apply_required or dns_unit.get("changed"))
         and getattr(dns_settings, "enabled", False)
-        and not settings_unit.get("changed")
         and not applied_resolver_uses_local_dns(load_appliance_apply_baselines(db).get("appliance_settings"))
+        and "dnsmasq" not in submitted_ids
         and "appliance_settings" not in submitted_ids
     ):
         projected = next(
             unit for unit in appliance_apply_units(db, reconcile=False, applying_dns=True)
             if unit["id"] == "appliance_settings"
         )
-        projected["requires_dns_selection"] = True
-        projected["summary"] = [*projected["summary"], "Selected with DNS to activate the host resolver"]
-        review_units = [projected, *review_units]
+        if not initial_apply_required and not settings_unit.get("changed"):
+            projected["requires_dns_selection"] = True
+            projected["summary"] = [*projected["summary"], "Selected with DNS to activate the host resolver"]
+        if any(unit["id"] == "appliance_settings" for unit in review_units):
+            review_units = [
+                projected if unit["id"] == "appliance_settings" else unit
+                for unit in review_units
+            ]
+        else:
+            review_units = [projected, *review_units]
     return {
         "apply_units": units,
         "changed_apply_units": changed_units,

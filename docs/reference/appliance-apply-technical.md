@@ -1001,8 +1001,9 @@ When desired state changes later, the global apply page compares the current ren
 preview and shows a unified config diff when available. On first apply, no baseline exists yet, so the page shows the
 current preview instead. If an appliance already has operator activity but its Network baseline is absent, Network
 apply fails closed before helper execution because Atlaso cannot prove which management path must remain reachable.
-Restore a known-good settings archive containing the apply baselines or complete maintainer-guided local-console
-recovery before retrying Network apply.
+On the same host, settings restore retains its existing apply baselines and compares imported desired state against
+what is actually applied. Archives never transfer apply baselines to another host. If the current host has no Network
+baseline, complete maintainer-guided local-console recovery before retrying Network apply.
 
 Rendered previews and job results must redact sensitive-looking values such as passwords, tokens, credentials, private
 keys, robot accounts, activation codes, encrypted CA private material, and uploaded secret contents.
