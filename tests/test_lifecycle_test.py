@@ -42,6 +42,113 @@ def load_network_boot_lifecycle_module():
     return module
 
 
+def test_signed_release_availability_check_confirms_current_candidate(monkeypatch):
+    """Submit and await the exact Atlaso Release check before installation.
+
+    Args:
+        monkeypatch: Replace polling delay for the bounded fake task.
+    """
+    lifecycle = load_lifecycle_module()
+    monkeypatch.setattr(lifecycle.time, "sleep", lambda _seconds: None)
+
+    class FakeClient:
+        """Serve the browser check form and its exact task status."""
+
+        polls = 0
+
+        def request(self, method, path, **kwargs):  # type: ignore[no-untyped-def]  # Fake models the lifecycle client boundary.
+            if (method, path) == ("GET", "/appliance-update"):
+                return 200, '<input type="hidden" name="csrf" value="csrf-123">', {}
+            assert (method, path) == ("POST", "/appliance-update/check")
+            assert kwargs["form"] == [("csrf", "csrf-123"), ("selected_streams", "atlaso_release")]
+            assert kwargs["headers"] == {"Accept": "application/json"}
+            return 202, '{"job_id":"job_abcdef123456"}', {}
+
+        def json_request(self, method, path):  # type: ignore[no-untyped-def]  # Fake returns the exact submitted task.
+            assert (method, path) == ("GET", "/tasks/job_abcdef123456/status")
+            self.polls += 1
+            if self.polls == 1:
+                return {"task": {"status": "running"}}
+            return {"task": {
+                "status": "succeeded",
+                "_children": [{"component_key": "atlaso_release", "status": "succeeded"}],
+                "result": {"stream_results": {"atlaso_release": {"availability": {"update_available": True}}}},
+            }}
+
+    client = FakeClient()
+    assert lifecycle._check_signed_release_availability(client) == "job_abcdef123456"
+    assert client.polls == 2
+
+
+def test_signed_release_availability_check_rejects_up_to_date_candidate(monkeypatch):
+    """Do not install when a successful check reports no candidate.
+
+    Args:
+        monkeypatch: Replace the task submission with a deterministic fake.
+    """
+    lifecycle = load_lifecycle_module()
+
+    class FakeClient:
+        """Report a successful but up-to-date signed-release check."""
+
+        def request(self, method, path, **_kwargs):  # type: ignore[no-untyped-def]  # Fake models the lifecycle client boundary.
+            if method == "GET":
+                return 200, '<input type="hidden" name="csrf" value="csrf-123">', {}
+            assert path == "/appliance-update/check"
+            return 202, '{"job_id":"job_abcdef123456"}', {}
+
+        def json_request(self, method, path):  # type: ignore[no-untyped-def]  # Fake returns the exact submitted task.
+            assert (method, path) == ("GET", "/tasks/job_abcdef123456/status")
+            return {"task": {
+                "status": "succeeded",
+                "_children": [{"component_key": "atlaso_release", "status": "succeeded"}],
+                "result": {"stream_results": {"atlaso_release": {"availability": {"update_available": False}}}},
+            }}
+
+    with pytest.raises(lifecycle.LifecycleError, match="did not confirm an available update"):
+        lifecycle._check_signed_release_availability(FakeClient())
+
+
+def test_signed_release_lifecycle_rechecks_after_channel_change(monkeypatch):
+    """Check each channel after configuring it and before its install.
+
+    Args:
+        monkeypatch: Replace appliance operations with deterministic evidence.
+    """
+    lifecycle = load_lifecycle_module()
+    events = []
+    before = {"current_release": "release-v1", "compatibility_venv": "venv", "schema_sha256": "schema", "users": []}
+    after = {**before, "current_release": "release-v2"}
+    identities = iter((before, after, after, after, after, after))
+    monkeypatch.setattr(lifecycle, "_release_database_identity", lambda _args: next(identities))
+    monkeypatch.setattr(lifecycle, "_configure_signed_release_source", lambda _client, _args, *, channel: events.append(f"source:{channel}") or {})
+    monkeypatch.setattr(lifecycle, "_check_signed_release_availability", lambda _client: events.append("check") or "job_abcdef123456")
+
+    def submit(_client, *, expected_status):  # type: ignore[no-untyped-def]  # Fake records the release task selected by the lifecycle.
+        events.append(f"install:{expected_status}")
+        transaction = (
+            {"candidate_version": "0.9.2"}
+            if expected_status == "succeeded"
+            else {"rolled_back": True, "rollback_health": True, "failure_layer": "nginx_configuration"}
+        )
+        return {"id": "job_123456abcdef", "result": {"release_transaction": transaction}}
+
+    monkeypatch.setattr(lifecycle, "_submit_signed_release_update", submit)
+    monkeypatch.setattr(lifecycle, "appliance_health", lambda _client, _args: {"version": {"base_version": "0.9.2"}})
+    monkeypatch.setattr(lifecycle, "_reboot_appliance_and_wait", lambda _client, _args: {})
+    monkeypatch.setattr(lifecycle.time, "sleep", lambda _seconds: None)
+    args = argparse.Namespace(signed_release_repository_url="https://release-fixture.example.test/updates")
+
+    result = lifecycle.signed_release_update_check(object(), args)
+
+    assert events == [
+        "source:preview", "check", "install:succeeded",
+        "source:development", "check", "install:failed",
+    ]
+    assert result["preview_check_task_id"] == "job_abcdef123456"
+    assert result["development_check_task_id"] == "job_abcdef123456"
+
+
 def test_load_lifecycle_secrets_populates_passwords_from_stdin_envelope():
     """Verify that lifecycle secrets are validated and loaded without argv values."""
     lifecycle = load_lifecycle_module()

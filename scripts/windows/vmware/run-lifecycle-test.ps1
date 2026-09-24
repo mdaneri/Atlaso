@@ -2314,7 +2314,7 @@ $plan = [ordered]@{
     full_esxi_pxe_install = [bool]$FullEsxiPxeInstall
     signed_release_update_check = [bool]$SignedReleaseRepositoryUrl
     signed_release_fixture_operations = if ($SignedReleaseRepositoryUrl) {
-        'preview upgrade, development rollback, and two audited appliance reboots'
+        'preview availability check and upgrade, development availability check and rollback, and two audited appliance reboots'
     } else { 'not requested' }
     pxe_installer_iso     = $PxeInstallerIsoPath
     pxe_client_ip         = $PxeClientIPAddress

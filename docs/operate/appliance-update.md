@@ -555,7 +555,8 @@ fixture's HTTPS base URL.
 The signed fixture requires the full lifecycle run; it cannot be combined with `-OidcOnly` or `-RoutingWanOnly`.
 Use `-PlanOnly` to inspect whether the signed upgrade, rollback, and two audited reboots are included before running.
 
-The lifecycle runner proves that each release task
+The lifecycle runner checks Atlaso Release availability after selecting each channel and installs only when that check
+confirms an available update. It then proves that each release task
 exposes an Atlaso Release child step, proves the preview upgrade and exact host-facing candidate version, performs an
 audited appliance reboot, and requires the same candidate version and release link afterward. It then expects the
 development parent and child to fail with `rolled_back=true`, compares the active release, compatibility virtualenv,

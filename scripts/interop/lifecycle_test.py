@@ -3435,6 +3435,63 @@ def _submit_signed_release_update(
     return task
 
 
+def _check_signed_release_availability(client: HttpClient, *, timeout_seconds: int = 360) -> str:
+    """Confirm the configured signed release has an available update before installation.
+
+    Args:
+        client: Authenticated appliance client.
+        timeout_seconds: Maximum time to wait for the check task.
+
+    Returns:
+        The completed check task ID.
+
+    Raises:
+        LifecycleError: If the check cannot confirm an available release.
+    """
+    status, page, _headers = client.request("GET", "/appliance-update")
+    if status >= 400:
+        raise LifecycleError(f"GET /appliance-update failed with HTTP {status}")
+    csrf = extract_csrf(page)
+    status, body, _headers = client.request(
+        "POST",
+        "/appliance-update/check",
+        form=[("csrf", csrf), ("selected_streams", "atlaso_release")],
+        headers={"Accept": "application/json"},
+        follow_redirects=False,
+        timeout=30,
+    )
+    if status != 202:
+        raise LifecycleError(f"Signed release check submission failed with HTTP {status}.")
+    try:
+        submitted = json.loads(body)
+    except json.JSONDecodeError as exc:
+        raise LifecycleError("Signed release check did not return a valid task identity.") from exc
+    job_id = submitted.get("job_id") if isinstance(submitted, dict) else None
+    if not isinstance(job_id, str) or re.fullmatch(r"job_[0-9a-f]{12}", job_id) is None:
+        raise LifecycleError("Signed release check did not return a valid task identity.")
+
+    deadline = time.monotonic() + timeout_seconds
+    while time.monotonic() < deadline:
+        task = dict(client.json_request("GET", f"/tasks/{job_id}/status").get("task") or {})
+        if str(task.get("status") or "") not in {"pending", "running"}:
+            break
+        time.sleep(2)
+    else:
+        raise LifecycleError("Signed release availability check did not finish within the lifecycle timeout.")
+    if task.get("status") != "succeeded":
+        raise LifecycleError(f"Signed release availability check {job_id} did not succeed.")
+    children = list(task.get("_children") or [])
+    if len(children) != 1 or children[0].get("component_key") != "atlaso_release" or children[0].get("status") != "succeeded":
+        raise LifecycleError(f"Signed release availability check {job_id} did not complete its Atlaso Release step.")
+    result = task.get("result") or {}
+    stream_results = result.get("stream_results") if isinstance(result, dict) else None
+    release_result = stream_results.get("atlaso_release") if isinstance(stream_results, dict) else None
+    availability = release_result.get("availability") if isinstance(release_result, dict) else None
+    if not isinstance(availability, dict) or availability.get("update_available") is not True:
+        raise LifecycleError(f"Signed release availability check {job_id} did not confirm an available update.")
+    return job_id
+
+
 def _release_database_identity(args: argparse.Namespace) -> dict[str, Any]:
     """Return release database identity.
 
@@ -3584,6 +3641,7 @@ def signed_release_update_check(client: HttpClient, args: argparse.Namespace) ->
 
     before = _release_database_identity(args)
     preview_source = _configure_signed_release_source(client, args, channel="preview")
+    preview_check_task_id = _check_signed_release_availability(client)
     successful_task = _submit_signed_release_update(client, expected_status="succeeded")
     time.sleep(8)
     after_success = _release_database_identity(args)
@@ -3604,6 +3662,7 @@ def signed_release_update_check(client: HttpClient, args: argparse.Namespace) ->
 
     broken_source = _configure_signed_release_source(client, args, channel="development")
     broken_baseline = _release_database_identity(args)
+    development_check_task_id = _check_signed_release_availability(client)
     failed_task = _submit_signed_release_update(client, expected_status="failed")
     time.sleep(4)
     after_rollback = _release_database_identity(args)
@@ -3628,9 +3687,11 @@ def signed_release_update_check(client: HttpClient, args: argparse.Namespace) ->
             raise LifecycleError(f"Broken release rollback field {key} changed after reboot.")
     return {
         "preview_source": preview_source,
+        "preview_check_task_id": preview_check_task_id,
         "successful_task_id": successful_task.get("id"),
         "installed_release": after_success["current_release"],
         "broken_source": broken_source,
+        "development_check_task_id": development_check_task_id,
         "failed_task_id": failed_task.get("id"),
         "verified_key_id": transaction.get("verified_key_id"),
         "bundle_sha256": transaction.get("bundle_sha256"),
