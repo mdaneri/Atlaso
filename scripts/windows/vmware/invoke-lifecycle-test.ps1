@@ -34,6 +34,8 @@ VMware network used for tagged trunk traffic.
 Management IPv4 address assigned to or expected from the appliance.
 .PARAMETER ApplianceUrl
 HTTPS URL used for appliance API validation.
+.PARAMETER SignedReleaseRepositoryUrl
+Credential-free HTTPS base URL of a pre-published signed release lifecycle fixture.
 .PARAMETER SiteInterface
 Appliance interface used for the site-network scenario.
 .PARAMETER SiteCidr
@@ -157,6 +159,10 @@ param(
 
     [Parameter(ParameterSetName = 'Run')]
     [Parameter(ParameterSetName = 'Plan')]
+    [string]$SignedReleaseRepositoryUrl = '',
+
+    [Parameter(ParameterSetName = 'Run')]
+    [Parameter(ParameterSetName = 'Plan')]
     [string]$SiteInterface = 'eth1',
 
     [Parameter(ParameterSetName = 'Run')]
@@ -260,6 +266,17 @@ if ($OidcOnly -and $SiteANetwork.StartsWith('lan:', [StringComparison]::OrdinalI
 }
 if ($OidcOnly -and $SiteInterface -ne 'eth1') {
     throw '-OidcOnly requires SiteInterface eth1 because its Site A vmnet is attached to the appliance second adapter.'
+}
+if ($SignedReleaseRepositoryUrl -and ($OidcOnly -or $RoutingWanOnly)) {
+    throw '-SignedReleaseRepositoryUrl requires the full lifecycle; it cannot be combined with -OidcOnly or -RoutingWanOnly.'
+}
+if ($SignedReleaseRepositoryUrl) {
+    [Uri]$fixtureUri = $null
+    if (-not [Uri]::TryCreate($SignedReleaseRepositoryUrl, [UriKind]::Absolute, [ref]$fixtureUri) -or
+        -not $fixtureUri.IsWellFormedOriginalString() -or $fixtureUri.Scheme -cne 'https' -or
+        -not $fixtureUri.Host -or $fixtureUri.UserInfo -or $fixtureUri.Query -or $fixtureUri.Fragment) {
+        throw '-SignedReleaseRepositoryUrl must be a credential-free absolute HTTPS base URL without a query or fragment.'
+    }
 }
 
 <#
@@ -516,6 +533,7 @@ $arguments = @(
 if (-not $PlanOnly) { $arguments += @('-SecretBundlePath', $secretBundlePath) }
 if ($ApplianceIPAddress) { $arguments += @('-ApplianceIPAddress', $ApplianceIPAddress) }
 if ($effectiveApplianceUrl) { $arguments += @('-ApplianceUrl', $effectiveApplianceUrl) }
+if ($SignedReleaseRepositoryUrl) { $arguments += @('-SignedReleaseRepositoryUrl', $SignedReleaseRepositoryUrl) }
 if ($VmrunPath) { $arguments += @('-VmrunPath', $VmrunPath) }
 if ($BridgedInterfaceAlias) { $arguments += @('-BridgedInterfaceAlias', $BridgedInterfaceAlias) }
 if (-not $KeepVms) { $arguments += '-CleanupCreatedLab' }

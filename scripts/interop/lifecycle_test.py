@@ -3314,28 +3314,34 @@ def _configure_signed_release_source(
     if not section_match:
         raise LifecycleError("Atlaso release source group was not found in Appliance Update.")
     section = section_match.group(1)
-    source_match = re.search(
-        r'<form\b[^>]*action="/appliance-update/sources/(\d+)"[^>]*>(.*?)</form>',
-        section,
-        flags=re.DOTALL,
-    )
-    if not source_match:
+    source_payload = None
+    for button_match in re.finditer(r"<button\b[^>]*>", section, flags=re.DOTALL):
+        button = button_match.group(0)
+        if 'data-update-source-mode="edit"' not in button or 'data-update-source-kind="atlaso"' not in button:
+            continue
+        payload_match = re.search(r"data-update-source='([^']*)'", button)
+        if not payload_match:
+            raise LifecycleError("Atlaso release source edit data was not found.")
+        try:
+            source_payload = json.loads(html.unescape(payload_match.group(1)))
+        except json.JSONDecodeError as exc:
+            raise LifecycleError("Atlaso release source edit data was invalid.") from exc
+        break
+    if source_payload is None:
         raise LifecycleError("No configured Atlaso release source was found.")
-    source_id, form_body = source_match.groups()
-
-    def field_value(name: str, default: str) -> str:
-        """Return field value.
-
-        Args:
-            name: Stable name identifying the resource or operation.
-            default: Default consumed by field value.
-        """
-        match = re.search(rf'<input\b[^>]*name="{re.escape(name)}"[^>]*value="([^"]*)"', form_body)
-        return html.unescape(match.group(1)) if match else default
-
-    csrf = extract_csrf(form_body)
-    source_name = field_value("name", "Lifecycle signed releases")
-    priority = field_value("priority", "1")
+    if not isinstance(source_payload, dict):
+        raise LifecycleError("Atlaso release source edit data was invalid.")
+    source_id = source_payload.get("id")
+    source_name = source_payload.get("name")
+    priority = source_payload.get("priority")
+    if (
+        type(source_id) is not int or source_id < 1
+        or source_payload.get("kind") != "atlaso"
+        or not isinstance(source_name, str) or not source_name.strip()
+        or type(priority) is not int
+    ):
+        raise LifecycleError("Atlaso release source edit data was incomplete.")
+    csrf = extract_csrf(body)
     status, response_body, _headers = client.request(
         "POST",
         f"/appliance-update/sources/{source_id}",
@@ -3343,7 +3349,7 @@ def _configure_signed_release_source(
             "csrf": csrf,
             "name": source_name,
             "url": args.signed_release_repository_url.rstrip("/"),
-            "priority": priority,
+            "priority": str(priority),
             "enabled_present": "1",
             "enabled": "on",
             "channel": channel,
@@ -3356,7 +3362,7 @@ def _configure_signed_release_source(
             f"Signed release source update failed with HTTP {status}: {summarize_html_response(response_body)}"
         )
     return {
-        "source_id": int(source_id),
+        "source_id": source_id,
         "source_name": source_name,
         "base_url": args.signed_release_repository_url.rstrip("/"),
         "channel": channel,
@@ -3433,6 +3439,63 @@ def _submit_signed_release_update(
             f"expected {expected_status}."
         )
     return task
+
+
+def _check_signed_release_availability(client: HttpClient, *, timeout_seconds: int = 360) -> str:
+    """Confirm the configured signed release has an available update before installation.
+
+    Args:
+        client: Authenticated appliance client.
+        timeout_seconds: Maximum time to wait for the check task.
+
+    Returns:
+        The completed check task ID.
+
+    Raises:
+        LifecycleError: If the check cannot confirm an available release.
+    """
+    status, page, _headers = client.request("GET", "/appliance-update")
+    if status >= 400:
+        raise LifecycleError(f"GET /appliance-update failed with HTTP {status}")
+    csrf = extract_csrf(page)
+    status, body, _headers = client.request(
+        "POST",
+        "/appliance-update/check",
+        form=[("csrf", csrf), ("selected_streams", "atlaso_release")],
+        headers={"Accept": "application/json"},
+        follow_redirects=False,
+        timeout=30,
+    )
+    if status != 202:
+        raise LifecycleError(f"Signed release check submission failed with HTTP {status}.")
+    try:
+        submitted = json.loads(body)
+    except json.JSONDecodeError as exc:
+        raise LifecycleError("Signed release check did not return a valid task identity.") from exc
+    job_id = submitted.get("job_id") if isinstance(submitted, dict) else None
+    if not isinstance(job_id, str) or re.fullmatch(r"job_[0-9a-f]{12}", job_id) is None:
+        raise LifecycleError("Signed release check did not return a valid task identity.")
+
+    deadline = time.monotonic() + timeout_seconds
+    while time.monotonic() < deadline:
+        task = dict(client.json_request("GET", f"/tasks/{job_id}/status").get("task") or {})
+        if str(task.get("status") or "") not in {"pending", "running"}:
+            break
+        time.sleep(2)
+    else:
+        raise LifecycleError("Signed release availability check did not finish within the lifecycle timeout.")
+    if task.get("status") != "succeeded":
+        raise LifecycleError(f"Signed release availability check {job_id} did not succeed.")
+    children = list(task.get("_children") or [])
+    if len(children) != 1 or children[0].get("component_key") != "atlaso_release" or children[0].get("status") != "succeeded":
+        raise LifecycleError(f"Signed release availability check {job_id} did not complete its Atlaso Release step.")
+    result = task.get("result") or {}
+    stream_results = result.get("stream_results") if isinstance(result, dict) else None
+    release_result = stream_results.get("atlaso_release") if isinstance(stream_results, dict) else None
+    availability = release_result.get("availability") if isinstance(release_result, dict) else None
+    if not isinstance(availability, dict) or availability.get("update_available") is not True:
+        raise LifecycleError(f"Signed release availability check {job_id} did not confirm an available update.")
+    return job_id
 
 
 def _release_database_identity(args: argparse.Namespace) -> dict[str, Any]:
@@ -3567,6 +3630,15 @@ def _reboot_appliance_and_wait(
     raise LifecycleError("Appliance reboot did not produce a new nginx-ready kernel boot within the lifecycle timeout.")
 
 
+def _signed_release_console_check(args: argparse.Namespace) -> dict[str, Any]:
+    """Verify the same local-console service and launcher contract after a release reboot.
+
+    Args:
+        args: Lifecycle arguments containing appliance SSH connection details.
+    """
+    return run_host_checks(args, {"local_console": _local_console_check_command()})
+
+
 def signed_release_update_check(client: HttpClient, args: argparse.Namespace) -> dict[str, Any]:
     """Return signed release update check.
 
@@ -3584,6 +3656,7 @@ def signed_release_update_check(client: HttpClient, args: argparse.Namespace) ->
 
     before = _release_database_identity(args)
     preview_source = _configure_signed_release_source(client, args, channel="preview")
+    preview_check_task_id = _check_signed_release_availability(client)
     successful_task = _submit_signed_release_update(client, expected_status="succeeded")
     time.sleep(8)
     after_success = _release_database_identity(args)
@@ -3598,12 +3671,14 @@ def signed_release_update_check(client: HttpClient, args: argparse.Namespace) ->
     success_post_reboot_health = appliance_health(client, args)
     if success_post_reboot_health["version"]["base_version"] != successful_version:
         raise LifecycleError("The successful candidate release did not remain active after reboot.")
+    success_post_reboot_console = _signed_release_console_check(args)
     after_success_reboot = _release_database_identity(args)
     if after_success_reboot["current_release"] != after_success["current_release"]:
         raise LifecycleError("The successful candidate release link changed after reboot.")
 
     broken_source = _configure_signed_release_source(client, args, channel="development")
     broken_baseline = _release_database_identity(args)
+    development_check_task_id = _check_signed_release_availability(client)
     failed_task = _submit_signed_release_update(client, expected_status="failed")
     time.sleep(4)
     after_rollback = _release_database_identity(args)
@@ -3622,15 +3697,18 @@ def signed_release_update_check(client: HttpClient, args: argparse.Namespace) ->
     rollback_post_reboot_health = appliance_health(client, args)
     if rollback_post_reboot_health["version"]["base_version"] != successful_version:
         raise LifecycleError("The rolled-back Atlaso version did not remain active after reboot.")
+    rollback_post_reboot_console = _signed_release_console_check(args)
     after_rollback_reboot = _release_database_identity(args)
     for key in ("current_release", "compatibility_venv", "schema_sha256", "users"):
         if after_rollback_reboot[key] != after_rollback[key]:
             raise LifecycleError(f"Broken release rollback field {key} changed after reboot.")
     return {
         "preview_source": preview_source,
+        "preview_check_task_id": preview_check_task_id,
         "successful_task_id": successful_task.get("id"),
         "installed_release": after_success["current_release"],
         "broken_source": broken_source,
+        "development_check_task_id": development_check_task_id,
         "failed_task_id": failed_task.get("id"),
         "verified_key_id": transaction.get("verified_key_id"),
         "bundle_sha256": transaction.get("bundle_sha256"),
@@ -3640,9 +3718,11 @@ def signed_release_update_check(client: HttpClient, args: argparse.Namespace) ->
         "successful_version": successful_version,
         "successful_reboot": success_reboot,
         "successful_post_reboot_health": success_post_reboot_health,
+        "successful_post_reboot_console": success_post_reboot_console,
         "rollback_health": rollback_health,
         "rollback_reboot": rollback_reboot,
         "rollback_post_reboot_health": rollback_post_reboot_health,
+        "rollback_post_reboot_console": rollback_post_reboot_console,
     }
 
 
@@ -4194,6 +4274,20 @@ def routing_host_state_checks(args: argparse.Namespace) -> dict[str, Any]:
     return run_host_checks(args, routing_host_check_commands(args))
 
 
+def _local_console_check_command() -> str:
+    """Return the appliance console service and launcher readiness check."""
+    return (
+        "systemctl is-active atlaso-console.service && "
+        "systemctl is-enabled atlaso-console.service && "
+        "test \"$(systemctl is-enabled getty@tty1.service 2>/dev/null)\" = masked && "
+        "test \"$(systemctl show getty@tty2.service -p LoadState --value)\" = loaded && "
+        "test \"$(systemctl show getty@tty2.service -p UnitFileState --value)\" != masked && "
+        "test -x /opt/atlaso/.venv/bin/atlaso-console && "
+        "/opt/atlaso/bin/atlaso-helper console status --real | "
+        "grep -F '\"maintenance_isolation\": false'"
+    )
+
+
 def host_state_checks(args: argparse.Namespace) -> dict[str, Any]:
     """Return host state checks.
 
@@ -4215,16 +4309,7 @@ def host_state_checks(args: argparse.Namespace) -> dict[str, Any]:
     ).decode("ascii")
     checks = {
         **routing_host_check_commands(args),
-        "local_console": (
-            "systemctl is-active atlaso-console.service && "
-            "systemctl is-enabled atlaso-console.service && "
-            "test \"$(systemctl is-enabled getty@tty1.service 2>/dev/null)\" = masked && "
-            "test \"$(systemctl show getty@tty2.service -p LoadState --value)\" = loaded && "
-            "test \"$(systemctl show getty@tty2.service -p UnitFileState --value)\" != masked && "
-            "test -x /opt/atlaso/.venv/bin/atlaso-console && "
-            "/opt/atlaso/bin/atlaso-helper console status --real | "
-            "grep -F '\"maintenance_isolation\": false'"
-        ),
+        "local_console": _local_console_check_command(),
         "vcf_trust_dependencies": (
             f"printf %s {httpx_probe} | base64 -d | /opt/atlaso/.venv/bin/python -"
         ),
