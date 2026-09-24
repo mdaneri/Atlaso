@@ -28313,6 +28313,14 @@ def _apply_management_handoff(payload: dict) -> int:
         upstream_readiness = _management_handoff_upstream_readiness()
         if not resolver_before_dns:
             apply_candidate_resolver()
+        # Resolver publication reconfigures networkd and can briefly remove a
+        # DHCP address that passed the earlier candidate-network observation.
+        # Nginx uses an address-specific listener, so require the renewed
+        # address before installing that listener or recording handoff paths.
+        failing_layer = "post-resolver address activation"
+        address_observation = _wait_network_addresses(
+            Path(str(payload["network_config_path"])), started_at=activation_started, stable_samples=3,
+        )
         protocol_holdover = _management_handoff_protocol_holdover(state, settings_payload)
         failing_layer = "nginx management front door"
         management_https_result, _restart_delay_seconds = _configure_atlaso_management_https(

@@ -3102,8 +3102,10 @@ def test_management_handoff_keeps_previous_https_identity(monkeypatch, tmp_path,
     assert "X-Forwarded-Proto https" in holdover
 
 
-@pytest.mark.parametrize("candidate_sync_error", [False, True, "address-timeout", "address-conflict"],
-                         ids=["durable", "sync-failure", "address-timeout", "address-conflict"])
+@pytest.mark.parametrize("candidate_sync_error", [False, True, "address-timeout", "address-conflict",
+                                                   "pre-nginx-address-timeout"],
+                         ids=["durable", "sync-failure", "address-timeout", "address-conflict",
+                              "pre-nginx-address-timeout"])
 @pytest.mark.parametrize("paired_publishing", [False, True], ids=["source-only", "port-forward-pair"])
 @pytest.mark.parametrize("mapping_change", ["unchanged", "target", "removed"])
 def test_management_handoff_candidate_durability_gates_ack(
@@ -3151,6 +3153,7 @@ def test_management_handoff_candidate_durability_gates_ack(
     nginx_readiness_options: list[bool] = []
     retirement_operations: list[str] = []
     wan_calls: list[str] = []
+    stable_waits = 0
     def wait_addresses(_path, **kwargs):
         """Reject unstable or conflicting final addresses before WAN and durable ACK.
 
@@ -3158,11 +3161,14 @@ def test_management_handoff_candidate_durability_gates_ack(
             _path: Candidate network intent.
             **kwargs: Readiness boundary selected by the handoff.
         """
+        nonlocal stable_waits
         if kwargs.get("stable_samples") == 3:
+            stable_waits += 1
             retirement_operations.append("address-ready")
-            if candidate_sync_error == "address-timeout":
+            if ((candidate_sync_error == "address-timeout" and stable_waits == 2)
+                    or (candidate_sync_error == "pre-nginx-address-timeout" and stable_waits == 1)):
                 raise ValueError("Unable to verify candidate addresses: eth1 192.0.2.20/24")
-            if candidate_sync_error == "address-conflict":
+            if candidate_sync_error == "address-conflict" and stable_waits == 2:
                 raise ValueError("IP conflict on eth1: 192.0.2.20/24")
         return {}
 
@@ -3332,8 +3338,19 @@ def test_management_handoff_candidate_durability_gates_ack(
 
     assert guard_events[:2] == ["guard-on", "candidate-network"]
     assert state["source_transition_guard"] is True
-    assert guard_events == ["guard-on", "candidate-network", "source-intent", "final-network"]
+    if candidate_sync_error == "pre-nginx-address-timeout":
+        assert guard_events == ["guard-on", "candidate-network", "source-intent"]
+    else:
+        assert guard_events == ["guard-on", "candidate-network", "source-intent", "final-network"]
 
+    if candidate_sync_error == "pre-nginx-address-timeout":
+        assert result == 1
+        assert not durability_calls and not wan_calls and not paired_calls
+        assert restored == [True] and cleared == [True]
+        assert not nginx_suffixes
+        payload = json.loads(capsys.readouterr().err.splitlines()[-1])
+        assert payload["failing_layer"] == "post-resolver address activation"
+        return
     if candidate_sync_error in {"address-timeout", "address-conflict"}:
         assert result == 1
         assert not durability_calls and not wan_calls and not paired_calls
@@ -3362,7 +3379,7 @@ def test_management_handoff_candidate_durability_gates_ack(
     assert restored == []
     assert resolver_calls == ["eth1", "eth1"]
     assert wan_calls == ["candidate-wan"]
-    assert retirement_operations == ["resolver", "final-network", "resolver", "address-ready", "wan"]
+    assert retirement_operations == ["resolver", "address-ready", "final-network", "resolver", "address-ready", "wan"]
     assert len(applied_firewalls) == 2
     assert candidate_rule in applied_firewalls[0]
     assert 'iifname "eth0"' in applied_firewalls[0]
