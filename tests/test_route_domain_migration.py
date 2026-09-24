@@ -557,8 +557,12 @@ def test_network_apply_retires_vlan_before_final_guard_removal(helper, monkeypat
     monkeypatch.setattr(helper, "_stage_candidate_ingress_guards", lambda _path: None)
     monkeypatch.setattr(helper, "_install_systemd_networkd_files", lambda _path: (0, [], [], []))
     monkeypatch.setattr(helper, "_wait_network_addresses", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr(helper, "_install_route_domain_intent", lambda _path: None)
-    monkeypatch.setattr(helper, "_reconcile_route_domains", lambda: None)
+    holds = [{"name": "eth1.120", "mac": "02:00:00:00:01:20", "address": "192.0.2.20", "table": 200}]
+    monkeypatch.setattr(helper, "_install_route_domain_intent", lambda _path, **kwargs: events.append(
+        "held-intent" if kwargs.get("held_addresses") == holds else "final-intent"))
+    monkeypatch.setattr(helper, "_removed_vlan_source_holds", lambda _path: holds)
+    monkeypatch.setattr(helper, "_transition_source_guard", lambda enabled: events.append("source-guard-on" if enabled else "source-guard-off"))
+    monkeypatch.setattr(helper, "_reconcile_route_domains", lambda: events.append("reconcile"))
 
     def vlans(_path, *, defer_removed=False, removed_only=False):
         """Model one deferred old link and an optional deletion failure."""
@@ -572,8 +576,10 @@ def test_network_apply_retires_vlan_before_final_guard_removal(helper, monkeypat
     monkeypatch.setattr(helper, "_apply_vlan_interfaces", vlans)
     monkeypatch.setattr(helper, "_apply_route_domain_ingress", ingress)
     assert helper._handle_network_locked("apply", [str(config)]) == (2 if retirement_fails else 0)
-    assert events == (["activate", "retain", "delete"] if retirement_fails
-                      else ["activate", "retain", "delete", "retire"])
+    assert events == (["source-guard-on", "activate", "held-intent", "retain", "reconcile", "delete"]
+                      if retirement_fails else ["source-guard-on", "activate", "held-intent", "retain",
+                                               "reconcile", "delete", "final-intent", "retire", "reconcile",
+                                               "source-guard-off"])
 
 
 def test_removed_vlan_missing_guard_refuses_before_rule_mutation(helper, monkeypatch, tmp_path):

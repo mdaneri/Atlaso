@@ -828,6 +828,55 @@ def test_render_wan_config_uses_ipv6_route_commands():
     assert "ip -6 route replace 2001:db8:100::/64 via 2001:db8:50::fe dev eth2.50 metric 120 table 200" in config
 
 
+@pytest.mark.parametrize("routing_enabled", [False, True])
+def test_legacy_wan_preview_matches_source_rule_migration(routing_enabled):
+    """Show the legacy cleanup and only the helper's owned source rules."""
+    targets = [
+        {"name": "eth0", "routing_domain": "management", "ip_cidr": "192.0.2.10/24",
+         "ipv6_cidr": "2001:db8:1::10/64", "gateway": "192.0.2.1", "ipv6_gateway": "fe80::1"},
+        {"name": "eth1", "routing_domain": "lab", "ip_cidr": "198.51.100.10/24",
+         "ipv6_cidr": "2001:db8:2::10/64"},
+        {"name": "eth2", "routing_domain": "lab", "ip_cidr": "198.51.100.20/24"},
+        {"name": "eth3", "routing_domain": "management", "ip_cidr": "203.0.113.10/24",
+         "gateway": "198.51.100.1"},
+    ]
+    preview = render_wan_config(
+        [], targets=targets, applied_network_ingress=[], network_owned_targets=None,
+        settings=RoutesWanSettings(routing_enabled=routing_enabled),
+    )
+    commands = preview.splitlines()
+
+    cleanup = [line for line in commands if line.startswith(("ip rule del priority ", "ip -6 rule del priority "))]
+    assert len(cleanup) == 4 * 100
+    assert "ip rule del priority 1000" in cleanup
+    assert "ip -6 rule del priority 1099" in cleanup
+    assert "ip rule del priority 2000" in cleanup
+    assert "ip -6 rule del priority 2099" in cleanup
+    source_rules = [line for line in commands if "rule add from " in line]
+    expected = [
+        "ip rule add from 192.0.2.0/24 table 100 priority 1000",
+        "ip -6 rule add from 2001:db8:1::/64 table 100 priority 1000",
+    ]
+    if routing_enabled:
+        expected += [
+            "ip rule add from 198.51.100.0/24 table 200 priority 2001",
+            "ip -6 rule add from 2001:db8:2::/64 table 200 priority 2001",
+        ]
+    assert source_rules == expected
+    assert "Local source-address rules remain reconciled from applied Network intent." not in preview
+
+
+def test_modern_wan_preview_does_not_show_legacy_source_rule_migration():
+    """An empty modern ingress set is not a pre-migration Network baseline."""
+    target = {"name": "eth0", "routing_domain": "management", "ip_cidr": "192.0.2.10/24",
+              "gateway": "192.0.2.1"}
+    preview = render_wan_config(
+        [], targets=[target], applied_network_ingress=[], network_owned_targets=[target],
+    )
+    assert "rule del priority 1000" not in preview
+    assert "rule add from " not in preview
+
+
 def test_render_wan_config_keeps_management_and_lab_route_tables_separate():
     """Verify that render wan config keeps management and lab route tables separate."""
     config = render_wan_config(

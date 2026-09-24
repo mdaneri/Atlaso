@@ -9652,6 +9652,39 @@ def _reconcile_route_domains() -> None:
         raise ValueError("routing-domain source reconciliation failed")
 
 
+def _transition_source_guard(enable: bool) -> None:
+    """Block otherwise unclassified local sources while Network changes addresses."""
+    mode = "--transition-start" if enable else "--transition-stop"
+    result = _run(["/opt/atlaso/.venv/bin/python", "-I", "-m", "atlaso.route_domains", mode])
+    if result.returncode:
+        raise ValueError("routing-domain transition source guard could not reconcile")
+
+
+def _removed_vlan_source_holds(path: Path) -> list[dict]:
+    """Capture live, MAC-bound sources of VLANs retained until deferred deletion."""
+    _physical, _vlans, removed = _parse_network_config(path)
+    names = sorted({row["name"] for row in removed})
+    if not names:
+        return []
+    program = (
+        "import json,sys\n"
+        "from atlaso.route_domains import read_intent,read_native,removed_interface_holds,reconciliation_lock\n"
+        "names=set(json.loads(sys.argv[1]))\n"
+        "with reconciliation_lock():\n"
+        " intent=read_intent()\n inventory=read_native(['address','show'])\n"
+        " print(json.dumps(removed_interface_holds(intent,inventory,names)))\n"
+    )
+    result = _network_observation_command(
+        ["/opt/atlaso/.venv/bin/python", "-I", "-c", program, json.dumps(names)], timeout=45,
+    )
+    if result.returncode:
+        raise ValueError("removed VLAN source ownership could not be captured")
+    holds = json.loads(result.stdout)
+    if not isinstance(holds, list) or len(holds) > 256:
+        raise ValueError("removed VLAN source inventory is malformed")
+    return holds
+
+
 def _install_route_domain_intent(
     path: Path, *, held_interfaces: set[str] | None = None, held_tables: dict[str, int] | None = None,
     held_addresses: list[dict] | None = None,
@@ -10615,6 +10648,8 @@ def _restore_network_transaction(state: dict) -> bool:
         failures.append(str(exc))
     if failures:
         raise ValueError("network rollback incomplete: " + "; ".join(failures[:8]))
+    if state.get("source_transition_guard"):
+        _transition_source_guard(False)
     return _finish_network_transaction(state, "rolled-back")
 
 
@@ -10689,7 +10724,8 @@ def _network_apply_transaction(path: Path):
                  "previous_route_domain_service": _snapshot_route_domain_service(),
                  "previous_route_domain_rules": _snapshot_route_domain_rules(),
                  "candidate_vlan_interfaces": vlans, "candidate_link_states": link_states,
-                 "backup_root": str(backup_root), "job_id": job_id, "phase": "applying"}
+                 "backup_root": str(backup_root), "job_id": job_id, "phase": "applying",
+                 "source_transition_guard": True}
         _fsync_directory(backup_root)
         published = True
         marker = NETWORK_TRANSACTION_DIR / "state.json"
@@ -10847,6 +10883,8 @@ def _handle_network_locked(action: str, args: list[str]) -> int:
         return 2
     try:
         with _network_apply_transaction(config_path):
+            held_sources = _removed_vlan_source_holds(config_path)
+            _transition_source_guard(True)
             _stage_candidate_ingress_guards(config_path)
             activation_started = datetime.now(timezone.utc).isoformat()
             install_returncode, installed, reconfigure_links, admin_down_links = _install_systemd_networkd_files(config_path)
@@ -10855,13 +10893,16 @@ def _handle_network_locked(action: str, args: list[str]) -> int:
             if _apply_vlan_interfaces(config_path, defer_removed=True) != 0:
                 raise ValueError("candidate VLAN activation failed")
             _wait_network_addresses(config_path, started_at=activation_started)
-            _install_route_domain_intent(config_path)
+            _install_route_domain_intent(config_path, held_addresses=held_sources)
             _apply_route_domain_ingress(config_path, retain_removed_vlan_guards=True)
             _reconcile_route_domains()
             # Retire old VLANs only after the candidate addresses have activated.
             if _apply_vlan_interfaces(config_path, removed_only=True) != 0:
                 raise ValueError("previous VLAN retirement failed")
+            _install_route_domain_intent(config_path)
             _apply_route_domain_ingress(config_path)
+            _reconcile_route_domains()
+            _transition_source_guard(False)
     except (ValueError, OSError, subprocess.TimeoutExpired) as exc:
         print(str(exc), file=sys.stderr)
         return 2

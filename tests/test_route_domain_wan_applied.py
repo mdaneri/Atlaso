@@ -71,6 +71,76 @@ def wan_input():
 
 
 @pytest.mark.parametrize("family", [4, 6])
+def test_transition_guard_is_exact_and_rejects_foreign_priority(family):
+    """Only the owned local-origin terminal guard may occupy priority 6000."""
+    canonical = {"priority": 6000, "src": "all", "srclen": 0, "iif": "lo",
+                 "action": "unreachable", "protocol": "2"}
+    assert route_domains.transition_guard_present([canonical], family)
+    assert not route_domains.transition_guard_present([], family)
+    for changed in ({"iif": "eth1"}, {"action": "to_tbl", "table": "200"}, {"protocol": "4"}):
+        with pytest.raises(route_domains.ReconcileError):
+            route_domains.transition_guard_present([{**canonical, **changed}], family)
+
+
+def test_transition_guard_brackets_both_families_after_source_slots(monkeypatch):
+    """Dynamic sources remain blocked until synchronous rules have been installed."""
+    commands = []
+    occupied = {4: False, 6: False}
+    monkeypatch.setattr(route_domains, "reconciliation_lock", nullcontext)
+
+    def read_native(args):
+        family = int(args[0][1:])
+        return ([{"priority": 6000, "src": "all", "srclen": 0, "iif": "lo",
+                  "action": "unreachable", "protocol": "2"}] if occupied[family] else [])
+
+    def run_ip(command):
+        family = int(command[1][1:])
+        occupied[family] = command[3] == "add"
+        commands.append(command)
+        return ""
+
+    monkeypatch.setattr(route_domains, "read_native", read_native)
+    monkeypatch.setattr(route_domains, "run_ip", run_ip)
+    route_domains.transition_guard(True)
+    assert occupied == {4: True, 6: True}
+    route_domains.transition_guard(False)
+    assert occupied == {4: False, 6: False}
+    assert [(cmd[1], cmd[3]) for cmd in commands] == [
+        ("-4", "add"), ("-6", "add"), ("-4", "del"), ("-6", "del")]
+    assert all(cmd[cmd.index("priority") + 1] == "6000" and "lo" in cmd and "unreachable" in cmd
+               for cmd in commands)
+
+
+def test_stale_transition_guard_blocks_new_network_transaction(monkeypatch):
+    """An orphan guard must be recovered, not silently adopted by a new Apply."""
+    monkeypatch.setattr(route_domains, "reconciliation_lock", nullcontext)
+    monkeypatch.setattr(route_domains, "read_native", lambda _args: [{
+        "priority": 6000, "src": "all", "srclen": 0, "iif": "lo",
+        "action": "unreachable", "protocol": "2"}])
+    with pytest.raises(route_domains.ReconcileError, match="stale"):
+        route_domains.preflight()
+
+
+def test_removed_vlan_sources_remain_bound_until_link_retirement():
+    """A deferred VLAN preserves its old exact source pair until the link is gone."""
+    intent = route_domains.parse_intent({"schema": 1, "interfaces": [
+        {"name": "eth1.120", "mac": "02:00:00:00:01:20", "table": 200}], "held_addresses": []})
+    inventory = [{"ifname": "eth1.120", "address": "02:00:00:00:01:20", "addr_info": [
+        {"local": "192.0.2.20", "prefixlen": 24},
+        {"local": "2001:db8::20", "prefixlen": 64, "flags": []}]}]
+    holds = route_domains.removed_interface_holds(intent, inventory, {"eth1.120"})
+    assert holds == [{"name": "eth1.120", "mac": "02:00:00:00:01:20", "address": source, "table": 200}
+                     for source in ("192.0.2.20", "2001:db8::20")]
+    transitional = route_domains.parse_intent({"schema": 1, "interfaces": [], "held_addresses": holds})
+    assert route_domains.source_tables(transitional, inventory) == (
+        {"192.0.2.20": 200, "2001:db8::20": 200}, False)
+    assert route_domains.source_tables(transitional, [])[0] == {}
+    with pytest.raises(route_domains.ReconcileError, match="identity unavailable"):
+        route_domains.removed_interface_holds(intent, [{**inventory[0], "address": "02:00:00:00:02:20"}],
+                                              {"eth1.120"})
+
+
+@pytest.mark.parametrize("family", [4, 6])
 def test_flagged_default_keeps_reply_table_with_forwarding_off(helper, modern, family):
     """Applied flag retains both host and guarded reply defaults, not forwarding.
 

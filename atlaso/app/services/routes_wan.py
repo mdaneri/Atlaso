@@ -1170,6 +1170,18 @@ def render_wan_config(
         ]
     )
 
+    legacy_source_rules = (
+        applied_network_ingress == []
+        and candidate_network_ingress is None
+        and network_owned_targets is None
+    )
+    if legacy_source_rules:
+        lines.append("# Pre-migration WAN Apply clears both owned source-rule windows; absent priorities are ignored.")
+        for base_priority in (MANAGEMENT_ROUTE_RULE_PRIORITY, LAB_ROUTE_RULE_PRIORITY):
+            for priority in range(base_priority, base_priority + ROUTE_RULE_PRIORITY_WINDOW):
+                lines.append(f"ip rule del priority {priority}")
+                lines.append(f"ip -6 rule del priority {priority}")
+
     forwarding_value = 1 if settings.routing_enabled else 0
     forwarding_commands = [
         f"sysctl -w net.ipv4.ip_forward={forwarding_value}  # global Routing switch",
@@ -1178,7 +1190,10 @@ def render_wan_config(
     if not settings.routing_enabled:
         lines.extend(forwarding_commands)
         lines.append("# Routing disabled: reconcile owned IPv4/IPv6 lab ingress lookups and terminal guards to an empty set.")
-        lines.append("# Local source-address rules remain reconciled from applied Network intent.")
+        if legacy_source_rules:
+            lines.append("# Pre-migration WAN Apply still restores management source rules while Routing is disabled.")
+        else:
+            lines.append("# Local source-address rules remain reconciled from applied Network intent.")
     else:
         if candidate_network_ingress is not None:
             lines.append("# Ingress commands below reflect the candidate Network intent applied before WAN in this task.")
@@ -1205,6 +1220,32 @@ def render_wan_config(
                 lines.append(f"ip {route_family}rule add iif {name} table {LAB_ROUTE_TABLE_ID} priority {LAB_ROUTE_RULE_PRIORITY + index} protocol 2")
         lines.extend(forwarding_commands)
     target_network_owners = _target_network_owners(targets)
+    if legacy_source_rules:
+        for index, target in enumerate(targets):
+            management = target.get("routing_domain", "lab") == "management"
+            if not management and not settings.routing_enabled:
+                continue
+            networks = _target_networks(target)
+            gateway_versions: set[int] = set()
+            if management:
+                for key in ("gateway", "ipv6_gateway"):
+                    try:
+                        gateway = ip_address(str(target.get(key) or ""))
+                    except ValueError:
+                        continue
+                    if any(network.version == gateway.version and (
+                        gateway in network or gateway.version == 6 and gateway.is_link_local
+                    ) for network in networks):
+                        gateway_versions.add(gateway.version)
+            for network in networks:
+                if target_network_owners[(target.get("routing_domain", "lab"), str(network))] != index:
+                    continue
+                if management and network.version not in gateway_versions:
+                    continue
+                route_family = "-6 " if network.version == 6 else ""
+                table = MANAGEMENT_ROUTE_TABLE_ID if management else LAB_ROUTE_TABLE_ID
+                base_priority = MANAGEMENT_ROUTE_RULE_PRIORITY if management else LAB_ROUTE_RULE_PRIORITY
+                lines.append(f"ip {route_family}rule add from {network} table {table} priority {base_priority + index}")
     if network_owned_targets is not None:
         lines.append("# Connected routes and dedicated-management defaults are maintained by Network, not pending WAN targets.")
         lines.append("# Static cleanup below reflects applied Network intent; combined Apply uses the newly applied Network intent.")

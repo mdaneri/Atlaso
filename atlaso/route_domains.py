@@ -36,6 +36,7 @@ IP_COMMAND = "/usr/sbin/ip"
 PROTOCOL = 2
 PRIORITY_START = 5000
 PRIORITY_END = 6000
+TRANSITION_PRIORITY = 6000
 MAX_JSON_BYTES = 2_000_000
 RESCAN_SECONDS = 10.0
 LOCK_SECONDS = 30.0
@@ -246,6 +247,41 @@ def source_tables(intent: Intent, inventory: Any) -> tuple[dict[str, int | None]
     return {source: next(iter(tables)) if len(tables) == 1 else None for source, tables in sources.items()}, incomplete
 
 
+def removed_interface_holds(intent: Intent, inventory: Any, names: set[str]) -> list[dict[str, str | int]]:
+    """Retain proven old sources while a deferred VLAN link is still present."""
+    if len(names) > 256 or any(not isinstance(name, str) or not INTERFACE_PATTERN.fullmatch(name) for name in names):
+        raise ReconcileError("invalid removed interface names")
+    sources, incomplete = source_tables(intent, inventory)
+    if incomplete or any(table is None for table in sources.values()):
+        raise ReconcileError("old source identity unavailable")
+    owners = {row.name: row for row in intent.interfaces if row.name in names}
+    holds: list[dict[str, str | int]] = []
+    for link in inventory:
+        name = link["ifname"]
+        if name not in names:
+            continue
+        entries = link.get("addr_info")
+        if not isinstance(entries, list):
+            raise ReconcileError("invalid removed interface addresses")
+        owner = owners.get(name)
+        if owner is None or str(link.get("address", "")).lower() != owner.mac:
+            raise ReconcileError("removed interface has unproven source ownership")
+        for entry in entries:
+            flags = entry.get("flags", [])
+            if any(entry.get(flag) or flag in flags for flag in ("tentative", "dadfailed")):
+                continue
+            if entry.get("valid_life_time") == 0:
+                continue
+            try:
+                source = usable_address(entry.get("local"))
+            except ReconcileError:
+                continue
+            if sources.get(source) != owner.table:
+                raise ReconcileError("removed source has ambiguous ownership")
+            holds.append({"name": name, "mac": owner.mac, "address": source, "table": owner.table})
+    return holds
+
+
 def owned_rules(rows: Any, family: int) -> set[Rule]:
     """Reject occupied ranges or tagged rules outside the canonical owned form.
 
@@ -447,7 +483,44 @@ def preflight() -> None:
     """Reject foreign source-rule ownership before Network starts a transaction."""
     with reconciliation_lock():
         for family in (4, 6):
-            owned_rules(read_native([f"-{family}", "rule", "show"]), family)
+            rows = read_native([f"-{family}", "rule", "show"])
+            owned_rules(rows, family)
+            if transition_guard_present(rows, family):
+                raise ReconcileError("stale routing-domain transition guard requires recovery")
+
+
+def transition_guard_present(rows: Any, family: int) -> bool:
+    """Admit only our exact temporary local-origin terminal rule at slot 6000."""
+    if not isinstance(rows, list) or any(not isinstance(row, dict) for row in rows):
+        raise ReconcileError("invalid native policy rules")
+    matches = [row for row in rows if row.get("priority") == TRANSITION_PRIORITY]
+    if len(matches) > 1:
+        raise ReconcileError("ambiguous routing-domain transition priority")
+    if not matches:
+        return False
+    row = matches[0]
+    source = "0.0.0.0" if family == 4 else "::"
+    if (set(row) - {"priority", "src", "srclen", "iif", "action", "protocol"}
+            or row.get("src", "all") not in {"all", source}
+            or row.get("srclen", 0) != 0 or row.get("iif") != "lo"
+            or row.get("action") not in {"unreachable", "7"}
+            or str(row.get("protocol")) not in {str(PROTOCOL), "kernel"}):
+        raise ReconcileError("routing-domain transition priority ownership conflict")
+    return True
+
+
+def transition_guard(enable: bool) -> None:
+    """Bracket Network address activation with an exact, owned fail-closed rule."""
+    with reconciliation_lock():
+        for family in (4, 6):
+            rows = read_native([f"-{family}", "rule", "show"])
+            owned_rules(rows, family)
+            present = transition_guard_present(rows, family)
+            if present == enable:
+                continue
+            run_ip([IP_COMMAND, f"-{family}", "rule", "add" if enable else "del",
+                    "priority", str(TRANSITION_PRIORITY), "from", "all", "iif", "lo",
+                    "protocol", str(PROTOCOL), "unreachable"])
 
 
 def reconcile() -> None:
@@ -529,12 +602,18 @@ def main() -> int:
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--once", action="store_true", help="Reconcile once for protected Apply readiness")
     mode.add_argument("--preflight", action="store_true", help="Check source-rule ownership without changing rules or intent")
+    mode.add_argument("--transition-start", action="store_true", help="Install Network Apply local-origin guard")
+    mode.add_argument("--transition-stop", action="store_true", help="Retire Network Apply local-origin guard")
     arguments = parser.parse_args()
     try:
         if linux_attribute(os, "geteuid")() != 0:
             raise ReconcileError("routing-domain reconciliation requires root")
         if arguments.preflight:
             preflight()
+        elif arguments.transition_start:
+            transition_guard(True)
+        elif arguments.transition_stop:
+            transition_guard(False)
         elif arguments.once:
             reconcile()
         else:
