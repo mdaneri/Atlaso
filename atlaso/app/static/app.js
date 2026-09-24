@@ -9396,7 +9396,7 @@ async function togglePhysicalInterfaceFromMenu(row, csrf) {
 }
 
 function canConvertPhysicalDhcpToStatic(data) {
-  return data.ipv4_method === "dhcp" && (data.role === "management" || (
+  return data.oper_state !== "missing" && data.ipv4_method === "dhcp" && (data.role === "management" || (
     data.role === "access" && data.mode === "access" && data.access_management_ui_enabled
   ));
 }
