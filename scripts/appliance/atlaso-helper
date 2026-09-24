@@ -7851,7 +7851,13 @@ def _management_ca_download_locations(upstream_host: str, upstream_port: int) ->
     return lines
 
 
-def _management_nginx_config(payload: dict, cert_path: Path | None = None, key_path: Path | None = None) -> str:
+def _management_nginx_config(
+    payload: dict,
+    cert_path: Path | None = None,
+    key_path: Path | None = None,
+    *,
+    listen_addresses: list[str] | None = None,
+) -> str:
     """Perform management nginx config.
 
     Args:
@@ -7866,12 +7872,28 @@ def _management_nginx_config(payload: dict, cert_path: Path | None = None, key_p
     upstream_host = str(payload.get("management_upstream_host") or "127.0.0.1")
     upstream_port = int(payload.get("management_upstream_port") or payload.get("management_http_port") or 8000)
     lines = ["# Managed by Atlaso. Local changes may be overwritten."]
+    if listen_addresses is None:
+        http_listeners = [f"{public_http_port}", f"[::]:{public_http_port}"]
+        https_listeners = [f"{public_https_port}", f"[::]:{public_https_port}"]
+    else:
+        if not listen_addresses:
+            raise ValueError("management handoff has no verified listener address")
+        addresses = [ip_address(address) for address in listen_addresses]
+        http_listeners = [
+            f"[{address}]:{public_http_port}" if address.version == 6 else f"{address}:{public_http_port}"
+            for address in addresses
+        ]
+        https_listeners = [
+            f"[{address}]:{public_https_port}" if address.version == 6 else f"{address}:{public_https_port}"
+            for address in addresses
+        ]
+    http_listen_lines = [f"  listen {listener} default_server;" for listener in http_listeners]
+    https_listen_lines = [f"  listen {listener} ssl default_server;" for listener in https_listeners]
     if not https_enabled:
         lines.extend(
             [
                 "server {",
-                f"  listen {public_http_port} default_server;",
-                f"  listen [::]:{public_http_port} default_server;",
+                *http_listen_lines,
                 f"  server_name {fqdn} _;",
                 *_management_proxy_location(upstream_host, upstream_port, "http"),
                 "}",
@@ -7883,8 +7905,7 @@ def _management_nginx_config(payload: dict, cert_path: Path | None = None, key_p
         [
             "server {",
             _release_maintenance_condition(),
-            f"  listen {public_http_port} default_server;",
-            f"  listen [::]:{public_http_port} default_server;",
+            *http_listen_lines,
             "  server_name _;",
             *_management_ca_download_locations(upstream_host, upstream_port),
             "  location / {",
@@ -7893,8 +7914,7 @@ def _management_nginx_config(payload: dict, cert_path: Path | None = None, key_p
             "}",
             "",
             "server {",
-            f"  listen {public_https_port} ssl default_server;",
-            f"  listen [::]:{public_https_port} ssl default_server;",
+            *https_listen_lines,
             f"  server_name {fqdn};",
             f"  ssl_certificate {cert_path};",
             f"  ssl_certificate_key {key_path};",
@@ -7911,6 +7931,7 @@ def _configure_atlaso_management_https(
     *,
     site_suffix: str = "",
     verify_front_door: bool = True,
+    listen_addresses: list[str] | None = None,
 ) -> tuple[int, int | None]:
     """Install the management front door without interrupting its upstream.
 
@@ -7928,7 +7949,9 @@ def _configure_atlaso_management_https(
         cert_path = _ca_managed_path(str(payload["management_https_cert_path"]), "management_https_cert_path")
         key_path = _ca_managed_path(str(payload["management_https_key_path"]), "management_https_key_path")
         _grant_atlaso_service_key_read(key_path)
-    site_text = _management_nginx_config(payload, cert_path, key_path).rstrip() + "\n"
+    site_text = _management_nginx_config(
+        payload, cert_path, key_path, listen_addresses=listen_addresses,
+    ).rstrip() + "\n"
     if site_suffix.strip():
         site_text += "\n" + site_suffix.strip() + "\n"
 
@@ -27427,6 +27450,7 @@ def _apply_management_handoff(payload: dict) -> int:
             settings_payload,
             site_suffix=protocol_holdover,
             verify_front_door=False,
+            listen_addresses=candidate_addresses,
         )
         if management_https_result != 0:
             raise ValueError("candidate management nginx apply failed")
@@ -27514,14 +27538,14 @@ def _apply_management_handoff(payload: dict) -> int:
             os.chmod(transition_path, 0o600)
             if _handle_firewall("apply", [str(transition_path)]) != 0:
                 raise ValueError("final nftables apply failed while retiring the previous path")
-        if protocol_holdover:
-            failing_layer = "previous-protocol retirement"
-            management_https_result, _restart_delay_seconds = _configure_atlaso_management_https(
-                settings_payload,
-                verify_front_door=False,
-            )
-            if management_https_result != 0:
-                raise ValueError("candidate nginx could not retire the previous protocol listener")
+        failing_layer = "verified-listener publication"
+        management_https_result, _restart_delay_seconds = _configure_atlaso_management_https(
+            settings_payload,
+            verify_front_door=False,
+            listen_addresses=candidate_addresses,
+        )
+        if management_https_result != 0:
+            raise ValueError("candidate nginx could not publish verified final listeners")
         failing_layer = "post-retirement readiness"
         final_readiness = _management_handoff_readiness(
             candidate_addresses,

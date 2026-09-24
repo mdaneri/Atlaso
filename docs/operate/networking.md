@@ -370,7 +370,10 @@ still-assigned address enters the candidate check. A new
 DHCP or SLAAC address missing from the certificate fails at the certificate
 prerequisite and restores the previous applied path. Automatic certificate issuance for a newly acquired address is
 not part of this transaction; restore the static address or use a DHCP reservation covered by the managed certificate
-before retrying. Candidate HTTPS readiness verifies the transaction's CA and address identity before completion.
+before retrying. During the handoff, the candidate nginx listener binds only to addresses already verified against
+its certificate. Final reconfiguration cannot expose that certificate on a newly acquired address before the final
+certificate check and listener update. Candidate HTTPS readiness verifies the transaction's CA and address identity
+before completion.
 
 A failed management handoff reports its non-secret failing layer and rolls back the captured network, coupled Routes &
 WAN runtime, firewall, nginx, certificate, and service state before the task becomes failed. Rollback also reconfigures

@@ -3093,6 +3093,34 @@ def test_management_handoff_keeps_previous_http_during_https_transition():
     assert " ssl bind;" not in holdover
 
 
+def test_management_handoff_candidate_listeners_use_verified_addresses_only():
+    """Never expose the candidate certificate on an unobserved dynamic address."""
+    helper = load_helper_module()
+    config = helper._management_nginx_config(
+        {
+            "fqdn": "atlaso.example.test",
+            "management_https_enabled": True,
+            "management_public_http_port": 80,
+            "management_public_https_port": 443,
+        },
+        Path("/etc/atlaso/candidate.crt"),
+        Path("/etc/atlaso/candidate.key"),
+        listen_addresses=["192.0.2.20", "2001:db8::20"],
+    )
+
+    assert "listen 192.0.2.20:443 ssl default_server;" in config
+    assert "listen [2001:db8::20]:443 ssl default_server;" in config
+    assert "listen 192.0.2.20:80 default_server;" in config
+    assert "listen [2001:db8::20]:80 default_server;" in config
+    assert "listen 443 ssl default_server;" not in config
+    assert "listen [::]:443 ssl default_server;" not in config
+    with pytest.raises(ValueError, match="no verified listener address"):
+        helper._management_nginx_config(
+            {"fqdn": "atlaso.example.test", "management_https_enabled": False},
+            listen_addresses=[],
+        )
+
+
 def test_management_handoff_keeps_previous_http_when_port_changes():
     """Retain the old HTTP socket beside a candidate on another HTTP port."""
     helper = load_helper_module()
@@ -3175,9 +3203,9 @@ def test_management_handoff_keeps_previous_https_identity(monkeypatch, tmp_path,
 
 
 @pytest.mark.parametrize("candidate_sync_error", [False, True, "address-timeout", "address-conflict", "certificate",
-                                                  "late-certificate"],
+                                                  "late-certificate", "late-covered"],
                          ids=["durable", "sync-failure", "address-timeout", "address-conflict", "certificate",
-                              "late-certificate"])
+                              "late-certificate", "late-covered"])
 @pytest.mark.parametrize("paired_publishing", [False, True], ids=["source-only", "port-forward-pair"])
 @pytest.mark.parametrize("mapping_change", ["unchanged", "target", "removed"])
 def test_management_handoff_candidate_durability_gates_ack(
@@ -3214,6 +3242,7 @@ def test_management_handoff_candidate_durability_gates_ack(
     durability_calls: list[bool] = []
     nginx_suffixes: list[str] = []
     nginx_readiness_options: list[bool] = []
+    nginx_listen_addresses: list[list[str] | None] = []
     retirement_operations: list[str] = []
     wan_calls: list[str] = []
     def wait_addresses(_path, **kwargs):
@@ -3300,9 +3329,10 @@ def test_management_handoff_candidate_durability_gates_ack(
     monkeypatch.setattr(
         helper,
         "_configure_atlaso_management_https",
-        lambda _payload, *, site_suffix="", verify_front_door=True: (
+        lambda _payload, *, site_suffix="", verify_front_door=True, listen_addresses=None: (
             nginx_suffixes.append(site_suffix)
             or nginx_readiness_options.append(verify_front_door)
+            or nginx_listen_addresses.append(listen_addresses)
             or 0,
             None,
         ),
@@ -3316,7 +3346,8 @@ def test_management_handoff_candidate_durability_gates_ack(
     )
     monkeypatch.setattr(helper, "_management_handoff_addresses", lambda *_args, **kwargs:
                         ["198.51.100.10", "198.51.100.11"]
-                        if candidate_sync_error == "late-certificate" and kwargs.get("address_observation", {}).get("final")
+                        if candidate_sync_error in {"late-certificate", "late-covered"}
+                        and kwargs.get("address_observation", {}).get("final")
                         else ["198.51.100.10"])
     monkeypatch.setattr(helper, "_parse_network_config", lambda _path: ([], [], []))
     monkeypatch.setattr(helper, "_link_exists", lambda _interface: False)
@@ -3432,6 +3463,7 @@ def test_management_handoff_candidate_durability_gates_ack(
     if candidate_sync_error == "late-certificate":
         assert result == 1
         assert not durability_calls and not wan_calls and not paired_calls
+        assert nginx_listen_addresses == [["198.51.100.10"]]
         assert "candidate-ready" in phases and "awaiting-application-commit" not in phases
         assert restored == [True] and cleared == [True]
         failure = json.loads(capsys.readouterr().err.splitlines()[-1])
@@ -3440,7 +3472,7 @@ def test_management_handoff_candidate_durability_gates_ack(
         return
     assert durability_calls == [True]
     assert paired_calls == ([(nat.read_text(), "captured nat")] if paired_publishing else [])
-    if candidate_sync_error:
+    if candidate_sync_error is True:
         assert result == 1
         assert "awaiting-application-commit" not in phases
         assert restored == [True]
@@ -3466,6 +3498,11 @@ def test_management_handoff_candidate_durability_gates_ack(
     assert "resolver-applying" in phases
     assert nginx_suffixes == ["old protocol listener", ""]
     assert nginx_readiness_options == [False, False]
+    assert nginx_listen_addresses == [
+        ["198.51.100.10"],
+        (["198.51.100.10", "198.51.100.11"] if candidate_sync_error == "late-covered"
+         else ["198.51.100.10"]),
+    ]
     payload = json.loads(capsys.readouterr().out.splitlines()[-1])
     assert payload["management_handoff"] == "awaiting application commit"
 
