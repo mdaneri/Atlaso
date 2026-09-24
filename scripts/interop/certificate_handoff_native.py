@@ -657,9 +657,6 @@ def main():
             peer_plan["ssh_host_key"], peer_plan["private_subnet"],
         )
         peer_transport.__enter__()
-        client = Client(plan["url"], plan["ca_path"], peer=peer_transport,
-                        connect_ip=peer_plan["baseline_address"])
-        client.login(plan.get("username", "admin"), password)
         try:
             fixture, _ = admit_private_receipts(plan)
             with PinnedApplianceSession(
@@ -671,6 +668,9 @@ def main():
                 raise Refusal("private_live_preflight_changed")
         except (PeerProofRefusal, PeerTransportRefusal, OSError, KeyError, ValueError, RuntimeError):
             raise Refusal("private_live_preflight_unproven") from None
+        client = Client(plan["url"], plan["ca_path"], peer=peer_transport,
+                        connect_ip=peer_plan["baseline_address"])
+        client.login(plan.get("username", "admin"), password)
         original, _ = client.interface(plan["interface"])
         fields = saved_fields(original)
         if fields["role"] != "management" or fields["ipv6_enabled"] or not same_mac(original.get("mac_address"), plan["mac"]):

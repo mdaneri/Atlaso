@@ -472,6 +472,13 @@ function Protect-AtlasoCertificateProofInputs {
             [IO.Path]::GetDirectoryName($planPath), $true))
         $pins.Add([Atlaso.WorkstationFileIdentity]::PinOrdinaryReadFile($planPath, $true))
         $planValue = Get-Content -LiteralPath $planPath -Raw | ConvertFrom-Json -ErrorAction Stop
+        $caPath = [IO.Path]::GetFullPath([string]$planValue.ca_path)
+        if (-not $caPath.StartsWith($owned, [StringComparison]::OrdinalIgnoreCase)) {
+            throw 'Certificate proof CA escapes the owned evidence root.'
+        }
+        $pins.Add([Atlaso.WorkstationFileIdentity]::PinOrdinaryDirectoryPath(
+            [IO.Path]::GetDirectoryName($caPath), $true))
+        $pins.Add([Atlaso.WorkstationFileIdentity]::PinOrdinaryReadFile($caPath, $true))
         $references = [Collections.Generic.List[object]]::new()
         foreach ($property in $planValue.PSObject.Properties) {
             $value = $property.Value

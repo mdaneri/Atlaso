@@ -35,6 +35,46 @@ def test_inspect_admits_before_credential_or_peer_connection(
     assert evidence["failure"] == "peer_original_identity_mismatch"
 
 
+def test_live_address_ownership_precedes_http_login(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A changed private-LAN claim must stop before the admin password is sent.
+
+    Args:
+        tmp_path: Pytest-owned temporary directory.
+        monkeypatch: Pytest fixture for isolated test overrides.
+    """
+    plan_path = tmp_path / "plan.json"
+    evidence_path = tmp_path / "evidence.json"
+    plan_path.write_text(json.dumps({
+        "pr": 871, "source_commit": "a" * 40, "scenario": "static-success",
+        "peer_transport": {"host": "peer", "user": "tester", "ssh_host_key": "key", "private_subnet": "192.168.77.0/24",
+                           "baseline_address": "192.168.77.10"},
+    }))
+    monkeypatch.setattr(sys, "argv", ["handoff", "--plan", str(plan_path), "--evidence", str(evidence_path)])
+    monkeypatch.setattr(handoff, "admit_execution", lambda _plan: {})
+    monkeypatch.setattr(handoff, "admin_password", lambda: "test-admin-password")
+    monkeypatch.setattr(handoff, "peer_password", lambda: "test-peer-password")
+
+    class Peer:
+        def __init__(self, *_args):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            pass
+
+    monkeypatch.setattr(handoff, "PinnedPeerTransport", Peer)
+    monkeypatch.setattr(handoff, "admit_private_receipts", lambda _plan: (_ for _ in ()).throw(
+        handoff.PeerProofRefusal("live ownership changed")))
+    monkeypatch.setattr(handoff, "Client", lambda *_args, **_kwargs: pytest.fail("HTTP client before live ownership"))
+    with pytest.raises(SystemExit, match="1"):
+        handoff.main()
+    assert json.loads(evidence_path.read_text())["failure"] == "private_live_preflight_unproven"
+
+
 def test_peer_credential_is_independent_of_admin(monkeypatch: pytest.MonkeyPatch) -> None:
     """Handle test peer credential is independent of admin for certificate handoff verification.
 

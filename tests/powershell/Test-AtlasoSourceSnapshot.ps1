@@ -45,6 +45,8 @@ $receiptPath = Join-Path $proofRoot 'original.json'
 $segmentPath = Join-Path $proofRoot 'segment.json'
 $fixturePath = Join-Path $proofRoot 'fixture.json'
 $planPath = Join-Path $proofRoot 'proof-plan.json'
+$caPath = Join-Path $proofRoot 'trusted-ca.pem'
+[IO.File]::WriteAllText($caPath, 'test trust anchor')
 [IO.File]::WriteAllText($receiptPath, '{"schema":1}')
 [IO.File]::WriteAllText($segmentPath, '{"schema":1}')
 $segmentSha = (Get-FileHash -LiteralPath $segmentPath -Algorithm SHA256).Hash.ToLowerInvariant()
@@ -54,12 +56,13 @@ $segmentSha = (Get-FileHash -LiteralPath $segmentPath -Algorithm SHA256).Hash.To
 $fixtureSha = (Get-FileHash -LiteralPath $fixturePath -Algorithm SHA256).Hash.ToLowerInvariant()
 $receiptSha = (Get-FileHash -LiteralPath $receiptPath -Algorithm SHA256).Hash.ToLowerInvariant()
 [IO.File]::WriteAllText($planPath, (@{
+    ca_path = $caPath
     peer_fixture = @{ path = $fixturePath; sha256 = $fixtureSha }
     predeployment_evidence = @{ path = $receiptPath; sha256 = $receiptSha }
 } | ConvertTo-Json -Compress -Depth 4))
 $proofPins = @(Protect-AtlasoCertificateProofInputs -Plan $planPath -EvidenceRoot $OutputDirectory)
 try {
-    foreach ($inputPath in @($planPath, $fixturePath, $receiptPath, $segmentPath)) {
+    foreach ($inputPath in @($planPath, $fixturePath, $receiptPath, $segmentPath, $caPath)) {
         $blocked = $false
         try {
             $write = [IO.File]::Open($inputPath, [IO.FileMode]::Open, [IO.FileAccess]::Write, [IO.FileShare]::ReadWrite)
