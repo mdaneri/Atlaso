@@ -1970,6 +1970,86 @@ def test_wan_apply_preview_uses_selected_network_ownership(client, monkeypatch, 
     assert captured["config_preview"] == expected["config_preview"]
 
 
+@pytest.mark.parametrize("scenario", ["changed_address", "unrelated_network_edit", "invalid_network",
+                                      "disabled_route", "routing_off"])
+def test_wan_gateway_target_address_requires_network_apply(client, monkeypatch, scenario):
+    """A pending gateway's new on-link prefix requires Network before WAN.
+
+    Args:
+        client: Isolated HTTP application fixture.
+        monkeypatch: Keep submitted jobs pending and inject invalid Network state.
+        scenario: Address dependency, unrelated edit, invalid dependency, or inactive route.
+    """
+    from sqlalchemy import select
+
+    from atlaso.app import ui
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Job, PhysicalInterface, Route
+    from atlaso.app.services.routes_wan import save_routes_wan_settings
+
+    login(client)
+    with SessionLocal() as db:
+        db.query(Route).delete()
+        save_routes_wan_settings(db, routing_enabled=True, nat_enabled=False, wan_simulation_enabled=False)
+        interface = db.scalar(select(PhysicalInterface).where(PhysicalInterface.name == "eth2"))
+        assert interface is not None
+        interface.role = "access"
+        interface.mode = "access"
+        interface.admin_state = "up"
+        interface.oper_state = "up"
+        interface.ipv4_method = "static"
+        interface.ip_cidr = "192.0.2.10/24"
+        route = Route(destination_cidr="198.51.100.0/24", gateway="192.0.2.1",
+                      interface_name="eth2", enabled=True)
+        db.add(route)
+        db.commit()
+        units = ui.appliance_apply_units(db)
+        ui.update_appliance_apply_baselines(db, units, {unit["id"] for unit in units})
+        if scenario == "unrelated_network_edit":
+            interface.mtu = 1400
+            route.gateway = "192.0.2.2"
+        else:
+            interface.ip_cidr = "192.0.3.10/24"
+            route.gateway = "192.0.3.1"
+            if scenario == "disabled_route":
+                route.enabled = False
+            elif scenario == "routing_off":
+                save_routes_wan_settings(db, routing_enabled=False, nat_enabled=False,
+                                         wan_simulation_enabled=False)
+        db.commit()
+        units = ui.appliance_apply_units(db)
+        network = next(unit for unit in units if unit["id"] == "network")
+        wan = next(unit for unit in units if unit["id"] == "wan")
+        expected_dependency = scenario in {"changed_address", "invalid_network"}
+        assert network["changed"]
+        assert wan["network_address_dependency"] is expected_dependency
+        assert wan["changed"]
+        if scenario == "invalid_network":
+            network["validation_errors"] = ["invalid Network dependency"]
+        count_before = db.query(Job).count()
+
+    page = client.get("/dashboard")
+    csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    monkeypatch.setattr(ui, "appliance_apply_units", lambda _db: units)
+    monkeypatch.setattr(ui, "run_appliance_apply_job", lambda _job_id: None)
+    response = client.post("/appliance-apply", data={"csrf": csrf, "selected_units": "wan"},
+                           headers={"Accept": "application/json"})
+    assert response.status_code == (422 if scenario == "invalid_network" else 202), response.text
+    with SessionLocal() as db:
+        assert db.query(Job).count() == count_before + (0 if scenario == "invalid_network" else 1)
+        if scenario == "invalid_network":
+            return
+        payload = json.loads(db.get(Job, response.json()["job_id"]).result)
+    selected = payload["selected_units"]
+    assert ("network" in selected) is expected_dependency
+    assert "wan" in selected
+    if expected_dependency:
+        assert selected.index("network") < selected.index("wan")
+    captured = next(unit for unit in payload["captured_units"] if unit["unit_id"] == "wan")
+    expected_wan = wan["network_candidate_variant"] if expected_dependency else wan
+    assert captured["config_preview"] == expected_wan["config_preview"]
+
+
 def test_network_only_ingress_reconciliation_does_not_leave_wan_pending(client):
     """Network-owned ingress changes do not create an independent WAN Apply.
 

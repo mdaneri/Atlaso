@@ -11353,6 +11353,38 @@ def appliance_apply_units(db: Session, *, reconcile: bool = True) -> list[dict[s
         config_preview=wan["wan_config_preview"],
         baseline=wan_baseline,
     )
+    # Desired WAN gateway validation cannot authorize a route against an
+    # unapplied Network prefix. Couple only effective routes whose own target
+    # addressing changed; unrelated pending Network edits stay independent.
+    applied_network_rows = {
+        row["name"]: row for row in network_interface_entries(network_baseline_preview)
+    }
+    desired_network_rows = {
+        row["name"]: row for row in network_interface_entries(network["network_config_preview"])
+    }
+    applied_management_ui = {
+        row["name"] for row in (wan_network_owned_targets(db) or [])
+        if row.get("management_ui")
+    }
+    gateway_target_changes: set[str] = set()
+    for route in wan["routes"]:
+        if not route.enabled or not route.gateway:
+            continue
+        if not (wan["routes_wan_settings"].routing_enabled or (
+            default_route_family(route.destination_cidr) is not None
+            and route.interface_name in applied_management_ui
+        )):
+            continue
+        try:
+            family = ip_address(route.gateway).version
+        except ValueError:
+            continue  # WAN validation reports the invalid gateway before task submission.
+        address_fields = ("ip_cidr", "ipv4_method") if family == 4 else ("ipv6_cidr", "ipv6_enabled")
+        previous = applied_network_rows.get(route.interface_name, {})
+        desired = desired_network_rows.get(route.interface_name, {})
+        if any(previous.get(field, "") != desired.get(field, "") for field in address_fields):
+            gateway_target_changes.add(route.interface_name)
+    wan_unit["network_address_dependency"] = bool(network_unit["changed"] and gateway_target_changes)
     previous_targets = {
         row["name"]: row for row in wan_config_target_entries(
             str((wan_baseline or {}).get("config_preview") or "")
@@ -17155,7 +17187,10 @@ def _submit_appliance_apply(
     # A fresh WAN preview includes desired ingress selectors. Establish their
     # Network intent first, including when NAT added WAN transitively above.
     # Existing baselines retain independent WAN Apply and its applied intent.
-    if "wan" in selected_ids and load_appliance_apply_baselines(db).get("network") is None:
+    if "wan" in selected_ids and (
+        load_appliance_apply_baselines(db).get("network") is None
+        or unit_map["wan"].get("network_address_dependency")
+    ):
         selected_ids.add("network")
     management_domain_migration = bool(
         "network" in selected_ids
