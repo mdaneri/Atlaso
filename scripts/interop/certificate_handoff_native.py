@@ -113,6 +113,7 @@ class Client:
         self.peer = peer
         self.connect_ip = str(ipaddress.IPv4Address(connect_ip))
         self.context = ssl.create_default_context(cafile=str(ca))
+        self.context.minimum_version = ssl.TLSVersion.TLSv1_2
         self.cookies = http.cookiejar.CookieJar()
         self.opener = urllib.request.build_opener(
             SameOrigin(), urllib.request.ProxyHandler({}),
@@ -294,6 +295,14 @@ def admin_password():
     password = os.environ.pop("ATLASO_NATIVE_ADMIN", None)
     if not password or len(password) < 12 or password != password.strip():
         raise Refusal("bounded_credential_bridge_required")
+    return password
+
+
+def peer_password():
+    """Consume the separate client-SSH secret only after peer identity admission."""
+    password = os.environ.pop("ATLASO_NATIVE_PEER", None)
+    if not password or len(password) < 12 or password != password.strip():
+        raise Refusal("bounded_peer_credential_bridge_required")
     return password
 
 
@@ -485,17 +494,17 @@ def main():
             raise Refusal("plan_contract")
         if Path(args.evidence).exists() or Path(args.evidence + ".original.json").exists():
             raise Refusal("evidence_destination_exists")
-        if args.execute or args.preflight_only:
-            evidence["admission"] = admit_execution(plan)
-            evidence["no_publication_evidence_basis"] = "reviewed exact helper ordering and unit assertions plus native prerequisite failure and rollback"
-            evidence["native_observation_limit"] = "TLS before and after; individual transient nginx generations are not directly observed"
+        evidence["admission"] = admit_execution(plan)
+        evidence["no_publication_evidence_basis"] = "reviewed exact helper ordering and unit assertions plus native prerequisite failure and rollback"
+        evidence["native_observation_limit"] = "TLS before and after; individual transient nginx generations are not directly observed"
         if args.preflight_only:
             evidence.update(success=True, stage="admitted_no_credentials_or_network")
             return
         password = admin_password()
+        peer_secret = peer_password()
         peer_plan = plan["peer_transport"]
         peer_transport = PinnedPeerTransport(
-            peer_plan["host"], peer_plan["user"], password,
+            peer_plan["host"], peer_plan["user"], peer_secret,
             peer_plan["ssh_host_key"], peer_plan["private_subnet"],
         )
         peer_transport.__enter__()
@@ -632,7 +641,9 @@ def main():
         if peer_transport is not None:
             peer_transport.__exit__(None, None, None)
         password = None
+        peer_secret = None
         os.environ.pop("ATLASO_NATIVE_ADMIN", None)
+        os.environ.pop("ATLASO_NATIVE_PEER", None)
         # Never serialize task bodies, response text, sessions, credentials, or exception text.
         path = Path(args.evidence)
         with path.open("x", encoding="utf-8") as stream:

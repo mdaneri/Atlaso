@@ -1556,6 +1556,55 @@ function Assert-CertificatePeerBootReady {
 
 <#
 .SYNOPSIS
+Capture the owned peer's management address and SSH host key through VMware guest operations.
+.PARAMETER Path
+Original task-owned peer VMX path; no network SSH connection is made.
+#>
+function Get-CertificatePeerOriginalIdentity {
+    param([Parameter(Mandatory)][string]$Path)
+
+    $token = [guid]::NewGuid().ToString('N')
+    $guestPath = "/tmp/atlaso-peer-identity-$token.txt"
+    $hostPath = Join-Path $resultRoot "peer-identity-$token.txt"
+    $script = "ip -4 -o addr show dev eth0 | awk 'NR == 1 { print `$4 }' > '$guestPath' && cat /etc/ssh/ssh_host_ed25519_key.pub >> '$guestPath'"
+    $passwordText = ConvertFrom-SecureString -SecureString $sshPasswordSecure -AsPlainText
+    try {
+        $query = Invoke-VmrunBounded -Arguments @(
+            '-T', 'ws', '-gu', $ClientSshUser, '-gp', $passwordText,
+            'runScriptInGuest', $Path, '/bin/sh', $script
+        ) -TimeoutSeconds 30
+        if ($query.TimedOut -or $query.ExitCode -ne 0) { throw 'Certificate peer original identity query failed.' }
+        $copy = Invoke-VmrunBounded -Arguments @(
+            '-T', 'ws', '-gu', $ClientSshUser, '-gp', $passwordText,
+            'copyFileFromGuestToHost', $Path, $guestPath, $hostPath
+        ) -TimeoutSeconds 30
+        if ($copy.TimedOut -or $copy.ExitCode -ne 0) { throw 'Certificate peer original identity readback failed.' }
+        if (-not (Test-Path -LiteralPath $hostPath -PathType Leaf) -or (Get-Item -LiteralPath $hostPath).Length -gt 1024) {
+            throw 'Certificate peer original identity readback is missing or oversized.'
+        }
+        $lines = @(Get-Content -LiteralPath $hostPath)
+        $addressMatch = if ($lines.Count -eq 2) { [regex]::Match($lines[0], '^(?<ip>(?:[0-9]{1,3}\.){3}[0-9]{1,3})/[0-9]{1,2}$') }
+        $keyMatch = if ($lines.Count -eq 2) { [regex]::Match($lines[1], '^ssh-ed25519 (?<key>[A-Za-z0-9+/]+={0,2})(?:\s+[^\r\n]{1,128})?$') }
+        if ($lines.Count -ne 2 -or -not $addressMatch.Success -or -not $keyMatch.Success) {
+            throw 'Certificate peer original identity shape is invalid.'
+        }
+        $address = [Net.IPAddress]::Parse($addressMatch.Groups['ip'].Value)
+        if ($address.AddressFamily -ne [Net.Sockets.AddressFamily]::InterNetwork -or
+            $address.ToString() -ceq '0.0.0.0') { throw 'Certificate peer management address is invalid.' }
+        $key = [Convert]::FromBase64String($keyMatch.Groups['key'].Value)
+        $fingerprint = 'SHA256:' + [Convert]::ToBase64String([Security.Cryptography.SHA256]::HashData($key)).TrimEnd('=')
+        if ($fingerprint -notmatch '^SHA256:[A-Za-z0-9+/]{43}$') {
+            throw 'Certificate peer SSH host key is invalid.'
+        }
+        return [ordered]@{ management_address = $address.ToString(); ssh_host_key = $fingerprint }
+    } finally {
+        $passwordText = $null
+        if (Test-Path -LiteralPath $hostPath) { Remove-Item -LiteralPath $hostPath -Force -ErrorAction Stop }
+    }
+}
+
+<#
+.SYNOPSIS
 Invoke vmrun with fail-fast behavior.
 
 .PARAMETER Arguments
@@ -2887,6 +2936,7 @@ with WindowsFiles().opened(Path(sys.argv[1]), directory=True) as (_, identity, _
             peer_vmx = $certificatePeerVmx; peer_ownership_sha256 = $peerOwnership.Sha256
             appliance_vmx = $applianceVmx; appliance_ownership_sha256 = $certificateOwnership.Sha256
             private_network = $SiteANetwork; peer_cidr = $CertificatePeerCidr
+            management_network = $ManagementNetwork
             lease_address = $CertificateLeaseAddress; appliance_mac = $certificateAppliancePeerMac
             lan_segment_receipt = $ownedLanSegments[0].ReceiptPath
             lan_segment_receipt_sha256 = $ownedLanSegments[0].ReceiptSha256.ToLowerInvariant()
@@ -3101,6 +3151,16 @@ with WindowsFiles().opened(Path(sys.argv[1]), directory=True) as (_, identity, _
         # The peer needs its seed only for first boot. Retain no password-bearing
         # ISO in a kept native acceptance lab.
         Assert-CertificatePeerBootReady -Path $certificatePeerVmx
+        $peerIdentityReadback = Get-CertificatePeerOriginalIdentity -Path $certificatePeerVmx
+        $certificatePeerIdentity = Write-CertificateLabReceipt -Name 'peer-identity.json' -Value ([ordered]@{
+            schema = 1; kind = 'certificate-peer-original-identity'; task_id = $env:CODEX_THREAD_ID
+            repository = 'mdaneri/Atlaso'; pr = $PullRequestNumber
+            peer_vmx = $certificatePeerVmx; peer_ownership_sha256 = $peerOwnership.Sha256
+            peer_fixture_sha256 = (Get-FileHash -LiteralPath (Join-Path $repoRoot "test-results/certificate-native-evidence/$LabName/peer-fixture.json") -Algorithm SHA256).Hash.ToLowerInvariant()
+            management_network = $ManagementNetwork; management_address = $peerIdentityReadback.management_address
+            ssh_user = $ClientSshUser; ssh_host_key = $peerIdentityReadback.ssh_host_key
+            observation = 'owned-vmware-guest-operations-before-management-rewire'
+        })
         Remove-ClientSeedArtifacts -VmxPaths @($certificatePeerVmx) -SeedPaths @($certificatePeerSeedIso) -Restart:(-not $CleanupCreatedLab)
         $seedArtifactsRetired = $true
         if (-not (Test-WorkstationVmRunning -Path $applianceVmx) -or
@@ -3113,6 +3173,7 @@ with WindowsFiles().opened(Path(sys.argv[1]), directory=True) as (_, identity, _
             appliance_vmx = $applianceVmx; appliance_ownership_sha256 = $certificateOwnership.Sha256
             bootstrap_runtime_sha256 = $certificateRuntime.Sha256
             peer_fixture_sha256 = (Get-FileHash -LiteralPath (Join-Path $repoRoot "test-results/certificate-native-evidence/$LabName/peer-fixture.json") -Algorithm SHA256).Hash.ToLowerInvariant()
+            peer_identity_sha256 = $certificatePeerIdentity.Sha256
             from_network = $ManagementNetwork; to_network = $SiteANetwork
             lan_segment_receipt_sha256 = $ownedLanSegments[0].ReceiptSha256.ToLowerInvariant()
             mac = $certificateAppliancePeerMac; expected_dhcp_address = $CertificateLeaseAddress
@@ -3147,6 +3208,7 @@ with WindowsFiles().opened(Path(sys.argv[1]), directory=True) as (_, identity, _
             vmx_path = $applianceVmx; vm_ownership_sha256 = $certificateOwnership.Sha256
             bootstrap_runtime_sha256 = $certificateRuntime.Sha256
             rewire_intent_sha256 = $rewireIntent.Sha256
+            peer_identity_sha256 = $certificatePeerIdentity.Sha256
             deployed_commit = $sourceCommit; wheel_sha256 = $applianceWheel.Sha256.ToLowerInvariant()
             helper_sha256 = $installedHelperSha256
             url = "https://$(New-AtlasoWorkstationFqdn -Name $applianceName)"

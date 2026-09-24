@@ -9,6 +9,8 @@ New nonsecret evidence file within that same tree.
 Explicit pinned 1Password Environment selector.
 .PARAMETER PythonPath
 Exact supported Python executable with the locked Paramiko dependency.
+.PARAMETER SshPassword
+The peer client's SSH password, supplied separately from the appliance admin credential.
 .PARAMETER Execute
 Run the guarded native mutation and restoration; default inspects only.
 #>
@@ -18,6 +20,7 @@ param(
     [Parameter(Mandatory)][string]$Evidence,
     [Parameter(Mandatory)][string]$EnvironmentId,
     [Parameter(Mandatory)][string]$PythonPath,
+    [Parameter(Mandatory)][SecureString]$SshPassword,
     [switch]$Execute
 )
 
@@ -39,24 +42,25 @@ Import-Module (Join-Path $PSScriptRoot 'Atlaso.OnePasswordCredentials.psm1') -Fo
 . (Join-Path $PSScriptRoot 'Atlaso.WorkstationFirstBoot.ps1')
 $scriptPath = Join-Path $repoRoot 'scripts/interop/certificate_handoff_native.py'
 $arguments = @('-I', $scriptPath, '--plan', $Plan, '--evidence', $Evidence)
-if ($Execute) {
-    Invoke-AtlasoBoundedProcess -FilePath $PythonPath `
-        -ArgumentList @('-I', $scriptPath, '--plan', $Plan,
-            '--evidence', ($Evidence + '.admission.json'), '--preflight-only') `
-        -TimeoutSeconds 30 -Action 'PR871 canonical identity admission' -DiscardOutput | Out-Null
-    $arguments += '--execute'
-}
+Invoke-AtlasoBoundedProcess -FilePath $PythonPath `
+    -ArgumentList @('-I', $scriptPath, '--plan', $Plan,
+        '--evidence', ($Evidence + '.admission.json'), '--preflight-only') `
+    -TimeoutSeconds 30 -Action 'PR871 canonical identity admission' -DiscardOutput | Out-Null
+if ($Execute) { $arguments += '--execute' }
 $pair = $null
 $plain = $null
+$peerPlain = $null
 try {
     $pair = Get-AtlasoOnePasswordCredentialPair -RepositoryRoot $repoRoot -EnvironmentId $EnvironmentId `
         -OnePasswordServiceAccountTokenFile (Join-Path $repoRoot '.atlaso-local/onepassword-service-account-token.dpapi') `
         -OnePasswordPython $PythonPath -TimeoutSeconds 300 -ConsumerDescription 'PR871 certificate inspection'
     $plain = [Net.NetworkCredential]::new('', $pair.AdminPassword).Password
+    $peerPlain = [Net.NetworkCredential]::new('', $SshPassword).Password
     Invoke-AtlasoBoundedProcess -FilePath $PythonPath -ArgumentList $arguments `
-        -EnvironmentVariables @{ ATLASO_NATIVE_ADMIN = $plain; TEMP = $evidenceRoot; TMP = $evidenceRoot } `
+        -EnvironmentVariables @{ ATLASO_NATIVE_ADMIN = $plain; ATLASO_NATIVE_PEER = $peerPlain; TEMP = $evidenceRoot; TMP = $evidenceRoot } `
         -TimeoutSeconds 1500 -Action 'PR871 certificate inspection' -DiscardOutput | Out-Null
 } finally {
     $plain = $null
+    $peerPlain = $null
     if ($pair) { $pair.AdminPassword.Dispose(); $pair.RootPassword.Dispose() }
 }

@@ -80,11 +80,77 @@ def test_read_native_requires_exact_unexpired_lease_before_tls(tmp_path: Path, m
         def close(self) -> None:
             pass
 
-    monkeypatch.setattr(proof.ssl, "create_default_context", lambda **kwargs: object())
+    class FakeContext:
+        minimum_version = None
+
+    context = FakeContext()
+    monkeypatch.setattr(proof.ssl, "create_default_context", lambda **kwargs: context)
     monkeypatch.setattr(proof, "PeerHTTPSConnection", FakeHTTPS)
     with pytest.raises(proof.Refusal, match="peer_original_mac_lease_expired_or_missing"):
         proof.read_native(plan, fixture, FakePeer(wrong_lease=True), FakeAppliance())
     result = proof.read_native(plan, fixture, FakePeer(), FakeAppliance())
+    assert context.minimum_version == proof.ssl.TLSVersion.TLSv1_2
     assert result["address_ownership_state"] == "proven-controlled"
     assert result["addresses"] == ["192.168.77.40", "192.168.77.10"]
     assert result["candidate_observation_limit"].startswith("candidate addresses are reserved")
+
+
+def test_original_peer_identity_rejects_changed_endpoint_before_network(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "original"
+    root.mkdir()
+    refs = {name: {"path": str(root / f"{name}.json"), "sha256": name[0] * 64}
+            for name in ("fixture", "bootstrap", "intent", "rewire")}
+    refs["identity"] = {"path": str(root / "peer-identity.json"), "sha256": "e" * 64}
+    fixture = {
+        "schema": 1, "kind": "certificate-dhcp-peer-fixture", "task_id": "task",
+        "repository": "mdaneri/Atlaso", "pr": 871, "address_ownership_state": "awaiting-live-readback",
+        "private_network": "lan:private", "source_commit": "a" * 40,
+        "appliance_vmx": "appliance.vmx", "peer_vmx": "peer.vmx",
+        "appliance_ownership_sha256": "a" * 64, "peer_ownership_sha256": "p" * 64,
+        "client_vmdk_source": "disk.vmdk", "client_vmdk_sha256": "d" * 64,
+        "lan_segment_receipt": str(root / "lan.json"), "lan_segment_receipt_sha256": "l" * 64,
+        "lan_segment_id": "owned-id", "appliance_mac": "00:50:56:aa:bb:cc",
+        "management_network": "VMnet8", "lease_address": "192.168.77.10",
+    }
+    identity = {
+        "schema": 1, "kind": "certificate-peer-original-identity", "task_id": "task",
+        "repository": "mdaneri/Atlaso", "pr": 871, "peer_vmx": "peer.vmx",
+        "peer_ownership_sha256": "p" * 64, "peer_fixture_sha256": refs["fixture"]["sha256"],
+        "observation": "owned-vmware-guest-operations-before-management-rewire",
+        "management_network": "VMnet8", "management_address": "192.168.167.42",
+        "ssh_user": "alpine", "ssh_host_key": "SHA256:" + "A" * 43,
+    }
+    bootstrap = {"schema": 1, "vmx_path": "appliance.vmx", "vm_ownership_sha256": "a" * 64,
+                 "deployed_commit": "c" * 40}
+    intent = {"kind": "certificate-management-rewire-intent", "bootstrap_runtime_sha256": refs["bootstrap"]["sha256"],
+              "peer_fixture_sha256": refs["fixture"]["sha256"], "peer_identity_sha256": refs["identity"]["sha256"]}
+    rewire = {"kind": "certificate-rewired-runtime", "rewire_intent_sha256": refs["intent"]["sha256"],
+              "peer_identity_sha256": refs["identity"]["sha256"],
+              "bootstrap_runtime_sha256": refs["bootstrap"]["sha256"], "vmx_path": "appliance.vmx",
+              "interface": "eth0", "mac": "00-50-56-aa-bb-cc", "observed_address": "192.168.77.10",
+              "address_ownership_state": "unproven", "deployed_commit": "c" * 40}
+    segment = {"schema": 1, "task_id": "task", "repository": "mdaneri/Atlaso", "pr": 871,
+               "source_commit": "a" * 40, "name": "private", "pvn_id": "owned-id"}
+    values = {refs["fixture"]["path"]: fixture, refs["identity"]["path"]: identity,
+              refs["bootstrap"]["path"]: bootstrap, refs["intent"]["path"]: intent,
+              refs["rewire"]["path"]: rewire, fixture["lan_segment_receipt"]: segment}
+    monkeypatch.setattr(proof, "bound_json", lambda ref: values[ref["path"]])
+    monkeypatch.setattr(proof, "original_vm", lambda plan, role, vmx: {"source_commit": "a" * 40})
+    monkeypatch.setattr(proof, "file_digest", lambda path: "d" * 64)
+    monkeypatch.setattr(proof, "vmx_adapter", lambda path, index: (
+        {"connectiontype": "custom", "vnet": "VMnet8"} if index == 0 and path == "peer.vmx"
+        else {"connectiontype": "pvn", "pvnid": "owned-id", "address": "00:50:56:aa:bb:cc"}))
+    plan = {"task_id": "task", "deployed_commit": "c" * 40,
+            "peer_fixture": refs["fixture"], "peer_identity": refs["identity"],
+            "bootstrap_runtime": refs["bootstrap"], "rewire_intent": refs["intent"],
+            "rewired_runtime": refs["rewire"],
+            "appliance_ownership": {"sha256": "a" * 64}, "peer_ownership": {"sha256": "p" * 64},
+            "peer_transport": {"host": "192.168.167.42", "user": "alpine", "ssh_host_key": identity["ssh_host_key"]}}
+    assert proof.admit_receipts(plan)[0] is fixture
+    for field, changed in (("host", "192.168.167.43"), ("ssh_host_key", "SHA256:" + "B" * 43),
+                           ("user", "root")):
+        altered = {**plan, "peer_transport": {**plan["peer_transport"], field: changed}}
+        with pytest.raises(proof.Refusal, match="peer_original_identity_mismatch"):
+            proof.admit_receipts(altered)

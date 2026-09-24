@@ -11,7 +11,9 @@ import pytest
 import yaml
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts" / "interop"))
-from create_certificate_peer_seed_iso import peer_files  # noqa: E402
+from create_certificate_peer_seed_iso import (
+    peer_files,  # noqa: E402 - Local interop import after path setup.
+)
 
 
 def _args(**overrides: str) -> argparse.Namespace:

@@ -51,7 +51,10 @@ def bound_json(reference: dict) -> dict:
     expected = reference.get("sha256", "").lower()
     if not re.fullmatch(r"[a-f0-9]{64}", expected):
         raise Refusal("receipt_digest_invalid")
-    payload = Path(reference["path"]).read_bytes()
+    path = Path(reference["path"])
+    if not path.is_absolute() or path.is_symlink() or not path.is_file() or path.stat().st_size > 262144:
+        raise Refusal("unsafe_receipt_reference")
+    payload = path.read_bytes()
     if digest(payload) != expected:
         raise Refusal("receipt_digest_changed")
     value = json.loads(payload)
@@ -147,6 +150,36 @@ def admit_receipts(plan: dict) -> tuple[dict, dict]:
     bootstrap = bound_json(plan["bootstrap_runtime"])
     rewire_intent = bound_json(plan["rewire_intent"])
     rewire = bound_json(plan["rewired_runtime"])
+    identity_reference = plan["peer_identity"]
+    if Path(identity_reference["path"]) != Path(plan["peer_fixture"]["path"]).parent / "peer-identity.json":
+        raise Refusal("peer_identity_location_invalid")
+    identity = bound_json(identity_reference)
+    transport = plan["peer_transport"]
+    peer_bootstrap_adapter = vmx_adapter(fixture["peer_vmx"], 0)
+    if (
+        identity.get("schema") != 1
+        or identity.get("kind") != "certificate-peer-original-identity"
+        or identity.get("task_id") != plan["task_id"]
+        or identity.get("repository") != "mdaneri/Atlaso"
+        or identity.get("pr") != 871
+        or identity.get("peer_vmx") != fixture["peer_vmx"]
+        or identity.get("peer_ownership_sha256") != fixture["peer_ownership_sha256"]
+        or identity.get("peer_fixture_sha256") != plan["peer_fixture"]["sha256"]
+        or identity.get("observation") != "owned-vmware-guest-operations-before-management-rewire"
+        or identity.get("management_network") != fixture.get("management_network")
+        or peer_bootstrap_adapter.get("connectiontype", "").lower() != "custom"
+        or peer_bootstrap_adapter.get("vnet") != fixture.get("management_network")
+        or transport.get("host") != identity.get("management_address")
+        or transport.get("ssh_host_key") != identity.get("ssh_host_key")
+        or transport.get("user") != identity.get("ssh_user")
+        or not re.fullmatch(r"SHA256:[A-Za-z0-9+/]{43}", identity.get("ssh_host_key", ""))
+    ):
+        raise Refusal("peer_original_identity_mismatch")
+    try:
+        if ipaddress.IPv4Address(identity["management_address"]).is_private is not True:
+            raise Refusal("peer_original_address_not_private")
+    except ipaddress.AddressValueError:
+        raise Refusal("peer_original_address_invalid") from None
     if (
         bootstrap.get("schema") != 1
         or bootstrap.get("vmx_path") != fixture["appliance_vmx"]
@@ -154,8 +187,10 @@ def admit_receipts(plan: dict) -> tuple[dict, dict]:
         or rewire_intent.get("kind") != "certificate-management-rewire-intent"
         or rewire_intent.get("bootstrap_runtime_sha256") != plan["bootstrap_runtime"]["sha256"]
         or rewire_intent.get("peer_fixture_sha256") != plan["peer_fixture"]["sha256"]
+        or rewire_intent.get("peer_identity_sha256") != identity_reference["sha256"]
         or rewire.get("kind") != "certificate-rewired-runtime"
         or rewire.get("rewire_intent_sha256") != plan["rewire_intent"]["sha256"]
+        or rewire.get("peer_identity_sha256") != identity_reference["sha256"]
         or rewire.get("bootstrap_runtime_sha256") != plan["bootstrap_runtime"]["sha256"]
         or rewire.get("vmx_path") != fixture["appliance_vmx"]
         or rewire.get("interface") != "eth0"
@@ -220,6 +255,7 @@ def read_native(plan: dict, fixture: dict, peer: PinnedPeerTransport, appliance:
     if digest(ca_bytes) != plan["ca_sha256"].lower() or b"PRIVATE KEY" in ca_bytes or b"-----BEGIN CERTIFICATE-----" not in ca_bytes:
         raise Refusal("public_ca_pin_invalid")
     context = ssl.create_default_context(cafile=plan["ca_path"])
+    context.minimum_version = ssl.TLSVersion.TLSv1_2
     connection = PeerHTTPSConnection(baseline, peer=peer, target_ip=baseline, context=context, timeout=12)
     try:
         connection.request("GET", "/openapi.json")
@@ -297,17 +333,18 @@ def main() -> int:
         if args.preflight_only:
             print(json.dumps({"success": True, "stage": "original_receipts_admitted_no_network"}))
             return 0
-        password = os.environ.pop("ATLASO_NATIVE_ADMIN", None)
-        if not password or len(password) < 12 or password != password.strip():
+        admin_password = os.environ.pop("ATLASO_NATIVE_ADMIN", None)
+        peer_password = os.environ.pop("ATLASO_NATIVE_PEER", None)
+        if any(not value or len(value) < 12 or value != value.strip() for value in (admin_password, peer_password)):
             raise Refusal("bounded_credential_bridge_required")
         peer_plan = plan["peer_transport"]
         with PinnedPeerTransport(
-            peer_plan["host"], peer_plan["user"], password,
+            peer_plan["host"], peer_plan["user"], peer_password,
             peer_plan["ssh_host_key"], peer_plan["private_subnet"],
         ) as peer:
             with PinnedApplianceSession(
                 peer, plan["baseline_address"], plan["appliance_user"],
-                password, plan["appliance_ssh_host_key"],
+                admin_password, plan["appliance_ssh_host_key"],
             ) as appliance:
                 proof = read_native(plan, fixture, peer, appliance)
         proof_sha = publish(address_path, proof)
