@@ -755,10 +755,41 @@ def _run_authenticated(
                                    for row in initial["management_routes"]["6"])
                 exemptions = {row.get("priority") for row in initial["rules"]["6"]
                               if row.get("iif") == "lo" and str(row.get("table")) in ("254", "main")}
+                link_sources = [str(row["local"]) for row in _addresses(initial, management)
+                                if row.get("family") == "inet6" and row.get("scope") == "link"
+                                and not row.get("tentative") and not row.get("dadfailed")]
+                link_source = next((source for source in link_sources
+                                    if ipaddress.ip_address(source).is_link_local), None)
+                diagnostic_program = SNAPSHOT_PROGRAM + '''
+def probe(args, management):
+    p = subprocess.run(args, capture_output=True, text=True, timeout=10)
+    if p.returncode:
+        return [0, 0]
+    try:
+        rows = json.loads(p.stdout)
+    except json.JSONDecodeError:
+        return [0, 0]
+    return [1, int(len(rows) == 1 and rows[0].get("dev") == management)]
+'''
+                diagnostic_program += (
+                    f'\nm={json.dumps(management)}\n'
+                    'base=["ip","-j","-N","-6","route","get","fe80::1"]\n'
+                    'p={"no-dev":probe(base,m),'
+                    '"loopback-input":probe(base+["dev",m,"iif","lo"],m),'
+                    '"unspecified-source":probe(base+["dev",m,"from","::"],m),'
+                    '"loopback-source":probe(base+["dev",m,"from","::1"],m)}\n'
+                )
+                if link_source is not None:
+                    diagnostic_program += (
+                        f'p["link-source"]=probe(base+["dev",m,"from",{json.dumps(link_source)}],m)\n'
+                    )
+                diagnostic_program += 'print(json.dumps({"probes":p}))\n'
+                probes = _observe(connect_appliance, diagnostic_program)["probes"]
                 raise OverlapPrerequisiteError(
                     f"{exc}; main-default={int(main_default)},main-fe80={int(main_link)},"
                     f"main-fe80-mgmt={int(main_link_management)},main-fe80-lab={int(main_link_lab)},"
-                    f"table100-fe80={int(managed_link)},exemptions={sorted(exemptions & {6000, 6001, 6002})}"
+                    f"table100-fe80={int(managed_link)},exemptions={sorted(exemptions & {6000, 6001, 6002})},"
+                    f"route-probes={probes}"
                 ) from None
             allowed = ({row["local"] for row in _addresses(initial, management)
                         if row.get("family") == "inet6" and row.get("scope") == "link"
