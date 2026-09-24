@@ -973,7 +973,8 @@ def test_web_terminal_check_probes_canonical_browser_planes(monkeypatch):
             if method == "GET" and path == "/ui/public/terminal":
                 return 200, '<main data-terminal-available="true" data-csrf="csrf-323"></main>', {}
             if method == "POST" and path == "/terminal/tickets":
-                assert kwargs["form"] == {"csrf": "csrf-323"}
+                assert kwargs["form"]["csrf"] == "csrf-323"
+                assert 16 <= len(kwargs["form"]["browser_session_id"]) <= 80
                 return 200, '{"websocket_path": "/terminal/ws", "ticket": "ticket-323"}', {}
             if method == "GET" and path == "/ui/management/dashboard":
                 assert kwargs["follow_redirects"] is False
@@ -1022,7 +1023,8 @@ def test_web_terminal_check_uses_site_client_on_isolated_lab(monkeypatch):
             if (method, path) == ("GET", "/ui/public/terminal"):
                 return 404, 'not found', {}
             if (method, path) == ("POST", "/terminal/tickets"):
-                assert _kwargs["form"] == {"csrf": "csrf-323"}
+                assert _kwargs["form"]["csrf"] == "csrf-323"
+                assert 16 <= len(_kwargs["form"]["browser_session_id"]) <= 80
                 return 200, '{"websocket_path": "/terminal/ws", "ticket": "ticket-323"}', {}
             raise AssertionError((method, path))
 

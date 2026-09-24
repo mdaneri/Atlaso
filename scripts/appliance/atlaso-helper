@@ -3513,6 +3513,76 @@ def _recursive_lease_mirrors_in_config(config_path: Path) -> bool:
     return f"hostsdir={DNSMASQ_AUTHORITATIVE_LEASE_HOSTS_DIR}" in config_path.read_text(encoding="utf-8").splitlines()
 
 
+@contextmanager
+def _restore_dnsmasq_activation_on_failure() -> Iterator[Callable[[], None]]:
+    """Restore the installed DNS pair if any later activation command fails."""
+    paths = (
+        DNSMASQ_CONFIG_PATH,
+        DNSMASQ_SERVICE_DROPIN_PATH,
+        DNSMASQ_AUTHORITATIVE_CONFIG_PATH,
+        DNSMASQ_AUTHORITATIVE_SERVICE_PATH,
+    )
+    files: dict[Path, tuple[bytes, int] | None] = {}
+    for path in paths:
+        if path.is_symlink() or (path.exists() and not path.is_file()):
+            raise ValueError("The installed dnsmasq path is unsafe for rollback.")
+        files[path] = (path.read_bytes(), stat.S_IMODE(path.stat().st_mode)) if path.is_file() else None
+    units = ("atlaso-dns-authoritative.service", "dnsmasq")
+    services = {
+        unit: (
+            _run(["systemctl", "is-enabled", "--quiet", unit]).returncode == 0,
+            _run(["systemctl", "is-active", "--quiet", unit]).returncode == 0,
+        )
+        for unit in units
+    }
+    committed = False
+
+    def commit() -> None:
+        nonlocal committed
+        committed = True
+
+    try:
+        yield commit
+    finally:
+        if not committed:
+            failures = []
+            # Stop the client listener first so it cannot forward to a
+            # candidate backend while the previous files are restored.
+            for unit in reversed(units):
+                if _run(["systemctl", "stop", unit]).returncode != 0:
+                    failures.append(f"stop {unit}")
+            for path, previous in files.items():
+                if previous is None:
+                    path.unlink(missing_ok=True)
+                    continue
+                content, mode = previous
+                path.parent.mkdir(parents=True, exist_ok=True)
+                temporary = path.with_name(f".{path.name}.atlaso-rollback-{uuid.uuid4().hex}")
+                try:
+                    with temporary.open("xb") as stream:
+                        stream.write(content)
+                        stream.flush()
+                        os.fsync(stream.fileno())
+                    temporary.chmod(mode)
+                    temporary.replace(path)
+                finally:
+                    temporary.unlink(missing_ok=True)
+            if _run(["systemctl", "daemon-reload"]).returncode != 0:
+                failures.append("daemon-reload")
+            for unit in units:
+                was_enabled, was_active = services[unit]
+                is_enabled = _run(["systemctl", "is-enabled", "--quiet", unit]).returncode == 0
+                if was_enabled != is_enabled:
+                    command = "enable" if was_enabled else "disable"
+                    if _run(["systemctl", command, unit]).returncode != 0:
+                        failures.append(f"{command} {unit}")
+                if was_active and _run(["systemctl", "restart", unit]).returncode != 0:
+                    failures.append(f"restart {unit}")
+            if failures:
+                _run(["systemctl", "stop", "dnsmasq"])
+                raise OSError("Failed to restore prior DNS service state: " + ", ".join(failures))
+
+
 def _handle_dnsmasq(action: str, args: list[str]) -> int:
     """Handle dnsmasq.
 
@@ -3582,53 +3652,55 @@ def _handle_dnsmasq(action: str, args: list[str]) -> int:
                 except (OSError, ValueError) as exc:
                     print(str(exc), file=sys.stderr)
                     return 2
-            shutil.copy2(main_config_path, DNSMASQ_CONFIG_PATH)
-            _install_dnsmasq_service_dropin(authoritative=authoritative_config_path is not None)
-            if authoritative_config_path is not None:
-                shutil.copy2(authoritative_config_path, DNSMASQ_AUTHORITATIVE_CONFIG_PATH)
-                _install_dnsmasq_authoritative_service()
+            with _restore_dnsmasq_activation_on_failure() as commit_runtime:
+                shutil.copy2(main_config_path, DNSMASQ_CONFIG_PATH)
+                _install_dnsmasq_service_dropin(authoritative=authoritative_config_path is not None)
+                if authoritative_config_path is not None:
+                    shutil.copy2(authoritative_config_path, DNSMASQ_AUTHORITATIVE_CONFIG_PATH)
+                    _install_dnsmasq_authoritative_service()
 
-            daemon_reload = _run(["systemctl", "daemon-reload"])
-            print(daemon_reload.stdout, end="")
-            print(daemon_reload.stderr, end="", file=sys.stderr)
-            if daemon_reload.returncode != 0:
-                return daemon_reload.returncode
-            if authoritative_config_path is not None:
-                for command in (
-                    ["systemctl", "enable", "atlaso-dns-authoritative.service"],
-                    ["systemctl", "restart", "atlaso-dns-authoritative.service"],
-                ):
-                    result = _run(command)
-                    print(result.stdout, end="")
-                    print(result.stderr, end="", file=sys.stderr)
-                    if result.returncode != 0:
-                        return result.returncode
-            enable = _run(["systemctl", "enable", "dnsmasq"])
-            print(enable.stdout, end="")
-            print(enable.stderr, end="", file=sys.stderr)
-            if enable.returncode != 0:
-                return enable.returncode
-            restart = _run(["systemctl", "restart", "dnsmasq"])
-            print(restart.stdout, end="")
-            print(restart.stderr, end="", file=sys.stderr)
-            if restart.returncode != 0:
-                return restart.returncode
-            if authoritative_config_path is None and (
-                DNSMASQ_AUTHORITATIVE_CONFIG_PATH.exists() or DNSMASQ_AUTHORITATIVE_SERVICE_PATH.exists()
-            ):
-                disable = _run(["systemctl", "disable", "--now", "atlaso-dns-authoritative.service"])
-                print(disable.stdout, end="")
-                print(disable.stderr, end="", file=sys.stderr)
-                if disable.returncode != 0:
-                    return disable.returncode
-                DNSMASQ_AUTHORITATIVE_CONFIG_PATH.unlink(missing_ok=True)
-                DNSMASQ_AUTHORITATIVE_SERVICE_PATH.unlink(missing_ok=True)
                 daemon_reload = _run(["systemctl", "daemon-reload"])
                 print(daemon_reload.stdout, end="")
                 print(daemon_reload.stderr, end="", file=sys.stderr)
                 if daemon_reload.returncode != 0:
                     return daemon_reload.returncode
-            commit_mirrors()
+                if authoritative_config_path is not None:
+                    for command in (
+                        ["systemctl", "enable", "atlaso-dns-authoritative.service"],
+                        ["systemctl", "restart", "atlaso-dns-authoritative.service"],
+                    ):
+                        result = _run(command)
+                        print(result.stdout, end="")
+                        print(result.stderr, end="", file=sys.stderr)
+                        if result.returncode != 0:
+                            return result.returncode
+                enable = _run(["systemctl", "enable", "dnsmasq"])
+                print(enable.stdout, end="")
+                print(enable.stderr, end="", file=sys.stderr)
+                if enable.returncode != 0:
+                    return enable.returncode
+                restart = _run(["systemctl", "restart", "dnsmasq"])
+                print(restart.stdout, end="")
+                print(restart.stderr, end="", file=sys.stderr)
+                if restart.returncode != 0:
+                    return restart.returncode
+                if authoritative_config_path is None and (
+                    DNSMASQ_AUTHORITATIVE_CONFIG_PATH.exists() or DNSMASQ_AUTHORITATIVE_SERVICE_PATH.exists()
+                ):
+                    disable = _run(["systemctl", "disable", "--now", "atlaso-dns-authoritative.service"])
+                    print(disable.stdout, end="")
+                    print(disable.stderr, end="", file=sys.stderr)
+                    if disable.returncode != 0:
+                        return disable.returncode
+                    DNSMASQ_AUTHORITATIVE_CONFIG_PATH.unlink(missing_ok=True)
+                    DNSMASQ_AUTHORITATIVE_SERVICE_PATH.unlink(missing_ok=True)
+                    daemon_reload = _run(["systemctl", "daemon-reload"])
+                    print(daemon_reload.stdout, end="")
+                    print(daemon_reload.stderr, end="", file=sys.stderr)
+                    if daemon_reload.returncode != 0:
+                        return daemon_reload.returncode
+                commit_mirrors()
+                commit_runtime()
             return 0
 
     if action == "reload":

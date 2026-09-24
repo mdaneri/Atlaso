@@ -11509,6 +11509,84 @@ def test_dnsmasq_helper_apply_installs_isolated_authoritative_backend(monkeypatc
     )
 
 
+@pytest.mark.parametrize("failed_command", ["enable", "restart"])
+def test_dnsmasq_apply_restores_previous_dns_pair_after_client_activation_failure(monkeypatch, tmp_path, failed_command):
+    """A failed client activation must restore the prior recursive and authoritative pair."""
+    helper = load_helper_module()
+    apply_dir = tmp_path / "apply" / "dnsmasq"
+    config_dir = tmp_path / "etc" / "atlaso" / "dnsmasq.d"
+    systemd_dir = tmp_path / "etc" / "systemd" / "system"
+    dropin_dir = systemd_dir / "dnsmasq.service.d"
+    apply_dir.mkdir(parents=True)
+    config_dir.mkdir(parents=True)
+    dropin_dir.mkdir(parents=True)
+    candidate = apply_dir / "atlaso.conf"
+    candidate.write_text(
+        "no-resolv\nserver=/new.atlaso.internal/127.0.0.1#5353\n"
+        "# atlaso-authoritative-config: port=5353\n"
+        "# atlaso-authoritative-config: auth-zone=new.atlaso.internal\n",
+        encoding="utf-8",
+    )
+    installed = {
+        config_dir / "atlaso.conf": b"server=/old.atlaso.internal/127.0.0.1#5353\n",
+        config_dir / "atlaso-authoritative.conf": b"auth-zone=old.atlaso.internal\n",
+        dropin_dir / "atlaso.conf": b"old dnsmasq dropin\n",
+        systemd_dir / "atlaso-dns-authoritative.service": b"old authoritative unit\n",
+    }
+    for path, content in installed.items():
+        path.write_bytes(content)
+    units = {
+        "atlaso-dns-authoritative.service": {"enabled": True, "active": True},
+        "dnsmasq": {"enabled": failed_command == "restart", "active": True},
+    }
+    commands = []
+    failure_pending = True
+
+    def fake_run(command):
+        nonlocal failure_pending
+        commands.append(command)
+        if command[0] != "systemctl" or command[1] == "daemon-reload":
+            return subprocess.CompletedProcess(command, 0, "", "")
+        verb = command[1]
+        unit = command[-1]
+        if verb in {"is-enabled", "is-active"}:
+            key = "enabled" if verb == "is-enabled" else "active"
+            return subprocess.CompletedProcess(command, 0 if units[unit][key] else 1, "", "")
+        if failure_pending and verb == failed_command and unit == "dnsmasq":
+            failure_pending = False
+            return subprocess.CompletedProcess(command, 1, "", "activation failed")
+        if verb in {"enable", "disable"}:
+            units[unit]["enabled"] = verb == "enable"
+        if verb in {"restart", "stop"}:
+            units[unit]["active"] = verb == "restart"
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    monkeypatch.setattr(helper, "DNSMASQ_APPLY_DIR", apply_dir)
+    monkeypatch.setattr(helper, "DNSMASQ_STATE_DIR", tmp_path / "state")
+    monkeypatch.setattr(helper, "DNSMASQ_LEASE_FILE_PATH", tmp_path / "state" / "dhcp.leases")
+    monkeypatch.setattr(helper, "DNSMASQ_AUTHORITATIVE_LEASE_HOSTS_DIR", tmp_path / "state" / "authoritative-leases")
+    monkeypatch.setattr(helper, "DNSMASQ_CONFIG_DIR", config_dir)
+    monkeypatch.setattr(helper, "DNSMASQ_CONFIG_PATH", config_dir / "atlaso.conf")
+    monkeypatch.setattr(helper, "DNSMASQ_AUTHORITATIVE_CONFIG_PATH", config_dir / "atlaso-authoritative.conf")
+    monkeypatch.setattr(helper, "DNSMASQ_SERVICE_DROPIN_DIR", dropin_dir)
+    monkeypatch.setattr(helper, "DNSMASQ_SERVICE_DROPIN_PATH", dropin_dir / "atlaso.conf")
+    monkeypatch.setattr(helper, "DNSMASQ_AUTHORITATIVE_SERVICE_PATH", systemd_dir / "atlaso-dns-authoritative.service")
+    monkeypatch.setattr(helper, "_validate_dnsmasq_config", lambda _path: subprocess.CompletedProcess([], 0, "", ""))
+    monkeypatch.setattr(helper.shutil, "which", lambda command: "/usr/sbin/dnsmasq" if command == "dnsmasq" else None)
+    monkeypatch.setattr(helper, "_run", fake_run)
+
+    assert helper._handle_dnsmasq("apply", [str(candidate)]) == 1
+    assert {path: path.read_bytes() for path in installed} == installed
+    assert units == {
+        "atlaso-dns-authoritative.service": {"enabled": True, "active": True},
+        "dnsmasq": {"enabled": failed_command == "restart", "active": True},
+    }
+    assert commands.index(["systemctl", "stop", "dnsmasq"]) < commands.index(
+        ["systemctl", "restart", "atlaso-dns-authoritative.service"],
+        commands.index(["systemctl", "stop", "dnsmasq"]),
+    )
+
+
 @pytest.mark.parametrize("daemon_reload_fails", [False, True])
 def test_dnsmasq_failed_apply_restores_pruned_live_lease_name(monkeypatch, tmp_path, daemon_reload_fails):
     """Do not lose a managed lease name when service activation fails."""
@@ -11551,8 +11629,11 @@ def test_dnsmasq_failed_apply_restores_pruned_live_lease_name(monkeypatch, tmp_p
     monkeypatch.setattr(helper.shutil, "which", lambda command: "/usr/sbin/dnsmasq" if command == "dnsmasq" else None)
     monkeypatch.setattr(helper, "_run", fake_run)
 
-    result = helper._handle_dnsmasq("apply", [str(config_path)])
-    assert result == (1 if daemon_reload_fails else 0)
+    if daemon_reload_fails:
+        with pytest.raises(OSError, match="Failed to restore prior DNS service state: daemon-reload"):
+            helper._handle_dnsmasq("apply", [str(config_path)])
+    else:
+        assert helper._handle_dnsmasq("apply", [str(config_path)]) == 0
     if daemon_reload_fails:
         assert mirror.read_text(encoding="utf-8") == original
         assert ["systemctl", "kill", "--kill-whom=main", "--signal=HUP", "atlaso-dns-authoritative.service"] in commands

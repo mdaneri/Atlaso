@@ -15,6 +15,7 @@ import http.cookiejar
 import json
 import random
 import re
+import secrets
 import shlex
 import ssl
 import subprocess
@@ -2320,7 +2321,10 @@ def web_terminal_check(client: HttpClient, args: argparse.Namespace) -> dict[str
     ticket_status, ticket_body, _ticket_headers = site_client.request(
         "POST",
         "/terminal/tickets",
-        form={"csrf": html.unescape(csrf_match.group(1))},
+        form={
+            "csrf": html.unescape(csrf_match.group(1)),
+            "browser_session_id": secrets.token_urlsafe(24),
+        },
     )
     if ticket_status != 200:
         raise LifecycleError(f"Selected extra-interface terminal ticket failed with HTTP {ticket_status}: {ticket_body[:300]}")
