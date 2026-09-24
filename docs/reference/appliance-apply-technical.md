@@ -249,6 +249,9 @@ local-source (`iif lo`, `/32` or `/128`) lookup/adjacent-unreachable pairs at pr
 deliberately exempts these rules from networkd's foreign-rule cleanup; ownership still requires the reserved range and
 canonical selector shape. Deprecated valid addresses remain covered; tentative, failed-DAD and link-local addresses are
 excluded. Duplicate sources across domains or uncertain old identities retain unreachable guards and fail readiness.
+When a protected handoff holds a previous Management link that becomes Lab, its candidate ingress gets a terminal guard
+before activation. Its table-200 lookup begins only after the old path retires. Source holds are bounded by the paired
+source-rule slots across both address families, rather than by the number of interfaces.
 The watcher never reads pending database intent or changes routes. Its event-driven updates are asynchronous outside
 Apply; no zero-gap lease-renewal guarantee is implied.
 

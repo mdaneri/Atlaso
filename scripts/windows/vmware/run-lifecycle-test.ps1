@@ -3063,7 +3063,7 @@ try {
     $scenarioFailure = $_
 }
 if ($overlapRecoveryUncertain) {
-    throw "Private Apply outcome is unknown. Preserve the running lab and original evidence at '$resultRoot'; reconcile its public job identity before restoration or cleanup."
+    throw "Private Apply or restoration is not safely complete. Preserve the running lab and original evidence at '$resultRoot'; reconcile its public job and baseline before restoration or cleanup."
 }
 if ($overlapStarted -and $null -ne $overlapDescriptor -and -not $diagnosticTerminationUnproven) {
     try { Invoke-RoutingOverlapPhase -Phase stop -Descriptor $overlapDescriptor } catch {

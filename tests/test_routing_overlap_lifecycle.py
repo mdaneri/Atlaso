@@ -118,7 +118,10 @@ def terminal_rows(family):
         network = ipaddress.ip_network(prefix)
         rows.append({"priority": 6000 + offset, "src": str(network.network_address),
                      "srclen": network.prefixlen, "iif": "lo", "table": "254", "protocol": "2"})
-    rows.append({"priority": 6003, "src": "all", "srclen": 0, "iif": "lo",
+    destination = ipaddress.ip_network("169.254.0.0/16" if family == 4 else "fe80::/10")
+    rows.append({"priority": 6003, "dst": str(destination.network_address),
+                 "dstlen": destination.prefixlen, "iif": "lo", "table": "254", "protocol": "2"})
+    rows.append({"priority": 6004, "src": "all", "srclen": 0, "iif": "lo",
                  "action": "7", "protocol": "2"})
     return rows
 

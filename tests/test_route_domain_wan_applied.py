@@ -73,12 +73,12 @@ def wan_input():
 
 @pytest.mark.parametrize("family", [4, 6])
 def test_transition_guard_is_exact_and_rejects_foreign_priority(family):
-    """Only the owned local-origin terminal guard may occupy priority 6003.
+    """Only the owned local-origin terminal guard may occupy priority 6004.
 
     Args:
         family: IPv4 or IPv6 address family under test.
     """
-    canonical = {"priority": 6003, "src": "all", "srclen": 0, "iif": "lo",
+    canonical = {"priority": route_domains.TRANSITION_PRIORITY, "src": "all", "srclen": 0, "iif": "lo",
                  "action": "unreachable", "protocol": "2"}
     assert route_domains.transition_guard_present([canonical], family)
     assert not route_domains.transition_guard_present([], family)
@@ -99,6 +99,29 @@ def test_terminal_exemptions_admit_only_unbound_and_link_local_main_lookup(famil
                         {"table": "200"}, {"iif": "eth0"}):
             with pytest.raises(route_domains.ReconcileError):
                 route_domains.transition_exemptions_present([{**canonical, **changed}], family)
+    destination = ipaddress.ip_network(route_domains.TRANSITION_DESTINATION_EXEMPTIONS[family])
+    canonical_destination = {"priority": 6003, "dst": str(destination.network_address),
+                             "dstlen": destination.prefixlen, "iif": "lo", "table": "254", "protocol": "2"}
+    assert route_domains.transition_exemptions_present([canonical_destination], family) == {6003}
+    for changed in ({"dst": "192.0.2.1" if family == 4 else "2001:db8::1"},
+                    {"table": "200"}, {"iif": "eth0"}):
+        with pytest.raises(route_domains.ReconcileError):
+            route_domains.transition_exemptions_present([{**canonical_destination, **changed}], family)
+
+
+def test_held_source_inventory_uses_source_rule_capacity():
+    """A dual-stack removal may hold more addresses than interface records."""
+    owner = {"name": "eth1", "mac": "02:00:00:00:00:01", "table": 200}
+    holds = [
+        {**owner, "address": address}
+        for index in range(1, 130)
+        for address in (f"10.0.0.{index}", f"2001:db8::{index}")
+    ]
+    parsed = route_domains.parse_intent({"schema": 1, "interfaces": [], "held_addresses": holds})
+    assert len(parsed.held_addresses) == 258
+    too_many = [{**owner, "address": f"2001:db8::{index:x}"} for index in range(1, 1002)]
+    with pytest.raises(route_domains.ReconcileError, match="invalid routing-domain inventory"):
+        route_domains.parse_intent({"schema": 1, "interfaces": [], "held_addresses": too_many})
 
 
 def test_transition_guard_brackets_both_families_after_source_slots(monkeypatch):
@@ -120,9 +143,13 @@ def test_transition_guard_brackets_both_families_after_source_slots(monkeypatch)
         family = int(args[0][1:])
         rows = []
         for priority in occupied[family]:
-            if priority == 6003:
+            if priority == route_domains.TRANSITION_PRIORITY:
                 rows.append({"priority": priority, "src": "all", "srclen": 0,
                              "iif": "lo", "action": "unreachable", "protocol": "2"})
+            elif priority == 6003:
+                network = ipaddress.ip_network(route_domains.TRANSITION_DESTINATION_EXEMPTIONS[family])
+                rows.append({"priority": priority, "dst": str(network.network_address),
+                             "dstlen": network.prefixlen, "iif": "lo", "table": "254", "protocol": "2"})
             else:
                 network = ipaddress.ip_network(route_domains.TRANSITION_EXEMPTIONS[family][priority - 6000])
                 rows.append({"priority": priority, "src": str(network.network_address),
@@ -147,13 +174,13 @@ def test_transition_guard_brackets_both_families_after_source_slots(monkeypatch)
     monkeypatch.setattr(route_domains, "read_native", read_native)
     monkeypatch.setattr(route_domains, "run_ip", run_ip)
     route_domains.transition_guard(True)
-    assert occupied == {4: {6000, 6001, 6002, 6003}, 6: {6000, 6001, 6002, 6003}}
+    assert occupied == {4: {6000, 6001, 6002, 6003, 6004}, 6: {6000, 6001, 6002, 6003, 6004}}
     route_domains.transition_guard(False)
     assert occupied == {4: set(), 6: set()}
     assert [(cmd[1], cmd[3], cmd[cmd.index("priority") + 1]) for cmd in commands] == [
         (family, action, str(priority))
-        for action, priorities in (("add", (6003, 6000, 6001, 6002)),
-                                   ("del", (6000, 6001, 6002, 6003)))
+        for action, priorities in (("add", (6004, 6000, 6001, 6002, 6003)),
+                                   ("del", (6000, 6001, 6002, 6003, 6004)))
         for family in ("-4", "-6")
         for priority in priorities]
 
@@ -166,7 +193,7 @@ def test_owned_terminal_guard_is_admitted_by_new_network_transaction(monkeypatch
     """
     monkeypatch.setattr(route_domains, "reconciliation_lock", nullcontext)
     monkeypatch.setattr(route_domains, "read_native", lambda _args: [{
-        "priority": 6003, "src": "all", "srclen": 0, "iif": "lo",
+        "priority": route_domains.TRANSITION_PRIORITY, "src": "all", "srclen": 0, "iif": "lo",
         "action": "unreachable", "protocol": "2"}])
     route_domains.preflight()
 

@@ -90,8 +90,11 @@ def native():
         rules[family].extend({"src": source, "srclen": length, "iif": "lo", "protocol": "2",
                               "priority": 6000 + offset, "table": "254"}
                              for offset, (source, length) in enumerate(prefixes))
+        destination = ("169.254.0.0", 16) if family == "4" else ("fe80::", 10)
+        rules[family].append({"dst": destination[0], "dstlen": destination[1], "iif": "lo",
+                              "protocol": "2", "priority": 6003, "table": "254"})
         rules[family].append({"src": "all", "srclen": 0, "iif": "lo", "protocol": "2",
-                              "priority": 6003, "action": "7"})
+                              "priority": 6004, "action": "7"})
     return {
         "links": [{"ifname": "eth0", "addr_info": [
             {"family": "inet", "local": "192.0.2.10", "dynamic": True, "valid_life_time": 100, "scope": "global"},
@@ -357,6 +360,22 @@ def test_unknown_apply_outcome_does_not_start_restoration(monkeypatch, topology)
         scenario._run_authenticated(client, lambda: None, topology, lambda action: {})
     assert len([call for call in client.calls if call[0] == "PATCH"]) == 2
     assert client.rows["eth0"]["ipv4_method"] == "dhcp"
+
+
+def test_failed_restoration_requires_fixture_preservation(monkeypatch, topology):
+    """A definite failed baseline Apply still needs running DHCP and RA peers."""
+    client = FakeClient()
+
+    def failed_apply(_client, **_kwargs):
+        raise OverlapPrerequisiteError("candidate Apply failed")
+
+    def failed_restoration(*_args):
+        raise OverlapPrerequisiteError("baseline Apply failed")
+
+    monkeypatch.setattr(scenario, "_apply", failed_apply)
+    monkeypatch.setattr(scenario, "_restore", failed_restoration)
+    with pytest.raises(scenario.RestorationIncomplete, match="restoration: baseline Apply failed"):
+        scenario._run_authenticated(client, lambda: None, topology, lambda action: {})
 
 
 def test_apply_deadline_preserves_identity(monkeypatch):

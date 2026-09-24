@@ -2,7 +2,7 @@
 
 Routes remain owned by networkd and WAN Apply. This service only owns canonical
 protocol-2 source pairs in priorities 5000--5999 and terminal/exemption rules
-in 6000--6003. The kernel
+in 6000--6004. The kernel
 protocol deliberately exempts these rules from systemd-networkd v257's foreign
 rule cleanup without changing its global policy. It does not confer ownership
 of kernel rules outside these slots. The service never consumes desired state.
@@ -37,11 +37,13 @@ IP_COMMAND = "/usr/sbin/ip"
 PROTOCOL = 2
 PRIORITY_START = 5000
 PRIORITY_END = 6000
-TRANSITION_PRIORITY = 6003
+TRANSITION_PRIORITY = 6004
 TRANSITION_EXEMPTIONS = {
     4: ("0.0.0.0/32", "169.254.0.0/16", "127.0.0.0/8"),
     6: ("::/128", "fe80::/10", "::1/128"),
 }
+TRANSITION_DESTINATION_EXEMPTIONS = {4: "169.254.0.0/16", 6: "fe80::/10"}
+MAX_HELD_ADDRESSES = PRIORITY_END - PRIORITY_START
 MAX_JSON_BYTES = 2_000_000
 RESCAN_SECONDS = 10.0
 LOCK_SECONDS = 30.0
@@ -162,7 +164,8 @@ def parse_intent(value: Any) -> Intent:
     if type(value.get("schema")) is not int or value["schema"] != 1:
         raise ReconcileError("unsupported routing-domain schema")
     rows, holds = value.get("interfaces"), value.get("held_addresses", [])
-    if not isinstance(rows, list) or len(rows) > 256 or not isinstance(holds, list) or len(holds) > 256:
+    if (not isinstance(rows, list) or len(rows) > 256 or not isinstance(holds, list)
+            or len(holds) > MAX_HELD_ADDRESSES):
         raise ReconcileError("invalid routing-domain inventory")
     interfaces = tuple(parse_interface(row) for row in rows)
     if len({row.name for row in interfaces}) != len(interfaces):
@@ -667,6 +670,23 @@ def transition_exemptions_present(rows: Any, family: int) -> set[int]:
                 or str(row.get("protocol")) not in {str(PROTOCOL), "kernel"}):
             raise ReconcileError("routing-domain exemption priority ownership conflict")
         present.add(priority)
+    priority = PRIORITY_END + len(TRANSITION_EXEMPTIONS[family])
+    matches = [row for row in rows if row.get("priority") == priority]
+    if len(matches) > 1:
+        raise ReconcileError("ambiguous routing-domain exemption priority")
+    if matches:
+        row = matches[0]
+        network = ipaddress.ip_network(TRANSITION_DESTINATION_EXEMPTIONS[family])
+        if (set(row) - {"priority", "src", "srclen", "dst", "dstlen", "iif", "table", "protocol"}
+                or row.get("src", "all") not in {"all", "0.0.0.0" if family == 4 else "::"}
+                or row.get("srclen", 0) != 0
+                or row.get("dst") != str(network.network_address)
+                or row.get("dstlen") != network.prefixlen
+                or row.get("iif") != "lo"
+                or str(row.get("table")) not in {"254", "main"}
+                or str(row.get("protocol")) not in {str(PROTOCOL), "kernel"}):
+            raise ReconcileError("routing-domain exemption priority ownership conflict")
+        present.add(priority)
     return present
 
 
@@ -705,6 +725,12 @@ def _set_guard_locked(family: int, enable: bool) -> None:
                        "priority", str(priority), "from", prefix, "iif", "lo",
                        "protocol", str(PROTOCOL), "table", "main"]
             run_ip(command)
+    destination_priority = PRIORITY_END + len(TRANSITION_EXEMPTIONS[family])
+    if (destination_priority in exemptions) != enable:
+        command = [IP_COMMAND, f"-{family}", "rule", "add" if enable else "del",
+                   "priority", str(destination_priority), "to", TRANSITION_DESTINATION_EXEMPTIONS[family],
+                   "iif", "lo", "protocol", str(PROTOCOL), "table", "main"]
+        run_ip(command)
     if not enable and present:
         run_ip(guard[:3] + ["del"] + guard[3:])
 

@@ -9,6 +9,54 @@ import pytest
 from tests.test_appliance_helper import load_helper_module
 
 
+def test_held_management_link_becoming_lab_gets_guard_before_lookup(monkeypatch, tmp_path):
+    """Candidate ingress cannot reach main while its old listener is held."""
+    helper = load_helper_module()
+    network = tmp_path / "candidate-network.conf"
+    network.write_text("candidate\n", encoding="utf-8")
+    wan = tmp_path / "applied-wan.conf"
+    wan.write_text("[feature_settings]\nrouting_enabled=true\n", encoding="utf-8")
+    monkeypatch.setattr(helper, "WAN_RUNTIME_CONFIG_PATH", wan)
+    monkeypatch.setattr(helper, "_wan_config_errors", lambda *_args, **_kwargs: [])
+    monkeypatch.setattr(helper, "_parse_wan_config", lambda _path: {"feature_settings": [{"routing_enabled": "true"}]})
+    monkeypatch.setattr(helper, "_wan_feature_settings", lambda _parsed: {"routing_enabled": True})
+    monkeypatch.setattr(helper, "_parse_network_config", lambda _path: ([
+        {"name": "eth0", "role": "access", "mode": "access", "admin_state": "up"},
+        {"name": "eth1", "role": "route", "mode": "access", "admin_state": "up"},
+    ], [], []))
+
+    desired = helper._route_domain_ingress_desired_rules(
+        network, held_management_interfaces={"eth0"},
+    )
+    assert {(row["family"], row["table"]) for row in desired if row["incoming_interface"] == "eth0"} == {
+        (4, None), (6, None),
+    }
+    assert {(row["family"], row["table"]) for row in desired if row["incoming_interface"] == "eth1"} == {
+        (4, 200), (4, None), (6, 200), (6, None),
+    }
+    commands = []
+    monkeypatch.setattr(helper, "_snapshot_route_domain_rules", lambda: [])
+    monkeypatch.setattr(helper, "_run", lambda command: commands.append(command)
+                        or subprocess.CompletedProcess(command, 0, "", ""))
+    helper._stage_candidate_ingress_guards(network, held_management_interfaces={"eth0"})
+    assert {command[5] for command in commands} == {"eth0", "eth1"}
+    assert all("unreachable" in command for command in commands)
+
+
+def test_removed_vlan_capture_accepts_dual_stack_holds_above_interface_limit(monkeypatch, tmp_path):
+    """The readback bound admits every source from an admitted bulk removal."""
+    helper = load_helper_module()
+    network = tmp_path / "candidate-network.conf"
+    network.write_text("candidate\n", encoding="utf-8")
+    holds = [{"name": "eth1.120", "mac": "02:00:00:00:01:20", "table": 200,
+              "address": f"2001:db8::{index:x}"} for index in range(1, 259)]
+    monkeypatch.setattr(helper, "_parse_network_config", lambda _path: ([], [], [{"name": "eth1.120"}]))
+    monkeypatch.setattr(helper, "_network_observation_command", lambda _command, **_kwargs:
+                        subprocess.CompletedProcess([], 0, json.dumps(holds), ""))
+
+    assert len(helper._removed_vlan_source_holds(network)) == 258
+
+
 def observe_snapshot(helper, monkeypatch, *, v4_routes=None, v6_routes=None, addresses=None, nexthops=None):
     """Provide bounded native route/address snapshots without touching the host.
 

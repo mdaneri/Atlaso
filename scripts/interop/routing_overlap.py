@@ -245,7 +245,7 @@ def verify_source_rules(
     if set(rules) != {4, 6} or not addresses:
         raise OverlapPrerequisiteError("complete dual-family rule observations are required")
     for family in (4, 6):
-        terminal = [row for row in rules[family] if row.get("priority") == 6003]
+        terminal = [row for row in rules[family] if row.get("priority") == 6004]
         if (len(terminal) != 1 or terminal[0].get("src", "all") not in
                 {"all", "0.0.0.0" if family == 4 else "::"}
                 or terminal[0].get("srclen", 0) != 0
@@ -264,6 +264,14 @@ def verify_source_rules(
                     or str(matches[0].get("table")) != "254"
                     or str(matches[0].get("protocol")) != "2"):
                 raise OverlapPrerequisiteError("unbound/link-local source escape is absent or ambiguous")
+        destination = ipaddress.ip_network("169.254.0.0/16" if family == 4 else "fe80::/10")
+        matches = [row for row in rules[family] if row.get("priority") == 6003]
+        if (len(matches) != 1 or matches[0].get("dst") != str(destination.network_address)
+                or matches[0].get("dstlen") != destination.prefixlen
+                or matches[0].get("iif") != "lo"
+                or str(matches[0].get("table")) != "254"
+                or str(matches[0].get("protocol")) != "2"):
+            raise OverlapPrerequisiteError("unbound link-local destination escape is absent or ambiguous")
     verified = {}
     for value, table in addresses.items():
         address = ipaddress.ip_address(value)

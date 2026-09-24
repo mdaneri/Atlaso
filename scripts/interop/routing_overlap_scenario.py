@@ -33,6 +33,10 @@ FIELDS = (
 class ApplyOutcomeUnknown(OverlapPrerequisiteError):
     """Preserve an uncertain Apply identity and prohibit competing restoration."""
 
+
+class RestorationIncomplete(OverlapPrerequisiteError):
+    """Keep the fixture available when baseline restoration is not proven."""
+
 # Fixed, read-only guest program. No files, services, route edits, or credentials.
 SNAPSHOT_PROGRAM = '''
 import json, subprocess, time, ipaddress
@@ -788,7 +792,7 @@ def probe(args, management):
                 raise OverlapPrerequisiteError(
                     f"{exc}; main-default={int(main_default)},main-fe80={int(main_link)},"
                     f"main-fe80-mgmt={int(main_link_management)},main-fe80-lab={int(main_link_lab)},"
-                    f"table100-fe80={int(managed_link)},exemptions={sorted(exemptions & {6000, 6001, 6002})},"
+                    f"table100-fe80={int(managed_link)},exemptions={sorted(exemptions & {6000, 6001, 6002, 6003})},"
                     f"route-probes={probes}"
                 ) from None
             allowed = ({row["local"] for row in _addresses(initial, management)
@@ -834,6 +838,10 @@ def probe(args, management):
                 evidence["restored"] = _restore(
                     client, connect_appliance, server_action, baseline, baseline_dns_servers,
                 )
+            except ApplyOutcomeUnknown:
+                raise
             except OverlapPrerequisiteError as exc:
-                raise OverlapPrerequisiteError(f"restoration: {exc}") from None
+                raise RestorationIncomplete(f"restoration: {exc}") from None
+            except Exception:  # noqa: BLE001 - preserve fixture without logging transport or credential details.
+                raise RestorationIncomplete("restoration did not prove the baseline") from None
     return evidence

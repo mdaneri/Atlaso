@@ -6,11 +6,17 @@ import json
 
 import pytest
 
+from scripts.interop.routing_overlap import OverlapPrerequisiteError
 from scripts.interop.routing_overlap_runner import (
     ControllerFailure,
     FixtureSession,
     bounded_json_command,
     run_client_phase,
+    scenario_failure_result,
+)
+from scripts.interop.routing_overlap_scenario import (
+    ApplyOutcomeUnknown,
+    RestorationIncomplete,
 )
 from tests import test_routing_overlap_lifecycle
 
@@ -69,6 +75,22 @@ def test_session_admission_is_side_effect_free(descriptor):
     assert not session.clients
     assert len(session.digest) == 64
     session.close()
+
+
+@pytest.mark.parametrize(("failure", "exit_code", "unknown", "incomplete"), [
+    (OverlapPrerequisiteError("scenario failed"), 2, False, False),
+    (ApplyOutcomeUnknown("accepted task unresolved"), 3, True, False),
+    (RestorationIncomplete("baseline Apply failed"), 3, False, True),
+])
+def test_scenario_exit_preserves_fixture_until_restoration_is_proven(
+    failure, exit_code, unknown, incomplete,
+):
+    """A definite restoration failure must bypass client stop and VM cleanup."""
+    result, actual_exit = scenario_failure_result(failure, "a" * 64)
+    assert actual_exit == exit_code
+    assert result["apply_outcome_unknown"] is unknown
+    assert result["restoration_incomplete"] is incomplete
+    assert result["preserve_fixture"] is (exit_code == 3)
 
 
 def test_bootstrap_rolls_back_only_client_with_validated_start_receipt():

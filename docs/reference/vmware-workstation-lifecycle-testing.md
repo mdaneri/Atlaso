@@ -377,10 +377,11 @@ discovers the runtime address through VMware Tools.
 The opt-in `-RoutingOverlapOnly` mode exercises DHCP/SLAAC overlap through the canonical lifecycle wrapper.
 `-RoutingWanOnly` retains its existing static routing scenario. Focused unit tests do not replace native acceptance
 for automatic IPv6 acquisition, lease expiry, rollback, or reboot.
-The native source-rule proof also requires the persistent, dual-family local-origin terminal guard at priority 6003
+The native source-rule proof also requires the persistent, dual-family local-origin terminal guard at priority 6004
 after Apply and after address renewal; otherwise a newly acquired DHCP or SLAAC source could use the main table
 before its exact lookup/unreachable pair is installed. Priorities 6000–6002 allow only unspecified, link-local, and
-loopback sources into the main table so ordinary unbound outbound traffic keeps source selection. The guard starts
+loopback sources into the main table. Priority 6003 sends link-local destinations to main for unbound source selection.
+The guard starts
 before networkd at boot and remains active
 through ordinary Network Apply. It is retired only after restoring a pre-routing-domain state or factory reset.
 Use a prepared client disk with `-SkipClientPrepare -ClientVmdkPath <owned-client-disk>` and

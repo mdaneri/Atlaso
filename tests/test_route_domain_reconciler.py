@@ -518,7 +518,7 @@ def test_new_dynamic_address_is_observed_only_behind_terminal_guards(monkeypatch
             events.append("address-observed")
             return [link(row, "192.0.2.20")]
         family = int(args[0][1:])
-        return ([{"priority": 6003, "src": "all", "srclen": 0, "iif": "lo",
+        return ([{"priority": domains.TRANSITION_PRIORITY, "src": "all", "srclen": 0, "iif": "lo",
                   "action": "unreachable", "protocol": "2"}] if guards[family] else [])
 
     def run_ip(command):
@@ -536,7 +536,7 @@ def test_new_dynamic_address_is_observed_only_behind_terminal_guards(monkeypatch
     monkeypatch.setattr(domains, "run_ip", run_ip)
     monkeypatch.setattr(domains, "apply_rules", lambda desired, existing: events.append("exact-rules"))
     domains.reconcile()
-    assert events == [*["guard-4"] * 4, *["guard-6"] * 4, "address-observed", "exact-rules"]
+    assert events == [*["guard-4"] * 5, *["guard-6"] * 5, "address-observed", "exact-rules"]
     assert guards == {4: True, 6: True}
 
 
@@ -556,10 +556,10 @@ def test_missing_identity_quarantines_old_source_instead_of_opening_main_fallbac
     commands = capture_commands(monkeypatch)
     with pytest.raises(domains.ReconcileError, match="identity unavailable"):
         domains.reconcile()
-    assert [(command[1], command[3], command[command.index("priority") + 1]) for command in commands[:8]] == [
+    assert [(command[1], command[3], command[command.index("priority") + 1]) for command in commands[:10]] == [
         (family, "add", str(priority)) for family in ("-4", "-6")
-        for priority in (6003, 6000, 6001, 6002)]
-    assert commands[8:] == [domains.rule_command("del", domains.Rule(5000, "192.0.2.10", 100))]
+        for priority in (6004, 6000, 6001, 6002, 6003)]
+    assert commands[10:] == [domains.rule_command("del", domains.Rule(5000, "192.0.2.10", 100))]
 
 
 def test_native_rule_dump_requests_numeric_and_detailed_kernel_protocol(monkeypatch):

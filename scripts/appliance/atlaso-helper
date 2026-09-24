@@ -480,6 +480,7 @@ LAB_ROUTE_TABLE_ID = 200
 MANAGEMENT_ROUTE_RULE_PRIORITY = 1000
 LAB_ROUTE_RULE_PRIORITY = 2000
 ROUTE_RULE_PRIORITY_WINDOW = 100
+ROUTE_DOMAIN_HELD_ADDRESS_LIMIT = 1000  # Two families, 500 exact source slots each.
 LAB_ROUTE_GUARD_PRIORITY = LAB_ROUTE_RULE_PRIORITY + ROUTE_RULE_PRIORITY_WINDOW
 APPLIANCE_SETTINGS_APPLY_DIR = Path("/var/lib/atlaso/apply/appliance-settings")
 PUBLIC_SERVICES_APPLY_DIR = Path("/var/lib/atlaso/apply/public-services")
@@ -10760,7 +10761,7 @@ def _removed_vlan_source_holds(path: Path) -> list[dict]:
     if result.returncode:
         raise ValueError("removed VLAN source ownership could not be captured")
     holds = json.loads(result.stdout)
-    if not isinstance(holds, list) or len(holds) > 256:
+    if not isinstance(holds, list) or len(holds) > ROUTE_DOMAIN_HELD_ADDRESS_LIMIT:
         raise ValueError("removed VLAN source inventory is malformed")
     return holds
 
@@ -11080,6 +11081,18 @@ def _route_domain_ingress_interfaces(
         held_management_interfaces: Old management links retained until retirement.
         enforce_capacity: Reject ingress sets larger than the owned priority window.
     """
+    selected, _guarded = _route_domain_ingress_projection(
+        path, held_management_interfaces=held_management_interfaces,
+        enforce_capacity=enforce_capacity,
+    )
+    return selected
+
+
+def _route_domain_ingress_projection(
+    path: Path | None = None, *, held_management_interfaces: set[str] | None = None,
+    enforce_capacity: bool = True,
+) -> tuple[list[str], list[str]]:
+    """Separate table-200 lookups from candidate links needing terminal guards."""
     excluded = set(held_management_interfaces or set())
     if path is not None:
         physical, vlans, _removed = _parse_network_config(path)
@@ -11101,7 +11114,7 @@ def _route_domain_ingress_interfaces(
             raise ValueError("invalid applied routing-domain interfaces")
         names = [row.get("name", "") for row in rows if row["table"] == LAB_ROUTE_TABLE_ID]
         holds = intent.get("held_addresses", [])
-        if not isinstance(holds, list) or len(holds) > 256 or any(
+        if not isinstance(holds, list) or len(holds) > ROUTE_DOMAIN_HELD_ADDRESS_LIMIT or any(
             not isinstance(row, dict) or not isinstance(row.get("name"), str)
             or type(row.get("table")) is not int or row["table"] not in {100, 200} for row in holds
         ):
@@ -11113,7 +11126,7 @@ def _route_domain_ingress_interfaces(
     result = sorted(set(names) - excluded)
     if enforce_capacity and len(result) > ROUTE_RULE_PRIORITY_WINDOW:
         raise ValueError("routing-domain ingress interfaces exceed rule capacity")
-    return result
+    return result, sorted(set(names))
 
 
 def _route_domain_ingress_rules(names: list[str]) -> list[dict]:
@@ -11139,8 +11152,9 @@ def _route_domain_ingress_desired_rules(
         path: Candidate Network configuration, or None for persisted applied intent.
         held_management_interfaces: Old management links to exclude until retirement.
     """
-    names = _route_domain_ingress_interfaces(path, held_management_interfaces=held_management_interfaces,
-                                              enforce_capacity=False)
+    names, guarded_names = _route_domain_ingress_projection(
+        path, held_management_interfaces=held_management_interfaces, enforce_capacity=False,
+    )
     enabled = False
     if WAN_RUNTIME_CONFIG_PATH.exists() or WAN_RUNTIME_CONFIG_PATH.is_symlink():
         if WAN_RUNTIME_CONFIG_PATH.is_symlink() or not WAN_RUNTIME_CONFIG_PATH.is_file() or WAN_RUNTIME_CONFIG_PATH.stat().st_size > 2_000_000:
@@ -11155,9 +11169,16 @@ def _route_domain_ingress_desired_rules(
         if _wan_config_errors(WAN_RUNTIME_CONFIG_PATH, include_nat=False):
             raise ValueError("applied WAN configuration is invalid")
         enabled = _wan_feature_settings(parsed)["routing_enabled"]
-    if enabled and len(names) > ROUTE_RULE_PRIORITY_WINDOW:
+    if enabled and len(guarded_names) > ROUTE_RULE_PRIORITY_WINDOW:
         raise ValueError("routing-domain ingress interfaces exceed rule capacity")
-    return _route_domain_ingress_rules(names if enabled else [])
+    if not enabled:
+        return []
+    rules = _route_domain_ingress_rules(names)
+    # A held Management link can already be receiving candidate Lab traffic.
+    # Block it before activation, but defer table-200 lookup until retirement.
+    for name in sorted(set(guarded_names) - set(names)):
+        rules.extend(row for row in _route_domain_ingress_rules([name]) if row["table"] is None)
+    return rules
 
 
 def _stage_candidate_ingress_guards(

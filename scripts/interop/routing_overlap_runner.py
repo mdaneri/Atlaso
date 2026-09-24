@@ -182,6 +182,22 @@ def write_evidence(path: Path, value: dict[str, Any]) -> None:
         os.fsync(stream.fileno())
 
 
+def scenario_failure_result(failure: Exception, digest: str) -> tuple[dict[str, Any], int]:
+    """Keep the private fixture when Apply or restoration lacks safe completion."""
+    from scripts.interop.routing_overlap_scenario import (
+        ApplyOutcomeUnknown,
+        RestorationIncomplete,
+    )
+
+    unknown = isinstance(failure, ApplyOutcomeUnknown)
+    restoration_incomplete = isinstance(failure, RestorationIncomplete)
+    preserve = unknown or restoration_incomplete
+    return ({"schema": 1, "phase": "scenario", "ok": False,
+             "apply_outcome_unknown": unknown, "restoration_incomplete": restoration_incomplete,
+             "preserve_fixture": preserve, "error": str(failure), "topology_sha256": digest},
+            3 if preserve else 2)
+
+
 def run_client_phase(fixture: FixtureSession, phase: str) -> dict[str, dict[str, Any]]:
     """Start or stop admitted clients without leaving a known started peer behind.
 
@@ -270,20 +286,16 @@ def main() -> int:
                     evidence = {"schema": 1, "phase": "probe", "status": status, "topology_sha256": fixture.digest}
                 else:
                     from scripts.interop.routing_overlap import OverlapPrerequisiteError
-                    from scripts.interop.routing_overlap_scenario import (
-                        ApplyOutcomeUnknown,
-                        run_scenario,
-                    )
+                    from scripts.interop.routing_overlap_scenario import run_scenario
                     try:
                         evidence = run_scenario(client=FixtureHttpClient(gateway),
                             connect_appliance=lambda: gateway.connect_appliance("root", secrets["appliance_ssh_password"]),
                             topology=fixture.topology, server_action=lambda action: fixture.action("client-a", action),
                             username=args.admin_user, password=secrets["password"])
                     except OverlapPrerequisiteError as failure:
-                        unknown = isinstance(failure, ApplyOutcomeUnknown)
-                        write_evidence(args.output, {"schema": 1, "phase": "scenario", "ok": False,
-                            "apply_outcome_unknown": unknown, "error": str(failure), "topology_sha256": fixture.digest})
-                        return 3 if unknown else 2
+                        result, exit_code = scenario_failure_result(failure, fixture.digest)
+                        write_evidence(args.output, result)
+                        return exit_code
             finally:
                 gateway.close()
         write_evidence(args.output, evidence)
