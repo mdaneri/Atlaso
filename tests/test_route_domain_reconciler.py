@@ -44,6 +44,29 @@ def link(row, *addresses):
     ]}
 
 
+def test_removed_vlan_already_absent_needs_no_source_hold():
+    """A removed parent may already have taken its applied VLAN link away."""
+    management = interface()
+    removed = interface("eth0.20", "02:00:00:00:00:02", 200)
+    applied = intent(management, removed)
+
+    assert domains.removed_interface_holds(applied, [link(management, "192.0.2.10")], {removed["name"]}) == []
+
+
+def test_removed_vlan_still_requires_other_and_present_link_identity():
+    """Only the selected absent link is exempt from source identity proof."""
+    management = interface()
+    removed = interface("eth0.20", "02:00:00:00:00:02", 200)
+    applied = intent(management, removed)
+
+    with pytest.raises(domains.ReconcileError, match="old source identity unavailable"):
+        domains.removed_interface_holds(applied, [link(removed, "192.0.2.20")], {removed["name"]})
+    mismatch = link(removed, "192.0.2.20")
+    mismatch["address"] = "02:00:00:00:00:03"
+    with pytest.raises(domains.ReconcileError, match="old source identity unavailable"):
+        domains.removed_interface_holds(applied, [link(management, "192.0.2.10"), mismatch], {removed["name"]})
+
+
 def native_rule(rule):
     """Encode the exact iproute2 JSON shape, including omitted host prefix lengths.
 

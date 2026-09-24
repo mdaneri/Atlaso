@@ -257,7 +257,19 @@ def removed_interface_holds(intent: Intent, inventory: Any, names: set[str]) -> 
     """
     if len(names) > 256 or any(not isinstance(name, str) or not INTERFACE_PATTERN.fullmatch(name) for name in names):
         raise ReconcileError("invalid removed interface names")
-    sources, incomplete = source_tables(intent, inventory)
+    if (not isinstance(inventory, list) or len(inventory) > 4096
+            or any(not isinstance(link, dict) or not isinstance(link.get("ifname"), str)
+                   for link in inventory)):
+        raise ReconcileError("invalid native address inventory")
+    present = {link["ifname"] for link in inventory}
+    absent = names - present
+    # A selected VLAN already removed with its parent has no live source to
+    # preserve. Other missing links still make the old snapshot incomplete.
+    effective = Intent(
+        tuple(row for row in intent.interfaces if row.name not in absent),
+        tuple(row for row in intent.held_addresses if row.interface.name not in absent),
+    )
+    sources, incomplete = source_tables(effective, inventory)
     if incomplete or any(table is None for table in sources.values()):
         raise ReconcileError("old source identity unavailable")
     owners = {row.name: row for row in intent.interfaces if row.name in names}
@@ -508,7 +520,9 @@ def migrate_legacy_sources(rows: Any) -> None:
             raise ReconcileError("invalid legacy source inventory")
         existing = owned_rules(read_native(["-4", "rule", "show"]), 4)
         existing |= owned_rules(read_native(["-6", "rule", "show"]), 6)
-        sources = {rule.source: rule.table for rule in existing if rule.table is not None}
+        sources: dict[str, int | None] = {
+            rule.source: rule.table for rule in existing if rule.table is not None
+        }
         for rule in existing:
             sources.setdefault(rule.source, None)
         seen_links: set[str] = set()
