@@ -26573,7 +26573,7 @@ def _retire_transition_routes(
         seeded = [item for item in observed if _transition_route_matches(row, item, seeded=True)]
         if len(seeded) > 1:
             raise ValueError("transition route seed is ambiguous")
-        if require_replacement and seeded and not any(
+        if require_replacement and not any(
             _transition_route_successor(row, item, seed_metrics) for item in observed
         ):
             if not allow_disappeared_source or not _transition_old_source_absent(

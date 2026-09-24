@@ -325,6 +325,28 @@ def test_transition_retirement_requires_successor_or_disappeared_old_source(
         assert commands == []
 
 
+def test_transition_retirement_refuses_missing_seed_without_replacement(monkeypatch, tmp_path):
+    """A vanished seed does not prove that the old source has a safe route.
+
+    Args:
+        monkeypatch: Replace native observations with a missing route table.
+        tmp_path: Task-owned transaction marker location.
+    """
+    helper = load_helper_module()
+    route = {"destination": "192.0.2.0/24", "gateway": "", "metric": 0,
+             "scope": "link", "table": 100, "preferred_source": "192.0.2.10",
+             "preference": "medium", "holdover_metric": 1}
+    evidence = {"eth0": {"mac": "02:00:00:00:00:01", "table": 100,
+                         "cidrs": ["192.0.2.10/24"], "routes": [route]}}
+    state = {"previous_management_routing": evidence,
+             "transition_seed_routes": [{"name": "eth0", **route, "seed_metric": 2}]}
+    monkeypatch.setattr(helper, "_transition_route_rows", lambda *_args: [])
+    monkeypatch.setattr(helper, "_run", lambda *_args: pytest.fail("missing seed was mutated"))
+    with pytest.raises(ValueError, match="replacement management route is not ready"):
+        helper._retire_transition_routes(state, tmp_path / "state.json", require_replacement=True)
+    assert state["transition_seed_routes"]
+
+
 def test_snapshot_never_invents_gateway_or_ipv6_onlink_prefix(monkeypatch):
     """An RA prefix without the on-link flag must retain only observed routes.
 
