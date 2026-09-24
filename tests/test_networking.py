@@ -1053,19 +1053,24 @@ def test_pending_dhcp_management_uses_dhcp_resolver_without_claiming_a_lease(mon
         name="eth0", role="management", mode="access", ipv4_method="dhcp",
         ip_cidr=None, host_ip_cidr=None, admin_state="up", oper_state="up",
     )
+    flagged_fallback = PhysicalInterface(
+        name="eth1", role="access", mode="access", ip_cidr="192.0.2.25/24",
+        access_management_ui_enabled=True, admin_state="up", oper_state="up",
+    )
     monkeypatch.setattr(
         appliance_settings_service,
         "observed_management_dhcp_dns_servers",
         lambda _name: pytest.fail("unacquired DHCP DNS must not be observed"),
     )
 
-    management, servers = management_dhcp_dns_context([pending], [])
+    management, servers = management_dhcp_dns_context([flagged_fallback, pending], [])
 
     assert management["name"] == "eth0"
     assert management["ipv4_method"] == "dhcp"
     assert management["ip"] == ""
     assert management["addresses"] == []
     assert servers == []
+    assert management_ui_context([flagged_fallback, pending], [])["name"] == "eth0"
     assert appliance_settings_service.resolver_mode_for_settings(
         local_dns_enabled=False, management_interface=management, external_servers=[],
     ) == "dhcp"

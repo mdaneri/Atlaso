@@ -1038,7 +1038,10 @@ def test_ordinary_apply_restores_rejected_candidate(tmp_path, monkeypatch, capsy
         if failure == "cleanup":
             assert len(backups) == 1
             assert "backup cleanup incomplete" in capsys.readouterr().err
-            assert not commands
+            assert commands == [
+                ["/opt/atlaso/.venv/bin/python", "-I", "-m", "atlaso.route_domains", "--transition-start"],
+                ["/opt/atlaso/.venv/bin/python", "-I", "-m", "atlaso.route_domains", "--transition-stop"],
+            ]
             return
     else:
         assert previous.read_bytes() == original

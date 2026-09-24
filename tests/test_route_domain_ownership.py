@@ -8,6 +8,29 @@ import pytest
 from tests.test_appliance_helper import load_helper_module
 
 
+@pytest.mark.parametrize("count,over_limit", [(256, False), (257, True)])
+def test_source_intent_capacity_is_checked_before_network_mutation(tmp_path, monkeypatch, count, over_limit):
+    """Routing-off Network still owns every active local source interface."""
+    helper = load_helper_module()
+    rows = ["[physical_interfaces]", "interface=eth0", "role=management", "mode=access",
+            "admin_state=up", "ipv4_method=static", "ip_cidr=192.0.2.10/24"]
+    for index in range(1, count):
+        rows.extend(["[physical_interfaces]", f"interface=eth{index}", "role=access",
+                     "mode=access", "admin_state=up", f"ip_cidr=198.51.{index // 256}.{index % 256}/24"])
+    config = tmp_path / "candidate.conf"
+    config.write_text("\n".join(rows) + "\n", encoding="utf-8")
+    errors = helper._network_config_errors(config)
+    assert any("256 active routing-domain" in error for error in errors) is over_limit
+    if over_limit:
+        monkeypatch.setattr(helper, "_validate_network_config_path", lambda _path: config)
+        monkeypatch.setattr(helper, "_network_apply_transaction", lambda _path: pytest.fail("mutation began"))
+        assert helper._handle_network_locked("apply", [str(config)]) == 2
+        monkeypatch.setattr(helper, "MANAGEMENT_HANDOFF_STATE_PATH", tmp_path / "handoff-state.json")
+        monkeypatch.setattr(helper, "_preflight_route_domains", lambda: None)
+        with pytest.raises(ValueError, match="256 active routing-domain"):
+            helper._snapshot_management_handoff({"network_config_path": str(config)})
+
+
 @pytest.mark.parametrize("inventory", [
     None,
     {},

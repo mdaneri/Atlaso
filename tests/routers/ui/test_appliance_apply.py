@@ -886,7 +886,7 @@ def test_appliance_settings_uses_last_applied_dns_state_for_resolver(client):
 
 
 def test_pending_dhcp_management_does_not_require_external_dns(client):
-    """Review the desired DHCP resolver before the network handoff obtains its lease."""
+    """Keep pending dedicated DHCP resolver ahead of a usable Access fallback."""
     from atlaso.app import ui
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import ApplianceSettings, DnsSettings, PhysicalInterface
@@ -902,6 +902,16 @@ def test_pending_dhcp_management_does_not_require_external_dns(client):
         interface.ipv4_method = "dhcp"
         interface.ip_cidr = None
         interface.host_ip_cidr = None
+        fallback = db.query(PhysicalInterface).filter_by(name="eth1").one_or_none()
+        if fallback is None:
+            fallback = PhysicalInterface(name="eth1", mac_address="02:00:00:00:00:02")
+            db.add(fallback)
+        fallback.role = "access"
+        fallback.mode = "access"
+        fallback.admin_state = "up"
+        fallback.oper_state = "up"
+        fallback.ip_cidr = "192.0.2.25/24"
+        fallback.access_management_ui_enabled = True
         settings.external_dns_servers = ""
         dns.enabled = False
         db.commit()
@@ -911,6 +921,9 @@ def test_pending_dhcp_management_does_not_require_external_dns(client):
     assert context["management_interface"]["name"] == "eth0"
     assert context["management_interface"]["ip"] == ""
     assert context["appliance_settings_resolver_mode"] == "dhcp"
+    preview = json.loads(context["appliance_settings_config_preview"])
+    assert preview["management_interface"] == "eth0"
+    assert preview["resolver_mode"] == "dhcp"
     assert not any(
         error.startswith("External DNS servers are required")
         for error in context["appliance_settings_validation_errors"]

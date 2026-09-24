@@ -9256,6 +9256,12 @@ def _network_config_errors(path: Path) -> list[str]:
     """
     physical_interfaces, vlan_interfaces, removed_vlan_interfaces = _parse_network_config(path)
     errors: list[str] = []
+    source_interfaces = [
+        row for row in [*physical_interfaces, *vlan_interfaces]
+        if row.get("role") != "unused" and row.get("mode") != "trunk" and row.get("admin_state") != "down"
+    ]
+    if len(source_interfaces) > 256:
+        errors.append("Network config exceeds the 256 active routing-domain interface limit.")
     for row in physical_interfaces + vlan_interfaces:
         if row.get("check_duplicate_ip_addresses", "true") not in {"true", "false"}:
             errors.append("check_duplicate_ip_addresses must be true or false.")
@@ -25146,6 +25152,9 @@ def _snapshot_management_handoff(payload: dict) -> dict:
     if MANAGEMENT_HANDOFF_STATE_PATH.exists():
         raise ValueError("another management handoff requires recovery")
     _preflight_route_domains()
+    network_errors = _network_config_errors(Path(str(payload["network_config_path"])))
+    if network_errors:
+        raise ValueError("candidate Network validation failed: " + network_errors[0])
     state_dir_existed = MANAGEMENT_HANDOFF_STATE_DIR.is_dir()
     MANAGEMENT_HANDOFF_STATE_DIR.mkdir(mode=0o700, parents=True, exist_ok=True)
     if not state_dir_existed:
@@ -25210,6 +25219,7 @@ def _snapshot_management_handoff(payload: dict) -> dict:
         "candidate_vlan_interfaces": candidate_vlans,
         "candidate_link_states": candidate_link_states,
         "candidate_management_interface": candidate_management_interface,
+        "source_transition_guard": False,
         "resolver_apply_started": False,
         "previous_firewall_config_existed": previous_firewall_config_existed,
         "previous_firewall_service_existed": previous_firewall_service_existed,
@@ -26375,6 +26385,8 @@ def _restore_management_handoff(state: dict) -> dict:
         if len(errors) > len(bounded):
             bounded.append(f"{len(errors) - len(bounded)} additional rollback errors")
         raise ValueError("rollback incomplete: " + "; ".join(bounded))
+    if state.get("source_transition_guard"):
+        _transition_source_guard(False)
     return {"commands": commands, "readiness": readiness}
 
 
@@ -26856,6 +26868,9 @@ def _apply_management_handoff(payload: dict) -> int:
         )
         failing_layer = "network"
         activation_started = datetime.now(timezone.utc).isoformat()
+        state["source_transition_guard"] = True
+        _write_management_handoff_state(state, str(state.get("phase") or "old-path-retained"))
+        _transition_source_guard(True)
         _stage_candidate_ingress_guards(
             Path(str(payload["network_config_path"])),
             held_management_interfaces={name for name, table in state.get("previous_route_domains", {}).items()
@@ -26875,6 +26890,10 @@ def _apply_management_handoff(payload: dict) -> int:
             Path(str(payload["network_config_path"])),
             held_addresses=_management_handoff_held_addresses(state),
         )
+        _reconcile_route_domains()
+        _transition_source_guard(False)
+        state["source_transition_guard"] = False
+        _write_management_handoff_state(state, str(state.get("phase") or "old-path-retained"))
         previous_firewall = FIREWALL_CONFIG_PATH.read_text(encoding="utf-8") if FIREWALL_CONFIG_PATH.is_file() else ""
         candidate_firewall_path = Path(str(payload["firewall_config_path"]))
         candidate_firewall = candidate_firewall_path.read_text(encoding="utf-8")

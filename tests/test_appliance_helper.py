@@ -1627,7 +1627,9 @@ def test_management_handoff_rollback_continues_after_missing_snapshot(monkeypatc
         "previous_management_addresses": ["192.0.2.10"],
         "previous_https_enabled": True,
         "previous_management_public_port": 443,
+        "source_transition_guard": True,
     }
+    monkeypatch.setattr(helper, "_transition_source_guard", lambda _enabled: stages.append("guard-retired"))
 
     with pytest.raises(ValueError, match=r"rollback incomplete: snapshot 0 restore: FileNotFoundError"):
         helper._restore_management_handoff(state)
@@ -1694,14 +1696,17 @@ def test_management_handoff_rollback_preserves_nat_after_firewall(monkeypatch, t
     monkeypatch.setattr(helper, "_management_handoff_readiness", lambda *_args: {"stable_samples": 3})
 
     retired = []
+    guard_stops = []
+    monkeypatch.setattr(helper, "_transition_source_guard", lambda enabled: guard_stops.append(enabled))
     monkeypatch.setattr(helper, "_retire_port_forward_connections", lambda ids=None: retired.append(ids))
-    state = {"snapshots": [], "publishing_included": True}
+    state = {"snapshots": [], "publishing_included": True, "source_transition_guard": True}
     if publication != "legacy":
         state.update(publishing_started=publication != "before",
                      publishing_retire_rule_ids=[1] if publication == "changed" else [])
     helper._restore_management_handoff(state)
 
     assert retired == {"before": [], "unchanged": [[]], "changed": [[1]], "legacy": [None]}[publication]
+    assert guard_stops == [False]
 
     assert tables == {"ip atlaso_nat", "ip6 atlaso_nat"} | ({"firewall"} if prior_firewall else set())
 
@@ -2312,6 +2317,7 @@ def test_management_handoff_syncs_transaction_and_backups_before_marker(monkeypa
         lambda _path: {"management_interface": "eth1"},
     )
     monkeypatch.setattr(helper, "_management_handoff_previous_addresses", lambda _payload: ["192.0.2.10"])
+    monkeypatch.setattr(helper, "_network_config_errors", lambda _path: [])
     monkeypatch.setattr(helper, "_management_handoff_candidate_links", lambda _payload: ([], [], {}))
     monkeypatch.setattr(
         helper,
@@ -2327,6 +2333,7 @@ def test_management_handoff_syncs_transaction_and_backups_before_marker(monkeypa
     state = helper._snapshot_management_handoff(
         {
             "job_id": "job-435",
+            "network_config_path": "candidate-network",
             "appliance_settings_config_path": "candidate-settings",
             "previous_management_interfaces": ["eth0"],
             "previous_management_addresses": ["192.0.2.10"],
@@ -2787,10 +2794,12 @@ def test_management_handoff_candidate_durability_gates_ack(
         mapping_change: Effective forwarding difference in the candidate handoff.
     """
     helper = load_helper_module()
+    guard_events: list[str] = []
     monkeypatch.setattr(helper, "_stage_candidate_ingress_guards", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(helper, "_wait_management_handoff_routes", lambda *_args: None)
     monkeypatch.setattr(helper, "_apply_route_domain_ingress", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr(helper, "_install_route_domain_intent", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(helper, "_install_route_domain_intent", lambda *_args, **_kwargs: guard_events.append("source-intent"))
+    monkeypatch.setattr(helper, "_transition_source_guard", lambda enabled: guard_events.append("guard-on" if enabled else "guard-off"))
     monkeypatch.setattr(helper, "_management_handoff_held_addresses", lambda *_args: [])
     monkeypatch.setattr(helper, "_reconcile_route_domains", lambda: None)
     state = {
@@ -2835,7 +2844,7 @@ def test_management_handoff_candidate_durability_gates_ack(
     monkeypatch.setattr(helper, "_management_handoff_upstream_readiness", lambda: {"stable_samples": 3})
     monkeypatch.setattr(helper, "_install_management_holdovers", lambda _state, _payload: [])
     monkeypatch.setattr(helper, "_write_management_handoff_state", lambda _state, phase: phases.append(phase))
-    monkeypatch.setattr(helper, "_apply_management_candidate_network", lambda *_args: None)
+    monkeypatch.setattr(helper, "_apply_management_candidate_network", lambda *_args: guard_events.append("candidate-network"))
     monkeypatch.setattr(
         helper,
         "_apply_management_handoff_wan",
@@ -2851,7 +2860,7 @@ def test_management_handoff_candidate_durability_gates_ack(
     monkeypatch.setattr(
         helper,
         "_handle_network",
-        lambda *_args: retirement_operations.append("final-network") or 0,
+        lambda *_args: guard_events.append("final-network") or retirement_operations.append("final-network") or 0,
     )
     applied_firewalls: list[str] = []
     monkeypatch.setattr(
@@ -2989,6 +2998,10 @@ def test_management_handoff_candidate_durability_gates_ack(
         }
     )
 
+    assert guard_events[:2] == ["guard-on", "candidate-network"]
+    assert state["source_transition_guard"] is False
+    assert guard_events == ["guard-on", "candidate-network", "source-intent", "guard-off", "final-network"]
+
     if candidate_sync_error in {"address-timeout", "address-conflict"}:
         assert result == 1
         assert not durability_calls and not wan_calls and not paired_calls
@@ -3119,6 +3132,7 @@ def test_management_handoff_failure_rolls_back_with_truthful_layer(monkeypatch, 
     monkeypatch.setattr(helper, "_wait_management_handoff_routes", lambda *_args: None)
     monkeypatch.setattr(helper, "_apply_route_domain_ingress", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(helper, "_install_route_domain_intent", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(helper, "_transition_source_guard", lambda _enable: None)
     monkeypatch.setattr(helper, "_management_handoff_held_addresses", lambda *_args: [])
     monkeypatch.setattr(helper, "_reconcile_route_domains", lambda: None)
     monkeypatch.setattr(helper, "_network_detection_preflight", lambda _path: None)
@@ -3197,6 +3211,7 @@ def test_management_handoff_resolver_failure_rolls_back_before_nginx(
     monkeypatch.setattr(helper, "_wait_management_handoff_routes", lambda *_args: None)
     monkeypatch.setattr(helper, "_apply_route_domain_ingress", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(helper, "_install_route_domain_intent", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(helper, "_transition_source_guard", lambda _enable: None)
     monkeypatch.setattr(helper, "_management_handoff_held_addresses", lambda *_args: [])
     monkeypatch.setattr(helper, "_reconcile_route_domains", lambda: None)
     monkeypatch.setattr(helper, "_network_detection_preflight", lambda _path: None)
@@ -3284,6 +3299,7 @@ def test_management_handoff_never_activates_nginx_with_unhealthy_upstream(monkey
     monkeypatch.setattr(helper, "_wait_management_handoff_routes", lambda *_args: None)
     monkeypatch.setattr(helper, "_apply_route_domain_ingress", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(helper, "_install_route_domain_intent", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(helper, "_transition_source_guard", lambda _enable: None)
     monkeypatch.setattr(helper, "_management_handoff_held_addresses", lambda *_args: [])
     monkeypatch.setattr(helper, "_reconcile_route_domains", lambda: None)
     monkeypatch.setattr(helper, "_network_detection_preflight", lambda _path: None)
