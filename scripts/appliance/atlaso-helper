@@ -3348,7 +3348,7 @@ def _restore_pruned_lease_hosts_on_failure(enabled: bool):
                 lease_rows = lease_path.read_text(encoding="utf-8").splitlines()
             except FileNotFoundError:
                 lease_rows = []
-            active_identities: dict[str, str] = {}
+            active_leases: dict[str, tuple[str, str]] = {}
             for row in lease_rows:
                 fields = row.split()
                 if len(fields) < 4:
@@ -3359,7 +3359,7 @@ def _restore_pruned_lease_hosts_on_failure(enabled: bool):
                 except ValueError:
                     continue
                 if expires == 0 or expires > time.time():
-                    active_identities[str(address)] = _dnsmasq_lease_identity(fields, address)
+                    active_leases[str(address)] = (_dnsmasq_lease_identity(fields, address), fields[3].lower().strip("."))
             for path, content in previous.items():
                 # A renewal after preparation owns a newly created path; do
                 # not overwrite it with the older snapshot.
@@ -3370,10 +3370,23 @@ def _restore_pruned_lease_hosts_on_failure(enabled: bool):
                 snapshot_rows = content.decode("utf-8").splitlines()
                 address_parts = snapshot_rows[0].split() if snapshot_rows else []
                 snapshot_address = address_parts[0] if address_parts else ""
+                snapshot_hostname = address_parts[1].lower().strip(".") if len(address_parts) > 1 else ""
                 snapshot_identity = snapshot_rows[1] if len(snapshot_rows) > 1 else ""
                 # A deleted mirror may belong to a released or reassigned
-                # lease. Only restore a still-active lease for the same client.
-                if not snapshot_identity or active_identities.get(snapshot_address) != snapshot_identity:
+                # lease, or to a renewal with a different native hostname.
+                # Restore only the same active client's still-current name.
+                current_lease = active_leases.get(snapshot_address)
+                if (
+                    not snapshot_identity
+                    or not snapshot_hostname
+                    or current_lease is None
+                    or current_lease[0] != snapshot_identity
+                    or (
+                        current_lease[1] != "*"
+                        and snapshot_hostname != current_lease[1]
+                        and snapshot_hostname.split(".", 1)[0] != current_lease[1]
+                    )
+                ):
                     continue
                 temporary = path.with_name(f".{path.name}.atlaso-restore")
                 try:

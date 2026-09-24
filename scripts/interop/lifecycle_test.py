@@ -875,6 +875,15 @@ def authenticated_ui_client(client: HttpClient, args: argparse.Namespace) -> Htt
     return fresh_client
 
 
+def reauthenticate_after_restore(client: HttpClient, args: argparse.Namespace) -> dict[str, str]:
+    """Replace browser and API credentials invalidated by settings restore."""
+    client.cookie_jar.clear()
+    client.bearer_token = ""
+    api_login(client, args)
+    ui_login(client, args)
+    return {"api": "authenticated", "browser": "authenticated"}
+
+
 def authentication_lifetime_policy_check(
     client: HttpClient, args: argparse.Namespace
 ) -> dict[str, Any]:
@@ -5340,6 +5349,7 @@ def run_restored_lifecycle(results: list[StepResult], client: HttpClient, args: 
         raise LifecycleError("--restored-state-run requires --restore-settings-backup.")
     run_step(results, "appliance-health", appliance_health, client, args)
     run_step(results, "restore-settings-backup", restore_settings_backup, client, args)
+    run_step(results, "reauthenticate-after-restore", reauthenticate_after_restore, client, args)
     run_step(
         results,
         "authentication-lifetime-policy-check",

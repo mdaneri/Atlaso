@@ -11882,9 +11882,16 @@ def test_failed_authoritative_apply_removes_only_its_new_lease_seed(monkeypatch,
         assert "renewed.atlaso.internal" in destination.read_text(encoding="utf-8")
 
 
-@pytest.mark.parametrize("lease_after_release", ["", "1893456000 02:00:00:00:00:02 192.168.50.21 replacement *\n"])
-def test_failed_dns_apply_does_not_restore_released_lease_mirror(monkeypatch, tmp_path, lease_after_release):
-    """A concurrent release or reassignment owns the missing mirror path."""
+@pytest.mark.parametrize(
+    "lease_after_change",
+    [
+        "",
+        "1893456000 02:00:00:00:00:02 192.168.50.21 replacement *\n",
+        "1893456000 02:00:00:00:00:01 192.168.50.21 renewed *\n",
+    ],
+)
+def test_failed_dns_apply_does_not_restore_stale_lease_mirror(monkeypatch, tmp_path, lease_after_change):
+    """A concurrent release, reassignment, or rename owns the missing mirror path."""
     helper = load_helper_module()
     state_dir = tmp_path / "dnsmasq"
     hosts_dir = state_dir / "authoritative-leases"
@@ -11903,7 +11910,7 @@ def test_failed_dns_apply_does_not_restore_released_lease_mirror(monkeypatch, tm
 
     with helper._restore_pruned_lease_hosts_on_failure(True):
         mirror.unlink()
-        lease_file.write_text(lease_after_release, encoding="utf-8")
+        lease_file.write_text(lease_after_change, encoding="utf-8")
 
     assert not mirror.exists()
 

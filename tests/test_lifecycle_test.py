@@ -1633,6 +1633,8 @@ def test_restored_esxi_lifecycle_recreates_vault_secret_before_apply(monkeypatch
 
     call_names = [name for name, _operation, _arguments in calls]
     stage_index = call_names.index("stage-esxi-vault-secret")
+    assert call_names.index("restore-settings-backup") < call_names.index("reauthenticate-after-restore")
+    assert call_names.index("reauthenticate-after-restore") < call_names.index("authentication-lifetime-policy-check")
     assert call_names.index("restore-settings-backup") < stage_index
     assert stage_index < call_names.index("apply-connectivity-units")
     assert calls[stage_index][1] is lifecycle.ensure_lifecycle_esxi_vault_secret
@@ -1640,6 +1642,37 @@ def test_restored_esxi_lifecycle_recreates_vault_secret_before_apply(monkeypatch
     connectivity = next(arguments for name, _operation, arguments in calls if name == "apply-connectivity-units")
     assert "appliance_settings" in connectivity[1]
     assert {"ca", "ldap", "ntpd", "vcf_offline_depot", "public_services"}.issubset(connectivity[1])
+
+
+def test_reauthenticate_after_restore_replaces_revoked_credentials(monkeypatch):
+    """A restored archive requires a fresh browser session and API token."""
+    lifecycle = load_lifecycle_module()
+    calls = []
+
+    class CookieJar:
+        def clear(self):
+            calls.append("clear")
+
+    client = argparse.Namespace(cookie_jar=CookieJar(), bearer_token="old-token")
+
+    def fake_api_login(selected_client, _args):
+        assert selected_client is client
+        assert selected_client.bearer_token == ""
+        calls.append("api")
+        selected_client.bearer_token = "new-token"
+
+    def fake_ui_login(selected_client, _args):
+        assert selected_client is client
+        assert selected_client.bearer_token == "new-token"
+        calls.append("browser")
+
+    monkeypatch.setattr(lifecycle, "api_login", fake_api_login)
+    monkeypatch.setattr(lifecycle, "ui_login", fake_ui_login)
+
+    assert lifecycle.reauthenticate_after_restore(client, object()) == {
+        "api": "authenticated", "browser": "authenticated"
+    }
+    assert calls == ["clear", "api", "browser"]
 
 
 def test_full_lifecycle_selects_resolver_settings_with_initial_dns_apply(monkeypatch):
