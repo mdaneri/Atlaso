@@ -603,6 +603,32 @@ The runner admits and publishes that source receipt only when every required fie
 and wheel digests are measured afterward. A discovered DHCP address does not prove exclusive address control.
 The certificate scenario must refuse mutation until a controlled network producer proves the candidate static address
 or DHCP reservation belongs to the clone.
+For a dedicated DHCP peer, add `-CertificateDhcpPeer -SiteANetwork lan:<task-owned-name>` and explicitly provide a
+provenance-admitted, prepared `-ClientVmdkPath`. This mode does not auto-create the source client disk. The optional
+`-CertificatePeerCidr` and `-CertificateLeaseAddress` select a small private
+IPv4 subnet and one lease. This mode boots the appliance on the selected management VMnet, pins the management
+`eth0` MAC, and then soft-stops and rewires that same adapter to the task-owned private LAN. The two-adapter
+Alpine peer keeps its `eth0` on the management VMnet for control; its `eth1` serves DHCP on the private LAN.
+The peer's `dnsmasq` seed binds only to its private `eth1` and reserves the appliance `eth0` MAC. Separate
+original-intent and original-directory-identity
+receipts precede peer VM creation, and `peer-fixture.json` records its source-disk digest, addresses, MAC, and
+network binding. A management-rewire intent receipt is written before the power-off edit, and a separate
+rewired-runtime receipt records the preserved MAC and the appliance's reserved DHCP address afterward. Both
+runtime receipts deliberately say `unproven`: VM creation and a guest address alone do not establish exclusive
+control. The tracked `inspect-certificate-peer.ps1` wrapper runs the read-only
+`certificate_peer_proof.py` producer. It admits the original creation and LAN receipts by independent digests,
+checks both VMX adapter bindings, then uses pinned SSH connections to read the peer's dnsmasq configuration,
+active lease, appliance `eth0` address and route, and CA-pinned HTTPS through a private peer tunnel. Its
+`--preflight-only` mode checks original receipts without credentials or network access. The producer requires
+an explicit, already configured static management baseline and publishes a new address proof and
+`proven-controlled` runtime receipt only after live readback; it does not configure that baseline. The
+tracked `inspect-certificate-handoff.ps1` wrapper rechecks those receipts and the live private baseline before
+the native scenario changes the management address, then restores the original interface and certificate
+state. Keep the original receipts outside the lab removal root. A source appliance or client disk owned
+by another task requires separate source-admission evidence and owner coordination; the fixture does not transfer
+ownership of either source. The peer receipt binds the selected client VMDK by path and SHA-256 and the
+read-only producer rehashes it; this detects changes but does not establish original client-disk creation
+provenance. Admit that source independently before the lifecycle run.
 For the negative case, the authenticated CA inventory must bind the chosen ID and fingerprint to the live
 `appliance:https` certificate before and after the desired edit. Keep the original receipts outside the lab removal
 root; clean up only through the exact lifecycle VM removal and artifact-root procedures below.

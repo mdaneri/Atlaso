@@ -35,6 +35,8 @@ before the affected operation for maintainer direction.
 - Before destructive actions, signing/publication, or external infrastructure mutation, load the exact procedure and
   prove authority and ownership. Preserve its fail-closed gates. Reading policy grants no authority; unavailable
   capabilities never justify inventing a substitute.
+- Certificate handoff needs proven address control before mutation; see the
+  [VMware procedure](docs/reference/vmware-workstation-lifecycle-testing.md).
 
 ## Conditional policy routes
 

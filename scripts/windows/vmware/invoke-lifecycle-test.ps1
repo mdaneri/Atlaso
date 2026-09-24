@@ -60,6 +60,12 @@ Run only the routing and WAN lifecycle scenario.
 Run only the OIDC lifecycle scenario.
 .PARAMETER CertificateOnly
 Prepare a retained appliance clone for the certificate handoff acceptance scenario.
+.PARAMETER CertificateDhcpPeer
+Prepare an owned private DHCP peer for certificate management handoff.
+.PARAMETER CertificatePeerCidr
+Private peer address and prefix for the certificate management segment.
+.PARAMETER CertificateLeaseAddress
+Exact reserved DHCP address for the appliance management MAC.
 .PARAMETER FullEsxiPxeInstall
 Include the full ESXi PXE installation scenario.
 .PARAMETER PxeInstallerIsoPath
@@ -202,6 +208,18 @@ param(
     [Parameter(ParameterSetName = 'Run')]
     [Parameter(ParameterSetName = 'Plan')]
     [switch]$CertificateOnly,
+
+    [Parameter(ParameterSetName = 'Run')]
+    [Parameter(ParameterSetName = 'Plan')]
+    [switch]$CertificateDhcpPeer,
+
+    [Parameter(ParameterSetName = 'Run')]
+    [Parameter(ParameterSetName = 'Plan')]
+    [string]$CertificatePeerCidr = '192.168.77.1/24',
+
+    [Parameter(ParameterSetName = 'Run')]
+    [Parameter(ParameterSetName = 'Plan')]
+    [string]$CertificateLeaseAddress = '192.168.77.10',
 
     [Parameter(ParameterSetName = 'Run')]
     [Parameter(ParameterSetName = 'Plan')]
@@ -421,6 +439,12 @@ if (@(@($OidcOnly, $RoutingWanOnly, $CertificateOnly, $FullEsxiPxeInstall) | Whe
 if ($CertificateOnly -and -not $KeepVms -and -not $PlanOnly) {
     throw '-CertificateOnly requires -KeepVms so the retained appliance can undergo native acceptance.'
 }
+if ($CertificateDhcpPeer -and ($PullRequestNumber -ne 871 -or -not $CertificateOnly -or -not $SiteANetwork.StartsWith('lan:', [StringComparison]::OrdinalIgnoreCase) -or $SiteANetwork.Length -le 4 -or $SiteInterface -ne 'eth0')) {
+    throw '-CertificateDhcpPeer requires PR 871, -CertificateOnly, a named private lan: SiteANetwork, and SiteInterface eth0.'
+}
+if ($CertificateDhcpPeer -and -not $PlanOnly -and -not $PSBoundParameters.ContainsKey('ClientVmdkPath')) {
+    throw '-CertificateDhcpPeer requires an explicit, provenance-admitted -ClientVmdkPath.'
+}
 if (-not $ApplianceVmxPath) {
     if ($PlanOnly) {
         $ApplianceVmxPath = Join-Path $repoRoot 'image\vmware-workstation\output\Atlaso-VMware\Atlaso-VMware.vmx'
@@ -508,6 +532,10 @@ if ($AllowDryRunApply) { $arguments += '-AllowDryRunApply' }
 if ($effectiveSkipBackupRestoreTest) { $arguments += '-SkipBackupRestoreTest' }
 if ($OidcOnly) { $arguments += '-OidcOnly' }
 if ($CertificateOnly) { $arguments += '-CertificateOnly' }
+if ($CertificateDhcpPeer) {
+    $arguments += @('-CertificateDhcpPeer', '-CertificatePeerCidr', $CertificatePeerCidr,
+        '-CertificateLeaseAddress', $CertificateLeaseAddress)
+}
 if ($RoutingWanOnly) { $arguments += '-RoutingWanOnly' }
 if ($FullEsxiPxeInstall) { $arguments += '-FullEsxiPxeInstall' }
 if ($PxeInstallerIsoPath) { $arguments += @('-PxeInstallerIsoPath', $PxeInstallerIsoPath) }

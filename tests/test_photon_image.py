@@ -3365,7 +3365,9 @@ def test_lifecycle_vmware_script_supports_routing_wan_only_and_esxi_pxe_install(
     assert "python -m pip wheel $wheelSource --no-deps -w $wheelRoot" in runner
     assert "pip install --force-reinstall --no-deps $quotedWheel" in runner
     assert "systemctl restart atlaso.service" in runner
-    assert "$applianceWheelPath = Sync-ApplianceApplicationWheel -ApplianceVmx $applianceVmx" in runner
+    assert "$applianceWheel = Sync-ApplianceApplicationWheel -ApplianceVmx $applianceVmx" in runner
+    assert "wheel_sha256 = $applianceWheel.Sha256.ToLowerInvariant()" in runner
+    assert "Get-FileHash -LiteralPath $applianceWheelPath" not in runner
     assert "function Register-WorkstationVm" in runner
     assert "$resolvedVmrun @Arguments" in runner
     assert "ws register $Path" in runner

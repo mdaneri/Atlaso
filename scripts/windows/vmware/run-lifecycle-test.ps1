@@ -54,6 +54,12 @@ Skip backup/restore validation pass.
 Run only OIDC scenario path.
 .PARAMETER CertificateOnly
 Prepare only a retained appliance for the certificate handoff acceptance scenario.
+.PARAMETER CertificateDhcpPeer
+Prepare an owned private DHCP peer and rewire the certificate appliance management adapter to it.
+.PARAMETER CertificatePeerCidr
+Private peer address and prefix for the certificate management segment.
+.PARAMETER CertificateLeaseAddress
+Exact reserved DHCP address for the appliance management MAC.
 .PARAMETER RoutingWanOnly
 Run only WAN routing scenario.
 .PARAMETER FullEsxiPxeInstall
@@ -104,6 +110,9 @@ param(
     [switch]$SkipBackupRestoreTest,
     [switch]$OidcOnly,
     [switch]$CertificateOnly,
+    [switch]$CertificateDhcpPeer,
+    [string]$CertificatePeerCidr = '192.168.77.1/24',
+    [string]$CertificateLeaseAddress = '192.168.77.10',
     [switch]$RoutingWanOnly,
     [switch]$FullEsxiPxeInstall,
     [string]$PxeInstallerIsoPath = '',
@@ -122,6 +131,15 @@ if ($OidcOnly -and $SiteANetwork.StartsWith('lan:', [StringComparison]::OrdinalI
 }
 if ($OidcOnly -and $SiteInterface -ne 'eth1') {
     throw '-OidcOnly requires SiteInterface eth1 because its Site A vmnet is attached to the appliance second adapter.'
+}
+if ($CertificateDhcpPeer) {
+    if ($PullRequestNumber -ne 871 -or -not $CertificateOnly -or -not $SiteANetwork.StartsWith('lan:', [StringComparison]::OrdinalIgnoreCase) -or
+        $SiteANetwork.Length -le 4 -or $SiteInterface -ne 'eth0') {
+        throw '-CertificateDhcpPeer requires PR 871, -CertificateOnly, a named private lan: SiteANetwork, and SiteInterface eth0.'
+    }
+    if (-not $PlanOnly -and -not (Test-Path -LiteralPath $ClientVmdkPath -PathType Leaf)) {
+        throw 'Certificate DHCP peer requires a prepared, explicitly supplied client VMDK.'
+    }
 }
 <#
 .SYNOPSIS
@@ -1489,6 +1507,55 @@ function New-CloudInitSeedIso {
 
 <#
 .SYNOPSIS
+Create the first-boot seed for the task-owned certificate DHCP peer.
+.PARAMETER Path
+New task-owned seed ISO path.
+.PARAMETER HostName
+Peer guest hostname.
+.PARAMETER ClientMac
+Exact reserved appliance management MAC.
+#>
+function New-CertificatePeerSeedIso {
+    param([string]$Path, [string]$HostName, [string]$ClientMac)
+    if ($PSCmdlet.ShouldProcess($Path, "Create private certificate DHCP peer seed for $HostName")) {
+        python -c 'import pycdlib' 2>$null
+        if ($LASTEXITCODE -ne 0) { throw 'pycdlib must be installed before creating the certificate peer seed.' }
+        $helper = Join-Path $runtimeSourceRoot 'scripts\interop\create_certificate_peer_seed_iso.py'
+        $SshPassword | & python $helper --output $Path --hostname $HostName --user $ClientSshUser `
+            --password-stdin --server-cidr $CertificatePeerCidr --lease-address $CertificateLeaseAddress `
+            --client-mac $ClientMac | Out-Host
+        if ($LASTEXITCODE -ne 0) { throw "Certificate peer seed creation failed for $HostName." }
+    }
+}
+
+<#
+.SYNOPSIS
+Verify that the certificate peer consumed its seed and started dnsmasq.
+.PARAMETER Path
+Task-owned peer VMX path.
+#>
+function Assert-CertificatePeerBootReady {
+    param([string]$Path)
+    # Guest-ops results are deliberately not printed: vmrun error text can
+    # include its credential arguments. This check proves first-boot consumed
+    # the seed before a retained peer is detached from its password-bearing ISO.
+    $passwordText = ConvertFrom-SecureString -SecureString $sshPasswordSecure -AsPlainText
+    try {
+        $probe = Invoke-VmrunBounded -Arguments @(
+            '-T', 'ws', '-gu', $ClientSshUser, '-gp', $passwordText,
+            'runScriptInGuest', $Path, '/bin/sh',
+            'cloud-init status --wait >/dev/null 2>&1 && sudo dnsmasq --test --conf-file=/etc/dnsmasq.conf >/dev/null 2>&1 && sudo rc-service dnsmasq status >/dev/null 2>&1'
+        ) -TimeoutSeconds 300
+        if ($probe.ExitCode -ne 0) {
+            throw 'Certificate DHCP peer did not complete first boot with an active, valid dnsmasq configuration.'
+        }
+    } finally {
+        $passwordText = $null
+    }
+}
+
+<#
+.SYNOPSIS
 Invoke vmrun with fail-fast behavior.
 
 .PARAMETER Arguments
@@ -2161,7 +2228,10 @@ function Sync-ApplianceApplicationWheel {
         $deadline = (Get-Date).AddMinutes(3)
         do {
             if (Test-ApplianceOpenApi -Url "$ApplianceUrl/openapi.json") {
-                return $wheel.FullName
+                # Return the digest established while both the source snapshot
+                # and wheel file remain pinned. Later receipts must not reopen
+                # an unpinned pathname after this function releases its pins.
+                return $wheel
             }
             Start-Sleep -Seconds 5
         } while ((Get-Date) -lt $deadline)
@@ -2291,6 +2361,7 @@ $clientAName = "$LabName-ClientA"
 $clientBName = "$LabName-ClientB"
 $esxiName = "$LabName-ESXiPXE"
 $esxiMacAddress = if ($FullEsxiPxeInstall) { New-StaticVmwareMac } else { '' }
+$certificateAppliancePeerMac = if ($CertificateDhcpPeer) { New-StaticVmwareMac } else { '' }
 $planApplianceVmx = if (Test-Path -LiteralPath $ApplianceVmxPath) { (Resolve-Path -LiteralPath $ApplianceVmxPath).Path } else { $ApplianceVmxPath }
 $planClientVmdk = if (Test-Path -LiteralPath $ClientVmdkPath) { (Resolve-Path -LiteralPath $ClientVmdkPath).Path } else { $ClientVmdkPath }
 
@@ -2318,6 +2389,10 @@ $plan = [ordered]@{
     site_b_network        = $SiteBNetwork
     oidc_only             = [bool]$OidcOnly
     certificate_only      = [bool]$CertificateOnly
+    certificate_dhcp_peer = [bool]$CertificateDhcpPeer
+    certificate_peer_cidr = if ($CertificateDhcpPeer) { $CertificatePeerCidr } else { '' }
+    certificate_lease_address = if ($CertificateDhcpPeer) { $CertificateLeaseAddress } else { '' }
+    certificate_appliance_peer_mac = $certificateAppliancePeerMac
     routing_wan_only      = [bool]$RoutingWanOnly
     full_esxi_pxe_install = [bool]$FullEsxiPxeInstall
     pxe_installer_iso     = $PxeInstallerIsoPath
@@ -2667,7 +2742,9 @@ $clientASeedIso = ''
 $clientBSeedIso = ''
 $clientAVmx = ''
 $clientBVmx = ''
-$seedArtifactsRetired = [bool]($OidcOnly -or $CertificateOnly)
+$certificatePeerSeedIso = ''
+$certificatePeerVmx = ''
+$seedArtifactsRetired = [bool]($OidcOnly -or ($CertificateOnly -and -not $CertificateDhcpPeer))
 $scenarioFailure = $null
 try {
     if (-not ($OidcOnly -or $CertificateOnly)) {
@@ -2675,6 +2752,11 @@ try {
         $clientBSeedIso = Join-Path $seedRoot "$clientBName-seed.iso"
         New-CloudInitSeedIso -Path $clientASeedIso -HostName ($clientAName.ToLowerInvariant())
         New-CloudInitSeedIso -Path $clientBSeedIso -HostName ($clientBName.ToLowerInvariant())
+    }
+    if ($CertificateDhcpPeer) {
+        $certificateClientVmdkSha256 = (Get-FileHash -LiteralPath $ClientVmdkPath -Algorithm SHA256).Hash.ToLowerInvariant()
+        $certificatePeerSeedIso = Join-Path $seedRoot "$clientAName-seed.iso"
+        New-CertificatePeerSeedIso -Path $certificatePeerSeedIso -HostName ($clientAName.ToLowerInvariant()) -ClientMac $certificateAppliancePeerMac
     }
     $applianceDirectory = Join-Path $vmRoot $applianceName
     $preparedApplianceDirectoryIdentity = ''
@@ -2723,6 +2805,11 @@ with WindowsFiles().opened(Path(sys.argv[1]), directory=True) as (_, identity, _
                 -PreparedDirectoryIdentity $preparedApplianceDirectoryIdentity
         }
     Set-VmxNetworkAdapter -Path $applianceVmx -Index 0 -Vmnet $ManagementNetwork
+    if ($CertificateDhcpPeer) {
+        # Pin eth0's final MAC before first boot, while the bootstrap adapter
+        # remains host-reachable on VMnet8 for the supported deploy workflow.
+        Set-VmxNetworkAdapter -Path $applianceVmx -Index 0 -Vmnet $ManagementNetwork -StaticMac $certificateAppliancePeerMac
+    }
     Set-AtlasoWorkstationOvfEnvironment -VmxPath $applianceVmx -OvfEnvironment $firstBootOvfEnvironment
     if ($OidcOnly) {
         Set-VmxNetworkAdapter -Path $applianceVmx -Index 1 -Vmnet $SiteANetwork
@@ -2758,6 +2845,57 @@ with WindowsFiles().opened(Path(sys.argv[1]), directory=True) as (_, identity, _
                     -Networks @($ManagementNetwork, $SiteBNetwork)
             }
     }
+    if ($CertificateDhcpPeer) {
+        if ((Get-FileHash -LiteralPath $ClientVmdkPath -Algorithm SHA256).Hash.ToLowerInvariant() -cne $certificateClientVmdkSha256) {
+            throw 'Certificate peer client disk source changed during fixture preparation.'
+        }
+        $certificatePeerDirectory = Join-Path $vmRoot $clientAName
+        $peerIntent = Write-CertificateLabReceipt -Name 'peer-vm-creation-intent.json' -Value ([ordered]@{
+            schema = 1; kind = 'vm-creation-intent'; task_id = $env:CODEX_THREAD_ID
+            repository = 'mdaneri/Atlaso'; pr = $PullRequestNumber; source_commit = $sourceCommit
+            path = (Join-Path $certificatePeerDirectory "$clientAName.vmx")
+            root_path = $certificatePeerDirectory; lab_root = $resultRoot
+        })
+        New-Item -ItemType Directory -Path $certificatePeerDirectory -ErrorAction Stop | Out-Null
+        $peerIdentityOutput = @(& python -I -c $identityCode $certificatePeerDirectory $runtimeSourceRoot)
+        if ($LASTEXITCODE -ne 0 -or $peerIdentityOutput.Count -ne 1) {
+            throw 'Certificate peer directory original identity could not be captured.'
+        }
+        $peerDirectoryIdentity = @($peerIdentityOutput[0] | ConvertFrom-Json)
+        if ($peerDirectoryIdentity.Count -ne 3) { throw 'Certificate peer directory identity is invalid.' }
+        $peerOwnership = Write-CertificateLabReceipt -Name 'peer-vm-original-ownership.json' -Value ([ordered]@{
+            schema = 1; kind = 'vm'; task_id = $env:CODEX_THREAD_ID
+            repository = 'mdaneri/Atlaso'; pr = $PullRequestNumber; source_commit = $sourceCommit
+            path = (Join-Path $certificatePeerDirectory "$clientAName.vmx")
+            root_path = $certificatePeerDirectory; root_identity = $peerDirectoryIdentity
+            intent_sha256 = $peerIntent.Sha256; lab_root = $resultRoot
+        })
+        $certificatePeerVmx = Invoke-TrackedLifecycleVmCreation `
+            -Role 'certificate-dhcp-peer' -DisplayName $clientAName `
+            -VmxPath (Join-Path $certificatePeerDirectory "$clientAName.vmx") `
+            -Action {
+                New-ClientVm -Name $clientAName -Directory $certificatePeerDirectory `
+                    -DiskPath $ClientVmdkPath -SeedIso $certificatePeerSeedIso `
+                    -Networks @($ManagementNetwork, $SiteANetwork)
+            }
+        if ($ownedLanSegments.Count -ne 1 -or -not $ownedLanSegments[0].ReceiptPath -or -not $ownedLanSegments[0].ReceiptSha256) {
+            throw 'Certificate DHCP peer requires a newly created, receipt-bound private LAN segment.'
+        }
+        Write-CertificateLabReceipt -Name 'peer-fixture.json' -Value ([ordered]@{
+            schema = 1; kind = 'certificate-dhcp-peer-fixture'; task_id = $env:CODEX_THREAD_ID
+            repository = 'mdaneri/Atlaso'; pr = $PullRequestNumber; source_commit = $sourceCommit
+            peer_vmx = $certificatePeerVmx; peer_ownership_sha256 = $peerOwnership.Sha256
+            appliance_vmx = $applianceVmx; appliance_ownership_sha256 = $certificateOwnership.Sha256
+            private_network = $SiteANetwork; peer_cidr = $CertificatePeerCidr
+            lease_address = $CertificateLeaseAddress; appliance_mac = $certificateAppliancePeerMac
+            lan_segment_receipt = $ownedLanSegments[0].ReceiptPath
+            lan_segment_receipt_sha256 = $ownedLanSegments[0].ReceiptSha256.ToLowerInvariant()
+            lan_segment_id = $ownedLanSegments[0].Id
+            client_vmdk_source = (Resolve-Path -LiteralPath $ClientVmdkPath).Path
+            client_vmdk_sha256 = $certificateClientVmdkSha256
+            address_ownership_state = 'awaiting-live-readback'
+        }) | Out-Null
+    }
     $esxiVmx = ''
     if ($FullEsxiPxeInstall) {
         $esxiDirectory = Join-Path $vmRoot $esxiName
@@ -2779,6 +2917,7 @@ with WindowsFiles().opened(Path(sys.argv[1]), directory=True) as (_, identity, _
     }
 
     $vmxsToStart = @($applianceVmx)
+    if ($CertificateDhcpPeer) { $vmxsToStart += $certificatePeerVmx }
     if (-not ($OidcOnly -or $CertificateOnly)) {
         $vmxsToStart += @($clientAVmx, $clientBVmx)
     }
@@ -2812,7 +2951,7 @@ with WindowsFiles().opened(Path(sys.argv[1]), directory=True) as (_, identity, _
     }
     try {
         Sync-ApplianceHelperScript -ApplianceVmx $applianceVmx
-        $applianceWheelPath = Sync-ApplianceApplicationWheel -ApplianceVmx $applianceVmx
+        $applianceWheel = Sync-ApplianceApplicationWheel -ApplianceVmx $applianceVmx
     }
     catch {
         $deploymentFailure = $_
@@ -2834,7 +2973,7 @@ with WindowsFiles().opened(Path(sys.argv[1]), directory=True) as (_, identity, _
             vm_ownership_sha256 = $certificateOwnership.Sha256
             predeployment_sha256 = $certificateSource.Sha256
             deployed_commit = $sourceCommit
-            wheel_sha256 = (Get-FileHash -LiteralPath $applianceWheelPath -Algorithm SHA256).Hash.ToLowerInvariant()
+            wheel_sha256 = $applianceWheel.Sha256.ToLowerInvariant()
             helper_sha256 = $installedHelperSha256
             url = $ApplianceUrl; interface = 'eth0'
             mac = (Get-VmxEthernetMacAddress -Path $applianceVmx -Index 0)
@@ -2958,6 +3097,64 @@ with WindowsFiles().opened(Path(sys.argv[1]), directory=True) as (_, identity, _
         }
     }
     }
+    if ($CertificateDhcpPeer) {
+        # The peer needs its seed only for first boot. Retain no password-bearing
+        # ISO in a kept native acceptance lab.
+        Assert-CertificatePeerBootReady -Path $certificatePeerVmx
+        Remove-ClientSeedArtifacts -VmxPaths @($certificatePeerVmx) -SeedPaths @($certificatePeerSeedIso) -Restart:(-not $CleanupCreatedLab)
+        $seedArtifactsRetired = $true
+        if (-not (Test-WorkstationVmRunning -Path $applianceVmx) -or
+            (Get-VmxEthernetMacAddress -Path $applianceVmx -Index 0) -cne (ConvertTo-HyphenMac -MacAddress $certificateAppliancePeerMac)) {
+            throw 'Certificate appliance bootstrap MAC or running state changed before private handoff.'
+        }
+        $rewireIntent = Write-CertificateLabReceipt -Name 'management-rewire-intent.json' -Value ([ordered]@{
+            schema = 1; kind = 'certificate-management-rewire-intent'; task_id = $env:CODEX_THREAD_ID
+            repository = 'mdaneri/Atlaso'; pr = $PullRequestNumber; source_commit = $sourceCommit
+            appliance_vmx = $applianceVmx; appliance_ownership_sha256 = $certificateOwnership.Sha256
+            bootstrap_runtime_sha256 = $certificateRuntime.Sha256
+            peer_fixture_sha256 = (Get-FileHash -LiteralPath (Join-Path $repoRoot "test-results/certificate-native-evidence/$LabName/peer-fixture.json") -Algorithm SHA256).Hash.ToLowerInvariant()
+            from_network = $ManagementNetwork; to_network = $SiteANetwork
+            lan_segment_receipt_sha256 = $ownedLanSegments[0].ReceiptSha256.ToLowerInvariant()
+            mac = $certificateAppliancePeerMac; expected_dhcp_address = $CertificateLeaseAddress
+        })
+        $softStop = Invoke-VmrunBounded -Arguments @('-T', 'ws', 'stop', $applianceVmx, 'soft') -TimeoutSeconds 45
+        if ($softStop.ExitCode -ne 0) { throw 'Certificate appliance soft stop failed before private handoff.' }
+        $stopDeadline = (Get-Date).AddSeconds(45)
+        while ((Test-WorkstationVmRunning -Path $applianceVmx) -and (Get-Date) -lt $stopDeadline) {
+            Start-Sleep -Seconds 3
+        }
+        if (Test-WorkstationVmRunning -Path $applianceVmx) {
+            throw 'Certificate appliance remained powered on; private eth0 rewire was refused.'
+        }
+        Set-VmxNetworkAdapter -Path $applianceVmx -Index 0 -Vmnet $SiteANetwork -StaticMac $certificateAppliancePeerMac
+        $rewiredAdapterLines = @(Get-Content -LiteralPath $applianceVmx | Where-Object { $_ -match '^\s*ethernet0\.pvnID\s*=' })
+        if ($rewiredAdapterLines.Count -ne 1 -or $rewiredAdapterLines[0] -notmatch '^\s*ethernet0\.pvnID\s*=\s*"(?<id>[^"]+)"\s*$' -or
+            $Matches['id'] -cne $ownedLanSegments[0].Id -or
+            (Get-VmxEthernetMacAddress -Path $applianceVmx -Index 0) -cne (ConvertTo-HyphenMac -MacAddress $certificateAppliancePeerMac)) {
+            throw 'Certificate appliance eth0 private LAN or preserved MAC readback failed.'
+        }
+        Start-WorkstationVm -Path $applianceVmx
+        $privateAddress = Wait-GuestIPv4 -Path $applianceVmx -TimeoutSeconds 300 -GuestUser $ApplianceSshUser -GuestPassword $adminPasswordSecure -Name $applianceName
+        if ($privateAddress -cne $CertificateLeaseAddress) {
+            throw 'Certificate appliance did not report the reserved private DHCP address after eth0 rewire.'
+        }
+        if ((Get-CertificateInstalledHelperSha256 -ApplianceVmx $applianceVmx) -cne $installedHelperSha256) {
+            throw 'Installed appliance helper changed during certificate private handoff.'
+        }
+        $rewiredRuntime = Write-CertificateLabReceipt -Name 'rewired-runtime.json' -Value ([ordered]@{
+            schema = 1; kind = 'certificate-rewired-runtime'; task_id = $env:CODEX_THREAD_ID
+            repository = 'mdaneri/Atlaso'; pr = $PullRequestNumber
+            vmx_path = $applianceVmx; vm_ownership_sha256 = $certificateOwnership.Sha256
+            bootstrap_runtime_sha256 = $certificateRuntime.Sha256
+            rewire_intent_sha256 = $rewireIntent.Sha256
+            deployed_commit = $sourceCommit; wheel_sha256 = $applianceWheel.Sha256.ToLowerInvariant()
+            helper_sha256 = $installedHelperSha256
+            url = "https://$(New-AtlasoWorkstationFqdn -Name $applianceName)"
+            interface = 'eth0'; mac = (Get-VmxEthernetMacAddress -Path $applianceVmx -Index 0)
+            observed_address = $privateAddress; address_ownership_state = 'unproven'
+        })
+        Write-Host "Certificate private handoff evidence: $($rewiredRuntime.Path)"
+    }
     if (-not ($OidcOnly -or $CertificateOnly)) {
         # Successful lifecycle client access proves cloud-init consumed both
         # seeds. Leave retained labs running only after verified deletion.
@@ -2982,8 +3179,8 @@ if (-not $seedArtifactsRetired) {
         # Failure cleanup intentionally leaves affected clients stopped: a
         # restart is unsafe until every credential-bearing ISO is absent.
         Remove-ClientSeedArtifacts `
-            -VmxPaths @($clientAVmx, $clientBVmx) `
-            -SeedPaths @($clientASeedIso, $clientBSeedIso)
+            -VmxPaths @($clientAVmx, $clientBVmx, $certificatePeerVmx) `
+            -SeedPaths @($clientASeedIso, $clientBSeedIso, $certificatePeerSeedIso)
         $seedArtifactsRetired = $true
     } catch {
         $seedCleanupFailure = $_
