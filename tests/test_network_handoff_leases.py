@@ -140,8 +140,8 @@ def test_handoff_accepts_retained_address_only_with_proven_lease(tmp_path, monke
     monkeypatch.setattr(helper, "NETWORK_APPLY_DIR", tmp_path)
     row = {"name": "eth0", "role": "management", "ipv4_method": "dhcp", "ipv6_enabled": "false"}
     monkeypatch.setattr(helper, "_parse_network_config", lambda _path: ([row], [], []))
-    native = {"complete": True, "links": [{"name": "eth0", "configured": True,
-              "addresses": [{"address": "192.0.2.10", "cidr": "192.0.2.10/24",
+    native = {"complete": True, "links": [{"name": "eth0", "configured": True, "address_inventory_complete": True,
+              "addresses": [{"address": "192.0.2.10", "cidr": "192.0.2.10/24", "scope": "global",
                              "source": "static", "state": "assigned", "dhcp4_lease": valid}]}], "conflicts": []}
     monkeypatch.setattr(helper, "_network_address_observation", lambda: native)
     ip_rows = [{"addr_info": [{"local": "192.0.2.10", "family": "inet", "scope": "global"}]}]

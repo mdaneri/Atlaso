@@ -372,6 +372,15 @@ def bound_json(reference):
     return json.loads(payload)
 
 
+def admit_predeployment_binding(plan, ownership, source, runtime):
+    """Require the routing-absence readback from this exact owned VM and runtime."""
+    if (source.get("task_id") != plan["task_id"]
+            or source.get("vmx_path") != plan["vmx_path"]
+            or source.get("source_commit") != ownership["source_commit"]
+            or runtime.get("predeployment_sha256") != plan["predeployment_evidence"]["sha256"]):
+        raise Refusal("predeployment_runtime_binding_mismatch")
+
+
 def admit_execution(plan):
     """Bind canonical creation, predeployment and exact installed-runtime evidence."""
     deployed_commit = plan.get("deployed_commit", "")
@@ -429,6 +438,7 @@ def admit_execution(plan):
             or not re.fullmatch(r"[a-f0-9]{64}", route_snapshot.get("probe_sha256", ""))):
         raise Refusal("source_route_domain_ownership_present_or_unproven")
     runtime = bound_json(plan["runtime_evidence"])
+    admit_predeployment_binding(plan, ownership, source, runtime)
     if (runtime.get("schema") != 1 or runtime.get("vmx_path") != plan["vmx_path"]
             or runtime.get("vm_ownership_sha256") != plan["vm_ownership"]["sha256"]
             or runtime.get("deployed_commit") != deployed_commit

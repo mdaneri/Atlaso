@@ -2508,6 +2508,39 @@ def test_management_handoff_dynamic_address_must_not_be_retained_old_address(mon
     ) == ["198.51.100.25"]
 
 
+def test_management_handoff_covers_every_live_global_address_on_static_link(monkeypatch, tmp_path):
+    """Both candidate and post-retirement checks include secondary live addresses."""
+    helper = load_helper_module()
+    network_path = tmp_path / "atlaso-network.conf"
+    network_path.write_text("candidate\n", encoding="utf-8")
+    row = {"name": "eth1", "role": "management", "mode": "access", "admin_state": "up",
+           "ipv4_method": "static", "ip_cidr": "198.51.100.10/24", "ipv6_enabled": "false"}
+    monkeypatch.setattr(helper, "_parse_network_config", lambda _path: ([row], [], []))
+    observations = [
+        {"complete": True, "links": [{"name": "eth1", "configured": True, "address_inventory_complete": True, "addresses": [
+            {"address": "198.51.100.10", "scope": "global", "state": "assigned"},
+            {"address": "198.51.100.25", "scope": "global", "state": "assigned"},
+            {"address": "fe80::1", "scope": "link", "state": "assigned"},
+        ]}]},
+        {"complete": True, "links": [{"name": "eth1", "configured": True, "address_inventory_complete": True, "addresses": [
+            {"address": "198.51.100.10", "scope": "global", "state": "assigned"},
+            {"address": "2001:db8::25", "scope": "global", "state": "assigned"},
+        ]}]},
+    ]
+    assert helper._management_handoff_addresses(network_path, address_observation=observations[0]) == [
+        "198.51.100.10", "198.51.100.25",
+    ]
+    assert helper._management_handoff_addresses(network_path, address_observation=observations[1]) == [
+        "198.51.100.10", "2001:db8::25",
+    ]
+    observations[1]["links"][0]["addresses"][1].pop("scope")
+    with pytest.raises(ValueError, match="live address scope is unproven"):
+        helper._management_handoff_addresses(network_path, address_observation=observations[1])
+    observations[1]["links"][0]["address_inventory_complete"] = False
+    with pytest.raises(ValueError, match="live address observation is unavailable"):
+        helper._management_handoff_addresses(network_path, address_observation=observations[1])
+
+
 @pytest.mark.parametrize(
     ("row", "family", "address"),
     [

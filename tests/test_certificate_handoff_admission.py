@@ -35,3 +35,22 @@ def test_peer_credential_is_independent_of_admin(monkeypatch: pytest.MonkeyPatch
     monkeypatch.setenv("ATLASO_NATIVE_PEER", "peer-password-456")
     assert handoff.peer_password() == "peer-password-456"
     assert handoff.admin_password() == "admin-password-123"
+
+
+@pytest.mark.parametrize("changed", ["task_id", "vmx_path", "source_commit", "digest"])
+def test_predeployment_snapshot_must_belong_to_exact_runtime(changed: str) -> None:
+    """A clean snapshot from another lab cannot authorize this VM's mutation."""
+    plan = {"task_id": "task-a", "vmx_path": "owned-a.vmx",
+            "predeployment_evidence": {"sha256": "a" * 64}}
+    ownership = {"source_commit": "b" * 40}
+    source = {"task_id": "task-a", "vmx_path": "owned-a.vmx", "source_commit": "b" * 40}
+    runtime = {"predeployment_sha256": "a" * 64}
+    handoff.admit_predeployment_binding(plan, ownership, source, runtime)
+    if changed == "digest":
+        runtime["predeployment_sha256"] = "c" * 64
+    elif changed == "source_commit":
+        source[changed] = "c" * 40
+    else:
+        source[changed] = "other"
+    with pytest.raises(handoff.Refusal, match="predeployment_runtime_binding_mismatch"):
+        handoff.admit_predeployment_binding(plan, ownership, source, runtime)

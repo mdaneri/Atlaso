@@ -9834,12 +9834,16 @@ def _network_address_observation() -> dict:
                 except (ValueError, TypeError, KeyError):
                     continue
             records = []
-            for info in row.get("addr_info", [])[:32]:
+            native_addresses = row.get("addr_info", [])
+            address_inventory_complete = isinstance(native_addresses, list) and len(native_addresses) <= 32
+            for info in native_addresses[:32] if isinstance(native_addresses, list) else []:
                 if not isinstance(info, dict):
+                    address_inventory_complete = False
                     continue
                 try:
                     address = str(ip_address(info.get("local", "")))
                 except ValueError:
+                    address_inventory_complete = False
                     continue
                 flags = set(info.get("flags", []))
                 flags.update(key for key in ("tentative", "dadfailed") if info.get(key))
@@ -9847,7 +9851,8 @@ def _network_address_observation() -> dict:
                     cidr = str(ip_interface(f"{address}/{info['prefixlen']}"))
                 except (ValueError, KeyError):
                     cidr = ""
-                records.append({"address": address, "cidr": cidr, "source": sources.get(cidr, ""),
+                records.append({"address": address, "cidr": cidr, "scope": str(info.get("scope") or ""),
+                                "source": sources.get(cidr, ""),
                                 "dhcp4_lease": cidr in dhcp4_cidrs,
                                 "state": "conflict" if "dadfailed" in flags else "checking" if "tentative" in flags else "assigned"})
             mac = str(row.get("address", "")).lower()
@@ -9865,6 +9870,7 @@ def _network_address_observation() -> dict:
                 "native_observed": bool(native_link.get("AdministrativeState")),
                 "up": "UP" in row.get("flags", []),
                 "carrier": "LOWER_UP" in row.get("flags", []), "addresses": records,
+                "address_inventory_complete": address_inventory_complete,
             })
         # journalctl --grep returns 1 when no matching entry exists.
         if journal.returncode not in (0, 1) or len(journal.stdout) > 262144:
@@ -24611,17 +24617,17 @@ def _management_handoff_addresses(
     address_observation: dict | None = None,
     discovery_attempts: int = 45,
 ) -> list[str]:
-    """Return configured candidate management listener addresses.
+    """Return configured and all assigned global candidate management addresses.
 
     Args:
         network_path: Candidate staged network configuration.
         previous_addresses: Addresses retained only for the old-path transition.
         previous_dynamic_families: Interface/address families that were already dynamic.
-        address_observation: Successful candidate activation evidence for a same-address DHCP lease.
+        address_observation: Complete live link readback, including secondary assigned addresses.
         discovery_attempts: Bounded runtime-address discovery attempts.
 
     Returns:
-        The configured address list.
+        The candidate listener address list.
     """
     physical, vlans, _removed = _parse_network_config(network_path)
     rows = [
@@ -24669,6 +24675,22 @@ def _management_handoff_addresses(
             required_families.add("inet6")
         if required_families:
             dynamic_requirements.append((str(row.get("name") or ""), required_families))
+    if address_observation is not None:
+        if not address_observation.get("complete"):
+            raise ValueError("candidate management live address observation is incomplete")
+        for row in rows:
+            name = str(row.get("name") or "")
+            matches = [link for link in address_observation.get("links", []) if link.get("name") == name]
+            if len(matches) != 1 or not matches[0].get("configured") or not matches[0].get("address_inventory_complete"):
+                raise ValueError(f"candidate management live address observation is unavailable for {name}")
+            for record in matches[0].get("addresses", []):
+                if record.get("state") != "assigned":
+                    continue
+                scope = record.get("scope")
+                if scope not in {"global", "link", "host"}:
+                    raise ValueError(f"candidate management live address scope is unproven for {name}")
+                if scope == "global":
+                    addresses.append(str(ip_address(record["address"])))
     discovered: dict[tuple[str, str], list[str]] = {}
     for attempt in range(max(1, discovery_attempts)):
         for interface, families in dynamic_requirements:
