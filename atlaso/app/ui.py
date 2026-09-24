@@ -16917,11 +16917,18 @@ def _submit_appliance_apply(
     management_https_activation = not management_tls_binding_signature(applied_settings_preview).get(
         "management_https_enabled", False
     )
-    management_certificate_unapplied = not management_certificate_signature(applied_ca_preview).get("fingerprint")
+    applied_management_certificate = management_certificate_signature(applied_ca_preview)
+    desired_management_certificate = management_certificate_signature(
+        str(unit_map.get("ca", {}).get("config_preview") or "")
+    )
+    management_certificate_unapplied = not applied_management_certificate.get("fingerprint")
+    management_certificate_pending = bool(
+        desired_management_certificate and desired_management_certificate != applied_management_certificate
+    )
     https_ca_required = bool(
         "appliance_settings" in selected_ids
         and getattr(settings_for_apply, "management_https_enabled", False)
-        and (management_https_activation or management_certificate_unapplied)
+        and (management_https_activation or management_certificate_unapplied or management_certificate_pending)
     )
     if https_ca_required:
         # The CA unit materializes newly issued management TLS files.

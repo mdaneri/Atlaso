@@ -734,6 +734,41 @@ def test_applied_https_does_not_reselect_unrelated_pending_ca(client, monkeypatc
     assert "ca" not in selected
 
 
+def test_management_https_hostname_change_applies_new_ca_certificate_first(client, monkeypatch):
+    """An already-enabled HTTPS listener still needs its newly issued certificate installed first."""
+    from atlaso.app import ui
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import ApplianceSettings, CaSettings, Job
+
+    login(client)
+    with SessionLocal() as db:
+        settings = db.query(ApplianceSettings).one()
+        settings.management_https_enabled = True
+        db.query(CaSettings).one().enabled = True
+        db.commit()
+        ui.ca_context(db)
+        units = ui.appliance_apply_units(db)
+        ui.update_appliance_apply_baselines(db, units, {unit["id"] for unit in units})
+        settings.fqdn = "new-management.atlaso.internal"
+        db.commit()
+        ui.ca_context(db)
+
+    monkeypatch.setattr(ui, "run_appliance_apply_job", lambda _job_id: None)
+    csrf = client.get("/dashboard").text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    response = client.post(
+        "/appliance-apply",
+        data={"csrf": csrf, "selected_units": "appliance_settings"},
+        headers={"Accept": "application/json"},
+    )
+
+    assert response.status_code == 202, response.text
+    with SessionLocal() as db:
+        job = db.get(Job, response.json()["job_id"])
+        assert job is not None
+        selected = json.loads(job.result or "{}")["selected_units"]
+    assert selected.index("ca") < selected.index("appliance_settings")
+
+
 def test_local_dns_disable_forces_resolver_move_before_dns_stop(client):
     """Move the resolver before an applied local DNS listener is disabled.
 
