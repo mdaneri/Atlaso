@@ -2305,9 +2305,15 @@ def web_terminal_check(client: HttpClient, args: argparse.Namespace) -> dict[str
             )
     else:
         ui_login(site_client, args)
-    site_status, site_body, _site_headers = site_client.request("GET", "/ui/public/terminal")
-    if site_status != 200 or 'data-terminal-available="true"' not in site_body:
-        raise LifecycleError(f"Selected extra-interface terminal route was not ready: HTTP {site_status}")
+    if isolated_site:
+        # The public path is intentionally absent on the management listener.
+        # The client-side probe above proves the selected site path exists;
+        # use the authenticated management page for the shared ticket API.
+        site_status, site_body = site_probe_status, management_body
+    else:
+        site_status, site_body, _site_headers = site_client.request("GET", "/ui/public/terminal")
+        if site_status != 200 or 'data-terminal-available="true"' not in site_body:
+            raise LifecycleError(f"Selected extra-interface terminal route was not ready: HTTP {site_status}")
     csrf_match = re.search(r'data-csrf="([^"]+)"', site_body)
     if not csrf_match:
         raise LifecycleError("Selected extra-interface terminal page did not include a session CSRF token.")

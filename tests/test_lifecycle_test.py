@@ -1018,10 +1018,11 @@ def test_web_terminal_check_uses_site_client_on_isolated_lab(monkeypatch):
     class ManagementClient:
         def request(self, method, path, **_kwargs):
             if (method, path) == ("GET", "/ui/management/terminal"):
-                return 200, '<main data-terminal-available="true"></main>', {}
-            if (method, path) == ("GET", "/ui/public/terminal"):
                 return 200, '<main data-terminal-available="true" data-csrf="csrf-323"></main>', {}
+            if (method, path) == ("GET", "/ui/public/terminal"):
+                return 404, 'not found', {}
             if (method, path) == ("POST", "/terminal/tickets"):
+                assert _kwargs["form"] == {"csrf": "csrf-323"}
                 return 200, '{"websocket_path": "/terminal/ws", "ticket": "ticket-323"}', {}
             raise AssertionError((method, path))
 
@@ -1042,7 +1043,7 @@ def test_web_terminal_check_uses_site_client_on_isolated_lab(monkeypatch):
 
     evidence = lifecycle.web_terminal_check(ManagementClient(), args)
 
-    assert evidence["extra_terminal_status"] == 200
+    assert evidence["extra_terminal_status"] == 302
     assert evidence["site_probe_status"] == 302
     assert evidence["dashboard_status"] == 404
     assert len(commands) == 3

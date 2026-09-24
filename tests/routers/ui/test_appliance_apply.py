@@ -714,7 +714,15 @@ def test_applied_https_does_not_reselect_unrelated_pending_ca(client, monkeypatc
 
     def units_with_pending_ca(db, *, reconcile=True, applying_dns=False):
         units = real_units(db, reconcile=reconcile, applying_dns=applying_dns)
-        next(unit for unit in units if unit["id"] == "ca")["changed"] = True
+        ca_unit = next(unit for unit in units if unit["id"] == "ca")
+        ca_preview = json.loads(ca_unit["config_preview"])
+        management_certificate = next(
+            certificate for certificate in ca_preview["certificates"]
+            if certificate.get("managed_owner") == "appliance:https"
+        )
+        management_certificate["fingerprint"] = "replacement-ca-leaf"
+        ca_unit["config_preview"] = json.dumps(ca_preview)
+        ca_unit["changed"] = True
         return units
 
     monkeypatch.setattr(ui, "appliance_apply_units", units_with_pending_ca)

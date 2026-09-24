@@ -16914,8 +16914,14 @@ def _submit_appliance_apply(
     settings_for_apply = unit_map.get("appliance_settings", {}).get("context", {}).get("appliance_settings")
     applied_settings_preview = str((apply_baselines.get("appliance_settings") or {}).get("config_preview") or "")
     applied_ca_preview = str((apply_baselines.get("ca") or {}).get("config_preview") or "")
-    management_https_activation = not management_tls_binding_signature(applied_settings_preview).get(
-        "management_https_enabled", False
+    applied_management_binding = management_tls_binding_signature(applied_settings_preview)
+    desired_management_binding = management_tls_binding_signature(
+        str(unit_map.get("appliance_settings", {}).get("config_preview") or "")
+    )
+    management_https_activation = not applied_management_binding.get("management_https_enabled", False)
+    management_tls_binding_changed = bool(
+        applied_management_binding and desired_management_binding
+        and applied_management_binding != desired_management_binding
     )
     applied_management_certificate = management_certificate_signature(applied_ca_preview)
     desired_management_certificate = management_certificate_signature(
@@ -16928,7 +16934,11 @@ def _submit_appliance_apply(
     https_ca_required = bool(
         "appliance_settings" in selected_ids
         and getattr(settings_for_apply, "management_https_enabled", False)
-        and (management_https_activation or management_certificate_unapplied or management_certificate_pending)
+        and (
+            management_https_activation
+            or management_certificate_unapplied
+            or (management_tls_binding_changed and management_certificate_pending)
+        )
     )
     if https_ca_required:
         # The CA unit materializes newly issued management TLS files.
