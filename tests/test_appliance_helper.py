@@ -11926,6 +11926,13 @@ def test_failed_authoritative_apply_removes_only_its_new_lease_seed(monkeypatch,
         helper._prepare_authoritative_lease_hosts(authoritative, main, seeded_inodes)
         assert destination in seeded_inodes
         if lease_hook_replaced_seed:
+            # A genuinely renewed native name still belongs to the active
+            # client and must survive reconciliation with the restored config.
+            lease_file.write_text(
+                "1893456000 02:00:00:00:00:01 192.168.50.21 renewed *\n", encoding="utf-8"
+            )
+            monkeypatch.setattr(helper, "DNSMASQ_CONFIG_PATH", main)
+            monkeypatch.setattr(helper, "DNSMASQ_AUTHORITATIVE_CONFIG_PATH", authoritative)
             replacement = state_dir / "lease-hook-replacement"
             replacement.write_text(
                 "192.168.50.21 renewed.atlaso.internal\n# mac=02:00:00:00:00:01\n",
@@ -11975,6 +11982,56 @@ def test_failed_dns_apply_does_not_restore_stale_lease_mirror(monkeypatch, tmp_p
         lease_file.write_text(lease_after_change, encoding="utf-8")
 
     assert not mirror.exists()
+
+
+def test_failed_dns_apply_reconciles_hook_name_from_unapplied_reservation(monkeypatch, tmp_path):
+    """Rollback must retire a renewal name read from the candidate config.
+
+    Args:
+        monkeypatch: Isolate installed DNS paths and the lease-hook environment.
+        tmp_path: Temporary directory for DNS configuration and lease state.
+    """
+    helper = load_helper_module()
+    state_dir = tmp_path / "dnsmasq"
+    hosts_dir = state_dir / "authoritative-leases"
+    hosts_dir.mkdir(parents=True)
+    lease_file = state_dir / "dhcp.leases"
+    lease_file.write_text("1893456000 02:00:00:00:00:01 192.168.50.21 * *\n", encoding="utf-8")
+    main = tmp_path / "atlaso.conf"
+    old_config = (
+        "# atlaso-authoritative-lease-scope=192.168.50.0/24,atlaso.internal\n"
+        "dhcp-host=02:00:00:00:00:01,set:atlaso-name-020000000001,192.168.50.21\n"
+        "dhcp-option=tag:atlaso-name-020000000001,12,old\n"
+    )
+    main.write_text(old_config, encoding="utf-8")
+    authoritative = tmp_path / "atlaso-authoritative.conf"
+    authoritative.write_text("auth-zone=atlaso.internal,192.168.50.0/24\n", encoding="utf-8")
+    mirror = hosts_dir / "lease-c0a83215.hosts"
+    old_mirror = (
+        "192.168.50.21 old.atlaso.internal\n"
+        "# mac=02:00:00:00:00:01\n"
+        "# reservation\n"
+        "# scope-domain=atlaso.internal\n"
+    )
+    mirror.write_text(old_mirror, encoding="utf-8")
+    monkeypatch.setattr(helper, "DNSMASQ_STATE_DIR", state_dir)
+    monkeypatch.setattr(helper, "DNSMASQ_LEASE_FILE_PATH", lease_file)
+    monkeypatch.setattr(helper, "DNSMASQ_AUTHORITATIVE_LEASE_HOSTS_DIR", hosts_dir)
+    monkeypatch.setattr(helper, "DNSMASQ_CONFIG_PATH", main)
+    monkeypatch.setattr(helper, "DNSMASQ_AUTHORITATIVE_CONFIG_PATH", authoritative)
+    monkeypatch.setattr(helper, "_reload_authoritative_lease_hosts", lambda: None)
+    monkeypatch.setenv("DNSMASQ_TAGS", "atlaso-name-020000000001")
+    monkeypatch.setenv("DNSMASQ_DOMAIN", "atlaso.internal")
+
+    with helper._restore_pruned_lease_hosts_on_failure(True):
+        main.write_text(old_config.replace(",12,old", ",12,new"), encoding="utf-8")
+        assert helper._handle_dnsmasq_lease_event(
+            ["atlaso-helper", "old", "02:00:00:00:00:01", "192.168.50.21", "*"]
+        ) == 0
+        assert "new.atlaso.internal" in mirror.read_text(encoding="utf-8")
+        main.write_text(old_config, encoding="utf-8")
+
+    assert mirror.read_text(encoding="utf-8") == old_mirror
 
 
 def test_recursive_transition_preserves_suppressed_lease_until_native_name(monkeypatch, tmp_path):

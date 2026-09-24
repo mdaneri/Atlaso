@@ -3364,6 +3364,18 @@ def _restore_pruned_lease_hosts_on_failure(enabled: bool):
                     continue
                 if expires == 0 or expires > time.time():
                     active_leases[str(address)] = (_dnsmasq_lease_identity(fields, address), fields[3].lower().strip("."))
+            # The old daemon can renew a lease after the candidate main config
+            # is installed. Its hook then publishes the candidate reservation
+            # name even though activation later fails. Runtime rollback has
+            # already restored the installed config at this point, so validate
+            # every live mirror against that config before restoring snapshots.
+            if DNSMASQ_CONFIG_PATH.is_file():
+                if DNSMASQ_AUTHORITATIVE_CONFIG_PATH.is_file():
+                    _prepare_authoritative_lease_hosts(DNSMASQ_AUTHORITATIVE_CONFIG_PATH, DNSMASQ_CONFIG_PATH)
+                    restored = True
+                elif _recursive_lease_mirrors_in_config(DNSMASQ_CONFIG_PATH):
+                    _prepare_authoritative_lease_hosts(DNSMASQ_CONFIG_PATH, DNSMASQ_CONFIG_PATH, recursive_mode=True)
+                    restored = True
             for path, content in previous.items():
                 # A renewal after preparation owns a newly created path; do
                 # not overwrite it with the older snapshot.

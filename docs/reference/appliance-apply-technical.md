@@ -466,6 +466,9 @@ When DHCP is enabled, managed-suffix lease events update the backend's hosts dir
 The recursive instance forwards their reverse lookups to that backend, keeps PTR records for generated nameserver glue,
 and retains ordinary local names for scopes outside the managed zones. The helper restores suppressed managed lease
 names in DHCP API/UI reads and reconciles mirrored entries with current leases before the backend starts.
+If activation fails after installing a candidate reservation, rollback first restores the previous DNS configuration,
+then reconciles concurrent lease-hook replacements against that configuration and active leases before restoring eligible
+older mirrors. A name read only from the unapplied candidate must not remain in the restored authoritative backend.
 Listener selection and firewall policy limit client access. Validate the installed state with
 `sudo grep -E '^(auth-zone|auth-server|auth-soa|auth-ttl|host-record=ns)' /etc/atlaso/dnsmasq.d/atlaso-authoritative.conf`,
 `systemctl is-active atlaso-dns-authoritative dnsmasq`, authoritative queries such as `dig @<selected-listener> <zone> SOA`,
