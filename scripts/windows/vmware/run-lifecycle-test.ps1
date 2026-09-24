@@ -26,6 +26,8 @@ VMnet/LAN segment name for trunk connectivity.
 Optional override for appliance management IPv4.
 .PARAMETER ApplianceUrl
 Optional override for appliance URL.
+.PARAMETER SignedReleaseRepositoryUrl
+Credential-free HTTPS base URL of a pre-published signed release lifecycle fixture.
 .PARAMETER SiteInterface
 Interface name used for site routing in workload checks.
 .PARAMETER SiteCidr
@@ -96,6 +98,7 @@ param(
     [string]$TrunkNetwork = 'VMnet4',
     [string]$ApplianceIPAddress = '',
     [string]$ApplianceUrl = '',
+    [string]$SignedReleaseRepositoryUrl = '',
     [string]$SiteInterface = 'eth1',
     [string]$SiteCidr = '192.168.12.1/24',
     [string]$BridgedInterfaceAlias = '',
@@ -139,6 +142,17 @@ if ($CertificateDhcpPeer) {
     }
     if (-not $PlanOnly -and -not (Test-Path -LiteralPath $ClientVmdkPath -PathType Leaf)) {
         throw 'Certificate DHCP peer requires a prepared, explicitly supplied client VMDK.'
+    }
+}
+if ($SignedReleaseRepositoryUrl -and ($OidcOnly -or $RoutingWanOnly)) {
+    throw '-SignedReleaseRepositoryUrl requires the full lifecycle; it cannot be combined with -OidcOnly or -RoutingWanOnly.'
+}
+if ($SignedReleaseRepositoryUrl) {
+    [Uri]$fixtureUri = $null
+    if (-not [Uri]::TryCreate($SignedReleaseRepositoryUrl, [UriKind]::Absolute, [ref]$fixtureUri) -or
+        -not $fixtureUri.IsWellFormedOriginalString() -or $fixtureUri.Scheme -cne 'https' -or
+        -not $fixtureUri.Host -or $fixtureUri.UserInfo -or $fixtureUri.Query -or $fixtureUri.Fragment) {
+        throw '-SignedReleaseRepositoryUrl must be a credential-free absolute HTTPS base URL without a query or fragment.'
     }
 }
 <#
@@ -2458,6 +2472,10 @@ $plan = [ordered]@{
     certificate_appliance_peer_mac = $certificateAppliancePeerMac
     routing_wan_only      = [bool]$RoutingWanOnly
     full_esxi_pxe_install = [bool]$FullEsxiPxeInstall
+    signed_release_update_check = [bool]$SignedReleaseRepositoryUrl
+    signed_release_fixture_operations = if ($SignedReleaseRepositoryUrl) {
+        'preview availability check and upgrade, development availability check and rollback, and two audited appliance reboots'
+    } else { 'not requested' }
     pxe_installer_iso     = $PxeInstallerIsoPath
     pxe_client_ip         = $PxeClientIPAddress
     esxi_probe_delay_seconds = $EsxiInstallProbeDelaySeconds
@@ -3112,6 +3130,8 @@ with WindowsFiles().opened(Path(sys.argv[1]), directory=True) as (_, identity, _
     $backupArchivePath = Join-Path $resultRoot 'settings-backup.json'
 
     $initialPythonArgs = @($basePythonArgs + @('--result-dir', $initialResultRoot))
+    # The restored-state pass validates backup portability, not a second release transaction.
+    if ($SignedReleaseRepositoryUrl) { $initialPythonArgs += @('--signed-release-repository-url', $SignedReleaseRepositoryUrl) }
     if (-not $SkipBackupRestoreTest) {
         $initialPythonArgs += @('--export-settings-backup', $backupArchivePath)
     }
