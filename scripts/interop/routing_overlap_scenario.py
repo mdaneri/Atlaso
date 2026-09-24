@@ -463,6 +463,7 @@ def _lease(status: dict[str, Any], topology: AdmittedTopology) -> dict[str, Any]
 def _restore(
     client: FixtureHttpClient, connect: Callable[[], paramiko.SSHClient],
     server_action: Callable[[str], dict[str, Any]], baseline: dict[str, dict[str, Any]],
+    baseline_dns_servers: list[str],
 ) -> dict[str, Any]:
     """Attempt every safe recovery step and require applied baseline readback.
 
@@ -471,6 +472,7 @@ def _restore(
         connect: Fresh pinned SSH factory.
         server_action: Admitted private server controller.
         baseline: Supported desired fields captured before the first mutation.
+        baseline_dns_servers: Original external resolver settings.
     """
     errors = []
     for action in ("resume-dhcp", "resume-ra"):
@@ -478,6 +480,10 @@ def _restore(
             server_action(action)
         except Exception:  # noqa: BLE001 - continue independent restoration without logging secret-bearing errors.
             errors.append(action)
+    try:
+        client.json_request("PATCH", "/api/v1/settings", json_body={"external_dns_servers": baseline_dns_servers})
+    except Exception:  # noqa: BLE001 - continue independent interface recovery.
+        errors.append("restore-dns")
     for name, desired in baseline.items():
         try:
             client.json_request("PATCH", f"/api/v1/interfaces/physical/{name}", json_body=desired)
@@ -548,6 +554,7 @@ print(json.dumps({"address_status": json.loads(p.stdout), "native": snapshot()})
 def _same_address_lease(
     client: FixtureHttpClient, connect: Callable[[], paramiko.SSHClient],
     topology: AdmittedTopology, server_action: Callable[[str], dict[str, Any]],
+    baseline_dns_servers: list[str],
 ) -> dict[str, Any]:
     """Prove DHCP activation against an unexpired lease retaining the same static address.
 
@@ -556,14 +563,19 @@ def _same_address_lease(
         connect: Fresh pinned root SSH factory.
         topology: Independently admitted fixture identities.
         server_action: Admitted DHCP server status controller.
+        baseline_dns_servers: Original external resolvers to restore before DHCP activation.
     """
     before = _lease(server_action("status"), topology)
     interface = topology.link("appliance", 0).interface
     path = f"/api/v1/interfaces/physical/{interface}"
+    # The private DHCP offer intentionally has no DNS option. A static
+    # management phase uses the owned peer's private-only resolver, then
+    # restores the original resolver settings with the DHCP phase.
+    client.json_request("PATCH", "/api/v1/settings", json_body={"external_dns_servers": ["192.0.2.1"]})
     client.json_request("PATCH", path, json_body={
         "ipv4_method": "static", "ip_cidr": "192.0.2.10/24", "gateway": "192.0.2.1",
     })
-    static_apply = _apply(client, stage="same-address-static")
+    static_apply = _apply(client, ["network", "firewall", "wan", "appliance_settings"], stage="same-address-static")
     static = _snapshot(connect)
     static_rows = [row for row in _addresses(static, interface) if row.get("local") == "192.0.2.10"]
     if len(static_rows) != 1 or static_rows[0].get("dynamic") is True:
@@ -572,11 +584,12 @@ def _same_address_lease(
     if before["expires_at"] != retained["expires_at"] or retained["expires_at"] <= time.time():
         raise OverlapPrerequisiteError("the original DHCP lease was not retained through static Apply")
     client.json_request("PATCH", path, json_body={"ipv4_method": "dhcp", "ip_cidr": None, "gateway": None})
+    client.json_request("PATCH", "/api/v1/settings", json_body={"external_dns_servers": baseline_dns_servers})
     # Record the actual still-unexpired server lease immediately before activation.
     activation_lease = _lease(server_action("status"), topology)
     if activation_lease["expires_at"] != retained["expires_at"]:
         raise OverlapPrerequisiteError("retained DHCP lease changed before activation")
-    dhcp_apply = _apply(client, stage="same-address-dhcp")
+    dhcp_apply = _apply(client, ["network", "firewall", "wan", "appliance_settings"], stage="same-address-dhcp")
     acquired = _same_address_native(connect, topology)
     desired = client.json_request("GET", path)
     if desired.get("ipv4_method") != "dhcp" or desired.get("ip_cidr"):
@@ -614,7 +627,7 @@ def run_scenario(
     token = client.json_request(
         "POST", "/api/v1/auth/login?" + urllib.parse.urlencode({"username": username, "password": password}),
         json_body={"name": "private routing overlap lifecycle",
-                   "scopes": ["read:dashboard", "read:interfaces", "write:interfaces"]},
+                   "scopes": ["admin:all", "read:dashboard", "read:interfaces", "write:interfaces"]},
     )
     client.bearer_token = token["raw_token"]
     client.diagnostic_secret = password
@@ -660,6 +673,11 @@ def _run_authenticated(
         for name in (management, lab)
         for row in [client.json_request("GET", f"/api/v1/interfaces/physical/{name}")]
     }
+    settings = client.json_request("GET", "/api/v1/settings")
+    baseline_dns_servers = settings.get("external_dns_servers")
+    if (not isinstance(baseline_dns_servers, list)
+            or any(not isinstance(server, str) for server in baseline_dns_servers)):
+        raise OverlapPrerequisiteError("original external DNS settings are unavailable")
     evidence: dict[str, Any] = {"schema": 1, "setup": setup, "baseline": clean,
                                 "covered": ["native-dhcp", "native-slaac", "expiry", "source-domains",
                                             "retained-static-same-address-lease"],
@@ -700,11 +718,15 @@ def _run_authenticated(
         evidence["dhcp_expired"] = _expiry(connect_appliance, server_action, kind="dhcp", addresses=["192.0.2.10"],
                                             interface=management, wait_seconds=155)
         evidence["dhcp_reacquired"] = _ready(connect_appliance, topology)
-        evidence["same_address_lease"] = _same_address_lease(client, connect_appliance, topology, server_action)
+        evidence["same_address_lease"] = _same_address_lease(
+            client, connect_appliance, topology, server_action, baseline_dns_servers,
+        )
     except ApplyOutcomeUnknown:
         restore_allowed = False
         raise
     finally:
         if restore_allowed:
-            evidence["restored"] = _restore(client, connect_appliance, server_action, baseline)
+            evidence["restored"] = _restore(
+                client, connect_appliance, server_action, baseline, baseline_dns_servers,
+            )
     return evidence

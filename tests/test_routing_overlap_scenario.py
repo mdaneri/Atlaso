@@ -142,6 +142,7 @@ class FakeClient:
                      "eth1": {**shared, "role": "unused", "ip_cidr": None, "admin_state": "down"}}
         self.calls = []
         self.bearer_token = ""
+        self.external_dns_servers = []
 
     def json_request(self, method, path, *, json_body=None):
         """Return synthetic API data and capture supported desired mutations.
@@ -159,6 +160,10 @@ class FakeClient:
         if path.startswith("/ui/management/appliance-apply/"):
             return {"units": [], "pending_count": 0, "initial_apply_required": False,
                     "active_task": None, "locked": False}
+        if path == "/api/v1/settings":
+            if method == "PATCH":
+                self.external_dns_servers = list(json_body["external_dns_servers"])
+            return {"external_dns_servers": list(self.external_dns_servers)}
         name = path.rsplit("/", 1)[1]
         if method == "PATCH":
             self.rows[name].update(json_body)
@@ -196,7 +201,7 @@ def test_failed_acquisition_restores_both_interfaces_and_revokes(monkeypatch, to
         raise OverlapPrerequisiteError("native acquisition failed")
 
     monkeypatch.setattr(scenario, "_ready", fail_ready)
-    monkeypatch.setattr(scenario, "_apply", lambda current, **kwargs: applies.append(copy.deepcopy(current.rows)) or {"status": "succeeded"})
+    monkeypatch.setattr(scenario, "_apply", lambda current, units=None, **kwargs: applies.append(copy.deepcopy(current.rows)) or {"status": "succeeded"})
     monkeypatch.setattr(scenario, "_snapshot", lambda connect: {"links": [
         {"ifname": "eth0", "addr_info": [{"local": "192.0.2.10", "scope": "global"}]},
         {"ifname": "eth1", "addr_info": []}]})
@@ -204,6 +209,7 @@ def test_failed_acquisition_restores_both_interfaces_and_revokes(monkeypatch, to
         scenario.run_scenario(client=client, connect_appliance=lambda: None, topology=topology,
                               server_action=lambda action: actions.append(action) or {}, username="test", password="synthetic")
     assert client.rows == before
+    assert client.external_dns_servers == []
     assert len(applies) == 2 and applies[-1] == before
     assert actions == ["resume-dhcp", "resume-ra"]
     assert client.calls[-1][:2] == ("POST", "/api/v1/api-tokens/1/revoke")
@@ -218,6 +224,7 @@ def test_restore_attempts_both_interfaces_after_server_failure(monkeypatch):
     """
     client = FakeClient()
     baseline = copy.deepcopy(client.rows)
+    client.external_dns_servers = ["192.0.2.1"]
     actions = []
 
     def server(action):
@@ -232,10 +239,11 @@ def test_restore_attempts_both_interfaces_after_server_failure(monkeypatch):
         return {}
 
     with pytest.raises(OverlapPrerequisiteError, match="resume-dhcp"):
-        scenario._restore(client, lambda: None, server, baseline)
+        scenario._restore(client, lambda: None, server, baseline, [])
     assert actions == ["resume-dhcp", "resume-ra"]
+    assert client.external_dns_servers == []
     assert [path for method, path, _body in client.calls if method == "PATCH"] == [
-        "/api/v1/interfaces/physical/eth0", "/api/v1/interfaces/physical/eth1"]
+        "/api/v1/settings", "/api/v1/interfaces/physical/eth0", "/api/v1/interfaces/physical/eth1"]
 
 
 def test_expiry_resumes_server_and_closes_ssh_when_pause_fails(monkeypatch):
@@ -514,15 +522,19 @@ def test_same_address_requires_original_unexpired_server_lease(monkeypatch, topo
     static["links"][0]["addr_info"][0].pop("dynamic")
     monkeypatch.setattr(scenario, "_snapshot", lambda connect: static)
     monkeypatch.setattr(scenario, "_same_address_native", lambda connect, admitted: {"native": native})
-    monkeypatch.setattr(scenario, "_apply", lambda current, **kwargs: applies.append(copy.deepcopy(current.rows)) or {"status": "succeeded"})
+    monkeypatch.setattr(scenario, "_apply", lambda current, units=None, **kwargs: applies.append(copy.deepcopy(current.rows)) or {"status": "succeeded"})
     if changed:
         with pytest.raises(OverlapPrerequisiteError, match="not retained"):
-            scenario._same_address_lease(client, lambda: None, topology, lambda action: {"leases": [next(observations)]})
+            scenario._same_address_lease(client, lambda: None, topology, lambda action: {"leases": [next(observations)]}, [])
         assert len(applies) == 1
+        assert client.external_dns_servers == ["192.0.2.1"]
     else:
-        result = scenario._same_address_lease(client, lambda: None, topology, lambda action: {"leases": [next(observations)]})
+        result = scenario._same_address_lease(client, lambda: None, topology, lambda action: {"leases": [next(observations)]}, [])
         assert result["lease_before_activation"] == lease
         assert [rows["eth0"]["ipv4_method"] for rows in applies] == ["static", "dhcp"]
+        assert client.external_dns_servers == []
+        assert [body["external_dns_servers"] for method, path, body in client.calls
+                if method == "PATCH" and path == "/api/v1/settings"] == [["192.0.2.1"], []]
 
 
 @pytest.fixture

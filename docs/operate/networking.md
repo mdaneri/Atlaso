@@ -67,9 +67,11 @@ allowed. These forwarded-traffic rules do not match appliance-local traffic on `
 After upgrading, **Network** appears as pending in Appliance Apply even when interface settings are unchanged. Its
 versioned configuration marker makes this one-time migration selectable. Review and apply **Network** to install this
 domain ownership and migrate previous prefix rules. A successful Network Apply clears the pending migration; a failed
-migration leaves it pending for retry. The migration uses the already-applied forwarding setting and does not apply
-pending Routes & WAN edits. Rollback restores the prior
-rules, network files, and routing service state. Subsequent WAN Apply uses the applied Network ownership.
+migration leaves it pending for retry. If an existing access-role Management UI listener has an enabled default route,
+Atlaso includes **Routing & WAN** in a protected management handoff. That handoff retains the old route until its
+lab-domain replacement is ready, then applies the captured WAN configuration. Other migrations use the already-applied
+forwarding setting and do not apply pending Routes & WAN edits. Rollback restores the prior rules, network files,
+routing service state, and any WAN runtime included in the handoff. Subsequent WAN Apply uses the applied Network ownership.
 
 The routing service follows DHCP and IPv6 address events and periodically reconciles missed events. Protected Apply
 waits for address activation and synchronously verifies source rules before readiness. Address changes outside Apply are

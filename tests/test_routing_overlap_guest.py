@@ -349,7 +349,9 @@ def test_server_config_is_private_only_and_leases_are_observed():
     """Configured reservations never masquerade as an observed live DHCP lease."""
     config = guest.configurations(request())
     assert "interface=eth1\n" in config["dnsmasq"] and "except-interface=eth0" in config["dnsmasq"]
-    assert "port=0" in config["dnsmasq"] and "dhcp-ignore=tag:!fixture" in config["dnsmasq"]
+    assert "port=53" in config["dnsmasq"] and "interface=eth1" in config["dnsmasq"]
+    assert "address=/fixture.test/192.0.2.1" in config["dnsmasq"]
+    assert "dhcp-option=6" in config["dnsmasq"] and "dhcp-ignore=tag:!fixture" in config["dnsmasq"]
     assert "AdvValidLifetime 60" in config["radvd"] and "AdvPreferredLifetime 30" in config["radvd"]
     assert "AdvDefaultLifetime 30" in config["radvd"]
     assert guest.parse_leases("", request()["appliance_mac"], 100) == []

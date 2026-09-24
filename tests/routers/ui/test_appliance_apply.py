@@ -274,6 +274,60 @@ def test_network_runtime_revision_requires_successful_upgrade_apply(client, monk
         assert current["changed"] is (not apply_succeeds)
 
 
+@pytest.mark.parametrize("enabled_default", [False, True])
+def test_legacy_flagged_default_network_revision_couples_wan_handoff(client, monkeypatch, enabled_default):
+    """A Network-only migration preserves the flagged listener's off-subnet reply route."""
+    from sqlalchemy import select
+
+    from atlaso.app import ui
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Job, PhysicalInterface, Route
+
+    login(client)
+    marker = "# Network runtime revision: exact-source-routing-v1.\n"
+    with SessionLocal() as db:
+        interface = db.scalar(select(PhysicalInterface).where(PhysicalInterface.name == "eth2"))
+        assert interface is not None
+        interface.role = "access"
+        interface.mode = "access"
+        interface.admin_state = "up"
+        interface.oper_state = "up"
+        interface.ipv4_method = "static"
+        interface.ip_cidr = "192.168.50.10/24"
+        interface.access_management_ui_enabled = True
+        db.add(Route(destination_cidr="0.0.0.0/0", gateway="192.168.50.1",
+                     interface_name="eth2", enabled=enabled_default))
+        db.commit()
+        units = ui.appliance_apply_units(db)
+        assert not next(unit for unit in units if unit["id"] == "network")["management_domain_migration_required"]
+        ui.update_appliance_apply_baselines(db, units, {unit["id"] for unit in units})
+        baselines = ui.load_appliance_apply_baselines(db)
+        assert marker in baselines["network"]["config_preview"]
+        baselines["network"]["config_preview"] = baselines["network"]["config_preview"].replace(marker, "")
+        baselines["network"]["snapshot_hash"] = "legacy-network-revision"
+        ui.save_appliance_apply_baselines(db, baselines)
+        db.commit()
+        refreshed = {unit["id"]: unit for unit in ui.appliance_apply_units(db)}
+        assert refreshed["network"]["changed"]
+        assert not refreshed["network"]["management_handoff_required"]
+        assert refreshed["network"]["management_domain_migration_required"] is enabled_default
+
+    monkeypatch.setattr(ui, "run_appliance_apply_job", lambda _job_id: None)
+    page = client.get("/dashboard")
+    csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    response = client.post("/appliance-apply", data={"csrf": csrf, "selected_units": "network"},
+                           headers={"Accept": "application/json"})
+    assert response.status_code == 202, response.text
+    with SessionLocal() as db:
+        payload = json.loads(db.get(Job, response.json()["job_id"]).result)
+    assert payload["management_handoff"] is enabled_default
+    if enabled_default:
+        assert set(ui.MANAGEMENT_HANDOFF_UNIT_IDS) | {"wan"} <= set(payload["management_handoff_units"])
+        assert "wan" in payload["selected_units"]
+    else:
+        assert "wan" not in payload["selected_units"]
+
+
 @pytest.mark.parametrize("commit_fails", [False, True])
 @pytest.mark.parametrize("cleanup_fails", [False, True])
 def test_network_apply_acknowledges_only_durable_executed_baseline(client, monkeypatch, commit_fails, cleanup_fails):

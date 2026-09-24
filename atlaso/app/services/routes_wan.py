@@ -1171,13 +1171,12 @@ def render_wan_config(
     )
 
     forwarding_value = 1 if settings.routing_enabled else 0
-    lines.append(
-        f"sysctl -w net.ipv4.ip_forward={forwarding_value}  # global Routing switch"
-    )
-    lines.append(
-        f"sysctl -w net.ipv6.conf.all.forwarding={forwarding_value}  # global Routing switch"
-    )
+    forwarding_commands = [
+        f"sysctl -w net.ipv4.ip_forward={forwarding_value}  # global Routing switch",
+        f"sysctl -w net.ipv6.conf.all.forwarding={forwarding_value}  # global Routing switch",
+    ]
     if not settings.routing_enabled:
+        lines.extend(forwarding_commands)
         lines.append("# Routing disabled: reconcile owned IPv4/IPv6 lab ingress lookups and terminal guards to an empty set.")
         lines.append("# Local source-address rules remain reconciled from applied Network intent.")
     else:
@@ -1204,6 +1203,7 @@ def render_wan_config(
         for index, name in enumerate(ingress_names):
             for route_family in ("", "-6 "):
                 lines.append(f"ip {route_family}rule add iif {name} table {LAB_ROUTE_TABLE_ID} priority {LAB_ROUTE_RULE_PRIORITY + index} protocol 2")
+        lines.extend(forwarding_commands)
     target_network_owners = _target_network_owners(targets)
     if network_owned_targets is not None:
         lines.append("# Connected routes and dedicated-management defaults are maintained by Network, not pending WAN targets.")

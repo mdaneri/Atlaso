@@ -100,8 +100,9 @@ def configurations(request: dict[str, Any]) -> dict[str, str]:
     """
     private, control = request["private"]["name"], request["control"]["name"]
     dnsmasq = "\n".join([
-        "port=0", "user=root", "bind-interfaces", f"interface={private}", f"except-interface={control}", "except-interface=lo",
-        "no-resolv", "no-hosts", "dhcp-authoritative", "dhcp-ignore=tag:!fixture",
+        "port=53", "user=root", "bind-interfaces", f"interface={private}", f"except-interface={control}", "except-interface=lo",
+        "no-resolv", "no-hosts", "local=/fixture.test/", "address=/fixture.test/192.0.2.1",
+        "dhcp-authoritative", "dhcp-ignore=tag:!fixture",
         "dhcp-range=192.0.2.10,192.0.2.10,255.255.255.0,2m",
         f"dhcp-host=set:fixture,{request['appliance_mac']},192.0.2.10,2m",
         "dhcp-option=3,192.0.2.1", "dhcp-option=6", f"dhcp-leasefile={ROOT}/leases", "log-facility=-", "",

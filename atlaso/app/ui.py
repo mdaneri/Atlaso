@@ -11447,6 +11447,21 @@ def appliance_apply_units(db: Session, *, reconcile: bool = True) -> list[dict[s
             str((wan_baseline or {}).get("config_preview") or "")
         )
     )
+    flagged_management_names = {
+        path["name"] for path in network_management_paths(network["network_config_preview"])
+        if path["role"] == "access"
+    }
+    network_unit["management_domain_migration_required"] = bool(
+        network_baseline_preview
+        and "# Network runtime revision: exact-source-routing-v1." not in network_baseline_preview.splitlines()
+        and flagged_management_names
+        and any(
+            interface_name in flagged_management_names
+            for _destination, interface_name, _gateway, _metric in mirrored_management_default_routes(
+                candidate_wan_preview
+            )
+        )
+    )
 
     units = [
         make_appliance_apply_unit(
@@ -14461,6 +14476,7 @@ def execute_management_handoff(
         else bool(
             network.get("management_gateway_route_migrations")
             or network.get("management_default_mirror_change")
+            or network.get("management_domain_migration_required")
         )
     )
     wan = units_by_id["wan"] if wan_required else None
@@ -16108,6 +16124,19 @@ def run_appliance_apply_job(job_id: str, *, force_real: bool = False) -> None:
             invalid_units = [unit["label"] for unit in selected_units if unit["validation_errors"]]
             if invalid_units:
                 raise ApplianceApplyJobError(f"Desired state became invalid before execution: {', '.join(invalid_units)}.")
+            if (
+                "network" in selected_order
+                and current_by_id["network"].get("management_domain_migration_required")
+                and not (
+                    job_result.get("management_handoff")
+                    and "wan" in selected_order
+                    and set(MANAGEMENT_HANDOFF_UNIT_IDS).issubset(selected_order)
+                )
+            ):
+                raise ApplianceApplyJobError(
+                    "The flagged management listener requires a protected Network and Routing & WAN migration. "
+                    "Submit the appliance changes again."
+                )
             changed_after_submit = [
                 unit["label"]
                 for unit in selected_units
@@ -17125,6 +17154,10 @@ def _submit_appliance_apply(
     # Existing baselines retain independent WAN Apply and its applied intent.
     if "wan" in selected_ids and load_appliance_apply_baselines(db).get("network") is None:
         selected_ids.add("network")
+    management_domain_migration = bool(
+        "network" in selected_ids
+        and unit_map.get("network", {}).get("management_domain_migration_required")
+    )
     management_handoff = bool(
         (
             selected_ids.intersection(MANAGEMENT_HANDOFF_UNIT_IDS)
@@ -17134,6 +17167,7 @@ def _submit_appliance_apply(
             "wan" in selected_ids
             and unit_map.get("network", {}).get("management_default_mirror_change")
         )
+        or management_domain_migration
     )
     if management_handoff:
         selected_ids.update(
@@ -17143,6 +17177,7 @@ def _submit_appliance_apply(
             (
                 unit_map.get("network", {}).get("management_gateway_route_migrations")
                 or unit_map.get("network", {}).get("management_default_mirror_change")
+                or management_domain_migration
             )
             and "wan" in unit_map
         ):

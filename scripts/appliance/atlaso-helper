@@ -9668,7 +9668,24 @@ def _install_route_domain_intent(
     result = _network_observation_command(["ip", "-j", "address", "show"])
     if result.returncode:
         raise ValueError("routing-domain interface identity observation failed")
-    observed = {row["ifname"]: row for row in json.loads(result.stdout)}
+    rows = json.loads(result.stdout)
+    if not isinstance(rows, list) or len(rows) > 4096:
+        raise ValueError("routing-domain interface identity inventory is malformed")
+    observed: dict[str, dict] = {}
+    for row in rows:
+        if not isinstance(row, dict) or not isinstance(row.get("ifname"), str) or not row["ifname"]:
+            raise ValueError("routing-domain interface identity inventory is malformed")
+        if row["ifname"] in observed:
+            raise ValueError("routing-domain interface identity inventory is ambiguous")
+        addresses = row.get("addr_info")
+        if not isinstance(addresses, list) or len(addresses) > 256 or any(
+            not isinstance(address, dict) or (
+                address.get("scope") == "global"
+                and (not isinstance(address.get("local"), str) or not address["local"])
+            ) for address in addresses
+        ):
+            raise ValueError("routing-domain interface address inventory is malformed")
+        observed[row["ifname"]] = row
     intent: dict = {"schema": 1, "interfaces": [], "held_addresses": []}
     previous = json.loads(ROUTE_DOMAIN_CONFIG_PATH.read_text()) if ROUTE_DOMAIN_CONFIG_PATH.exists() else {}
     previous_tables = {row["name"]: row["table"] for row in previous.get("interfaces", [])}
@@ -9679,6 +9696,8 @@ def _install_route_domain_intent(
         row = observed.get(name)
         if row is None:
             raise ValueError("previous routing-domain interface disappeared")
+        if not isinstance(row.get("address"), str) or not row["address"]:
+            raise ValueError("previous routing-domain interface identity is malformed")
         table = (held_tables or {}).get(name, previous_tables.get(
             name, MANAGEMENT_ROUTE_TABLE_ID if name in legacy_management else LAB_ROUTE_TABLE_ID,
         ))
@@ -9693,6 +9712,8 @@ def _install_route_domain_intent(
         live = observed.get(name)
         if live is None:
             raise ValueError("candidate routing-domain interface is missing")
+        if not isinstance(live.get("address"), str) or not live["address"]:
+            raise ValueError("candidate routing-domain interface identity is malformed")
         intent["interfaces"].append({"name": name, "mac": live["address"],
                                      "management_ui": row.get("role") == "access" and row.get("access_management_ui_enabled", "false").lower() == "true",
                                      "table": MANAGEMENT_ROUTE_TABLE_ID if row.get("role") == "management" else LAB_ROUTE_TABLE_ID})

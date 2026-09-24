@@ -415,7 +415,9 @@ no host port forward or insecure legacy HTTP client is used. The scenario record
 source rules, route selection, DHCP and RA expiry, and ordinary Apply restoration. It also verifies a same-address
 static-to-DHCP transition while the original server lease remains unexpired, requiring the measured appliance
 helper's independent current client-lease proof, exact interface identity, and source rules. A static-classified
-address alone or a server reservation alone cannot satisfy this phase. An uncertain Apply outcome
+address alone or a server reservation alone cannot satisfy this phase. The private peer serves fixture-only DNS on
+its isolated interface; the scenario stages that resolver for the static phase, then restores the original DNS
+settings when DHCP resumes and during baseline recovery. An uncertain Apply outcome
 preserves the running fixture and public job identity for reconciliation before any further cleanup. Failed temporary
 token revocation cannot replace that unknown-outcome signal or authorize stopping the fixture.
 Negative DAD Apply and reboot are separate acceptance cases and are not claimed by this mode.

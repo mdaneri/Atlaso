@@ -112,6 +112,30 @@ def test_feature_settings_render_full_saved_intent_with_effective_gates():
     assert "net.ipv6.conf.all.forwarding=0" in config
 
 
+@pytest.mark.parametrize("routing_enabled", [False, True])
+def test_wan_preview_orders_ingress_guards_before_enabling_forwarding(routing_enabled):
+    """The captured preview follows the helper's enable and disable ordering."""
+    config = render_wan_config(
+        [],
+        settings=RoutesWanSettings(routing_enabled, False, False),
+        applied_network_ingress=["eth1"],
+    )
+    lines = config.splitlines()
+    forwarding = [
+        lines.index(f"sysctl -w net.ipv4.ip_forward={int(routing_enabled)}  # global Routing switch"),
+        lines.index(f"sysctl -w net.ipv6.conf.all.forwarding={int(routing_enabled)}  # global Routing switch"),
+    ]
+    if routing_enabled:
+        guard = lines.index("ip rule add iif eth1 unreachable priority 2100 protocol 2")
+        lookup = lines.index("ip rule add iif eth1 table 200 priority 2000 protocol 2")
+        assert guard < lookup < min(forwarding)
+    else:
+        assert max(forwarding) < lines.index(
+            "# Routing disabled: reconcile owned IPv4/IPv6 lab ingress lookups and terminal guards to an empty set."
+        )
+        assert "rule add iif eth1" not in config
+
+
 def test_disabled_route_preview_guards_unknown_target_cleanup():
     """Preview dormant cleanup with the helper's live-link condition."""
     route = Route(

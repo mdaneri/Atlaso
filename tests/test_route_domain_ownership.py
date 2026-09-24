@@ -1,10 +1,42 @@
 """Regress pre-mutation rule admission and connected-route cleanup ownership."""
 
+import json
 import subprocess
 
 import pytest
 
 from tests.test_appliance_helper import load_helper_module
+
+
+@pytest.mark.parametrize("inventory", [
+    None,
+    {},
+    [[]],
+    [{"address": "00:11:22:33:44:55"}],
+    [{"ifname": "eth0", "addr_info": []}],
+    [{"ifname": "eth0", "address": "00:11:22:33:44:55", "addr_info": {}}],
+    [{"ifname": "eth0", "address": "00:11:22:33:44:55", "addr_info": [None]}],
+    [{"ifname": "eth0", "address": "00:11:22:33:44:55",
+      "addr_info": [{"scope": "global"}]}],
+])
+def test_malformed_address_inventory_raises_recoverable_network_error(tmp_path, monkeypatch, inventory):
+    """Malformed successful `ip -j` output uses the Network rollback error type."""
+    helper = load_helper_module()
+    config = tmp_path / "network.conf"
+    config.write_text("[physical_interfaces]\ninterface=eth0\n", encoding="utf-8")
+    intent = tmp_path / "route-domains.json"
+    monkeypatch.setattr(helper, "ROUTE_DOMAIN_CONFIG_PATH", intent)
+    monkeypatch.setattr(helper, "ROUTE_DOMAIN_SERVICE_PATH", tmp_path / "route-domains.service")
+    monkeypatch.setattr(helper, "_parse_network_config", lambda _path: (
+        [{"name": "eth0", "role": "access", "mode": "access", "admin_state": "up"}], [], [],
+    ))
+    monkeypatch.setattr(helper, "_read_existing_management_network_values", lambda: {"Name": []})
+    monkeypatch.setattr(helper, "_network_observation_command", lambda command:
+                        subprocess.CompletedProcess(command, 0, json.dumps(inventory), ""))
+
+    with pytest.raises(ValueError, match="routing-domain .* (inventory|identity) .*malformed"):
+        helper._install_route_domain_intent(config)
+    assert not intent.exists()
 
 
 @pytest.mark.parametrize("protected", [False, True])
