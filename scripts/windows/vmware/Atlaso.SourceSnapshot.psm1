@@ -443,6 +443,70 @@ function New-AtlasoImmutableSourceSnapshot {
     }
 }
 
+<#
+.SYNOPSIS
+Pin a certificate inspector and its imported Python modules to one reviewed commit.
+.PARAMETER RepositoryRoot
+Clean task checkout at the plan's admitted commit.
+.PARAMETER EvidenceRoot
+Existing task-owned test-results root; original creation evidence remains here.
+.PARAMETER SourceCommit
+Exact source commit named by the native plan.
+.PARAMETER TaskId
+Originating Codex task identity.
+#>
+function New-AtlasoCertificateInspectorSnapshot {
+    param(
+        [Parameter(Mandatory)][string]$RepositoryRoot,
+        [Parameter(Mandatory)][string]$EvidenceRoot,
+        [Parameter(Mandatory)][ValidatePattern('^[0-9a-f]{40}$')][string]$SourceCommit,
+        [Parameter(Mandatory)][string]$TaskId
+    )
+
+    $resolvedEvidence = Resolve-AtlasoSourceSnapshotDirectory -Path $EvidenceRoot -Description 'Certificate evidence root'
+    $checkout = Get-AtlasoSourceCheckoutIdentity -RepositoryRoot $RepositoryRoot
+    if ($checkout.Commit -cne $SourceCommit -or $TaskId -cne $env:CODEX_THREAD_ID) {
+        throw 'Certificate inspector source commit or task identity differs from its plan.'
+    }
+    $name = 'certificate-inspector-source-' + [guid]::NewGuid().ToString('N')
+    $stageRoot = Join-Path $resolvedEvidence $name
+    $verificationRoot = Join-Path $resolvedEvidence ($name + '-verify')
+    $manifestPath = Join-Path $resolvedEvidence ($name + '.creation.json')
+    if ((Test-Path -LiteralPath $stageRoot) -or (Test-Path -LiteralPath $verificationRoot) -or
+        (Test-Path -LiteralPath $manifestPath)) {
+        throw 'Certificate inspector source staging paths are not fresh.'
+    }
+    $manifest = [ordered]@{
+        schema = 1; kind = 'certificate-inspector-source'; task_id = $TaskId
+        repository = 'mdaneri/Atlaso'; worktree = [IO.Path]::GetFullPath($RepositoryRoot)
+        source_commit = $SourceCommit; staging_root = $stageRoot
+        verification_root = $verificationRoot; created_at = [DateTimeOffset]::UtcNow.ToString('o')
+    }
+    $bytes = [Text.UTF8Encoding]::new($false).GetBytes(($manifest | ConvertTo-Json -Depth 4))
+    $stream = [IO.File]::Open($manifestPath, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::None)
+    try { $stream.Write($bytes); $stream.Flush($true) } finally { $stream.Dispose() }
+    [void][IO.Directory]::CreateDirectory($stageRoot)
+    $snapshot = New-AtlasoImmutableSourceSnapshot -RepositoryRoot $RepositoryRoot -StagingRoot $stageRoot
+    if ($snapshot.Commit -cne $SourceCommit) { throw 'Certificate inspector snapshot commit changed.' }
+    $null = Assert-AtlasoSourceSnapshotCommitBinding -Root $snapshot.Root -RepositoryRoot $RepositoryRoot `
+        -Commit $SourceCommit -ExpectedSha256 $snapshot.Sha256 -ExpectedFileCount $snapshot.FileCount `
+        -VerificationRoot $verificationRoot
+    $null = Protect-AtlasoSourceSnapshot -Root $snapshot.Root -ExpectedSha256 $snapshot.Sha256 `
+        -ExpectedFileCount $snapshot.FileCount
+    $pins = [Collections.Generic.List[IO.FileStream]]::new()
+    try {
+        foreach ($leaf in @('certificate_handoff_native.py', 'certificate_peer_proof.py', 'certificate_peer_transport.py')) {
+            $path = Join-Path $snapshot.Root "scripts/interop/$leaf"
+            $pins.Add([IO.File]::Open($path, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::Read))
+        }
+    } catch {
+        foreach ($pin in $pins) { $pin.Dispose() }
+        throw
+    }
+    return [pscustomobject]@{ Root = $snapshot.Root; Sha256 = $snapshot.Sha256
+        FileCount = $snapshot.FileCount; Pins = $pins; Manifest = $manifestPath }
+}
+
 Export-ModuleMember -Function `
     Get-AtlasoSourceCheckoutIdentity, `
     New-AtlasoImmutableSourceSnapshot, `
@@ -450,4 +514,5 @@ Export-ModuleMember -Function `
     Assert-AtlasoSourceSnapshotCommitBinding, `
     Get-AtlasoSourceSnapshotInventory, `
     Protect-AtlasoSourceSnapshot, `
-    Unprotect-AtlasoSourceSnapshot
+    Unprotect-AtlasoSourceSnapshot, `
+    New-AtlasoCertificateInspectorSnapshot

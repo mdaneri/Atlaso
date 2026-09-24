@@ -2548,10 +2548,11 @@ function Write-CertificateLabReceipt {
     $writer = [Atlaso.WorkstationDurablePublisherV3]::CreateStage($stage)
     try {
         $bytes = [Text.UTF8Encoding]::new($false).GetBytes(($Value | ConvertTo-Json -Depth 8))
+        $publishedSha256 = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($bytes)).ToLowerInvariant()
         $writer.Write($bytes)
         [Atlaso.WorkstationDurablePublisherV3]::PublishDurableFile($writer, $target, $false)
     } finally { $writer.Dispose() }
-    return [pscustomobject]@{ Path = $target; Sha256 = (Get-FileHash -LiteralPath $target -Algorithm SHA256).Hash.ToLowerInvariant() }
+    return [pscustomobject]@{ Path = $target; Sha256 = $publishedSha256 }
 }
 
 <#
@@ -2938,7 +2939,7 @@ with WindowsFiles().opened(Path(sys.argv[1]), directory=True) as (_, identity, _
         if ($ownedLanSegments.Count -ne 1 -or -not $ownedLanSegments[0].ReceiptPath -or -not $ownedLanSegments[0].ReceiptSha256) {
             throw 'Certificate DHCP peer requires a newly created, receipt-bound private LAN segment.'
         }
-        Write-CertificateLabReceipt -Name 'peer-fixture.json' -Value ([ordered]@{
+        $peerFixture = Write-CertificateLabReceipt -Name 'peer-fixture.json' -Value ([ordered]@{
             schema = 1; kind = 'certificate-dhcp-peer-fixture'; task_id = $env:CODEX_THREAD_ID
             repository = 'mdaneri/Atlaso'; pr = $PullRequestNumber; source_commit = $sourceCommit
             peer_vmx = $certificatePeerVmx; peer_ownership_sha256 = $peerOwnership.Sha256
@@ -2952,7 +2953,7 @@ with WindowsFiles().opened(Path(sys.argv[1]), directory=True) as (_, identity, _
             client_vmdk_source = (Resolve-Path -LiteralPath $ClientVmdkPath).Path
             client_vmdk_sha256 = $certificateClientVmdkSha256
             address_ownership_state = 'awaiting-live-readback'
-        }) | Out-Null
+        })
     }
     $esxiVmx = ''
     if ($FullEsxiPxeInstall) {
@@ -3164,7 +3165,7 @@ with WindowsFiles().opened(Path(sys.argv[1]), directory=True) as (_, identity, _
             schema = 1; kind = 'certificate-peer-original-identity'; task_id = $env:CODEX_THREAD_ID
             repository = 'mdaneri/Atlaso'; pr = $PullRequestNumber
             peer_vmx = $certificatePeerVmx; peer_ownership_sha256 = $peerOwnership.Sha256
-            peer_fixture_sha256 = (Get-FileHash -LiteralPath (Join-Path $repoRoot "test-results/certificate-native-evidence/$LabName/peer-fixture.json") -Algorithm SHA256).Hash.ToLowerInvariant()
+            peer_fixture_sha256 = $peerFixture.Sha256
             management_network = $ManagementNetwork; management_address = $peerIdentityReadback.management_address
             ssh_user = $ClientSshUser; ssh_host_key = $peerIdentityReadback.ssh_host_key
             observation = 'owned-vmware-guest-operations-before-management-rewire'
@@ -3180,7 +3181,7 @@ with WindowsFiles().opened(Path(sys.argv[1]), directory=True) as (_, identity, _
             repository = 'mdaneri/Atlaso'; pr = $PullRequestNumber; source_commit = $sourceCommit
             appliance_vmx = $applianceVmx; appliance_ownership_sha256 = $certificateOwnership.Sha256
             bootstrap_runtime_sha256 = $certificateRuntime.Sha256
-            peer_fixture_sha256 = (Get-FileHash -LiteralPath (Join-Path $repoRoot "test-results/certificate-native-evidence/$LabName/peer-fixture.json") -Algorithm SHA256).Hash.ToLowerInvariant()
+            peer_fixture_sha256 = $peerFixture.Sha256
             peer_identity_sha256 = $certificatePeerIdentity.Sha256
             from_network = $ManagementNetwork; to_network = $SiteANetwork
             lan_segment_receipt_sha256 = $ownedLanSegments[0].ReceiptSha256.ToLowerInvariant()
