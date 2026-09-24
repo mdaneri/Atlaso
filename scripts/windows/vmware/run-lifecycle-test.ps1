@@ -2473,7 +2473,10 @@ Exact cloned appliance VMX whose source database is queried.
 function Get-CertificateSourceRoutingSnapshot {
     param([Parameter(Mandatory)][string]$ApplianceVmx)
 
-    $localProbe = Join-Path $repoRoot 'scripts/interop/certificate_source_probe.py'
+    # The routing-absence claim must be made by the admitted source, not by a
+    # transient checkout edit that disappears before the later cleanliness check.
+    Assert-LifecycleSourcePins -Pins $runtimeConsumerPins
+    $localProbe = Join-Path $runtimeSourceRoot 'scripts/interop/certificate_source_probe.py'
     $probeSha256 = (Get-FileHash -LiteralPath $localProbe -Algorithm SHA256).Hash.ToLowerInvariant()
     $probeToken = [guid]::NewGuid().ToString('N')
     $guestProbe = "/root/atlaso-certificate-source-$probeToken.py"
@@ -2487,17 +2490,20 @@ function Get-CertificateSourceRoutingSnapshot {
             'copyFileFromHostToGuest', $ApplianceVmx, $localProbe, $guestProbe
         ) -TimeoutSeconds 20
         if ($copy.TimedOut -or $copy.ExitCode -ne 0) { throw 'Certificate source routing probe copy failed.' }
+        Assert-LifecycleSourcePins -Pins $runtimeConsumerPins
         $script = "printf '%s  %s\n' '$probeSha256' '$guestProbe' | sha256sum -c - >/dev/null && python3 '$guestProbe' > '$guestOutput'"
         $query = Invoke-VmrunBounded -Arguments @(
             '-T', 'ws', '-gu', 'root', '-gp', $password,
             'runScriptInGuest', $ApplianceVmx, '/bin/sh', $script
         ) -TimeoutSeconds 20
         if ($query.TimedOut -or $query.ExitCode -ne 0) { throw 'Certificate source routing probe failed.' }
+        Assert-LifecycleSourcePins -Pins $runtimeConsumerPins
         $readback = Invoke-VmrunBounded -Arguments @(
             '-T', 'ws', '-gu', 'root', '-gp', $password,
             'copyFileFromGuestToHost', $ApplianceVmx, $guestOutput, $hostOutput
         ) -TimeoutSeconds 20
         if ($readback.TimedOut -or $readback.ExitCode -ne 0) { throw 'Certificate source routing readback failed.' }
+        Assert-LifecycleSourcePins -Pins $runtimeConsumerPins
         if (-not (Test-Path -LiteralPath $hostOutput -PathType Leaf) -or (Get-Item -LiteralPath $hostOutput).Length -gt 4096) {
             throw 'Certificate source routing readback is missing or oversized.'
         }
@@ -2530,6 +2536,7 @@ function Get-CertificateSourceRoutingSnapshot {
             throw 'Certificate source routing service intent is present.'
         }
         $snapshot.probe_sha256 = $probeSha256
+        Assert-LifecycleSourcePins -Pins $runtimeConsumerPins
         return $snapshot
     } finally {
         # These unique files exist only in this task-owned clone; the host receipt is published separately.
