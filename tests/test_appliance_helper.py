@@ -1529,7 +1529,12 @@ def test_management_handoff_preserves_valid_post_snapshot_lease(monkeypatch, tmp
 
 
 def test_management_handoff_rollback_keeps_old_scope_renewal_only(monkeypatch, tmp_path):
-    """Keep a renewed old-scope name but reject nested candidate names."""
+    """Keep a renewed old-scope name but reject nested candidate names.
+
+    Args:
+        monkeypatch: Replace external behavior for this scenario.
+        tmp_path: Temporary directory for isolated test state.
+    """
     helper = load_helper_module()
     state_dir = tmp_path / "dnsmasq"
     state_dir.mkdir()
@@ -3571,7 +3576,13 @@ def test_management_handoff_resolver_failure_rolls_back_before_nginx(
 
 @pytest.mark.parametrize("resolver_mode", ["external", "local_dns"])
 def test_management_handoff_orders_resolver_before_dns_shutdown(monkeypatch, tmp_path, resolver_mode):
-    """Leave loopback before shutdown but keep DNS enablement listener-first."""
+    """Leave loopback before shutdown but keep DNS enablement listener-first.
+
+    Args:
+        monkeypatch: Replace external behavior for this scenario.
+        tmp_path: Temporary directory for isolated test state.
+        resolver_mode: Resolver mode under test.
+    """
     helper = load_helper_module()
     events: list[str] = []
     state = {
@@ -11511,7 +11522,13 @@ def test_dnsmasq_helper_apply_installs_isolated_authoritative_backend(monkeypatc
 
 @pytest.mark.parametrize("failed_command", ["enable", "restart"])
 def test_dnsmasq_apply_restores_previous_dns_pair_after_client_activation_failure(monkeypatch, tmp_path, failed_command):
-    """A failed client activation must restore the prior recursive and authoritative pair."""
+    """A failed client activation must restore the prior recursive and authoritative pair.
+
+    Args:
+        monkeypatch: Replace external behavior for this scenario.
+        tmp_path: Temporary directory for isolated test state.
+        failed_command: Command selected to fail during activation.
+    """
     helper = load_helper_module()
     apply_dir = tmp_path / "apply" / "dnsmasq"
     config_dir = tmp_path / "etc" / "atlaso" / "dnsmasq.d"
@@ -11543,6 +11560,11 @@ def test_dnsmasq_apply_restores_previous_dns_pair_after_client_activation_failur
     failure_pending = True
 
     def fake_run(command):
+        """Fake run.
+
+        Args:
+            command: Command issued by the scenario.
+        """
         nonlocal failure_pending
         commands.append(command)
         if command[0] != "systemctl" or command[1] == "daemon-reload":
@@ -11589,7 +11611,13 @@ def test_dnsmasq_apply_restores_previous_dns_pair_after_client_activation_failur
 
 @pytest.mark.parametrize("daemon_reload_fails", [False, True])
 def test_dnsmasq_failed_apply_restores_pruned_live_lease_name(monkeypatch, tmp_path, daemon_reload_fails):
-    """Do not lose a managed lease name when service activation fails."""
+    """Do not lose a managed lease name when service activation fails.
+
+    Args:
+        monkeypatch: Replace external behavior for this scenario.
+        tmp_path: Temporary directory for isolated test state.
+        daemon_reload_fails: Whether the daemon reload fails.
+    """
     helper = load_helper_module()
     apply_dir = tmp_path / "apply" / "dnsmasq"
     state_dir = tmp_path / "var" / "lib" / "atlaso" / "dnsmasq"
@@ -11613,6 +11641,11 @@ def test_dnsmasq_failed_apply_restores_pruned_live_lease_name(monkeypatch, tmp_p
     commands: list[list[str]] = []
 
     def fake_run(command):
+        """Fake run.
+
+        Args:
+            command: Command issued by the scenario.
+        """
         commands.append(command)
         failed = daemon_reload_fails and command == ["systemctl", "daemon-reload"]
         return subprocess.CompletedProcess(command, 1 if failed else 0, "", "")
@@ -11746,7 +11779,12 @@ def test_dnsmasq_lease_events_mirror_only_managed_names(monkeypatch, tmp_path, c
 
 
 def test_authoritative_lease_event_rejects_cross_scope_client_name(monkeypatch, tmp_path):
-    """A client name cannot publish into another scope without a reservation tag."""
+    """A client name cannot publish into another scope without a reservation tag.
+
+    Args:
+        monkeypatch: Replace external behavior for this scenario.
+        tmp_path: Temporary directory for isolated test state.
+    """
     helper = load_helper_module()
     state_dir = tmp_path / "dnsmasq"
     state_dir.mkdir()
@@ -11781,7 +11819,14 @@ def test_authoritative_lease_event_rejects_cross_scope_client_name(monkeypatch, 
 def test_authoritative_enable_seeds_existing_named_lease_mirror(
     monkeypatch, tmp_path, lease_name, expected_name
 ):
-    """An active ordinary lease must resolve before its next DHCP renewal."""
+    """An active ordinary lease must resolve before its next DHCP renewal.
+
+    Args:
+        monkeypatch: Replace external behavior for this scenario.
+        tmp_path: Temporary directory for isolated test state.
+        lease_name: Existing lease hostname under test.
+        expected_name: Expected authoritative mirror name.
+    """
     helper = load_helper_module()
     state_dir = tmp_path / "dnsmasq"
     state_dir.mkdir()
@@ -11814,7 +11859,12 @@ def test_authoritative_enable_seeds_existing_named_lease_mirror(
 
 
 def test_authoritative_enable_does_not_seed_unproven_ipv6_reservation(monkeypatch, tmp_path):
-    """A lease DUID/IAID cannot prove ownership of a MAC-keyed reservation."""
+    """A lease DUID/IAID cannot prove ownership of a MAC-keyed reservation.
+
+    Args:
+        monkeypatch: Replace external behavior for this scenario.
+        tmp_path: Temporary directory for isolated test state.
+    """
     helper = load_helper_module()
     state_dir = tmp_path / "dnsmasq"
     state_dir.mkdir()
@@ -11848,7 +11898,13 @@ def test_authoritative_enable_does_not_seed_unproven_ipv6_reservation(monkeypatc
 
 @pytest.mark.parametrize("lease_hook_replaced_seed", [False, True])
 def test_failed_authoritative_apply_removes_only_its_new_lease_seed(monkeypatch, tmp_path, lease_hook_replaced_seed):
-    """Rollback cannot publish a staged name or erase a later lease event."""
+    """Rollback cannot publish a staged name or erase a later lease event.
+
+    Args:
+        monkeypatch: Replace external behavior for this scenario.
+        tmp_path: Temporary directory for isolated test state.
+        lease_hook_replaced_seed: Whether a later lease event replaces the seed.
+    """
     helper = load_helper_module()
     state_dir = tmp_path / "dnsmasq"
     state_dir.mkdir()
@@ -11891,7 +11947,13 @@ def test_failed_authoritative_apply_removes_only_its_new_lease_seed(monkeypatch,
     ],
 )
 def test_failed_dns_apply_does_not_restore_stale_lease_mirror(monkeypatch, tmp_path, lease_after_change):
-    """A concurrent release, reassignment, or rename owns the missing mirror path."""
+    """A concurrent release, reassignment, or rename owns the missing mirror path.
+
+    Args:
+        monkeypatch: Replace external behavior for this scenario.
+        tmp_path: Temporary directory for isolated test state.
+        lease_after_change: Lease contents after the concurrent change.
+    """
     helper = load_helper_module()
     state_dir = tmp_path / "dnsmasq"
     hosts_dir = state_dir / "authoritative-leases"
@@ -11916,7 +11978,12 @@ def test_failed_dns_apply_does_not_restore_stale_lease_mirror(monkeypatch, tmp_p
 
 
 def test_recursive_transition_preserves_suppressed_lease_until_native_name(monkeypatch, tmp_path):
-    """A recursive restart must retain '*' names and retire them on renewal."""
+    """A recursive restart must retain '*' names and retire them on renewal.
+
+    Args:
+        monkeypatch: Replace external behavior for this scenario.
+        tmp_path: Temporary directory for isolated test state.
+    """
     helper = load_helper_module()
     state_dir = tmp_path / "dnsmasq"
     state_dir.mkdir()

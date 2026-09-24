@@ -4,7 +4,11 @@ from tests.routers.ui.helpers import login
 
 
 def test_settings_restore_preserves_current_host_apply_baselines(client):
-    """Desired-state imports must retain trusted applied-state evidence from this host."""
+    """Desired-state imports must retain trusted applied-state evidence from this host.
+
+    Args:
+        client: Isolated client for this scenario.
+    """
     from atlaso.app.database import SessionLocal
     from atlaso.app.services.settings_archive import (
         export_settings_archive,

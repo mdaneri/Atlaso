@@ -215,7 +215,12 @@ def test_dnsmasq_renderer_emits_shared_authoritative_zones_and_generated_glue():
 
 @pytest.mark.parametrize("configured_cache_size,expected_cache_size", [(0, 150), (500, 500)])
 def test_dnssec_renderer_keeps_required_cache(configured_cache_size, expected_cache_size):
-    """Recursive DNSSEC validation must retain enough cache."""
+    """Recursive DNSSEC validation must retain enough cache.
+
+    Args:
+        configured_cache_size: Configured DNS cache size.
+        expected_cache_size: Minimum effective DNS cache size.
+    """
     config = render_dnsmasq_config(
         dns_settings=DnsSettings(
             enabled=True,

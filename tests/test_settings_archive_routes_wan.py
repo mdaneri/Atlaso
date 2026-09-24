@@ -403,7 +403,11 @@ def test_restore_routes_wan_archive_rejects_dedicated_management_route(client):
 
 
 def test_restore_routes_wan_archive_accepts_addressed_route_role_targets(client):
-    """A saved physical and VLAN route target must survive settings backup restore."""
+    """A saved physical and VLAN route target must survive settings backup restore.
+
+    Args:
+        client: Isolated client for this scenario.
+    """
     with SessionLocal() as db_session:
         archive = deepcopy(export_settings_archive(db_session, actor="test"))
     physical = next(

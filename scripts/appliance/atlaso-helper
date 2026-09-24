@@ -3306,7 +3306,11 @@ def _prepare_authoritative_lease_hosts(
 
 @contextmanager
 def _restore_pruned_lease_hosts_on_failure(enabled: bool):
-    """Restore pruned mirrors and remove still-owned seeds after failed DNS Apply."""
+    """Restore pruned mirrors and remove still-owned seeds after failed DNS Apply.
+
+    Args:
+        enabled: Whether lease mirror rollback is active.
+    """
     previous: dict[Path, bytes] = {}
     seeded_inodes: dict[Path, tuple[int, int]] = {}
     if enabled:
@@ -3551,7 +3555,11 @@ def _reload_authoritative_lease_hosts() -> None:
 
 
 def _recursive_lease_mirrors_in_config(config_path: Path) -> bool:
-    """Return whether the recursive listener serves transition lease mirrors."""
+    """Return whether the recursive listener serves transition lease mirrors.
+
+    Args:
+        config_path: Path to the installed DNS configuration.
+    """
     return f"hostsdir={DNSMASQ_AUTHORITATIVE_LEASE_HOSTS_DIR}" in config_path.read_text(encoding="utf-8").splitlines()
 
 
@@ -26266,7 +26274,11 @@ def _restore_management_handoff_snapshot(item: dict) -> None:
 
 
 def _capture_management_handoff_lease_updates(state: dict) -> None:
-    """Durably retain changed existing mirrors before restoring their snapshots."""
+    """Durably retain changed existing mirrors before restoring their snapshots.
+
+    Args:
+        state: Current handoff or rollback state.
+    """
     if not state.get("dnsmasq_included") or "lease_mirror_updates" in state:
         return
     if not any(

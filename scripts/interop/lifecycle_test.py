@@ -876,7 +876,12 @@ def authenticated_ui_client(client: HttpClient, args: argparse.Namespace) -> Htt
 
 
 def reauthenticate_after_restore(client: HttpClient, args: argparse.Namespace) -> dict[str, str]:
-    """Replace browser and API credentials invalidated by settings restore."""
+    """Replace browser and API credentials invalidated by settings restore.
+
+    Args:
+        client: Active lifecycle HTTP client.
+        args: Lifecycle command arguments.
+    """
     client.cookie_jar.clear()
     client.bearer_token = ""
     api_login(client, args)
@@ -1769,7 +1774,11 @@ def configure_ca(client: HttpClient, args: argparse.Namespace) -> dict[str, Any]
 
 
 def prepare_vmware_ntp_clock(args: argparse.Namespace) -> dict[str, Any]:
-    """Give NTPsec sole control of the lifecycle appliance clock."""
+    """Give NTPsec sole control of the lifecycle appliance clock.
+
+    Args:
+        args: Lifecycle command arguments.
+    """
     result = ssh_command(
         args.appliance_ssh_host,
         args,
@@ -2020,7 +2029,13 @@ def configure_oidc_provider(client: HttpClient, args: argparse.Namespace) -> dic
 
 
 def verified_oidc_public_client(client: HttpClient, args: argparse.Namespace, provider: dict[str, Any]) -> HttpClient:
-    """Bind OIDC browser traffic to the selected site listener and applied CA."""
+    """Bind OIDC browser traffic to the selected site listener and applied CA.
+
+    Args:
+        client: Active lifecycle HTTP client.
+        args: Lifecycle command arguments.
+        provider: Configured OIDC provider state.
+    """
     site_address = str(ip_interface(args.site_cidr).ip)
     if site_address not in (provider.get("listen_addresses") or []):
         raise LifecycleError("The OIDC provider did not publish the selected site listener.")
@@ -2031,7 +2046,12 @@ def verified_oidc_public_client(client: HttpClient, args: argparse.Namespace, pr
 
 
 def oidc_site_listener_check(args: argparse.Namespace, provider: dict[str, Any]) -> dict[str, Any]:
-    """Verify the full lab's site-only OIDC listener from its site client."""
+    """Verify the full lab's site-only OIDC listener from its site client.
+
+    Args:
+        args: Lifecycle command arguments.
+        provider: Configured OIDC provider state.
+    """
     hostname = str(provider["hostname"])
     port = int(provider["port"])
     site_address = str(ip_interface(args.site_cidr).ip)
@@ -2296,6 +2316,11 @@ def web_terminal_check(client: HttpClient, args: argparse.Namespace) -> dict[str
         # actual public listener from its client, then exercise the same
         # terminal page and ticket contract on the reachable management plane.
         def probe_site(path: str) -> int:
+            """Probe site.
+
+            Args:
+                path: Site route to probe.
+            """
             command = (
                 "curl -ksS --connect-timeout 10 --max-time 30 "
                 f"--output /dev/null --write-out %{{http_code}} https://{site_address}{path}"

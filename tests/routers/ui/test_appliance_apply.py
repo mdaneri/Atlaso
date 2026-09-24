@@ -609,7 +609,12 @@ def test_local_dns_enable_applies_listener_before_host_resolver(client):
 
 @pytest.mark.parametrize("previous_apply", [False, True])
 def test_dns_activation_review_projects_local_resolver_for_existing_settings_row(client, previous_apply):
-    """Initial and independently changed Settings rows show the executed resolver preview."""
+    """Initial and independently changed Settings rows show the executed resolver preview.
+
+    Args:
+        client: Isolated client for this scenario.
+        previous_apply: Whether Appliance Settings was previously applied.
+    """
     from atlaso.app import ui
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import ApplianceSettings, DnsSettings, Job
@@ -696,7 +701,13 @@ def test_dns_change_keeps_unrelated_settings_pending_when_resolver_is_already_lo
 
 @pytest.mark.parametrize("ca_changed", [False, True])
 def test_management_https_applies_pending_ca_before_settings(client, monkeypatch, ca_changed):
-    """HTTPS activation installs its certificate even if CA preview is unchanged."""
+    """HTTPS activation installs its certificate even if CA preview is unchanged.
+
+    Args:
+        client: Isolated client for this scenario.
+        monkeypatch: Replace external behavior for this scenario.
+        ca_changed: Whether the CA unit has pending changes.
+    """
     from atlaso.app import ui
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import ApplianceSettings, CaSettings, Job
@@ -714,6 +725,13 @@ def test_management_https_applies_pending_ca_before_settings(client, monkeypatch
     real_units = ui.appliance_apply_units
 
     def units_with_pending_ca(db, *, reconcile=True, applying_dns=False):
+        """Units with pending ca.
+
+        Args:
+            db: Current database session.
+            reconcile: Whether to reconcile current inventory.
+            applying_dns: Whether DNS is included in the apply selection.
+        """
         units = real_units(db, reconcile=reconcile, applying_dns=applying_dns)
         next(unit for unit in units if unit["id"] == "ca")["changed"] = ca_changed
         return units
@@ -736,7 +754,12 @@ def test_management_https_applies_pending_ca_before_settings(client, monkeypatch
 
 
 def test_applied_https_does_not_reselect_unrelated_pending_ca(client, monkeypatch):
-    """A later Settings edit must honor an operator's unchecked CA row."""
+    """A later Settings edit must honor an operator's unchecked CA row.
+
+    Args:
+        client: Isolated client for this scenario.
+        monkeypatch: Replace external behavior for this scenario.
+    """
     from atlaso.app import ui
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import ApplianceSettings, CaSettings, Job
@@ -756,6 +779,13 @@ def test_applied_https_does_not_reselect_unrelated_pending_ca(client, monkeypatc
     real_units = ui.appliance_apply_units
 
     def units_with_pending_ca(db, *, reconcile=True, applying_dns=False):
+        """Units with pending ca.
+
+        Args:
+            db: Current database session.
+            reconcile: Whether to reconcile current inventory.
+            applying_dns: Whether DNS is included in the apply selection.
+        """
         units = real_units(db, reconcile=reconcile, applying_dns=applying_dns)
         ca_unit = next(unit for unit in units if unit["id"] == "ca")
         ca_preview = json.loads(ca_unit["config_preview"])
@@ -786,7 +816,12 @@ def test_applied_https_does_not_reselect_unrelated_pending_ca(client, monkeypatc
 
 
 def test_management_https_hostname_change_applies_new_ca_certificate_first(client, monkeypatch):
-    """An already-enabled HTTPS listener still needs its newly issued certificate installed first."""
+    """An already-enabled HTTPS listener still needs its newly issued certificate installed first.
+
+    Args:
+        client: Isolated client for this scenario.
+        monkeypatch: Replace external behavior for this scenario.
+    """
     from atlaso.app import ui
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import ApplianceSettings, CaSettings, Job
@@ -863,7 +898,11 @@ def test_local_dns_disable_forces_resolver_move_before_dns_stop(client):
 
 
 def test_local_dns_disable_retry_accepts_already_applied_external_resolver(client):
-    """A failed DNS step can retry after Settings committed the resolver move."""
+    """A failed DNS step can retry after Settings committed the resolver move.
+
+    Args:
+        client: Isolated client for this scenario.
+    """
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import DnsSettings, Job
     from atlaso.app.ui import appliance_apply_units, update_appliance_apply_baselines
@@ -2399,7 +2438,12 @@ def test_ntp_and_unrelated_dns_changes_keep_explicit_selection(
 
 
 def test_ntp_apply_does_not_select_manual_ptr_to_its_target(client, monkeypatch):
-    """A manual reverse owner stays outside NTP's generated DNS dependency."""
+    """A manual reverse owner stays outside NTP's generated DNS dependency.
+
+    Args:
+        client: Isolated client for this scenario.
+        monkeypatch: Replace external behavior for this scenario.
+    """
     from ipaddress import ip_address
 
     from sqlalchemy import select

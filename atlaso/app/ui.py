@@ -6883,11 +6883,20 @@ def ntp_owned_dns_is_only_pending_change(db: Session, dns_unit: dict[str, Any]) 
     prior_target = service_target_hostname(prior_hostname, "service") if prior_enabled and prior_hostname else ""
     prior_cname = f"cname={prior_hostname},{prior_target}" if prior_target else ""
     def rendered_directive(line: str) -> str:
-        """Unwrap a directive staged for the isolated authoritative backend."""
+        """Unwrap a directive staged for the isolated authoritative backend.
+
+        Args:
+            line: Staged DNS directive to render.
+        """
         return line.removeprefix("# atlaso-authoritative-config: ")
 
     def generated_ptr_lines(config_lines: set[str], target: str) -> set[str]:
-        """Match PTR owners derived from this service's A and AAAA records."""
+        """Match PTR owners derived from this service's A and AAAA records.
+
+        Args:
+            config_lines: Configured DNS directives to inspect.
+            target: Hostname whose PTR records are derived.
+        """
         ptr_lines = set()
         prefix = f"host-record={target},"
         for line in config_lines:

@@ -979,7 +979,11 @@ def test_dns_settings_autosave_returns_json(client):
 
 
 def test_dns_settings_rejects_authoritative_dnssec_before_apply(client):
-    """Show the incompatible combination in review and block its Apply."""
+    """Show the incompatible combination in review and block its Apply.
+
+    Args:
+        client: Isolated client for this scenario.
+    """
     login(client)
     page = client.get("/dns")
     csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]

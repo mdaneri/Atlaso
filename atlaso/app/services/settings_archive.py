@@ -1432,21 +1432,10 @@ def restore_settings_archive(db: Session, archive: dict[str, Any]) -> dict[str, 
     _validate_archive(prepared_archive)
     _validate_archive_database_relationships(db, prepared_archive["data"])
     from atlaso.app.services.network_boot import lock_esxi_host_reference_lifecycle
-    from atlaso.app.ui import (
-        load_appliance_apply_baselines,
-        save_appliance_apply_baselines,
-    )
-
     lock_esxi_host_reference_lifecycle(db)
-    # These baselines describe the current host's applied files, not the
-    # archive's desired state. Preserve only live host evidence; an imported
-    # archive must never claim that its settings were already applied here.
-    live_apply_baselines = deepcopy(load_appliance_apply_baselines(db))
     recovery_archives = db.execute(select(LdapRecoveryArchive)).scalars().all()
     try:
         counts = _restore_settings_archive_data(db, prepared_archive["data"])
-        if live_apply_baselines:
-            save_appliance_apply_baselines(db, live_apply_baselines)
         db.commit()
     except ValueError:
         db.rollback()
@@ -1736,11 +1725,13 @@ def _clear_desired_state(db: Session) -> None:
         statement = delete(model)
         if model is Setting:
             # Native helper history survives restore too. Keep this appliance's
-            # resolution and identity evidence; it is never exported or imported.
+            # resolution, identity, and applied-file evidence; none is exported
+            # or imported. An archive cannot transfer another host's baselines.
             # Remote VCF task provenance, reservations and consumed reviews are
             # local runtime state tied to retained Jobs, not archive desired state.
             statement = statement.where(
                 Setting.key != STATUS_KEY,
+                Setting.key != "appliance_apply.baselines.v1",
                 ~Setting.key.startswith("vcf_lab_", autoescape=True),
             )
         db.execute(statement)

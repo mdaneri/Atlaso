@@ -787,7 +787,12 @@ def test_focused_oidc_authorization_uses_public_listener_after_management_setup(
     [(["--oidc-only"], "core.atlaso.internal"), ([], "oidc.atlaso.internal")],
 )
 def test_oidc_provider_sets_access_listener_before_enabling(mode, expected_hostname):
-    """Provider setup must send a distinct full-lifecycle name and addressed listener."""
+    """Provider setup must send a distinct full-lifecycle name and addressed listener.
+
+    Args:
+        mode: Lifecycle mode under test.
+        expected_hostname: Expected site hostname.
+    """
     lifecycle = load_lifecycle_module()
     submitted = {}
 
@@ -831,13 +836,25 @@ def test_oidc_provider_sets_access_listener_before_enabling(mode, expected_hostn
 
 
 def test_full_oidc_site_listener_uses_client_and_verifies_ca(monkeypatch):
-    """The full lab must probe the site-only listener from its reachable client."""
+    """The full lab must probe the site-only listener from its reachable client.
+
+    Args:
+        monkeypatch: Replace external behavior for this scenario.
+    """
     lifecycle = load_lifecycle_module()
     args = lifecycle.parse_args(["--password", "test", "--site-cidr", "192.168.12.1/24"])
     args.client_a_host = "192.0.2.10"
     calls = []
 
     def fake_ssh_command(host, _args, command, *, role):
+        """Fake ssh command.
+
+        Args:
+            host: Host selected for the simulated SSH command.
+            _args: Unused lifecycle arguments accepted by the fake.
+            command: Command issued by the scenario.
+            role: Role selected for the simulated SSH command.
+        """
         calls.append((host, command, role))
         return {"returncode": 0, "stdout": "200", "stderr": ""}
 
@@ -860,7 +877,12 @@ def test_full_oidc_site_listener_uses_client_and_verifies_ca(monkeypatch):
 
 @pytest.mark.parametrize("server_ready", [False, True])
 def test_ntp_client_check_waits_for_synchronized_server(monkeypatch, server_ready):
-    """Do not judge client NTS/NTP while a new server advertises leap_alarm."""
+    """Do not judge client NTS/NTP while a new server advertises leap_alarm.
+
+    Args:
+        monkeypatch: Replace external behavior for this scenario.
+        server_ready: Whether the NTP server reports synchronization.
+    """
     lifecycle = load_lifecycle_module()
     args = lifecycle.parse_args([
         "--password", "test", "--client-a-host", "192.0.2.11", "--appliance-ssh-host", "192.0.2.10",
@@ -868,12 +890,28 @@ def test_ntp_client_check_waits_for_synchronized_server(monkeypatch, server_read
     calls = []
 
     def fake_wait(host, _args, command, **kwargs):
+        """Fake wait.
+
+        Args:
+            host: Host selected for the simulated SSH command.
+            _args: Unused lifecycle arguments accepted by the fake.
+            command: Command issued by the scenario.
+            **kwargs: Additional request arguments accepted by the fake.
+        """
         calls.append(("wait", host, command, kwargs))
         if not server_ready:
             raise lifecycle.LifecycleError("appliance NTP synchronization failed")
         return {"attempts": 3}
 
     def fake_ssh(host, _args, command, *, role):
+        """Fake ssh.
+
+        Args:
+            host: Host selected for the simulated SSH command.
+            _args: Unused lifecycle arguments accepted by the fake.
+            command: Command issued by the scenario.
+            role: Role selected for the simulated SSH command.
+        """
         calls.append(("client", host, command, role))
         return {"returncode": 0, "stdout": "", "stderr": ""}
 
@@ -896,12 +934,27 @@ def test_ntp_client_check_waits_for_synchronized_server(monkeypatch, server_read
     [(0, "Disabled\n", True), (0, "Enabled\n", False), (1, "Disabled\n", False)],
 )
 def test_lifecycle_disables_vmware_clock_sync_before_ntp(monkeypatch, returncode, output, accepted):
-    """The VMware lab must not leave Tools competing with NTPsec."""
+    """The VMware lab must not leave Tools competing with NTPsec.
+
+    Args:
+        monkeypatch: Replace external behavior for this scenario.
+        returncode: Simulated VMware command exit status.
+        output: Simulated VMware command output.
+        accepted: Whether the simulated result should be accepted.
+    """
     lifecycle = load_lifecycle_module()
     args = lifecycle.parse_args(["--password", "test", "--appliance-ssh-host", "192.0.2.10"])
     calls = []
 
     def fake_ssh(host, _args, command, *, role):
+        """Fake ssh.
+
+        Args:
+            host: Host selected for the simulated SSH command.
+            _args: Unused lifecycle arguments accepted by the fake.
+            command: Command issued by the scenario.
+            role: Role selected for the simulated SSH command.
+        """
         calls.append((host, command, role))
         return {"returncode": returncode, "stdout": output, "stderr": ""}
 
@@ -1012,12 +1065,23 @@ def test_web_terminal_check_probes_canonical_browser_planes(monkeypatch):
 
 
 def test_web_terminal_check_uses_site_client_on_isolated_lab(monkeypatch):
-    """The full lab checks site routing from Client A without a Windows host route."""
+    """The full lab checks site routing from Client A without a Windows host route.
+
+    Args:
+        monkeypatch: Replace external behavior for this scenario.
+    """
     lifecycle = load_lifecycle_module()
     commands = []
 
     class ManagementClient:
         def request(self, method, path, **_kwargs):
+            """Request.
+
+            Args:
+                method: HTTP method issued by the probe.
+                path: Site route to probe.
+                **_kwargs: Unused request arguments accepted by the fake.
+            """
             if (method, path) == ("GET", "/ui/management/terminal"):
                 return 200, '<main data-terminal-available="true" data-csrf="csrf-323"></main>', {}
             if (method, path) == ("GET", "/ui/public/terminal"):
@@ -1029,6 +1093,14 @@ def test_web_terminal_check_uses_site_client_on_isolated_lab(monkeypatch):
             raise AssertionError((method, path))
 
     def fake_ssh_command(host, _args, command, *, role):
+        """Fake ssh command.
+
+        Args:
+            host: Host selected for the simulated SSH command.
+            _args: Unused lifecycle arguments accepted by the fake.
+            command: Command issued by the scenario.
+            role: Role selected for the simulated SSH command.
+        """
         commands.append((host, command, role))
         if role == "appliance":
             return {"returncode": 0, "stdout": '{"enabled": true, "ca_public_key": "web-terminal-ca.pub"}', "stderr": ""}
@@ -1476,6 +1548,12 @@ def test_managed_ldap_lifecycle_check_sends_directory_password_only_through_stdi
     captured = {}
 
     def fake_run(command, **kwargs):
+        """Fake run.
+
+        Args:
+            command: Command issued by the scenario.
+            **kwargs: Additional request arguments accepted by the fake.
+        """
         captured["command"] = command
         captured["input"] = kwargs["input"]
         return subprocess.CompletedProcess(command, 0, b'{"helper":"atlaso-helper","action":"authenticate"}\n', b"")
@@ -1645,7 +1723,11 @@ def test_restored_esxi_lifecycle_recreates_vault_secret_before_apply(monkeypatch
 
 
 def test_reauthenticate_after_restore_replaces_revoked_credentials(monkeypatch):
-    """A restored archive requires a fresh browser session and API token."""
+    """A restored archive requires a fresh browser session and API token.
+
+    Args:
+        monkeypatch: Replace external behavior for this scenario.
+    """
     lifecycle = load_lifecycle_module()
     calls = []
 
@@ -1656,12 +1738,24 @@ def test_reauthenticate_after_restore_replaces_revoked_credentials(monkeypatch):
     client = argparse.Namespace(cookie_jar=CookieJar(), bearer_token="old-token")
 
     def fake_api_login(selected_client, _args):
+        """Fake api login.
+
+        Args:
+            selected_client: Client selected for the simulated login.
+            _args: Unused lifecycle arguments accepted by the fake.
+        """
         assert selected_client is client
         assert selected_client.bearer_token == ""
         calls.append("api")
         selected_client.bearer_token = "new-token"
 
     def fake_ui_login(selected_client, _args):
+        """Fake ui login.
+
+        Args:
+            selected_client: Client selected for the simulated login.
+            _args: Unused lifecycle arguments accepted by the fake.
+        """
         assert selected_client is client
         assert selected_client.bearer_token == "new-token"
         calls.append("browser")
@@ -1676,12 +1770,24 @@ def test_reauthenticate_after_restore_replaces_revoked_credentials(monkeypatch):
 
 
 def test_full_lifecycle_selects_resolver_settings_with_initial_dns_apply(monkeypatch):
-    """The first DNS Apply must include resolver consent and changed CA listeners."""
+    """The first DNS Apply must include resolver consent and changed CA listeners.
+
+    Args:
+        monkeypatch: Replace external behavior for this scenario.
+    """
     lifecycle = load_lifecycle_module()
     args = lifecycle.parse_args(["--secret-stdin"])
     calls = []
 
     def fake_run_step(_results, name, _operation, *operation_args):
+        """Fake run step.
+
+        Args:
+            _results: Unused result collection accepted by the fake.
+            name: Lifecycle step name.
+            _operation: Unused operation accepted by the fake.
+            *operation_args: Operation arguments captured by the fake.
+        """
         calls.append((name, operation_args))
         return {}
 
@@ -1705,12 +1811,24 @@ def test_full_lifecycle_selects_resolver_settings_with_initial_dns_apply(monkeyp
 
 
 def test_full_lifecycle_skips_oidc_site_probe_without_client_checks(monkeypatch):
-    """No-client mode must not rely on a site client or its installed CA root."""
+    """No-client mode must not rely on a site client or its installed CA root.
+
+    Args:
+        monkeypatch: Replace external behavior for this scenario.
+    """
     lifecycle = load_lifecycle_module()
     args = lifecycle.parse_args(["--secret-stdin", "--skip-client-checks"])
     calls = []
 
     def fake_run_step(_results, name, _operation, *_operation_args):
+        """Fake run step.
+
+        Args:
+            _results: Unused result collection accepted by the fake.
+            name: Lifecycle step name.
+            _operation: Unused operation accepted by the fake.
+            *_operation_args: Unused operation arguments accepted by the fake.
+        """
         calls.append(name)
         return {}
 
@@ -1723,7 +1841,12 @@ def test_full_lifecycle_skips_oidc_site_probe_without_client_checks(monkeypatch)
 
 
 def test_restored_lifecycle_skips_terminal_site_probe_without_client_checks(monkeypatch, tmp_path):
-    """Restored no-client mode must not require the isolated Client A VM."""
+    """Restored no-client mode must not require the isolated Client A VM.
+
+    Args:
+        monkeypatch: Replace external behavior for this scenario.
+        tmp_path: Temporary directory for isolated test state.
+    """
     lifecycle = load_lifecycle_module()
     args = lifecycle.parse_args(
         ["--secret-stdin", "--skip-client-checks", "--client-a-host", "192.0.2.11", "--restore-settings-backup", str(tmp_path / "backup.json")]
