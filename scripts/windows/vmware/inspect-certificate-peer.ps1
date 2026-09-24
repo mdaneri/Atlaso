@@ -39,10 +39,46 @@ if (-not (Test-Path -LiteralPath $PythonPath -PathType Leaf) -or
 }
 $env:TEMP = $evidenceRoot
 $env:TMP = $evidenceRoot
-Import-Module (Join-Path $PSScriptRoot 'Atlaso.OnePasswordCredentials.psm1') -Force
-. (Join-Path $PSScriptRoot 'Atlaso.WorkstationFirstBoot.ps1')
-Import-Module (Join-Path $PSScriptRoot 'Atlaso.SourceSnapshot.psm1') -Force
 $planIdentity = Get-Content -LiteralPath $Plan -Raw | ConvertFrom-Json
+$sourceCommit = [string]$planIdentity.source_commit
+if ($sourceCommit -notmatch '^[0-9a-f]{40}$' -or
+    ([string](& git -C $repoRoot rev-parse --verify 'HEAD^{commit}')).Trim() -cne $sourceCommit) {
+    throw 'Certificate peer proof source commit differs from its plan.'
+}
+$helperPins = [Collections.Generic.List[IDisposable]]::new()
+try {
+    # Pin every helper and transitive import before executing any of their
+    # definitions. Raw Git blob identity refuses a transient altered module
+    # even when a later clean-checkout test would see restored bytes.
+    foreach ($relative in @(
+            'scripts/windows/vmware/Atlaso.OnePasswordCredentials.psm1',
+            'scripts/windows/vmware/Invoke-AtlasoOnePasswordCredentials.ps1',
+            'scripts/windows/vmware/Atlaso.WorkstationFirstBoot.ps1',
+            'scripts/windows/vmware/Atlaso.SourceSnapshot.psm1',
+            'scripts/windows/vmware/Atlaso.WorkstationCleanup.psm1',
+            'scripts/windows/vmware/Atlaso.WorkstationLanSegments.ps1'
+        )) {
+        $path = Join-Path $repoRoot $relative
+        $item = Get-Item -LiteralPath $path -Force -ErrorAction Stop
+        if ($item.PSIsContainer -or ($item.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+            throw 'Certificate helper source is not an ordinary file.'
+        }
+        $helperPins.Add([IO.FileStream]::new($path, [IO.FileMode]::Open,
+                [IO.FileAccess]::Read, [IO.FileShare]::Read))
+        $expected = ([string](& git -C $repoRoot rev-parse --verify "${sourceCommit}:$relative")).Trim()
+        $actual = ([string](& git hash-object --no-filters -- $path)).Trim()
+        if ($LASTEXITCODE -ne 0 -or $expected -notmatch '^[0-9a-f]{40}$' -or $actual -cne $expected) {
+            throw 'Certificate helper bytes differ from the admitted source commit.'
+        }
+    }
+    Import-Module (Join-Path $PSScriptRoot 'Atlaso.WorkstationCleanup.psm1') -Force
+    $helperPins.Add([Atlaso.WorkstationFileIdentity]::PinOrdinaryDirectoryPath($PSScriptRoot))
+    Import-Module (Join-Path $PSScriptRoot 'Atlaso.OnePasswordCredentials.psm1') -Force
+    . (Join-Path $PSScriptRoot 'Atlaso.WorkstationFirstBoot.ps1')
+    Import-Module (Join-Path $PSScriptRoot 'Atlaso.SourceSnapshot.psm1') -Force
+    if (([string](& git -C $repoRoot rev-parse --verify 'HEAD^{commit}')).Trim() -cne $sourceCommit) {
+        throw 'Certificate helper source commit changed during import.'
+    }
 $snapshot = New-AtlasoCertificateInspectorSnapshot -RepositoryRoot $repoRoot -EvidenceRoot $evidenceRoot `
     -SourceCommit ([string]$planIdentity.source_commit) -TaskId ([string]$planIdentity.task_id)
 try {
@@ -72,4 +108,7 @@ try {
     }
 } finally {
     foreach ($pin in $snapshot.Pins) { $pin.Dispose() }
+}
+} finally {
+    foreach ($pin in $helperPins) { $pin.Dispose() }
 }
