@@ -183,6 +183,7 @@ def test_original_peer_identity_rejects_changed_endpoint_before_network(
     monkeypatch.setattr(proof, "original_vm", lambda plan, role, vmx: {"source_commit": "a" * 40})
     monkeypatch.setattr(proof, "file_digest", lambda path: "d" * 64)
     from scripts.completed_task_files import WindowsFiles
+    monkeypatch.setattr(WindowsFiles, "__init__", lambda self: None)
     monkeypatch.setattr(WindowsFiles, "mutable_file_identity", lambda self, path: fixture["client_vmdk_copy_identity"])
     monkeypatch.setattr(proof, "vmx_adapter", lambda path, index: (
         {"connectiontype": "custom", "vnet": "VMnet8"} if index == 0 and path == "peer.vmx"
