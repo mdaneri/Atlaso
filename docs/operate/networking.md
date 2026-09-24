@@ -362,8 +362,9 @@ baseline; a later edit remains pending until the next Apply. When the route targ
 listener, also confirm `ip route show default` (or `ip -6 route show default`) names the same gateway and interface, and
 that `atlaso-wan.service` is enabled for reboot replay.
 
-HTTPS management handoffs check the staged certificate against every acquired IPv4 and IPv6 address before
-publishing the candidate listener and check the addresses again after the final network reconfigure. A new DHCP or
+HTTPS management handoffs check the staged certificate against configured and acquired candidate IPv4/IPv6 addresses
+before publishing the candidate listener. An old-only address retained during the transition stays on its snapshotted
+old TLS certificate; after final network reconfigure, every still-assigned address enters the candidate check. A new DHCP or
 SLAAC address missing from the certificate fails at the certificate
 prerequisite and restores the previous applied path. Automatic certificate issuance for a newly acquired address is
 not part of this transaction; restore the static address or use a DHCP reservation covered by the managed certificate
