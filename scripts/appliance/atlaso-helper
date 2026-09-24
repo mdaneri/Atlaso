@@ -26334,23 +26334,34 @@ def _transition_route_rows(name: str, family: int, table: int) -> list[dict]:
     """
     if not _valid_network_interface_name(name) or family not in {4, 6} or table not in {100, 200}:
         raise ValueError("invalid transition route observation")
-    # An empty numeric table can make `ip route show table N` exit nonzero on
-    # the appliance. Observe all tables and select this exact one instead.
-    result = _network_observation_command(
-        ["ip", "-j", f"-{family}", "route", "show", "table", "all", "dev", name]
-    )
-    if result.returncode:
-        raise ValueError("transition routing-domain routes could not be observed")
+    # The table selector proves ownership even when iproute2 omits `table` in
+    # the returned JSON. An as-yet empty numeric table can instead exit 2, so
+    # use the all-table inventory only to establish that no explicit entry for
+    # the numeric table exists before the first seed.
+    command = ["ip", "-j", f"-{family}", "route", "show", "table", str(table), "dev", name]
+    result = _network_observation_command(command)
+    missing_table = bool(result.returncode)
+    if missing_table:
+        result = _network_observation_command(
+            ["ip", "-j", f"-{family}", "route", "show", "table", "all", "dev", name]
+        )
+        if result.returncode:
+            raise ValueError("transition routing-domain routes could not be observed")
     try:
         rows = json.loads(result.stdout)
     except json.JSONDecodeError as exc:
         raise ValueError("transition routing-domain routes are malformed") from exc
     if not isinstance(rows, list) or len(rows) > 4096 or any(not isinstance(row, dict) for row in rows):
         raise ValueError("transition routing-domain routes are malformed")
-    # The dev selector is authoritative even when iproute2 omits it in JSON.
-    return [{**row, "dev": row.get("dev", name)} for row in rows
-            if str(row.get("table", "main")) == str(table)
-            and row.get("dev", name) == name]
+    if missing_table:
+        if any(str(row.get("table", "main")) == str(table) for row in rows):
+            raise ValueError("transition routing-domain table read is inconsistent")
+        return []
+    if any(row.get("dev", name) != name or str(row.get("table", table)) != str(table)
+           for row in rows):
+        raise ValueError("transition routing-domain route owner is inconsistent")
+    # Both fields are bound by the selector, including when JSON omits them.
+    return [{**row, "dev": name, "table": table} for row in rows]
 
 
 def _transition_route_command(action: str, row: dict) -> list[str]:
