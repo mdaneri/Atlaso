@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import argparse
+import base64
 import importlib.util
 import io
 import json
 import ssl
+import subprocess
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -365,7 +367,7 @@ def test_appliance_console_geometry_requires_deployed_framebuffer_and_tty1(monke
         commands.append(command)
         return {
             "returncode": 0,
-            "stdout": "framebuffer=1280,800\nconsole=50 160\n",
+            "stdout": "1280,800\n50 160\n",
             "stderr": "",
             "command": "redacted",
         }
@@ -378,10 +380,111 @@ def test_appliance_console_geometry_requires_deployed_framebuffer_and_tty1(monke
 
     assert "/sys/class/graphics/fb0/virtual_size" in commands[0]
     assert "stty -F /dev/tty1 size" in commands[0]
-    assert "test \"$framebuffer\" = '1280,800'" in commands[0]
-    assert "test \"$console\" = '50 160'" in commands[0]
+    assert "printf" not in commands[0]
     assert evidence["framebuffer_virtual_size"] == "1280,800"
     assert evidence["tty1_rows_columns"] == "50 160"
+
+    def wrong_geometry(host, command_args, command, *, role):  # type: ignore[no-untyped-def]  # Fake mirrors the lifecycle SSH helper.
+        """Return a healthy command with the wrong tty1 dimensions.
+
+        Args:
+            host: Appliance host selected by the lifecycle test.
+            command_args: Parsed lifecycle command arguments.
+            command: Remote shell command issued by the check.
+            role: Lifecycle SSH role used for the command.
+        """
+        assert host and command_args and command and role
+        return {"returncode": 0, "stdout": "1280,800\n48 160\n", "stderr": "", "command": "redacted"}
+
+    monkeypatch.setattr(lifecycle, "ssh_command", wrong_geometry)
+    with pytest.raises(lifecycle.LifecycleError, match="console geometry did not match"):
+        lifecycle.appliance_console_geometry(argparse.Namespace(appliance_ssh_host="192.0.2.10"))
+
+
+def test_authentication_lifetime_uses_appliance_issuance_clock(monkeypatch):
+    """Verify token policy from server timestamps when host and appliance clocks differ.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace lifecycle dependencies.
+    """
+    lifecycle = load_lifecycle_module()
+    policy = {"browser_session_idle_timeout_minutes": 30, "api_token_max_lifetime_days": 90}
+
+    class PolicyClient:
+        """Serve policy reads and immediate autosave writes."""
+
+        def json_request(self, method, path):  # type: ignore[no-untyped-def]  # Fake mirrors the lifecycle HTTP client.
+            """Return the currently persisted policy.
+
+            Args:
+                method: HTTP method requested by the lifecycle check.
+                path: API path requested by the lifecycle check.
+            """
+            assert method == "GET" and path == "/api/v1/settings"
+            return policy.copy()
+
+        def request(self, method, path, *, form=None, headers=None):  # type: ignore[no-untyped-def]  # Fake mirrors the lifecycle HTTP client.
+            """Serve the settings page and autosave endpoint.
+
+            Args:
+                method: HTTP method requested by the lifecycle check.
+                path: UI path requested by the lifecycle check.
+                form: Submitted settings values, when present.
+                headers: Request headers, when present.
+            """
+            if method == "GET":
+                assert path == "/settings"
+                return 200, "settings", {}
+            assert method == "POST" and path == "/settings/authentication-lifetimes"
+            assert form and headers == {"X-Atlaso-Autosave": "1"}
+            policy["browser_session_idle_timeout_minutes"] = form["browser_session_idle_timeout_minutes"]
+            policy["api_token_max_lifetime_days"] = form["api_token_max_lifetime_days"]
+            return 200, "saved", {}
+
+    class IssuanceClient:
+        """Serve a seven-day token issued by an appliance clock one day ahead."""
+
+        def __init__(self, base_url):  # type: ignore[no-untyped-def]  # Fake mirrors the lifecycle HTTP client.
+            """Retain the selected appliance URL.
+
+            Args:
+                base_url: Appliance URL selected by the lifecycle check.
+            """
+            assert base_url == "https://192.0.2.10"
+
+        def json_request(self, method, path, *, json_body):  # type: ignore[no-untyped-def]  # Fake mirrors the lifecycle HTTP client.
+            """Return server-side creation and expiration timestamps.
+
+            Args:
+                method: HTTP method requested by the lifecycle check.
+                path: API path requested by the lifecycle check.
+                json_body: Login request payload.
+            """
+            assert method == "POST" and path.startswith("/api/v1/auth/login?")
+            assert json_body["scopes"] == ["read:dashboard"]
+            return {"token": {"created_at": "2026-09-23T00:00:00+00:00", "expires_at": "2026-09-30T00:00:00+00:00"}}
+
+        def request(self, method, path, *, json_body):  # type: ignore[no-untyped-def]  # Fake mirrors the lifecycle HTTP client.
+            """Reject an explicit expiry beyond the seven-day policy.
+
+            Args:
+                method: HTTP method requested by the lifecycle check.
+                path: API path requested by the lifecycle check.
+                json_body: Login request payload.
+            """
+            assert method == "POST" and path.startswith("/api/v1/auth/login?")
+            assert json_body["expires_at"] == "2026-10-01T00:00:00+00:00"
+            return 422, "configured maximum lifetime of 7 days", {}
+
+    monkeypatch.setattr(lifecycle, "authenticated_ui_client", lambda client, args: PolicyClient())
+    monkeypatch.setattr(lifecycle, "extract_csrf", lambda page: "csrf")
+    monkeypatch.setattr(lifecycle, "HttpClient", IssuanceClient)
+    evidence = lifecycle.authentication_lifetime_policy_check(
+        argparse.Namespace(base_url="https://192.0.2.10", username="admin", password="test"),
+        argparse.Namespace(username="admin", password="test"),
+    )
+    assert evidence["issued_lifetime_seconds"] == 7 * 24 * 60 * 60
+    assert policy == {"browser_session_idle_timeout_minutes": 30, "api_token_max_lifetime_days": 90}
 
 
 def test_reboot_appliance_waits_for_new_boot_and_host_facing_readiness(monkeypatch):
@@ -640,8 +743,9 @@ def test_focused_oidc_authorization_uses_public_listener_after_management_setup(
             if (method, path) == ("POST", "/api/v1/oidc/group-mappings"):
                 return {}
             if (method, path) == ("GET", "/api/v1/oidc/provider"):
-                return {"port": 443}
+                return {"port": 443, "hostname": "core.atlaso.internal"}
             if (method, path) == ("PUT", "/api/v1/oidc/provider"):
+                assert _kwargs["json_body"]["issuer_url"] == "https://core.atlaso.internal/identity"
                 return {"enabled": True, "valid": True}
             raise AssertionError((method, path))
 
@@ -678,8 +782,17 @@ def test_focused_oidc_authorization_uses_public_listener_after_management_setup(
         )
 
 
-def test_focused_oidc_provider_sets_access_listener_before_enabling():
-    """Provider setup must send an addressed listener to the certificate reconciliation flow."""
+@pytest.mark.parametrize(
+    ("mode", "expected_hostname"),
+    [(["--oidc-only"], "core.atlaso.internal"), ([], "oidc.atlaso.internal")],
+)
+def test_oidc_provider_sets_access_listener_before_enabling(mode, expected_hostname):
+    """Provider setup must send a distinct full-lifecycle name and addressed listener.
+
+    Args:
+        mode: Lifecycle mode under test.
+        expected_hostname: Expected site hostname.
+    """
     lifecycle = load_lifecycle_module()
     submitted = {}
 
@@ -710,16 +823,148 @@ def test_focused_oidc_provider_sets_access_listener_before_enabling():
                 return 200, '<input name="csrf" value="test-token">', {}
             assert path == "/authentication/oidc/provider"
             submitted.update(kwargs["form"])
-            return 200, json.dumps({"enabled": True, "valid": True, "hostname": "core.atlaso.internal", "listen_addresses": ["192.0.2.1"]}), {}
+            return 200, json.dumps({"enabled": True, "valid": True, "hostname": expected_hostname, "listen_addresses": ["192.0.2.1"]}), {}
 
     result = lifecycle.configure_oidc_provider(
-        Client(), lifecycle.parse_args(["--password", "test", "--oidc-only", "--site-interface", "eth1"])
+        Client(), lifecycle.parse_args(["--password", "test", *mode, "--site-interface", "eth1"])
     )
     assert result["enabled"] is True
     assert result["port"] == 443
     assert submitted["listen_interfaces"] == ["eth1"]
-    assert submitted["hostname"] == "core.atlaso.internal"
+    assert submitted["hostname"] == expected_hostname
     assert submitted["csrf"] == "test-token"
+
+
+def test_full_oidc_site_listener_uses_client_and_verifies_ca(monkeypatch):
+    """The full lab must probe the site-only listener from its reachable client.
+
+    Args:
+        monkeypatch: Replace external behavior for this scenario.
+    """
+    lifecycle = load_lifecycle_module()
+    args = lifecycle.parse_args(["--password", "test", "--site-cidr", "192.168.12.1/24"])
+    args.client_a_host = "192.0.2.10"
+    calls = []
+
+    def fake_ssh_command(host, _args, command, *, role):
+        """Fake ssh command.
+
+        Args:
+            host: Host selected for the simulated SSH command.
+            _args: Unused lifecycle arguments accepted by the fake.
+            command: Command issued by the scenario.
+            role: Role selected for the simulated SSH command.
+        """
+        calls.append((host, command, role))
+        return {"returncode": 0, "stdout": "200", "stderr": ""}
+
+    monkeypatch.setattr(lifecycle, "ssh_command", fake_ssh_command)
+    result = lifecycle.oidc_site_listener_check(
+        args,
+        {"hostname": "oidc.atlaso.internal", "port": 443, "listen_addresses": ["192.168.12.1"]},
+    )
+
+    assert result == {"site_address": "192.168.12.1", "http_status": 200, "tls_verified": True}
+    assert calls[0][0] == args.client_a_host
+    assert calls[0][2] == "client"
+    assert "--cacert /tmp/atlaso-root-ca.pem" in calls[0][1]
+    assert "dig +short A oidc.atlaso.internal @192.168.12.1" in calls[0][1]
+    assert "grep -qFx 192.168.12.1" in calls[0][1]
+    assert "--resolve" not in calls[0][1]
+    assert "https://oidc.atlaso.internal:443/identity/.well-known/openid-configuration" in calls[0][1]
+    assert " -k" not in calls[0][1]
+
+
+@pytest.mark.parametrize("server_ready", [False, True])
+def test_ntp_client_check_waits_for_synchronized_server(monkeypatch, server_ready):
+    """Do not judge client NTS/NTP while a new server advertises leap_alarm.
+
+    Args:
+        monkeypatch: Replace external behavior for this scenario.
+        server_ready: Whether the NTP server reports synchronization.
+    """
+    lifecycle = load_lifecycle_module()
+    args = lifecycle.parse_args([
+        "--password", "test", "--client-a-host", "192.0.2.11", "--appliance-ssh-host", "192.0.2.10",
+    ])
+    calls = []
+
+    def fake_wait(host, _args, command, **kwargs):
+        """Fake wait.
+
+        Args:
+            host: Host selected for the simulated SSH command.
+            _args: Unused lifecycle arguments accepted by the fake.
+            command: Command issued by the scenario.
+            **kwargs: Additional request arguments accepted by the fake.
+        """
+        calls.append(("wait", host, command, kwargs))
+        if not server_ready:
+            raise lifecycle.LifecycleError("appliance NTP synchronization failed")
+        return {"attempts": 3}
+
+    def fake_ssh(host, _args, command, *, role):
+        """Fake ssh.
+
+        Args:
+            host: Host selected for the simulated SSH command.
+            _args: Unused lifecycle arguments accepted by the fake.
+            command: Command issued by the scenario.
+            role: Role selected for the simulated SSH command.
+        """
+        calls.append(("client", host, command, role))
+        return {"returncode": 0, "stdout": "", "stderr": ""}
+
+    monkeypatch.setattr(lifecycle, "ssh_until_success", fake_wait)
+    monkeypatch.setattr(lifecycle, "ssh_command", fake_ssh)
+    if server_ready:
+        evidence = lifecycle.ntp_client_checks(args)
+        assert evidence["server_synchronization_attempts"] == 3
+        assert calls[1][0] == "client"
+    else:
+        with pytest.raises(lifecycle.LifecycleError, match="synchronization"):
+            lifecycle.ntp_client_checks(args)
+        assert len(calls) == 1
+    assert calls[0][0:3] == ("wait", args.appliance_ssh_host, "ntpq -c rv | grep -q leap=00")
+    assert calls[0][3]["timeout_seconds"] == 600
+
+
+@pytest.mark.parametrize(
+    ("returncode", "output", "accepted"),
+    [(0, "Disabled\n", True), (0, "Enabled\n", False), (1, "Disabled\n", False)],
+)
+def test_lifecycle_disables_vmware_clock_sync_before_ntp(monkeypatch, returncode, output, accepted):
+    """The VMware lab must not leave Tools competing with NTPsec.
+
+    Args:
+        monkeypatch: Replace external behavior for this scenario.
+        returncode: Simulated VMware command exit status.
+        output: Simulated VMware command output.
+        accepted: Whether the simulated result should be accepted.
+    """
+    lifecycle = load_lifecycle_module()
+    args = lifecycle.parse_args(["--password", "test", "--appliance-ssh-host", "192.0.2.10"])
+    calls = []
+
+    def fake_ssh(host, _args, command, *, role):
+        """Fake ssh.
+
+        Args:
+            host: Host selected for the simulated SSH command.
+            _args: Unused lifecycle arguments accepted by the fake.
+            command: Command issued by the scenario.
+            role: Role selected for the simulated SSH command.
+        """
+        calls.append((host, command, role))
+        return {"returncode": returncode, "stdout": output, "stderr": ""}
+
+    monkeypatch.setattr(lifecycle, "ssh_command", fake_ssh)
+    if accepted:
+        assert lifecycle.prepare_vmware_ntp_clock(args) == {"vmware_tools_time_sync": "disabled"}
+    else:
+        with pytest.raises(lifecycle.LifecycleError):
+            lifecycle.prepare_vmware_ntp_clock(args)
+    assert calls == [(args.appliance_ssh_host, "sudo -n vmware-toolbox-cmd timesync disable", "appliance")]
 
 
 def test_full_lifecycle_plan_includes_passwordless_web_terminal_acceptance():
@@ -781,7 +1026,8 @@ def test_web_terminal_check_probes_canonical_browser_planes(monkeypatch):
             if method == "GET" and path == "/ui/public/terminal":
                 return 200, '<main data-terminal-available="true" data-csrf="csrf-323"></main>', {}
             if method == "POST" and path == "/terminal/tickets":
-                assert kwargs["form"] == {"csrf": "csrf-323"}
+                assert kwargs["form"]["csrf"] == "csrf-323"
+                assert 16 <= len(kwargs["form"]["browser_session_id"]) <= 80
                 return 200, '{"websocket_path": "/terminal/ws", "ticket": "ticket-323"}', {}
             if method == "GET" and path == "/ui/management/dashboard":
                 assert kwargs["follow_redirects"] is False
@@ -816,6 +1062,67 @@ def test_web_terminal_check_probes_canonical_browser_planes(monkeypatch):
     assert ("GET", "/ui/public/terminal", None) in calls
     assert ("GET", "/ui/management/dashboard", False) in calls
     assert ("POST", "/terminal/tickets", None) in calls
+
+
+def test_web_terminal_check_uses_site_client_on_isolated_lab(monkeypatch):
+    """The full lab checks site routing from Client A without a Windows host route.
+
+    Args:
+        monkeypatch: Replace external behavior for this scenario.
+    """
+    lifecycle = load_lifecycle_module()
+    commands = []
+
+    class ManagementClient:
+        def request(self, method, path, **_kwargs):
+            """Request.
+
+            Args:
+                method: HTTP method issued by the probe.
+                path: Site route to probe.
+                **_kwargs: Unused request arguments accepted by the fake.
+            """
+            if (method, path) == ("GET", "/ui/management/terminal"):
+                return 200, '<main data-terminal-available="true" data-csrf="csrf-323"></main>', {}
+            if (method, path) == ("GET", "/ui/public/terminal"):
+                return 404, 'not found', {}
+            if (method, path) == ("POST", "/terminal/tickets"):
+                assert _kwargs["form"]["csrf"] == "csrf-323"
+                assert 16 <= len(_kwargs["form"]["browser_session_id"]) <= 80
+                return 200, '{"websocket_path": "/terminal/ws", "ticket": "ticket-323"}', {}
+            raise AssertionError((method, path))
+
+    def fake_ssh_command(host, _args, command, *, role):
+        """Fake ssh command.
+
+        Args:
+            host: Host selected for the simulated SSH command.
+            _args: Unused lifecycle arguments accepted by the fake.
+            command: Command issued by the scenario.
+            role: Role selected for the simulated SSH command.
+        """
+        commands.append((host, command, role))
+        if role == "appliance":
+            return {"returncode": 0, "stdout": '{"enabled": true, "ca_public_key": "web-terminal-ca.pub"}', "stderr": ""}
+        status = "404" if "/ui/management/dashboard" in command else "302"
+        return {"returncode": 0, "stdout": status, "stderr": ""}
+
+    monkeypatch.setattr(lifecycle, "ssh_command", fake_ssh_command)
+    monkeypatch.setattr(lifecycle, "HttpClient", lambda _url: (_ for _ in ()).throw(AssertionError("direct host route")))
+    monkeypatch.setattr(lifecycle, "ui_login", lambda *_args: (_ for _ in ()).throw(AssertionError("new login")))
+    args = argparse.Namespace(
+        appliance_ssh_host="192.0.2.10", client_a_host="192.0.2.11",
+        site_cidr="192.168.12.1/24", site_interface="eth1",
+    )
+
+    evidence = lifecycle.web_terminal_check(ManagementClient(), args)
+
+    assert evidence["extra_terminal_status"] == 302
+    assert evidence["site_probe_status"] == 302
+    assert evidence["dashboard_status"] == 404
+    assert len(commands) == 3
+    assert "grep -i trustedusercakeys" in commands[0][1]
+    assert all(host == args.client_a_host and role == "client" for host, _command, role in commands[1:])
 
 
 def test_release_database_identity_uses_privileged_appliance_command(monkeypatch):
@@ -962,12 +1269,26 @@ def test_authoritative_dns_lifecycle_probe_covers_authority_reverse_nxdomain_and
     encoded = command.split()[2]
     script = base64.b64decode(encoded).decode("utf-8")
 
-    assert '(domain, 6, 0, 6, True)' in script
-    assert '(domain, 2, 0, 2, True)' in script
-    assert '("ns1." + domain, 1, 0, 1, True)' in script
-    assert '("interop-appliance." + domain, 1, 0, 1, True)' in script
+    compile(script, "<authoritative-dns-probe>", "exec")
+    assert '(domain, 6, 0, 6, True, None)' in script
+    assert '(domain, 2, 0, 2, True, None)' in script
+    assert '("ns1." + domain, 1, 0, 1, True, \'192.168.50.1\')' in script
+    assert '("interop-appliance." + domain, 1, 0, 1, True, \'192.168.50.1\')' in script
+    assert "for _ in range(2):" in script
     assert 'query("missing-authoritative." + domain, 1)' in script
     assert "assert 6 in sections[1]" in script
+    assert 'query("example.com", 1, tcp=tcp)' in script
+
+    dynamic_command = lifecycle.authoritative_dns_probe_command(
+        "atlaso.internal", "192.168.50.1", "192.168.50.1", "interop-client", "192.168.50.105"
+    )
+    dynamic_script = base64.b64decode(dynamic_command.split()[2]).decode("utf-8")
+    compile(dynamic_script, "<dynamic-dns-probe>", "exec")
+    assert "dynamic_hostname = 'interop-client'" in dynamic_script
+    assert '(1, dynamic_ip) in values[0]' in dynamic_script
+    assert 'expected.append((dynamic_hostname + "." + domain, 1, 0, 1, True, dynamic_ip))' in dynamic_script
+    assert 'expected.append((ip_address(dynamic_ip).reverse_pointer, 12, 0, 12, False,' in dynamic_script
+    assert 'assert (expected_type, expected_value) in values[0]' in dynamic_script
 
     recursive_command = lifecycle.recursive_dns_probe_command("127.0.0.1", "192.168.50.1")
     recursive_script = base64.b64decode(recursive_command.split()[2]).decode("utf-8")
@@ -977,6 +1298,41 @@ def test_authoritative_dns_lifecycle_probe_covers_authority_reverse_nxdomain_and
     source = Path(lifecycle.__file__).read_text(encoding="utf-8")
     assert 'run_step(results, "authoritative-dns-state-check", authoritative_dns_state_check, args)' in source
     assert 'run_step(results, "recursive-dns-state-check", recursive_dns_state_check, args)' in source
+
+
+def test_lifecycle_enables_routing_before_wan_apply(monkeypatch):
+    """The WAN lab must turn on its global gates before applying routes.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace network setup helpers.
+    """
+    lifecycle = load_lifecycle_module()
+    calls = []
+
+    class Client:
+        def json_request(self, method, path, *, json_body):
+            """Record a settings request and return its supplied state.
+
+            Args:
+                method: HTTP method used for the request.
+                path: API path receiving the request.
+                json_body: Settings payload to record.
+            """
+            calls.append((method, path, json_body))
+            return json_body
+
+    monkeypatch.setattr(lifecycle, "configure_firewall", lambda *_args: {})
+    monkeypatch.setattr(lifecycle, "configure_wan_policy", lambda *_args: {"id": 1})
+    monkeypatch.setattr(lifecycle, "configure_routes_nat", lambda *_args: {})
+    monkeypatch.setattr(lifecycle, "configure_routing_permissions", lambda *_args: {})
+
+    result = lifecycle.configure_firewall_wan(Client(), argparse.Namespace())
+
+    assert calls == [(
+        "PUT", "/api/v1/routes-wan/settings",
+        {"routing_enabled": True, "nat_enabled": True, "wan_simulation_enabled": True},
+    )]
+    assert result["settings"] == calls[0][2]
 
 
 def test_apply_units_retries_once_when_desired_state_drifts(monkeypatch):
@@ -1073,6 +1429,49 @@ def test_routing_probe_commands_cover_block_allow_and_route_role_paths():
     assert "ip route replace 192.168.60.0/24 via 172.31.50.1 dev eth1" in client_b
 
 
+def test_routing_host_firewall_check_uses_default_drop_isolation():
+    """The lab verifies its configured forward policy and explicit route rule."""
+    lifecycle = load_lifecycle_module()
+    args = lifecycle.parse_args(["--password", "test"])
+
+    command = lifecycle.routing_host_check_commands(args)["firewall"]
+
+    assert 'nft list chain inet atlaso forward | grep -F "policy drop;"' in command
+    assert 'comment \\"route-' in command
+    assert 'isolate-' not in command
+
+
+def test_host_checks_encode_shell_before_ssh_transport(monkeypatch):
+    """Preserve nested quotes and substitutions across plink and sudo parsing.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace remote execution.
+    """
+    lifecycle = load_lifecycle_module()
+    args = lifecycle.parse_args(["--password", "test"])
+    command = "test \"$(printf '%s' a)\" = a"
+    sent: list[str] = []
+
+    def fake_ssh_command(_host, _args, remote_command, **_kwargs):
+        """Capture the transport command without contacting an appliance.
+
+        Args:
+            _host: Ignored appliance host.
+            _args: Ignored lifecycle arguments.
+            remote_command: Command sent through the SSH transport.
+            **_kwargs: Ignored SSH options.
+        """
+        sent.append(remote_command)
+        return {"returncode": 0, "stdout": "", "stderr": ""}
+
+    monkeypatch.setattr(lifecycle, "ssh_command", fake_ssh_command)
+
+    lifecycle.run_host_checks(args, {"quoted": command})
+
+    encoded = lifecycle.base64.b64encode(command.encode("utf-8")).decode("ascii")
+    assert sent == [f"printf %s {encoded} | base64 -d | sh"]
+
+
 def test_host_state_checks_verify_vcf_trust_runtime_dependencies(monkeypatch):
     """Verify that host state checks verify vcf trust runtime dependencies.
 
@@ -1124,6 +1523,7 @@ def test_host_state_checks_verify_vcf_trust_runtime_dependencies(monkeypatch):
     assert "-verify_hostname ldap.atlaso.internal" in captured["ldap_tls"]
     assert encoded_powercli_probe in captured["vcf_powercli_user"]
     assert execution_contexts["vcf_powercli_user"] is False
+    assert "console status --real | grep -F '\"maintenance_isolation\": false'" in captured["local_console"]
 
 
 def test_managed_ldap_lifecycle_check_sends_directory_password_only_through_stdin(monkeypatch):
@@ -1148,25 +1548,30 @@ def test_managed_ldap_lifecycle_check_sends_directory_password_only_through_stdi
     captured = {}
 
     def fake_run(command, **kwargs):
-        """Return fake run.
+        """Fake run.
 
         Args:
-            command: Command and arguments to execute.
-            **kwargs: Additional keyword arguments accepted by the callable.
+            command: Command issued by the scenario.
+            **kwargs: Additional request arguments accepted by the fake.
         """
         captured["command"] = command
-        captured["input"] = kwargs.get("input")
-        return lifecycle.subprocess.CompletedProcess(command, 0, "", "")
+        captured["input"] = kwargs["input"]
+        return subprocess.CompletedProcess(command, 0, b'{"helper":"atlaso-helper","action":"authenticate"}\n', b"")
 
     monkeypatch.setattr(lifecycle.subprocess, "run", fake_run)
     evidence = lifecycle.managed_ldap_helper_authentication_check(args)
 
-    assert lifecycle.LIFECYCLE_LDAP_PASSWORD in captured["input"]
+    assert captured["input"] == f"appliance-secret\n{lifecycle.LIFECYCLE_LDAP_PASSWORD}\n".encode()
     assert lifecycle.LIFECYCLE_LDAP_PASSWORD not in " ".join(captured["command"])
     assert lifecycle.LIFECYCLE_LDAP_PASSWORD not in json.dumps(evidence)
     assert evidence["password_transport"] == "stdin-only"
     assert evidence["bind_transport"] == "ldapi:///"
-    assert "atlaso-helper ldap authenticate --real" in " ".join(captured["command"])
+    encoded = captured["command"][-1].split("printf %s ", 1)[1].split(" |", 1)[0]
+    remote_script = base64.b64decode(encoded).decode()
+    assert "sudo -S -p '' -v" in remote_script
+    assert "sudo -n env PYTHONUNBUFFERED=1 /opt/atlaso/bin/atlaso-helper ldap authenticate --real" in remote_script
+    assert "appliance-secret" not in remote_script
+    assert lifecycle.LIFECYCLE_LDAP_PASSWORD not in remote_script
 
 
 def test_appliance_user_ssh_command_does_not_wrap_with_sudo(monkeypatch):
@@ -1306,10 +1711,153 @@ def test_restored_esxi_lifecycle_recreates_vault_secret_before_apply(monkeypatch
 
     call_names = [name for name, _operation, _arguments in calls]
     stage_index = call_names.index("stage-esxi-vault-secret")
+    assert call_names.index("restore-settings-backup") < call_names.index("reauthenticate-after-restore")
+    assert call_names.index("reauthenticate-after-restore") < call_names.index("authentication-lifetime-policy-check")
     assert call_names.index("restore-settings-backup") < stage_index
     assert stage_index < call_names.index("apply-connectivity-units")
     assert calls[stage_index][1] is lifecycle.ensure_lifecycle_esxi_vault_secret
     assert calls[stage_index][2] == (client, args.esxi_password)
+    connectivity = next(arguments for name, _operation, arguments in calls if name == "apply-connectivity-units")
+    assert "appliance_settings" in connectivity[1]
+    assert {"ca", "ldap", "ntpd", "vcf_offline_depot", "public_services"}.issubset(connectivity[1])
+
+
+def test_reauthenticate_after_restore_replaces_revoked_credentials(monkeypatch):
+    """A restored archive requires a fresh browser session and API token.
+
+    Args:
+        monkeypatch: Replace external behavior for this scenario.
+    """
+    lifecycle = load_lifecycle_module()
+    calls = []
+
+    class CookieJar:
+        def clear(self):
+            calls.append("clear")
+
+    client = argparse.Namespace(cookie_jar=CookieJar(), bearer_token="old-token")
+
+    def fake_api_login(selected_client, _args):
+        """Fake api login.
+
+        Args:
+            selected_client: Client selected for the simulated login.
+            _args: Unused lifecycle arguments accepted by the fake.
+        """
+        assert selected_client is client
+        assert selected_client.bearer_token == ""
+        calls.append("api")
+        selected_client.bearer_token = "new-token"
+
+    def fake_ui_login(selected_client, _args):
+        """Fake ui login.
+
+        Args:
+            selected_client: Client selected for the simulated login.
+            _args: Unused lifecycle arguments accepted by the fake.
+        """
+        assert selected_client is client
+        assert selected_client.bearer_token == "new-token"
+        calls.append("browser")
+
+    monkeypatch.setattr(lifecycle, "api_login", fake_api_login)
+    monkeypatch.setattr(lifecycle, "ui_login", fake_ui_login)
+
+    assert lifecycle.reauthenticate_after_restore(client, object()) == {
+        "api": "authenticated", "browser": "authenticated"
+    }
+    assert calls == ["clear", "api", "browser"]
+
+
+def test_full_lifecycle_selects_resolver_settings_with_initial_dns_apply(monkeypatch):
+    """The first DNS Apply must include resolver consent and changed CA listeners.
+
+    Args:
+        monkeypatch: Replace external behavior for this scenario.
+    """
+    lifecycle = load_lifecycle_module()
+    args = lifecycle.parse_args(["--secret-stdin"])
+    calls = []
+
+    def fake_run_step(_results, name, _operation, *operation_args):
+        """Fake run step.
+
+        Args:
+            _results: Unused result collection accepted by the fake.
+            name: Lifecycle step name.
+            _operation: Unused operation accepted by the fake.
+            *operation_args: Operation arguments captured by the fake.
+        """
+        calls.append((name, operation_args))
+        return {}
+
+    monkeypatch.setattr(lifecycle, "run_step", fake_run_step)
+    management_client = object()
+    lifecycle.run_full_lifecycle([], management_client, args)
+
+    connectivity = next(arguments for name, arguments in calls if name == "apply-connectivity-units")
+    assert "dnsmasq" in connectivity[1]
+    assert "appliance_settings" in connectivity[1]
+    assert {"ca", "ldap", "ntpd", "vcf_offline_depot", "public_services"}.issubset(connectivity[1])
+    call_names = [name for name, _arguments in calls]
+    assert call_names.index("management-https-check") < call_names.index("configure-oidc-provider")
+    assert call_names.index("configure-oidc-provider") < call_names.index("apply-oidc-certificate-and-listener")
+    assert call_names.index("apply-oidc-certificate-and-listener") < call_names.index("oidc-site-listener-check")
+    assert call_names.index("oidc-site-listener-check") < call_names.index("oidc-authorization-code-check")
+    oidc_call = next(arguments for name, arguments in calls if name == "oidc-authorization-code-check")
+    assert oidc_call[2] is management_client
+    oidc_apply = next(arguments for name, arguments in calls if name == "apply-oidc-certificate-and-listener")
+    assert "dnsmasq" in oidc_apply[1]
+
+
+def test_full_lifecycle_skips_oidc_site_probe_without_client_checks(monkeypatch):
+    """No-client mode must not rely on a site client or its installed CA root.
+
+    Args:
+        monkeypatch: Replace external behavior for this scenario.
+    """
+    lifecycle = load_lifecycle_module()
+    args = lifecycle.parse_args(["--secret-stdin", "--skip-client-checks"])
+    calls = []
+
+    def fake_run_step(_results, name, _operation, *_operation_args):
+        """Fake run step.
+
+        Args:
+            _results: Unused result collection accepted by the fake.
+            name: Lifecycle step name.
+            _operation: Unused operation accepted by the fake.
+            *_operation_args: Unused operation arguments accepted by the fake.
+        """
+        calls.append(name)
+        return {}
+
+    monkeypatch.setattr(lifecycle, "run_step", fake_run_step)
+    lifecycle.run_full_lifecycle([], object(), args)
+
+    assert "apply-oidc-certificate-and-listener" in calls
+    assert "oidc-site-listener-check" not in calls
+    assert "web-terminal-check" not in calls
+
+
+def test_restored_lifecycle_skips_terminal_site_probe_without_client_checks(monkeypatch, tmp_path):
+    """Restored no-client mode must not require the isolated Client A VM.
+
+    Args:
+        monkeypatch: Replace external behavior for this scenario.
+        tmp_path: Temporary directory for isolated test state.
+    """
+    lifecycle = load_lifecycle_module()
+    args = lifecycle.parse_args(
+        ["--secret-stdin", "--skip-client-checks", "--client-a-host", "192.0.2.11", "--restore-settings-backup", str(tmp_path / "backup.json")]
+    )
+    calls = []
+    monkeypatch.setattr(lifecycle, "run_step", lambda _results, name, _operation, *_args: calls.append(name) or {})
+
+    lifecycle.run_restored_lifecycle([], object(), args)
+
+    assert "management-https-check" in calls
+    assert "web-terminal-check" not in calls
 
 
 def test_configure_esxi_pxe_selects_dhcp_scope_and_proves_reservation():

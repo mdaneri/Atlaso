@@ -402,6 +402,47 @@ def test_restore_routes_wan_archive_rejects_dedicated_management_route(client):
             restore_settings_archive(db_session, archive)
 
 
+def test_restore_routes_wan_archive_accepts_addressed_route_role_targets(client):
+    """A saved physical and VLAN route target must survive settings backup restore.
+
+    Args:
+        client: Isolated client for this scenario.
+    """
+    with SessionLocal() as db_session:
+        archive = deepcopy(export_settings_archive(db_session, actor="test"))
+    physical = next(
+        row for row in archive["data"]["physical_interfaces"]
+        if row.get("role") == "access" and row.get("ip_cidr")
+    )
+    vlan = next(
+        row for row in archive["data"]["vlan_interfaces"]
+        if row.get("enabled", True) and row.get("ip_cidr")
+    )
+    physical["role"] = "route"
+    vlan["role"] = "route"
+    for index, target in enumerate((physical, vlan), start=1):
+        archive["data"]["routes"].append(
+            {
+                "destination_cidr": f"198.51.{index}.0/24",
+                "gateway": None,
+                "interface_name": target["name"],
+                "metric": 100,
+                "enabled": True,
+                "wan_mode": "interface",
+                "wan_policy_name": None,
+            }
+        )
+    _set_routes_wan_setting(archive, key=ROUTING_ENABLED_SETTING_KEY, value=True)
+
+    with SessionLocal() as db_session:
+        restore_settings_archive(db_session, archive)
+        restored_targets = {
+            row.interface_name for row in db_session.scalars(select(Route))
+            if row.destination_cidr in {"198.51.1.0/24", "198.51.2.0/24"}
+        }
+    assert restored_targets == {physical["name"], vlan["name"]}
+
+
 def test_restore_routes_wan_archive_legacy_inference_turns_features_off_for_dormant_rows(
     client,
 ):

@@ -29,10 +29,18 @@ import tempfile
 import threading
 import time
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager, nullcontext
 from datetime import datetime, timezone
-from ipaddress import IPv4Network, IPv6Network, ip_address, ip_interface, ip_network
+from ipaddress import (
+    IPv4Address,
+    IPv4Network,
+    IPv6Address,
+    IPv6Network,
+    ip_address,
+    ip_interface,
+    ip_network,
+)
 from pathlib import Path, PurePosixPath
 from urllib.parse import quote, unquote, urljoin, urlparse
 from urllib.request import HTTPRedirectHandler, Request, build_opener, urlopen
@@ -343,6 +351,7 @@ CONSOLE_MANAGED_SERVICE_UNITS = (
     "nginx.service",
     "sshd.service",
     "dnsmasq.service",
+    "atlaso-dns-authoritative.service",
     "ntpd.service",
     "slapd.service",
     "atlaso-kmip.service",
@@ -357,10 +366,14 @@ FIREWALL_SERVICE_PATH = Path("/etc/systemd/system/atlaso-firewall.service")
 DNSMASQ_APPLY_DIR = Path("/var/lib/atlaso/apply/dnsmasq")
 DNSMASQ_STATE_DIR = Path("/var/lib/atlaso/dnsmasq")
 DNSMASQ_LEASE_FILE_PATH = DNSMASQ_STATE_DIR / "dhcp.leases"
+DNSMASQ_AUTHORITATIVE_LEASE_HOSTS_DIR = Path("/var/lib/atlaso-dns-authoritative-leases")
 DNSMASQ_CONFIG_DIR = Path("/etc/atlaso/dnsmasq.d")
 DNSMASQ_CONFIG_PATH = DNSMASQ_CONFIG_DIR / "atlaso.conf"
 DNSMASQ_SERVICE_DROPIN_DIR = Path("/etc/systemd/system/dnsmasq.service.d")
 DNSMASQ_SERVICE_DROPIN_PATH = DNSMASQ_SERVICE_DROPIN_DIR / "atlaso.conf"
+DNSMASQ_AUTHORITATIVE_CONFIG_PREFIX = "# atlaso-authoritative-config: "
+DNSMASQ_AUTHORITATIVE_CONFIG_PATH = DNSMASQ_CONFIG_DIR / "atlaso-authoritative.conf"
+DNSMASQ_AUTHORITATIVE_SERVICE_PATH = Path("/etc/systemd/system/atlaso-dns-authoritative.service")
 DNSMASQ_DNSSEC_TRUST_ANCHORS_PATH = DNSMASQ_APPLY_DIR / "atlaso-trust-anchors.conf"
 DNSMASQ_DNSSEC_TRUST_ANCHOR_CANDIDATES = [
     Path("/usr/share/dnsmasq/trust-anchors.conf"),
@@ -481,6 +494,7 @@ LOCAL_USERS_ALLOWED_SHELLS = {"/sbin/nologin", "/bin/bash", "/bin/sh", "/usr/bin
 NETWORKD_CONFIG_DIR = Path("/etc/systemd/network")
 NETWORKD_MGMT_CONFIG_PATH = NETWORKD_CONFIG_DIR / "00-atlaso-mgmt.network"
 NETWORKD_MANAGED_PREFIX = "10-atlaso-"
+MANAGEMENT_RESOLVER_MODE_PREFIX = "# Atlaso management resolver mode="
 NETWORKD_DEFAULT_APPLIANCE_FILES = {
     "50-static-en.network",
     "99-dhcp-en.network",
@@ -1531,6 +1545,36 @@ def _handle_ca(action: str, args: list[str]) -> int:
 
 
 
+@contextmanager
+def _dnsmasq_config_bundle_paths(path: Path) -> Iterator[tuple[Path, Path | None]]:
+    """Yield the recursive and optional authoritative dnsmasq configurations.
+
+    Args:
+        path: Staged combined dnsmasq configuration.
+
+    Yields:
+        Paths to the recursive configuration and optional authoritative configuration.
+    """
+    raw_lines = path.read_text(encoding="utf-8").splitlines()
+    authoritative_lines: list[str] = []
+    main_lines: list[str] = []
+    for line in raw_lines:
+        if line.startswith(DNSMASQ_AUTHORITATIVE_CONFIG_PREFIX):
+            authoritative_lines.append(line[len(DNSMASQ_AUTHORITATIVE_CONFIG_PREFIX):])
+        else:
+            main_lines.append(line)
+    if not authoritative_lines:
+        yield path, None
+        return
+    with tempfile.TemporaryDirectory(prefix=".dnsmasq-bundle-", dir=path.parent) as temporary:
+        temporary_dir = Path(temporary)
+        main_path = temporary_dir / "atlaso.conf"
+        authoritative_path = temporary_dir / "atlaso-authoritative.conf"
+        main_path.write_text("\n".join(main_lines).rstrip() + "\n", encoding="utf-8")
+        authoritative_path.write_text("\n".join(authoritative_lines).rstrip() + "\n", encoding="utf-8")
+        yield main_path, authoritative_path
+
+
 def _validate_dnsmasq_config(path: Path) -> subprocess.CompletedProcess[str]:
     """Validate dnsmasq config.
 
@@ -1675,16 +1719,27 @@ def _prepare_dnsmasq_tftp_roots(path: Path) -> None:
             pass
 
 
-def _install_dnsmasq_service_dropin() -> None:
+def _install_dnsmasq_service_dropin(*, authoritative: bool = False) -> None:
     """Perform install dnsmasq service dropin.
 
+    Args:
+        authoritative: Start the authoritative backend with the client-facing service.
     """
     dnsmasq = shutil.which("dnsmasq") or "/usr/sbin/dnsmasq"
     DNSMASQ_SERVICE_DROPIN_DIR.mkdir(parents=True, exist_ok=True)
+    unit_lines = ["[Unit]"]
+    if authoritative:
+        unit_lines.extend(
+            [
+                "Wants=atlaso-dns-authoritative.service",
+                "After=atlaso-dns-authoritative.service",
+            ]
+        )
+    unit_lines.extend(["", "[Service]"])
     DNSMASQ_SERVICE_DROPIN_PATH.write_text(
         "\n".join(
             [
-                "[Service]",
+                *unit_lines,
                 "ExecStart=",
                 f"ExecStart={dnsmasq} --keep-in-foreground --conf-file={DNSMASQ_CONFIG_PATH}",
                 "",
@@ -1692,6 +1747,46 @@ def _install_dnsmasq_service_dropin() -> None:
         ),
         encoding="utf-8",
     )
+
+
+def _install_dnsmasq_authoritative_service() -> None:
+    """Install the isolated authoritative dnsmasq systemd unit."""
+    dnsmasq = shutil.which("dnsmasq") or "/usr/sbin/dnsmasq"
+    DNSMASQ_AUTHORITATIVE_SERVICE_PATH.parent.mkdir(parents=True, exist_ok=True)
+    DNSMASQ_AUTHORITATIVE_SERVICE_PATH.write_text(
+        "\n".join(
+            [
+                "[Unit]",
+                "Description=Atlaso authoritative DNS backend",
+                "After=network.target",
+                "Before=dnsmasq.service",
+                "",
+                "[Service]",
+                "Type=simple",
+                f"ExecStart={dnsmasq} --keep-in-foreground --conf-file={DNSMASQ_AUTHORITATIVE_CONFIG_PATH}",
+                "Restart=on-failure",
+                "",
+                "[Install]",
+                "WantedBy=multi-user.target",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+
+def _dnsmasq_lease_identity(fields: list[str], address: IPv4Address | IPv6Address) -> str:
+    """Return the identity stored in an authoritative lease mirror.
+
+    Args:
+        fields: Parsed dnsmasq lease fields.
+        address: Leased IP address that determines the identifier format.
+    """
+    if address.version == 4:
+        return f"# mac={fields[1].lower()}"
+    if len(fields) < 5 or fields[4] == "*":
+        return ""
+    return f"# duid={fields[4].lower()} iaid={fields[1].lower()}"
 
 
 def _read_dnsmasq_leases() -> int:
@@ -1707,7 +1802,33 @@ def _read_dnsmasq_leases() -> int:
     if not lease_path.is_file():
         print(f"dnsmasq lease path is not a regular file: {lease_path}", file=sys.stderr)
         return 2
-    print(lease_path.read_text(encoding="utf-8"), end="")
+    for line in lease_path.read_text(encoding="utf-8").splitlines():
+        fields = line.split()
+        if len(fields) >= 4 and fields[3] == "*":
+            try:
+                address = ip_address(fields[2])
+                expires = int(fields[0])
+            except ValueError:
+                address = None
+                expires = -1
+            if address is not None and (expires == 0 or expires > time.time()):
+                mirror = DNSMASQ_AUTHORITATIVE_LEASE_HOSTS_DIR / f"lease-{address.packed.hex()}.hosts"
+                if mirror.is_file() and not mirror.is_symlink():
+                    try:
+                        mirror_lines = mirror.read_text(encoding="utf-8").splitlines()
+                        if (
+                            len(mirror_lines) in {2, 3, 4}
+                            and mirror_lines[0].startswith(f"{address} ")
+                            and mirror_lines[1] == _dnsmasq_lease_identity(fields, address)
+                            and all(
+                                line == "# reservation" or line.startswith("# scope-domain=")
+                                for line in mirror_lines[2:]
+                            )
+                        ):
+                            fields[3] = mirror_lines[0].split()[1].split(".", 1)[0]
+                    except (OSError, IndexError):
+                        pass
+        print(" ".join(fields) if fields else line)
     return 0
 
 
@@ -2682,6 +2803,8 @@ def _management_resolver_candidate(
         Updated networkd content used by factory-reset preflight.
     """
     lines = text.splitlines()
+    resolver_mode = "configured" if servers or domains else "dhcp"
+    resolver_marker = f"{MANAGEMENT_RESOLVER_MODE_PREFIX}{resolver_mode}"
     updated: list[str] = []
     in_network = False
     inserted = False
@@ -2690,6 +2813,9 @@ def _management_resolver_candidate(
         if stripped == "[Network]":
             in_network = True
             updated.append(line)
+            updated.append(resolver_marker)
+            continue
+        if stripped.startswith(MANAGEMENT_RESOLVER_MODE_PREFIX):
             continue
         if in_network and stripped.startswith("[") and stripped.endswith("]"):
             if not inserted:
@@ -2706,6 +2832,45 @@ def _management_resolver_candidate(
         inserted = True
     if not inserted:
         raise ValueError("management networkd config is missing a [Network] section")
+    # Networkd otherwise adds DHCP/RA DNS to the explicit loopback resolver after
+    # reboot or lease renewal, allowing local-zone queries to escape to upstreams.
+    relevant_sections = {
+        section
+        for section in ("DHCP", "DHCPv4", "DHCPv6", "IPv6AcceptRA")
+        if f"[{section}]" in updated
+    }
+    dhcp_modes = {
+        line.partition("=")[2].strip().lower()
+        for line in updated
+        if line.strip().lower().startswith("dhcp=")
+    }
+    if dhcp_modes & {"yes", "true", "both", "ipv4"}:
+        relevant_sections.add("DHCPv4")
+    if dhcp_modes & {"yes", "true", "both", "ipv6"}:
+        relevant_sections.add("DHCPv6")
+    ra_modes = {
+        line.partition("=")[2].strip().lower()
+        for line in updated
+        if line.strip().lower().startswith("ipv6acceptra=")
+    }
+    if not ra_modes or ra_modes & {"yes", "true"}:
+        relevant_sections.add("IPv6AcceptRA")
+    for section in ("DHCP", "DHCPv4", "DHCPv6", "IPv6AcceptRA"):
+        if section not in relevant_sections:
+            continue
+        header = f"[{section}]"
+        active = False
+        cleaned: list[str] = []
+        for line in updated:
+            if line.strip().startswith("["):
+                active = line.strip() == header
+            if not (active and line.strip().startswith("UseDNS=")):
+                cleaned.append(line)
+        updated = cleaned
+        if header in updated:
+            updated.insert(updated.index(header) + 1, f"UseDNS={'no' if servers else 'yes'}")
+        else:
+            updated.extend(["", header, f"UseDNS={'no' if servers else 'yes'}"])
     return "\n".join(updated).rstrip() + "\n"
 
 
@@ -2739,7 +2904,7 @@ def _write_management_resolver(
     interface_name: str,
     servers: list[str],
     domains: list[str],
-) -> None:
+) -> tuple[Path | None, str | None]:
     """Write management resolver.
 
     Args:
@@ -2749,29 +2914,59 @@ def _write_management_resolver(
     """
     network_path = _management_resolver_network_path(interface_name)
     if network_path is not None:
-        lines = network_path.read_text(encoding="utf-8").splitlines()
-        updated: list[str] = []
-        in_network = False
-        inserted = False
-        for line in lines:
-            stripped = line.strip()
-            if stripped == "[Network]":
-                in_network = True
-                updated.append(line)
-                continue
-            if in_network and stripped.startswith("[") and stripped.endswith("]"):
-                if not inserted:
-                    updated.extend([f"DNS={server}" for server in servers])
-                    updated.extend([f"Domains={domain}" for domain in domains])
-                    inserted = True
-                in_network = False
-            if in_network and (stripped.startswith("DNS=") or stripped.startswith("Domains=")):
-                continue
-            updated.append(line)
-        if in_network and not inserted:
-            updated.extend([f"DNS={server}" for server in servers])
-            updated.extend([f"Domains={domain}" for domain in domains])
-        network_path.write_text("\n".join(updated).rstrip() + "\n", encoding="utf-8")
+        text = network_path.read_text(encoding="utf-8")
+        network_path.write_text(_management_resolver_candidate(text, servers, domains), encoding="utf-8")
+        return network_path, text
+    return None, None
+
+
+def _reload_management_resolver(
+    interface_name: str,
+    network_path: Path | None,
+) -> subprocess.CompletedProcess[str] | None:
+    """Apply a persisted management resolver change to the active networkd link.
+
+    Args:
+        interface_name: Host network-interface name affected by the operation.
+        network_path: Generated networkd file updated for the interface, when present.
+
+    Returns:
+        The first failed networkctl result, the final successful result, or ``None``
+        when no generated networkd file was updated.
+    """
+    if network_path is None:
+        return None
+    commands = [
+        ["networkctl", "reload"],
+        ["networkctl", "reconfigure", interface_name],
+    ]
+    for command in commands:
+        result = _run(command)
+        print(result.stdout, end="")
+        print(result.stderr, end="", file=sys.stderr)
+        if result.returncode != 0:
+            return result
+    return result
+
+
+def _restore_management_resolver(
+    interface_name: str,
+    network_path: Path | None,
+    previous_text: str | None,
+) -> None:
+    """Restore the prior networkd file after a failed resolver transition.
+
+    Args:
+        interface_name: Host network-interface name affected by the operation.
+        network_path: Generated networkd file changed for the transition.
+        previous_text: Exact file content from before the transition.
+    """
+    if network_path is None or previous_text is None:
+        return
+    network_path.write_text(previous_text, encoding="utf-8")
+    # Reload again in case the first reload accepted the candidate before a
+    # later reconfigure failed. The original failure remains authoritative.
+    _reload_management_resolver(interface_name, network_path)
 
 
 def _configure_resolver(interface_name: str, servers: list[str], domains: list[str]) -> subprocess.CompletedProcess[str]:
@@ -2782,7 +2977,11 @@ def _configure_resolver(interface_name: str, servers: list[str], domains: list[s
         servers: Servers consumed by configure resolver.
         domains: Domains consumed by configure resolver.
     """
-    _write_management_resolver(interface_name, servers, domains)
+    network_path, previous_text = _write_management_resolver(interface_name, servers, domains)
+    reload_result = _reload_management_resolver(interface_name, network_path)
+    if reload_result is not None and reload_result.returncode != 0:
+        _restore_management_resolver(interface_name, network_path, previous_text)
+        return reload_result
     commands = [
         ["resolvectl", "dns", interface_name, *servers],
         ["resolvectl", "domain", interface_name, *(domains or [""])],
@@ -2792,6 +2991,7 @@ def _configure_resolver(interface_name: str, servers: list[str], domains: list[s
         print(result.stdout, end="")
         print(result.stderr, end="", file=sys.stderr)
         if result.returncode != 0:
+            _restore_management_resolver(interface_name, network_path, previous_text)
             return result
     return subprocess.CompletedProcess(commands[-1], 0, "", "")
 
@@ -2802,10 +3002,18 @@ def _configure_dhcp_resolver(interface_name: str) -> subprocess.CompletedProcess
     Args:
         interface_name: Host network-interface name affected by the operation.
     """
-    _write_management_resolver(interface_name, [], [])
+    network_path, previous_text = _write_management_resolver(interface_name, [], [])
+    # Keep the active resolver until networkd has accepted the restored DHCP/RA
+    # policy. Revert discards every transient per-link DNS setting.
+    reload_result = _reload_management_resolver(interface_name, network_path)
+    if reload_result is not None and reload_result.returncode != 0:
+        _restore_management_resolver(interface_name, network_path, previous_text)
+        return reload_result
     result = _run(["resolvectl", "revert", interface_name])
     print(result.stdout, end="")
     print(result.stderr, end="", file=sys.stderr)
+    if result.returncode != 0:
+        _restore_management_resolver(interface_name, network_path, previous_text)
     return result
 
 
@@ -2841,6 +3049,602 @@ def _configure_local_resolver() -> subprocess.CompletedProcess[str]:
     return _configure_resolver("eth0", ["127.0.0.1"], ["~."])
 
 
+def _authoritative_lease_scopes(config_path: Path) -> list[tuple[IPv4Network | IPv6Network, str]]:
+    """Read the managed DHCP networks and suffixes from a candidate config.
+
+    Args:
+        config_path: Candidate main dnsmasq configuration to inspect.
+    """
+    if config_path.stat().st_size > 1_048_576:
+        raise ValueError("The dnsmasq candidate configuration is too large.")
+    scopes = []
+    for line in config_path.read_text(encoding="utf-8").splitlines():
+        if not line.startswith("# atlaso-authoritative-lease-scope="):
+            continue
+        fields = line.removeprefix("# atlaso-authoritative-lease-scope=").split(",", 1)
+        if len(fields) != 2 or not HOSTNAME_PATTERN.fullmatch(fields[1]):
+            raise ValueError("The authoritative lease scope metadata is invalid.")
+        try:
+            scopes.append((ip_network(fields[0], strict=True), fields[1]))
+        except ValueError as exc:
+            raise ValueError("The authoritative lease scope network is invalid.") from exc
+    return scopes
+
+
+def _authoritative_reservation_names(
+    config_path: Path, scopes: list[tuple[IPv4Network | IPv6Network, str]]
+) -> dict[str, tuple[str, str]]:
+    """Map reserved addresses to names and clients in the selected DNS config.
+
+    Args:
+        config_path: Selected main dnsmasq configuration to inspect.
+        scopes: Managed DHCP networks and suffixes for reservation names.
+    """
+    if config_path.stat().st_size > 1_048_576:
+        raise ValueError("The dnsmasq candidate configuration is too large.")
+    names_by_tag: dict[str, str] = {}
+    addresses_by_tag: dict[str, str] = {}
+    identities_by_tag: dict[str, str] = {}
+    for line in config_path.read_text(encoding="utf-8").splitlines():
+        if line.startswith("dhcp-option=tag:atlaso-name-"):
+            fields = line.split(",", 2)
+            if len(fields) != 3 or fields[1] != "12":
+                raise ValueError("The authoritative reservation hostname option is invalid.")
+            names_by_tag[fields[0].removeprefix("dhcp-option=tag:")] = fields[2].strip().strip(".").lower()
+        elif line.startswith("dhcp-host=") and ",set:atlaso-name-" in line:
+            fields = line.split(",")
+            if len(fields) != 3 or not re.fullmatch(
+                r"(?:[0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}", fields[0].removeprefix("dhcp-host=")
+            ):
+                raise ValueError("The authoritative reservation host is invalid.")
+            tag = fields[1].removeprefix("set:")
+            try:
+                address = str(ip_address(fields[2].strip("[]")))
+            except ValueError as exc:
+                raise ValueError("The authoritative reservation address is invalid.") from exc
+            addresses_by_tag[tag] = address
+            identities_by_tag[tag] = f"# mac={fields[0].removeprefix('dhcp-host=').lower()}"
+    expected: dict[str, tuple[str, str]] = {}
+    for tag, address in addresses_by_tag.items():
+        name = names_by_tag.get(tag, "")
+        reserved_ip = ip_address(address)
+        domain = next((suffix for network, suffix in scopes if reserved_ip in network), "")
+        fqdn = name if "." in name else f"{name}.{domain}" if name and domain else ""
+        if not HOSTNAME_PATTERN.fullmatch(fqdn):
+            raise ValueError("The authoritative reservation name is invalid.")
+        expected[address] = (fqdn, identities_by_tag[tag])
+    return expected
+
+
+def _prepare_authoritative_lease_hosts(
+    candidate_config_path: Path, candidate_main_config_path: Path | None = None,
+    seeded_inodes: dict[Path, tuple[int, int]] | None = None, *, recursive_mode: bool = False
+) -> None:
+    """Validate and reconcile the lease mirror before starting the DNS backend.
+
+    Args:
+        candidate_config_path: New authoritative configuration containing managed zones.
+        candidate_main_config_path: New main configuration containing reservation names, if available.
+        seeded_inodes: New mirrors owned by this Apply, identified by device and inode for rollback.
+        recursive_mode: Preserve only suppressed lease names while leaving authoritative mode.
+    """
+
+    # Reconcile retained names before switching modes so released or
+    # reassigned addresses cannot reappear as answers.
+    hosts_dir = DNSMASQ_AUTHORITATIVE_LEASE_HOSTS_DIR
+    if DNSMASQ_STATE_DIR.is_symlink():
+        raise ValueError("The dnsmasq state directory is unsafe.")
+    if hosts_dir.is_symlink():
+        raise ValueError("The authoritative lease hosts directory is unsafe.")
+    hosts_dir.mkdir(parents=True, exist_ok=True)
+    if not hosts_dir.is_dir():
+        raise ValueError("The authoritative lease hosts directory is invalid.")
+    # dnsmasq drops privileges after startup and rereads hostsdir on HUP.
+    # This derived-name directory is outside the restricted Atlaso state
+    # tree; the DHCP lease file retains its own protected path and mode.
+    hosts_dir.chmod(0o755)
+    lease_path = DNSMASQ_LEASE_FILE_PATH
+    if lease_path.is_symlink() or not lease_path.resolve().is_relative_to(DNSMASQ_STATE_DIR.resolve()):
+        raise ValueError("The dnsmasq lease file path is unsafe.")
+    if lease_path.exists() and not lease_path.is_file():
+        raise ValueError("The dnsmasq lease file path is invalid.")
+    try:
+        lease_rows = lease_path.read_text(encoding="utf-8").splitlines()
+    except FileNotFoundError:
+        lease_rows = []
+    active_leases: dict[str, tuple[str, str]] = {}
+    for row in lease_rows:
+        fields = row.split()
+        if len(fields) < 4:
+            continue
+        try:
+            expires = int(fields[0])
+            address = str(ip_address(fields[2]))
+        except ValueError:
+            continue
+        if expires == 0 or expires > time.time():
+            active_leases[address] = (_dnsmasq_lease_identity(fields, ip_address(address)), fields[3].lower())
+    zones = (
+        [
+            domain
+            for line in candidate_config_path.read_text(encoding="utf-8").splitlines()
+            if line.startswith("domain=")
+            and HOSTNAME_PATTERN.fullmatch(domain := line.removeprefix("domain=").lower())
+        ]
+        if recursive_mode else _authoritative_lease_domains(candidate_config_path)
+    )
+    scopes = _authoritative_lease_scopes(candidate_main_config_path) if candidate_main_config_path else None
+    reservation_names = _authoritative_reservation_names(candidate_main_config_path, scopes) if scopes is not None else {}
+    previous_reservations: dict[str, tuple[str, str]] = {}
+    # Mirrors from older releases have no provenance marker. Compare them to
+    # the installed reservation before replacing the main configuration.
+    if (
+        candidate_main_config_path
+        and DNSMASQ_CONFIG_PATH.is_file()
+        and candidate_main_config_path != DNSMASQ_CONFIG_PATH
+    ):
+        previous_scopes = _authoritative_lease_scopes(DNSMASQ_CONFIG_PATH)
+        previous_reservations = _authoritative_reservation_names(DNSMASQ_CONFIG_PATH, previous_scopes)
+    for entry in hosts_dir.iterdir():
+        if not re.fullmatch(r"lease-[0-9a-f]{8,32}\.hosts", entry.name) or entry.is_symlink() or not entry.is_file():
+            raise ValueError("The authoritative lease hosts directory contains an unexpected entry.")
+        rows = entry.read_text(encoding="utf-8").splitlines()
+        parts = rows[0].split() if rows else []
+        metadata = rows[2:]
+        reserved_mirror = "# reservation" in metadata
+        scope_markers = [line.removeprefix("# scope-domain=") for line in metadata if line.startswith("# scope-domain=")]
+        if (
+            len(rows) not in {2, 3, 4}
+            or len(scope_markers) > 1
+            or any(line != "# reservation" and not line.startswith("# scope-domain=") for line in metadata)
+            or len(parts) != 2
+            or not rows[1].startswith(("# mac=", "# duid="))
+        ):
+            entry.unlink()
+            continue
+        address, hostname = parts
+        lease = active_leases.get(address)
+        current_reservation = reservation_names.get(address)
+        previous_reservation = previous_reservations.get(address)
+        try:
+            lease_address = ip_address(address)
+        except ValueError:
+            entry.unlink()
+            continue
+        # DHCPv6 mirrors carry DUID and IAID from the active lease, not the
+        # MAC used to configure the reservation. The lease check below binds it.
+        current_reservation_matches = bool(
+            current_reservation
+            and hostname == current_reservation[0]
+            and (lease_address.version == 6 or rows[1] == current_reservation[1])
+        )
+        previous_reservation_matches = bool(
+            previous_reservation
+            and hostname == previous_reservation[0]
+            and (lease_address.version == 6 or rows[1] == previous_reservation[1])
+        )
+        exact_scope_matches = bool(
+            scope_markers
+            and any(
+                lease_address in network and domain == scope_markers[0]
+                for network, domain in (scopes or [])
+            )
+        )
+        if (
+            lease is None
+            or not lease[0]
+            or rows[1] != lease[0]
+            or not any(hostname == zone or hostname.endswith(f".{zone}") for zone in zones)
+            or (recursive_mode and lease[1] != "*")
+            or (scopes is not None and not current_reservation_matches and not any(
+                lease_address in network and (hostname == domain or hostname.endswith(f".{domain}"))
+                for network, domain in scopes
+            ))
+            or (lease[1] != "*" and hostname != lease[1] and hostname.split(".", 1)[0] != lease[1])
+            or (not recursive_mode and current_reservation is not None and not current_reservation_matches)
+            or (not recursive_mode and reserved_mirror and not current_reservation_matches)
+            or (not recursive_mode and previous_reservation_matches and not current_reservation_matches)
+            or (scope_markers and scopes is not None and not exact_scope_matches and not current_reservation_matches)
+        ):
+            entry.unlink()
+
+    if recursive_mode or scopes is None:
+        return
+    # Turning authority on must publish names from existing ordinary leases;
+    # those clients may not renew immediately after the backend starts.
+    for address, (identity, lease_name) in active_leases.items():
+        if not identity or not lease_name or lease_name == "*":
+            continue
+        leased_ip = ip_address(address)
+        scope_domain = next((domain for network, domain in scopes if leased_ip in network), "")
+        reservation = reservation_names.get(address)
+        # A DHCPv6 lease exposes DUID/IAID, while a reservation is keyed by
+        # MAC. The lease file cannot prove that they identify the same client;
+        # wait for dnsmasq's reservation-tagged renewal instead of seeding it.
+        if reservation and (leased_ip.version == 6 or identity != reservation[1]):
+            continue
+        if reservation:
+            fqdn = reservation[0]
+        elif scope_domain:
+            name = lease_name.strip(".")
+            fqdn = name if "." in name else f"{name}.{scope_domain}"
+            if fqdn != scope_domain and not fqdn.endswith(f".{scope_domain}"):
+                continue
+        else:
+            continue
+        if not HOSTNAME_PATTERN.fullmatch(fqdn) or not any(
+            fqdn == zone or fqdn.endswith(f".{zone}") for zone in zones
+        ):
+            continue
+        destination = hosts_dir / f"lease-{leased_ip.packed.hex()}.hosts"
+        if destination.exists():
+            continue
+        temporary_path: Path | None = None
+        try:
+            with tempfile.NamedTemporaryFile(
+                mode="w", encoding="utf-8", prefix=".lease-seed-", dir=DNSMASQ_STATE_DIR, delete=False
+            ) as temporary:
+                temporary_path = Path(temporary.name)
+                temporary.write(f"{address} {fqdn}\n{identity}\n")
+                if reservation:
+                    temporary.write("# reservation\n")
+                if scope_domain:
+                    temporary.write(f"# scope-domain={scope_domain}\n")
+            temporary_path.chmod(0o644)
+            try:
+                temporary_stat = temporary_path.stat()
+                os.link(temporary_path, destination)
+                if seeded_inodes is not None:
+                    seeded_inodes[destination] = (temporary_stat.st_dev, temporary_stat.st_ino)
+            except FileExistsError:
+                # A concurrent lease hook owns its newer name.
+                pass
+        finally:
+            if temporary_path is not None:
+                temporary_path.unlink(missing_ok=True)
+
+
+@contextmanager
+def _restore_pruned_lease_hosts_on_failure(enabled: bool):
+    """Restore pruned mirrors and remove still-owned seeds after failed DNS Apply.
+
+    Args:
+        enabled: Whether lease mirror rollback is active.
+    """
+    previous: dict[Path, bytes] = {}
+    seeded_inodes: dict[Path, tuple[int, int]] = {}
+    if enabled:
+        for path in _authoritative_lease_mirror_paths():
+            if path.stat().st_size > 512:
+                raise ValueError("An authoritative lease mirror exceeds its size bound.")
+            previous[path] = path.read_bytes()
+        if sum(len(content) for content in previous.values()) > 16_777_216:
+            raise ValueError("Authoritative lease mirror rollback exceeds its size bound.")
+    committed = False
+
+    def commit() -> None:
+        nonlocal committed
+        committed = True
+
+    try:
+        yield commit, seeded_inodes
+    finally:
+        if enabled and not committed:
+            restored = False
+            for path, seeded_identity in seeded_inodes.items():
+                try:
+                    current = path.lstat()
+                except FileNotFoundError:
+                    continue
+                if stat.S_ISLNK(current.st_mode) or not stat.S_ISREG(current.st_mode):
+                    raise ValueError("The authoritative lease mirror path became unsafe.")
+                # A lease hook publishes through os.replace; its new inode
+                # belongs to the live event and must survive Apply rollback.
+                if (current.st_dev, current.st_ino) == seeded_identity:
+                    path.unlink()
+                    restored = True
+            lease_path = DNSMASQ_LEASE_FILE_PATH
+            if lease_path.is_symlink() or not lease_path.resolve().is_relative_to(DNSMASQ_STATE_DIR.resolve()):
+                raise ValueError("The dnsmasq lease file path is unsafe.")
+            if lease_path.exists() and not lease_path.is_file():
+                raise ValueError("The dnsmasq lease file path is invalid.")
+            try:
+                lease_rows = lease_path.read_text(encoding="utf-8").splitlines()
+            except FileNotFoundError:
+                lease_rows = []
+            active_leases: dict[str, tuple[str, str]] = {}
+            for row in lease_rows:
+                fields = row.split()
+                if len(fields) < 4:
+                    continue
+                try:
+                    expires = int(fields[0])
+                    address = ip_address(fields[2])
+                except ValueError:
+                    continue
+                if expires == 0 or expires > time.time():
+                    active_leases[str(address)] = (_dnsmasq_lease_identity(fields, address), fields[3].lower().strip("."))
+            # The old daemon can renew a lease after the candidate main config
+            # is installed. Its hook then publishes the candidate reservation
+            # name even though activation later fails. Runtime rollback has
+            # already restored the installed config at this point, so validate
+            # every live mirror against that config before restoring snapshots.
+            if DNSMASQ_CONFIG_PATH.is_file():
+                if DNSMASQ_AUTHORITATIVE_CONFIG_PATH.is_file():
+                    _prepare_authoritative_lease_hosts(DNSMASQ_AUTHORITATIVE_CONFIG_PATH, DNSMASQ_CONFIG_PATH)
+                    restored = True
+                elif _recursive_lease_mirrors_in_config(DNSMASQ_CONFIG_PATH):
+                    _prepare_authoritative_lease_hosts(DNSMASQ_CONFIG_PATH, DNSMASQ_CONFIG_PATH, recursive_mode=True)
+                    restored = True
+            for path, content in previous.items():
+                # A renewal after preparation owns a newly created path; do
+                # not overwrite it with the older snapshot.
+                if path.exists():
+                    continue
+                if path.is_symlink():
+                    raise ValueError("The authoritative lease mirror path became unsafe.")
+                snapshot_rows = content.decode("utf-8").splitlines()
+                address_parts = snapshot_rows[0].split() if snapshot_rows else []
+                snapshot_address = address_parts[0] if address_parts else ""
+                snapshot_hostname = address_parts[1].lower().strip(".") if len(address_parts) > 1 else ""
+                snapshot_identity = snapshot_rows[1] if len(snapshot_rows) > 1 else ""
+                # A deleted mirror may belong to a released or reassigned
+                # lease, or to a renewal with a different native hostname.
+                # Restore only the same active client's still-current name.
+                current_lease = active_leases.get(snapshot_address)
+                if (
+                    not snapshot_identity
+                    or not snapshot_hostname
+                    or current_lease is None
+                    or current_lease[0] != snapshot_identity
+                    or (
+                        current_lease[1] != "*"
+                        and snapshot_hostname != current_lease[1]
+                        and snapshot_hostname.split(".", 1)[0] != current_lease[1]
+                    )
+                ):
+                    continue
+                temporary = path.with_name(f".{path.name}.atlaso-restore")
+                try:
+                    with temporary.open("xb") as stream:
+                        stream.write(content)
+                        stream.flush()
+                        os.fsync(stream.fileno())
+                    temporary.chmod(0o644)
+                    temporary.replace(path)
+                    restored = True
+                finally:
+                    temporary.unlink(missing_ok=True)
+            if restored:
+                _reload_authoritative_lease_hosts()
+
+
+def _authoritative_lease_domains(config_path: Path | None = None) -> list[str]:
+    """Read authoritative zone names for lease hostname filtering.
+
+    Args:
+        config_path: Authoritative configuration to inspect, or the installed one.
+    """
+    config_path = config_path or DNSMASQ_AUTHORITATIVE_CONFIG_PATH
+    try:
+        if config_path.stat().st_size > 1_048_576:
+            return []
+        lines = config_path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return []
+    return [
+        domain
+        for line in lines
+        if line.startswith("auth-zone=")
+        if HOSTNAME_PATTERN.fullmatch(domain := line.removeprefix("auth-zone=").split(",", 1)[0].lower())
+    ]
+
+
+def _lease_option_from_tags(option_name: str) -> str:
+    """Find a DHCP option associated with the lease event's matched tags.
+
+    Args:
+        option_name: dnsmasq option name to locate.
+    """
+    tags = set(os.environ.get("DNSMASQ_TAGS", "").split())
+    if not tags:
+        return ""
+    try:
+        if DNSMASQ_CONFIG_PATH.stat().st_size > 1_048_576:
+            return ""
+        lines = DNSMASQ_CONFIG_PATH.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return ""
+    for line in lines:
+        prefix = "dhcp-option=tag:"
+        if not line.startswith(prefix):
+            continue
+        fields = line.removeprefix(prefix).split(",", 2)
+        if len(fields) == 3 and fields[0] in tags and fields[1] == option_name:
+            return fields[2].strip().strip(".").lower()
+    return ""
+
+
+def _handle_dnsmasq_lease_event(argv: list[str]) -> int:
+    """Mirror a DHCP lease name into the live authoritative hosts directory.
+
+    Args:
+        argv: dnsmasq lease-script action and lease fields.
+    """
+    action = argv[1]
+    if action not in {"add", "old", "del"} or len(argv) not in {4, 5}:
+        return 0
+    try:
+        address = ip_address(argv[3])
+    except ValueError:
+        return 0
+    if address.is_link_local or address.is_loopback or address.is_multicast or address.is_unspecified:
+        return 0
+    hosts_dir = DNSMASQ_AUTHORITATIVE_LEASE_HOSTS_DIR
+    if not hosts_dir.is_dir() or hosts_dir.is_symlink():
+        return 0
+    destination = hosts_dir / f"lease-{address.packed.hex()}.hosts"
+    if address.version == 6:
+        iaid = os.environ.get("DNSMASQ_IAID", "").strip().lower()
+        if not re.fullmatch(r"t?[0-9]{1,10}", iaid):
+            return 0
+        identity = f"# duid={argv[2].lower()} iaid={iaid}"
+    else:
+        identity = f"# mac={argv[2].lower()}"
+    reserved_hostname = _lease_option_from_tags("12")
+    hostname = reserved_hostname
+    if not hostname:
+        hostname = argv[4].strip().strip(".").lower() if len(argv) == 5 else ""
+    if not hostname or hostname == "*":
+        hostname = os.environ.get("DNSMASQ_SUPPLIED_HOSTNAME", "").strip().strip(".").lower()
+    try:
+        recursive_mirrors = DNSMASQ_CONFIG_PATH.is_file() and _recursive_lease_mirrors_in_config(DNSMASQ_CONFIG_PATH)
+    except OSError:
+        return 0
+    if recursive_mirrors:
+        # Ordinary dnsmasq serves new named leases itself. Keep only a
+        # same-client '*' mirror until that lease renews or expires.
+        try:
+            if destination.is_symlink():
+                return 1
+            existing_identity = destination.read_text(encoding="utf-8").splitlines()[1] if destination.is_file() else ""
+            if action == "del" or hostname or existing_identity != identity:
+                destination.unlink(missing_ok=True)
+        except (OSError, IndexError):
+            return 1
+        return 0
+    if action == "old" and not hostname:
+        # Ignored client names are absent from the persisted dnsmasq lease
+        # row. Keep the mirrored name until renewal or an expiry "del" event.
+        return 0
+    domain = os.environ.get("DNSMASQ_DOMAIN", "").strip().strip(".").lower()
+    if not domain:
+        domain = _lease_option_from_tags("option:domain-name") or _lease_option_from_tags("option6:domain-search")
+    fqdn = hostname if "." in hostname else f"{hostname}.{domain}" if hostname and domain else ""
+    zones = _authoritative_lease_domains()
+    publish = (
+        action != "del"
+        and bool(HOSTNAME_PATTERN.fullmatch(fqdn))
+        and any(fqdn == zone or fqdn.endswith(f".{zone}") for zone in zones)
+        and (bool(reserved_hostname) or (bool(domain) and (fqdn == domain or fqdn.endswith(f".{domain}"))))
+    )
+    try:
+        if not publish:
+            destination.unlink(missing_ok=True)
+            _reload_authoritative_lease_hosts()
+            return 0
+        temporary_path: Path | None = None
+        try:
+            with tempfile.NamedTemporaryFile(
+                mode="w", encoding="utf-8", prefix=".lease-sync-", dir=DNSMASQ_STATE_DIR, delete=False
+            ) as temporary:
+                temporary_path = Path(temporary.name)
+                temporary.write(f"{address} {fqdn}\n{identity}\n")
+                if reserved_hostname:
+                    temporary.write("# reservation\n")
+                if domain and HOSTNAME_PATTERN.fullmatch(domain):
+                    temporary.write(f"# scope-domain={domain}\n")
+            temporary_path.chmod(0o644)
+            os.replace(temporary_path, destination)
+            _reload_authoritative_lease_hosts()
+        finally:
+            if temporary_path is not None:
+                temporary_path.unlink(missing_ok=True)
+    except OSError:
+        print("Unable to synchronize an authoritative DHCP lease name.", file=sys.stderr)
+        return 1
+    return 0
+
+
+def _reload_authoritative_lease_hosts() -> None:
+    """Discard backend records retained after a hostsdir file changes."""
+    unit = "atlaso-dns-authoritative.service"
+    if _run(["systemctl", "is-active", "--quiet", unit]).returncode != 0:
+        return
+    result = _run(["systemctl", "kill", "--kill-whom=main", "--signal=HUP", unit])
+    if result.returncode != 0:
+        raise OSError("Unable to reload authoritative DHCP lease records.")
+
+
+def _recursive_lease_mirrors_in_config(config_path: Path) -> bool:
+    """Return whether the recursive listener serves transition lease mirrors.
+
+    Args:
+        config_path: Path to the installed DNS configuration.
+    """
+    return f"hostsdir={DNSMASQ_AUTHORITATIVE_LEASE_HOSTS_DIR}" in config_path.read_text(encoding="utf-8").splitlines()
+
+
+@contextmanager
+def _restore_dnsmasq_activation_on_failure() -> Iterator[Callable[[], None]]:
+    """Restore the installed DNS pair if any later activation command fails."""
+    paths = (
+        DNSMASQ_CONFIG_PATH,
+        DNSMASQ_SERVICE_DROPIN_PATH,
+        DNSMASQ_AUTHORITATIVE_CONFIG_PATH,
+        DNSMASQ_AUTHORITATIVE_SERVICE_PATH,
+    )
+    files: dict[Path, tuple[bytes, int] | None] = {}
+    for path in paths:
+        if path.is_symlink() or (path.exists() and not path.is_file()):
+            raise ValueError("The installed dnsmasq path is unsafe for rollback.")
+        files[path] = (path.read_bytes(), stat.S_IMODE(path.stat().st_mode)) if path.is_file() else None
+    units = ("atlaso-dns-authoritative.service", "dnsmasq")
+    services = {
+        unit: (
+            _run(["systemctl", "is-enabled", "--quiet", unit]).returncode == 0,
+            _run(["systemctl", "is-active", "--quiet", unit]).returncode == 0,
+        )
+        for unit in units
+    }
+    committed = False
+
+    def commit() -> None:
+        nonlocal committed
+        committed = True
+
+    try:
+        yield commit
+    finally:
+        if not committed:
+            failures = []
+            # Stop the client listener first so it cannot forward to a
+            # candidate backend while the previous files are restored.
+            for unit in reversed(units):
+                if _run(["systemctl", "stop", unit]).returncode != 0:
+                    failures.append(f"stop {unit}")
+            for path, previous in files.items():
+                if previous is None:
+                    path.unlink(missing_ok=True)
+                    continue
+                content, mode = previous
+                path.parent.mkdir(parents=True, exist_ok=True)
+                temporary = path.with_name(f".{path.name}.atlaso-rollback-{uuid.uuid4().hex}")
+                try:
+                    with temporary.open("xb") as stream:
+                        stream.write(content)
+                        stream.flush()
+                        os.fsync(stream.fileno())
+                    temporary.chmod(mode)
+                    temporary.replace(path)
+                finally:
+                    temporary.unlink(missing_ok=True)
+            if _run(["systemctl", "daemon-reload"]).returncode != 0:
+                failures.append("daemon-reload")
+            for unit in units:
+                was_enabled, was_active = services[unit]
+                is_enabled = _run(["systemctl", "is-enabled", "--quiet", unit]).returncode == 0
+                if was_enabled != is_enabled:
+                    command = "enable" if was_enabled else "disable"
+                    if _run(["systemctl", command, unit]).returncode != 0:
+                        failures.append(f"{command} {unit}")
+                if was_active and _run(["systemctl", "restart", unit]).returncode != 0:
+                    failures.append(f"restart {unit}")
+            if failures:
+                _run(["systemctl", "stop", "dnsmasq"])
+                raise OSError("Failed to restore prior DNS service state: " + ", ".join(failures))
+
+
 def _handle_dnsmasq(action: str, args: list[str]) -> int:
     """Handle dnsmasq.
 
@@ -2870,36 +3674,96 @@ def _handle_dnsmasq(action: str, args: list[str]) -> int:
         if not dnssec_ready:
             print(dnssec_error, file=sys.stderr)
             return 2
-        validation = _validate_dnsmasq_config(config_path)
-        print(validation.stdout, end="")
-        print(validation.stderr, end="", file=sys.stderr)
-        if action == "validate" or validation.returncode != 0:
-            return validation.returncode
+        with (
+            _dnsmasq_config_bundle_paths(config_path) as (main_config_path, authoritative_config_path),
+            _restore_pruned_lease_hosts_on_failure(
+                action == "apply" and (
+                    authoritative_config_path is not None
+                    or _recursive_lease_mirrors_in_config(main_config_path)
+                )
+            ) as (commit_mirrors, seeded_inodes),
+        ):
+            for candidate in (main_config_path, authoritative_config_path):
+                if candidate is None:
+                    continue
+                validation = _validate_dnsmasq_config(candidate)
+                print(validation.stdout, end="")
+                print(validation.stderr, end="", file=sys.stderr)
+                if validation.returncode != 0:
+                    return validation.returncode
+            if action == "validate":
+                return 0
 
-        try:
-            _prepare_dnsmasq_tftp_roots(config_path)
-        except ValueError as exc:
-            print(str(exc), file=sys.stderr)
-            return 2
+            try:
+                _prepare_dnsmasq_tftp_roots(main_config_path)
+            except ValueError as exc:
+                print(str(exc), file=sys.stderr)
+                return 2
 
-        DNSMASQ_CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-        DNSMASQ_STATE_DIR.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(config_path, DNSMASQ_CONFIG_PATH)
-        _install_dnsmasq_service_dropin()
-        daemon_reload = _run(["systemctl", "daemon-reload"])
-        print(daemon_reload.stdout, end="")
-        print(daemon_reload.stderr, end="", file=sys.stderr)
-        if daemon_reload.returncode != 0:
-            return daemon_reload.returncode
-        enable = _run(["systemctl", "enable", "dnsmasq"])
-        print(enable.stdout, end="")
-        print(enable.stderr, end="", file=sys.stderr)
-        if enable.returncode != 0:
-            return enable.returncode
-        restart = _run(["systemctl", "reload-or-restart", "dnsmasq"])
-        print(restart.stdout, end="")
-        print(restart.stderr, end="", file=sys.stderr)
-        return restart.returncode
+            DNSMASQ_CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+            DNSMASQ_STATE_DIR.mkdir(parents=True, exist_ok=True)
+            if authoritative_config_path is not None:
+                try:
+                    _prepare_authoritative_lease_hosts(authoritative_config_path, main_config_path, seeded_inodes)
+                except (OSError, ValueError) as exc:
+                    print(str(exc), file=sys.stderr)
+                    return 2
+            elif _recursive_lease_mirrors_in_config(main_config_path):
+                try:
+                    _prepare_authoritative_lease_hosts(main_config_path, main_config_path, recursive_mode=True)
+                except (OSError, ValueError) as exc:
+                    print(str(exc), file=sys.stderr)
+                    return 2
+            with _restore_dnsmasq_activation_on_failure() as commit_runtime:
+                shutil.copy2(main_config_path, DNSMASQ_CONFIG_PATH)
+                _install_dnsmasq_service_dropin(authoritative=authoritative_config_path is not None)
+                if authoritative_config_path is not None:
+                    shutil.copy2(authoritative_config_path, DNSMASQ_AUTHORITATIVE_CONFIG_PATH)
+                    _install_dnsmasq_authoritative_service()
+
+                daemon_reload = _run(["systemctl", "daemon-reload"])
+                print(daemon_reload.stdout, end="")
+                print(daemon_reload.stderr, end="", file=sys.stderr)
+                if daemon_reload.returncode != 0:
+                    return daemon_reload.returncode
+                if authoritative_config_path is not None:
+                    for command in (
+                        ["systemctl", "enable", "atlaso-dns-authoritative.service"],
+                        ["systemctl", "restart", "atlaso-dns-authoritative.service"],
+                    ):
+                        result = _run(command)
+                        print(result.stdout, end="")
+                        print(result.stderr, end="", file=sys.stderr)
+                        if result.returncode != 0:
+                            return result.returncode
+                enable = _run(["systemctl", "enable", "dnsmasq"])
+                print(enable.stdout, end="")
+                print(enable.stderr, end="", file=sys.stderr)
+                if enable.returncode != 0:
+                    return enable.returncode
+                restart = _run(["systemctl", "restart", "dnsmasq"])
+                print(restart.stdout, end="")
+                print(restart.stderr, end="", file=sys.stderr)
+                if restart.returncode != 0:
+                    return restart.returncode
+                if authoritative_config_path is None and (
+                    DNSMASQ_AUTHORITATIVE_CONFIG_PATH.exists() or DNSMASQ_AUTHORITATIVE_SERVICE_PATH.exists()
+                ):
+                    disable = _run(["systemctl", "disable", "--now", "atlaso-dns-authoritative.service"])
+                    print(disable.stdout, end="")
+                    print(disable.stderr, end="", file=sys.stderr)
+                    if disable.returncode != 0:
+                        return disable.returncode
+                    DNSMASQ_AUTHORITATIVE_CONFIG_PATH.unlink(missing_ok=True)
+                    DNSMASQ_AUTHORITATIVE_SERVICE_PATH.unlink(missing_ok=True)
+                    daemon_reload = _run(["systemctl", "daemon-reload"])
+                    print(daemon_reload.stdout, end="")
+                    print(daemon_reload.stderr, end="", file=sys.stderr)
+                    if daemon_reload.returncode != 0:
+                        return daemon_reload.returncode
+                commit_mirrors()
+                commit_runtime()
+            return 0
 
     if action == "reload":
         daemon_reload = _run(["systemctl", "daemon-reload"])
@@ -2907,7 +3771,13 @@ def _handle_dnsmasq(action: str, args: list[str]) -> int:
         print(daemon_reload.stderr, end="", file=sys.stderr)
         if daemon_reload.returncode != 0:
             return daemon_reload.returncode
-        restart = _run(["systemctl", "reload-or-restart", "dnsmasq"])
+        if DNSMASQ_AUTHORITATIVE_CONFIG_PATH.is_file():
+            authoritative_restart = _run(["systemctl", "restart", "atlaso-dns-authoritative.service"])
+            print(authoritative_restart.stdout, end="")
+            print(authoritative_restart.stderr, end="", file=sys.stderr)
+            if authoritative_restart.returncode != 0:
+                return authoritative_restart.returncode
+        restart = _run(["systemctl", "restart", "dnsmasq"])
         print(restart.stdout, end="")
         print(restart.stderr, end="", file=sys.stderr)
         if restart.returncode != 0:
@@ -4850,7 +5720,6 @@ def _handle_ldap_inner(action: str, args: list[str]) -> int:
                 delete=False,
             ) as password_file:
                 password_file.write(password)
-                password_file.write("\n")
                 password_path = Path(password_file.name)
             os.chmod(password_path, 0o600)
             result = _run(
@@ -9007,31 +9876,72 @@ def _networkd_managed_filename(name: str, suffix: str) -> str:
     return f"{NETWORKD_MANAGED_PREFIX}{name}.{suffix}"
 
 
-def _read_existing_management_network_values() -> dict[str, list[str]]:
+def _read_existing_management_network_values(
+    interface_names: list[str] | None = None,
+) -> dict[str, list[str]]:
     """Read existing management network values.
 
+    Args:
+        interface_names: Effective management interfaces eligible for preservation.
+
     """
-    values: dict[str, list[str]] = {"Gateway": [], "DNS": [], "Name": []}
-    try:
-        lines = NETWORKD_MGMT_CONFIG_PATH.read_text(encoding="utf-8").splitlines()
-    except OSError:
-        return values
-    current_section = ""
-    for raw_line in lines:
-        line = raw_line.strip()
-        if line.startswith("[") and line.endswith("]"):
-            current_section = line.strip("[]")
+    empty: dict[str, list[str]] = {"Gateway": [], "DNS": [], "Domains": [], "Name": []}
+    candidates = [
+        NETWORKD_CONFIG_DIR / _networkd_managed_filename(name, "network")
+        for name in interface_names or []
+        if _valid_network_interface_name(name)
+    ]
+    candidates.append(NETWORKD_MGMT_CONFIG_PATH)
+    parsed_candidates: list[tuple[bool, int, int, dict[str, list[str]]]] = []
+    for candidate_index, path in enumerate(dict.fromkeys(candidates)):
+        values = {key: list(entries) for key, entries in empty.items()}
+        try:
+            lines = path.read_text(encoding="utf-8").splitlines()
+            modified_ns = path.stat().st_mtime_ns
+        except OSError:
             continue
-        if current_section not in {"Match", "Network", "Route"} or "=" not in line:
+        current_section = ""
+        resolver_mode_marked = False
+        for raw_line in lines:
+            line = raw_line.strip()
+            if line.startswith(MANAGEMENT_RESOLVER_MODE_PREFIX):
+                resolver_mode_marked = line.removeprefix(
+                    MANAGEMENT_RESOLVER_MODE_PREFIX
+                ) in {"configured", "dhcp"}
+                continue
+            if line.startswith("[") and line.endswith("]"):
+                current_section = line.strip("[]")
+                continue
+            if current_section not in {"Match", "Network", "Route"} or "=" not in line:
+                continue
+            key, value = [part.strip() for part in line.split("=", 1)]
+            if key == "Name" and current_section == "Match" and value:
+                values[key].append(value)
+            if key in {"DNS", "Domains"} and current_section == "Network" and value:
+                values[key].append(value)
+            if key == "Gateway" and value:
+                values[key].append(value)
+        if interface_names and not set(values["Name"]).intersection(interface_names):
             continue
-        key, value = [part.strip() for part in line.split("=", 1)]
-        if key == "Name" and current_section == "Match" and value:
-            values[key].append(value)
-        if key == "DNS" and current_section == "Network" and value:
-            values[key].append(value)
-        if key == "Gateway" and value:
-            values[key].append(value)
-    return values
+        parsed_candidates.append(
+            (resolver_mode_marked, modified_ns, candidate_index, values)
+        )
+    marked_candidates = [candidate for candidate in parsed_candidates if candidate[0]]
+    if marked_candidates:
+        return max(
+            marked_candidates,
+            key=lambda candidate: (candidate[1], candidate[2]),
+        )[3]
+    resolver_candidates = [
+        candidate for candidate in parsed_candidates
+        if candidate[3]["DNS"] or candidate[3]["Domains"]
+    ]
+    if resolver_candidates:
+        return max(
+            resolver_candidates,
+            key=lambda candidate: (candidate[1], candidate[2]),
+        )[3]
+    return parsed_candidates[0][3] if parsed_candidates else empty
 
 
 def _usable_management_default_gateways(networks: list[str], candidates: list[str]) -> list[str]:
@@ -9079,7 +9989,51 @@ def _systemd_networkd_files(path: Path) -> tuple[dict[str, str], list[str], list
 
     management = next((row for row in physical_interfaces if row.get("role") == "management"), None)
     management_name = management.get("name") if management else None
-    preserved_management = _read_existing_management_network_values()
+    flagged_management_names = [
+        row.get("name", "")
+        for row in sorted(
+            physical_interfaces,
+            key=lambda row: (row.get("name") != "eth0", row.get("name", "")),
+        )
+        if row.get("role") == "access"
+        and row.get("mode") == "access"
+        and row.get("admin_state") == "up"
+        and row.get("access_management_ui_enabled", "false").strip().lower() == "true"
+        and (
+            _network_row_has_usable_management_address(row)
+            or _network_row_has_usable_runtime_management_address(row)
+        )
+    ]
+    flagged_management_names.extend(
+        row.get("name", "")
+        for row in sorted(
+            vlan_interfaces,
+            key=lambda row: (row.get("parent", ""), int(row.get("vlan_id", "0"))),
+        )
+        if row.get("role") == "access"
+        and row.get("enabled", "true").strip().lower() == "true"
+        and row.get("access_management_ui_enabled", "false").strip().lower() == "true"
+        and _network_row_has_usable_management_address(row)
+    )
+    management_is_effective = bool(
+        management
+        and (
+            _network_row_has_usable_management_address(management)
+            or _network_row_has_usable_runtime_management_address(management)
+        )
+    )
+    resolver_name = (str(management_name) if management_is_effective else None) or next(
+        iter(flagged_management_names),
+        management_name,
+    )
+    resolver_source_names = list(
+        dict.fromkeys(
+            ([str(resolver_name)] if resolver_name else [])
+            + ([str(management_name)] if management_name else [])
+            + flagged_management_names
+        )
+    )
+    preserved_management = _read_existing_management_network_values(resolver_source_names)
     files: dict[str, str] = {}
     reconfigure_links: list[str] = []
     admin_down_links: list[str] = []
@@ -9111,7 +10065,7 @@ def _systemd_networkd_files(path: Path) -> tuple[dict[str, str], list[str], list
 
         else:
             lines.extend(["IPv6AcceptRA=yes", "LinkLocalAddressing=ipv6"])
-        if name == management_name:
+        if name == resolver_name:
             for dns in preserved_management["DNS"]:
                 lines.append(f"DNS={dns}")
         if mode == "trunk":
@@ -9179,6 +10133,10 @@ def _systemd_networkd_files(path: Path) -> tuple[dict[str, str], list[str], list
                 lines.extend(["", "[Address]", f"Address={interface[key]}", f"DuplicateAddressDetection={detection}"])
         filename = "00-atlaso-mgmt.network" if name == management_name else _networkd_managed_filename(name, "network")
         files[filename] = "\n".join(lines).strip() + "\n"
+        if name == resolver_name and preserved_management["DNS"]:
+            files[filename] = _management_resolver_candidate(
+                files[filename], preserved_management["DNS"], preserved_management["Domains"],
+            )
         if name != management_name:
             reconfigure_links.append(name)
 
@@ -9211,7 +10169,14 @@ def _systemd_networkd_files(path: Path) -> tuple[dict[str, str], list[str], list
                 network_lines.extend(["", "[Address]", f"Address={vlan[key]}", f"DuplicateAddressDetection={detection}"])
         if not vlan.get("ip_cidr") and not vlan.get("ipv6_cidr"):
             network_lines.append("LinkLocalAddressing=no")
-        files[_networkd_managed_filename(name, "network")] = "\n".join(network_lines).strip() + "\n"
+        network_filename = _networkd_managed_filename(name, "network")
+        files[network_filename] = "\n".join(network_lines).strip() + "\n"
+        if name == resolver_name and preserved_management["DNS"]:
+            files[network_filename] = _management_resolver_candidate(
+                files[network_filename],
+                preserved_management["DNS"],
+                preserved_management["Domains"],
+            )
         reconfigure_links.append(name)
 
     return files, reconfigure_links, admin_down_links
@@ -9234,6 +10199,77 @@ def _network_row_has_usable_management_address(row: dict[str, str]) -> bool:
         if not (address.is_link_local or address.is_loopback or address.is_multicast or address.is_unspecified):
             return True
     return False
+
+
+def _network_interface_has_usable_runtime_address(
+    interface_name: str,
+    *,
+    ipv4_enabled: bool,
+    ipv6_enabled: bool,
+) -> bool:
+    """Return whether a live interface currently owns a usable address.
+
+    Args:
+        interface_name: Host network-interface name inspected at runtime.
+        ipv4_enabled: Whether candidate state accepts observed IPv4 addresses.
+        ipv6_enabled: Whether candidate state accepts observed IPv6 addresses.
+    """
+    if not _valid_network_interface_name(interface_name) or shutil.which("ip") is None:
+        return False
+    try:
+        result = _run(["ip", "-j", "address", "show", "dev", interface_name])
+    except OSError:
+        return False
+    if result.returncode != 0:
+        return False
+    try:
+        interfaces = json.loads(result.stdout or "[]")
+    except json.JSONDecodeError:
+        return False
+    for interface in interfaces if isinstance(interfaces, list) else []:
+        for item in interface.get("addr_info", []) if isinstance(interface, dict) else []:
+            flags = {
+                str(flag).strip().lower()
+                for flag in (item.get("flags") or [])
+            }
+            if item.get("tentative") or item.get("dadfailed") or flags & {"tentative", "dadfailed"}:
+                continue
+            try:
+                address = ip_address(str(item.get("local") or ""))
+            except ValueError:
+                continue
+            if (address.version == 4 and not ipv4_enabled) or (
+                address.version == 6 and not ipv6_enabled
+            ):
+                continue
+            if not (
+                address.is_link_local
+                or address.is_loopback
+                or address.is_multicast
+                or address.is_unspecified
+            ):
+                return True
+    return False
+
+
+def _network_row_has_usable_runtime_management_address(row: dict[str, str]) -> bool:
+    """Inspect only address families that candidate dynamic state keeps enabled.
+
+    Args:
+        row: Parsed staged network interface values.
+    """
+    ipv4_dynamic = (row.get("ipv4_method") or "static").strip().lower() == "dhcp"
+    ipv6_dynamic = (
+        row.get("ipv6_enabled", "false").strip().lower() == "true"
+        and not row.get("ipv6_cidr", "").strip()
+    )
+    if not (ipv4_dynamic or ipv6_dynamic):
+        return False
+    return _network_interface_has_usable_runtime_address(
+        row.get("name", ""),
+        ipv4_enabled=ipv4_dynamic,
+        ipv6_enabled=ipv6_dynamic,
+    )
 
 
 def _network_config_errors(path: Path) -> list[str]:
@@ -9264,7 +10300,10 @@ def _network_config_errors(path: Path) -> list[str]:
             management_ui_enabled
             and role == "access"
             and interface.get("mode") == "access"
-            and not _network_row_has_usable_management_address(interface)
+            and not (
+                _network_row_has_usable_management_address(interface)
+                or _network_row_has_usable_runtime_management_address(interface)
+            )
         ):
             errors.append(
                 f"Interface {name or '<missing>'} can expose the management UI only when it has a usable non-link-local address."
@@ -9425,12 +10464,18 @@ def _network_config_errors(path: Path) -> list[str]:
         and row.get("mode") == "access"
         and row.get("admin_state") == "up"
         and row.get("access_management_ui_enabled", "false").strip().lower() == "true"
-        and _network_row_has_usable_management_address(row)
+        and (
+            _network_row_has_usable_management_address(row)
+            or _network_row_has_usable_runtime_management_address(row)
+        )
         for row in physical_interfaces
     ) or any(
         row.get("role") == "access"
         and row.get("access_management_ui_enabled", "false").strip().lower() == "true"
-        and _network_row_has_usable_management_address(row)
+        and (
+            _network_row_has_usable_management_address(row)
+            or _network_row_has_usable_runtime_management_address(row)
+        )
         for row in vlan_interfaces
     )
     if not effective_management:
@@ -23874,6 +24919,11 @@ def _load_management_handoff_manifest(path: Path) -> dict:
         if not ca_path.is_file() or not ca_path.is_relative_to(CA_APPLY_DIR):
             raise ValueError(f"management handoff ca_config_path must name a staged file under {CA_APPLY_DIR}")
         payload["ca_config_path"] = str(ca_path)
+    dnsmasq_value = str(payload.get("dnsmasq_config_path") or "")
+    if dnsmasq_value:
+        payload["dnsmasq_config_path"] = str(
+            _validate_dnsmasq_config_path(dnsmasq_value)
+        )
     wan_value = str(payload.get("wan_config_path") or "")
     nat_value = str(payload.get("nat_config_path") or "")
     if nat_value:
@@ -23979,6 +25029,22 @@ def _management_handoff_validation_errors(payload: dict) -> list[str]:
     )
     if staged_ca_path is not None:
         errors.extend(f"certificate: {error}" for error in _ca_payload_errors(staged_ca_path))
+    dnsmasq_path = str(payload.get("dnsmasq_config_path") or "")
+    if dnsmasq_path:
+        dnssec_ready, dnssec_error = _prepare_dnsmasq_dnssec(Path(dnsmasq_path))
+        if not dnssec_ready:
+            errors.append(f"DNS/DHCP: {dnssec_error}")
+        else:
+            with _dnsmasq_config_bundle_paths(Path(dnsmasq_path)) as dnsmasq_paths:
+                for candidate in dnsmasq_paths:
+                    if candidate is None:
+                        continue
+                    dnsmasq_validation = _validate_dnsmasq_config(candidate)
+                    if dnsmasq_validation.returncode != 0:
+                        errors.append(
+                            "DNS/DHCP: "
+                            + (dnsmasq_validation.stderr or dnsmasq_validation.stdout).strip()
+                        )
     for label, field in (
         ("WAN candidate", "wan_config_path"),
         ("WAN rollback", "wan_rollback_config_path"),
@@ -24067,6 +25133,20 @@ def _management_handoff_previous_certificate_paths() -> list[Path]:
     return paths
 
 
+def _authoritative_lease_mirror_paths() -> list[Path]:
+    """Return only owned lease mirror files eligible for handoff snapshots."""
+    directory = DNSMASQ_AUTHORITATIVE_LEASE_HOSTS_DIR
+    if directory.is_symlink() or (directory.exists() and not directory.is_dir()):
+        raise ValueError("The authoritative lease hosts directory is unsafe.")
+    if not directory.exists():
+        return []
+    paths = sorted(directory.iterdir())
+    for path in paths:
+        if not re.fullmatch(r"lease-[0-9a-f]{8,32}\.hosts", path.name) or path.is_symlink() or not path.is_file():
+            raise ValueError("The authoritative lease hosts directory contains an unexpected entry.")
+    return paths
+
+
 def _management_handoff_runtime_paths(payload: dict) -> list[Path]:
     """Return runtime files that require exact rollback snapshots.
 
@@ -24088,6 +25168,12 @@ def _management_handoff_runtime_paths(payload: dict) -> list[Path]:
         NGINX_PUBLIC_SERVICES_SITE_PATH,
         VCF_DEPOT_HTPASSWD_PATH,
         ATLASO_SERVICE_HTTPS_DROPIN_PATH,
+        DNSMASQ_CONFIG_PATH,
+        DNSMASQ_SERVICE_DROPIN_PATH,
+        DNSMASQ_AUTHORITATIVE_CONFIG_PATH,
+        DNSMASQ_AUTHORITATIVE_SERVICE_PATH,
+        DNSMASQ_DNSSEC_TRUST_ANCHORS_PATH,
+        *(_authoritative_lease_mirror_paths() if payload.get("dnsmasq_config_path") else []),
         WAN_NAT_CONFIG_PATH,
         WAN_NAT_SERVICE_PATH,
         WAN_SYSCTL_PATH,
@@ -24279,6 +25365,32 @@ def _snapshot_management_handoff(payload: dict) -> dict:
         "publishing_retire_rule_ids": [],
         "previous_nat_enabled": (_run(["systemctl", "is-enabled", "atlaso-nat.service"]).returncode == 0
                                  if payload.get("nat_config_path") else False),
+        "dnsmasq_included": bool(payload.get("dnsmasq_config_path")),
+        "previous_dnsmasq_active": (
+            _run(["systemctl", "is-active", "dnsmasq.service"]).returncode == 0
+            if payload.get("dnsmasq_config_path")
+            else False
+        ),
+        "previous_dnsmasq_enabled": (
+            _run(["systemctl", "is-enabled", "dnsmasq.service"]).returncode == 0
+            if payload.get("dnsmasq_config_path")
+            else False
+        ),
+        "previous_dnsmasq_authoritative_present": (
+            DNSMASQ_AUTHORITATIVE_SERVICE_PATH.is_file()
+            if payload.get("dnsmasq_config_path")
+            else False
+        ),
+        "previous_dnsmasq_authoritative_active": (
+            _run(["systemctl", "is-active", "atlaso-dns-authoritative.service"]).returncode == 0
+            if payload.get("dnsmasq_config_path") and DNSMASQ_AUTHORITATIVE_SERVICE_PATH.is_file()
+            else False
+        ),
+        "previous_dnsmasq_authoritative_enabled": (
+            _run(["systemctl", "is-enabled", "atlaso-dns-authoritative.service"]).returncode == 0
+            if payload.get("dnsmasq_config_path") and DNSMASQ_AUTHORITATIVE_SERVICE_PATH.is_file()
+            else False
+        ),
         "wan_rollback_config_path": str(payload.get("wan_rollback_config_path") or ""),
     }
     _durable_management_handoff_state_write(state, MANAGEMENT_HANDOFF_STATE_PATH)
@@ -25294,6 +26406,101 @@ def _restore_management_handoff_snapshot(item: dict) -> None:
         temporary.unlink(missing_ok=True)
 
 
+def _capture_management_handoff_lease_updates(state: dict) -> None:
+    """Durably retain changed existing mirrors before restoring their snapshots.
+
+    Args:
+        state: Current handoff or rollback state.
+    """
+    if not state.get("dnsmasq_included") or "lease_mirror_updates" in state:
+        return
+    if not any(
+        isinstance(item, dict)
+        and Path(str(item.get("path", ""))).parent == DNSMASQ_AUTHORITATIVE_LEASE_HOSTS_DIR
+        and item.get("existed")
+        for item in state.get("snapshots", [])
+    ):
+        return
+    updates: list[dict[str, object]] = []
+    for index, item in enumerate(state.get("snapshots", [])):
+        path = Path(str(item.get("path", "")))
+        if (
+            path.parent != DNSMASQ_AUTHORITATIVE_LEASE_HOSTS_DIR
+            or not item.get("existed")
+            or not re.fullmatch(r"lease-[0-9a-f]{8,32}\.hosts", path.name)
+            or not path.is_file()
+            or path.is_symlink()
+        ):
+            continue
+        previous = Path(str(item["backup"]))
+        if path.stat().st_size > 512 or path.read_bytes() == previous.read_bytes():
+            continue
+        backup = MANAGEMENT_HANDOFF_BACKUP_DIR / f"lease-update-{index:03d}.bin"
+        shutil.copy2(path, backup)
+        _fsync_file(backup)
+        stat = path.stat()
+        updates.append({
+            "path": str(path), "backup": str(backup), "existed": True,
+            "mode": stat.st_mode & 0o777, "uid": stat.st_uid, "gid": stat.st_gid,
+        })
+    _fsync_directory(MANAGEMENT_HANDOFF_BACKUP_DIR)
+    state["lease_mirror_updates"] = updates
+    _durable_management_handoff_state_write(state, MANAGEMENT_HANDOFF_STATE_PATH)
+
+
+def _reconcile_management_handoff_lease_mirrors(state: dict) -> None:
+    """Keep valid post-snapshot leases when rolling back authoritative DNS.
+
+    Args:
+        state: Durable management-handoff transaction state.
+    """
+    if state.get("previous_dnsmasq_authoritative_present"):
+        previous_scopes = _authoritative_lease_scopes(DNSMASQ_CONFIG_PATH)
+        original = {
+            Path(str(item["path"]))
+            for item in state.get("snapshots", [])
+            if isinstance(item, dict)
+            and Path(str(item.get("path", ""))).parent == DNSMASQ_AUTHORITATIVE_LEASE_HOSTS_DIR
+            and item.get("existed")
+        }
+        for item in state.get("lease_mirror_updates", []):
+            path = Path(str(item.get("path", "")))
+            backup = Path(str(item.get("backup", "")))
+            if path not in original or not backup.is_file() or backup.stat().st_size > 512:
+                continue
+            rows = backup.read_text(encoding="utf-8").splitlines()
+            scope_markers = [line.removeprefix("# scope-domain=") for line in rows[2:] if line.startswith("# scope-domain=")]
+            try:
+                address = ip_address(rows[0].split()[0])
+            except (IndexError, ValueError):
+                continue
+            if len(scope_markers) == 1 and any(
+                address in network and domain == scope_markers[0]
+                for network, domain in previous_scopes
+            ):
+                _restore_management_handoff_snapshot(item)
+        # A new mirror cannot be trusted without its exact source scope. Old
+        # snapshotted mirrors may predate the provenance marker.
+        for path in _authoritative_lease_mirror_paths():
+            if path in original:
+                continue
+            rows = path.read_text(encoding="utf-8").splitlines()
+            if not any(line.startswith("# scope-domain=") for line in rows[2:]):
+                _durable_management_handoff_unlink(path)
+        _prepare_authoritative_lease_hosts(DNSMASQ_AUTHORITATIVE_CONFIG_PATH, DNSMASQ_CONFIG_PATH)
+        return
+    original = {
+        Path(str(item["path"]))
+        for item in state.get("snapshots", [])
+        if isinstance(item, dict)
+        and Path(str(item.get("path", ""))).parent == DNSMASQ_AUTHORITATIVE_LEASE_HOSTS_DIR
+        and item.get("existed")
+    }
+    for path in _authoritative_lease_mirror_paths():
+        if path not in original:
+            _durable_management_handoff_unlink(path)
+
+
 def _apply_management_handoff_wan(payload: dict) -> None:
     """Apply the candidate Routes & WAN config when it joined the handoff.
 
@@ -25407,6 +26614,9 @@ def _restore_management_handoff(state: dict) -> dict:
     """
     commands: list[dict[str, object]] = []
     errors: list[str] = []
+    # Preserve renewals before any snapshot restore can overwrite them. A
+    # failed capture leaves the handoff journal intact for a later recovery.
+    _capture_management_handoff_lease_updates(state)
 
     def attempt(stage: str, operation: Callable[[], None]) -> None:
         """Run one rollback stage without preventing later restoration work.
@@ -25424,6 +26634,26 @@ def _restore_management_handoff(state: dict) -> dict:
         "firewall service quiesce",
         lambda: _quiesce_management_handoff_firewall(state, commands),
     )
+    if (
+        state.get("dnsmasq_included")
+        and not state.get("previous_dnsmasq_authoritative_present")
+        and DNSMASQ_AUTHORITATIVE_SERVICE_PATH.exists()
+    ):
+        def disable_candidate_authoritative_dns() -> None:
+            """Disable the candidate-only authoritative service before removing its unit."""
+            command = ["systemctl", "disable", "--now", "atlaso-dns-authoritative.service"]
+            result = _run(command)
+            commands.append(
+                {
+                    "stage": "Authoritative DNS candidate rollback",
+                    "command": command,
+                    "returncode": result.returncode,
+                }
+            )
+            if result.returncode != 0:
+                raise ValueError("candidate authoritative DNS disable failed")
+
+        attempt("Authoritative DNS candidate rollback", disable_candidate_authoritative_dns)
     for path in NETWORKD_CONFIG_DIR.glob(f"{MANAGEMENT_HANDOFF_HOLDOVER_PREFIX}*.network"):
         attempt(
             "network holdover removal",
@@ -25441,6 +26671,11 @@ def _restore_management_handoff(state: dict) -> dict:
             f"snapshot {index} restore",
             lambda item=item: _restore_management_handoff_snapshot(item),
         )
+    if state.get("dnsmasq_included"):
+        attempt(
+            "authoritative lease mirror reconciliation",
+            lambda: _reconcile_management_handoff_lease_mirrors(state),
+        )
     for command in (["networkctl", "reload"], ["systemctl", "daemon-reload"]):
         def run_reload(command: list[str] = command) -> None:
             """Run one required rollback reload command.
@@ -25456,6 +26691,72 @@ def _restore_management_handoff(state: dict) -> dict:
         attempt(f"{' '.join(command)}", run_reload)
     attempt("resolver restore", lambda: _restore_management_handoff_resolver(state, commands))
     attempt("network link restore", lambda: _restore_management_handoff_links(state, commands))
+    if state.get("dnsmasq_included"):
+        def restore_dnsmasq() -> None:
+            """Restore DNS after the previous listener addresses are active."""
+            if state.get("previous_dnsmasq_authoritative_present"):
+                authoritative_runtime_operation = (
+                    "restart" if state.get("previous_dnsmasq_authoritative_active") else "stop"
+                )
+                authoritative_runtime = _run(
+                    ["systemctl", authoritative_runtime_operation, "atlaso-dns-authoritative.service"]
+                )
+                commands.append(
+                    {
+                        "stage": "Authoritative DNS rollback",
+                        "command": [
+                            "systemctl",
+                            authoritative_runtime_operation,
+                            "atlaso-dns-authoritative.service",
+                        ],
+                        "returncode": authoritative_runtime.returncode,
+                    }
+                )
+                if authoritative_runtime.returncode != 0:
+                    raise ValueError("authoritative DNS runtime rollback failed")
+                authoritative_boot_operation = (
+                    "enable" if state.get("previous_dnsmasq_authoritative_enabled") else "disable"
+                )
+                authoritative_boot = _run(
+                    ["systemctl", authoritative_boot_operation, "atlaso-dns-authoritative.service"]
+                )
+                commands.append(
+                    {
+                        "stage": "Authoritative DNS rollback",
+                        "command": [
+                            "systemctl",
+                            authoritative_boot_operation,
+                            "atlaso-dns-authoritative.service",
+                        ],
+                        "returncode": authoritative_boot.returncode,
+                    }
+                )
+                if authoritative_boot.returncode != 0:
+                    raise ValueError("authoritative DNS boot-policy rollback failed")
+            runtime_operation = "restart" if state.get("previous_dnsmasq_active") else "stop"
+            runtime = _run(["systemctl", runtime_operation, "dnsmasq.service"])
+            commands.append(
+                {
+                    "stage": "DNS/DHCP rollback",
+                    "command": ["systemctl", runtime_operation, "dnsmasq.service"],
+                    "returncode": runtime.returncode,
+                }
+            )
+            if runtime.returncode != 0:
+                raise ValueError("DNS/DHCP runtime rollback failed")
+            boot_operation = "enable" if state.get("previous_dnsmasq_enabled") else "disable"
+            boot = _run(["systemctl", boot_operation, "dnsmasq.service"])
+            commands.append(
+                {
+                    "stage": "DNS/DHCP rollback",
+                    "command": ["systemctl", boot_operation, "dnsmasq.service"],
+                    "returncode": boot.returncode,
+                }
+            )
+            if boot.returncode != 0:
+                raise ValueError("DNS/DHCP boot-policy rollback failed")
+
+        attempt("DNS/DHCP rollback", restore_dnsmasq)
 
     attempt(
         "Routes & WAN rollback",
@@ -26019,6 +27320,31 @@ def _apply_management_handoff(payload: dict) -> int:
             candidate_firewall,
             candidate_management_rules=candidate_management_rules,
         )
+        dnsmasq_path = str(payload.get("dnsmasq_config_path") or "")
+
+        def apply_candidate_resolver() -> None:
+            """Mark and apply the candidate resolver within the durable handoff."""
+            nonlocal failing_layer
+            resolver_interface = str(settings_payload.get("management_interface") or "")
+            if resolver_interface != str(state.get("candidate_management_interface") or ""):
+                raise ValueError("candidate management resolver interface changed after snapshot")
+            state["resolver_apply_started"] = True
+            _write_management_handoff_state(state, "resolver-applying")
+            failing_layer = "resolver"
+            resolver = _configure_management_handoff_resolver(settings_payload)
+            if resolver.returncode != 0:
+                raise ValueError("candidate management resolver apply failed")
+
+        # On DNS shutdown the candidate listener may no longer serve loopback.
+        # Move off local DNS before replacing that listener; enablement keeps
+        # the existing listener-first ordering.
+        resolver_before_dns = bool(dnsmasq_path and settings_payload.get("resolver_mode") != "local_dns")
+        if resolver_before_dns:
+            apply_candidate_resolver()
+        if dnsmasq_path:
+            failing_layer = "DNS/DHCP listener"
+            if _handle_dnsmasq("apply", [dnsmasq_path]) != 0:
+                raise ValueError("candidate DNS/DHCP apply failed")
         transition_path = FIREWALL_APPLY_DIR / "atlaso-management-handoff.nft"
         transition_path.write_text(
             _management_handoff_firewall_text(
@@ -26034,15 +27360,8 @@ def _apply_management_handoff(payload: dict) -> int:
             raise ValueError("transitional nftables apply failed")
         failing_layer = "Atlaso upstream"
         upstream_readiness = _management_handoff_upstream_readiness()
-        resolver_interface = str(settings_payload.get("management_interface") or "")
-        if resolver_interface != str(state.get("candidate_management_interface") or ""):
-            raise ValueError("candidate management resolver interface changed after snapshot")
-        state["resolver_apply_started"] = True
-        _write_management_handoff_state(state, "resolver-applying")
-        failing_layer = "resolver"
-        resolver = _configure_management_handoff_resolver(settings_payload)
-        if resolver.returncode != 0:
-            raise ValueError("candidate management resolver apply failed")
+        if not resolver_before_dns:
+            apply_candidate_resolver()
         protocol_holdover = _management_handoff_protocol_holdover(state, settings_payload)
         failing_layer = "candidate address discovery"
         previous_dynamic_families = {
@@ -26561,6 +27880,10 @@ def main(argv: list[str]) -> int:
     Args:
         argv: Command-line arguments to parse, or ``None`` to use the process arguments.
     """
+    if len(argv) >= 2 and argv[1] in {
+        "add", "old", "del", "init", "arp-add", "arp-del", "relay-snoop", "tftp"
+    }:
+        return _handle_dnsmasq_lease_event(argv)
     if len(argv) < 3:
         return _usage()
 

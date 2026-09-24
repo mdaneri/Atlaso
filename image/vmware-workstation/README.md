@@ -83,7 +83,8 @@ management HTTP/80 redirect-only. Network Boot remains the only served HTTP payl
 - VMware Workstation's bundled OVF Tool with `ovftool.exe` available under
   `C:\Program Files\VMware\VMware Workstation\OVFTool` when exporting OVF/OVA artifacts.
 - Packer `>= 1.10`.
-- `qemu-img` when preparing the tiny Alpine lifecycle client VMDK or exporting portable virtualization artifacts.
+- `qemu-img` for converting the Alpine lifecycle client and exporting portable virtualization artifacts; VMware Virtual
+  Disk Manager expands the powered-off client VMDK to the capacity needed for probe packages.
 - Photon OS 5.0 ISO URL and checksum.
 - At least 70 GiB free on the filesystem holding the Packer output. Final zero-filling temporarily expands both sparse
   payload VMDKs before compaction reclaims the zeroed blocks.

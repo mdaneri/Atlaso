@@ -79,7 +79,7 @@ try {
         $failure = $null
         try { Copy-VmDirectory -SourceVmx $sourceVmx -DestinationDirectory $destination -Name 'another' }
         catch { $failure = $_ }
-        if ($null -eq $failure -or $failure.Exception.Message -notlike 'Lifecycle VM directory already exists:*' -or
+        if ($null -eq $failure -or $failure.Exception.Message -notlike 'Lifecycle VM directory already exists or changed:*' -or
             (Test-Path -LiteralPath (Join-Path $destination 'another.vmx'))) {
             throw 'Existing destination was not refused before clone mutation.'
         }

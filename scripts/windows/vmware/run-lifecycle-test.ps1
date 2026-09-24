@@ -1255,6 +1255,8 @@ VMnet or lan-segment reference.
 Optional static MAC address.
 .PARAMETER VirtualDev
 VMXNET device type.
+.PARAMETER PciSlotNumber
+Explicit slot for stable guest enumeration of the four appliance adapters.
 #>
 function Set-VmxNetworkAdapter {
     param(
@@ -1262,7 +1264,8 @@ function Set-VmxNetworkAdapter {
         [int]$Index,
         [string]$Vmnet,
         [string]$StaticMac = '',
-        [string]$VirtualDev = 'vmxnet3'
+        [string]$VirtualDev = 'vmxnet3',
+        [int]$PciSlotNumber = 0
     )
 
     $prefix = "ethernet$Index"
@@ -1287,6 +1290,9 @@ function Set-VmxNetworkAdapter {
         Set-VmxValue -Path $Path -Key "$prefix.address" -Value $StaticMac
     }
     Set-VmxValue -Path $Path -Key "$prefix.startConnected" -Value 'TRUE'
+    if ($PciSlotNumber -gt 0) {
+        Set-VmxValue -Path $Path -Key "$prefix.pciSlotNumber" -Value ([string]$PciSlotNumber)
+    }
 }
 
 <#
@@ -2862,7 +2868,14 @@ with WindowsFiles().opened(Path(sys.argv[1]), directory=True) as (_, identity, _
                 -Name $applianceName `
                 -PreparedDirectoryIdentity $preparedApplianceDirectoryIdentity
         }
-    Set-VmxNetworkAdapter -Path $applianceVmx -Index 0 -Vmnet $ManagementNetwork
+    if ($OidcOnly -or $CertificateOnly) {
+        Set-VmxNetworkAdapter -Path $applianceVmx -Index 0 -Vmnet $ManagementNetwork
+    }
+    else {
+        # Workstation otherwise places the fourth NIC in slot 1184, which Photon
+        # enumerates as eth0 instead of the management NIC.
+        Set-VmxNetworkAdapter -Path $applianceVmx -Index 0 -Vmnet $ManagementNetwork -PciSlotNumber 1184
+    }
     if ($CertificateDhcpPeer) {
         # Pin eth0's final MAC before first boot, while the bootstrap adapter
         # remains host-reachable on VMnet8 for the supported deploy workflow.
@@ -2873,9 +2886,9 @@ with WindowsFiles().opened(Path(sys.argv[1]), directory=True) as (_, identity, _
         Set-VmxNetworkAdapter -Path $applianceVmx -Index 1 -Vmnet $SiteANetwork
     }
     if (-not ($OidcOnly -or $CertificateOnly)) {
-        Set-VmxNetworkAdapter -Path $applianceVmx -Index 1 -Vmnet $SiteANetwork
-        Set-VmxNetworkAdapter -Path $applianceVmx -Index 2 -Vmnet $TrunkNetwork
-        Set-VmxNetworkAdapter -Path $applianceVmx -Index 3 -Vmnet $SiteBNetwork
+        Set-VmxNetworkAdapter -Path $applianceVmx -Index 1 -Vmnet $SiteANetwork -PciSlotNumber 192
+        Set-VmxNetworkAdapter -Path $applianceVmx -Index 2 -Vmnet $TrunkNetwork -PciSlotNumber 224
+        Set-VmxNetworkAdapter -Path $applianceVmx -Index 3 -Vmnet $SiteBNetwork -PciSlotNumber 256
         $clientADirectory = Join-Path $vmRoot $clientAName
         $clientAVmx = Invoke-TrackedLifecycleVmCreation `
             -Role 'client-a' `

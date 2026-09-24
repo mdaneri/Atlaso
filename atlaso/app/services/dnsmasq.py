@@ -20,7 +20,12 @@ from atlaso.app.models import (
 
 DNS_CONDITIONAL_FORWARDERS_SETTING_KEY = "dns.conditional_forwarders"
 DNSMASQ_LEASE_FILE_PATH = "/var/lib/atlaso/dnsmasq/dhcp.leases"
+DNSMASQ_AUTHORITATIVE_LEASE_HOSTS_DIR = "/var/lib/atlaso-dns-authoritative-leases"
+DNSMASQ_DHCP_LEASE_SYNC_PATH = "/opt/atlaso/bin/atlaso-helper"
 DNSMASQ_DNSSEC_TRUST_ANCHORS_PATH = "/var/lib/atlaso/apply/dnsmasq/atlaso-trust-anchors.conf"
+DNSMASQ_AUTHORITATIVE_LOOPBACK_ADDRESS = "127.0.0.1"
+DNSMASQ_AUTHORITATIVE_PORT = 5353
+DNSMASQ_AUTHORITATIVE_CONFIG_PREFIX = "# atlaso-authoritative-config: "
 DHCP_DENY_RESERVATION_DESCRIPTION_PREFIX = "Deny DHCP for "
 DNS_RECORD_TYPES = {"A", "AAAA", "CNAME", "TXT", "SRV", "MX", "CAA", "PTR"}
 DNS_HOSTNAME_PATTERN = re.compile(r"^(?=.{1,253}$)([a-z0-9_](?:[a-z0-9_-]{0,61}[a-z0-9_])?\.)*[a-z0-9_](?:[a-z0-9_-]{0,61}[a-z0-9_])?$")
@@ -1064,6 +1069,14 @@ def validate_dns_settings(
             errors.append(f"conditional forwarder domain {domain} must not contain whitespace.")
         if not domain or "." not in domain:
             errors.append(f"conditional forwarder domain {domain or '(blank)'} must be a DNS domain.")
+        if settings.authoritative and any(
+            domain == managed_domain or domain.endswith(f".{managed_domain}")
+            for managed_domain in split_domains(settings.domain)
+        ):
+            errors.append(
+                f"conditional forwarder {domain} overlaps an authoritative managed domain; "
+                "remove the forwarder or disable authoritative DNS."
+            )
         _validate_forwarder_server(server, f"conditional forwarder {domain} server", errors)
     for record in records:
         if record.enabled is not False:
@@ -1080,6 +1093,11 @@ def validate_dns_settings(
             errors.append(f"DNS rebind exemption {domain} must be a valid domain name.")
     if (settings.cache_size or 0) < 0:
         errors.append("DNS cache size must be zero or greater.")
+    if settings.authoritative and settings.dnssec_enabled:
+        errors.append(
+            "Authoritative DNS and DNSSEC validation cannot be enabled together: "
+            "DNSSEC caching would remove the authoritative AA flag from repeated managed-zone answers."
+        )
     return errors
 
 
@@ -1412,11 +1430,63 @@ def validate_dhcp_scope(scope: DhcpScope) -> tuple[list[str], object | None]:
         errors.append(f"{label} IPv4 prefix length must be between 1 and 32.")
     if family == "ipv6" and not 1 <= int(scope.prefix_length or 0) <= 128:
         errors.append(f"{label} IPv6 prefix length must be between 1 and 128.")
-    if network and dns_server and dns_server not in network:
-        errors.append(f"{label} DNS server {dns_server} is outside {network.with_prefixlen}. Bind DNS to {scope.interface_name} or leave the DNS server blank for this zone.")
-    if network and ntp_server and ntp_server not in network:
-        errors.append(f"{label} NTP server {ntp_server} is outside {network.with_prefixlen}. Bind NTPsec to {scope.interface_name} or leave the NTP server blank for this zone.")
+    # Service endpoints may be routed; only the gateway and lease range are on-link.
+    for service, address in (("DNS", dns_server), ("NTP", ntp_server)):
+        if address and (
+            address.is_loopback or address.is_unspecified or address.is_multicast
+            or address.is_link_local
+            or (address.version == 4 and address in ip_network("0.0.0.0/8"))
+            or (address.version == 4 and address == ip_address("255.255.255.255"))
+            or (address.version == 6 and address.ipv4_mapped is not None)
+            or (address.version == 6 and address in ip_network("::/96"))
+            or (address.version == 6 and address in ip_network("100::/64"))
+            or (network and address == network.network_address)
+            or (network and address.version == 4 and address == network.broadcast_address)
+        ):
+            errors.append(f"{label} {service} server must be a usable unicast IPv{required_version} address.")
     return errors, network
+
+
+def _dnsmasq_record_directive(record: DnsRecord) -> str:
+    """Render one enabled DNS record directive.
+
+    Args:
+        record: Enabled DNS record to render.
+
+    Returns:
+        The dnsmasq directive for the record.
+    """
+    record_type = record.record_type.upper()
+    if record_type in {"A", "AAAA"}:
+        return f"host-record={record.hostname},{record.address}"
+    if record_type == "CNAME":
+        return f"cname={record.hostname},{record.address.strip().strip('.').lower()}"
+    if record_type == "TXT":
+        return f"txt-record={record.hostname},{_quote_dnsmasq_text(record.address)}"
+    if record_type == "PTR":
+        return f"ptr-record={record.hostname},{record.address.strip().strip('.').lower()}"
+    if record_type == "MX":
+        data = record_data(record)
+        return (
+            f"mx-host={record.hostname},{_record_data_value(data, 'target').strip().strip('.').lower()},"
+            f"{_record_data_value(data, 'preference', '10')}"
+        )
+    if record_type == "SRV":
+        data = record_data(record)
+        return (
+            "srv-host="
+            f"{record.hostname},{_record_data_value(data, 'target').strip().strip('.').lower()},"
+            f"{_record_data_value(data, 'port')},{_record_data_value(data, 'priority', '0')},"
+            f"{_record_data_value(data, 'weight', '0')}"
+        )
+    if record_type == "CAA":
+        data = record_data(record)
+        return (
+            "caa-record="
+            f"{record.hostname},{_record_data_value(data, 'flags')},{_record_data_value(data, 'tag')},"
+            f"{_quote_dnsmasq_text(_record_data_value(data, 'value'))}"
+        )
+    raise ValueError(f"unsupported DNS record type: {record.record_type}")
 
 
 def render_dnsmasq_config(
@@ -1457,15 +1527,26 @@ def render_dnsmasq_config(
         if domain not in domains
     ]
     scopes = dhcp_scopes if dhcp_scopes else [_legacy_scope(dhcp_settings)]
+    configured_cache_size = dns_settings.cache_size if dns_settings.cache_size is not None else 1000
+    # The shared authoritative listener normally avoids caching forwarded
+    # answers so the backend's AA bit survives. DNSSEC needs a cache, so
+    # validation rejects enabling it together with authoritative mode.
+    cache_size = max(configured_cache_size, 150) if dns_settings.dnssec_enabled else (
+        0 if dns_settings.authoritative else configured_cache_size
+    )
     lines = [
         "# Managed by Atlaso. Local changes may be overwritten.",
         "domain-needed",
         "bogus-priv",
         "no-resolv",
-        "bind-interfaces",
+        "bind-dynamic",
         f"dhcp-leasefile={DNSMASQ_LEASE_FILE_PATH}",
-        f"cache-size={dns_settings.cache_size if dns_settings.cache_size is not None else 1000}",
+        f"cache-size={cache_size}",
     ]
+    if dns_settings.enabled and dhcp_settings.enabled and not dns_settings.authoritative:
+        # Existing authoritative leases may have '*' in the lease file. Keep
+        # their mirrored names visible until ordinary DHCP renewals take over.
+        lines.append(f"hostsdir={DNSMASQ_AUTHORITATIVE_LEASE_HOSTS_DIR}")
     if require_dhcp_upstream:
         lines.insert(1, "# atlaso-dhcp-upstream-required")
     if dns_settings.query_logging_mode == "queries-extra":
@@ -1475,31 +1556,117 @@ def render_dnsmasq_config(
         lines.append(f"conf-file={DNSMASQ_DNSSEC_TRUST_ANCHORS_PATH}")
     if dns_settings.rebind_protection_enabled:
         lines.append("stop-dns-rebind")
-        for domain in split_domains(dns_settings.rebind_domain_exemptions):
+        rebind_exemptions = split_domains(dns_settings.rebind_domain_exemptions)
+        if dns_settings.authoritative:
+            rebind_exemptions.extend(domain for domain in domains if domain not in rebind_exemptions)
+        for domain in rebind_exemptions:
             lines.append(f"rebind-domain-ok=/{domain}/")
+    authoritative_lines: list[str] = []
     for domain in domains:
         lines.append(f"domain={domain}")
         if dns_settings.authoritative:
-            lines.append(f"auth-zone={domain}")
+            lines.append(
+                f"server=/{domain}/{DNSMASQ_AUTHORITATIVE_LOOPBACK_ADDRESS}#{DNSMASQ_AUTHORITATIVE_PORT}"
+            )
         else:
             lines.append(f"local=/{domain}/")
     if dns_settings.authoritative:
         server = authoritative_server_name(dns_settings)
-        authoritative_interfaces = split_interfaces(dns_settings.listen_interface)
-        auth_server = ",".join([server, *authoritative_interfaces])
-        lines.append(f"auth-server={auth_server}")
-        lines.append(
+        ordered_domains = sorted(domains, key=len, reverse=True)
+
+        def zone_for_name(name: str) -> str | None:
+            """Find the managed zone containing a DNS name.
+
+            Args:
+                name: Fully qualified DNS name to match against managed zones.
+            """
+            return next(
+                (domain for domain in ordered_domains if name == domain or name.endswith(f".{domain}")),
+                None,
+            )
+
+        zone_networks = {domain: [] for domain in domains}
+        if dhcp_settings.enabled:
+            for scope in scopes:
+                if scope.enabled is False:
+                    continue
+                scope_domain = (scope.domain_name or domains[0]).strip().strip(".").lower()
+                zone = zone_for_name(scope_domain)
+                network = _dhcp_scope_network(scope)
+                if zone and network is not None and network not in zone_networks[zone]:
+                    zone_networks[zone].append(network)
+        for record in dns_records:
+            if record.enabled is False or record.record_type.upper() not in {"A", "AAAA"}:
+                continue
+            hostname = record.hostname.strip().strip(".").lower()
+            if any(hostname == domain or hostname.endswith(f".{domain}") for domain in disabled_domains):
+                continue
+            zone = zone_for_name(hostname)
+            if not zone:
+                continue
+            address = ip_address(record.address)
+            if not any(address in network for network in zone_networks[zone]):
+                zone_networks[zone].append(ip_network(f"{address}/{address.max_prefixlen}"))
+        server_zone = zone_for_name(server)
+        if server_zone:
+            for listen_address in split_addresses(dns_settings.listen_address):
+                address = ip_address(listen_address)
+                if not any(address in network for network in zone_networks[server_zone]):
+                    zone_networks[server_zone].append(ip_network(f"{address}/{address.max_prefixlen}"))
+        authoritative_lines.extend(
+            [
+                "# Managed by Atlaso. Local changes may be overwritten.",
+                f"port={DNSMASQ_AUTHORITATIVE_PORT}",
+                "no-resolv",
+                "bind-interfaces",
+                f"listen-address={DNSMASQ_AUTHORITATIVE_LOOPBACK_ADDRESS}",
+                f"hostsdir={DNSMASQ_AUTHORITATIVE_LEASE_HOSTS_DIR}",
+            ]
+        )
+        for domain in domains:
+            subnets = "".join(f",{network}" for network in zone_networks[domain])
+            authoritative_lines.extend([f"domain={domain}", f"auth-zone={domain}{subnets}"])
+        authoritative_lines.append(f"auth-server={server},{DNSMASQ_AUTHORITATIVE_LOOPBACK_ADDRESS}")
+        authoritative_lines.append(
             "auth-soa="
             f"{dns_settings.authoritative_serial},{authoritative_contact_name(dns_settings)},"
             f"{dns_settings.authoritative_refresh},{dns_settings.authoritative_retry},{dns_settings.authoritative_expire}"
         )
-        lines.append(f"auth-ttl={dns_settings.authoritative_ttl}")
+        authoritative_lines.append(f"auth-ttl={dns_settings.authoritative_ttl}")
         for listen_address in split_addresses(dns_settings.listen_address):
-            lines.append(f"host-record={server},{listen_address}")
+            authoritative_lines.append(f"host-record={server},{listen_address}")
+            # Reverse queries stay on the client-facing DNS/DHCP instance.
+            lines.append(f"ptr-record={ip_address(listen_address).reverse_pointer},{server}")
     if dns_settings.expand_hosts:
         lines.append("expand-hosts")
+        if authoritative_lines:
+            authoritative_lines.append("expand-hosts")
     if dhcp_settings.enabled and dhcp_settings.authoritative:
         lines.append("dhcp-authoritative")
+    if dns_settings.enabled and dhcp_settings.enabled:
+        # The hook retires transition mirrors as ordinary lease names resume
+        # after authoritative mode is disabled.
+        for scope in scopes:
+            if scope.enabled is False:
+                continue
+            scope_domain = (scope.domain_name or domains[0]).strip().strip(".").lower()
+            if not any(scope_domain == domain or scope_domain.endswith(f".{domain}") for domain in domains):
+                continue
+            if dns_settings.authoritative:
+                tag = dnsmasq_tag(scope.name)
+                lines.append(f"dhcp-ignore-names=tag:{tag}")
+            network = _dhcp_scope_network(scope)
+            if network is not None:
+                lines.append(f"# atlaso-authoritative-lease-scope={network},{scope_domain}")
+                if dns_settings.authoritative:
+                    lines.append(
+                        f"rev-server={network},{DNSMASQ_AUTHORITATIVE_LOOPBACK_ADDRESS}#{DNSMASQ_AUTHORITATIVE_PORT}"
+                    )
+        lines.append(f"dhcp-script={DNSMASQ_DHCP_LEASE_SYNC_PATH}")
+        # Existing leases keep their address when the service is restarted.
+        # Renewals must still re-publish client-supplied names that were
+        # intentionally omitted from the persisted lease by ignore-names.
+        lines.append("script-on-renewal")
     dhcp_interfaces = [scope.interface_name for scope in scopes if dhcp_settings.enabled and scope.enabled is not False]
     dns_interfaces = split_interfaces(dns_settings.listen_interface)
     if dns_settings.enabled:
@@ -1514,6 +1681,11 @@ def render_dnsmasq_config(
     for server in effective_dns_upstream_servers(dns_settings, fallback_upstream_servers):
         lines.append(f"server={server}")
     for forwarder in split_conditional_forwarders(conditional_forwarders):
+        if dns_settings.authoritative and any(
+            forwarder["domain"] == domain or forwarder["domain"].endswith(f".{domain}")
+            for domain in domains
+        ):
+            continue
         lines.append(f"server=/{forwarder['domain']}/{forwarder['server']}")
     for record in dns_records:
         if record.enabled is False:
@@ -1522,34 +1694,18 @@ def render_dnsmasq_config(
         if any(hostname == domain or hostname.endswith(f".{domain}") for domain in disabled_domains):
             continue
         record_type = record.record_type.upper()
-        if dns_settings.authoritative and record_type in {"A", "AAAA"} and record.hostname.strip().strip(".").lower() == authoritative_server_name(dns_settings):
+        managed_authoritative_record = dns_settings.authoritative and any(
+            hostname == domain or hostname.endswith(f".{domain}")
+            for domain in domains
+        )
+        if managed_authoritative_record:
+            if record_type not in {"A", "AAAA"} or hostname != authoritative_server_name(dns_settings):
+                authoritative_lines.append(_dnsmasq_record_directive(record))
+            if record_type in {"A", "AAAA"}:
+                # The recursive/DHCP instance continues to own reverse lookup service.
+                lines.append(f"ptr-record={ip_address(record.address).reverse_pointer},{hostname}")
             continue
-        if record_type in {"A", "AAAA"}:
-            # dnsmasq host-record also creates the matching PTR record.
-            lines.append(f"host-record={record.hostname},{record.address}")
-        elif record_type == "CNAME":
-            lines.append(f"cname={record.hostname},{record.address.strip().strip('.').lower()}")
-        elif record_type == "TXT":
-            lines.append(f"txt-record={record.hostname},{_quote_dnsmasq_text(record.address)}")
-        elif record_type == "PTR":
-            lines.append(f"ptr-record={record.hostname},{record.address.strip().strip('.').lower()}")
-        elif record_type == "MX":
-            data = record_data(record)
-            lines.append(f"mx-host={record.hostname},{_record_data_value(data, 'target').strip().strip('.').lower()},{_record_data_value(data, 'preference', '10')}")
-        elif record_type == "SRV":
-            data = record_data(record)
-            lines.append(
-                "srv-host="
-                f"{record.hostname},{_record_data_value(data, 'target').strip().strip('.').lower()},"
-                f"{_record_data_value(data, 'port')},{_record_data_value(data, 'priority', '0')},{_record_data_value(data, 'weight', '0')}"
-            )
-        elif record_type == "CAA":
-            data = record_data(record)
-            lines.append(
-                "caa-record="
-                f"{record.hostname},{_record_data_value(data, 'flags')},{_record_data_value(data, 'tag')},"
-                f"{_quote_dnsmasq_text(_record_data_value(data, 'value'))}"
-            )
+        lines.append(_dnsmasq_record_directive(record))
     scope_tags = {scope.id: dnsmasq_tag(scope.name) for scope in scopes}
     if dhcp_settings.enabled:
         if any(scope.enabled is not False and dhcp_scope_address_family(scope) == "ipv6" for scope in scopes):
@@ -1735,7 +1891,33 @@ def render_dnsmasq_config(
                 except ValueError:
                     reserved_ip = None
                 reservation_ip = f"[{reservation.ip_address}]" if reserved_ip and reserved_ip.version == 6 else reservation.ip_address
-                lines.append(f"dhcp-host={reservation.mac_address},{reservation.hostname},{reservation_ip}")
+                reservation_scope = _scope_for_ip(reserved_ip, scopes) if reserved_ip else None
+                reservation_domain = (
+                    (reservation_scope.domain_name or domains[0]).strip().strip(".").lower()
+                    if reservation_scope else ""
+                )
+                reservation_hostname = reservation.hostname.strip().strip(".").lower()
+                reservation_fqdn = (
+                    reservation_hostname if "." in reservation_hostname
+                    else f"{reservation_hostname}.{reservation_domain}" if reservation_domain
+                    else reservation_hostname
+                )
+                managed_reservation = dns_settings.authoritative and any(
+                    reservation_fqdn == domain or reservation_fqdn.endswith(f".{domain}")
+                    for domain in domains
+                )
+                if managed_reservation:
+                    reservation_tag = "atlaso-name-" + re.sub(r"[^0-9a-f]", "", reservation.mac_address.lower())
+                    lines.append(f"dhcp-host={reservation.mac_address},set:{reservation_tag},{reservation_ip}")
+                    # A reservation in an unmanaged DHCP scope still must not
+                    # let recursive dnsmasq learn the managed name locally.
+                    lines.append(f"dhcp-ignore-names=tag:{reservation_tag}")
+                    lines.append(f"dhcp-option=tag:{reservation_tag},12,{reservation.hostname}")
+                else:
+                    lines.append(f"dhcp-host={reservation.mac_address},{reservation.hostname},{reservation_ip}")
+    if authoritative_lines:
+        lines.extend(["", "# Embedded configuration for atlaso-dns-authoritative.service."])
+        lines.extend(f"{DNSMASQ_AUTHORITATIVE_CONFIG_PREFIX}{line}" for line in authoritative_lines)
     return "\n".join(lines) + "\n"
 
 

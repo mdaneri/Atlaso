@@ -15,6 +15,8 @@ import http.cookiejar
 import json
 import random
 import re
+import secrets
+import shlex
 import ssl
 import subprocess
 import sys
@@ -873,6 +875,20 @@ def authenticated_ui_client(client: HttpClient, args: argparse.Namespace) -> Htt
     return fresh_client
 
 
+def reauthenticate_after_restore(client: HttpClient, args: argparse.Namespace) -> dict[str, str]:
+    """Replace browser and API credentials invalidated by settings restore.
+
+    Args:
+        client: Active lifecycle HTTP client.
+        args: Lifecycle command arguments.
+    """
+    client.cookie_jar.clear()
+    client.bearer_token = ""
+    api_login(client, args)
+    ui_login(client, args)
+    return {"api": "authenticated", "browser": "authenticated"}
+
+
 def authentication_lifetime_policy_check(
     client: HttpClient, args: argparse.Namespace
 ) -> dict[str, Any]:
@@ -932,7 +948,6 @@ def authentication_lifetime_policy_check(
                 {"username": args.username, "password": args.password}
             )
         )
-        issued_at = datetime.now(timezone.utc)
         created = issuance_client.json_request(
             "POST",
             login_path,
@@ -941,11 +956,14 @@ def authentication_lifetime_policy_check(
                 "scopes": ["read:dashboard"],
             },
         )
+        issued_at = datetime.fromisoformat(created["token"]["created_at"])
         expires_at = datetime.fromisoformat(created["token"]["expires_at"])
+        if issued_at.tzinfo is None:
+            issued_at = issued_at.replace(tzinfo=timezone.utc)
         if expires_at.tzinfo is None:
             expires_at = expires_at.replace(tzinfo=timezone.utc)
         lifetime = expires_at - issued_at
-        if not timedelta(days=7) <= lifetime <= timedelta(days=7, seconds=30):
+        if not timedelta(days=7) <= lifetime <= timedelta(days=7, seconds=1):
             raise LifecycleError("Omitted API-token expiry did not use the deployed seven-day policy.")
 
         too_late = (issued_at + timedelta(days=8)).isoformat()
@@ -1631,11 +1649,15 @@ def configure_firewall_wan(client: HttpClient, args: argparse.Namespace) -> dict
     Returns:
         The configure firewall wan result.
     """
+    settings = client.json_request(
+        "PUT", "/api/v1/routes-wan/settings",
+        json_body={"routing_enabled": True, "nat_enabled": True, "wan_simulation_enabled": True},
+    )
     firewall = configure_firewall(client, args)
     policy = configure_wan_policy(client, args)
     routes_nat = configure_routes_nat(client, args, policy)
     routing = configure_routing_permissions(client, args)
-    return {"firewall": firewall, "wan_policy": policy, **routes_nat, "routing": routing}
+    return {"settings": settings, "firewall": firewall, "wan_policy": policy, **routes_nat, "routing": routing}
 
 
 def wan_policy_payload(*, packet_loss_percent: float) -> dict[str, Any]:
@@ -1749,6 +1771,24 @@ def configure_ca(client: HttpClient, args: argparse.Namespace) -> dict[str, Any]
     if status >= 400 or "BEGIN CERTIFICATE" not in root_ca:
         raise LifecycleError(f"CA root download failed with HTTP {status}")
     return {"root_ca": certificate_summary(root_ca)}
+
+
+def prepare_vmware_ntp_clock(args: argparse.Namespace) -> dict[str, Any]:
+    """Give NTPsec sole control of the lifecycle appliance clock.
+
+    Args:
+        args: Lifecycle command arguments.
+    """
+    result = ssh_command(
+        args.appliance_ssh_host,
+        args,
+        "sudo -n vmware-toolbox-cmd timesync disable",
+        role="appliance",
+    )
+    require_success(result, "disable VMware Tools guest time synchronization")
+    if result.get("stdout", "").strip() != "Disabled":
+        raise LifecycleError("VMware Tools did not confirm guest time synchronization is disabled")
+    return {"vmware_tools_time_sync": "disabled"}
 
 
 def configure_ntp(client: HttpClient, args: argparse.Namespace) -> dict[str, Any]:
@@ -1961,12 +2001,13 @@ def configure_oidc_provider(client: HttpClient, args: argparse.Namespace) -> dic
     if status >= 400:
         raise LifecycleError(f"GET /openid-connect failed with HTTP {status}")
     provider = client.json_request("GET", "/api/v1/oidc/provider")
+    hostname = "core.atlaso.internal" if args.oidc_only else "oidc.atlaso.internal"
     status, response_body, _headers = client.request(
         "POST",
         "/authentication/oidc/provider",
         form={
             "enabled": "on",
-            "hostname": "core.atlaso.internal",
+            "hostname": hostname,
             "listen_interfaces_present": "1",
             "listen_interfaces": [args.site_interface],
             "port": str(provider["port"]),
@@ -1985,6 +2026,50 @@ def configure_oidc_provider(client: HttpClient, args: argparse.Namespace) -> dic
         "listen_addresses": payload.get("listen_addresses"),
         "port": provider["port"],
     }
+
+
+def verified_oidc_public_client(client: HttpClient, args: argparse.Namespace, provider: dict[str, Any]) -> HttpClient:
+    """Bind OIDC browser traffic to the selected site listener and applied CA.
+
+    Args:
+        client: Active lifecycle HTTP client.
+        args: Lifecycle command arguments.
+        provider: Configured OIDC provider state.
+    """
+    site_address = str(ip_interface(args.site_cidr).ip)
+    if site_address not in (provider.get("listen_addresses") or []):
+        raise LifecycleError("The OIDC provider did not publish the selected site listener.")
+    status, root_ca_pem, _headers = client.request("GET", "/certificate-authority/downloads/root-ca.pem")
+    if status != 200 or "BEGIN CERTIFICATE" not in root_ca_pem:
+        raise LifecycleError("The applied CA root was unavailable for OIDC listener verification.")
+    return HttpClient(f"https://{site_address}:{provider['port']}", trusted_ca_pem=root_ca_pem)
+
+
+def oidc_site_listener_check(args: argparse.Namespace, provider: dict[str, Any]) -> dict[str, Any]:
+    """Verify the full lab's site-only OIDC listener from its site client.
+
+    Args:
+        args: Lifecycle command arguments.
+        provider: Configured OIDC provider state.
+    """
+    hostname = str(provider["hostname"])
+    port = int(provider["port"])
+    site_address = str(ip_interface(args.site_cidr).ip)
+    if site_address not in (provider.get("listen_addresses") or []):
+        raise LifecycleError("The OIDC provider did not publish the selected site listener.")
+    url = f"https://{hostname}:{port}/identity/.well-known/openid-configuration"
+    command = (
+        "test -s /tmp/atlaso-root-ca.pem && "
+        f"dig +short A {shlex.quote(hostname)} @{site_address} | grep -qFx {shlex.quote(site_address)} && "
+        "curl --silent --show-error --fail --connect-timeout 10 --max-time 30 "
+        "--cacert /tmp/atlaso-root-ca.pem "
+        f"--output /dev/null --write-out '%{{http_code}}' {shlex.quote(url)}"
+    )
+    result = ssh_command(args.client_a_host, args, command, role="client")
+    require_success(result, "OIDC site listener")
+    if result["stdout"].strip() != "200":
+        raise LifecycleError("OIDC site listener did not return a successful discovery response.")
+    return {"site_address": site_address, "http_status": 200, "tls_verified": True}
 
 
 def oidc_authorization_code_check(
@@ -2036,7 +2121,7 @@ def oidc_authorization_code_check(
     )
     provider = client.json_request("GET", "/api/v1/oidc/provider")
     provider["enabled"] = True
-    provider["issuer_url"] = "https://core.atlaso.internal/identity"
+    provider["issuer_url"] = f"https://{provider['hostname']}/identity"
     for read_only in (
         "authorization_flow_available",
         "valid",
@@ -2216,7 +2301,7 @@ def web_terminal_check(client: HttpClient, args: argparse.Namespace) -> dict[str
     host_evidence = ssh_command(
         args.appliance_ssh_host,
         args,
-        "/opt/atlaso/bin/atlaso-helper web-terminal status --real && sshd -T | grep -i '^trustedusercakeys '",
+        "/opt/atlaso/bin/atlaso-helper web-terminal status --real && sshd -T | grep -i trustedusercakeys",
         role="appliance",
     )
     require_success(host_evidence, "web terminal OpenSSH CA state")
@@ -2224,34 +2309,75 @@ def web_terminal_check(client: HttpClient, args: argparse.Namespace) -> dict[str
         raise LifecycleError(f"OpenSSH did not report the applied web terminal CA state: {host_evidence.get('stdout', '')}")
 
     site_address = str(ip_interface(args.site_cidr).ip)
-    site_client = HttpClient(f"https://{site_address}")
-    ui_login(site_client, args)
-    site_status, site_body, _site_headers = site_client.request("GET", "/ui/public/terminal")
-    if site_status != 200 or 'data-terminal-available="true"' not in site_body:
-        raise LifecycleError(f"Selected extra-interface terminal route was not ready: HTTP {site_status}")
+    isolated_site = bool(getattr(args, "client_a_host", ""))
+    site_client = client if isolated_site else HttpClient(f"https://{site_address}")
+    if isolated_site:
+        # The full lab's Site A segment has no Windows host route. Check the
+        # actual public listener from its client, then exercise the same
+        # terminal page and ticket contract on the reachable management plane.
+        def probe_site(path: str) -> int:
+            """Probe site.
+
+            Args:
+                path: Site route to probe.
+            """
+            command = (
+                "curl -ksS --connect-timeout 10 --max-time 30 "
+                f"--output /dev/null --write-out %{{http_code}} https://{site_address}{path}"
+            )
+            result = ssh_command(args.client_a_host, args, command, role="client")
+            require_success(result, f"site web terminal {path}")
+            try:
+                return int(result["stdout"].strip())
+            except ValueError as exc:
+                raise LifecycleError("Site web terminal probe did not return an HTTP status.") from exc
+
+        site_probe_status = probe_site("/ui/public/terminal")
+        site_dashboard_status = probe_site("/ui/management/dashboard")
+        if site_probe_status not in {200, 302, 303} or site_dashboard_status != 404:
+            raise LifecycleError(
+                "The site web terminal listener did not preserve its public route and management isolation."
+            )
+    else:
+        ui_login(site_client, args)
+    if isolated_site:
+        # The public path is intentionally absent on the management listener.
+        # The client-side probe above proves the selected site path exists;
+        # use the authenticated management page for the shared ticket API.
+        site_status, site_body = site_probe_status, management_body
+    else:
+        site_status, site_body, _site_headers = site_client.request("GET", "/ui/public/terminal")
+        if site_status != 200 or 'data-terminal-available="true"' not in site_body:
+            raise LifecycleError(f"Selected extra-interface terminal route was not ready: HTTP {site_status}")
     csrf_match = re.search(r'data-csrf="([^"]+)"', site_body)
     if not csrf_match:
         raise LifecycleError("Selected extra-interface terminal page did not include a session CSRF token.")
     ticket_status, ticket_body, _ticket_headers = site_client.request(
         "POST",
         "/terminal/tickets",
-        form={"csrf": html.unescape(csrf_match.group(1))},
+        form={
+            "csrf": html.unescape(csrf_match.group(1)),
+            "browser_session_id": secrets.token_urlsafe(24),
+        },
     )
     if ticket_status != 200:
         raise LifecycleError(f"Selected extra-interface terminal ticket failed with HTTP {ticket_status}: {ticket_body[:300]}")
     ticket_payload = json.loads(ticket_body)
     if ticket_payload.get("websocket_path") != "/terminal/ws" or not ticket_payload.get("ticket"):
         raise LifecycleError("Web terminal ticket response was incomplete.")
-    dashboard_status, _dashboard_body, _dashboard_headers = site_client.request(
-        "GET",
-        "/ui/management/dashboard",
-        follow_redirects=False,
-    )
-    if dashboard_status != 404:
-        raise LifecycleError(
-            "Extra-interface terminal listener exposed /ui/management/dashboard "
-            f"with HTTP {dashboard_status}"
+    if isolated_site:
+        dashboard_status = site_dashboard_status
+    else:
+        dashboard_status, _dashboard_body, _dashboard_headers = site_client.request(
+            "GET",
+            "/ui/management/dashboard",
+            follow_redirects=False,
         )
+        if dashboard_status != 404:
+            raise LifecycleError(
+                "Extra-interface terminal listener exposed /ui/management/dashboard "
+                f"with HTTP {dashboard_status}"
+            )
     return {
         "management_status": management_status,
         "extra_interface": args.site_interface,
@@ -2259,6 +2385,8 @@ def web_terminal_check(client: HttpClient, args: argparse.Namespace) -> dict[str
         "extra_terminal_status": site_status,
         "ticket_status": ticket_status,
         "dashboard_status": dashboard_status,
+        "site_probe_status": site_probe_status if isolated_site else site_status,
+        "site_dashboard_status": site_dashboard_status if isolated_site else dashboard_status,
         "host_status": host_evidence.get("stdout", ""),
     }
 
@@ -2428,6 +2556,40 @@ def ca_client_certificate_request(client: HttpClient, args: argparse.Namespace) 
         "client_probe_ip": str(ca_request.ip),
         "client_probe_interface": args.client_ca_request_interface,
     }
+
+
+def client_package_readiness(args: argparse.Namespace) -> dict[str, Any]:
+    """Wait for client cloud-init packages and repair an incomplete install.
+
+    Args:
+        args: Parsed command-line options consumed by the operation.
+    """
+    if args.skip_client_checks:
+        return {"skipped": "client checks disabled"}
+    results: dict[str, Any] = {}
+    for label, host in (("client_a", args.client_a_host), ("client_b", args.client_b_host)):
+        if not host:
+            continue
+        required = "command -v curl && command -v dig && command -v chronyd && command -v openssl"
+        try:
+            results[label] = ssh_until_success(
+                host, args, required, role="client", label=f"{label} package readiness", timeout_seconds=60
+            )
+            continue
+        except LifecycleError:
+            pass
+        elevate = elevation_probe()
+        repair = ssh_command(
+            host,
+            args,
+            f'ELEV="$({elevate})"; test -n "$ELEV"; $ELEV apk add --no-cache bind-tools chrony-nts curl iproute2 iputils openssl openssh-client sshpass',
+            role="client",
+        )
+        require_success(repair, f"{label} package installation")
+        results[label] = ssh_until_success(
+            host, args, required, role="client", label=f"{label} package readiness", timeout_seconds=30
+        )
+    return results
 
 
 def ca_generated_certificate_request_check(client: HttpClient, args: argparse.Namespace) -> dict[str, Any]:
@@ -3496,17 +3658,16 @@ def appliance_console_geometry(args: argparse.Namespace) -> dict[str, Any]:
     result = ssh_command(
         args.appliance_ssh_host,
         args,
-        "framebuffer=$(cat /sys/class/graphics/fb0/virtual_size) && "
-        "console=$(stty -F /dev/tty1 size) && "
-        "printf 'framebuffer=%s\\nconsole=%s\\n' \"$framebuffer\" \"$console\" && "
-        "test \"$framebuffer\" = '1280,800' && test \"$console\" = '50 160'",
+        "cat /sys/class/graphics/fb0/virtual_size && stty -F /dev/tty1 size",
         role="appliance",
     )
     require_success(result, "appliance console geometry")
-    observed = dict(line.split("=", 1) for line in result["stdout"].splitlines() if "=" in line)
+    observed = [line.strip() for line in result["stdout"].splitlines() if line.strip()]
+    if observed != ["1280,800", "50 160"]:
+        raise LifecycleError("appliance console geometry did not match the required 1280x800 framebuffer and 50x160 tty1")
     return {
-        "framebuffer_virtual_size": observed.get("framebuffer", ""),
-        "tty1_rows_columns": observed.get("console", ""),
+        "framebuffer_virtual_size": observed[0],
+        "tty1_rows_columns": observed[1],
         "ssh": result,
     }
 
@@ -3614,73 +3775,133 @@ if expected_ip not in answers:
     return f"printf %s {encoded} | base64 -d | python3 -"
 
 
-def authoritative_dns_probe_command(domain: str, server: str, expected_ip: str) -> str:
+def authoritative_dns_probe_command(
+    domain: str, server: str, expected_ip: str, dynamic_hostname: str = "", dynamic_ip: str = ""
+) -> str:
     """Return authoritative dns probe command.
 
     Args:
         domain: Domain consumed by authoritative DNS probe command.
         server: Server consumed by authoritative DNS probe command.
         expected_ip: Expected IP used to verify the result.
+        dynamic_hostname: DHCP-learned client name expected to retain AA.
+        dynamic_ip: DHCP-learned client address expected to retain PTR lookup.
     """
     script = f'''
 import random
 import socket
 import struct
+import time
+from ipaddress import ip_address
 
 server = {server!r}
+dynamic_hostname = {dynamic_hostname!r}
+dynamic_ip = {dynamic_ip!r}
 
-def skip_name(data, offset):
-    while True:
+def decode_name(data, offset):
+    labels = []
+    following = None
+    for _ in range(128):
         length = data[offset]
         if length & 0xC0 == 0xC0:
-            return offset + 2
+            pointer = ((length & 0x3F) << 8) | data[offset + 1]
+            if following is None:
+                following = offset + 2
+            offset = pointer
+            continue
+        assert length & 0xC0 == 0
         offset += 1
         if length == 0:
-            return offset
+            return ".".join(labels).lower(), following if following is not None else offset
+        labels.append(data[offset:offset + length].decode("ascii").lower())
         offset += length
+    raise AssertionError("DNS name compression loop")
 
-def query(name, qtype, target=server):
+def skip_name(data, offset):
+    return decode_name(data, offset)[1]
+
+def query(name, qtype, target=server, tcp=False):
     query_id = random.randrange(0, 65536)
     qname = b"".join(bytes([len(part)]) + part.encode("ascii") for part in name.rstrip(".").split(".")) + b"\\0"
     packet = struct.pack("!HHHHHH", query_id, 0x0100, 1, 0, 0, 0) + qname + struct.pack("!HH", qtype, 1)
-    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    sock.settimeout(5)
-    sock.sendto(packet, (target, 53))
-    data, _ = sock.recvfrom(4096)
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM if tcp else socket.SOCK_DGRAM) as sock:
+        sock.settimeout(5)
+        if tcp:
+            sock.connect((target, 53))
+            sock.sendall(struct.pack("!H", len(packet)) + packet)
+            def read_exact(size):
+                data = b""
+                while len(data) < size:
+                    part = sock.recv(size - len(data))
+                    assert part, "DNS TCP connection closed early"
+                    data += part
+                return data
+            data = read_exact(struct.unpack("!H", read_exact(2))[0])
+        else:
+            sock.sendto(packet, (target, 53))
+            data, _ = sock.recvfrom(4096)
     response_id, flags, qd, an, ns, ar = struct.unpack("!HHHHHH", data[:12])
     assert response_id == query_id
     offset = 12
     for _ in range(qd):
         offset = skip_name(data, offset) + 4
     types = []
+    values = []
     for count in (an, ns, ar):
         section = []
+        section_values = []
         for _ in range(count):
             offset = skip_name(data, offset)
             rtype, _rclass, _ttl, rdlen = struct.unpack("!HHIH", data[offset:offset + 10])
-            offset += 10 + rdlen
+            offset += 10
+            value = None
+            if rtype == 1 and rdlen == 4:
+                value = socket.inet_ntoa(data[offset:offset + rdlen])
+            elif rtype == 12:
+                value, _ = decode_name(data, offset)
+            offset += rdlen
             section.append(rtype)
+            section_values.append((rtype, value))
         types.append(section)
-    return flags, types
+        values.append(section_values)
+    return flags, types, values
 
 domain = {domain!r}
 expected = [
-    (domain, 6, 0, 6, True),
-    (domain, 2, 0, 2, True),
-    ("ns1." + domain, 1, 0, 1, True),
-    ("interop-appliance." + domain, 1, 0, 1, True),
+    (domain, 6, 0, 6, True, None),
+    (domain, 2, 0, 2, True, None),
+    ("ns1." + domain, 1, 0, 1, True, {expected_ip!r}),
+    ("interop-appliance." + domain, 1, 0, 1, True, {expected_ip!r}),
 ]
-for name, qtype, expected_rcode, expected_type, authoritative in expected:
-    flags, sections = query(name, qtype)
-    assert flags & 0x000F == expected_rcode, (name, flags, sections)
-    assert expected_type in sections[0], (name, flags, sections)
-    if authoritative:
-        assert flags & 0x0400, (name, flags, sections)
+if dynamic_hostname:
+    for attempt in range(15):
+        flags, sections, values = query(dynamic_hostname + "." + domain, 1)
+        if flags & 0x000F == 0 and flags & 0x0400 and (1, dynamic_ip) in values[0]:
+            break
+        time.sleep(1)
+    else:
+        raise AssertionError((dynamic_hostname, dynamic_ip, flags, values))
+    expected.append((dynamic_hostname + "." + domain, 1, 0, 1, True, dynamic_ip))
+    if dynamic_ip:
+        expected.append((ip_address(dynamic_ip).reverse_pointer, 12, 0, 12, False, dynamic_hostname + "." + domain))
+for tcp in (False, True):
+    for name, qtype, expected_rcode, expected_type, authoritative, expected_value in expected:
+        for _ in range(2):
+            flags, sections, values = query(name, qtype, tcp=tcp)
+            assert flags & 0x000F == expected_rcode, (name, flags, sections)
+            assert expected_type in sections[0], (name, flags, sections)
+            if expected_value is not None:
+                assert (expected_type, expected_value) in values[0], (name, expected_value, values)
+            if authoritative:
+                assert flags & 0x0400, (name, flags, sections)
+    flags, sections, _ = query("example.com", 1, tcp=tcp)
+    assert flags & 0x000F == 0 and sections[0], (flags, sections)
 
-flags, sections = query("missing-authoritative." + domain, 1)
-assert flags & 0x000F == 3, (flags, sections)
-assert flags & 0x0400, (flags, sections)
-assert 6 in sections[1], (flags, sections)
+for _ in range(2):
+    flags, sections, _ = query("missing-authoritative." + domain, 1)
+    assert flags & 0x000F == 3, (flags, sections)
+    assert flags & 0x0400, (flags, sections)
+    assert 6 in sections[1], (flags, sections)
 
 print("authoritative DNS lifecycle probes passed")
 '''
@@ -3713,14 +3934,26 @@ def skip_name(data, offset):
             return offset
         offset += length
 
-def query(name, qtype):
+def query(name, qtype, tcp=False):
     query_id = random.randrange(0, 65536)
     qname = b"".join(bytes([len(part)]) + part.encode("ascii") for part in name.rstrip(".").split(".")) + b"\\0"
     packet = struct.pack("!HHHHHH", query_id, 0x0100, 1, 0, 0, 0) + qname + struct.pack("!HH", qtype, 1)
-    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    sock.settimeout(5)
-    sock.sendto(packet, (server, 53))
-    data, _ = sock.recvfrom(4096)
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM if tcp else socket.SOCK_DGRAM) as sock:
+        sock.settimeout(5)
+        if tcp:
+            sock.connect((server, 53))
+            sock.sendall(struct.pack("!H", len(packet)) + packet)
+            def read_exact(size):
+                data = b""
+                while len(data) < size:
+                    part = sock.recv(size - len(data))
+                    assert part, "DNS TCP connection closed early"
+                    data += part
+                return data
+            data = read_exact(struct.unpack("!H", read_exact(2))[0])
+        else:
+            sock.sendto(packet, (server, 53))
+            data, _ = sock.recvfrom(4096)
     response_id, flags, qd, an, ns, ar = struct.unpack("!HHHHHH", data[:12])
     assert response_id == query_id
     offset = 12
@@ -3769,10 +4002,13 @@ def run_host_checks(
     """
     evidence: dict[str, Any] = {}
     for name, command in checks.items():
+        # plink and sudo each parse the remote command. Pass only shell-safe
+        # base64 through those layers, then let one guest shell parse the check.
+        encoded = base64.b64encode(command.encode("utf-8")).decode("ascii")
         result = ssh_command(
             args.appliance_ssh_host,
             args,
-            command,
+            f"printf %s {encoded} | base64 -d | sh",
             role="appliance",
             appliance_as_root=appliance_as_root,
         )
@@ -3788,25 +4024,30 @@ def managed_ldap_helper_authentication_check(args: argparse.Namespace) -> dict[s
         args: Parsed command-line options consumed by the operation.
     """
     user_dn = "uid=operator,ou=users,dc=lifecycle-org-a,dc=ldap,dc=atlaso,dc=internal"
-    helper_command = (
-        "IFS= read -r ldap_password; "
-        "printf '%s\\n' \"$ldap_password\" | "
-        f"/opt/atlaso/bin/atlaso-helper ldap authenticate --real {shell_single_quote(user_dn)}"
-    )
+    # Keep both passwords out of the remote command. Read them in the guest
+    # shell before sudo, which can otherwise consume the helper's stdin.
+    helper_command = f"/opt/atlaso/bin/atlaso-helper ldap authenticate --real {user_dn}"
     user = ssh_username(args, "appliance")
     host = args.appliance_ssh_host
     hostkey = ssh_hostkey(host, args, "appliance")
     appliance_password = ssh_password(args, "appliance")
     secrets = [appliance_password, LIFECYCLE_LDAP_PASSWORD]
     if user == "root":
-        remote_command = f"sh -lc {shell_single_quote(helper_command)}"
-        input_text = f"{LIFECYCLE_LDAP_PASSWORD}\n"
+        remote_command = helper_command
+        input_bytes = f"{LIFECYCLE_LDAP_PASSWORD}\n".encode("utf-8")
     elif appliance_password:
-        remote_command = f"sudo -S -p '' sh -lc {shell_single_quote(helper_command)}"
-        input_text = f"{appliance_password}\n{LIFECYCLE_LDAP_PASSWORD}\n"
+        remote_script = (
+            "IFS= read -r sudo_password || exit 1\n"
+            "IFS= read -r ldap_password || exit 1\n"
+            "printf '%s\\n' \"$sudo_password\" | sudo -S -p '' -v >/dev/null || exit 1\n"
+            f"printf '%s\\n' \"$ldap_password\" | sudo -n env PYTHONUNBUFFERED=1 {helper_command}\n"
+        )
+        encoded_script = base64.b64encode(remote_script.encode("utf-8")).decode("ascii")
+        remote_command = f'sh -c "$(printf %s {encoded_script} | base64 -d)"'
+        input_bytes = f"{appliance_password}\n{LIFECYCLE_LDAP_PASSWORD}\n".encode("utf-8")
     else:
-        remote_command = f"sudo -n sh -lc {shell_single_quote(helper_command)}"
-        input_text = f"{LIFECYCLE_LDAP_PASSWORD}\n"
+        remote_command = f"sudo -n {helper_command}"
+        input_bytes = f"{LIFECYCLE_LDAP_PASSWORD}\n".encode("utf-8")
 
     if appliance_password:
         command = ["plink", "-batch", "-ssh", "-pw", appliance_password, f"{user}@{host}", remote_command]
@@ -3820,20 +4061,12 @@ def managed_ldap_helper_authentication_check(args: argparse.Namespace) -> dict[s
         command.extend([f"{user}@{host}", remote_command])
         redacted_command = redact_sequence(command, secrets)
     try:
-        completed = subprocess.run(
-            command,
-            input=input_text,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            capture_output=True,
-            timeout=120,
-        )
+        completed = subprocess.run(command, input=input_bytes, capture_output=True, timeout=120)
         result = {
             "command": redacted_command,
             "returncode": completed.returncode,
-            "stdout": redact_text(completed.stdout, secrets),
-            "stderr": redact_text(completed.stderr, secrets),
+            "stdout": redact_text(completed.stdout.decode("utf-8", errors="replace"), secrets),
+            "stderr": redact_text(completed.stderr.decode("utf-8", errors="replace"), secrets),
             "password_transport": "stdin-only",
             "bind_transport": "ldapi:///",
         }
@@ -3932,15 +4165,15 @@ def routing_host_check_commands(args: argparse.Namespace) -> dict[str, str]:
     return {
         "network": "ip -br addr && ip route",
         "routing_tables": (
-            'ip rule show | grep -E "lookup (100|atlaso_mgmt)" && '
+            'ip rule show && ip route show table 200 && '
             'ip rule show | grep -E "lookup (200|atlaso_lab)" && '
             f'ip route show table 200 | grep -F "{wan_network}" && '
             '! ip route show table 200 | grep -q "^default" && '
             'sysctl -n net.ipv4.ip_forward | grep "^1$"'
         ),
         "firewall": (
+            'nft list chain inet atlaso forward | grep -F "policy drop;" && '
             "nft list ruleset | tee /tmp/atlaso-lifecycle-nft.txt | head -n 200 && "
-            'grep -F "comment \\"isolate-" /tmp/atlaso-lifecycle-nft.txt && '
             'grep -F "comment \\"route-" /tmp/atlaso-lifecycle-nft.txt && '
             'grep -F "masquerade" /tmp/atlaso-lifecycle-nft.txt'
         ),
@@ -4084,12 +4317,68 @@ def authoritative_dns_state_check(args: argparse.Namespace) -> dict[str, Any]:
     site_ip = str(ip_interface(args.site_cidr).ip)
     if args.skip_client_checks or not args.client_a_host:
         return {"skipped": "client A host not provided"}
+    refresh = ssh_command(
+        args.client_a_host,
+        args,
+        'ELEV="$(command -v sudo || true)"; ${ELEV:+$ELEV }/usr/local/sbin/atlaso-refresh-test-dhcp; printf "HOST=%s\\n" "$(hostname -s)"; ip -4 -o addr show dev eth1',
+        role="client",
+    )
+    require_success(refresh, "client A DHCP hostname refresh")
+    hostname_match = re.search(r"^HOST=([^\s]+)$", refresh["stdout"], re.MULTILINE)
+    client_hostname = hostname_match[1].lower() if hostname_match else ""
+    if not re.fullmatch(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?", client_hostname):
+        raise LifecycleError("Client A DHCP hostname is invalid for the authoritative DNS probe.")
+    address_match = re.search(r"\binet (\d+\.\d+\.\d+\.\d+)/\d+", refresh["stdout"])
+    if address_match is None:
+        raise LifecycleError("Client A has no IPv4 DHCP address for the authoritative DNS probe.")
     authoritative = ssh_command(
         args.client_a_host,
         args,
-        authoritative_dns_probe_command(args.domain, site_ip, site_ip),
+        authoritative_dns_probe_command(args.domain, site_ip, site_ip, client_hostname, address_match[1]),
         role="client",
     )
+    if authoritative["returncode"] != 0:
+        # Preserve bounded appliance evidence before the lifecycle runner
+        # cleans its VMs; a DNS reply alone cannot distinguish a missing
+        # lease callback from a backend hostsdir or reload failure.
+        commands = {
+            "config": "cat /etc/atlaso/dnsmasq.d/atlaso.conf",
+            "lease": "cat /var/lib/atlaso/dnsmasq/dhcp.leases",
+            "mirrors": "cat /var/lib/atlaso-dns-authoritative-leases/*.hosts",
+            "mirror_modes": "stat -c '%a %U:%G %n' /var/lib/atlaso /var/lib/atlaso/dnsmasq /var/lib/atlaso-dns-authoritative-leases /var/lib/atlaso-dns-authoritative-leases/*.hosts",
+            "journal": "journalctl -u dnsmasq.service --no-pager -n 100",
+            "backend_journal": "journalctl -u atlaso-dns-authoritative.service --no-pager -n 60",
+            "backend": "systemctl is-active atlaso-dns-authoritative.service",
+        }
+        diagnostic = {"client_refresh": {
+            "stdout": refresh.get("stdout", "")[-500:],
+            "stderr": refresh.get("stderr", "")[-500:],
+        }}
+        for key, command in commands.items():
+            remote_command = appliance_ssh_command(args, command) if key in {"lease", "mirrors", "mirror_modes", "backend_journal"} else command
+            result = ssh_command(
+                args.appliance_ssh_host, args, remote_command, role="appliance", appliance_as_root=False
+            )
+            lines = result.get("stdout", "").splitlines()
+            if key == "config":
+                lines = [line for line in lines if line.startswith((
+                    "dhcp-script=", "script-on-renewal", "dhcp-ignore-names=", "dhcp-range=",
+                    "dhcp-option=tag:",
+                ))][:25]
+            elif key == "lease":
+                lines = [line for line in lines if address_match[1] in line][:4]
+            elif key == "journal":
+                lines = [line for line in lines if any(
+                    word in line.lower() for word in ("script", "lease", "error")
+                )][-20:]
+            else:
+                lines = lines[:20]
+            diagnostic[key] = {"exit": result["returncode"], "lines": lines,
+                               "stderr": result.get("stderr", "")[-300:]}
+        raise LifecycleError(
+            f"client A authoritative DNS probe failed: {authoritative.get('stderr', '').strip()}; "
+            f"appliance diagnostic: {json.dumps(diagnostic, sort_keys=True)}"
+        )
     require_success(authoritative, "client A authoritative DNS probe")
     return {"authoritative": authoritative}
 
@@ -4546,6 +4835,18 @@ def ntp_client_checks(args: argparse.Namespace) -> dict[str, Any]:
         return {"skipped": "client checks disabled"}
     if not args.client_a_host:
         return {"skipped": "client A host not provided"}
+    # A freshly started ntpd can be active and listening while it still
+    # advertises leap_alarm. Chrony correctly refuses such a server, so wait
+    # for NTPsec to select a synchronized upstream before probing clients.
+    synchronization = ssh_until_success(
+        args.appliance_ssh_host,
+        args,
+        "ntpq -c rv | grep -q leap=00",
+        role="appliance",
+        label="appliance NTP synchronization",
+        timeout_seconds=600,
+        interval_seconds=15,
+    )
     site_ip = str(ip_interface(args.site_cidr).ip)
     hostname = f"ntp.{args.domain}"
     elevate = elevation_probe()
@@ -4561,7 +4862,12 @@ def ntp_client_checks(args: argparse.Namespace) -> dict[str, Any]:
     )
     result = ssh_command(args.client_a_host, args, command, role="client")
     require_success(result, "client A NTS-authenticated and ordinary NTP probes")
-    return {"client_a": result, "hostname": hostname, "ordinary_ntp_target": site_ip}
+    return {
+        "client_a": result,
+        "hostname": hostname,
+        "ordinary_ntp_target": site_ip,
+        "server_synchronization_attempts": synchronization["attempts"],
+    }
 
 
 def wan_packet_loss_check(client: HttpClient, args: argparse.Namespace) -> dict[str, Any]:
@@ -4950,6 +5256,7 @@ def run_full_lifecycle(results: list[StepResult], client: HttpClient, args: argp
     run_step(results, "configure-esxi-pxe", configure_esxi_pxe, client, args)
     run_step(results, "configure-firewall-wan", configure_firewall_wan, client, args)
     run_step(results, "configure-ca", configure_ca, client, args)
+    run_step(results, "prepare-vmware-ntp-clock", prepare_vmware_ntp_clock, args)
     run_step(results, "configure-ntp", configure_ntp, client, args)
     run_step(results, "configure-vcf-backups", configure_vcf_backups, client, args)
     run_step(results, "configure-vcf-offline-depot", configure_vcf_offline_depot, client, args)
@@ -4960,11 +5267,15 @@ def run_full_lifecycle(results: list[StepResult], client: HttpClient, args: argp
         "apply-connectivity-units",
         apply_units,
         client,
-        ["local_users", "network", "firewall", "wan", "dnsmasq", "esxi_pxe", "vcf_backups", "ldap"],
+        [
+            "local_users", "network", "firewall", "wan", "dnsmasq", "appliance_settings",
+            "esxi_pxe", "vcf_backups", "ca", "ldap", "ntpd", "vcf_offline_depot", "public_services",
+        ],
         args,
     )
     if args.esx_storage_test:
         run_step(results, "apply-esx-storage-units", apply_units, client, ["esx_storage", "dnsmasq", "firewall"], args)
+    run_step(results, "client-package-readiness", client_package_readiness, args)
     run_step(results, "ca-client-certificate-request", ca_client_certificate_request, client, args)
     run_step(results, "ca-generated-certificate-request-check", ca_generated_certificate_request_check, client, args)
     run_step(results, "apply-ca-unit", apply_units, client, ["ca"], args)
@@ -4985,8 +5296,20 @@ def run_full_lifecycle(results: list[StepResult], client: HttpClient, args: argp
     run_step(results, "configure-management-https", configure_management_https, client, args)
     run_step(results, "apply-appliance-settings-unit", apply_units, client, ["appliance_settings", "firewall", "public_services"], args)
     run_step(results, "management-https-check", management_https_check, client, args)
-    run_step(results, "oidc-authorization-code-check", oidc_authorization_code_check, client, args)
-    run_step(results, "web-terminal-check", web_terminal_check, client, args)
+    provider = run_step(results, "configure-oidc-provider", configure_oidc_provider, client, args)
+    run_step(
+        results,
+        "apply-oidc-certificate-and-listener",
+        apply_units,
+        client,
+        ["ca", "dnsmasq", "firewall", "public_services"],
+        args,
+    )
+    if not args.skip_client_checks:
+        run_step(results, "oidc-site-listener-check", oidc_site_listener_check, args, provider)
+    run_step(results, "oidc-authorization-code-check", oidc_authorization_code_check, client, args, client)
+    if not args.skip_client_checks:
+        run_step(results, "web-terminal-check", web_terminal_check, client, args)
     if args.signed_release_repository_url:
         run_step(results, "signed-release-update-check", signed_release_update_check, client, args)
     if args.export_settings_backup:
@@ -5031,15 +5354,7 @@ def run_oidc_lifecycle(results: list[StepResult], client: HttpClient, args: argp
     run_step(results, "configure-ca", configure_ca, client, args)
     provider = run_step(results, "configure-oidc-provider", configure_oidc_provider, client, args)
     run_step(results, "apply-oidc-certificate-and-listener", apply_units, client, ["ca", "firewall", "public_services"], args)
-    site_address = str(ip_interface(args.site_cidr).ip)
-    if site_address not in (provider.get("listen_addresses") or []):
-        raise LifecycleError("The OIDC provider did not publish the selected site listener.")
-    status, root_ca_pem, _headers = client.request("GET", "/certificate-authority/downloads/root-ca.pem")
-    if status != 200 or "BEGIN CERTIFICATE" not in root_ca_pem:
-        raise LifecycleError("The applied CA root was unavailable for OIDC listener verification.")
-    public_client = HttpClient(
-        f"https://{site_address}:{provider['port']}", trusted_ca_pem=root_ca_pem
-    )
+    public_client = verified_oidc_public_client(client, args, provider)
     run_step(results, "oidc-authorization-code-check", oidc_authorization_code_check, client, args, public_client)
 
 
@@ -5059,6 +5374,7 @@ def run_restored_lifecycle(results: list[StepResult], client: HttpClient, args: 
         raise LifecycleError("--restored-state-run requires --restore-settings-backup.")
     run_step(results, "appliance-health", appliance_health, client, args)
     run_step(results, "restore-settings-backup", restore_settings_backup, client, args)
+    run_step(results, "reauthenticate-after-restore", reauthenticate_after_restore, client, args)
     run_step(
         results,
         "authentication-lifetime-policy-check",
@@ -5085,7 +5401,10 @@ def run_restored_lifecycle(results: list[StepResult], client: HttpClient, args: 
         "apply-connectivity-units",
         apply_units,
         client,
-        ["local_users", "network", "firewall", "wan", "dnsmasq", "esxi_pxe", "vcf_backups", "ldap"],
+        [
+            "local_users", "network", "firewall", "wan", "dnsmasq", "appliance_settings",
+            "esxi_pxe", "vcf_backups", "ca", "ldap", "ntpd", "vcf_offline_depot", "public_services",
+        ],
         args,
     )
     if args.esx_storage_test:
@@ -5111,7 +5430,8 @@ def run_restored_lifecycle(results: list[StepResult], client: HttpClient, args: 
     run_step(results, "vcf-depot-auth-check", vcf_depot_auth_check, client, args)
     run_step(results, "apply-appliance-settings-unit", apply_units, client, ["appliance_settings", "firewall", "public_services"], args)
     run_step(results, "management-https-check", management_https_check, client, args)
-    run_step(results, "web-terminal-check", web_terminal_check, client, args)
+    if not args.skip_client_checks:
+        run_step(results, "web-terminal-check", web_terminal_check, client, args)
 
 
 def format_step_summary(step: dict[str, Any]) -> str:

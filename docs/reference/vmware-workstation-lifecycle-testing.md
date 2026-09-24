@@ -346,7 +346,8 @@ from a pinned upstream QCOW2 source. The payload and SHA-512 metadata are cached
 a verified pair: corrupt entries are removed on an ordinary rerun, downloads stay in unique partial files until
 validation succeeds, and promotion is scoped to the exact expected cache files. The default Alpine artifact uses the
 versioned `v3.24` release URL and a repository-pinned SHA-512 digest; custom images must pass their own
-`-ExpectedSha512` pin.
+`-ExpectedSha512` pin. Preparation expands the powered-off client VMDK to at least 2 GiB with VMware Virtual Disk
+Manager; cloud-init grows its root partition and filesystem before installing lifecycle probe packages.
 
 Default vmnets:
 
@@ -633,6 +634,19 @@ provenance. Admit that source independently before the lifecycle run.
 For the negative case, the authenticated CA inventory must bind the chosen ID and fingerprint to the live
 `appliance:https` certificate before and after the desired edit. Keep the original receipts outside the lab removal
 root; clean up only through the exact lifecycle VM removal and artifact-root procedures below.
+
+The full lifecycle uses `oidc.atlaso.internal` because management HTTPS already owns
+`core.atlaso.internal`. Its first Apply includes the configured CA certificate consumers, then it
+applies the OIDC certificate, DNS record, and public listener. Site Client A resolves the OIDC
+hostname through the site DNS listener and verifies the discovery endpoint over TLS against the
+applied CA root; the Authorization Code flow uses the management listener,
+which remains reachable from the Windows harness when Site A is an isolated `lan:<name>` segment.
+The harness disables VMware Tools guest time synchronization before applying NTPsec, so the two clock
+controllers do not compete. Before the client NTS and ordinary NTP probes, it waits up to ten minutes
+for the appliance NTP server to clear its unsynchronized leap alarm; an active listener alone is not
+accepted as ready.
+The web-terminal check likewise probes the site route and management-path isolation from Site Client A,
+while exercising the authenticated page and ticket flow through the reachable management listener.
 
 Useful commands:
 
@@ -1061,6 +1075,11 @@ VMware Workstation vmnets provide isolated layer-2 segments. The lifecycle valid
 reachability, service apply behavior, tty1 console ownership with tty2 left available for normal login, backup/restore
 portability, and host/client integration where separate vmnets are equivalent. Tagged-trunk acceptance requires a
 compatible upstream virtual-network configuration and recorded topology evidence.
+
+For the four-adapter lifecycle appliance, `run-lifecycle-test.ps1` assigns explicit VMware PCI slots so Photon enumerates
+management as `eth0`, site A as `eth1`, trunk as `eth2`, and site B as `eth3`. Without those slots, Workstation can
+enumerate the isolated site B adapter as `eth0`; the management DHCP configuration then binds to the wrong network
+and lifecycle startup cannot reach the appliance. The management-only test VM path retains its existing slot layout.
 
 ## Recover a retained builder address
 
