@@ -1686,6 +1686,22 @@ def test_full_lifecycle_skips_oidc_site_probe_without_client_checks(monkeypatch)
 
     assert "apply-oidc-certificate-and-listener" in calls
     assert "oidc-site-listener-check" not in calls
+    assert "web-terminal-check" not in calls
+
+
+def test_restored_lifecycle_skips_terminal_site_probe_without_client_checks(monkeypatch, tmp_path):
+    """Restored no-client mode must not require the isolated Client A VM."""
+    lifecycle = load_lifecycle_module()
+    args = lifecycle.parse_args(
+        ["--secret-stdin", "--skip-client-checks", "--client-a-host", "192.0.2.11", "--restore-settings-backup", str(tmp_path / "backup.json")]
+    )
+    calls = []
+    monkeypatch.setattr(lifecycle, "run_step", lambda _results, name, _operation, *_args: calls.append(name) or {})
+
+    lifecycle.run_restored_lifecycle([], object(), args)
+
+    assert "management-https-check" in calls
+    assert "web-terminal-check" not in calls
 
 
 def test_configure_esxi_pxe_selects_dhcp_scope_and_proves_reservation():

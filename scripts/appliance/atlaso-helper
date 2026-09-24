@@ -3339,6 +3339,27 @@ def _restore_pruned_lease_hosts_on_failure(enabled: bool):
                 if (current.st_dev, current.st_ino) == seeded_identity:
                     path.unlink()
                     restored = True
+            lease_path = DNSMASQ_LEASE_FILE_PATH
+            if lease_path.is_symlink() or not lease_path.resolve().is_relative_to(DNSMASQ_STATE_DIR.resolve()):
+                raise ValueError("The dnsmasq lease file path is unsafe.")
+            if lease_path.exists() and not lease_path.is_file():
+                raise ValueError("The dnsmasq lease file path is invalid.")
+            try:
+                lease_rows = lease_path.read_text(encoding="utf-8").splitlines()
+            except FileNotFoundError:
+                lease_rows = []
+            active_identities: dict[str, str] = {}
+            for row in lease_rows:
+                fields = row.split()
+                if len(fields) < 4:
+                    continue
+                try:
+                    expires = int(fields[0])
+                    address = ip_address(fields[2])
+                except ValueError:
+                    continue
+                if expires == 0 or expires > time.time():
+                    active_identities[str(address)] = _dnsmasq_lease_identity(fields, address)
             for path, content in previous.items():
                 # A renewal after preparation owns a newly created path; do
                 # not overwrite it with the older snapshot.
@@ -3346,6 +3367,14 @@ def _restore_pruned_lease_hosts_on_failure(enabled: bool):
                     continue
                 if path.is_symlink():
                     raise ValueError("The authoritative lease mirror path became unsafe.")
+                snapshot_rows = content.decode("utf-8").splitlines()
+                address_parts = snapshot_rows[0].split() if snapshot_rows else []
+                snapshot_address = address_parts[0] if address_parts else ""
+                snapshot_identity = snapshot_rows[1] if len(snapshot_rows) > 1 else ""
+                # A deleted mirror may belong to a released or reassigned
+                # lease. Only restore a still-active lease for the same client.
+                if not snapshot_identity or active_identities.get(snapshot_address) != snapshot_identity:
+                    continue
                 temporary = path.with_name(f".{path.name}.atlaso-restore")
                 try:
                     with temporary.open("xb") as stream:

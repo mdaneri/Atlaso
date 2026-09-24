@@ -5274,7 +5274,8 @@ def run_full_lifecycle(results: list[StepResult], client: HttpClient, args: argp
     if not args.skip_client_checks:
         run_step(results, "oidc-site-listener-check", oidc_site_listener_check, args, provider)
     run_step(results, "oidc-authorization-code-check", oidc_authorization_code_check, client, args, client)
-    run_step(results, "web-terminal-check", web_terminal_check, client, args)
+    if not args.skip_client_checks:
+        run_step(results, "web-terminal-check", web_terminal_check, client, args)
     if args.signed_release_repository_url:
         run_step(results, "signed-release-update-check", signed_release_update_check, client, args)
     if args.export_settings_backup:
@@ -5394,7 +5395,8 @@ def run_restored_lifecycle(results: list[StepResult], client: HttpClient, args: 
     run_step(results, "vcf-depot-auth-check", vcf_depot_auth_check, client, args)
     run_step(results, "apply-appliance-settings-unit", apply_units, client, ["appliance_settings", "firewall", "public_services"], args)
     run_step(results, "management-https-check", management_https_check, client, args)
-    run_step(results, "web-terminal-check", web_terminal_check, client, args)
+    if not args.skip_client_checks:
+        run_step(results, "web-terminal-check", web_terminal_check, client, args)
 
 
 def format_step_summary(step: dict[str, Any]) -> str:

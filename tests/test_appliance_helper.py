@@ -11601,6 +11601,8 @@ def test_dnsmasq_failed_apply_restores_pruned_live_lease_name(monkeypatch, tmp_p
     mirror = hosts_dir / "lease-c0a83215.hosts"
     original = "192.168.50.21 client.atlaso.internal\n# mac=02:00:00:00:00:01\n# scope-domain=atlaso.internal\n"
     mirror.write_text(original, encoding="utf-8")
+    lease_file = state_dir / "dhcp.leases"
+    lease_file.write_text("1893456000 02:00:00:00:00:01 192.168.50.21 client *\n", encoding="utf-8")
     config_path = apply_dir / "atlaso.conf"
     config_path.write_text(
         "no-resolv\nserver=/atlaso.internal/127.0.0.1#5353\n"
@@ -11617,6 +11619,7 @@ def test_dnsmasq_failed_apply_restores_pruned_live_lease_name(monkeypatch, tmp_p
 
     monkeypatch.setattr(helper, "DNSMASQ_APPLY_DIR", apply_dir)
     monkeypatch.setattr(helper, "DNSMASQ_STATE_DIR", state_dir)
+    monkeypatch.setattr(helper, "DNSMASQ_LEASE_FILE_PATH", lease_file)
     monkeypatch.setattr(helper, "DNSMASQ_AUTHORITATIVE_LEASE_HOSTS_DIR", hosts_dir)
     monkeypatch.setattr(helper, "DNSMASQ_CONFIG_DIR", config_dir)
     monkeypatch.setattr(helper, "DNSMASQ_CONFIG_PATH", config_dir / "atlaso.conf")
@@ -11877,6 +11880,32 @@ def test_failed_authoritative_apply_removes_only_its_new_lease_seed(monkeypatch,
     assert destination.exists() is lease_hook_replaced_seed
     if lease_hook_replaced_seed:
         assert "renewed.atlaso.internal" in destination.read_text(encoding="utf-8")
+
+
+@pytest.mark.parametrize("lease_after_release", ["", "1893456000 02:00:00:00:00:02 192.168.50.21 replacement *\n"])
+def test_failed_dns_apply_does_not_restore_released_lease_mirror(monkeypatch, tmp_path, lease_after_release):
+    """A concurrent release or reassignment owns the missing mirror path."""
+    helper = load_helper_module()
+    state_dir = tmp_path / "dnsmasq"
+    hosts_dir = state_dir / "authoritative-leases"
+    hosts_dir.mkdir(parents=True)
+    lease_file = state_dir / "dhcp.leases"
+    lease_file.write_text("1893456000 02:00:00:00:00:01 192.168.50.21 client *\n", encoding="utf-8")
+    mirror = hosts_dir / "lease-c0a83215.hosts"
+    mirror.write_text(
+        "192.168.50.21 client.atlaso.internal\n# mac=02:00:00:00:00:01\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(helper, "DNSMASQ_STATE_DIR", state_dir)
+    monkeypatch.setattr(helper, "DNSMASQ_LEASE_FILE_PATH", lease_file)
+    monkeypatch.setattr(helper, "DNSMASQ_AUTHORITATIVE_LEASE_HOSTS_DIR", hosts_dir)
+    monkeypatch.setattr(helper, "_reload_authoritative_lease_hosts", lambda: None)
+
+    with helper._restore_pruned_lease_hosts_on_failure(True):
+        mirror.unlink()
+        lease_file.write_text(lease_after_release, encoding="utf-8")
+
+    assert not mirror.exists()
 
 
 def test_recursive_transition_preserves_suppressed_lease_until_native_name(monkeypatch, tmp_path):

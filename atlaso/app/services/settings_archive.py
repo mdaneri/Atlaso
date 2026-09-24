@@ -2163,11 +2163,22 @@ def _validate_archive_relationships(data: dict[str, list[dict[str, Any]]]) -> No
         }
     )
     route_target_families = {
-        name: families
-        for name, families in dhcp_target_families.items()
-        if normalize_interface_role((physical_interfaces.get(name) or vlan_interfaces.get(name, {})).get("role"))
-        != "management"
+        name: address_families(row)
+        for name, row in physical_interfaces.items()
+        if str(row.get("oper_state") or "") != "missing"
+        and normalize_interface_mode(row.get("mode")) != "trunk"
+        and normalize_interface_role(row.get("role")) != "management"
+        and address_families(row)
     }
+    route_target_families.update(
+        {
+            name: address_families(row)
+            for name, row in vlan_interfaces.items()
+            if row.get("enabled", True)
+            and normalize_interface_role(row.get("role")) != "management"
+            and address_families(row)
+        }
+    )
     route_target_names = set(route_target_families)
     management_target_names: set[str] = set()
     for name in route_target_names:
