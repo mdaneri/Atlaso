@@ -8692,6 +8692,44 @@ route=0.0.0.0/0
         assert ["ip", "route", "del", "0.0.0.0/0", "dev", "eth0"] in commands
 
 
+@pytest.mark.parametrize("removed", [False, True])
+def test_wan_preserves_new_network_owned_management_default(tmp_path, removed):
+    """Retiring an old Access mirror must retain the new dedicated default."""
+    helper = load_helper_module()
+    previous_path = tmp_path / "previous.conf"
+    previous_path.write_text(
+        "[targets]\ntarget=eth0\n  management_ui=true\n\n"
+        "[routes]\nroute=0.0.0.0/0\n  interface=eth0\n  gateway=192.0.2.1\n"
+        "  enabled=true\n\n[routing_rules]\n[nat_rules]\n[wan_policies]\n",
+        encoding="utf-8",
+    )
+    previous = helper._parse_wan_config(previous_path)
+    section = "removed_routes" if removed else "routes"
+    candidate_path = tmp_path / "candidate.conf"
+    candidate_path.write_text(
+        "[feature_settings]\nrouting_enabled=false\n\n"
+        "[targets]\ntarget=eth0\n  role=management\n  routing_domain=management\n"
+        "  management_ui=false\n\n"
+        f"[{section}]\nroute=0.0.0.0/0\n  interface=eth0\n"
+        "  gateway=192.0.2.1\n  enabled=false\n\n"
+        "[routing_rules]\n[nat_rules]\n[wan_policies]\n",
+        encoding="utf-8",
+    )
+    commands = []
+    helper.shutil.which = lambda command: f"/usr/sbin/{command}" if command in {"ip", "tc"} else None
+    helper._run = lambda command: (
+        commands.append(command) or subprocess.CompletedProcess(command, 0, "", "")
+    )
+    applied = {"connected": {}, "prefixes": set(), "management_ui": {"eth0": False},
+               "management_domain": {"eth0": True}}
+
+    assert helper._apply_wan_routes_and_qdiscs(
+        helper._parse_wan_config(candidate_path), previous, applied_network_state=applied,
+    ) == 0
+    assert not any(command[:4] == ["ip", "route", "del", "0.0.0.0/0"]
+                   and "table" not in command for command in commands)
+
+
 def test_wan_rollback_explicitly_removes_candidate_only_main_default(tmp_path):
     """Remove a partially applied mirror absent from last-applied runtime state.
 

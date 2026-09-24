@@ -13253,7 +13253,9 @@ def _applied_wan_network_state() -> dict | None:
                                     or (protocol in {"3", "boot", ""} and metric == (0 if family == 4 else 1024))):
                 connected.setdefault(key, set()).add(metric)
     return {"connected": connected, "prefixes": prefixes,
-            "management_ui": {name: row.get("management_ui") for name, row in interfaces.items()}}
+            "management_ui": {name: row.get("management_ui") for name, row in interfaces.items()},
+            "management_domain": {name: row["table"] == MANAGEMENT_ROUTE_TABLE_ID
+                                  for name, row in interfaces.items()}}
 
 
 def _apply_wan_target_routes(
@@ -13619,6 +13621,11 @@ def _apply_wan_routes_and_qdiscs(
             str(destination_network),
             interface_name,
         ) in previously_mirrored_defaults if destination_network is not None else False
+        network_owned_default = bool(
+            applied is not None and destination_network is not None
+            and destination_network.prefixlen == 0
+            and applied.get("management_domain", {}).get(interface_name) is True
+        )
         saved_enabled = _wan_bool(route.get("enabled", ""), default=True)
         enabled = saved_enabled and (routing_enabled or management_ui_default)
         if not enabled:
@@ -13631,13 +13638,13 @@ def _apply_wan_routes_and_qdiscs(
             delete_result = _retire_wan_static_route(route, targets, applied)
             if delete_result != 0:
                 return delete_result
-            if not saved_enabled and (management_ui_default or previously_mirrored_default):
+            if not network_owned_default and not saved_enabled and (management_ui_default or previously_mirrored_default):
                 main_delete = _run(
                     [*_route_command_prefix(destination), "del", destination, "dev", interface_name]
                 )
                 if main_delete.returncode not in {0, 2}:
                     return main_delete.returncode
-            elif previously_mirrored_default:
+            elif previously_mirrored_default and not network_owned_default:
                 main_delete = _run(
                     [*_route_command_prefix(destination), "del", destination, "dev", interface_name]
                 )
@@ -13666,7 +13673,7 @@ def _apply_wan_routes_and_qdiscs(
             print(main_result.stderr, end="", file=sys.stderr)
             if main_result.returncode != 0:
                 return main_result.returncode
-        elif previously_mirrored_default:
+        elif previously_mirrored_default and not network_owned_default:
             main_delete = _run(
                 [*_route_command_prefix(destination), "del", destination, "dev", interface_name]
             )
@@ -13696,6 +13703,7 @@ def _apply_wan_routes_and_qdiscs(
         if (
             removed_destination is not None
             and removed_destination.prefixlen == 0
+            and not (applied is not None and applied.get("management_domain", {}).get(interface_name) is True)
             and (
                 removed_management_ui
                 or removed_key in previously_mirrored_defaults

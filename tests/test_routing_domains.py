@@ -104,7 +104,7 @@ def test_networkd_connected_routes_have_one_owner_per_domain(monkeypatch, tmp_pa
          "ipv4_method": "static", "ip_cidr": "192.0.2.30/24", "ipv6_enabled": "true", "ipv6_cidr": "2001:db8::30/64"},
     ]
     monkeypatch.setattr(helper, "_parse_network_config", lambda _path: (physical, [], []))
-    monkeypatch.setattr(helper, "_read_existing_management_network_values", lambda: {"DNS": [], "Gateway": [], "Name": []})
+    monkeypatch.setattr(helper, "_read_existing_management_network_values", lambda _names=None: {"DNS": [], "Gateway": [], "Name": []})
     monkeypatch.setattr(helper, "_runtime_default_gateways_for_interface", lambda _name: [])
     files, _, _ = helper._systemd_networkd_files(tmp_path / "network.conf")
     for prefix in ("192.0.2.0/24", "2001:db8::/64"):
