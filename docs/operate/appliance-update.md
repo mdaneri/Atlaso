@@ -552,6 +552,8 @@ scripts/windows/vmware/invoke-lifecycle-test.ps1 `
 
 Replace `1234` with the exact pull-request number that owns the lifecycle validation and the example URL with the
 fixture's HTTPS base URL.
+The signed fixture requires the full lifecycle run; it cannot be combined with `-OidcOnly` or `-RoutingWanOnly`.
+Use `-PlanOnly` to inspect whether the signed upgrade, rollback, and two audited reboots are included before running.
 
 The lifecycle runner proves that each release task
 exposes an Atlaso Release child step, proves the preview upgrade and exact host-facing candidate version, performs an

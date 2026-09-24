@@ -123,6 +123,9 @@ if ($OidcOnly -and $SiteANetwork.StartsWith('lan:', [StringComparison]::OrdinalI
 if ($OidcOnly -and $SiteInterface -ne 'eth1') {
     throw '-OidcOnly requires SiteInterface eth1 because its Site A vmnet is attached to the appliance second adapter.'
 }
+if ($SignedReleaseRepositoryUrl -and ($OidcOnly -or $RoutingWanOnly)) {
+    throw '-SignedReleaseRepositoryUrl requires the full lifecycle; it cannot be combined with -OidcOnly or -RoutingWanOnly.'
+}
 <#
 .SYNOPSIS
 Refuse consumer output after any snapshot namespace or security change.
@@ -2309,6 +2312,10 @@ $plan = [ordered]@{
     oidc_only             = [bool]$OidcOnly
     routing_wan_only      = [bool]$RoutingWanOnly
     full_esxi_pxe_install = [bool]$FullEsxiPxeInstall
+    signed_release_update_check = [bool]$SignedReleaseRepositoryUrl
+    signed_release_fixture_operations = if ($SignedReleaseRepositoryUrl) {
+        'preview upgrade, development rollback, and two audited appliance reboots'
+    } else { 'not requested' }
     pxe_installer_iso     = $PxeInstallerIsoPath
     pxe_client_ip         = $PxeClientIPAddress
     esxi_probe_delay_seconds = $EsxiInstallProbeDelaySeconds
