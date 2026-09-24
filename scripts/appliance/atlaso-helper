@@ -24616,6 +24616,7 @@ def _management_handoff_addresses(
     previous_dynamic_families: set[tuple[str, str]] | None = None,
     address_observation: dict | None = None,
     discovery_attempts: int = 45,
+    exclude_previous_holdovers: bool = False,
 ) -> list[str]:
     """Return configured and all assigned global candidate management addresses.
 
@@ -24625,6 +24626,7 @@ def _management_handoff_addresses(
         previous_dynamic_families: Interface/address families that were already dynamic.
         address_observation: Complete live link readback, including secondary assigned addresses.
         discovery_attempts: Bounded runtime-address discovery attempts.
+        exclude_previous_holdovers: Exclude old-only addresses while their old TLS listener is retained.
 
     Returns:
         The candidate listener address list.
@@ -24675,6 +24677,7 @@ def _management_handoff_addresses(
             required_families.add("inet6")
         if required_families:
             dynamic_requirements.append((str(row.get("name") or ""), required_families))
+    configured_addresses = set(addresses)
     if address_observation is not None:
         if not address_observation.get("complete"):
             raise ValueError("candidate management live address observation is incomplete")
@@ -24690,7 +24693,10 @@ def _management_handoff_addresses(
                 if scope not in {"global", "link", "host"}:
                     raise ValueError(f"candidate management live address scope is unproven for {name}")
                 if scope == "global":
-                    addresses.append(str(ip_address(record["address"])))
+                    observed_address = str(ip_address(record["address"]))
+                    if (not exclude_previous_holdovers or observed_address not in previous_addresses
+                            or observed_address in configured_addresses):
+                        addresses.append(observed_address)
     discovered: dict[tuple[str, str], list[str]] = {}
     for attempt in range(max(1, discovery_attempts)):
         for interface, families in dynamic_requirements:
@@ -26053,6 +26059,7 @@ def _apply_management_handoff(payload: dict) -> int:
             address_observation=address_observation,
             previous_addresses=set(state["previous_management_addresses"]),
             previous_dynamic_families=previous_dynamic_families,
+            exclude_previous_holdovers=True,
         )
         failing_layer = "certificate prerequisite"
         candidate_ca = _management_handoff_candidate_ca(public_certificate, candidate_addresses)

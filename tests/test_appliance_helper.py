@@ -2,6 +2,7 @@
 
 import base64
 import configparser
+import copy
 import hashlib
 import importlib.machinery
 import importlib.util
@@ -2537,6 +2538,18 @@ def test_management_handoff_covers_every_live_global_address_on_static_link(monk
     assert helper._management_handoff_addresses(network_path, address_observation=observations[1]) == [
         "198.51.100.10", "2001:db8::25",
     ]
+    same_link_handoff = copy.deepcopy(observations[0])
+    same_link_handoff["links"][0]["addresses"].insert(0, {
+        "address": "198.51.100.5", "scope": "global", "state": "assigned",
+    })
+    assert helper._management_handoff_addresses(
+        network_path, address_observation=same_link_handoff,
+        previous_addresses={"198.51.100.5"}, exclude_previous_holdovers=True,
+    ) == ["198.51.100.10", "198.51.100.25"]
+    assert helper._management_handoff_addresses(
+        network_path, address_observation=same_link_handoff,
+        previous_addresses={"198.51.100.5"},
+    ) == ["198.51.100.10", "198.51.100.5", "198.51.100.25"]
     observations[1]["links"][0]["addresses"][1].pop("scope")
     with pytest.raises(ValueError, match="live address scope is unproven"):
         helper._management_handoff_addresses(network_path, address_observation=observations[1])
