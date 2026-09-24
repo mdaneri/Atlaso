@@ -46,27 +46,77 @@ from that interface's active systemd-networkd lease. This lease fallback remains
 resolver has been redirected to local dnsmasq and `resolvectl` therefore reports only `127.0.0.1`; applying DNS must not
 regenerate dnsmasq without the DHCP-provided forwarders.
 
-With **Authoritative** on, every managed forward domain renders as `auth-zone=domain`. dnsmasq has service-level
-authoritative settings, so all managed zones share one primary nameserver, SOA administrator, TTL, refresh, retry,
-expiry, and serial. v1 does not configure secondary nameservers, AXFR, or a separate DNS server. Generated reverse zones
-remain normal dnsmasq PTR behavior rather than authoritative reverse zones.
+With **Authoritative** on, Atlaso runs an isolated authoritative dnsmasq backend on `127.0.0.1:5353`. The ordinary
+dnsmasq service forwards each managed forward domain to that backend and continues to answer clients on every selected
+listener. The client-facing cache is disabled in this mode because cached forwarded replies lose the backend's AA flag;
+this preserves authoritative positive and negative answers on repeated queries. The same client-facing sockets
+retain upstream recursion. All managed zones share one primary nameserver, SOA administrator, TTL, refresh, retry,
+expiry, and serial. v1 does not configure secondary nameservers or AXFR. Generated reverse zones remain normal dnsmasq
+PTR behavior rather than authoritative reverse zones.
 
 The authoritative renderer emits:
 
-- `auth-server` for the configured primary nameserver and every selected DNS interface;
+- `auth-server=<primary-nameserver>,127.0.0.1` in the isolated authoritative backend;
 - one `auth-zone` per managed forward domain;
 - shared `auth-soa` and `auth-ttl` values;
-- A/AAAA `host-record` glue mapping the primary nameserver to every selected DNS listen address.
+- A/AAAA `host-record` glue mapping the primary nameserver to every selected DNS listen address;
+- `server=/<managed-domain>/127.0.0.1#5353` and `cache-size=0` in the recursive client-facing
+  service. Authoritative DNS and DNSSEC validation cannot be enabled together: DNSSEC caching
+  removes the AA flag from repeated managed-zone answers. Without Authoritative DNS, DNSSEC keeps
+  at least 150 cache entries as dnsmasq requires.
+
+When DHCP is enabled, leases in a managed DNS suffix update the derived-name directory
+`/var/lib/atlaso-dns-authoritative-leases`, which the authoritative backend can read after dropping privileges.
+The DHCP lease file remains under the restricted Atlaso state directory.
+The recursive instance forwards those leases' reverse lookups to the backend and keeps generated nameserver glue PTR
+records locally. DHCP names in other suffixes retain normal recursive-instance behavior. Atlaso reads the managed lease
+names from the mirror for the DHCP UI and API, and reconciles the mirror against current leases, reservation names,
+client identities, and reservation provenance before re-enabling authoritative DNS. Departed clients or rolled-back
+reservations cannot regain stale A records. Reserved clients still receive their saved hostname through DHCP.
+When authoritative DNS is enabled over existing DHCP leases, Atlaso seeds valid active lease names before starting the
+backend so clients do not need to renew first. When it is disabled, the recursive listener temporarily serves mirrored
+names for active leases whose stored hostname is `*`; the lease hook removes each mirror when the client renews with an
+ordinary name, releases its address, or changes identity. This avoids dropping names during the mode change while
+preventing stale mirrors from outliving their leases. A valid DHCP name equal to the managed zone apex follows the same
+mirror and reconciliation rules as names beneath that zone.
+Each new mirror records the exact DHCP scope domain that emitted it. If a protected management handoff rolls back,
+Atlaso preserves valid renewals of existing names under the old scope and rejects candidate names from a different
+scope, including nested suffixes that also match the old authoritative zone.
+An explicit reservation name in a managed zone suppresses client-supplied names even when its DHCP scope uses an
+unmanaged suffix, so the recursive instance cannot learn a competing local answer.
 
 The primary nameserver must belong to a managed domain. Its glue identity is generated and cannot conflict with operator
 CNAME or A/AAAA data. SOA expiry must be greater than refresh and retry, and all timer values must be positive 32-bit
 seconds.
 
-dnsmasq treats interfaces named by `auth-server` as authoritative-only destinations. Those selected DNS listeners return
-complete authoritative SOA, NS, glue, positive-record, and negative-SOA responses, but intentionally return `REFUSED`
-for unrelated recursive queries and non-authoritative reverse zones. The same dnsmasq process retains ordinary local/PTR
-and upstream-recursive service on listeners not named by `auth-server`, including appliance loopback. This service-level
-boundary is why v1 cannot provide authority and recursion on the same address and port.
+Selected DNS listeners answer managed-zone records (including SOA and NS), ordinary PTR queries, and external queries
+through the configured upstreams. Listener selections and firewall policy continue to limit client access; Atlaso does
+not bind an unrestricted public resolver. The renderer uses `bind-dynamic` so selected interfaces and addresses can
+appear after dnsmasq starts, including VLANs created during Network Apply.
+
+### Appliance host resolution
+
+When enabling or disabling local DNS changes the host resolver, select both **DNS/DHCP** and **Appliance Settings**
+in Appliance Apply. Selecting Appliance Settings approves its complete pending configuration; DNS selection alone is
+rejected so unrelated pending settings cannot be applied implicitly. When DNS activation is the only pending edit, the
+review still shows the projected Appliance Settings resolver change and selects it together with DNS. The task starts
+dnsmasq before directing the host's systemd-resolved resolver to `127.0.0.1` with the catch-all routing domain `~.`.
+DNS startup failure skips the resolver change. Disabling DNS moves the host back to configured external or management
+DHCP DNS before stopping local DNS.
+If that resolver change committed but the DNS step failed, a DNS-only retry is accepted because the host no longer
+depends on local DNS.
+The managed networkd file persists the selection across reboot and excludes DHCP/RA DNS while explicit DNS is active.
+The systemd-resolved stub in `/etc/resolv.conf` remains in use; dnsmasq uses explicit upstreams with `no-resolv` to avoid
+resolver loops. Apply restarts dnsmasq because a SIGHUP reload does not reread its configuration.
+During a protected management handoff, disabling local DNS moves the resolver first, before replacing the listener;
+enabling it starts the listener first. If an ordinary DNS Apply fails after lease reconciliation, removed live lease
+names are restored and the authoritative backend is reloaded.
+
+After Apply and again after reboot, compare `dig @127.0.0.1 host.atlaso.internal`,
+`resolvectl query host.atlaso.internal`, `getent hosts host.atlaso.internal`, and a Python `socket.getaddrinfo()` lookup.
+From an allowed LAN client, query local records, SOA/NS, and an external name over UDP and TCP. If DNS activation fails,
+inspect the DNS task error and correct listener/upstream configuration before retrying global Apply. To restore external
+host resolution, disable DNS and submit the resulting DNS/DHCP and Appliance Settings changes.
 
 ## Generated zone records and serial
 
@@ -104,13 +154,17 @@ remains scoped to the selected managed domain.
 ## Apply and verification
 
 Review the DNS validation card and rendered config, then submit only the global DNS/DHCP unit when that is the intended
-changed unit. The helper stages and validates `/var/lib/atlaso/apply/dnsmasq/atlaso.conf`, installs
-`/etc/atlaso/dnsmasq.d/atlaso.conf`, and reloads or restarts `dnsmasq.service`.
+changed unit. The helper stages and validates `/var/lib/atlaso/apply/dnsmasq/atlaso.conf`, installs the recursive
+configuration at `/etc/atlaso/dnsmasq.d/atlaso.conf`, and, when authoritative mode is enabled, installs the extracted
+backend configuration at `/etc/atlaso/dnsmasq.d/atlaso-authoritative.conf`. It starts
+`atlaso-dns-authoritative.service` before restarting `dnsmasq.service`.
 
 On an applied appliance, verify the installed directives and query behavior:
 
 ```sh
-sudo grep -E '^(auth-zone|auth-server|auth-soa|auth-ttl|host-record=ns)' /etc/atlaso/dnsmasq.d/atlaso.conf
+sudo grep -E '^(auth-zone|auth-server|auth-soa|auth-ttl|host-record=ns)' /etc/atlaso/dnsmasq.d/atlaso-authoritative.conf
+sudo grep -E '^server=/.+/127\.0\.0\.1#5353$' /etc/atlaso/dnsmasq.d/atlaso.conf
+systemctl is-active atlaso-dns-authoritative
 systemctl is-active dnsmasq
 dig @192.168.50.1 atlaso.internal SOA
 dig @192.168.50.1 atlaso.internal NS
@@ -121,11 +175,9 @@ dig @127.0.0.1 -x 192.168.50.20
 dig @127.0.0.1 example.com A
 ```
 
-The missing managed name should return authoritative NXDOMAIN with SOA authority. The loopback queries verify that
-existing PTR behavior and configured upstream recursion remain available on a non-authoritative listener. Replace
-addresses and names with the appliance's selected listener and managed data. To provide recursion on an external
-address, leave Authoritative off for that listener or select a separate DNS interface that is not part of the
-authoritative interface set.
+The missing managed name should return authoritative NXDOMAIN with SOA authority. The loopback queries verify existing
+PTR behavior and configured upstream recursion. Replace addresses and names with the appliance's selected listener and
+managed data.
 
 ### DHCP upstream preservation
 

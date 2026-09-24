@@ -11,8 +11,10 @@ from atlaso import route_domains as domains
 from tests.test_appliance_helper import load_helper_module
 
 
-@pytest.mark.parametrize("candidate_count,exhausted", [(249, False), (250, True)])
-def test_transition_capacity_reserves_old_and_candidate_sources(monkeypatch, candidate_count, exhausted):
+@pytest.mark.parametrize("candidate_count,exhausted,incomplete", [
+    (249, False, False), (249, False, True), (250, True, True),
+])
+def test_transition_capacity_reserves_old_and_candidate_sources(monkeypatch, candidate_count, exhausted, incomplete):
     """A large renumber must fit old and candidate IPv4 slots together."""
     old = [str(ipaddress.IPv4Address(int(ipaddress.IPv4Address("10.0.0.1")) + index))
            for index in range(251)]
@@ -25,7 +27,7 @@ def test_transition_capacity_reserves_old_and_candidate_sources(monkeypatch, can
     monkeypatch.setattr(domains, "transition_guard_present", lambda *_args: False)
     monkeypatch.setattr(domains, "transition_exemptions_present", lambda *_args: False)
     monkeypatch.setattr(domains, "read_intent", lambda: None)
-    monkeypatch.setattr(domains, "source_tables", lambda _intent, _rows: ({source: 200 for source in old}, False))
+    monkeypatch.setattr(domains, "source_tables", lambda _intent, _rows: ({source: 200 for source in old}, incomplete))
     if exhausted:
         with pytest.raises(domains.ReconcileError, match="capacity exhausted"):
             domains.preflight_capacity(candidates)

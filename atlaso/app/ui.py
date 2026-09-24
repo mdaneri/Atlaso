@@ -2565,12 +2565,13 @@ def ensure_dns_for_appliance_settings(
     return "+".join(actions) if actions else None
 
 
-def appliance_settings_context(db: Session, *, reconcile_dns: bool = True) -> dict[str, Any]:
+def appliance_settings_context(db: Session, *, reconcile_dns: bool = True, applying_dns: bool = False) -> dict[str, Any]:
     """Return appliance settings context.
 
     Args:
         db: Active database session.
         reconcile_dns: Reconcile dns supplied by the caller.
+        applying_dns: DNS activation is ordered before these resolver settings in the same Apply.
     """
     settings = get_appliance_settings_row(db)
     dns_settings = get_dns_settings_row(db)
@@ -2580,7 +2581,7 @@ def appliance_settings_context(db: Session, *, reconcile_dns: bool = True) -> di
         db.refresh(dns_settings)
     local_dns_enabled = bool(
         dns_settings.enabled
-        and applied_local_dns_enabled(load_appliance_apply_baselines(db).get("dnsmasq"))
+        and (applying_dns or applied_local_dns_enabled(load_appliance_apply_baselines(db).get("dnsmasq")))
     )
     interfaces = db.execute(select(PhysicalInterface).order_by(PhysicalInterface.name)).scalars().all()
     vlans = db.execute(select(VlanInterface).order_by(VlanInterface.parent_interface, VlanInterface.vlan_id)).scalars().all()
@@ -6874,6 +6875,10 @@ def ntp_owned_dns_is_only_pending_change(db: Session, dns_unit: dict[str, Any]) 
         if row.record_type == "CNAME" else f"host-record={row.hostname},{row.address}"
         for row in owned if row.enabled and row.record_type in {"A", "AAAA", "CNAME"}
     }
+    current_targets = {
+        row.address.strip().strip(".").lower()
+        for row in owned if row.enabled and row.record_type == "CNAME"
+    }
     previous_ntp = str((baselines.get("ntpd") or {}).get("config_preview") or "")
     prior_hostname = next(
         (line.partition(": ")[2] for line in previous_ntp.splitlines()
@@ -6882,18 +6887,57 @@ def ntp_owned_dns_is_only_pending_change(db: Session, dns_unit: dict[str, Any]) 
     prior_enabled = "# Atlaso NTP enabled: true" in previous_ntp.splitlines()
     prior_target = service_target_hostname(prior_hostname, "service") if prior_enabled and prior_hostname else ""
     prior_cname = f"cname={prior_hostname},{prior_target}" if prior_target else ""
-    if not current_lines and (not prior_cname or prior_cname not in previous_dns.splitlines()):
+    def rendered_directive(line: str) -> str:
+        """Unwrap a directive staged for the isolated authoritative backend.
+
+        Args:
+            line: Staged DNS directive to render.
+        """
+        return line.removeprefix("# atlaso-authoritative-config: ")
+
+    def generated_ptr_lines(config_lines: set[str], target: str) -> set[str]:
+        """Match PTR owners derived from this service's A and AAAA records.
+
+        Args:
+            config_lines: Configured DNS directives to inspect.
+            target: Hostname whose PTR records are derived.
+        """
+        ptr_lines = set()
+        prefix = f"host-record={target},"
+        for line in config_lines:
+            directive = rendered_directive(line)
+            if not directive.startswith(prefix):
+                continue
+            try:
+                reverse_owner = ip_address(directive.removeprefix(prefix)).reverse_pointer
+            except ValueError:
+                continue
+            ptr_lines.add(f"ptr-record={reverse_owner},{target}")
+        return ptr_lines
+
+    if not current_lines and (not prior_cname or not any(
+        rendered_directive(line) == prior_cname for line in previous_dns.splitlines()
+    )):
         # A clean disable can be attributed to the previously applied NTP
         # alias. Without that evidence, leave DNS selection with the operator.
         return False
+    previous_ptr_lines = generated_ptr_lines(set(previous_dns.splitlines()), prior_target) if prior_target else set()
+    current_ptr_lines: set[str] = set()
+    for target in current_targets:
+        current_ptr_lines.update(generated_ptr_lines(current_lines, target))
     previous_lines = {
         line for line in previous_dns.splitlines()
         if prior_target and (
-            line == prior_cname
-            or line.startswith(f"host-record={prior_target},")
+            rendered_directive(line) == prior_cname
+            or rendered_directive(line).startswith(f"host-record={prior_target},")
+            or rendered_directive(line) in previous_ptr_lines
         )
     }
-    if previous_lines == current_lines:
+    current_rendered_lines = {
+        line for line in current_dns.splitlines()
+        if rendered_directive(line) in current_lines or rendered_directive(line) in current_ptr_lines
+    }
+    if previous_lines == current_rendered_lines:
         return False
 
     def non_ntp_lines(config: str, omitted: set[str]) -> list[str]:
@@ -6907,16 +6951,13 @@ def ntp_owned_dns_is_only_pending_change(db: Session, dns_unit: dict[str, Any]) 
         for line in config.splitlines():
             if line in omitted:
                 continue
-            if line.startswith("auth-soa="):
+            if rendered_directive(line).startswith("auth-soa="):
                 # DNS record mutations advance the server-managed SOA serial.
-                line = "auth-soa=<serial>," + line.partition(",")[2]
+                line = "auth-soa=<serial>," + rendered_directive(line).partition(",")[2]
             lines.append(line)
         return sorted(lines)
 
-    return (
-        non_ntp_lines(previous_dns, previous_lines)
-        == non_ntp_lines(current_dns, current_lines)
-    )
+    return non_ntp_lines(previous_dns, previous_lines) == non_ntp_lines(current_dns, current_rendered_lines)
 
 
 def remove_dns_for_vcf_offline_depot_hostname(db: Session, hostname: str, actor: str) -> str | None:
@@ -9918,6 +9959,31 @@ def applied_local_dns_enabled(baseline: dict[str, Any] | None) -> bool:
     return bool(isinstance(summary, list) and summary and summary[0] == "DNS enabled")
 
 
+def applied_resolver_uses_local_dns(baseline: dict[str, Any] | None) -> bool:
+    """Return whether applied Appliance Settings point the host resolver at local DNS.
+
+    Args:
+        baseline: Last-applied Appliance Settings unit baseline.
+
+    Returns:
+        Whether the applied resolver mode is local DNS.
+    """
+    if not baseline:
+        return False
+    preview = baseline.get("config_preview")
+    if not isinstance(preview, str):
+        return False
+    try:
+        payload = json.loads(preview)
+    except json.JSONDecodeError:
+        return False
+    return bool(
+        isinstance(payload, dict)
+        and payload.get("resolver_mode") == "local_dns"
+        and payload.get("resolver_servers") == ["127.0.0.1"]
+    )
+
+
 def save_appliance_apply_baselines(db: Session, baselines: dict[str, dict[str, Any]]) -> None:
     """Persist appliance apply baselines.
 
@@ -11243,18 +11309,19 @@ def esx_storage_context(db: Session, *, reconcile: bool = True, include_disk_inv
     }
 
 
-def appliance_apply_units(db: Session, *, reconcile: bool = True) -> list[dict[str, Any]]:
+def appliance_apply_units(db: Session, *, reconcile: bool = True, applying_dns: bool = False) -> list[dict[str, Any]]:
     """Return appliance apply units.
 
     Args:
         db: Active database session.
         reconcile: Whether dependent desired state should be reconciled.
+        applying_dns: Include the resolver intent that follows selected DNS activation.
     """
     from atlaso.app.services.network_boot import load_esxi_applied_runtime
 
     baselines = load_appliance_apply_baselines(db)
     local_users = local_users_apply_context(db, baselines.get("local_users"))
-    appliance_settings = appliance_settings_context(db, reconcile_dns=reconcile)
+    appliance_settings = appliance_settings_context(db, reconcile_dns=reconcile, applying_dns=applying_dns)
     network = network_context(db)
     wan = routes_wan_context(db)
     nat = traffic_publishing_context(db)
@@ -11968,6 +12035,31 @@ def appliance_apply_context(db: Session) -> dict[str, Any]:
         if initial_apply_required
         else changed_units
     )
+    unit_map = {unit["id"]: unit for unit in units}
+    dns_unit = unit_map.get("dnsmasq", {})
+    settings_unit = unit_map.get("appliance_settings", {})
+    dns_settings = dns_unit.get("context", {}).get("dns_settings")
+    if (
+        (initial_apply_required or dns_unit.get("changed"))
+        and getattr(dns_settings, "enabled", False)
+        and not applied_resolver_uses_local_dns(load_appliance_apply_baselines(db).get("appliance_settings"))
+        and "dnsmasq" not in submitted_ids
+        and "appliance_settings" not in submitted_ids
+    ):
+        projected = next(
+            unit for unit in appliance_apply_units(db, reconcile=False, applying_dns=True)
+            if unit["id"] == "appliance_settings"
+        )
+        if not initial_apply_required and not settings_unit.get("changed"):
+            projected["requires_dns_selection"] = True
+            projected["summary"] = [*projected["summary"], "Selected with DNS to activate the host resolver"]
+        if any(unit["id"] == "appliance_settings" for unit in review_units):
+            review_units = [
+                projected if unit["id"] == "appliance_settings" else unit
+                for unit in review_units
+            ]
+        else:
+            review_units = [projected, *review_units]
     return {
         "apply_units": units,
         "changed_apply_units": changed_units,
@@ -14482,6 +14574,7 @@ def execute_management_handoff(
     db: Session,
     include_wan: bool | None = None,
     include_nat: bool = False,
+    include_dnsmasq: bool = False,
 ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     """Execute management-affecting apply units as one recoverable transaction.
 
@@ -14492,6 +14585,7 @@ def execute_management_handoff(
         db: Active database session.
         include_wan: Whether the captured WAN unit participates in the transaction.
         include_nat: Whether the captured Firewall/NAT pair shares this wider recovery.
+        include_dnsmasq: Whether DNS listener activation shares this wider recovery.
 
     Returns:
         The group result and one truthful result per bundled apply unit.
@@ -14513,8 +14607,10 @@ def execute_management_handoff(
     )
     wan = units_by_id["wan"] if wan_required else None
     nat = units_by_id["nat"] if include_nat else None
+    dnsmasq = units_by_id["dnsmasq"] if include_dnsmasq else None
     handoff_unit_ids = (
         *MANAGEMENT_HANDOFF_UNIT_IDS,
+        *(("dnsmasq",) if include_dnsmasq else ()),
         *(("wan",) if wan_required else ()),
         *(("nat",) if include_nat else ()),
     )
@@ -14560,8 +14656,14 @@ def execute_management_handoff(
         wan_path = ""
         wan_rollback_path = ""
         nat_path = ""
+        dnsmasq_path = ""
         if nat is not None:
             nat_path = stage_appliance_apply_config(NAT_CONFIG_PATH, nat["raw_config_preview"])
+        if dnsmasq is not None:
+            dnsmasq_path = stage_appliance_apply_config(
+                DNSMASQ_STAGED_CONFIG_PATH,
+                dnsmasq["raw_config_preview"],
+            )
         if wan is not None:
             wan_path = stage_appliance_apply_config(
                 str(wan["config_path"]),
@@ -14596,6 +14698,7 @@ def execute_management_handoff(
                 "wan_config_path": wan_path,
                 "wan_rollback_config_path": wan_rollback_path,
                 "nat_config_path": nat_path,
+                "dnsmasq_config_path": dnsmasq_path,
                 "previous_management_interfaces": previous_interfaces,
                 "previous_management_parent_interfaces": previous_parent_interfaces,
                 "previous_management_addresses": list(dict.fromkeys(previous_addresses)),
@@ -14766,6 +14869,7 @@ def update_appliance_apply_baselines(db: Session, units: list[dict[str, Any]], s
             baseline["runtime_config_preview"] = runtime_config_preview
         if unit["id"] == "dnsmasq":
             baseline["dns_enabled"] = bool(unit["context"]["dns_settings"].enabled)
+            baseline["dns_authoritative"] = bool(unit["context"]["dns_settings"].authoritative)
         baselines[unit["id"]] = baseline
     save_appliance_apply_baselines(db, baselines)
 
@@ -16146,7 +16250,9 @@ def run_appliance_apply_job(job_id: str, *, force_real: bool = False) -> None:
             invalidate_observed_management_dhcp_dns()
             invalidate_appliance_apply_status_projection()
             current_units = appliance_apply_units_for_selection(
-                appliance_apply_units(db), set(selected_order)
+                appliance_apply_units(db, applying_dns=True)
+                if job_result.get("dns_resolver_activation") else appliance_apply_units(db),
+                set(selected_order),
             )
             current_by_id = {unit["id"]: unit for unit in current_units}
             missing_ids = [unit_id for unit_id in selected_order if unit_id not in current_by_id]
@@ -16232,7 +16338,7 @@ def run_appliance_apply_job(job_id: str, *, force_real: bool = False) -> None:
                         continue
                     bundled_units = [
                         current_by_id[unit_id]
-                        for unit_id in (*MANAGEMENT_HANDOFF_UNIT_IDS, "wan", "nat")
+                        for unit_id in (*MANAGEMENT_HANDOFF_UNIT_IDS, "dnsmasq", "wan", "nat")
                         if unit_id in handoff_unit_ids
                     ]
                     if not set(MANAGEMENT_HANDOFF_UNIT_IDS).issubset(
@@ -16265,6 +16371,7 @@ def run_appliance_apply_job(job_id: str, *, force_real: bool = False) -> None:
                         db=db,
                         include_wan="wan" in handoff_unit_ids,
                         include_nat="nat" in handoff_unit_ids,
+                        include_dnsmasq="dnsmasq" in handoff_unit_ids,
                     )
                     if not group_result.get("success") and group_result.get("rollback_proven"):
                         handoff_runtime_pending = False
@@ -16308,7 +16415,7 @@ def run_appliance_apply_job(job_id: str, *, force_real: bool = False) -> None:
                             )
                         applied = [
                             current_by_id[unit_id]
-                            for unit_id in (*MANAGEMENT_HANDOFF_UNIT_IDS, "wan", "nat")
+                            for unit_id in (*MANAGEMENT_HANDOFF_UNIT_IDS, "dnsmasq", "wan", "nat")
                             if unit_id in handoff_unit_ids
                         ]
                         applied_ids = set(handoff_unit_ids)
@@ -16603,7 +16710,7 @@ def run_appliance_apply_job(job_id: str, *, force_real: bool = False) -> None:
                     db.expire_all()
                     refreshed_units = appliance_apply_units(db, reconcile=False)
                     applied_unit = next((candidate for candidate in refreshed_units if candidate["id"] == unit["id"]), unit)
-                    if unit["id"] == "network":
+                    if unit["id"] in {"network", "dnsmasq", "appliance_settings"}:
                         # Commit exactly the executed intent, including when desired
                         # state changed while native address readiness was running.
                         applied_unit = unit
@@ -17061,6 +17168,8 @@ def _submit_appliance_apply(
     units = appliance_apply_units(db)
     unit_map = {unit["id"]: unit for unit in units}
     selected_ids = {unit_id for unit_id in selected_units if unit_id in APPLIANCE_APPLY_UNIT_IDS}
+    requested_ids = set(selected_ids)
+    appliance_settings_selected = "appliance_settings" in selected_ids
     ntp_dns_dependency = bool(
         unit_map.get("ntpd", {}).get("changed")
         and unit_map.get("dnsmasq", {}).get("changed")
@@ -17080,9 +17189,42 @@ def _submit_appliance_apply(
     )
     if ca_required_for_nts:
         selected_ids.add("ca")
+    apply_baselines = load_appliance_apply_baselines(db)
+    settings_for_apply = unit_map.get("appliance_settings", {}).get("context", {}).get("appliance_settings")
+    applied_settings_preview = str((apply_baselines.get("appliance_settings") or {}).get("config_preview") or "")
+    applied_ca_preview = str((apply_baselines.get("ca") or {}).get("config_preview") or "")
+    applied_management_binding = management_tls_binding_signature(applied_settings_preview)
+    desired_management_binding = management_tls_binding_signature(
+        str(unit_map.get("appliance_settings", {}).get("config_preview") or "")
+    )
+    management_https_activation = not applied_management_binding.get("management_https_enabled", False)
+    management_tls_binding_changed = bool(
+        applied_management_binding and desired_management_binding
+        and applied_management_binding != desired_management_binding
+    )
+    applied_management_certificate = management_certificate_signature(applied_ca_preview)
+    desired_management_certificate = management_certificate_signature(
+        str(unit_map.get("ca", {}).get("config_preview") or "")
+    )
+    management_certificate_unapplied = not applied_management_certificate.get("fingerprint")
+    management_certificate_pending = bool(
+        desired_management_certificate and desired_management_certificate != applied_management_certificate
+    )
+    https_ca_required = bool(
+        "appliance_settings" in selected_ids
+        and getattr(settings_for_apply, "management_https_enabled", False)
+        and (
+            management_https_activation
+            or management_certificate_unapplied
+            or (management_tls_binding_changed and management_certificate_pending)
+        )
+    )
+    if https_ca_required:
+        # The CA unit materializes newly issued management TLS files.
+        selected_ids.add("ca")
     if "ca" in selected_ids:
         ca_consumers = rotated_ca_certificate_consumers(
-            unit_map["ca"], load_appliance_apply_baselines(db).get("ca")
+            unit_map["ca"], apply_baselines.get("ca")
         )
         pending_ca_consumers = {
             unit_id for unit_id in ca_consumers
@@ -17101,11 +17243,27 @@ def _submit_appliance_apply(
             if unit_id in unit_map and unit_map[unit_id]["has_baseline"] and not unit_map[unit_id]["changed"]
         )
     dns_settings_for_apply = unit_map.get("dnsmasq", {}).get("context", {}).get("dns_settings")
+    dns_resolver_activation = bool(
+        "dnsmasq" in selected_ids
+        and getattr(dns_settings_for_apply, "enabled", False)
+        and not applied_resolver_uses_local_dns(
+            apply_baselines.get("appliance_settings")
+        )
+    )
+    if dns_resolver_activation and not appliance_settings_selected:
+        detail = "Select Appliance Settings with DNS to approve the host resolver change and all pending settings."
+        return JSONResponse({"detail": detail}, status_code=422) if wants_json else Response(detail, status_code=422, media_type="text/plain")
+    if dns_resolver_activation:
+        selected_ids.add("appliance_settings")
     local_dns_disable_requires_resolver = bool(
         "dnsmasq" in selected_ids
         and not getattr(dns_settings_for_apply, "enabled", False)
-        and applied_local_dns_enabled(load_appliance_apply_baselines(db).get("dnsmasq"))
+        and applied_local_dns_enabled(apply_baselines.get("dnsmasq"))
+        and applied_resolver_uses_local_dns(apply_baselines.get("appliance_settings"))
     )
+    if local_dns_disable_requires_resolver and not appliance_settings_selected:
+        detail = "Select Appliance Settings with DNS to approve the host resolver change and all pending settings."
+        return JSONResponse({"detail": detail}, status_code=422) if wants_json else Response(detail, status_code=422, media_type="text/plain")
     if local_dns_disable_requires_resolver and "appliance_settings" in unit_map:
         selected_ids.add("appliance_settings")
     ldap_related_units = {"ca", "dnsmasq", "firewall", "ldap"}
@@ -17220,6 +17378,43 @@ def _submit_appliance_apply(
             and "wan" in unit_map
         ):
             selected_ids.add("wan")
+    management_handoff_dnsmasq = bool(
+        management_handoff
+        # A pending DNS edit is not consent to apply it with a Network handoff.
+        and "dnsmasq" in selected_ids
+        and (getattr(dns_settings_for_apply, "enabled", False) or "dnsmasq" in requested_ids)
+    )
+    if management_handoff_dnsmasq:
+        selected_ids.add("dnsmasq")
+    dns_resolver_activation = bool(
+        "dnsmasq" in selected_ids
+        and getattr(dns_settings_for_apply, "enabled", False)
+        and not applied_resolver_uses_local_dns(
+            apply_baselines.get("appliance_settings")
+        )
+    )
+    if dns_resolver_activation and not appliance_settings_selected:
+        detail = "Select Appliance Settings with DNS to approve the host resolver change and all pending settings."
+        return JSONResponse({"detail": detail}, status_code=422) if wants_json else Response(detail, status_code=422, media_type="text/plain")
+    if dns_resolver_activation:
+        selected_ids.add("appliance_settings")
+        units = appliance_apply_units(db, applying_dns=True)
+        unit_map = {unit["id"]: unit for unit in units}
+    local_dns_disable_requires_resolver = bool(
+        "dnsmasq" in selected_ids
+        and not getattr(dns_settings_for_apply, "enabled", False)
+        and applied_local_dns_enabled(apply_baselines.get("dnsmasq"))
+        and applied_resolver_uses_local_dns(apply_baselines.get("appliance_settings"))
+    )
+    if local_dns_disable_requires_resolver and not appliance_settings_selected:
+        detail = "Select Appliance Settings with DNS to approve the host resolver change and all pending settings."
+        return JSONResponse({"detail": detail}, status_code=422) if wants_json else Response(detail, status_code=422, media_type="text/plain")
+    if local_dns_disable_requires_resolver and "appliance_settings" in unit_map:
+        selected_ids.add("appliance_settings")
+        if management_handoff:
+            # Keep listener shutdown inside the protected group so its resolver
+            # move and runtime snapshot can roll back together.
+            management_handoff_dnsmasq = True
     if selected_ids.intersection({"wan", "network", "firewall"}) and "nat" in unit_map:
         selected_ids.add("nat")
     if not selected_ids:
@@ -17247,7 +17442,12 @@ def _submit_appliance_apply(
     if publishing_pair_required and "nat" in selected_ids:
         # Release selected service sockets before the paired live-listener check.
         # Handoff publishes as one group at its first member, not at the NAT row.
-        grouped = set(MANAGEMENT_HANDOFF_UNIT_IDS) if management_handoff else {"firewall", "nat"}
+        grouped = (
+            set(MANAGEMENT_HANDOFF_UNIT_IDS)
+            | ({"dnsmasq"} if management_handoff_dnsmasq else set())
+            if management_handoff
+            else {"firewall", "nat"}
+        )
         release_ids = listener_units - grouped
         if management_handoff:
             # Only shutdowns can precede the CA-bearing group. Enabled consumers
@@ -17275,6 +17475,18 @@ def _submit_appliance_apply(
         publication_index = next(index for index, unit in enumerate(selected_ordered_units)
                                  if unit["id"] in grouped)
         selected_ordered_units[publication_index:publication_index] = releases
+    if dns_resolver_activation and not management_handoff_dnsmasq:
+        # Dynamic binding permits future VLAN addresses. DNS must start successfully
+        # before the resolver switches, including before a management handoff group.
+        selected_ordered_units = [unit_map["dnsmasq"], *[
+            unit for unit in selected_ordered_units if unit["id"] != "dnsmasq"
+        ]]
+    if https_ca_required and not management_handoff:
+        # Settings validates the management certificate files on disk; publish
+        # the pending CA state before enabling HTTPS.
+        selected_ordered_units = [unit for unit in selected_ordered_units if unit["id"] != "ca"]
+        settings_index = next(index for index, unit in enumerate(selected_ordered_units) if unit["id"] == "appliance_settings")
+        selected_ordered_units.insert(settings_index, unit_map["ca"])
     skipped_changed_units = [
         {"unit_id": unit["id"], "label": unit["label"], "summary": unit["summary"]}
         for unit in units
@@ -17304,6 +17516,7 @@ def _submit_appliance_apply(
 
     job_result = {
         "selected_units": [unit["id"] for unit in selected_ordered_units],
+        "dns_resolver_activation": dns_resolver_activation,
         "skipped_changed_units": skipped_changed_units,
         "captured_units": [
             {
@@ -17327,8 +17540,9 @@ def _submit_appliance_apply(
         "traffic_publishing_pair": traffic_publishing_pair,
         "management_handoff_units": [
             unit_id
-            for unit_id in (*MANAGEMENT_HANDOFF_UNIT_IDS, "wan", "nat")
+            for unit_id in (*MANAGEMENT_HANDOFF_UNIT_IDS, "dnsmasq", "wan", "nat")
             if management_handoff and unit_id in selected_ids
+            and (unit_id != "dnsmasq" or management_handoff_dnsmasq)
             and (unit_id != "nat" or publishing_pair_required)
         ],
     }

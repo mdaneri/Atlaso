@@ -940,6 +940,296 @@ def test_pending_dhcp_management_does_not_require_external_dns(client):
     )
 
 
+
+def test_local_dns_enable_applies_listener_before_host_resolver(client):
+    """Require explicit Settings selection before activating the resolver.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+    """
+    from atlaso.app import ui
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import DnsSettings, Job
+
+    login(client)
+    with SessionLocal() as db:
+        dns = db.query(DnsSettings).one()
+        dns.enabled = False
+        db.commit()
+        units = ui.appliance_apply_units(db)
+        ui.update_appliance_apply_baselines(db, units, {unit["id"] for unit in units})
+        db.add(Job(id="dns-enable-previous-apply", type="appliance-apply", status="succeeded", created_by="admin"))
+        dns.enabled = True
+        db.commit()
+    review = client.get("/appliance-apply/review")
+    assert review.status_code == 200
+    settings_review = next(unit for unit in review.json()["units"] if unit["id"] == "appliance_settings")
+    assert settings_review["requires_dns_selection"] is True
+    assert json.loads(settings_review["config_preview"])["resolver_servers"] == ["127.0.0.1"]
+    csrf = client.get("/dashboard").text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    response = client.post("/appliance-apply", data={"csrf": csrf, "selected_units": "dnsmasq"},
+                           headers={"Accept": "application/json"})
+    assert response.status_code == 422
+    assert "Select Appliance Settings" in response.json()["detail"]
+    response = client.post("/appliance-apply", data={"csrf": csrf, "selected_units": ["dnsmasq", "appliance_settings"]},
+                           headers={"Accept": "application/json"})
+    assert response.status_code == 202
+    with SessionLocal() as db:
+        job = db.get(Job, response.json()["job_id"])
+        payload = json.loads(job.result)
+        assert payload["selected_units"] == ["dnsmasq", "appliance_settings"]
+        settings = next(unit for unit in payload["captured_units"] if unit["unit_id"] == "appliance_settings")
+        assert json.loads(settings["config_preview"])["resolver_servers"] == ["127.0.0.1"]
+
+
+@pytest.mark.parametrize("previous_apply", [False, True])
+def test_dns_activation_review_projects_local_resolver_for_existing_settings_row(client, previous_apply):
+    """Initial and independently changed Settings rows show the executed resolver preview.
+
+    Args:
+        client: Isolated client for this scenario.
+        previous_apply: Whether Appliance Settings was previously applied.
+    """
+    from atlaso.app import ui
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import ApplianceSettings, DnsSettings, Job
+
+    login(client)
+    with SessionLocal() as db:
+        dns = db.query(DnsSettings).one()
+        dns.enabled = False
+        db.commit()
+        if previous_apply:
+            units = ui.appliance_apply_units(db)
+            ui.update_appliance_apply_baselines(db, units, {unit["id"] for unit in units})
+            db.add(Job(id="dns-review-previous-apply", type="appliance-apply", status="succeeded", created_by="admin"))
+        dns.enabled = True
+        if previous_apply:
+            settings = db.query(ApplianceSettings).one()
+            settings.root_ssh_enabled = not settings.root_ssh_enabled
+        db.commit()
+
+    review = client.get("/appliance-apply/review")
+    assert review.status_code == 200
+    settings_rows = [unit for unit in review.json()["units"] if unit["id"] == "appliance_settings"]
+    assert len(settings_rows) == 1
+    assert json.loads(settings_rows[0]["config_preview"])["resolver_servers"] == ["127.0.0.1"]
+    assert settings_rows[0]["requires_dns_selection"] is False
+
+    if previous_apply:
+        csrf = client.get("/dashboard").text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+        response = client.post(
+            "/appliance-apply",
+            data={"csrf": csrf, "selected_units": ["dnsmasq", "appliance_settings"]},
+            headers={"Accept": "application/json"},
+        )
+        assert response.status_code == 202
+        with SessionLocal() as db:
+            job = db.get(Job, response.json()["job_id"])
+            captured = next(unit for unit in json.loads(job.result)["captured_units"] if unit["unit_id"] == "appliance_settings")
+            assert captured["config_preview"] == settings_rows[0]["config_preview"]
+
+
+def test_dns_change_keeps_unrelated_settings_pending_when_resolver_is_already_local(
+    client,
+):
+    """Do not expand an ordinary DNS apply after local resolver activation.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+    """
+    from atlaso.app import ui
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import ApplianceSettings, DnsSettings, Job
+
+    login(client)
+    with SessionLocal() as db:
+        dns = db.query(DnsSettings).one()
+        dns.enabled = True
+        db.commit()
+        units = ui.appliance_apply_units(db)
+        ui.update_appliance_apply_baselines(db, units, {unit["id"] for unit in units})
+        db.commit()
+        units = ui.appliance_apply_units(db)
+        ui.update_appliance_apply_baselines(db, units, {unit["id"] for unit in units})
+        db.commit()
+
+        settings = db.query(ApplianceSettings).one()
+        settings.root_ssh_enabled = not settings.root_ssh_enabled
+        dns.cache_size = int(dns.cache_size or 1000) + 1
+        db.commit()
+
+    csrf = client.get("/dashboard").text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    response = client.post(
+        "/appliance-apply",
+        data={"csrf": csrf, "selected_units": "dnsmasq"},
+        headers={"Accept": "application/json"},
+    )
+
+    assert response.status_code == 202, response.text
+    with SessionLocal() as db:
+        job = db.get(Job, response.json()["job_id"])
+        assert job is not None
+        payload = json.loads(job.result or "{}")
+    assert payload["selected_units"] == ["dnsmasq"]
+
+
+@pytest.mark.parametrize("ca_changed", [False, True])
+def test_management_https_applies_pending_ca_before_settings(client, monkeypatch, ca_changed):
+    """HTTPS activation installs its certificate even if CA preview is unchanged.
+
+    Args:
+        client: Isolated client for this scenario.
+        monkeypatch: Replace external behavior for this scenario.
+        ca_changed: Whether the CA unit has pending changes.
+    """
+    from atlaso.app import ui
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import ApplianceSettings, CaSettings, Job
+
+    login(client)
+    with SessionLocal() as db:
+        settings = db.query(ApplianceSettings).one()
+        db.query(CaSettings).one().enabled = True
+        db.commit()
+        baseline_units = ui.appliance_apply_units(db)
+        ui.update_appliance_apply_baselines(db, baseline_units, {unit["id"] for unit in baseline_units})
+        settings.management_https_enabled = True
+        db.commit()
+        ui.ca_context(db)
+    real_units = ui.appliance_apply_units
+
+    def units_with_pending_ca(db, *, reconcile=True, applying_dns=False):
+        """Units with pending ca.
+
+        Args:
+            db: Current database session.
+            reconcile: Whether to reconcile current inventory.
+            applying_dns: Whether DNS is included in the apply selection.
+        """
+        units = real_units(db, reconcile=reconcile, applying_dns=applying_dns)
+        next(unit for unit in units if unit["id"] == "ca")["changed"] = ca_changed
+        return units
+
+    monkeypatch.setattr(ui, "appliance_apply_units", units_with_pending_ca)
+    monkeypatch.setattr(ui, "run_appliance_apply_job", lambda _job_id: None)
+    csrf = client.get("/dashboard").text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    response = client.post(
+        "/appliance-apply",
+        data={"csrf": csrf, "selected_units": "appliance_settings"},
+        headers={"Accept": "application/json"},
+    )
+
+    assert response.status_code == 202, response.text
+    with SessionLocal() as db:
+        job = db.get(Job, response.json()["job_id"])
+        assert job is not None
+        selected = json.loads(job.result or "{}")["selected_units"]
+    assert selected.index("ca") < selected.index("appliance_settings")
+
+
+def test_applied_https_does_not_reselect_unrelated_pending_ca(client, monkeypatch):
+    """A later Settings edit must honor an operator's unchecked CA row.
+
+    Args:
+        client: Isolated client for this scenario.
+        monkeypatch: Replace external behavior for this scenario.
+    """
+    from atlaso.app import ui
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import ApplianceSettings, CaSettings, Job
+
+    login(client)
+    with SessionLocal() as db:
+        settings = db.query(ApplianceSettings).one()
+        settings.management_https_enabled = True
+        db.query(CaSettings).one().enabled = True
+        db.commit()
+        ui.ca_context(db)
+        units = ui.appliance_apply_units(db)
+        ui.update_appliance_apply_baselines(db, units, {unit["id"] for unit in units})
+        settings.root_ssh_enabled = not settings.root_ssh_enabled
+        db.commit()
+
+    real_units = ui.appliance_apply_units
+
+    def units_with_pending_ca(db, *, reconcile=True, applying_dns=False):
+        """Units with pending ca.
+
+        Args:
+            db: Current database session.
+            reconcile: Whether to reconcile current inventory.
+            applying_dns: Whether DNS is included in the apply selection.
+        """
+        units = real_units(db, reconcile=reconcile, applying_dns=applying_dns)
+        ca_unit = next(unit for unit in units if unit["id"] == "ca")
+        ca_preview = json.loads(ca_unit["config_preview"])
+        management_certificate = next(
+            certificate for certificate in ca_preview["certificates"]
+            if certificate.get("managed_owner") == "appliance:https"
+        )
+        management_certificate["fingerprint"] = "replacement-ca-leaf"
+        ca_unit["config_preview"] = json.dumps(ca_preview)
+        ca_unit["changed"] = True
+        return units
+
+    monkeypatch.setattr(ui, "appliance_apply_units", units_with_pending_ca)
+    monkeypatch.setattr(ui, "run_appliance_apply_job", lambda _job_id: None)
+    csrf = client.get("/dashboard").text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    response = client.post(
+        "/appliance-apply",
+        data={"csrf": csrf, "selected_units": "appliance_settings"},
+        headers={"Accept": "application/json"},
+    )
+
+    assert response.status_code == 202, response.text
+    with SessionLocal() as db:
+        job = db.get(Job, response.json()["job_id"])
+        assert job is not None
+        selected = json.loads(job.result or "{}")["selected_units"]
+    assert "ca" not in selected
+
+
+def test_management_https_hostname_change_applies_new_ca_certificate_first(client, monkeypatch):
+    """An already-enabled HTTPS listener still needs its newly issued certificate installed first.
+
+    Args:
+        client: Isolated client for this scenario.
+        monkeypatch: Replace external behavior for this scenario.
+    """
+    from atlaso.app import ui
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import ApplianceSettings, CaSettings, Job
+
+    login(client)
+    with SessionLocal() as db:
+        settings = db.query(ApplianceSettings).one()
+        settings.management_https_enabled = True
+        db.query(CaSettings).one().enabled = True
+        db.commit()
+        ui.ca_context(db)
+        units = ui.appliance_apply_units(db)
+        ui.update_appliance_apply_baselines(db, units, {unit["id"] for unit in units})
+        settings.fqdn = "new-management.atlaso.internal"
+        db.commit()
+        ui.ca_context(db)
+
+    monkeypatch.setattr(ui, "run_appliance_apply_job", lambda _job_id: None)
+    csrf = client.get("/dashboard").text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    response = client.post(
+        "/appliance-apply",
+        data={"csrf": csrf, "selected_units": "appliance_settings"},
+        headers={"Accept": "application/json"},
+    )
+
+    assert response.status_code == 202, response.text
+    with SessionLocal() as db:
+        job = db.get(Job, response.json()["job_id"])
+        assert job is not None
+        selected = json.loads(job.result or "{}")["selected_units"]
+    assert selected.index("ca") < selected.index("appliance_settings")
+
+
 def test_local_dns_disable_forces_resolver_move_before_dns_stop(client):
     """Move the resolver before an applied local DNS listener is disabled.
 
@@ -966,7 +1256,7 @@ def test_local_dns_disable_forces_resolver_move_before_dns_stop(client):
 
     response = client.post(
         "/appliance-apply",
-        data={"csrf": csrf, "selected_units": "dnsmasq"},
+        data={"csrf": csrf, "selected_units": ["dnsmasq", "appliance_settings"]},
         headers={"Accept": "application/json"},
     )
 
@@ -980,6 +1270,194 @@ def test_local_dns_disable_forces_resolver_move_before_dns_stop(client):
         "appliance_settings",
         "dnsmasq",
     ]
+
+
+def test_local_dns_disable_retry_accepts_already_applied_external_resolver(client):
+    """A failed DNS step can retry after Settings committed the resolver move.
+
+    Args:
+        client: Isolated client for this scenario.
+    """
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import DnsSettings, Job
+    from atlaso.app.ui import appliance_apply_units, update_appliance_apply_baselines
+
+    login(client)
+    with SessionLocal() as db:
+        dns_settings = db.query(DnsSettings).one()
+        dns_settings.enabled = True
+        db.commit()
+        units = appliance_apply_units(db)
+        update_appliance_apply_baselines(db, units, {unit["id"] for unit in units})
+        dns_settings.enabled = False
+        db.commit()
+        units = appliance_apply_units(db)
+        update_appliance_apply_baselines(db, units, {"appliance_settings"})
+        db.commit()
+    csrf = client.get("/dashboard").text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    response = client.post(
+        "/appliance-apply",
+        data={"csrf": csrf, "selected_units": "dnsmasq"},
+        headers={"Accept": "application/json"},
+    )
+
+    assert response.status_code == 202, response.text
+    with SessionLocal() as db:
+        job = db.get(Job, response.json()["job_id"])
+        assert job is not None
+        payload = json.loads(job.result or "{}")
+    assert payload["selected_units"] == ["dnsmasq"]
+
+
+def test_management_handoff_keeps_dns_shutdown_after_resolver_move(client):
+    """Bundle local DNS shutdown with a protected management-address change.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+    """
+    from sqlalchemy import select
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import DnsSettings, Job, PhysicalInterface
+    from atlaso.app.ui import appliance_apply_units, update_appliance_apply_baselines
+
+    login(client)
+    with SessionLocal() as db:
+        dns_settings = db.query(DnsSettings).one()
+        dns_settings.enabled = True
+        db.commit()
+        units = appliance_apply_units(db)
+        update_appliance_apply_baselines(db, units, {unit["id"] for unit in units})
+        management = db.scalar(select(PhysicalInterface).where(PhysicalInterface.name == "eth0"))
+        assert management is not None
+        management.ip_cidr = "192.168.49.22/24"
+        dns_settings.enabled = False
+        db.commit()
+    page = client.get("/dashboard")
+    csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+
+    response = client.post(
+        "/appliance-apply",
+        data={"csrf": csrf, "selected_units": ["network", "dnsmasq", "appliance_settings"]},
+        headers={"Accept": "application/json"},
+    )
+
+    assert response.status_code == 202, response.text
+    with SessionLocal() as db:
+        job = db.get(Job, response.json()["job_id"])
+        assert job is not None
+        payload = json.loads(job.result or "{}")
+    assert payload["management_handoff"] is True
+    assert "dnsmasq" in payload["management_handoff_units"]
+    assert payload["selected_units"].index("appliance_settings") < payload["selected_units"].index("dnsmasq")
+
+
+def test_management_handoff_leaves_unselected_dns_record_pending(client, monkeypatch):
+    """A Network handoff must not submit a separately staged DNS record.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+        monkeypatch: Pytest fixture used to isolate background execution.
+    """
+    from sqlalchemy import select
+
+    from atlaso.app import ui
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import DnsRecord, DnsSettings, Job, PhysicalInterface
+
+    login(client)
+    with SessionLocal() as db:
+        dns_settings = db.query(DnsSettings).one()
+        dns_settings.enabled = True
+        db.commit()
+        units = ui.appliance_apply_units(db)
+        ui.update_appliance_apply_baselines(db, units, {unit["id"] for unit in units})
+        management = db.scalar(select(PhysicalInterface).where(PhysicalInterface.name == "eth0"))
+        assert management is not None
+        management.ip_cidr = "192.168.49.22/24"
+        db.add(DnsRecord(hostname="pending.atlaso.internal", record_type="A", address="192.168.12.44"))
+        db.commit()
+    monkeypatch.setattr(ui, "run_appliance_apply_job", lambda _job_id: None)
+    csrf = client.get("/dashboard").text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+
+    response = client.post(
+        "/appliance-apply",
+        data={"csrf": csrf, "selected_units": "network"},
+        headers={"Accept": "application/json"},
+    )
+
+    assert response.status_code == 202, response.text
+    with SessionLocal() as db:
+        job = db.get(Job, response.json()["job_id"])
+        assert job is not None
+        payload = json.loads(job.result or "{}")
+        pending = next(unit for unit in ui.appliance_apply_units(db) if unit["id"] == "dnsmasq")
+    assert payload["management_handoff"] is True
+    assert "dnsmasq" not in payload["selected_units"]
+    assert "dnsmasq" not in payload["management_handoff_units"]
+    assert "dnsmasq" in {unit["unit_id"] for unit in payload["skipped_changed_units"]}
+    assert pending["changed"] is True
+
+
+def test_ldap_dependency_dns_disable_includes_resolver_move(client, monkeypatch):
+    """Move the resolver when LDAP dependency expansion selects DNS shutdown.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+        monkeypatch: Pytest fixture used to isolate background execution.
+    """
+    from atlaso.app import ui
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import DnsSettings, Job
+
+    login(client)
+    with SessionLocal() as db:
+        dns = db.query(DnsSettings).one()
+        dns.enabled = True
+        db.commit()
+        units = ui.appliance_apply_units(db)
+        ui.update_appliance_apply_baselines(db, units, {unit["id"] for unit in units})
+        dns.enabled = False
+        db.commit()
+
+    real_units = ui.appliance_apply_units
+
+    def units_with_ldap_dependency(db, **kwargs):
+        """Mark LDAP active so its changed DNS dependency is selected.
+
+        Args:
+            db: Active database session used to build apply units.
+            **kwargs: Additional appliance apply unit options.
+        """
+        units = real_units(db, **kwargs)
+        unit_map = {unit["id"]: unit for unit in units}
+        unit_map["ldap"]["context"]["ldap_organizations"] = [object()]
+        unit_map["ldap"]["changed"] = True
+        return units
+
+    monkeypatch.setattr(ui, "appliance_apply_units", units_with_ldap_dependency)
+    monkeypatch.setattr(ui, "run_appliance_apply_job", lambda _job_id: None)
+    csrf = client.get("/dashboard").text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+
+    response = client.post(
+        "/appliance-apply",
+        data={"csrf": csrf, "selected_units": ["ldap", "appliance_settings"]},
+        headers={"Accept": "application/json"},
+    )
+
+    assert response.status_code == 202, response.text
+    with SessionLocal() as db:
+        job = db.get(Job, response.json()["job_id"])
+        assert job is not None
+        payload = json.loads(job.result or "{}")
+    assert "dnsmasq" in payload["selected_units"]
+    assert payload["selected_units"].index("appliance_settings") < payload["selected_units"].index("dnsmasq")
+    settings = next(
+        unit
+        for unit in payload["captured_units"]
+        if unit["unit_id"] == "appliance_settings"
+    )
+    assert json.loads(settings["config_preview"])["resolver_servers"] != ["127.0.0.1"]
 
 
 def test_management_handoff_fails_closed_without_network_baseline():
@@ -1231,7 +1709,7 @@ def test_management_handoff_timeout_stops_and_recovers_indeterminate_helper(monk
     }
     units = {
         unit_id: {**unit_defaults, "id": unit_id}
-        for unit_id in ui.MANAGEMENT_HANDOFF_UNIT_IDS
+        for unit_id in (*ui.MANAGEMENT_HANDOFF_UNIT_IDS, "dnsmasq")
     }
     units["network"]["previous_management_paths"] = [
         {
@@ -1268,6 +1746,7 @@ def test_management_handoff_timeout_stops_and_recovers_indeterminate_helper(monk
         job_id="job_timeout435",
         adapter=adapter,
         db=object(),
+        include_dnsmasq=True,
     )
 
     assert adapter.actions == ["validate", "apply", "recover"]
@@ -1277,6 +1756,11 @@ def test_management_handoff_timeout_stops_and_recovers_indeterminate_helper(monk
     assert group["management_handoff"]["failing_layer"] == "handoff helper wait"
     assert all(result["rolled_back"] is True for result in results)
     manifest = json.loads(staged[str(ui.MANAGEMENT_HANDOFF_STAGED_MANIFEST_PATH)])
+    assert manifest["dnsmasq_config_path"] == str(ui.DNSMASQ_STAGED_CONFIG_PATH)
+    assert {result["unit_id"] for result in results} == {
+        *ui.MANAGEMENT_HANDOFF_UNIT_IDS,
+        "dnsmasq",
+    }
     assert manifest["previous_management_interfaces"] == ["eth0.20"]
     assert manifest["previous_management_parent_interfaces"] == ["eth0"]
     assert manifest["previous_management_paths"] == [
@@ -2112,8 +2596,8 @@ def test_network_only_ingress_reconciliation_does_not_leave_wan_pending(client):
         assert not next(unit for unit in after if unit["id"] == "wan")["changed"]
 
 
-def test_management_move_forces_partial_dependency_selection_into_handoff(client):
-    """Bundle every runtime layer when Firewall alone is selected for a pending move.
+def test_management_move_leaves_unselected_dns_enablement_pending(client):
+    """Bundle required handoff units without applying pending DNS enablement.
 
     Args:
         client: HTTP test client used to exercise the Atlaso application.
@@ -2121,16 +2605,20 @@ def test_management_move_forces_partial_dependency_selection_into_handoff(client
     from sqlalchemy import select
 
     from atlaso.app.database import SessionLocal
-    from atlaso.app.models import Job, PhysicalInterface
+    from atlaso.app.models import DnsSettings, Job, PhysicalInterface
     from atlaso.app.ui import appliance_apply_units, update_appliance_apply_baselines
 
     login(client)
     with SessionLocal() as db:
+        dns = db.query(DnsSettings).one()
+        dns.enabled = False
+        db.commit()
         units = appliance_apply_units(db)
         update_appliance_apply_baselines(db, units, {unit["id"] for unit in units})
         management = db.scalar(select(PhysicalInterface).where(PhysicalInterface.name == "eth0"))
         assert management is not None
         management.ip_cidr = "192.168.49.21/24"
+        dns.enabled = True
         db.commit()
     page = client.get("/dashboard")
     csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
@@ -2154,6 +2642,16 @@ def test_management_move_forces_partial_dependency_selection_into_handoff(client
             "appliance_settings",
             "public_services",
         }
+        assert "dnsmasq" not in payload["selected_units"]
+        assert "dnsmasq" in {unit["unit_id"] for unit in payload["skipped_changed_units"]}
+        settings = next(
+            unit
+            for unit in payload["captured_units"]
+            if unit["unit_id"] == "appliance_settings"
+        )
+        resolver = json.loads(settings["config_preview"])
+        assert resolver["resolver_mode"] != "local_dns"
+        assert resolver["resolver_servers"] != ["127.0.0.1"]
         assert all(
             unit["management_handoff"]["management_handoff"] == "committed"
             for unit in payload["units"]
@@ -2541,6 +3039,64 @@ def test_ntp_and_unrelated_dns_changes_keep_explicit_selection(
         assert job is not None
         selected = json.loads(job.result or "{}")["selected_units"]
     assert selected == ([selected_id] if isinstance(selected_id, str) else selected_id)
+
+
+def test_ntp_apply_does_not_select_manual_ptr_to_its_target(client, monkeypatch):
+    """A manual reverse owner stays outside NTP's generated DNS dependency.
+
+    Args:
+        client: Isolated client for this scenario.
+        monkeypatch: Replace external behavior for this scenario.
+    """
+    from ipaddress import ip_address
+
+    from sqlalchemy import select
+
+    from atlaso.app import ui
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import DnsRecord, Job, NtpSettings, PhysicalInterface
+
+    login(client)
+    with SessionLocal() as db:
+        interface = db.scalar(select(PhysicalInterface).where(PhysicalInterface.name == "eth2"))
+        settings = db.scalar(select(NtpSettings))
+        assert interface is not None and settings is not None
+        interface.role = "access"
+        interface.mode = "access"
+        interface.admin_state = "up"
+        interface.oper_state = "up"
+        interface.ip_cidr = "192.168.49.20/24"
+        settings.listen_interface = "eth2"
+        settings.listen_address = "192.168.49.20"
+        settings.enabled = False
+        db.commit()
+        units = ui.appliance_apply_units(db)
+        ui.update_appliance_apply_baselines(db, units, {unit["id"] for unit in units})
+        settings.enabled = True
+        db.add(DnsRecord(
+            hostname=ip_address("192.0.2.77").reverse_pointer,
+            record_type="PTR",
+            address=ui.service_target_hostname(settings.hostname, "service"),
+            description="Operator",
+            enabled=True,
+        ))
+        db.commit()
+        changed = {unit["id"]: unit for unit in ui.appliance_apply_units(db)}
+        assert not ui.ntp_owned_dns_is_only_pending_change(db, changed["dnsmasq"])
+
+    monkeypatch.setattr(ui, "run_appliance_apply_job", lambda _job_id: None)
+    csrf = client.get("/dashboard").text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    response = client.post(
+        "/appliance-apply",
+        data={"csrf": csrf, "selected_units": "ntpd"},
+        headers={"Accept": "application/json"},
+    )
+    assert response.status_code == 202, response.text
+    with SessionLocal() as db:
+        job = db.get(Job, response.json()["job_id"])
+        assert job is not None
+        selected = json.loads(job.result or "{}")["selected_units"]
+    assert "dnsmasq" not in selected
 
 
 def test_management_move_rechecks_handoff_after_ldap_dependency_expansion(client, monkeypatch):
