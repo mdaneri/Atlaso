@@ -500,6 +500,10 @@ function New-AtlasoCertificateInspectorSnapshot {
     try {
         $scriptsRoot = Join-Path $snapshot.Root 'scripts'
         $pins.Add([Atlaso.WorkstationFileIdentity]::PinOrdinaryDirectoryPath($scriptsRoot))
+        # The credentialed child imports these modules by name. Pin their
+        # directory too so a concurrent ACL change cannot add a .pyd shadow.
+        $pins.Add([Atlaso.WorkstationFileIdentity]::PinOrdinaryDirectoryPath(
+            (Join-Path $scriptsRoot 'interop')))
         foreach ($relative in @(
                 'scripts/__init__.py',
                 'scripts/interop/certificate_handoff_native.py',
