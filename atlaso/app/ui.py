@@ -11451,7 +11451,7 @@ def appliance_apply_units(db: Session, *, reconcile: bool = True, applying_dns: 
         address_fields = ("ip_cidr", "ipv4_method") if family == 4 else ("ipv6_cidr", "ipv6_enabled")
         previous = applied_network_rows.get(route.interface_name, {})
         desired = desired_network_rows.get(route.interface_name, {})
-        routing_fields = ("role", "mode", "admin_state")
+        routing_fields = ("role", "mode", "admin_state", "access_management_ui_enabled")
         if any(previous.get(field, "") != desired.get(field, "")
                for field in (*address_fields, *routing_fields)):
             route_target_changes.add(route.interface_name)

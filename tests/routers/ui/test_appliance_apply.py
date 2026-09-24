@@ -2479,7 +2479,8 @@ def test_wan_apply_preview_uses_selected_network_ownership(client, monkeypatch, 
 
 @pytest.mark.parametrize("scenario", ["changed_address", "unrelated_network_edit", "invalid_network",
                                        "disabled_route", "routing_off", "activate_trunk",
-                                       "activate_admin_down", "activate_unused", "change_domain"])
+                                       "activate_admin_down", "activate_unused", "change_domain",
+                                       "enable_management_listener"])
 @pytest.mark.parametrize("gateway_present", [True, False], ids=["gateway", "direct"])
 def test_wan_gateway_target_address_requires_network_apply(client, monkeypatch, scenario, gateway_present):
     """A pending route's new target prefix or routing owner requires Network first.
@@ -2511,13 +2512,16 @@ def test_wan_gateway_target_address_requires_network_apply(client, monkeypatch, 
         interface.oper_state = "up"
         interface.ipv4_method = "static"
         interface.ip_cidr = "192.0.2.10/24"
-        route = Route(destination_cidr="198.51.100.0/24", gateway="192.0.2.1" if gateway_present else None,
+        route = Route(destination_cidr="0.0.0.0/0" if scenario == "enable_management_listener" and gateway_present
+                      else "198.51.100.0/24", gateway="192.0.2.1" if gateway_present else None,
                       interface_name="eth2", enabled=True)
         db.add(route)
         db.commit()
         units = ui.appliance_apply_units(db)
         ui.update_appliance_apply_baselines(db, units, {unit["id"] for unit in units})
-        if scenario.startswith("activate_") or scenario == "change_domain":
+        if scenario == "enable_management_listener":
+            interface.access_management_ui_enabled = True
+        elif scenario.startswith("activate_") or scenario == "change_domain":
             interface.role = "access"
             interface.mode = "access"
             interface.admin_state = "up"
@@ -2545,7 +2549,8 @@ def test_wan_gateway_target_address_requires_network_apply(client, monkeypatch, 
         network = next(unit for unit in units if unit["id"] == "network")
         wan = next(unit for unit in units if unit["id"] == "wan")
         expected_dependency = scenario in {"changed_address", "invalid_network", "activate_trunk",
-                                           "activate_admin_down", "activate_unused", "change_domain"}
+                                           "activate_admin_down", "activate_unused", "change_domain",
+                                           "enable_management_listener"}
         assert network["changed"]
         assert wan["network_address_dependency"] is expected_dependency
         assert wan["changed"]
