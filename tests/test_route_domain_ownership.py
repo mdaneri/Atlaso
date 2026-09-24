@@ -1,11 +1,60 @@
 """Regress pre-mutation rule admission and connected-route cleanup ownership."""
 
+import ipaddress
 import json
 import subprocess
+from contextlib import nullcontext
 
 import pytest
 
+from atlaso import route_domains as domains
 from tests.test_appliance_helper import load_helper_module
+
+
+@pytest.mark.parametrize("candidate_count,exhausted", [(249, False), (250, True)])
+def test_transition_capacity_reserves_old_and_candidate_sources(monkeypatch, candidate_count, exhausted):
+    """A large renumber must fit old and candidate IPv4 slots together."""
+    old = [str(ipaddress.IPv4Address(int(ipaddress.IPv4Address("10.0.0.1")) + index))
+           for index in range(251)]
+    candidates = [str(ipaddress.IPv4Address(int(ipaddress.IPv4Address("10.1.0.1")) + index))
+                  for index in range(candidate_count)]
+    existing = domains.plan_rules({source: 200 for source in old}, set())
+    monkeypatch.setattr(domains, "reconciliation_lock", nullcontext)
+    monkeypatch.setattr(domains, "read_native", lambda _command: [])
+    monkeypatch.setattr(domains, "owned_rules", lambda _rows, family: existing if family == 4 else set())
+    monkeypatch.setattr(domains, "transition_guard_present", lambda *_args: False)
+    monkeypatch.setattr(domains, "transition_exemptions_present", lambda *_args: False)
+    monkeypatch.setattr(domains, "read_intent", lambda: None)
+    monkeypatch.setattr(domains, "source_tables", lambda _intent, _rows: ({source: 200 for source in old}, False))
+    if exhausted:
+        with pytest.raises(domains.ReconcileError, match="capacity exhausted"):
+            domains.preflight_capacity(candidates)
+    else:
+        domains.preflight_capacity(candidates)
+
+
+@pytest.mark.parametrize("protected", [False, True])
+def test_transition_capacity_failure_precedes_network_mutation(tmp_path, monkeypatch, protected):
+    """Both Apply paths reject an overfull transition before writing state."""
+    helper = load_helper_module()
+    config = tmp_path / "candidate.conf"
+    config.write_text("# atlaso-network-task: test\n[physical_interfaces]\ninterface=eth0\n"
+                      "role=management\nmode=access\nadmin_state=up\nip_cidr=192.0.2.10/24\n")
+    monkeypatch.setattr(helper, "_preflight_route_domains", lambda: None)
+    monkeypatch.setattr(helper, "_network_config_errors", lambda _path: [])
+    monkeypatch.setattr(helper, "_network_transaction_state", lambda: {})
+    monkeypatch.setattr(helper, "MANAGEMENT_HANDOFF_STATE_PATH", tmp_path / "state.json")
+    monkeypatch.setattr(helper, "_run_with_input", lambda command, payload:
+                        subprocess.CompletedProcess(command, 1, "", "capacity exhausted")
+                        if json.loads(payload) == ["192.0.2.10"] else pytest.fail("wrong candidate"))
+    before = list(tmp_path.iterdir())
+    with pytest.raises(ValueError, match="transition source capacity preflight failed"):
+        if protected:
+            helper._snapshot_management_handoff({"network_config_path": str(config)})
+        else:
+            with helper._network_apply_transaction(config):
+                pytest.fail("candidate mutation entered")
+    assert list(tmp_path.iterdir()) == before
 
 
 @pytest.mark.parametrize("count,over_limit", [(256, False), (257, True)])

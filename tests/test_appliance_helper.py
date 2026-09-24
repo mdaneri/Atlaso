@@ -2294,6 +2294,7 @@ def test_management_handoff_syncs_transaction_and_backups_before_marker(monkeypa
     """
     helper = load_helper_module()
     monkeypatch.setattr(helper, "_preflight_route_domains", lambda: None)
+    monkeypatch.setattr(helper, "_preflight_route_domain_capacity", lambda _path: None)
     monkeypatch.setattr(helper, "_snapshot_management_handoff_routing", lambda *_args: {})
     monkeypatch.setattr(helper, "_snapshot_route_domain_rules", lambda: [])
     monkeypatch.setattr(helper, "_snapshot_route_domain_service", lambda: {"enabled": False, "active": False})

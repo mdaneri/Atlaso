@@ -601,6 +601,25 @@ def preflight() -> None:
             transition_exemptions_present(rows, family)
 
 
+def preflight_capacity(candidate_addresses: list[str]) -> None:
+    """Reserve rule slots for live, old, and candidate static sources before Apply."""
+    if not isinstance(candidate_addresses, list) or len(candidate_addresses) > 512:
+        raise ReconcileError("invalid candidate source inventory")
+    candidates = {usable_address(address) for address in candidate_addresses}
+    with reconciliation_lock():
+        existing: set[Rule] = set()
+        for family in (4, 6):
+            rows = read_native([f"-{family}", "rule", "show"])
+            existing.update(owned_rules(rows, family))
+            transition_guard_present(rows, family)
+            transition_exemptions_present(rows, family)
+        live, incomplete = source_tables(read_intent(), read_native(["address", "show"]))
+        if incomplete:
+            raise ReconcileError("routing-domain source identity unavailable during capacity preflight")
+        reserved = {rule.source for rule in existing} | set(live) | candidates
+        plan_rules({source: None for source in reserved}, existing)
+
+
 def transition_guard_present(rows: Any, family: int) -> bool:
     """Admit only our exact persistent local-origin terminal rule.
 

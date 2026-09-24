@@ -9651,6 +9651,27 @@ def _preflight_route_domains() -> None:
         raise ValueError("applied routing-domain intent preflight failed")
 
 
+def _preflight_route_domain_capacity(path: Path) -> None:
+    """Reject a candidate whose static sources cannot coexist with old sources."""
+    physical, vlans, _removed = _parse_network_config(path)
+    candidates = []
+    for row in [*physical, *vlans]:
+        if row.get("role") == "unused" or row.get("mode") == "trunk" or row.get("admin_state") == "down":
+            continue
+        for key in ("ip_cidr", "ipv6_cidr"):
+            if row.get(key):
+                address = ip_interface(row[key]).ip
+                if not (address.is_unspecified or address.is_multicast or address.is_link_local or address.is_loopback):
+                    candidates.append(str(address))
+    program = ("import json, sys\n"
+               "from atlaso.route_domains import preflight_capacity\n"
+               "preflight_capacity(json.load(sys.stdin))\n")
+    result = _run_with_input(["/opt/atlaso/.venv/bin/python", "-I", "-c", program],
+                             json.dumps(candidates))
+    if result.returncode:
+        raise ValueError("routing-domain transition source capacity preflight failed")
+
+
 def _reconcile_route_domains() -> None:
     """Require exact local source routing to match the applied interface intent."""
     result = _run(["/opt/atlaso/.venv/bin/python", "-I", "-m", "atlaso.route_domains", "--once"])
@@ -10731,6 +10752,7 @@ def _network_apply_transaction(path: Path):
     binding = re.search(r"(?m)^# atlaso-network-task: ([A-Za-z0-9_-]{1,128})$", path.read_text(encoding="utf-8"))
     _preflight_route_domains()
     job_id = binding[1] if binding else "manual"
+    _preflight_route_domain_capacity(path)
     files, _links, _down = _systemd_networkd_files(path)
     physical, vlans, link_states = _management_handoff_candidate_links(
         {"network_config_path": str(path)}, include_removed=True,
@@ -25188,6 +25210,7 @@ def _snapshot_management_handoff(payload: dict) -> dict:
     network_errors = _network_config_errors(Path(str(payload["network_config_path"])))
     if network_errors:
         raise ValueError("candidate Network validation failed: " + network_errors[0])
+    _preflight_route_domain_capacity(Path(str(payload["network_config_path"])))
     state_dir_existed = MANAGEMENT_HANDOFF_STATE_DIR.is_dir()
     MANAGEMENT_HANDOFF_STATE_DIR.mkdir(mode=0o700, parents=True, exist_ok=True)
     if not state_dir_existed:

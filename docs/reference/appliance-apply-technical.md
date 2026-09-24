@@ -263,6 +263,9 @@ quiesces the watcher before clearing its intent and routes. A WAN-only Apply bef
 behavior; after migration, WAN replay obtains interface ownership from applied Network intent.
 Before starting either Network transaction, a read-only ownership check rejects noncanonical rules in the new
 local-source priority window. An existing conflict is reported before network files, VLANs, or addresses change.
+The same preflight reserves source-rule slots for existing rules, currently assigned sources, and candidate static
+addresses. A bulk renumber that would exceed the 500 pairs available per IP family is rejected before links change;
+dynamic addresses acquired later are still subject to the watcher's capacity check.
 WAN review shows ingress commands for the current applied Network baseline, rather than pending interface edits.
 When Network and WAN are applied together, WAN uses the Network intent established by the successful Network step.
 On a fresh appliance without a Network baseline, review derives projected ingress rules from the staged Network
