@@ -131,6 +131,30 @@ def test_legacy_dhcp_and_ra_routes_gain_disjoint_standby_metrics(monkeypatch):
     assert all(row["table"] == 100 for row in held)
 
 
+def test_transition_route_observation_accepts_empty_numeric_table(monkeypatch):
+    """An absent table is empty, while the all-table query still detects peers.
+
+    Args:
+        monkeypatch: Replace the native route observation with bounded JSON.
+    """
+    helper = load_helper_module()
+    commands = []
+
+    def observe(command):
+        """Return a main-table route while recording the queried table.
+
+        Args:
+            command: Native route inventory command.
+        """
+        commands.append(command)
+        rows = [{"dst": "192.0.2.0/24", "dev": "eth0", "protocol": "kernel"}]
+        return subprocess.CompletedProcess(command, 0, json.dumps(rows), "")
+
+    monkeypatch.setattr(helper, "_network_observation_command", observe)
+    assert helper._transition_route_rows("eth0", 4, 100) == []
+    assert commands == [["ip", "-j", "-4", "route", "show", "table", "all"]]
+
+
 @pytest.mark.parametrize("destination,gateway,source", [
     ("192.0.2.0/24", "", "192.0.2.10"),
     ("0.0.0.0/0", "192.0.2.1", "192.0.2.10"),

@@ -26334,8 +26334,10 @@ def _transition_route_rows(name: str, family: int, table: int) -> list[dict]:
     """
     if not _valid_network_interface_name(name) or family not in {4, 6} or table not in {100, 200}:
         raise ValueError("invalid transition route observation")
+    # An empty numeric table can make `ip route show table N` exit nonzero on
+    # the appliance. Observe all tables and select this exact one instead.
     result = _network_observation_command(
-        ["ip", "-j", f"-{family}", "route", "show", "table", str(table)]
+        ["ip", "-j", f"-{family}", "route", "show", "table", "all"]
     )
     if result.returncode:
         raise ValueError("transition routing-domain routes could not be observed")
@@ -26345,7 +26347,7 @@ def _transition_route_rows(name: str, family: int, table: int) -> list[dict]:
         raise ValueError("transition routing-domain routes are malformed") from exc
     if not isinstance(rows, list) or len(rows) > 4096 or any(not isinstance(row, dict) for row in rows):
         raise ValueError("transition routing-domain routes are malformed")
-    return rows
+    return [row for row in rows if str(row.get("table", "main")) == str(table)]
 
 
 def _transition_route_command(action: str, row: dict) -> list[str]:
