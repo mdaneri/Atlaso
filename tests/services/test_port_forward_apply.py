@@ -11,7 +11,7 @@ from atlaso.app.models import Job
 
 
 @pytest.mark.parametrize("management_handoff", [False, True])
-def test_legacy_restore_retires_runtime_forwards_without_baselines(client, monkeypatch, management_handoff):
+def test_legacy_restore_retires_runtime_forwards_with_host_baselines(client, monkeypatch, management_handoff):
     """A full restore must not send durable old forwards through standalone Apply.
 
     Args:
@@ -41,7 +41,11 @@ def test_legacy_restore_retires_runtime_forwards_without_baselines(client, monke
         archive = export_settings_archive(db, actor="test")
         archive["data"].pop("port_forwards")
         restore_settings_archive(db, archive)
-        assert not ui.load_appliance_apply_baselines(db)
+        # A restore changes desired state, while the applied snapshot still
+        # describes the current host until the replacement is published.
+        assert port_forwarding.snapshot_has_port_forwards(
+            ui.load_appliance_apply_baselines(db)["nat"]["config_preview"]
+        )
         assert db.scalar(select(PortForward)) is None
     monkeypatch.setattr(SystemAdapter, "port_forward_status", lambda self: AdapterResult(
         command=[], dry_run=False, stdout='{"runtime_has_port_forwards":true}',
@@ -52,7 +56,7 @@ def test_legacy_restore_retires_runtime_forwards_without_baselines(client, monke
         """Control only whether the restored management front door requires handoff.
 
         Args:
-            db: Current restored desired state with empty Apply baselines.
+            db: Restored desired state with the current host's applied baselines.
             **kwargs: Preserve the caller's inventory reconciliation selection.
         """
         units = original_units(db, **kwargs)

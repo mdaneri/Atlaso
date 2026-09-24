@@ -143,15 +143,15 @@ Do not treat a submitted task as proof that the appliance changed successfully.
 3. Return to the affected service page and confirm its pending indicator cleared.
 4. Verify the resulting runtime behavior from the relevant service guide.
 
-When enabling local DNS, apply **DNS/DHCP (dnsmasq)** before the subsequent Appliance Settings resolver change. Atlaso
-keeps the last-applied external or DHCP resolver active until the DNS/DHCP unit is applied, so an unapplied local-DNS
-selection cannot redirect the appliance to loopback prematurely.
-When disabling applied local DNS, selecting **DNS/DHCP (dnsmasq)** automatically includes **Appliance Settings** first.
-That ordering moves the management resolver away from `127.0.0.1` before the local listener stops.
+When enabling local DNS, apply **DNS/DHCP (dnsmasq)** before the subsequent Appliance Settings resolver change. Atlaso keeps
+the last-applied external or DHCP resolver active until then, so an unapplied selection cannot redirect to loopback.
+When disabling applied local DNS, selecting **DNS/DHCP (dnsmasq)** includes **Appliance Settings** first, moving the
+management resolver away from `127.0.0.1` before the local listener stops.
+If enabling Management HTTPS creates a pending CA-managed certificate, the review includes **Certificate Authority** and
+installs its files before **Appliance Settings**. The protected management handoff uses the same ordering.
 
 Examples include checking service health, resolving a managed DNS name, reaching the intended listener, or confirming
-the installed configuration from the appliance console. Use the service-specific verification procedure rather than
-relying only on a green UI status.
+installed configuration from the appliance console. Use the service-specific procedure; a green UI status is insufficient.
 
 In development, adapters normally run in dry-run mode. A successful dry-run proves that Atlaso validated and recorded
 the command intent; it does not prove that Photon services changed.

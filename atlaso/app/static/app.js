@@ -18417,6 +18417,10 @@ function applianceApplyReviewRow(unit) {
   checkbox.checked = Boolean(unit.selected && unit.valid);
   checkbox.disabled = !unit.valid;
   checkbox.dataset.applianceApplyReviewCheckbox = "";
+  if (unit.requires_dns_selection) {
+    checkbox.dataset.requiresDnsSelection = "";
+    checkbox.dataset.valid = String(Boolean(unit.valid));
+  }
   const labelText = document.createElement("span");
   const strong = document.createElement("strong");
   strong.textContent = unit.label || unit.id || "Component";
@@ -18510,6 +18514,12 @@ function applianceApplyReviewRow(unit) {
 function updateApplianceApplySelection() {
   const { modal, selectionSummary, submit, connectionWarning } = applianceApplyModalElements();
   if (!(modal instanceof HTMLDialogElement)) return;
+  const dnsCheckbox = modal.querySelector('[data-appliance-apply-review-checkbox][value="dnsmasq"]');
+  modal.querySelectorAll('[data-requires-dns-selection]').forEach((checkbox) => {
+    if (!(checkbox instanceof HTMLInputElement)) return;
+    checkbox.disabled = !(dnsCheckbox instanceof HTMLInputElement && dnsCheckbox.checked) || checkbox.dataset.valid === "false";
+    checkbox.checked = !checkbox.disabled;
+  });
   const selectedCheckboxes = Array.from(modal.querySelectorAll("[data-appliance-apply-review-checkbox]:checked"));
   const selected = selectedCheckboxes.length;
   const incompleteFormatConfirmations = selectedCheckboxes.some((checkbox) => {

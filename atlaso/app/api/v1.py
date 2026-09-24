@@ -185,6 +185,7 @@ from atlaso.app.services.service_dns_defaults import (
 )
 from atlaso.app.services.service_registry import (
     SERVICE_SYSTEMD_UNITS,
+    dns_requires_authoritative_backend,
 )
 from atlaso.app.services.vcf_backups import (
     vcf_backup_service_state,
@@ -254,11 +255,24 @@ def service_state_response(row: ServiceState, db: Session | None = None) -> Serv
         "detail": row.detail,
     }
     if row.service in {"dns", "dhcp"} and db is not None:
+        dns_settings = get_dns_settings_row(db)
         if row.service == "dns":
-            data["enabled"] = get_dns_settings_row(db).enabled
+            data["enabled"] = dns_settings.enabled
         else:
             data["enabled"] = get_dhcp_settings_row(db).enabled
         active = backing_systemd_unit_active("dnsmasq.service")
+        if (
+            row.service == "dns"
+            and dns_requires_authoritative_backend(
+                db, desired_authoritative=dns_settings.authoritative
+            )
+            and not get_settings().dry_run_system_adapters
+        ):
+            authoritative_active = backing_systemd_unit_active(
+                "atlaso-dns-authoritative.service"
+            )
+            if authoritative_active is not True:
+                active = False
         if active is not None:
             data["running"] = active
         if data["running"] and data["enabled"]:

@@ -96,6 +96,10 @@ users:
     lock_passwd: false
 {key_block}
 package_update: true
+growpart:
+  mode: auto
+  devices: ['/']
+resize_rootfs: true
 packages:
   - bind-tools
   - chrony-nts
@@ -112,7 +116,7 @@ write_files:
       #!/bin/sh
       for iface in eth1 eth2; do
         ip link set "$iface" up 2>/dev/null || true
-        udhcpc -i "$iface" -q -n -t 5 2>/dev/null || true
+        udhcpc -i "$iface" -H "$(hostname -s)" -q -n -t 5 2>/dev/null || true
       done
 runcmd:
   - rc-update add sshd default || true

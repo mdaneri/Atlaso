@@ -393,8 +393,15 @@ def tls_sha256_fingerprint(address: str, port: int = 443, *, timeout: float = 10
     """
     context = _fingerprint_tls_context()
     with socket.create_connection((address, port), timeout=timeout) as sock:
-        with context.wrap_socket(sock, server_hostname=address) as wrapped:
-            certificate = wrapped.getpeercert(binary_form=True)
+        try:
+            with context.wrap_socket(sock, server_hostname=address) as wrapped:
+                certificate = wrapped.getpeercert(binary_form=True)
+        except TimeoutError as exc:
+            raise ssl.SSLError("TLS handshake timed out") from exc
+        except ssl.SSLError:
+            raise
+        except OSError as exc:
+            raise ssl.SSLError(f"TLS handshake or certificate retrieval failed: {exc}") from exc
     digest = hashlib.sha256(certificate).hexdigest().upper()
     return ":".join(digest[index : index + 2] for index in range(0, len(digest), 2))
 

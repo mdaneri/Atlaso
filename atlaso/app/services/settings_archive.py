@@ -1432,7 +1432,6 @@ def restore_settings_archive(db: Session, archive: dict[str, Any]) -> dict[str, 
     _validate_archive(prepared_archive)
     _validate_archive_database_relationships(db, prepared_archive["data"])
     from atlaso.app.services.network_boot import lock_esxi_host_reference_lifecycle
-
     lock_esxi_host_reference_lifecycle(db)
     recovery_archives = db.execute(select(LdapRecoveryArchive)).scalars().all()
     try:
@@ -1726,11 +1725,13 @@ def _clear_desired_state(db: Session) -> None:
         statement = delete(model)
         if model is Setting:
             # Native helper history survives restore too. Keep this appliance's
-            # resolution and identity evidence; it is never exported or imported.
+            # resolution, identity, and applied-file evidence; none is exported
+            # or imported. An archive cannot transfer another host's baselines.
             # Remote VCF task provenance, reservations and consumed reviews are
             # local runtime state tied to retained Jobs, not archive desired state.
             statement = statement.where(
                 Setting.key != STATUS_KEY,
+                Setting.key != "appliance_apply.baselines.v1",
                 ~Setting.key.startswith("vcf_lab_", autoescape=True),
             )
         db.execute(statement)
@@ -2163,11 +2164,22 @@ def _validate_archive_relationships(data: dict[str, list[dict[str, Any]]]) -> No
         }
     )
     route_target_families = {
-        name: families
-        for name, families in dhcp_target_families.items()
-        if normalize_interface_role((physical_interfaces.get(name) or vlan_interfaces.get(name, {})).get("role"))
-        != "management"
+        name: address_families(row)
+        for name, row in physical_interfaces.items()
+        if str(row.get("oper_state") or "") != "missing"
+        and normalize_interface_mode(row.get("mode")) != "trunk"
+        and normalize_interface_role(row.get("role")) != "management"
+        and address_families(row)
     }
+    route_target_families.update(
+        {
+            name: address_families(row)
+            for name, row in vlan_interfaces.items()
+            if row.get("enabled", True)
+            and normalize_interface_role(row.get("role")) != "management"
+            and address_families(row)
+        }
+    )
     route_target_names = set(route_target_families)
     management_target_names: set[str] = set()
     for name in route_target_names:

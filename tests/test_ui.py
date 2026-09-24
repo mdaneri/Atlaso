@@ -17056,7 +17056,7 @@ def test_services_live_dns_dhcp_runtime_uses_dnsmasq_systemd(client, monkeypatch
     from atlaso.app.adapters.system import AdapterResult
     from atlaso.app.config import get_settings
     from atlaso.app.database import SessionLocal
-    from atlaso.app.models import DhcpSettings, DnsSettings, ServiceState
+    from atlaso.app.models import DhcpSettings, DnsSettings, ServiceState, Setting
 
     def fake_service_status(self, unit: str):
         """Return fake service status.
@@ -17080,6 +17080,7 @@ def test_services_live_dns_dhcp_runtime_uses_dnsmasq_systemd(client, monkeypatch
     with SessionLocal() as db:
         dns_settings = db.execute(select(DnsSettings)).scalar_one()
         dns_settings.enabled = True
+        dns_settings.authoritative = True
         dhcp_settings = db.execute(select(DhcpSettings)).scalar_one()
         dhcp_settings.enabled = True
         for service_name in ("dns", "dhcp"):
@@ -17095,14 +17096,54 @@ def test_services_live_dns_dhcp_runtime_uses_dnsmasq_systemd(client, monkeypatch
     service_rows = json.loads(html.unescape(page.text.split("data-services='", 1)[1].split("'", 1)[0]))
     dns_row = next(row for row in service_rows if row["service"] == "dns")
     dhcp_row = next(row for row in service_rows if row["service"] == "dhcp")
-    assert dns_row["running"] is True
+    assert dns_row["running"] is False
     assert dns_row["enabled"] is True
     assert dhcp_row["running"] is True
     assert dhcp_row["enabled"] is True
 
     token = create_api_token(client, ["read:services"])
-    assert client.get("/api/v1/services/dns", headers={"Authorization": f"Bearer {token}"}).json()["running"] is True
+    dns_api_row = client.get(
+        "/api/v1/services/dns",
+        headers={"Authorization": f"Bearer {token}"},
+    ).json()
+    assert dns_api_row["running"] is False
+    assert dns_api_row["health"] == "degraded"
     assert client.get("/api/v1/services/dhcp", headers={"Authorization": f"Bearer {token}"}).json()["running"] is True
+
+    with SessionLocal() as db:
+        dns_settings = db.execute(select(DnsSettings)).scalar_one()
+        dns_settings.authoritative = False
+        baseline = db.execute(
+            select(Setting).where(Setting.key == "appliance_apply.baselines.v1")
+        ).scalar_one_or_none()
+        if baseline is None:
+            baseline = Setting(key="appliance_apply.baselines.v1")
+            db.add(baseline)
+        baseline.value = json.dumps({"dnsmasq": {"dns_authoritative": True}})
+        db.commit()
+
+    pending_page = client.get("/services")
+    pending_rows = json.loads(html.unescape(pending_page.text.split("data-services='", 1)[1].split("'", 1)[0]))
+    assert next(row for row in pending_rows if row["service"] == "dns")["running"] is False
+    pending_api = client.get(
+        "/api/v1/services/dns", headers={"Authorization": f"Bearer {token}"}
+    ).json()
+    assert pending_api["running"] is False
+    assert pending_api["health"] == "degraded"
+
+    with SessionLocal() as db:
+        baseline = db.execute(
+            select(Setting).where(Setting.key == "appliance_apply.baselines.v1")
+        ).scalar_one()
+        baseline.value = json.dumps({
+            "dnsmasq": {
+                "config_preview": "# atlaso-authoritative-config: auth-zone=atlaso.internal\n"
+            }
+        })
+        db.commit()
+    assert client.get(
+        "/api/v1/services/dns", headers={"Authorization": f"Bearer {token}"}
+    ).json()["running"] is False
 
 
 def test_services_live_ntp_status_uses_systemd(client, monkeypatch):

@@ -117,6 +117,9 @@ access physical interfaces and VLANs. Additional explicitly selected terminal li
 The internal Certificate Authority is the exception: if its last selected portal interface becomes ineligible, Atlaso
 clears the public CA portal binding and app-owned alias while leaving internal CA custody enabled.
 
+DHCP DNS/NTP scope options accept usable unicast addresses of the correct family on routed networks as well as the
+local subnet; service addresses need not be Atlaso-owned. Gateway and lease-range subnet rules are unchanged.
+
 DHCP scope gateway, DNS, and NTP values remain operator-owned when they are valid and do not match a replaced interface
 address. Interface edits update only blank or stale derived values. Enabled reservations that would otherwise leave
 every enabled scope retain their host offset in the uniquely matching rebased scope; Atlaso updates app-owned
