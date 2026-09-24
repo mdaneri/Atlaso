@@ -15,7 +15,8 @@ from tests.test_appliance_helper import (
 )
 
 
-def test_first_apply_seeds_exact_old_sources_before_deleting_legacy_prefixes(monkeypatch):
+@pytest.mark.parametrize("scope", ["global", 0])
+def test_first_apply_seeds_exact_old_sources_before_deleting_legacy_prefixes(monkeypatch, scope):
     """An overlapping candidate cannot inherit the old table on first Apply.
 
     Args:
@@ -28,8 +29,8 @@ def test_first_apply_seeds_exact_old_sources_before_deleting_legacy_prefixes(mon
          "incoming_interface": "", "protocol": 4},
     ]
     inventory = [{"ifname": "eth0", "addr_info": [
-        {"scope": "global", "local": "10.42.1.5"},
-        {"scope": "global", "local": "2001:db8:42::5"},
+        {"scope": scope, "local": "10.42.1.5"},
+        {"scope": scope, "local": "2001:db8:42::5"},
     ]}]
     commands: list[list[str]] = []
     monkeypatch.setattr(domains, "reconciliation_lock", nullcontext)
@@ -425,6 +426,17 @@ def test_ordinary_network_seeds_only_existing_management_interface(helper, monke
     monkeypatch.setattr(helper, "_read_existing_management_network_values",
                         lambda: {"Name": ["eth2"]})
     assert helper._ordinary_network_old_management_bindings(config) == []
+
+
+def test_ordinary_network_seeds_existing_flagged_access_listener(helper, monkeypatch, tmp_path):
+    """A marker-free flagged-only listener retains its lab-domain return path."""
+    config = tmp_path / "network.conf"
+    config.write_text(network_config_text(eth2_mode="access", include_vlan=False).replace(
+        "  role=access\n  mode=access", "  role=access\n  access_management_ui_enabled=true\n  mode=access"),
+        encoding="utf-8")
+    monkeypatch.setattr(helper, "_read_existing_management_network_values", lambda: {"Name": ["eth2"]})
+
+    assert helper._ordinary_network_old_management_bindings(config) == [{"name": "eth2", "table": 200}]
 
 
 def test_transition_helper_supplies_proven_sources_before_guard(helper, monkeypatch):

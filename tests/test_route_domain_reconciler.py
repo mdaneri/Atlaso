@@ -96,6 +96,24 @@ def test_transition_start_seeds_persisted_identity_before_guard(monkeypatch):
     assert events == ["rule", "rule", "guard", "guard"]
 
 
+def test_transition_start_guards_before_persisted_vlan_exists(monkeypatch):
+    """Boot must protect new sources even before networkd creates a VLAN."""
+    management = interface()
+    vlan = interface("eth0.20", "02:00:00:00:00:02", 200)
+    events = []
+    monkeypatch.setattr(domains, "reconciliation_lock", nullcontext)
+    monkeypatch.setattr(domains, "read_intent", lambda: intent(management, vlan))
+    monkeypatch.setattr(domains, "read_native", lambda args:
+                        [link(management, "192.0.2.10")] if args == ["address", "show"] else [])
+    monkeypatch.setattr(domains, "run_ip", lambda command: events.append(("rule", command)) or "")
+    monkeypatch.setattr(domains, "_set_guard_locked", lambda family, enable:
+                        events.append(("guard", (family, enable))))
+
+    domains.transition_guard(True)
+
+    assert [kind for kind, _ in events] == ["rule", "rule", "guard", "guard"]
+
+
 def test_removed_vlan_already_absent_needs_no_source_hold():
     """A removed parent may already have taken its applied VLAN link away."""
     management = interface()

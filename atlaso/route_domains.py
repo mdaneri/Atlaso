@@ -544,7 +544,7 @@ def migrate_legacy_sources(rows: Any) -> None:
             for entry in entries:
                 if not isinstance(entry, dict):
                     raise ReconcileError("invalid legacy source address")
-                if entry.get("scope") != "global" or entry.get("valid_life_time") == 0:
+                if entry.get("scope") not in ("global", 0) or entry.get("valid_life_time") == 0:
                     continue
                 flags = entry.get("flags", [])
                 if not isinstance(flags, list):
@@ -690,7 +690,7 @@ def transition_exemptions_present(rows: Any, family: int) -> set[int]:
     return present
 
 
-def _seed_transition_sources_locked(bindings: Any) -> None:
+def _seed_transition_sources_locked(bindings: Any, *, allow_absent: bool = False) -> None:
     """Install exact live lookups before a transition guard can cut off old paths."""
     if (not isinstance(bindings, list) or len(bindings) > 256 or any(
         not isinstance(row, dict) or set(row) != {"name", "table"}
@@ -713,6 +713,8 @@ def _seed_transition_sources_locked(bindings: Any) -> None:
     owners = []
     for binding in bindings:
         link = by_name.get(binding["name"])
+        if link is None and allow_absent:
+            continue
         if link is None:
             raise ReconcileError("previous management source identity unavailable")
         owners.append(parse_interface({"name": binding["name"], "mac": link.get("address"),
@@ -771,7 +773,7 @@ def transition_guard(enable: bool, seed_interfaces: Any = None) -> None:
                 bindings = [{"name": row.name, "table": row.table}
                             for row in read_intent().interfaces]
             if bindings:
-                _seed_transition_sources_locked(bindings)
+                _seed_transition_sources_locked(bindings, allow_absent=seed_interfaces is None)
         for family in (4, 6):
             _set_guard_locked(family, enable)
 

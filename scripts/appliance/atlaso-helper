@@ -10758,9 +10758,20 @@ def _transition_source_guard(enable: bool, *, seed_interfaces: list[dict] | None
 def _ordinary_network_old_management_bindings(path: Path) -> list[dict]:
     """Identify unchanged live Management links before ordinary Network Apply."""
     old_names = set(_read_existing_management_network_values().get("Name", []))
-    physical, _vlans, _removed = _parse_network_config(path)
-    return [{"name": row["name"], "table": MANAGEMENT_ROUTE_TABLE_ID}
-            for row in physical if row.get("role") == "management" and row.get("name") in old_names]
+    physical, vlans, _removed = _parse_network_config(path)
+    bindings = []
+    for row in [*physical, *vlans]:
+        if row.get("name") not in old_names:
+            continue
+        if row.get("role") == "management":
+            table = MANAGEMENT_ROUTE_TABLE_ID
+        elif (row.get("role") == "access"
+              and row.get("access_management_ui_enabled", "false").strip().lower() == "true"):
+            table = LAB_ROUTE_TABLE_ID
+        else:
+            continue
+        bindings.append({"name": row["name"], "table": table})
+    return bindings
 
 
 def _removed_vlan_source_holds(path: Path) -> list[dict]:
