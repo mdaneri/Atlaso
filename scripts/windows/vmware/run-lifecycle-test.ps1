@@ -2011,6 +2011,10 @@ Guest username used for guest-ops probing.
 Guest password used for guest-ops probing.
 .PARAMETER Name
 VM name used for temporary artifacts.
+.PARAMETER ExpectedAddress
+Require this exact IPv4 address before returning; ignore stale address observations.
+.PARAMETER SkipHostNeighbor
+Do not use the host neighbor cache when proving a guest address after a network rewire.
 #>
 function Wait-GuestIPv4 {
     param(
@@ -2018,7 +2022,9 @@ function Wait-GuestIPv4 {
         [int]$TimeoutSeconds = 240,
         [string]$GuestUser = '',
         [SecureString]$GuestPassword,
-        [string]$Name = 'guest'
+        [string]$Name = 'guest',
+        [string]$ExpectedAddress = '',
+        [switch]$SkipHostNeighbor
     )
 
     $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
@@ -2026,16 +2032,18 @@ function Wait-GuestIPv4 {
         $reported = Invoke-VmrunBounded -Arguments @('-T', 'ws', 'getGuestIPAddress', $Path) -TimeoutSeconds 10
         if ($reported.ExitCode -eq 0) {
             $ip = Get-GuestIPv4FromAddressText -Lines @($reported.StdOut -split "`r?`n")
-            if ($ip) {
+            if ($ip -and (-not $ExpectedAddress -or $ip -ceq $ExpectedAddress)) {
                 return $ip
             }
         }
-        $neighborIp = Get-GuestIPv4FromHostNeighbor -Path $Path
-        if ($neighborIp) {
-            return $neighborIp
+        if (-not $SkipHostNeighbor) {
+            $neighborIp = Get-GuestIPv4FromHostNeighbor -Path $Path
+            if ($neighborIp -and (-not $ExpectedAddress -or $neighborIp -ceq $ExpectedAddress)) {
+                return $neighborIp
+            }
         }
         $fallbackIp = Get-GuestIPv4ViaGuestOps -Path $Path -GuestUser $GuestUser -GuestPassword $GuestPassword -Name $Name
-        if ($fallbackIp) {
+        if ($fallbackIp -and (-not $ExpectedAddress -or $fallbackIp -ceq $ExpectedAddress)) {
             return $fallbackIp
         }
         Start-Sleep -Seconds 5
@@ -3195,7 +3203,9 @@ with WindowsFiles().opened(Path(sys.argv[1]), directory=True) as (_, identity, _
             throw 'Certificate appliance eth0 private LAN or preserved MAC readback failed.'
         }
         Start-WorkstationVm -Path $applianceVmx
-        $privateAddress = Wait-GuestIPv4 -Path $applianceVmx -TimeoutSeconds 300 -GuestUser $ApplianceSshUser -GuestPassword $adminPasswordSecure -Name $applianceName
+        # The preserved MAC can leave an old management address in the host neighbor cache.
+        # Wait for the reserved lease from VMware Tools or guest operations instead.
+        $privateAddress = Wait-GuestIPv4 -Path $applianceVmx -TimeoutSeconds 300 -GuestUser $ApplianceSshUser -GuestPassword $adminPasswordSecure -Name $applianceName -ExpectedAddress $CertificateLeaseAddress -SkipHostNeighbor
         if ($privateAddress -cne $CertificateLeaseAddress) {
             throw 'Certificate appliance did not report the reserved private DHCP address after eth0 rewire.'
         }
