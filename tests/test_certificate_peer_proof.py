@@ -149,6 +149,8 @@ def test_original_peer_identity_rejects_changed_endpoint_before_network(
         "appliance_vmx": "appliance.vmx", "peer_vmx": "peer.vmx",
         "appliance_ownership_sha256": "a" * 64, "peer_ownership_sha256": "p" * 64,
         "client_vmdk_source": "disk.vmdk", "client_vmdk_sha256": "d" * 64,
+        "client_vmdk_copy": "peer.vmdk", "client_vmdk_copy_preboot_sha256": "d" * 64,
+        "client_vmdk_copy_identity": "00000001:0000000000000002",
         "lan_segment_receipt": str(root / "lan.json"), "lan_segment_receipt_sha256": "l" * 64,
         "lan_segment_id": "owned-id", "appliance_mac": "00:50:56:aa:bb:cc",
         "management_network": "VMnet8", "lease_address": "192.168.77.10",
@@ -157,6 +159,7 @@ def test_original_peer_identity_rejects_changed_endpoint_before_network(
         "schema": 1, "kind": "certificate-peer-original-identity", "task_id": "task",
         "repository": "mdaneri/Atlaso", "pr": 871, "peer_vmx": "peer.vmx",
         "peer_ownership_sha256": "p" * 64, "peer_fixture_sha256": refs["fixture"]["sha256"],
+        "client_vmdk_copy_identity": fixture["client_vmdk_copy_identity"],
         "observation": "owned-vmware-guest-operations-before-management-rewire",
         "management_network": "VMnet8", "management_address": "192.168.167.42",
         "ssh_user": "alpine", "ssh_host_key": "SHA256:" + "A" * 43,
@@ -179,6 +182,8 @@ def test_original_peer_identity_rejects_changed_endpoint_before_network(
     monkeypatch.setattr(proof, "bound_json", lambda ref: values[ref["path"]])
     monkeypatch.setattr(proof, "original_vm", lambda plan, role, vmx: {"source_commit": "a" * 40})
     monkeypatch.setattr(proof, "file_digest", lambda path: "d" * 64)
+    from scripts.completed_task_files import WindowsFiles
+    monkeypatch.setattr(WindowsFiles, "mutable_file_identity", lambda self, path: fixture["client_vmdk_copy_identity"])
     monkeypatch.setattr(proof, "vmx_adapter", lambda path, index: (
         {"connectiontype": "custom", "vnet": "VMnet8"} if index == 0 and path == "peer.vmx"
         else {"connectiontype": "pvn", "pvnid": "owned-id", "address": "00:50:56:aa:bb:cc"}))
@@ -190,6 +195,14 @@ def test_original_peer_identity_rejects_changed_endpoint_before_network(
             "peer_transport": {"host": "192.168.167.42", "user": "alpine", "ssh_host_key": identity["ssh_host_key"]}}
     with pytest.raises(proof.Refusal, match="exclusive_private_lan_and_candidate_ownership_unproven"):
         proof.admit_receipts(plan)
+    monkeypatch.setattr(WindowsFiles, "mutable_file_identity", lambda self, path: "replaced")
+    with pytest.raises(proof.Refusal, match="fixture_original_vm_mismatch"):
+        proof.admit_receipts(plan)
+    monkeypatch.setattr(WindowsFiles, "mutable_file_identity", lambda self, path: fixture["client_vmdk_copy_identity"])
+    fixture["client_vmdk_copy_identity"] = "changed"
+    with pytest.raises(proof.Refusal, match="peer_original_identity_mismatch"):
+        proof.admit_receipts(plan)
+    fixture["client_vmdk_copy_identity"] = identity["client_vmdk_copy_identity"]
     rewire["predeployment_sha256"] = "b" * 64
     with pytest.raises(proof.Refusal, match="runtime_rewire_chain_invalid"):
         proof.admit_receipts(plan)

@@ -2826,6 +2826,8 @@ $clientAVmx = ''
 $clientBVmx = ''
 $certificatePeerSeedIso = ''
 $certificatePeerVmx = ''
+$certificateDiskSourcePin = $null
+$certificatePeerDiskPin = $null
 $seedArtifactsRetired = [bool]($OidcOnly -or ($CertificateOnly -and -not $CertificateDhcpPeer))
 $scenarioFailure = $null
 try {
@@ -2935,6 +2937,7 @@ with WindowsFiles().opened(Path(sys.argv[1]), directory=True) as (_, identity, _
             }
     }
     if ($CertificateDhcpPeer) {
+        $certificateDiskSourcePin = [Atlaso.WorkstationFileIdentity]::PinOrdinaryReadFile($ClientVmdkPath, $true)
         if ((Get-FileHash -LiteralPath $ClientVmdkPath -Algorithm SHA256).Hash.ToLowerInvariant() -cne $certificateClientVmdkSha256) {
             throw 'Certificate peer client disk source changed during fixture preparation.'
         }
@@ -2967,6 +2970,13 @@ with WindowsFiles().opened(Path(sys.argv[1]), directory=True) as (_, identity, _
                     -DiskPath $ClientVmdkPath -SeedIso $certificatePeerSeedIso `
                     -Networks @($ManagementNetwork, $SiteANetwork)
             }
+        $certificatePeerDiskPath = Join-Path $certificatePeerDirectory "$clientAName.vmdk"
+        $certificatePeerDiskPin = [Atlaso.WorkstationFileIdentity]::PinOrdinaryMutableFile($certificatePeerDiskPath)
+        $certificatePeerDiskSha256 = (Get-FileHash -LiteralPath $certificatePeerDiskPath -Algorithm SHA256).Hash.ToLowerInvariant()
+        if ($certificatePeerDiskSha256 -cne $certificateClientVmdkSha256) {
+            throw 'Certificate peer copied disk differs from its pinned source before boot.'
+        }
+        $certificatePeerDiskIdentity = [Atlaso.WorkstationFileIdentity]::Get($certificatePeerDiskPath)
         if ($ownedLanSegments.Count -ne 1 -or -not $ownedLanSegments[0].ReceiptPath -or -not $ownedLanSegments[0].ReceiptSha256) {
             throw 'Certificate DHCP peer requires a newly created, receipt-bound private LAN segment.'
         }
@@ -2983,6 +2993,9 @@ with WindowsFiles().opened(Path(sys.argv[1]), directory=True) as (_, identity, _
             lan_segment_id = $ownedLanSegments[0].Id
             client_vmdk_source = (Resolve-Path -LiteralPath $ClientVmdkPath).Path
             client_vmdk_sha256 = $certificateClientVmdkSha256
+            client_vmdk_copy = $certificatePeerDiskPath
+            client_vmdk_copy_preboot_sha256 = $certificatePeerDiskSha256
+            client_vmdk_copy_identity = $certificatePeerDiskIdentity
             address_ownership_state = 'awaiting-live-readback'
         })
     }
@@ -3193,18 +3206,32 @@ with WindowsFiles().opened(Path(sys.argv[1]), directory=True) as (_, identity, _
         # The peer needs its seed only for first boot. Retain no password-bearing
         # ISO in a kept native acceptance lab.
         Assert-CertificatePeerBootReady -Path $certificatePeerVmx
-        $peerIdentityReadback = Get-CertificatePeerOriginalIdentity -Path $certificatePeerVmx
+        if ($CleanupCreatedLab) {
+            $peerIdentityReadback = Get-CertificatePeerOriginalIdentity -Path $certificatePeerVmx
+        }
+        Remove-ClientSeedArtifacts -VmxPaths @($certificatePeerVmx) -SeedPaths @($certificatePeerSeedIso) -Restart:(-not $CleanupCreatedLab)
+        $seedArtifactsRetired = $true
+        if (-not $CleanupCreatedLab) {
+            Assert-CertificatePeerBootReady -Path $certificatePeerVmx
+            $peerIdentityReadback = Get-CertificatePeerOriginalIdentity -Path $certificatePeerVmx
+        }
+        if ([Atlaso.WorkstationFileIdentity]::Get($certificatePeerDiskPath) -cne $certificatePeerDiskIdentity) {
+            throw 'Certificate peer copied disk identity changed during boot or seed retirement.'
+        }
         $certificatePeerIdentity = Write-CertificateLabReceipt -Name 'peer-identity.json' -Value ([ordered]@{
             schema = 1; kind = 'certificate-peer-original-identity'; task_id = $env:CODEX_THREAD_ID
             repository = 'mdaneri/Atlaso'; pr = $PullRequestNumber
             peer_vmx = $certificatePeerVmx; peer_ownership_sha256 = $peerOwnership.Sha256
             peer_fixture_sha256 = $peerFixture.Sha256
+            client_vmdk_copy_identity = $certificatePeerDiskIdentity
             management_network = $ManagementNetwork; management_address = $peerIdentityReadback.management_address
             ssh_user = $ClientSshUser; ssh_host_key = $peerIdentityReadback.ssh_host_key
             observation = 'owned-vmware-guest-operations-before-management-rewire'
         })
-        Remove-ClientSeedArtifacts -VmxPaths @($certificatePeerVmx) -SeedPaths @($certificatePeerSeedIso) -Restart:(-not $CleanupCreatedLab)
-        $seedArtifactsRetired = $true
+        $certificatePeerDiskPin.Dispose()
+        $certificatePeerDiskPin = $null
+        $certificateDiskSourcePin.Dispose()
+        $certificateDiskSourcePin = $null
         if (-not (Test-WorkstationVmRunning -Path $applianceVmx) -or
             (Get-VmxEthernetMacAddress -Path $applianceVmx -Index 0) -cne (ConvertTo-HyphenMac -MacAddress $certificateAppliancePeerMac)) {
             throw 'Certificate appliance bootstrap MAC or running state changed before private handoff.'
@@ -3275,6 +3302,13 @@ with WindowsFiles().opened(Path(sys.argv[1]), directory=True) as (_, identity, _
     $scenarioFailure = $_
 }
 
+# A failed boot still owns its copied disk; release admission handles before
+# the documented seed and task-owned VM cleanup paths inspect that VM.
+if ($scenarioFailure) {
+    if ($certificatePeerDiskPin) { $certificatePeerDiskPin.Dispose(); $certificatePeerDiskPin = $null }
+    if ($certificateDiskSourcePin) { $certificateDiskSourcePin.Dispose(); $certificateDiskSourcePin = $null }
+}
+
 # No further provider operations are safe while a diagnostic writer may survive.
 if ($diagnosticTerminationUnproven) {
     throw "Lifecycle provider termination is unproven. VM and diagnostic staging cleanup is blocked; preserve lab '$LabName' at '$vmRoot' until the owning process tree is proven inactive."
@@ -3336,6 +3370,8 @@ if ($cleanupFailure) {
     throw $cleanupFailure
 }
 } finally {
+    if ($certificatePeerDiskPin) { $certificatePeerDiskPin.Dispose() }
+    if ($certificateDiskSourcePin) { $certificateDiskSourcePin.Dispose() }
     for ($pinIndex = $runtimeConsumerPins.Count - 1; $pinIndex -ge 0; $pinIndex--) { $runtimeConsumerPins[$pinIndex].Dispose() }
     if ($preflightGuard) { $preflightGuard.Dispose() }
 }

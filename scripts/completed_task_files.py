@@ -169,6 +169,21 @@ class WindowsFiles:
         self.kernel.SetFileInformationByHandle.argtypes = [ctypes.c_void_p, ctypes.c_int,
                                                          ctypes.c_void_p, ctypes.c_uint32]
 
+    def mutable_file_identity(self, path: Path) -> str:
+        """Read an ordinary guest-writable disk identity without allowing replacement."""
+        handle = self.kernel.CreateFileW(str(path), 0x81, 3, None, 3, 0x00200000, None)
+        if handle == ctypes.c_void_p(-1).value:
+            raise FileRefusal("Cannot pin the copied peer disk identity.")
+        try:
+            information = (ctypes.c_uint32 * 13)()
+            if not self.kernel.GetFileInformationByHandle(handle, information):
+                raise FileRefusal("Cannot read copied peer disk identity.")
+            if information[0] & (0x10 | 0x400) or information[10] != 1:
+                raise FileRefusal("Copied peer disk is not an ordinary single-identity file.")
+            return f"{information[7]:08X}:{information[11]:08X}{information[12]:08X}"
+        finally:
+            self.kernel.CloseHandle(handle)
+
     @contextmanager
     def opened(self, path: Path, *, delete: bool = False, directory: bool = False):
         """Deny replacement/writers while reading attributes or setting exact-object disposition.

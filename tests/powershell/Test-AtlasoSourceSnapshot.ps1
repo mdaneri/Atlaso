@@ -17,8 +17,28 @@ $ErrorActionPreference = 'Stop'
 Import-Module (
     Join-Path $RepositoryRoot 'scripts\windows\vmware\Atlaso.SourceSnapshot.psm1'
 ) -Force
+Import-Module (
+    Join-Path $RepositoryRoot 'scripts\windows\vmware\Atlaso.WorkstationCleanup.psm1'
+) -Force
 
 New-Item -ItemType Directory -Path $OutputDirectory -Force | Out-Null
+$mutableDiskPath = Join-Path $OutputDirectory 'mutable-peer-disk.vmdk'
+[IO.File]::WriteAllText($mutableDiskPath, 'preboot disk')
+$mutableDiskIdentity = [Atlaso.WorkstationFileIdentity]::Get($mutableDiskPath)
+$mutableDiskPin = [Atlaso.WorkstationFileIdentity]::PinOrdinaryMutableFile($mutableDiskPath)
+try {
+    [IO.File]::AppendAllText($mutableDiskPath, ' guest write')
+    if ([Atlaso.WorkstationFileIdentity]::Get($mutableDiskPath) -cne $mutableDiskIdentity) {
+        throw 'Guest-writable disk identity changed while pinned.'
+    }
+    $replacementPath = Join-Path $OutputDirectory 'replacement.vmdk'
+    $replacementRejected = $false
+    try { [IO.File]::Move($mutableDiskPath, $replacementPath) }
+    catch [IO.IOException] { $replacementRejected = $true }
+    if (-not $replacementRejected) { throw 'A pinned guest-writable disk was replaceable.' }
+} finally {
+    $mutableDiskPin.Dispose()
+}
 $proofRoot = Join-Path $OutputDirectory 'certificate-proof-pins'
 New-Item -ItemType Directory -Path $proofRoot | Out-Null
 $receiptPath = Join-Path $proofRoot 'original.json'

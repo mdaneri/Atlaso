@@ -20,6 +20,7 @@ import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from certificate_peer_transport import (  # noqa: E402 - The pinned sibling module lives beside this script.
     PeerHTTPSConnection,
     PeerTransportRefusal,
@@ -140,12 +141,23 @@ def admit_receipts(plan: dict) -> tuple[dict, dict]:
         raise Refusal("peer_fixture_invalid")
     appliance = original_vm(plan, "appliance", fixture["appliance_vmx"])
     peer = original_vm(plan, "peer", fixture["peer_vmx"])
+    from scripts.completed_task_files import FileRefusal, WindowsFiles
+
+    copy_path = Path(str(fixture.get("client_vmdk_copy") or ""))
+    if copy_path != Path(fixture["peer_vmx"]).with_suffix(".vmdk"):
+        raise Refusal("fixture_copied_disk_path_invalid")
+    try:
+        copy_identity = WindowsFiles().mutable_file_identity(copy_path)
+    except (FileRefusal, OSError) as exc:
+        raise Refusal("fixture_copied_disk_identity_unavailable") from exc
     if (
         appliance.get("source_commit") != fixture["source_commit"]
         or peer.get("source_commit") != fixture["source_commit"]
         or plan["appliance_ownership"]["sha256"] != fixture["appliance_ownership_sha256"]
         or plan["peer_ownership"]["sha256"] != fixture["peer_ownership_sha256"]
         or file_digest(Path(fixture["client_vmdk_source"])) != fixture["client_vmdk_sha256"]
+        or fixture.get("client_vmdk_copy_preboot_sha256") != fixture["client_vmdk_sha256"]
+        or copy_identity != fixture.get("client_vmdk_copy_identity")
     ):
         raise Refusal("fixture_original_vm_mismatch")
     segment = bound_json(
@@ -186,6 +198,7 @@ def admit_receipts(plan: dict) -> tuple[dict, dict]:
         or identity.get("peer_vmx") != fixture["peer_vmx"]
         or identity.get("peer_ownership_sha256") != fixture["peer_ownership_sha256"]
         or identity.get("peer_fixture_sha256") != plan["peer_fixture"]["sha256"]
+        or identity.get("client_vmdk_copy_identity") != fixture.get("client_vmdk_copy_identity")
         or identity.get("observation") != "owned-vmware-guest-operations-before-management-rewire"
         or identity.get("management_network") != fixture.get("management_network")
         or peer_bootstrap_adapter.get("connectiontype", "").lower() != "custom"
