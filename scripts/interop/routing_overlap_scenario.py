@@ -735,9 +735,26 @@ def _run_authenticated(
         for family, peer in ((4, "203.0.113.1"), (6, "fe80::1")):
             stage = f"unbound-ipv{family}-route-selection"
             device = f',"dev","{management}"' if family == 6 else ""
-            observed = _observe(connect_appliance, SNAPSHOT_PROGRAM +
-                                f'\nprint(json.dumps({{"routes": command(["ip","-j","-N","-{family}",'
-                                f'"route","get","{peer}"{device}])}}))\n')["routes"]
+            try:
+                observed = _observe(connect_appliance, SNAPSHOT_PROGRAM +
+                                    f'\nprint(json.dumps({{"routes": command(["ip","-j","-N","-{family}",'
+                                    f'"route","get","{peer}"{device}])}}))\n')["routes"]
+            except OverlapPrerequisiteError as exc:
+                if family != 6:
+                    raise
+                main = _observe(connect_appliance, SNAPSHOT_PROGRAM +
+                                '\nprint(json.dumps({"routes": command(["ip","-j","-N","-6",'
+                                '"route","show","table","main"])}))\n')["routes"]
+                main_default = any(row.get("dst") in ("default", "::/0") for row in main)
+                main_link = any(str(row.get("dst", "")).startswith("fe80::/") for row in main)
+                managed_link = any(str(row.get("dst", "")).startswith("fe80::/")
+                                   for row in initial["management_routes"]["6"])
+                exemptions = {row.get("priority") for row in initial["rules"]["6"]
+                              if row.get("iif") == "lo" and str(row.get("table")) in ("254", "main")}
+                raise OverlapPrerequisiteError(
+                    f"{exc}; main-default={int(main_default)},main-fe80={int(main_link)},"
+                    f"table100-fe80={int(managed_link)},exemptions={sorted(exemptions & {6000, 6001, 6002})}"
+                ) from None
             allowed = ({row["local"] for row in _addresses(initial, management)
                         if row.get("family") == "inet6" and row.get("scope") == "link"
                         and not row.get("tentative") and not row.get("dadfailed")}
