@@ -162,12 +162,13 @@ def test_original_peer_identity_rejects_changed_endpoint_before_network(
         "ssh_user": "alpine", "ssh_host_key": "SHA256:" + "A" * 43,
     }
     bootstrap = {"schema": 1, "vmx_path": "appliance.vmx", "vm_ownership_sha256": "a" * 64,
-                 "deployed_commit": "c" * 40}
+                 "predeployment_sha256": "a" * 64, "deployed_commit": "c" * 40}
     intent = {"kind": "certificate-management-rewire-intent", "bootstrap_runtime_sha256": refs["bootstrap"]["sha256"],
               "peer_fixture_sha256": refs["fixture"]["sha256"], "peer_identity_sha256": refs["identity"]["sha256"]}
     rewire = {"kind": "certificate-rewired-runtime", "rewire_intent_sha256": refs["intent"]["sha256"],
               "peer_identity_sha256": refs["identity"]["sha256"],
-              "bootstrap_runtime_sha256": refs["bootstrap"]["sha256"], "vmx_path": "appliance.vmx",
+              "bootstrap_runtime_sha256": refs["bootstrap"]["sha256"],
+              "predeployment_sha256": "a" * 64, "vmx_path": "appliance.vmx",
               "interface": "eth0", "mac": "00-50-56-aa-bb-cc", "observed_address": "192.168.77.10",
               "address_ownership_state": "unproven", "deployed_commit": "c" * 40}
     segment = {"schema": 1, "task_id": "task", "repository": "mdaneri/Atlaso", "pr": 871,
@@ -189,6 +190,10 @@ def test_original_peer_identity_rejects_changed_endpoint_before_network(
             "peer_transport": {"host": "192.168.167.42", "user": "alpine", "ssh_host_key": identity["ssh_host_key"]}}
     with pytest.raises(proof.Refusal, match="exclusive_private_lan_and_candidate_ownership_unproven"):
         proof.admit_receipts(plan)
+    rewire["predeployment_sha256"] = "b" * 64
+    with pytest.raises(proof.Refusal, match="runtime_rewire_chain_invalid"):
+        proof.admit_receipts(plan)
+    rewire["predeployment_sha256"] = "a" * 64
     for field, changed in (("host", "192.168.167.43"), ("ssh_host_key", "SHA256:" + "B" * 43),
                            ("user", "root")):
         altered = {**plan, "peer_transport": {**plan["peer_transport"], field: changed}}

@@ -144,8 +144,8 @@ if ($CertificateDhcpPeer) {
         throw 'Certificate DHCP peer requires a prepared, explicitly supplied client VMDK.'
     }
 }
-if ($SignedReleaseRepositoryUrl -and ($OidcOnly -or $RoutingWanOnly)) {
-    throw '-SignedReleaseRepositoryUrl requires the full lifecycle; it cannot be combined with -OidcOnly or -RoutingWanOnly.'
+if ($SignedReleaseRepositoryUrl -and ($OidcOnly -or $RoutingWanOnly -or $CertificateOnly)) {
+    throw '-SignedReleaseRepositoryUrl requires the full lifecycle; it cannot be combined with -OidcOnly, -RoutingWanOnly, or -CertificateOnly.'
 }
 if ($SignedReleaseRepositoryUrl) {
     [Uri]$fixtureUri = $null
@@ -3251,6 +3251,7 @@ with WindowsFiles().opened(Path(sys.argv[1]), directory=True) as (_, identity, _
             repository = 'mdaneri/Atlaso'; pr = $PullRequestNumber
             vmx_path = $applianceVmx; vm_ownership_sha256 = $certificateOwnership.Sha256
             bootstrap_runtime_sha256 = $certificateRuntime.Sha256
+            predeployment_sha256 = $certificateSource.Sha256
             rewire_intent_sha256 = $rewireIntent.Sha256
             peer_identity_sha256 = $certificatePeerIdentity.Sha256
             deployed_commit = $sourceCommit; wheel_sha256 = $applianceWheel.Sha256.ToLowerInvariant()

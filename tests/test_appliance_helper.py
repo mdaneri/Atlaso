@@ -3218,6 +3218,13 @@ def test_management_handoff_candidate_listeners_use_verified_addresses_only():
     assert "listen 192.0.2.20:443 ssl default_server;" in config
     assert "listen [2001:db8::20]:443 ssl default_server;" in config
     assert "listen 192.0.2.20:80 default_server;" in config
+    only_previous = helper._management_nginx_config(
+        {"fqdn": "atlaso.example.test", "management_https_enabled": True},
+        Path("/etc/atlaso/candidate.crt"), Path("/etc/atlaso/candidate.key"),
+        listen_addresses=["192.0.2.10"], http_listen_addresses=[],
+    )
+    assert "listen 192.0.2.10:443 ssl default_server;" in only_previous
+    assert "return 308" not in only_previous
     assert "listen [2001:db8::20]:80 default_server;" in config
     assert "listen 443 ssl default_server;" not in config
     assert "listen [::]:443 ssl default_server;" not in config
@@ -3231,6 +3238,53 @@ def test_management_handoff_candidate_listeners_use_verified_addresses_only():
             verify_front_door=False,
             listen_addresses=[],
         )
+
+
+def test_management_handoff_keeps_previous_http_out_of_candidate_redirect():
+    """An old HTTP proxy keeps its socket while covered HTTPS is staged."""
+    helper = load_helper_module()
+    config = helper._management_nginx_config(
+        {"fqdn": "atlaso.example.test", "management_https_enabled": True,
+         "management_public_http_port": 80, "management_public_https_port": 443},
+        Path("/etc/atlaso/candidate.crt"), Path("/etc/atlaso/candidate.key"),
+        listen_addresses=["192.0.2.10", "192.0.2.20"],
+        http_listen_addresses=["192.0.2.20"],
+    )
+    assert "listen 192.0.2.10:443 ssl default_server;" in config
+    assert "listen 192.0.2.10:80 default_server;" not in config
+    assert "listen 192.0.2.20:80 default_server;" in config
+    with pytest.raises(ValueError, match="not a verified"):
+        helper._management_nginx_config(
+            {"fqdn": "atlaso.example.test", "management_https_enabled": True},
+            listen_addresses=["192.0.2.10"], http_listen_addresses=["192.0.2.99"],
+        )
+
+
+def test_ordinary_settings_preserve_committed_management_listener_scope(monkeypatch, tmp_path):
+    """Regenerating the site carries verified sockets rather than wildcards.
+
+    Args:
+        monkeypatch: Pytest fixture replacing the managed site path.
+        tmp_path: Temporary directory containing the prior managed site.
+    """
+    helper = load_helper_module()
+    site = tmp_path / "management.conf"
+    payload = {"fqdn": "atlaso.example.test", "management_https_enabled": True,
+               "management_public_http_port": 80, "management_public_https_port": 443}
+    addresses = ["127.0.0.1", "::1", "192.0.2.10", "2001:db8::10"]
+    site.write_text(helper._management_nginx_config(
+        payload, Path("/etc/atlaso/candidate.crt"), Path("/etc/atlaso/candidate.key"),
+        listen_addresses=addresses,
+    ), encoding="utf-8")
+    monkeypatch.setattr(helper, "NGINX_MANAGEMENT_SITE_PATH", site)
+    preserved = helper._existing_management_scoped_addresses()
+    assert set(preserved) == set(addresses)
+    regenerated = helper._management_nginx_config(
+        payload, Path("/etc/atlaso/candidate.crt"), Path("/etc/atlaso/candidate.key"),
+        listen_addresses=preserved,
+    )
+    assert "listen 443 ssl default_server;" not in regenerated
+    assert "listen [::]:443 ssl default_server;" not in regenerated
 
 
 def test_management_handoff_preserves_previous_identity_on_shared_socket():
@@ -3465,7 +3519,8 @@ def test_management_handoff_candidate_durability_gates_ack(
     monkeypatch.setattr(
         helper,
         "_configure_atlaso_management_https",
-        lambda _payload, *, site_suffix="", verify_front_door=True, listen_addresses=None: (
+        lambda _payload, *, site_suffix="", verify_front_door=True, listen_addresses=None,
+        http_listen_addresses=None: (
             nginx_suffixes.append(site_suffix)
             or nginx_readiness_options.append(verify_front_door)
             or nginx_listen_addresses.append(listen_addresses)

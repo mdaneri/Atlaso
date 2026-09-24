@@ -273,8 +273,8 @@ if ($OidcOnly -and $SiteANetwork.StartsWith('lan:', [StringComparison]::OrdinalI
 if ($OidcOnly -and $SiteInterface -ne 'eth1') {
     throw '-OidcOnly requires SiteInterface eth1 because its Site A vmnet is attached to the appliance second adapter.'
 }
-if ($SignedReleaseRepositoryUrl -and ($OidcOnly -or $RoutingWanOnly)) {
-    throw '-SignedReleaseRepositoryUrl requires the full lifecycle; it cannot be combined with -OidcOnly or -RoutingWanOnly.'
+if ($SignedReleaseRepositoryUrl -and ($OidcOnly -or $RoutingWanOnly -or $CertificateOnly)) {
+    throw '-SignedReleaseRepositoryUrl requires the full lifecycle; it cannot be combined with -OidcOnly, -RoutingWanOnly, or -CertificateOnly.'
 }
 if ($SignedReleaseRepositoryUrl) {
     [Uri]$fixtureUri = $null

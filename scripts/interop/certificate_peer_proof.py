@@ -213,6 +213,8 @@ def admit_receipts(plan: dict) -> tuple[dict, dict]:
         or rewire.get("rewire_intent_sha256") != plan["rewire_intent"]["sha256"]
         or rewire.get("peer_identity_sha256") != identity_reference["sha256"]
         or rewire.get("bootstrap_runtime_sha256") != plan["bootstrap_runtime"]["sha256"]
+        or rewire.get("predeployment_sha256") != bootstrap.get("predeployment_sha256")
+        or not re.fullmatch(r"[0-9a-f]{64}", str(rewire.get("predeployment_sha256") or ""))
         or rewire.get("vmx_path") != fixture["appliance_vmx"]
         or rewire.get("interface") != "eth0"
         or rewire.get("mac", "").lower() != fixture["appliance_mac"].replace(":", "-").lower()
