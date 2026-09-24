@@ -3631,7 +3631,11 @@ def _reboot_appliance_and_wait(
 
 
 def _signed_release_console_check(args: argparse.Namespace) -> dict[str, Any]:
-    """Verify the same local-console service and launcher contract after a release reboot."""
+    """Verify the same local-console service and launcher contract after a release reboot.
+
+    Args:
+        args: Lifecycle arguments containing appliance SSH connection details.
+    """
     return run_host_checks(args, {"local_console": _local_console_check_command()})
 
 

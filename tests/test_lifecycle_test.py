@@ -61,6 +61,13 @@ def test_configure_signed_release_source_uses_wizard_edit_data():
         """Serve the rendered wizard data and check the submitted source fields."""
 
         def request(self, method, path, **kwargs):  # type: ignore[no-untyped-def]  # Fake models the lifecycle client boundary.
+            """Serve the page or verify the source update.
+
+            Args:
+                method: HTTP method under test.
+                path: Request path under test.
+                **kwargs: Request form and options under test.
+            """
             if (method, path) == ("GET", "/appliance-update"):
                 return 200, page, {}
             assert (method, path) == ("POST", "/appliance-update/sources/17")
@@ -105,6 +112,13 @@ def test_signed_release_availability_check_confirms_current_candidate(monkeypatc
         polls = 0
 
         def request(self, method, path, **kwargs):  # type: ignore[no-untyped-def]  # Fake models the lifecycle client boundary.
+            """Serve the check form or verify check submission.
+
+            Args:
+                method: HTTP method under test.
+                path: Request path under test.
+                **kwargs: Request form and headers under test.
+            """
             if (method, path) == ("GET", "/appliance-update"):
                 return 200, '<input type="hidden" name="csrf" value="csrf-123">', {}
             assert (method, path) == ("POST", "/appliance-update/check")
@@ -113,6 +127,12 @@ def test_signed_release_availability_check_confirms_current_candidate(monkeypatc
             return 202, '{"job_id":"job_abcdef123456"}', {}
 
         def json_request(self, method, path):  # type: ignore[no-untyped-def]  # Fake returns the exact submitted task.
+            """Return the polled task state.
+
+            Args:
+                method: HTTP method under test.
+                path: Task status path under test.
+            """
             assert (method, path) == ("GET", "/tasks/job_abcdef123456/status")
             self.polls += 1
             if self.polls == 1:
@@ -140,12 +160,25 @@ def test_signed_release_availability_check_rejects_up_to_date_candidate(monkeypa
         """Report a successful but up-to-date signed-release check."""
 
         def request(self, method, path, **_kwargs):  # type: ignore[no-untyped-def]  # Fake models the lifecycle client boundary.
+            """Serve the check form or its submission.
+
+            Args:
+                method: HTTP method under test.
+                path: Request path under test.
+                **_kwargs: Unused request options.
+            """
             if method == "GET":
                 return 200, '<input type="hidden" name="csrf" value="csrf-123">', {}
             assert path == "/appliance-update/check"
             return 202, '{"job_id":"job_abcdef123456"}', {}
 
         def json_request(self, method, path):  # type: ignore[no-untyped-def]  # Fake returns the exact submitted task.
+            """Return the up-to-date task result.
+
+            Args:
+                method: HTTP method under test.
+                path: Task status path under test.
+            """
             assert (method, path) == ("GET", "/tasks/job_abcdef123456/status")
             return {"task": {
                 "status": "succeeded",
@@ -173,6 +206,12 @@ def test_signed_release_lifecycle_rechecks_after_channel_change(monkeypatch):
     monkeypatch.setattr(lifecycle, "_check_signed_release_availability", lambda _client: events.append("check") or "job_abcdef123456")
 
     def submit(_client, *, expected_status):  # type: ignore[no-untyped-def]  # Fake records the release task selected by the lifecycle.
+        """Record each install request and return its expected transaction.
+
+        Args:
+            _client: Unused lifecycle client.
+            expected_status: Expected release task outcome.
+        """
         events.append(f"install:{expected_status}")
         transaction = (
             {"candidate_version": "0.9.2"}
@@ -201,11 +240,21 @@ def test_signed_release_lifecycle_rechecks_after_channel_change(monkeypatch):
 
 
 def test_signed_release_console_check_reuses_host_contract(monkeypatch):
-    """The post-reboot probe runs the same fail-closed console check as host state."""
+    """The post-reboot probe runs the same fail-closed console check as host state.
+
+    Args:
+        monkeypatch: Replace the host command executor with deterministic fakes.
+    """
     lifecycle = load_lifecycle_module()
     captured = {}
 
     def fake_host_checks(_args, checks):  # type: ignore[no-untyped-def]  # Fake records the exact post-reboot host contract.
+        """Record the selected post-reboot host checks.
+
+        Args:
+            _args: Unused lifecycle arguments.
+            checks: Named host commands under test.
+        """
         captured.update(checks)
         return {"local_console": "ready"}
 
@@ -217,6 +266,12 @@ def test_signed_release_console_check_reuses_host_contract(monkeypatch):
     assert "test -x /opt/atlaso/.venv/bin/atlaso-console" in captured["local_console"]
 
     def failed_host_checks(_args, _checks):  # type: ignore[no-untyped-def]  # Fake models a broken post-reboot console.
+        """Simulate a failed console probe.
+
+        Args:
+            _args: Unused lifecycle arguments.
+            _checks: Unused host commands.
+        """
         raise lifecycle.LifecycleError("host local_console check failed")
 
     monkeypatch.setattr(lifecycle, "run_host_checks", failed_host_checks)
