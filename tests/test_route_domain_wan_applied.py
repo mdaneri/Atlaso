@@ -89,7 +89,11 @@ def test_transition_guard_is_exact_and_rejects_foreign_priority(family):
 
 @pytest.mark.parametrize("family", [4, 6])
 def test_terminal_exemptions_admit_only_unbound_and_link_local_main_lookup(family):
-    """The escape slots cannot admit a global source or a foreign table."""
+    """The escape slots cannot admit a global source or a foreign table.
+
+    Args:
+        family: IPv4 or IPv6 rule family under test.
+    """
     for offset, prefix in enumerate(route_domains.TRANSITION_EXEMPTIONS[family]):
         network = ipaddress.ip_network(prefix)
         canonical = {"priority": 6000 + offset, "src": str(network.network_address),

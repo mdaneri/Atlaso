@@ -21,6 +21,7 @@ def test_first_apply_seeds_exact_old_sources_before_deleting_legacy_prefixes(mon
 
     Args:
         monkeypatch: Pytest fixture replacing native routing operations.
+        scope: Textual or numeric native global address scope.
     """
     legacy = [
         {"family": 4, "priority": 1000, "table": 100, "source": "10.42.0.0/16",
@@ -417,7 +418,13 @@ def test_ingress_guard_capacity_remains_one_hundred_interfaces(helper):
 
 
 def test_ordinary_network_seeds_only_existing_management_interface(helper, monkeypatch, tmp_path):
-    """An unchanged old listener is seeded; a newly promoted lab link is not."""
+    """An unchanged old listener is seeded; a newly promoted lab link is not.
+
+    Args:
+        helper: Loaded appliance helper module.
+        monkeypatch: Isolated applied Network observation.
+        tmp_path: Disposable candidate Network configuration location.
+    """
     config = tmp_path / "network.conf"
     config.write_text(network_config_text(), encoding="utf-8")
     monkeypatch.setattr(helper, "_read_existing_management_network_values",
@@ -429,7 +436,13 @@ def test_ordinary_network_seeds_only_existing_management_interface(helper, monke
 
 
 def test_ordinary_network_seeds_existing_flagged_access_listener(helper, monkeypatch, tmp_path):
-    """A marker-free flagged-only listener retains its lab-domain return path."""
+    """A marker-free flagged-only listener retains its lab-domain return path.
+
+    Args:
+        helper: Loaded appliance helper module.
+        monkeypatch: Isolated applied Network observation.
+        tmp_path: Disposable candidate Network configuration location.
+    """
     config = tmp_path / "network.conf"
     config.write_text(network_config_text(eth2_mode="access", include_vlan=False).replace(
         "  role=access\n  mode=access", "  role=access\n  access_management_ui_enabled=true\n  mode=access"),
@@ -440,7 +453,12 @@ def test_ordinary_network_seeds_existing_flagged_access_listener(helper, monkeyp
 
 
 def test_transition_helper_supplies_proven_sources_before_guard(helper, monkeypatch):
-    """The appliance boundary sends old link domains to the seeded entry point."""
+    """The appliance boundary sends old link domains to the seeded entry point.
+
+    Args:
+        helper: Loaded appliance helper module.
+        monkeypatch: Isolated transition command replacement.
+    """
     calls = []
     monkeypatch.setattr(helper, "_run_with_input", lambda command, payload:
                         calls.append((command, json.loads(payload)))

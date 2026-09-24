@@ -15,7 +15,14 @@ from tests.test_appliance_helper import load_helper_module
     (249, False, False), (249, False, True), (250, True, True),
 ])
 def test_transition_capacity_reserves_old_and_candidate_sources(monkeypatch, candidate_count, exhausted, incomplete):
-    """A large renumber must fit old and candidate IPv4 slots together."""
+    """A large renumber must fit old and candidate IPv4 slots together.
+
+    Args:
+        monkeypatch: Isolated native inventory and capacity boundary.
+        candidate_count: Candidate address count under test.
+        exhausted: Whether the combined source count exceeds capacity.
+        incomplete: Whether a live source identity is unavailable.
+    """
     old = [str(ipaddress.IPv4Address(int(ipaddress.IPv4Address("10.0.0.1")) + index))
            for index in range(251)]
     candidates = [str(ipaddress.IPv4Address(int(ipaddress.IPv4Address("10.1.0.1")) + index))
@@ -37,7 +44,13 @@ def test_transition_capacity_reserves_old_and_candidate_sources(monkeypatch, can
 
 @pytest.mark.parametrize("protected", [False, True])
 def test_transition_capacity_failure_precedes_network_mutation(tmp_path, monkeypatch, protected):
-    """Both Apply paths reject an overfull transition before writing state."""
+    """Both Apply paths reject an overfull transition before writing state.
+
+    Args:
+        tmp_path: Disposable candidate Network configuration location.
+        monkeypatch: Isolated network mutation boundary.
+        protected: Whether the protected handoff path is used.
+    """
     helper = load_helper_module()
     config = tmp_path / "candidate.conf"
     config.write_text("# atlaso-network-task: test\n[physical_interfaces]\ninterface=eth0\n"

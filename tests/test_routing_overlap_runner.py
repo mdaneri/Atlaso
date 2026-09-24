@@ -85,7 +85,14 @@ def test_session_admission_is_side_effect_free(descriptor):
 def test_scenario_exit_preserves_fixture_until_restoration_is_proven(
     failure, exit_code, unknown, incomplete,
 ):
-    """A definite restoration failure must bypass client stop and VM cleanup."""
+    """A definite restoration failure must bypass client stop and VM cleanup.
+
+    Args:
+        failure: Classified scenario failure reason.
+        exit_code: Expected fixture-preservation exit status.
+        unknown: Whether completion of the mutation is uncertain.
+        incomplete: Whether restoration remains incomplete.
+    """
     result, actual_exit = scenario_failure_result(failure, "a" * 64)
     assert actual_exit == exit_code
     assert result["apply_outcome_unknown"] is unknown

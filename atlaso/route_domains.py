@@ -605,7 +605,11 @@ def preflight() -> None:
 
 
 def preflight_capacity(candidate_addresses: list[str]) -> None:
-    """Reserve rule slots for live, old, and candidate static sources before Apply."""
+    """Reserve rule slots for live, old, and candidate static sources before Apply.
+
+    Args:
+        candidate_addresses: Candidate static source addresses to reserve.
+    """
     if not isinstance(candidate_addresses, list) or len(candidate_addresses) > 512:
         raise ReconcileError("invalid candidate source inventory")
     candidates = {usable_address(address) for address in candidate_addresses}
@@ -649,7 +653,12 @@ def transition_guard_present(rows: Any, family: int) -> bool:
 
 
 def transition_exemptions_present(rows: Any, family: int) -> set[int]:
-    """Admit only main-table escape rules for unbound and link-local sources."""
+    """Admit only main-table escape rules for unbound and link-local sources.
+
+    Args:
+        rows: Observed native policy rules.
+        family: IPv4 or IPv6 family under test.
+    """
     if not isinstance(rows, list) or any(not isinstance(row, dict) for row in rows):
         raise ReconcileError("invalid native policy rules")
     present: set[int] = set()
@@ -691,7 +700,12 @@ def transition_exemptions_present(rows: Any, family: int) -> set[int]:
 
 
 def _seed_transition_sources_locked(bindings: Any, *, allow_absent: bool = False) -> None:
-    """Install exact live lookups before a transition guard can cut off old paths."""
+    """Install exact live lookups before a transition guard can cut off old paths.
+
+    Args:
+        bindings: Previous interface names and routing tables to preserve.
+        allow_absent: Permit persisted links not yet created by networkd at boot.
+    """
     if (not isinstance(bindings, list) or len(bindings) > 256 or any(
         not isinstance(row, dict) or set(row) != {"name", "table"}
         or not isinstance(row["name"], str) or not INTERFACE_PATTERN.fullmatch(row["name"])

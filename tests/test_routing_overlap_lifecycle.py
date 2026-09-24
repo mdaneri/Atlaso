@@ -110,7 +110,11 @@ def test_topology_refuses_unproven_isolation(topology_inputs, fault):
 
 
 def terminal_rows(family):
-    """Return the terminal guard and narrow main-table escape rules."""
+    """Return the terminal guard and narrow main-table escape rules.
+
+    Args:
+        family: IPv4 or IPv6 policy-rule family.
+    """
     prefixes = (("0.0.0.0/32", "169.254.0.0/16", "127.0.0.0/8") if family == 4
                 else ("::/128", "fe80::/10", "::1/128"))
     rows = []

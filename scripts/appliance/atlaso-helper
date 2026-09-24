@@ -10698,7 +10698,11 @@ def _preflight_route_domains() -> None:
 
 
 def _preflight_route_domain_capacity(path: Path) -> None:
-    """Reject a candidate whose static sources cannot coexist with old sources."""
+    """Reject a candidate whose static sources cannot coexist with old sources.
+
+    Args:
+        path: Validated candidate Network configuration.
+    """
     physical, vlans, _removed = _parse_network_config(path)
     candidates = []
     for row in [*physical, *vlans]:
@@ -10756,7 +10760,11 @@ def _transition_source_guard(enable: bool, *, seed_interfaces: list[dict] | None
 
 
 def _ordinary_network_old_management_bindings(path: Path) -> list[dict]:
-    """Identify unchanged live Management links before ordinary Network Apply."""
+    """Identify existing Management and flagged Access listeners before Apply.
+
+    Args:
+        path: Validated candidate Network configuration.
+    """
     old_names = set(_read_existing_management_network_values().get("Name", []))
     physical, vlans, _removed = _parse_network_config(path)
     bindings = []
@@ -11129,7 +11137,13 @@ def _route_domain_ingress_projection(
     path: Path | None = None, *, held_management_interfaces: set[str] | None = None,
     enforce_capacity: bool = True,
 ) -> tuple[list[str], list[str]]:
-    """Separate table-200 lookups from candidate links needing terminal guards."""
+    """Separate table-200 lookups from candidate links needing terminal guards.
+
+    Args:
+        path: Validated candidate Network configuration.
+        held_management_interfaces: Old listener links retained during handoff.
+        enforce_capacity: Whether to reject a projection beyond rule capacity.
+    """
     excluded = set(held_management_interfaces or set())
     if path is not None:
         physical, vlans, _removed = _parse_network_config(path)

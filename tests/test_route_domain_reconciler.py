@@ -47,7 +47,13 @@ def link(row, *addresses):
 @pytest.mark.parametrize("source", ["192.0.2.10", "2001:db8::10"])
 @pytest.mark.parametrize("scope", ["global", 0])
 def test_transition_seeds_live_management_lookup_before_global_guard(monkeypatch, source, scope):
-    """An old source without a legacy prefix selector keeps its working path."""
+    """An old source without a legacy prefix selector keeps its working path.
+
+    Args:
+        monkeypatch: Isolated native routing operations.
+        source: IPv4 or IPv6 address requiring a seeded lookup.
+        scope: Textual or numeric native global address scope.
+    """
     management = interface()
     inventory = [link(management, source)]
     inventory[0]["addr_info"][0]["scope"] = scope
@@ -66,7 +72,11 @@ def test_transition_seeds_live_management_lookup_before_global_guard(monkeypatch
 
 
 def test_transition_refuses_ambiguous_live_management_source_before_guard(monkeypatch):
-    """A duplicate address is not evidence of one management source owner."""
+    """A duplicate address is not evidence of one management source owner.
+
+    Args:
+        monkeypatch: Isolated native routing operations.
+    """
     management = interface()
     inventory = [link(management, "192.0.2.10"),
                  link(interface("eth1", "02:00:00:00:00:02", 200), "192.0.2.10")]
@@ -81,7 +91,11 @@ def test_transition_refuses_ambiguous_live_management_source_before_guard(monkey
 
 
 def test_transition_start_seeds_persisted_identity_before_guard(monkeypatch):
-    """The service's boot entry point also preserves already assigned sources."""
+    """The service's boot entry point also preserves already assigned sources.
+
+    Args:
+        monkeypatch: Isolated boot intent and native routing operations.
+    """
     management = interface()
     events = []
     monkeypatch.setattr(domains, "reconciliation_lock", nullcontext)
@@ -97,7 +111,11 @@ def test_transition_start_seeds_persisted_identity_before_guard(monkeypatch):
 
 
 def test_transition_start_guards_before_persisted_vlan_exists(monkeypatch):
-    """Boot must protect new sources even before networkd creates a VLAN."""
+    """Boot must protect new sources even before networkd creates a VLAN.
+
+    Args:
+        monkeypatch: Isolated boot intent and native routing operations.
+    """
     management = interface()
     vlan = interface("eth0.20", "02:00:00:00:00:02", 200)
     events = []

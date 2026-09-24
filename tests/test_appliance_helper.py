@@ -8711,7 +8711,12 @@ route=0.0.0.0/0
 
 @pytest.mark.parametrize("removed", [False, True])
 def test_wan_preserves_new_network_owned_management_default(tmp_path, removed):
-    """Retiring an old Access mirror must retain the new dedicated default."""
+    """Retiring an old Access mirror must retain the new dedicated default.
+
+    Args:
+        tmp_path: Disposable applied Network configuration location.
+        removed: Whether the old Access mirror is retired.
+    """
     helper = load_helper_module()
     previous_path = tmp_path / "previous.conf"
     previous_path.write_text(

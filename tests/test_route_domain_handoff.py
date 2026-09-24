@@ -10,7 +10,12 @@ from tests.test_appliance_helper import load_helper_module
 
 
 def test_held_management_link_becoming_lab_gets_guard_before_lookup(monkeypatch, tmp_path):
-    """Candidate ingress cannot reach main while its old listener is held."""
+    """Candidate ingress cannot reach main while its old listener is held.
+
+    Args:
+        monkeypatch: Isolated native and configuration boundary replacements.
+        tmp_path: Disposable candidate Network configuration location.
+    """
     helper = load_helper_module()
     network = tmp_path / "candidate-network.conf"
     network.write_text("candidate\n", encoding="utf-8")
@@ -44,7 +49,12 @@ def test_held_management_link_becoming_lab_gets_guard_before_lookup(monkeypatch,
 
 
 def test_removed_vlan_capture_accepts_dual_stack_holds_above_interface_limit(monkeypatch, tmp_path):
-    """The readback bound admits every source from an admitted bulk removal."""
+    """The readback bound admits every source from an admitted bulk removal.
+
+    Args:
+        monkeypatch: Isolated native inventory replacement.
+        tmp_path: Disposable candidate Network configuration location.
+    """
     helper = load_helper_module()
     network = tmp_path / "candidate-network.conf"
     network.write_text("candidate\n", encoding="utf-8")

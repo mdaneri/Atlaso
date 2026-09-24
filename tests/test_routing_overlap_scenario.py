@@ -53,7 +53,13 @@ def test_native_snapshot_accepts_empty_management_route_table(monkeypatch):
     ("private guest diagnostic", "other"),
 ])
 def test_native_observation_failure_reports_only_whitelisted_reason(monkeypatch, stderr, reason):
-    """Classify a failed read-only route query without copying guest stderr."""
+    """Classify a failed read-only route query without copying guest stderr.
+
+    Args:
+        monkeypatch: Isolated guest transport response.
+        stderr: Raw guest error text excluded from the receipt.
+        reason: Expected allowlisted failure reason.
+    """
     monkeypatch.setattr(subprocess, "run", lambda args, **kwargs:
                         subprocess.CompletedProcess(args, 2, "", stderr))
     namespace = {}
@@ -363,13 +369,29 @@ def test_unknown_apply_outcome_does_not_start_restoration(monkeypatch, topology)
 
 
 def test_failed_restoration_requires_fixture_preservation(monkeypatch, topology):
-    """A definite failed baseline Apply still needs running DHCP and RA peers."""
+    """A definite failed baseline Apply still needs running DHCP and RA peers.
+
+    Args:
+        monkeypatch: Isolated scenario network operations.
+        topology: Proven private test topology.
+    """
     client = FakeClient()
 
     def failed_apply(_client, **_kwargs):
+        """Fail the candidate Apply before restoration.
+
+        Args:
+            _client: Authenticated fixture client, unused by this failure.
+            **_kwargs: Apply options unused by this failure.
+        """
         raise OverlapPrerequisiteError("candidate Apply failed")
 
     def failed_restoration(*_args):
+        """Fail the baseline restoration after candidate Apply.
+
+        Args:
+            *_args: Restoration inputs unused by this failure.
+        """
         raise OverlapPrerequisiteError("baseline Apply failed")
 
     monkeypatch.setattr(scenario, "_apply", failed_apply)

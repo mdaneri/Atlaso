@@ -183,7 +183,12 @@ def write_evidence(path: Path, value: dict[str, Any]) -> None:
 
 
 def scenario_failure_result(failure: Exception, digest: str) -> tuple[dict[str, Any], int]:
-    """Keep the private fixture when Apply or restoration lacks safe completion."""
+    """Keep the private fixture when Apply or restoration lacks safe completion.
+
+    Args:
+        failure: Classified scenario prerequisite or restoration failure.
+        digest: Proven topology digest for the result receipt.
+    """
     from scripts.interop.routing_overlap_scenario import (
         ApplyOutcomeUnknown,
         RestorationIncomplete,
