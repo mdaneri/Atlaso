@@ -195,4 +195,30 @@ catch {
     }
 }
 
+$pinRoot = Join-Path $OutputDirectory 'certificate-inspector-pin-fixture'
+$scriptsRoot = Join-Path $pinRoot 'scripts'
+New-Item -ItemType Directory -Path $scriptsRoot | Out-Null
+$packagePath = Join-Path $scriptsRoot '__init__.py'
+$ownerPath = Join-Path $scriptsRoot 'completed_task_files.py'
+[IO.File]::WriteAllText($packagePath, 'admitted package')
+[IO.File]::WriteAllText($ownerPath, 'admitted ownership module')
+Import-Module (Join-Path $RepositoryRoot 'scripts/windows/vmware/Atlaso.WorkstationCleanup.psm1') -Force
+$directoryPin = [Atlaso.WorkstationFileIdentity]::PinOrdinaryDirectoryPath($scriptsRoot)
+$packagePin = [Atlaso.WorkstationFileIdentity]::PinOrdinaryReadFile($packagePath, $true)
+$ownerPin = [Atlaso.WorkstationFileIdentity]::PinOrdinaryReadFile($ownerPath, $true)
+try {
+    foreach ($path in @($packagePath, $ownerPath)) {
+        $blocked = $false
+        try { [IO.File]::WriteAllText($path, 'replacement') }
+        catch [IO.IOException] { $blocked = $true }
+        catch [UnauthorizedAccessException] { $blocked = $true }
+        if (-not $blocked) { throw 'A pinned certificate dependency was replaced.' }
+    }
+}
+finally {
+    $ownerPin.Dispose()
+    $packagePin.Dispose()
+    $directoryPin.Dispose()
+}
+
 Write-Output 'Atlaso immutable source snapshot tests passed.'

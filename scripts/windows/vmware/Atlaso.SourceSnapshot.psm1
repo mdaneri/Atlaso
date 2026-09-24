@@ -493,12 +493,25 @@ function New-AtlasoCertificateInspectorSnapshot {
         -VerificationRoot $verificationRoot
     $null = Protect-AtlasoSourceSnapshot -Root $snapshot.Root -ExpectedSha256 $snapshot.Sha256 `
         -ExpectedFileCount $snapshot.FileCount
-    $pins = [Collections.Generic.List[IO.FileStream]]::new()
+    # Retain the package namespace as well as the imported files: Python resolves
+    # scripts.completed_task_files lazily after the credentialed child starts.
+    Import-Module (Join-Path $PSScriptRoot 'Atlaso.WorkstationCleanup.psm1') -Force
+    $pins = [Collections.Generic.List[IDisposable]]::new()
     try {
-        foreach ($leaf in @('certificate_handoff_native.py', 'certificate_peer_proof.py', 'certificate_peer_transport.py')) {
-            $path = Join-Path $snapshot.Root "scripts/interop/$leaf"
-            $pins.Add([IO.File]::Open($path, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::Read))
+        $scriptsRoot = Join-Path $snapshot.Root 'scripts'
+        $pins.Add([Atlaso.WorkstationFileIdentity]::PinOrdinaryDirectoryPath($scriptsRoot))
+        foreach ($relative in @(
+                'scripts/__init__.py',
+                'scripts/interop/certificate_handoff_native.py',
+                'scripts/interop/certificate_peer_proof.py',
+                'scripts/interop/certificate_peer_transport.py',
+                'scripts/completed_task_files.py'
+            )) {
+            $path = Join-Path $snapshot.Root $relative
+            $pins.Add([Atlaso.WorkstationFileIdentity]::PinOrdinaryReadFile($path, $true))
         }
+        $null = Assert-AtlasoSourceSnapshot -Root $snapshot.Root -ExpectedSha256 $snapshot.Sha256 `
+            -ExpectedFileCount $snapshot.FileCount
     } catch {
         foreach ($pin in $pins) { $pin.Dispose() }
         throw
