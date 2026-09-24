@@ -3,6 +3,7 @@
 import copy
 import json
 import subprocess
+from contextlib import nullcontext
 
 import pytest
 
@@ -496,3 +497,95 @@ def test_wan_uses_same_guards_and_preserves_local_source_rules(helper, monkeypat
     assert helper._apply_wan_policy_rules({}) == 0
     assert len(commands) == 2
     assert all(command[3] == "del" and "unreachable" in command and "lo" not in command for command in commands)
+
+
+@pytest.mark.parametrize("protected", [False, True])
+def test_removed_vlan_guard_survives_until_link_deletion(helper, monkeypatch, tmp_path, protected):
+    """Normal and protected handoff retire old lookups while the live VLAN stays guarded."""
+    config = tmp_path / "network.conf"
+    config.write_text("[removed_vlan_interfaces]\nvlan=eth1.120\n  parent=eth1\n  vlan_id=120\n", encoding="utf-8")
+    current = helper._route_domain_ingress_rules(["eth1.120"])
+    commands: list[list[str]] = []
+    seen_holds: list[set[str] | None] = []
+
+    def desired(_path, *, held_management_interfaces=None):
+        """Supply candidate rules while observing protected management exclusions."""
+        seen_holds.append(held_management_interfaces)
+        return []
+
+    def run(command):
+        """Track exact rule deletion against the live native-rule model."""
+        commands.append(command)
+        if command[3] == "del":
+            family = 4 if "-4" in command else 6
+            guard = "unreachable" in command
+            row = next(row for row in current if row["family"] == family and (row["table"] is None) == guard)
+            current.remove(row)
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    monkeypatch.setattr(helper, "_route_domain_ingress_desired_rules", desired)
+    monkeypatch.setattr(helper, "_snapshot_route_domain_rules", lambda: list(current))
+    monkeypatch.setattr(helper, "_run", run)
+    holds = {"eth0"} if protected else None
+    helper._apply_route_domain_ingress(config, held_management_interfaces=holds,
+                                       retain_removed_vlan_guards=True)
+    assert len(current) == 2 and all(row["table"] is None for row in current)
+    assert all("unreachable" not in command for command in commands)
+    assert seen_holds == [holds]
+
+    # A failed VLAN deletion never reaches the final reconciliation. In the
+    # successful path, both family guards are removed only after link deletion.
+    commands.append(["ip", "link", "delete", "dev", "eth1.120"])
+    helper._apply_route_domain_ingress(config, held_management_interfaces=holds)
+    deletion = commands.index(["ip", "link", "delete", "dev", "eth1.120"])
+    assert all(index > deletion for index, command in enumerate(commands)
+               if "unreachable" in command and command[3] == "del")
+    assert current == []
+
+
+@pytest.mark.parametrize("retirement_fails", [False, True])
+def test_network_apply_retires_vlan_before_final_guard_removal(helper, monkeypatch, tmp_path, retirement_fails):
+    """The ordinary transaction cannot retire a guard before removed-only deletion succeeds."""
+    config = tmp_path / "network.conf"
+    config.write_text("[network]\n", encoding="utf-8")
+    events: list[str] = []
+    monkeypatch.setattr(helper, "_validate_network_config_path", lambda _path: config)
+    monkeypatch.setattr(helper, "_network_config_errors", lambda _path: [])
+    monkeypatch.setattr(helper, "_network_detection_preflight", lambda _path: None)
+    monkeypatch.setattr(helper, "_route_domain_ingress_desired_rules", lambda _path: [])
+    monkeypatch.setattr(helper, "_network_apply_transaction", lambda _path: nullcontext())
+    monkeypatch.setattr(helper, "_stage_candidate_ingress_guards", lambda _path: None)
+    monkeypatch.setattr(helper, "_install_systemd_networkd_files", lambda _path: (0, [], [], []))
+    monkeypatch.setattr(helper, "_wait_network_addresses", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(helper, "_install_route_domain_intent", lambda _path: None)
+    monkeypatch.setattr(helper, "_reconcile_route_domains", lambda: None)
+
+    def vlans(_path, *, defer_removed=False, removed_only=False):
+        """Model one deferred old link and an optional deletion failure."""
+        events.append("delete" if removed_only else "activate")
+        return int(retirement_fails and removed_only)
+
+    def ingress(_path, *, retain_removed_vlan_guards=False):
+        """Record the protected and final rule reconciliation phases."""
+        events.append("retain" if retain_removed_vlan_guards else "retire")
+
+    monkeypatch.setattr(helper, "_apply_vlan_interfaces", vlans)
+    monkeypatch.setattr(helper, "_apply_route_domain_ingress", ingress)
+    assert helper._handle_network_locked("apply", [str(config)]) == (2 if retirement_fails else 0)
+    assert events == (["activate", "retain", "delete"] if retirement_fails
+                      else ["activate", "retain", "delete", "retire"])
+
+
+def test_removed_vlan_missing_guard_refuses_before_rule_mutation(helper, monkeypatch, tmp_path):
+    """An inconsistent applied lookup cannot expose a deferred VLAN to the main table."""
+    config = tmp_path / "network.conf"
+    config.write_text("[removed_vlan_interfaces]\nvlan=eth1.120\n  parent=eth1\n  vlan_id=120\n", encoding="utf-8")
+    lookup = [row for row in helper._route_domain_ingress_rules(["eth1.120"]) if row["table"] == 200]
+    commands: list[list[str]] = []
+    monkeypatch.setattr(helper, "_route_domain_ingress_desired_rules", lambda *_args, **_kwargs: [])
+    monkeypatch.setattr(helper, "_snapshot_route_domain_rules", lambda: lookup)
+    monkeypatch.setattr(helper, "_run", lambda command: commands.append(command)
+                        or subprocess.CompletedProcess(command, 0, "", ""))
+    with pytest.raises(ValueError, match="without its terminal ingress guard"):
+        helper._apply_route_domain_ingress(config, retain_removed_vlan_guards=True)
+    assert commands == []

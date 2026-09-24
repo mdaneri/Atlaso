@@ -10072,15 +10072,38 @@ def _stage_candidate_ingress_guards(
 
 def _apply_route_domain_ingress(
     path: Path | None = None, *, held_management_interfaces: set[str] | None = None,
+    retain_removed_vlan_guards: bool = False,
 ) -> None:
     """Migrate legacy rules using preflighted applied WAN forwarding policy.
 
     Args:
         path: Candidate Network file, or None for persisted applied intent.
         held_management_interfaces: Old management links retained until retirement.
+        retain_removed_vlan_guards: Keep existing terminal guards until removed VLAN links are deleted.
     """
-    _restore_route_domain_rules(_route_domain_ingress_desired_rules(
-        path, held_management_interfaces=held_management_interfaces))
+    desired = _route_domain_ingress_desired_rules(
+        path, held_management_interfaces=held_management_interfaces,
+    )
+    if not retain_removed_vlan_guards:
+        _restore_route_domain_rules(desired)
+        return
+    if path is None:
+        raise ValueError("removed VLAN guard retention requires staged Network intent")
+    _physical, _vlans, removed_vlans = _parse_network_config(path)
+    removed_names = {row["name"] for row in removed_vlans}
+    current = _snapshot_route_domain_rules()
+    guarded = {(row["family"], row["incoming_interface"]) for row in current
+               if row["table"] is None and row["incoming_interface"] in removed_names}
+    unguarded = {(row["family"], row["incoming_interface"]) for row in current
+                 if row["table"] == LAB_ROUTE_TABLE_ID and row["incoming_interface"] in removed_names} - guarded
+    if unguarded:
+        raise ValueError("removed VLAN has a live lab lookup without its terminal ingress guard")
+    # The previous link can still receive ingress while its deletion is
+    # deferred. Retire its lookup now, but keep only its already-owned terminal
+    # guard until the link deletion succeeds. Never invent a new guard here.
+    desired.extend(row for row in current if row["table"] is None
+                   and row["incoming_interface"] in removed_names and row not in desired)
+    _restore_route_domain_rules(desired, current_rules=current)
 
 
 def _network_observation_command(command: list[str], *, timeout: float = 4) -> subprocess.CompletedProcess[str]:
@@ -10833,11 +10856,12 @@ def _handle_network_locked(action: str, args: list[str]) -> int:
                 raise ValueError("candidate VLAN activation failed")
             _wait_network_addresses(config_path, started_at=activation_started)
             _install_route_domain_intent(config_path)
-            _apply_route_domain_ingress(config_path)
+            _apply_route_domain_ingress(config_path, retain_removed_vlan_guards=True)
             _reconcile_route_domains()
             # Retire old VLANs only after the candidate addresses have activated.
             if _apply_vlan_interfaces(config_path, removed_only=True) != 0:
                 raise ValueError("previous VLAN retirement failed")
+            _apply_route_domain_ingress(config_path)
     except (ValueError, OSError, subprocess.TimeoutExpired) as exc:
         print(str(exc), file=sys.stderr)
         return 2
@@ -12405,9 +12429,10 @@ def _apply_wan_routes_and_qdiscs(
             name = row["interface"]
             saved = _wan_bool(row.get("enabled", ""), default=True)
             metric = int(row.get("metric", "100") or "100") or (1024 if network.version == 6 else 0)
-            if saved and routing_enabled and row.get("gateway") and any(
+            if saved and routing_enabled and any(
                 prefix == str(network) and metric in metrics
-                for (_owner, prefix), metrics in applied["connected"].items()
+                and (row.get("gateway") or owner != name)
+                for (owner, prefix), metrics in applied["connected"].items()
             ):
                 raise ValueError("static route would replace a Network-owned connected route; choose a distinct metric")
             if network.prefixlen == 0:
@@ -26803,6 +26828,7 @@ def _apply_management_handoff(payload: dict) -> int:
             Path(str(payload["network_config_path"])),
             held_management_interfaces={name for name, table in state.get("previous_route_domains", {}).items()
                                         if table == MANAGEMENT_ROUTE_TABLE_ID},
+            retain_removed_vlan_guards=True,
         )
         _install_route_domain_intent(
             Path(str(payload["network_config_path"])),

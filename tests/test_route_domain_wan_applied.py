@@ -264,13 +264,15 @@ def test_enabled_static_cannot_replace_connected_identity(helper, modern, family
 
 
 @pytest.mark.parametrize("family", [4, 6])
-def test_nonowner_static_cannot_replace_connected_identity(helper, modern, family):
+@pytest.mark.parametrize("gateway", [False, True])
+def test_nonowner_static_cannot_replace_connected_identity(helper, modern, family, gateway):
     """A route on another lab link cannot replace the table-wide prefix owner.
 
     Args:
         helper: Loaded privileged helper.
         modern: Admitted snapshot and captured mutations.
         family: Connected route address family.
+        gateway: Whether the conflicting route has a next hop.
     """
     state, commands = modern
     parsed = wan_input()
@@ -286,7 +288,7 @@ def test_nonowner_static_cannot_replace_connected_identity(helper, modern, famil
                                  ("2001:db8::/64", "2001:db8::1", "1024"))
     parsed["routes"] = [
         {"destination_cidr": "203.0.113.0/24", "interface": "eth2", "enabled": "true", "metric": "100"},
-        {"destination_cidr": network, "interface": "eth2", "gateway": next_hop,
+        {"destination_cidr": network, "interface": "eth2", "gateway": next_hop if gateway else "",
          "enabled": "true", "metric": metric},
     ]
     with pytest.raises(ValueError, match="Network-owned connected route"):
