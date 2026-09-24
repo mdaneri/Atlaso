@@ -9659,7 +9659,11 @@ def _reconcile_route_domains() -> None:
 
 
 def _transition_source_guard(enable: bool) -> None:
-    """Block otherwise unclassified local sources while Network changes addresses."""
+    """Block otherwise unclassified local sources while Network changes addresses.
+
+    Args:
+        enable: Whether to install the owned guard.
+    """
     mode = "--transition-start" if enable else "--transition-stop"
     result = _run(["/opt/atlaso/.venv/bin/python", "-I", "-m", "atlaso.route_domains", mode])
     if result.returncode:
@@ -9667,7 +9671,11 @@ def _transition_source_guard(enable: bool) -> None:
 
 
 def _removed_vlan_source_holds(path: Path) -> list[dict]:
-    """Capture live, MAC-bound sources of VLANs retained until deferred deletion."""
+    """Capture live, MAC-bound sources of VLANs retained until deferred deletion.
+
+    Args:
+        path: Validated network configuration path.
+    """
     _physical, _vlans, removed = _parse_network_config(path)
     names = sorted({row["name"] for row in removed})
     if not names:
@@ -9760,8 +9768,10 @@ def _install_route_domain_intent(
     _durable_management_handoff_state_write(intent, ROUTE_DOMAIN_CONFIG_PATH)
     ROUTE_DOMAIN_SERVICE_PATH.write_text("\n".join([
         "[Unit]", "Description=Atlaso applied routing-domain source rules",
-        "After=systemd-networkd.service", "Before=atlaso.service atlaso-worker.service nginx.service",
+        "DefaultDependencies=no", "After=local-fs.target", "Before=systemd-networkd.service atlaso.service atlaso-worker.service nginx.service shutdown.target",
+        "Conflicts=shutdown.target",
         "[Service]", "Type=simple",
+        "ExecStartPre=/opt/atlaso/.venv/bin/python -I -m atlaso.route_domains --transition-start",
         "ExecStartPre=/opt/atlaso/.venv/bin/python -I -m atlaso.route_domains --once",
         "ExecStart=/opt/atlaso/.venv/bin/python -I -m atlaso.route_domains",
         "Restart=on-failure", "RestartSec=2", "[Install]", "WantedBy=multi-user.target", "",
@@ -10089,6 +10099,10 @@ def _stage_candidate_ingress_guards(
 ) -> None:
     """Add missing terminal guards before Network can activate candidate lab links.
 
+
+    Args:
+        path: Validated network configuration path.
+        held_management_interfaces: Old management interfaces retained during handoff.
     This runs only after the Network or handoff rollback journal is durable.
     Existing rules stay in place until the ordinary reconciliation after address
     activation; a failed addition is restored from the journal's rule snapshot.
@@ -10654,7 +10668,7 @@ def _restore_network_transaction(state: dict) -> bool:
         failures.append(str(exc))
     if failures:
         raise ValueError("network rollback incomplete: " + "; ".join(failures[:8]))
-    if state.get("source_transition_guard"):
+    if state.get("source_transition_guard") and not state.get("previous_route_domain_service", {}).get("active"):
         _transition_source_guard(False)
     return _finish_network_transaction(state, "rolled-back")
 
@@ -10908,7 +10922,6 @@ def _handle_network_locked(action: str, args: list[str]) -> int:
             _install_route_domain_intent(config_path)
             _apply_route_domain_ingress(config_path)
             _reconcile_route_domains()
-            _transition_source_guard(False)
     except (ValueError, OSError, subprocess.TimeoutExpired) as exc:
         print(str(exc), file=sys.stderr)
         return 2
@@ -24318,6 +24331,7 @@ def _reset_factory_network_runtime() -> int:
         # exact canonical forms as part of reset, even after an interrupted
         # reset already removed the applied domain intent.
         _restore_route_domain_rules([])
+        _transition_source_guard(False)
     except (OSError, ValueError) as exc:
         print(str(exc), file=sys.stderr)
         return 2
@@ -26385,7 +26399,7 @@ def _restore_management_handoff(state: dict) -> dict:
         if len(errors) > len(bounded):
             bounded.append(f"{len(errors) - len(bounded)} additional rollback errors")
         raise ValueError("rollback incomplete: " + "; ".join(bounded))
-    if state.get("source_transition_guard"):
+    if state.get("source_transition_guard") and not state.get("previous_route_domain_service", {}).get("active"):
         _transition_source_guard(False)
     return {"commands": commands, "readiness": readiness}
 
@@ -26891,8 +26905,6 @@ def _apply_management_handoff(payload: dict) -> int:
             held_addresses=_management_handoff_held_addresses(state),
         )
         _reconcile_route_domains()
-        _transition_source_guard(False)
-        state["source_transition_guard"] = False
         _write_management_handoff_state(state, str(state.get("phase") or "old-path-retained"))
         previous_firewall = FIREWALL_CONFIG_PATH.read_text(encoding="utf-8") if FIREWALL_CONFIG_PATH.is_file() else ""
         candidate_firewall_path = Path(str(payload["firewall_config_path"]))

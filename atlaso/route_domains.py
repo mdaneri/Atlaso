@@ -248,7 +248,13 @@ def source_tables(intent: Intent, inventory: Any) -> tuple[dict[str, int | None]
 
 
 def removed_interface_holds(intent: Intent, inventory: Any, names: set[str]) -> list[dict[str, str | int]]:
-    """Retain proven old sources while a deferred VLAN link is still present."""
+    """Retain proven old sources while a deferred VLAN link is still present.
+
+    Args:
+        intent: Applied routing-domain interface intent.
+        inventory: Observed native interface and address inventory.
+        names: Interface names selected for inspection.
+    """
     if len(names) > 256 or any(not isinstance(name, str) or not INTERFACE_PATTERN.fullmatch(name) for name in names):
         raise ReconcileError("invalid removed interface names")
     sources, incomplete = source_tables(intent, inventory)
@@ -485,12 +491,16 @@ def preflight() -> None:
         for family in (4, 6):
             rows = read_native([f"-{family}", "rule", "show"])
             owned_rules(rows, family)
-            if transition_guard_present(rows, family):
-                raise ReconcileError("stale routing-domain transition guard requires recovery")
+            transition_guard_present(rows, family)
 
 
 def transition_guard_present(rows: Any, family: int) -> bool:
-    """Admit only our exact temporary local-origin terminal rule at slot 6000."""
+    """Admit only our exact persistent local-origin terminal rule at slot 6000.
+
+    Args:
+        rows: Observed native policy rule rows.
+        family: IPv4 or IPv6 address family under test.
+    """
     if not isinstance(rows, list) or any(not isinstance(row, dict) for row in rows):
         raise ReconcileError("invalid native policy rules")
     matches = [row for row in rows if row.get("priority") == TRANSITION_PRIORITY]
@@ -510,22 +520,40 @@ def transition_guard_present(rows: Any, family: int) -> bool:
 
 
 def transition_guard(enable: bool) -> None:
-    """Bracket Network address activation with an exact, owned fail-closed rule."""
+    """Maintain an exact local-origin guard across address changes.
+
+    Args:
+        enable: Whether to install the owned guard.
+    """
     with reconciliation_lock():
         for family in (4, 6):
-            rows = read_native([f"-{family}", "rule", "show"])
-            owned_rules(rows, family)
-            present = transition_guard_present(rows, family)
-            if present == enable:
-                continue
-            run_ip([IP_COMMAND, f"-{family}", "rule", "add" if enable else "del",
-                    "priority", str(TRANSITION_PRIORITY), "from", "all", "iif", "lo",
-                    "protocol", str(PROTOCOL), "unreachable"])
+            _set_guard_locked(family, enable)
+
+
+def _set_guard_locked(family: int, enable: bool) -> None:
+    """Change only the owned terminal guard while holding the reconciliation lock.
+
+    Args:
+        family: IPv4 or IPv6 address family under test.
+        enable: Whether to install the owned guard.
+    """
+    rows = read_native([f"-{family}", "rule", "show"])
+    owned_rules(rows, family)
+    present = transition_guard_present(rows, family)
+    if present == enable:
+        return
+    run_ip([IP_COMMAND, f"-{family}", "rule", "add" if enable else "del",
+            "priority", str(TRANSITION_PRIORITY), "from", "all", "iif", "lo",
+            "protocol", str(PROTOCOL), "unreachable"])
 
 
 def reconcile() -> None:
     """Re-read applied intent and native state under the shared mutation lock."""
     with reconciliation_lock():
+        # Keep unclassified DHCP/SLAAC sources out of main even between the
+        # kernel's address event and this process's next netlink rescan.
+        for family in (4, 6):
+            _set_guard_locked(family, True)
         intent = read_intent()
         sources, incomplete = source_tables(intent, read_native(["address", "show"]))
         existing = owned_rules(read_native(["-4", "rule", "show"]), 4)
@@ -602,8 +630,8 @@ def main() -> int:
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--once", action="store_true", help="Reconcile once for protected Apply readiness")
     mode.add_argument("--preflight", action="store_true", help="Check source-rule ownership without changing rules or intent")
-    mode.add_argument("--transition-start", action="store_true", help="Install Network Apply local-origin guard")
-    mode.add_argument("--transition-stop", action="store_true", help="Retire Network Apply local-origin guard")
+    mode.add_argument("--transition-start", action="store_true", help="Install persistent local-origin guard")
+    mode.add_argument("--transition-stop", action="store_true", help="Retire local-origin guard during rollback or reset")
     arguments = parser.parse_args()
     try:
         if linux_attribute(os, "geteuid")() != 0:

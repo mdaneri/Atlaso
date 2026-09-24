@@ -10,7 +10,14 @@ from tests.test_appliance_helper import load_helper_module
 
 @pytest.mark.parametrize("count,over_limit", [(256, False), (257, True)])
 def test_source_intent_capacity_is_checked_before_network_mutation(tmp_path, monkeypatch, count, over_limit):
-    """Routing-off Network still owns every active local source interface."""
+    """Routing-off Network still owns every active local source interface.
+
+    Args:
+        tmp_path: Pytest-owned temporary directory.
+        monkeypatch: Pytest fixture replacing external dependencies.
+        count: Number of active interfaces in the candidate configuration.
+        over_limit: Whether the candidate exceeds source-rule capacity.
+    """
     helper = load_helper_module()
     rows = ["[physical_interfaces]", "interface=eth0", "role=management", "mode=access",
             "admin_state=up", "ipv4_method=static", "ip_cidr=192.0.2.10/24"]
@@ -43,7 +50,13 @@ def test_source_intent_capacity_is_checked_before_network_mutation(tmp_path, mon
       "addr_info": [{"scope": "global"}]}],
 ])
 def test_malformed_address_inventory_raises_recoverable_network_error(tmp_path, monkeypatch, inventory):
-    """Malformed successful `ip -j` output uses the Network rollback error type."""
+    """Malformed successful `ip -j` output uses the Network rollback error type.
+
+    Args:
+        tmp_path: Pytest-owned temporary directory.
+        monkeypatch: Pytest fixture replacing external dependencies.
+        inventory: Observed native interface and address inventory.
+    """
     helper = load_helper_module()
     config = tmp_path / "network.conf"
     config.write_text("[physical_interfaces]\ninterface=eth0\n", encoding="utf-8")
@@ -107,6 +120,11 @@ def test_invalid_applied_intent_precedes_network_mutation(tmp_path, monkeypatch,
     commands = []
 
     def run(command):
+        """Record the native command for this isolated test.
+
+        Args:
+            command: Native command being recorded.
+        """
         commands.append(command)
         return subprocess.CompletedProcess(command, 0 if len(commands) == 1 else 1, "", "")
 

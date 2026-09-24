@@ -276,7 +276,13 @@ def test_network_runtime_revision_requires_successful_upgrade_apply(client, monk
 
 @pytest.mark.parametrize("enabled_default", [False, True])
 def test_legacy_flagged_default_network_revision_couples_wan_handoff(client, monkeypatch, enabled_default):
-    """A Network-only migration preserves the flagged listener's off-subnet reply route."""
+    """A Network-only migration preserves the flagged listener's off-subnet reply route.
+
+    Args:
+        client: Authenticated test client.
+        monkeypatch: Pytest fixture replacing external dependencies.
+        enabled_default: Whether the default route is enabled.
+    """
     from sqlalchemy import select
 
     from atlaso.app import ui
@@ -886,7 +892,11 @@ def test_appliance_settings_uses_last_applied_dns_state_for_resolver(client):
 
 
 def test_pending_dhcp_management_does_not_require_external_dns(client):
-    """Keep pending dedicated DHCP resolver ahead of a usable Access fallback."""
+    """Keep pending dedicated DHCP resolver ahead of a usable Access fallback.
+
+    Args:
+        client: Authenticated test client.
+    """
     from atlaso.app import ui
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import ApplianceSettings, DnsSettings, PhysicalInterface

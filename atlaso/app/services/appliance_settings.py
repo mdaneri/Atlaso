@@ -483,7 +483,11 @@ def management_interface_context(interfaces: list[PhysicalInterface]) -> dict[st
 
 
 def _pending_dhcp_management_context(interfaces: list[PhysicalInterface]) -> dict[str, Any] | None:
-    """Keep one desired dedicated DHCP listener selected before it has a lease."""
+    """Keep one desired dedicated DHCP listener selected before it has a lease.
+
+    Args:
+        interfaces: Observed physical and VLAN interface rows.
+    """
     pending = [
         interface for interface in interfaces
         if normalize_interface_role(interface.role) == "management"

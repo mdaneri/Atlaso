@@ -375,8 +375,13 @@ discovers the runtime address through VMware Tools.
 
 The opt-in `-RoutingOverlapOnly` mode exercises DHCP/SLAAC overlap through the canonical lifecycle wrapper.
 `-RoutingWanOnly` retains its existing static routing scenario. Focused unit tests do not replace native acceptance
-for automatic IPv6 acquisition, lease expiry, rollback, or reboot. Use a prepared client disk with
-`-SkipClientPrepare -ClientVmdkPath <owned-client-disk>` and `-ApplianceSshUser root`; the existing management VMnet
+for automatic IPv6 acquisition, lease expiry, rollback, or reboot.
+The native source-rule proof also requires the persistent, dual-family local-origin terminal guard at priority 6000
+after Apply and after address renewal; otherwise a newly acquired DHCP or SLAAC source could use the main table
+before its exact lookup/unreachable pair is installed. The guard starts before networkd at boot and remains active
+through ordinary Network Apply. It is retired only after restoring a pre-routing-domain state or factory reset.
+Use a prepared client disk with `-SkipClientPrepare -ClientVmdkPath <owned-client-disk>` and
+`-ApplianceSshUser root`; the existing management VMnet
 is used only for control access to the two clients. Do not supply an appliance IP/URL override or dry-run Apply.
 Original external ownership must be enabled; human runs opt in with `-OwnershipRoot` and a UUID `-OwnershipTaskId`.
 Pass distinct protected `-RootPassword` and `-AdminPassword` identities from the supported credential provider.

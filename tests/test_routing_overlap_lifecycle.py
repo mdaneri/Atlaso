@@ -116,6 +116,9 @@ def source_evidence():
         family = 6 if ":" in source else 4
         rules[family].extend([{"src": source, "table": table, "priority": 5570, "iif": "lo", "protocol": "2"},
                               {"src": source, "action": "7", "priority": 5571, "iif": "lo", "protocol": "2"}])
+    for family in (4, 6):
+        rules[family].append({"priority": 6000, "src": "all", "srclen": 0, "iif": "lo",
+                              "action": "7", "protocol": "2"})
     return addresses, rules
 
 
@@ -133,11 +136,13 @@ def test_recorded_photon_rules_match_source_isolation_contract():
         4: [{"priority": 5570, "src": "192.168.167.172", "iif": "lo", "table": "100", "protocol": "2"},
             {"priority": 5571, "src": "192.168.167.172", "iif": "lo", "action": "7", "protocol": "2"},
             {"priority": 5780, "src": "192.168.167.254", "iif": "lo", "table": "200", "protocol": "2"},
-            {"priority": 5781, "src": "192.168.167.254", "iif": "lo", "action": "7", "protocol": "2"}],
+            {"priority": 5781, "src": "192.168.167.254", "iif": "lo", "action": "7", "protocol": "2"},
+            {"priority": 6000, "src": "all", "srclen": 0, "iif": "lo", "action": "7", "protocol": "2"}],
         6: [{"priority": 5314, "src": "fd42:741::254", "iif": "lo", "table": "200", "protocol": "2"},
             {"priority": 5315, "src": "fd42:741::254", "iif": "lo", "action": "7", "protocol": "2"},
             {"priority": 5552, "src": "fd42:741::172", "iif": "lo", "table": "100", "protocol": "2"},
-            {"priority": 5553, "src": "fd42:741::172", "iif": "lo", "action": "7", "protocol": "2"}],
+            {"priority": 5553, "src": "fd42:741::172", "iif": "lo", "action": "7", "protocol": "2"},
+            {"priority": 6000, "src": "all", "srclen": 0, "iif": "lo", "action": "7", "protocol": "2"}],
     }
     assert verify_source_rules(addresses, rules) == addresses
 
@@ -191,6 +196,7 @@ def test_client_seed_installs_fixture_tools_only_when_requested(enabled):
 
 
 @pytest.mark.parametrize("fault", ["broad", "wrong-table", "missing-fallback", "wrong-order", "ingress-only",
+                                   "missing-terminal", "wrong-terminal",
                                    "missing-family", "wrong-protocol", "wrong-band", "missing-iif"])
 def test_source_proof_rejects_incomplete_isolation(fault):
     """Reject a route proof that could still select the other domain.
@@ -215,6 +221,10 @@ def test_source_proof_rejects_incomplete_isolation(fault):
         rules[4][0]["priority"] = 4999
     elif fault == "missing-iif":
         del rules[4][0]["iif"]
+    elif fault == "missing-terminal":
+        rules[4].pop()
+    elif fault == "wrong-terminal":
+        rules[6][-1]["iif"] = "eth0"
     else:
         del rules[6]
     with pytest.raises(OverlapPrerequisiteError):

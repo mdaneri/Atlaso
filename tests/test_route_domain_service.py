@@ -121,4 +121,5 @@ def test_factory_reset_quiesces_old_domain_before_flushing_routes(monkeypatch, t
         ["systemctl", "stop", unit.name], ["systemctl", "disable", unit.name], ["reconcile"],
     ]
     assert operations[3] == ["retire-ingress", []]
-    assert operations[4][:4] == ["ip", "route", "flush", "table"]
+    assert operations[4][-1] == "--transition-stop"
+    assert operations[5][:4] == ["ip", "route", "flush", "table"]

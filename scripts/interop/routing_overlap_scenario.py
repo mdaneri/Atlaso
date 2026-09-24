@@ -258,7 +258,11 @@ def _apply(
             result = task.get("result")
             units = result.get("units", []) if isinstance(result, dict) else []
             def safe_excerpt(command: dict[str, Any]) -> str:
-                """Return bounded, credential-redacted WAN helper diagnostics."""
+                """Return bounded, credential-redacted WAN helper diagnostics.
+
+                Args:
+                    command: Command or command result under test.
+                """
                 stderr = str(command.get("stderr", ""))
                 value = stderr if len(stderr) <= 768 else stderr[:512] + " ... " + stderr[-256:]
                 for secret in (getattr(client, "diagnostic_secret", ""), client.bearer_token):
@@ -323,7 +327,11 @@ def _clean(client: FixtureHttpClient) -> dict[str, Any]:
 
 
 def _settle_dependent_dns(client: FixtureHttpClient) -> dict[str, Any]:
-    """Admit at most two reviewed DNS deltas before requiring stable clean reads."""
+    """Admit at most two reviewed DNS deltas before requiring stable clean reads.
+
+    Args:
+        client: Authenticated test client.
+    """
     applications: list[dict[str, Any]] = []
     for attempt in range(3):
         try:

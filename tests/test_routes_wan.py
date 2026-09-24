@@ -114,7 +114,11 @@ def test_feature_settings_render_full_saved_intent_with_effective_gates():
 
 @pytest.mark.parametrize("routing_enabled", [False, True])
 def test_wan_preview_orders_ingress_guards_before_enabling_forwarding(routing_enabled):
-    """The captured preview follows the helper's enable and disable ordering."""
+    """The captured preview follows the helper's enable and disable ordering.
+
+    Args:
+        routing_enabled: Whether lab routing is enabled in this case.
+    """
     config = render_wan_config(
         [],
         settings=RoutesWanSettings(routing_enabled, False, False),
@@ -830,7 +834,11 @@ def test_render_wan_config_uses_ipv6_route_commands():
 
 @pytest.mark.parametrize("routing_enabled", [False, True])
 def test_legacy_wan_preview_matches_source_rule_migration(routing_enabled):
-    """Show the legacy cleanup and only the helper's owned source rules."""
+    """Show the legacy cleanup and only the helper's owned source rules.
+
+    Args:
+        routing_enabled: Whether lab routing is enabled in this case.
+    """
     targets = [
         {"name": "eth0", "routing_domain": "management", "ip_cidr": "192.0.2.10/24",
          "ipv6_cidr": "2001:db8:1::10/64", "gateway": "192.0.2.1", "ipv6_gateway": "fe80::1"},

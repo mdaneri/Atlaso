@@ -501,7 +501,14 @@ def test_wan_uses_same_guards_and_preserves_local_source_rules(helper, monkeypat
 
 @pytest.mark.parametrize("protected", [False, True])
 def test_removed_vlan_guard_survives_until_link_deletion(helper, monkeypatch, tmp_path, protected):
-    """Normal and protected handoff retire old lookups while the live VLAN stays guarded."""
+    """Normal and protected handoff retire old lookups while the live VLAN stays guarded.
+
+    Args:
+        helper: Loaded appliance helper under test.
+        monkeypatch: Pytest fixture replacing external dependencies.
+        tmp_path: Pytest-owned temporary directory.
+        protected: Whether the operation uses the protected management handoff.
+    """
     config = tmp_path / "network.conf"
     config.write_text("[removed_vlan_interfaces]\nvlan=eth1.120\n  parent=eth1\n  vlan_id=120\n", encoding="utf-8")
     current = helper._route_domain_ingress_rules(["eth1.120"])
@@ -509,12 +516,21 @@ def test_removed_vlan_guard_survives_until_link_deletion(helper, monkeypatch, tm
     seen_holds: list[set[str] | None] = []
 
     def desired(_path, *, held_management_interfaces=None):
-        """Supply candidate rules while observing protected management exclusions."""
+        """Supply candidate rules while observing protected management exclusions.
+
+        Args:
+            _path: Unused configuration path accepted by the test double.
+            held_management_interfaces: Old management interfaces retained during handoff.
+        """
         seen_holds.append(held_management_interfaces)
         return []
 
     def run(command):
-        """Track exact rule deletion against the live native-rule model."""
+        """Track exact rule deletion against the live native-rule model.
+
+        Args:
+            command: Command or command result under test.
+        """
         commands.append(command)
         if command[3] == "del":
             family = 4 if "-4" in command else 6
@@ -544,8 +560,15 @@ def test_removed_vlan_guard_survives_until_link_deletion(helper, monkeypatch, tm
 
 
 @pytest.mark.parametrize("retirement_fails", [False, True])
-def test_network_apply_retires_vlan_before_final_guard_removal(helper, monkeypatch, tmp_path, retirement_fails):
-    """The ordinary transaction cannot retire a guard before removed-only deletion succeeds."""
+def test_network_apply_retires_vlan_but_keeps_terminal_source_guard(helper, monkeypatch, tmp_path, retirement_fails):
+    """Old VLAN guards retire after deletion while the terminal source guard persists.
+
+    Args:
+        helper: Loaded appliance helper under test.
+        monkeypatch: Pytest fixture replacing external dependencies.
+        tmp_path: Pytest-owned temporary directory.
+        retirement_fails: Whether deferred VLAN deletion fails.
+    """
     config = tmp_path / "network.conf"
     config.write_text("[network]\n", encoding="utf-8")
     events: list[str] = []
@@ -565,12 +588,23 @@ def test_network_apply_retires_vlan_before_final_guard_removal(helper, monkeypat
     monkeypatch.setattr(helper, "_reconcile_route_domains", lambda: events.append("reconcile"))
 
     def vlans(_path, *, defer_removed=False, removed_only=False):
-        """Model one deferred old link and an optional deletion failure."""
+        """Model one deferred old link and an optional deletion failure.
+
+        Args:
+            _path: Unused configuration path accepted by the test double.
+            defer_removed: Whether to defer removal of old VLAN links.
+            removed_only: Whether to process only removed VLAN links.
+        """
         events.append("delete" if removed_only else "activate")
         return int(retirement_fails and removed_only)
 
     def ingress(_path, *, retain_removed_vlan_guards=False):
-        """Record the protected and final rule reconciliation phases."""
+        """Record the protected and final rule reconciliation phases.
+
+        Args:
+            _path: Unused configuration path accepted by the test double.
+            retain_removed_vlan_guards: Whether to retain ingress guards until link retirement.
+        """
         events.append("retain" if retain_removed_vlan_guards else "retire")
 
     monkeypatch.setattr(helper, "_apply_vlan_interfaces", vlans)
@@ -578,12 +612,17 @@ def test_network_apply_retires_vlan_before_final_guard_removal(helper, monkeypat
     assert helper._handle_network_locked("apply", [str(config)]) == (2 if retirement_fails else 0)
     assert events == (["source-guard-on", "activate", "held-intent", "retain", "reconcile", "delete"]
                       if retirement_fails else ["source-guard-on", "activate", "held-intent", "retain",
-                                               "reconcile", "delete", "final-intent", "retire", "reconcile",
-                                               "source-guard-off"])
+                                               "reconcile", "delete", "final-intent", "retire", "reconcile"])
 
 
 def test_removed_vlan_missing_guard_refuses_before_rule_mutation(helper, monkeypatch, tmp_path):
-    """An inconsistent applied lookup cannot expose a deferred VLAN to the main table."""
+    """An inconsistent applied lookup cannot expose a deferred VLAN to the main table.
+
+    Args:
+        helper: Loaded appliance helper under test.
+        monkeypatch: Pytest fixture replacing external dependencies.
+        tmp_path: Pytest-owned temporary directory.
+    """
     config = tmp_path / "network.conf"
     config.write_text("[removed_vlan_interfaces]\nvlan=eth1.120\n  parent=eth1\n  vlan_id=120\n", encoding="utf-8")
     lookup = [row for row in helper._route_domain_ingress_rules(["eth1.120"]) if row["table"] == 200]

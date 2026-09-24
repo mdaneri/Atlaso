@@ -72,7 +72,11 @@ def wan_input():
 
 @pytest.mark.parametrize("family", [4, 6])
 def test_transition_guard_is_exact_and_rejects_foreign_priority(family):
-    """Only the owned local-origin terminal guard may occupy priority 6000."""
+    """Only the owned local-origin terminal guard may occupy priority 6000.
+
+    Args:
+        family: IPv4 or IPv6 address family under test.
+    """
     canonical = {"priority": 6000, "src": "all", "srclen": 0, "iif": "lo",
                  "action": "unreachable", "protocol": "2"}
     assert route_domains.transition_guard_present([canonical], family)
@@ -83,17 +87,31 @@ def test_transition_guard_is_exact_and_rejects_foreign_priority(family):
 
 
 def test_transition_guard_brackets_both_families_after_source_slots(monkeypatch):
-    """Dynamic sources remain blocked until synchronous rules have been installed."""
+    """Dynamic sources remain blocked until synchronous rules have been installed.
+
+    Args:
+        monkeypatch: Pytest fixture replacing external dependencies.
+    """
     commands = []
     occupied = {4: False, 6: False}
     monkeypatch.setattr(route_domains, "reconciliation_lock", nullcontext)
 
     def read_native(args):
+        """Return controlled native observations for this test.
+
+        Args:
+            args: Native observation arguments.
+        """
         family = int(args[0][1:])
         return ([{"priority": 6000, "src": "all", "srclen": 0, "iif": "lo",
                   "action": "unreachable", "protocol": "2"}] if occupied[family] else [])
 
     def run_ip(command):
+        """Record the policy-rule command without host mutation.
+
+        Args:
+            command: Native command being recorded.
+        """
         family = int(command[1][1:])
         occupied[family] = command[3] == "add"
         commands.append(command)
@@ -111,14 +129,17 @@ def test_transition_guard_brackets_both_families_after_source_slots(monkeypatch)
                for cmd in commands)
 
 
-def test_stale_transition_guard_blocks_new_network_transaction(monkeypatch):
-    """An orphan guard must be recovered, not silently adopted by a new Apply."""
+def test_owned_terminal_guard_is_admitted_by_new_network_transaction(monkeypatch):
+    """The persistent local-origin guard remains through later Network Applies.
+
+    Args:
+        monkeypatch: Pytest fixture replacing external dependencies.
+    """
     monkeypatch.setattr(route_domains, "reconciliation_lock", nullcontext)
     monkeypatch.setattr(route_domains, "read_native", lambda _args: [{
         "priority": 6000, "src": "all", "srclen": 0, "iif": "lo",
         "action": "unreachable", "protocol": "2"}])
-    with pytest.raises(route_domains.ReconcileError, match="stale"):
-        route_domains.preflight()
+    route_domains.preflight()
 
 
 def test_removed_vlan_sources_remain_bound_until_link_retirement():
@@ -262,7 +283,11 @@ def test_installed_core_projection_serializes_held_identity(helper, modern, monk
     monkeypatch.setattr(route_domains, "read_intent", lambda: admitted)
     monkeypatch.setattr(route_domains, "reconciliation_lock", nullcontext)
     def read_native(arguments):
-        """Return table 200 plus an unrelated main-table route for the projection."""
+        """Return table 200 plus an unrelated main-table route for the projection.
+
+        Args:
+            arguments: Command arguments under test.
+        """
         if arguments == ["address", "show"]:
             return state["addresses"]
         assert arguments[-2:] == ["table", "all"]

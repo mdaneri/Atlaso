@@ -2999,8 +2999,8 @@ def test_management_handoff_candidate_durability_gates_ack(
     )
 
     assert guard_events[:2] == ["guard-on", "candidate-network"]
-    assert state["source_transition_guard"] is False
-    assert guard_events == ["guard-on", "candidate-network", "source-intent", "guard-off", "final-network"]
+    assert state["source_transition_guard"] is True
+    assert guard_events == ["guard-on", "candidate-network", "source-intent", "final-network"]
 
     if candidate_sync_error in {"address-timeout", "address-conflict"}:
         assert result == 1
@@ -8999,7 +8999,13 @@ def test_ca_helper_removes_invalid_apply_payload(monkeypatch, tmp_path, capsys, 
 
 @pytest.mark.parametrize("failed_observation", ["network", "network_missing", "rules"])
 def test_wan_apply_preflights_native_state_before_forwarding(monkeypatch, tmp_path, failed_observation):
-    """An unsafe applied Network or rule inventory leaves forwarding unchanged."""
+    """An unsafe applied Network or rule inventory leaves forwarding unchanged.
+
+    Args:
+        monkeypatch: Pytest fixture replacing external dependencies.
+        tmp_path: Pytest-owned temporary directory.
+        failed_observation: Native observation stage configured to fail.
+    """
     helper = load_helper_module()
     config_path = tmp_path / "wan.conf"
     config_path.write_text("[feature_settings]\nrouting_enabled=true\n", encoding="utf-8")
@@ -9044,7 +9050,12 @@ def test_wan_apply_preflights_native_state_before_forwarding(monkeypatch, tmp_pa
 
 
 def test_wan_ingress_capacity_precedes_host_mutation(monkeypatch, tmp_path):
-    """An oversized applied ingress set cannot change forwarding or routes."""
+    """An oversized applied ingress set cannot change forwarding or routes.
+
+    Args:
+        monkeypatch: Pytest fixture replacing external dependencies.
+        tmp_path: Pytest-owned temporary directory.
+    """
     helper = load_helper_module()
     config_path = tmp_path / "wan.conf"
     config_path.write_text("[feature_settings]\nrouting_enabled=true\n", encoding="utf-8")
@@ -9073,7 +9084,12 @@ def test_wan_ingress_capacity_precedes_host_mutation(monkeypatch, tmp_path):
 
 
 def test_wan_apply_reuses_preflighted_native_snapshots(monkeypatch, tmp_path):
-    """Downstream WAN stages receive the admitted baseline without reobserving it."""
+    """Downstream WAN stages receive the admitted baseline without reobserving it.
+
+    Args:
+        monkeypatch: Pytest fixture replacing external dependencies.
+        tmp_path: Pytest-owned temporary directory.
+    """
     helper = load_helper_module()
     config_path = tmp_path / "wan.conf"
     config_path.write_text("[feature_settings]\nrouting_enabled=true\n", encoding="utf-8")
@@ -9114,7 +9130,13 @@ def test_wan_apply_reuses_preflighted_native_snapshots(monkeypatch, tmp_path):
 
 @pytest.mark.parametrize("routing_enabled", [True, False])
 def test_wan_forwarding_changes_on_guarded_side_of_policy_rules(monkeypatch, tmp_path, routing_enabled):
-    """Enable after guard installation and disable before guard retirement."""
+    """Enable after guard installation and disable before guard retirement.
+
+    Args:
+        monkeypatch: Pytest fixture replacing external dependencies.
+        tmp_path: Pytest-owned temporary directory.
+        routing_enabled: Whether lab routing is enabled in this case.
+    """
     helper = load_helper_module()
     path = tmp_path / "wan.conf"
     path.write_text(f"[feature_settings]\nrouting_enabled={str(routing_enabled).lower()}\n", encoding="utf-8")
@@ -9138,7 +9160,12 @@ def test_wan_forwarding_changes_on_guarded_side_of_policy_rules(monkeypatch, tmp
 
 
 def test_candidate_ingress_guards_add_only_and_fail_before_activation(monkeypatch, tmp_path):
-    """An admitted candidate guard is staged without retiring existing rules."""
+    """An admitted candidate guard is staged without retiring existing rules.
+
+    Args:
+        monkeypatch: Pytest fixture replacing external dependencies.
+        tmp_path: Pytest-owned temporary directory.
+    """
     helper = load_helper_module()
     path = tmp_path / "network.conf"
     path.write_text("[physical_interfaces]\ninterface=eth1\n  role=route\n  mode=access\n  admin_state=up\n", encoding="utf-8")

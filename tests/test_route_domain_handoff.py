@@ -18,6 +18,7 @@ def observe_snapshot(helper, monkeypatch, *, v4_routes=None, v6_routes=None, add
         v4_routes: Observed IPv4 routes for the previous management path.
         v6_routes: Observed IPv6 routes for the previous management path.
         addresses: Assigned native address records.
+        nexthops: Observed native next-hop rows.
     """
     if addresses is None:
         addresses = [{"local": "192.0.2.10", "prefixlen": 24, "scope": "global"},
@@ -105,7 +106,11 @@ def test_snapshot_ignores_other_domains_local_routes_and_duplicate_native_copies
 
 
 def test_device_filtered_snapshot_accepts_omitted_dev_but_rejects_explicit_other_dev(monkeypatch):
-    """An omitted JSON device is allowed only because the native query filters by it."""
+    """An omitted JSON device is allowed only because the native query filters by it.
+
+    Args:
+        monkeypatch: Pytest fixture replacing external dependencies.
+    """
     helper = load_helper_module()
     commands = observe_snapshot(
         helper, monkeypatch,
@@ -120,7 +125,11 @@ def test_device_filtered_snapshot_accepts_omitted_dev_but_rejects_explicit_other
 
 
 def test_snapshot_resolves_single_ipv6_nexthop_on_previous_device(monkeypatch):
-    """A native nexthop ID may represent the RA gateway held during Apply."""
+    """A native nexthop ID may represent the RA gateway held during Apply.
+
+    Args:
+        monkeypatch: Pytest fixture replacing external dependencies.
+    """
     helper = load_helper_module()
     commands = observe_snapshot(
         helper, monkeypatch,
@@ -139,7 +148,12 @@ def test_snapshot_resolves_single_ipv6_nexthop_on_previous_device(monkeypatch):
     {"id": 7, "dev": "eth0", "blackhole": None},
 ])
 def test_snapshot_refuses_unsupported_ipv6_nexthop(monkeypatch, nexthop):
-    """An unresolved or non-single-device nexthop cannot authorize holdover."""
+    """An unresolved or non-single-device nexthop cannot authorize holdover.
+
+    Args:
+        monkeypatch: Pytest fixture replacing external dependencies.
+        nexthop: Native next-hop row under test.
+    """
     helper = load_helper_module()
     observe_snapshot(helper, monkeypatch,
                      v6_routes=[{"dst": "default", "nhid": 7, "metric": 1024}],
@@ -210,6 +224,7 @@ def test_route_readiness_requires_standby_copy_not_merely_previous_native_route(
 
     Args:
         monkeypatch: Pytest fixture replacing native operations with controlled observations.
+        include_dev: Whether the native route observation includes a device.
     """
     helper = load_helper_module()
     observe_snapshot(helper, monkeypatch, v6_routes=[], addresses=[{"local": "192.0.2.10", "prefixlen": 24, "scope": "global"}])
@@ -319,6 +334,11 @@ def test_candidate_new_address_never_becomes_a_held_old_source(monkeypatch, tmp_
     helper._install_route_domain_intent(Path("candidate.conf"), held_addresses=[old])
     assert published[0]["held_addresses"] == [old]
     assert published[0]["interfaces"] == [{"name": "eth0", "mac": "02:00:00:00:00:01", "table": 200, "management_ui": management_ui}]
+    unit = (tmp_path / "route-domains.service").read_text(encoding="utf-8")
+    assert "DefaultDependencies=no" in unit
+    assert "Before=systemd-networkd.service" in unit
+    assert unit.index("ExecStartPre=/opt/atlaso/.venv/bin/python -I -m atlaso.route_domains --transition-start") < unit.index(
+        "ExecStartPre=/opt/atlaso/.venv/bin/python -I -m atlaso.route_domains --once")
     assert commands[:3] == [["systemctl", "daemon-reload"],
                             ["systemctl", "enable", "--now", "route-domains.service"],
                             ["systemctl", "restart", "route-domains.service"]]

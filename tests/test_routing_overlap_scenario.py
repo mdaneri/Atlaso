@@ -25,7 +25,12 @@ def test_native_snapshot_accepts_empty_management_route_table(monkeypatch):
         monkeypatch: Reversible native iproute observation boundary.
     """
     def run(args, **_kwargs):
-        """Return numeric JSON from the table-all query without mutating routes."""
+        """Return numeric JSON from the table-all query without mutating routes.
+
+        Args:
+            args: Command arguments under test.
+            **_kwargs: Unused keyword arguments accepted by the test double.
+        """
         if "route" in args:
             assert args[-2:] == ["table", "all"]
             rows = [{"dst": "default", "table": "main"}]
@@ -63,6 +68,9 @@ def native():
         shared = {"src": source, "iif": "lo", "protocol": "2"}
         rules[family].extend([{**shared, "priority": 5000 + index * 2, "table": table},
                               {**shared, "priority": 5001 + index * 2, "action": "7"}])
+    for family in ("4", "6"):
+        rules[family].append({"src": "all", "srclen": 0, "iif": "lo", "protocol": "2",
+                              "priority": 6000, "action": "7"})
     return {
         "links": [{"ifname": "eth0", "addr_info": [
             {"family": "inet", "local": "192.0.2.10", "dynamic": True, "valid_life_time": 100, "scope": "global"},
@@ -319,6 +327,7 @@ def test_unknown_apply_outcome_does_not_start_restoration(monkeypatch, topology)
 
         Args:
             current: Authenticated client.
+            **kwargs: Value used by this operation.
         """
         raise scenario.ApplyOutcomeUnknown("Apply job_abc still running")
 
@@ -394,7 +403,11 @@ def test_ambiguous_submission_prohibits_recovery_mutation(monkeypatch, topology,
 
 
 def test_rejected_apply_reports_only_bounded_validation_identity(monkeypatch):
-    """A known 422 exposes the invalid unit without echoing the server preview."""
+    """A known 422 exposes the invalid unit without echoing the server preview.
+
+    Args:
+        monkeypatch: Pytest fixture replacing external dependencies.
+    """
     client = FakeClient()
     monkeypatch.setattr(client, "request", lambda method, path, **kwargs:
                         (200, '<input name="csrf" value="synthetic">', {}) if method == "GET" else
@@ -428,7 +441,11 @@ def test_initial_setup_uses_reviewed_nonformatting_units(monkeypatch):
 
 
 def test_initial_setup_applies_only_one_reviewed_dependent_dnsmasq_unit(monkeypatch):
-    """An initial Apply may expose one generated DNS change, then must become clean."""
+    """An initial Apply may expose one generated DNS change, then must become clean.
+
+    Args:
+        monkeypatch: Pytest fixture replacing external dependencies.
+    """
     client = FakeClient()
     calls = []
     reviews = iter([
@@ -445,6 +462,11 @@ def test_initial_setup_applies_only_one_reviewed_dependent_dnsmasq_unit(monkeypa
                         {"pending_count": 0}, {"pending_count": 0}])
 
     def clean(_client):
+        """Return a clean desired-state projection for this test.
+
+        Args:
+            _client: Unused client supplied by the scenario.
+        """
         outcome = next(clean_calls)
         if isinstance(outcome, Exception):
             raise outcome
@@ -457,7 +479,11 @@ def test_initial_setup_applies_only_one_reviewed_dependent_dnsmasq_unit(monkeypa
 
 
 def test_established_setup_applies_only_reviewed_dependent_dnsmasq_unit(monkeypatch):
-    """A deployed baseline may have one DNS delta before the scenario starts."""
+    """A deployed baseline may have one DNS delta before the scenario starts.
+
+    Args:
+        monkeypatch: Pytest fixture replacing external dependencies.
+    """
     client = FakeClient()
     calls = []
     review = {"initial_apply_required": False, "active_task": None, "pending_count": 1,
@@ -469,6 +495,11 @@ def test_established_setup_applies_only_reviewed_dependent_dnsmasq_unit(monkeypa
                      {"pending_count": 0}, {"pending_count": 0}])
 
     def clean(_client):
+        """Return a clean desired-state projection for this test.
+
+        Args:
+            _client: Unused client supplied by the scenario.
+        """
         outcome = next(outcomes)
         if isinstance(outcome, Exception):
             raise outcome
@@ -482,7 +513,11 @@ def test_established_setup_applies_only_reviewed_dependent_dnsmasq_unit(monkeypa
 
 
 def test_established_setup_rechecks_clean_projection_before_acceptance(monkeypatch):
-    """A clean first read followed by DNS drift still needs audited Apply."""
+    """A clean first read followed by DNS drift still needs audited Apply.
+
+    Args:
+        monkeypatch: Pytest fixture replacing external dependencies.
+    """
     client = FakeClient()
     review = {"initial_apply_required": False, "active_task": None, "pending_count": 1,
               "units": [{"id": "dnsmasq", "valid": True, "format_volumes": []}]}
@@ -494,6 +529,11 @@ def test_established_setup_rechecks_clean_projection_before_acceptance(monkeypat
                      {"pending_count": 0}, {"pending_count": 0}])
 
     def clean(_client):
+        """Return a clean desired-state projection for this test.
+
+        Args:
+            _client: Unused client supplied by the scenario.
+        """
         outcome = next(outcomes)
         if isinstance(outcome, Exception):
             raise outcome

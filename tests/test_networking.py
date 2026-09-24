@@ -1048,7 +1048,11 @@ def test_management_ui_context_prefers_dedicated_then_flagged_eth0_then_vlan(mon
 
 
 def test_pending_dhcp_management_uses_dhcp_resolver_without_claiming_a_lease(monkeypatch):
-    """A protected handoff may review DHCP DNS before its first lease exists."""
+    """A protected handoff may review DHCP DNS before its first lease exists.
+
+    Args:
+        monkeypatch: Pytest fixture replacing external dependencies.
+    """
     pending = PhysicalInterface(
         name="eth0", role="management", mode="access", ipv4_method="dhcp",
         ip_cidr=None, host_ip_cidr=None, admin_state="up", oper_state="up",

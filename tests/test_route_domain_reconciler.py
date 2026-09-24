@@ -463,12 +463,58 @@ def test_reconcile_reads_new_intent_each_time_and_never_uses_desired_db(monkeypa
     monkeypatch.setattr(domains, "reconciliation_lock", nullcontext)
     monkeypatch.setattr(domains, "read_intent", lambda: next(states))
     monkeypatch.setattr(domains, "read_native", lambda args: [link(row, "192.0.2.10")] if args == ["address", "show"] else [])
+    monkeypatch.setattr(domains, "run_ip", lambda _command: "")
     calls = []
     monkeypatch.setattr(domains, "apply_rules", lambda desired, existing: calls.append((desired, existing)))
     domains.reconcile()
     domains.reconcile()
     assert len(calls[0][0]) == 2
     assert calls[1] == (set(), set())
+
+
+def test_new_dynamic_address_is_observed_only_behind_terminal_guards(monkeypatch):
+    """A newly usable lease cannot escape through main before exact rules exist.
+
+    Args:
+        monkeypatch: Pytest fixture replacing external dependencies.
+    """
+    row = interface()
+    guards = {4: False, 6: False}
+    events = []
+    monkeypatch.setattr(domains, "reconciliation_lock", nullcontext)
+    monkeypatch.setattr(domains, "read_intent", lambda: intent(row))
+
+    def read_native(args):
+        """Return controlled native observations for this test.
+
+        Args:
+            args: Native observation arguments.
+        """
+        if args == ["address", "show"]:
+            assert all(guards.values())
+            events.append("address-observed")
+            return [link(row, "192.0.2.20")]
+        family = int(args[0][1:])
+        return ([{"priority": 6000, "src": "all", "srclen": 0, "iif": "lo",
+                  "action": "unreachable", "protocol": "2"}] if guards[family] else [])
+
+    def run_ip(command):
+        """Record the policy-rule command without host mutation.
+
+        Args:
+            command: Native command being recorded.
+        """
+        family = int(command[1][1:])
+        guards[family] = True
+        events.append(f"guard-{family}")
+        return ""
+
+    monkeypatch.setattr(domains, "read_native", read_native)
+    monkeypatch.setattr(domains, "run_ip", run_ip)
+    monkeypatch.setattr(domains, "apply_rules", lambda desired, existing: events.append("exact-rules"))
+    domains.reconcile()
+    assert events == ["guard-4", "guard-6", "address-observed", "exact-rules"]
+    assert guards == {4: True, 6: True}
 
 
 def test_missing_identity_quarantines_old_source_instead_of_opening_main_fallback(monkeypatch):
@@ -487,7 +533,9 @@ def test_missing_identity_quarantines_old_source_instead_of_opening_main_fallbac
     commands = capture_commands(monkeypatch)
     with pytest.raises(domains.ReconcileError, match="identity unavailable"):
         domains.reconcile()
-    assert commands == [domains.rule_command("del", domains.Rule(5000, "192.0.2.10", 100))]
+    assert [(command[1], command[3], command[command.index("priority") + 1]) for command in commands[:2]] == [
+        ("-4", "add", "6000"), ("-6", "add", "6000")]
+    assert commands[2:] == [domains.rule_command("del", domains.Rule(5000, "192.0.2.10", 100))]
 
 
 def test_native_rule_dump_requests_numeric_and_detailed_kernel_protocol(monkeypatch):
