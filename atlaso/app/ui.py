@@ -11422,7 +11422,9 @@ def appliance_apply_units(db: Session, *, reconcile: bool = True, applying_dns: 
     )
     # Desired WAN gateway validation cannot authorize a route against an
     # unapplied Network prefix. Couple only effective routes whose own target
-    # addressing changed; unrelated pending Network edits stay independent.
+    # addressing or routing ownership changed; unrelated pending Network edits
+    # stay independent. A newly active target needs its connected route before
+    # WAN can install a gateway route in that target's domain.
     applied_network_rows = {
         row["name"]: row for row in network_interface_entries(network_baseline_preview)
     }
@@ -11449,7 +11451,9 @@ def appliance_apply_units(db: Session, *, reconcile: bool = True, applying_dns: 
         address_fields = ("ip_cidr", "ipv4_method") if family == 4 else ("ipv6_cidr", "ipv6_enabled")
         previous = applied_network_rows.get(route.interface_name, {})
         desired = desired_network_rows.get(route.interface_name, {})
-        if any(previous.get(field, "") != desired.get(field, "") for field in address_fields):
+        routing_fields = ("role", "mode", "admin_state")
+        if any(previous.get(field, "") != desired.get(field, "")
+               for field in (*address_fields, *routing_fields)):
             gateway_target_changes.add(route.interface_name)
     wan_unit["network_address_dependency"] = bool(network_unit["changed"] and gateway_target_changes)
     previous_targets = {

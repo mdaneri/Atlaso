@@ -11820,6 +11820,7 @@ def _restore_network_transaction(state: dict) -> bool:
         _restore_route_domains(state)
         if "previous_route_domain_rules" in state:
             _restore_route_domain_rules(state["previous_route_domain_rules"])
+        _retire_transition_routes(state, NETWORK_TRANSACTION_DIR / "state.json", require_replacement=False)
     except (OSError, ValueError, subprocess.TimeoutExpired) as exc:
         failures.append(str(exc))
     if failures:
@@ -11921,13 +11922,17 @@ def _network_apply_transaction(path: Path):
                 if target.is_file():
                     _fsync_file(target)
             _fsync_directory(NETWORKD_CONFIG_DIR)
+            # Route seeds are journaled by the yielded Apply body. Reload the
+            # current marker so completion cannot overwrite that ownership
+            # record with the pre-yield snapshot.
+            state = _network_transaction_state()
             state["phase"] = "awaiting-commit"
             _durable_management_handoff_state_write(state, NETWORK_TRANSACTION_DIR / "state.json")
             if job_id == "manual":
                 _finish_network_transaction(state, "committed")
         except (OSError, ValueError, subprocess.TimeoutExpired) as exc:
             try:
-                _restore_network_transaction(state)
+                _restore_network_transaction(_network_transaction_state())
             except (OSError, ValueError, subprocess.TimeoutExpired) as restore_exc:
                 raise ValueError(f"{exc}; network rollback incomplete: {restore_exc}") from exc
             raise ValueError(f"{exc}; previous network configuration restored") from exc
@@ -12063,6 +12068,9 @@ def _handle_network_locked(action: str, args: list[str]) -> int:
             held_sources = _removed_vlan_source_holds(config_path)
             old_management = _ordinary_network_old_management_bindings(config_path)
             if old_management:
+                _seed_transition_routes(
+                    _network_transaction_state(), old_management, NETWORK_TRANSACTION_DIR / "state.json",
+                )
                 _transition_source_guard(True, seed_interfaces=old_management)
             else:
                 _transition_source_guard(True)
@@ -12072,6 +12080,17 @@ def _handle_network_locked(action: str, args: list[str]) -> int:
             install_returncode, installed, reconfigure_links, admin_down_links = _install_systemd_networkd_files(config_path)
             if install_returncode != 0:
                 raise ValueError(f"network configuration installation failed ({install_returncode})")
+            # The ordinary renderer deliberately omits Management from its
+            # reconfigure list. On a marker-free upgrade, the newly rendered
+            # table-100 routes need one explicit reconfigure while the proven
+            # old routes and exact-source guard remain in place.
+            seeded_management = {
+                row["name"] for row in _network_transaction_state().get("transition_seed_routes", [])
+                if row["table"] == MANAGEMENT_ROUTE_TABLE_ID
+            } if old_management else set()
+            for name in sorted(seeded_management):
+                if _run(["networkctl", "reconfigure", name]).returncode:
+                    raise ValueError("previous management route reconfigure failed")
             if _apply_vlan_interfaces(config_path, defer_removed=True) != 0:
                 raise ValueError("candidate VLAN activation failed")
             _wait_network_addresses(config_path, started_at=activation_started)
@@ -12084,6 +12103,11 @@ def _handle_network_locked(action: str, args: list[str]) -> int:
             _install_route_domain_intent(config_path)
             _apply_route_domain_ingress(config_path)
             _reconcile_route_domains()
+            if old_management:
+                _retire_transition_routes(
+                    _network_transaction_state(), NETWORK_TRANSACTION_DIR / "state.json",
+                    require_replacement=True, allow_disappeared_source=True,
+                )
     except (ValueError, OSError, subprocess.TimeoutExpired) as exc:
         print(str(exc), file=sys.stderr)
         return 2
@@ -26300,6 +26324,250 @@ def _snapshot_management_handoff_routing(interfaces: list[str], tables: dict[str
     return captured
 
 
+def _transition_route_rows(name: str, family: int, table: int) -> list[dict]:
+    """Read a full bounded domain table so foreign metric collisions are visible.
+
+    Args:
+        name: Interface whose routing domain is being inspected.
+        family: IP family, either 4 or 6.
+        table: Routing table assigned to the interface.
+    """
+    if not _valid_network_interface_name(name) or family not in {4, 6} or table not in {100, 200}:
+        raise ValueError("invalid transition route observation")
+    result = _network_observation_command(
+        ["ip", "-j", f"-{family}", "route", "show", "table", str(table)]
+    )
+    if result.returncode:
+        raise ValueError("transition routing-domain routes could not be observed")
+    try:
+        rows = json.loads(result.stdout)
+    except json.JSONDecodeError as exc:
+        raise ValueError("transition routing-domain routes are malformed") from exc
+    if not isinstance(rows, list) or len(rows) > 4096 or any(not isinstance(row, dict) for row in rows):
+        raise ValueError("transition routing-domain routes are malformed")
+    return rows
+
+
+def _transition_route_command(action: str, row: dict) -> list[str]:
+    """Build an exact command for a route recorded in the durable transaction.
+
+    Args:
+        action: Route operation, either add or del.
+        row: Journaled route and its exact owner and seed metric.
+    """
+    if action not in {"add", "del"}:
+        raise ValueError("invalid transition route operation")
+    name, table, destination = row["name"], row["table"], row["destination"]
+    if not _valid_network_interface_name(name) or type(table) is not int or table not in {100, 200}:
+        raise ValueError("invalid transition route owner")
+    network = ip_network(destination, strict=True)
+    if str(network) != destination:
+        raise ValueError("invalid transition route destination")
+    metric = row["seed_metric"]
+    if type(metric) is not int or not 0 < metric <= 0xFFFFFFFF:
+        raise ValueError("invalid transition route metric")
+    command = ["ip", f"-{network.version}", "route", action, destination]
+    gateway = row["gateway"]
+    if gateway:
+        if str(ip_address(gateway)) != gateway or ip_address(gateway).version != network.version:
+            raise ValueError("invalid transition route gateway")
+        command.extend(["via", gateway, "onlink"])
+    command.extend(["dev", name, "table", str(table), "proto", "2", "metric", str(metric)])
+    if row["preferred_source"]:
+        if (str(ip_address(row["preferred_source"])) != row["preferred_source"]
+                or ip_address(row["preferred_source"]).version != network.version):
+            raise ValueError("invalid transition route preferred source")
+        command.extend(["src", row["preferred_source"]])
+    if not gateway and network.version == 4 and row["scope"] == "link":
+        command.extend(["scope", "link"])
+    return command
+
+
+def _transition_route_matches(row: dict, observed: dict, *, seeded: bool) -> bool:
+    """Match one route's exact device, prefix, gateway, and optional seed tag.
+
+    Args:
+        row: Journaled route to match.
+        observed: Route returned by the live kernel inventory.
+        seeded: Whether to require the temporary seed metric and protocol.
+    """
+    family = ip_network(row["destination"]).version
+    destination = observed.get("dst", "default")
+    if destination == "default":
+        destination = "0.0.0.0/0" if family == 4 else "::/0"
+    try:
+        same = (observed.get("dev") == row["name"]
+                and ip_network(destination, strict=False) == ip_network(row["destination"])
+                and str(observed.get("gateway") or "") == row["gateway"]
+                and observed.get("type", "unicast") == "unicast")
+    except ValueError:
+        raise ValueError("transition routing-domain route is malformed") from None
+    if not same:
+        return False
+    if seeded:
+        return (observed.get("metric", 0) == row["seed_metric"]
+                and str(observed.get("protocol")) in {"2", "kernel"})
+    return observed.get("metric", 0) != row["seed_metric"]
+
+
+def _transition_route_successor(row: dict, observed: dict, seed_metrics: set[int]) -> bool:
+    """Require a live networkd route for the old destination on its exact link.
+
+    Args:
+        row: Journaled old route whose successor is required.
+        observed: Candidate route returned by the live kernel inventory.
+        seed_metrics: Metrics reserved for temporary transition routes.
+    """
+    if observed.get("dev") != row["name"] or observed.get("type", "unicast") != "unicast":
+        return False
+    if str(observed.get("protocol")) not in {"kernel", "static", "dhcp", "ra"}:
+        return False
+    flags = observed.get("flags", [])
+    if not isinstance(flags, list) or set(flags) & {"dead", "linkdown"}:
+        return False
+    if observed.get("metric", 0) in seed_metrics:
+        return False
+    family = ip_network(row["destination"]).version
+    destination = observed.get("dst", "default")
+    if destination == "default":
+        destination = "0.0.0.0/0" if family == 4 else "::/0"
+    try:
+        return ip_network(destination, strict=False) == ip_network(row["destination"])
+    except ValueError as exc:
+        raise ValueError("transition routing-domain successor is malformed") from exc
+
+
+def _transition_old_source_absent(name: str, mac: str, cidrs: list[str], family: int) -> bool:
+    """Prove the old source family left its original MAC-bound link.
+
+    Args:
+        name: Original interface name.
+        mac: Original interface MAC address.
+        cidrs: Source addresses recorded before the transition.
+        family: IP family being checked, either 4 or 6.
+    """
+    result = _network_observation_command(["ip", "-j", "address", "show", "dev", name])
+    if result.returncode:
+        raise ValueError("transition old source could not be observed")
+    try:
+        links = json.loads(result.stdout)
+    except json.JSONDecodeError as exc:
+        raise ValueError("transition old source inventory is malformed") from exc
+    if (not isinstance(links, list) or len(links) != 1 or not isinstance(links[0], dict)
+            or links[0].get("ifname") != name or str(links[0].get("address", "")).lower() != mac):
+        raise ValueError("transition old source identity changed")
+    entries = links[0].get("addr_info")
+    if not isinstance(entries, list) or len(entries) > 4096 or any(not isinstance(entry, dict) for entry in entries):
+        raise ValueError("transition old source addresses are malformed")
+    old = {str(ip_interface(cidr).ip) for cidr in cidrs if ip_interface(cidr).version == family}
+    return not any(entry.get("local") in old and entry.get("valid_life_time") != 0 for entry in entries)
+
+
+def _seed_transition_routes(state: dict, bindings: list[dict], marker: Path) -> None:
+    """Stage proven old routes before source rules can select their domain.
+
+    Args:
+        state: Durable management transition state.
+        bindings: Current interface-to-routing-table bindings.
+        marker: Path of the durable transition marker.
+    """
+    tables = {row["name"]: row["table"] for row in bindings}
+    previous = state.get("previous_management_routing")
+    live = _snapshot_management_handoff_routing(list(tables), tables)
+    if previous is not None and live != previous:
+        raise ValueError("previous management routing changed before transition")
+    if previous is None:
+        previous = live
+        state["previous_management_routing"] = previous
+    planned = []
+    seed_base = max(
+        (route["holdover_metric"] for evidence in previous.values() for route in evidence["routes"]),
+        default=0,
+    ) + 1
+    for name, evidence in previous.items():
+        if evidence["table"] not in {100, 200} or name not in tables or tables[name] != evidence["table"]:
+            raise ValueError("previous management routing ownership changed")
+        for route in evidence["routes"]:
+            destination = route["destination"]
+            family = ip_network(destination).version
+            row = {"name": name, "table": evidence["table"], **route,
+                   "seed_metric": seed_base + len(planned)}
+            _transition_route_command("add", row)
+            observed = _transition_route_rows(name, family, evidence["table"])
+            if any(_transition_route_matches(row, candidate, seeded=False) for candidate in observed):
+                continue
+            for candidate in observed:
+                candidate_destination = candidate.get("dst", "default")
+                if candidate_destination == "default":
+                    candidate_destination = "0.0.0.0/0" if family == 4 else "::/0"
+                try:
+                    same_destination = ip_network(candidate_destination, strict=False) == ip_network(destination)
+                except ValueError as exc:
+                    raise ValueError("transition routing-domain route is malformed") from exc
+                if same_destination:
+                    raise ValueError("previous management route conflicts with live domain")
+            if any(candidate.get("metric") == row["seed_metric"] for candidate in observed):
+                raise ValueError("transition route seed metric is occupied")
+            planned.append(row)
+    if len(planned) > 256:
+        raise ValueError("transition route seed capacity exceeded")
+    state["transition_seed_routes"] = planned
+    _durable_management_handoff_state_write(state, marker)
+    for row in planned:
+        if _run(_transition_route_command("add", row)).returncode:
+            raise ValueError("previous management route seed failed")
+
+
+def _retire_transition_routes(
+    state: dict, marker: Path, *, require_replacement: bool, allow_disappeared_source: bool = False,
+) -> None:
+    """Retire only durably recorded seed routes after replacement or rollback.
+
+    Args:
+        state: Durable management transition state.
+        marker: Path of the durable transition marker.
+        require_replacement: Require a proven successor before deleting a seed.
+        allow_disappeared_source: Permit retirement once the old source is absent.
+    """
+    rows = state.get("transition_seed_routes", [])
+    if not isinstance(rows, list) or len(rows) > 256:
+        raise ValueError("transition route seed journal is invalid")
+    if not rows:
+        return
+    previous = state.get("previous_management_routing")
+    if not isinstance(previous, dict):
+        raise ValueError("transition route seed ownership is missing")
+    seed_base = max(
+        (route["holdover_metric"] for evidence in previous.values() for route in evidence["routes"]),
+        default=0,
+    ) + 1
+    seed_metrics = {row.get("seed_metric") for row in rows if isinstance(row, dict)}
+    for index, row in enumerate(rows):
+        evidence = previous.get(row.get("name")) if isinstance(row, dict) else None
+        if (not isinstance(evidence, dict) or row.get("table") != evidence.get("table")
+                or row.get("seed_metric") != seed_base + index
+                or not any(row == {"name": row["name"], "seed_metric": row["seed_metric"], **route}
+                           for route in evidence.get("routes", []))):
+            raise ValueError("transition route seed ownership is invalid")
+        _transition_route_command("del", row)
+        family = ip_network(row["destination"]).version
+        observed = _transition_route_rows(row["name"], family, row["table"])
+        seeded = [item for item in observed if _transition_route_matches(row, item, seeded=True)]
+        if len(seeded) > 1:
+            raise ValueError("transition route seed is ambiguous")
+        if require_replacement and seeded and not any(
+            _transition_route_successor(row, item, seed_metrics) for item in observed
+        ):
+            if not allow_disappeared_source or not _transition_old_source_absent(
+                row["name"], evidence["mac"], evidence["cidrs"], family,
+            ):
+                raise ValueError("replacement management route is not ready")
+        if seeded and _run(_transition_route_command("del", row)).returncode:
+            raise ValueError("transition route seed retirement failed")
+    state["transition_seed_routes"] = []
+    _durable_management_handoff_state_write(state, marker)
+
+
 def _management_handoff_held_addresses(state: dict) -> list[dict]:
     """Derive immutable held sources from pre-mutation routing evidence.
 
@@ -27761,6 +28029,9 @@ def _restore_management_handoff(state: dict) -> dict:
     )
     if "previous_route_domain_rules" in state:
         attempt("routing-domain rule restore", lambda: _restore_route_domain_rules(state["previous_route_domain_rules"]))
+    attempt("transition route seed retirement", lambda: _retire_transition_routes(
+        state, MANAGEMENT_HANDOFF_STATE_PATH, require_replacement=False,
+    ))
     # Firewall restoration flushes the ruleset; replay canonical NAT after that final flush.
     attempt("firewall restore", lambda: _restore_management_handoff_firewall(state, commands))
     # Older journals lack publication progress; retain conservative recovery for them.
@@ -28314,6 +28585,7 @@ def _apply_management_handoff(payload: dict) -> int:
         previous_bindings = [{"name": name, "table": table}
                              for name, table in state.get("previous_route_domains", {}).items()]
         if previous_bindings:
+            _seed_transition_routes(state, previous_bindings, MANAGEMENT_HANDOFF_STATE_PATH)
             _transition_source_guard(True, seed_interfaces=previous_bindings)
         else:
             _transition_source_guard(True)
@@ -28327,6 +28599,7 @@ def _apply_management_handoff(payload: dict) -> int:
         failing_layer = "address activation"
         address_observation = _wait_network_addresses(Path(str(payload["network_config_path"])), started_at=activation_started)
         _wait_management_handoff_routes(state)
+        _retire_transition_routes(state, MANAGEMENT_HANDOFF_STATE_PATH, require_replacement=True)
         _apply_route_domain_ingress(
             Path(str(payload["network_config_path"])),
             held_management_interfaces={name for name, table in state.get("previous_route_domains", {}).items()

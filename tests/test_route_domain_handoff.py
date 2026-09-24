@@ -131,6 +131,142 @@ def test_legacy_dhcp_and_ra_routes_gain_disjoint_standby_metrics(monkeypatch):
     assert all(row["table"] == 100 for row in held)
 
 
+@pytest.mark.parametrize("destination,gateway,source", [
+    ("192.0.2.0/24", "", "192.0.2.10"),
+    ("0.0.0.0/0", "192.0.2.1", "192.0.2.10"),
+    ("::/0", "fe80::1", "2001:db8::10"),
+])
+def test_transition_seeds_missing_old_route_before_source_guard_and_retires_after_replacement(
+    monkeypatch, tmp_path, destination, gateway, source,
+):
+    """An absent table-100 route gets a journaled standby before exact rules.
+
+    Args:
+        monkeypatch: Isolated native route operations.
+        tmp_path: Task-owned transaction marker location.
+        destination: Connected or default route copied from the old path.
+        gateway: Proven old next hop, if any.
+        source: Assigned old address used by the route.
+    """
+    helper = load_helper_module()
+    family = 6 if ":" in destination else 4
+    route = {"destination": destination, "gateway": gateway, "metric": 0,
+             "scope": "link" if not gateway else "global", "table": 100,
+             "preferred_source": source if not gateway else "", "preference": "medium",
+             "holdover_metric": 1}
+    evidence = {"eth0": {"mac": "02:00:00:00:00:01", "table": 100,
+                         "cidrs": [f"{source}/64" if family == 6 else f"{source}/24"],
+                         "routes": [route]}}
+    state = {"previous_management_routing": evidence}
+    observed = []
+    events = []
+    marker = tmp_path / "state.json"
+    monkeypatch.setattr(helper, "_snapshot_management_handoff_routing", lambda *_args: evidence)
+    monkeypatch.setattr(helper, "_transition_route_rows", lambda *_args: list(observed))
+    monkeypatch.setattr(helper, "_durable_management_handoff_state_write",
+                        lambda _state, _marker: events.append("journal"))
+
+    def run(command):
+        """Model only exact route addition and deletion, recording their order.
+
+        Args:
+            command: Route command being simulated.
+        """
+        events.append(command[3])
+        if command[3] == "add":
+            observed.append({"dst": destination, "dev": "eth0", "gateway": gateway,
+                             "metric": 2, "protocol": 2})
+        else:
+            observed.clear()
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    monkeypatch.setattr(helper, "_run", run)
+    helper._seed_transition_routes(state, [{"name": "eth0", "table": 100}], marker)
+    assert events == ["journal", "add"]
+    assert state["transition_seed_routes"][0]["seed_metric"] == 2
+    assert "table" in helper._transition_route_command("add", state["transition_seed_routes"][0])
+    # Networkd later installs the connected/default path at its own metric.
+    observed.append({"dst": destination, "dev": "eth0", "gateway": gateway,
+                     "metric": 1, "protocol": "static"})
+    helper._retire_transition_routes(state, marker, require_replacement=True)
+    assert events == ["journal", "add", "del", "journal"]
+    assert state["transition_seed_routes"] == []
+
+
+def test_transition_route_seed_refuses_changed_old_route_before_any_mutation(monkeypatch, tmp_path):
+    """A stale snapshot cannot authorize a route and then a source-rule guard.
+
+    Args:
+        monkeypatch: Pytest fixture for replacing helper operations.
+        tmp_path: Pytest fixture for the transition marker location.
+    """
+    helper = load_helper_module()
+    evidence = {"eth0": {"mac": "02:00:00:00:00:01", "table": 100, "cidrs": ["192.0.2.10/24"],
+                         "routes": [{"destination": "192.0.2.0/24", "gateway": "", "metric": 0,
+                                     "scope": "link", "table": 100, "preferred_source": "192.0.2.10",
+                                     "preference": "medium", "holdover_metric": 1}]}}
+    state = {"previous_management_routing": evidence}
+    monkeypatch.setattr(helper, "_snapshot_management_handoff_routing", lambda *_args: {})
+    monkeypatch.setattr(helper, "_durable_management_handoff_state_write",
+                        lambda *_args: pytest.fail("stale routing was journaled"))
+    monkeypatch.setattr(helper, "_run", lambda *_args: pytest.fail("stale routing was mutated"))
+    with pytest.raises(ValueError, match="changed before transition"):
+        helper._seed_transition_routes(state, [{"name": "eth0", "table": 100}], tmp_path / "state.json")
+
+
+@pytest.mark.parametrize("successor,old_address_present,allowed", [
+    ({"dst": "default", "dev": "eth0", "gateway": "192.0.2.2",
+      "metric": 1024, "protocol": "dhcp"}, True, True),
+    ({"dst": "198.51.100.0/24", "dev": "eth0", "metric": 1024,
+      "protocol": "dhcp"}, True, False),
+    (None, False, True),
+])
+def test_transition_retirement_requires_successor_or_disappeared_old_source(
+    monkeypatch, tmp_path, successor, old_address_present, allowed,
+):
+    """A changed gateway is valid, but an unrelated route cannot replace old reachability.
+
+    Args:
+        monkeypatch: Pytest fixture for replacing helper operations.
+        tmp_path: Pytest fixture for the transition marker location.
+        successor: Candidate successor route for the old destination.
+        old_address_present: Whether the old source remains on the link.
+        allowed: Whether retirement is expected to succeed.
+    """
+    helper = load_helper_module()
+    route = {"destination": "0.0.0.0/0", "gateway": "192.0.2.1", "metric": 0,
+             "scope": "global", "table": 100, "preferred_source": "",
+             "preference": "medium", "holdover_metric": 1}
+    evidence = {"eth0": {"mac": "02:00:00:00:00:01", "table": 100,
+                         "cidrs": ["192.0.2.10/24"], "routes": [route]}}
+    seeded = {"name": "eth0", **route, "seed_metric": 2}
+    state = {"previous_management_routing": evidence, "transition_seed_routes": [seeded]}
+    observed = [{"dst": "default", "dev": "eth0", "gateway": "192.0.2.1",
+                 "metric": 2, "protocol": "kernel"}]
+    if successor:
+        observed.append(successor)
+    commands = []
+    monkeypatch.setattr(helper, "_transition_route_rows", lambda *_args: observed)
+    monkeypatch.setattr(helper, "_network_observation_command", lambda _command:
+                        subprocess.CompletedProcess([], 0, json.dumps([{
+                            "ifname": "eth0", "address": "02:00:00:00:00:01",
+                            "addr_info": [{"local": "192.0.2.10" if old_address_present else "198.51.100.10"}],
+                        }]), ""))
+    monkeypatch.setattr(helper, "_run", lambda command: commands.append(command)
+                        or subprocess.CompletedProcess(command, 0, "", ""))
+    monkeypatch.setattr(helper, "_durable_management_handoff_state_write", lambda *_args: None)
+    if allowed:
+        helper._retire_transition_routes(state, tmp_path / "state.json",
+                                         require_replacement=True, allow_disappeared_source=True)
+        assert len(commands) == 1
+        assert state["transition_seed_routes"] == []
+    else:
+        with pytest.raises(ValueError, match="replacement management route is not ready"):
+            helper._retire_transition_routes(state, tmp_path / "state.json",
+                                             require_replacement=True, allow_disappeared_source=True)
+        assert commands == []
+
+
 def test_snapshot_never_invents_gateway_or_ipv6_onlink_prefix(monkeypatch):
     """An RA prefix without the on-link flag must retain only observed routes.
 

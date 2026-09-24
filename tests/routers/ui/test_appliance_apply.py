@@ -2478,14 +2478,15 @@ def test_wan_apply_preview_uses_selected_network_ownership(client, monkeypatch, 
 
 
 @pytest.mark.parametrize("scenario", ["changed_address", "unrelated_network_edit", "invalid_network",
-                                      "disabled_route", "routing_off"])
+                                      "disabled_route", "routing_off", "activate_trunk",
+                                      "activate_admin_down", "activate_unused", "change_domain"])
 def test_wan_gateway_target_address_requires_network_apply(client, monkeypatch, scenario):
-    """A pending gateway's new on-link prefix requires Network before WAN.
+    """A pending gateway's new prefix or routing owner requires Network first.
 
     Args:
         client: Isolated HTTP application fixture.
         monkeypatch: Keep submitted jobs pending and inject invalid Network state.
-        scenario: Address dependency, unrelated edit, invalid dependency, or inactive route.
+        scenario: Address or ownership dependency, unrelated edit, or inactive route.
     """
     from sqlalchemy import select
 
@@ -2500,9 +2501,11 @@ def test_wan_gateway_target_address_requires_network_apply(client, monkeypatch, 
         save_routes_wan_settings(db, routing_enabled=True, nat_enabled=False, wan_simulation_enabled=False)
         interface = db.scalar(select(PhysicalInterface).where(PhysicalInterface.name == "eth2"))
         assert interface is not None
-        interface.role = "access"
-        interface.mode = "access"
-        interface.admin_state = "up"
+        interface.role = "unused" if scenario == "activate_unused" else (
+            "management" if scenario == "change_domain" else "access"
+        )
+        interface.mode = "trunk" if scenario == "activate_trunk" else "access"
+        interface.admin_state = "down" if scenario == "activate_admin_down" else "up"
         interface.oper_state = "up"
         interface.ipv4_method = "static"
         interface.ip_cidr = "192.0.2.10/24"
@@ -2512,7 +2515,11 @@ def test_wan_gateway_target_address_requires_network_apply(client, monkeypatch, 
         db.commit()
         units = ui.appliance_apply_units(db)
         ui.update_appliance_apply_baselines(db, units, {unit["id"] for unit in units})
-        if scenario == "unrelated_network_edit":
+        if scenario.startswith("activate_") or scenario == "change_domain":
+            interface.role = "access"
+            interface.mode = "access"
+            interface.admin_state = "up"
+        elif scenario == "unrelated_network_edit":
             interface.mtu = 1400
             route.gateway = "192.0.2.2"
         else:
@@ -2527,7 +2534,8 @@ def test_wan_gateway_target_address_requires_network_apply(client, monkeypatch, 
         units = ui.appliance_apply_units(db)
         network = next(unit for unit in units if unit["id"] == "network")
         wan = next(unit for unit in units if unit["id"] == "wan")
-        expected_dependency = scenario in {"changed_address", "invalid_network"}
+        expected_dependency = scenario in {"changed_address", "invalid_network", "activate_trunk",
+                                           "activate_admin_down", "activate_unused", "change_domain"}
         assert network["changed"]
         assert wan["network_address_dependency"] is expected_dependency
         assert wan["changed"]
