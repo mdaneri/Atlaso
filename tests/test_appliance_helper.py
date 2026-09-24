@@ -2609,6 +2609,43 @@ def test_management_handoff_merges_previous_static_and_dynamic_addresses(monkeyp
     assert helper._management_handoff_previous_link_interfaces(payload) == {"eth0", "eth0.20"}
 
 
+def test_management_handoff_scopes_old_tls_before_new_address_activation(monkeypatch, tmp_path):
+    """Keep a wildcard old certificate from serving newly acquired addresses."""
+    helper = load_helper_module()
+    site = tmp_path / "management.conf"
+    site.write_text(
+        "# Managed by Atlaso. Local changes may be overwritten.\n"
+        "server {\n  listen 80 default_server;\n  listen [::]:80 default_server;\n}\n"
+        "server {\n  listen 443 ssl default_server;\n  listen [::]:443 ssl default_server;\n}\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(helper, "NGINX_MANAGEMENT_SITE_PATH", site)
+    installed = []
+    monkeypatch.setattr(helper, "_install_nginx_site", lambda _path, text: installed.append(text) or 0)
+    helper._scope_management_handoff_old_listener({
+        "previous_https_enabled": True,
+        "previous_management_addresses": ["192.0.2.10", "2001:db8::10"],
+    })
+    assert len(installed) == 1
+    assert "listen 192.0.2.10:443 ssl default_server;" in installed[0]
+    assert "listen [2001:db8::10]:443 ssl default_server;" in installed[0]
+    assert "listen 443 ssl default_server;" not in installed[0]
+    assert "listen [::]:443 ssl default_server;" not in installed[0]
+
+
+def test_management_handoff_refuses_uncanonical_old_tls_site(monkeypatch, tmp_path):
+    """Refuse a wildcard listener that cannot be safely scoped."""
+    helper = load_helper_module()
+    site = tmp_path / "management.conf"
+    site.write_text("server { listen 443 ssl default_server; }\n", encoding="utf-8")
+    monkeypatch.setattr(helper, "NGINX_MANAGEMENT_SITE_PATH", site)
+    with pytest.raises(ValueError, match="not canonical"):
+        helper._scope_management_handoff_old_listener({
+            "previous_https_enabled": True,
+            "previous_management_addresses": ["192.0.2.10"],
+        })
+
+
 def test_management_handoff_syncs_transaction_and_backups_before_marker(monkeypatch, tmp_path):
     """Make the transaction directory and backups durable before the marker.
 
@@ -3518,6 +3555,7 @@ def test_management_handoff_failure_rolls_back_with_truthful_layer(monkeypatch, 
         failing_layer: Network activation or downstream firewall failure under test.
     """
     helper = load_helper_module()
+    monkeypatch.setattr(helper, "_scope_management_handoff_old_listener", lambda _state: None)
     monkeypatch.setattr(helper, "_network_detection_preflight", lambda _path: None)
     monkeypatch.setattr(helper, "_wait_network_addresses", lambda _path, **_kwargs: (_ for _ in ()).throw(ValueError("IP conflict on eth0: 192.0.2.20")) if failing_layer == "address activation" else {})
     state = {
@@ -3589,6 +3627,7 @@ def test_management_handoff_resolver_failure_rolls_back_before_nginx(
         capsys: Pytest fixture used to inspect bounded helper output.
     """
     helper = load_helper_module()
+    monkeypatch.setattr(helper, "_scope_management_handoff_old_listener", lambda _state: None)
     monkeypatch.setattr(helper, "_network_detection_preflight", lambda _path: None)
     monkeypatch.setattr(helper, "_wait_network_addresses", lambda _path, **_kwargs: {})
     state = {
@@ -3671,6 +3710,8 @@ def test_management_handoff_orders_resolver_before_dns_shutdown(monkeypatch, tmp
     """
     helper = load_helper_module()
     events: list[str] = []
+    monkeypatch.setattr(helper, "_scope_management_handoff_old_listener",
+                        lambda _state: events.append("scoped"))
     state = {
         "previous_management_addresses": ["192.0.2.10"],
         "previous_https_enabled": True,
@@ -3687,7 +3728,8 @@ def test_management_handoff_orders_resolver_before_dns_shutdown(monkeypatch, tmp
     monkeypatch.setattr(helper, "_management_handoff_readiness", lambda *_args: {"ready": True})
     monkeypatch.setattr(helper, "_install_management_holdovers", lambda *_args: [])
     monkeypatch.setattr(helper, "_write_management_handoff_state", lambda *_args: None)
-    monkeypatch.setattr(helper, "_apply_management_candidate_network", lambda *_args: None)
+    monkeypatch.setattr(helper, "_apply_management_candidate_network",
+                        lambda *_args: events.append("network"))
     monkeypatch.setattr(helper, "_wait_network_addresses", lambda *_args, **_kwargs: {})
     monkeypatch.setattr(helper, "_management_handoff_candidate_firewall_rules", lambda *_args: [])
     monkeypatch.setattr(helper, "_management_handoff_firewall_text", lambda *_args, **_kwargs: "table inet atlaso {}\n")
@@ -3711,7 +3753,8 @@ def test_management_handoff_orders_resolver_before_dns_shutdown(monkeypatch, tmp
         "dnsmasq_config_path": "candidate-dns",
         "public_services_config_path": "candidate-public",
     }) == 1
-    assert events == (["resolver", "dns"] if resolver_mode == "external" else ["dns"])
+    assert events == (["scoped", "network", "resolver", "dns"] if resolver_mode == "external"
+                      else ["scoped", "network", "dns"])
     assert state["resolver_apply_started"] is (resolver_mode == "external")
 
 
@@ -3724,6 +3767,7 @@ def test_management_handoff_never_activates_nginx_with_unhealthy_upstream(monkey
         capsys: Pytest fixture used to capture bounded helper output.
     """
     helper = load_helper_module()
+    monkeypatch.setattr(helper, "_scope_management_handoff_old_listener", lambda _state: None)
     monkeypatch.setattr(helper, "_network_detection_preflight", lambda _path: None)
     monkeypatch.setattr(helper, "_wait_network_addresses", lambda _path, **_kwargs: {})
     state = {

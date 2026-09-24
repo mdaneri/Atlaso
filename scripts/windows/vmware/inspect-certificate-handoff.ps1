@@ -86,10 +86,11 @@ try {
         -SourceCommit ([string]$planIdentity.source_commit) -TaskId ([string]$planIdentity.task_id)
     try {
     $scriptPath = Join-Path $snapshot.Root 'scripts/interop/certificate_handoff_native.py'
-    $arguments = @('-I', '-B', $scriptPath, '--plan', $Plan, '--evidence', $Evidence)
+    $arguments = New-AtlasoCertificatePythonArguments -Runtime $runtime -ScriptPath $scriptPath `
+        -ScriptArguments @('--plan', $Plan, '--evidence', $Evidence)
     Invoke-AtlasoBoundedProcess -FilePath $PythonPath `
-        -ArgumentList @('-I', '-B', $scriptPath, '--plan', $Plan,
-            '--evidence', ($Evidence + '.admission.json'), '--preflight-only') `
+        -ArgumentList (New-AtlasoCertificatePythonArguments -Runtime $runtime -ScriptPath $scriptPath `
+            -ScriptArguments @('--plan', $Plan, '--evidence', ($Evidence + '.admission.json'), '--preflight-only')) `
         -TimeoutSeconds 30 -Action 'PR871 canonical identity admission' -DiscardOutput | Out-Null
     $null = Assert-AtlasoSourceSnapshot -Root $snapshot.Root -ExpectedSha256 $snapshot.Sha256 `
         -ExpectedFileCount $snapshot.FileCount

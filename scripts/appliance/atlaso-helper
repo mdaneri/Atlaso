@@ -25291,6 +25291,44 @@ def _management_handoff_previous_addresses(payload: dict) -> list[str]:
     return list(dict.fromkeys(previous_addresses))
 
 
+def _scope_management_handoff_old_listener(state: dict) -> None:
+    """Bind the old TLS site only to proven old addresses before adding new ones.
+
+    Args:
+        state: Durable handoff snapshot with the reachable previous addresses.
+    """
+    if not state["previous_https_enabled"]:
+        return
+    site = NGINX_MANAGEMENT_SITE_PATH.read_text(encoding="utf-8")
+    if not site.startswith("# Managed by Atlaso. Local changes may be overwritten.\n"):
+        raise ValueError("previous management nginx site is not canonical")
+    addresses = [ip_address(value) for value in state["previous_management_addresses"]]
+    if not addresses or any(address.is_unspecified or address.is_multicast or address.is_link_local
+                            for address in addresses):
+        raise ValueError("previous management listener addresses are invalid")
+    scoped: list[str] = []
+    listeners = 0
+    for line in site.splitlines():
+        ipv4 = re.fullmatch(r"(\s*)listen (\d+)( (?:ssl )?default_server);", line)
+        ipv6 = re.fullmatch(r"(\s*)listen \[::\]:(\d+)( (?:ssl )?default_server);", line)
+        if ipv4 or ipv6:
+            match = ipv4 or ipv6
+            listeners += 1
+            family = 4 if ipv4 else 6
+            for address in addresses:
+                if address.version == family:
+                    binding = str(address) if family == 4 else f"[{address}]"
+                    scoped.append(f"{match.group(1)}listen {binding}:{match.group(2)}{match.group(3)};")
+        elif re.match(r"\s*listen\s", line):
+            raise ValueError("previous management nginx listener is not canonical")
+        else:
+            scoped.append(line)
+    if listeners != 4:
+        raise ValueError("previous management nginx listener inventory is incomplete")
+    if _install_nginx_site(NGINX_MANAGEMENT_SITE_PATH, "\n".join(scoped) + "\n") != 0:
+        raise ValueError("previous management nginx listener could not be address scoped")
+
+
 def _snapshot_management_handoff(payload: dict) -> dict:
     """Create the durable pre-mutation snapshot and interruption marker.
 
@@ -27287,6 +27325,8 @@ def _apply_management_handoff(payload: dict) -> int:
         )
         holdovers = _install_management_holdovers(state, payload)
         _write_management_handoff_state(state, "old-path-retained")
+        failing_layer = "old listener isolation"
+        _scope_management_handoff_old_listener(state)
         failing_layer = "certificate"
         settings_payload = _load_appliance_settings_config(
             Path(str(payload["appliance_settings_config_path"]))

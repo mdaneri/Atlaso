@@ -87,8 +87,9 @@ try {
         -SourceCommit ([string]$planIdentity.source_commit) -TaskId ([string]$planIdentity.task_id)
     try {
     $scriptPath = Join-Path $snapshot.Root 'scripts/interop/certificate_peer_proof.py'
-    $arguments = @('-I', '-B', $scriptPath, '--plan', $Plan,
-        '--address-output', $AddressEvidence, '--runtime-output', $RuntimeEvidence)
+    $arguments = New-AtlasoCertificatePythonArguments -Runtime $runtime -ScriptPath $scriptPath `
+        -ScriptArguments @('--plan', $Plan, '--address-output', $AddressEvidence,
+            '--runtime-output', $RuntimeEvidence)
     Invoke-AtlasoBoundedProcess -FilePath $PythonPath -ArgumentList ($arguments + '--preflight-only') `
         -TimeoutSeconds 30 -Action 'PR871 original peer proof admission' -DiscardOutput | Out-Null
     $null = Assert-AtlasoSourceSnapshot -Root $snapshot.Root -ExpectedSha256 $snapshot.Sha256 `

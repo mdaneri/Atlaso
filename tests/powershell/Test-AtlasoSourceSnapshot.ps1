@@ -239,6 +239,12 @@ foreach ($number in 1..100) {
 }
 $runtime = Protect-AtlasoCertificatePythonRuntime -PythonPath $python -EvidenceRoot $OutputDirectory
 try {
+    $proofArguments = New-AtlasoCertificatePythonArguments -Runtime $runtime -ScriptPath $dependency `
+        -ScriptArguments @('--help')
+    if ((@($proofArguments[0..2]) -join ' ') -cne '-I -S -B' -or
+        $proofArguments[-1] -cne '--help') {
+        throw 'Certificate proof child could execute Python startup hooks.'
+    }
     foreach ($path in @($python, $dependency, (Join-Path $baseLib 'module1.py'))) {
         $blocked = $false
         try { [IO.File]::WriteAllText($path, 'replaced') }

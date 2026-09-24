@@ -616,7 +616,7 @@ function Assert-AtlasoCertificatePythonImportPaths {
     param([Parameter(Mandatory)]$Runtime)
 
     $raw = Invoke-AtlasoBoundedProcess -FilePath $Runtime.Executable `
-        -ArgumentList @('-I', '-B', '-c', 'import json,sys;print(json.dumps(sys.path))') `
+        -ArgumentList @('-I', '-S', '-B', '-c', 'import json,sys;print(json.dumps(sys.path))') `
         -TimeoutSeconds 15 -Action 'Certificate Python import-path verification'
     $paths = ConvertFrom-Json -InputObject $raw
     if ($paths -isnot [array] -or $paths.Count -lt 2) {
@@ -639,6 +639,38 @@ function Assert-AtlasoCertificatePythonImportPaths {
     }
 }
 
+function New-AtlasoCertificatePythonArguments {
+    <#
+    .SYNOPSIS
+    Build isolated proof arguments without running Python startup hooks.
+
+    .PARAMETER Runtime
+    Pinned isolated Python runtime.
+
+    .PARAMETER ScriptPath
+    Pinned certificate proof script in the immutable source snapshot.
+
+    .PARAMETER ScriptArguments
+    Non-secret proof arguments forwarded to the script.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]$Runtime,
+        [Parameter(Mandatory)][string]$ScriptPath,
+        [string[]]$ScriptArguments = @()
+    )
+
+    $sitePackages = Join-Path $Runtime.VenvRoot 'Lib/site-packages'
+    if (-not (Test-Path -LiteralPath $sitePackages -PathType Container) -or
+        -not (Test-Path -LiteralPath $ScriptPath -PathType Leaf)) {
+        throw 'Pinned certificate Python imports or proof source are unavailable.'
+    }
+    # -S prevents .pth and sitecustomize execution even when another process
+    # creates a new startup hook after the namespace was admitted.
+    $bootstrap = 'import runpy,sys;sys.path.append(sys.argv[1]);sys.argv=sys.argv[2:];runpy.run_path(sys.argv[0],run_name="__main__")'
+    return @('-I', '-S', '-B', '-c', $bootstrap, $sitePackages, $ScriptPath) + $ScriptArguments
+}
+
 Export-ModuleMember -Function `
     Get-AtlasoSourceCheckoutIdentity, `
     New-AtlasoImmutableSourceSnapshot, `
@@ -649,4 +681,5 @@ Export-ModuleMember -Function `
     Unprotect-AtlasoSourceSnapshot, `
     New-AtlasoCertificateInspectorSnapshot, `
     Protect-AtlasoCertificatePythonRuntime, `
-    Assert-AtlasoCertificatePythonImportPaths
+    Assert-AtlasoCertificatePythonImportPaths, `
+    New-AtlasoCertificatePythonArguments
