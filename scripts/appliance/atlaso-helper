@@ -10705,6 +10705,7 @@ def _preflight_route_domain_capacity(path: Path) -> None:
     """
     physical, vlans, _removed = _parse_network_config(path)
     candidates = []
+    candidate_owners = []
     for row in [*physical, *vlans]:
         if row.get("role") == "unused" or row.get("mode") == "trunk" or row.get("admin_state") == "down":
             continue
@@ -10712,12 +10713,17 @@ def _preflight_route_domain_capacity(path: Path) -> None:
             if row.get(key):
                 address = ip_interface(row[key]).ip
                 if not (address.is_unspecified or address.is_multicast or address.is_link_local or address.is_loopback):
-                    candidates.append(str(address))
+                    source = str(address)
+                    candidates.append(source)
+                    candidate_owners.append({"address": source, "table": (
+                        MANAGEMENT_ROUTE_TABLE_ID if row.get("role") == "management"
+                        else LAB_ROUTE_TABLE_ID)})
     program = ("import json, sys\n"
                "from atlaso.route_domains import preflight_capacity\n"
-               "preflight_capacity(json.load(sys.stdin))\n")
+               "payload = json.load(sys.stdin)\n"
+               "preflight_capacity(payload['addresses'], payload['owners'])\n")
     result = _run_with_input(["/opt/atlaso/.venv/bin/python", "-I", "-c", program],
-                             json.dumps(candidates))
+                             json.dumps({"addresses": candidates, "owners": candidate_owners}))
     if result.returncode:
         raise ValueError("routing-domain transition source capacity preflight failed")
 
@@ -26543,9 +26549,16 @@ def _seed_transition_routes(state: dict, bindings: list[dict], marker: Path) -> 
                    "seed_metric": seed_base + len(planned)}
             _transition_route_command("add", row)
             observed = _transition_route_rows(name, family, evidence["table"])
-            if any(_transition_route_matches(row, candidate, seeded=False) for candidate in observed):
+            if any(_transition_route_matches(row, candidate, seeded=False)
+                   and _transition_route_successor(row, candidate, {row["seed_metric"]})
+                   for candidate in observed):
                 continue
             for candidate in observed:
+                flags = candidate.get("flags", [])
+                if not isinstance(flags, list) or any(not isinstance(flag, str) for flag in flags):
+                    raise ValueError("transition routing-domain route flags are malformed")
+                if set(flags) & {"dead", "linkdown"}:
+                    continue
                 candidate_destination = candidate.get("dst", "default")
                 if candidate_destination == "default":
                     candidate_destination = "0.0.0.0/0" if family == 4 else "::/0"

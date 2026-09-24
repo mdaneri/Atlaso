@@ -42,6 +42,24 @@ def test_transition_capacity_reserves_old_and_candidate_sources(monkeypatch, can
         domains.preflight_capacity(candidates)
 
 
+def test_transition_capacity_rejects_live_cross_domain_reuse(monkeypatch):
+    """An old management hold cannot share a source with candidate Lab intent."""
+    monkeypatch.setattr(domains, "reconciliation_lock", nullcontext)
+    monkeypatch.setattr(domains, "read_native", lambda _command: [])
+    monkeypatch.setattr(domains, "owned_rules", lambda *_args: set())
+    monkeypatch.setattr(domains, "transition_guard_present", lambda *_args: False)
+    monkeypatch.setattr(domains, "transition_exemptions_present", lambda *_args: False)
+    monkeypatch.setattr(domains, "read_intent", lambda: None)
+    monkeypatch.setattr(domains, "source_tables", lambda *_args: ({"192.0.2.10": 100}, False))
+    with pytest.raises(domains.ReconcileError, match="conflicts with live routing domain"):
+        domains.preflight_capacity(
+            ["192.0.2.10"], [{"address": "192.0.2.10", "table": 200}],
+        )
+    domains.preflight_capacity(
+        ["192.0.2.10"], [{"address": "192.0.2.10", "table": 100}],
+    )
+
+
 @pytest.mark.parametrize("protected", [False, True])
 def test_transition_capacity_failure_precedes_network_mutation(tmp_path, monkeypatch, protected):
     """Both Apply paths reject an overfull transition before writing state.
@@ -61,7 +79,9 @@ def test_transition_capacity_failure_precedes_network_mutation(tmp_path, monkeyp
     monkeypatch.setattr(helper, "MANAGEMENT_HANDOFF_STATE_PATH", tmp_path / "state.json")
     monkeypatch.setattr(helper, "_run_with_input", lambda command, payload:
                         subprocess.CompletedProcess(command, 1, "", "capacity exhausted")
-                        if json.loads(payload) == ["192.0.2.10"] else pytest.fail("wrong candidate"))
+                        if json.loads(payload) == {"addresses": ["192.0.2.10"],
+                                                   "owners": [{"address": "192.0.2.10", "table": 100}]}
+                        else pytest.fail("wrong candidate"))
     before = list(tmp_path.iterdir())
     with pytest.raises(ValueError, match="transition source capacity preflight failed"):
         if protected:

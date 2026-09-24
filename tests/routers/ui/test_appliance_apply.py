@@ -150,6 +150,25 @@ def test_wan_review_uses_applied_network_ingress_with_pending_network(client, ba
                     assert "pre-migration baselines retain legacy WAN handling" in preview
 
 
+def test_combined_wan_rejects_candidate_ingress_over_capacity(client, monkeypatch):
+    """Combined Apply refuses a newly enabled Routing window before Network runs."""
+    from atlaso.app import ui
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.services.routes_wan import save_routes_wan_settings
+
+    with SessionLocal() as db:
+        save_routes_wan_settings(db, routing_enabled=True, nat_enabled=False,
+                                 wan_simulation_enabled=False)
+        monkeypatch.setattr(ui, "wan_network_ingress_from_preview",
+                            lambda _preview: [f"lab{index}" for index in range(101)])
+        units = ui.appliance_apply_units(db)
+        wan = next(unit for unit in units if unit["id"] == "wan")
+        combined = ui.appliance_apply_units_for_selection(units, {"network", "wan"})
+        selected_wan = next(unit for unit in combined if unit["id"] == "wan")
+        assert selected_wan is wan["network_candidate_variant"]
+        assert any("ingress rule capacity" in error for error in selected_wan["validation_errors"])
+
+
 def test_fresh_wan_ingress_matches_helper_for_mixed_network_links(client, tmp_path):
     """Project active addressless links without admitting down or unused targets.
 

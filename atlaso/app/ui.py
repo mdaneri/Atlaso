@@ -514,6 +514,7 @@ from atlaso.app.services.public_services import (
     render_public_services_nginx_config,
 )
 from atlaso.app.services.routes_wan import (
+    ROUTE_RULE_PRIORITY_WINDOW,
     WAN_CONFIG_PATH,
     WAN_MODES,
     canonical_route_destination,
@@ -11493,13 +11494,18 @@ def appliance_apply_units(db: Session, *, reconcile: bool = True, applying_dns: 
     # A combined Apply publishes Network before WAN. Keep the applied-Network
     # rendering for WAN-only Apply, and capture the candidate rendering for the
     # review selection, submit snapshot, and execution snapshot.
+    candidate_network_ingress = wan_network_ingress_from_preview(network["network_config_preview"])
+    candidate_wan_errors = list(wan["wan_validation_errors"])
+    if (wan["routes_wan_settings"].routing_enabled
+            and len(candidate_network_ingress) > ROUTE_RULE_PRIORITY_WINDOW):
+        candidate_wan_errors.append("Routing & WAN exceeds the candidate Network ingress rule capacity.")
     candidate_wan_preview = render_wan_config(
         wan["routes"], wan["policies"], wan["nat_rules"], wan["wan_all_targets"],
         wan["routing_rules"], removed_routes=wan_removed_routes,
         source_groups=wan["wan_source_groups"],
         previous_config_preview=str((wan_baseline or {}).get("config_preview") or ""),
         settings=wan["routes_wan_settings"],
-        candidate_network_ingress=wan_network_ingress_from_preview(network["network_config_preview"]),
+        candidate_network_ingress=candidate_network_ingress,
         network_owned_targets=wan_network_owned_targets(
             db, network_preview=network["network_config_preview"]
         ),
@@ -11507,7 +11513,7 @@ def appliance_apply_units(db: Session, *, reconcile: bool = True, applying_dns: 
     candidate_wan = make_appliance_apply_unit(
         unit_id="wan", label="Routing & WAN", page_url="/routes-wan",
         context={**wan, "wan_config_preview": candidate_wan_preview},
-        summary=wan_summary, validation_errors=wan["wan_validation_errors"],
+        summary=wan_summary, validation_errors=candidate_wan_errors,
         config_path=wan["wan_config_path"], config_preview=candidate_wan_preview,
         baseline=wan_baseline,
     )

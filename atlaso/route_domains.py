@@ -623,17 +623,29 @@ def preflight() -> None:
             transition_exemptions_present(rows, family)
 
 
-def preflight_capacity(candidate_addresses: list[str]) -> None:
+def preflight_capacity(
+    candidate_addresses: list[str], candidate_owners: list[dict[str, str | int]] | None = None,
+) -> None:
     """Reserve rule slots for live, old, and candidate static sources before Apply.
 
     Args:
         candidate_addresses: Candidate static source addresses to reserve.
+        candidate_owners: Address and routing-table ownership projected from candidate Network intent.
     """
     if not isinstance(candidate_addresses, list) or len(candidate_addresses) > 512:
         raise ReconcileError("invalid candidate source inventory")
     candidates = {usable_address(address) for address in candidate_addresses}
     if len(candidates) != len(candidate_addresses):
         raise ReconcileError("duplicate candidate source address")
+    if candidate_owners is not None:
+        if (not isinstance(candidate_owners, list) or len(candidate_owners) != len(candidate_addresses)
+                or any(not isinstance(row, dict) or set(row) != {"address", "table"}
+                       or type(row["table"]) is not int or row["table"] not in {100, 200}
+                       for row in candidate_owners)):
+            raise ReconcileError("invalid candidate source ownership")
+        owner_map = {usable_address(row["address"]): row["table"] for row in candidate_owners}
+        if set(owner_map) != candidates or len(owner_map) != len(candidate_owners):
+            raise ReconcileError("invalid candidate source ownership")
     with reconciliation_lock():
         existing: set[Rule] = set()
         for family in (4, 6):
@@ -644,6 +656,10 @@ def preflight_capacity(candidate_addresses: list[str]) -> None:
         # A removed VLAN can already be absent. Count its remaining old rules;
         # the removal-specific identity check decides whether Apply may proceed.
         live, _incomplete = source_tables(read_intent(), read_native(["address", "show"]))
+        if candidate_owners is not None and any(
+            source in live and live[source] != table for source, table in owner_map.items()
+        ):
+            raise ReconcileError("candidate source conflicts with live routing domain")
         reserved = {rule.source for rule in existing} | set(live) | candidates
         plan_rules({source: None for source in reserved}, existing)
 

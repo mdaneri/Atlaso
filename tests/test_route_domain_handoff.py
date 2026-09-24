@@ -270,6 +270,29 @@ def test_transition_route_seed_refuses_changed_old_route_before_any_mutation(mon
         helper._seed_transition_routes(state, [{"name": "eth0", "table": 100}], tmp_path / "state.json")
 
 
+@pytest.mark.parametrize("flags", [["dead"], ["linkdown"]])
+def test_transition_seed_ignores_unusable_same_destination_route(monkeypatch, tmp_path, flags):
+    """A stale table route cannot stand in for the old management source."""
+    helper = load_helper_module()
+    route = {"destination": "192.0.2.0/24", "gateway": "", "metric": 0,
+             "scope": "link", "table": 100, "preferred_source": "192.0.2.10",
+             "preference": "medium", "holdover_metric": 1}
+    evidence = {"eth0": {"mac": "02:00:00:00:00:01", "table": 100,
+                         "cidrs": ["192.0.2.10/24"], "routes": [route]}}
+    observed = [{"dst": "192.0.2.0/24", "dev": "eth0", "metric": 20,
+                 "protocol": "kernel", "flags": flags}]
+    monkeypatch.setattr(helper, "_snapshot_management_handoff_routing", lambda *_args: evidence)
+    monkeypatch.setattr(helper, "_transition_route_rows", lambda *_args: observed)
+    monkeypatch.setattr(helper, "_durable_management_handoff_state_write", lambda *_args: None)
+    commands = []
+    monkeypatch.setattr(helper, "_run", lambda command: commands.append(command)
+                        or subprocess.CompletedProcess(command, 0, "", ""))
+    state = {"previous_management_routing": evidence}
+    helper._seed_transition_routes(state, [{"name": "eth0", "table": 100}], tmp_path / "state.json")
+    assert len(state["transition_seed_routes"]) == 1
+    assert len(commands) == 1
+
+
 @pytest.mark.parametrize("successor,old_address_present,allowed", [
     ({"dst": "default", "dev": "eth0", "gateway": "192.0.2.1",
       "metric": 1, "protocol": "boot"}, True, True),
