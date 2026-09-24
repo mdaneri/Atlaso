@@ -3332,6 +3332,22 @@ def test_management_handoff_keeps_previous_http_when_port_changes():
     assert "X-Forwarded-Proto http" in holdover
 
 
+def test_management_handoff_keeps_previous_http_on_same_port():
+    """Address replacement keeps the old HTTP socket until final retirement."""
+    helper = load_helper_module()
+    state = {"previous_https_enabled": False, "previous_management_public_port": 80,
+             "previous_management_addresses": ["192.0.2.10"]}
+    holdover = helper._management_handoff_protocol_holdover(
+        state, {"management_https_enabled": False, "management_public_http_port": 80,
+                "management_upstream_host": "127.0.0.1", "management_upstream_port": 8000},
+    )
+    initial = helper._management_handoff_initial_listener_addresses(
+        ["192.0.2.10", "192.0.2.20"], state, 80, holdover,
+    )
+    assert "listen 192.0.2.10:80 bind;" in holdover
+    assert initial == ["192.0.2.20"]
+
+
 @pytest.mark.parametrize("candidate_https", [False, True])
 def test_management_handoff_keeps_previous_https_identity(monkeypatch, tmp_path, candidate_https):
     """Use separate captured TLS bytes until old-listener retirement.

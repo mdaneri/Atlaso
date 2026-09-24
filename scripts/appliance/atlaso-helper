@@ -26257,14 +26257,9 @@ def _management_handoff_protocol_holdover(state: dict, payload: dict) -> str:
         Transitional nginx server blocks, or an empty string when no holdover is required.
     """
     previous_https = bool(state.get("previous_https_enabled", True))
-    candidate_https = bool(payload.get("management_https_enabled"))
     public_port = int(state.get("previous_management_public_port") or (443 if previous_https else 80))
-    candidate_port = int(
-        payload.get("management_public_https_port" if candidate_https else "management_public_http_port")
-        or (443 if candidate_https else 80)
-    )
-    if not previous_https and not candidate_https and public_port == candidate_port:
-        return ""
+    # The old HTTP socket remains a required rollback path even when the
+    # candidate keeps the same protocol and port but changes its address.
     upstream_host = str(payload.get("management_upstream_host") or "127.0.0.1")
     upstream_port = int(payload.get("management_upstream_port") or payload.get("management_http_port") or 8000)
     certificate_lines: list[str] = []
