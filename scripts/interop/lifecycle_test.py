@@ -3314,28 +3314,34 @@ def _configure_signed_release_source(
     if not section_match:
         raise LifecycleError("Atlaso release source group was not found in Appliance Update.")
     section = section_match.group(1)
-    source_match = re.search(
-        r'<form\b[^>]*action="/appliance-update/sources/(\d+)"[^>]*>(.*?)</form>',
-        section,
-        flags=re.DOTALL,
-    )
-    if not source_match:
+    source_payload = None
+    for button_match in re.finditer(r"<button\b[^>]*>", section, flags=re.DOTALL):
+        button = button_match.group(0)
+        if 'data-update-source-mode="edit"' not in button or 'data-update-source-kind="atlaso"' not in button:
+            continue
+        payload_match = re.search(r"data-update-source='([^']*)'", button)
+        if not payload_match:
+            raise LifecycleError("Atlaso release source edit data was not found.")
+        try:
+            source_payload = json.loads(html.unescape(payload_match.group(1)))
+        except json.JSONDecodeError as exc:
+            raise LifecycleError("Atlaso release source edit data was invalid.") from exc
+        break
+    if source_payload is None:
         raise LifecycleError("No configured Atlaso release source was found.")
-    source_id, form_body = source_match.groups()
-
-    def field_value(name: str, default: str) -> str:
-        """Return field value.
-
-        Args:
-            name: Stable name identifying the resource or operation.
-            default: Default consumed by field value.
-        """
-        match = re.search(rf'<input\b[^>]*name="{re.escape(name)}"[^>]*value="([^"]*)"', form_body)
-        return html.unescape(match.group(1)) if match else default
-
-    csrf = extract_csrf(form_body)
-    source_name = field_value("name", "Lifecycle signed releases")
-    priority = field_value("priority", "1")
+    if not isinstance(source_payload, dict):
+        raise LifecycleError("Atlaso release source edit data was invalid.")
+    source_id = source_payload.get("id")
+    source_name = source_payload.get("name")
+    priority = source_payload.get("priority")
+    if (
+        type(source_id) is not int or source_id < 1
+        or source_payload.get("kind") != "atlaso"
+        or not isinstance(source_name, str) or not source_name.strip()
+        or type(priority) is not int
+    ):
+        raise LifecycleError("Atlaso release source edit data was incomplete.")
+    csrf = extract_csrf(body)
     status, response_body, _headers = client.request(
         "POST",
         f"/appliance-update/sources/{source_id}",
@@ -3343,7 +3349,7 @@ def _configure_signed_release_source(
             "csrf": csrf,
             "name": source_name,
             "url": args.signed_release_repository_url.rstrip("/"),
-            "priority": priority,
+            "priority": str(priority),
             "enabled_present": "1",
             "enabled": "on",
             "channel": channel,
@@ -3356,7 +3362,7 @@ def _configure_signed_release_source(
             f"Signed release source update failed with HTTP {status}: {summarize_html_response(response_body)}"
         )
     return {
-        "source_id": int(source_id),
+        "source_id": source_id,
         "source_name": source_name,
         "base_url": args.signed_release_repository_url.rstrip("/"),
         "channel": channel,

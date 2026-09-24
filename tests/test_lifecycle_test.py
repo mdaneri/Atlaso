@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import html
 import importlib.util
 import io
 import json
@@ -40,6 +41,53 @@ def load_network_boot_lifecycle_module():
     sys.modules[spec.name] = module
     spec.loader.exec_module(module)
     return module
+
+
+def test_configure_signed_release_source_uses_wizard_edit_data():
+    """Update the source identified by the current edit button, not a removed inline form."""
+    lifecycle = load_lifecycle_module()
+    payload = {"id": 17, "kind": "atlaso", "name": "Signed & Verified", "priority": 42}
+    encoded_payload = html.escape(json.dumps(payload), quote=True)
+    page = (
+        '<input type="hidden" name="csrf" value="csrf-123">'
+        '<details data-update-source-group="photon"></details>'
+        '<details data-update-source-group="atlaso">'
+        '<button data-update-source-wizard-open data-update-source-mode="edit" '
+        'data-update-source-kind="atlaso" data-update-source=\'' + encoded_payload + "'></button>"
+        '</details>'
+    )
+
+    class FakeClient:
+        """Serve the rendered wizard data and check the submitted source fields."""
+
+        def request(self, method, path, **kwargs):  # type: ignore[no-untyped-def]  # Fake models the lifecycle client boundary.
+            if (method, path) == ("GET", "/appliance-update"):
+                return 200, page, {}
+            assert (method, path) == ("POST", "/appliance-update/sources/17")
+            assert kwargs["form"] == {
+                "csrf": "csrf-123",
+                "name": "Signed & Verified",
+                "url": "https://release-fixture.example.test/updates",
+                "priority": "42",
+                "enabled_present": "1",
+                "enabled": "on",
+                "channel": "preview",
+            }
+            assert kwargs["headers"] == {"X-Atlaso-Autosave": "1", "Accept": "application/json"}
+            assert kwargs["follow_redirects"] is False
+            return 200, '{"status":"saved"}', {}
+
+    result = lifecycle._configure_signed_release_source(
+        FakeClient(),
+        argparse.Namespace(signed_release_repository_url="https://release-fixture.example.test/updates/"),
+        channel="preview",
+    )
+    assert result == {
+        "source_id": 17,
+        "source_name": "Signed & Verified",
+        "base_url": "https://release-fixture.example.test/updates",
+        "channel": "preview",
+    }
 
 
 def test_signed_release_availability_check_confirms_current_candidate(monkeypatch):
