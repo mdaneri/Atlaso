@@ -30,6 +30,8 @@ VMware network used for tagged trunk traffic.
 Management IPv4 address assigned to or expected from the appliance.
 .PARAMETER ApplianceUrl
 HTTPS URL used for appliance API validation.
+.PARAMETER SignedReleaseRepositoryUrl
+Credential-free HTTPS base URL of a pre-published signed release lifecycle fixture.
 .PARAMETER SiteInterface
 Appliance interface used for the site-network scenario.
 .PARAMETER SiteCidr
@@ -140,6 +142,10 @@ param(
     [Parameter(ParameterSetName = 'Run')]
     [Parameter(ParameterSetName = 'Plan')]
     [string]$ApplianceUrl = '',
+
+    [Parameter(ParameterSetName = 'Run')]
+    [Parameter(ParameterSetName = 'Plan')]
+    [string]$SignedReleaseRepositoryUrl = '',
 
     [Parameter(ParameterSetName = 'Run')]
     [Parameter(ParameterSetName = 'Plan')]
@@ -489,6 +495,7 @@ $arguments = @(
 if (-not $PlanOnly) { $arguments += @('-SecretBundlePath', $secretBundlePath) }
 if ($ApplianceIPAddress) { $arguments += @('-ApplianceIPAddress', $ApplianceIPAddress) }
 if ($effectiveApplianceUrl) { $arguments += @('-ApplianceUrl', $effectiveApplianceUrl) }
+if ($SignedReleaseRepositoryUrl) { $arguments += @('-SignedReleaseRepositoryUrl', $SignedReleaseRepositoryUrl) }
 if ($VmrunPath) { $arguments += @('-VmrunPath', $VmrunPath) }
 if ($BridgedInterfaceAlias) { $arguments += @('-BridgedInterfaceAlias', $BridgedInterfaceAlias) }
 if (-not $KeepVms) { $arguments += '-CleanupCreatedLab' }

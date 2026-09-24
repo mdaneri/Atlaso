@@ -26,6 +26,8 @@ VMnet/LAN segment name for trunk connectivity.
 Optional override for appliance management IPv4.
 .PARAMETER ApplianceUrl
 Optional override for appliance URL.
+.PARAMETER SignedReleaseRepositoryUrl
+Credential-free HTTPS base URL of a pre-published signed release lifecycle fixture.
 .PARAMETER SiteInterface
 Interface name used for site routing in workload checks.
 .PARAMETER SiteCidr
@@ -88,6 +90,7 @@ param(
     [string]$TrunkNetwork = 'VMnet4',
     [string]$ApplianceIPAddress = '',
     [string]$ApplianceUrl = '',
+    [string]$SignedReleaseRepositoryUrl = '',
     [string]$SiteInterface = 'eth1',
     [string]$SiteCidr = '192.168.12.1/24',
     [string]$BridgedInterfaceAlias = '',
@@ -2635,6 +2638,8 @@ try {
     $backupArchivePath = Join-Path $resultRoot 'settings-backup.json'
 
     $initialPythonArgs = @($basePythonArgs + @('--result-dir', $initialResultRoot))
+    # The restored-state pass validates backup portability, not a second release transaction.
+    if ($SignedReleaseRepositoryUrl) { $initialPythonArgs += @('--signed-release-repository-url', $SignedReleaseRepositoryUrl) }
     if (-not $SkipBackupRestoreTest) {
         $initialPythonArgs += @('--export-settings-backup', $backupArchivePath)
     }

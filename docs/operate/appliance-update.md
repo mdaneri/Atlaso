@@ -538,7 +538,11 @@ sources directly.
 
 ## Signed lifecycle fixture
 
-The canonical VMware Workstation lifecycle coverage can exercise the complete release transaction with:
+Publish an isolated signed release fixture at a credential-free HTTPS base URL before running the VMware Workstation
+lifecycle. Configure the appliance's named test trust key for that fixture. Its signed `preview` channel must select a
+healthy release newer than the image baseline; its signed `development` channel must select a candidate that reaches
+database startup and then fails final nginx or management-front-door readiness. The lifecycle wrapper neither publishes
+the fixture nor installs its trust key. Once those prerequisites are ready, run:
 
 ```powershell
 scripts/windows/vmware/invoke-lifecycle-test.ps1 `
@@ -546,11 +550,10 @@ scripts/windows/vmware/invoke-lifecycle-test.ps1 `
   -SignedReleaseRepositoryUrl https://release-fixture.example.test/updates
 ```
 
-Replace `1234` with the exact pull-request number that owns the lifecycle validation.
+Replace `1234` with the exact pull-request number that owns the lifecycle validation and the example URL with the
+fixture's HTTPS base URL.
 
-The fixture must use the appliance's named test trust key. Its signed `preview` channel must select a healthy release
-newer than the image baseline; its signed `development` channel must select a candidate that reaches database startup
-and then fails final nginx or management-front-door readiness. The lifecycle runner proves that each release task
+The lifecycle runner proves that each release task
 exposes an Atlaso Release child step, proves the preview upgrade and exact host-facing candidate version, performs an
 audited appliance reboot, and requires the same candidate version and release link afterward. It then expects the
 development parent and child to fail with `rolled_back=true`, compares the active release, compatibility virtualenv,
