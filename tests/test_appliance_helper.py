@@ -2633,6 +2633,31 @@ def test_management_handoff_scopes_old_tls_before_new_address_activation(monkeyp
     assert "listen [::]:443 ssl default_server;" not in installed[0]
 
 
+def test_management_handoff_scopes_old_http_before_new_address_activation(monkeypatch, tmp_path):
+    """Do not expose a newly acquired address through the previous plaintext site."""
+    helper = load_helper_module()
+    site = tmp_path / "management.conf"
+    site.write_text(
+        "# Managed by Atlaso. Local changes may be overwritten.\n"
+        "server {\n  listen 80 default_server;\n  listen [::]:80 default_server;\n}\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(helper, "NGINX_MANAGEMENT_SITE_PATH", site)
+    installed = []
+    monkeypatch.setattr(helper, "_install_nginx_site", lambda _path, text: installed.append(text) or 0)
+
+    helper._scope_management_handoff_old_listener({
+        "previous_https_enabled": False,
+        "previous_management_addresses": ["192.0.2.10", "2001:db8::10"],
+    })
+
+    assert len(installed) == 1
+    assert "listen 192.0.2.10:80 default_server;" in installed[0]
+    assert "listen [2001:db8::10]:80 default_server;" in installed[0]
+    assert "listen 80 default_server;" not in installed[0]
+    assert "listen [::]:80 default_server;" not in installed[0]
+
+
 def test_management_handoff_refuses_uncanonical_old_tls_site(monkeypatch, tmp_path):
     """Refuse a wildcard listener that cannot be safely scoped."""
     helper = load_helper_module()
@@ -3310,6 +3335,7 @@ def test_management_handoff_candidate_durability_gates_ack(
     monkeypatch.setattr(helper, "_management_handoff_candidate_ca", candidate_ca)
     monkeypatch.setattr(helper, "_management_handoff_upstream_readiness", lambda: {"stable_samples": 3})
     monkeypatch.setattr(helper, "_install_management_holdovers", lambda _state, _payload: [])
+    monkeypatch.setattr(helper, "_scope_management_handoff_old_listener", lambda _state: None)
     monkeypatch.setattr(helper, "_write_management_handoff_state", lambda _state, phase: phases.append(phase))
     monkeypatch.setattr(helper, "_apply_management_candidate_network", lambda *_args: None)
     monkeypatch.setattr(

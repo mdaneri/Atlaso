@@ -25317,13 +25317,11 @@ def _management_handoff_previous_addresses(payload: dict) -> list[str]:
 
 
 def _scope_management_handoff_old_listener(state: dict) -> None:
-    """Bind the old TLS site only to proven old addresses before adding new ones.
+    """Bind the old management site only to proven addresses before adding new ones.
 
     Args:
         state: Durable handoff snapshot with the reachable previous addresses.
     """
-    if not state["previous_https_enabled"]:
-        return
     site = NGINX_MANAGEMENT_SITE_PATH.read_text(encoding="utf-8")
     if not site.startswith("# Managed by Atlaso. Local changes may be overwritten.\n"):
         raise ValueError("previous management nginx site is not canonical")
@@ -25348,7 +25346,8 @@ def _scope_management_handoff_old_listener(state: dict) -> None:
             raise ValueError("previous management nginx listener is not canonical")
         else:
             scoped.append(line)
-    if listeners != 4:
+    expected_listeners = 4 if state["previous_https_enabled"] else 2
+    if listeners != expected_listeners:
         raise ValueError("previous management nginx listener inventory is incomplete")
     if _install_nginx_site(NGINX_MANAGEMENT_SITE_PATH, "\n".join(scoped) + "\n") != 0:
         raise ValueError("previous management nginx listener could not be address scoped")
