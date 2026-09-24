@@ -26579,7 +26579,19 @@ def _retire_transition_routes(
             if not allow_disappeared_source or not _transition_old_source_absent(
                 row["name"], evidence["mac"], evidence["cidrs"], family,
             ):
-                raise ValueError("replacement management route is not ready")
+                destination = ip_network(row["destination"])
+                matching_destination = 0
+                for item in observed:
+                    raw = item.get("dst", "default")
+                    raw = ("0.0.0.0/0" if family == 4 else "::/0") if raw == "default" else raw
+                    if ip_network(raw, strict=False) == destination:
+                        matching_destination += 1
+                raise ValueError(
+                    "replacement management route is not ready "
+                    f"(index={index}, family={family}, table={row['table']}, "
+                    f"observed={len(observed)}, destination_matches={matching_destination}, "
+                    f"holdover_metric_matches={sum(item.get('metric', 0) == row['holdover_metric'] for item in observed)})"
+                )
         if seeded and _run(_transition_route_command("del", row)).returncode:
             raise ValueError("transition route seed retirement failed")
     state["transition_seed_routes"] = []
