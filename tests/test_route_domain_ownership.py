@@ -43,7 +43,11 @@ def test_transition_capacity_reserves_old_and_candidate_sources(monkeypatch, can
 
 
 def test_transition_capacity_rejects_live_cross_domain_reuse(monkeypatch):
-    """An old management hold cannot share a source with candidate Lab intent."""
+    """An old management hold cannot share a source with candidate Lab intent.
+
+    Args:
+        monkeypatch: Replace native ownership observations.
+    """
     monkeypatch.setattr(domains, "reconciliation_lock", nullcontext)
     monkeypatch.setattr(domains, "read_native", lambda _command: [])
     monkeypatch.setattr(domains, "owned_rules", lambda *_args: set())

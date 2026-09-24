@@ -544,7 +544,11 @@ def test_full_capacity_replacement_recovers_from_native_snapshot(monkeypatch, fa
     calls = 0
 
     def execute(arguments):
-        """Apply an exact rule mutation after the one injected interruption."""
+        """Apply an exact rule mutation after the one injected interruption.
+
+        Args:
+            arguments: Native rule command argument vector.
+        """
         nonlocal calls
         calls += 1
         if calls == failure_step:

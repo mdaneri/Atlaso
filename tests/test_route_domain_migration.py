@@ -747,6 +747,7 @@ def test_ordinary_first_upgrade_seeds_and_reconfigures_management_before_exact_g
         helper: Loaded appliance helper module under test.
         monkeypatch: Pytest fixture for replacing helper operations.
         tmp_path: Pytest fixture for the temporary network configuration.
+        protected_finalization: Whether an enclosing handoff retires seeds later.
     """
     config = tmp_path / "network.conf"
     config.write_text("[network]\n", encoding="utf-8")
@@ -787,7 +788,13 @@ def test_ordinary_first_upgrade_seeds_and_reconfigures_management_before_exact_g
 
 
 def test_incomplete_ordinary_network_rollback_keeps_seed_journal(helper, monkeypatch, tmp_path):
-    """A failed snapshot restore cannot delete the only old management route."""
+    """A failed snapshot restore cannot delete the only old management route.
+
+    Args:
+        helper: Loaded appliance helper module under test.
+        monkeypatch: Replace native restore operations.
+        tmp_path: Isolated transaction directory.
+    """
     state = {"snapshots": [{"path": str(tmp_path / "old.network")}],
              "transition_seed_routes": [{"name": "eth0"}]}
     monkeypatch.setattr(helper, "NETWORK_TRANSACTION_DIR", tmp_path)

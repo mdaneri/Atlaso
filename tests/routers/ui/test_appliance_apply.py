@@ -151,7 +151,12 @@ def test_wan_review_uses_applied_network_ingress_with_pending_network(client, ba
 
 
 def test_combined_wan_rejects_candidate_ingress_over_capacity(client, monkeypatch):
-    """Combined Apply refuses a newly enabled Routing window before Network runs."""
+    """Combined Apply refuses a newly enabled Routing window before Network runs.
+
+    Args:
+        client: Authenticated API test client.
+        monkeypatch: Replace host execution with bounded test observations.
+    """
     from atlaso.app import ui
     from atlaso.app.database import SessionLocal
     from atlaso.app.services.routes_wan import save_routes_wan_settings

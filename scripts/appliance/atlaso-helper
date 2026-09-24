@@ -11990,6 +11990,7 @@ def _handle_network(action: str, args: list[str], *, preserve_transition_routes:
     Args:
         action: Validated network operation.
         args: Operation arguments.
+        preserve_transition_routes: Keep an enclosing handoff's route seeds active.
     """
     try:
         with _network_transaction_lock() if action in {"apply", "recover", "acknowledge"} else nullcontext():
@@ -12005,6 +12006,7 @@ def _handle_network_locked(action: str, args: list[str], *, preserve_transition_
     Args:
         action: Action consumed by handle network.
         args: Parsed command-line options consumed by the operation.
+        preserve_transition_routes: Defer seed retirement to the enclosing handoff.
     """
     if action == "prepare-observation":
         if args:
@@ -26465,7 +26467,11 @@ def _transition_route_successor(row: dict, observed: dict, seed_metrics: set[int
 
 
 def _restored_legacy_route_baseline(state: dict) -> bool:
-    """Admit selector-free seed retirement only for a proven old baseline."""
+    """Admit selector-free seed retirement only for a proven old baseline.
+
+    Args:
+        state: Durable old route-domain service and file snapshot.
+    """
     service = state.get("previous_route_domain_service")
     snapshots = state.get("snapshots")
     if (not isinstance(service, dict) or service.get("active") or service.get("enabled")
@@ -26478,7 +26484,12 @@ def _restored_legacy_route_baseline(state: dict) -> bool:
 
 
 def _transition_table_unselected(family: int, table: int) -> bool:
-    """Prove that no current native rule can select a retired legacy table."""
+    """Prove that no current native rule can select a retired legacy table.
+
+    Args:
+        family: IP version to inspect.
+        table: Route table that must have no live selector.
+    """
     result = _network_observation_command(["ip", "-N", "-j", "-details", f"-{family}", "rule", "show"])
     if result.returncode:
         raise ValueError("restored routing-domain rules could not be observed")
@@ -26664,7 +26675,13 @@ def _retire_transition_routes(
 
 
 def _wait_and_retire_transition_routes(state: dict, marker: Path, *, attempts: int = 31) -> None:
-    """Retire journaled seeds after the final networkd route has settled."""
+    """Retire journaled seeds after the final networkd route has settled.
+
+    Args:
+        state: Durable transition inventory with owned seed routes.
+        marker: Transaction journal path to update after retirement.
+        attempts: Bounded observations while native routes settle.
+    """
     deadline = time.monotonic() + 30
     for attempt in range(max(1, attempts)):
         try:

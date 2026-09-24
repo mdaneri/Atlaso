@@ -272,7 +272,13 @@ def test_transition_route_seed_refuses_changed_old_route_before_any_mutation(mon
 
 @pytest.mark.parametrize("flags", [["dead"], ["linkdown"]])
 def test_transition_seed_ignores_unusable_same_destination_route(monkeypatch, tmp_path, flags):
-    """A stale table route cannot stand in for the old management source."""
+    """A stale table route cannot stand in for the old management source.
+
+    Args:
+        monkeypatch: Replace native route observations.
+        tmp_path: Isolated transaction marker directory.
+        flags: Native route flags that make the observed route unusable.
+    """
     helper = load_helper_module()
     route = {"destination": "192.0.2.0/24", "gateway": "", "metric": 0,
              "scope": "link", "table": 100, "preferred_source": "192.0.2.10",
@@ -374,7 +380,13 @@ def test_transition_retirement_refuses_missing_seed_without_replacement(monkeypa
 def test_legacy_rollback_retires_seed_only_without_table_selector(
     monkeypatch, tmp_path, selector_present,
 ):
-    """A restored selector-free baseline can fall back to main after guard removal."""
+    """A restored selector-free baseline can fall back to main after guard removal.
+
+    Args:
+        monkeypatch: Replace native rule and route observations.
+        tmp_path: Isolated prior-intent path.
+        selector_present: Whether a live rule still selects the old table.
+    """
     helper = load_helper_module()
     route = {"destination": "fe80::/64", "gateway": "", "metric": 0,
              "scope": "link", "table": 100, "preferred_source": "",
@@ -413,7 +425,12 @@ def test_legacy_rollback_retires_seed_only_without_table_selector(
 
 
 def test_legacy_rollback_requires_restored_marker_free_baseline(monkeypatch, tmp_path):
-    """Selector-free retirement is unavailable while old domain intent existed."""
+    """Selector-free retirement is unavailable while old domain intent existed.
+
+    Args:
+        monkeypatch: Redirect the prior-intent path.
+        tmp_path: Isolated prior-intent path.
+    """
     helper = load_helper_module()
     path = tmp_path / "route-domains.json"
     monkeypatch.setattr(helper, "ROUTE_DOMAIN_CONFIG_PATH", path)
@@ -428,7 +445,12 @@ def test_legacy_rollback_requires_restored_marker_free_baseline(monkeypatch, tmp
 
 
 def test_transition_refusal_diagnostics_exclude_dead_and_unsupported_routes(monkeypatch, tmp_path):
-    """The receipt distinguishes a matching destination from a usable successor."""
+    """The receipt distinguishes a matching destination from a usable successor.
+
+    Args:
+        monkeypatch: Replace native route observations.
+        tmp_path: Isolated transaction marker directory.
+    """
     helper = load_helper_module()
     route = {"destination": "::/0", "gateway": "fe80::1", "metric": 0,
              "scope": "global", "table": 100, "preferred_source": "",
@@ -455,11 +477,23 @@ def test_transition_refusal_diagnostics_exclude_dead_and_unsupported_routes(monk
 
 
 def test_transition_retirement_waits_for_final_route_without_weakening_proof(monkeypatch, tmp_path):
-    """A late RA successor may settle, while an unrelated error must fail immediately."""
+    """A late RA successor may settle, while an unrelated error must fail immediately.
+
+    Args:
+        monkeypatch: Replace retirement and time helpers.
+        tmp_path: Isolated transaction marker directory.
+    """
     helper = load_helper_module()
     attempts = []
 
     def retire(_state, _marker, **kwargs):
+        """Simulate a delayed replacement route.
+
+        Args:
+            _state: Unused transaction state.
+            _marker: Unused marker path.
+            **kwargs: Retirement options recorded for the assertion.
+        """
         attempts.append(kwargs)
         if len(attempts) == 1:
             raise ValueError("replacement management route is not ready (family=6)")
