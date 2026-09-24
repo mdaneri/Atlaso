@@ -112,9 +112,10 @@ class Client:
         self.url = url.rstrip("/")
         self.peer = peer
         self.connect_ip = str(ipaddress.IPv4Address(connect_ip))
-        self.context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
-        self.context.minimum_version = ssl.TLSVersion.TLSv1_2
-        self.context.load_verify_locations(cafile=str(ca))
+        context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+        context.minimum_version = ssl.TLSVersion.TLSv1_2
+        context.load_verify_locations(cafile=str(ca))
+        self.context = context
         self.cookies = http.cookiejar.CookieJar()
         self.opener = urllib.request.build_opener(
             SameOrigin(), urllib.request.ProxyHandler({}),
