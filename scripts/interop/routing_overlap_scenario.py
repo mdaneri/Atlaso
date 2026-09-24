@@ -724,9 +724,13 @@ def _run_authenticated(
                                 f'"route","get","{peer}"])}}))\n')["routes"]
             allowed = {source for source, table in sources.items()
                        if table == 100 and ipaddress.ip_address(source).version == family}
+            selected = (observed[0].get("prefsrc") or observed[0].get("from")
+                        or observed[0].get("src")) if len(observed) == 1 else None
             if (len(observed) != 1 or observed[0].get("dev") != management
-                    or observed[0].get("prefsrc", observed[0].get("src")) not in allowed):
-                raise OverlapPrerequisiteError("unbound source selection cannot use management routing")
+                    or selected not in allowed):
+                detail = {"family": family, "dev": observed[0].get("dev") if observed else None,
+                          "selected": selected, "allowed": sorted(allowed)}
+                raise OverlapPrerequisiteError(f"unbound source selection cannot use management routing: {detail}")
             unbound[str(family)] = observed
         evidence["acquired"] = initial
         evidence["route_selection"] = routes
