@@ -750,9 +750,9 @@ def _run_authenticated(
                                 '\nprint(json.dumps({"routes": command(["ip","-j","-N","-6",'
                                 '"route","show","table","main"])}))\n')["routes"]
                 main_default = any(row.get("dst") in ("default", "::/0") for row in main)
-                main_link = any(str(row.get("dst", "")).startswith("fe80::/") for row in main)
-                main_link_management = any(str(row.get("dst", "")).startswith("fe80::/")
-                                           and row.get("dev") == management for row in main)
+                main_link = any(str(row.get("dst", "")).startswith("fe80::/")
+                                and row.get("dev") == management for row in main)
+                main_link_management = main_link
                 main_link_lab = any(str(row.get("dst", "")).startswith("fe80::/")
                                     and row.get("dev") == lab for row in main)
                 managed_link = any(str(row.get("dst", "")).startswith("fe80::/")
