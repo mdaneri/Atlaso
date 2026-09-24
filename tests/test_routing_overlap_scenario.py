@@ -47,6 +47,22 @@ def test_native_snapshot_accepts_empty_management_route_table(monkeypatch):
     assert result["management_routes"] == {"4": [{"dst": "192.0.2.0/24", "table": 100}], "6": []}
 
 
+@pytest.mark.parametrize(("stderr", "reason"), [
+    ("RTNETLINK answers: Network is unreachable", "network-unreachable"),
+    ("Error: Invalid argument", "invalid-argument"),
+    ("private guest diagnostic", "other"),
+])
+def test_native_observation_failure_reports_only_whitelisted_reason(monkeypatch, stderr, reason):
+    """Classify a failed read-only route query without copying guest stderr."""
+    monkeypatch.setattr(subprocess, "run", lambda args, **kwargs:
+                        subprocess.CompletedProcess(args, 2, "", stderr))
+    namespace = {}
+    exec(scenario.SNAPSHOT_PROGRAM, namespace)
+    with pytest.raises(RuntimeError, match=f"native observation failed: {reason}") as failure:
+        namespace["command"](["ip", "-6", "route", "get", "fe80::1"])
+    assert stderr not in str(failure.value)
+
+
 @pytest.fixture
 def topology():
     """Supply already admitted independent fixture interface identities."""

@@ -39,7 +39,9 @@ import json, subprocess, time, ipaddress
 def command(args):
     p = subprocess.run(args, capture_output=True, text=True, timeout=10)
     if p.returncode:
-        raise RuntimeError("native observation failed")
+        reason = "network-unreachable" if "Network is unreachable" in p.stderr else (
+            "invalid-argument" if "Invalid argument" in p.stderr else "other")
+        raise RuntimeError("native observation failed: " + reason)
     return json.loads(p.stdout)
 def snapshot():
     links = command(["ip", "-j", "address", "show"])
@@ -71,10 +73,13 @@ def _observe(connect: Callable[[], paramiko.SSHClient], program: str) -> dict[st
     """
     ssh = connect()
     try:
-        _stdin, stdout, _stderr = ssh.exec_command(_command(program), timeout=45)
+        _stdin, stdout, stderr = ssh.exec_command(_command(program), timeout=45)
         raw = stdout.read(262145)
         if len(raw) > 262144 or stdout.channel.recv_exit_status() != 0:
-            raise OverlapPrerequisiteError("native observation failed or exceeded its bound")
+            error = stderr.read(8192).decode(errors="replace")
+            reason = next((label for label in ("network-unreachable", "invalid-argument", "other")
+                           if f"native observation failed: {label}" in error), "unknown")
+            raise OverlapPrerequisiteError(f"native observation failed or exceeded its bound: {reason}")
         value = json.loads(raw)
         if not isinstance(value, dict):
             raise OverlapPrerequisiteError("native observation is not an object")
