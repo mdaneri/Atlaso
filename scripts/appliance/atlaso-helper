@@ -26337,7 +26337,7 @@ def _transition_route_rows(name: str, family: int, table: int) -> list[dict]:
     # An empty numeric table can make `ip route show table N` exit nonzero on
     # the appliance. Observe all tables and select this exact one instead.
     result = _network_observation_command(
-        ["ip", "-j", f"-{family}", "route", "show", "table", "all"]
+        ["ip", "-j", f"-{family}", "route", "show", "table", "all", "dev", name]
     )
     if result.returncode:
         raise ValueError("transition routing-domain routes could not be observed")
@@ -26347,7 +26347,10 @@ def _transition_route_rows(name: str, family: int, table: int) -> list[dict]:
         raise ValueError("transition routing-domain routes are malformed") from exc
     if not isinstance(rows, list) or len(rows) > 4096 or any(not isinstance(row, dict) for row in rows):
         raise ValueError("transition routing-domain routes are malformed")
-    return [row for row in rows if str(row.get("table", "main")) == str(table)]
+    # The dev selector is authoritative even when iproute2 omits it in JSON.
+    return [{**row, "dev": row.get("dev", name)} for row in rows
+            if str(row.get("table", "main")) == str(table)
+            and row.get("dev", name) == name]
 
 
 def _transition_route_command(action: str, row: dict) -> list[str]:
@@ -26422,7 +26425,9 @@ def _transition_route_successor(row: dict, observed: dict, seed_metrics: set[int
     """
     if observed.get("dev") != row["name"] or observed.get("type", "unicast") != "unicast":
         return False
-    if str(observed.get("protocol")) not in {"kernel", "static", "dhcp", "ra"}:
+    exact_holdover = (observed.get("metric", 0) == row["holdover_metric"]
+                      and str(observed.get("gateway") or "") == row["gateway"])
+    if not exact_holdover and str(observed.get("protocol")) not in {"kernel", "static", "dhcp", "ra"}:
         return False
     flags = observed.get("flags", [])
     if not isinstance(flags, list) or set(flags) & {"dead", "linkdown"}:

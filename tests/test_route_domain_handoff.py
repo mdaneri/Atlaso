@@ -152,7 +152,7 @@ def test_transition_route_observation_accepts_empty_numeric_table(monkeypatch):
 
     monkeypatch.setattr(helper, "_network_observation_command", observe)
     assert helper._transition_route_rows("eth0", 4, 100) == []
-    assert commands == [["ip", "-j", "-4", "route", "show", "table", "all"]]
+    assert commands == [["ip", "-j", "-4", "route", "show", "table", "all", "dev", "eth0"]]
 
 
 @pytest.mark.parametrize("destination,gateway,source", [
@@ -239,6 +239,8 @@ def test_transition_route_seed_refuses_changed_old_route_before_any_mutation(mon
 
 
 @pytest.mark.parametrize("successor,old_address_present,allowed", [
+    ({"dst": "default", "dev": "eth0", "gateway": "192.0.2.1",
+      "metric": 1, "protocol": "boot"}, True, True),
     ({"dst": "default", "dev": "eth0", "gateway": "192.0.2.2",
       "metric": 1024, "protocol": "dhcp"}, True, True),
     ({"dst": "198.51.100.0/24", "dev": "eth0", "metric": 1024,
