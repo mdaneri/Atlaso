@@ -347,6 +347,63 @@ def test_transition_retirement_refuses_missing_seed_without_replacement(monkeypa
     assert state["transition_seed_routes"]
 
 
+@pytest.mark.parametrize("selector_present", [False, True])
+def test_legacy_rollback_retires_seed_only_without_table_selector(
+    monkeypatch, tmp_path, selector_present,
+):
+    """A restored selector-free baseline can fall back to main after guard removal."""
+    helper = load_helper_module()
+    route = {"destination": "fe80::/64", "gateway": "", "metric": 0,
+             "scope": "link", "table": 100, "preferred_source": "",
+             "preference": "medium", "holdover_metric": 1}
+    state = {"previous_management_routing": {"eth0": {
+        "mac": "02:00:00:00:00:01", "table": 100,
+        "cidrs": ["fe80::10/64"], "routes": [route]}},
+        "transition_seed_routes": [{"name": "eth0", **route, "seed_metric": 2}]}
+    observed = [{"dst": "fe80::/64", "dev": "eth0", "metric": 2,
+                 "protocol": "kernel"}]
+    monkeypatch.setattr(helper, "_transition_route_rows", lambda *_args: observed)
+    rules = [{"priority": 0, "table": "local"}, {"priority": 32766, "table": "main"}]
+    if selector_present:
+        rules.append({"priority": 6004, "table": "100"})
+    monkeypatch.setattr(helper, "_network_observation_command", lambda _command:
+                        subprocess.CompletedProcess([], 0, json.dumps(rules), ""))
+    commands = []
+    monkeypatch.setattr(helper, "_run", lambda command: commands.append(command)
+                        or subprocess.CompletedProcess(command, 0, "", ""))
+    monkeypatch.setattr(helper, "_durable_management_handoff_state_write", lambda *_args: None)
+    if selector_present:
+        with pytest.raises(ValueError, match="replacement management route is not ready"):
+            helper._retire_transition_routes(
+                state, tmp_path / "state.json", require_replacement=True,
+                allow_unselected_legacy=True,
+            )
+        assert not commands
+        assert state["transition_seed_routes"]
+    else:
+        helper._retire_transition_routes(
+            state, tmp_path / "state.json", require_replacement=True,
+            allow_unselected_legacy=True,
+        )
+        assert len(commands) == 1
+        assert state["transition_seed_routes"] == []
+
+
+def test_legacy_rollback_requires_restored_marker_free_baseline(monkeypatch, tmp_path):
+    """Selector-free retirement is unavailable while old domain intent existed."""
+    helper = load_helper_module()
+    path = tmp_path / "route-domains.json"
+    monkeypatch.setattr(helper, "ROUTE_DOMAIN_CONFIG_PATH", path)
+    state = {"previous_route_domain_service": {"active": False, "enabled": False},
+             "snapshots": [{"path": str(path), "existed": False}]}
+    assert helper._restored_legacy_route_baseline(state)
+    path.write_text("{}", encoding="utf-8")
+    assert not helper._restored_legacy_route_baseline(state)
+    path.unlink()
+    state["previous_route_domain_service"]["active"] = True
+    assert not helper._restored_legacy_route_baseline(state)
+
+
 def test_transition_refusal_diagnostics_exclude_dead_and_unsupported_routes(monkeypatch, tmp_path):
     """The receipt distinguishes a matching destination from a usable successor."""
     helper = load_helper_module()
