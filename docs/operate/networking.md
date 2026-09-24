@@ -363,8 +363,9 @@ listener, also confirm `ip route show default` (or `ip -6 route show default`) n
 that `atlaso-wan.service` is enabled for reboot replay.
 
 HTTPS management handoffs check the staged certificate against configured and acquired candidate IPv4/IPv6 addresses
-before publishing the candidate listener. An old-only address retained during the transition stays on its snapshotted
-old TLS certificate. Before new addresses activate, the old HTTPS listener binds only to verified old addresses, so
+before publishing the candidate listener. A previous address retained during the transition stays on its snapshotted
+old TLS certificate, including when the candidate uses the same public port. Before new addresses activate, the old
+HTTPS listener binds only to verified old addresses, so
 it cannot serve an unmatched certificate on a newly acquired address. After final network reconfigure, every
 still-assigned address enters the candidate check. A new
 DHCP or SLAAC address missing from the certificate fails at the certificate

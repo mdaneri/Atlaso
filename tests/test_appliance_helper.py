@@ -3114,11 +3114,39 @@ def test_management_handoff_candidate_listeners_use_verified_addresses_only():
     assert "listen [2001:db8::20]:80 default_server;" in config
     assert "listen 443 ssl default_server;" not in config
     assert "listen [::]:443 ssl default_server;" not in config
+    assert "listen " not in helper._management_nginx_config(
+        {"fqdn": "atlaso.example.test", "management_https_enabled": False},
+        listen_addresses=[],
+    )
     with pytest.raises(ValueError, match="no verified listener address"):
-        helper._management_nginx_config(
+        helper._configure_atlaso_management_https(
             {"fqdn": "atlaso.example.test", "management_https_enabled": False},
+            verify_front_door=False,
             listen_addresses=[],
         )
+
+
+def test_management_handoff_preserves_previous_identity_on_shared_socket():
+    """An old certificate keeps its address until final candidate publication."""
+    helper = load_helper_module()
+    state = {
+        "previous_management_public_port": 443,
+        "previous_management_addresses": ["192.0.2.10"],
+    }
+    candidates = ["192.0.2.10", "192.0.2.20"]
+
+    assert helper._management_handoff_initial_listener_addresses(
+        candidates, state, 443, "old TLS listener",
+    ) == ["192.0.2.20"]
+    assert helper._management_handoff_initial_listener_addresses(
+        ["192.0.2.10"], state, 443, "old TLS listener",
+    ) == []
+    assert helper._management_handoff_initial_listener_addresses(
+        candidates, state, 8443, "old TLS listener",
+    ) == candidates
+    assert helper._management_handoff_initial_listener_addresses(
+        candidates, state, 443, "",
+    ) == candidates
 
 
 def test_management_handoff_keeps_previous_http_when_port_changes():

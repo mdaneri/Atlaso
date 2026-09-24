@@ -7876,8 +7876,6 @@ def _management_nginx_config(
         http_listeners = [f"{public_http_port}", f"[::]:{public_http_port}"]
         https_listeners = [f"{public_https_port}", f"[::]:{public_https_port}"]
     else:
-        if not listen_addresses:
-            raise ValueError("management handoff has no verified listener address")
         addresses = [ip_address(address) for address in listen_addresses]
         http_listeners = [
             f"[{address}]:{public_http_port}" if address.version == 6 else f"{address}:{public_http_port}"
@@ -7889,6 +7887,8 @@ def _management_nginx_config(
         ]
     http_listen_lines = [f"  listen {listener} default_server;" for listener in http_listeners]
     https_listen_lines = [f"  listen {listener} ssl default_server;" for listener in https_listeners]
+    if listen_addresses == []:
+        return "\n".join(lines)
     if not https_enabled:
         lines.extend(
             [
@@ -7952,6 +7952,8 @@ def _configure_atlaso_management_https(
     site_text = _management_nginx_config(
         payload, cert_path, key_path, listen_addresses=listen_addresses,
     ).rstrip() + "\n"
+    if listen_addresses == [] and not site_suffix.strip():
+        raise ValueError("management handoff has no verified listener address")
     if site_suffix.strip():
         site_text += "\n" + site_suffix.strip() + "\n"
 
@@ -26209,6 +26211,16 @@ def _management_handoff_protocol_holdover(state: dict, payload: dict) -> str:
     return "\n".join(blocks)
 
 
+def _management_handoff_initial_listener_addresses(
+    candidate_addresses: list[str], state: dict, candidate_port: int, protocol_holdover: str,
+) -> list[str]:
+    """Keep a previous address on its old listener until final retirement."""
+    if not protocol_holdover or int(state["previous_management_public_port"]) != candidate_port:
+        return candidate_addresses
+    previous_addresses = set(state["previous_management_addresses"])
+    return [address for address in candidate_addresses if address not in previous_addresses]
+
+
 def _management_handoff_vlan_parents(vlan_interfaces: set[str]) -> set[str]:
     """Return restored physical parents that declare the supplied VLAN links.
 
@@ -27445,12 +27457,15 @@ def _apply_management_handoff(payload: dict) -> int:
         )
         failing_layer = "certificate prerequisite"
         candidate_ca = _management_handoff_candidate_ca(public_certificate, candidate_addresses)
+        initial_listener_addresses = _management_handoff_initial_listener_addresses(
+            candidate_addresses, state, candidate_public_port, protocol_holdover,
+        )
         failing_layer = "nginx management front door"
         management_https_result, _restart_delay_seconds = _configure_atlaso_management_https(
             settings_payload,
             site_suffix=protocol_holdover,
             verify_front_door=False,
-            listen_addresses=candidate_addresses,
+            listen_addresses=initial_listener_addresses,
         )
         if management_https_result != 0:
             raise ValueError("candidate management nginx apply failed")
