@@ -75,6 +75,33 @@ try {
 } finally {
     foreach ($pin in $proofPins) { $pin.Dispose() }
 }
+foreach ($name in @('inspect-certificate-peer.ps1', 'inspect-certificate-handoff.ps1')) {
+    $wrapperPath = Join-Path $RepositoryRoot (Join-Path 'scripts/windows/vmware' $name)
+    $parameters = @{
+        RepositoryRoot = $RepositoryRoot
+        ReviewedSourceCommit = 'a' * 40
+        Plan = $planPath
+        EnvironmentId = 'test-environment'
+        PythonPath = (Join-Path $proofRoot 'nonexistent-python.exe')
+        SshPassword = [SecureString]::new()
+    }
+    if ($name -eq 'inspect-certificate-peer.ps1') {
+        $parameters.AddressEvidence = Join-Path $proofRoot 'address-result.json'
+        $parameters.RuntimeEvidence = Join-Path $proofRoot 'runtime-result.json'
+    } else {
+        $parameters.Evidence = Join-Path $proofRoot 'handoff-result.json'
+    }
+    $directFailure = try { & $wrapperPath @parameters; '' } catch { $_.Exception.Message }
+    if ($directFailure -notlike '*Invoke the certificate inspector from reviewed Git-blob bytes*') {
+        throw 'A mutable certificate entrypoint accepted direct credential-bearing execution.'
+    }
+    $entrypoint = [ScriptBlock]::Create([IO.File]::ReadAllText($wrapperPath))
+    $memoryFailure = try { & $entrypoint @parameters; '' } catch { $_.Exception.Message }
+    if ($memoryFailure -notlike '*requires an existing plan/Python*' -and
+        $memoryFailure -notlike '*Python, plan, and new evidence destination*') {
+        throw 'An in-memory certificate entrypoint did not reach pre-credential admission.'
+    }
+}
 $sourceRepository = Join-Path $OutputDirectory 'source-repository'
 $firstStaging = Join-Path $OutputDirectory 'first-staging'
 New-Item -ItemType Directory -Path $sourceRepository, $firstStaging | Out-Null

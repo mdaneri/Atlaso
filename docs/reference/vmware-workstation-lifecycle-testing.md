@@ -626,6 +626,29 @@ and route, and CA-pinned HTTPS through a private peer tunnel. The producer also 
 configured static management baseline; it does not configure that baseline. The tracked
 `inspect-certificate-handoff.ps1` wrapper then rechecks controlled receipts and the live private baseline before
 the native scenario changes the management address and restores the original interface and certificate state.
+Load either credentialed wrapper from the reviewed full PR-head Git blob into an in-memory PowerShell script block;
+direct execution of the mutable checkout file is refused. The caller must pin `$reviewedCommit` to the full head
+already verified on the PR and use one of the two literal paths below. For example, load the read-only peer
+proof before obtaining the task-owned `$sshPassword` `SecureString`:
+
+```powershell
+$repoRoot = 'E:\.codex\worktree\issue-865-dynamic-certificate'
+$reviewedCommit = '<verified full PR head SHA>'
+$relative = 'scripts/windows/vmware/inspect-certificate-peer.ps1'
+$head = (& git -C $repoRoot rev-parse --verify 'HEAD^{commit}').Trim()
+if ($LASTEXITCODE -ne 0 -or $head -cne $reviewedCommit) { throw 'Reviewed certificate head changed.' }
+$source = (& git -C $repoRoot show "${reviewedCommit}:$relative" | Out-String)
+if ($LASTEXITCODE -ne 0 -or -not $source) { throw 'Reviewed certificate entrypoint unavailable.' }
+$entrypoint = [ScriptBlock]::Create($source)
+# Obtain $sshPassword as a SecureString through the approved peer credential flow only now.
+& $entrypoint -RepositoryRoot $repoRoot -ReviewedSourceCommit $reviewedCommit `
+    -Plan $plan -AddressEvidence $addressEvidence -RuntimeEvidence $runtimeEvidence `
+    -EnvironmentId $environmentId -PythonPath $pythonPath -SshPassword $sshPassword
+```
+
+For the handoff, select the literal `scripts/windows/vmware/inspect-certificate-handoff.ps1` blob and pass
+`-Plan`, `-Evidence`, `-EnvironmentId`, `-PythonPath`, and `-SshPassword` (plus `-Execute` only for the guarded
+native mutation). Do not obtain either credential until after selecting and loading the reviewed entrypoint.
 For both credentialed wrappers, install the task-owned virtual environment from the hash-locked
 `requirements-onepassword-deploy.lock`. They pin the interpreter, base runtime, and isolated import files
 through child termination and refuse an external import path or startup customization.

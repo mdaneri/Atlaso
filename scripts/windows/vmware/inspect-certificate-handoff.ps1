@@ -3,6 +3,10 @@
 Inspect or execute the receipt-bound PR871 native certificate handoff.
 .PARAMETER Plan
 Existing nonsecret plan within the original task-owned test-results tree.
+.PARAMETER RepositoryRoot
+Exact task checkout supplied by the reviewed Git-blob bootstrap.
+.PARAMETER ReviewedSourceCommit
+Exact reviewed PR head used to load this entrypoint from Git.
 .PARAMETER Evidence
 New nonsecret evidence file within that same tree.
 .PARAMETER EnvironmentId
@@ -16,6 +20,8 @@ Run the guarded native mutation and restoration; default inspects only.
 #>
 [CmdletBinding()]
 param(
+    [Parameter(Mandatory)][string]$RepositoryRoot,
+    [Parameter(Mandatory)][ValidatePattern('^[0-9a-f]{40}$')][string]$ReviewedSourceCommit,
     [Parameter(Mandatory)][string]$Plan,
     [Parameter(Mandatory)][string]$Evidence,
     [Parameter(Mandatory)][string]$EnvironmentId,
@@ -25,7 +31,11 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-$repoRoot = Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..\..')
+if ($PSScriptRoot) {
+    throw 'Invoke the certificate inspector from reviewed Git-blob bytes, not a checkout script path.'
+}
+$repoRoot = Resolve-Path -LiteralPath $RepositoryRoot
+$helperRoot = Join-Path $repoRoot 'scripts/windows/vmware'
 $evidenceRoot = [IO.Path]::GetFullPath((Join-Path $repoRoot 'test-results')).TrimEnd('\') + '\'
 foreach ($candidate in @($Plan, $Evidence)) {
     if (-not [IO.Path]::GetFullPath($candidate).StartsWith($evidenceRoot, [StringComparison]::OrdinalIgnoreCase)) {
@@ -40,7 +50,7 @@ $env:TEMP = $evidenceRoot
 $env:TMP = $evidenceRoot
 $planIdentity = Get-Content -LiteralPath $Plan -Raw | ConvertFrom-Json
 $sourceCommit = [string]$planIdentity.source_commit
-if ($sourceCommit -notmatch '^[0-9a-f]{40}$' -or
+if ($sourceCommit -cne $ReviewedSourceCommit -or
     ([string](& git -C $repoRoot rev-parse --verify 'HEAD^{commit}')).Trim() -cne $sourceCommit) {
     throw 'Certificate inspector source commit differs from its plan.'
 }
@@ -70,11 +80,11 @@ try {
             throw 'Certificate helper bytes differ from the admitted source commit.'
         }
     }
-    Import-Module (Join-Path $PSScriptRoot 'Atlaso.WorkstationCleanup.psm1') -Force
-    $helperPins.Add([Atlaso.WorkstationFileIdentity]::PinOrdinaryDirectoryPath($PSScriptRoot))
-    Import-Module (Join-Path $PSScriptRoot 'Atlaso.OnePasswordCredentials.psm1') -Force
-    . (Join-Path $PSScriptRoot 'Atlaso.WorkstationFirstBoot.ps1')
-    Import-Module (Join-Path $PSScriptRoot 'Atlaso.SourceSnapshot.psm1') -Force
+    Import-Module (Join-Path $helperRoot 'Atlaso.WorkstationCleanup.psm1') -Force
+    $helperPins.Add([Atlaso.WorkstationFileIdentity]::PinOrdinaryDirectoryPath($helperRoot))
+    Import-Module (Join-Path $helperRoot 'Atlaso.OnePasswordCredentials.psm1') -Force
+    . (Join-Path $helperRoot 'Atlaso.WorkstationFirstBoot.ps1')
+    Import-Module (Join-Path $helperRoot 'Atlaso.SourceSnapshot.psm1') -Force
     if (([string](& git -C $repoRoot rev-parse --verify 'HEAD^{commit}')).Trim() -cne $sourceCommit) {
         throw 'Certificate helper source commit changed during import.'
     }
