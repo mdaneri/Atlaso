@@ -69,8 +69,13 @@ def native():
         rules[family].extend([{**shared, "priority": 5000 + index * 2, "table": table},
                               {**shared, "priority": 5001 + index * 2, "action": "7"}])
     for family in ("4", "6"):
+        prefixes = (("0.0.0.0", 32), ("169.254.0.0", 16), ("127.0.0.0", 8)) if family == "4" else (
+            ("::", 128), ("fe80::", 10), ("::1", 128))
+        rules[family].extend({"src": source, "srclen": length, "iif": "lo", "protocol": "2",
+                              "priority": 6000 + offset, "table": "254"}
+                             for offset, (source, length) in enumerate(prefixes))
         rules[family].append({"src": "all", "srclen": 0, "iif": "lo", "protocol": "2",
-                              "priority": 6000, "action": "7"})
+                              "priority": 6003, "action": "7"})
     return {
         "links": [{"ifname": "eth0", "addr_info": [
             {"family": "inet", "local": "192.0.2.10", "dynamic": True, "valid_life_time": 100, "scope": "global"},

@@ -2,6 +2,7 @@
 
 import copy
 import io
+import ipaddress
 import json
 import subprocess
 from contextlib import nullcontext, redirect_stdout
@@ -72,18 +73,32 @@ def wan_input():
 
 @pytest.mark.parametrize("family", [4, 6])
 def test_transition_guard_is_exact_and_rejects_foreign_priority(family):
-    """Only the owned local-origin terminal guard may occupy priority 6000.
+    """Only the owned local-origin terminal guard may occupy priority 6003.
 
     Args:
         family: IPv4 or IPv6 address family under test.
     """
-    canonical = {"priority": 6000, "src": "all", "srclen": 0, "iif": "lo",
+    canonical = {"priority": 6003, "src": "all", "srclen": 0, "iif": "lo",
                  "action": "unreachable", "protocol": "2"}
     assert route_domains.transition_guard_present([canonical], family)
     assert not route_domains.transition_guard_present([], family)
     for changed in ({"iif": "eth1"}, {"action": "to_tbl", "table": "200"}, {"protocol": "4"}):
         with pytest.raises(route_domains.ReconcileError):
             route_domains.transition_guard_present([{**canonical, **changed}], family)
+
+
+@pytest.mark.parametrize("family", [4, 6])
+def test_terminal_exemptions_admit_only_unbound_and_link_local_main_lookup(family):
+    """The escape slots cannot admit a global source or a foreign table."""
+    for offset, prefix in enumerate(route_domains.TRANSITION_EXEMPTIONS[family]):
+        network = ipaddress.ip_network(prefix)
+        canonical = {"priority": 6000 + offset, "src": str(network.network_address),
+                     "srclen": network.prefixlen, "iif": "lo", "table": "254", "protocol": "2"}
+        assert route_domains.transition_exemptions_present([canonical], family) == {6000 + offset}
+        for changed in ({"src": "192.0.2.1" if family == 4 else "2001:db8::1"},
+                        {"table": "200"}, {"iif": "eth0"}):
+            with pytest.raises(route_domains.ReconcileError):
+                route_domains.transition_exemptions_present([{**canonical, **changed}], family)
 
 
 def test_transition_guard_brackets_both_families_after_source_slots(monkeypatch):
@@ -93,7 +108,7 @@ def test_transition_guard_brackets_both_families_after_source_slots(monkeypatch)
         monkeypatch: Pytest fixture replacing external dependencies.
     """
     commands = []
-    occupied = {4: False, 6: False}
+    occupied = {4: set(), 6: set()}
     monkeypatch.setattr(route_domains, "reconciliation_lock", nullcontext)
 
     def read_native(args):
@@ -103,8 +118,16 @@ def test_transition_guard_brackets_both_families_after_source_slots(monkeypatch)
             args: Native observation arguments.
         """
         family = int(args[0][1:])
-        return ([{"priority": 6000, "src": "all", "srclen": 0, "iif": "lo",
-                  "action": "unreachable", "protocol": "2"}] if occupied[family] else [])
+        rows = []
+        for priority in occupied[family]:
+            if priority == 6003:
+                rows.append({"priority": priority, "src": "all", "srclen": 0,
+                             "iif": "lo", "action": "unreachable", "protocol": "2"})
+            else:
+                network = ipaddress.ip_network(route_domains.TRANSITION_EXEMPTIONS[family][priority - 6000])
+                rows.append({"priority": priority, "src": str(network.network_address),
+                             "srclen": network.prefixlen, "iif": "lo", "table": "254", "protocol": "2"})
+        return rows
 
     def run_ip(command):
         """Record the policy-rule command without host mutation.
@@ -113,20 +136,26 @@ def test_transition_guard_brackets_both_families_after_source_slots(monkeypatch)
             command: Native command being recorded.
         """
         family = int(command[1][1:])
-        occupied[family] = command[3] == "add"
+        priority = int(command[command.index("priority") + 1])
+        if command[3] == "add":
+            occupied[family].add(priority)
+        else:
+            occupied[family].remove(priority)
         commands.append(command)
         return ""
 
     monkeypatch.setattr(route_domains, "read_native", read_native)
     monkeypatch.setattr(route_domains, "run_ip", run_ip)
     route_domains.transition_guard(True)
-    assert occupied == {4: True, 6: True}
+    assert occupied == {4: {6000, 6001, 6002, 6003}, 6: {6000, 6001, 6002, 6003}}
     route_domains.transition_guard(False)
-    assert occupied == {4: False, 6: False}
-    assert [(cmd[1], cmd[3]) for cmd in commands] == [
-        ("-4", "add"), ("-6", "add"), ("-4", "del"), ("-6", "del")]
-    assert all(cmd[cmd.index("priority") + 1] == "6000" and "lo" in cmd and "unreachable" in cmd
-               for cmd in commands)
+    assert occupied == {4: set(), 6: set()}
+    assert [(cmd[1], cmd[3], cmd[cmd.index("priority") + 1]) for cmd in commands] == [
+        (family, action, str(priority))
+        for action, priorities in (("add", (6003, 6000, 6001, 6002)),
+                                   ("del", (6000, 6001, 6002, 6003)))
+        for family in ("-4", "-6")
+        for priority in priorities]
 
 
 def test_owned_terminal_guard_is_admitted_by_new_network_transaction(monkeypatch):
@@ -137,7 +166,7 @@ def test_owned_terminal_guard_is_admitted_by_new_network_transaction(monkeypatch
     """
     monkeypatch.setattr(route_domains, "reconciliation_lock", nullcontext)
     monkeypatch.setattr(route_domains, "read_native", lambda _args: [{
-        "priority": 6000, "src": "all", "srclen": 0, "iif": "lo",
+        "priority": 6003, "src": "all", "srclen": 0, "iif": "lo",
         "action": "unreachable", "protocol": "2"}])
     route_domains.preflight()
 

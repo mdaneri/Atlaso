@@ -15,6 +15,9 @@ brings infrastructure, storage, identity, networking, and lifecycle workflows in
 - **Networking** — configure interfaces, default-off routing, source NAT and dual-stack port forwarding with explicit
   ingress, WAN simulation, DNS, DHCP,
   firewall policy, public services, and network boot through reviewed desired state.
+  Applied management and lab source addresses keep separate reply tables even while Routing is off. A persistent
+  local-source guard blocks newly acquired global DHCP/SLAAC addresses until their exact rules exist, while unbound
+  and link-local traffic retains ordinary main-table source selection.
 - **Lifecycle** — review desired-state changes, automate tasks, monitor health, and install signed updates.
 
 [Appliance Update](docs/operate/appliance-update.md) follows one durable task through service restarts and recovery,

@@ -2,6 +2,7 @@
 
 import copy
 import hashlib
+import ipaddress
 import json
 
 import pytest
@@ -108,6 +109,20 @@ def test_topology_refuses_unproven_isolation(topology_inputs, fault):
         admit_topology(**inputs)
 
 
+def terminal_rows(family):
+    """Return the terminal guard and narrow main-table escape rules."""
+    prefixes = (("0.0.0.0/32", "169.254.0.0/16", "127.0.0.0/8") if family == 4
+                else ("::/128", "fe80::/10", "::1/128"))
+    rows = []
+    for offset, prefix in enumerate(prefixes):
+        network = ipaddress.ip_network(prefix)
+        rows.append({"priority": 6000 + offset, "src": str(network.network_address),
+                     "srclen": network.prefixlen, "iif": "lo", "table": "254", "protocol": "2"})
+    rows.append({"priority": 6003, "src": "all", "srclen": 0, "iif": "lo",
+                 "action": "7", "protocol": "2"})
+    return rows
+
+
 def source_evidence():
     """Return dual-family exact source isolation observations."""
     addresses = {"192.0.2.10": 100, "192.0.2.20": 200, "fd74:1::10": 100, "fd74:1::20": 200}
@@ -117,8 +132,7 @@ def source_evidence():
         rules[family].extend([{"src": source, "table": table, "priority": 5570, "iif": "lo", "protocol": "2"},
                               {"src": source, "action": "7", "priority": 5571, "iif": "lo", "protocol": "2"}])
     for family in (4, 6):
-        rules[family].append({"priority": 6000, "src": "all", "srclen": 0, "iif": "lo",
-                              "action": "7", "protocol": "2"})
+        rules[family].extend(terminal_rows(family))
     return addresses, rules
 
 
@@ -126,6 +140,14 @@ def test_dual_family_exact_sources():
     """Accept Photon numeric unreachable actions for both separate domains."""
     addresses, rules = source_evidence()
     assert verify_source_rules(addresses, rules) == addresses
+
+
+def test_source_proof_rejects_missing_unbound_escape():
+    """A terminal guard without source-selection escape is not native acceptance."""
+    addresses, rules = source_evidence()
+    rules[4] = [row for row in rules[4] if row.get("priority") != 6000]
+    with pytest.raises(OverlapPrerequisiteError, match="escape"):
+        verify_source_rules(addresses, rules)
 
 
 def test_recorded_photon_rules_match_source_isolation_contract():
@@ -137,12 +159,12 @@ def test_recorded_photon_rules_match_source_isolation_contract():
             {"priority": 5571, "src": "192.168.167.172", "iif": "lo", "action": "7", "protocol": "2"},
             {"priority": 5780, "src": "192.168.167.254", "iif": "lo", "table": "200", "protocol": "2"},
             {"priority": 5781, "src": "192.168.167.254", "iif": "lo", "action": "7", "protocol": "2"},
-            {"priority": 6000, "src": "all", "srclen": 0, "iif": "lo", "action": "7", "protocol": "2"}],
+            *terminal_rows(4)],
         6: [{"priority": 5314, "src": "fd42:741::254", "iif": "lo", "table": "200", "protocol": "2"},
             {"priority": 5315, "src": "fd42:741::254", "iif": "lo", "action": "7", "protocol": "2"},
             {"priority": 5552, "src": "fd42:741::172", "iif": "lo", "table": "100", "protocol": "2"},
             {"priority": 5553, "src": "fd42:741::172", "iif": "lo", "action": "7", "protocol": "2"},
-            {"priority": 6000, "src": "all", "srclen": 0, "iif": "lo", "action": "7", "protocol": "2"}],
+            *terminal_rows(6)],
     }
     assert verify_source_rules(addresses, rules) == addresses
 

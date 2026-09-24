@@ -1,10 +1,11 @@
 """Maintain local-source routing rules from applied, identity-bound network intent.
 
 Routes remain owned by networkd and WAN Apply. This service only owns canonical
-protocol-2 rules in the exclusively reserved priorities 5000--5999. The kernel
+protocol-2 source pairs in priorities 5000--5999 and terminal/exemption rules
+in 6000--6003. The kernel
 protocol deliberately exempts these rules from systemd-networkd v257's foreign
 rule cleanup without changing its global policy. It does not confer ownership
-of kernel rules outside this range. The service never consumes desired state.
+of kernel rules outside these slots. The service never consumes desired state.
 """
 
 from __future__ import annotations
@@ -36,7 +37,11 @@ IP_COMMAND = "/usr/sbin/ip"
 PROTOCOL = 2
 PRIORITY_START = 5000
 PRIORITY_END = 6000
-TRANSITION_PRIORITY = 6000
+TRANSITION_PRIORITY = 6003
+TRANSITION_EXEMPTIONS = {
+    4: ("0.0.0.0/32", "169.254.0.0/16", "127.0.0.0/8"),
+    6: ("::/128", "fe80::/10", "::1/128"),
+}
 MAX_JSON_BYTES = 2_000_000
 RESCAN_SECONDS = 10.0
 LOCK_SECONDS = 30.0
@@ -593,10 +598,11 @@ def preflight() -> None:
             rows = read_native([f"-{family}", "rule", "show"])
             owned_rules(rows, family)
             transition_guard_present(rows, family)
+            transition_exemptions_present(rows, family)
 
 
 def transition_guard_present(rows: Any, family: int) -> bool:
-    """Admit only our exact persistent local-origin terminal rule at slot 6000.
+    """Admit only our exact persistent local-origin terminal rule.
 
     Args:
         rows: Observed native policy rule rows.
@@ -620,6 +626,31 @@ def transition_guard_present(rows: Any, family: int) -> bool:
     return True
 
 
+def transition_exemptions_present(rows: Any, family: int) -> set[int]:
+    """Admit only main-table escape rules for unbound and link-local sources."""
+    if not isinstance(rows, list) or any(not isinstance(row, dict) for row in rows):
+        raise ReconcileError("invalid native policy rules")
+    present: set[int] = set()
+    for offset, prefix in enumerate(TRANSITION_EXEMPTIONS[family]):
+        priority = PRIORITY_END + offset
+        matches = [row for row in rows if row.get("priority") == priority]
+        if len(matches) > 1:
+            raise ReconcileError("ambiguous routing-domain exemption priority")
+        if not matches:
+            continue
+        row = matches[0]
+        network = ipaddress.ip_network(prefix)
+        if (set(row) - {"priority", "src", "srclen", "iif", "table", "protocol"}
+                or row.get("src") != str(network.network_address)
+                or row.get("srclen", 32 if family == 4 else 128) != network.prefixlen
+                or row.get("iif") != "lo"
+                or str(row.get("table")) not in {"254", "main"}
+                or str(row.get("protocol")) not in {str(PROTOCOL), "kernel"}):
+            raise ReconcileError("routing-domain exemption priority ownership conflict")
+        present.add(priority)
+    return present
+
+
 def transition_guard(enable: bool) -> None:
     """Maintain an exact local-origin guard across address changes.
 
@@ -641,11 +672,22 @@ def _set_guard_locked(family: int, enable: bool) -> None:
     rows = read_native([f"-{family}", "rule", "show"])
     owned_rules(rows, family)
     present = transition_guard_present(rows, family)
-    if present == enable:
-        return
-    run_ip([IP_COMMAND, f"-{family}", "rule", "add" if enable else "del",
-            "priority", str(TRANSITION_PRIORITY), "from", "all", "iif", "lo",
-            "protocol", str(PROTOCOL), "unreachable"])
+    exemptions = transition_exemptions_present(rows, family)
+    guard = [IP_COMMAND, f"-{family}", "rule", "priority", str(TRANSITION_PRIORITY),
+             "from", "all", "iif", "lo", "protocol", str(PROTOCOL), "unreachable"]
+    if enable and not present:
+        # Install the catch-all first; a newly acquired global source must
+        # never fall through while the narrow exceptions are being installed.
+        run_ip(guard[:3] + ["add"] + guard[3:])
+    for offset, prefix in enumerate(TRANSITION_EXEMPTIONS[family]):
+        priority = PRIORITY_END + offset
+        if (priority in exemptions) != enable:
+            command = [IP_COMMAND, f"-{family}", "rule", "add" if enable else "del",
+                       "priority", str(priority), "from", prefix, "iif", "lo",
+                       "protocol", str(PROTOCOL), "table", "main"]
+            run_ip(command)
+    if not enable and present:
+        run_ip(guard[:3] + ["del"] + guard[3:])
 
 
 def reconcile() -> None:

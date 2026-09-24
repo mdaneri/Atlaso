@@ -687,6 +687,7 @@ def _run_authenticated(
         raise OverlapPrerequisiteError("original external DNS settings are unavailable")
     evidence: dict[str, Any] = {"schema": 1, "setup": setup, "baseline": clean,
                                 "covered": ["native-dhcp", "native-slaac", "expiry", "source-domains",
+                                            "unbound-source-selection",
                                             "retained-static-same-address-lease"],
                                 "not_covered": ["dad-conflict"]}
     if baseline[management]["ipv6_enabled"] or baseline[lab]["role"] != "unused":
@@ -716,8 +717,20 @@ def _run_authenticated(
                                 f'"route","get","{peer}","from","{source}"])}}))\n')["routes"]
             verify_route_selection(source, table, interface, observed)
             routes[source] = observed
+        unbound = {}
+        for family, peer in ((4, "192.0.2.1"), (6, "fd74:1::1")):
+            observed = _observe(connect_appliance, SNAPSHOT_PROGRAM +
+                                f'\nprint(json.dumps({{"routes": command(["ip","-j","-N","-{family}",'
+                                f'"route","get","{peer}"])}}))\n')["routes"]
+            allowed = {source for source, table in sources.items()
+                       if table == 100 and ipaddress.ip_address(source).version == family}
+            if (len(observed) != 1 or observed[0].get("dev") != management
+                    or observed[0].get("prefsrc", observed[0].get("src")) not in allowed):
+                raise OverlapPrerequisiteError("unbound source selection cannot use management routing")
+            unbound[str(family)] = observed
         evidence["acquired"] = initial
         evidence["route_selection"] = routes
+        evidence["unbound_route_selection"] = unbound
         slaac = [source for source, table in sources.items() if table == 100 and ":" in source]
         evidence["ra_expired"] = _expiry(connect_appliance, server_action, kind="ra", addresses=slaac,
                                           interface=management, wait_seconds=90)
