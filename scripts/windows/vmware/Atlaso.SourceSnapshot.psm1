@@ -445,6 +445,79 @@ function New-AtlasoImmutableSourceSnapshot {
 
 <#
 .SYNOPSIS
+Pin the plan and receipt bytes used by a credentialed certificate inspector.
+.PARAMETER Plan
+Existing receipt-bound proof plan.
+.PARAMETER EvidenceRoot
+Original task-owned evidence root containing the plan and receipts.
+#>
+function Protect-AtlasoCertificateProofInputs {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$Plan,
+        [Parameter(Mandatory)][string]$EvidenceRoot
+    )
+
+    Import-Module (Join-Path $PSScriptRoot 'Atlaso.WorkstationCleanup.psm1') -Force
+    $owned = [IO.Path]::GetFullPath($EvidenceRoot).TrimEnd('\') + '\'
+    $planPath = [IO.Path]::GetFullPath($Plan)
+    if (-not $planPath.StartsWith($owned, [StringComparison]::OrdinalIgnoreCase)) {
+        throw 'Certificate proof plan escapes the owned evidence root.'
+    }
+    $pins = [Collections.Generic.List[IDisposable]]::new()
+    try {
+        # Parent handles prevent replacement while allowing the inspector to
+        # publish fresh evidence beside these inputs. File handles deny writes.
+        $pins.Add([Atlaso.WorkstationFileIdentity]::PinOrdinaryDirectoryPath(
+            [IO.Path]::GetDirectoryName($planPath), $true))
+        $pins.Add([Atlaso.WorkstationFileIdentity]::PinOrdinaryReadFile($planPath, $true))
+        $planValue = Get-Content -LiteralPath $planPath -Raw | ConvertFrom-Json -ErrorAction Stop
+        $references = [Collections.Generic.List[object]]::new()
+        foreach ($property in $planValue.PSObject.Properties) {
+            $value = $property.Value
+            if ($null -ne $value -and $value -is [pscustomobject] -and
+                $null -ne $value.PSObject.Properties['path'] -and
+                $null -ne $value.PSObject.Properties['sha256']) {
+                $references.Add($value)
+            }
+        }
+        $fixture = $planValue.PSObject.Properties['peer_fixture']
+        if ($null -ne $fixture -and $null -ne $fixture.Value) {
+            $fixturePath = [IO.Path]::GetFullPath([string]$fixture.Value.path)
+            if (-not $fixturePath.StartsWith($owned, [StringComparison]::OrdinalIgnoreCase)) {
+                throw 'Certificate peer fixture escapes the owned evidence root.'
+            }
+            $fixtureValue = Get-Content -LiteralPath $fixturePath -Raw | ConvertFrom-Json -ErrorAction Stop
+            if ($fixtureValue.lan_segment_receipt -and $fixtureValue.lan_segment_receipt_sha256) {
+                $references.Add([pscustomobject]@{
+                    path = $fixtureValue.lan_segment_receipt
+                    sha256 = $fixtureValue.lan_segment_receipt_sha256
+                })
+            }
+        }
+        foreach ($reference in $references) {
+            $path = [IO.Path]::GetFullPath([string]$reference.path)
+            $digest = [string]$reference.sha256
+            if (-not $path.StartsWith($owned, [StringComparison]::OrdinalIgnoreCase) -or
+                $digest -cnotmatch '^[0-9a-f]{64}$') {
+                throw 'Certificate proof receipt path or digest is invalid.'
+            }
+            $pins.Add([Atlaso.WorkstationFileIdentity]::PinOrdinaryDirectoryPath(
+                [IO.Path]::GetDirectoryName($path), $true))
+            $pins.Add([Atlaso.WorkstationFileIdentity]::PinOrdinaryReadFile($path, $true))
+            if ((Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant() -cne $digest) {
+                throw 'Certificate proof receipt changed before credentialed admission.'
+            }
+        }
+        return $pins
+    } catch {
+        foreach ($pin in $pins) { $pin.Dispose() }
+        throw
+    }
+}
+
+<#
+.SYNOPSIS
 Pin a certificate inspector and its imported Python modules to one reviewed commit.
 .PARAMETER RepositoryRoot
 Clean task checkout at the plan's admitted commit.
@@ -683,6 +756,7 @@ Export-ModuleMember -Function `
     Get-AtlasoSourceSnapshotInventory, `
     Protect-AtlasoSourceSnapshot, `
     Unprotect-AtlasoSourceSnapshot, `
+    Protect-AtlasoCertificateProofInputs, `
     New-AtlasoCertificateInspectorSnapshot, `
     Protect-AtlasoCertificatePythonRuntime, `
     Assert-AtlasoCertificatePythonImportPaths, `

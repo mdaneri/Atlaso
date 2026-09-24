@@ -85,6 +85,9 @@ try {
     $snapshot = New-AtlasoCertificateInspectorSnapshot -RepositoryRoot $repoRoot -EvidenceRoot $evidenceRoot `
         -SourceCommit ([string]$planIdentity.source_commit) -TaskId ([string]$planIdentity.task_id)
     try {
+    foreach ($pin in (Protect-AtlasoCertificateProofInputs -Plan $Plan -EvidenceRoot $evidenceRoot)) {
+        $snapshot.Pins.Add($pin)
+    }
     $scriptPath = Join-Path $snapshot.Root 'scripts/interop/certificate_handoff_native.py'
     $arguments = New-AtlasoCertificatePythonArguments -Runtime $runtime -ScriptPath $scriptPath `
         -ScriptArguments @('--plan', $Plan, '--evidence', $Evidence)

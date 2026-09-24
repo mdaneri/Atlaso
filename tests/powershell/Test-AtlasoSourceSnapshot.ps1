@@ -19,6 +19,39 @@ Import-Module (
 ) -Force
 
 New-Item -ItemType Directory -Path $OutputDirectory -Force | Out-Null
+$proofRoot = Join-Path $OutputDirectory 'certificate-proof-pins'
+New-Item -ItemType Directory -Path $proofRoot | Out-Null
+$receiptPath = Join-Path $proofRoot 'original.json'
+$segmentPath = Join-Path $proofRoot 'segment.json'
+$fixturePath = Join-Path $proofRoot 'fixture.json'
+$planPath = Join-Path $proofRoot 'proof-plan.json'
+[IO.File]::WriteAllText($receiptPath, '{"schema":1}')
+[IO.File]::WriteAllText($segmentPath, '{"schema":1}')
+$segmentSha = (Get-FileHash -LiteralPath $segmentPath -Algorithm SHA256).Hash.ToLowerInvariant()
+[IO.File]::WriteAllText($fixturePath, (@{
+    lan_segment_receipt = $segmentPath; lan_segment_receipt_sha256 = $segmentSha
+} | ConvertTo-Json -Compress))
+$fixtureSha = (Get-FileHash -LiteralPath $fixturePath -Algorithm SHA256).Hash.ToLowerInvariant()
+$receiptSha = (Get-FileHash -LiteralPath $receiptPath -Algorithm SHA256).Hash.ToLowerInvariant()
+[IO.File]::WriteAllText($planPath, (@{
+    peer_fixture = @{ path = $fixturePath; sha256 = $fixtureSha }
+    predeployment_evidence = @{ path = $receiptPath; sha256 = $receiptSha }
+} | ConvertTo-Json -Compress -Depth 4))
+$proofPins = @(Protect-AtlasoCertificateProofInputs -Plan $planPath -EvidenceRoot $OutputDirectory)
+try {
+    foreach ($inputPath in @($planPath, $fixturePath, $receiptPath, $segmentPath)) {
+        $blocked = $false
+        try {
+            $write = [IO.File]::Open($inputPath, [IO.FileMode]::Open, [IO.FileAccess]::Write, [IO.FileShare]::ReadWrite)
+            $write.Dispose()
+        } catch [IO.IOException] {
+            $blocked = $true
+        }
+        if (-not $blocked) { throw 'Credentialed certificate proof input was writable while pinned.' }
+    }
+} finally {
+    foreach ($pin in $proofPins) { $pin.Dispose() }
+}
 $sourceRepository = Join-Path $OutputDirectory 'source-repository'
 $firstStaging = Join-Path $OutputDirectory 'first-staging'
 New-Item -ItemType Directory -Path $sourceRepository, $firstStaging | Out-Null
