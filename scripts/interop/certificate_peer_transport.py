@@ -24,6 +24,11 @@ class PeerTransportRefusal(Exception):
 
 
 def _forward(source: socket.socket | paramiko.Channel, destination: socket.socket | paramiko.Channel) -> None:
+    """Handle forward for certificate handoff verification.
+
+    Args:
+        source: Source resource bound to the test plan.
+        destination: Destination endpoint of the transport."""
     try:
         while chunk := source.recv(16_384):
             destination.sendall(chunk)
@@ -37,6 +42,11 @@ def _forward(source: socket.socket | paramiko.Channel, destination: socket.socke
 
 
 def _run_bridge(bridge: socket.socket, channel: paramiko.Channel) -> None:
+    """Handle run bridge for certificate handoff verification.
+
+    Args:
+        bridge: Socket bridge for the private transport.
+        channel: SSH channel carrying the private transport."""
     left = threading.Thread(target=_forward, args=(bridge, channel), daemon=True)
     right = threading.Thread(target=_forward, args=(channel, bridge), daemon=True)
     left.start()
@@ -51,6 +61,14 @@ class PinnedPeerTransport(AbstractContextManager["PinnedPeerTransport"]):
     """Open only private-subnet TCP channels through one pinned peer SSH key."""
 
     def __init__(self, peer_ip: str, username: str, password: str, host_key: str, subnet: str):
+        """Initialize the validated client or test double.
+
+        Args:
+            peer_ip: Private-LAN peer address.
+            username: Account name for this request.
+            password: Credential held in memory for this request.
+            host_key: Expected SSH host key for the peer.
+            subnet: Expected private-LAN subnet."""
         self.peer_ip = str(ipaddress.IPv4Address(peer_ip))
         self.username = username
         self.password = password
@@ -89,12 +107,20 @@ class PinnedPeerTransport(AbstractContextManager["PinnedPeerTransport"]):
                     sock.close()
 
     def __exit__(self, *args: object) -> None:
+        """Handle exit for certificate handoff verification.
+
+        Args:
+            *args: Args used by this operation."""
         if self.transport is not None:
             self.transport.close()
             self.transport = None
 
     def open_socket(self, target_ip: str, port: int = 443) -> socket.socket:
-        """Return a real local socket whose remote bytes cross the pinned peer."""
+        """Return a real local socket whose remote bytes cross the pinned peer.
+
+        Args:
+            target_ip: Pinned destination address for the connection.
+            port: TCP port of the target service."""
         address = ipaddress.IPv4Address(target_ip)
         if address not in self.subnet or port not in (22, 443):
             raise PeerTransportRefusal("target_outside_owned_private_subnet")
@@ -120,7 +146,11 @@ class PinnedPeerTransport(AbstractContextManager["PinnedPeerTransport"]):
                 local.close()
 
     def command(self, command: str, stdin: bytes = b"") -> bytes:
-        """Read bounded peer output without persisting credentials or response text."""
+        """Read bounded peer output without persisting credentials or response text.
+
+        Args:
+            command: Command to execute on the pinned peer.
+            stdin: Optional input sent to the command."""
         if self.transport is None or not self.transport.is_active():
             raise PeerTransportRefusal("peer_transport_inactive")
         try:
@@ -147,6 +177,14 @@ class PinnedApplianceSession(AbstractContextManager["PinnedApplianceSession"]):
     """Read guest state via the peer while pinning the appliance SSH key too."""
 
     def __init__(self, peer: PinnedPeerTransport, private_ip: str, user: str, password: str, host_key: str):
+        """Initialize the validated client or test double.
+
+        Args:
+            peer: Pinned private-LAN peer transport.
+            private_ip: Private-LAN address used by the peer.
+            user: User used by this operation.
+            password: Credential held in memory for this request.
+            host_key: Expected SSH host key for the peer."""
         self.peer = peer
         self.private_ip = private_ip
         self.user = user
@@ -184,12 +222,19 @@ class PinnedApplianceSession(AbstractContextManager["PinnedApplianceSession"]):
                     sock.close()
 
     def __exit__(self, *args: object) -> None:
+        """Handle exit for certificate handoff verification.
+
+        Args:
+            *args: Args used by this operation."""
         if self.transport is not None:
             self.transport.close()
             self.transport = None
 
     def command(self, command: str) -> bytes:
-        """Return allowlist-sized read-only guest output."""
+        """Return allowlist-sized read-only guest output.
+
+        Args:
+            command: Command to execute on the pinned peer."""
         if self.transport is None or not self.transport.is_active():
             raise PeerTransportRefusal("appliance_transport_inactive")
         try:
@@ -214,6 +259,13 @@ class PeerHTTPSConnection(http.client.HTTPSConnection):
     """HTTPS origin connection routed over a peer channel with normal SNI."""
 
     def __init__(self, host: str, *, peer: PinnedPeerTransport, target_ip: str, **kwargs: object):
+        """Initialize the validated client or test double.
+
+        Args:
+            host: Host used by this operation.
+            peer: Pinned private-LAN peer transport.
+            target_ip: Pinned destination address for the connection.
+            **kwargs: Kwargs used by this operation."""
         super().__init__(host, **kwargs)
         self.peer = peer
         self.target_ip = target_ip
@@ -233,12 +285,27 @@ class PeerHTTPSHandler(urllib.request.HTTPSHandler):
     """Use peer transport for every urllib HTTPS request to one private IP."""
 
     def __init__(self, *, peer: PinnedPeerTransport, target_ip: str, context: ssl.SSLContext):
+        """Initialize the validated client or test double.
+
+        Args:
+            peer: Pinned private-LAN peer transport.
+            target_ip: Pinned destination address for the connection.
+            context: Context used by this operation."""
         super().__init__(context=context)
         self.peer = peer
         self.target_ip = target_ip
 
     def https_open(self, request: urllib.request.Request):
+        """Handle https open for certificate handoff verification.
+
+        Args:
+            request: HTTP request being processed."""
         def connection(host: str, **kwargs: object) -> PeerHTTPSConnection:
+            """Handle connection for certificate handoff verification.
+
+            Args:
+                host: Host used by this operation.
+                **kwargs: Kwargs used by this operation."""
             return PeerHTTPSConnection(host, peer=self.peer, target_ip=self.target_ip, **kwargs)
 
         return self.do_open(connection, request, context=self._context)

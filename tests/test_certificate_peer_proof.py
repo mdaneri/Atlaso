@@ -18,9 +18,17 @@ class FakePeer:
     """Return only bounded network readbacks used by the proof."""
 
     def __init__(self, *, wrong_lease: bool = False):
+        """Initialize the validated client or test double.
+
+        Args:
+            wrong_lease: Wrong lease used by this operation."""
         self.wrong_lease = wrong_lease
 
     def command(self, command: str) -> bytes:
+        """Handle command for certificate handoff verification.
+
+        Args:
+            command: Command to execute on the pinned peer."""
         if command == "cat /etc/dnsmasq.conf":
             return (
                 "port=0\ninterface=eth1\nbind-interfaces\nexcept-interface=eth0\n"
@@ -42,6 +50,10 @@ class FakeAppliance:
     """Return management address and route readbacks."""
 
     def command(self, command: str) -> bytes:
+        """Handle command for certificate handoff verification.
+
+        Args:
+            command: Command to execute on the pinned peer."""
         if command == "cat /sys/class/net/eth0/address":
             return b"00:50:56:aa:bb:cc\n"
         if command == "ip -j -4 addr show dev eth0":
@@ -52,6 +64,11 @@ class FakeAppliance:
 
 
 def test_read_native_requires_exact_unexpired_lease_before_tls(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Handle test read native requires exact unexpired lease before tls for certificate handoff verification.
+
+    Args:
+        tmp_path: Pytest-owned temporary directory.
+        monkeypatch: Pytest fixture for isolated test overrides."""
     ca = tmp_path / "ca.pem"
     ca.write_bytes(b"-----BEGIN CERTIFICATE-----\npublic\n-----END CERTIFICATE-----\n")
     plan = {
@@ -68,10 +85,20 @@ def test_read_native_requires_exact_unexpired_lease_before_tls(tmp_path: Path, m
 
     class FakeHTTPS:
         def __init__(self, host: str, **kwargs: object):
+            """Initialize the validated client or test double.
+
+            Args:
+                host: Host used by this operation.
+                **kwargs: Kwargs used by this operation."""
             assert host == "192.168.77.30"
             assert kwargs["target_ip"] == host
 
         def request(self, method: str, path: str) -> None:
+            """Handle request for certificate handoff verification.
+
+            Args:
+                method: Method used by this operation.
+                path: Path to the resource being inspected."""
             assert (method, path) == ("GET", "/openapi.json")
 
         def getresponse(self):
@@ -84,6 +111,10 @@ def test_read_native_requires_exact_unexpired_lease_before_tls(tmp_path: Path, m
         minimum_version = None
 
         def load_verify_locations(self, *, cafile: str) -> None:
+            """Handle load verify locations for certificate handoff verification.
+
+            Args:
+                cafile: Path to the CA certificate file."""
             assert cafile == str(ca)
 
     context = FakeContext()
@@ -101,6 +132,11 @@ def test_read_native_requires_exact_unexpired_lease_before_tls(tmp_path: Path, m
 def test_original_peer_identity_rejects_changed_endpoint_before_network(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """Handle test original peer identity rejects changed endpoint before network for certificate handoff verification.
+
+    Args:
+        tmp_path: Pytest-owned temporary directory.
+        monkeypatch: Pytest fixture for isolated test overrides."""
     root = tmp_path / "original"
     root.mkdir()
     refs = {name: {"path": str(root / f"{name}.json"), "sha256": name[0] * 64}
@@ -163,6 +199,11 @@ def test_original_peer_identity_rejects_changed_endpoint_before_network(
 def test_preflight_refuses_exclusive_claim_before_credentials(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """Handle test preflight refuses exclusive claim before credentials for certificate handoff verification.
+
+    Args:
+        tmp_path: Pytest-owned temporary directory.
+        monkeypatch: Pytest fixture for isolated test overrides."""
     plan_path = tmp_path / "plan.json"
     plan_path.write_text(json.dumps({"schema": 1, "pr": 871, "task_id": "task"}))
     monkeypatch.setattr(sys, "argv", [

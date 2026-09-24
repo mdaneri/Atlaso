@@ -33,12 +33,18 @@ class Refusal(Exception):
 
 
 def digest(payload: bytes) -> str:
-    """Return a canonical lowercase SHA-256 digest."""
+    """Return a canonical lowercase SHA-256 digest.
+
+    Args:
+        payload: Bytes included in the digest."""
     return hashlib.sha256(payload).hexdigest()
 
 
 def file_digest(path: Path) -> str:
-    """Hash a large source disk without loading it into memory."""
+    """Hash a large source disk without loading it into memory.
+
+    Args:
+        path: Path to the resource being inspected."""
     hasher = hashlib.sha256()
     with path.open("rb") as stream:
         for block in iter(lambda: stream.read(1024 * 1024), b""):
@@ -47,7 +53,10 @@ def file_digest(path: Path) -> str:
 
 
 def bound_json(reference: dict) -> dict:
-    """Read one immutable receipt against an independent digest reference."""
+    """Read one immutable receipt against an independent digest reference.
+
+    Args:
+        reference: Receipt reference to validate."""
     expected = reference.get("sha256", "").lower()
     if not re.fullmatch(r"[a-f0-9]{64}", expected):
         raise Refusal("receipt_digest_invalid")
@@ -64,7 +73,12 @@ def bound_json(reference: dict) -> dict:
 
 
 def original_vm(plan: dict, role: str, vmx_path: str) -> dict:
-    """Bind live VM directory to a receipt made before VM creation."""
+    """Bind live VM directory to a receipt made before VM creation.
+
+    Args:
+        plan: Validated task plan bound to the owned test resources.
+        role: Role used by this operation.
+        vmx_path: VMware configuration path for the owned VM."""
     intent_reference = plan[f"{role}_intent"]
     ownership_reference = plan[f"{role}_ownership"]
     intent = bound_json(intent_reference)
@@ -91,7 +105,11 @@ def original_vm(plan: dict, role: str, vmx_path: str) -> dict:
 
 
 def vmx_adapter(path: str, index: int) -> dict[str, str]:
-    """Read a VMX adapter's identity fields without changing VMware state."""
+    """Read a VMX adapter's identity fields without changing VMware state.
+
+    Args:
+        path: Path to the resource being inspected.
+        index: Index used by this operation."""
     prefix = f"ethernet{index}."
     values: dict[str, str] = {}
     for line in Path(path).read_text(encoding="utf-8", errors="replace").splitlines():
@@ -105,7 +123,10 @@ def vmx_adapter(path: str, index: int) -> dict[str, str]:
 
 
 def admit_receipts(plan: dict) -> tuple[dict, dict]:
-    """Pin original VM/LAN creation, bootstrap deployment and rewire chain."""
+    """Pin original VM/LAN creation, bootstrap deployment and rewire chain.
+
+    Args:
+        plan: Validated task plan bound to the owned test resources."""
     fixture = bound_json(plan["peer_fixture"])
     if (
         fixture.get("schema") != 1
@@ -209,7 +230,13 @@ def admit_receipts(plan: dict) -> tuple[dict, dict]:
 
 
 def read_native(plan: dict, fixture: dict, peer: PinnedPeerTransport, appliance: PinnedApplianceSession) -> dict:
-    """Collect native facts; never promote them to exclusive address ownership alone."""
+    """Collect native facts; never promote them to exclusive address ownership alone.
+
+    Args:
+        plan: Validated task plan bound to the owned test resources.
+        fixture: Verified native fixture for this run.
+        peer: Pinned private-LAN peer transport.
+        appliance: Pinned appliance transport."""
     network = ipaddress.IPv4Interface(fixture["peer_cidr"])
     baseline = str(ipaddress.IPv4Address(plan["baseline_address"]))
     candidate = str(ipaddress.IPv4Address(plan["static_candidate_address"]))
@@ -288,7 +315,12 @@ def read_native(plan: dict, fixture: dict, peer: PinnedPeerTransport, appliance:
 
 
 def admit_output(plan: dict, address_path: Path, runtime_path: Path) -> None:
-    """Keep new immutable proofs beneath the original task-owned tree."""
+    """Keep new immutable proofs beneath the original task-owned tree.
+
+    Args:
+        plan: Validated task plan bound to the owned test resources.
+        address_path: Path to the address evidence receipt.
+        runtime_path: Path to the runtime evidence receipt."""
     manifest = bound_json(plan["evidence_root_manifest"])
     from scripts.completed_task_files import WindowsFiles
 
@@ -310,7 +342,11 @@ def admit_output(plan: dict, address_path: Path, runtime_path: Path) -> None:
 
 
 def publish(path: Path, value: dict) -> str:
-    """Publish one never-replaced, fsynced, allowlisted JSON receipt."""
+    """Publish one never-replaced, fsynced, allowlisted JSON receipt.
+
+    Args:
+        path: Path to the resource being inspected.
+        value: Value used by this operation."""
     encoded = (json.dumps(value, sort_keys=True, separators=(",", ":")) + "\n").encode()
     with path.open("xb") as stream:
         stream.write(encoded)

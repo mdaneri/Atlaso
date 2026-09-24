@@ -17,6 +17,10 @@ from create_certificate_peer_seed_iso import (
 
 
 def _args(**overrides: str) -> argparse.Namespace:
+    """Handle args for certificate handoff verification.
+
+    Args:
+        **overrides: Overrides used by this operation."""
     values = {
         "server_cidr": "192.168.77.1/24",
         "lease_address": "192.168.77.10",
@@ -64,5 +68,9 @@ def test_peer_has_exact_mac_static_only_dhcp_on_private_interface() -> None:
     ],
 )
 def test_peer_rejects_ambiguous_or_external_input(bad: dict[str, str]) -> None:
+    """Handle test peer rejects ambiguous or external input for certificate handoff verification.
+
+    Args:
+        bad: Bad used by this operation."""
     with pytest.raises(ValueError):
         peer_files(_args(**bad))

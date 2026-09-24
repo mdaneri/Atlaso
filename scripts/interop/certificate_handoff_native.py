@@ -41,6 +41,10 @@ class Page(HTMLParser):
     """Read server-rendered CSRF and physical-interface public projection."""
 
     def __init__(self, body):
+        """Initialize the validated client or test double.
+
+        Args:
+            body: Body used by this operation."""
         super().__init__()
         self.csrf = ""
         self.rows = []
@@ -50,6 +54,11 @@ class Page(HTMLParser):
         self.feed(body)
 
     def handle_starttag(self, tag, attributes):
+        """Handle starttag for certificate handoff verification.
+
+        Args:
+            tag: Tag used by this operation.
+            attributes: Attributes used by this operation."""
         values = dict(attributes)
         if values.get("name") in {"external_dns_servers", "upstream_servers"}:
             if tag == "input":
@@ -67,18 +76,27 @@ class Page(HTMLParser):
 
 
     def handle_data(self, data):
-        """Read only the two public DNS values needed for restoration checks."""
+        """Read only the two public DNS values needed for restoration checks.
+
+        Args:
+            data: Data used by this operation."""
         if self.dns_textarea is not None:
             self.dns_fields[self.dns_textarea] += data
 
     def handle_endtag(self, tag):
-        """Close an observed DNS textarea."""
+        """Close an observed DNS textarea.
+
+        Args:
+            tag: Tag used by this operation."""
         if tag == "textarea":
             self.dns_textarea = None
 
 
 def dns_baseline(client):
-    """Require explicit setup DNS so conversion cannot silently adopt new defaults."""
+    """Require explicit setup DNS so conversion cannot silently adopt new defaults.
+
+    Args:
+        client: Authenticated appliance client used for this request."""
     result = {}
     for path, key in (("/ui/management/settings", "external_dns_servers"),
                       ("/ui/management/dns", "upstream_servers")):
@@ -95,6 +113,15 @@ class SameOrigin(urllib.request.HTTPRedirectHandler):
     """Never forward credentials to a redirect-selected different origin."""
 
     def redirect_request(self, request, response, code, message, headers, new_url):
+        """Handle redirect request for certificate handoff verification.
+
+        Args:
+            request: HTTP request being processed.
+            response: HTTP response being processed.
+            code: Code used by this operation.
+            message: Message used by this operation.
+            headers: Headers used by this operation.
+            new_url: Redirect destination URL."""
         old = urllib.parse.urlsplit(request.full_url)
         new = urllib.parse.urlsplit(new_url)
         if (old.scheme, old.netloc) != (new.scheme, new.netloc):
@@ -106,6 +133,13 @@ class Client:
     """CA and hostname-verified HTTP with an in-memory session cookie jar."""
 
     def __init__(self, url, ca, *, peer, connect_ip):
+        """Initialize the validated client or test double.
+
+        Args:
+            url: HTTPS origin to validate.
+            ca: Trusted CA certificate used for TLS verification.
+            peer: Pinned private-LAN peer transport.
+            connect_ip: Pinned appliance address for the connection."""
         parsed = urllib.parse.urlsplit(url)
         if parsed.scheme != "https" or not parsed.hostname or parsed.username or parsed.password or parsed.path not in ("", "/") or parsed.query or parsed.fragment:
             raise Refusal("invalid_origin")
@@ -124,6 +158,12 @@ class Client:
         )
 
     def request(self, path, form=None, accept="text/html"):
+        """Handle request for certificate handoff verification.
+
+        Args:
+            path: Path to the resource being inspected.
+            form: Form fields submitted to the appliance.
+            accept: Accept used by this operation."""
         if not path.startswith("/") or path.startswith("//"):
             raise Refusal("invalid_request_path")
         data = None if form is None else urllib.parse.urlencode(form, doseq=True).encode()
@@ -139,10 +179,20 @@ class Client:
             raise Refusal(f"http_{exc.code}") from None
 
     def json(self, path, form=None):
+        """Handle json for certificate handoff verification.
+
+        Args:
+            path: Path to the resource being inspected.
+            form: Form fields submitted to the appliance."""
         status, body = self.request(path, form, "application/json")
         return status, json.loads(body)
 
     def login(self, username, password):
+        """Handle login for certificate handoff verification.
+
+        Args:
+            username: Account name for this request.
+            password: Credential held in memory for this request."""
         _, body = self.request("/ui/management/login")
         csrf = Page(body).csrf
         if not csrf:
@@ -154,6 +204,10 @@ class Client:
             raise Refusal("authenticated_inventory_missing")
 
     def interface(self, name):
+        """Handle interface for certificate handoff verification.
+
+        Args:
+            name: Name used by this operation."""
         _, body = self.request("/ui/management/physical-interfaces")
         page = Page(body)
         matches = [row for row in page.rows if row.get("name") == name]
@@ -175,8 +229,16 @@ FIELDS = ("role", "mode", "ipv4_method", "ip_cidr", "gateway", "ipv6_enabled", "
 
 
 def same_mac(left, right):
-    """Compare VMware and appliance MAC spellings without accepting missing identities."""
+    """Compare VMware and appliance MAC spellings without accepting missing identities.
+
+    Args:
+        left: Left used by this operation.
+        right: Right used by this operation."""
     def canonical(value):
+        """Handle canonical for certificate handoff verification.
+
+        Args:
+            value: Value used by this operation."""
         if not isinstance(value, str) or not re.fullmatch(r"(?:[0-9a-fA-F]{2}[:-]){5}[0-9a-fA-F]{2}", value):
             return ""
         octets = value.replace("-", ":").lower().split(":")
@@ -187,14 +249,23 @@ def same_mac(left, right):
 
 
 def saved_fields(row):
-    """Retain desired fields only; never POST inventory or audit properties."""
+    """Retain desired fields only; never POST inventory or audit properties.
+
+    Args:
+        row: Row used by this operation."""
     result = {key: "" if row.get(key) is None else row[key] for key in FIELDS}
     result["admin_state"] = "up" if row.get("admin_up") else "down"
     return result
 
 
 def edit(client, name, fields, expected_mac):
-    """Use the same atomic domain mutation and audit path as the UI."""
+    """Use the same atomic domain mutation and audit path as the UI.
+
+    Args:
+        client: Authenticated appliance client used for this request.
+        name: Name used by this operation.
+        fields: Physical interface fields to apply.
+        expected_mac: Expected physical interface MAC address."""
     current, csrf = client.interface(name)
     if not same_mac(current.get("mac_address"), expected_mac):
         raise Refusal("interface_mac_changed")
@@ -206,7 +277,10 @@ def edit(client, name, fields, expected_mac):
 
 
 def submit(client):
-    """Run ordinary review/admission and return the exact master task URL."""
+    """Run ordinary review/admission and return the exact master task URL.
+
+    Args:
+        client: Authenticated appliance client used for this request."""
     _, review = client.json("/ui/management/appliance-apply/review")
     if review.get("active_task"):
         raise Refusal("apply_already_active")
@@ -230,7 +304,13 @@ def submit(client):
 
 
 def wait_task(clients, status_path, username, password):
-    """Follow the admitted task across only predeclared verified origins."""
+    """Follow the admitted task across only predeclared verified origins.
+
+    Args:
+        clients: Appliance clients for the original and candidate addresses.
+        status_path: Task status endpoint to poll.
+        username: Account name for this request.
+        password: Credential held in memory for this request."""
     deadline = time.monotonic() + 300
     while time.monotonic() < deadline:
         for client in clients:
@@ -253,7 +333,11 @@ def wait_task(clients, status_path, username, password):
 
 
 def evidence_values(value, key):
-    """Find an explicit result property in task steps without logging task bodies."""
+    """Find an explicit result property in task steps without logging task bodies.
+
+    Args:
+        value: Value used by this operation.
+        key: Key used by this operation."""
     found = []
     if isinstance(value, dict):
         if key in value:
@@ -272,7 +356,15 @@ def evidence_values(value, key):
 
 
 def public_certificate_excludes(client, certificate_id, address, ca, destination, openssl):
-    """Validate the actual public desired leaf, never a handcrafted CA payload."""
+    """Validate the actual public desired leaf, never a handcrafted CA payload.
+
+    Args:
+        client: Authenticated appliance client used for this request.
+        certificate_id: Certificate identifier to verify.
+        address: Address used by this operation.
+        ca: Trusted CA certificate used for TLS verification.
+        destination: Destination endpoint of the transport.
+        openssl: OpenSSL executable for certificate verification."""
     _, pem = client.request(f"/ui/management/certificate-authority/certificates/{certificate_id}/downloads/certificate.pem")
     if "PRIVATE KEY" in pem or not pem.startswith("-----BEGIN CERTIFICATE-----"):
         raise Refusal("unexpected_public_certificate_response")
@@ -289,7 +381,11 @@ def public_certificate_excludes(client, certificate_id, address, ca, destination
 
 
 def selected_management_certificate(client, certificate_id):
-    """Bind the negative candidate to the live service-owned certificate row."""
+    """Bind the negative candidate to the live service-owned certificate row.
+
+    Args:
+        client: Authenticated appliance client used for this request.
+        certificate_id: Certificate identifier to verify."""
     _, body = client.request("/ui/management/certificate-authority")
     rows = Page(body).certificates
     managed = [row for row in rows if isinstance(row, dict) and row.get("managed_owner") == "appliance:https"]
@@ -321,7 +417,10 @@ def peer_password():
 
 
 def clean_baseline(client):
-    """Reject active, pending, malformed, or never-applied baselines."""
+    """Reject active, pending, malformed, or never-applied baselines.
+
+    Args:
+        client: Authenticated appliance client used for this request."""
     _, review = client.json("/ui/management/appliance-apply/review")
     if (review.get("active_task") is not None or review.get("units") != []
             or review.get("pending_count") != 0 or review.get("initial_apply_required") is not False):
@@ -329,7 +428,16 @@ def clean_baseline(client):
 
 
 def restore_original(clients, plan, fields, before, username, password, original_dns):
-    """Restore desired state and prove trusted TLS for the original origin, allowing reissuance."""
+    """Restore desired state and prove trusted TLS for the original origin, allowing reissuance.
+
+    Args:
+        clients: Appliance clients for the original and candidate addresses.
+        plan: Validated task plan bound to the owned test resources.
+        fields: Physical interface fields to apply.
+        before: Original interface values to restore.
+        username: Account name for this request.
+        password: Credential held in memory for this request.
+        original_dns: Original DNS values to restore."""
     reachable = None
     for candidate in clients:
         try:
@@ -374,7 +482,10 @@ def restore_original(clients, plan, fields, before, username, password, original
 
 
 def bound_json(reference):
-    """Read a bounded evidence artifact whose original digest is in the plan."""
+    """Read a bounded evidence artifact whose original digest is in the plan.
+
+    Args:
+        reference: Receipt reference to validate."""
     path = Path(reference["path"])
     if not path.is_absolute() or path.is_symlink() or not path.is_file() or path.stat().st_size > 262144:
         raise Refusal("unsafe_evidence_reference")
@@ -385,7 +496,13 @@ def bound_json(reference):
 
 
 def admit_predeployment_binding(plan, ownership, source, runtime):
-    """Require the routing-absence readback from this exact owned VM and runtime."""
+    """Require the routing-absence readback from this exact owned VM and runtime.
+
+    Args:
+        plan: Validated task plan bound to the owned test resources.
+        ownership: Original resource ownership record.
+        source: Source resource bound to the test plan.
+        runtime: Observed runtime identity for the test appliance."""
     if (source.get("task_id") != plan["task_id"]
             or source.get("vmx_path") != plan["vmx_path"]
             or source.get("source_commit") != ownership["source_commit"]
@@ -394,7 +511,10 @@ def admit_predeployment_binding(plan, ownership, source, runtime):
 
 
 def admit_execution(plan):
-    """Bind canonical creation, predeployment and exact installed-runtime evidence."""
+    """Bind canonical creation, predeployment and exact installed-runtime evidence.
+
+    Args:
+        plan: Validated task plan bound to the owned test resources."""
     deployed_commit = plan.get("deployed_commit", "")
     current_head = subprocess.run(
         ["git", "-C", str(Path(__file__).resolve().parents[2]), "rev-parse", "HEAD"],

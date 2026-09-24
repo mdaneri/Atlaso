@@ -15,6 +15,11 @@ import certificate_handoff_native as handoff  # noqa: E402 - Local interop impor
 def test_inspect_admits_before_credential_or_peer_connection(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """Handle test inspect admits before credential or peer connection for certificate handoff verification.
+
+    Args:
+        tmp_path: Pytest-owned temporary directory.
+        monkeypatch: Pytest fixture for isolated test overrides."""
     plan_path = tmp_path / "plan.json"
     evidence_path = tmp_path / "evidence.json"
     plan_path.write_text(json.dumps({"pr": 871, "source_commit": "a" * 40, "scenario": "static-success"}))
@@ -31,6 +36,10 @@ def test_inspect_admits_before_credential_or_peer_connection(
 
 
 def test_peer_credential_is_independent_of_admin(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Handle test peer credential is independent of admin for certificate handoff verification.
+
+    Args:
+        monkeypatch: Pytest fixture for isolated test overrides."""
     monkeypatch.setenv("ATLASO_NATIVE_ADMIN", "admin-password-123")
     monkeypatch.setenv("ATLASO_NATIVE_PEER", "peer-password-456")
     assert handoff.peer_password() == "peer-password-456"
@@ -44,9 +53,18 @@ def test_interface_edit_accepts_vmware_mac_spelling_only_for_same_device() -> No
             self.posts: list[tuple[str, dict]] = []
 
         def interface(self, _name: str) -> tuple[dict, str]:
+            """Handle interface for certificate handoff verification.
+
+            Args:
+                _name:  name used by this operation."""
             return {"id": 4, "mac_address": "00:50:56:AA:BB:CC"}, "csrf-value"
 
         def request(self, path: str, form: dict) -> None:
+            """Handle request for certificate handoff verification.
+
+            Args:
+                path: Path to the resource being inspected.
+                form: Form fields submitted to the appliance."""
             self.posts.append((path, form))
 
     client = Client()
@@ -62,7 +80,10 @@ def test_interface_edit_accepts_vmware_mac_spelling_only_for_same_device() -> No
 
 @pytest.mark.parametrize("changed", ["task_id", "vmx_path", "source_commit", "digest"])
 def test_predeployment_snapshot_must_belong_to_exact_runtime(changed: str) -> None:
-    """A clean snapshot from another lab cannot authorize this VM's mutation."""
+    """A clean snapshot from another lab cannot authorize this VM's mutation.
+
+    Args:
+        changed: Changed used by this operation."""
     plan = {"task_id": "task-a", "vmx_path": "owned-a.vmx",
             "predeployment_evidence": {"sha256": "a" * 64}}
     ownership = {"source_commit": "b" * 40}

@@ -2509,7 +2509,11 @@ def test_management_handoff_dynamic_address_must_not_be_retained_old_address(mon
 
 
 def test_management_handoff_covers_every_live_global_address_on_static_link(monkeypatch, tmp_path):
-    """Both candidate and post-retirement checks include secondary live addresses."""
+    """Both candidate and post-retirement checks include secondary live addresses.
+
+    Args:
+        monkeypatch: Pytest fixture for isolated test overrides.
+        tmp_path: Pytest-owned temporary directory."""
     helper = load_helper_module()
     network_path = tmp_path / "atlaso-network.conf"
     network_path.write_text("candidate\n", encoding="utf-8")

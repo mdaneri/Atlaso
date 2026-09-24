@@ -14,7 +14,10 @@ from create_nocloud_seed_iso import add_file, load_password_from_stdin
 
 
 def peer_files(args: argparse.Namespace) -> dict[str, str]:
-    """Render a peer whose DHCP listener is confined to its private eth1."""
+    """Render a peer whose DHCP listener is confined to its private eth1.
+
+    Args:
+        args: Args used by this operation."""
     network = ipaddress.IPv4Interface(args.server_cidr)
     lease = ipaddress.IPv4Address(args.lease_address)
     if lease not in network.network or lease in (network.network.network_address, network.network.broadcast_address) or lease == network.ip:

@@ -23,6 +23,13 @@ class FakeTransport:
         return True
 
     def open_channel(self, kind: str, destination: tuple[str, int], origin: tuple[str, int], timeout: int):
+        """Handle open channel for certificate handoff verification.
+
+        Args:
+            kind: Kind used by this operation.
+            destination: Destination endpoint of the transport.
+            origin: Origin endpoint of the transport.
+            timeout: Timeout used by this operation."""
         assert kind == "direct-tcpip"
         assert destination == ("192.168.77.10", 443)
         assert origin == ("127.0.0.1", 0)
