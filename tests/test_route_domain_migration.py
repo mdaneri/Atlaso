@@ -415,6 +415,32 @@ def test_ingress_guard_capacity_remains_one_hundred_interfaces(helper):
     assert max(row["priority"] for row in desired if row["table"] == 200) == 2099
 
 
+def test_ordinary_network_seeds_only_existing_management_interface(helper, monkeypatch, tmp_path):
+    """An unchanged old listener is seeded; a newly promoted lab link is not."""
+    config = tmp_path / "network.conf"
+    config.write_text(network_config_text(), encoding="utf-8")
+    monkeypatch.setattr(helper, "_read_existing_management_network_values",
+                        lambda: {"Name": ["eth0"]})
+    assert helper._ordinary_network_old_management_bindings(config) == [{"name": "eth0", "table": 100}]
+    monkeypatch.setattr(helper, "_read_existing_management_network_values",
+                        lambda: {"Name": ["eth2"]})
+    assert helper._ordinary_network_old_management_bindings(config) == []
+
+
+def test_transition_helper_supplies_proven_sources_before_guard(helper, monkeypatch):
+    """The appliance boundary sends old link domains to the seeded entry point."""
+    calls = []
+    monkeypatch.setattr(helper, "_run_with_input", lambda command, payload:
+                        calls.append((command, json.loads(payload)))
+                        or subprocess.CompletedProcess(command, 0, "", ""))
+    bindings = [{"name": "eth0", "table": 100}]
+
+    helper._transition_source_guard(True, seed_interfaces=bindings)
+
+    assert calls[0][0][-1] == "--transition-start-seeded"
+    assert calls[0][1] == bindings
+
+
 @pytest.mark.parametrize("enabled", [False, True])
 def test_ingress_capacity_preflight_applies_only_with_routing(helper, monkeypatch, tmp_path, enabled):
     """Reject a large Network intent before mutation only when Routing needs rules.
@@ -429,8 +455,9 @@ def test_ingress_capacity_preflight_applies_only_with_routing(helper, monkeypatc
     wan.write_text(f"[feature_settings]\nrouting_enabled={str(enabled).lower()}\n" + wan_config_text(),
                    encoding="utf-8")
     monkeypatch.setattr(helper, "WAN_RUNTIME_CONFIG_PATH", wan)
-    monkeypatch.setattr(helper, "_route_domain_ingress_interfaces", lambda *_args, **_kwargs:
-                        [f"eth{index}" for index in range(101)])
+    monkeypatch.setattr(helper, "_route_domain_ingress_projection", lambda *_args, **_kwargs:
+                        ([f"eth{index}" for index in range(101)],
+                         [f"eth{index}" for index in range(101)]))
     if enabled:
         with pytest.raises(ValueError, match="exceed rule capacity"):
             helper._route_domain_ingress_desired_rules(tmp_path / "network.conf")

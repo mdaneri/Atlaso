@@ -690,13 +690,83 @@ def transition_exemptions_present(rows: Any, family: int) -> set[int]:
     return present
 
 
-def transition_guard(enable: bool) -> None:
+def _seed_transition_sources_locked(bindings: Any) -> None:
+    """Install exact live lookups before a transition guard can cut off old paths."""
+    if (not isinstance(bindings, list) or len(bindings) > 256 or any(
+        not isinstance(row, dict) or set(row) != {"name", "table"}
+        or not isinstance(row["name"], str) or not INTERFACE_PATTERN.fullmatch(row["name"])
+        or row["name"] in {"lo", ".", ".."} or type(row["table"]) is not int
+        or row["table"] not in {100, 200} for row in bindings
+    )):
+        raise ReconcileError("invalid transition source bindings")
+    names = [row["name"] for row in bindings]
+    if len(names) != len(set(names)):
+        raise ReconcileError("ambiguous transition source bindings")
+    inventory = read_native(["address", "show"])
+    if not isinstance(inventory, list) or len(inventory) > 4096:
+        raise ReconcileError("invalid transition source inventory")
+    by_name: dict[str, dict[str, Any]] = {}
+    for link in inventory:
+        if not isinstance(link, dict) or not isinstance(link.get("ifname"), str) or link["ifname"] in by_name:
+            raise ReconcileError("ambiguous transition source inventory")
+        by_name[link["ifname"]] = link
+    owners = []
+    for binding in bindings:
+        link = by_name.get(binding["name"])
+        if link is None:
+            raise ReconcileError("previous management source identity unavailable")
+        owners.append(parse_interface({"name": binding["name"], "mac": link.get("address"),
+                                       "table": binding["table"]}))
+    sources, incomplete = source_tables(Intent(tuple(owners)), inventory)
+    if incomplete or any(table is None for table in sources.values()):
+        raise ReconcileError("previous management source identity unavailable")
+    for source in sources:
+        appearances = 0
+        for link in inventory:
+            entries = link.get("addr_info")
+            if not isinstance(entries, list) or any(not isinstance(entry, dict) for entry in entries):
+                raise ReconcileError("invalid transition source addresses")
+            for entry in entries:
+                if entry.get("scope") == "global" and entry.get("valid_life_time") != 0:
+                    appearances += usable_address(entry.get("local")) == source
+        if appearances != 1:
+            raise ReconcileError("ambiguous previous management source")
+    existing = owned_rules(read_native(["-4", "rule", "show"]), 4)
+    existing |= owned_rules(read_native(["-6", "rule", "show"]), 6)
+    current: dict[str, int | None] = {
+        rule.source: rule.table for rule in existing if rule.table is not None
+    }
+    for rule in existing:
+        if rule.table is None and rule.source not in current:
+            current[rule.source] = None
+    for source, table in sources.items():
+        if source in current and current[source] != table:
+            raise ReconcileError("previous management source ownership conflicts with live rules")
+        current[source] = table
+    desired = plan_rules(current, existing)
+    # Old replies still use main until their exact lookup is present. Add
+    # lookups before their adjacent guards; do not retire any old rule here.
+    for rule in sorted((desired - existing), key=lambda row: (row.table is None, row.family, row.priority)):
+        run_ip(rule_command("add", rule))
+
+
+def transition_guard(enable: bool, seed_interfaces: Any = None) -> None:
     """Maintain an exact local-origin guard across address changes.
 
     Args:
         enable: Whether to install the owned guard.
+        seed_interfaces: Previous live interface domains to route before the guard.
     """
     with reconciliation_lock():
+        if enable:
+            bindings = seed_interfaces
+            if bindings is None:
+                # Boot starts the unit before networkd, but a persisted intent
+                # can still identify addresses already present on its links.
+                bindings = [{"name": row.name, "table": row.table}
+                            for row in read_intent().interfaces]
+            if bindings:
+                _seed_transition_sources_locked(bindings)
         for family in (4, 6):
             _set_guard_locked(family, enable)
 
@@ -819,6 +889,7 @@ def main() -> int:
     mode.add_argument("--once", action="store_true", help="Reconcile once for protected Apply readiness")
     mode.add_argument("--preflight", action="store_true", help="Check source-rule ownership without changing rules or intent")
     mode.add_argument("--transition-start", action="store_true", help="Install persistent local-origin guard")
+    mode.add_argument("--transition-start-seeded", action="store_true", help="Seed proven old sources before the guard")
     mode.add_argument("--transition-stop", action="store_true", help="Retire local-origin guard during rollback or reset")
     mode.add_argument("--migrate-legacy", action="store_true", help="Retire journaled legacy source rules before activation")
     arguments = parser.parse_args()
@@ -829,6 +900,14 @@ def main() -> int:
             preflight()
         elif arguments.transition_start:
             transition_guard(True)
+        elif arguments.transition_start_seeded:
+            payload = sys.stdin.read(MAX_JSON_BYTES + 1)
+            if len(payload) > MAX_JSON_BYTES:
+                raise ReconcileError("transition source bindings are oversized")
+            try:
+                transition_guard(True, json.loads(payload))
+            except json.JSONDecodeError as exc:
+                raise ReconcileError("invalid transition source bindings") from exc
         elif arguments.transition_stop:
             transition_guard(False)
         elif arguments.migrate_legacy:

@@ -44,6 +44,56 @@ def link(row, *addresses):
     ]}
 
 
+@pytest.mark.parametrize("source", ["192.0.2.10", "2001:db8::10"])
+def test_transition_seeds_live_management_lookup_before_global_guard(monkeypatch, source):
+    """An old source without a legacy prefix selector keeps its working path."""
+    management = interface()
+    inventory = [link(management, source)]
+    events: list[tuple[str, object]] = []
+    monkeypatch.setattr(domains, "reconciliation_lock", nullcontext)
+    monkeypatch.setattr(domains, "read_native", lambda args: inventory if args == ["address", "show"] else [])
+    monkeypatch.setattr(domains, "run_ip", lambda command: events.append(("rule", command)) or "")
+    monkeypatch.setattr(domains, "_set_guard_locked", lambda family, enable:
+                        events.append(("guard", (family, enable))))
+
+    domains.transition_guard(True, [{"name": "eth0", "table": 100}])
+
+    assert [event[0] for event in events] == ["rule", "rule", "guard", "guard"]
+    assert events[0][1][-2:] == ["table", "100"]
+    assert events[1][1][-1] == "unreachable"
+
+
+def test_transition_refuses_ambiguous_live_management_source_before_guard(monkeypatch):
+    """A duplicate address is not evidence of one management source owner."""
+    management = interface()
+    inventory = [link(management, "192.0.2.10"),
+                 link(interface("eth1", "02:00:00:00:00:02", 200), "192.0.2.10")]
+    commands = []
+    monkeypatch.setattr(domains, "reconciliation_lock", nullcontext)
+    monkeypatch.setattr(domains, "read_native", lambda args: inventory if args == ["address", "show"] else [])
+    monkeypatch.setattr(domains, "run_ip", lambda command: commands.append(command) or "")
+
+    with pytest.raises(domains.ReconcileError, match="ambiguous previous management source"):
+        domains.transition_guard(True, [{"name": "eth0", "table": 100}])
+    assert commands == []
+
+
+def test_transition_start_seeds_persisted_identity_before_guard(monkeypatch):
+    """The service's boot entry point also preserves already assigned sources."""
+    management = interface()
+    events = []
+    monkeypatch.setattr(domains, "reconciliation_lock", nullcontext)
+    monkeypatch.setattr(domains, "read_intent", lambda: intent(management))
+    monkeypatch.setattr(domains, "read_native", lambda args:
+                        [link(management, "192.0.2.10")] if args == ["address", "show"] else [])
+    monkeypatch.setattr(domains, "run_ip", lambda command: events.append("rule") or "")
+    monkeypatch.setattr(domains, "_set_guard_locked", lambda _family, _enable: events.append("guard"))
+
+    domains.transition_guard(True)
+
+    assert events == ["rule", "rule", "guard", "guard"]
+
+
 def test_removed_vlan_already_absent_needs_no_source_hold():
     """A removed parent may already have taken its applied VLAN link away."""
     management = interface()

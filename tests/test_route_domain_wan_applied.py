@@ -173,6 +173,7 @@ def test_transition_guard_brackets_both_families_after_source_slots(monkeypatch)
 
     monkeypatch.setattr(route_domains, "read_native", read_native)
     monkeypatch.setattr(route_domains, "run_ip", run_ip)
+    monkeypatch.setattr(route_domains, "read_intent", lambda: route_domains.Intent(()))
     route_domains.transition_guard(True)
     assert occupied == {4: {6000, 6001, 6002, 6003, 6004}, 6: {6000, 6001, 6002, 6003, 6004}}
     route_domains.transition_guard(False)

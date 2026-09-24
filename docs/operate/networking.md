@@ -72,6 +72,8 @@ Atlaso includes **Routing & WAN** in a protected management handoff. That handof
 lab-domain replacement is ready, then applies the captured WAN configuration. Other migrations use the already-applied
 forwarding setting and do not apply pending Routes & WAN edits. Rollback restores the prior rules, network files,
 routing service state, and any WAN runtime included in the handoff. Subsequent WAN Apply uses the applied Network ownership.
+Before the transition guard is enabled, Atlaso installs exact rules for proven live sources on the existing management
+interface. This also preserves gatewayless static and DHCP management access when the older setup has no prefix rule.
 
 The routing service follows DHCP and IPv6 address events and periodically reconciles missed events. Protected Apply
 waits for address activation and synchronously verifies source rules before readiness. Address changes outside Apply are
