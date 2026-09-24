@@ -11420,11 +11420,9 @@ def appliance_apply_units(db: Session, *, reconcile: bool = True, applying_dns: 
         config_preview=wan["wan_config_preview"],
         baseline=wan_baseline,
     )
-    # Desired WAN gateway validation cannot authorize a route against an
-    # unapplied Network prefix. Couple only effective routes whose own target
-    # addressing or routing ownership changed; unrelated pending Network edits
-    # stay independent. A newly active target needs its connected route before
-    # WAN can install a gateway route in that target's domain.
+    # Couple effective routes to a pending Network change on their own target.
+    # A gateway needs the candidate prefix, while a direct dev route also needs
+    # the candidate link's routing role and administrative state to be active.
     applied_network_rows = {
         row["name"]: row for row in network_interface_entries(network_baseline_preview)
     }
@@ -11435,9 +11433,9 @@ def appliance_apply_units(db: Session, *, reconcile: bool = True, applying_dns: 
         row["name"] for row in (wan_network_owned_targets(db) or [])
         if row.get("management_ui")
     }
-    gateway_target_changes: set[str] = set()
+    route_target_changes: set[str] = set()
     for route in wan["routes"]:
-        if not route.enabled or not route.gateway:
+        if not route.enabled:
             continue
         if not (wan["routes_wan_settings"].routing_enabled or (
             default_route_family(route.destination_cidr) is not None
@@ -11445,17 +11443,19 @@ def appliance_apply_units(db: Session, *, reconcile: bool = True, applying_dns: 
         )):
             continue
         try:
-            family = ip_address(route.gateway).version
+            family = ip_address(route.gateway).version if route.gateway else ip_network(
+                route.destination_cidr, strict=False,
+            ).version
         except ValueError:
-            continue  # WAN validation reports the invalid gateway before task submission.
+            continue  # WAN validation reports malformed routes before task submission.
         address_fields = ("ip_cidr", "ipv4_method") if family == 4 else ("ipv6_cidr", "ipv6_enabled")
         previous = applied_network_rows.get(route.interface_name, {})
         desired = desired_network_rows.get(route.interface_name, {})
         routing_fields = ("role", "mode", "admin_state")
         if any(previous.get(field, "") != desired.get(field, "")
                for field in (*address_fields, *routing_fields)):
-            gateway_target_changes.add(route.interface_name)
-    wan_unit["network_address_dependency"] = bool(network_unit["changed"] and gateway_target_changes)
+            route_target_changes.add(route.interface_name)
+    wan_unit["network_address_dependency"] = bool(network_unit["changed"] and route_target_changes)
     previous_targets = {
         row["name"]: row for row in wan_config_target_entries(
             str((wan_baseline or {}).get("config_preview") or "")

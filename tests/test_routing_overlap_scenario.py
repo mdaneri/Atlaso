@@ -723,18 +723,19 @@ def test_same_address_rejects_missing_or_mismatched_client_proof(monkeypatch, to
         scenario._same_address_native(lambda: None, topology)
 
 
-@pytest.mark.parametrize("unknown", [False, True])
-def test_revocation_failure_preserves_unknown_apply_outcome(monkeypatch, topology, unknown):
-    """Revocation failure cannot downgrade the running-fixture recovery signal.
+@pytest.mark.parametrize("outcome", ["success", "unknown", "restoration"])
+def test_revocation_failure_preserves_recovery_outcome(monkeypatch, topology, outcome):
+    """Revocation failure cannot downgrade either running-fixture recovery signal.
 
     Args:
         monkeypatch: Replace scenario and transport failure boundaries.
         topology: Admitted fixture identities.
-        unknown: Whether the accepted Apply outcome remains unknown.
+        outcome: Success, unknown Apply, or incomplete baseline restoration.
     """
     client = FakeClient()
     original_request = client.json_request
-    sentinel = scenario.ApplyOutcomeUnknown("Apply job_abc still running")
+    sentinel = (scenario.ApplyOutcomeUnknown("Apply job_abc still running") if outcome == "unknown" else
+                scenario.RestorationIncomplete("baseline restoration incomplete"))
 
     def revoke_fails(method, path, *, json_body=None):
         """Fail only revocation after recording its attempt.
@@ -755,17 +756,17 @@ def test_revocation_failure_preserves_unknown_apply_outcome(monkeypatch, topolog
         Args:
             *_args: Admitted scenario dependencies.
         """
-        if unknown:
+        if outcome != "success":
             raise sentinel
         return {"status": "succeeded"}
 
     monkeypatch.setattr(client, "json_request", revoke_fails)
     monkeypatch.setattr(scenario, "_run_authenticated", run_authenticated)
-    expected = scenario.ApplyOutcomeUnknown if unknown else OSError
+    expected = type(sentinel) if outcome != "success" else OSError
     with pytest.raises(expected) as caught:
         scenario.run_scenario(client=client, connect_appliance=lambda: None, topology=topology,
                               server_action=lambda _action: {}, username="test", password="synthetic")
-    if unknown:
+    if outcome != "success":
         assert caught.value is sentinel
         assert sentinel.__notes__ == ["Temporary token revocation failed; retain the fixture for recovery."]
     assert client.calls[-1][:2] == ("POST", "/api/v1/api-tokens/1/revoke")

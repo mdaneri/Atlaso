@@ -647,21 +647,21 @@ def run_scenario(
     )
     client.bearer_token = token["raw_token"]
     client.diagnostic_secret = password
-    unknown_outcome: ApplyOutcomeUnknown | None = None
+    recovery_required: ApplyOutcomeUnknown | RestorationIncomplete | None = None
     try:
         return _run_authenticated(client, connect_appliance, topology, server_action)
-    except ApplyOutcomeUnknown as failure:
-        unknown_outcome = failure
+    except (ApplyOutcomeUnknown, RestorationIncomplete) as failure:
+        recovery_required = failure
         raise
     finally:
         try:
             client.json_request("POST", f'/api/v1/api-tokens/{int(token["token"]["id"])}/revoke')
         except Exception:
-            if unknown_outcome is None:
+            if recovery_required is None:
                 raise
             # Keep exit-code 3 and the running fixture even if HTTPS is down.
             # Never attach the transport exception, which may contain secrets.
-            unknown_outcome.add_note("Temporary token revocation failed; retain the fixture for recovery.")
+            recovery_required.add_note("Temporary token revocation failed; retain the fixture for recovery.")
         finally:
             client.bearer_token = ""
             client.diagnostic_secret = ""

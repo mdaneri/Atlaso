@@ -2478,15 +2478,17 @@ def test_wan_apply_preview_uses_selected_network_ownership(client, monkeypatch, 
 
 
 @pytest.mark.parametrize("scenario", ["changed_address", "unrelated_network_edit", "invalid_network",
-                                      "disabled_route", "routing_off", "activate_trunk",
-                                      "activate_admin_down", "activate_unused", "change_domain"])
-def test_wan_gateway_target_address_requires_network_apply(client, monkeypatch, scenario):
-    """A pending gateway's new prefix or routing owner requires Network first.
+                                       "disabled_route", "routing_off", "activate_trunk",
+                                       "activate_admin_down", "activate_unused", "change_domain"])
+@pytest.mark.parametrize("gateway_present", [True, False], ids=["gateway", "direct"])
+def test_wan_gateway_target_address_requires_network_apply(client, monkeypatch, scenario, gateway_present):
+    """A pending route's new target prefix or routing owner requires Network first.
 
     Args:
         client: Isolated HTTP application fixture.
         monkeypatch: Keep submitted jobs pending and inject invalid Network state.
         scenario: Address or ownership dependency, unrelated edit, or inactive route.
+        gateway_present: Whether the route uses a gateway or only its target link.
     """
     from sqlalchemy import select
 
@@ -2509,7 +2511,7 @@ def test_wan_gateway_target_address_requires_network_apply(client, monkeypatch, 
         interface.oper_state = "up"
         interface.ipv4_method = "static"
         interface.ip_cidr = "192.0.2.10/24"
-        route = Route(destination_cidr="198.51.100.0/24", gateway="192.0.2.1",
+        route = Route(destination_cidr="198.51.100.0/24", gateway="192.0.2.1" if gateway_present else None,
                       interface_name="eth2", enabled=True)
         db.add(route)
         db.commit()
@@ -2519,12 +2521,20 @@ def test_wan_gateway_target_address_requires_network_apply(client, monkeypatch, 
             interface.role = "access"
             interface.mode = "access"
             interface.admin_state = "up"
+            if not gateway_present:
+                route.destination_cidr = "198.51.101.0/24"
         elif scenario == "unrelated_network_edit":
             interface.mtu = 1400
-            route.gateway = "192.0.2.2"
+            if gateway_present:
+                route.gateway = "192.0.2.2"
+            else:
+                route.destination_cidr = "198.51.101.0/24"
         else:
             interface.ip_cidr = "192.0.3.10/24"
-            route.gateway = "192.0.3.1"
+            if gateway_present:
+                route.gateway = "192.0.3.1"
+            else:
+                route.destination_cidr = "198.51.101.0/24"
             if scenario == "disabled_route":
                 route.enabled = False
             elif scenario == "routing_off":
