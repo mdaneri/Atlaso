@@ -34,6 +34,13 @@ def test_signed_lifecycle_fixture_url_reaches_python_checker() -> None:
     assert guard in runner
     assert wrapper.index(guard) < wrapper.index("if (-not $SkipClientPrepare")
     assert runner.index(guard) < runner.index("$sourceCommit =")
+    url_guard = "[Uri]::TryCreate($SignedReleaseRepositoryUrl, [UriKind]::Absolute, [ref]$fixtureUri)"
+    for script in (wrapper, runner):
+        assert url_guard in script
+        assert "$fixtureUri.Scheme -cne 'https'" in script
+        assert "$fixtureUri.UserInfo -or $fixtureUri.Query -or $fixtureUri.Fragment" in script
+    assert wrapper.index(url_guard) < wrapper.index("if (-not $SkipClientPrepare")
+    assert runner.index(url_guard) < runner.index("$sourceCommit =")
     assert "signed_release_update_check = [bool]$SignedReleaseRepositoryUrl" in runner
     assert "preview availability check and upgrade, development availability check and rollback, and two audited appliance reboots" in runner
     assert runner.index("$initialPythonArgs =") < runner.index("@('--signed-release-repository-url', $SignedReleaseRepositoryUrl)")

@@ -126,6 +126,14 @@ if ($OidcOnly -and $SiteInterface -ne 'eth1') {
 if ($SignedReleaseRepositoryUrl -and ($OidcOnly -or $RoutingWanOnly)) {
     throw '-SignedReleaseRepositoryUrl requires the full lifecycle; it cannot be combined with -OidcOnly or -RoutingWanOnly.'
 }
+if ($SignedReleaseRepositoryUrl) {
+    [Uri]$fixtureUri = $null
+    if (-not [Uri]::TryCreate($SignedReleaseRepositoryUrl, [UriKind]::Absolute, [ref]$fixtureUri) -or
+        -not $fixtureUri.IsWellFormedOriginalString() -or $fixtureUri.Scheme -cne 'https' -or
+        -not $fixtureUri.Host -or $fixtureUri.UserInfo -or $fixtureUri.Query -or $fixtureUri.Fragment) {
+        throw '-SignedReleaseRepositoryUrl must be a credential-free absolute HTTPS base URL without a query or fragment.'
+    }
+}
 <#
 .SYNOPSIS
 Refuse consumer output after any snapshot namespace or security change.

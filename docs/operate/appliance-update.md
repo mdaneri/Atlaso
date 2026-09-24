@@ -552,6 +552,8 @@ scripts/windows/vmware/invoke-lifecycle-test.ps1 `
 
 Replace `1234` with the exact pull-request number that owns the lifecycle validation and the example URL with the
 fixture's HTTPS base URL.
+Both PowerShell entry points reject a malformed or non-HTTPS base URL before preparing clients or creating a lab;
+the URL must not contain credentials, a query, or a fragment.
 The signed fixture requires the full lifecycle run; it cannot be combined with `-OidcOnly` or `-RoutingWanOnly`.
 Use `-PlanOnly` to inspect whether the signed upgrade, rollback, and two audited reboots are included before running.
 
