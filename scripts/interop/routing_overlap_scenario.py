@@ -718,15 +718,20 @@ def _run_authenticated(
             verify_route_selection(source, table, interface, observed)
             routes[source] = observed
         unbound = {}
-        # The fixture intentionally overlaps its on-link prefixes. An unbound
-        # on-link query may legitimately choose either connected interface;
-        # off-link destinations exercise the retained management defaults.
-        for family, peer in ((4, "203.0.113.1"), (6, "2001:db8::1")):
+        # The IPv4 default is available to an unbound query. The RA default is
+        # intentionally isolated in table 100, so use a link-local destination
+        # on the management device to check unbound IPv6 source selection.
+        for family, peer in ((4, "203.0.113.1"), (6, "fe80::1")):
+            device = f',"dev","{management}"' if family == 6 else ""
             observed = _observe(connect_appliance, SNAPSHOT_PROGRAM +
                                 f'\nprint(json.dumps({{"routes": command(["ip","-j","-N","-{family}",'
-                                f'"route","get","{peer}"])}}))\n')["routes"]
-            allowed = {source for source, table in sources.items()
-                       if table == 100 and ipaddress.ip_address(source).version == family}
+                                f'"route","get","{peer}"{device}])}}))\n')["routes"]
+            allowed = ({row["local"] for row in _addresses(initial, management)
+                        if row.get("family") == "inet6" and row.get("scope") == "link"
+                        and not row.get("tentative") and not row.get("dadfailed")}
+                       if family == 6 else
+                       {source for source, table in sources.items()
+                        if table == 100 and ipaddress.ip_address(source).version == family})
             selected = (observed[0].get("prefsrc") or observed[0].get("from")
                         or observed[0].get("src")) if len(observed) == 1 else None
             if (len(observed) != 1 or observed[0].get("dev") != management
