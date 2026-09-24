@@ -93,9 +93,9 @@ def test_read_native_requires_exact_unexpired_lease_before_tls(tmp_path: Path, m
         proof.read_native(plan, fixture, FakePeer(wrong_lease=True), FakeAppliance())
     result = proof.read_native(plan, fixture, FakePeer(), FakeAppliance())
     assert context.minimum_version == proof.ssl.TLSVersion.TLSv1_2
-    assert result["address_ownership_state"] == "proven-controlled"
+    assert result["address_ownership_state"] == "unproven"
     assert result["addresses"] == ["192.168.77.40", "192.168.77.10"]
-    assert result["candidate_observation_limit"].startswith("candidate addresses are reserved")
+    assert "do not prove exclusive LAN attachment" in result["candidate_observation_limit"]
 
 
 def test_original_peer_identity_rejects_changed_endpoint_before_network(
@@ -151,9 +151,27 @@ def test_original_peer_identity_rejects_changed_endpoint_before_network(
             "rewired_runtime": refs["rewire"],
             "appliance_ownership": {"sha256": "a" * 64}, "peer_ownership": {"sha256": "p" * 64},
             "peer_transport": {"host": "192.168.167.42", "user": "alpine", "ssh_host_key": identity["ssh_host_key"]}}
-    assert proof.admit_receipts(plan)[0] is fixture
+    with pytest.raises(proof.Refusal, match="exclusive_private_lan_and_candidate_ownership_unproven"):
+        proof.admit_receipts(plan)
     for field, changed in (("host", "192.168.167.43"), ("ssh_host_key", "SHA256:" + "B" * 43),
                            ("user", "root")):
         altered = {**plan, "peer_transport": {**plan["peer_transport"], field: changed}}
         with pytest.raises(proof.Refusal, match="peer_original_identity_mismatch"):
             proof.admit_receipts(altered)
+
+
+def test_preflight_refuses_exclusive_claim_before_credentials(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    plan_path = tmp_path / "plan.json"
+    plan_path.write_text(json.dumps({"schema": 1, "pr": 871, "task_id": "task"}))
+    monkeypatch.setattr(sys, "argv", [
+        "proof", "--plan", str(plan_path), "--address-output", str(tmp_path / "address.json"),
+        "--runtime-output", str(tmp_path / "runtime.json"), "--preflight-only",
+    ])
+    monkeypatch.setattr(proof, "admit_output", lambda *args: None)
+    monkeypatch.setattr(proof, "admit_receipts", lambda plan: (_ for _ in ()).throw(
+        proof.Refusal("exclusive_private_lan_and_candidate_ownership_unproven")))
+    monkeypatch.setattr(proof, "PinnedPeerTransport", lambda *args: pytest.fail("network before exclusive proof"))
+    assert proof.main() == 2
+    assert not (tmp_path / "address.json").exists()

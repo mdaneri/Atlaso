@@ -454,6 +454,8 @@ def admit_execution(plan):
     address = str(ipaddress.ip_interface(plan["candidate_cidr"]).ip) if plan["scenario"] == "static-success" else str(ipaddress.IPv4Address(plan["expected_dhcp_address"]))
     reservation = bound_json(plan["address_evidence"])
     if (reservation.get("schema") != 1 or reservation.get("kind") != "certificate-private-address-proof"
+            or reservation.get("exclusive_attachment_state") != "verified-current"
+            or reservation.get("candidate_conflict_state") != "clear-current"
             or reservation.get("phase") != "static-baseline-preflight"
             or reservation.get("task_id") != plan["task_id"]
             or reservation.get("vmx_path") != plan["vmx_path"]

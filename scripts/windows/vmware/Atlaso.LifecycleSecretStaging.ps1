@@ -73,7 +73,30 @@ function Assert-AtlasoLifecyclePrivateStagingAcl {
 
 <#
 .SYNOPSIS
-Create only the dedicated lifecycle bundle directory with private ACLs, or verify an existing one.
+Build a private ACL before publishing a new lifecycle staging directory.
+.PARAMETER CurrentSid
+Current Windows user's SID.
+#>
+function New-AtlasoLifecyclePrivateDirectoryAcl {
+    param([Parameter(Mandatory)][Security.Principal.SecurityIdentifier]$CurrentSid)
+
+    $acl = [Security.AccessControl.DirectorySecurity]::new()
+    $acl.SetOwner($CurrentSid)
+    $acl.SetAccessRuleProtection($true, $false)
+    foreach ($sid in @($CurrentSid, [Security.Principal.SecurityIdentifier]::new('S-1-5-18'))) {
+        $acl.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new(
+            $sid, [Security.AccessControl.FileSystemRights]::FullControl,
+            [Security.AccessControl.InheritanceFlags]'ContainerInherit,ObjectInherit',
+            [Security.AccessControl.PropagationFlags]::None,
+            [Security.AccessControl.AccessControlType]::Allow
+        ))
+    }
+    return $acl
+}
+
+<#
+.SYNOPSIS
+Create and verify private checkout-local staging directories, or verify existing ones.
 .PARAMETER RepositoryRoot
 Exact task checkout that owns the `.atlaso-local` parent.
 #>
@@ -81,12 +104,24 @@ function Initialize-AtlasoLifecycleSecretBundleRoot {
     param([Parameter(Mandatory)][string]$RepositoryRoot)
 
     $parent = Join-Path $RepositoryRoot '.atlaso-local'
+    $currentSid = [Security.Principal.WindowsIdentity]::GetCurrent().User
+    if (-not (Test-Path -LiteralPath $parent)) {
+        $repositoryItem = Get-Item -LiteralPath $RepositoryRoot -Force -ErrorAction Stop
+        if (-not $repositoryItem.PSIsContainer -or
+            ($repositoryItem.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+            throw 'Lifecycle credential checkout must be an ordinary directory.'
+        }
+        Assert-AtlasoLifecycleStagingParentAcl -Acl (Get-Acl -LiteralPath $RepositoryRoot) -CurrentSid $currentSid
+        # No secret is published while the new Git-ignored parent inherits its
+        # checkout ACL. Protect and verify it before creating the child.
+        $null = New-Item -ItemType Directory -Path $parent -ErrorAction Stop
+        Set-Acl -LiteralPath $parent -AclObject (New-AtlasoLifecyclePrivateDirectoryAcl -CurrentSid $currentSid)
+    }
     $parentItem = Get-Item -LiteralPath $parent -Force -ErrorAction Stop
     if (-not $parentItem.PSIsContainer -or
         ($parentItem.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
         throw 'Task-local credential parent must be an ordinary directory.'
     }
-    $currentSid = [Security.Principal.WindowsIdentity]::GetCurrent().User
     Assert-AtlasoLifecycleStagingParentAcl -Acl (Get-Acl -LiteralPath $parent) -CurrentSid $currentSid
 
     $bundleRoot = Join-Path $parent 'lifecycle-secret-bundles'
@@ -94,18 +129,7 @@ function Initialize-AtlasoLifecycleSecretBundleRoot {
     if ($newDirectory) {
         # No secret is written until the new child has a verified private ACL.
         $null = New-Item -ItemType Directory -Path $bundleRoot -ErrorAction Stop
-        $acl = [Security.AccessControl.DirectorySecurity]::new()
-        $acl.SetOwner($currentSid)
-        $acl.SetAccessRuleProtection($true, $false)
-        foreach ($sid in @($currentSid, [Security.Principal.SecurityIdentifier]::new('S-1-5-18'))) {
-            $acl.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new(
-                $sid, [Security.AccessControl.FileSystemRights]::FullControl,
-                [Security.AccessControl.InheritanceFlags]'ContainerInherit,ObjectInherit',
-                [Security.AccessControl.PropagationFlags]::None,
-                [Security.AccessControl.AccessControlType]::Allow
-            ))
-        }
-        Set-Acl -LiteralPath $bundleRoot -AclObject $acl
+        Set-Acl -LiteralPath $bundleRoot -AclObject (New-AtlasoLifecyclePrivateDirectoryAcl -CurrentSid $currentSid)
     }
     $bundleItem = Get-Item -LiteralPath $bundleRoot -Force -ErrorAction Stop
     if (-not $bundleItem.PSIsContainer -or

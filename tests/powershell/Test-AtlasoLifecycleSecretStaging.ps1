@@ -24,6 +24,10 @@ $inheritedParent.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::ne
 if ($inheritedParent.AreAccessRulesProtected) { throw 'The parent fixture unexpectedly disables inheritance.' }
 Assert-AtlasoLifecycleStagingParentAcl -Acl $inheritedParent -CurrentSid $current
 
+$newParentAcl = New-AtlasoLifecyclePrivateDirectoryAcl -CurrentSid $current
+Assert-AtlasoLifecyclePrivateStagingAcl -Acl $newParentAcl -CurrentSid $current
+Assert-AtlasoLifecycleStagingParentAcl -Acl $newParentAcl -CurrentSid $current
+
 $unsafeParent = [Security.AccessControl.DirectorySecurity]::new()
 $unsafeParent.SetOwner($current)
 $unsafeParent.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new(

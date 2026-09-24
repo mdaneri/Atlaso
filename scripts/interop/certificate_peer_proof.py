@@ -201,11 +201,15 @@ def admit_receipts(plan: dict) -> tuple[dict, dict]:
         or rewire.get("deployed_commit") != plan["deployed_commit"]
     ):
         raise Refusal("runtime_rewire_chain_invalid")
-    return fixture, rewire
+    # The available VMX/lease evidence cannot enumerate every current PVN
+    # attachment or detect a static-address/MAC impostor on that segment.
+    # Refuse both the no-credential preflight and any handoff admission until
+    # a supported native producer supplies those independent observations.
+    raise Refusal("exclusive_private_lan_and_candidate_ownership_unproven")
 
 
 def read_native(plan: dict, fixture: dict, peer: PinnedPeerTransport, appliance: PinnedApplianceSession) -> dict:
-    """Verify static baseline, exclusive reservation and peer-routed HTTPS."""
+    """Collect native facts; never promote them to exclusive address ownership alone."""
     network = ipaddress.IPv4Interface(fixture["peer_cidr"])
     baseline = str(ipaddress.IPv4Address(plan["baseline_address"]))
     candidate = str(ipaddress.IPv4Address(plan["static_candidate_address"]))
@@ -269,11 +273,11 @@ def read_native(plan: dict, fixture: dict, peer: PinnedPeerTransport, appliance:
         "schema": 1, "kind": "certificate-private-address-proof", "phase": "static-baseline-preflight",
         "task_id": plan["task_id"], "repository": "mdaneri/Atlaso", "pr": 871,
         "vmx_path": fixture["appliance_vmx"], "addresses": [candidate, dhcp],
-        "address_ownership_state": "proven-controlled",
+        "address_ownership_state": "unproven",
         "baseline_address": baseline, "baseline_interface": "eth0", "appliance_mac": mac,
         "dhcp_reservation": dhcp, "dhcp_server": str(network.ip),
         "dhcp_lease_observation": "unexpired-before-static-baseline",
-        "candidate_observation_limit": "candidate addresses are reserved by original private LAN topology; live DHCP route is not claimed at preflight",
+        "candidate_observation_limit": "lease and topology do not prove exclusive LAN attachment or absence of static address and MAC conflicts",
         "peer_fixture_sha256": plan["peer_fixture"]["sha256"],
         "rewired_runtime_sha256": plan["rewired_runtime"]["sha256"],
         "lan_segment_receipt_sha256": fixture["lan_segment_receipt_sha256"].lower(),
@@ -348,6 +352,10 @@ def main() -> int:
                 admin_password, plan["appliance_ssh_host_key"],
             ) as appliance:
                 proof = read_native(plan, fixture, peer, appliance)
+        if (proof.get("address_ownership_state") != "proven-controlled"
+                or proof.get("exclusive_attachment_state") != "verified-current"
+                or proof.get("candidate_conflict_state") != "clear-current"):
+            raise Refusal("exclusive_private_lan_and_candidate_ownership_unproven")
         proof_sha = publish(address_path, proof)
         controlled = dict(rewire)
         controlled.update(
