@@ -626,6 +626,9 @@ and route, and CA-pinned HTTPS through a private peer tunnel. The producer also 
 configured static management baseline; it does not configure that baseline. The tracked
 `inspect-certificate-handoff.ps1` wrapper then rechecks controlled receipts and the live private baseline before
 the native scenario changes the management address and restores the original interface and certificate state.
+For both credentialed wrappers, install the task-owned virtual environment from the hash-locked
+`requirements-onepassword-deploy.lock`. They pin the interpreter, base runtime, and isolated import files
+through child termination and refuse an external import path or startup customization.
 Keep the original receipts outside the lab removal root. A source appliance or client disk owned
 by another task requires separate source-admission evidence and owner coordination; the fixture does not transfer
 ownership of either source. The peer receipt binds the selected client VMDK by path and SHA-256 and the

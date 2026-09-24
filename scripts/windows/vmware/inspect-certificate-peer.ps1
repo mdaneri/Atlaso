@@ -10,7 +10,7 @@ New immutable controlled-runtime destination within that same tree.
 .PARAMETER EnvironmentId
 Explicit pinned 1Password Environment selector.
 .PARAMETER PythonPath
-Exact supported Python executable with the locked Paramiko dependency.
+Task-owned isolated Python virtual environment with locked native dependencies.
 .PARAMETER SshPassword
 The peer client's SSH password, supplied separately from the appliance admin credential.
 #>
@@ -79,9 +79,13 @@ try {
     if (([string](& git -C $repoRoot rev-parse --verify 'HEAD^{commit}')).Trim() -cne $sourceCommit) {
         throw 'Certificate helper source commit changed during import.'
     }
-$snapshot = New-AtlasoCertificateInspectorSnapshot -RepositoryRoot $repoRoot -EvidenceRoot $evidenceRoot `
-    -SourceCommit ([string]$planIdentity.source_commit) -TaskId ([string]$planIdentity.task_id)
+$runtime = Protect-AtlasoCertificatePythonRuntime -PythonPath $PythonPath -EvidenceRoot $evidenceRoot
 try {
+    $PythonPath = $runtime.Executable
+    Assert-AtlasoCertificatePythonImportPaths -Runtime $runtime
+    $snapshot = New-AtlasoCertificateInspectorSnapshot -RepositoryRoot $repoRoot -EvidenceRoot $evidenceRoot `
+        -SourceCommit ([string]$planIdentity.source_commit) -TaskId ([string]$planIdentity.task_id)
+    try {
     $scriptPath = Join-Path $snapshot.Root 'scripts/interop/certificate_peer_proof.py'
     $arguments = @('-I', '-B', $scriptPath, '--plan', $Plan,
         '--address-output', $AddressEvidence, '--runtime-output', $RuntimeEvidence)
@@ -108,6 +112,9 @@ try {
     }
 } finally {
     foreach ($pin in $snapshot.Pins) { $pin.Dispose() }
+}
+} finally {
+    foreach ($pin in $runtime.Pins) { $pin.Dispose() }
 }
 } finally {
     foreach ($pin in $helperPins) { $pin.Dispose() }

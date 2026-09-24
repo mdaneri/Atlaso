@@ -221,4 +221,43 @@ finally {
     $directoryPin.Dispose()
 }
 
+$runtimeFixture = Join-Path $OutputDirectory 'certificate-python-pin-fixture'
+$venv = Join-Path $runtimeFixture 'venv'
+$base = Join-Path $runtimeFixture 'base'
+$python = Join-Path $venv 'Scripts/python.exe'
+$dependency = Join-Path $venv 'Lib/site-packages/paramiko/__init__.py'
+$baseLib = Join-Path $base 'Lib'
+foreach ($directory in @((Split-Path $python), (Split-Path $dependency), $baseLib)) {
+    New-Item -ItemType Directory -Path $directory -Force | Out-Null
+}
+[IO.File]::WriteAllText($python, 'synthetic executable')
+[IO.File]::WriteAllText($dependency, 'synthetic pinned import')
+[IO.File]::WriteAllText((Join-Path $venv 'pyvenv.cfg'),
+    "home = $base`ninclude-system-site-packages = false`n")
+foreach ($number in 1..100) {
+    [IO.File]::WriteAllText((Join-Path $baseLib "module$number.py"), 'synthetic stdlib import')
+}
+$runtime = Protect-AtlasoCertificatePythonRuntime -PythonPath $python -EvidenceRoot $OutputDirectory
+try {
+    foreach ($path in @($python, $dependency, (Join-Path $baseLib 'module1.py'))) {
+        $blocked = $false
+        try { [IO.File]::WriteAllText($path, 'replaced') }
+        catch [IO.IOException] { $blocked = $true }
+        catch [UnauthorizedAccessException] { $blocked = $true }
+        if (-not $blocked) { throw 'A pinned certificate Python dependency was replaced.' }
+    }
+}
+finally {
+    foreach ($pin in $runtime.Pins) { $pin.Dispose() }
+}
+$startupPath = Join-Path $venv 'Lib/site-packages/injected.pth'
+[IO.File]::WriteAllText($startupPath, 'import injected')
+try {
+    $null = Protect-AtlasoCertificatePythonRuntime -PythonPath $python -EvidenceRoot $OutputDirectory
+    throw 'A Python startup import was admitted.'
+}
+catch {
+    if ($_.Exception.Message -notlike '*startup imports are not isolated*') { throw }
+}
+
 Write-Output 'Atlaso immutable source snapshot tests passed.'

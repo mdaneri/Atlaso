@@ -520,6 +520,113 @@ function New-AtlasoCertificateInspectorSnapshot {
         FileCount = $snapshot.FileCount; Pins = $pins; Manifest = $manifestPath }
 }
 
+function Protect-AtlasoCertificatePythonRuntime {
+    <#
+    .SYNOPSIS
+    Hold the exact isolated Python runtime used by a credentialed certificate proof.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$PythonPath,
+        [Parameter(Mandatory)][string]$EvidenceRoot
+    )
+
+    $executable = [IO.Path]::GetFullPath($PythonPath)
+    $owned = [IO.Path]::GetFullPath($EvidenceRoot).TrimEnd('\') + '\'
+    if (-not $executable.StartsWith($owned, [StringComparison]::OrdinalIgnoreCase) -or
+        [IO.Path]::GetFileName($executable) -cne 'python.exe' -or
+        [IO.Path]::GetFileName([IO.Path]::GetDirectoryName($executable)) -cne 'Scripts') {
+        throw 'Certificate proof requires a task-owned isolated Python virtual environment.'
+    }
+    $venvRoot = [IO.Path]::GetDirectoryName([IO.Path]::GetDirectoryName($executable))
+    $configPath = Join-Path $venvRoot 'pyvenv.cfg'
+    $pins = [Collections.Generic.List[IDisposable]]::new()
+    try {
+        $pins.Add([Atlaso.WorkstationFileIdentity]::PinOrdinaryDirectoryPath($venvRoot))
+        $pins.Add([Atlaso.WorkstationFileIdentity]::PinOrdinaryReadFile($configPath, $true))
+        $config = Get-Content -LiteralPath $configPath -Raw
+        if ($config -notmatch '(?im)^include-system-site-packages\s*=\s*false\s*$') {
+            throw 'Certificate Python must not import system site packages.'
+        }
+        $homeMatch = [regex]::Match($config, '(?im)^home\s*=\s*(.+?)\s*$')
+        if (-not $homeMatch.Success) { throw 'Certificate Python base runtime is unavailable.' }
+        $baseRoot = [IO.Path]::GetFullPath($homeMatch.Groups[1].Value)
+        if ($baseRoot.StartsWith($venvRoot + '\', [StringComparison]::OrdinalIgnoreCase) -or
+            -not (Test-Path -LiteralPath (Join-Path $baseRoot 'Lib') -PathType Container)) {
+            throw 'Certificate Python base runtime is invalid.'
+        }
+        $pins.Add([Atlaso.WorkstationFileIdentity]::PinOrdinaryDirectoryPath($baseRoot))
+        $excluded = [IO.Path]::GetFullPath((Join-Path $baseRoot 'Lib/site-packages')).TrimEnd('\')
+        $codeExtensions = @('.py', '.pyc', '.pyd', '.dll', '.pth', '.zip', '.exe', '.pyw')
+        $count = 0
+        foreach ($root in @($venvRoot, $baseRoot)) {
+            foreach ($directory in @(Get-ChildItem -LiteralPath $root -Directory -Recurse -Force -ErrorAction Stop)) {
+                $path = [IO.Path]::GetFullPath($directory.FullName).TrimEnd('\')
+                if ($root -ceq $baseRoot -and
+                    ($path -eq $excluded -or $path.StartsWith($excluded + '\', [StringComparison]::OrdinalIgnoreCase))) {
+                    continue
+                }
+                $pins.Add([Atlaso.WorkstationFileIdentity]::PinOrdinaryDirectoryPath($path))
+            }
+            foreach ($file in @(Get-ChildItem -LiteralPath $root -File -Recurse -Force -ErrorAction Stop)) {
+                $path = [IO.Path]::GetFullPath($file.FullName)
+                if ($root -ceq $baseRoot -and
+                    $path.StartsWith($excluded + '\', [StringComparison]::OrdinalIgnoreCase)) {
+                    continue
+                }
+                if ($file.Extension.ToLowerInvariant() -notin $codeExtensions -and $path -cne $configPath) {
+                    continue
+                }
+                $count++
+                if ($count -gt 14000) { throw 'Certificate Python code inventory exceeds its bound.' }
+                $pins.Add([Atlaso.WorkstationFileIdentity]::PinOrdinaryReadFile($path, $true))
+            }
+        }
+        if ($count -lt 100 -or -not (Test-Path -LiteralPath (Join-Path $venvRoot 'Lib/site-packages/paramiko/__init__.py'))) {
+            throw 'Certificate Python dependencies are incomplete.'
+        }
+        if (@(Get-ChildItem -LiteralPath (Join-Path $venvRoot 'Lib/site-packages') -Filter '*.pth' -File -Force).Count -or
+            (Test-Path -LiteralPath (Join-Path $venvRoot 'Lib/site-packages/sitecustomize.py')) -or
+            (Test-Path -LiteralPath (Join-Path $venvRoot 'Lib/site-packages/usercustomize.py'))) {
+            throw 'Certificate Python startup imports are not isolated.'
+        }
+        return [pscustomobject]@{ Pins = $pins; Executable = $executable; VenvRoot = $venvRoot
+            BaseRoot = $baseRoot; ExcludedBaseSitePackages = $excluded }
+    } catch {
+        foreach ($pin in $pins) { $pin.Dispose() }
+        throw
+    }
+}
+
+function Assert-AtlasoCertificatePythonImportPaths {
+    <# .SYNOPSIS Confirm isolated import paths before a credentialed child starts. #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory)]$Runtime)
+
+    $raw = Invoke-AtlasoBoundedProcess -FilePath $Runtime.Executable `
+        -ArgumentList @('-I', '-B', '-c', 'import json,sys;print(json.dumps(sys.path))') `
+        -TimeoutSeconds 15 -Action 'Certificate Python import-path verification'
+    $paths = ConvertFrom-Json -InputObject $raw
+    if ($paths -isnot [array] -or $paths.Count -lt 2) {
+        throw 'Certificate Python import paths are incomplete.'
+    }
+    foreach ($entry in $paths) {
+        if ($entry -isnot [string] -or [string]::IsNullOrWhiteSpace($entry)) {
+            throw 'Certificate Python import path is invalid.'
+        }
+        $path = [IO.Path]::GetFullPath($entry)
+        $insideVenv = $path -eq $Runtime.VenvRoot -or
+            $path.StartsWith($Runtime.VenvRoot + '\', [StringComparison]::OrdinalIgnoreCase)
+        $insideBase = $path -eq $Runtime.BaseRoot -or
+            $path.StartsWith($Runtime.BaseRoot + '\', [StringComparison]::OrdinalIgnoreCase)
+        $excluded = $path -eq $Runtime.ExcludedBaseSitePackages -or
+            $path.StartsWith($Runtime.ExcludedBaseSitePackages + '\', [StringComparison]::OrdinalIgnoreCase)
+        if (-not ($insideVenv -or ($insideBase -and -not $excluded))) {
+            throw 'Certificate Python imports escape the pinned runtime.'
+        }
+    }
+}
+
 Export-ModuleMember -Function `
     Get-AtlasoSourceCheckoutIdentity, `
     New-AtlasoImmutableSourceSnapshot, `
@@ -528,4 +635,6 @@ Export-ModuleMember -Function `
     Get-AtlasoSourceSnapshotInventory, `
     Protect-AtlasoSourceSnapshot, `
     Unprotect-AtlasoSourceSnapshot, `
-    New-AtlasoCertificateInspectorSnapshot
+    New-AtlasoCertificateInspectorSnapshot, `
+    Protect-AtlasoCertificatePythonRuntime, `
+    Assert-AtlasoCertificatePythonImportPaths
