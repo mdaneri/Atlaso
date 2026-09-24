@@ -4654,21 +4654,30 @@ recovery boundary.</p>
 or installed environments from the retired product. Deploy a fresh Atlaso appliance and configure its signed update
 sources directly.</p>
 <h2 id="signed-lifecycle-fixture">Signed lifecycle fixture<a class="headerlink" href="#signed-lifecycle-fixture" title="Permanent link">&para;</a></h2>
-<p>The canonical VMware Workstation lifecycle coverage can exercise the complete release transaction with:</p>
+<p>Publish an isolated signed release fixture at a credential-free HTTPS base URL before running the VMware Workstation
+lifecycle. Configure the appliance's named test trust key for that fixture. Its signed <code>preview</code> channel must select a
+healthy release newer than the image baseline; its signed <code>development</code> channel must select a candidate that reaches
+database startup and then fails final nginx or management-front-door readiness. The lifecycle wrapper neither publishes
+the fixture nor installs its trust key. Once those prerequisites are ready, run:</p>
 <div class="language-powershell highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="n">scripts</span><span class="p">/</span><span class="n">windows</span><span class="p">/</span><span class="n">vmware</span><span class="p">/</span><span class="nb">invoke-lifecycle</span><span class="n">-test</span><span class="p">.</span><span class="n">ps1</span> <span class="p">`</span>
 </span><span id="__span-5-2"><a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>  <span class="n">-PullRequestNumber</span> <span class="n">1234</span> <span class="p">`</span>
 </span><span id="__span-5-3"><a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a>  <span class="n">-SignedReleaseRepositoryUrl</span> <span class="n">https</span><span class="p">://</span><span class="n">release-fixture</span><span class="p">.</span><span class="n">example</span><span class="p">.</span><span class="n">test</span><span class="p">/</span><span class="n">updates</span>
 </span></code></pre></div>
-<p>Replace <code>1234</code> with the exact pull-request number that owns the lifecycle validation.</p>
-<p>The fixture must use the appliance's named test trust key. Its signed <code>preview</code> channel must select a healthy release
-newer than the image baseline; its signed <code>development</code> channel must select a candidate that reaches database startup
-and then fails final nginx or management-front-door readiness. The lifecycle runner proves that each release task
+<p>Replace <code>1234</code> with the exact pull-request number that owns the lifecycle validation and the example URL with the
+fixture's HTTPS base URL.
+Both PowerShell entry points reject a malformed or non-HTTPS base URL before preparing clients or creating a lab;
+the URL must not contain credentials, a query, or a fragment.
+The signed fixture requires the full lifecycle run; it cannot be combined with <code>-OidcOnly</code> or <code>-RoutingWanOnly</code>.
+Use <code>-PlanOnly</code> to inspect whether the signed upgrade, rollback, and two audited reboots are included before running.</p>
+<p>The lifecycle runner checks Atlaso Release availability after selecting each channel and installs only when that check
+confirms an available update. It then proves that each release task
 exposes an Atlaso Release child step, proves the preview upgrade and exact host-facing candidate version, performs an
-audited appliance reboot, and requires the same candidate version and release link afterward. It then expects the
+audited appliance reboot, and requires the same candidate version, release link, and local console service/launcher
+readiness afterward. It then expects the
 development parent and child to fail with <code>rolled_back=true</code>, compares the active release, compatibility virtualenv,
 database schema hash, and user identities before and after rollback, and rechecks the previous version through the web,
 worker, console, internal <code>/openapi.json</code>, and host-facing API. A second audited reboot must preserve that healthy
-rollback identity and version. Omitting the URL skips only this externally supplied fixture.</p>
+rollback identity, version, and local console readiness. Omitting the URL skips only this externally supplied fixture.</p>
 <h2 id="release-operator-workflow">Release operator workflow<a class="headerlink" href="#release-operator-workflow" title="Permanent link">&para;</a></h2>
 <p>Routine <code>main</code> push CI automatically starts <strong>Publish Python wheel</strong> after CI succeeds. Its immutable Actions artifact
 is named <code>atlaso-wheel-vX.Y.Z-&lt;full-sha&gt;</code> and is retained for 90 days. The artifact ZIP contains only the versioned
