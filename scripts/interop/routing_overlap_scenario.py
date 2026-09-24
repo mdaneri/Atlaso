@@ -747,12 +747,17 @@ def _run_authenticated(
                                 '"route","show","table","main"])}))\n')["routes"]
                 main_default = any(row.get("dst") in ("default", "::/0") for row in main)
                 main_link = any(str(row.get("dst", "")).startswith("fe80::/") for row in main)
+                main_link_management = any(str(row.get("dst", "")).startswith("fe80::/")
+                                           and row.get("dev") == management for row in main)
+                main_link_lab = any(str(row.get("dst", "")).startswith("fe80::/")
+                                    and row.get("dev") == lab for row in main)
                 managed_link = any(str(row.get("dst", "")).startswith("fe80::/")
                                    for row in initial["management_routes"]["6"])
                 exemptions = {row.get("priority") for row in initial["rules"]["6"]
                               if row.get("iif") == "lo" and str(row.get("table")) in ("254", "main")}
                 raise OverlapPrerequisiteError(
                     f"{exc}; main-default={int(main_default)},main-fe80={int(main_link)},"
+                    f"main-fe80-mgmt={int(main_link_management)},main-fe80-lab={int(main_link_lab)},"
                     f"table100-fe80={int(managed_link)},exemptions={sorted(exemptions & {6000, 6001, 6002})}"
                 ) from None
             allowed = ({row["local"] for row in _addresses(initial, management)
