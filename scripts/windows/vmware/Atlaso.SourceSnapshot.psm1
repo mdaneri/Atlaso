@@ -524,6 +524,12 @@ function Protect-AtlasoCertificatePythonRuntime {
     <#
     .SYNOPSIS
     Hold the exact isolated Python runtime used by a credentialed certificate proof.
+
+    .PARAMETER PythonPath
+    Absolute path to the task-owned virtual environment's Python executable.
+
+    .PARAMETER EvidenceRoot
+    Task-owned evidence root containing the isolated virtual environment.
     #>
     [CmdletBinding()]
     param(
@@ -599,7 +605,13 @@ function Protect-AtlasoCertificatePythonRuntime {
 }
 
 function Assert-AtlasoCertificatePythonImportPaths {
-    <# .SYNOPSIS Confirm isolated import paths before a credentialed child starts. #>
+    <#
+    .SYNOPSIS
+    Confirm isolated import paths before a credentialed child starts.
+
+    .PARAMETER Runtime
+    Pinned Python runtime returned by Protect-AtlasoCertificatePythonRuntime.
+    #>
     [CmdletBinding()]
     param([Parameter(Mandatory)]$Runtime)
 
