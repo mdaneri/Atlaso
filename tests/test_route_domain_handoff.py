@@ -347,6 +347,33 @@ def test_transition_retirement_refuses_missing_seed_without_replacement(monkeypa
     assert state["transition_seed_routes"]
 
 
+def test_transition_refusal_diagnostics_exclude_dead_and_unsupported_routes(monkeypatch, tmp_path):
+    """The receipt distinguishes a matching destination from a usable successor."""
+    helper = load_helper_module()
+    route = {"destination": "::/0", "gateway": "fe80::1", "metric": 0,
+             "scope": "global", "table": 100, "preferred_source": "",
+             "preference": "medium", "holdover_metric": 1}
+    evidence = {"eth0": {"mac": "02:00:00:00:00:01", "table": 100,
+                         "cidrs": ["2001:db8::10/64"], "routes": [route]}}
+    state = {"previous_management_routing": evidence,
+             "transition_seed_routes": [{"name": "eth0", **route, "seed_metric": 2}]}
+    observed = [
+        {"dst": "default", "dev": "eth0", "gateway": "fe80::1", "metric": 2, "protocol": "kernel"},
+        {"dst": "default", "dev": "eth0", "gateway": "fe80::1", "metric": 1,
+         "protocol": "boot", "flags": ["linkdown"]},
+        {"dst": "default", "dev": "eth0", "gateway": "fe80::2", "metric": 1024,
+         "protocol": "boot"},
+    ]
+    monkeypatch.setattr(helper, "_transition_route_rows", lambda *_args: observed)
+    monkeypatch.setattr(helper, "_transition_old_source_absent", lambda *_args: False)
+    monkeypatch.setattr(helper, "_run", lambda *_args: pytest.fail("unproven seed was deleted"))
+    with pytest.raises(ValueError, match="destination_matches=3, live_matches=2, supported_matches=1, "
+                                               "nonseed_matches=0, holdover_metric_matches=0"):
+        helper._retire_transition_routes(
+            state, tmp_path / "state.json", require_replacement=True, allow_disappeared_source=True,
+        )
+
+
 def test_transition_retirement_waits_for_final_route_without_weakening_proof(monkeypatch, tmp_path):
     """A late RA successor may settle, while an unrelated error must fail immediately."""
     helper = load_helper_module()

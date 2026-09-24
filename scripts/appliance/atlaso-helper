@@ -11820,11 +11820,13 @@ def _restore_network_transaction(state: dict) -> bool:
         _restore_route_domains(state)
         if "previous_route_domain_rules" in state:
             _restore_route_domain_rules(state["previous_route_domain_rules"])
-        _retire_transition_routes(state, NETWORK_TRANSACTION_DIR / "state.json", require_replacement=False)
     except (OSError, ValueError, subprocess.TimeoutExpired) as exc:
         failures.append(str(exc))
     if failures:
         raise ValueError("network rollback incomplete: " + "; ".join(failures[:8]))
+    _retire_transition_routes(
+        state, NETWORK_TRANSACTION_DIR / "state.json", require_replacement=True,
+    )
     if state.get("source_transition_guard") and not state.get("previous_route_domain_service", {}).get("active"):
         _transition_source_guard(False)
     return _finish_network_transaction(state, "rolled-back")
@@ -26580,17 +26582,33 @@ def _retire_transition_routes(
                 row["name"], evidence["mac"], evidence["cidrs"], family,
             ):
                 destination = ip_network(row["destination"])
-                matching_destination = 0
+                matching_destination = []
                 for item in observed:
                     raw = item.get("dst", "default")
                     raw = ("0.0.0.0/0" if family == 4 else "::/0") if raw == "default" else raw
                     if ip_network(raw, strict=False) == destination:
-                        matching_destination += 1
+                        matching_destination.append(item)
+                live_destination = [
+                    item for item in matching_destination
+                    if item.get("dev") == row["name"] and item.get("type", "unicast") == "unicast"
+                    and not set(item.get("flags", [])) & {"dead", "linkdown"}
+                ]
+                supported_destination = [
+                    item for item in live_destination
+                    if str(item.get("protocol")) in {"kernel", "static", "dhcp", "ra"}
+                    or (item.get("metric", 0) == row["holdover_metric"]
+                        and str(item.get("gateway") or "") == row["gateway"])
+                ]
+                nonseed_destination = [
+                    item for item in supported_destination if item.get("metric", 0) not in seed_metrics
+                ]
                 raise ValueError(
                     "replacement management route is not ready "
                     f"(index={index}, family={family}, table={row['table']}, "
-                    f"observed={len(observed)}, destination_matches={matching_destination}, "
-                    f"holdover_metric_matches={sum(item.get('metric', 0) == row['holdover_metric'] for item in observed)})"
+                    f"observed={len(observed)}, destination_matches={len(matching_destination)}, "
+                    f"live_matches={len(live_destination)}, supported_matches={len(supported_destination)}, "
+                    f"nonseed_matches={len(nonseed_destination)}, "
+                    f"holdover_metric_matches={sum(item.get('metric', 0) == row['holdover_metric'] for item in nonseed_destination)})"
                 )
         if seeded and _run(_transition_route_command("del", row)).returncode:
             raise ValueError("transition route seed retirement failed")
@@ -28076,9 +28094,10 @@ def _restore_management_handoff(state: dict) -> dict:
     )
     if "previous_route_domain_rules" in state:
         attempt("routing-domain rule restore", lambda: _restore_route_domain_rules(state["previous_route_domain_rules"]))
-    attempt("transition route seed retirement", lambda: _retire_transition_routes(
-        state, MANAGEMENT_HANDOFF_STATE_PATH, require_replacement=False,
-    ))
+    if not errors:
+        attempt("transition route seed retirement", lambda: _retire_transition_routes(
+            state, MANAGEMENT_HANDOFF_STATE_PATH, require_replacement=True,
+        ))
     # Firewall restoration flushes the ruleset; replay canonical NAT after that final flush.
     attempt("firewall restore", lambda: _restore_management_handoff_firewall(state, commands))
     # Older journals lack publication progress; retain conservative recovery for them.

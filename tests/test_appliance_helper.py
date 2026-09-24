@@ -1788,8 +1788,11 @@ def test_management_handoff_rollback_continues_after_missing_snapshot(monkeypatc
         "previous_https_enabled": True,
         "previous_management_public_port": 443,
         "source_transition_guard": True,
+        "transition_seed_routes": [{"name": "eth0"}],
     }
     monkeypatch.setattr(helper, "_transition_source_guard", lambda _enabled: stages.append("guard-retired"))
+    monkeypatch.setattr(helper, "_retire_transition_routes",
+                        lambda *_args, **_kwargs: pytest.fail("seed retired during incomplete rollback"))
 
     with pytest.raises(ValueError, match=r"rollback incomplete: snapshot 0 restore: FileNotFoundError"):
         helper._restore_management_handoff(state)

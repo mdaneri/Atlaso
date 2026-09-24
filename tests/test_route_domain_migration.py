@@ -786,6 +786,24 @@ def test_ordinary_first_upgrade_seeds_and_reconfigures_management_before_exact_g
                       ["seed", "source-guard", "install", "reconfigure", "retire"])
 
 
+def test_incomplete_ordinary_network_rollback_keeps_seed_journal(helper, monkeypatch, tmp_path):
+    """A failed snapshot restore cannot delete the only old management route."""
+    state = {"snapshots": [{"path": str(tmp_path / "old.network")}],
+             "transition_seed_routes": [{"name": "eth0"}]}
+    monkeypatch.setattr(helper, "NETWORK_TRANSACTION_DIR", tmp_path)
+    monkeypatch.setattr(helper, "_stop_route_domains_for_restore", lambda _state: None)
+    monkeypatch.setattr(helper, "_restore_management_handoff_snapshot",
+                        lambda _item: (_ for _ in ()).throw(ValueError("snapshot unavailable")))
+    monkeypatch.setattr(helper, "_run", lambda command: subprocess.CompletedProcess(command, 0, "", ""))
+    monkeypatch.setattr(helper, "_restore_management_handoff_links", lambda *_args: None)
+    monkeypatch.setattr(helper, "_restore_route_domains", lambda _state: None)
+    monkeypatch.setattr(helper, "_retire_transition_routes",
+                        lambda *_args, **_kwargs: pytest.fail("seed retired during incomplete rollback"))
+    with pytest.raises(ValueError, match="network rollback incomplete: snapshot unavailable"):
+        helper._restore_network_transaction(state)
+    assert state["transition_seed_routes"] == [{"name": "eth0"}]
+
+
 def test_removed_vlan_missing_guard_refuses_before_rule_mutation(helper, monkeypatch, tmp_path):
     """An inconsistent applied lookup cannot expose a deferred VLAN to the main table.
 
