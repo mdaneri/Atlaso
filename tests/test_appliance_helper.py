@@ -1510,7 +1510,7 @@ def test_management_handoff_preserves_valid_post_snapshot_lease(monkeypatch, tmp
     main.write_text(
         "# atlaso-authoritative-lease-scope=192.168.50.0/24,atlaso.internal\n"
         "dhcp-host=02:00:00:00:00:02,set:atlaso-name-020000000002,192.168.50.22\n"
-        "dhcp-option=tag:atlaso-name-020000000002,option:host-name,old-reserved\n",
+        "dhcp-option=tag:atlaso-name-020000000002,12,old-reserved\n",
         encoding="utf-8",
     )
     monkeypatch.setattr(helper, "DNSMASQ_STATE_DIR", state_dir)
@@ -11645,7 +11645,7 @@ def test_dnsmasq_lease_events_mirror_only_managed_names(monkeypatch, tmp_path, c
     main_config = tmp_path / "atlaso.conf"
     main_config.write_text(
         "dhcp-option=tag:sitea,option:domain-name,atlaso.internal\n"
-        "dhcp-option=tag:atlaso-name-020000000001,option:host-name,reserved\n",
+        "dhcp-option=tag:atlaso-name-020000000001,12,reserved\n",
         encoding="utf-8",
     )
     monkeypatch.setattr(helper, "DNSMASQ_CONFIG_PATH", main_config)
@@ -11684,7 +11684,7 @@ def test_authoritative_lease_event_rejects_cross_scope_client_name(monkeypatch, 
     assert helper.main(event) == 0
     assert list(hosts_dir.iterdir()) == []
 
-    main.write_text("dhcp-option=tag:reservation,option:host-name,chosen.siteb.internal\n", encoding="utf-8")
+    main.write_text("dhcp-option=tag:reservation,12,chosen.siteb.internal\n", encoding="utf-8")
     monkeypatch.setenv("DNSMASQ_TAGS", "reservation")
     assert helper.main(event) == 0
     assert "chosen.siteb.internal" in next(hosts_dir.iterdir()).read_text(encoding="utf-8")
@@ -11745,7 +11745,7 @@ def test_authoritative_enable_does_not_seed_unproven_ipv6_reservation(monkeypatc
     main.write_text(
         "# atlaso-authoritative-lease-scope=2001:db8:50::/64,atlaso.internal\n"
         "dhcp-host=02:00:00:00:00:01,set:atlaso-name-020000000001,[2001:db8:50::21]\n"
-        "dhcp-option=tag:atlaso-name-020000000001,option:host-name,reserved\n",
+        "dhcp-option=tag:atlaso-name-020000000001,12,reserved\n",
         encoding="utf-8",
     )
     authoritative = tmp_path / "authoritative.conf"
@@ -11872,13 +11872,13 @@ def test_authoritative_reservation_change_removes_old_lease_name(
     old_main.write_text(
         "# atlaso-authoritative-lease-scope=192.168.50.0/24,atlaso.internal\n"
         "dhcp-host=02:00:00:00:00:01,set:atlaso-name-020000000001,192.168.50.21\n"
-        "dhcp-option=tag:atlaso-name-020000000001,option:host-name,reserved\n",
+        "dhcp-option=tag:atlaso-name-020000000001,12,reserved\n",
         encoding="utf-8",
     )
     candidate = tmp_path / "candidate.conf"
     new_reservation = (
         "dhcp-host=02:00:00:00:00:01,set:atlaso-name-020000000001,192.168.50.22\n"
-        "dhcp-option=tag:atlaso-name-020000000001,option:host-name,reserved\n"
+        "dhcp-option=tag:atlaso-name-020000000001,12,reserved\n"
         if change == "moved" else ""
     )
     candidate.write_text(
@@ -12041,7 +12041,7 @@ def test_explicit_managed_reservation_survives_unmanaged_dhcp_scope(monkeypatch,
     installed = tmp_path / "installed.conf"
     installed.write_text(
         "dhcp-host=02:00:00:00:00:01,set:atlaso-name-020000000001,192.168.50.21\n"
-        "dhcp-option=tag:atlaso-name-020000000001,option:host-name,reserved.atlaso.internal\n",
+        "dhcp-option=tag:atlaso-name-020000000001,12,reserved.atlaso.internal\n",
         encoding="utf-8",
     )
     candidate = tmp_path / "candidate.conf"
@@ -12086,7 +12086,7 @@ def test_ipv6_reservation_mirror_uses_active_duid_before_removal(monkeypatch, tm
     installed.write_text(
         "# atlaso-authoritative-lease-scope=2001:db8:50::/64,atlaso.internal\n"
         "dhcp-host=02:00:00:00:00:01,set:atlaso-name-020000000001,[2001:db8:50::21]\n"
-        "dhcp-option=tag:atlaso-name-020000000001,option:host-name,reserved\n",
+        "dhcp-option=tag:atlaso-name-020000000001,12,reserved\n",
         encoding="utf-8",
     )
     candidate = tmp_path / "candidate.conf"

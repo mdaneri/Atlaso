@@ -1912,7 +1912,7 @@ def render_dnsmasq_config(
                     # A reservation in an unmanaged DHCP scope still must not
                     # let recursive dnsmasq learn the managed name locally.
                     lines.append(f"dhcp-ignore-names=tag:{reservation_tag}")
-                    lines.append(f"dhcp-option=tag:{reservation_tag},option:host-name,{reservation.hostname}")
+                    lines.append(f"dhcp-option=tag:{reservation_tag},12,{reservation.hostname}")
                 else:
                     lines.append(f"dhcp-host={reservation.mac_address},{reservation.hostname},{reservation_ip}")
     if authoritative_lines:

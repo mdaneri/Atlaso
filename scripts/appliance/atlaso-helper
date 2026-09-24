@@ -3088,7 +3088,7 @@ def _authoritative_reservation_names(
     for line in config_path.read_text(encoding="utf-8").splitlines():
         if line.startswith("dhcp-option=tag:atlaso-name-"):
             fields = line.split(",", 2)
-            if len(fields) != 3 or fields[1] != "option:host-name":
+            if len(fields) != 3 or fields[1] != "12":
                 raise ValueError("The authoritative reservation hostname option is invalid.")
             names_by_tag[fields[0].removeprefix("dhcp-option=tag:")] = fields[2].strip().strip(".").lower()
         elif line.startswith("dhcp-host=") and ",set:atlaso-name-" in line:
@@ -3433,7 +3433,7 @@ def _handle_dnsmasq_lease_event(argv: list[str]) -> int:
         identity = f"# duid={argv[2].lower()} iaid={iaid}"
     else:
         identity = f"# mac={argv[2].lower()}"
-    reserved_hostname = _lease_option_from_tags("option:host-name")
+    reserved_hostname = _lease_option_from_tags("12")
     hostname = reserved_hostname
     if not hostname:
         hostname = argv[4].strip().strip(".").lower() if len(argv) == 5 else ""
