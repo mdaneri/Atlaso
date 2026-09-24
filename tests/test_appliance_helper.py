@@ -2796,6 +2796,7 @@ def test_management_handoff_candidate_durability_gates_ack(
     helper = load_helper_module()
     guard_events: list[str] = []
     monkeypatch.setattr(helper, "_stage_candidate_ingress_guards", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(helper, "_retire_legacy_source_rules", lambda: None)
     monkeypatch.setattr(helper, "_wait_management_handoff_routes", lambda *_args: None)
     monkeypatch.setattr(helper, "_apply_route_domain_ingress", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(helper, "_install_route_domain_intent", lambda *_args, **_kwargs: guard_events.append("source-intent"))
@@ -3129,6 +3130,7 @@ def test_management_handoff_failure_rolls_back_with_truthful_layer(monkeypatch, 
     """
     helper = load_helper_module()
     monkeypatch.setattr(helper, "_stage_candidate_ingress_guards", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(helper, "_retire_legacy_source_rules", lambda: None)
     monkeypatch.setattr(helper, "_wait_management_handoff_routes", lambda *_args: None)
     monkeypatch.setattr(helper, "_apply_route_domain_ingress", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(helper, "_install_route_domain_intent", lambda *_args, **_kwargs: None)
@@ -3208,6 +3210,7 @@ def test_management_handoff_resolver_failure_rolls_back_before_nginx(
     """
     helper = load_helper_module()
     monkeypatch.setattr(helper, "_stage_candidate_ingress_guards", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(helper, "_retire_legacy_source_rules", lambda: None)
     monkeypatch.setattr(helper, "_wait_management_handoff_routes", lambda *_args: None)
     monkeypatch.setattr(helper, "_apply_route_domain_ingress", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(helper, "_install_route_domain_intent", lambda *_args, **_kwargs: None)
@@ -3296,6 +3299,7 @@ def test_management_handoff_never_activates_nginx_with_unhealthy_upstream(monkey
     """
     helper = load_helper_module()
     monkeypatch.setattr(helper, "_stage_candidate_ingress_guards", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(helper, "_retire_legacy_source_rules", lambda: None)
     monkeypatch.setattr(helper, "_wait_management_handoff_routes", lambda *_args: None)
     monkeypatch.setattr(helper, "_apply_route_domain_ingress", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(helper, "_install_route_domain_intent", lambda *_args, **_kwargs: None)
@@ -9186,6 +9190,27 @@ def test_candidate_ingress_guards_add_only_and_fail_before_activation(monkeypatc
     monkeypatch.setattr(helper, "_run", lambda command: subprocess.CompletedProcess(command, 1, "", "failed"))
     with pytest.raises(ValueError, match="guard installation failed"):
         helper._stage_candidate_ingress_guards(path)
+
+
+def test_legacy_source_migration_preserves_old_address_before_prefix_retirement(monkeypatch):
+    """The helper delegates journaled selectors to the installed reconciler.
+
+    Args:
+        monkeypatch: Pytest fixture replacing native routing dependencies.
+    """
+    helper = load_helper_module()
+    legacy = {"family": 4, "priority": 1000, "table": 100, "source": "10.42.0.0/16",
+              "incoming_interface": "", "protocol": 4}
+    calls: list[tuple[list[str], str]] = []
+    monkeypatch.setattr(helper, "_snapshot_route_domain_rules", lambda: [legacy])
+    monkeypatch.setattr(helper, "_run_with_input", lambda command, payload:
+                        calls.append((command, payload)) or subprocess.CompletedProcess(command, 0, "", ""))
+
+    helper._retire_legacy_source_rules()
+
+    assert len(calls) == 1
+    assert calls[0][0][-1] == "--migrate-legacy"
+    assert json.loads(calls[0][1]) == [legacy]
 
 
 def test_wan_helper_apply_routes_nat_and_netem(monkeypatch, tmp_path):

@@ -10123,6 +10123,24 @@ def _stage_candidate_ingress_guards(
             raise ValueError("candidate routing-domain ingress guard installation failed")
 
 
+def _retire_legacy_source_rules() -> None:
+    """Preserve assigned old sources before retiring pre-migration selectors.
+
+    The caller has already published a rollback journal and installed the
+    local-origin transition guard. Legacy priorities precede that guard, so
+    they must be gone before candidate addresses can appear on any link.
+    """
+    legacy = [row for row in _snapshot_route_domain_rules() if not row["incoming_interface"]]
+    if not legacy:
+        return
+    result = _run_with_input(
+        ["/opt/atlaso/.venv/bin/python", "-I", "-m", "atlaso.route_domains", "--migrate-legacy"],
+        json.dumps(legacy),
+    )
+    if result.returncode:
+        raise ValueError("legacy source routing migration failed")
+
+
 def _apply_route_domain_ingress(
     path: Path | None = None, *, held_management_interfaces: set[str] | None = None,
     retain_removed_vlan_guards: bool = False,
@@ -10906,6 +10924,7 @@ def _handle_network_locked(action: str, args: list[str]) -> int:
             held_sources = _removed_vlan_source_holds(config_path)
             _transition_source_guard(True)
             _stage_candidate_ingress_guards(config_path)
+            _retire_legacy_source_rules()
             activation_started = datetime.now(timezone.utc).isoformat()
             install_returncode, installed, reconfigure_links, admin_down_links = _install_systemd_networkd_files(config_path)
             if install_returncode != 0:
@@ -26890,6 +26909,7 @@ def _apply_management_handoff(payload: dict) -> int:
             held_management_interfaces={name for name, table in state.get("previous_route_domains", {}).items()
                                         if table == MANAGEMENT_ROUTE_TABLE_ID},
         )
+        _retire_legacy_source_rules()
         _apply_management_candidate_network(Path(str(payload["network_config_path"])), state)
         failing_layer = "address activation"
         address_observation = _wait_network_addresses(Path(str(payload["network_config_path"])), started_at=activation_started)

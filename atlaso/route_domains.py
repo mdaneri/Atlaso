@@ -460,6 +460,93 @@ def apply_rules(desired: set[Rule], existing: set[Rule]) -> None:
         run_ip(rule_command("del", rule))
 
 
+def migrate_legacy_sources(rows: Any) -> None:
+    """Replace journaled legacy source selectors before candidate activation.
+
+    Args:
+        rows: Helper-admitted legacy rules from the durable pre-Apply snapshot.
+    """
+    if not isinstance(rows, list) or len(rows) > 400:
+        raise ReconcileError("invalid legacy source rules")
+    selectors: list[tuple[int, int, int, ipaddress.IPv4Network | ipaddress.IPv6Network]] = []
+    seen: set[tuple[int, int]] = set()
+    for row in rows:
+        if not isinstance(row, dict) or set(row) != {
+            "family", "priority", "table", "source", "incoming_interface", "protocol",
+        }:
+            raise ReconcileError("invalid legacy source rule")
+        family, priority, table, protocol = (row[key] for key in ("family", "priority", "table", "protocol"))
+        if (type(family) is not int or family not in {4, 6} or type(priority) is not int
+                or type(table) is not int or type(protocol) is not int or protocol not in {0, 2, 3, 4}
+                or row["incoming_interface"] != "" or not isinstance(row["source"], str)):
+            raise ReconcileError("invalid legacy source selector")
+        expected = 100 if 1000 <= priority < 1100 else 200 if 2000 <= priority < 2100 else None
+        if table != expected or (family, priority) in seen:
+            raise ReconcileError("foreign or ambiguous legacy source rule")
+        try:
+            network = ipaddress.ip_network(row["source"], strict=True)
+        except ValueError as exc:
+            raise ReconcileError("invalid legacy source prefix") from exc
+        if network.version != family or str(network) != row["source"] or network.prefixlen == 0:
+            raise ReconcileError("invalid legacy source prefix")
+        seen.add((family, priority))
+        selectors.append((priority, table, protocol, network))
+    if not selectors:
+        return
+    selectors.sort(key=lambda item: item[0])
+    with reconciliation_lock():
+        try:
+            service = subprocess.run(["systemctl", "is-active", "atlaso-route-domains.service"],
+                                     check=False, capture_output=True, timeout=5)
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            raise ReconcileError("legacy source watcher status unavailable") from exc
+        if service.returncode not in {0, 3, 4}:
+            raise ReconcileError("legacy source watcher status unavailable")
+        active = service.returncode == 0
+        inventory = read_native(["address", "show"])
+        if not isinstance(inventory, list) or len(inventory) > 4096:
+            raise ReconcileError("invalid legacy source inventory")
+        existing = owned_rules(read_native(["-4", "rule", "show"]), 4)
+        existing |= owned_rules(read_native(["-6", "rule", "show"]), 6)
+        sources = {rule.source: rule.table for rule in existing if rule.table is not None}
+        for rule in existing:
+            sources.setdefault(rule.source, None)
+        seen_links: set[str] = set()
+        for link in inventory:
+            if not isinstance(link, dict) or not isinstance(link.get("ifname"), str) or link["ifname"] in seen_links:
+                raise ReconcileError("ambiguous legacy source link")
+            seen_links.add(link["ifname"])
+            entries = link.get("addr_info")
+            if not isinstance(entries, list) or len(entries) > 4096:
+                raise ReconcileError("invalid legacy source addresses")
+            for entry in entries:
+                if not isinstance(entry, dict):
+                    raise ReconcileError("invalid legacy source address")
+                if entry.get("scope") != "global" or entry.get("valid_life_time") == 0:
+                    continue
+                flags = entry.get("flags", [])
+                if not isinstance(flags, list):
+                    raise ReconcileError("invalid legacy source flags")
+                if any(entry.get(flag) or flag in flags for flag in ("tentative", "dadfailed")):
+                    continue
+                source = usable_address(entry.get("local"))
+                address = ipaddress.ip_address(source)
+                match = next((item for item in selectors if item[3].version == address.version
+                              and address in item[3]), None)
+                if match is None:
+                    continue
+                table = match[1]
+                if source in sources and sources[source] != table:
+                    raise ReconcileError("legacy source conflicts with canonical ownership")
+                if active and sources.get(source) != table:
+                    raise ReconcileError("active watcher cannot preserve legacy source ownership")
+                sources[source] = table
+        apply_rules(plan_rules(sources, existing), existing)
+        for priority, table, protocol, network in selectors:
+            run_ip([IP_COMMAND, f"-{network.version}", "rule", "del", "from", str(network),
+                    "table", str(table), "priority", str(priority), "protocol", str(protocol)])
+
+
 @contextmanager
 def reconciliation_lock() -> Iterator[None]:
     """Serialize snapshots and mutations while allowing bounded synchronous Apply."""
@@ -632,6 +719,7 @@ def main() -> int:
     mode.add_argument("--preflight", action="store_true", help="Check source-rule ownership without changing rules or intent")
     mode.add_argument("--transition-start", action="store_true", help="Install persistent local-origin guard")
     mode.add_argument("--transition-stop", action="store_true", help="Retire local-origin guard during rollback or reset")
+    mode.add_argument("--migrate-legacy", action="store_true", help="Retire journaled legacy source rules before activation")
     arguments = parser.parse_args()
     try:
         if linux_attribute(os, "geteuid")() != 0:
@@ -642,6 +730,14 @@ def main() -> int:
             transition_guard(True)
         elif arguments.transition_stop:
             transition_guard(False)
+        elif arguments.migrate_legacy:
+            payload = sys.stdin.read(MAX_JSON_BYTES + 1)
+            if len(payload) > MAX_JSON_BYTES:
+                raise ReconcileError("legacy source snapshot is oversized")
+            try:
+                migrate_legacy_sources(json.loads(payload))
+            except json.JSONDecodeError as exc:
+                raise ReconcileError("invalid legacy source snapshot") from exc
         elif arguments.once:
             reconcile()
         else:

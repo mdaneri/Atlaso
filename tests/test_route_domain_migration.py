@@ -7,11 +7,70 @@ from contextlib import nullcontext
 
 import pytest
 
+from atlaso import route_domains as domains
 from tests.test_appliance_helper import (
     load_helper_module,
     network_config_text,
     wan_config_text,
 )
+
+
+def test_first_apply_seeds_exact_old_sources_before_deleting_legacy_prefixes(monkeypatch):
+    """An overlapping candidate cannot inherit the old table on first Apply.
+
+    Args:
+        monkeypatch: Pytest fixture replacing native routing operations.
+    """
+    legacy = [
+        {"family": 4, "priority": 1000, "table": 100, "source": "10.42.0.0/16",
+         "incoming_interface": "", "protocol": 4},
+        {"family": 6, "priority": 1000, "table": 100, "source": "2001:db8:42::/64",
+         "incoming_interface": "", "protocol": 4},
+    ]
+    inventory = [{"ifname": "eth0", "addr_info": [
+        {"scope": "global", "local": "10.42.1.5"},
+        {"scope": "global", "local": "2001:db8:42::5"},
+    ]}]
+    commands: list[list[str]] = []
+    monkeypatch.setattr(domains, "reconciliation_lock", nullcontext)
+    monkeypatch.setattr(domains.subprocess, "run", lambda *_args, **_kwargs:
+                        subprocess.CompletedProcess([], 3, b"", b""))
+    monkeypatch.setattr(domains, "read_native", lambda args:
+                        inventory if args == ["address", "show"] else [])
+    monkeypatch.setattr(domains, "run_ip", lambda command: commands.append(command) or "")
+
+    domains.migrate_legacy_sources(legacy)
+
+    assert len(commands) == 6
+    assert all("unreachable" in command for command in commands[:2])
+    assert all("table" in command for command in commands[2:])
+    assert all(command[3] == "del" for command in commands[-2:])
+    assert {command[command.index("from") + 1] for command in commands[2:4]} == {
+        "10.42.1.5/32", "2001:db8:42::5/128",
+    }
+    assert {command[command.index("from") + 1] for command in commands[-2:]} == {
+        "10.42.0.0/16", "2001:db8:42::/64",
+    }
+
+
+def test_active_watcher_refuses_unowned_legacy_source_migration(monkeypatch):
+    """An active watcher cannot discard a newly seeded unproven old source.
+
+    Args:
+        monkeypatch: Pytest fixture replacing native routing operations.
+    """
+    legacy = [{"family": 4, "priority": 1000, "table": 100, "source": "10.42.0.0/16",
+               "incoming_interface": "", "protocol": 4}]
+    monkeypatch.setattr(domains, "reconciliation_lock", nullcontext)
+    monkeypatch.setattr(domains.subprocess, "run", lambda *_args, **_kwargs:
+                        subprocess.CompletedProcess([], 0, b"", b""))
+    monkeypatch.setattr(domains, "read_native", lambda args:
+                        [{"ifname": "eth0", "addr_info": [{"scope": "global", "local": "10.42.1.5"}]}]
+                        if args == ["address", "show"] else [])
+    monkeypatch.setattr(domains, "run_ip", lambda _command: pytest.fail("migration changed native rules"))
+
+    with pytest.raises(domains.ReconcileError, match="active watcher"):
+        domains.migrate_legacy_sources(legacy)
 
 
 @pytest.fixture(scope="module")
@@ -578,6 +637,7 @@ def test_network_apply_retires_vlan_but_keeps_terminal_source_guard(helper, monk
     monkeypatch.setattr(helper, "_route_domain_ingress_desired_rules", lambda _path: [])
     monkeypatch.setattr(helper, "_network_apply_transaction", lambda _path: nullcontext())
     monkeypatch.setattr(helper, "_stage_candidate_ingress_guards", lambda _path: None)
+    monkeypatch.setattr(helper, "_retire_legacy_source_rules", lambda: None)
     monkeypatch.setattr(helper, "_install_systemd_networkd_files", lambda _path: (0, [], [], []))
     monkeypatch.setattr(helper, "_wait_network_addresses", lambda *_args, **_kwargs: None)
     holds = [{"name": "eth1.120", "mac": "02:00:00:00:01:20", "address": "192.0.2.20", "table": 200}]
