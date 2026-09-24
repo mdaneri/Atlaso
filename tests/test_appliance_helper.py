@@ -3131,6 +3131,8 @@ def test_management_handoff_candidate_durability_gates_ack(
     monkeypatch.setattr(helper, "_stage_candidate_ingress_guards", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(helper, "_retire_legacy_source_rules", lambda: None)
     monkeypatch.setattr(helper, "_wait_management_handoff_routes", lambda *_args: None)
+    monkeypatch.setattr(helper, "_wait_and_retire_transition_routes",
+                        lambda *_args: retirement_operations.append("seed-retirement"))
     monkeypatch.setattr(helper, "_apply_route_domain_ingress", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(helper, "_install_route_domain_intent", lambda *_args, **_kwargs: guard_events.append("source-intent"))
     monkeypatch.setattr(helper, "_transition_source_guard", lambda enabled: guard_events.append("guard-on" if enabled else "guard-off"))
@@ -3198,7 +3200,7 @@ def test_management_handoff_candidate_durability_gates_ack(
     monkeypatch.setattr(
         helper,
         "_handle_network",
-        lambda *_args: guard_events.append("final-network") or retirement_operations.append("final-network") or 0,
+        lambda *_args, **_kwargs: guard_events.append("final-network") or retirement_operations.append("final-network") or 0,
     )
     applied_firewalls: list[str] = []
     monkeypatch.setattr(
@@ -3379,7 +3381,8 @@ def test_management_handoff_candidate_durability_gates_ack(
     assert restored == []
     assert resolver_calls == ["eth1", "eth1"]
     assert wan_calls == ["candidate-wan"]
-    assert retirement_operations == ["resolver", "address-ready", "final-network", "resolver", "address-ready", "wan"]
+    assert retirement_operations == ["resolver", "address-ready", "final-network", "resolver", "address-ready",
+                                     "seed-retirement", "wan"]
     assert len(applied_firewalls) == 2
     assert candidate_rule in applied_firewalls[0]
     assert 'iifname "eth0"' in applied_firewalls[0]
@@ -3480,6 +3483,7 @@ def test_management_handoff_failure_rolls_back_with_truthful_layer(monkeypatch, 
     monkeypatch.setattr(helper, "_stage_candidate_ingress_guards", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(helper, "_retire_legacy_source_rules", lambda: None)
     monkeypatch.setattr(helper, "_wait_management_handoff_routes", lambda *_args: None)
+    monkeypatch.setattr(helper, "_wait_and_retire_transition_routes", lambda *_args: None)
     monkeypatch.setattr(helper, "_apply_route_domain_ingress", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(helper, "_install_route_domain_intent", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(helper, "_transition_source_guard", lambda _enable: None)
@@ -3513,7 +3517,7 @@ def test_management_handoff_failure_rolls_back_with_truthful_layer(monkeypatch, 
             "management_public_http_port": 80,
         },
     )
-    monkeypatch.setattr(helper, "_handle_network", lambda *_args: 0)
+    monkeypatch.setattr(helper, "_handle_network", lambda *_args, **_kwargs: 0)
     firewall_calls = []
     monkeypatch.setattr(helper, "_handle_firewall", lambda *_args: firewall_calls.append(True) or 1)
     monkeypatch.setattr(helper, "_restore_management_handoff", lambda value: restored.append(value) or {"readiness": "old-ready"})
@@ -3560,6 +3564,7 @@ def test_management_handoff_resolver_failure_rolls_back_before_nginx(
     monkeypatch.setattr(helper, "_stage_candidate_ingress_guards", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(helper, "_retire_legacy_source_rules", lambda: None)
     monkeypatch.setattr(helper, "_wait_management_handoff_routes", lambda *_args: None)
+    monkeypatch.setattr(helper, "_wait_and_retire_transition_routes", lambda *_args: None)
     monkeypatch.setattr(helper, "_apply_route_domain_ingress", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(helper, "_install_route_domain_intent", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(helper, "_transition_source_guard", lambda _enable: None)
@@ -3669,6 +3674,7 @@ def test_management_handoff_orders_resolver_before_dns_shutdown(monkeypatch, tmp
     monkeypatch.setattr(helper, "_stage_candidate_ingress_guards", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(helper, "_retire_legacy_source_rules", lambda: None)
     monkeypatch.setattr(helper, "_wait_management_handoff_routes", lambda *_args: None)
+    monkeypatch.setattr(helper, "_wait_and_retire_transition_routes", lambda *_args: None)
     monkeypatch.setattr(helper, "_apply_route_domain_ingress", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(helper, "_management_handoff_held_addresses", lambda *_args: [])
     monkeypatch.setattr(helper, "_install_route_domain_intent", lambda *_args, **_kwargs: None)
@@ -3712,6 +3718,7 @@ def test_management_handoff_never_activates_nginx_with_unhealthy_upstream(monkey
     monkeypatch.setattr(helper, "_stage_candidate_ingress_guards", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(helper, "_retire_legacy_source_rules", lambda: None)
     monkeypatch.setattr(helper, "_wait_management_handoff_routes", lambda *_args: None)
+    monkeypatch.setattr(helper, "_wait_and_retire_transition_routes", lambda *_args: None)
     monkeypatch.setattr(helper, "_apply_route_domain_ingress", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(helper, "_install_route_domain_intent", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(helper, "_transition_source_guard", lambda _enable: None)

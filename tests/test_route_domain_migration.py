@@ -737,8 +737,9 @@ def test_network_apply_retires_vlan_but_keeps_terminal_source_guard(helper, monk
                                                "reconcile", "delete", "final-intent", "retire", "reconcile"])
 
 
+@pytest.mark.parametrize("protected_finalization", [False, True])
 def test_ordinary_first_upgrade_seeds_and_reconfigures_management_before_exact_guard(
-    helper, monkeypatch, tmp_path,
+    helper, monkeypatch, tmp_path, protected_finalization,
 ):
     """Marker-free Management needs table-100 routes before source rules.
 
@@ -778,8 +779,11 @@ def test_ordinary_first_upgrade_seeds_and_reconfigures_management_before_exact_g
     monkeypatch.setattr(helper, "_reconcile_route_domains", lambda: None)
     monkeypatch.setattr(helper, "_retire_transition_routes",
                         lambda *_args, **_kwargs: events.append("retire"))
-    assert helper._handle_network_locked("apply", [str(config)]) == 0
-    assert events == ["seed", "source-guard", "install", "reconfigure", "retire"]
+    assert helper._handle_network_locked(
+        "apply", [str(config)], preserve_transition_routes=protected_finalization,
+    ) == 0
+    assert events == (["source-guard", "install"] if protected_finalization else
+                      ["seed", "source-guard", "install", "reconfigure", "retire"])
 
 
 def test_removed_vlan_missing_guard_refuses_before_rule_mutation(helper, monkeypatch, tmp_path):

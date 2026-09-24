@@ -11975,7 +11975,7 @@ def _prepare_network_observation() -> None:
             raise ValueError("Unable to enable native address conflict evidence")
 
 
-def _handle_network(action: str, args: list[str]) -> int:
+def _handle_network(action: str, args: list[str], *, preserve_transition_routes: bool = False) -> int:
     """Serialize network mutation and recovery while leaving observation read-only.
 
     Args:
@@ -11984,13 +11984,13 @@ def _handle_network(action: str, args: list[str]) -> int:
     """
     try:
         with _network_transaction_lock() if action in {"apply", "recover", "acknowledge"} else nullcontext():
-            return _handle_network_locked(action, args)
+            return _handle_network_locked(action, args, preserve_transition_routes=preserve_transition_routes)
     except (OSError, ValueError, subprocess.TimeoutExpired) as exc:
         print(str(exc), file=sys.stderr)
         return 2
 
 
-def _handle_network_locked(action: str, args: list[str]) -> int:
+def _handle_network_locked(action: str, args: list[str], *, preserve_transition_routes: bool = False) -> int:
     """Handle network.
 
     Args:
@@ -12067,7 +12067,7 @@ def _handle_network_locked(action: str, args: list[str]) -> int:
         with _network_apply_transaction(config_path):
             held_sources = _removed_vlan_source_holds(config_path)
             old_management = _ordinary_network_old_management_bindings(config_path)
-            if old_management:
+            if old_management and not preserve_transition_routes:
                 _seed_transition_routes(
                     _network_transaction_state(), old_management, NETWORK_TRANSACTION_DIR / "state.json",
                 )
@@ -12087,7 +12087,7 @@ def _handle_network_locked(action: str, args: list[str]) -> int:
             seeded_management = {
                 row["name"] for row in _network_transaction_state().get("transition_seed_routes", [])
                 if row["table"] == MANAGEMENT_ROUTE_TABLE_ID
-            } if old_management else set()
+            } if old_management and not preserve_transition_routes else set()
             for name in sorted(seeded_management):
                 if _run(["networkctl", "reconfigure", name]).returncode:
                     raise ValueError("previous management route reconfigure failed")
@@ -12103,7 +12103,7 @@ def _handle_network_locked(action: str, args: list[str]) -> int:
             _install_route_domain_intent(config_path)
             _apply_route_domain_ingress(config_path)
             _reconcile_route_domains()
-            if old_management:
+            if old_management and not preserve_transition_routes:
                 _retire_transition_routes(
                     _network_transaction_state(), NETWORK_TRANSACTION_DIR / "state.json",
                     require_replacement=True, allow_disappeared_source=True,
@@ -26598,6 +26598,23 @@ def _retire_transition_routes(
     _durable_management_handoff_state_write(state, marker)
 
 
+def _wait_and_retire_transition_routes(state: dict, marker: Path, *, attempts: int = 31) -> None:
+    """Retire journaled seeds after the final networkd route has settled."""
+    deadline = time.monotonic() + 30
+    for attempt in range(max(1, attempts)):
+        try:
+            _retire_transition_routes(
+                state, marker, require_replacement=True, allow_disappeared_source=True,
+            )
+            return
+        except ValueError as exc:
+            if not str(exc).startswith("replacement management route is not ready "):
+                raise
+            if time.monotonic() >= deadline or attempt + 1 >= attempts:
+                raise
+            time.sleep(min(1, max(0, deadline - time.monotonic())))
+
+
 def _management_handoff_held_addresses(state: dict) -> list[dict]:
     """Derive immutable held sources from pre-mutation routing evidence.
 
@@ -28629,7 +28646,6 @@ def _apply_management_handoff(payload: dict) -> int:
         failing_layer = "address activation"
         address_observation = _wait_network_addresses(Path(str(payload["network_config_path"])), started_at=activation_started)
         _wait_management_handoff_routes(state)
-        _retire_transition_routes(state, MANAGEMENT_HANDOFF_STATE_PATH, require_replacement=True)
         _apply_route_domain_ingress(
             Path(str(payload["network_config_path"])),
             held_management_interfaces={name for name, table in state.get("previous_route_domains", {}).items()
@@ -28752,7 +28768,9 @@ def _apply_management_handoff(payload: dict) -> int:
         failing_layer = "previous-path retirement"
         for path in holdovers:
             path.unlink(missing_ok=True)
-        if _handle_network("apply", [str(payload["network_config_path"])]) != 0:
+        if _handle_network(
+            "apply", [str(payload["network_config_path"])], preserve_transition_routes=True,
+        ) != 0:
             raise ValueError("final network apply failed while retiring the previous path")
         failing_layer = "resolver persistence"
         resolver = _configure_management_handoff_resolver(settings_payload)
@@ -28777,6 +28795,8 @@ def _apply_management_handoff(payload: dict) -> int:
         _wait_network_addresses(
             Path(str(payload["network_config_path"])), started_at=retirement_started, stable_samples=3,
         )
+        failing_layer = "replacement management route"
+        _wait_and_retire_transition_routes(state, MANAGEMENT_HANDOFF_STATE_PATH)
         _reconcile_route_domains()
         if payload.get("wan_config_path"):
             # The final Network regeneration intentionally replaces networkd

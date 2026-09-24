@@ -347,6 +347,31 @@ def test_transition_retirement_refuses_missing_seed_without_replacement(monkeypa
     assert state["transition_seed_routes"]
 
 
+def test_transition_retirement_waits_for_final_route_without_weakening_proof(monkeypatch, tmp_path):
+    """A late RA successor may settle, while an unrelated error must fail immediately."""
+    helper = load_helper_module()
+    attempts = []
+
+    def retire(_state, _marker, **kwargs):
+        attempts.append(kwargs)
+        if len(attempts) == 1:
+            raise ValueError("replacement management route is not ready (family=6)")
+
+    monkeypatch.setattr(helper, "_retire_transition_routes", retire)
+    monkeypatch.setattr(helper.time, "sleep", lambda _seconds: None)
+    helper._wait_and_retire_transition_routes({}, tmp_path / "state.json", attempts=2)
+    assert attempts == [
+        {"require_replacement": True, "allow_disappeared_source": True},
+        {"require_replacement": True, "allow_disappeared_source": True},
+    ]
+
+    attempts.clear()
+    monkeypatch.setattr(helper, "_retire_transition_routes", lambda *_args, **_kwargs:
+                        (_ for _ in ()).throw(ValueError("transition route seed ownership is invalid")))
+    with pytest.raises(ValueError, match="ownership is invalid"):
+        helper._wait_and_retire_transition_routes({}, tmp_path / "state.json", attempts=2)
+
+
 def test_snapshot_never_invents_gateway_or_ipv6_onlink_prefix(monkeypatch):
     """An RA prefix without the on-link flag must retain only observed routes.
 
