@@ -2610,7 +2610,12 @@ def test_management_handoff_merges_previous_static_and_dynamic_addresses(monkeyp
 
 
 def test_management_handoff_scopes_old_tls_before_new_address_activation(monkeypatch, tmp_path):
-    """Keep a wildcard old certificate from serving newly acquired addresses."""
+    """Keep a wildcard old certificate from serving newly acquired addresses.
+
+    Args:
+        monkeypatch: Isolated management site and installer replacements.
+        tmp_path: Disposable management site location.
+    """
     helper = load_helper_module()
     site = tmp_path / "management.conf"
     site.write_text(
@@ -2634,7 +2639,12 @@ def test_management_handoff_scopes_old_tls_before_new_address_activation(monkeyp
 
 
 def test_management_handoff_scopes_old_http_before_new_address_activation(monkeypatch, tmp_path):
-    """Do not expose a newly acquired address through the previous plaintext site."""
+    """Do not expose a newly acquired address through the previous plaintext site.
+
+    Args:
+        monkeypatch: Isolated management site and installer replacements.
+        tmp_path: Disposable management site location.
+    """
     helper = load_helper_module()
     site = tmp_path / "management.conf"
     site.write_text(
@@ -2659,7 +2669,12 @@ def test_management_handoff_scopes_old_http_before_new_address_activation(monkey
 
 
 def test_management_readiness_accepts_committed_scoped_loopback(monkeypatch, tmp_path):
-    """Console and update readiness retain their loopback path after handoff."""
+    """Console and update readiness retain their loopback path after handoff.
+
+    Args:
+        monkeypatch: Isolated management site replacement.
+        tmp_path: Disposable management site and certificate location.
+    """
     helper = load_helper_module()
     certificate = tmp_path / "site.crt"
     key = tmp_path / "site.key"
@@ -2683,7 +2698,12 @@ def test_management_readiness_accepts_committed_scoped_loopback(monkeypatch, tmp
 
 
 def test_management_handoff_refuses_uncanonical_old_tls_site(monkeypatch, tmp_path):
-    """Refuse a wildcard listener that cannot be safely scoped."""
+    """Refuse a wildcard listener that cannot be safely scoped.
+
+    Args:
+        monkeypatch: Isolated management site replacement.
+        tmp_path: Disposable management site location.
+    """
     helper = load_helper_module()
     site = tmp_path / "management.conf"
     site.write_text("server { listen 443 ssl default_server; }\n", encoding="utf-8")
@@ -2697,7 +2717,13 @@ def test_management_handoff_refuses_uncanonical_old_tls_site(monkeypatch, tmp_pa
 
 @pytest.mark.parametrize("https_enabled", [False, True])
 def test_management_handoff_accepts_previously_scoped_site(monkeypatch, tmp_path, https_enabled):
-    """A second handoff accepts the first handoff's address-specific site."""
+    """A second handoff accepts the first handoff's address-specific site.
+
+    Args:
+        monkeypatch: Isolated management site and installer replacements.
+        tmp_path: Disposable management site location.
+        https_enabled: Whether the previous listener served HTTPS.
+    """
     helper = load_helper_module()
     site = tmp_path / "management.conf"
     site.write_text(

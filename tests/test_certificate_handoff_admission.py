@@ -47,12 +47,22 @@ def test_peer_credential_is_independent_of_admin(monkeypatch: pytest.MonkeyPatch
 
 
 def test_admission_git_child_has_no_credential_bridge(monkeypatch: pytest.MonkeyPatch) -> None:
-    """The head check must not pass either plaintext bridge value to Git."""
+    """The head check must not pass either plaintext bridge value to Git.
+
+    Args:
+        monkeypatch: Isolated environment and Git subprocess replacement.
+    """
     monkeypatch.setenv("ATLASO_NATIVE_ADMIN", "dummy-admin-password")
     monkeypatch.setenv("ATLASO_NATIVE_PEER", "dummy-peer-password")
     observed = []
 
     def refuse_after_environment_check(_command, **kwargs):
+        """Stop after recording the Git child's scrubbed environment.
+
+        Args:
+            _command: Git invocation arguments, unused by this assertion.
+            **kwargs: Subprocess options containing the child environment.
+        """
         observed.append(kwargs["env"])
         raise RuntimeError("stop before reading plan artifacts")
 

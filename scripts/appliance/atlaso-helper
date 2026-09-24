@@ -7864,6 +7864,7 @@ def _management_nginx_config(
         payload: Validated request or task payload consumed by the operation.
         cert_path: Filesystem path used for cert.
         key_path: Filesystem path used for key.
+        listen_addresses: Exact addresses exposed by the management listener.
     """
     fqdn = str(payload["fqdn"])
     https_enabled = bool(payload.get("management_https_enabled"))
@@ -7939,6 +7940,7 @@ def _configure_atlaso_management_https(
         payload: Validated request or task payload consumed by the operation.
         site_suffix: Additional transitional server blocks installed in the same site.
         verify_front_door: Whether to prove the ordinary current-address path.
+        listen_addresses: Exact addresses exposed by the management listener.
     """
     enabled = bool(payload.get("management_https_enabled"))
     port = int(payload.get("management_upstream_port") or payload.get("management_http_port") or 8000)
@@ -26249,7 +26251,14 @@ def _management_handoff_protocol_holdover(state: dict, payload: dict) -> str:
 def _management_handoff_initial_listener_addresses(
     candidate_addresses: list[str], state: dict, candidate_port: int, protocol_holdover: str,
 ) -> list[str]:
-    """Keep a previous address on its old listener until final retirement."""
+    """Keep a previous address on its old listener until final retirement.
+
+    Args:
+        candidate_addresses: Certificate-covered candidate listener addresses.
+        state: Captured previous management listener state.
+        candidate_port: New management public port.
+        protocol_holdover: Old listener protocol retained during transition.
+    """
     if not protocol_holdover or int(state["previous_management_public_port"]) != candidate_port:
         return candidate_addresses
     previous_addresses = set(state["previous_management_addresses"])
