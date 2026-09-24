@@ -1758,6 +1758,20 @@ def configure_ca(client: HttpClient, args: argparse.Namespace) -> dict[str, Any]
     return {"root_ca": certificate_summary(root_ca)}
 
 
+def prepare_vmware_ntp_clock(args: argparse.Namespace) -> dict[str, Any]:
+    """Give NTPsec sole control of the lifecycle appliance clock."""
+    result = ssh_command(
+        args.appliance_ssh_host,
+        args,
+        "sudo -n vmware-toolbox-cmd timesync disable",
+        role="appliance",
+    )
+    require_success(result, "disable VMware Tools guest time synchronization")
+    if result.get("stdout", "").strip() != "Disabled":
+        raise LifecycleError("VMware Tools did not confirm guest time synchronization is disabled")
+    return {"vmware_tools_time_sync": "disabled"}
+
+
 def configure_ntp(client: HttpClient, args: argparse.Namespace) -> dict[str, Any]:
     """Update ntp.
 
@@ -5198,6 +5212,7 @@ def run_full_lifecycle(results: list[StepResult], client: HttpClient, args: argp
     run_step(results, "configure-esxi-pxe", configure_esxi_pxe, client, args)
     run_step(results, "configure-firewall-wan", configure_firewall_wan, client, args)
     run_step(results, "configure-ca", configure_ca, client, args)
+    run_step(results, "prepare-vmware-ntp-clock", prepare_vmware_ntp_clock, args)
     run_step(results, "configure-ntp", configure_ntp, client, args)
     run_step(results, "configure-vcf-backups", configure_vcf_backups, client, args)
     run_step(results, "configure-vcf-offline-depot", configure_vcf_offline_depot, client, args)

@@ -891,6 +891,29 @@ def test_ntp_client_check_waits_for_synchronized_server(monkeypatch, server_read
     assert calls[0][3]["timeout_seconds"] == 600
 
 
+@pytest.mark.parametrize(
+    ("returncode", "output", "accepted"),
+    [(0, "Disabled\n", True), (0, "Enabled\n", False), (1, "Disabled\n", False)],
+)
+def test_lifecycle_disables_vmware_clock_sync_before_ntp(monkeypatch, returncode, output, accepted):
+    """The VMware lab must not leave Tools competing with NTPsec."""
+    lifecycle = load_lifecycle_module()
+    args = lifecycle.parse_args(["--password", "test", "--appliance-ssh-host", "192.0.2.10"])
+    calls = []
+
+    def fake_ssh(host, _args, command, *, role):
+        calls.append((host, command, role))
+        return {"returncode": returncode, "stdout": output, "stderr": ""}
+
+    monkeypatch.setattr(lifecycle, "ssh_command", fake_ssh)
+    if accepted:
+        assert lifecycle.prepare_vmware_ntp_clock(args) == {"vmware_tools_time_sync": "disabled"}
+    else:
+        with pytest.raises(lifecycle.LifecycleError):
+            lifecycle.prepare_vmware_ntp_clock(args)
+    assert calls == [(args.appliance_ssh_host, "sudo -n vmware-toolbox-cmd timesync disable", "appliance")]
+
+
 def test_full_lifecycle_plan_includes_passwordless_web_terminal_acceptance():
     """Verify that full lifecycle plan includes passwordless web terminal acceptance."""
     lifecycle = load_lifecycle_module()
