@@ -693,6 +693,7 @@ def _run_authenticated(
     if baseline[management]["ipv6_enabled"] or baseline[lab]["role"] != "unused":
         raise OverlapPrerequisiteError("scenario requires original IPv4 management and unused lab baseline")
     restore_allowed = True
+    stage = "candidate-network"
     try:
         client.json_request("PATCH", f"/api/v1/interfaces/physical/{management}", json_body={
             "role": "management", "mode": "access", "ipv4_method": "dhcp", "ip_cidr": None,
@@ -703,12 +704,17 @@ def _run_authenticated(
             "gateway": None, "ipv6_enabled": True, "ipv6_cidr": "fd74:1::20/64", "ipv6_gateway": None,
             "admin_state": "up", "access_management_ui_enabled": False,
         })
+        stage = "route-activation"
         evidence["apply"] = _apply(client, stage="route-activation")
+        stage = "initial-native-readiness"
         initial = _ready(connect_appliance, topology)
+        stage = "lease-proof"
         evidence["lease"] = _lease(server_action("status"), topology)
+        stage = "source-proof"
         sources = _prove(initial, topology)
         routes = {}
         for source, table in sources.items():
+            stage = "bound-source-route-selection"
             interface = management if table == 100 else lab
             family = ipaddress.ip_address(source).version
             peer = "192.0.2.1" if family == 4 else "fd74:1::1"
@@ -722,6 +728,7 @@ def _run_authenticated(
         # intentionally isolated in table 100, so use a link-local destination
         # on the management device to check unbound IPv6 source selection.
         for family, peer in ((4, "203.0.113.1"), (6, "fe80::1")):
+            stage = f"unbound-ipv{family}-route-selection"
             device = f',"dev","{management}"' if family == 6 else ""
             observed = _observe(connect_appliance, SNAPSHOT_PROGRAM +
                                 f'\nprint(json.dumps({{"routes": command(["ip","-j","-N","-{family}",'
@@ -744,21 +751,31 @@ def _run_authenticated(
         evidence["route_selection"] = routes
         evidence["unbound_route_selection"] = unbound
         slaac = [source for source, table in sources.items() if table == 100 and ":" in source]
+        stage = "ra-expiry"
         evidence["ra_expired"] = _expiry(connect_appliance, server_action, kind="ra", addresses=slaac,
                                           interface=management, wait_seconds=90)
+        stage = "ra-reacquisition"
         evidence["ra_reacquired"] = _ready(connect_appliance, topology)
+        stage = "dhcp-expiry"
         evidence["dhcp_expired"] = _expiry(connect_appliance, server_action, kind="dhcp", addresses=["192.0.2.10"],
                                             interface=management, wait_seconds=155)
+        stage = "dhcp-reacquisition"
         evidence["dhcp_reacquired"] = _ready(connect_appliance, topology)
+        stage = "same-address-lease"
         evidence["same_address_lease"] = _same_address_lease(
             client, connect_appliance, topology, server_action, baseline_dns_servers,
         )
     except ApplyOutcomeUnknown:
         restore_allowed = False
         raise
+    except OverlapPrerequisiteError as exc:
+        raise OverlapPrerequisiteError(f"{stage}: {exc}") from None
     finally:
         if restore_allowed:
-            evidence["restored"] = _restore(
-                client, connect_appliance, server_action, baseline, baseline_dns_servers,
-            )
+            try:
+                evidence["restored"] = _restore(
+                    client, connect_appliance, server_action, baseline, baseline_dns_servers,
+                )
+            except OverlapPrerequisiteError as exc:
+                raise OverlapPrerequisiteError(f"restoration: {exc}") from None
     return evidence

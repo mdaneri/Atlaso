@@ -218,7 +218,7 @@ def test_failed_acquisition_restores_both_interfaces_and_revokes(monkeypatch, to
     monkeypatch.setattr(scenario, "_snapshot", lambda connect: {"links": [
         {"ifname": "eth0", "addr_info": [{"local": "192.0.2.10", "scope": "global"}]},
         {"ifname": "eth1", "addr_info": []}]})
-    with pytest.raises(OverlapPrerequisiteError, match="native acquisition failed"):
+    with pytest.raises(OverlapPrerequisiteError, match="initial-native-readiness: native acquisition failed"):
         scenario.run_scenario(client=client, connect_appliance=lambda: None, topology=topology,
                               server_action=lambda action: actions.append(action) or {}, username="test", password="synthetic")
     assert client.rows == before
