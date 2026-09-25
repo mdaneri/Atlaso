@@ -624,6 +624,9 @@ The wrapper has no password defaults. It prompts securely for the appliance admi
 client SSH reuses the administrator `SecureString` unless `-SshPassword` is supplied. `-FullEsxiPxeInstall` also
 requires the ESXi root password that matches the selected rendered Kickstart profile. The launcher sends these values to
 its child through a current-user DPAPI-protected temporary CLIXML bundle and removes that bundle after the child exits.
+The wrapper stages that bundle only in a dedicated checkout-local directory with protected current-user-and-SYSTEM
+ACLs. The ordinary `.atlaso-local` parent may retain the initializer's inherited ACL when no untrusted principal can
+mutate its children; an existing unsafe bundle directory is refused without automatic permission changes.
 The runner streams the complete password set for the main lifecycle Python consumer as one JSON envelope over standard
 input, so those values do not enter that child's process arguments. Client NoCloud seed generation likewise sends its
 SSH password as one bounded standard-input line to the repository-controlled helper; the helper rejects empty,
@@ -685,6 +688,103 @@ has an address on that subnet before prompting for credentials or creating a lab
 from the default `192.168.12.1/24`, pass a matching site CIDR with an unused host address.
 For bridged VMnet0, the wrapper forwards `-BridgedInterfaceAlias` to the direct runner so both checks use the selected
 host interface; runtime discovery executes the network script from the admitted source commit.
+
+For certificate handoff preparation, pass `-CertificateOnly -KeepVms` with a task-owned PR identity. This mode
+clones and boots only the appliance, installs the admitted source commit's helper and wheel, and leaves the appliance
+running for a separate native certificate scenario. The runner publishes immutable creation intent and original VM
+directory identity under `test-results/certificate-native-evidence/<lab>` before VMware populates that directory.
+It also records a bounded `atlaso.service` readback and runs a read-only SQLite source probe before deployment.
+The probe emits only aggregate counts and feature flags from one transaction, requiring absent routing service intent,
+disabled routing and WAN features, and no saved route, rule, NAT, port-forward, WAN-policy, or route-role interface rows.
+The runner admits and publishes that source receipt only when every required field proves absence. The actual helper
+and wheel digests are measured afterward. A discovered DHCP address does not prove exclusive address control.
+The certificate scenario must refuse mutation until a controlled network producer proves the candidate static address
+or DHCP reservation belongs to the clone.
+For a dedicated DHCP peer, add `-CertificateDhcpPeer -SiteANetwork lan:<task-owned-name>` and explicitly provide a
+provenance-admitted, prepared `-ClientVmdkPath` and `-CertificatePeerPublicKeyPath` for an existing Ed25519 public key
+whose private half is already loaded in the local SSH agent. The runner verifies the exact agent key before creating
+the peer seed. This mode does not auto-create the source client disk. The optional
+`-CertificatePeerCidr` and `-CertificateLeaseAddress` select a small private
+IPv4 subnet and one lease. This mode boots the appliance on the selected management VMnet, pins the management
+`eth0` MAC, and then soft-stops and rewires that same adapter to the task-owned private LAN. The two-adapter
+Alpine peer keeps its `eth0` on the management VMnet for control; its `eth1` serves DHCP on the private LAN.
+The peer's NoCloud seed contains only the public key for SSH access, disables password login, binds `dnsmasq` only
+to its private `eth1`, and reserves the appliance `eth0` MAC. The runner uses agent-backed SSH for boot and identity
+readback, pins the observed SSH host key across the seed-removal restart, and never sends a peer password into the
+guest. The copied disk remains writable while VMware runs; its preboot digest is not a lasting byte-integrity claim.
+Separate
+original-intent and original-directory-identity
+receipts precede peer VM creation, and `peer-fixture.json` records its source-disk digest, addresses, MAC, and
+network binding. A management-rewire intent receipt is written before the power-off edit, and a separate
+rewired-runtime receipt records the preserved MAC and the appliance's reserved DHCP address afterward. Both
+runtime receipts deliberately say `unproven`: VM creation and a guest address alone do not establish exclusive
+control. The peer fixture is preparatory: the current `certificate_peer_proof.py` producer deliberately refuses
+even `--preflight-only` before credentials because VMware tooling cannot prove exclusive current attachment to
+the private LAN or exclude another claimant for the candidate address. Native certificate acceptance remains
+blocked until a supported producer independently proves those properties. Once available, the tracked
+`inspect-certificate-peer.ps1` wrapper can admit original creation and LAN receipts, check VMX adapter bindings,
+and use pinned SSH connections to read the peer's dnsmasq configuration, active lease, appliance `eth0` address
+and route, and CA-pinned HTTPS through a private peer tunnel. The producer also requires an explicit, already
+configured static management baseline; it does not configure that baseline. The tracked
+`inspect-certificate-handoff.ps1` wrapper then rechecks controlled receipts and the live private baseline before
+the native scenario changes the management address and restores the original interface and certificate state.
+Each handoff invocation keeps its own preflight admission evidence under the task result root, so a failed later
+stage does not consume the next attempt's admission destination.
+Load either credentialed wrapper from the reviewed full PR-head Git blob into an in-memory PowerShell script block;
+direct execution of the mutable checkout file is refused. The caller must pin `$reviewedCommit` to the full head
+already verified on the PR and use one of the two literal paths below. For example, load the read-only peer
+proof before obtaining the appliance credential through the bounded bridge:
+
+```powershell
+$repoRoot = 'E:\.codex\worktree\issue-865-dynamic-certificate'
+$reviewedCommit = '<verified full PR head SHA>'
+$relative = 'scripts/windows/vmware/inspect-certificate-peer.ps1'
+$gitRoot = Join-Path ([Environment]::GetFolderPath([Environment+SpecialFolder]::ProgramFiles)) 'Git'
+$trustedGit = Join-Path $gitRoot 'cmd/git.exe'
+$gitCore = Join-Path $gitRoot 'mingw64/bin/git.exe'
+$gitPins = [Collections.Generic.List[IDisposable]]::new()
+try {
+    foreach ($path in @($gitRoot, (Join-Path $gitRoot 'cmd'), (Join-Path $gitRoot 'mingw64'),
+            (Join-Path $gitRoot 'mingw64/bin'), $trustedGit, $gitCore)) {
+        $item = Get-Item -LiteralPath $path -Force -ErrorAction Stop
+        if ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) { throw 'Trusted Git path is redirected.' }
+    }
+    foreach ($path in @($trustedGit, $gitCore)) {
+        $gitPins.Add([IO.FileStream]::new($path, [IO.FileMode]::Open,
+                [IO.FileAccess]::Read, [IO.FileShare]::Read))
+        $signature = Get-AuthenticodeSignature -FilePath $path
+        if ($signature.Status -ne 'Valid' -or
+            $signature.SignerCertificate.Thumbprint -cne '3EB14A3AEF84B7153E139397F0A49E2FAC662B0E') {
+            throw 'Trusted Git signature is unavailable or unexpected.'
+        }
+    }
+    $head = (& $trustedGit -C $repoRoot rev-parse --verify 'HEAD^{commit}').Trim()
+    if ($LASTEXITCODE -ne 0 -or $head -cne $reviewedCommit) { throw 'Reviewed certificate head changed.' }
+    $source = (& $trustedGit -C $repoRoot show "${reviewedCommit}:$relative" | Out-String)
+    if ($LASTEXITCODE -ne 0 -or -not $source) { throw 'Reviewed certificate entrypoint unavailable.' }
+    $entrypoint = [ScriptBlock]::Create($source)
+    & $entrypoint -RepositoryRoot $repoRoot -ReviewedSourceCommit $reviewedCommit `
+        -Plan $plan -AddressEvidence $addressEvidence -RuntimeEvidence $runtimeEvidence `
+        -EnvironmentId $environmentId -PythonPath $pythonPath
+} finally {
+    foreach ($pin in $gitPins) { $pin.Dispose() }
+}
+```
+
+For the handoff, select the literal `scripts/windows/vmware/inspect-certificate-handoff.ps1` blob and pass
+`-Plan`, `-Evidence`, `-EnvironmentId`, and `-PythonPath` (plus `-Execute` only for the guarded
+native mutation). Do not obtain the appliance credential until after selecting and loading the reviewed entrypoint.
+For both credentialed wrappers, install the task-owned virtual environment from the hash-locked
+`requirements-onepassword-deploy.lock`. They pin the interpreter, base runtime, and isolated import files
+through child termination and refuse an external import path or startup customization.
+Keep the original receipts outside the lab removal root. A source appliance or client disk owned
+by another task requires separate source-admission evidence and owner coordination; the fixture does not transfer
+ownership of either source. The peer receipt binds the selected client VMDK by path and SHA-256 and the
+read-only producer rehashes it; this detects changes but does not establish original client-disk creation
+provenance. Admit that source independently before the lifecycle run.
+For the negative case, the authenticated CA inventory must bind the chosen ID and fingerprint to the live
+`appliance:https` certificate before and after the desired edit. Keep the original receipts outside the lab removal
+root; clean up only through the exact lifecycle VM removal and artifact-root procedures below.
 
 The full lifecycle uses `oidc.atlaso.internal` because management HTTPS already owns
 `core.atlaso.internal`. Its first Apply includes the configured CA certificate consumers, then it
@@ -992,6 +1092,10 @@ malformed ID fails with an actionable preflight error before network preparation
 mutation. The wrapper verifies its SHA-256 identity against the repository pin without printing the ID. Install the
 Environments-enabled beta 1Password CLI under `C:\Program Files\1Password CLI`; a stable CLI without
 `op run --environment` fails before Environment access. A wrong Environment ID or signer fails before new VM mutation.
+The concealed `ATLASO_DEVELOPMENT_ROOT_CA_PRIVATE_KEY` value accepts the original complete PEM or canonical single-line
+base64 of the complete PEM text (including the BEGIN and END lines). Encode the original PEM bytes without changing
+line endings or encoding only the DER body. The bounded secret child decodes the value and validates the PEM against
+the checked-in certificate before VM mutation; the encoded value remains secret material.
 The cleanup marker uses a non-secret identity stored in the VMX, not the VMX file ID alone, because Workstation may
 replace the VMX during power-on. The wrapper exposes the marker path as recovery state only after its write-through
 rename succeeds. If publication fails before a credential or signer child starts, it preserves the original actionable

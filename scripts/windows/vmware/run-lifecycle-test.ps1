@@ -58,6 +58,16 @@ Permit dry-run apply mode for the Python lifecycle harness.
 Skip backup/restore validation pass.
 .PARAMETER OidcOnly
 Run only OIDC scenario path.
+.PARAMETER CertificateOnly
+Prepare only a retained appliance for the certificate handoff acceptance scenario.
+.PARAMETER CertificateDhcpPeer
+Prepare an owned private DHCP peer and rewire the certificate appliance management adapter to it.
+.PARAMETER CertificatePeerCidr
+Private peer address and prefix for the certificate management segment.
+.PARAMETER CertificateLeaseAddress
+Exact reserved DHCP address for the appliance management MAC.
+.PARAMETER CertificatePeerPublicKeyPath
+Existing Ed25519 public key whose private half is loaded in the local SSH agent.
 .PARAMETER RoutingWanOnly
 Run only WAN routing scenario.
 .PARAMETER RoutingOverlapOnly
@@ -112,6 +122,11 @@ param(
     [switch]$AllowDryRunApply,
     [switch]$SkipBackupRestoreTest,
     [switch]$OidcOnly,
+    [switch]$CertificateOnly,
+    [switch]$CertificateDhcpPeer,
+    [string]$CertificatePeerCidr = '192.168.77.1/24',
+    [string]$CertificateLeaseAddress = '192.168.77.10',
+    [string]$CertificatePeerPublicKeyPath = '',
     [switch]$RoutingWanOnly,
     [switch]$RoutingOverlapOnly,
     [switch]$FullEsxiPxeInstall,
@@ -138,8 +153,20 @@ if ($OidcOnly -and $SiteANetwork.StartsWith('lan:', [StringComparison]::OrdinalI
 if ($OidcOnly -and $SiteInterface -ne 'eth1') {
     throw '-OidcOnly requires SiteInterface eth1 because its Site A vmnet is attached to the appliance second adapter.'
 }
-if ($SignedReleaseRepositoryUrl -and ($OidcOnly -or $RoutingWanOnly)) {
-    throw '-SignedReleaseRepositoryUrl requires the full lifecycle; it cannot be combined with -OidcOnly or -RoutingWanOnly.'
+if ($CertificateDhcpPeer) {
+    if ($PullRequestNumber -ne 871 -or -not $CertificateOnly -or -not $SiteANetwork.StartsWith('lan:', [StringComparison]::OrdinalIgnoreCase) -or
+        $SiteANetwork.Length -le 4 -or $SiteInterface -ne 'eth0') {
+        throw '-CertificateDhcpPeer requires PR 871, -CertificateOnly, a named private lan: SiteANetwork, and SiteInterface eth0.'
+    }
+    if (-not $PlanOnly -and -not (Test-Path -LiteralPath $ClientVmdkPath -PathType Leaf)) {
+        throw 'Certificate DHCP peer requires a prepared, explicitly supplied client VMDK.'
+    }
+    if (-not $PlanOnly -and -not (Test-Path -LiteralPath $CertificatePeerPublicKeyPath -PathType Leaf)) {
+        throw 'Certificate DHCP peer requires an existing SSH-agent Ed25519 public key.'
+    }
+}
+if ($SignedReleaseRepositoryUrl -and ($OidcOnly -or $RoutingWanOnly -or $CertificateOnly)) {
+    throw '-SignedReleaseRepositoryUrl requires the full lifecycle; it cannot be combined with -OidcOnly, -RoutingWanOnly, or -CertificateOnly.'
 }
 if ($SignedReleaseRepositoryUrl) {
     [Uri]$fixtureUri = $null
@@ -969,7 +996,7 @@ if (-not $PlanOnly) {
             throw "Lifecycle secret bundle property is missing or invalid: $propertyName"
         }
     }
-    $focusedRun = $OidcOnly -or $RoutingWanOnly -or $RoutingOverlapOnly
+    $focusedRun = $OidcOnly -or $RoutingWanOnly -or $CertificateOnly -or $RoutingOverlapOnly
     if (-not $focusedRun -and $secretBundle.VcfBackupPassword -isnot [SecureString]) {
         throw 'Lifecycle secret bundle property is missing or invalid: VcfBackupPassword'
     }
@@ -1004,6 +1031,13 @@ if ($RoutingWanOnly -or $RoutingOverlapOnly) {
 }
 if ($OidcOnly) {
     $SkipBackupRestoreTest = $true
+}
+if ($CertificateOnly) {
+    $SkipBackupRestoreTest = $true
+    if (-not $PlanOnly) {
+        if ($CleanupCreatedLab) { throw 'Certificate preparation must retain its appliance until native acceptance and owned cleanup.' }
+        if (-not $env:CODEX_THREAD_ID) { throw 'Certificate preparation requires the originating task ID before resource creation.' }
+    }
 }
 
 <#
@@ -1402,12 +1436,15 @@ Source VMX path.
 Destination directory for the copied appliance.
 .PARAMETER Name
 Lifecycle VM name.
+.PARAMETER PreparedDirectoryIdentity
+Original identity of an empty certificate VM directory recorded before cloning.
 #>
 function Copy-VmDirectory {
     param(
         [string]$SourceVmx,
         [string]$DestinationDirectory,
-        [string]$Name
+        [string]$Name,
+        [string]$PreparedDirectoryIdentity = ''
     )
 
     Assert-SafeLifecycleName -Name $Name
@@ -1415,7 +1452,13 @@ function Copy-VmDirectory {
     Assert-AtlasoTemplatePoweredOff -VmxPath $resolvedSourceVmx -VmrunPath $resolvedVmrun
     Assert-AtlasoVmwarePayloadProvenance -VmxPath $resolvedSourceVmx | Out-Null
     if (Test-Path -LiteralPath $DestinationDirectory) {
-        throw "Lifecycle VM directory already exists: $DestinationDirectory"
+        if (-not $PreparedDirectoryIdentity -or
+            (Get-AtlasoPathIdentity -Path $DestinationDirectory -Description 'prepared certificate VM directory') -cne $PreparedDirectoryIdentity -or
+            @(Get-ChildItem -LiteralPath $DestinationDirectory -Force).Count) {
+            throw "Lifecycle VM directory already exists or changed: $DestinationDirectory"
+        }
+    } elseif ($PreparedDirectoryIdentity) {
+        throw 'Prepared certificate VM directory disappeared before cloning.'
     }
     $targetVmx = Join-Path $DestinationDirectory "$Name.vmx"
     if ($PSCmdlet.ShouldProcess($DestinationDirectory, "Clone Workstation VM $Name with dedicated storage")) {
@@ -1630,6 +1673,157 @@ function New-CloudInitSeedIso {
             throw "Failed to create NoCloud seed ISO for $HostName"
         }
     }
+}
+
+<#
+.SYNOPSIS
+Create the first-boot seed for the task-owned certificate DHCP peer.
+.PARAMETER Path
+New task-owned seed ISO path.
+.PARAMETER HostName
+Peer guest hostname.
+.PARAMETER ClientMac
+Exact reserved appliance management MAC.
+#>
+function New-CertificatePeerSeedIso {
+    param([string]$Path, [string]$HostName, [string]$ClientMac)
+    if ($PSCmdlet.ShouldProcess($Path, "Create private certificate DHCP peer seed for $HostName")) {
+        python -c 'import pycdlib' 2>$null
+        if ($LASTEXITCODE -ne 0) { throw 'pycdlib must be installed before creating the certificate peer seed.' }
+        $helper = Join-Path $runtimeSourceRoot 'scripts\interop\create_certificate_peer_seed_iso.py'
+        & python $helper --output $Path --hostname $HostName --user $ClientSshUser `
+            --public-key $certificatePeerPublicKey --server-cidr $CertificatePeerCidr --lease-address $CertificateLeaseAddress `
+            --client-mac $ClientMac | Out-Host
+        if ($LASTEXITCODE -ne 0) { throw "Certificate peer seed creation failed for $HostName." }
+    }
+}
+
+<#
+.SYNOPSIS
+Verify that the certificate peer consumed its seed and started dnsmasq.
+.PARAMETER Path
+Task-owned peer VMX path.
+#>
+function Assert-CertificatePeerBootReady {
+    param([string]$Path)
+    $address = Wait-CertificatePeerManagementAddress -Path $Path
+    $probe = Invoke-CertificatePeerSsh -Address $address -Command `
+        'cloud-init status --wait >/dev/null 2>&1 && sudo dnsmasq --test --conf-file=/etc/dnsmasq.conf >/dev/null 2>&1 && sudo rc-service dnsmasq status >/dev/null 2>&1'
+    if ($probe.ExitCode -ne 0) {
+        throw 'Certificate DHCP peer did not complete first boot with an active, valid dnsmasq configuration.'
+    }
+}
+
+<#
+.SYNOPSIS
+Wait for VMware Tools to report the peer management address without guest credentials.
+.PARAMETER Path
+Owned peer VMX path.
+#>
+function Wait-CertificatePeerManagementAddress {
+    param([Parameter(Mandatory)][string]$Path)
+    $deadline = (Get-Date).AddSeconds(300)
+    while ((Get-Date) -lt $deadline) {
+        $reported = Invoke-VmrunBounded -Arguments @('-T', 'ws', 'getGuestIPAddress', $Path) -TimeoutSeconds 10
+        if (-not $reported.TimedOut -and $reported.ExitCode -eq 0) {
+            $address = Get-GuestIPv4FromAddressText -Lines @($reported.StdOut -split "`r?`n")
+            if ($address) { return $address }
+        }
+        Start-Sleep -Seconds 5
+    }
+    throw 'Certificate peer management address was unavailable from owned VMware Tools.'
+}
+
+<#
+.SYNOPSIS
+Run a peer command using only the selected local SSH agent key.
+.PARAMETER Address
+VMware-reported peer management address.
+.PARAMETER Command
+Read-only guest command with nonsecret output.
+.PARAMETER TimeoutSeconds
+Maximum bounded SSH execution time.
+#>
+function Invoke-CertificatePeerSsh {
+    param(
+        [Parameter(Mandatory)][string]$Address,
+        [Parameter(Mandatory)][string]$Command,
+        [int]$TimeoutSeconds = 300
+    )
+    $ssh = (Get-Command ssh.exe -CommandType Application -ErrorAction Stop).Source
+    $startInfo = [Diagnostics.ProcessStartInfo]::new()
+    $startInfo.FileName = $ssh
+    $startInfo.UseShellExecute = $false
+    $startInfo.CreateNoWindow = $true
+    $startInfo.RedirectStandardOutput = $true
+    $startInfo.RedirectStandardError = $true
+    foreach ($argument in @(
+            '-o', 'BatchMode=yes', '-o', 'PreferredAuthentications=publickey',
+            '-o', 'PasswordAuthentication=no', '-o', 'KbdInteractiveAuthentication=no',
+            '-o', 'IdentitiesOnly=yes',
+            '-o', 'HostKeyAlgorithms=ssh-ed25519',
+            '-o', 'StrictHostKeyChecking=accept-new', '-o', 'HashKnownHosts=no',
+            '-o', 'UpdateHostKeys=no', '-o', "HostKeyAlias=$clientAName",
+            '-o', "UserKnownHostsFile=$certificatePeerKnownHostsPath", '-o', 'ConnectTimeout=10',
+            '-i', $certificatePeerPublicKeySnapshot,
+            "$ClientSshUser@$Address", $Command
+        )) { [void]$startInfo.ArgumentList.Add($argument) }
+    $process = [Diagnostics.Process]::new()
+    $process.StartInfo = $startInfo
+    try {
+        [void]$process.Start()
+        $stdout = $process.StandardOutput.ReadToEndAsync()
+        $stderr = $process.StandardError.ReadToEndAsync()
+        if (-not $process.WaitForExit($TimeoutSeconds * 1000)) {
+            $process.Kill($true)
+            [void]$process.WaitForExit(5000)
+            throw 'Certificate peer SSH command timed out.'
+        }
+        $output = $stdout.GetAwaiter().GetResult()
+        $null = $stderr.GetAwaiter().GetResult()
+        if ($output.Length -gt 1024) { throw 'Certificate peer SSH output exceeded the identity bound.' }
+        return [pscustomobject]@{ ExitCode = $process.ExitCode; Output = @($output -split "`r?`n" | Where-Object { $_ }) }
+    } finally {
+        $process.Dispose()
+    }
+}
+
+<#
+.SYNOPSIS
+Capture the owned peer's management address and SSH host key through VMware Tools and agent SSH.
+.PARAMETER Path
+Original task-owned peer VMX path.
+#>
+function Get-CertificatePeerOriginalIdentity {
+    param([Parameter(Mandatory)][string]$Path)
+    $addressFromVmware = Wait-CertificatePeerManagementAddress -Path $Path
+    $query = Invoke-CertificatePeerSsh -Address $addressFromVmware -Command `
+        "ip -4 -o addr show dev eth0 | awk 'NR == 1 { print `$4 }'; cat /etc/ssh/ssh_host_ed25519_key.pub"
+    if ($query.ExitCode -ne 0) { throw 'Certificate peer original identity query failed.' }
+    $lines = @($query.Output)
+    if ($lines.Count -gt 2 -or -not (Test-Path -LiteralPath $certificatePeerKnownHostsPath -PathType Leaf) -or
+        (Get-Item -LiteralPath $certificatePeerKnownHostsPath).Length -gt 1024) {
+        throw 'Certificate peer original identity readback is missing or oversized.'
+    }
+    $addressMatch = if ($lines.Count -eq 2) { [regex]::Match($lines[0], '^(?<ip>(?:[0-9]{1,3}\.){3}[0-9]{1,3})/[0-9]{1,2}$') }
+    $keyMatch = if ($lines.Count -eq 2) { [regex]::Match($lines[1], '^ssh-ed25519 (?<key>[A-Za-z0-9+/]+={0,2})(?:\s+[^\r\n]{1,128})?$') }
+    if ($lines.Count -ne 2 -or -not $addressMatch.Success -or -not $keyMatch.Success) {
+        throw 'Certificate peer original identity shape is invalid.'
+    }
+    $address = [Net.IPAddress]::Parse($addressMatch.Groups['ip'].Value)
+    if ($address.AddressFamily -ne [Net.Sockets.AddressFamily]::InterNetwork -or
+        $address.ToString() -ceq '0.0.0.0') { throw 'Certificate peer management address is invalid.' }
+    $key = [Convert]::FromBase64String($keyMatch.Groups['key'].Value)
+    $fingerprint = 'SHA256:' + [Convert]::ToBase64String([Security.Cryptography.SHA256]::HashData($key)).TrimEnd('=')
+    if ($fingerprint -notmatch '^SHA256:[A-Za-z0-9+/]{43}$') {
+        throw 'Certificate peer SSH host key is invalid.'
+    }
+    if ($address.ToString() -cne $addressFromVmware) { throw 'Certificate peer SSH address differs from VMware Tools.' }
+    $knownHost = @(Get-Content -LiteralPath $certificatePeerKnownHostsPath)
+    if ($knownHost.Count -ne 1 -or $knownHost[0] -cne "$clientAName ssh-ed25519 $($keyMatch.Groups['key'].Value)") {
+        throw 'Certificate peer SSH host key differs from the pinned agent connection.'
+    }
+    return [ordered]@{ management_address = $address.ToString(); ssh_host_key = $fingerprint }
 }
 
 <#
@@ -2040,6 +2234,10 @@ Guest username used for guest-ops probing.
 Guest password used for guest-ops probing.
 .PARAMETER Name
 VM name used for temporary artifacts.
+.PARAMETER ExpectedAddress
+Require this exact IPv4 address before returning; ignore stale address observations.
+.PARAMETER SkipHostNeighbor
+Do not use the host neighbor cache when proving a guest address after a network rewire.
 #>
 function Wait-GuestIPv4 {
     param(
@@ -2047,7 +2245,9 @@ function Wait-GuestIPv4 {
         [int]$TimeoutSeconds = 240,
         [string]$GuestUser = '',
         [SecureString]$GuestPassword,
-        [string]$Name = 'guest'
+        [string]$Name = 'guest',
+        [string]$ExpectedAddress = '',
+        [switch]$SkipHostNeighbor
     )
 
     $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
@@ -2055,16 +2255,18 @@ function Wait-GuestIPv4 {
         $reported = Invoke-VmrunBounded -Arguments @('-T', 'ws', 'getGuestIPAddress', $Path) -TimeoutSeconds 10
         if ($reported.ExitCode -eq 0) {
             $ip = Get-GuestIPv4FromAddressText -Lines @($reported.StdOut -split "`r?`n")
-            if ($ip) {
+            if ($ip -and (-not $ExpectedAddress -or $ip -ceq $ExpectedAddress)) {
                 return $ip
             }
         }
-        $neighborIp = Get-GuestIPv4FromHostNeighbor -Path $Path
-        if ($neighborIp) {
-            return $neighborIp
+        if (-not $SkipHostNeighbor) {
+            $neighborIp = Get-GuestIPv4FromHostNeighbor -Path $Path
+            if ($neighborIp -and (-not $ExpectedAddress -or $neighborIp -ceq $ExpectedAddress)) {
+                return $neighborIp
+            }
         }
         $fallbackIp = Get-GuestIPv4ViaGuestOps -Path $Path -GuestUser $GuestUser -GuestPassword $GuestPassword -Name $Name
-        if ($fallbackIp) {
+        if ($fallbackIp -and (-not $ExpectedAddress -or $fallbackIp -ceq $ExpectedAddress)) {
             return $fallbackIp
         }
         Start-Sleep -Seconds 5
@@ -2436,6 +2638,9 @@ function Sync-ApplianceApplicationWheel {
                 try { Invoke-RoutingOverlapPhase -Phase probe -Descriptor $overlapDescriptor -Trust $overlapTrust; $true } catch { $false }
             } else { Test-ApplianceOpenApi -Url "$ApplianceUrl/openapi.json" }
             if ($ready) {
+                # Return the digest established while both the source snapshot
+                # and wheel file remain pinned. Later receipts must not reopen
+                # an unpinned pathname after this function releases its pins.
                 return $wheel
             }
             Start-Sleep -Seconds 5
@@ -2558,8 +2763,8 @@ function Add-LifecycleResultStep {
 }
 
 $resolvedVmrun = Resolve-VmrunPath
-if (@($OidcOnly, $RoutingWanOnly, $RoutingOverlapOnly, $FullEsxiPxeInstall | Where-Object { $_ }).Count -gt 1) {
-    throw 'Focused lifecycle modes are mutually exclusive.'
+if (@(@($OidcOnly, $RoutingWanOnly, $CertificateOnly, $RoutingOverlapOnly, $FullEsxiPxeInstall) | Where-Object { $_ }).Count -gt 1) {
+    throw "-OidcOnly, -RoutingWanOnly, -CertificateOnly, -RoutingOverlapOnly, and -FullEsxiPxeInstall are mutually exclusive."
 }
 if ($RoutingOverlapOnly -and -not $PlanOnly -and (-not $externalOwnershipEnabled -or $ApplianceSshUser -cne 'root' -or
     $ApplianceIPAddress -or $ApplianceUrl -or $AllowDryRunApply -or $ManagementNetwork -notmatch '^VMnet\d+$')) {
@@ -2579,6 +2784,7 @@ $clientAName = "$LabName-ClientA"
 $clientBName = "$LabName-ClientB"
 $esxiName = "$LabName-ESXiPXE"
 $esxiMacAddress = if ($FullEsxiPxeInstall) { New-StaticVmwareMac } else { '' }
+$certificateAppliancePeerMac = if ($CertificateDhcpPeer) { New-StaticVmwareMac } else { '' }
 $planApplianceVmx = if (Test-Path -LiteralPath $ApplianceVmxPath) { (Resolve-Path -LiteralPath $ApplianceVmxPath).Path } else { $ApplianceVmxPath }
 $planClientVmdk = if (Test-Path -LiteralPath $ClientVmdkPath) { (Resolve-Path -LiteralPath $ClientVmdkPath).Path } else { $ClientVmdkPath }
 
@@ -2605,6 +2811,11 @@ $plan = [ordered]@{
     trunk_network         = $TrunkNetwork
     site_b_network        = $SiteBNetwork
     oidc_only             = [bool]$OidcOnly
+    certificate_only      = [bool]$CertificateOnly
+    certificate_dhcp_peer = [bool]$CertificateDhcpPeer
+    certificate_peer_cidr = if ($CertificateDhcpPeer) { $CertificatePeerCidr } else { '' }
+    certificate_lease_address = if ($CertificateDhcpPeer) { $CertificateLeaseAddress } else { '' }
+    certificate_appliance_peer_mac = $certificateAppliancePeerMac
     routing_wan_only      = [bool]$RoutingWanOnly
     routing_overlap_only  = [bool]$RoutingOverlapOnly
     full_esxi_pxe_install = [bool]$FullEsxiPxeInstall
@@ -2712,6 +2923,200 @@ function Publish-LifecycleOriginalVmIdentity {
 
 <#
 .SYNOPSIS
+Publish one immutable certificate-lab receipt outside its disposable VM root.
+.PARAMETER Name
+Unique receipt filename beneath this lab's durable evidence directory.
+.PARAMETER Value
+Non-secret structured evidence to serialize and flush.
+#>
+function Write-CertificateLabReceipt {
+    param([Parameter(Mandatory)][string]$Name, [Parameter(Mandatory)]$Value)
+
+    if (-not $CertificateOnly -or $Name -notmatch '^[a-z][a-z0-9-]*\.json$') {
+        throw 'Certificate evidence publication was requested outside its supported mode.'
+    }
+    $evidenceRoot = Join-Path $repoRoot "test-results/certificate-native-evidence/$LabName"
+    [IO.Directory]::CreateDirectory($evidenceRoot) | Out-Null
+    $target = Join-Path $evidenceRoot $Name
+    if (Test-Path -LiteralPath $target) { throw "Certificate evidence already exists: $target" }
+    $stage = Join-Path $evidenceRoot ('.' + [guid]::NewGuid().ToString('N') + '.pending')
+    $writer = [Atlaso.WorkstationDurablePublisherV3]::CreateStage($stage)
+    try {
+        $bytes = [Text.UTF8Encoding]::new($false).GetBytes(($Value | ConvertTo-Json -Depth 8))
+        $publishedSha256 = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($bytes)).ToLowerInvariant()
+        $writer.Write($bytes)
+        [Atlaso.WorkstationDurablePublisherV3]::PublishDurableFile($writer, $target, $false)
+    } finally { $writer.Dispose() }
+    return [pscustomobject]@{ Path = $target; Sha256 = $publishedSha256 }
+}
+
+<#
+.SYNOPSIS
+Capture bounded guest service state before certificate-lab helper and wheel deployment.
+.PARAMETER ApplianceVmx
+Exact cloned appliance VMX whose guest state is queried.
+#>
+function Get-CertificateSourceGuestState {
+    param([Parameter(Mandatory)][string]$ApplianceVmx)
+
+    $guestPath = "/tmp/$LabName-source-app.txt"
+    $hostPath = Join-Path $resultRoot 'source-app-readback.txt'
+    $script = "systemctl show atlaso.service --property=LoadState,ActiveState > '$guestPath'"
+    $password = ConvertFrom-SecureString -SecureString $adminPasswordSecure -AsPlainText
+    try {
+        $query = Invoke-VmrunBounded -Arguments @(
+            '-T', 'ws', '-gu', $ApplianceSshUser, '-gp', $password,
+            'runScriptInGuest', $ApplianceVmx, '/bin/sh', $script
+        ) -TimeoutSeconds 20
+        if ($query.TimedOut -or $query.ExitCode -ne 0) { throw 'Certificate source guest query failed.' }
+        $readback = Invoke-VmrunBounded -Arguments @(
+            '-T', 'ws', '-gu', $ApplianceSshUser, '-gp', $password,
+            'copyFileFromGuestToHost', $ApplianceVmx, $guestPath, $hostPath
+        ) -TimeoutSeconds 20
+        if ($readback.TimedOut -or $readback.ExitCode -ne 0) { throw 'Certificate source guest readback failed.' }
+        if (-not (Test-Path -LiteralPath $hostPath -PathType Leaf) -or (Get-Item -LiteralPath $hostPath).Length -gt 1024) {
+            throw 'Certificate source guest readback is missing or oversized.'
+        }
+        $values = @{}
+        foreach ($line in Get-Content -LiteralPath $hostPath) {
+            if ($line -notmatch '^(LoadState|ActiveState)=([a-z-]{1,40})$' -or $values.ContainsKey($Matches[1])) {
+                throw 'Certificate source guest readback is invalid.'
+            }
+            $values[$Matches[1]] = $Matches[2]
+        }
+        if ($values.Count -ne 2) { throw 'Certificate source guest state is incomplete.' }
+        return $values
+    } finally {
+        $password = $null
+        if (Test-Path -LiteralPath $hostPath) { Remove-Item -LiteralPath $hostPath -Force -ErrorAction Stop }
+    }
+}
+
+<#
+.SYNOPSIS
+Read a bounded, read-only routing-intent snapshot from the cloned guest database before deployment.
+.PARAMETER ApplianceVmx
+Exact cloned appliance VMX whose source database is queried.
+#>
+function Get-CertificateSourceRoutingSnapshot {
+    param([Parameter(Mandatory)][string]$ApplianceVmx)
+
+    # The routing-absence claim must be made by the admitted source, not by a
+    # transient checkout edit that disappears before the later cleanliness check.
+    Assert-LifecycleSourcePins -Pins $runtimeConsumerPins
+    $localProbe = Join-Path $runtimeSourceRoot 'scripts/interop/certificate_source_probe.py'
+    $probeSha256 = (Get-FileHash -LiteralPath $localProbe -Algorithm SHA256).Hash.ToLowerInvariant()
+    $probeToken = [guid]::NewGuid().ToString('N')
+    $guestProbe = "/root/atlaso-certificate-source-$probeToken.py"
+    $guestOutput = "/root/atlaso-certificate-source-$probeToken.json"
+    $hostOutput = Join-Path $resultRoot "source-routing-$probeToken.json"
+    if (Test-Path -LiteralPath $hostOutput) { throw 'Certificate source routing output already exists.' }
+    $password = ConvertFrom-SecureString -SecureString $adminPasswordSecure -AsPlainText
+    try {
+        $copy = Invoke-VmrunBounded -Arguments @(
+            '-T', 'ws', '-gu', 'root', '-gp', $password,
+            'copyFileFromHostToGuest', $ApplianceVmx, $localProbe, $guestProbe
+        ) -TimeoutSeconds 20
+        if ($copy.TimedOut -or $copy.ExitCode -ne 0) { throw 'Certificate source routing probe copy failed.' }
+        Assert-LifecycleSourcePins -Pins $runtimeConsumerPins
+        $script = "printf '%s  %s\n' '$probeSha256' '$guestProbe' | sha256sum -c - >/dev/null && python3 '$guestProbe' > '$guestOutput'"
+        $query = Invoke-VmrunBounded -Arguments @(
+            '-T', 'ws', '-gu', 'root', '-gp', $password,
+            'runScriptInGuest', $ApplianceVmx, '/bin/sh', $script
+        ) -TimeoutSeconds 20
+        if ($query.TimedOut -or $query.ExitCode -ne 0) { throw 'Certificate source routing probe failed.' }
+        Assert-LifecycleSourcePins -Pins $runtimeConsumerPins
+        $readback = Invoke-VmrunBounded -Arguments @(
+            '-T', 'ws', '-gu', 'root', '-gp', $password,
+            'copyFileFromGuestToHost', $ApplianceVmx, $guestOutput, $hostOutput
+        ) -TimeoutSeconds 20
+        if ($readback.TimedOut -or $readback.ExitCode -ne 0) { throw 'Certificate source routing readback failed.' }
+        Assert-LifecycleSourcePins -Pins $runtimeConsumerPins
+        if (-not (Test-Path -LiteralPath $hostOutput -PathType Leaf) -or (Get-Item -LiteralPath $hostOutput).Length -gt 4096) {
+            throw 'Certificate source routing readback is missing or oversized.'
+        }
+        $snapshot = Get-Content -LiteralPath $hostOutput -Raw | ConvertFrom-Json -AsHashtable
+        if ($snapshot.schema -ne 1 -or $snapshot.database -ne '/var/lib/atlaso/atlaso.db' -or
+            $snapshot.state -ne 'proven-absent') {
+            throw 'Certificate source routing intent is present or unproven.'
+        }
+        $expectedCounts = @('routes', 'routing_rules', 'nat_rules', 'port_forwards', 'wan_policies', 'route_physical_interfaces', 'route_vlan_interfaces')
+        if (@($snapshot.counts.Keys).Count -ne $expectedCounts.Count -or
+            @($snapshot.settings.Keys).Count -ne 4) {
+            throw 'Certificate source routing snapshot has an unexpected schema.'
+        }
+        foreach ($key in $expectedCounts) {
+            if (-not $snapshot.counts.ContainsKey($key) -or $snapshot.counts[$key] -isnot [long] -or $snapshot.counts[$key] -ne 0) {
+                throw 'Certificate source routing desired state is not empty.'
+            }
+        }
+        foreach ($key in @('routes_wan.routing_enabled', 'routes_wan.wan_simulation_enabled', 'routes_wan.nat_enabled', 'traffic_publishing.nat_enabled')) {
+            if (-not $snapshot.settings.ContainsKey($key) -or
+                ($null -ne $snapshot.settings[$key] -and $snapshot.settings[$key] -isnot [bool]) -or
+                $snapshot.settings[$key] -eq $true) {
+                throw 'Certificate source routing feature is enabled or unproven.'
+            }
+        }
+        if ($null -ne $snapshot.routing_service -and
+            (@($snapshot.routing_service.Keys).Count -ne 2 -or
+             $snapshot.routing_service.enabled -isnot [bool] -or $snapshot.routing_service.running -isnot [bool] -or
+             $snapshot.routing_service.enabled -or $snapshot.routing_service.running)) {
+            throw 'Certificate source routing service intent is present.'
+        }
+        $snapshot.probe_sha256 = $probeSha256
+        Assert-LifecycleSourcePins -Pins $runtimeConsumerPins
+        return $snapshot
+    } finally {
+        # These unique files exist only in this task-owned clone; the host receipt is published separately.
+        $null = Invoke-VmrunBounded -Arguments @(
+            '-T', 'ws', '-gu', 'root', '-gp', $password,
+            'runScriptInGuest', $ApplianceVmx, '/bin/sh', "rm -f -- '$guestProbe' '$guestOutput'"
+        ) -TimeoutSeconds 20
+        $password = $null
+        if (Test-Path -LiteralPath $hostOutput) { Remove-Item -LiteralPath $hostOutput -Force -ErrorAction Stop }
+    }
+}
+
+<#
+.SYNOPSIS
+Measure the installed appliance helper by a bounded guest readback.
+.PARAMETER ApplianceVmx
+Exact cloned appliance VMX whose helper is measured.
+#>
+function Get-CertificateInstalledHelperSha256 {
+    param([Parameter(Mandatory)][string]$ApplianceVmx)
+
+    $guestPath = "/tmp/$LabName-helper-sha256.txt"
+    $hostPath = Join-Path $resultRoot 'helper-sha256-readback.txt'
+    $script = "sha256sum /opt/atlaso/bin/atlaso-helper > '$guestPath'"
+    $password = ConvertFrom-SecureString -SecureString $adminPasswordSecure -AsPlainText
+    try {
+        $query = Invoke-VmrunBounded -Arguments @(
+            '-T', 'ws', '-gu', $ApplianceSshUser, '-gp', $password,
+            'runScriptInGuest', $ApplianceVmx, '/bin/sh', $script
+        ) -TimeoutSeconds 20
+        if ($query.TimedOut -or $query.ExitCode -ne 0) { throw 'Installed appliance helper measurement failed.' }
+        $readback = Invoke-VmrunBounded -Arguments @(
+            '-T', 'ws', '-gu', $ApplianceSshUser, '-gp', $password,
+            'copyFileFromGuestToHost', $ApplianceVmx, $guestPath, $hostPath
+        ) -TimeoutSeconds 20
+        if ($readback.TimedOut -or $readback.ExitCode -ne 0) { throw 'Installed appliance helper readback failed.' }
+        if (-not (Test-Path -LiteralPath $hostPath -PathType Leaf) -or (Get-Item -LiteralPath $hostPath).Length -gt 256) {
+            throw 'Installed appliance helper digest is missing or oversized.'
+        }
+        $lines = @(Get-Content -LiteralPath $hostPath)
+        if ($lines.Count -ne 1 -or $lines[0] -notmatch '^([a-f0-9]{64})  /opt/atlaso/bin/atlaso-helper$') {
+            throw 'Installed appliance helper digest is invalid.'
+        }
+        return $Matches[1]
+    } finally {
+        $password = $null
+        if (Test-Path -LiteralPath $hostPath) { Remove-Item -LiteralPath $hostPath -Force -ErrorAction Stop }
+    }
+}
+
+<#
+.SYNOPSIS
 Publish one expected VM identity before running its artifact-producing action.
 
 .PARAMETER Role
@@ -2790,20 +3195,95 @@ $clientASeedIso = ''
 $clientBSeedIso = ''
 $clientAVmx = ''
 $clientBVmx = ''
-$seedArtifactsRetired = [bool]$OidcOnly
+$certificatePeerSeedIso = ''
+$certificatePeerVmx = ''
+$certificateDiskSourcePin = $null
+$certificatePeerDiskPin = $null
+$certificateKnownHostsPin = $null
+$certificatePeerPublicKeyPin = $null
+$certificatePeerPublicKey = ''
+$certificatePeerPublicKeySnapshot = Join-Path $resultRoot 'certificate-peer-authorized-key.pub'
+$certificatePeerKnownHostsPath = Join-Path $resultRoot 'certificate-peer-known-hosts'
+$seedArtifactsRetired = [bool]($OidcOnly -or ($CertificateOnly -and -not $CertificateDhcpPeer))
 $scenarioFailure = $null
 $overlapDescriptor = $null
 $overlapTrust = ''
 $overlapStarted = $false
 $overlapRecoveryUncertain = $false
 try {
-    if (-not $OidcOnly) {
+    if ($CertificateDhcpPeer -and -not $PlanOnly) {
+        $keyFile = Get-Item -LiteralPath $CertificatePeerPublicKeyPath -Force -ErrorAction Stop
+        if ($keyFile.PSIsContainer -or ($keyFile.Attributes -band [IO.FileAttributes]::ReparsePoint) -or $keyFile.Length -gt 1024) {
+            throw 'Certificate peer public key must be one ordinary bounded file.'
+        }
+        $certificatePeerPublicKey = (Get-Content -LiteralPath $CertificatePeerPublicKeyPath -Raw).Trim()
+        if ($certificatePeerPublicKey -notmatch '^ssh-ed25519 (?<blob>[A-Za-z0-9+/]+={0,2})(?: [^\r\n]{1,128})?$') {
+            throw 'Certificate peer requires one Ed25519 public key.'
+        }
+        $selectedBlob = $Matches['blob']
+        $agentKeys = @(& ssh-add.exe -L 2>$null)
+        if ($LASTEXITCODE -ne 0 -or -not @($agentKeys | Where-Object { ($_ -split ' ')[0] -ceq 'ssh-ed25519' -and ($_ -split ' ')[1] -ceq $selectedBlob }).Count) {
+            throw 'Certificate peer public key is not loaded in the local SSH agent.'
+        }
+        $keyBytes = [Text.UTF8Encoding]::new($false).GetBytes("$certificatePeerPublicKey`n")
+        $keyStream = [IO.FileStream]::new($certificatePeerPublicKeySnapshot, [IO.FileMode]::CreateNew,
+            [IO.FileAccess]::Write, [IO.FileShare]::None)
+        try {
+            $keyStream.Write($keyBytes, 0, $keyBytes.Length)
+            $keyStream.Flush($true)
+        } finally { $keyStream.Dispose() }
+        $certificatePeerPublicKeyPin = [Atlaso.WorkstationFileIdentity]::PinOrdinaryReadFile($certificatePeerPublicKeySnapshot, $true)
+        if ((Get-FileHash -LiteralPath $certificatePeerPublicKeySnapshot -Algorithm SHA256).Hash -cne
+            [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($keyBytes))) {
+            throw 'Certificate peer public-key snapshot changed before pinning.'
+        }
+    }
+    if (-not ($OidcOnly -or $CertificateOnly)) {
         $clientASeedIso = Join-Path $seedRoot "$clientAName-seed.iso"
         $clientBSeedIso = Join-Path $seedRoot "$clientBName-seed.iso"
         New-CloudInitSeedIso -Path $clientASeedIso -HostName ($clientAName.ToLowerInvariant())
         New-CloudInitSeedIso -Path $clientBSeedIso -HostName ($clientBName.ToLowerInvariant())
     }
+    if ($CertificateDhcpPeer) {
+        $certificateClientVmdkSha256 = (Get-FileHash -LiteralPath $ClientVmdkPath -Algorithm SHA256).Hash.ToLowerInvariant()
+        $certificatePeerSeedIso = Join-Path $seedRoot "$clientAName-seed.iso"
+        New-CertificatePeerSeedIso -Path $certificatePeerSeedIso -HostName ($clientAName.ToLowerInvariant()) -ClientMac $certificateAppliancePeerMac
+    }
     $applianceDirectory = Join-Path $vmRoot $applianceName
+    $preparedApplianceDirectoryIdentity = ''
+    if ($CertificateOnly) {
+        # The immutable intent precedes directory creation. The second receipt
+        # captures the directory's original identity before vmrun can populate it.
+        $certificateIntent = Write-CertificateLabReceipt -Name 'vm-creation-intent.json' -Value ([ordered]@{
+            schema = 1; kind = 'vm-creation-intent'; task_id = $env:CODEX_THREAD_ID
+            repository = 'mdaneri/Atlaso'; pr = $PullRequestNumber
+            source_commit = $sourceCommit; path = (Join-Path $applianceDirectory "$applianceName.vmx")
+            root_path = $applianceDirectory; lab_root = $resultRoot
+        })
+        New-Item -ItemType Directory -Path $applianceDirectory -ErrorAction Stop | Out-Null
+        $identityCode = @'
+import json, sys
+from pathlib import Path
+sys.path.insert(0, sys.argv[2])
+from scripts.completed_task_files import WindowsFiles
+with WindowsFiles().opened(Path(sys.argv[1]), directory=True) as (_, identity, _):
+    print(json.dumps(list(identity)))
+'@
+        $identityOutput = @(& python -I -c $identityCode $applianceDirectory $runtimeSourceRoot)
+        if ($LASTEXITCODE -ne 0 -or $identityOutput.Count -ne 1) {
+            throw 'Certificate VM directory creation identity could not be captured.'
+        }
+        $originalDirectoryIdentity = @($identityOutput[0] | ConvertFrom-Json)
+        if ($originalDirectoryIdentity.Count -ne 3) { throw 'Certificate VM directory identity is invalid.' }
+        $preparedApplianceDirectoryIdentity = Get-AtlasoPathIdentity -Path $applianceDirectory -Description 'certificate VM directory'
+        $certificateOwnership = Write-CertificateLabReceipt -Name 'vm-original-ownership.json' -Value ([ordered]@{
+            schema = 1; kind = 'vm'; task_id = $env:CODEX_THREAD_ID
+            repository = 'mdaneri/Atlaso'; pr = $PullRequestNumber
+            source_commit = $sourceCommit; path = (Join-Path $applianceDirectory "$applianceName.vmx")
+            root_path = $applianceDirectory; root_identity = $originalDirectoryIdentity
+            intent_sha256 = $certificateIntent.Sha256; lab_root = $resultRoot
+        })
+    }
     $applianceVmx = Invoke-TrackedLifecycleVmCreation `
         -Role 'appliance' `
         -DisplayName $applianceName `
@@ -2812,9 +3292,10 @@ try {
             Copy-VmDirectory `
                 -SourceVmx $ApplianceVmxPath `
                 -DestinationDirectory $applianceDirectory `
-                -Name $applianceName
+                -Name $applianceName `
+                -PreparedDirectoryIdentity $preparedApplianceDirectoryIdentity
         }
-    if ($OidcOnly) {
+    if ($OidcOnly -or $CertificateOnly) {
         Set-VmxNetworkAdapter -Path $applianceVmx -Index 0 -Vmnet $ManagementNetwork
     }
     else {
@@ -2822,11 +3303,16 @@ try {
         # enumerates as eth0 instead of the management NIC.
         Set-VmxNetworkAdapter -Path $applianceVmx -Index 0 -Vmnet $ManagementNetwork -PciSlotNumber 1184
     }
+    if ($CertificateDhcpPeer) {
+        # Pin eth0's final MAC before first boot, while the bootstrap adapter
+        # remains host-reachable on VMnet8 for the supported deploy workflow.
+        Set-VmxNetworkAdapter -Path $applianceVmx -Index 0 -Vmnet $ManagementNetwork -StaticMac $certificateAppliancePeerMac
+    }
     Set-AtlasoWorkstationOvfEnvironment -VmxPath $applianceVmx -OvfEnvironment $firstBootOvfEnvironment
     if ($OidcOnly) {
         Set-VmxNetworkAdapter -Path $applianceVmx -Index 1 -Vmnet $SiteANetwork
     }
-    if (-not $OidcOnly) {
+    if (-not ($OidcOnly -or $CertificateOnly)) {
         Set-VmxNetworkAdapter -Path $applianceVmx -Index 1 -Vmnet $SiteANetwork -PciSlotNumber 192
         if (-not $RoutingOverlapOnly) {
             Set-VmxNetworkAdapter -Path $applianceVmx -Index 2 -Vmnet $TrunkNetwork -PciSlotNumber 224
@@ -2858,6 +3344,70 @@ try {
                     -SeedIso $clientBSeedIso `
                     -Networks $(if ($RoutingOverlapOnly) { @($overlapControlNetwork, $SiteANetwork) } else { @($ManagementNetwork, $SiteBNetwork) })
             }
+    }
+    if ($CertificateDhcpPeer) {
+        $certificateDiskSourcePin = [Atlaso.WorkstationFileIdentity]::PinOrdinaryReadFile($ClientVmdkPath, $true)
+        if ((Get-FileHash -LiteralPath $ClientVmdkPath -Algorithm SHA256).Hash.ToLowerInvariant() -cne $certificateClientVmdkSha256) {
+            throw 'Certificate peer client disk source changed during fixture preparation.'
+        }
+        $certificatePeerDirectory = Join-Path $vmRoot $clientAName
+        $peerIntent = Write-CertificateLabReceipt -Name 'peer-vm-creation-intent.json' -Value ([ordered]@{
+            schema = 1; kind = 'vm-creation-intent'; task_id = $env:CODEX_THREAD_ID
+            repository = 'mdaneri/Atlaso'; pr = $PullRequestNumber; source_commit = $sourceCommit
+            path = (Join-Path $certificatePeerDirectory "$clientAName.vmx")
+            root_path = $certificatePeerDirectory; lab_root = $resultRoot
+        })
+        New-Item -ItemType Directory -Path $certificatePeerDirectory -ErrorAction Stop | Out-Null
+        $peerIdentityOutput = @(& python -I -c $identityCode $certificatePeerDirectory $runtimeSourceRoot)
+        if ($LASTEXITCODE -ne 0 -or $peerIdentityOutput.Count -ne 1) {
+            throw 'Certificate peer directory original identity could not be captured.'
+        }
+        $peerDirectoryIdentity = @($peerIdentityOutput[0] | ConvertFrom-Json)
+        if ($peerDirectoryIdentity.Count -ne 3) { throw 'Certificate peer directory identity is invalid.' }
+        $peerOwnership = Write-CertificateLabReceipt -Name 'peer-vm-original-ownership.json' -Value ([ordered]@{
+            schema = 1; kind = 'vm'; task_id = $env:CODEX_THREAD_ID
+            repository = 'mdaneri/Atlaso'; pr = $PullRequestNumber; source_commit = $sourceCommit
+            path = (Join-Path $certificatePeerDirectory "$clientAName.vmx")
+            root_path = $certificatePeerDirectory; root_identity = $peerDirectoryIdentity
+            intent_sha256 = $peerIntent.Sha256; lab_root = $resultRoot
+        })
+        $certificatePeerVmx = Invoke-TrackedLifecycleVmCreation `
+            -Role 'certificate-dhcp-peer' -DisplayName $clientAName `
+            -VmxPath (Join-Path $certificatePeerDirectory "$clientAName.vmx") `
+            -Action {
+                New-ClientVm -Name $clientAName -Directory $certificatePeerDirectory `
+                    -DiskPath $ClientVmdkPath -SeedIso $certificatePeerSeedIso `
+                    -Networks @($ManagementNetwork, $SiteANetwork)
+            }
+        $certificatePeerDiskPath = Join-Path $certificatePeerDirectory "$clientAName.vmdk"
+        $certificatePeerDiskPin = [Atlaso.WorkstationFileIdentity]::PinOrdinaryMutableFile($certificatePeerDiskPath)
+        $certificatePeerDiskSha256 = (Get-FileHash -LiteralPath $certificatePeerDiskPath -Algorithm SHA256).Hash.ToLowerInvariant()
+        if ($certificatePeerDiskSha256 -cne $certificateClientVmdkSha256) {
+            throw 'Certificate peer copied disk differs from its pinned source before boot.'
+        }
+        $certificatePeerDiskIdentity = [Atlaso.WorkstationFileIdentity]::Get($certificatePeerDiskPath)
+        if ($ownedLanSegments.Count -ne 1 -or -not $ownedLanSegments[0].ReceiptPath -or -not $ownedLanSegments[0].ReceiptSha256) {
+            throw 'Certificate DHCP peer requires a newly created, receipt-bound private LAN segment.'
+        }
+        $peerFixture = Write-CertificateLabReceipt -Name 'peer-fixture.json' -Value ([ordered]@{
+            schema = 1; kind = 'certificate-dhcp-peer-fixture'; task_id = $env:CODEX_THREAD_ID
+            repository = 'mdaneri/Atlaso'; pr = $PullRequestNumber; source_commit = $sourceCommit
+            peer_vmx = $certificatePeerVmx; peer_ownership_sha256 = $peerOwnership.Sha256
+            appliance_vmx = $applianceVmx; appliance_ownership_sha256 = $certificateOwnership.Sha256
+            private_network = $SiteANetwork; peer_cidr = $CertificatePeerCidr
+            management_network = $ManagementNetwork
+            lease_address = $CertificateLeaseAddress; appliance_mac = $certificateAppliancePeerMac
+            lan_segment_receipt = $ownedLanSegments[0].ReceiptPath
+            lan_segment_receipt_sha256 = $ownedLanSegments[0].ReceiptSha256.ToLowerInvariant()
+            lan_segment_id = $ownedLanSegments[0].Id
+            client_vmdk_source = (Resolve-Path -LiteralPath $ClientVmdkPath).Path
+            client_vmdk_sha256 = $certificateClientVmdkSha256
+            client_vmdk_copy = $certificatePeerDiskPath
+            client_vmdk_copy_preboot_sha256 = $certificatePeerDiskSha256
+            client_vmdk_copy_identity = $certificatePeerDiskIdentity
+            ssh_public_key = $certificatePeerPublicKey
+            address_ownership_state = 'awaiting-live-readback'
+        })
     }
     $esxiVmx = ''
     if ($FullEsxiPxeInstall) {
@@ -2894,7 +3444,8 @@ try {
     }
 
     $vmxsToStart = @($applianceVmx)
-    if (-not $OidcOnly) {
+    if ($CertificateDhcpPeer) { $vmxsToStart += $certificatePeerVmx }
+    if (-not ($OidcOnly -or $CertificateOnly)) {
         $vmxsToStart += @($clientAVmx, $clientBVmx)
     }
     foreach ($vmx in $vmxsToStart) {
@@ -2932,11 +3483,23 @@ try {
         appliance_ip  = $ApplianceIPAddress
         appliance_url = $ApplianceUrl
     } | ConvertTo-Json -Depth 3 | Set-Content -LiteralPath (Join-Path $resultRoot 'discovered-appliance.json') -Encoding UTF8
+    if ($CertificateOnly) {
+        $sourceGuestState = Get-CertificateSourceGuestState -ApplianceVmx $applianceVmx
+        $sourceRoutingSnapshot = Get-CertificateSourceRoutingSnapshot -ApplianceVmx $applianceVmx
+        $certificateSource = Write-CertificateLabReceipt -Name 'predeployment-network.json' -Value ([ordered]@{
+            schema = 1; phase = 'before-lifecycle-deployment'
+            task_id = $env:CODEX_THREAD_ID; vmx_path = $applianceVmx
+            source_commit = $sourceCommit; app_service = $sourceGuestState
+            routing_intent_state = 'proven-absent'; route_snapshot = $sourceRoutingSnapshot
+        })
+    }
     try {
         Save-ApplianceSourceNetworkEvidence -ApplianceVmx $applianceVmx
         Sync-ApplianceHelperScript -ApplianceVmx $applianceVmx
-        $applianceWheelIdentity = Sync-ApplianceApplicationWheel -ApplianceVmx $applianceVmx
-        Save-ApplianceDeploymentIdentity -ApplianceVmx $applianceVmx -Wheel $applianceWheelIdentity
+        $applianceWheel = Sync-ApplianceApplicationWheel -ApplianceVmx $applianceVmx
+        if ($RoutingOverlapOnly) {
+            Save-ApplianceDeploymentIdentity -ApplianceVmx $applianceVmx -Wheel $applianceWheel
+        }
     }
     catch {
         $deploymentFailure = $_
@@ -2950,13 +3513,33 @@ try {
         Invoke-RoutingOverlapPhase -Phase scenario -Descriptor $overlapDescriptor -Trust $overlapTrust
         Invoke-RoutingOverlapPhase -Phase stop -Descriptor $overlapDescriptor
         $overlapStarted = $false
+    } elseif ($CertificateOnly) {
+        $sourceHelperSha256 = (Get-FileHash -LiteralPath (Join-Path $runtimeSourceRoot 'scripts/appliance/atlaso-helper') -Algorithm SHA256).Hash.ToLowerInvariant()
+        $installedHelperSha256 = Get-CertificateInstalledHelperSha256 -ApplianceVmx $applianceVmx
+        if ($installedHelperSha256 -cne $sourceHelperSha256) {
+            throw 'Installed appliance helper digest differs from the admitted source helper.'
+        }
+        $certificateRuntime = Write-CertificateLabReceipt -Name 'deployed-runtime.json' -Value ([ordered]@{
+            schema = 1; task_id = $env:CODEX_THREAD_ID; repository = 'mdaneri/Atlaso'
+            pr = $PullRequestNumber; vmx_path = $applianceVmx
+            vm_ownership_sha256 = $certificateOwnership.Sha256
+            predeployment_sha256 = $certificateSource.Sha256
+            deployed_commit = $sourceCommit
+            wheel_sha256 = $applianceWheel.Sha256.ToLowerInvariant()
+            helper_sha256 = $installedHelperSha256
+            url = $ApplianceUrl; interface = 'eth0'
+            mac = (Get-VmxEthernetMacAddress -Path $applianceVmx -Index 0)
+            observed_address = $ApplianceIPAddress
+            address_ownership_state = 'unproven'
+        })
+        Write-Host "Certificate clone evidence: $($certificateRuntime.Path)"
     } else {
     $applianceHostKey = Get-PlinkHostKey -HostName $ApplianceIPAddress -UserName $ApplianceSshUser -Password $applianceSshPasswordSecure
     $clientAHost = ''
     $clientBHost = ''
     $clientAHostKey = ''
     $clientBHostKey = ''
-    if (-not $OidcOnly) {
+    if (-not ($OidcOnly -or $CertificateOnly)) {
         $clientAHost = Wait-GuestIPv4 -Path $clientAVmx -GuestUser $ClientSshUser -GuestPassword $sshPasswordSecure -Name $clientAName
         $clientBHost = Wait-GuestIPv4 -Path $clientBVmx -GuestUser $ClientSshUser -GuestPassword $sshPasswordSecure -Name $clientBName
         if (-not $clientAHost -or -not $clientBHost) {
@@ -3070,7 +3653,99 @@ try {
         }
     }
     }
-    if (-not $OidcOnly) {
+    if ($CertificateDhcpPeer) {
+        # The NoCloud seed contains only a public key. Pin the SSH host key
+        # established on first boot across the required seed-removal restart.
+        Assert-CertificatePeerBootReady -Path $certificatePeerVmx
+        $initialPeerIdentity = Get-CertificatePeerOriginalIdentity -Path $certificatePeerVmx
+        $certificateKnownHostsPin = [Atlaso.WorkstationFileIdentity]::PinOrdinaryReadFile($certificatePeerKnownHostsPath, $true)
+        Remove-ClientSeedArtifacts -VmxPaths @($certificatePeerVmx) -SeedPaths @($certificatePeerSeedIso) -Restart:(-not $CleanupCreatedLab)
+        $seedArtifactsRetired = $true
+        if (-not $CleanupCreatedLab) {
+            Assert-CertificatePeerBootReady -Path $certificatePeerVmx
+            $peerIdentityReadback = Get-CertificatePeerOriginalIdentity -Path $certificatePeerVmx
+            if ($peerIdentityReadback.ssh_host_key -cne $initialPeerIdentity.ssh_host_key) {
+                throw 'Certificate peer SSH host key changed across seed retirement.'
+            }
+        } else {
+            $peerIdentityReadback = $initialPeerIdentity
+        }
+        if ([Atlaso.WorkstationFileIdentity]::Get($certificatePeerDiskPath) -cne $certificatePeerDiskIdentity) {
+            throw 'Certificate peer copied disk identity changed during boot or seed retirement.'
+        }
+        $certificatePeerIdentity = Write-CertificateLabReceipt -Name 'peer-identity.json' -Value ([ordered]@{
+            schema = 1; kind = 'certificate-peer-original-identity'; task_id = $env:CODEX_THREAD_ID
+            repository = 'mdaneri/Atlaso'; pr = $PullRequestNumber
+            peer_vmx = $certificatePeerVmx; peer_ownership_sha256 = $peerOwnership.Sha256
+            peer_fixture_sha256 = $peerFixture.Sha256
+            client_vmdk_copy_identity = $certificatePeerDiskIdentity
+            management_network = $ManagementNetwork; management_address = $peerIdentityReadback.management_address
+            ssh_user = $ClientSshUser; ssh_host_key = $peerIdentityReadback.ssh_host_key
+            ssh_public_key = $certificatePeerPublicKey
+            observation = 'owned-vmware-tools-and-agent-ssh-after-management-restart'
+        })
+        $certificatePeerDiskPin.Dispose()
+        $certificatePeerDiskPin = $null
+        $certificateDiskSourcePin.Dispose()
+        $certificateDiskSourcePin = $null
+        if (-not (Test-WorkstationVmRunning -Path $applianceVmx) -or
+            (Get-VmxEthernetMacAddress -Path $applianceVmx -Index 0) -cne (ConvertTo-HyphenMac -MacAddress $certificateAppliancePeerMac)) {
+            throw 'Certificate appliance bootstrap MAC or running state changed before private handoff.'
+        }
+        $rewireIntent = Write-CertificateLabReceipt -Name 'management-rewire-intent.json' -Value ([ordered]@{
+            schema = 1; kind = 'certificate-management-rewire-intent'; task_id = $env:CODEX_THREAD_ID
+            repository = 'mdaneri/Atlaso'; pr = $PullRequestNumber; source_commit = $sourceCommit
+            appliance_vmx = $applianceVmx; appliance_ownership_sha256 = $certificateOwnership.Sha256
+            bootstrap_runtime_sha256 = $certificateRuntime.Sha256
+            peer_fixture_sha256 = $peerFixture.Sha256
+            peer_identity_sha256 = $certificatePeerIdentity.Sha256
+            from_network = $ManagementNetwork; to_network = $SiteANetwork
+            lan_segment_receipt_sha256 = $ownedLanSegments[0].ReceiptSha256.ToLowerInvariant()
+            mac = $certificateAppliancePeerMac; expected_dhcp_address = $CertificateLeaseAddress
+        })
+        $softStop = Invoke-VmrunBounded -Arguments @('-T', 'ws', 'stop', $applianceVmx, 'soft') -TimeoutSeconds 45
+        if ($softStop.ExitCode -ne 0) { throw 'Certificate appliance soft stop failed before private handoff.' }
+        $stopDeadline = (Get-Date).AddSeconds(45)
+        while ((Test-WorkstationVmRunning -Path $applianceVmx) -and (Get-Date) -lt $stopDeadline) {
+            Start-Sleep -Seconds 3
+        }
+        if (Test-WorkstationVmRunning -Path $applianceVmx) {
+            throw 'Certificate appliance remained powered on; private eth0 rewire was refused.'
+        }
+        Set-VmxNetworkAdapter -Path $applianceVmx -Index 0 -Vmnet $SiteANetwork -StaticMac $certificateAppliancePeerMac
+        $rewiredAdapterLines = @(Get-Content -LiteralPath $applianceVmx | Where-Object { $_ -match '^\s*ethernet0\.pvnID\s*=' })
+        if ($rewiredAdapterLines.Count -ne 1 -or $rewiredAdapterLines[0] -notmatch '^\s*ethernet0\.pvnID\s*=\s*"(?<id>[^"]+)"\s*$' -or
+            $Matches['id'] -cne $ownedLanSegments[0].Id -or
+            (Get-VmxEthernetMacAddress -Path $applianceVmx -Index 0) -cne (ConvertTo-HyphenMac -MacAddress $certificateAppliancePeerMac)) {
+            throw 'Certificate appliance eth0 private LAN or preserved MAC readback failed.'
+        }
+        Start-WorkstationVm -Path $applianceVmx
+        # The preserved MAC can leave an old management address in the host neighbor cache.
+        # Wait for the reserved lease from VMware Tools or guest operations instead.
+        $privateAddress = Wait-GuestIPv4 -Path $applianceVmx -TimeoutSeconds 300 -GuestUser $ApplianceSshUser -GuestPassword $adminPasswordSecure -Name $applianceName -ExpectedAddress $CertificateLeaseAddress -SkipHostNeighbor
+        if ($privateAddress -cne $CertificateLeaseAddress) {
+            throw 'Certificate appliance did not report the reserved private DHCP address after eth0 rewire.'
+        }
+        if ((Get-CertificateInstalledHelperSha256 -ApplianceVmx $applianceVmx) -cne $installedHelperSha256) {
+            throw 'Installed appliance helper changed during certificate private handoff.'
+        }
+        $rewiredRuntime = Write-CertificateLabReceipt -Name 'rewired-runtime.json' -Value ([ordered]@{
+            schema = 1; kind = 'certificate-rewired-runtime'; task_id = $env:CODEX_THREAD_ID
+            repository = 'mdaneri/Atlaso'; pr = $PullRequestNumber
+            vmx_path = $applianceVmx; vm_ownership_sha256 = $certificateOwnership.Sha256
+            bootstrap_runtime_sha256 = $certificateRuntime.Sha256
+            predeployment_sha256 = $certificateSource.Sha256
+            rewire_intent_sha256 = $rewireIntent.Sha256
+            peer_identity_sha256 = $certificatePeerIdentity.Sha256
+            deployed_commit = $sourceCommit; wheel_sha256 = $applianceWheel.Sha256.ToLowerInvariant()
+            helper_sha256 = $installedHelperSha256
+            url = "https://$(New-AtlasoWorkstationFqdn -Name $applianceName)"
+            interface = 'eth0'; mac = (Get-VmxEthernetMacAddress -Path $applianceVmx -Index 0)
+            observed_address = $privateAddress; address_ownership_state = 'unproven'
+        })
+        Write-Host "Certificate private handoff evidence: $($rewiredRuntime.Path)"
+    }
+    if (-not ($OidcOnly -or $CertificateOnly)) {
         # Successful lifecycle client access proves cloud-init consumed both
         # seeds. Leave retained labs running only after verified deletion.
         Remove-ClientSeedArtifacts `
@@ -3091,6 +3766,15 @@ if ($overlapStarted -and $null -ne $overlapDescriptor -and -not $diagnosticTermi
     }
 }
 
+# A failed boot still owns its copied disk; release admission handles before
+# the documented seed and task-owned VM cleanup paths inspect that VM.
+if ($scenarioFailure) {
+    if ($certificatePeerDiskPin) { $certificatePeerDiskPin.Dispose(); $certificatePeerDiskPin = $null }
+    if ($certificateKnownHostsPin) { $certificateKnownHostsPin.Dispose(); $certificateKnownHostsPin = $null }
+    if ($certificatePeerPublicKeyPin) { $certificatePeerPublicKeyPin.Dispose(); $certificatePeerPublicKeyPin = $null }
+    if ($certificateDiskSourcePin) { $certificateDiskSourcePin.Dispose(); $certificateDiskSourcePin = $null }
+}
+
 # No further provider operations are safe while a diagnostic writer may survive.
 if ($diagnosticTerminationUnproven) {
     throw "Lifecycle provider termination is unproven. VM and diagnostic staging cleanup is blocked; preserve lab '$LabName' at '$vmRoot' until the owning process tree is proven inactive."
@@ -3102,8 +3786,8 @@ if (-not $seedArtifactsRetired) {
         # Failure cleanup intentionally leaves affected clients stopped: a
         # restart is unsafe until every credential-bearing ISO is absent.
         Remove-ClientSeedArtifacts `
-            -VmxPaths @($clientAVmx, $clientBVmx) `
-            -SeedPaths @($clientASeedIso, $clientBSeedIso)
+            -VmxPaths @($clientAVmx, $clientBVmx, $certificatePeerVmx) `
+            -SeedPaths @($clientASeedIso, $clientBSeedIso, $certificatePeerSeedIso)
         $seedArtifactsRetired = $true
     } catch {
         $seedCleanupFailure = $_
@@ -3152,6 +3836,10 @@ if ($cleanupFailure) {
     throw $cleanupFailure
 }
 } finally {
+    if ($certificatePeerDiskPin) { $certificatePeerDiskPin.Dispose() }
+    if ($certificateKnownHostsPin) { $certificateKnownHostsPin.Dispose() }
+    if ($certificatePeerPublicKeyPin) { $certificatePeerPublicKeyPin.Dispose() }
+    if ($certificateDiskSourcePin) { $certificateDiskSourcePin.Dispose() }
     for ($pinIndex = $runtimeConsumerPins.Count - 1; $pinIndex -ge 0; $pinIndex--) { $runtimeConsumerPins[$pinIndex].Dispose() }
     if ($preflightGuard) { $preflightGuard.Dispose() }
 }

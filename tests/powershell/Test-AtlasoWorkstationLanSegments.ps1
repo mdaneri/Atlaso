@@ -373,13 +373,16 @@ $sourceFile = Join-Path $sourceRoot 'source.txt'
 [IO.File]::WriteAllText($sourceFile, 'initial')
 $helperFile = Join-Path $sourceRoot 'helper.psm1'
 [IO.File]::WriteAllText($helperFile, "function Get-FixtureProvenance { 'initial' }")
+[IO.Directory]::CreateDirectory((Join-Path $sourceRoot 'scripts/interop')) | Out-Null
+$sourceProbeFile = Join-Path $sourceRoot 'scripts/interop/certificate_source_probe.py'
+[IO.File]::WriteAllText($sourceProbeFile, 'admitted certificate probe')
 [IO.Directory]::CreateDirectory((Join-Path $sourceRoot 'nested')) | Out-Null
 [IO.File]::WriteAllText((Join-Path $sourceRoot 'nested/child.txt'), 'child')
 $fixtureRunnerPath = Join-Path $sourceRoot 'scripts/windows/vmware/run-lifecycle-test.ps1'
 [IO.Directory]::CreateDirectory((Split-Path -Parent $fixtureRunnerPath)) | Out-Null
 $fixtureRunnerText = "param()`n'original orchestration'`n"
 [IO.File]::WriteAllText($fixtureRunnerPath, $fixtureRunnerText)
-& git -C $sourceRoot add source.txt helper.psm1 nested/child.txt scripts/windows/vmware/run-lifecycle-test.ps1
+& git -C $sourceRoot add source.txt helper.psm1 nested/child.txt scripts/windows/vmware/run-lifecycle-test.ps1 scripts/interop/certificate_source_probe.py
 & git -C $sourceRoot -c user.name=Fixture -c user.email=fixture@example.invalid -c commit.gpgsign=false commit -qm initial
 if ($LASTEXITCODE -ne 0) { throw 'Could not prepare source fixture.' }
 $admitted = Get-LifecycleSourceCommit -RepositoryRoot $sourceRoot
@@ -418,6 +421,68 @@ $snapshotConsumerPins = [Collections.Generic.List[IDisposable]]::new()
 $snapshot = New-LifecycleSourceSnapshot -RepositoryRoot $sourceRoot -Commit $admitted -ConsumerPins $snapshotConsumerPins -DestinationRoot $fixture
 if ([IO.File]::ReadAllText((Join-Path $snapshot 'source.txt')) -cne 'initial' -or
     [IO.File]::Exists((Join-Path $snapshot 'untracked.txt'))) { throw 'Snapshot read live worktree bytes.' }
+$sourcePinCheck = $runnerAst.Find({ param($node)
+    $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'Assert-LifecycleSourcePins'
+}, $false)
+. ([scriptblock]::Create($sourcePinCheck.Extent.Text))
+$certificateProbeFunction = $runnerAst.Find({ param($node)
+    $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'Get-CertificateSourceRoutingSnapshot'
+}, $false)
+if (-not $certificateProbeFunction) { throw 'Cannot load certificate source routing probe.' }
+. ([scriptblock]::Create($certificateProbeFunction.Extent.Text))
+$repoRoot = $sourceRoot
+$runtimeSourceRoot = $snapshot
+$runtimeConsumerPins = $snapshotConsumerPins
+$resultRoot = $fixture
+$adminPasswordSecure = [SecureString]::new()
+$adminPasswordSecure.AppendChar([char]120)
+$adminPasswordSecure.MakeReadOnly()
+$script:copiedCertificateProbeText = ''
+$script:certificateProbeOutput = [ordered]@{
+    schema = 1; database = '/var/lib/atlaso/atlaso.db'; state = 'proven-absent'
+    counts = [ordered]@{ routes = 0; routing_rules = 0; nat_rules = 0; port_forwards = 0
+        wan_policies = 0; route_physical_interfaces = 0; route_vlan_interfaces = 0 }
+    settings = [ordered]@{ 'routes_wan.routing_enabled' = $null; 'routes_wan.wan_simulation_enabled' = $null
+        'routes_wan.nat_enabled' = $null; 'traffic_publishing.nat_enabled' = $null }
+    routing_service = $null
+} | ConvertTo-Json -Depth 5
+<#
+.SYNOPSIS
+Emulate only the guest copy and probe commands for the source-binding regression.
+.PARAMETER Arguments
+Bounded vmrun arguments whose source and readback paths are inspected.
+.PARAMETER TimeoutSeconds
+Unused bounded timeout carried by the production call.
+#>
+function Invoke-VmrunBounded {
+    param([string[]]$Arguments, [int]$TimeoutSeconds)
+    if ($Arguments -contains 'copyFileFromHostToGuest') {
+        $index = [array]::IndexOf($Arguments, 'copyFileFromHostToGuest')
+        $script:copiedCertificateProbeText = [IO.File]::ReadAllText($Arguments[$index + 2])
+    } elseif ($Arguments -contains 'copyFileFromGuestToHost') {
+        $index = [array]::IndexOf($Arguments, 'copyFileFromGuestToHost')
+        [IO.File]::WriteAllText($Arguments[$index + 3], $script:certificateProbeOutput)
+    }
+    return [pscustomobject]@{ TimedOut = $false; ExitCode = 0 }
+}
+[IO.File]::WriteAllText($sourceProbeFile, 'transient checkout probe')
+try {
+    $routingEvidence = Get-CertificateSourceRoutingSnapshot -ApplianceVmx 'fixture.vmx'
+    if ($script:copiedCertificateProbeText -cne 'admitted certificate probe' -or
+        $routingEvidence.probe_sha256 -cne (Get-FileHash -LiteralPath (Join-Path $snapshot 'scripts/interop/certificate_source_probe.py') -Algorithm SHA256).Hash.ToLowerInvariant()) {
+        throw 'Certificate routing proof was not sourced from the admitted snapshot.'
+    }
+    $originalPinCheck = ${function:Assert-LifecycleSourcePins}.ToString()
+    $script:certificateProbePinChecks = 0
+    Set-Item Function:Assert-LifecycleSourcePins {
+        param($Pins)
+        $script:certificateProbePinChecks++
+        if ($script:certificateProbePinChecks -eq 3) { throw 'source snapshot changed during guest execution' }
+    }
+    try {
+        Assert-Refused { Get-CertificateSourceRoutingSnapshot -ApplianceVmx 'fixture.vmx' } 'source snapshot changed during guest execution'
+    } finally { Set-Item Function:Assert-LifecycleSourcePins ([scriptblock]::Create($originalPinCheck)) }
+} finally { [IO.File]::WriteAllText($sourceProbeFile, 'admitted certificate probe') }
 Import-Module (Join-Path $snapshot 'helper.psm1') -Force
 if ((Get-FixtureProvenance) -cne 'initial') { throw 'Runtime helper loaded transient checkout code.' }
 Remove-Module helper

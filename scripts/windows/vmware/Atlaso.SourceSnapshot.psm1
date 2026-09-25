@@ -443,6 +443,318 @@ function New-AtlasoImmutableSourceSnapshot {
     }
 }
 
+<#
+.SYNOPSIS
+Pin the plan and receipt bytes used by a credentialed certificate inspector.
+.PARAMETER Plan
+Existing receipt-bound proof plan.
+.PARAMETER EvidenceRoot
+Original task-owned evidence root containing the plan and receipts.
+#>
+function Protect-AtlasoCertificateProofInputs {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$Plan,
+        [Parameter(Mandatory)][string]$EvidenceRoot
+    )
+
+    Import-Module (Join-Path $PSScriptRoot 'Atlaso.WorkstationCleanup.psm1') -Force
+    $owned = [IO.Path]::GetFullPath($EvidenceRoot).TrimEnd('\') + '\'
+    $planPath = [IO.Path]::GetFullPath($Plan)
+    if (-not $planPath.StartsWith($owned, [StringComparison]::OrdinalIgnoreCase)) {
+        throw 'Certificate proof plan escapes the owned evidence root.'
+    }
+    $pins = [Collections.Generic.List[IDisposable]]::new()
+    try {
+        # Parent handles prevent replacement while allowing the inspector to
+        # publish fresh evidence beside these inputs. File handles deny writes.
+        $pins.Add([Atlaso.WorkstationFileIdentity]::PinOrdinaryDirectoryPath(
+            [IO.Path]::GetDirectoryName($planPath), $true))
+        $pins.Add([Atlaso.WorkstationFileIdentity]::PinOrdinaryReadFile($planPath, $true))
+        $planValue = Get-Content -LiteralPath $planPath -Raw | ConvertFrom-Json -ErrorAction Stop
+        $caPath = [IO.Path]::GetFullPath([string]$planValue.ca_path)
+        if (-not $caPath.StartsWith($owned, [StringComparison]::OrdinalIgnoreCase)) {
+            throw 'Certificate proof CA escapes the owned evidence root.'
+        }
+        $pins.Add([Atlaso.WorkstationFileIdentity]::PinOrdinaryDirectoryPath(
+            [IO.Path]::GetDirectoryName($caPath), $true))
+        $pins.Add([Atlaso.WorkstationFileIdentity]::PinOrdinaryReadFile($caPath, $true))
+        $references = [Collections.Generic.List[object]]::new()
+        foreach ($property in $planValue.PSObject.Properties) {
+            $value = $property.Value
+            if ($null -ne $value -and $value -is [pscustomobject] -and
+                $null -ne $value.PSObject.Properties['path'] -and
+                $null -ne $value.PSObject.Properties['sha256']) {
+                $references.Add($value)
+            }
+        }
+        $fixture = $planValue.PSObject.Properties['peer_fixture']
+        if ($null -ne $fixture -and $null -ne $fixture.Value) {
+            $fixturePath = [IO.Path]::GetFullPath([string]$fixture.Value.path)
+            if (-not $fixturePath.StartsWith($owned, [StringComparison]::OrdinalIgnoreCase)) {
+                throw 'Certificate peer fixture escapes the owned evidence root.'
+            }
+            $fixtureValue = Get-Content -LiteralPath $fixturePath -Raw | ConvertFrom-Json -ErrorAction Stop
+            if ($fixtureValue.lan_segment_receipt -and $fixtureValue.lan_segment_receipt_sha256) {
+                $references.Add([pscustomobject]@{
+                    path = $fixtureValue.lan_segment_receipt
+                    sha256 = $fixtureValue.lan_segment_receipt_sha256
+                })
+            }
+        }
+        foreach ($reference in $references) {
+            $path = [IO.Path]::GetFullPath([string]$reference.path)
+            $digest = [string]$reference.sha256
+            if (-not $path.StartsWith($owned, [StringComparison]::OrdinalIgnoreCase) -or
+                $digest -cnotmatch '^[0-9a-f]{64}$') {
+                throw 'Certificate proof receipt path or digest is invalid.'
+            }
+            $pins.Add([Atlaso.WorkstationFileIdentity]::PinOrdinaryDirectoryPath(
+                [IO.Path]::GetDirectoryName($path), $true))
+            $pins.Add([Atlaso.WorkstationFileIdentity]::PinOrdinaryReadFile($path, $true))
+            if ((Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant() -cne $digest) {
+                throw 'Certificate proof receipt changed before credentialed admission.'
+            }
+        }
+        return $pins
+    } catch {
+        foreach ($pin in $pins) { $pin.Dispose() }
+        throw
+    }
+}
+
+<#
+.SYNOPSIS
+Pin a certificate inspector and its imported Python modules to one reviewed commit.
+.PARAMETER RepositoryRoot
+Clean task checkout at the plan's admitted commit.
+.PARAMETER EvidenceRoot
+Existing task-owned test-results root; original creation evidence remains here.
+.PARAMETER SourceCommit
+Exact source commit named by the native plan.
+.PARAMETER TaskId
+Originating Codex task identity.
+#>
+function New-AtlasoCertificateInspectorSnapshot {
+    param(
+        [Parameter(Mandatory)][string]$RepositoryRoot,
+        [Parameter(Mandatory)][string]$EvidenceRoot,
+        [Parameter(Mandatory)][ValidatePattern('^[0-9a-f]{40}$')][string]$SourceCommit,
+        [Parameter(Mandatory)][string]$TaskId
+    )
+
+    $resolvedEvidence = Resolve-AtlasoSourceSnapshotDirectory -Path $EvidenceRoot -Description 'Certificate evidence root'
+    $checkout = Get-AtlasoSourceCheckoutIdentity -RepositoryRoot $RepositoryRoot
+    if ($checkout.Commit -cne $SourceCommit -or $TaskId -cne $env:CODEX_THREAD_ID) {
+        throw 'Certificate inspector source commit or task identity differs from its plan.'
+    }
+    $name = 'certificate-inspector-source-' + [guid]::NewGuid().ToString('N')
+    $stageRoot = Join-Path $resolvedEvidence $name
+    $verificationRoot = Join-Path $resolvedEvidence ($name + '-verify')
+    $manifestPath = Join-Path $resolvedEvidence ($name + '.creation.json')
+    if ((Test-Path -LiteralPath $stageRoot) -or (Test-Path -LiteralPath $verificationRoot) -or
+        (Test-Path -LiteralPath $manifestPath)) {
+        throw 'Certificate inspector source staging paths are not fresh.'
+    }
+    $manifest = [ordered]@{
+        schema = 1; kind = 'certificate-inspector-source'; task_id = $TaskId
+        repository = 'mdaneri/Atlaso'; worktree = [IO.Path]::GetFullPath($RepositoryRoot)
+        source_commit = $SourceCommit; staging_root = $stageRoot
+        verification_root = $verificationRoot; created_at = [DateTimeOffset]::UtcNow.ToString('o')
+    }
+    $bytes = [Text.UTF8Encoding]::new($false).GetBytes(($manifest | ConvertTo-Json -Depth 4))
+    $stream = [IO.File]::Open($manifestPath, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::None)
+    try { $stream.Write($bytes); $stream.Flush($true) } finally { $stream.Dispose() }
+    [void][IO.Directory]::CreateDirectory($stageRoot)
+    $snapshot = New-AtlasoImmutableSourceSnapshot -RepositoryRoot $RepositoryRoot -StagingRoot $stageRoot
+    if ($snapshot.Commit -cne $SourceCommit) { throw 'Certificate inspector snapshot commit changed.' }
+    $null = Assert-AtlasoSourceSnapshotCommitBinding -Root $snapshot.Root -RepositoryRoot $RepositoryRoot `
+        -Commit $SourceCommit -ExpectedSha256 $snapshot.Sha256 -ExpectedFileCount $snapshot.FileCount `
+        -VerificationRoot $verificationRoot
+    $null = Protect-AtlasoSourceSnapshot -Root $snapshot.Root -ExpectedSha256 $snapshot.Sha256 `
+        -ExpectedFileCount $snapshot.FileCount
+    # Retain the package namespace as well as the imported files: Python resolves
+    # scripts.completed_task_files lazily after the credentialed child starts.
+    Import-Module (Join-Path $PSScriptRoot 'Atlaso.WorkstationCleanup.psm1') -Force
+    $pins = [Collections.Generic.List[IDisposable]]::new()
+    try {
+        $scriptsRoot = Join-Path $snapshot.Root 'scripts'
+        $pins.Add([Atlaso.WorkstationFileIdentity]::PinOrdinaryDirectoryPath($scriptsRoot))
+        # The credentialed child imports these modules by name. Pin their
+        # directory too so a concurrent ACL change cannot add a .pyd shadow.
+        $pins.Add([Atlaso.WorkstationFileIdentity]::PinOrdinaryDirectoryPath(
+            (Join-Path $scriptsRoot 'interop')))
+        foreach ($relative in @(
+                'scripts/__init__.py',
+                'scripts/interop/certificate_handoff_native.py',
+                'scripts/interop/certificate_peer_proof.py',
+                'scripts/interop/certificate_peer_transport.py',
+                'scripts/completed_task_files.py'
+            )) {
+            $path = Join-Path $snapshot.Root $relative
+            $pins.Add([Atlaso.WorkstationFileIdentity]::PinOrdinaryReadFile($path, $true))
+        }
+        $null = Assert-AtlasoSourceSnapshot -Root $snapshot.Root -ExpectedSha256 $snapshot.Sha256 `
+            -ExpectedFileCount $snapshot.FileCount
+    } catch {
+        foreach ($pin in $pins) { $pin.Dispose() }
+        throw
+    }
+    return [pscustomobject]@{ Root = $snapshot.Root; Sha256 = $snapshot.Sha256
+        FileCount = $snapshot.FileCount; Pins = $pins; Manifest = $manifestPath }
+}
+
+function Protect-AtlasoCertificatePythonRuntime {
+    <#
+    .SYNOPSIS
+    Hold the exact isolated Python runtime used by a credentialed certificate proof.
+
+    .PARAMETER PythonPath
+    Absolute path to the task-owned virtual environment's Python executable.
+
+    .PARAMETER EvidenceRoot
+    Task-owned evidence root containing the isolated virtual environment.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$PythonPath,
+        [Parameter(Mandatory)][string]$EvidenceRoot
+    )
+
+    $executable = [IO.Path]::GetFullPath($PythonPath)
+    $owned = [IO.Path]::GetFullPath($EvidenceRoot).TrimEnd('\') + '\'
+    if (-not $executable.StartsWith($owned, [StringComparison]::OrdinalIgnoreCase) -or
+        [IO.Path]::GetFileName($executable) -cne 'python.exe' -or
+        [IO.Path]::GetFileName([IO.Path]::GetDirectoryName($executable)) -cne 'Scripts') {
+        throw 'Certificate proof requires a task-owned isolated Python virtual environment.'
+    }
+    $venvRoot = [IO.Path]::GetDirectoryName([IO.Path]::GetDirectoryName($executable))
+    $configPath = Join-Path $venvRoot 'pyvenv.cfg'
+    $pins = [Collections.Generic.List[IDisposable]]::new()
+    try {
+        $pins.Add([Atlaso.WorkstationFileIdentity]::PinOrdinaryDirectoryPath($venvRoot))
+        $pins.Add([Atlaso.WorkstationFileIdentity]::PinOrdinaryReadFile($configPath, $true))
+        $config = Get-Content -LiteralPath $configPath -Raw
+        if ($config -notmatch '(?im)^include-system-site-packages\s*=\s*false\s*$') {
+            throw 'Certificate Python must not import system site packages.'
+        }
+        $homeMatch = [regex]::Match($config, '(?im)^home\s*=\s*(.+?)\s*$')
+        if (-not $homeMatch.Success) { throw 'Certificate Python base runtime is unavailable.' }
+        $baseRoot = [IO.Path]::GetFullPath($homeMatch.Groups[1].Value)
+        if ($baseRoot.StartsWith($venvRoot + '\', [StringComparison]::OrdinalIgnoreCase) -or
+            -not (Test-Path -LiteralPath (Join-Path $baseRoot 'Lib') -PathType Container)) {
+            throw 'Certificate Python base runtime is invalid.'
+        }
+        $pins.Add([Atlaso.WorkstationFileIdentity]::PinOrdinaryDirectoryPath($baseRoot))
+        $excluded = [IO.Path]::GetFullPath((Join-Path $baseRoot 'Lib/site-packages')).TrimEnd('\')
+        $codeExtensions = @('.py', '.pyc', '.pyd', '.dll', '.pth', '.zip', '.exe', '.pyw')
+        $count = 0
+        foreach ($root in @($venvRoot, $baseRoot)) {
+            foreach ($directory in @(Get-ChildItem -LiteralPath $root -Directory -Recurse -Force -ErrorAction Stop)) {
+                $path = [IO.Path]::GetFullPath($directory.FullName).TrimEnd('\')
+                if ($root -ceq $baseRoot -and
+                    ($path -eq $excluded -or $path.StartsWith($excluded + '\', [StringComparison]::OrdinalIgnoreCase))) {
+                    continue
+                }
+                $pins.Add([Atlaso.WorkstationFileIdentity]::PinOrdinaryDirectoryPath($path))
+            }
+            foreach ($file in @(Get-ChildItem -LiteralPath $root -File -Recurse -Force -ErrorAction Stop)) {
+                $path = [IO.Path]::GetFullPath($file.FullName)
+                if ($root -ceq $baseRoot -and
+                    $path.StartsWith($excluded + '\', [StringComparison]::OrdinalIgnoreCase)) {
+                    continue
+                }
+                if ($file.Extension.ToLowerInvariant() -notin $codeExtensions -and $path -cne $configPath) {
+                    continue
+                }
+                $count++
+                if ($count -gt 14000) { throw 'Certificate Python code inventory exceeds its bound.' }
+                $pins.Add([Atlaso.WorkstationFileIdentity]::PinOrdinaryReadFile($path, $true))
+            }
+        }
+        if ($count -lt 100 -or -not (Test-Path -LiteralPath (Join-Path $venvRoot 'Lib/site-packages/paramiko/__init__.py'))) {
+            throw 'Certificate Python dependencies are incomplete.'
+        }
+        if (@(Get-ChildItem -LiteralPath (Join-Path $venvRoot 'Lib/site-packages') -Filter '*.pth' -File -Force).Count -or
+            (Test-Path -LiteralPath (Join-Path $venvRoot 'Lib/site-packages/sitecustomize.py')) -or
+            (Test-Path -LiteralPath (Join-Path $venvRoot 'Lib/site-packages/usercustomize.py'))) {
+            throw 'Certificate Python startup imports are not isolated.'
+        }
+        return [pscustomobject]@{ Pins = $pins; Executable = $executable; VenvRoot = $venvRoot
+            BaseRoot = $baseRoot; ExcludedBaseSitePackages = $excluded }
+    } catch {
+        foreach ($pin in $pins) { $pin.Dispose() }
+        throw
+    }
+}
+
+function Assert-AtlasoCertificatePythonImportPaths {
+    <#
+    .SYNOPSIS
+    Confirm isolated import paths before a credentialed child starts.
+
+    .PARAMETER Runtime
+    Pinned Python runtime returned by Protect-AtlasoCertificatePythonRuntime.
+    #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory)]$Runtime)
+
+    $raw = Invoke-AtlasoBoundedProcess -FilePath $Runtime.Executable `
+        -ArgumentList @('-I', '-S', '-B', '-c', 'import json,sys;print(json.dumps(sys.path))') `
+        -TimeoutSeconds 15 -Action 'Certificate Python import-path verification'
+    $paths = ConvertFrom-Json -InputObject $raw
+    if ($paths -isnot [array] -or $paths.Count -lt 2) {
+        throw 'Certificate Python import paths are incomplete.'
+    }
+    foreach ($entry in $paths) {
+        if ($entry -isnot [string] -or [string]::IsNullOrWhiteSpace($entry)) {
+            throw 'Certificate Python import path is invalid.'
+        }
+        $path = [IO.Path]::GetFullPath($entry)
+        $insideVenv = $path -eq $Runtime.VenvRoot -or
+            $path.StartsWith($Runtime.VenvRoot + '\', [StringComparison]::OrdinalIgnoreCase)
+        $insideBase = $path -eq $Runtime.BaseRoot -or
+            $path.StartsWith($Runtime.BaseRoot + '\', [StringComparison]::OrdinalIgnoreCase)
+        $excluded = $path -eq $Runtime.ExcludedBaseSitePackages -or
+            $path.StartsWith($Runtime.ExcludedBaseSitePackages + '\', [StringComparison]::OrdinalIgnoreCase)
+        if (-not ($insideVenv -or ($insideBase -and -not $excluded))) {
+            throw 'Certificate Python imports escape the pinned runtime.'
+        }
+    }
+}
+
+function New-AtlasoCertificatePythonArguments {
+    <#
+    .SYNOPSIS
+    Build isolated proof arguments without running Python startup hooks.
+
+    .PARAMETER Runtime
+    Pinned isolated Python runtime.
+
+    .PARAMETER ScriptPath
+    Pinned certificate proof script in the immutable source snapshot.
+
+    .PARAMETER ScriptArguments
+    Non-secret proof arguments forwarded to the script.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]$Runtime,
+        [Parameter(Mandatory)][string]$ScriptPath,
+        [string[]]$ScriptArguments = @()
+    )
+
+    $sitePackages = Join-Path $Runtime.VenvRoot 'Lib/site-packages'
+    if (-not (Test-Path -LiteralPath $sitePackages -PathType Container) -or
+        -not (Test-Path -LiteralPath $ScriptPath -PathType Leaf)) {
+        throw 'Pinned certificate Python imports or proof source are unavailable.'
+    }
+    # -S prevents .pth and sitecustomize execution even when another process
+    # creates a new startup hook after the namespace was admitted.
+    $bootstrap = 'import runpy,sys;sys.path.append(sys.argv[1]);sys.argv=sys.argv[2:];runpy.run_path(sys.argv[0],run_name="__main__")'
+    return @('-I', '-S', '-B', '-c', $bootstrap, $sitePackages, $ScriptPath) + $ScriptArguments
+}
+
 Export-ModuleMember -Function `
     Get-AtlasoSourceCheckoutIdentity, `
     New-AtlasoImmutableSourceSnapshot, `
@@ -450,4 +762,9 @@ Export-ModuleMember -Function `
     Assert-AtlasoSourceSnapshotCommitBinding, `
     Get-AtlasoSourceSnapshotInventory, `
     Protect-AtlasoSourceSnapshot, `
-    Unprotect-AtlasoSourceSnapshot
+    Unprotect-AtlasoSourceSnapshot, `
+    Protect-AtlasoCertificateProofInputs, `
+    New-AtlasoCertificateInspectorSnapshot, `
+    Protect-AtlasoCertificatePythonRuntime, `
+    Assert-AtlasoCertificatePythonImportPaths, `
+    New-AtlasoCertificatePythonArguments

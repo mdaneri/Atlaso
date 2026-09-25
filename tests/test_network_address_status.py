@@ -379,7 +379,7 @@ def test_native_observation_sanitizes_and_attributes_structured_sources(monkeypa
     from tests.test_appliance_helper import load_helper_module
 
     helper = load_helper_module()
-    ip_rows = [{"ifname": "eth0", "ifindex": 2, "address": "00:11:22:33:44:55", "link_type": "ether", "flags": ["UP", "LOWER_UP"], "addr_info": [{"local": "192.0.2.10", "prefixlen": 24}]}]
+    ip_rows = [{"ifname": "eth0", "ifindex": 2, "address": "00:11:22:33:44:55", "link_type": "ether", "flags": ["UP", "LOWER_UP"], "addr_info": [{"local": "192.0.2.10", "prefixlen": 24, "scope": "global"}]}]
     networkd = {"Interfaces": [{"Name": "eth0", "AdministrativeState": "configured", "Addresses": [{"Address": [192, 0, 2, 10], "PrefixLength": 24, "ConfigSource": "DHCPv4"}]}]}
     networkd["Interfaces"][0]["Addresses"].append(
         {"Address": [192, 0, 2, 10], "PrefixLength": 25, "ConfigSource": "static"},
@@ -403,6 +403,8 @@ def test_native_observation_sanitizes_and_attributes_structured_sources(monkeypa
     assert result["complete"] is True
     assert result["links"][0]["addresses"][0]["source"] == "DHCPv4"
     assert result["links"][0]["addresses"][0]["cidr"] == "192.0.2.10/24"
+    assert result["links"][0]["addresses"][0]["scope"] == "global"
+    assert result["links"][0]["address_inventory_complete"] is True
     assert result["conflicts"][0]["address"] == "192.0.2.20"
     assert result["conflicts"][0]["mac"] == ""
     assert "unrelated-sensitive-text" not in json.dumps(result)

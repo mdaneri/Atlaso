@@ -2,6 +2,7 @@
 
 import base64
 import configparser
+import copy
 import hashlib
 import importlib.machinery
 import importlib.util
@@ -2640,6 +2641,150 @@ def test_management_handoff_merges_previous_static_and_dynamic_addresses(monkeyp
     assert helper._management_handoff_previous_link_interfaces(payload) == {"eth0", "eth0.20"}
 
 
+def test_management_handoff_scopes_old_tls_before_new_address_activation(monkeypatch, tmp_path):
+    """Keep a wildcard old certificate from serving newly acquired addresses.
+
+    Args:
+        monkeypatch: Isolated management site and installer replacements.
+        tmp_path: Disposable management site location.
+    """
+    helper = load_helper_module()
+    site = tmp_path / "management.conf"
+    site.write_text(
+        "# Managed by Atlaso. Local changes may be overwritten.\n"
+        "server {\n  listen 80 default_server;\n  listen [::]:80 default_server;\n}\n"
+        "server {\n  listen 443 ssl default_server;\n  listen [::]:443 ssl default_server;\n}\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(helper, "NGINX_MANAGEMENT_SITE_PATH", site)
+    installed = []
+    monkeypatch.setattr(helper, "_install_nginx_site", lambda _path, text: installed.append(text) or 0)
+    helper._scope_management_handoff_old_listener({
+        "previous_https_enabled": True,
+        "previous_management_addresses": ["192.0.2.10", "2001:db8::10"],
+    })
+    assert len(installed) == 1
+    assert "listen 192.0.2.10:443 ssl default_server;" in installed[0]
+    assert "listen [2001:db8::10]:443 ssl default_server;" in installed[0]
+    assert "listen 443 ssl default_server;" not in installed[0]
+    assert "listen [::]:443 ssl default_server;" not in installed[0]
+
+
+def test_management_handoff_scopes_old_http_before_new_address_activation(monkeypatch, tmp_path):
+    """Do not expose a newly acquired address through the previous plaintext site.
+
+    Args:
+        monkeypatch: Isolated management site and installer replacements.
+        tmp_path: Disposable management site location.
+    """
+    helper = load_helper_module()
+    site = tmp_path / "management.conf"
+    site.write_text(
+        "# Managed by Atlaso. Local changes may be overwritten.\n"
+        "server {\n  listen 80 default_server;\n  listen [::]:80 default_server;\n}\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(helper, "NGINX_MANAGEMENT_SITE_PATH", site)
+    installed = []
+    monkeypatch.setattr(helper, "_install_nginx_site", lambda _path, text: installed.append(text) or 0)
+
+    helper._scope_management_handoff_old_listener({
+        "previous_https_enabled": False,
+        "previous_management_addresses": ["192.0.2.10", "2001:db8::10"],
+    })
+
+    assert len(installed) == 1
+    assert "listen 192.0.2.10:80 default_server;" in installed[0]
+    assert "listen [2001:db8::10]:80 default_server;" in installed[0]
+    assert "listen 80 default_server;" not in installed[0]
+    assert "listen [::]:80 default_server;" not in installed[0]
+
+
+def test_management_readiness_accepts_committed_scoped_loopback(monkeypatch, tmp_path):
+    """Console and update readiness retain their loopback path after handoff.
+
+    Args:
+        monkeypatch: Isolated management site replacement.
+        tmp_path: Disposable management site and certificate location.
+    """
+    helper = load_helper_module()
+    certificate = tmp_path / "site.crt"
+    key = tmp_path / "site.key"
+    certificate.write_text("test", encoding="utf-8")
+    key.write_text("test", encoding="utf-8")
+    site = tmp_path / "management.conf"
+    site.write_text(
+        "server {\n  listen 192.0.2.10:443 ssl default_server;\n"
+        "  listen 127.0.0.1:443 ssl default_server;\n"
+        "  listen 127.0.0.1:80 default_server;\n"
+        f"  ssl_certificate {certificate};\n  ssl_certificate_key {key};\n"
+        "  proxy_pass http://127.0.0.1:8000;\n}\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(helper, "NGINX_MANAGEMENT_SITE_PATH", site)
+
+    assert helper._console_management_config_contract_is_complete(site.read_text(encoding="utf-8"))
+    https_enabled, checks = helper._console_management_readiness_checks()
+    assert https_enabled is True
+    assert ("nginx HTTPS readiness", "https://127.0.0.1/openapi.json", True, "200") in checks
+
+
+def test_management_handoff_refuses_uncanonical_old_tls_site(monkeypatch, tmp_path):
+    """Refuse a wildcard listener that cannot be safely scoped.
+
+    Args:
+        monkeypatch: Isolated management site replacement.
+        tmp_path: Disposable management site location.
+    """
+    helper = load_helper_module()
+    site = tmp_path / "management.conf"
+    site.write_text("server { listen 443 ssl default_server; }\n", encoding="utf-8")
+    monkeypatch.setattr(helper, "NGINX_MANAGEMENT_SITE_PATH", site)
+    with pytest.raises(ValueError, match="not canonical"):
+        helper._scope_management_handoff_old_listener({
+            "previous_https_enabled": True,
+            "previous_management_addresses": ["192.0.2.10"],
+        })
+
+
+@pytest.mark.parametrize("https_enabled", [False, True])
+def test_management_handoff_accepts_previously_scoped_site(monkeypatch, tmp_path, https_enabled):
+    """A second handoff accepts the first handoff's address-specific site.
+
+    Args:
+        monkeypatch: Isolated management site and installer replacements.
+        tmp_path: Disposable management site location.
+        https_enabled: Whether the previous listener served HTTPS.
+    """
+    helper = load_helper_module()
+    site = tmp_path / "management.conf"
+    site.write_text(
+        "# Managed by Atlaso. Local changes may be overwritten.\n"
+        "server {\n  listen 192.0.2.10:80 default_server;\n"
+        "  listen [2001:db8::10]:80 default_server;\n"
+        "  listen 127.0.0.1:80 default_server;\n  listen [::1]:80 default_server;\n}\n"
+        + ("server {\n  listen 192.0.2.10:443 ssl default_server;\n"
+           "  listen [2001:db8::10]:443 ssl default_server;\n"
+           "  listen 127.0.0.1:443 ssl default_server;\n"
+           "  listen [::1]:443 ssl default_server;\n}\n" if https_enabled else ""),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(helper, "NGINX_MANAGEMENT_SITE_PATH", site)
+    monkeypatch.setattr(helper, "_install_nginx_site", lambda *_args: pytest.fail("already scoped site changed"))
+
+    helper._scope_management_handoff_old_listener({
+        "previous_https_enabled": https_enabled,
+        "previous_management_addresses": ["192.0.2.10", "2001:db8::10"],
+    })
+
+    site.write_text(site.read_text(encoding="utf-8").replace("192.0.2.10", "192.0.2.11"), encoding="utf-8")
+    with pytest.raises(ValueError, match="not canonical"):
+        helper._scope_management_handoff_old_listener({
+            "previous_https_enabled": https_enabled,
+            "previous_management_addresses": ["192.0.2.10", "2001:db8::10"],
+        })
+
+
 def test_management_handoff_syncs_transaction_and_backups_before_marker(monkeypatch, tmp_path):
     """Make the transaction directory and backups durable before the marker.
 
@@ -2878,6 +3023,55 @@ def test_management_handoff_dynamic_address_must_not_be_retained_old_address(mon
     ) == ["198.51.100.25"]
 
 
+def test_management_handoff_covers_every_live_global_address_on_static_link(monkeypatch, tmp_path):
+    """Both candidate and post-retirement checks include secondary live addresses.
+
+    Args:
+        monkeypatch: Pytest fixture for isolated test overrides.
+        tmp_path: Pytest-owned temporary directory."""
+    helper = load_helper_module()
+    network_path = tmp_path / "atlaso-network.conf"
+    network_path.write_text("candidate\n", encoding="utf-8")
+    row = {"name": "eth1", "role": "management", "mode": "access", "admin_state": "up",
+           "ipv4_method": "static", "ip_cidr": "198.51.100.10/24", "ipv6_enabled": "false"}
+    monkeypatch.setattr(helper, "_parse_network_config", lambda _path: ([row], [], []))
+    observations = [
+        {"complete": True, "links": [{"name": "eth1", "configured": True, "address_inventory_complete": True, "addresses": [
+            {"address": "198.51.100.10", "scope": "global", "state": "assigned"},
+            {"address": "198.51.100.25", "scope": "global", "state": "assigned"},
+            {"address": "fe80::1", "scope": "link", "state": "assigned"},
+        ]}]},
+        {"complete": True, "links": [{"name": "eth1", "configured": True, "address_inventory_complete": True, "addresses": [
+            {"address": "198.51.100.10", "scope": "global", "state": "assigned"},
+            {"address": "2001:db8::25", "scope": "global", "state": "assigned"},
+        ]}]},
+    ]
+    assert helper._management_handoff_addresses(network_path, address_observation=observations[0]) == [
+        "198.51.100.10", "198.51.100.25",
+    ]
+    assert helper._management_handoff_addresses(network_path, address_observation=observations[1]) == [
+        "198.51.100.10", "2001:db8::25",
+    ]
+    same_link_handoff = copy.deepcopy(observations[0])
+    same_link_handoff["links"][0]["addresses"].insert(0, {
+        "address": "198.51.100.5", "scope": "global", "state": "assigned",
+    })
+    assert helper._management_handoff_addresses(
+        network_path, address_observation=same_link_handoff,
+        previous_addresses={"198.51.100.5"}, exclude_previous_holdovers=True,
+    ) == ["198.51.100.10", "198.51.100.25"]
+    assert helper._management_handoff_addresses(
+        network_path, address_observation=same_link_handoff,
+        previous_addresses={"198.51.100.5"},
+    ) == ["198.51.100.10", "198.51.100.5", "198.51.100.25"]
+    observations[1]["links"][0]["addresses"][1].pop("scope")
+    with pytest.raises(ValueError, match="live address scope is unproven"):
+        helper._management_handoff_addresses(network_path, address_observation=observations[1])
+    observations[1]["links"][0]["address_inventory_complete"] = False
+    with pytest.raises(ValueError, match="live address observation is unavailable"):
+        helper._management_handoff_addresses(network_path, address_observation=observations[1])
+
+
 @pytest.mark.parametrize(
     ("row", "family", "address"),
     [
@@ -3046,6 +3240,116 @@ def test_management_handoff_keeps_previous_http_during_https_transition():
     assert " ssl bind;" not in holdover
 
 
+def test_management_handoff_candidate_listeners_use_verified_addresses_only():
+    """Never expose the candidate certificate on an unobserved dynamic address."""
+    helper = load_helper_module()
+    config = helper._management_nginx_config(
+        {
+            "fqdn": "atlaso.example.test",
+            "management_https_enabled": True,
+            "management_public_http_port": 80,
+            "management_public_https_port": 443,
+        },
+        Path("/etc/atlaso/candidate.crt"),
+        Path("/etc/atlaso/candidate.key"),
+        listen_addresses=["192.0.2.20", "2001:db8::20"],
+    )
+
+    assert "listen 192.0.2.20:443 ssl default_server;" in config
+    assert "listen [2001:db8::20]:443 ssl default_server;" in config
+    assert "listen 192.0.2.20:80 default_server;" in config
+    only_previous = helper._management_nginx_config(
+        {"fqdn": "atlaso.example.test", "management_https_enabled": True},
+        Path("/etc/atlaso/candidate.crt"), Path("/etc/atlaso/candidate.key"),
+        listen_addresses=["192.0.2.10"], http_listen_addresses=[],
+    )
+    assert "listen 192.0.2.10:443 ssl default_server;" in only_previous
+    assert "return 308" not in only_previous
+    assert "listen [2001:db8::20]:80 default_server;" in config
+    assert "listen 443 ssl default_server;" not in config
+    assert "listen [::]:443 ssl default_server;" not in config
+    assert "listen " not in helper._management_nginx_config(
+        {"fqdn": "atlaso.example.test", "management_https_enabled": False},
+        listen_addresses=[],
+    )
+    with pytest.raises(ValueError, match="no verified listener address"):
+        helper._configure_atlaso_management_https(
+            {"fqdn": "atlaso.example.test", "management_https_enabled": False},
+            verify_front_door=False,
+            listen_addresses=[],
+        )
+
+
+def test_management_handoff_keeps_previous_http_out_of_candidate_redirect():
+    """An old HTTP proxy keeps its socket while covered HTTPS is staged."""
+    helper = load_helper_module()
+    config = helper._management_nginx_config(
+        {"fqdn": "atlaso.example.test", "management_https_enabled": True,
+         "management_public_http_port": 80, "management_public_https_port": 443},
+        Path("/etc/atlaso/candidate.crt"), Path("/etc/atlaso/candidate.key"),
+        listen_addresses=["192.0.2.10", "192.0.2.20"],
+        http_listen_addresses=["192.0.2.20"],
+    )
+    assert "listen 192.0.2.10:443 ssl default_server;" in config
+    assert "listen 192.0.2.10:80 default_server;" not in config
+    assert "listen 192.0.2.20:80 default_server;" in config
+    with pytest.raises(ValueError, match="not a verified"):
+        helper._management_nginx_config(
+            {"fqdn": "atlaso.example.test", "management_https_enabled": True},
+            listen_addresses=["192.0.2.10"], http_listen_addresses=["192.0.2.99"],
+        )
+
+
+def test_ordinary_settings_preserve_committed_management_listener_scope(monkeypatch, tmp_path):
+    """Regenerating the site carries verified sockets rather than wildcards.
+
+    Args:
+        monkeypatch: Pytest fixture replacing the managed site path.
+        tmp_path: Temporary directory containing the prior managed site.
+    """
+    helper = load_helper_module()
+    site = tmp_path / "management.conf"
+    payload = {"fqdn": "atlaso.example.test", "management_https_enabled": True,
+               "management_public_http_port": 80, "management_public_https_port": 443}
+    addresses = ["127.0.0.1", "::1", "192.0.2.10", "2001:db8::10"]
+    site.write_text(helper._management_nginx_config(
+        payload, Path("/etc/atlaso/candidate.crt"), Path("/etc/atlaso/candidate.key"),
+        listen_addresses=addresses,
+    ), encoding="utf-8")
+    monkeypatch.setattr(helper, "NGINX_MANAGEMENT_SITE_PATH", site)
+    preserved = helper._existing_management_scoped_addresses()
+    assert set(preserved) == set(addresses)
+    regenerated = helper._management_nginx_config(
+        payload, Path("/etc/atlaso/candidate.crt"), Path("/etc/atlaso/candidate.key"),
+        listen_addresses=preserved,
+    )
+    assert "listen 443 ssl default_server;" not in regenerated
+    assert "listen [::]:443 ssl default_server;" not in regenerated
+
+
+def test_management_handoff_preserves_previous_identity_on_shared_socket():
+    """An old certificate keeps its address until final candidate publication."""
+    helper = load_helper_module()
+    state = {
+        "previous_management_public_port": 443,
+        "previous_management_addresses": ["192.0.2.10"],
+    }
+    candidates = ["192.0.2.10", "192.0.2.20"]
+
+    assert helper._management_handoff_initial_listener_addresses(
+        candidates, state, 443, "old TLS listener",
+    ) == ["192.0.2.20"]
+    assert helper._management_handoff_initial_listener_addresses(
+        ["192.0.2.10"], state, 443, "old TLS listener",
+    ) == []
+    assert helper._management_handoff_initial_listener_addresses(
+        candidates, state, 8443, "old TLS listener",
+    ) == candidates
+    assert helper._management_handoff_initial_listener_addresses(
+        candidates, state, 443, "",
+    ) == candidates
+
+
 def test_management_handoff_keeps_previous_http_when_port_changes():
     """Retain the old HTTP socket beside a candidate on another HTTP port."""
     helper = load_helper_module()
@@ -3066,6 +3370,22 @@ def test_management_handoff_keeps_previous_http_when_port_changes():
 
     assert "listen 192.0.2.10:8080 bind;" in holdover
     assert "X-Forwarded-Proto http" in holdover
+
+
+def test_management_handoff_keeps_previous_http_on_same_port():
+    """Address replacement keeps the old HTTP socket until final retirement."""
+    helper = load_helper_module()
+    state = {"previous_https_enabled": False, "previous_management_public_port": 80,
+             "previous_management_addresses": ["192.0.2.10"]}
+    holdover = helper._management_handoff_protocol_holdover(
+        state, {"management_https_enabled": False, "management_public_http_port": 80,
+                "management_upstream_host": "127.0.0.1", "management_upstream_port": 8000},
+    )
+    initial = helper._management_handoff_initial_listener_addresses(
+        ["192.0.2.10", "192.0.2.20"], state, 80, holdover,
+    )
+    assert "listen 192.0.2.10:80 bind;" in holdover
+    assert initial == ["192.0.2.20"]
 
 
 @pytest.mark.parametrize("candidate_https", [False, True])
@@ -3128,9 +3448,9 @@ def test_management_handoff_keeps_previous_https_identity(monkeypatch, tmp_path,
 
 
 @pytest.mark.parametrize("candidate_sync_error", [False, True, "address-timeout", "address-conflict",
-                                                   "pre-nginx-address-timeout"],
+                                                   "pre-nginx-address-timeout", "certificate", "late-certificate", "late-covered"],
                          ids=["durable", "sync-failure", "address-timeout", "address-conflict",
-                              "pre-nginx-address-timeout"])
+                              "pre-nginx-address-timeout", "certificate", "late-certificate", "late-covered"])
 @pytest.mark.parametrize("paired_publishing", [False, True], ids=["source-only", "port-forward-pair"])
 @pytest.mark.parametrize("mapping_change", ["unchanged", "target", "removed"])
 def test_management_handoff_candidate_durability_gates_ack(
@@ -3179,6 +3499,7 @@ def test_management_handoff_candidate_durability_gates_ack(
     durability_calls: list[bool] = []
     nginx_suffixes: list[str] = []
     nginx_readiness_options: list[bool] = []
+    nginx_listen_addresses: list[list[str] | None] = []
     retirement_operations: list[str] = []
     wan_calls: list[str] = []
     stable_waits = 0
@@ -3198,7 +3519,7 @@ def test_management_handoff_candidate_durability_gates_ack(
                 raise ValueError("Unable to verify candidate addresses: eth1 192.0.2.20/24")
             if candidate_sync_error == "address-conflict" and stable_waits == 2:
                 raise ValueError("IP conflict on eth1: 192.0.2.20/24")
-        return {}
+        return {"final": True} if kwargs.get("stable_samples") == 3 else {}
 
     monkeypatch.setattr(helper, "_wait_network_addresses", wait_addresses)
     monkeypatch.setattr(helper, "_snapshot_management_handoff", lambda _payload: state)
@@ -3207,8 +3528,22 @@ def test_management_handoff_candidate_durability_gates_ack(
         "_management_handoff_readiness",
         lambda *_args, **_kwargs: {"stable_samples": 3},
     )
+    def candidate_ca(*_args):
+        """Inject an uncovered acquired address before candidate publication.
+
+        Args:
+            *_args: Candidate payload and public certificate inputs unused by this failure stub.
+        """
+        if candidate_sync_error == "certificate" or (candidate_sync_error == "late-certificate"
+                                                    and "198.51.100.11" in _args[1]):
+            raise ValueError("management HTTPS certificate does not authenticate candidate address 198.51.100.10")
+        return tmp_path / "ca.pem"
+
+    monkeypatch.setattr(helper, "_management_handoff_public_certificate", lambda *_args: None)
+    monkeypatch.setattr(helper, "_management_handoff_candidate_ca", candidate_ca)
     monkeypatch.setattr(helper, "_management_handoff_upstream_readiness", lambda: {"stable_samples": 3})
     monkeypatch.setattr(helper, "_install_management_holdovers", lambda _state, _payload: [])
+    monkeypatch.setattr(helper, "_scope_management_handoff_old_listener", lambda _state: None)
     monkeypatch.setattr(helper, "_write_management_handoff_state", lambda _state, phase: phases.append(phase))
     monkeypatch.setattr(helper, "_apply_management_candidate_network", lambda *_args: guard_events.append("candidate-network"))
     monkeypatch.setattr(
@@ -3262,9 +3597,11 @@ def test_management_handoff_candidate_durability_gates_ack(
     monkeypatch.setattr(
         helper,
         "_configure_atlaso_management_https",
-        lambda _payload, *, site_suffix="", verify_front_door=True: (
+        lambda _payload, *, site_suffix="", verify_front_door=True, listen_addresses=None,
+        http_listen_addresses=None: (
             nginx_suffixes.append(site_suffix)
             or nginx_readiness_options.append(verify_front_door)
+            or nginx_listen_addresses.append(listen_addresses)
             or 0,
             None,
         ),
@@ -3276,7 +3613,11 @@ def test_management_handoff_candidate_durability_gates_ack(
         "_nginx_test_command",
         lambda: subprocess.CompletedProcess(["nginx", "-t"], 0, "", ""),
     )
-    monkeypatch.setattr(helper, "_management_handoff_addresses", lambda *_args, **_kwargs: ["198.51.100.10"])
+    monkeypatch.setattr(helper, "_management_handoff_addresses", lambda *_args, **kwargs:
+                        ["198.51.100.10", "198.51.100.11"]
+                        if candidate_sync_error in {"late-certificate", "late-covered"}
+                        and stable_waits >= 2
+                        else ["198.51.100.10"])
     monkeypatch.setattr(helper, "_parse_network_config", lambda _path: ([], [], []))
     monkeypatch.setattr(helper, "_link_exists", lambda _interface: False)
     monkeypatch.setattr(helper, "_clear_management_handoff_state", lambda **_kwargs: cleared.append(True))
@@ -3373,9 +3714,9 @@ def test_management_handoff_candidate_durability_gates_ack(
 
     assert guard_events[:2] == ["guard-on", "candidate-network"]
     assert state["source_transition_guard"] is True
-    if candidate_sync_error == "pre-nginx-address-timeout":
+    if candidate_sync_error in {"pre-nginx-address-timeout", "certificate"}:
         assert guard_events == ["guard-on", "candidate-network", "source-intent"]
-    elif candidate_sync_error in {"address-timeout", "address-conflict"}:
+    elif candidate_sync_error in {"address-timeout", "address-conflict", "late-certificate"}:
         assert guard_events == ["guard-on", "candidate-network", "source-intent", "final-network"]
     else:
         assert guard_events == ["guard-on", "candidate-network", "source-intent", "final-network",
@@ -3398,9 +3739,28 @@ def test_management_handoff_candidate_durability_gates_ack(
         assert payload["management_handoff"] == "rolled back"
         assert payload["failing_layer"] == "post-retirement address activation"
         return
+    if candidate_sync_error == "certificate":
+        assert result == 1
+        assert not durability_calls and not wan_calls and not paired_calls and not nginx_suffixes
+        assert "candidate-ready" not in phases and "awaiting-application-commit" not in phases
+        assert restored == [True] and cleared == [True]
+        failure = json.loads(capsys.readouterr().err.splitlines()[-1])
+        assert failure["management_handoff"] == "rolled back"
+        assert failure["failing_layer"] == "certificate prerequisite"
+        return
+    if candidate_sync_error == "late-certificate":
+        assert result == 1
+        assert not durability_calls and not wan_calls and not paired_calls
+        assert nginx_listen_addresses == [["198.51.100.10"]]
+        assert "candidate-ready" in phases and "awaiting-application-commit" not in phases
+        assert restored == [True] and cleared == [True]
+        failure = json.loads(capsys.readouterr().err.splitlines()[-1])
+        assert failure["management_handoff"] == "rolled back"
+        assert failure["failing_layer"] == "post-retirement certificate prerequisite"
+        return
     assert durability_calls == [True]
     assert paired_calls == ([(nat.read_text(), "captured nat")] if paired_publishing else [])
-    if candidate_sync_error:
+    if candidate_sync_error is True:
         assert result == 1
         assert "awaiting-application-commit" not in phases
         assert restored == [True]
@@ -3428,6 +3788,12 @@ def test_management_handoff_candidate_durability_gates_ack(
     assert "resolver-applying" in phases
     assert nginx_suffixes == ["old protocol listener", ""]
     assert nginx_readiness_options == [False, False]
+    assert nginx_listen_addresses == [
+        ["198.51.100.10"],
+        (["198.51.100.10", "198.51.100.11", "127.0.0.1", "::1"]
+         if candidate_sync_error == "late-covered"
+         else ["198.51.100.10", "127.0.0.1", "::1"]),
+    ]
     payload = json.loads(capsys.readouterr().out.splitlines()[-1])
     assert payload["management_handoff"] == "awaiting application commit"
 
@@ -3526,6 +3892,7 @@ def test_management_handoff_failure_rolls_back_with_truthful_layer(monkeypatch, 
     monkeypatch.setattr(helper, "_transition_source_guard", lambda _enable: None)
     monkeypatch.setattr(helper, "_management_handoff_held_addresses", lambda *_args: [])
     monkeypatch.setattr(helper, "_reconcile_route_domains", lambda: None)
+    monkeypatch.setattr(helper, "_scope_management_handoff_old_listener", lambda _state: None)
     monkeypatch.setattr(helper, "_network_detection_preflight", lambda _path: None)
     monkeypatch.setattr(helper, "_route_domain_ingress_desired_rules", lambda *_args, **_kwargs: [])
     monkeypatch.setattr(helper, "_wait_network_addresses", lambda _path, **_kwargs: (_ for _ in ()).throw(ValueError("IP conflict on eth0: 192.0.2.20")) if failing_layer == "address activation" else {})
@@ -3607,6 +3974,7 @@ def test_management_handoff_resolver_failure_rolls_back_before_nginx(
     monkeypatch.setattr(helper, "_transition_source_guard", lambda _enable: None)
     monkeypatch.setattr(helper, "_management_handoff_held_addresses", lambda *_args: [])
     monkeypatch.setattr(helper, "_reconcile_route_domains", lambda: None)
+    monkeypatch.setattr(helper, "_scope_management_handoff_old_listener", lambda _state: None)
     monkeypatch.setattr(helper, "_network_detection_preflight", lambda _path: None)
     monkeypatch.setattr(helper, "_route_domain_ingress_desired_rules", lambda *_args, **_kwargs: [])
     monkeypatch.setattr(helper, "_wait_network_addresses", lambda _path, **_kwargs: {})
@@ -3690,6 +4058,8 @@ def test_management_handoff_orders_resolver_before_dns_shutdown(monkeypatch, tmp
     """
     helper = load_helper_module()
     events: list[str] = []
+    monkeypatch.setattr(helper, "_scope_management_handoff_old_listener",
+                        lambda _state: events.append("scoped"))
     state = {
         "previous_management_addresses": ["192.0.2.10"],
         "previous_https_enabled": True,
@@ -3716,6 +4086,9 @@ def test_management_handoff_orders_resolver_before_dns_shutdown(monkeypatch, tmp
     monkeypatch.setattr(helper, "_management_handoff_held_addresses", lambda *_args: [])
     monkeypatch.setattr(helper, "_install_route_domain_intent", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(helper, "_reconcile_route_domains", lambda: None)
+    monkeypatch.setattr(helper, "_management_handoff_public_certificate", lambda *_args: None)
+    monkeypatch.setattr(helper, "_apply_management_candidate_network",
+                        lambda *_args: events.append("network"))
     monkeypatch.setattr(helper, "_wait_network_addresses", lambda *_args, **_kwargs: {})
     monkeypatch.setattr(helper, "_management_handoff_candidate_firewall_rules", lambda *_args: [])
     monkeypatch.setattr(helper, "_management_handoff_firewall_text", lambda *_args, **_kwargs: "table inet atlaso {}\n")
@@ -3739,7 +4112,8 @@ def test_management_handoff_orders_resolver_before_dns_shutdown(monkeypatch, tmp
         "dnsmasq_config_path": "candidate-dns",
         "public_services_config_path": "candidate-public",
     }) == 1
-    assert events == (["resolver", "dns"] if resolver_mode == "external" else ["dns"])
+    assert events == (["scoped", "network", "resolver", "dns"] if resolver_mode == "external"
+                      else ["scoped", "network", "dns"])
     assert state["resolver_apply_started"] is (resolver_mode == "external")
 
 
@@ -3761,6 +4135,7 @@ def test_management_handoff_never_activates_nginx_with_unhealthy_upstream(monkey
     monkeypatch.setattr(helper, "_transition_source_guard", lambda _enable: None)
     monkeypatch.setattr(helper, "_management_handoff_held_addresses", lambda *_args: [])
     monkeypatch.setattr(helper, "_reconcile_route_domains", lambda: None)
+    monkeypatch.setattr(helper, "_scope_management_handoff_old_listener", lambda _state: None)
     monkeypatch.setattr(helper, "_network_detection_preflight", lambda _path: None)
     monkeypatch.setattr(helper, "_route_domain_ingress_desired_rules", lambda *_args, **_kwargs: [])
     monkeypatch.setattr(helper, "_wait_network_addresses", lambda _path, **_kwargs: {})
@@ -15611,6 +15986,95 @@ def test_appliance_settings_helper_accepts_dhcp_resolver_mode(tmp_path):
     errors = helper._appliance_settings_config_errors(config_path)
 
     assert errors == []
+
+
+def test_appliance_settings_rejects_rotation_without_retained_address_san(monkeypatch, tmp_path, capsys):
+    """Reject a replacement certificate before mutating a retained scoped listener.
+
+    Args:
+        monkeypatch: Fixture replacing runtime paths and host mutation.
+        tmp_path: Isolated certificate and staged settings directory.
+        capsys: Captured validation error output.
+    """
+    helper = load_helper_module()
+    managed_root = tmp_path / "etc" / "atlaso"
+    cert_path = managed_root / "https" / "certs" / "replacement.crt"
+    key_path = managed_root / "https" / "certs" / "replacement.key"
+    cert_path.parent.mkdir(parents=True)
+    cert_path.write_text("-----BEGIN CERTIFICATE-----\nleaf\n-----END CERTIFICATE-----\n", encoding="utf-8")
+    key_path.write_text("-----BEGIN PRIVATE KEY-----\nkey\n-----END PRIVATE KEY-----\n", encoding="utf-8")
+    apply_dir = tmp_path / "apply" / "appliance-settings"
+    apply_dir.mkdir(parents=True)
+    config_path = apply_dir / "settings.json"
+    config_path.write_text(
+        appliance_settings_json(
+            management_https_enabled=True,
+            management_https_cert_path=str(cert_path),
+            management_https_key_path=str(key_path),
+        ), encoding="utf-8",
+    )
+    monkeypatch.setattr(helper, "CA_MANAGED_PATH_BASE", managed_root)
+    monkeypatch.setattr(helper, "APPLIANCE_SETTINGS_APPLY_DIR", apply_dir)
+    monkeypatch.setattr(helper, "_ca_key_matches_certificate", lambda *_args: True)
+    monkeypatch.setattr(helper.shutil, "which", lambda _name: "/usr/bin/openssl")
+    checked_addresses = []
+
+    def check_certificate(command, **_kwargs):
+        """Model OpenSSL's exact IP SAN match for the candidate leaf.
+
+        Args:
+            command: OpenSSL invocation and candidate address.
+            **_kwargs: Subprocess options unused by the stub.
+        """
+        checked_addresses.append(command[-1])
+        return subprocess.CompletedProcess(command, 0 if command[-1] == "192.168.49.1" else 1)
+
+    monkeypatch.setattr(helper.subprocess, "run", check_certificate)
+    monkeypatch.setattr(helper, "_existing_management_scoped_addresses", lambda: [
+        "127.0.0.1", "::1", "192.168.49.1", "192.168.49.2",
+    ])
+    monkeypatch.setattr(helper, "_apply_hostname", lambda *_args: pytest.fail("host mutation reached"))
+
+    assert helper._handle_appliance_settings("apply", [str(config_path)]) == 2
+    assert "does not authenticate retained address 192.168.49.2" in capsys.readouterr().err
+    assert checked_addresses == ["192.168.49.1", "192.168.49.2"]
+    assert helper._management_certificate_covers_scoped_addresses(
+        cert_path.read_text(encoding="utf-8"), ["127.0.0.1", "::1", "192.168.49.1"],
+    ) is None
+
+
+def test_management_activation_rechecks_retained_certificate_addresses(monkeypatch, tmp_path):
+    """Refuse a swapped replacement certificate before nginx activation.
+
+    Args:
+        monkeypatch: Fixture replacing managed paths and activation.
+        tmp_path: Isolated public certificate path.
+    """
+    helper = load_helper_module()
+    managed_root = tmp_path / "etc" / "atlaso"
+    cert_path = managed_root / "https" / "certs" / "replacement.crt"
+    cert_path.parent.mkdir(parents=True)
+    cert_path.write_text("replacement", encoding="utf-8")
+    monkeypatch.setattr(helper, "CA_MANAGED_PATH_BASE", managed_root)
+    def reject_uncovered_address(*_args):
+        """Report a candidate certificate that lacks a retained listener SAN.
+
+        Args:
+            *_args: Certificate and listener arguments unused by the stub.
+        """
+        raise ValueError("retained address uncovered")
+
+    monkeypatch.setattr(helper, "_management_certificate_covers_scoped_addresses", reject_uncovered_address)
+    monkeypatch.setattr(helper, "_grant_atlaso_service_key_read", lambda *_args: pytest.fail("mutation reached"))
+
+    result = helper._configure_atlaso_management_https(
+        {"management_https_enabled": True,
+         "management_https_cert_path": str(cert_path),
+         "management_https_key_path": str(cert_path)},
+        listen_addresses=["127.0.0.1", "::1", "192.168.49.2"],
+    )
+
+    assert result == (1, None)
 
 
 def test_appliance_settings_helper_writes_management_nginx_proxy(monkeypatch, tmp_path, capsys):

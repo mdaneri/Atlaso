@@ -34,23 +34,27 @@ $ErrorActionPreference = 'Stop'
 
 $privateKey = [Environment]::GetEnvironmentVariable('ATLASO_DEVELOPMENT_ROOT_CA_PRIVATE_KEY')
 [Environment]::SetEnvironmentVariable('ATLASO_DEVELOPMENT_ROOT_CA_PRIVATE_KEY', $null)
+$privateKeyPem = $null
 try {
     if ([string]::IsNullOrWhiteSpace($privateKey)) {
         throw 'The exact Atlaso 1Password Environment did not provide ATLASO_DEVELOPMENT_ROOT_CA_PRIVATE_KEY.'
     }
+    $privateKeyPem = ConvertFrom-AtlasoDevelopmentRootCaEnvironmentValue -Value $privateKey
+    $privateKey = $null
     Assert-AtlasoDevelopmentRootCaMaterial `
         -CertificatePath $CertificatePath `
-        -PrivateKeyPem $privateKey
+        -PrivateKeyPem $privateKeyPem
     if ($Action -eq 'Stage') {
         if ([string]::IsNullOrWhiteSpace($VmxPath)) {
             throw 'The Stage action requires the exact new normal test VMX path.'
         }
         Set-AtlasoWorkstationDevelopmentRootCaPrivateKey `
             -VmxPath $VmxPath `
-            -PrivateKeyPem $privateKey
+            -PrivateKeyPem $privateKeyPem
     }
 }
 finally {
     $privateKey = $null
+    $privateKeyPem = $null
     [GC]::Collect()
 }

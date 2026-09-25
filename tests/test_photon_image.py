@@ -2896,7 +2896,8 @@ def test_vmware_raw_vmx_workflows_inject_complete_first_boot_ovf_environment_bef
     assert "-gp $SshPassword" not in lifecycle
     assert "[SecureString]$AdminPassword" in lifecycle_wrapper
     assert "[SecureString]$SshPassword" in lifecycle_wrapper
-    assert "Export-Clixml -LiteralPath $secretBundlePath -Force" in lifecycle_wrapper
+    assert "Export-Clixml -LiteralPath $secretBundlePath -NoClobber" in lifecycle_wrapper
+    assert "Protect-AtlasoLifecycleSecretBundleFile -Path $secretBundlePath" in lifecycle_wrapper
     assert "'-SecretBundlePath', $secretBundlePath" in lifecycle_wrapper
     assert "Remove-Item -LiteralPath $secretBundlePath -Force" in lifecycle_wrapper
     assert "[SecureString]$AdminPassword" in test_vm
@@ -3323,15 +3324,15 @@ def test_lifecycle_vmware_script_supports_routing_wan_only_and_esxi_pxe_install(
     assert "[switch]$OidcOnly" in wrapper
     assert "[switch]$FullEsxiPxeInstall" in wrapper
     assert "[string]$PxeInstallerIsoPath = ''" in wrapper
-    assert "$effectiveSkipBackupRestoreTest = [bool]($SkipBackupRestoreTest -or $RoutingWanOnly -or $OidcOnly -or $RoutingOverlapOnly)" in wrapper
+    assert "$effectiveSkipBackupRestoreTest = [bool]($SkipBackupRestoreTest -or $RoutingWanOnly -or $OidcOnly -or $CertificateOnly -or $RoutingOverlapOnly)" in wrapper
     assert "if ($OidcOnly) { $arguments += '-OidcOnly' }" in wrapper
     assert "if ($RoutingWanOnly) { $arguments += '-RoutingWanOnly' }" in wrapper
     assert "if ($FullEsxiPxeInstall) { $arguments += '-FullEsxiPxeInstall' }" in wrapper
     assert "if ($PxeInstallerIsoPath) { $arguments += @('-PxeInstallerIsoPath', $PxeInstallerIsoPath) }" in wrapper
-    assert "Focused lifecycle modes are mutually exclusive." in wrapper
+    assert "-OidcOnly, -RoutingWanOnly, -CertificateOnly, -RoutingOverlapOnly, and -FullEsxiPxeInstall are mutually exclusive." in wrapper
     assert "[SecureString]$EsxiPassword" in wrapper
     assert "Read-Host -Prompt 'ESXi root password for lifecycle probing' -AsSecureString" in wrapper
-    assert "if (-not ($OidcOnly -or $RoutingWanOnly -or $RoutingOverlapOnly) -and $null -eq $VcfBackupPassword)" in wrapper
+    assert "if (-not ($OidcOnly -or $RoutingWanOnly -or $CertificateOnly -or $RoutingOverlapOnly) -and $null -eq $VcfBackupPassword)" in wrapper
     assert wrapper.index("$secretBundlePath = ''\ntry {") < wrapper.index("Export-Clixml")
     assert wrapper.index("Export-Clixml") < wrapper.index("Remove-Item -LiteralPath $secretBundlePath -Force")
     assert "Remove-Item -LiteralPath $secretBundlePath -Force -ErrorAction Stop" in wrapper
@@ -3366,8 +3367,10 @@ def test_lifecycle_vmware_script_supports_routing_wan_only_and_esxi_pxe_install(
     assert "python -m pip wheel $wheelSource --no-deps -w $wheelRoot" in runner
     assert "pip install --force-reinstall --no-deps $quotedWheel" in runner
     assert "systemctl restart atlaso.service" in runner
-    assert "$applianceWheelIdentity = Sync-ApplianceApplicationWheel -ApplianceVmx $applianceVmx" in runner
-    assert "Save-ApplianceDeploymentIdentity -ApplianceVmx $applianceVmx -Wheel $applianceWheelIdentity" in runner
+    assert "$applianceWheel = Sync-ApplianceApplicationWheel -ApplianceVmx $applianceVmx" in runner
+    assert "Save-ApplianceDeploymentIdentity -ApplianceVmx $applianceVmx -Wheel $applianceWheel" in runner
+    assert "wheel_sha256 = $applianceWheel.Sha256.ToLowerInvariant()" in runner
+    assert "Get-FileHash -LiteralPath $applianceWheelPath" not in runner
     assert "function Register-WorkstationVm" in runner
     assert "$resolvedVmrun @Arguments" in runner
     assert "ws register $Path" in runner
