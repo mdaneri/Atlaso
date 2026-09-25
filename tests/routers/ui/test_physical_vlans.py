@@ -2113,7 +2113,13 @@ def test_access_static_conversion_does_not_copy_unrelated_dhcp_dns(client, monke
 
 @pytest.mark.parametrize("old_mode", ["access", "trunk"])
 def test_access_static_conversion_preserves_dhcp_dns_for_new_listener(client, monkeypatch, old_mode):
-    """A PATCH that enables the Access listener must retain its observed lease DNS."""
+    """A PATCH that enables the Access listener must retain its observed lease DNS.
+
+    Args:
+        client: Authenticated test client fixture.
+        monkeypatch: Fixture used to provide the observed DHCP lease DNS.
+        old_mode: Prior Access interface mode.
+    """
     from sqlalchemy import select
 
     from atlaso.app.database import SessionLocal

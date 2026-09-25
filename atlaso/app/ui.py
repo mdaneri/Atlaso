@@ -10241,13 +10241,23 @@ def management_handoff_required(network_unit: dict[str, Any], baseline: dict[str
 
 
 def management_front_door_binding_changed(current_preview: str, baseline: dict[str, Any] | None) -> bool:
-    """Require a protected handoff when the management protocol or public port changes."""
+    """Require a protected handoff when the management protocol or public port changes.
+
+    Args:
+        current_preview: Candidate Appliance Settings preview.
+        baseline: Last applied Appliance Settings snapshot, when present.
+    """
     previous = json_config_object(str((baseline or {}).get("config_preview") or ""))
     current = json_config_object(current_preview)
     if not previous or not current:
         return False
 
     def binding(settings: dict[str, Any]) -> tuple[bool, int, int | None]:
+        """Return protocol and public ports from one settings snapshot.
+
+        Args:
+            settings: Parsed Appliance Settings values.
+        """
         https_enabled = bool(settings.get("management_https_enabled"))
         http_port = int(settings.get("management_public_http_port") or 80)
         https_port = int(settings.get("management_public_https_port") or 443) if https_enabled else None

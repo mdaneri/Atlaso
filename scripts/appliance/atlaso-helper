@@ -26311,7 +26311,11 @@ def _management_handoff_snapshot_text(state: dict, runtime_path: Path) -> str:
 
 
 def _management_handoff_previous_public_tls_addresses(state: dict) -> set[str]:
-    """Identify snapshotted public-service TLS sockets for previous management addresses."""
+    """Identify snapshotted public-service TLS sockets for previous management addresses.
+
+    Args:
+        state: Durable handoff snapshot with prior listeners and addresses.
+    """
     site = _management_handoff_snapshot_text(state, NGINX_PUBLIC_SERVICES_SITE_PATH)
     if not site:
         return set()
@@ -26331,7 +26335,11 @@ def _management_handoff_previous_public_tls_addresses(state: dict) -> set[str]:
 
 
 def _management_handoff_validate_public_tls_holdover(state: dict) -> None:
-    """Prove the snapshotted Public Services TLS identity survives candidate CA apply."""
+    """Prove the snapshotted Public Services TLS identity survives candidate CA apply.
+
+    Args:
+        state: Durable handoff snapshot with prior site and certificate files.
+    """
     if not _management_handoff_previous_public_tls_addresses(state):
         return
     previous_site = _management_handoff_snapshot_text(state, NGINX_PUBLIC_SERVICES_SITE_PATH)
@@ -26345,14 +26353,23 @@ def _management_handoff_validate_public_tls_holdover(state: dict) -> None:
 
 
 def _management_handoff_public_site_with_holdover(state: dict, candidate_site: str) -> str:
-    """Publish new Public Services sockets while retaining every old site block."""
+    """Publish new Public Services sockets while retaining every old site block.
+
+    Args:
+        state: Durable handoff snapshot with the prior Public Services site.
+        candidate_site: Staged candidate Public Services nginx configuration.
+    """
     if not _management_handoff_previous_public_tls_addresses(state):
         return candidate_site
     previous_site = _management_handoff_snapshot_text(state, NGINX_PUBLIC_SERVICES_SITE_PATH)
     block_pattern = re.compile(r"(?ms)^server \{.*?^\}")
 
     def blocks_and_sockets(site: str) -> list[tuple[str, set[str]]]:
-        """Require managed top-level server blocks and collect their exact sockets."""
+        """Require managed top-level server blocks and collect their exact sockets.
+
+        Args:
+            site: Managed nginx site configuration to parse.
+        """
         if not site.startswith("# Managed by Atlaso. Local changes may be overwritten.\n"):
             raise ValueError("Public Services handoff site is not canonical")
         blocks = list(block_pattern.finditer(site))

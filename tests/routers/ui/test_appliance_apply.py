@@ -786,7 +786,11 @@ def test_management_https_applies_pending_ca_before_settings(client, monkeypatch
 
 
 def test_management_binding_change_requires_pending_network_selection(client):
-    """Do not silently admit an unrelated pending Network edit into a protocol handoff."""
+    """Do not silently admit an unrelated pending Network edit into a protocol handoff.
+
+    Args:
+        client: Authenticated test client fixture.
+    """
     from sqlalchemy import select
 
     from atlaso.app.database import SessionLocal

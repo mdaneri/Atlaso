@@ -90,12 +90,10 @@ Valid changed units are selected by default; invalid units are not. Unselected u
 4. Open a component row to inspect its bounded, redacted result.
 5. Wait for completion; the dialog, sidebar badge, pending count, and global write lock update without a page reload.
 
-If another session starts a new Apply immediately after the current master finishes, the monitor completes the current
-task's terminal refresh before following the newer task.
+If another session starts an Apply after the current one, the monitor finishes the current task's refresh first.
 
-Components run sequentially. If one component fails, Atlaso stops the sequence and marks the remaining components
-**skipped**. Other write operations are locked while the master task is pending or running; read-only pages, task
-inspection, authentication actions, and safe cancellation remain available.
+Components run sequentially. On failure, Atlaso marks the rest **skipped**. Writes are locked while a master task
+is pending or running; read-only pages, task inspection, authentication, and safe cancellation remain available.
 
 A management-path change is the exception to independent component execution. Atlaso selects Certificate Authority,
 Network, Firewall, Appliance Settings, and Public Services together after all other dependencies expand, then runs one

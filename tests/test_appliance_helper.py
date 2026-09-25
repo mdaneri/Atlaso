@@ -2755,7 +2755,13 @@ def test_management_handoff_accepts_previously_scoped_site(monkeypatch, tmp_path
 
 @pytest.mark.parametrize("dedicated", [False, True])
 def test_management_handoff_preserves_split_public_tls_on_later_apply(monkeypatch, tmp_path, dedicated):
-    """A later handoff keeps flagged Access TLS under Public Services ownership."""
+    """A later handoff keeps flagged Access TLS under Public Services ownership.
+
+    Args:
+        monkeypatch: Fixture used to isolate nginx sites and certificate paths.
+        tmp_path: Temporary paths for site and certificate snapshots.
+        dedicated: Whether another address has a dedicated management listener.
+    """
     helper = load_helper_module()
     management = tmp_path / "management.conf"
     public = tmp_path / "public.conf"
@@ -3106,7 +3112,12 @@ def test_management_handoff_covers_every_live_global_address_on_static_link(monk
 
 
 def test_management_handoff_keeps_flagged_access_out_of_dedicated_nginx(monkeypatch, tmp_path):
-    """The Public Services site owns flagged Access sockets during publication."""
+    """The Public Services site owns flagged Access sockets during publication.
+
+    Args:
+        monkeypatch: Fixture used to supply candidate network state.
+        tmp_path: Temporary path for the candidate Network configuration.
+    """
     helper = load_helper_module()
     network_path = tmp_path / "atlaso-network.conf"
     network_path.write_text("candidate\n", encoding="utf-8")
@@ -3431,7 +3442,13 @@ def test_ordinary_settings_preserve_committed_management_listener_scope(monkeypa
 
 
 def test_ordinary_settings_refuses_management_binding_change_without_handoff(monkeypatch, tmp_path, capsys):
-    """A direct Settings apply cannot reuse a stale HTTP-only scope for HTTPS."""
+    """A direct Settings apply cannot reuse a stale HTTP-only scope for HTTPS.
+
+    Args:
+        monkeypatch: Fixture used to isolate host mutation helpers.
+        tmp_path: Temporary path for the staged Settings configuration.
+        capsys: Fixture used to inspect the rejection message.
+    """
     helper = load_helper_module()
     monkeypatch.setattr(helper, "_validate_appliance_settings_config_path", lambda _path: tmp_path / "settings.json")
     monkeypatch.setattr(helper, "_appliance_settings_config_errors", lambda _path: [])
@@ -3732,6 +3749,12 @@ def test_management_handoff_candidate_durability_gates_ack(
         lambda: subprocess.CompletedProcess(["nginx", "-t"], 0, "", ""),
     )
     def observed_addresses(*_args, **kwargs):
+        """Return candidate addresses while recording the selected listener scope.
+
+        Args:
+            *_args: Unused candidate discovery arguments.
+            **kwargs: Candidate discovery options containing Access scope.
+        """
         address_scopes.append(kwargs.get("include_flagged_access"))
         addresses = ["198.51.100.10"]
         if kwargs.get("include_flagged_access") is not False:
