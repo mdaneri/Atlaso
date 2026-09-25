@@ -2759,7 +2759,6 @@ def test_management_handoff_preserves_split_public_tls_on_later_apply(monkeypatc
     helper = load_helper_module()
     management = tmp_path / "management.conf"
     public = tmp_path / "public.conf"
-    candidate = tmp_path / "candidate.conf"
     certificate = tmp_path / "management.crt"
     key = tmp_path / "management.key"
     certificate.write_text("unchanged certificate", encoding="utf-8")
@@ -2784,7 +2783,6 @@ def test_management_handoff_preserves_split_public_tls_on_later_apply(monkeypatc
         "  location /ui/ { proxy_pass http://127.0.0.1:8000; }\n}\n"
     )
     public.write_text(public_text, encoding="utf-8")
-    candidate.write_text(public_text, encoding="utf-8")
     monkeypatch.setattr(helper, "NGINX_MANAGEMENT_SITE_PATH", management)
     monkeypatch.setattr(helper, "NGINX_PUBLIC_SERVICES_SITE_PATH", public)
     monkeypatch.setattr(helper, "_ca_managed_path", lambda value, _field: Path(value))
@@ -2799,10 +2797,9 @@ def test_management_handoff_preserves_split_public_tls_on_later_apply(monkeypatc
         backup = tmp_path / f"{path.name}.snapshot"
         backup.write_bytes(path.read_bytes())
         state["snapshots"].append({"path": str(path), "existed": True, "backup": str(backup)})
-    payload = {"public_services_config_path": str(candidate)}
 
     helper._scope_management_handoff_old_listener(state)
-    helper._management_handoff_validate_public_tls_holdover(state, payload)
+    helper._management_handoff_validate_public_tls_holdover(state)
     holdover = helper._management_handoff_protocol_holdover(state, {"management_upstream_port": 8000})
     assert "listen 192.0.2.10:443 ssl bind;" not in holdover
     assert ("listen 192.0.2.20:443 ssl bind;" in holdover) == dedicated
@@ -2810,13 +2807,19 @@ def test_management_handoff_preserves_split_public_tls_on_later_apply(monkeypatc
         ["192.0.2.10", "192.0.2.20"] if dedicated else ["192.0.2.10"], state, 443, holdover,
     ) == ["192.0.2.10"]
 
-    candidate.write_text(public_text.replace("192.0.2.10", "192.0.2.11"), encoding="utf-8")
-    with pytest.raises(ValueError, match="cannot be preserved"):
-        helper._management_handoff_validate_public_tls_holdover(state, payload)
-    candidate.write_text(public_text, encoding="utf-8")
+    moved_text = public_text.replace("192.0.2.10", "192.0.2.11")
+    helper._management_handoff_validate_public_tls_holdover(state)
+    transitional = helper._management_handoff_public_site_with_holdover(state, moved_text)
+    assert "listen 192.0.2.10:443 ssl default_server;" in transitional
+    assert "listen 192.0.2.11:443 ssl default_server;" in transitional
+    assert helper._management_handoff_public_site_with_holdover(state, public_text).count("server {") == 1
+    removed_text = "# Managed by Atlaso. Local changes may be overwritten.\n"
+    assert "listen 192.0.2.10:443 ssl default_server;" in helper._management_handoff_public_site_with_holdover(
+        state, removed_text,
+    )
     certificate.write_text("rotated certificate", encoding="utf-8")
     with pytest.raises(ValueError, match="identity cannot be preserved"):
-        helper._management_handoff_validate_public_tls_holdover(state, payload)
+        helper._management_handoff_validate_public_tls_holdover(state)
 
 
 def test_management_handoff_syncs_transaction_and_backups_before_marker(monkeypatch, tmp_path):

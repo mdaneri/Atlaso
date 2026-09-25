@@ -7747,12 +7747,13 @@ def _public_services_prod_alias_path(alias: str) -> Path:
     return Path(normalized)
 
 
-def _handle_public_services(action: str, args: list[str]) -> int:
+def _handle_public_services(action: str, args: list[str], *, transitional_text: str | None = None) -> int:
     """Handle public services.
 
     Args:
         action: Action consumed by handle public services.
         args: Parsed command-line options consumed by the operation.
+        transitional_text: Candidate listeners joined with snapshotted old listeners.
     """
     if len(args) != 1:
         print(f"public-services {action} requires exactly one staged nginx config path", file=sys.stderr)
@@ -7780,7 +7781,7 @@ def _handle_public_services(action: str, args: list[str]) -> int:
         print(result.stderr, end="", file=sys.stderr)
         return result.returncode
     if action == "apply":
-        text = config_path.read_text(encoding="utf-8")
+        text = transitional_text if transitional_text is not None else config_path.read_text(encoding="utf-8")
         if "server {" not in text:
             result = _remove_nginx_site(NGINX_PUBLIC_SERVICES_SITE_PATH)
         else:
@@ -26329,19 +26330,53 @@ def _management_handoff_previous_public_tls_addresses(state: dict) -> set[str]:
     return owned
 
 
-def _management_handoff_validate_public_tls_holdover(state: dict, payload: dict) -> None:
-    """Keep an unchanged Public Services TLS site as the old management path."""
+def _management_handoff_validate_public_tls_holdover(state: dict) -> None:
+    """Prove the snapshotted Public Services TLS identity survives candidate CA apply."""
     if not _management_handoff_previous_public_tls_addresses(state):
         return
     previous_site = _management_handoff_snapshot_text(state, NGINX_PUBLIC_SERVICES_SITE_PATH)
-    candidate_site = Path(str(payload["public_services_config_path"])).read_text(encoding="utf-8")
-    if candidate_site != previous_site or NGINX_PUBLIC_SERVICES_SITE_PATH.read_text(encoding="utf-8") != previous_site:
+    if NGINX_PUBLIC_SERVICES_SITE_PATH.read_text(encoding="utf-8") != previous_site:
         raise ValueError("previous Public Services management TLS site cannot be preserved")
     for certificate in re.findall(r"(?m)^\s*ssl_certificate(?:_key)?\s+([^;]+);\s*$", previous_site):
         path = _ca_managed_path(certificate.strip(), "management_https_cert_path")
         backup = _management_handoff_snapshot_backup_path(state, path)
         if not path.is_file() or backup.read_bytes() != path.read_bytes():
             raise ValueError("previous Public Services management TLS identity cannot be preserved")
+
+
+def _management_handoff_public_site_with_holdover(state: dict, candidate_site: str) -> str:
+    """Publish new Public Services sockets while retaining every old site block."""
+    if not _management_handoff_previous_public_tls_addresses(state):
+        return candidate_site
+    previous_site = _management_handoff_snapshot_text(state, NGINX_PUBLIC_SERVICES_SITE_PATH)
+    block_pattern = re.compile(r"(?ms)^server \{.*?^\}")
+
+    def blocks_and_sockets(site: str) -> list[tuple[str, set[str]]]:
+        """Require managed top-level server blocks and collect their exact sockets."""
+        if not site.startswith("# Managed by Atlaso. Local changes may be overwritten.\n"):
+            raise ValueError("Public Services handoff site is not canonical")
+        blocks = list(block_pattern.finditer(site))
+        remainder = block_pattern.sub("", site)
+        if any(line.strip() and not line.lstrip().startswith("#") for line in remainder.splitlines()):
+            raise ValueError("Public Services handoff site is not canonical")
+        parsed: list[tuple[str, set[str]]] = []
+        for match in blocks:
+            sockets = set(re.findall(r"(?m)^  listen ([^ ;]+)(?: [^;]+)?;\s*$", match.group()))
+            if not sockets:
+                raise ValueError("Public Services handoff server has no listener")
+            parsed.append((match.group(), sockets))
+        return parsed
+
+    old_blocks = blocks_and_sockets(previous_site)
+    old_sockets = set().union(*(sockets for _, sockets in old_blocks))
+    additions: list[str] = []
+    for block, sockets in blocks_and_sockets(candidate_site):
+        if sockets.intersection(old_sockets):
+            if not sockets.issubset(old_sockets):
+                raise ValueError("Public Services handoff server mixes old and new sockets")
+            continue
+        additions.append(block)
+    return previous_site.rstrip() + "\n\n" + "\n\n".join(additions) + "\n"
 
 
 def _management_handoff_snapshot_backup_path(state: dict, runtime_path: Path) -> Path:
@@ -27595,7 +27630,7 @@ def _apply_management_handoff(payload: dict) -> int:
         if ca_path and _handle_ca("apply", [ca_path]) != 0:
             raise ValueError("candidate management certificate apply failed")
         failing_layer = "previous Public Services TLS preservation"
-        _management_handoff_validate_public_tls_holdover(state, payload)
+        _management_handoff_validate_public_tls_holdover(state)
         candidate_https = bool(settings_payload.get("management_https_enabled"))
         candidate_public_port = int(
             settings_payload.get(
@@ -27728,7 +27763,15 @@ def _apply_management_handoff(payload: dict) -> int:
         )
         if management_https_result != 0:
             raise ValueError("candidate management nginx apply failed")
-        if _handle_public_services("apply", [str(payload["public_services_config_path"])]) != 0:
+        split_public_tls = bool(_management_handoff_previous_public_tls_addresses(state))
+        transitional_public_site = None
+        if split_public_tls:
+            public_site = Path(str(payload["public_services_config_path"])).read_text(encoding="utf-8")
+            transitional_public_site = _management_handoff_public_site_with_holdover(state, public_site)
+        if _handle_public_services(
+            "apply", [str(payload["public_services_config_path"])],
+            **({"transitional_text": transitional_public_site} if split_public_tls else {}),
+        ) != 0:
             raise ValueError("candidate public-services nginx apply failed")
         if _nginx_test_command().returncode != 0:
             raise ValueError("candidate nginx validation failed")
@@ -27813,6 +27856,8 @@ def _apply_management_handoff(payload: dict) -> int:
             if _handle_firewall("apply", [str(transition_path)]) != 0:
                 raise ValueError("final nftables apply failed while retiring the previous path")
         failing_layer = "verified-listener publication"
+        if split_public_tls and _handle_public_services("apply", [str(payload["public_services_config_path"])]) != 0:
+            raise ValueError("candidate public-services nginx could not retire old listeners")
         management_site_addresses = _management_handoff_addresses(
             Path(str(payload["network_config_path"])),
             address_observation=final_address_observation,
