@@ -10009,7 +10009,11 @@ def _valid_network_interface_name(name: str) -> bool:
 
 
 def _valid_network_mac(value: str) -> bool:
-    """Admit a unicast physical MAC bound to reviewed Network intent."""
+    """Admit a unicast physical MAC bound to reviewed Network intent.
+
+    Args:
+        value: Physical MAC address from the reviewed Network intent.
+    """
     return bool(re.fullmatch(r"(?:[0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}", value)
                 and value.lower() != "00:00:00:00:00:00" and not int(value[:2], 16) & 1)
 
