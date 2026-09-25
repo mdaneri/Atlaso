@@ -3032,6 +3032,42 @@ def test_management_handoff_covers_every_live_global_address_on_static_link(monk
         helper._management_handoff_addresses(network_path, address_observation=observations[1])
 
 
+def test_management_handoff_keeps_flagged_access_out_of_dedicated_nginx(monkeypatch, tmp_path):
+    """The Public Services site owns flagged Access sockets during publication."""
+    helper = load_helper_module()
+    network_path = tmp_path / "atlaso-network.conf"
+    network_path.write_text("candidate\n", encoding="utf-8")
+    dedicated = {
+        "name": "eth0", "role": "management", "mode": "access", "admin_state": "up",
+        "ipv4_method": "static", "ip_cidr": "192.0.2.10/24", "ipv6_enabled": "false",
+    }
+    flagged = {
+        "name": "eth1", "role": "access", "mode": "access", "admin_state": "up",
+        "access_management_ui_enabled": "true", "ipv4_method": "static",
+        "ip_cidr": "198.51.100.10/24", "ipv6_enabled": "false",
+    }
+    monkeypatch.setattr(helper, "_parse_network_config", lambda _path: ([dedicated, flagged], [], []))
+    observed = {
+        "complete": True,
+        "links": [
+            {"name": row["name"], "configured": True, "address_inventory_complete": True,
+             "addresses": [{"address": row["ip_cidr"].split("/", 1)[0], "scope": "global", "state": "assigned"}]}
+            for row in (dedicated, flagged)
+        ],
+    }
+
+    assert helper._management_handoff_addresses(network_path, address_observation=observed) == [
+        "192.0.2.10", "198.51.100.10",
+    ]
+    assert helper._management_handoff_addresses(
+        network_path, address_observation=observed, include_flagged_access=False,
+    ) == ["192.0.2.10"]
+    monkeypatch.setattr(helper, "_parse_network_config", lambda _path: ([flagged], [], []))
+    assert helper._management_handoff_addresses(
+        network_path, address_observation=observed, include_flagged_access=False,
+    ) == []
+
+
 @pytest.mark.parametrize(
     ("row", "family", "address"),
     [

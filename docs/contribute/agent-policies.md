@@ -1884,7 +1884,9 @@ preserved with their affected subsystem below. Keep new requirements at their to
   service-owned.
 - Public Services apply stages `/var/lib/atlaso/apply/public-services/atlaso-public-services.conf` as the `atlaso`
   service user before invoking the root helper. The helper installs `/etc/atlaso/nginx/sites.d/public-services.conf`,
-  reloads nginx, and keeps management nginx config separate.
+  reloads nginx, and keeps management nginx config separate. During a protected handoff, the Public Services site owns
+  flagged Access management sockets; the dedicated management site must publish only dedicated management addresses
+  and loopback listeners so final nginx publication does not duplicate an Access socket.
 - The generated public-services nginx config should create HTTP server blocks only for ESXi PXE service IPs, redirect
   `/pxe/esxi` to `/pxe/esxi/`, proxy dynamic PXE requests to the app, serve PXE static content through a narrow nginx
   alias, and avoid exposing public portal, CA, request, depot, management, broad depot roots, registry, or unrelated

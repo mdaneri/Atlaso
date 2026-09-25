@@ -25939,6 +25939,7 @@ def _management_handoff_addresses(
     address_observation: dict | None = None,
     discovery_attempts: int = 45,
     exclude_previous_holdovers: bool = False,
+    include_flagged_access: bool = True,
 ) -> list[str]:
     """Return configured and all assigned global candidate management addresses.
 
@@ -25949,6 +25950,7 @@ def _management_handoff_addresses(
         address_observation: Complete live link readback, including secondary assigned addresses.
         discovery_attempts: Bounded runtime-address discovery attempts.
         exclude_previous_holdovers: Exclude old-only addresses while their old TLS listener is retained.
+        include_flagged_access: Include Access listeners served by the Public Services nginx site.
 
     Returns:
         The candidate listener address list.
@@ -25957,16 +25959,16 @@ def _management_handoff_addresses(
     rows = [
         row for row in physical
         if row.get("role") == "management"
-        or (
+        or (include_flagged_access and (
             row.get("role") == "access"
             and row.get("mode") == "access"
             and row.get("admin_state") == "up"
             and row.get("access_management_ui_enabled", "false").lower() == "true"
-        )
+        ))
     ]
     rows.extend(
         row for row in vlans
-        if row.get("role") == "access"
+        if include_flagged_access and row.get("role") == "access"
         and row.get("access_management_ui_enabled", "false").lower() == "true"
     )
     addresses: list[str] = []
@@ -27617,8 +27619,16 @@ def _apply_management_handoff(payload: dict) -> int:
         )
         failing_layer = "certificate prerequisite"
         candidate_ca = _management_handoff_candidate_ca(public_certificate, candidate_addresses)
+        dedicated_addresses = _management_handoff_addresses(
+            Path(str(payload["network_config_path"])),
+            address_observation=address_observation,
+            previous_addresses=set(state["previous_management_addresses"]),
+            previous_dynamic_families=previous_dynamic_families,
+            exclude_previous_holdovers=True,
+            include_flagged_access=False,
+        )
         initial_listener_addresses = _management_handoff_initial_listener_addresses(
-            candidate_addresses, state, candidate_public_port, protocol_holdover,
+            dedicated_addresses, state, candidate_public_port, protocol_holdover,
         )
         initial_http_addresses = None
         if protocol_holdover and not state["previous_https_enabled"] and candidate_https:
@@ -27720,10 +27730,17 @@ def _apply_management_handoff(payload: dict) -> int:
             if _handle_firewall("apply", [str(transition_path)]) != 0:
                 raise ValueError("final nftables apply failed while retiring the previous path")
         failing_layer = "verified-listener publication"
+        dedicated_addresses = _management_handoff_addresses(
+            Path(str(payload["network_config_path"])),
+            address_observation=final_address_observation,
+            previous_addresses=set(state["previous_management_addresses"]),
+            previous_dynamic_families=previous_dynamic_families,
+            include_flagged_access=False,
+        )
         management_https_result, _restart_delay_seconds = _configure_atlaso_management_https(
             settings_payload,
             verify_front_door=False,
-            listen_addresses=[*candidate_addresses, "127.0.0.1", "::1"],
+            listen_addresses=[*dedicated_addresses, "127.0.0.1", "::1"],
         )
         if management_https_result != 0:
             raise ValueError("candidate nginx could not publish verified final listeners")
