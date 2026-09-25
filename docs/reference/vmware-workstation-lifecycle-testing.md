@@ -1000,6 +1000,12 @@ The concealed `ATLASO_DEVELOPMENT_ROOT_CA_PRIVATE_KEY` value accepts the origina
 base64 of the complete PEM text (including the BEGIN and END lines). Encode the original PEM bytes without changing
 line endings or encoding only the DER body. The bounded secret child decodes the value and validates the PEM against
 the checked-in certificate before VM mutation; the encoded value remains secret material.
+The development-only root CA was rotated after its former matching private key became unavailable. Its public
+certificate is checked in at `image/vmware-workstation/development-trust/atlaso-development-root-ca.pem`; the matching
+private key is concealed only in the exact `Atlaso` 1Password Environment. Keep certificate and Environment changes
+coordinated: the wrapper rejects a mismatched pair before creating a VM. Newly created normal test VMs use the current
+root; existing test VMs retain the root and leaf certificates they imported at their own first boot. Recreate a test VM
+when it must use the current development root, and verify the new public fingerprint before trusting it on Windows.
 The cleanup marker uses a non-secret identity stored in the VMX, not the VMX file ID alone, because Workstation may
 replace the VMX during power-on. The wrapper exposes the marker path as recovery state only after its write-through
 rename succeeds. If publication fails before a credential or signer child starts, it preserves the original actionable
