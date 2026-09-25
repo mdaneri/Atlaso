@@ -499,6 +499,7 @@ ROUTE_DOMAIN_CONFIG_PATH = Path("/etc/atlaso/route-domains.json")
 ROUTE_DOMAIN_SERVICE_PATH = Path("/etc/systemd/system/atlaso-route-domains.service")
 
 NETWORKD_MANAGED_PREFIX = "10-atlaso-"
+NETWORK_IDENTITY_PIN_MARKER = "# Network identity pins: reviewed-mac-v1."
 MANAGEMENT_RESOLVER_MODE_PREFIX = "# Atlaso management resolver mode="
 NETWORKD_DEFAULT_APPLIANCE_FILES = {
     "50-static-en.network",
@@ -10007,6 +10008,12 @@ def _valid_network_interface_name(name: str) -> bool:
     return bool(name and NETWORK_INTERFACE_NAME_PATTERN.fullmatch(name) and "/" not in name)
 
 
+def _valid_network_mac(value: str) -> bool:
+    """Admit a unicast physical MAC bound to reviewed Network intent."""
+    return bool(re.fullmatch(r"(?:[0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}", value)
+                and value.lower() != "00:00:00:00:00:00" and not int(value[:2], 16) & 1)
+
+
 def _networkd_managed_filename(name: str, suffix: str) -> str:
     """Perform networkd managed filename.
 
@@ -10441,6 +10448,14 @@ def _network_config_errors(path: Path) -> list[str]:
     """
     physical_interfaces, vlan_interfaces, removed_vlan_interfaces = _parse_network_config(path)
     errors: list[str] = []
+    identity_pinned = NETWORK_IDENTITY_PIN_MARKER in path.read_text(encoding="utf-8").splitlines()
+    if identity_pinned:
+        for row in physical_interfaces:
+            if not _valid_network_mac(row.get("mac", "")):
+                errors.append(f"Interface {row.get('name') or '<missing>'} reviewed MAC is invalid or missing.")
+        for row in vlan_interfaces:
+            if not _valid_network_mac(row.get("parent_mac", "")):
+                errors.append(f"VLAN {row.get('name') or '<missing>'} reviewed parent MAC is invalid or missing.")
     source_interfaces = [
         row for row in [*physical_interfaces, *vlan_interfaces]
         if row.get("role") != "unused" and row.get("mode") != "trunk" and row.get("admin_state") != "down"
@@ -10990,6 +11005,7 @@ def _install_route_domain_intent(
         held_addresses: Exact pre-mutation old-source bindings, excluding new candidate addresses.
     """
     physical, vlans, _removed = _parse_network_config(path)
+    identity_pinned = NETWORK_IDENTITY_PIN_MARKER in path.read_text(encoding="utf-8").splitlines()
     result = _network_observation_command(["ip", "-j", "address", "show"])
     if result.returncode:
         raise ValueError("routing-domain interface identity observation failed")
@@ -11039,6 +11055,16 @@ def _install_route_domain_intent(
             raise ValueError("candidate routing-domain interface is missing")
         if not isinstance(live.get("address"), str) or not live["address"]:
             raise ValueError("candidate routing-domain interface identity is malformed")
+        if identity_pinned:
+            if row in physical:
+                expected_mac = row.get("mac", "")
+                actual_mac = live["address"]
+            else:
+                expected_mac = row.get("parent_mac", "")
+                parent = observed.get(row.get("parent", ""))
+                actual_mac = parent.get("address", "") if parent is not None else ""
+            if not _valid_network_mac(expected_mac) or actual_mac.lower() != expected_mac.lower():
+                raise ValueError("candidate routing-domain interface differs from reviewed MAC identity")
         intent["interfaces"].append({"name": name, "mac": live["address"],
                                      "management_ui": row.get("role") == "access" and row.get("access_management_ui_enabled", "false").lower() == "true",
                                      "table": MANAGEMENT_ROUTE_TABLE_ID if row.get("role") == "management" else LAB_ROUTE_TABLE_ID})

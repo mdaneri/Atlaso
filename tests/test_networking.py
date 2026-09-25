@@ -707,6 +707,8 @@ def test_render_network_config_includes_physical_roles_for_networkd_apply():
     )
 
     assert "interface=eth0" in config
+    assert "# Network identity pins: reviewed-mac-v1." in config
+    assert "  mac=00:15:5d:aa:bb:01" in config
     assert "  role=management" in config
     assert "  ipv4_method=static" in config
 

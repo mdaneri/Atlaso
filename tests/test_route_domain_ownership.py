@@ -219,6 +219,59 @@ def test_malformed_address_inventory_raises_recoverable_network_error(tmp_path, 
     assert not intent.exists()
 
 
+@pytest.mark.parametrize("vlan", [False, True])
+def test_reviewed_network_mac_rejects_replaced_nic_before_intent_publication(tmp_path, monkeypatch, vlan):
+    """A same-name replacement cannot inherit the reviewed routing domain.
+
+    Args:
+        tmp_path: Isolated staged config and intent paths.
+        monkeypatch: Native address observation replacement.
+        vlan: Whether the replaced physical NIC is a VLAN parent.
+    """
+    helper = load_helper_module()
+    config = tmp_path / "network.conf"
+    config_text = (
+        "# Network identity pins: reviewed-mac-v1.\n"
+        "[physical_interfaces]\ninterface=eth0\n  mac=02:00:00:00:00:01\n"
+        + ("  role=access\n  mode=trunk\n" if vlan else "  role=management\n  mode=access\n")
+    )
+    if vlan:
+        config_text += ("[vlan_interfaces]\nvlan=eth0.20\n  parent=eth0\n"
+                        "  parent_mac=02:00:00:00:00:01\n  vlan_id=20\n  role=access\n")
+    config.write_text(config_text, encoding="utf-8")
+    intent = tmp_path / "route-domains.json"
+    monkeypatch.setattr(helper, "ROUTE_DOMAIN_CONFIG_PATH", intent)
+    monkeypatch.setattr(helper, "_read_existing_management_network_values", lambda: {"Name": []})
+    inventory = [{"ifname": "eth0", "address": "02:00:00:00:00:03", "addr_info": []}]
+    if vlan:
+        inventory.append({"ifname": "eth0.20", "address": "02:00:00:00:00:03", "addr_info": []})
+    monkeypatch.setattr(helper, "_network_observation_command", lambda command:
+                        subprocess.CompletedProcess(command, 0, json.dumps(inventory), ""))
+
+    with pytest.raises(ValueError, match="differs from reviewed MAC identity"):
+        helper._install_route_domain_intent(config)
+    assert not intent.exists()
+
+
+def test_reviewed_network_requires_complete_mac_pins(tmp_path):
+    """A newly rendered Network candidate cannot omit its physical identity.
+
+    Args:
+        tmp_path: Isolated staged Network candidate.
+    """
+    helper = load_helper_module()
+    config = tmp_path / "network.conf"
+    config.write_text(
+        "# Network identity pins: reviewed-mac-v1.\n"
+        "[physical_interfaces]\ninterface=eth0\n  role=management\n"
+        "  mode=access\n  ip_cidr=192.0.2.10/24\n",
+        encoding="utf-8",
+    )
+
+    assert any("reviewed MAC is invalid or missing" in error
+               for error in helper._network_config_errors(config))
+
+
 @pytest.mark.parametrize("protected", [False, True])
 def test_source_conflict_precedes_transaction_artifacts(tmp_path, monkeypatch, protected):
     """A conflicting source window never publishes a rollback marker or backup.
