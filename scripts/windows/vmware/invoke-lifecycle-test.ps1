@@ -60,6 +60,16 @@ IPv4 CIDR used by the simulated WAN scenario.
 Run only the routing and WAN lifecycle scenario.
 .PARAMETER OidcOnly
 Run only the OIDC lifecycle scenario.
+.PARAMETER CertificateOnly
+Prepare a retained appliance clone for the certificate handoff acceptance scenario.
+.PARAMETER CertificateDhcpPeer
+Prepare an owned private DHCP peer for certificate management handoff.
+.PARAMETER CertificatePeerCidr
+Private peer address and prefix for the certificate management segment.
+.PARAMETER CertificateLeaseAddress
+Exact reserved DHCP address for the appliance management MAC.
+.PARAMETER CertificatePeerPublicKeyPath
+Existing Ed25519 public key whose private half is loaded in the local SSH agent.
 .PARAMETER FullEsxiPxeInstall
 Include the full ESXi PXE installation scenario.
 .PARAMETER PxeInstallerIsoPath
@@ -205,6 +215,23 @@ param(
 
     [Parameter(ParameterSetName = 'Run')]
     [Parameter(ParameterSetName = 'Plan')]
+    [switch]$CertificateOnly,
+
+    [Parameter(ParameterSetName = 'Run')]
+    [Parameter(ParameterSetName = 'Plan')]
+    [switch]$CertificateDhcpPeer,
+
+    [Parameter(ParameterSetName = 'Run')]
+    [Parameter(ParameterSetName = 'Plan')]
+    [string]$CertificatePeerCidr = '192.168.77.1/24',
+
+    [Parameter(ParameterSetName = 'Run')]
+    [Parameter(ParameterSetName = 'Plan')]
+    [string]$CertificateLeaseAddress = '192.168.77.10',
+    [string]$CertificatePeerPublicKeyPath = '',
+
+    [Parameter(ParameterSetName = 'Run')]
+    [Parameter(ParameterSetName = 'Plan')]
     [switch]$FullEsxiPxeInstall,
 
     [Parameter(ParameterSetName = 'Run')]
@@ -242,14 +269,15 @@ $repoRoot = Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..\..')
 $applianceIpWasPassed = $PSBoundParameters.ContainsKey('ApplianceIPAddress')
 Import-Module (Join-Path $PSScriptRoot 'Atlaso.VmwareTestIdentity.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'Atlaso.OidcSiteNetwork.psm1') -Force
+. (Join-Path $PSScriptRoot 'Atlaso.LifecycleSecretStaging.ps1')
 if ($OidcOnly -and $SiteANetwork.StartsWith('lan:', [StringComparison]::OrdinalIgnoreCase)) {
     throw '-OidcOnly requires a host-reachable SiteANetwork; VMware LAN segments cannot carry the host-side verified OIDC probe.'
 }
 if ($OidcOnly -and $SiteInterface -ne 'eth1') {
     throw '-OidcOnly requires SiteInterface eth1 because its Site A vmnet is attached to the appliance second adapter.'
 }
-if ($SignedReleaseRepositoryUrl -and ($OidcOnly -or $RoutingWanOnly)) {
-    throw '-SignedReleaseRepositoryUrl requires the full lifecycle; it cannot be combined with -OidcOnly or -RoutingWanOnly.'
+if ($SignedReleaseRepositoryUrl -and ($OidcOnly -or $RoutingWanOnly -or $CertificateOnly)) {
+    throw '-SignedReleaseRepositoryUrl requires the full lifecycle; it cannot be combined with -OidcOnly, -RoutingWanOnly, or -CertificateOnly.'
 }
 if ($SignedReleaseRepositoryUrl) {
     [Uri]$fixtureUri = $null
@@ -418,15 +446,27 @@ if (-not $PlanOnly) {
     if ($null -eq $SshPassword) {
         $SshPassword = $AdminPassword
     }
-    if (-not ($OidcOnly -or $RoutingWanOnly) -and $null -eq $VcfBackupPassword) {
+    if (-not ($OidcOnly -or $RoutingWanOnly -or $CertificateOnly) -and $null -eq $VcfBackupPassword) {
         $VcfBackupPassword = Read-Host -Prompt 'VCF Backup lifecycle password' -AsSecureString
     }
     if ($FullEsxiPxeInstall -and $null -eq $EsxiPassword) {
         $EsxiPassword = Read-Host -Prompt 'ESXi root password for lifecycle probing' -AsSecureString
     }
 }
-if (($RoutingWanOnly -and $FullEsxiPxeInstall) -or ($OidcOnly -and ($RoutingWanOnly -or $FullEsxiPxeInstall))) {
-    throw "-OidcOnly, -RoutingWanOnly, and -FullEsxiPxeInstall are mutually exclusive."
+if (@(@($OidcOnly, $RoutingWanOnly, $CertificateOnly, $FullEsxiPxeInstall) | Where-Object { $_ }).Count -gt 1) {
+    throw "-OidcOnly, -RoutingWanOnly, -CertificateOnly, and -FullEsxiPxeInstall are mutually exclusive."
+}
+if ($CertificateOnly -and -not $KeepVms -and -not $PlanOnly) {
+    throw '-CertificateOnly requires -KeepVms so the retained appliance can undergo native acceptance.'
+}
+if ($CertificateDhcpPeer -and ($PullRequestNumber -ne 871 -or -not $CertificateOnly -or -not $SiteANetwork.StartsWith('lan:', [StringComparison]::OrdinalIgnoreCase) -or $SiteANetwork.Length -le 4 -or $SiteInterface -ne 'eth0')) {
+    throw '-CertificateDhcpPeer requires PR 871, -CertificateOnly, a named private lan: SiteANetwork, and SiteInterface eth0.'
+}
+if ($CertificateDhcpPeer -and -not $PlanOnly -and -not $PSBoundParameters.ContainsKey('ClientVmdkPath')) {
+    throw '-CertificateDhcpPeer requires an explicit, provenance-admitted -ClientVmdkPath.'
+}
+if ($CertificateDhcpPeer -and -not $PlanOnly -and -not $CertificatePeerPublicKeyPath) {
+    throw '-CertificateDhcpPeer requires -CertificatePeerPublicKeyPath for passwordless bootstrap.'
 }
 if (-not $ApplianceVmxPath) {
     if ($PlanOnly) {
@@ -446,7 +486,7 @@ if (-not $applianceIpWasPassed) {
 }
 if (-not $PlanOnly -and $PSCmdlet.ParameterSetName -eq 'Run') {
     $usesLanSegments = @($SiteANetwork, $SiteBNetwork, $TrunkNetwork) | Where-Object { $_.StartsWith('lan:') }
-    if (-not $usesLanSegments) {
+    if (-not $usesLanSegments -and -not $CertificateOnly) {
         $lifecycleNetworkPlan = Get-ManagementNetworkPlan -NetworkName $ManagementNetwork -Vmrun $VmrunPath -BridgeAlias $BridgedInterfaceAlias -AllLifecycleNetworks
         if ($lifecycleNetworkPlan.missing_networks.Count -gt 0) {
             throw "Missing VMware Workstation lifecycle networks: $($lifecycleNetworkPlan.missing_networks -join ', '). Create them in Virtual Network Editor, pass lan:<segment-name> for isolated Workstation LAN segments, or run -PrepareNetworksOnly after configuring Workstation host-only vmnets."
@@ -455,20 +495,21 @@ if (-not $PlanOnly -and $PSCmdlet.ParameterSetName -eq 'Run') {
 }
 $effectiveApplianceUrl = if ($ApplianceUrl) { $ApplianceUrl } elseif ($ApplianceIPAddress) { "https://${ApplianceIPAddress}" } else { "" }
 
-if (-not $SkipClientPrepare -and -not $PlanOnly) {
+if (-not $SkipClientPrepare -and -not $CertificateOnly -and -not $PlanOnly) {
     & (Join-Path $PSScriptRoot 'prepare-tiny-linux-client.ps1')
     if (-not $?) {
         throw "Tiny Linux VMware client preparation failed."
     }
 }
 
-$effectiveSkipBackupRestoreTest = [bool]($SkipBackupRestoreTest -or $RoutingWanOnly -or $OidcOnly)
+$effectiveSkipBackupRestoreTest = [bool]($SkipBackupRestoreTest -or $RoutingWanOnly -or $OidcOnly -or $CertificateOnly)
 $powerShell7Path = Resolve-PowerShell7Path
 
 $secretBundlePath = ''
 try {
     if (-not $PlanOnly) {
-        $secretBundlePath = Join-Path ([System.IO.Path]::GetTempPath()) "atlaso-vmware-lifecycle-$([guid]::NewGuid().ToString('N')).clixml"
+        $secretBundleRoot = Initialize-AtlasoLifecycleSecretBundleRoot -RepositoryRoot $repoRoot
+        $secretBundlePath = Join-Path $secretBundleRoot "atlaso-vmware-lifecycle-$([guid]::NewGuid().ToString('N')).clixml"
         # Enter the cleanup scope before serialization because Export-Clixml
         # can leave a partial current-user-decryptable file when it fails.
         [pscustomobject]@{
@@ -476,7 +517,8 @@ try {
             SshPassword       = $SshPassword
             VcfBackupPassword = $VcfBackupPassword
             EsxiPassword      = $EsxiPassword
-        } | Export-Clixml -LiteralPath $secretBundlePath -Force
+        } | Export-Clixml -LiteralPath $secretBundlePath -NoClobber
+        Protect-AtlasoLifecycleSecretBundleFile -Path $secretBundlePath
     }
 
 $arguments = @(
@@ -513,6 +555,12 @@ if (-not $KeepVms) { $arguments += '-CleanupCreatedLab' }
 if ($AllowDryRunApply) { $arguments += '-AllowDryRunApply' }
 if ($effectiveSkipBackupRestoreTest) { $arguments += '-SkipBackupRestoreTest' }
 if ($OidcOnly) { $arguments += '-OidcOnly' }
+if ($CertificateOnly) { $arguments += '-CertificateOnly' }
+if ($CertificateDhcpPeer) {
+    $arguments += @('-CertificateDhcpPeer', '-CertificatePeerCidr', $CertificatePeerCidr,
+        '-CertificateLeaseAddress', $CertificateLeaseAddress)
+    if ($CertificatePeerPublicKeyPath) { $arguments += @('-CertificatePeerPublicKeyPath', $CertificatePeerPublicKeyPath) }
+}
 if ($RoutingWanOnly) { $arguments += '-RoutingWanOnly' }
 if ($FullEsxiPxeInstall) { $arguments += '-FullEsxiPxeInstall' }
 if ($PxeInstallerIsoPath) { $arguments += @('-PxeInstallerIsoPath', $PxeInstallerIsoPath) }

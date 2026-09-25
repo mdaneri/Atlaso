@@ -1996,6 +1996,47 @@ function New-AtlasoWorkstationOvfEnvironment {
 
 <#
 .SYNOPSIS
+Decode the complete development root PEM inside the bounded secret child.
+
+.PARAMETER Value
+Concealed Environment value containing PEM or canonical base64 of its complete UTF-8 text.
+#>
+function ConvertFrom-AtlasoDevelopmentRootCaEnvironmentValue {
+    param([Parameter(Mandatory = $true)][string]$Value)
+
+    if ($Value.StartsWith('-----BEGIN ', [StringComparison]::Ordinal)) {
+        return $Value
+    }
+    # Environment editors may flatten multiline text. The encoded form must
+    # contain the complete PEM, not only its DER body or a secret reference.
+    if ($Value.Length -gt 21848 -or $Value -cnotmatch '\A(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?\z') {
+        throw 'The Atlaso development root key must be one PEM or canonical base64 of its complete PEM.'
+    }
+    $decodedBytes = $null
+    try {
+        $decodedBytes = [Convert]::FromBase64String($Value)
+        if ([Convert]::ToBase64String($decodedBytes) -cne $Value) {
+            throw 'Non-canonical encoding'
+        }
+        $strictUtf8 = [System.Text.UTF8Encoding]::new($false, $true)
+        $pem = $strictUtf8.GetString($decodedBytes)
+        if ($pem.Length -gt 16384 -or -not $pem.StartsWith('-----BEGIN ', [StringComparison]::Ordinal)) {
+            throw 'Not a bounded PEM'
+        }
+        return $pem
+    }
+    catch {
+        throw 'The Atlaso development root key must be one PEM or canonical base64 of its complete PEM.'
+    }
+    finally {
+        if ($null -ne $decodedBytes) {
+            [System.Security.Cryptography.CryptographicOperations]::ZeroMemory($decodedBytes)
+        }
+    }
+}
+
+<#
+.SYNOPSIS
 Validate the checked-in development root certificate and matching private key.
 
 .DESCRIPTION

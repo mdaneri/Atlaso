@@ -75,6 +75,13 @@ product and release names remain PR-independent. Before a pull request exists, t
 normal test-VM modes derive guarded identities from the clean source commit; protected release paths reject local/test
 provenance, and acceptance evidence remains PR-numbered. See the
 [VMware Workstation lifecycle testing guide](docs/reference/vmware-workstation-lifecycle-testing.md).
+Certificate-only handoff testing on a retained clone requires an independently owned private management segment,
+receipt-bound address control, pinned peer and appliance identities, and CA-verified HTTPS before any native address
+change. A discovered DHCP address or successful clone deployment alone is not acceptance evidence; the
+[lifecycle certificate handoff procedure](docs/reference/vmware-workstation-lifecycle-testing.md) records the required
+readbacks and restoration.
+The DHCP peer seed contains an SSH public key and disables password login; the selected key must already be loaded
+in the local SSH agent before the peer VM is created.
 
 Password-backed Windows build and test helpers require standard GIL-enabled x64 CPython 3.14. Until 1Password ships
 an eligible official wheel, Atlaso verifies one immutable, attested compatibility release from the public

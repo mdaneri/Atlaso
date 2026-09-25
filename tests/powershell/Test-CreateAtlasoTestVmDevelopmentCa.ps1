@@ -16,6 +16,46 @@ Import-Module (
 ) -Force
 . (Join-Path $RepositoryRoot 'scripts\windows\vmware\Atlaso.WorkstationFirstBoot.ps1')
 
+# The encoded Environment value must contain the entire PEM, and all decode
+# failures must remain fixed diagnostics inside the bounded secret child.
+$syntheticPem = "-----BEGIN PRIVATE KEY-----`nAQID`n-----END PRIVATE KEY-----`n"
+$syntheticEncoded = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($syntheticPem))
+if ((ConvertFrom-AtlasoDevelopmentRootCaEnvironmentValue -Value $syntheticPem) -cne $syntheticPem -or
+    (ConvertFrom-AtlasoDevelopmentRootCaEnvironmentValue -Value $syntheticEncoded) -cne $syntheticPem) {
+    throw 'Raw and encoded complete PEM must decode identically.'
+}
+foreach ($invalidEncoded in @('AQID', ($syntheticEncoded + "`n"), $syntheticEncoded.ToLowerInvariant(), '////', ('A' * 21849))) {
+    $rejected = $false
+    try {
+        $null = ConvertFrom-AtlasoDevelopmentRootCaEnvironmentValue -Value $invalidEncoded
+    }
+    catch {
+        $rejected = $true
+        if ($_.Exception.Message.Contains($invalidEncoded, [StringComparison]::Ordinal)) {
+            throw 'Decoder failure echoed its input.'
+        }
+    }
+    if (-not $rejected) {
+        throw 'Malformed or incomplete encoded PEM was accepted.'
+    }
+}
+$pemEnvelope = "-----BEGIN PRIVATE KEY-----`n`n-----END PRIVATE KEY-----"
+$oversizePem = "-----BEGIN PRIVATE KEY-----`n$($('A' * (16385 - $pemEnvelope.Length)))`n-----END PRIVATE KEY-----"
+$oversizeEncoded = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($oversizePem))
+if ($oversizeEncoded.Length -gt 21848) {
+    throw 'The decoded-size test did not reach the intended bound.'
+}
+$oversizeRejected = $false
+try {
+    $null = ConvertFrom-AtlasoDevelopmentRootCaEnvironmentValue -Value $oversizeEncoded
+}
+catch {
+    $oversizeRejected = $true
+}
+if (-not $oversizeRejected) {
+    throw 'Oversize decoded PEM was accepted.'
+}
+
 <#
 .SYNOPSIS
 Assert that one test action terminates.
