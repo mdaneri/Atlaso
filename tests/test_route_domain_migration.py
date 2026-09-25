@@ -428,10 +428,10 @@ def test_ordinary_network_seeds_only_existing_management_interface(helper, monke
     config = tmp_path / "network.conf"
     config.write_text(network_config_text(), encoding="utf-8")
     monkeypatch.setattr(helper, "_read_existing_management_network_values",
-                        lambda: {"Name": ["eth0"]})
+                        lambda _names: {"Name": ["eth0"]})
     assert helper._ordinary_network_old_management_bindings(config) == [{"name": "eth0", "table": 100}]
     monkeypatch.setattr(helper, "_read_existing_management_network_values",
-                        lambda: {"Name": ["eth2"]})
+                        lambda _names: {"Name": ["eth2"]})
     assert helper._ordinary_network_old_management_bindings(config) == []
 
 
@@ -447,7 +447,30 @@ def test_ordinary_network_seeds_existing_flagged_access_listener(helper, monkeyp
     config.write_text(network_config_text(eth2_mode="access", include_vlan=False).replace(
         "  role=access\n  mode=access", "  role=access\n  access_management_ui_enabled=true\n  mode=access"),
         encoding="utf-8")
-    monkeypatch.setattr(helper, "_read_existing_management_network_values", lambda: {"Name": ["eth2"]})
+    monkeypatch.setattr(helper, "_read_existing_management_network_values", lambda _names: {"Name": ["eth2"]})
+
+    assert helper._ordinary_network_old_management_bindings(config) == [{"name": "eth2", "table": 200}]
+
+
+def test_ordinary_network_discovers_applied_flagged_listener_file(helper, monkeypatch, tmp_path):
+    """The production reader sees a flagged-only listener before enabling the guard.
+
+    Args:
+        helper: Loaded appliance helper module.
+        monkeypatch: Isolated installed networkd file paths.
+        tmp_path: Disposable candidate and applied networkd files.
+    """
+    config = tmp_path / "network.conf"
+    config.write_text(network_config_text(eth2_mode="access", include_vlan=False).replace(
+        "  role=access\n  mode=access", "  role=access\n  access_management_ui_enabled=true\n  mode=access"),
+        encoding="utf-8")
+    networkd = tmp_path / "networkd"
+    networkd.mkdir()
+    monkeypatch.setattr(helper, "NETWORKD_CONFIG_DIR", networkd)
+    monkeypatch.setattr(helper, "NETWORKD_MGMT_CONFIG_PATH", networkd / "00-atlaso-mgmt.network")
+    (networkd / "10-atlaso-eth2.network").write_text(
+        "[Match]\nName=eth2\n\n[Network]\n# Atlaso management resolver mode=dhcp\n",
+        encoding="utf-8")
 
     assert helper._ordinary_network_old_management_bindings(config) == [{"name": "eth2", "table": 200}]
 

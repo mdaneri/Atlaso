@@ -10782,8 +10782,14 @@ def _ordinary_network_old_management_bindings(path: Path) -> list[dict]:
     Args:
         path: Validated candidate Network configuration.
     """
-    old_names = set(_read_existing_management_network_values().get("Name", []))
     physical, vlans, _removed = _parse_network_config(path)
+    candidate_listeners = [
+        row["name"] for row in [*physical, *vlans]
+        if row.get("role") == "management"
+        or (row.get("role") == "access"
+            and row.get("access_management_ui_enabled", "false").strip().lower() == "true")
+    ]
+    old_names = set(_read_existing_management_network_values(candidate_listeners).get("Name", []))
     bindings = []
     for row in [*physical, *vlans]:
         if row.get("name") not in old_names:
