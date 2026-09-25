@@ -7105,12 +7105,14 @@ def _appliance_settings_config_errors(
     path: Path,
     *,
     staged_ca_path: Path | None = None,
+    pending_dhcp_management_interface: str = "",
 ) -> list[str]:
     """Perform appliance settings config errors.
 
     Args:
         path: Filesystem path read, validated, or updated by the operation.
         staged_ca_path: Bundled CA payload that will install management TLS material.
+        pending_dhcp_management_interface: Reviewed handoff DHCP listener awaiting its lease.
     """
     errors: list[str] = []
     try:
@@ -7150,9 +7152,14 @@ def _appliance_settings_config_errors(
     if not _valid_network_interface_name(management_interface):
         errors.append("management_interface must be a valid interface name.")
     management_ip = str(payload.get("management_ip") or "").strip()
-    if not management_ip:
+    pending_dhcp = bool(
+        not management_ip
+        and pending_dhcp_management_interface
+        and management_interface == pending_dhcp_management_interface
+    )
+    if not management_ip and not pending_dhcp:
         errors.append("management_ip is required.")
-    else:
+    elif management_ip:
         try:
             ip_interface(f"{management_ip}/32" if ":" not in management_ip else f"{management_ip}/128")
         except ValueError:
@@ -7203,7 +7210,7 @@ def _appliance_settings_config_errors(
             errors.append("web terminal requires management HTTPS.")
         if management_interface not in terminal_interfaces:
             errors.append("web terminal interfaces must include the management interface.")
-        if management_ip not in terminal_addresses:
+        if not pending_dhcp and management_ip not in terminal_addresses:
             errors.append("web terminal addresses must include the management IP.")
 
     if bool(payload.get("management_https_enabled")):
@@ -26397,6 +26404,69 @@ def _load_management_handoff_manifest(path: Path) -> dict:
     return payload
 
 
+def _management_handoff_pending_dhcp_interface(payload: dict) -> str:
+    """Identify only a reviewed, address-pending DHCP management listener.
+
+    Args:
+        payload: Validated handoff manifest with staged Network and Settings files.
+    """
+    settings = _load_appliance_settings_config(Path(payload["appliance_settings_config_path"]))
+    if str(settings.get("management_ip") or "").strip():
+        return ""
+    name = str(settings.get("management_interface") or "")
+    if not _valid_network_interface_name(name):
+        return ""
+    network_path = Path(payload["network_config_path"])
+    if not network_path.is_file():
+        return ""
+    physical, _vlans, _removed = _parse_network_config(network_path)
+    matches = [row for row in physical if row.get("name") == name]
+    if len(matches) != 1:
+        return ""
+    row = matches[0]
+    if row.get("role") != "management" or row.get("admin_state", "up") != "up":
+        return ""
+    return name if row.get("ipv4_method") == "dhcp" and not row.get("ip_cidr") else ""
+
+
+def _management_handoff_resolve_pending_dhcp(
+    settings: dict, interface: str, observation: dict,
+) -> None:
+    """Bind a pending listener to one native, assigned DHCP lease before publication.
+
+    Args:
+        settings: In-memory handoff settings payload used by resolver and front door.
+        interface: Reviewed DHCP management interface.
+        observation: Complete native address readback after candidate activation.
+    """
+    if not interface:
+        return
+    if not observation.get("complete") or settings.get("management_interface") != interface:
+        raise ValueError("candidate DHCP management address observation is incomplete")
+    links = [row for row in observation.get("links", []) if row.get("name") == interface]
+    if len(links) != 1 or not links[0].get("configured") or not links[0].get("address_inventory_complete"):
+        raise ValueError("candidate DHCP management link is not proven")
+    leases = {
+        str(ip_address(record["address"]))
+        for record in links[0].get("addresses", [])
+        if record.get("state") == "assigned" and record.get("scope") == "global"
+        and (record.get("dhcp4_lease") is True or record.get("source") == "DHCPv4")
+        and ip_address(record["address"]).version == 4
+    }
+    if len(leases) != 1:
+        raise ValueError("candidate DHCP management lease is missing or ambiguous")
+    address = leases.pop()
+    previous = str(settings.get("management_ip") or "")
+    settings["management_ip"] = address
+    if settings.get("web_terminal_enabled"):
+        addresses = settings.get("web_terminal_addresses") or []
+        if not isinstance(addresses, list):
+            raise ValueError("candidate Web Terminal addresses are invalid")
+        settings["web_terminal_addresses"] = [
+            *[value for value in addresses if value != previous and value != address], address,
+        ]
+
+
 def _management_handoff_validation_errors(payload: dict) -> list[str]:
     """Return bounded validation failures for a handoff manifest.
 
@@ -26414,11 +26484,16 @@ def _management_handoff_validation_errors(payload: dict) -> list[str]:
     firewall_result = _validate_firewall_config(Path(payload["firewall_config_path"]))
     if firewall_result.returncode != 0:
         errors.append(f"firewall: {(firewall_result.stderr or firewall_result.stdout).strip()}")
+    try:
+        pending_dhcp_interface = _management_handoff_pending_dhcp_interface(payload)
+    except (OSError, ValueError, json.JSONDecodeError):
+        pending_dhcp_interface = ""
     errors.extend(
         f"appliance settings: {error}"
         for error in _appliance_settings_config_errors(
             Path(payload["appliance_settings_config_path"]),
             staged_ca_path=staged_ca_path,
+            pending_dhcp_management_interface=pending_dhcp_interface,
         )
     )
     errors.extend(
@@ -29484,6 +29559,7 @@ def _apply_management_handoff(payload: dict) -> int:
         settings_payload = _load_appliance_settings_config(
             Path(str(payload["appliance_settings_config_path"]))
         )
+        pending_dhcp_interface = _management_handoff_pending_dhcp_interface(payload)
         public_certificate = _management_handoff_public_certificate(payload, settings_payload)
         ca_path = str(payload.get("ca_config_path") or "")
         if ca_path and _handle_ca("apply", [ca_path]) != 0:
@@ -29517,6 +29593,9 @@ def _apply_management_handoff(payload: dict) -> int:
         _apply_management_candidate_network(Path(str(payload["network_config_path"])), state)
         failing_layer = "address activation"
         address_observation = _wait_network_addresses(Path(str(payload["network_config_path"])), started_at=activation_started)
+        _management_handoff_resolve_pending_dhcp(
+            settings_payload, pending_dhcp_interface, address_observation,
+        )
         _wait_management_handoff_routes(state)
         _apply_route_domain_ingress(
             Path(str(payload["network_config_path"])),
@@ -29592,6 +29671,9 @@ def _apply_management_handoff(payload: dict) -> int:
         failing_layer = "post-resolver address activation"
         address_observation = _wait_network_addresses(
             Path(str(payload["network_config_path"])), started_at=activation_started, stable_samples=3,
+        )
+        _management_handoff_resolve_pending_dhcp(
+            settings_payload, pending_dhcp_interface, address_observation,
         )
         protocol_holdover = _management_handoff_protocol_holdover(state, settings_payload)
         failing_layer = "candidate address discovery"
@@ -29685,6 +29767,9 @@ def _apply_management_handoff(payload: dict) -> int:
         failing_layer = "post-retirement address activation"
         final_address_observation = _wait_network_addresses(
             Path(str(payload["network_config_path"])), started_at=retirement_started, stable_samples=3,
+        )
+        _management_handoff_resolve_pending_dhcp(
+            settings_payload, pending_dhcp_interface, final_address_observation,
         )
         failing_layer = "post-retirement certificate prerequisite"
         candidate_addresses = _management_handoff_addresses(

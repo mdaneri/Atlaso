@@ -15771,6 +15771,82 @@ def test_appliance_settings_helper_requires_https_cert_files(tmp_path):
     assert "management_https_key_path is required when management HTTPS is enabled." in errors
 
 
+def test_pending_dhcp_handoff_settings_require_reviewed_network_and_resolved_lease(monkeypatch, tmp_path):
+    """Only a protected DHCP candidate may defer its address, then bind a proven lease.
+
+    Args:
+        monkeypatch: Pytest fixture isolating the staged Network parser.
+        tmp_path: Temporary directory holding staged candidate files.
+    """
+    helper = load_helper_module()
+    settings_path = tmp_path / "settings.json"
+    settings = json.loads(appliance_settings_json(
+        resolver_mode="external", resolver_servers=["192.0.2.53"], local_dns_enabled=False,
+        web_terminal_enabled=True, web_terminal_interfaces=["eth0"],
+    ))
+    settings["management_ip"] = ""
+    settings["management_ip_cidr"] = ""
+    settings["management_https_enabled"] = True
+    settings_path.write_text(json.dumps(settings), encoding="utf-8")
+    payload = {"network_config_path": str(tmp_path / "network.conf"),
+               "appliance_settings_config_path": str(settings_path)}
+    (tmp_path / "network.conf").write_text("reviewed candidate\n", encoding="utf-8")
+    row = {"name": "eth0", "role": "management", "admin_state": "up",
+           "ipv4_method": "dhcp", "ip_cidr": ""}
+    monkeypatch.setattr(helper, "_parse_network_config", lambda _path: ([row], [], []))
+
+    assert helper._management_handoff_pending_dhcp_interface(payload) == "eth0"
+    strict = helper._appliance_settings_config_errors(settings_path)
+    deferred = helper._appliance_settings_config_errors(
+        settings_path, pending_dhcp_management_interface="eth0",
+    )
+    assert "management_ip is required." in strict
+    assert "web terminal addresses must include the management IP." in strict
+    assert "management_ip is required." not in deferred
+    assert "management_ip must be a valid IP address." not in deferred
+    assert "web terminal addresses must include the management IP." not in deferred
+    row["ipv4_method"] = "static"
+    assert helper._management_handoff_pending_dhcp_interface(payload) == ""
+
+    observation = {"complete": True, "links": [{
+        "name": "eth0", "configured": True, "address_inventory_complete": True,
+        "addresses": [{"address": "192.0.2.20", "state": "assigned", "scope": "global",
+                       "dhcp4_lease": True}],
+    }]}
+    helper._management_handoff_resolve_pending_dhcp(settings, "eth0", observation)
+    assert settings["management_ip"] == "192.0.2.20"
+    assert settings["web_terminal_addresses"] == ["192.0.2.20"]
+    observation["links"][0]["addresses"][0]["address"] = "192.0.2.21"
+    observation["links"][0]["addresses"][0]["dhcp4_lease"] = False
+    observation["links"][0]["addresses"][0]["source"] = "DHCPv4"
+    helper._management_handoff_resolve_pending_dhcp(settings, "eth0", observation)
+    assert settings["management_ip"] == "192.0.2.21"
+    assert settings["web_terminal_addresses"] == ["192.0.2.21"]
+    observation["links"][0]["addresses"].append(
+        {"address": "192.0.2.22", "state": "assigned", "scope": "global", "dhcp4_lease": True}
+    )
+    with pytest.raises(ValueError, match="missing or ambiguous"):
+        helper._management_handoff_resolve_pending_dhcp(settings, "eth0", observation)
+
+    settings["management_ip"] = ""
+    settings["management_https_enabled"] = False
+    settings["web_terminal_enabled"] = False
+    settings["web_terminal_interfaces"] = []
+    settings["web_terminal_addresses"] = []
+    settings_path.write_text(json.dumps(settings), encoding="utf-8")
+    monkeypatch.setattr(helper, "_network_config_errors", lambda _path: [])
+    monkeypatch.setattr(helper, "_validate_firewall_config", lambda _path: subprocess.CompletedProcess(
+        ["nft", "--check"], 0, "", "",
+    ))
+    monkeypatch.setattr(helper, "_public_services_config_errors", lambda _path, **_kwargs: [])
+    manifest = {**payload, "firewall_config_path": str(tmp_path / "firewall.nft"),
+                "public_services_config_path": str(tmp_path / "public.conf")}
+    row["ipv4_method"] = "dhcp"
+    assert helper._management_handoff_validation_errors(manifest) == []
+    row["ipv4_method"] = "static"
+    assert "appliance settings: management_ip is required." in helper._management_handoff_validation_errors(manifest)
+
+
 def test_appliance_settings_handoff_accepts_staged_https_cert_files(monkeypatch, tmp_path):
     """Validate bundled management TLS material before its CA apply installs files.
 
