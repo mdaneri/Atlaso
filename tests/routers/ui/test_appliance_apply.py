@@ -3445,6 +3445,61 @@ ipv6_cidr=
         ]
 
 
+def test_management_handoff_baselines_only_captured_settings_with_proven_dhcp_lease():
+    """A successful protected handoff must not leave its captured Settings baseline lease-less."""
+    import atlaso.app.ui as ui
+
+    network_preview = """\
+[physical_interfaces]
+interface=eth0
+role=management
+mode=access
+admin_state=up
+ipv4_method=dhcp
+ip_cidr=
+ipv6_enabled=false
+ipv6_cidr=
+"""
+    captured = {
+        "management_interface": "eth0", "management_ip": "", "management_ip_cidr": "",
+        "web_terminal_enabled": True, "web_terminal_addresses": ["198.51.100.10"],
+        "root_ssh_enabled": False,
+    }
+    unit = ui.make_appliance_apply_unit(
+        unit_id="appliance_settings", label="Appliance Settings", page_url="/settings",
+        context={}, summary=["captured settings"], validation_errors=[], config_path="/tmp/settings.json",
+        config_preview=json.dumps(captured), baseline=None,
+    )
+    original_hash = unit["snapshot_hash"]
+
+    class ObservedDb:
+        """Return only the interface observation confirmed by the helper."""
+
+        def scalar(self, _statement):
+            """Supply the observed lease without reading mutable desired settings."""
+            return SimpleNamespace(host_ip_cidr="192.0.2.30/24")
+
+    with pytest.raises(RuntimeError, match="did not confirm"):
+        ui.baseline_management_handoff_dhcp_settings(
+            ObservedDb(), unit, network_preview, {"candidate_addresses": ["192.0.2.31"]},
+        )
+    assert unit["snapshot_hash"] == original_hash
+    ui.baseline_management_handoff_dhcp_settings(
+        ObservedDb(), unit, network_preview, {"candidate_addresses": ["192.0.2.30"]},
+    )
+    resolved = json.loads(unit["config_preview"])
+    assert resolved["management_ip"] == "192.0.2.30"
+    assert resolved["management_ip_cidr"] == "192.0.2.30/24"
+    assert resolved["web_terminal_addresses"] == ["192.0.2.30", "198.51.100.10"]
+    assert resolved["root_ssh_enabled"] is False
+    assert unit["snapshot_hash"] != original_hash
+    assert unit["snapshot_hash"] == ui.make_appliance_apply_unit(
+        unit_id="appliance_settings", label="Appliance Settings", page_url="/settings",
+        context={}, summary=["captured settings"], validation_errors=[], config_path="/tmp/settings.json",
+        config_preview=unit["raw_config_preview"], baseline=None,
+    )["snapshot_hash"]
+
+
 def test_management_handoff_staging_failure_clears_unstarted_runtime_lock(client, monkeypatch):
     """Do not retain the Apply lock when the helper proves no transaction began.
 

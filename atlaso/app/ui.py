@@ -10319,6 +10319,63 @@ def refresh_management_handoff_dynamic_observations(
     db.flush()
 
 
+def baseline_management_handoff_dhcp_settings(
+    db: Session,
+    settings_unit: dict[str, Any],
+    network_preview: str,
+    handoff_evidence: dict[str, Any],
+) -> None:
+    """Bind the captured Settings baseline to the helper-confirmed DHCP lease.
+
+    Args:
+        db: Apply transaction with refreshed native interface observations.
+        settings_unit: Exact captured Settings unit staged for the handoff.
+        network_preview: Exact captured Network intent used by the helper.
+        handoff_evidence: Successful helper result with confirmed candidate addresses.
+    """
+    captured = json_config_object(str(settings_unit.get("raw_config_preview") or ""))
+    if captured.get("management_ip"):
+        return
+    name = str(captured.get("management_interface") or "")
+    paths = [
+        path for path in network_management_paths(network_preview)
+        if path.get("kind") == "physical" and path.get("name") == name
+        and path.get("role") == "management" and path.get("ipv4_method") == "dhcp"
+        and not path.get("ip_cidr")
+    ]
+    if len(paths) != 1:
+        raise RuntimeError("Protected handoff has no captured pending DHCP management listener.")
+    interface = db.scalar(select(PhysicalInterface).where(PhysicalInterface.name == name))
+    cidr = str(interface.host_ip_cidr or "") if interface is not None else ""
+    address = address_from_cidr(cidr)
+    if not address or address not in handoff_evidence.get("candidate_addresses", []):
+        raise RuntimeError("Protected handoff did not confirm the resolved DHCP management address.")
+    captured["management_ip"] = address
+    captured["management_ip_cidr"] = cidr
+    if captured.get("web_terminal_enabled"):
+        addresses = captured.get("web_terminal_addresses") or []
+        if not isinstance(addresses, list):
+            raise RuntimeError("Captured Web Terminal addresses are invalid.")
+        captured["web_terminal_addresses"] = [
+            address, *[value for value in addresses if value != address],
+        ]
+    rendered = json.dumps(captured, indent=2, sort_keys=True) + "\n"
+    resolved = make_appliance_apply_unit(
+        unit_id="appliance_settings",
+        label=settings_unit["label"],
+        page_url=settings_unit["page_url"],
+        context=settings_unit["context"],
+        summary=settings_unit["summary"],
+        validation_errors=settings_unit["validation_errors"],
+        validation_warnings=settings_unit["validation_warnings"],
+        config_path=settings_unit["config_path"],
+        config_preview=rendered,
+        baseline=None,
+    )
+    for key in ("raw_config_preview", "config_preview", "snapshot_hash"):
+        settings_unit[key] = resolved[key]
+
+
 def management_handoff_required(network_unit: dict[str, Any], baseline: dict[str, Any] | None) -> bool:
     """Return whether Network changes require a two-phase handoff.
 
@@ -16447,6 +16504,12 @@ def run_appliance_apply_job(job_id: str, *, force_real: bool = False) -> None:
                         if not group_result.get("dry_run"):
                             refresh_management_handoff_dynamic_observations(
                                 db,
+                                str(current_by_id["network"].get("config_preview") or ""),
+                                group_result["management_handoff"],
+                            )
+                            baseline_management_handoff_dhcp_settings(
+                                db,
+                                current_by_id["appliance_settings"],
                                 str(current_by_id["network"].get("config_preview") or ""),
                                 group_result["management_handoff"],
                             )
