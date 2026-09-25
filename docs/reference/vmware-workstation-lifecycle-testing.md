@@ -996,6 +996,10 @@ malformed ID fails with an actionable preflight error before network preparation
 mutation. The wrapper verifies its SHA-256 identity against the repository pin without printing the ID. Install the
 Environments-enabled beta 1Password CLI under `C:\Program Files\1Password CLI`; a stable CLI without
 `op run --environment` fails before Environment access. A wrong Environment ID or signer fails before new VM mutation.
+The concealed `ATLASO_DEVELOPMENT_ROOT_CA_PRIVATE_KEY` value accepts the original complete PEM or canonical single-line
+base64 of the complete PEM text (including the BEGIN and END lines). Encode the original PEM bytes without changing
+line endings or encoding only the DER body. The bounded secret child decodes the value and validates the PEM against
+the checked-in certificate before VM mutation; the encoded value remains secret material.
 The cleanup marker uses a non-secret identity stored in the VMX, not the VMX file ID alone, because Workstation may
 replace the VMX during power-on. The wrapper exposes the marker path as recovery state only after its write-through
 rename succeeds. If publication fails before a credential or signer child starts, it preserves the original actionable
