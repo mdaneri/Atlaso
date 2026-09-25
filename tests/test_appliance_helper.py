@@ -2972,6 +2972,47 @@ def test_management_handoff_restores_both_sites_before_failed_validation(monkeyp
     assert public.read_text(encoding="utf-8") == "old public\n"
 
 
+def test_management_handoff_prepares_candidate_depot_auth_before_final_reload(monkeypatch, tmp_path):
+    """A changed depot user is installed before the candidate Public Services site.
+
+    Args:
+        monkeypatch: Replaces nginx and credential preparation with test doubles.
+        tmp_path: Temporary site directory.
+    """
+    helper = load_helper_module()
+    management = tmp_path / "management.conf"
+    public = tmp_path / "public-services.conf"
+    management.write_text("old management\n", encoding="utf-8")
+    public.write_text("old public\n", encoding="utf-8")
+    monkeypatch.setattr(helper, "NGINX_MANAGEMENT_SITE_PATH", management)
+    monkeypatch.setattr(helper, "NGINX_PUBLIC_SERVICES_SITE_PATH", public)
+    monkeypatch.setattr(helper, "_nginx_binary", lambda: "nginx")
+    monkeypatch.setattr(helper, "_install_nginx_include", lambda: None)
+    monkeypatch.setattr(helper, "_nginx_site_conflict", lambda *_args: "")
+    candidate = (
+        "# Managed by Atlaso. Local changes may be overwritten.\n"
+        "# Atlaso VCF Offline Depot user: candidate-user\n"
+        "server {\n  auth_basic \"depot\";\n}\n"
+    )
+    events = []
+    monkeypatch.setattr(
+        helper, "_write_vcf_depot_htpasswd",
+        lambda username: events.append(("auth", username, public.read_text())) or 0,
+    )
+    monkeypatch.setattr(
+        helper, "_nginx_test_command",
+        lambda: events.append(("validate", public.read_text()))
+        or subprocess.CompletedProcess([], 0, "", ""),
+    )
+    monkeypatch.setattr(helper, "_reload_nginx", lambda: events.append(("reload", public.read_text())) or 0)
+    assert helper._management_handoff_publish_final_sites("new management\n", candidate) == 0
+    assert events == [
+        ("auth", "candidate-user", "old public\n"),
+        ("validate", candidate),
+        ("reload", candidate),
+    ]
+
+
 def test_management_handoff_syncs_transaction_and_backups_before_marker(monkeypatch, tmp_path):
     """Make the transaction directory and backups durable before the marker.
 

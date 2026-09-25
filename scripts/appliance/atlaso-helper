@@ -26468,6 +26468,10 @@ def _management_handoff_publish_final_sites(management_site: str, public_site: s
     """
     if _nginx_binary() is None:
         return 127
+    if _vcf_depot_auth_required(public_site) and _write_vcf_depot_htpasswd(
+        _vcf_depot_auth_username(public_site)
+    ) != 0:
+        return 2
     _install_nginx_include()
     sites: tuple[tuple[Path, str | None], ...] = (
         (NGINX_MANAGEMENT_SITE_PATH, management_site),
