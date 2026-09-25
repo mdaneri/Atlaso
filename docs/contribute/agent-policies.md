@@ -1887,8 +1887,10 @@ preserved with their affected subsystem below. Keep new requirements at their to
 - Public Services apply stages `/var/lib/atlaso/apply/public-services/atlaso-public-services.conf` as the `atlaso`
   service user before invoking the root helper. The helper installs `/etc/atlaso/nginx/sites.d/public-services.conf`,
   reloads nginx, and keeps management nginx config separate. During a protected handoff, the Public Services site owns
-  flagged Access management sockets on HTTPS port 443; the dedicated management site publishes those Access addresses
-  itself for HTTP or a different HTTPS port. The sites must not bind the same socket twice at final publication.
+  flagged Access management sockets on HTTPS port 443; the dedicated management site publishes the HTTP redirect for
+  those addresses and owns the management front door for HTTP or a different HTTPS port. Keep the verified HTTP and
+  HTTPS listener scopes separate through final publication and later ordinary Settings apply, so the sites never bind
+  the same socket twice.
 - The generated public-services nginx config should create HTTP server blocks only for ESXi PXE service IPs, redirect
   `/pxe/esxi` to `/pxe/esxi/`, proxy dynamic PXE requests to the app, serve PXE static content through a narrow nginx
   alias, and avoid exposing public portal, CA, request, depot, management, broad depot roots, registry, or unrelated

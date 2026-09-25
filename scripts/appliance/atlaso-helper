@@ -7259,9 +7259,9 @@ def _appliance_settings_config_errors(
                 errors.append(str(exc))
         if cert_pem is not None:
             try:
-                scoped_addresses = _existing_management_scoped_addresses()
-                if scoped_addresses is not None:
-                    _management_certificate_covers_scoped_addresses(cert_pem, scoped_addresses)
+                scoped_listeners = _existing_management_scoped_addresses()
+                if scoped_listeners is not None:
+                    _management_certificate_covers_scoped_addresses(cert_pem, scoped_listeners[0])
             except (OSError, ValueError) as exc:
                 errors.append(str(exc))
     return errors
@@ -7865,6 +7865,7 @@ def _management_nginx_config(
     *,
     listen_addresses: list[str] | None = None,
     http_listen_addresses: list[str] | None = None,
+    https_listen_addresses: list[str] | None = None,
 ) -> str:
     """Perform management nginx config.
 
@@ -7874,6 +7875,7 @@ def _management_nginx_config(
         key_path: Filesystem path used for key.
         listen_addresses: Exact addresses exposed by the management listener.
         http_listen_addresses: Addresses allowed on the HTTP redirect during a handoff.
+        https_listen_addresses: Addresses owned by this site on HTTPS.
     """
     fqdn = str(payload["fqdn"])
     https_enabled = bool(payload.get("management_https_enabled"))
@@ -7883,23 +7885,27 @@ def _management_nginx_config(
     upstream_port = int(payload.get("management_upstream_port") or payload.get("management_http_port") or 8000)
     lines = ["# Managed by Atlaso. Local changes may be overwritten."]
     if listen_addresses is None:
-        if http_listen_addresses is not None:
-            raise ValueError("HTTP listener override requires scoped management listeners")
+        if http_listen_addresses is not None or https_listen_addresses is not None:
+            raise ValueError("listener override requires scoped management listeners")
         http_listeners = [f"{public_http_port}", f"[::]:{public_http_port}"]
         https_listeners = [f"{public_https_port}", f"[::]:{public_https_port}"]
     else:
         addresses = [ip_address(address) for address in listen_addresses]
         http_addresses = ([ip_address(address) for address in http_listen_addresses]
                           if http_listen_addresses is not None else addresses)
+        https_addresses = ([ip_address(address) for address in https_listen_addresses]
+                           if https_listen_addresses is not None else addresses)
         if not set(http_addresses) <= set(addresses):
             raise ValueError("HTTP redirect address is not a verified management listener")
+        if not set(https_addresses) <= set(addresses):
+            raise ValueError("HTTPS address is not a verified management listener")
         http_listeners = [
             f"[{address}]:{public_http_port}" if address.version == 6 else f"{address}:{public_http_port}"
             for address in http_addresses
         ]
         https_listeners = [
             f"[{address}]:{public_https_port}" if address.version == 6 else f"{address}:{public_https_port}"
-            for address in addresses
+            for address in https_addresses
         ]
     http_listen_lines = [f"  listen {listener} default_server;" for listener in http_listeners]
     https_listen_lines = [f"  listen {listener} ssl default_server;" for listener in https_listeners]
@@ -7930,23 +7936,24 @@ def _management_nginx_config(
             "}",
             "",
         ])
-    lines.extend(
-        [
-            "server {",
-            *https_listen_lines,
-            f"  server_name {fqdn};",
-            f"  ssl_certificate {cert_path};",
-            f"  ssl_certificate_key {key_path};",
-            *_management_proxy_location(upstream_host, upstream_port, "https"),
-            "}",
-            "",
-        ]
-    )
+    if https_listen_lines:
+        lines.extend(
+            [
+                "server {",
+                *https_listen_lines,
+                f"  server_name {fqdn};",
+                f"  ssl_certificate {cert_path};",
+                f"  ssl_certificate_key {key_path};",
+                *_management_proxy_location(upstream_host, upstream_port, "https"),
+                "}",
+                "",
+            ]
+        )
     return "\n".join(lines)
 
 
-def _existing_management_scoped_addresses() -> list[str] | None:
-    """Carry a committed address scope through an ordinary Settings apply."""
+def _existing_management_scoped_addresses() -> tuple[list[str], list[str]] | None:
+    """Carry committed HTTP and HTTPS scopes through an ordinary Settings apply."""
     if NGINX_MANAGEMENT_SITE_PATH.is_symlink():
         raise ValueError("existing management listener inventory is unsafe")
     if not NGINX_MANAGEMENT_SITE_PATH.exists():
@@ -7982,10 +7989,10 @@ def _existing_management_scoped_addresses() -> list[str] | None:
         if str(address) in by_protocol[protocol]:
             raise ValueError("existing management listener is duplicated")
         by_protocol[protocol].add(str(address))
-    if (not by_protocol[False] or by_protocol[True] and by_protocol[False] != by_protocol[True]
+    if (not by_protocol[False] or not by_protocol[True] <= by_protocol[False]
             or not {"127.0.0.1", "::1"} <= by_protocol[False]):
         raise ValueError("existing management listener scope is incomplete")
-    return sorted(by_protocol[False])
+    return sorted(by_protocol[False]), sorted(by_protocol[True])
 
 
 def _management_certificate_covers_scoped_addresses(certificate_pem: str, addresses: list[str]) -> None:
@@ -8031,6 +8038,7 @@ def _configure_atlaso_management_https(
     verify_front_door: bool = True,
     listen_addresses: list[str] | None = None,
     http_listen_addresses: list[str] | None = None,
+    https_listen_addresses: list[str] | None = None,
 ) -> tuple[int, int | None]:
     """Install the management front door without interrupting its upstream.
 
@@ -8040,6 +8048,7 @@ def _configure_atlaso_management_https(
         verify_front_door: Whether to prove the ordinary current-address path.
         listen_addresses: Exact addresses exposed by the management listener.
         http_listen_addresses: Addresses allowed on the HTTP redirect during a handoff.
+        https_listen_addresses: Addresses owned by this site on HTTPS.
     """
     enabled = bool(payload.get("management_https_enabled"))
     port = int(payload.get("management_upstream_port") or payload.get("management_http_port") or 8000)
@@ -8061,6 +8070,7 @@ def _configure_atlaso_management_https(
     site_text = _management_nginx_config(
         payload, cert_path, key_path, listen_addresses=listen_addresses,
         http_listen_addresses=http_listen_addresses,
+        https_listen_addresses=https_listen_addresses,
     ).rstrip() + "\n"
     if listen_addresses == [] and not site_suffix.strip():
         raise ValueError("management handoff has no verified listener address")
@@ -9252,8 +9262,11 @@ def _handle_appliance_settings(action: str, args: list[str]) -> int:
     vcfdt_ceip, vcfdt_ceip_status = _apply_vcf_download_tool_ceip(vmware_ceip_enabled)
     if vcfdt_ceip != 0:
         return vcfdt_ceip
+    scoped_listeners = _existing_management_scoped_addresses()
     management_https, management_restart_delay_seconds = _configure_atlaso_management_https(
-        payload, listen_addresses=_existing_management_scoped_addresses(),
+        payload,
+        listen_addresses=scoped_listeners[0] if scoped_listeners is not None else None,
+        https_listen_addresses=scoped_listeners[1] if scoped_listeners is not None else None,
     )
     if management_https != 0:
         return management_https
@@ -27632,6 +27645,9 @@ def _apply_management_handoff(payload: dict) -> int:
             include_flagged_access=not public_services_owns_flagged,
         )
         initial_listener_addresses = _management_handoff_initial_listener_addresses(
+            candidate_addresses, state, candidate_public_port, protocol_holdover,
+        )
+        initial_https_addresses = _management_handoff_initial_listener_addresses(
             management_site_addresses, state, candidate_public_port, protocol_holdover,
         )
         initial_http_addresses = None
@@ -27646,6 +27662,7 @@ def _apply_management_handoff(payload: dict) -> int:
             verify_front_door=False,
             listen_addresses=initial_listener_addresses,
             http_listen_addresses=initial_http_addresses,
+            https_listen_addresses=initial_https_addresses if candidate_https else None,
         )
         if management_https_result != 0:
             raise ValueError("candidate management nginx apply failed")
@@ -27744,7 +27761,9 @@ def _apply_management_handoff(payload: dict) -> int:
         management_https_result, _restart_delay_seconds = _configure_atlaso_management_https(
             settings_payload,
             verify_front_door=False,
-            listen_addresses=[*management_site_addresses, "127.0.0.1", "::1"],
+            listen_addresses=[*candidate_addresses, "127.0.0.1", "::1"],
+            https_listen_addresses=[*management_site_addresses, "127.0.0.1", "::1"]
+            if candidate_https else None,
         )
         if management_https_result != 0:
             raise ValueError("candidate nginx could not publish verified final listeners")

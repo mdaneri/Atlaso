@@ -3262,6 +3262,22 @@ def test_management_handoff_candidate_listeners_use_verified_addresses_only():
     assert "listen 192.0.2.10:443 ssl default_server;" in only_previous
     assert "return 308" not in only_previous
     assert "listen [2001:db8::20]:80 default_server;" in config
+    split = helper._management_nginx_config(
+        {"fqdn": "atlaso.example.test", "management_https_enabled": True},
+        Path("/etc/atlaso/candidate.crt"), Path("/etc/atlaso/candidate.key"),
+        listen_addresses=["192.0.2.20", "127.0.0.1"],
+        https_listen_addresses=["127.0.0.1"],
+    )
+    assert "listen 192.0.2.20:80 default_server;" in split
+    assert "listen 192.0.2.20:443 ssl default_server;" not in split
+    http_only_candidate = helper._management_nginx_config(
+        {"fqdn": "atlaso.example.test", "management_https_enabled": True},
+        Path("/etc/atlaso/candidate.crt"), Path("/etc/atlaso/candidate.key"),
+        listen_addresses=["192.0.2.20"], https_listen_addresses=[],
+    )
+    assert "listen 192.0.2.20:80 default_server;" in http_only_candidate
+    assert "ssl_certificate " not in http_only_candidate
+    assert http_only_candidate.count("server {") == 1
     assert "listen 443 ssl default_server;" not in config
     assert "listen [::]:443 ssl default_server;" not in config
     assert "listen " not in helper._management_nginx_config(
@@ -3294,6 +3310,11 @@ def test_management_handoff_keeps_previous_http_out_of_candidate_redirect():
             {"fqdn": "atlaso.example.test", "management_https_enabled": True},
             listen_addresses=["192.0.2.10"], http_listen_addresses=["192.0.2.99"],
         )
+    with pytest.raises(ValueError, match="not a verified"):
+        helper._management_nginx_config(
+            {"fqdn": "atlaso.example.test", "management_https_enabled": True},
+            listen_addresses=["192.0.2.10"], https_listen_addresses=["192.0.2.99"],
+        )
 
 
 def test_ordinary_settings_preserve_committed_management_listener_scope(monkeypatch, tmp_path):
@@ -3314,13 +3335,24 @@ def test_ordinary_settings_preserve_committed_management_listener_scope(monkeypa
     ), encoding="utf-8")
     monkeypatch.setattr(helper, "NGINX_MANAGEMENT_SITE_PATH", site)
     preserved = helper._existing_management_scoped_addresses()
-    assert set(preserved) == set(addresses)
+    assert preserved is not None
+    assert set(preserved[0]) == set(addresses)
+    assert set(preserved[1]) == set(addresses)
     regenerated = helper._management_nginx_config(
         payload, Path("/etc/atlaso/candidate.crt"), Path("/etc/atlaso/candidate.key"),
-        listen_addresses=preserved,
+        listen_addresses=preserved[0], https_listen_addresses=preserved[1],
     )
     assert "listen 443 ssl default_server;" not in regenerated
     assert "listen [::]:443 ssl default_server;" not in regenerated
+    site.write_text(helper._management_nginx_config(
+        payload, Path("/etc/atlaso/candidate.crt"), Path("/etc/atlaso/candidate.key"),
+        listen_addresses=addresses,
+        https_listen_addresses=["127.0.0.1", "::1"],
+    ), encoding="utf-8")
+    split_preserved = helper._existing_management_scoped_addresses()
+    assert split_preserved is not None
+    assert set(split_preserved[0]) == set(addresses)
+    assert set(split_preserved[1]) == {"127.0.0.1", "::1"}
 
 
 def test_management_handoff_preserves_previous_identity_on_shared_socket():
@@ -3493,6 +3525,7 @@ def test_management_handoff_candidate_durability_gates_ack(
     nginx_suffixes: list[str] = []
     nginx_readiness_options: list[bool] = []
     nginx_listen_addresses: list[list[str] | None] = []
+    nginx_https_addresses: list[list[str] | None] = []
     address_scopes: list[bool | None] = []
     retirement_operations: list[str] = []
     wan_calls: list[str] = []
@@ -3589,10 +3622,11 @@ def test_management_handoff_candidate_durability_gates_ack(
         helper,
         "_configure_atlaso_management_https",
         lambda _payload, *, site_suffix="", verify_front_door=True, listen_addresses=None,
-        http_listen_addresses=None: (
+        http_listen_addresses=None, https_listen_addresses=None: (
             nginx_suffixes.append(site_suffix)
             or nginx_readiness_options.append(verify_front_door)
             or nginx_listen_addresses.append(listen_addresses)
+            or nginx_https_addresses.append(https_listen_addresses)
             or 0,
             None,
         ),
@@ -3606,10 +3640,13 @@ def test_management_handoff_candidate_durability_gates_ack(
     )
     def observed_addresses(*_args, **kwargs):
         address_scopes.append(kwargs.get("include_flagged_access"))
-        return (["198.51.100.10", "198.51.100.11"]
-                if candidate_sync_error in {"late-certificate", "late-covered"}
-                and kwargs.get("address_observation", {}).get("final")
-                else ["198.51.100.10"])
+        addresses = ["198.51.100.10"]
+        if kwargs.get("include_flagged_access") is not False:
+            addresses.append("198.51.100.20")
+        if (candidate_sync_error in {"late-certificate", "late-covered"}
+                and kwargs.get("address_observation", {}).get("final")):
+            addresses.append("198.51.100.11")
+        return addresses
 
     monkeypatch.setattr(helper, "_management_handoff_addresses", observed_addresses)
     monkeypatch.setattr(helper, "_parse_network_config", lambda _path: ([], [], []))
@@ -3734,7 +3771,7 @@ def test_management_handoff_candidate_durability_gates_ack(
     if candidate_sync_error == "late-certificate":
         assert result == 1
         assert not durability_calls and not wan_calls and not paired_calls
-        assert nginx_listen_addresses == [["198.51.100.10"]]
+        assert nginx_listen_addresses == [["198.51.100.10", "198.51.100.20"]]
         assert "candidate-ready" in phases and "awaiting-application-commit" not in phases
         assert restored == [True] and cleared == [True]
         failure = json.loads(capsys.readouterr().err.splitlines()[-1])
@@ -3774,11 +3811,23 @@ def test_management_handoff_candidate_durability_gates_ack(
     assert nginx_suffixes == ["old protocol listener", ""]
     assert nginx_readiness_options == [False, False]
     assert nginx_listen_addresses == [
-        ["198.51.100.10"],
-        (["198.51.100.10", "198.51.100.11", "127.0.0.1", "::1"]
+        ["198.51.100.10", "198.51.100.20"],
+        (["198.51.100.10", "198.51.100.20", "198.51.100.11", "127.0.0.1", "::1"]
          if candidate_sync_error == "late-covered"
-         else ["198.51.100.10", "127.0.0.1", "::1"]),
+         else ["198.51.100.10", "198.51.100.20", "127.0.0.1", "::1"]),
     ]
+    assert nginx_https_addresses == (
+        [["198.51.100.10"],
+         (["198.51.100.10", "198.51.100.11", "127.0.0.1", "::1"]
+          if candidate_sync_error == "late-covered"
+          else ["198.51.100.10", "127.0.0.1", "::1"])]
+        if candidate_https and candidate_port == 443 else
+        [["198.51.100.10", "198.51.100.20"],
+         (["198.51.100.10", "198.51.100.20", "198.51.100.11", "127.0.0.1", "::1"]
+          if candidate_sync_error == "late-covered"
+          else ["198.51.100.10", "198.51.100.20", "127.0.0.1", "::1"])]
+        if candidate_https else [None, None]
+    )
     payload = json.loads(capsys.readouterr().out.splitlines()[-1])
     assert payload["management_handoff"] == "awaiting application commit"
 
@@ -4117,7 +4166,7 @@ def test_management_handoff_never_activates_nginx_with_unhealthy_upstream(monkey
     monkeypatch.setattr(
         helper,
         "_configure_atlaso_management_https",
-        lambda *_args: (settings_calls.append("activated") or 0, None),
+        lambda *_args, **_kwargs: (settings_calls.append("activated") or 0, None),
     )
     monkeypatch.setattr(helper, "_restore_management_handoff", lambda _state: {"readiness": "old-ready"})
     monkeypatch.setattr(helper, "_clear_management_handoff_state", lambda: None)
