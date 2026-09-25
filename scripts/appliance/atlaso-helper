@@ -10957,7 +10957,23 @@ def _ordinary_network_old_management_bindings(path: Path) -> list[dict]:
             table = LAB_ROUTE_TABLE_ID
         else:
             continue
-        bindings.append({"name": row["name"], "table": table})
+        result = _network_observation_command(["ip", "-j", "address", "show", "dev", row["name"]])
+        if result.returncode:
+            raise ValueError("previous management source identity unavailable")
+        try:
+            links = json.loads(result.stdout)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("previous management source identity unavailable") from exc
+        if not isinstance(links, list) or len(links) != 1 or not isinstance(links[0], dict):
+            raise ValueError("previous management source identity unavailable")
+        live = links[0]
+        mac = live.get("address", "")
+        if live.get("ifname") != row["name"] or not isinstance(mac, str) or not _valid_network_mac(mac):
+            raise ValueError("previous management source identity unavailable")
+        if (NETWORK_IDENTITY_PIN_MARKER in path.read_text(encoding="utf-8").splitlines()
+                and row in physical and mac.lower() != row.get("mac", "").lower()):
+            raise ValueError("previous management source differs from reviewed MAC identity")
+        bindings.append({"name": row["name"], "mac": mac.lower(), "table": table})
     return bindings
 
 
@@ -12357,6 +12373,7 @@ def _handle_network_locked(
         _network_identity_preflight(config_path)
         _network_detection_preflight(config_path)
         _route_domain_ingress_desired_rules(config_path)
+        old_management = _ordinary_network_old_management_bindings(config_path)
     except (ValueError, OSError, subprocess.TimeoutExpired) as exc:
         print(str(exc), file=sys.stderr)
         return 2
@@ -12369,7 +12386,6 @@ def _handle_network_locked(
             }
             if len(held_identities) != len(held_sources):
                 raise ValueError("Network source holds are duplicated")
-            old_management = _ordinary_network_old_management_bindings(config_path)
             if old_management and not preserve_transition_routes:
                 _seed_transition_routes(
                     _network_transaction_state(), old_management, NETWORK_TRANSACTION_DIR / "state.json",
@@ -29348,8 +29364,10 @@ def _apply_management_handoff(payload: dict) -> int:
         activation_started = datetime.now(timezone.utc).isoformat()
         state["source_transition_guard"] = True
         _write_management_handoff_state(state, str(state.get("phase") or "old-path-retained"))
-        previous_bindings = [{"name": name, "table": table}
-                             for name, table in state.get("previous_route_domains", {}).items()]
+        previous_bindings = [
+            {"name": name, "mac": state["previous_management_routing"][name]["mac"], "table": table}
+            for name, table in state.get("previous_route_domains", {}).items()
+        ]
         if previous_bindings:
             _seed_transition_routes(state, previous_bindings, MANAGEMENT_HANDOFF_STATE_PATH)
             _transition_source_guard(True, seed_interfaces=previous_bindings)

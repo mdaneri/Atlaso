@@ -427,9 +427,15 @@ def test_ordinary_network_seeds_only_existing_management_interface(helper, monke
     """
     config = tmp_path / "network.conf"
     config.write_text(network_config_text(), encoding="utf-8")
+    monkeypatch.setattr(helper, "_network_observation_command", lambda command:
+                        subprocess.CompletedProcess(command, 0, json.dumps([
+                            {"ifname": command[-1], "address": "02:00:00:00:00:01"},
+                        ]), ""))
     monkeypatch.setattr(helper, "_read_existing_management_network_values",
                         lambda _names: {"Name": ["eth0"]})
-    assert helper._ordinary_network_old_management_bindings(config) == [{"name": "eth0", "table": 100}]
+    assert helper._ordinary_network_old_management_bindings(config) == [
+        {"name": "eth0", "mac": "02:00:00:00:00:01", "table": 100},
+    ]
     monkeypatch.setattr(helper, "_read_existing_management_network_values",
                         lambda _names: {"Name": ["eth2"]})
     assert helper._ordinary_network_old_management_bindings(config) == []
@@ -447,9 +453,15 @@ def test_ordinary_network_seeds_existing_flagged_access_listener(helper, monkeyp
     config.write_text(network_config_text(eth2_mode="access", include_vlan=False).replace(
         "  role=access\n  mode=access", "  role=access\n  access_management_ui_enabled=true\n  mode=access"),
         encoding="utf-8")
+    monkeypatch.setattr(helper, "_network_observation_command", lambda command:
+                        subprocess.CompletedProcess(command, 0, json.dumps([
+                            {"ifname": command[-1], "address": "02:00:00:00:00:02"},
+                        ]), ""))
     monkeypatch.setattr(helper, "_read_existing_management_network_values", lambda _names: {"Name": ["eth2"]})
 
-    assert helper._ordinary_network_old_management_bindings(config) == [{"name": "eth2", "table": 200}]
+    assert helper._ordinary_network_old_management_bindings(config) == [
+        {"name": "eth2", "mac": "02:00:00:00:00:02", "table": 200},
+    ]
 
 
 def test_ordinary_network_discovers_applied_flagged_listener_file(helper, monkeypatch, tmp_path):
@@ -471,8 +483,14 @@ def test_ordinary_network_discovers_applied_flagged_listener_file(helper, monkey
     (networkd / "10-atlaso-eth2.network").write_text(
         "[Match]\nName=eth2\n\n[Network]\n# Atlaso management resolver mode=dhcp\n",
         encoding="utf-8")
+    monkeypatch.setattr(helper, "_network_observation_command", lambda command:
+                        subprocess.CompletedProcess(command, 0, json.dumps([
+                            {"ifname": command[-1], "address": "02:00:00:00:00:02"},
+                        ]), ""))
 
-    assert helper._ordinary_network_old_management_bindings(config) == [{"name": "eth2", "table": 200}]
+    assert helper._ordinary_network_old_management_bindings(config) == [
+        {"name": "eth2", "mac": "02:00:00:00:00:02", "table": 200},
+    ]
 
 
 def test_transition_helper_supplies_proven_sources_before_guard(helper, monkeypatch):
@@ -486,7 +504,7 @@ def test_transition_helper_supplies_proven_sources_before_guard(helper, monkeypa
     monkeypatch.setattr(helper, "_run_with_input", lambda command, payload:
                         calls.append((command, json.loads(payload)))
                         or subprocess.CompletedProcess(command, 0, "", ""))
-    bindings = [{"name": "eth0", "table": 100}]
+    bindings = [{"name": "eth0", "mac": "02:00:00:00:00:01", "table": 100}]
 
     helper._transition_source_guard(True, seed_interfaces=bindings)
 
@@ -497,6 +515,25 @@ def test_transition_helper_supplies_proven_sources_before_guard(helper, monkeypa
                         subprocess.CompletedProcess(command, 1, "", "invalid transition source addresses\n"))
     with pytest.raises(ValueError, match="invalid transition source addresses"):
         helper._transition_source_guard(True, seed_interfaces=bindings)
+
+
+def test_transition_seed_rejects_replacement_after_mac_snapshot(monkeypatch):
+    """A replacement NIC cannot inherit old sources after preflight.
+
+    Args:
+        monkeypatch: Native inventory and command replacements.
+    """
+    monkeypatch.setattr(domains, "read_native", lambda args: [
+        {"ifname": "eth0", "address": "02:00:00:00:00:03",
+         "addr_info": [{"scope": "global", "local": "192.0.2.10", "prefixlen": 24}]},
+    ])
+    monkeypatch.setattr(domains, "run_ip", lambda _command:
+                        pytest.fail("replacement NIC received an old source rule"))
+
+    with pytest.raises(domains.ReconcileError, match="previous management source identity unavailable"):
+        domains._seed_transition_sources_locked([
+            {"name": "eth0", "mac": "02:00:00:00:00:01", "table": 100},
+        ])
 
 
 @pytest.mark.parametrize("enabled", [False, True])
