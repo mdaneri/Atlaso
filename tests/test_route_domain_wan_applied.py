@@ -234,15 +234,23 @@ def test_first_migration_removed_vlan_uses_proven_legacy_source():
     rules = [{"family": 4, "priority": 2000, "table": 200,
               "source": "192.0.2.0/24", "incoming_interface": "", "protocol": 4}]
 
-    intent = route_domains.legacy_removed_vlan_intent(removed, inventory, links, rules)
+    intent, guard_only = route_domains.legacy_removed_vlan_intent(removed, inventory, links, rules)
+    assert guard_only == set()
     assert route_domains.removed_interface_holds(intent, inventory, {"eth1.120"}) == [
         {"name": "eth1.120", "mac": "02:00:00:00:01:20", "address": "192.0.2.20", "table": 200}]
-    assert route_domains.legacy_removed_vlan_intent(removed, [], [links[0]], rules).interfaces == ()
+    absent_intent, absent_guard = route_domains.legacy_removed_vlan_intent(removed, [], [links[0]], rules)
+    assert absent_intent.interfaces == () and absent_guard == set()
     with pytest.raises(route_domains.ReconcileError, match="identity unavailable"):
         route_domains.legacy_removed_vlan_intent(removed, inventory,
                                                  [links[0], {**links[1], "link_index": 9}], rules)
-    with pytest.raises(route_domains.ReconcileError, match="unproven routing domain"):
-        route_domains.legacy_removed_vlan_intent(removed, inventory, links, [])
+    guarded_intent, guarded_names = route_domains.legacy_removed_vlan_intent(removed, inventory, links, [])
+    assert guarded_intent.interfaces == () and guarded_names == {"eth1.120"}
+    assert route_domains.removed_interface_holds(
+        guarded_intent, inventory, {"eth1.120"}, guard_only_names=guarded_names) == []
+    with pytest.raises(route_domains.ReconcileError, match="mixed source ownership"):
+        route_domains.legacy_removed_vlan_intent(
+            removed, [{**inventory[0], "addr_info": [*inventory[0]["addr_info"],
+                                                   {"local": "192.0.3.20", "flags": []}]}], links, rules)
     with pytest.raises(route_domains.ReconcileError, match="unproven routing domain"):
         route_domains.legacy_removed_vlan_intent(removed, inventory, links,
                                                  [*rules, {**rules[0], "table": 100}])

@@ -10818,10 +10818,10 @@ def _removed_vlan_source_holds(path: Path) -> list[dict]:
         "from atlaso.route_domains import read_intent,read_native,removed_interface_holds,legacy_removed_vlan_intent,reconciliation_lock\n"
         "payload=json.load(sys.stdin)\nnames=set(row['name'] for row in payload['removed'])\n"
         "with reconciliation_lock():\n"
-        " intent=read_intent()\n inventory=read_native(['address','show'])\n"
+        " intent=read_intent()\n inventory=read_native(['address','show'])\n guard_only=set()\n"
         " if not intent.interfaces and not intent.held_addresses:\n"
-        "  intent=legacy_removed_vlan_intent(payload['removed'],inventory,read_native(['link','show']),payload['rules'])\n"
-        " print(json.dumps(removed_interface_holds(intent,inventory,names)))\n"
+        "  intent,guard_only=legacy_removed_vlan_intent(payload['removed'],inventory,read_native(['link','show']),payload['rules'])\n"
+        " print(json.dumps(removed_interface_holds(intent,inventory,names,guard_only_names=guard_only)))\n"
     )
     result = _run_with_input(["/opt/atlaso/.venv/bin/python", "-I", "-c", program],
                              json.dumps({"removed": [{key: row[key] for key in ("name", "parent", "vlan_id")}

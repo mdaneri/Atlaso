@@ -255,16 +255,23 @@ def source_tables(intent: Intent, inventory: Any) -> tuple[dict[str, int | None]
     return {source: next(iter(tables)) if len(tables) == 1 else None for source, tables in sources.items()}, incomplete
 
 
-def removed_interface_holds(intent: Intent, inventory: Any, names: set[str]) -> list[dict[str, str | int]]:
+def removed_interface_holds(
+    intent: Intent, inventory: Any, names: set[str], *, guard_only_names: set[str] | None = None,
+) -> list[dict[str, str | int]]:
     """Retain proven old sources while a deferred VLAN link is still present.
 
     Args:
         intent: Applied routing-domain interface intent.
         inventory: Observed native interface and address inventory.
         names: Interface names selected for inspection.
+        guard_only_names: Proven selector-free legacy VLANs kept behind the transition guard.
     """
     if len(names) > 256 or any(not isinstance(name, str) or not INTERFACE_PATTERN.fullmatch(name) for name in names):
         raise ReconcileError("invalid removed interface names")
+    if guard_only_names is None:
+        guard_only_names = set()
+    if not isinstance(guard_only_names, set) or not guard_only_names <= names:
+        raise ReconcileError("invalid guard-only VLAN names")
     if (not isinstance(inventory, list) or len(inventory) > 4096
             or any(not isinstance(link, dict) or not isinstance(link.get("ifname"), str)
                    for link in inventory)):
@@ -285,6 +292,8 @@ def removed_interface_holds(intent: Intent, inventory: Any, names: set[str]) -> 
     for link in inventory:
         name = link["ifname"]
         if name not in names:
+            continue
+        if name in guard_only_names:
             continue
         entries = link.get("addr_info")
         if not isinstance(entries, list):
@@ -310,7 +319,7 @@ def removed_interface_holds(intent: Intent, inventory: Any, names: set[str]) -> 
 
 def legacy_removed_vlan_intent(
     removed: Any, inventory: Any, native_links: Any, legacy_rules: Any,
-) -> Intent:
+) -> tuple[Intent, set[str]]:
     """Prove first-migration VLAN source ownership from native links and old rules.
 
     Args:
@@ -332,6 +341,7 @@ def legacy_removed_vlan_intent(
     if len(addresses) != len(inventory) or len(links) != len(native_links):
         raise ReconcileError("ambiguous legacy VLAN link inventory")
     interfaces: list[Interface] = []
+    guard_only_names: set[str] = set()
     seen: set[str] = set()
     for row in removed:
         if not isinstance(row, dict) or set(row) != {"name", "parent", "vlan_id"}:
@@ -362,6 +372,7 @@ def legacy_removed_vlan_intent(
             raise ReconcileError("invalid legacy removed VLAN addresses")
         tables: set[int] = set()
         source_count = 0
+        selector_free_count = 0
         for entry in entries:
             if not isinstance(entry, dict) or not isinstance(entry.get("flags", []), list):
                 raise ReconcileError("invalid legacy removed VLAN address")
@@ -390,16 +401,24 @@ def legacy_removed_vlan_intent(
                     raise ReconcileError("invalid legacy source selector") from exc
                 if ipaddress.ip_address(source) in selector:
                     matching.add(rule["table"])
+            if not matching:
+                selector_free_count += 1
+                continue
             if len(matching) != 1:
                 raise ReconcileError("legacy removed source has unproven routing domain")
             tables.update(matching)
         if source_count == 0:
             continue
+        if selector_free_count == source_count:
+            guard_only_names.add(name)
+            continue
+        if selector_free_count:
+            raise ReconcileError("legacy removed VLAN has mixed source ownership")
         if len(tables) != 1:
             raise ReconcileError("legacy removed VLAN has ambiguous routing domain")
         interfaces.append(parse_interface({"name": name, "mac": address_link.get("address"),
                                            "table": tables.pop()}))
-    return Intent(tuple(interfaces))
+    return Intent(tuple(interfaces)), guard_only_names
 
 
 def owned_rules(rows: Any, family: int) -> set[Rule]:
