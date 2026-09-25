@@ -44,14 +44,16 @@ if (-not (Test-Path -LiteralPath $PythonPath -PathType Leaf) -or
     (Test-Path -LiteralPath $AddressEvidence) -or (Test-Path -LiteralPath $RuntimeEvidence)) {
     throw 'Certificate proof requires an existing plan/Python and two new evidence destinations.'
 }
-$env:TEMP = $evidenceRoot
-$env:TMP = $evidenceRoot
+$originalTemp = [Environment]::GetEnvironmentVariable('TEMP', 'Process')
+$originalTmp = [Environment]::GetEnvironmentVariable('TMP', 'Process')
 $gitRoot = Join-Path ([Environment]::GetFolderPath([Environment+SpecialFolder]::ProgramFiles)) 'Git'
 $trustedGit = Join-Path $gitRoot 'cmd/git.exe'
 $gitCore = Join-Path $gitRoot 'mingw64/bin/git.exe'
 $trustedGitPins = [Collections.Generic.List[IDisposable]]::new()
 $originalPath = $env:PATH
 try {
+    $env:TEMP = $evidenceRoot
+    $env:TMP = $evidenceRoot
     foreach ($path in @($gitRoot, (Join-Path $gitRoot 'cmd'), (Join-Path $gitRoot 'mingw64'),
             (Join-Path $gitRoot 'mingw64/bin'), $trustedGit, $gitCore)) {
         $item = Get-Item -LiteralPath $path -Force -ErrorAction Stop
@@ -156,5 +158,7 @@ try {
 }
 } finally {
     $env:PATH = $originalPath
+    [Environment]::SetEnvironmentVariable('TEMP', $originalTemp, 'Process')
+    [Environment]::SetEnvironmentVariable('TMP', $originalTmp, 'Process')
     foreach ($pin in $trustedGitPins) { $pin.Dispose() }
 }

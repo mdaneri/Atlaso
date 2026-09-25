@@ -632,6 +632,8 @@ and route, and CA-pinned HTTPS through a private peer tunnel. The producer also 
 configured static management baseline; it does not configure that baseline. The tracked
 `inspect-certificate-handoff.ps1` wrapper then rechecks controlled receipts and the live private baseline before
 the native scenario changes the management address and restores the original interface and certificate state.
+Each handoff invocation keeps its own preflight admission evidence under the task result root, so a failed later
+stage does not consume the next attempt's admission destination.
 Load either credentialed wrapper from the reviewed full PR-head Git blob into an in-memory PowerShell script block;
 direct execution of the mutable checkout file is refused. The caller must pin `$reviewedCommit` to the full head
 already verified on the PR and use one of the two literal paths below. For example, load the read-only peer

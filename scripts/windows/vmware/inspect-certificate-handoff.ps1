@@ -43,14 +43,16 @@ if (-not (Test-Path -LiteralPath $PythonPath -PathType Leaf) -or
     -not (Test-Path -LiteralPath $Plan -PathType Leaf) -or (Test-Path -LiteralPath $Evidence)) {
     throw 'Certificate Python, plan, and new evidence destination must be explicitly available.'
 }
-$env:TEMP = $evidenceRoot
-$env:TMP = $evidenceRoot
+$originalTemp = [Environment]::GetEnvironmentVariable('TEMP', 'Process')
+$originalTmp = [Environment]::GetEnvironmentVariable('TMP', 'Process')
 $gitRoot = Join-Path ([Environment]::GetFolderPath([Environment+SpecialFolder]::ProgramFiles)) 'Git'
 $trustedGit = Join-Path $gitRoot 'cmd/git.exe'
 $gitCore = Join-Path $gitRoot 'mingw64/bin/git.exe'
 $trustedGitPins = [Collections.Generic.List[IDisposable]]::new()
 $originalPath = $env:PATH
 try {
+    $env:TEMP = $evidenceRoot
+    $env:TMP = $evidenceRoot
     foreach ($path in @($gitRoot, (Join-Path $gitRoot 'cmd'), (Join-Path $gitRoot 'mingw64'),
             (Join-Path $gitRoot 'mingw64/bin'), $trustedGit, $gitCore)) {
         $item = Get-Item -LiteralPath $path -Force -ErrorAction Stop
@@ -125,9 +127,10 @@ try {
     $scriptPath = Join-Path $snapshot.Root 'scripts/interop/certificate_handoff_native.py'
     $arguments = New-AtlasoCertificatePythonArguments -Runtime $runtime -ScriptPath $scriptPath `
         -ScriptArguments @('--plan', $Plan, '--evidence', $Evidence)
+    $admissionEvidence = $Evidence + '.admission-' + [guid]::NewGuid().ToString('N') + '.json'
     Invoke-AtlasoBoundedProcess -FilePath $PythonPath `
         -ArgumentList (New-AtlasoCertificatePythonArguments -Runtime $runtime -ScriptPath $scriptPath `
-            -ScriptArguments @('--plan', $Plan, '--evidence', ($Evidence + '.admission.json'), '--preflight-only')) `
+            -ScriptArguments @('--plan', $Plan, '--evidence', $admissionEvidence, '--preflight-only')) `
         -TimeoutSeconds 30 -Action 'PR871 canonical identity admission' -DiscardOutput | Out-Null
     $null = Assert-AtlasoSourceSnapshot -Root $snapshot.Root -ExpectedSha256 $snapshot.Sha256 `
         -ExpectedFileCount $snapshot.FileCount
@@ -157,5 +160,7 @@ try {
 }
 } finally {
     $env:PATH = $originalPath
+    [Environment]::SetEnvironmentVariable('TEMP', $originalTemp, 'Process')
+    [Environment]::SetEnvironmentVariable('TMP', $originalTmp, 'Process')
     foreach ($pin in $trustedGitPins) { $pin.Dispose() }
 }
