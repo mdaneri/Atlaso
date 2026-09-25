@@ -161,6 +161,7 @@ def test_combined_wan_rejects_candidate_ingress_over_capacity(client, monkeypatc
     from atlaso.app.database import SessionLocal
     from atlaso.app.services.routes_wan import save_routes_wan_settings
 
+    login(client)
     with SessionLocal() as db:
         save_routes_wan_settings(db, routing_enabled=True, nat_enabled=False,
                                  wan_simulation_enabled=False)
@@ -172,6 +173,14 @@ def test_combined_wan_rejects_candidate_ingress_over_capacity(client, monkeypatc
         selected_wan = next(unit for unit in combined if unit["id"] == "wan")
         assert selected_wan is wan["network_candidate_variant"]
         assert any("ingress rule capacity" in error for error in selected_wan["validation_errors"])
+
+    review = client.get("/appliance-apply/review")
+    assert review.status_code == 200
+    review_wan = next(unit for unit in review.json()["units"] if unit["id"] == "wan")
+    assert review_wan["valid"] is True
+    assert review_wan["network_candidate_valid"] is False
+    assert any("ingress rule capacity" in error
+               for error in review_wan["network_candidate_validation_errors"])
 
 
 def test_fresh_wan_ingress_matches_helper_for_mixed_network_links(client, tmp_path):

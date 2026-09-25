@@ -18392,6 +18392,9 @@ function applianceApplyReviewRow(unit) {
   row.className = "appliance-apply-review-row";
   row.dataset.applyUnitId = unit.id || "";
   row.dataset.applyConnectionWarnings = JSON.stringify(Array.isArray(unit.connection_warnings) ? unit.connection_warnings : []);
+  if (unit.network_candidate_valid !== null && unit.network_candidate_valid !== undefined) {
+    row.dataset.applyCandidateValid = String(Boolean(unit.network_candidate_valid));
+  }
 
   const head = document.createElement("div");
   head.className = "appliance-apply-review-row-head";
@@ -18421,6 +18424,7 @@ function applianceApplyReviewRow(unit) {
   const validity = document.createElement("span");
   validity.className = `status-pill ${unit.valid ? "good" : "warn"}`;
   validity.textContent = unit.valid ? "valid" : "needs attention";
+  validity.dataset.applyValidity = "";
   const edit = document.createElement("a");
   edit.className = "text-link";
   edit.href = unit.page_url || managementUiPath("/dashboard");
@@ -18482,6 +18486,20 @@ function applianceApplyReviewRow(unit) {
     });
     row.append(alert);
   }
+  if (unit.network_candidate_valid === false) {
+    const candidateAlert = document.createElement("div");
+    candidateAlert.className = "alert error hidden";
+    candidateAlert.dataset.applyCandidateErrors = "";
+    const candidateErrors = Array.isArray(unit.network_candidate_validation_errors)
+      ? unit.network_candidate_validation_errors : [];
+    (candidateErrors.length ? candidateErrors : ["Routing & WAN needs attention when Network is applied in this task."])
+      .forEach((message) => {
+        const line = document.createElement("div");
+        line.textContent = String(message);
+        candidateAlert.append(line);
+      });
+    row.append(candidateAlert);
+  }
 
   const details = document.createElement("details");
   details.className = "config-diff";
@@ -18523,6 +18541,21 @@ function updateApplianceApplySelection() {
     checkbox.disabled = !(dnsCheckbox instanceof HTMLInputElement && dnsCheckbox.checked) || checkbox.dataset.valid === "false";
     checkbox.checked = !checkbox.disabled;
   });
+  const networkCheckbox = modal.querySelector('[data-appliance-apply-review-checkbox][value="network"]');
+  const wanRow = modal.querySelector('[data-apply-unit-id="wan"]');
+  const wanCheckbox = wanRow?.querySelector('[data-appliance-apply-review-checkbox]');
+  const invalidCombinedWan = Boolean(networkCheckbox?.checked && wanCheckbox?.checked
+    && wanRow?.dataset.applyCandidateValid === "false");
+  if (wanRow instanceof HTMLElement) {
+    wanRow.querySelector('[data-apply-candidate-errors]')?.classList.toggle("hidden", !invalidCombinedWan);
+    const validity = wanRow.querySelector('[data-apply-validity]');
+    if (validity instanceof HTMLElement && wanCheckbox instanceof HTMLInputElement) {
+      const valid = !wanCheckbox.disabled && !invalidCombinedWan;
+      validity.classList.toggle("good", valid);
+      validity.classList.toggle("warn", !valid);
+      validity.textContent = valid ? "valid" : "needs attention";
+    }
+  }
   const selectedCheckboxes = Array.from(modal.querySelectorAll("[data-appliance-apply-review-checkbox]:checked"));
   const selected = selectedCheckboxes.length;
   const incompleteFormatConfirmations = selectedCheckboxes.some((checkbox) => {
@@ -18531,12 +18564,14 @@ function updateApplianceApplySelection() {
     return Array.from(row.querySelectorAll("[data-esx-format-confirmation]")).some((input) => input instanceof HTMLInputElement && input.value !== input.dataset.expected);
   });
   if (selectionSummary instanceof HTMLElement) {
-    selectionSummary.textContent = incompleteFormatConfirmations
-      ? `${selected} component${selected === 1 ? "" : "s"} selected · complete disk format confirmation`
-      : `${selected} component${selected === 1 ? "" : "s"} selected`;
+    selectionSummary.textContent = invalidCombinedWan
+      ? `${selected} components selected · review Routing & WAN validation`
+      : (incompleteFormatConfirmations
+        ? `${selected} component${selected === 1 ? "" : "s"} selected · complete disk format confirmation`
+        : `${selected} component${selected === 1 ? "" : "s"} selected`);
   }
   if (submit instanceof HTMLButtonElement) {
-    submit.disabled = selected === 0 || incompleteFormatConfirmations;
+    submit.disabled = selected === 0 || incompleteFormatConfirmations || invalidCombinedWan;
   }
   if (connectionWarning instanceof HTMLElement) {
     const messages = new Set();

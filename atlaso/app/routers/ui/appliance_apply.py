@@ -99,6 +99,14 @@ def build_router(dependencies: ApplianceApplyUiDependencies) -> ApplianceApplyUi
                     unit["network_candidate_variant"]["config_diff"]
                     if unit.get("network_candidate_variant") else None
                 ),
+                "network_candidate_valid": (
+                    unit["network_candidate_variant"]["valid"]
+                    if unit.get("network_candidate_variant") else None
+                ),
+                "network_candidate_validation_errors": (
+                    unit["network_candidate_variant"]["validation_errors"]
+                    if unit.get("network_candidate_variant") else []
+                ),
                 "has_baseline": unit["has_baseline"],
                 "selected": unit["valid"],
                 "requires_dns_selection": unit.get("requires_dns_selection", False),
