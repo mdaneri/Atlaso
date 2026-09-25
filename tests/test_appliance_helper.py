@@ -3338,6 +3338,7 @@ def test_ordinary_settings_preserve_committed_management_listener_scope(monkeypa
     assert preserved is not None
     assert set(preserved[0]) == set(addresses)
     assert set(preserved[1]) == set(addresses)
+    assert preserved[2:] == (80, 443)
     regenerated = helper._management_nginx_config(
         payload, Path("/etc/atlaso/candidate.crt"), Path("/etc/atlaso/candidate.key"),
         listen_addresses=preserved[0], https_listen_addresses=preserved[1],
@@ -3353,6 +3354,25 @@ def test_ordinary_settings_preserve_committed_management_listener_scope(monkeypa
     assert split_preserved is not None
     assert set(split_preserved[0]) == set(addresses)
     assert set(split_preserved[1]) == {"127.0.0.1", "::1"}
+    assert split_preserved[2:] == (80, 443)
+
+
+def test_ordinary_settings_refuses_management_binding_change_without_handoff(monkeypatch, tmp_path, capsys):
+    """A direct Settings apply cannot reuse a stale HTTP-only scope for HTTPS."""
+    helper = load_helper_module()
+    monkeypatch.setattr(helper, "_validate_appliance_settings_config_path", lambda _path: tmp_path / "settings.json")
+    monkeypatch.setattr(helper, "_appliance_settings_config_errors", lambda _path: [])
+    monkeypatch.setattr(helper, "_load_appliance_settings_config", lambda _path: {
+        "management_https_enabled": True,
+        "management_public_https_port": 443,
+    })
+    monkeypatch.setattr(helper, "_existing_management_scoped_addresses", lambda: (
+        ["127.0.0.1", "::1", "192.0.2.10"], [], 80, None,
+    ))
+    monkeypatch.setattr(helper, "_apply_hostname", lambda _fqdn: pytest.fail("host mutation reached"))
+
+    assert helper._handle_appliance_settings("apply", [str(tmp_path / "settings.json")]) == 2
+    assert "requires a protected handoff" in capsys.readouterr().err
 
 
 def test_management_handoff_preserves_previous_identity_on_shared_socket():
@@ -15677,6 +15697,7 @@ def test_appliance_settings_rejects_rotation_without_retained_address_san(monkey
     monkeypatch.setattr(helper, "_existing_management_scoped_addresses", lambda: (
         ["127.0.0.1", "::1", "192.168.49.1", "192.168.49.2"],
         ["127.0.0.1", "::1", "192.168.49.1"],
+        80, 443,
     ))
     monkeypatch.setattr(helper, "_apply_hostname", lambda *_args: pytest.fail("host mutation reached"))
 

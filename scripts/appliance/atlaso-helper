@@ -7952,8 +7952,8 @@ def _management_nginx_config(
     return "\n".join(lines)
 
 
-def _existing_management_scoped_addresses() -> tuple[list[str], list[str]] | None:
-    """Carry committed HTTP and HTTPS scopes through an ordinary Settings apply."""
+def _existing_management_scoped_addresses() -> tuple[list[str], list[str], int, int | None] | None:
+    """Carry committed listener scopes and ports through an ordinary Settings apply."""
     if NGINX_MANAGEMENT_SITE_PATH.is_symlink():
         raise ValueError("existing management listener inventory is unsafe")
     if not NGINX_MANAGEMENT_SITE_PATH.exists():
@@ -7974,6 +7974,7 @@ def _existing_management_scoped_addresses() -> tuple[list[str], list[str]] | Non
             raise ValueError("existing management listeners mix wildcard and scoped sockets")
         return None
     by_protocol: dict[bool, set[str]] = {False: set(), True: set()}
+    ports: dict[bool, set[int]] = {False: set(), True: set()}
     for line in listeners:
         match = re.fullmatch(
             r"listen (?:([0-9.]+)|\[([0-9a-fA-F:]+)\]):(\d+)( ssl)? default_server;", line,
@@ -7986,13 +7987,18 @@ def _existing_management_scoped_addresses() -> tuple[list[str], list[str]] | Non
                 or str(address) != (match.group(1) or match.group(2))):
             raise ValueError("existing management listener address is invalid")
         protocol = match.group(4) is not None
+        ports[protocol].add(int(match.group(3)))
         if str(address) in by_protocol[protocol]:
             raise ValueError("existing management listener is duplicated")
         by_protocol[protocol].add(str(address))
     if (not by_protocol[False] or not by_protocol[True] <= by_protocol[False]
+            or len(ports[False]) != 1 or len(ports[True]) > 1
             or not {"127.0.0.1", "::1"} <= by_protocol[False]):
         raise ValueError("existing management listener scope is incomplete")
-    return sorted(by_protocol[False]), sorted(by_protocol[True])
+    return (
+        sorted(by_protocol[False]), sorted(by_protocol[True]),
+        next(iter(ports[False])), next(iter(ports[True])) if ports[True] else None,
+    )
 
 
 def _management_certificate_covers_scoped_addresses(certificate_pem: str, addresses: list[str]) -> None:
@@ -9238,6 +9244,16 @@ def _handle_appliance_settings(action: str, args: list[str]) -> int:
         return 2
 
     payload = _load_appliance_settings_config(config_path)
+    scoped_listeners = _existing_management_scoped_addresses()
+    if scoped_listeners is not None:
+        https_enabled = bool(payload.get("management_https_enabled"))
+        http_port = int(payload.get("management_public_http_port") or 80)
+        https_port = int(payload.get("management_public_https_port") or 443)
+        if (http_port != scoped_listeners[2]
+                or https_enabled != bool(scoped_listeners[1])
+                or (https_enabled and https_port != scoped_listeners[3])):
+            print("management front-door binding change requires a protected handoff", file=sys.stderr)
+            return 2
     fqdn = str(payload["fqdn"])
     management_interface = str(payload["management_interface"])
     resolver_mode = str(payload["resolver_mode"])
@@ -9262,7 +9278,6 @@ def _handle_appliance_settings(action: str, args: list[str]) -> int:
     vcfdt_ceip, vcfdt_ceip_status = _apply_vcf_download_tool_ceip(vmware_ceip_enabled)
     if vcfdt_ceip != 0:
         return vcfdt_ceip
-    scoped_listeners = _existing_management_scoped_addresses()
     management_https, management_restart_delay_seconds = _configure_atlaso_management_https(
         payload,
         listen_addresses=scoped_listeners[0] if scoped_listeners is not None else None,

@@ -1890,7 +1890,8 @@ preserved with their affected subsystem below. Keep new requirements at their to
   flagged Access management sockets on HTTPS port 443; the dedicated management site publishes the HTTP redirect for
   those addresses and owns the management front door for HTTP or a different HTTPS port. Keep the verified HTTP and
   HTTPS listener scopes separate through final publication and later ordinary Settings apply, so the sites never bind
-  the same socket twice.
+  the same socket twice. A management protocol or public-port change requires the protected handoff to recompute both
+  listener scopes with the candidate Network and Public Services configuration before publication.
 - The generated public-services nginx config should create HTTP server blocks only for ESXi PXE service IPs, redirect
   `/pxe/esxi` to `/pxe/esxi/`, proxy dynamic PXE requests to the app, serve PXE static content through a narrow nginx
   alias, and avoid exposing public portal, CA, request, depot, management, broad depot roots, registry, or unrelated

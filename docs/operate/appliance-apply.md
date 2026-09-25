@@ -148,7 +148,9 @@ the last-applied external or DHCP resolver active until then, so an unapplied se
 When disabling applied local DNS, selecting **DNS/DHCP (dnsmasq)** includes **Appliance Settings** first, moving the
 management resolver away from `127.0.0.1` before the local listener stops.
 If enabling Management HTTPS creates a pending CA-managed certificate, the review includes **Certificate Authority** and
-installs its files before **Appliance Settings**. The protected management handoff uses the same ordering.
+installs its files before **Appliance Settings**. Changing the management HTTP/HTTPS mode or public listener port uses
+the protected handoff to recompute Network, Firewall, and Public Services listeners together. If Network has separate
+pending edits, select Network explicitly with Appliance Settings before submitting that change.
 
 Examples include checking service health, resolving a managed DNS name, reaching the intended listener, or confirming
 installed configuration from the appliance console. Use the service-specific procedure; a green UI status is insufficient.
