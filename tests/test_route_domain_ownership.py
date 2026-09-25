@@ -272,6 +272,41 @@ def test_reviewed_network_requires_complete_mac_pins(tmp_path):
                for error in helper._network_config_errors(config))
 
 
+@pytest.mark.parametrize("vlan", [False, True])
+def test_replaced_network_nic_fails_before_apply_transaction(tmp_path, monkeypatch, vlan):
+    """A same-name replacement cannot receive candidate files or addresses.
+
+    Args:
+        tmp_path: Isolated staged Network configuration.
+        monkeypatch: Native observation and transaction replacements.
+        vlan: Whether the replaced physical NIC is a VLAN parent.
+    """
+    helper = load_helper_module()
+    config = tmp_path / "network.conf"
+    config.write_text(
+        "# Network identity pins: reviewed-mac-v1.\n"
+        "[physical_interfaces]\ninterface=eth0\n  mac="
+        + ("02:00:00:00:00:03\n" if vlan else "02:00:00:00:00:01\n")
+        + ("  role=access\n  mode=trunk\n" if vlan else "  role=management\n  mode=access\n")
+        + ("[vlan_interfaces]\nvlan=eth0.20\n  parent=eth0\n"
+           "  parent_mac=02:00:00:00:00:01\n  vlan_id=20\n  role=access\n" if vlan else ""),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(helper, "_validate_network_config_path", lambda _path: config)
+    monkeypatch.setattr(helper, "_network_config_errors", lambda _path: [])
+    monkeypatch.setattr(helper, "_route_domain_ingress_desired_rules", lambda _path: [])
+    monkeypatch.setattr(helper, "_network_observation_command", lambda command:
+                        subprocess.CompletedProcess(command, 0, json.dumps([
+                            {"ifname": "eth0", "address": "02:00:00:00:00:03", "addr_info": []},
+                        ]), ""))
+    monkeypatch.setattr(helper, "_network_detection_preflight", lambda _path:
+                        pytest.fail("address preflight ran after identity mismatch"))
+    monkeypatch.setattr(helper, "_network_apply_transaction", lambda _path:
+                        pytest.fail("Network transaction began before identity check"))
+
+    assert helper._handle_network_locked("apply", [str(config)]) == 2
+
+
 @pytest.mark.parametrize("protected", [False, True])
 def test_source_conflict_precedes_transaction_artifacts(tmp_path, monkeypatch, protected):
     """A conflicting source window never publishes a rollback marker or backup.

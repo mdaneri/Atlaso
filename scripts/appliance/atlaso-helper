@@ -11868,6 +11868,43 @@ def _network_detection_preflight(path: Path) -> None:
             raise ValueError(f"Unable to check IPv4 addresses on {name}: Ethernet link identity unavailable")
 
 
+def _network_identity_preflight(path: Path) -> None:
+    """Prove reviewed physical identities before activating candidate Network files.
+
+    Args:
+        path: Validated staged Network configuration being applied.
+    """
+    if NETWORK_IDENTITY_PIN_MARKER not in path.read_text(encoding="utf-8").splitlines():
+        return
+    physical, vlans, _removed = _parse_network_config(path)
+    result = _network_observation_command(["ip", "-j", "address", "show"])
+    if result.returncode:
+        raise ValueError("Network identity preflight observation failed")
+    try:
+        rows = json.loads(result.stdout)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("Network identity preflight inventory is malformed") from exc
+    if not isinstance(rows, list) or len(rows) > 4096:
+        raise ValueError("Network identity preflight inventory is malformed")
+    observed: dict[str, str] = {}
+    for row in rows:
+        if not isinstance(row, dict) or not isinstance(row.get("ifname"), str):
+            raise ValueError("Network identity preflight inventory is malformed")
+        name = row["ifname"]
+        mac = row.get("address")
+        if not name or name in observed or not isinstance(mac, str):
+            raise ValueError("Network identity preflight inventory is malformed")
+        observed[name] = mac.lower()
+    for row in physical:
+        expected = row.get("mac", "")
+        if not _valid_network_mac(expected) or observed.get(row.get("name", "")) != expected.lower():
+            raise ValueError("Network physical interface differs from reviewed MAC identity")
+    for row in vlans:
+        expected = row.get("parent_mac", "")
+        if not _valid_network_mac(expected) or observed.get(row.get("parent", "")) != expected.lower():
+            raise ValueError("Network VLAN parent differs from reviewed MAC identity")
+
+
 def _wait_network_addresses(
     path: Path, *, attempts: int = 31, started_at: str | None = None, stable_samples: int = 1,
 ) -> dict:
@@ -12317,6 +12354,7 @@ def _handle_network_locked(
         )
         return 0
     try:
+        _network_identity_preflight(config_path)
         _network_detection_preflight(config_path)
         _route_domain_ingress_desired_rules(config_path)
     except (ValueError, OSError, subprocess.TimeoutExpired) as exc:
