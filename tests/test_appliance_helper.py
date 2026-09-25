@@ -10034,6 +10034,11 @@ def test_wan_apply_preflights_native_state_before_forwarding(monkeypatch, tmp_pa
     commands: list[list[str]] = []
 
     def network_state(**_kwargs):
+        """Observe an applied Network state or simulate an unsafe observation.
+
+        Args:
+            **_kwargs: Unused native observation options.
+        """
         observed.append("network")
         if failed_observation == "network":
             raise ValueError("unsafe applied Network")
@@ -10117,6 +10122,11 @@ def test_wan_apply_reuses_preflighted_native_snapshots(monkeypatch, tmp_path):
     observed: list[str] = []
 
     def read_network(**_kwargs):
+        """Return the controlled applied Network snapshot.
+
+        Args:
+            **_kwargs: Unused native observation options.
+        """
         observed.append("network")
         return network_state
 

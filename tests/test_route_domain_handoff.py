@@ -64,7 +64,13 @@ def test_removed_vlan_capture_accepts_dual_stack_holds_above_interface_limit(mon
         [], [], [{"name": "eth1.120", "parent": "eth1", "vlan_id": "120"}]))
     monkeypatch.setattr(helper, "_network_transaction_state", lambda: {"previous_route_domain_rules": []})
     def observe(command, payload, **_kwargs):
-        """Verify the delegated Python program and its bounded identity payload."""
+        """Verify the delegated program and its bounded identity payload.
+
+        Args:
+            command: Python command containing the delegated program.
+            payload: JSON identity inventory passed to the program.
+            **_kwargs: Unused process execution options.
+        """
         compile(command[-1], "<removed-vlan-preflight>", "exec")
         assert json.loads(payload)["removed"] == [
             {"name": "eth1.120", "parent": "eth1", "vlan_id": "120"}]
