@@ -9217,7 +9217,8 @@ route=0.0.0.0/0
             )
             == 0
         )
-        assert ["ip", "route", "del", "0.0.0.0/0", "dev", "eth0"] in commands
+        assert ["ip", "route", "del", "0.0.0.0/0", "via", "192.0.2.1",
+                "dev", "eth0", "metric", "100"] in commands
 
 
 @pytest.mark.parametrize("removed", [False, True])

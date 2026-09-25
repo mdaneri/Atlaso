@@ -290,6 +290,7 @@ def test_web_terminal_validation_defers_only_pending_dhcp_management_address():
         ca_enabled=True,
         management_https_cert_available=True,
         web_terminal_options=options,
+        allow_pending_dhcp_management=True,
     )
 
     assert normalized_web_terminal_interfaces(settings, management) == ["eth0", "eth1", "eth9"]
@@ -304,8 +305,19 @@ def test_web_terminal_validation_defers_only_pending_dhcp_management_address():
         ca_enabled=True,
         management_https_cert_available=True,
         web_terminal_options=options,
+        allow_pending_dhcp_management=True,
     )
     assert errors == []
+
+    errors, _warnings = validate_appliance_settings(
+        settings,
+        local_dns_enabled=False,
+        management_interface=management,
+        ca_enabled=True,
+        management_https_cert_available=True,
+        web_terminal_options=options,
+    )
+    assert "Web terminal interfaces are unavailable or have no address: eth0." in errors
 
 
 def test_terminal_ticket_is_one_use_and_bound_to_session_identity():

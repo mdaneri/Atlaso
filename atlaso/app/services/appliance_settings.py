@@ -588,6 +588,7 @@ def validate_appliance_settings(
     ca_enabled: bool = False,
     management_https_cert_available: bool = False,
     web_terminal_options: list[dict[str, Any]] | None = None,
+    allow_pending_dhcp_management: bool = False,
 ) -> tuple[list[str], list[str]]:
     """Validate appliance settings.
 
@@ -599,6 +600,7 @@ def validate_appliance_settings(
         ca_enabled: Ca enabled supplied by the caller.
         management_https_cert_available: Management https cert available supplied by the caller.
         web_terminal_options: Web terminal options supplied by the caller.
+        allow_pending_dhcp_management: A protected Network handoff will acquire this lease before Settings.
 
     Returns:
         The validate appliance settings result.
@@ -649,7 +651,7 @@ def validate_appliance_settings(
         # check; all other Web Terminal selections still require a live option.
         pending_dhcp_management = (
             management_name if management_interface.get("ipv4_method") == "dhcp"
-            and not management_interface.get("ip") else ""
+            and not management_interface.get("ip") and allow_pending_dhcp_management else ""
         )
         missing = [name for name in selected_terminal_interfaces
                    if name not in option_names and name != pending_dhcp_management]

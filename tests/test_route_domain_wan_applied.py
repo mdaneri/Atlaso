@@ -279,6 +279,29 @@ def test_flagged_default_keeps_reply_table_with_forwarding_off(helper, modern, f
     assert not any("rule" in command for command in commands)
 
 
+def test_retired_static_default_does_not_select_new_ra_default(helper, modern):
+    """Retire the old IPv6 mirror by gateway and metric after Network enables RA.
+
+    Args:
+        helper: Loaded privileged helper.
+        modern: Admitted native snapshot and captured route mutations.
+    """
+    _state, commands = modern
+    previous = wan_input()
+    previous["targets"][0]["management_ui"] = "true"
+    old = {"destination_cidr": "::/0", "gateway": "2001:db8::1",
+           "interface": "eth1", "metric": "77", "enabled": "true"}
+    previous["routes"] = [old]
+    parsed = wan_input()
+    parsed["removed_routes"] = [old]
+
+    assert helper._apply_wan_routes_and_qdiscs(parsed, previous) == 0
+
+    assert ["ip", "-6", "route", "del", "::/0", "via", "2001:db8::1",
+            "dev", "eth1", "metric", "77"] in commands
+    assert ["ip", "-6", "route", "del", "::/0", "dev", "eth1"] not in commands
+
+
 @pytest.mark.parametrize("family", [4, 6])
 @pytest.mark.parametrize("combined", [False, True])
 def test_connected_cleanup_uses_current_applied_snapshot(helper, modern, family, combined):

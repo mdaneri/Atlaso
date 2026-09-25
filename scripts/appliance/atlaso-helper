@@ -14083,18 +14083,18 @@ def _retire_wan_static_route(
     return _run_route_delete(destination, name, metric=metric, gateway=gateway)
 
 
-def _mirrored_wan_default_keys(
+def _mirrored_wan_defaults(
     parsed: dict[str, list[dict[str, str]]] | None,
-) -> set[tuple[str, str]]:
-    """Return defaults previously mirrored into the host main table.
+) -> dict[tuple[str, str], dict[str, str]]:
+    """Return exact defaults previously mirrored into the host main table.
 
     Args:
         parsed: Parsed last-applied Routes & WAN configuration, when available.
     """
     if not parsed:
-        return set()
+        return {}
     targets = {target.get("name", ""): target for target in parsed["targets"]}
-    mirrored: set[tuple[str, str]] = set()
+    mirrored: dict[tuple[str, str], dict[str, str]] = {}
     for route in parsed["routes"]:
         if not _wan_bool(route.get("enabled", ""), default=True):
             continue
@@ -14108,8 +14108,25 @@ def _mirrored_wan_default_keys(
         except (KeyError, ValueError):
             continue
         if destination.prefixlen == 0:
-            mirrored.add((str(destination), interface_name))
+            mirrored[(str(destination), interface_name)] = route
     return mirrored
+
+
+def _retire_mirrored_main_default(route: dict[str, str]) -> int:
+    """Delete only the gateway and metric of the old static main default.
+
+    Args:
+        route: Admitted old static default, including its next hop and metric.
+    """
+    destination = route["destination_cidr"]
+    gateway = route.get("gateway", "")
+    if not gateway:
+        raise ValueError("mirrored main default has no exact gateway identity")
+    command = [*_route_command_prefix(destination), "del", destination,
+               "via", gateway, "dev", route["interface"],
+               "metric", str(int(route.get("metric", "100") or "100"))]
+    result = _run(command)
+    return 0 if result.returncode == 2 else result.returncode
 
 
 def _apply_wan_routes_and_qdiscs(
@@ -14135,7 +14152,7 @@ def _apply_wan_routes_and_qdiscs(
     applied = _applied_wan_network_state() if applied_network_state is None else applied_network_state
     routing_enabled = feature_settings["routing_enabled"]
     wan_simulation_enabled = feature_settings["wan_simulation_enabled"]
-    previously_mirrored_defaults = _mirrored_wan_default_keys(previous_parsed)
+    previously_mirrored_defaults = _mirrored_wan_defaults(previous_parsed)
     policies = {policy["name"]: policy for policy in parsed["wan_policies"]}
     touched_qdisc_targets: set[str] = set()
     if applied is not None:
@@ -14206,17 +14223,17 @@ def _apply_wan_routes_and_qdiscs(
             if delete_result != 0:
                 return delete_result
             if not network_owned_default and not saved_enabled and (management_ui_default or previously_mirrored_default):
-                main_delete = _run(
-                    [*_route_command_prefix(destination), "del", destination, "dev", interface_name]
-                )
-                if main_delete.returncode not in {0, 2}:
-                    return main_delete.returncode
+                main_delete = _retire_mirrored_main_default(previously_mirrored_defaults.get(
+                    (str(destination_network), interface_name), route,
+                ))
+                if main_delete:
+                    return main_delete
             elif previously_mirrored_default and not network_owned_default:
-                main_delete = _run(
-                    [*_route_command_prefix(destination), "del", destination, "dev", interface_name]
-                )
-                if main_delete.returncode not in {0, 2}:
-                    return main_delete.returncode
+                main_delete = _retire_mirrored_main_default(previously_mirrored_defaults[
+                    (str(destination_network), interface_name)
+                ])
+                if main_delete:
+                    return main_delete
             touched_qdisc_targets.add(interface_name)
             continue
         if applied is not None and not route.get("gateway") and destination_network is not None:
@@ -14241,11 +14258,11 @@ def _apply_wan_routes_and_qdiscs(
             if main_result.returncode != 0:
                 return main_result.returncode
         elif previously_mirrored_default and not network_owned_default:
-            main_delete = _run(
-                [*_route_command_prefix(destination), "del", destination, "dev", interface_name]
-            )
-            if main_delete.returncode not in {0, 2}:
-                return main_delete.returncode
+            main_delete = _retire_mirrored_main_default(previously_mirrored_defaults[
+                (str(destination_network), interface_name)
+            ])
+            if main_delete:
+                return main_delete
         touched_qdisc_targets.add(interface_name)
     for route in parsed["removed_routes"]:
         interface_name = route["interface"]
@@ -14276,17 +14293,11 @@ def _apply_wan_routes_and_qdiscs(
                 or removed_key in previously_mirrored_defaults
             )
         ):
-            main_delete = _run(
-                [
-                    *_route_command_prefix(route["destination_cidr"]),
-                    "del",
-                    route["destination_cidr"],
-                    "dev",
-                    route["interface"],
-                ]
-            )
-            if main_delete.returncode not in {0, 2}:
-                return main_delete.returncode
+            main_delete = _retire_mirrored_main_default(previously_mirrored_defaults.get(
+                removed_key, route,
+            ))
+            if main_delete:
+                return main_delete
         touched_qdisc_targets.add(route["interface"])
     for route in parsed["removed_main_defaults"]:
         command = [

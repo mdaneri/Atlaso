@@ -975,11 +975,12 @@ def test_appliance_settings_uses_last_applied_dns_state_for_resolver(client):
     assert disabling_preview["resolver_servers"] != ["127.0.0.1"]
 
 
-def test_pending_dhcp_management_does_not_require_external_dns(client):
+def test_pending_dhcp_management_does_not_require_external_dns(client, monkeypatch):
     """Keep pending dedicated DHCP resolver ahead of a usable Access fallback.
 
     Args:
         client: Authenticated test client.
+        monkeypatch: Replace the applied Network baseline for a lease-loss check.
     """
     from atlaso.app import ui
     from atlaso.app.database import SessionLocal
@@ -1013,6 +1014,16 @@ def test_pending_dhcp_management_does_not_require_external_dns(client):
         db.commit()
 
         context = ui.appliance_settings_context(db, reconcile_dns=False)
+        units = ui.appliance_apply_units(db, reconcile=False)
+        settings_unit = next(unit for unit in units if unit["id"] == "appliance_settings")
+        network_unit = next(unit for unit in units if unit["id"] == "network")
+        applied_network_preview = ui.network_context(db)["network_config_preview"]
+        monkeypatch.setattr(ui, "load_appliance_apply_baselines", lambda _db: {
+            "network": {"config_preview": applied_network_preview},
+        })
+        applied_units = ui.appliance_apply_units(db, reconcile=False)
+        applied_settings_unit = next(unit for unit in applied_units if unit["id"] == "appliance_settings")
+        applied_network_unit = next(unit for unit in applied_units if unit["id"] == "network")
 
     assert context["management_interface"]["name"] == "eth0"
     assert context["management_interface"]["ip"] == ""
@@ -1024,9 +1035,19 @@ def test_pending_dhcp_management_does_not_require_external_dns(client):
         error.startswith("External DNS servers are required")
         for error in context["appliance_settings_validation_errors"]
     )
-    assert not any(
+    assert any(
         error.startswith("Web terminal interfaces are unavailable or have no address: eth0")
         for error in context["appliance_settings_validation_errors"]
+    )
+    assert network_unit["management_handoff_required"] is True
+    assert not any(
+        error.startswith("Web terminal interfaces are unavailable or have no address: eth0")
+        for error in settings_unit["validation_errors"]
+    )
+    assert applied_network_unit["management_handoff_required"] is False
+    assert any(
+        error.startswith("Web terminal interfaces are unavailable or have no address: eth0")
+        for error in applied_settings_unit["validation_errors"]
     )
 
 

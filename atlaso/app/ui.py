@@ -2566,13 +2566,17 @@ def ensure_dns_for_appliance_settings(
     return "+".join(actions) if actions else None
 
 
-def appliance_settings_context(db: Session, *, reconcile_dns: bool = True, applying_dns: bool = False) -> dict[str, Any]:
+def appliance_settings_context(
+    db: Session, *, reconcile_dns: bool = True, applying_dns: bool = False,
+    allow_pending_dhcp_management: bool = False,
+) -> dict[str, Any]:
     """Return appliance settings context.
 
     Args:
         db: Active database session.
         reconcile_dns: Reconcile dns supplied by the caller.
         applying_dns: DNS activation is ordered before these resolver settings in the same Apply.
+        allow_pending_dhcp_management: Protected Network handoff will acquire the selected lease first.
     """
     settings = get_appliance_settings_row(db)
     dns_settings = get_dns_settings_row(db)
@@ -2599,6 +2603,7 @@ def appliance_settings_context(db: Session, *, reconcile_dns: bool = True, apply
         ca_enabled=bool(ca_settings.enabled),
         management_https_cert_available=management_https_cert_available,
         web_terminal_options=terminal_options,
+        allow_pending_dhcp_management=allow_pending_dhcp_management,
     )
     if settings.root_ssh_enabled and get_settings().dry_run_system_adapters:
         validation_warnings.append("Root SSH is enabled as desired state, but dry-run system adapters are active. Global appliance apply will record intent without changing sshd.")
@@ -11322,8 +11327,15 @@ def appliance_apply_units(db: Session, *, reconcile: bool = True, applying_dns: 
 
     baselines = load_appliance_apply_baselines(db)
     local_users = local_users_apply_context(db, baselines.get("local_users"))
-    appliance_settings = appliance_settings_context(db, reconcile_dns=reconcile, applying_dns=applying_dns)
     network = network_context(db)
+    network_baseline = baselines.get("network")
+    pending_management_handoff = management_handoff_required(
+        {"config_preview": network["network_config_preview"]}, network_baseline,
+    )
+    appliance_settings = appliance_settings_context(
+        db, reconcile_dns=reconcile, applying_dns=applying_dns,
+        allow_pending_dhcp_management=pending_management_handoff,
+    )
     wan = routes_wan_context(db)
     nat = traffic_publishing_context(db)
     firewall = firewall_context(db, reconcile=reconcile)
@@ -11341,7 +11353,6 @@ def appliance_apply_units(db: Session, *, reconcile: bool = True, applying_dns: 
     vcf_registry = vcf_private_registry_context(db, reconcile=reconcile)
     public_services = public_services_context(db, reconcile=reconcile)
 
-    network_baseline = baselines.get("network")
     network_removed_vlans = removed_network_vlan_entries(
         network["network_config_preview"],
         successful_network_apply_vlan_entries(db, network_baseline),
