@@ -29482,6 +29482,11 @@ def _apply_management_handoff(payload: dict) -> int:
         _verify_management_handoff_migrated_defaults(state, payload)
         _install_route_domain_intent(Path(str(payload["network_config_path"])))
         _reconcile_route_domains()
+        failing_layer = "routing ingress after source migration"
+        # WAN staging retained only a terminal guard for the held link. Once
+        # its source has moved to table 200, restore the lab ingress lookup
+        # before retiring the old route seed or publishing the final firewall.
+        _apply_route_domain_ingress(Path(str(payload["network_config_path"])))
         _wait_and_retire_transition_routes(state, MANAGEMENT_HANDOFF_STATE_PATH)
         if nat_intent is not None:
             failing_layer = "paired Firewall and Traffic Publishing"

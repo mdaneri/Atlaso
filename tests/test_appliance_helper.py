@@ -3478,7 +3478,9 @@ def test_management_handoff_candidate_durability_gates_ack(
     monkeypatch.setattr(helper, "_wait_management_handoff_routes", lambda *_args: None)
     monkeypatch.setattr(helper, "_wait_and_retire_transition_routes",
                         lambda *_args: retirement_operations.append("seed-retirement"))
-    monkeypatch.setattr(helper, "_apply_route_domain_ingress", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(helper, "_apply_route_domain_ingress", lambda *_args, **kwargs:
+                        retirement_operations.append("ingress-reconcile")
+                        if not kwargs.get("retain_removed_vlan_guards") else None)
     monkeypatch.setattr(helper, "_install_route_domain_intent", lambda *_args, **_kwargs: guard_events.append("source-intent"))
     monkeypatch.setattr(helper, "_transition_source_guard", lambda enabled: guard_events.append("guard-on" if enabled else "guard-off"))
     monkeypatch.setattr(helper, "_management_handoff_held_addresses", lambda *_args: [])
@@ -3779,7 +3781,7 @@ def test_management_handoff_candidate_durability_gates_ack(
     assert wan_calls == ["candidate-wan"]
     assert retirement_operations == ["source-reconcile", "resolver", "address-ready", "final-network",
                                      "resolver", "address-ready", "wan", "default-ready",
-                                     "source-reconcile", "seed-retirement"]
+                                     "source-reconcile", "ingress-reconcile", "seed-retirement"]
     assert len(applied_firewalls) == 2
     assert candidate_rule in applied_firewalls[0]
     assert 'iifname "eth0"' in applied_firewalls[0]
