@@ -25280,25 +25280,20 @@ def _management_handoff_certificate_paths(payload: dict) -> list[Path]:
 
 
 def _management_handoff_previous_certificate_paths() -> list[Path]:
-    """Return certificate files referenced by the applied management site.
+    """Return certificate files referenced by previous managed nginx sites.
 
     Returns:
-        The validated certificate and key paths used by the previous listener.
+        The validated certificate and key paths used by previous listeners.
     """
-    if not NGINX_MANAGEMENT_SITE_PATH.is_file():
-        return []
-    try:
-        site_text = NGINX_MANAGEMENT_SITE_PATH.read_text(encoding="utf-8")
-    except OSError:
-        return []
     paths: list[Path] = []
-    for directive, field in (
-        ("ssl_certificate", "management_https_cert_path"),
-        ("ssl_certificate_key", "management_https_key_path"),
-    ):
-        match = re.search(rf"(?m)^\s*{directive}\s+([^;]+);\s*$", site_text)
-        if match is not None:
-            paths.append(_ca_managed_path(match.group(1).strip(), field))
+    for site_path in (NGINX_MANAGEMENT_SITE_PATH, NGINX_PUBLIC_SERVICES_SITE_PATH):
+        if not site_path.is_file():
+            continue
+        site_text = site_path.read_text(encoding="utf-8")
+        for match in re.finditer(
+            r"(?m)^[ \t]*ssl_certificate(?:_key)?[ \t]+([^;\n]+);[ \t]*$", site_text,
+        ):
+            paths.append(_ca_managed_path(match.group(1).strip(), "previous_nginx_tls_path"))
     return paths
 
 

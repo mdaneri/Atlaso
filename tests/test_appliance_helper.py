@@ -2842,6 +2842,35 @@ def test_management_handoff_preserves_split_public_tls_on_later_apply(monkeypatc
     assert "ssl_certificate " + str(certificate) + ";" in transitional
 
 
+def test_management_handoff_snapshots_previous_public_certificates(monkeypatch, tmp_path):
+    """A candidate CA path change still captures every old Public Services identity.
+
+    Args:
+        monkeypatch: Fixture used to isolate previous nginx site paths.
+        tmp_path: Temporary paths for old and candidate certificate identities.
+    """
+    helper = load_helper_module()
+    management = tmp_path / "management.conf"
+    public = tmp_path / "public.conf"
+    old_cert = tmp_path / "old-public.crt"
+    old_key = tmp_path / "old-public.key"
+    candidate_cert = tmp_path / "candidate.crt"
+    management.write_text("# Managed by Atlaso. Local changes may be overwritten.\n", encoding="utf-8")
+    public.write_text(
+        "# Managed by Atlaso. Local changes may be overwritten.\n"
+        f"server {{\n  ssl_certificate {old_cert};\n  ssl_certificate_key {old_key};\n}}\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(helper, "NGINX_MANAGEMENT_SITE_PATH", management)
+    monkeypatch.setattr(helper, "NGINX_PUBLIC_SERVICES_SITE_PATH", public)
+    monkeypatch.setattr(helper, "_ca_managed_path", lambda value, _field: Path(value))
+    monkeypatch.setattr(helper, "_management_handoff_certificate_paths", lambda _payload: [candidate_cert])
+
+    paths = helper._management_handoff_runtime_paths({})
+
+    assert {old_cert, old_key, candidate_cert} <= set(paths)
+
+
 def test_management_handoff_syncs_transaction_and_backups_before_marker(monkeypatch, tmp_path):
     """Make the transaction directory and backups durable before the marker.
 
