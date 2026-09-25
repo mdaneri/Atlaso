@@ -1797,7 +1797,9 @@ preserved with their affected subsystem below. Keep new requirements at their to
   gateway in desired state. An absent or intentionally cleared gateway must warn that off-subnet connectivity will be
   unavailable; shared gateway validation, global Apply, baseline commit, and rollback remain authoritative. During a
   protected handoff, revalidate the candidate address after resolver and DNS activation and before binding nginx;
-  networkd can briefly withdraw a DHCP-to-static address while IPv4 conflict detection restarts.
+  networkd can briefly withdraw a DHCP-to-static address while IPv4 conflict detection restarts. Preserve observed
+  DHCP DNS from the prospective effective listener when the same desired-state edit enables its Access role, flag, or
+  admin state, without changing the persisted interface before validation.
 - Keep **Static Routes** separate from **Routing Permissions** in operator language. Static Routes choose destination,
   gateway, target interface/VLAN, and metric in the lab route table; Routing Permissions authorize forwarding between
   interface/VLAN networks, with route-role paths generated automatically and Access networks requiring explicit rules.
@@ -1885,8 +1887,8 @@ preserved with their affected subsystem below. Keep new requirements at their to
 - Public Services apply stages `/var/lib/atlaso/apply/public-services/atlaso-public-services.conf` as the `atlaso`
   service user before invoking the root helper. The helper installs `/etc/atlaso/nginx/sites.d/public-services.conf`,
   reloads nginx, and keeps management nginx config separate. During a protected handoff, the Public Services site owns
-  flagged Access management sockets; the dedicated management site must publish only dedicated management addresses
-  and loopback listeners so final nginx publication does not duplicate an Access socket.
+  flagged Access management sockets on HTTPS port 443; the dedicated management site publishes those Access addresses
+  itself for HTTP or a different HTTPS port. The sites must not bind the same socket twice at final publication.
 - The generated public-services nginx config should create HTTP server blocks only for ESXi PXE service IPs, redirect
   `/pxe/esxi` to `/pxe/esxi/`, proxy dynamic PXE requests to the app, serve PXE static content through a narrow nginx
   alias, and avoid exposing public portal, CA, request, depot, management, broad depot roots, registry, or unrelated

@@ -3449,6 +3449,11 @@ def test_management_handoff_keeps_previous_https_identity(monkeypatch, tmp_path,
                               "late-certificate", "late-covered"])
 @pytest.mark.parametrize("paired_publishing", [False, True], ids=["source-only", "port-forward-pair"])
 @pytest.mark.parametrize("mapping_change", ["unchanged", "target", "removed"])
+@pytest.mark.parametrize(
+    ("candidate_https", "candidate_port"),
+    [(True, 443), (True, 8443), (False, 80)],
+    ids=["https-default", "https-custom", "http"],
+)
 def test_management_handoff_candidate_durability_gates_ack(
     monkeypatch,
     tmp_path,
@@ -3456,6 +3461,8 @@ def test_management_handoff_candidate_durability_gates_ack(
     candidate_sync_error,
     paired_publishing,
     mapping_change,
+    candidate_https,
+    candidate_port,
 ):
     """Acknowledge only a durable candidate and roll back a sync failure.
 
@@ -3466,6 +3473,8 @@ def test_management_handoff_candidate_durability_gates_ack(
         candidate_sync_error: Whether to inject the final durability failure.
         paired_publishing: Include captured Firewall/NAT in the wider handoff.
         mapping_change: Effective forwarding difference in the candidate handoff.
+        candidate_https: Whether candidate management uses HTTPS.
+        candidate_port: Candidate management public port.
     """
     helper = load_helper_module()
     state = {
@@ -3484,6 +3493,7 @@ def test_management_handoff_candidate_durability_gates_ack(
     nginx_suffixes: list[str] = []
     nginx_readiness_options: list[bool] = []
     nginx_listen_addresses: list[list[str] | None] = []
+    address_scopes: list[bool | None] = []
     retirement_operations: list[str] = []
     wan_calls: list[str] = []
     stable_address_reads = 0
@@ -3560,8 +3570,8 @@ def test_management_handoff_candidate_durability_gates_ack(
         helper,
         "_load_appliance_settings_config",
         lambda _path: {
-            "management_https_enabled": True,
-            "management_public_https_port": 8443,
+            "management_https_enabled": candidate_https,
+            "management_public_https_port": candidate_port,
             "management_interface": "eth1",
             "resolver_mode": "external",
             "resolver_servers": ["192.0.2.53"],
@@ -3594,11 +3604,14 @@ def test_management_handoff_candidate_durability_gates_ack(
         "_nginx_test_command",
         lambda: subprocess.CompletedProcess(["nginx", "-t"], 0, "", ""),
     )
-    monkeypatch.setattr(helper, "_management_handoff_addresses", lambda *_args, **kwargs:
-                        ["198.51.100.10", "198.51.100.11"]
-                        if candidate_sync_error in {"late-certificate", "late-covered"}
-                        and kwargs.get("address_observation", {}).get("final")
-                        else ["198.51.100.10"])
+    def observed_addresses(*_args, **kwargs):
+        address_scopes.append(kwargs.get("include_flagged_access"))
+        return (["198.51.100.10", "198.51.100.11"]
+                if candidate_sync_error in {"late-certificate", "late-covered"}
+                and kwargs.get("address_observation", {}).get("final")
+                else ["198.51.100.10"])
+
+    monkeypatch.setattr(helper, "_management_handoff_addresses", observed_addresses)
     monkeypatch.setattr(helper, "_parse_network_config", lambda _path: ([], [], []))
     monkeypatch.setattr(helper, "_link_exists", lambda _interface: False)
     monkeypatch.setattr(helper, "_clear_management_handoff_state", lambda **_kwargs: cleared.append(True))
@@ -3746,6 +3759,8 @@ def test_management_handoff_candidate_durability_gates_ack(
     assert cleared == []
     assert restored == []
     assert resolver_calls == ["eth1", "eth1"]
+    assert address_scopes == [None, not (candidate_https and candidate_port == 443),
+                              None, not (candidate_https and candidate_port == 443)]
     assert wan_calls == ["candidate-wan"]
     assert retirement_operations == [
         "resolver", "candidate-address-ready", "final-network", "resolver", "address-ready", "wan",

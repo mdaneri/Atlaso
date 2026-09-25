@@ -27619,16 +27619,20 @@ def _apply_management_handoff(payload: dict) -> int:
         )
         failing_layer = "certificate prerequisite"
         candidate_ca = _management_handoff_candidate_ca(public_certificate, candidate_addresses)
-        dedicated_addresses = _management_handoff_addresses(
+        # Public Services renders flagged Access management sockets only on its
+        # HTTPS/443 front door. Other configured management ports and HTTP stay
+        # on the dedicated nginx site alongside any dedicated-role addresses.
+        public_services_owns_flagged = candidate_https and candidate_public_port == 443
+        management_site_addresses = _management_handoff_addresses(
             Path(str(payload["network_config_path"])),
             address_observation=address_observation,
             previous_addresses=set(state["previous_management_addresses"]),
             previous_dynamic_families=previous_dynamic_families,
             exclude_previous_holdovers=True,
-            include_flagged_access=False,
+            include_flagged_access=not public_services_owns_flagged,
         )
         initial_listener_addresses = _management_handoff_initial_listener_addresses(
-            dedicated_addresses, state, candidate_public_port, protocol_holdover,
+            management_site_addresses, state, candidate_public_port, protocol_holdover,
         )
         initial_http_addresses = None
         if protocol_holdover and not state["previous_https_enabled"] and candidate_https:
@@ -27730,17 +27734,17 @@ def _apply_management_handoff(payload: dict) -> int:
             if _handle_firewall("apply", [str(transition_path)]) != 0:
                 raise ValueError("final nftables apply failed while retiring the previous path")
         failing_layer = "verified-listener publication"
-        dedicated_addresses = _management_handoff_addresses(
+        management_site_addresses = _management_handoff_addresses(
             Path(str(payload["network_config_path"])),
             address_observation=final_address_observation,
             previous_addresses=set(state["previous_management_addresses"]),
             previous_dynamic_families=previous_dynamic_families,
-            include_flagged_access=False,
+            include_flagged_access=not public_services_owns_flagged,
         )
         management_https_result, _restart_delay_seconds = _configure_atlaso_management_https(
             settings_payload,
             verify_front_door=False,
-            listen_addresses=[*dedicated_addresses, "127.0.0.1", "::1"],
+            listen_addresses=[*management_site_addresses, "127.0.0.1", "::1"],
         )
         if management_https_result != 0:
             raise ValueError("candidate nginx could not publish verified final listeners")

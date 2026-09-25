@@ -2102,9 +2102,56 @@ def test_access_static_conversion_does_not_copy_unrelated_dhcp_dns(client, monke
         dns.upstream_servers = ""
         db.flush()
         assert _preserve_management_dhcp_dns_on_static_conversion(
-            db, interface, new_role="access", new_management_ui_enabled=True,
+            db, interface, new_role="access", new_mode="access",
+            new_management_ui_enabled=case != "unflagged",
             new_admin_state="down" if case == "disabled" else "up",
             old_ipv4_method="dhcp", new_ipv4_method="static",
         ) == []
         assert appliance.external_dns_servers == ""
         assert dns.upstream_servers == ""
+
+
+@pytest.mark.parametrize("old_mode", ["access", "trunk"])
+def test_access_static_conversion_preserves_dhcp_dns_for_new_listener(client, monkeypatch, old_mode):
+    """A PATCH that enables the Access listener must retain its observed lease DNS."""
+    from sqlalchemy import select
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import ApplianceSettings, DnsSettings, PhysicalInterface
+    from atlaso.app.services.interface_updates import (
+        _preserve_management_dhcp_dns_on_static_conversion,
+    )
+
+    login(client)
+    monkeypatch.setattr(
+        "atlaso.app.services.appliance_settings.observed_management_dhcp_dns_servers",
+        lambda name: ["192.0.2.53"] if name == "dns_new_listener" else [],
+    )
+    with SessionLocal() as db:
+        for existing in db.scalars(select(PhysicalInterface)):
+            existing.role = "unused"
+            existing.access_management_ui_enabled = False
+        interface = PhysicalInterface(
+            name="dns_new_listener", mac_address="02:00:00:00:85:31",
+            role="access", mode=old_mode, admin_state="down", oper_state="up",
+            access_management_ui_enabled=False, ipv4_method="dhcp",
+            host_ip_cidr="192.0.2.10/24",
+        )
+        db.add(interface)
+        appliance = db.scalars(select(ApplianceSettings)).one()
+        dns = db.scalars(select(DnsSettings)).one()
+        appliance.external_dns_servers = ""
+        dns.enabled = False
+        dns.upstream_servers = ""
+        db.flush()
+
+        assert _preserve_management_dhcp_dns_on_static_conversion(
+            db, interface, new_role="access", new_mode="access",
+            new_management_ui_enabled=True, new_admin_state="up",
+            old_ipv4_method="dhcp", new_ipv4_method="static",
+        ) == ["appliance resolver DNS", "DNS service forwarders"]
+        assert appliance.external_dns_servers == "192.0.2.53"
+        assert dns.upstream_servers == "192.0.2.53"
+        assert interface.admin_state == "down"
+        assert interface.mode == old_mode
+        assert interface.access_management_ui_enabled is False
