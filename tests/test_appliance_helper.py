@@ -15674,9 +15674,10 @@ def test_appliance_settings_rejects_rotation_without_retained_address_san(monkey
         return subprocess.CompletedProcess(command, 0 if command[-1] == "192.168.49.1" else 1)
 
     monkeypatch.setattr(helper.subprocess, "run", check_certificate)
-    monkeypatch.setattr(helper, "_existing_management_scoped_addresses", lambda: [
-        "127.0.0.1", "::1", "192.168.49.1", "192.168.49.2",
-    ])
+    monkeypatch.setattr(helper, "_existing_management_scoped_addresses", lambda: (
+        ["127.0.0.1", "::1", "192.168.49.1", "192.168.49.2"],
+        ["127.0.0.1", "::1", "192.168.49.1"],
+    ))
     monkeypatch.setattr(helper, "_apply_hostname", lambda *_args: pytest.fail("host mutation reached"))
 
     assert helper._handle_appliance_settings("apply", [str(config_path)]) == 2
