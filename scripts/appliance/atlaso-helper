@@ -11535,6 +11535,16 @@ def _retire_legacy_source_rules(path: Path | None = None) -> None:
                 continue
             name = row.get("name", "")
             link = observed.get(name)
+            if link is None and row in vlans:
+                # Candidate VLANs are created after legacy selector retirement.
+                # They have no live source to migrate yet; retain the reviewed
+                # parent identity check before admitting the candidate.
+                parent = observed.get(row.get("parent", ""))
+                expected = row.get("parent_mac", "")
+                actual = parent.get("address", "") if parent is not None else ""
+                if not _valid_network_mac(expected) or actual.lower() != expected.lower():
+                    raise ValueError("legacy source VLAN parent differs from reviewed MAC identity")
+                continue
             if link is None or not isinstance(link.get("address"), str):
                 raise ValueError("legacy source interface identity unavailable")
             if row in physical:

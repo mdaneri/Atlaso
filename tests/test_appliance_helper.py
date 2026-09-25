@@ -10702,7 +10702,9 @@ def test_legacy_source_migration_sends_reviewed_interface_domains(monkeypatch, t
         "interface=eth0\n  role=management\n  mode=access\n  admin_state=up\n"
         "  mac=02:00:00:00:00:10\n"
         "interface=eth1\n  role=access\n  mode=access\n  admin_state=up\n"
-        "  mac=02:00:00:00:00:20\n", encoding="utf-8",
+        "  mac=02:00:00:00:00:20\n"
+        "[vlan_interfaces]\nvlan=eth1.20\n  parent=eth1\n  parent_mac=02:00:00:00:00:20\n"
+        "  role=access\n  admin_state=up\n", encoding="utf-8",
     )
     legacy = {"family": 4, "priority": 1000, "table": 100, "source": "10.42.0.0/16",
               "incoming_interface": "", "protocol": 4}
