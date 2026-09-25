@@ -811,6 +811,113 @@ def test_incomplete_ordinary_network_rollback_keeps_seed_journal(helper, monkeyp
     assert state["transition_seed_routes"] == [{"name": "eth0"}]
 
 
+def test_legacy_source_restore_precedes_reconcile_and_survives_its_failure(helper, monkeypatch, tmp_path):
+    """A failed canonical reconcile cannot skip the previous source selector.
+
+    Args:
+        helper: Loaded appliance helper module under test.
+        monkeypatch: Replace native rollback operations.
+        tmp_path: Isolated transaction directory.
+    """
+    previous = [{"family": 4, "priority": 1000, "table": 100,
+                 "source": "192.0.2.0/24", "incoming_interface": "", "protocol": 4}]
+    state = {"snapshots": [], "previous_route_domain_rules": previous,
+             "transition_seed_routes": [{"name": "eth0"}]}
+    events = []
+    monkeypatch.setattr(helper, "NETWORK_TRANSACTION_DIR", tmp_path)
+    monkeypatch.setattr(helper, "_stop_route_domains_for_restore", lambda _state: None)
+    monkeypatch.setattr(helper, "_restore_management_handoff_links", lambda *_args: events.append("links"))
+    monkeypatch.setattr(helper, "_restored_legacy_route_baseline", lambda _state: True)
+    monkeypatch.setattr(helper, "_restore_legacy_route_domain_sources",
+                        lambda _rules: events.append("legacy-source"))
+    monkeypatch.setattr(helper, "_restore_route_domains",
+                        lambda _state: (events.append("canonical") or
+                                        (_ for _ in ()).throw(ValueError("reconcile failed"))))
+    monkeypatch.setattr(helper, "_restore_route_domain_rules",
+                        lambda _rules: events.append("legacy-rules"))
+    monkeypatch.setattr(helper, "_retire_transition_routes",
+                        lambda *_args, **_kwargs: pytest.fail("seed retired during incomplete rollback"))
+    monkeypatch.setattr(helper, "_run", lambda command: subprocess.CompletedProcess(command, 0, "", ""))
+
+    with pytest.raises(ValueError, match="network rollback incomplete: reconcile failed"):
+        helper._restore_network_transaction(state)
+    assert events == ["links", "legacy-source", "canonical", "legacy-rules"]
+    assert state["transition_seed_routes"] == [{"name": "eth0"}]
+
+
+def test_legacy_source_restore_refuses_occupied_priority_before_reconcile(helper, monkeypatch, tmp_path):
+    """Do not remove a canonical selector if the old source cannot be restored.
+
+    Args:
+        helper: Loaded appliance helper module under test.
+        monkeypatch: Replace native rollback operations.
+        tmp_path: Isolated transaction directory.
+    """
+    state = {"snapshots": [], "previous_route_domain_rules": [], "transition_seed_routes": [{"name": "eth0"}]}
+    events = []
+    monkeypatch.setattr(helper, "NETWORK_TRANSACTION_DIR", tmp_path)
+    monkeypatch.setattr(helper, "_stop_route_domains_for_restore", lambda _state: None)
+    monkeypatch.setattr(helper, "_restore_management_handoff_links", lambda *_args: None)
+    monkeypatch.setattr(helper, "_restored_legacy_route_baseline", lambda _state: True)
+    monkeypatch.setattr(helper, "_restore_legacy_route_domain_sources",
+                        lambda _rules: (_ for _ in ()).throw(ValueError("priority occupied")))
+    monkeypatch.setattr(helper, "_restore_route_domains", lambda _state: events.append("canonical"))
+    monkeypatch.setattr(helper, "_restore_route_domain_rules", lambda _rules: events.append("rules"))
+    monkeypatch.setattr(helper, "_retire_transition_routes",
+                        lambda *_args, **_kwargs: pytest.fail("seed retired during incomplete rollback"))
+    monkeypatch.setattr(helper, "_run", lambda command: subprocess.CompletedProcess(command, 0, "", ""))
+
+    with pytest.raises(ValueError, match="legacy routing-domain source restore: priority occupied"):
+        helper._restore_network_transaction(state)
+    assert events == []
+
+
+def test_legacy_source_restore_waits_for_restored_links(helper, monkeypatch, tmp_path):
+    """A failed link rollback must retain current selectors and seed journal.
+
+    Args:
+        helper: Loaded appliance helper module under test.
+        monkeypatch: Replace native rollback operations.
+        tmp_path: Isolated transaction directory.
+    """
+    state = {"snapshots": [], "previous_route_domain_rules": [], "transition_seed_routes": [{"name": "eth0"}]}
+    events = []
+    monkeypatch.setattr(helper, "NETWORK_TRANSACTION_DIR", tmp_path)
+    monkeypatch.setattr(helper, "_stop_route_domains_for_restore", lambda _state: None)
+    monkeypatch.setattr(helper, "_restore_management_handoff_links",
+                        lambda *_args: (_ for _ in ()).throw(ValueError("link restore failed")))
+    monkeypatch.setattr(helper, "_restored_legacy_route_baseline", lambda _state: True)
+    monkeypatch.setattr(helper, "_restore_legacy_route_domain_sources", lambda _rules: events.append("legacy-source"))
+    monkeypatch.setattr(helper, "_restore_route_domains", lambda _state: events.append("canonical"))
+    monkeypatch.setattr(helper, "_restore_route_domain_rules", lambda _rules: events.append("legacy-rules"))
+    monkeypatch.setattr(helper, "_retire_transition_routes",
+                        lambda *_args, **_kwargs: pytest.fail("seed retired during incomplete rollback"))
+    monkeypatch.setattr(helper, "_run", lambda command: subprocess.CompletedProcess(command, 0, "", ""))
+
+    with pytest.raises(ValueError, match="network rollback incomplete: link restore failed"):
+        helper._restore_network_transaction(state)
+    assert events == []
+
+
+def test_legacy_source_restore_adds_prior_prefix_without_removing_rules(helper, monkeypatch):
+    """Install only an admitted old prefix source before canonical reconciliation.
+
+    Args:
+        helper: Loaded appliance helper module under test.
+        monkeypatch: Replace native rule observation and mutation.
+    """
+    previous = [{"family": 4, "priority": 1000, "table": 100,
+                 "source": "192.0.2.0/24", "incoming_interface": "", "protocol": 4}]
+    commands = []
+    monkeypatch.setattr(helper, "_snapshot_route_domain_rules", lambda: [])
+    monkeypatch.setattr(helper, "_run", lambda command: commands.append(command)
+                        or subprocess.CompletedProcess(command, 0, "", ""))
+
+    helper._restore_legacy_route_domain_sources(previous)
+    assert commands == [["ip", "-4", "rule", "add", "from", "192.0.2.0/24",
+                         "table", "100", "priority", "1000", "protocol", "4"]]
+
+
 def test_removed_vlan_missing_guard_refuses_before_rule_mutation(helper, monkeypatch, tmp_path):
     """An inconsistent applied lookup cannot expose a deferred VLAN to the main table.
 

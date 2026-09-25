@@ -11131,6 +11131,30 @@ def _restore_route_domain_rules(snapshot: list[dict], *, current_rules: list[dic
                 raise ValueError("routing-domain rule migration failed")
 
 
+def _restore_legacy_route_domain_sources(snapshot: list[dict]) -> None:
+    """Reinstate old prefix lookups before canonical rollback can remove exact ones.
+
+    Args:
+        snapshot: Validated pre-Apply legacy-window rule journal.
+    """
+    desired = _validated_route_domain_rule_snapshot(snapshot)
+    current = _snapshot_route_domain_rules()
+    occupied = {(row["family"], row["priority"]): row for row in current}
+    for row in desired:
+        if row["table"] is None or row["incoming_interface"]:
+            continue
+        existing = occupied.get((row["family"], row["priority"]))
+        if existing == row:
+            continue
+        if existing is not None:
+            raise ValueError("legacy routing-domain source priority is occupied")
+        command = ["ip", f"-{row['family']}", "rule", "add", "from", row["source"],
+                   "table", str(row["table"]), "priority", str(row["priority"]),
+                   "protocol", str(row["protocol"])]
+        if _run(command).returncode:
+            raise ValueError("legacy routing-domain source restore failed")
+
+
 def _route_domain_ingress_interfaces(
     path: Path | None = None, *, held_management_interfaces: set[str] | None = None,
     enforce_capacity: bool = True,
@@ -11831,13 +11855,28 @@ def _restore_network_transaction(state: dict) -> bool:
             raise ValueError("restored networkd configuration reload failed")
     except (OSError, ValueError, subprocess.TimeoutExpired) as exc:
         failures.append(str(exc))
+    route_sources_ready = True
     try:
         _restore_management_handoff_links(state, [])
-        _restore_route_domains(state)
-        if "previous_route_domain_rules" in state:
-            _restore_route_domain_rules(state["previous_route_domain_rules"])
     except (OSError, ValueError, subprocess.TimeoutExpired) as exc:
         failures.append(str(exc))
+        route_sources_ready = False
+    if route_sources_ready and _restored_legacy_route_baseline(state):
+        try:
+            _restore_legacy_route_domain_sources(state["previous_route_domain_rules"])
+        except (KeyError, OSError, ValueError, subprocess.TimeoutExpired) as exc:
+            failures.append(f"legacy routing-domain source restore: {exc}")
+            route_sources_ready = False
+    if route_sources_ready:
+        try:
+            _restore_route_domains(state)
+        except (OSError, ValueError, subprocess.TimeoutExpired) as exc:
+            failures.append(str(exc))
+        if "previous_route_domain_rules" in state:
+            try:
+                _restore_route_domain_rules(state["previous_route_domain_rules"])
+            except (OSError, ValueError, subprocess.TimeoutExpired) as exc:
+                failures.append(str(exc))
     if failures:
         raise ValueError("network rollback incomplete: " + "; ".join(failures[:8]))
     _retire_transition_routes(
