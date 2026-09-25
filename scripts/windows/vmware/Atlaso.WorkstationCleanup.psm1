@@ -347,6 +347,26 @@ namespace Atlaso
             }
             catch { handle.Dispose(); throw; }
         }
+        public static SafeFileHandle PinOrdinaryMutableFile(string path)
+        {
+            // The guest must be able to write its disk. This pin prevents
+            // replacement, not in-place modification; certificate peer boot
+            // therefore uses a public-key-only seed with no password to steal.
+            SafeFileHandle handle = CreateFileW(path, FileReadAttributes | 0x1,
+                FileShareRead | FileShareWrite, IntPtr.Zero, OpenExisting,
+                0x00200000, IntPtr.Zero);
+            try
+            {
+                if (handle.IsInvalid) throw new Win32Exception(Marshal.GetLastWin32Error());
+                ByHandleFileInformation information;
+                if (!GetFileInformationByHandle(handle, out information))
+                    throw new Win32Exception(Marshal.GetLastWin32Error());
+                if ((information.FileAttributes & (0x10 | 0x400)) != 0 || information.NumberOfLinks != 1)
+                    throw new InvalidOperationException("Expected an ordinary single-identity mutable file.");
+                return handle;
+            }
+            catch { handle.Dispose(); throw; }
+        }
         public static void DeletePinnedFile(SafeFileHandle handle)
         {
             // Retire the same no-follow object that was validated and held through

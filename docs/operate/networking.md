@@ -362,6 +362,25 @@ baseline; a later edit remains pending until the next Apply. When the route targ
 listener, also confirm `ip route show default` (or `ip -6 route show default`) names the same gateway and interface, and
 that `atlaso-wan.service` is enabled for reboot replay.
 
+HTTPS management handoffs check the staged certificate against configured and acquired candidate IPv4/IPv6 addresses
+before publishing the candidate listener. A previous address retained during the transition stays on its snapshotted
+old TLS certificate, including when the candidate uses the same public port. Before new addresses activate, the old
+management listener binds only to verified old addresses, whether the previous site is HTTP or HTTPS. This prevents
+plaintext access on a newly acquired address and prevents an unmatched old certificate from serving it. After final
+network reconfigure, every
+still-assigned address enters the candidate check. A new
+DHCP or SLAAC address missing from the certificate fails at the certificate
+prerequisite and restores the previous applied path. Automatic certificate issuance for a newly acquired address is
+not part of this transaction; restore the static address or use a DHCP reservation covered by the managed certificate
+before retrying. During the handoff, the candidate nginx listener binds only to addresses already verified against
+its certificate. Final reconfiguration cannot expose that certificate on a newly acquired address before the final
+certificate check and listener update. Candidate HTTPS readiness verifies the transaction's CA and address identity
+before completion.
+
+The committed management site also keeps loopback listeners for console and update readiness. A later handoff accepts
+those address-scoped listeners as its proven previous site. A wildcard previous site is scoped before new addresses
+activate.
+
 A failed management handoff reports its non-secret failing layer and rolls back the captured network, coupled Routes &
 WAN runtime, firewall, nginx, certificate, and service state before the task becomes failed. Rollback also reconfigures
 interfaces introduced to the candidate and deletes candidate-only VLAN devices. If automatic rollback cannot restore
