@@ -11357,6 +11357,22 @@ def appliance_apply_units(db: Session, *, reconcile: bool = True, applying_dns: 
     if network_removed_vlans:
         network_summary.append(f"{len(network_removed_vlans)} VLAN removals")
     network_validation_errors = list(network["network_validation_errors"])
+    # Network-only Apply still changes the ingress rules of an already-applied
+    # Routing runtime. Validate that runtime's window before queuing Network.
+    applied_wan_preview = str((baselines.get("wan") or {}).get("config_preview") or "")
+    applied_routing_enabled = False
+    in_feature_settings = False
+    for line in applied_wan_preview.splitlines():
+        line = line.strip()
+        if line.startswith("[") and line.endswith("]"):
+            in_feature_settings = line == "[feature_settings]"
+        elif in_feature_settings and line == "routing_enabled=true":
+            applied_routing_enabled = True
+    if (applied_routing_enabled and len(wan_network_ingress_from_preview(
+            network["network_config_preview"])) > ROUTE_RULE_PRIORITY_WINDOW):
+        network_validation_errors.append(
+            "Network exceeds the applied Routing & WAN ingress rule capacity."
+        )
     network_baseline_preview = str((network_baseline or {}).get("config_preview") or "")
     if (
         get_settings().environment == "appliance"

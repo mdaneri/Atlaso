@@ -618,6 +618,17 @@ def migrate_legacy_sources(rows: Any) -> None:
     Args:
         rows: Helper-admitted legacy rules from the durable pre-Apply snapshot.
     """
+    bindings: dict[str, Interface] = {}
+    if isinstance(rows, dict) and set(rows) == {"rules", "interfaces"}:
+        raw_bindings = rows["interfaces"]
+        if not isinstance(raw_bindings, list) or len(raw_bindings) > 256:
+            raise ReconcileError("invalid legacy source bindings")
+        for raw in raw_bindings:
+            binding = parse_interface(raw)
+            if binding.name in bindings:
+                raise ReconcileError("ambiguous legacy source bindings")
+            bindings[binding.name] = binding
+        rows = rows["rules"]
     if not isinstance(rows, list) or len(rows) > 400:
         raise ReconcileError("invalid legacy source rules")
     selectors: list[tuple[int, int, int, ipaddress.IPv4Network | ipaddress.IPv6Network]] = []
@@ -666,6 +677,7 @@ def migrate_legacy_sources(rows: Any) -> None:
         for rule in existing:
             sources.setdefault(rule.source, None)
         seen_links: set[str] = set()
+        seen_sources: set[str] = set()
         for link in inventory:
             if not isinstance(link, dict) or not isinstance(link.get("ifname"), str) or link["ifname"] in seen_links:
                 raise ReconcileError("ambiguous legacy source link")
@@ -685,11 +697,27 @@ def migrate_legacy_sources(rows: Any) -> None:
                     continue
                 source = usable_address(entry.get("local"))
                 address = ipaddress.ip_address(source)
-                match = next((item for item in selectors if item[3].version == address.version
-                              and address in item[3]), None)
-                if match is None:
+                matches = {item[1] for item in selectors if item[3].version == address.version
+                           and address in item[3]}
+                if not matches:
                     continue
-                table = match[1]
+                if source in seen_sources:
+                    raise ReconcileError("ambiguous legacy source ownership")
+                seen_sources.add(source)
+                owner = bindings.get(link["ifname"])
+                if owner is not None and str(link.get("address", "")).lower() != owner.mac:
+                    raise ReconcileError("legacy source interface identity changed")
+                canonical = sources.get(source)
+                if canonical is not None:
+                    table = canonical
+                elif owner is not None:
+                    table = owner.table
+                elif len(matches) == 1:
+                    table = next(iter(matches))
+                else:
+                    raise ReconcileError("ambiguous legacy source routing domain")
+                if table not in matches:
+                    raise ReconcileError("legacy source conflicts with interface ownership")
                 if source in sources and sources[source] != table:
                     raise ReconcileError("legacy source conflicts with canonical ownership")
                 if active and sources.get(source) != table:

@@ -3474,7 +3474,7 @@ def test_management_handoff_candidate_durability_gates_ack(
     helper = load_helper_module()
     guard_events: list[str] = []
     monkeypatch.setattr(helper, "_stage_candidate_ingress_guards", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr(helper, "_retire_legacy_source_rules", lambda: None)
+    monkeypatch.setattr(helper, "_retire_legacy_source_rules", lambda *_args: None)
     monkeypatch.setattr(helper, "_wait_management_handoff_routes", lambda *_args: None)
     monkeypatch.setattr(helper, "_wait_and_retire_transition_routes",
                         lambda *_args: retirement_operations.append("seed-retirement"))
@@ -3886,7 +3886,7 @@ def test_management_handoff_failure_rolls_back_with_truthful_layer(monkeypatch, 
     """
     helper = load_helper_module()
     monkeypatch.setattr(helper, "_stage_candidate_ingress_guards", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr(helper, "_retire_legacy_source_rules", lambda: None)
+    monkeypatch.setattr(helper, "_retire_legacy_source_rules", lambda *_args: None)
     monkeypatch.setattr(helper, "_wait_management_handoff_routes", lambda *_args: None)
     monkeypatch.setattr(helper, "_wait_and_retire_transition_routes", lambda *_args: None)
     monkeypatch.setattr(helper, "_apply_route_domain_ingress", lambda *_args, **_kwargs: None)
@@ -3968,7 +3968,7 @@ def test_management_handoff_resolver_failure_rolls_back_before_nginx(
     """
     helper = load_helper_module()
     monkeypatch.setattr(helper, "_stage_candidate_ingress_guards", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr(helper, "_retire_legacy_source_rules", lambda: None)
+    monkeypatch.setattr(helper, "_retire_legacy_source_rules", lambda *_args: None)
     monkeypatch.setattr(helper, "_wait_management_handoff_routes", lambda *_args: None)
     monkeypatch.setattr(helper, "_wait_and_retire_transition_routes", lambda *_args: None)
     monkeypatch.setattr(helper, "_apply_route_domain_ingress", lambda *_args, **_kwargs: None)
@@ -4081,7 +4081,7 @@ def test_management_handoff_orders_resolver_before_dns_shutdown(monkeypatch, tmp
     monkeypatch.setattr(helper, "_apply_management_candidate_network", lambda *_args: None)
     monkeypatch.setattr(helper, "_transition_source_guard", lambda *_args: None)
     monkeypatch.setattr(helper, "_stage_candidate_ingress_guards", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr(helper, "_retire_legacy_source_rules", lambda: None)
+    monkeypatch.setattr(helper, "_retire_legacy_source_rules", lambda *_args: None)
     monkeypatch.setattr(helper, "_wait_management_handoff_routes", lambda *_args: None)
     monkeypatch.setattr(helper, "_wait_and_retire_transition_routes", lambda *_args: None)
     monkeypatch.setattr(helper, "_apply_route_domain_ingress", lambda *_args, **_kwargs: None)
@@ -4129,7 +4129,7 @@ def test_management_handoff_never_activates_nginx_with_unhealthy_upstream(monkey
     """
     helper = load_helper_module()
     monkeypatch.setattr(helper, "_stage_candidate_ingress_guards", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr(helper, "_retire_legacy_source_rules", lambda: None)
+    monkeypatch.setattr(helper, "_retire_legacy_source_rules", lambda *_args: None)
     monkeypatch.setattr(helper, "_wait_management_handoff_routes", lambda *_args: None)
     monkeypatch.setattr(helper, "_wait_and_retire_transition_routes", lambda *_args: None)
     monkeypatch.setattr(helper, "_apply_route_domain_ingress", lambda *_args, **_kwargs: None)
@@ -10652,6 +10652,43 @@ def test_legacy_source_migration_preserves_old_address_before_prefix_retirement(
     assert len(calls) == 1
     assert calls[0][0][-1] == "--migrate-legacy"
     assert json.loads(calls[0][1]) == [legacy]
+
+
+def test_legacy_source_migration_sends_reviewed_interface_domains(monkeypatch, tmp_path):
+    """The installed reconciler receives MAC-bound candidate ownership.
+
+    Args:
+        monkeypatch: Replace native address observation and reconciler execution.
+        tmp_path: Owned candidate Network file directory.
+    """
+    helper = load_helper_module()
+    candidate = tmp_path / "network.conf"
+    candidate.write_text(
+        "[physical_interfaces]\n"
+        "interface=eth0\n  role=management\n  mode=access\n  admin_state=up\n"
+        "  mac=02:00:00:00:00:10\n"
+        "interface=eth1\n  role=access\n  mode=access\n  admin_state=up\n"
+        "  mac=02:00:00:00:00:20\n", encoding="utf-8",
+    )
+    legacy = {"family": 4, "priority": 1000, "table": 100, "source": "10.42.0.0/16",
+              "incoming_interface": "", "protocol": 4}
+    observed = [
+        {"ifname": "eth0", "address": "02:00:00:00:00:10", "addr_info": []},
+        {"ifname": "eth1", "address": "02:00:00:00:00:20", "addr_info": []},
+    ]
+    calls: list[str] = []
+    monkeypatch.setattr(helper, "_snapshot_route_domain_rules", lambda: [legacy])
+    monkeypatch.setattr(helper, "_network_observation_command", lambda command:
+                        subprocess.CompletedProcess(command, 0, json.dumps(observed), ""))
+    monkeypatch.setattr(helper, "_run_with_input", lambda command, payload:
+                        calls.append(payload) or subprocess.CompletedProcess(command, 0, "", ""))
+
+    helper._retire_legacy_source_rules(candidate)
+
+    assert json.loads(calls[0]) == {"rules": [legacy], "interfaces": [
+        {"name": "eth0", "mac": "02:00:00:00:00:10", "table": 100},
+        {"name": "eth1", "mac": "02:00:00:00:00:20", "table": 200},
+    ]}
 
 
 def test_wan_helper_apply_routes_nat_and_netem(monkeypatch, tmp_path):

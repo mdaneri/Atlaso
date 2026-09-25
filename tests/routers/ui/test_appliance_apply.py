@@ -183,6 +183,56 @@ def test_combined_wan_rejects_candidate_ingress_over_capacity(client, monkeypatc
                for error in review_wan["network_candidate_validation_errors"])
 
 
+def test_network_only_rejects_ingress_over_applied_routing_capacity(client, monkeypatch):
+    """Network alone cannot overflow the already-applied Routing window.
+
+    Args:
+        client: Authenticated API test client.
+        monkeypatch: Replace candidate ingress with a bounded oversized set.
+    """
+    from atlaso.app import ui
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Job, PhysicalInterface
+    from atlaso.app.services.routes_wan import save_routes_wan_settings
+
+    login(client)
+    with SessionLocal() as db:
+        save_routes_wan_settings(db, routing_enabled=True, nat_enabled=False,
+                                 wan_simulation_enabled=False)
+        applied = ui.appliance_apply_units(db)
+        ui.update_appliance_apply_baselines(db, applied, {unit["id"] for unit in applied})
+        interface = db.query(PhysicalInterface).first()
+        assert interface is not None
+        interface.mtu = 1400
+        db.commit()
+    monkeypatch.setattr(ui, "wan_network_ingress_from_preview",
+                        lambda _preview: [f"lab{index}" for index in range(101)])
+    with SessionLocal() as db:
+        units = ui.appliance_apply_units(db)
+        network = next(unit for unit in units if unit["id"] == "network")
+        assert any("applied Routing & WAN ingress rule capacity" in error
+                   for error in network["validation_errors"])
+        selected = ui.appliance_apply_units_for_selection(units, {"network"})
+        assert selected is units
+
+    review = client.get("/appliance-apply/review")
+    assert review.status_code == 200
+    review_network = next(unit for unit in review.json()["units"] if unit["id"] == "network")
+    assert review_network["valid"] is False
+    assert any("applied Routing & WAN ingress rule capacity" in error
+               for error in review_network["validation_errors"])
+    monkeypatch.setattr(ui, "run_appliance_apply_job", lambda _job_id: None)
+    page = client.get("/dashboard")
+    csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    with SessionLocal() as db:
+        count_before = db.query(Job).count()
+    response = client.post("/appliance-apply", data={"csrf": csrf, "selected_units": "network"},
+                           headers={"Accept": "application/json"})
+    assert response.status_code == 422, response.text
+    with SessionLocal() as db:
+        assert db.query(Job).count() == count_before
+
+
 def test_fresh_wan_ingress_matches_helper_for_mixed_network_links(client, tmp_path):
     """Project active addressless links without admitting down or unused targets.
 

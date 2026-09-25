@@ -11497,19 +11497,62 @@ def _stage_candidate_ingress_guards(
             raise ValueError("candidate routing-domain ingress guard installation failed")
 
 
-def _retire_legacy_source_rules() -> None:
+def _retire_legacy_source_rules(path: Path | None = None) -> None:
     """Preserve assigned old sources before retiring pre-migration selectors.
 
     The caller has already published a rollback journal and installed the
     local-origin transition guard. Legacy priorities precede that guard, so
     they must be gone before candidate addresses can appear on any link.
+
+    Args:
+        path: Preflighted candidate Network file, providing MAC-bound domain ownership.
     """
     legacy = [row for row in _snapshot_route_domain_rules() if not row["incoming_interface"]]
     if not legacy:
         return
+    payload: list[dict] | dict = legacy
+    if path is not None:
+        physical, vlans, _removed = _parse_network_config(path)
+        observation = _network_observation_command(["ip", "-j", "address", "show"])
+        if observation.returncode:
+            raise ValueError("legacy source interface inventory unavailable")
+        try:
+            native = json.loads(observation.stdout)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("legacy source interface inventory unavailable") from exc
+        if not isinstance(native, list) or len(native) > 4096:
+            raise ValueError("legacy source interface inventory malformed")
+        observed: dict[str, dict] = {}
+        for link in native:
+            if not isinstance(link, dict) or not isinstance(link.get("ifname"), str):
+                raise ValueError("legacy source interface inventory malformed")
+            if link["ifname"] in observed:
+                raise ValueError("legacy source interface inventory ambiguous")
+            observed[link["ifname"]] = link
+        bindings = []
+        for row in [*physical, *vlans]:
+            if row.get("role") == "unused" or row.get("mode") == "trunk" or row.get("admin_state") == "down":
+                continue
+            name = row.get("name", "")
+            link = observed.get(name)
+            if link is None or not isinstance(link.get("address"), str):
+                raise ValueError("legacy source interface identity unavailable")
+            if row in physical:
+                expected = row.get("mac", "")
+                actual = link["address"]
+            else:
+                expected = row.get("parent_mac", "")
+                parent = observed.get(row.get("parent", ""))
+                actual = parent.get("address", "") if parent is not None else ""
+            if not _valid_network_mac(expected) or actual.lower() != expected.lower():
+                raise ValueError("legacy source interface differs from reviewed MAC identity")
+            bindings.append({"name": name, "mac": link["address"].lower(),
+                             "table": MANAGEMENT_ROUTE_TABLE_ID if row.get("role") == "management"
+                             else LAB_ROUTE_TABLE_ID})
+        payload = {"rules": legacy, "interfaces": bindings}
     result = _run_with_input(
         ["/opt/atlaso/.venv/bin/python", "-I", "-m", "atlaso.route_domains", "--migrate-legacy"],
-        json.dumps(legacy),
+        json.dumps(payload),
     )
     if result.returncode:
         raise ValueError("legacy source routing migration failed")
@@ -12394,7 +12437,7 @@ def _handle_network_locked(
             else:
                 _transition_source_guard(True)
             _stage_candidate_ingress_guards(config_path)
-            _retire_legacy_source_rules()
+            _retire_legacy_source_rules(config_path)
             activation_started = datetime.now(timezone.utc).isoformat()
             install_returncode, installed, reconfigure_links, admin_down_links = _install_systemd_networkd_files(config_path)
             if install_returncode != 0:
@@ -29378,7 +29421,7 @@ def _apply_management_handoff(payload: dict) -> int:
             held_management_interfaces={name for name, table in state.get("previous_route_domains", {}).items()
                                         if table == MANAGEMENT_ROUTE_TABLE_ID},
         )
-        _retire_legacy_source_rules()
+        _retire_legacy_source_rules(Path(str(payload["network_config_path"])))
         _apply_management_candidate_network(Path(str(payload["network_config_path"])), state)
         failing_layer = "address activation"
         address_observation = _wait_network_addresses(Path(str(payload["network_config_path"])), started_at=activation_started)

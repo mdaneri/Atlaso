@@ -75,6 +75,73 @@ def test_active_watcher_refuses_unowned_legacy_source_migration(monkeypatch):
         domains.migrate_legacy_sources(legacy)
 
 
+def test_overlapping_legacy_prefixes_follow_mac_bound_interface_domains(monkeypatch):
+    """A lab source inside a Management prefix keeps its own table.
+
+    Args:
+        monkeypatch: Replace native routing observations and mutations.
+    """
+    legacy = [
+        {"family": 4, "priority": 1000, "table": 100, "source": "10.42.0.0/16",
+         "incoming_interface": "", "protocol": 4},
+        {"family": 4, "priority": 2000, "table": 200, "source": "10.42.2.0/24",
+         "incoming_interface": "", "protocol": 4},
+    ]
+    payload = {"rules": legacy, "interfaces": [
+        {"name": "eth0", "mac": "02:00:00:00:00:10", "table": 100},
+        {"name": "eth1", "mac": "02:00:00:00:00:20", "table": 200},
+    ]}
+    inventory = [
+        {"ifname": "eth0", "address": "02:00:00:00:00:10",
+         "addr_info": [{"scope": "global", "local": "10.42.1.5"}]},
+        {"ifname": "eth1", "address": "02:00:00:00:00:20",
+         "addr_info": [{"scope": "global", "local": "10.42.2.5"}]},
+    ]
+    commands: list[list[str]] = []
+    monkeypatch.setattr(domains, "reconciliation_lock", nullcontext)
+    monkeypatch.setattr(domains.subprocess, "run", lambda *_args, **_kwargs:
+                        subprocess.CompletedProcess([], 3, b"", b""))
+    monkeypatch.setattr(domains, "read_native", lambda args:
+                        inventory if args == ["address", "show"] else [])
+    monkeypatch.setattr(domains, "run_ip", lambda command: commands.append(command) or "")
+
+    domains.migrate_legacy_sources(payload)
+
+    source_commands = [command for command in commands if "from" in command
+                       and "/32" in command[command.index("from") + 1]]
+    assert any("10.42.1.5/32" in command and command[command.index("table") + 1] == "100"
+               for command in source_commands if "table" in command)
+    assert any("10.42.2.5/32" in command and command[command.index("table") + 1] == "200"
+               for command in source_commands if "table" in command)
+    assert not any("10.42.2.5/32" in command and command[command.index("table") + 1] == "100"
+                   for command in source_commands if "table" in command)
+
+
+def test_overlapping_legacy_source_refuses_replaced_interface(monkeypatch):
+    """A same-name MAC replacement cannot claim a reviewed source domain.
+
+    Args:
+        monkeypatch: Replace native routing observations and mutations.
+    """
+    payload = {"rules": [
+        {"family": 4, "priority": 1000, "table": 100, "source": "10.42.0.0/16",
+         "incoming_interface": "", "protocol": 4},
+        {"family": 4, "priority": 2000, "table": 200, "source": "10.42.2.0/24",
+         "incoming_interface": "", "protocol": 4},
+    ], "interfaces": [{"name": "eth1", "mac": "02:00:00:00:00:20", "table": 200}]}
+    monkeypatch.setattr(domains, "reconciliation_lock", nullcontext)
+    monkeypatch.setattr(domains.subprocess, "run", lambda *_args, **_kwargs:
+                        subprocess.CompletedProcess([], 3, b"", b""))
+    monkeypatch.setattr(domains, "read_native", lambda args:
+                        [{"ifname": "eth1", "address": "02:00:00:00:00:21",
+                          "addr_info": [{"scope": "global", "local": "10.42.2.5"}]}]
+                        if args == ["address", "show"] else [])
+    monkeypatch.setattr(domains, "run_ip", lambda _command: pytest.fail("migration changed native rules"))
+
+    with pytest.raises(domains.ReconcileError, match="identity changed"):
+        domains.migrate_legacy_sources(payload)
+
+
 @pytest.fixture(scope="module")
 def helper():
     """Load one helper module; individual test monkeypatches remain reversible."""
@@ -759,7 +826,7 @@ def test_network_apply_retires_vlan_but_keeps_terminal_source_guard(helper, monk
     monkeypatch.setattr(helper, "_route_domain_ingress_desired_rules", lambda _path: [])
     monkeypatch.setattr(helper, "_network_apply_transaction", lambda _path: nullcontext())
     monkeypatch.setattr(helper, "_stage_candidate_ingress_guards", lambda _path: None)
-    monkeypatch.setattr(helper, "_retire_legacy_source_rules", lambda: None)
+    monkeypatch.setattr(helper, "_retire_legacy_source_rules", lambda *_args: None)
     monkeypatch.setattr(helper, "_install_systemd_networkd_files", lambda _path: (0, [], [], []))
     monkeypatch.setattr(helper, "_wait_network_addresses", lambda *_args, **_kwargs: None)
     holds = [{"name": "eth1.120", "mac": "02:00:00:00:01:20", "address": "192.0.2.20", "table": 200}]
@@ -827,7 +894,7 @@ def test_ordinary_first_upgrade_seeds_and_reconfigures_management_before_exact_g
     monkeypatch.setattr(helper, "_transition_source_guard",
                         lambda *_args, **_kwargs: events.append("source-guard"))
     monkeypatch.setattr(helper, "_stage_candidate_ingress_guards", lambda _path: None)
-    monkeypatch.setattr(helper, "_retire_legacy_source_rules", lambda: None)
+    monkeypatch.setattr(helper, "_retire_legacy_source_rules", lambda *_args: None)
     monkeypatch.setattr(helper, "_install_systemd_networkd_files",
                         lambda _path: (events.append("install") or 0, [], [], []))
     monkeypatch.setattr(helper, "_run", lambda command:

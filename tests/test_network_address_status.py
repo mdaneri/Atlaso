@@ -889,7 +889,7 @@ def test_ordinary_apply_restores_rejected_candidate(tmp_path, monkeypatch, capsy
                      "source": "192.0.2.0/24", "incoming_interface": "", "protocol": 0}]
     live_rules = list(legacy_rules)
     monkeypatch.setattr(helper, "_snapshot_route_domain_rules", lambda: list(live_rules))
-    monkeypatch.setattr(helper, "_retire_legacy_source_rules", lambda: live_rules.clear())
+    monkeypatch.setattr(helper, "_retire_legacy_source_rules", lambda *_args: live_rules.clear())
     monkeypatch.setattr(helper, "_install_route_domain_intent", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(helper, "_apply_route_domain_ingress", lambda *_args, **_kwargs: live_rules.clear())
     monkeypatch.setattr(helper, "_restore_route_domain_rules", lambda snapshot: live_rules.__setitem__(slice(None), snapshot))
