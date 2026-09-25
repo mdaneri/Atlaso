@@ -579,14 +579,15 @@ def _run(
     return subprocess.run(command, check=False, capture_output=True, text=True, timeout=timeout, env=env)
 
 
-def _run_with_input(command: list[str], input_text: str) -> subprocess.CompletedProcess[str]:
+def _run_with_input(command: list[str], input_text: str, *, timeout: float | None = None) -> subprocess.CompletedProcess[str]:
     """Run with input.
 
     Args:
         command: Command and arguments to execute.
         input_text: Text supplied to the invoked command through standard input.
+        timeout: Optional maximum subprocess duration.
     """
-    return subprocess.run(command, input=input_text, check=False, capture_output=True, text=True)
+    return subprocess.run(command, input=input_text, check=False, capture_output=True, text=True, timeout=timeout)
 
 
 def _vcfdt_atlaso_environment() -> tuple[dict[str, str], int | None, int | None]:
@@ -10808,17 +10809,23 @@ def _removed_vlan_source_holds(path: Path) -> list[dict]:
     names = sorted({row["name"] for row in removed})
     if not names:
         return []
+    previous_rules = _network_transaction_state().get("previous_route_domain_rules")
+    if not isinstance(previous_rules, list):
+        raise ValueError("previous routing-domain rules were not snapshotted")
+    previous_rules = _validated_route_domain_rule_snapshot(previous_rules)
     program = (
         "import json,sys\n"
-        "from atlaso.route_domains import read_intent,read_native,removed_interface_holds,reconciliation_lock\n"
-        "names=set(json.loads(sys.argv[1]))\n"
+        "from atlaso.route_domains import read_intent,read_native,removed_interface_holds,legacy_removed_vlan_intent,reconciliation_lock\n"
+        "payload=json.load(sys.stdin)\nnames=set(row['name'] for row in payload['removed'])\n"
         "with reconciliation_lock():\n"
         " intent=read_intent()\n inventory=read_native(['address','show'])\n"
+        " if not intent.interfaces and not intent.held_addresses:\n"
+        "  intent=legacy_removed_vlan_intent(payload['removed'],inventory,read_native(['link','show']),payload['rules'])\n"
         " print(json.dumps(removed_interface_holds(intent,inventory,names)))\n"
     )
-    result = _network_observation_command(
-        ["/opt/atlaso/.venv/bin/python", "-I", "-c", program, json.dumps(names)], timeout=45,
-    )
+    result = _run_with_input(["/opt/atlaso/.venv/bin/python", "-I", "-c", program],
+                             json.dumps({"removed": [{key: row[key] for key in ("name", "parent", "vlan_id")}
+                                                     for row in removed], "rules": previous_rules}), timeout=45)
     if result.returncode:
         raise ValueError("removed VLAN source ownership could not be captured")
     holds = json.loads(result.stdout)

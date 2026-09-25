@@ -222,6 +222,32 @@ def test_removed_vlan_sources_remain_bound_until_link_retirement():
                                               {"eth1.120"})
 
 
+def test_first_migration_removed_vlan_uses_proven_legacy_source():
+    """A marker-free VLAN removal derives its hold from native identity and old rules."""
+    removed = [{"name": "eth1.120", "parent": "eth1", "vlan_id": "120"}]
+    inventory = [{"ifname": "eth1.120", "address": "02:00:00:00:01:20",
+                  "addr_info": [{"local": "192.0.2.20", "flags": []}]}]
+    links = [{"ifname": "eth1", "ifindex": 5},
+             {"ifname": "eth1.120", "ifindex": 7, "link_index": 5,
+              "address": "02:00:00:00:01:20",
+              "linkinfo": {"info_kind": "vlan", "info_data": {"id": 120}}}]
+    rules = [{"family": 4, "priority": 2000, "table": 200,
+              "source": "192.0.2.0/24", "incoming_interface": "", "protocol": 4}]
+
+    intent = route_domains.legacy_removed_vlan_intent(removed, inventory, links, rules)
+    assert route_domains.removed_interface_holds(intent, inventory, {"eth1.120"}) == [
+        {"name": "eth1.120", "mac": "02:00:00:00:01:20", "address": "192.0.2.20", "table": 200}]
+    assert route_domains.legacy_removed_vlan_intent(removed, [], [links[0]], rules).interfaces == ()
+    with pytest.raises(route_domains.ReconcileError, match="identity unavailable"):
+        route_domains.legacy_removed_vlan_intent(removed, inventory,
+                                                 [links[0], {**links[1], "link_index": 9}], rules)
+    with pytest.raises(route_domains.ReconcileError, match="unproven routing domain"):
+        route_domains.legacy_removed_vlan_intent(removed, inventory, links, [])
+    with pytest.raises(route_domains.ReconcileError, match="unproven routing domain"):
+        route_domains.legacy_removed_vlan_intent(removed, inventory, links,
+                                                 [*rules, {**rules[0], "table": 100}])
+
+
 @pytest.mark.parametrize("family", [4, 6])
 def test_flagged_default_keeps_reply_table_with_forwarding_off(helper, modern, family):
     """Applied flag retains both host and guarded reply defaults, not forwarding.

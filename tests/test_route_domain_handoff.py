@@ -60,9 +60,17 @@ def test_removed_vlan_capture_accepts_dual_stack_holds_above_interface_limit(mon
     network.write_text("candidate\n", encoding="utf-8")
     holds = [{"name": "eth1.120", "mac": "02:00:00:00:01:20", "table": 200,
               "address": f"2001:db8::{index:x}"} for index in range(1, 259)]
-    monkeypatch.setattr(helper, "_parse_network_config", lambda _path: ([], [], [{"name": "eth1.120"}]))
-    monkeypatch.setattr(helper, "_network_observation_command", lambda _command, **_kwargs:
-                        subprocess.CompletedProcess([], 0, json.dumps(holds), ""))
+    monkeypatch.setattr(helper, "_parse_network_config", lambda _path: (
+        [], [], [{"name": "eth1.120", "parent": "eth1", "vlan_id": "120"}]))
+    monkeypatch.setattr(helper, "_network_transaction_state", lambda: {"previous_route_domain_rules": []})
+    def observe(command, payload, **_kwargs):
+        """Verify the delegated Python program and its bounded identity payload."""
+        compile(command[-1], "<removed-vlan-preflight>", "exec")
+        assert json.loads(payload)["removed"] == [
+            {"name": "eth1.120", "parent": "eth1", "vlan_id": "120"}]
+        return subprocess.CompletedProcess([], 0, json.dumps(holds), "")
+
+    monkeypatch.setattr(helper, "_run_with_input", observe)
 
     assert len(helper._removed_vlan_source_holds(network)) == 258
 

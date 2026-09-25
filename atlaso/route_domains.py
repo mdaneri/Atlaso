@@ -308,6 +308,100 @@ def removed_interface_holds(intent: Intent, inventory: Any, names: set[str]) -> 
     return holds
 
 
+def legacy_removed_vlan_intent(
+    removed: Any, inventory: Any, native_links: Any, legacy_rules: Any,
+) -> Intent:
+    """Prove first-migration VLAN source ownership from native links and old rules.
+
+    Args:
+        removed: Candidate removal records containing VLAN name, parent, and ID.
+        inventory: Native assigned-address inventory before Network mutation.
+        native_links: Detailed native link inventory with parent and VLAN identity.
+        legacy_rules: Admitted pre-Apply legacy routing-rule snapshot.
+    """
+    if (not isinstance(removed, list) or len(removed) > 256
+            or not isinstance(inventory, list) or len(inventory) > 4096
+            or not isinstance(native_links, list) or len(native_links) > 4096
+            or not isinstance(legacy_rules, list) or len(legacy_rules) > 6000):
+        raise ReconcileError("invalid legacy removed VLAN inventory")
+    if any(not isinstance(row, dict) or not isinstance(row.get("ifname"), str)
+           for row in [*inventory, *native_links]):
+        raise ReconcileError("invalid legacy VLAN link inventory")
+    addresses = {row["ifname"]: row for row in inventory}
+    links = {row["ifname"]: row for row in native_links}
+    if len(addresses) != len(inventory) or len(links) != len(native_links):
+        raise ReconcileError("ambiguous legacy VLAN link inventory")
+    interfaces: list[Interface] = []
+    seen: set[str] = set()
+    for row in removed:
+        if not isinstance(row, dict) or set(row) != {"name", "parent", "vlan_id"}:
+            raise ReconcileError("invalid legacy removed VLAN identity")
+        name, parent, raw_id = row["name"], row["parent"], row["vlan_id"]
+        if (not isinstance(name, str) or not isinstance(parent, str)
+                or not INTERFACE_PATTERN.fullmatch(parent) or parent in {".", "..", "lo"}
+                or not isinstance(raw_id, str) or not raw_id.isdecimal()
+                or not 1 <= int(raw_id) <= 4094 or name != f"{parent}.{int(raw_id)}"
+                or name in seen):
+            raise ReconcileError("invalid legacy removed VLAN identity")
+        seen.add(name)
+        link, parent_link, address_link = links.get(name), links.get(parent), addresses.get(name)
+        if link is None and address_link is None:
+            continue
+        if not isinstance(link, dict) or not isinstance(parent_link, dict) or not isinstance(address_link, dict):
+            raise ReconcileError("legacy removed VLAN identity unavailable")
+        info = link.get("linkinfo")
+        vlan = info.get("info_data") if isinstance(info, dict) else None
+        if (not isinstance(info, dict) or not isinstance(vlan, dict) or info.get("info_kind") != "vlan"
+                or vlan.get("id") != int(raw_id)
+                or type(parent_link.get("ifindex")) is not int
+                or link.get("link_index") != parent_link["ifindex"]
+                or str(link.get("address", "")).lower() != str(address_link.get("address", "")).lower()):
+            raise ReconcileError("legacy removed VLAN identity unavailable")
+        entries = address_link.get("addr_info")
+        if not isinstance(entries, list) or len(entries) > 4096:
+            raise ReconcileError("invalid legacy removed VLAN addresses")
+        tables: set[int] = set()
+        source_count = 0
+        for entry in entries:
+            if not isinstance(entry, dict) or not isinstance(entry.get("flags", []), list):
+                raise ReconcileError("invalid legacy removed VLAN address")
+            flags = entry.get("flags", [])
+            if any(entry.get(flag) or flag in flags for flag in ("tentative", "dadfailed")):
+                continue
+            if entry.get("valid_life_time") == 0:
+                continue
+            try:
+                source = usable_address(entry.get("local"))
+            except ReconcileError:
+                continue
+            source_count += 1
+            matching = set()
+            for rule in legacy_rules:
+                if not isinstance(rule, dict):
+                    raise ReconcileError("invalid legacy source rule")
+                if rule.get("incoming_interface") or rule.get("table") not in {100, 200}:
+                    continue
+                raw_selector = rule.get("source")
+                if not isinstance(raw_selector, str):
+                    raise ReconcileError("invalid legacy source selector")
+                try:
+                    selector = ipaddress.ip_network(raw_selector, strict=True)
+                except (TypeError, ValueError) as exc:
+                    raise ReconcileError("invalid legacy source selector") from exc
+                if ipaddress.ip_address(source) in selector:
+                    matching.add(rule["table"])
+            if len(matching) != 1:
+                raise ReconcileError("legacy removed source has unproven routing domain")
+            tables.update(matching)
+        if source_count == 0:
+            continue
+        if len(tables) != 1:
+            raise ReconcileError("legacy removed VLAN has ambiguous routing domain")
+        interfaces.append(parse_interface({"name": name, "mac": address_link.get("address"),
+                                           "table": tables.pop()}))
+    return Intent(tuple(interfaces))
+
+
 def owned_rules(rows: Any, family: int) -> set[Rule]:
     """Reject occupied ranges or tagged rules outside the canonical owned form.
 
