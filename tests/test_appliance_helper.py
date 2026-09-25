@@ -10730,8 +10730,11 @@ def test_legacy_source_migration_sends_reviewed_interface_domains(monkeypatch, t
 @pytest.mark.parametrize("role,mode,admin_state", [
     ("unused", "access", "up"), ("access", "trunk", "up"), ("access", "access", "down"),
 ])
+@pytest.mark.parametrize("old_routes", [
+    "", "[Route]\nDestination=10.42.0.0/16\nPreferredSource=10.42.0.2\nTable=200\n",
+])
 def test_legacy_source_migration_retains_outgoing_old_domain(
-    monkeypatch, tmp_path, role, mode, admin_state,
+    monkeypatch, tmp_path, role, mode, admin_state, old_routes,
 ):
     """An outgoing live source uses its installed domain, not candidate state.
 
@@ -10741,6 +10744,7 @@ def test_legacy_source_migration_retains_outgoing_old_domain(
         role: Candidate role after Apply.
         mode: Candidate interface mode after Apply.
         admin_state: Candidate administrative state after Apply.
+        old_routes: Installed route-table markers, if present on this baseline.
     """
     helper = load_helper_module()
     candidate = tmp_path / "candidate.conf"
@@ -10752,8 +10756,8 @@ def test_legacy_source_migration_retains_outgoing_old_domain(
     networkd = tmp_path / "networkd"
     networkd.mkdir()
     (networkd / "10-atlaso-eth1.network").write_text(
-        "[Match]\nName=eth1\n[Route]\nDestination=10.42.0.0/16\n"
-        "PreferredSource=10.42.0.2\nTable=200\n", encoding="utf-8",
+        "[Match]\nName=eth1\n[Network]\nAddress=10.42.0.2/16\n"
+        + old_routes, encoding="utf-8",
     )
     monkeypatch.setattr(helper, "NETWORKD_CONFIG_DIR", networkd)
     monkeypatch.setattr(helper, "NETWORKD_MGMT_CONFIG_PATH", networkd / "00-atlaso-mgmt.network")
@@ -10778,6 +10782,45 @@ def test_legacy_source_migration_retains_outgoing_old_domain(
     assert calls == [{"rules": legacy, "interfaces": [
         {"name": "eth1", "mac": "02:00:00:00:00:20", "table": 200},
     ]}]
+
+
+def test_legacy_source_migration_recognizes_marker_free_outgoing_management(monkeypatch, tmp_path):
+    """The installed management filename establishes old table 100 without markers.
+
+    Args:
+        monkeypatch: Pytest fixture replacing native observations.
+        tmp_path: Owned candidate and applied networkd file directory.
+    """
+    helper = load_helper_module()
+    candidate = tmp_path / "candidate.conf"
+    candidate.write_text(
+        "[physical_interfaces]\ninterface=eth0\n  role=unused\n  mode=access\n"
+        "  admin_state=up\n  mac=02:00:00:00:00:10\n", encoding="utf-8",
+    )
+    networkd = tmp_path / "networkd"
+    networkd.mkdir()
+    (networkd / "00-atlaso-mgmt.network").write_text(
+        "[Match]\nName=eth0\n[Network]\nDHCP=ipv4\n", encoding="utf-8",
+    )
+    monkeypatch.setattr(helper, "NETWORKD_CONFIG_DIR", networkd)
+    monkeypatch.setattr(helper, "NETWORKD_MGMT_CONFIG_PATH", networkd / "00-atlaso-mgmt.network")
+    legacy = [{"family": 4, "priority": 1000, "table": 100, "source": "10.42.0.0/16",
+               "incoming_interface": "", "protocol": 4}]
+    observed = [{"ifname": "eth0", "address": "02:00:00:00:00:10", "addr_info": [
+        {"scope": "global", "local": "10.42.0.2", "valid_life_time": 3600},
+    ]}]
+    calls: list[dict] = []
+    monkeypatch.setattr(helper, "_snapshot_route_domain_rules", lambda: legacy)
+    monkeypatch.setattr(helper, "_network_observation_command", lambda command:
+                        subprocess.CompletedProcess(command, 0, json.dumps(observed), ""))
+    monkeypatch.setattr(helper, "_run_with_input", lambda command, payload:
+                        calls.append(json.loads(payload)) or subprocess.CompletedProcess(command, 0, "", ""))
+
+    helper._retire_legacy_source_rules(candidate)
+
+    assert calls[0]["interfaces"] == [
+        {"name": "eth0", "mac": "02:00:00:00:00:10", "table": 100},
+    ]
 
 
 @pytest.mark.parametrize("old_policy", [
