@@ -49,7 +49,9 @@ def test_transition_capacity_rejects_live_cross_domain_reuse(monkeypatch):
         monkeypatch: Replace native ownership observations.
     """
     monkeypatch.setattr(domains, "reconciliation_lock", nullcontext)
-    monkeypatch.setattr(domains, "read_native", lambda _command: [])
+    native = [{"ifname": "eth0", "address": "02:00:00:00:00:01",
+               "addr_info": [{"local": "192.0.2.10", "flags": []}]}]
+    monkeypatch.setattr(domains, "read_native", lambda command: native if command == ["address", "show"] else [])
     monkeypatch.setattr(domains, "owned_rules", lambda *_args: set())
     monkeypatch.setattr(domains, "transition_guard_present", lambda *_args: False)
     monkeypatch.setattr(domains, "transition_exemptions_present", lambda *_args: False)
@@ -57,11 +59,65 @@ def test_transition_capacity_rejects_live_cross_domain_reuse(monkeypatch):
     monkeypatch.setattr(domains, "source_tables", lambda *_args: ({"192.0.2.10": 100}, False))
     with pytest.raises(domains.ReconcileError, match="conflicts with live routing domain"):
         domains.preflight_capacity(
-            ["192.0.2.10"], [{"address": "192.0.2.10", "table": 200}],
+            ["192.0.2.10"], [{"address": "192.0.2.10", "name": "eth1", "table": 200}],
         )
     domains.preflight_capacity(
-        ["192.0.2.10"], [{"address": "192.0.2.10", "table": 100}],
+        ["192.0.2.10"], [{"address": "192.0.2.10", "name": "eth0", "table": 100}],
     )
+    # The protected same-link Management-to-Access handoff may keep its IP.
+    domains.preflight_capacity(
+        ["192.0.2.10"], [{"address": "192.0.2.10", "name": "eth0", "table": 200}],
+    )
+
+
+def test_transition_capacity_classifies_marker_free_live_management_source(monkeypatch):
+    """A candidate on another L2 cannot reuse a legacy live management IP.
+
+    Args:
+        monkeypatch: Isolated native ownership observations.
+    """
+    native = [{"ifname": "eth0", "address": "02:00:00:00:00:01",
+               "addr_info": [{"local": "192.0.2.10", "flags": []}]},
+              {"ifname": "eth1", "address": "02:00:00:00:00:02", "addr_info": []}]
+    monkeypatch.setattr(domains, "reconciliation_lock", nullcontext)
+    monkeypatch.setattr(domains, "read_native", lambda command: native if command == ["address", "show"] else [])
+    monkeypatch.setattr(domains, "transition_guard_present", lambda *_args: False)
+    monkeypatch.setattr(domains, "transition_exemptions_present", lambda *_args: False)
+    monkeypatch.setattr(domains, "read_intent", lambda: domains.Intent(()))
+
+    with pytest.raises(domains.ReconcileError, match="conflicts with live routing domain"):
+        domains.preflight_capacity(
+            ["192.0.2.10"], [{"address": "192.0.2.10", "name": "eth1", "table": 200}],
+        )
+    domains.preflight_capacity(
+        ["192.0.2.10"], [{"address": "192.0.2.10", "name": "eth0", "table": 200}],
+    )
+    native[1]["addr_info"] = [{"local": "192.0.2.10", "flags": []}]
+    with pytest.raises(domains.ReconcileError, match="conflicts with live routing domain"):
+        domains.preflight_capacity(
+            ["192.0.2.10"], [{"address": "192.0.2.10", "name": "eth0", "table": 200}],
+        )
+
+
+def test_transition_capacity_preflight_sends_candidate_link_identity(tmp_path, monkeypatch):
+    """The helper binds each candidate address to its intended native link.
+
+    Args:
+        tmp_path: Isolated candidate Network file.
+        monkeypatch: Replace the privileged preflight command.
+    """
+    helper = load_helper_module()
+    config = tmp_path / "network.conf"
+    config.write_text("[physical_interfaces]\ninterface=eth1\n  role=access\n  mode=access\n"
+                      "  admin_state=up\n  ipv4_method=static\n  ip_cidr=192.0.2.10/24\n"
+                      "\n[vlan_interfaces]\n", encoding="utf-8")
+    payloads = []
+    monkeypatch.setattr(helper, "_run_with_input", lambda command, body:
+                        payloads.append(json.loads(body)) or subprocess.CompletedProcess(command, 0, "", ""))
+
+    helper._preflight_route_domain_capacity(config)
+    assert payloads == [{"addresses": ["192.0.2.10"],
+                         "owners": [{"address": "192.0.2.10", "name": "eth1", "table": 200}]}]
 
 
 @pytest.mark.parametrize("protected", [False, True])
@@ -84,7 +140,7 @@ def test_transition_capacity_failure_precedes_network_mutation(tmp_path, monkeyp
     monkeypatch.setattr(helper, "_run_with_input", lambda command, payload:
                         subprocess.CompletedProcess(command, 1, "", "capacity exhausted")
                         if json.loads(payload) == {"addresses": ["192.0.2.10"],
-                                                   "owners": [{"address": "192.0.2.10", "table": 100}]}
+                                                   "owners": [{"address": "192.0.2.10", "name": "eth0", "table": 100}]}
                         else pytest.fail("wrong candidate"))
     before = list(tmp_path.iterdir())
     with pytest.raises(ValueError, match="transition source capacity preflight failed"):

@@ -10725,7 +10725,7 @@ def _preflight_route_domain_capacity(path: Path) -> None:
                 if not (address.is_unspecified or address.is_multicast or address.is_link_local or address.is_loopback):
                     source = str(address)
                     candidates.append(source)
-                    candidate_owners.append({"address": source, "table": (
+                    candidate_owners.append({"address": source, "name": row["name"], "table": (
                         MANAGEMENT_ROUTE_TABLE_ID if row.get("role") == "management"
                         else LAB_ROUTE_TABLE_ID)})
     program = ("import json, sys\n"
