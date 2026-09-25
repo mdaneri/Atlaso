@@ -10823,6 +10823,43 @@ def test_legacy_source_migration_recognizes_marker_free_outgoing_management(monk
     ]
 
 
+def test_legacy_source_migration_uses_only_live_selector_for_outgoing_lab(monkeypatch, tmp_path):
+    """An old feature-off lab source cannot be forced into absent table 200.
+
+    Args:
+        monkeypatch: Pytest fixture replacing native observations.
+        tmp_path: Owned candidate and applied networkd file directory.
+    """
+    helper = load_helper_module()
+    candidate = tmp_path / "candidate.conf"
+    candidate.write_text(
+        "[physical_interfaces]\ninterface=eth1\n  role=unused\n  mode=access\n"
+        "  admin_state=up\n  mac=02:00:00:00:00:20\n", encoding="utf-8",
+    )
+    networkd = tmp_path / "networkd"
+    networkd.mkdir()
+    (networkd / "10-atlaso-eth1.network").write_text(
+        "[Match]\nName=eth1\n[Network]\nAddress=10.42.0.2/16\n", encoding="utf-8",
+    )
+    monkeypatch.setattr(helper, "NETWORKD_CONFIG_DIR", networkd)
+    monkeypatch.setattr(helper, "NETWORKD_MGMT_CONFIG_PATH", networkd / "00-atlaso-mgmt.network")
+    legacy = [{"family": 4, "priority": 1000, "table": 100, "source": "10.42.0.0/16",
+               "incoming_interface": "", "protocol": 4}]
+    observed = [{"ifname": "eth1", "address": "02:00:00:00:00:20", "addr_info": [
+        {"scope": "global", "local": "10.42.0.2", "valid_life_time": 3600},
+    ]}]
+    calls: list[dict] = []
+    monkeypatch.setattr(helper, "_snapshot_route_domain_rules", lambda: legacy)
+    monkeypatch.setattr(helper, "_network_observation_command", lambda command:
+                        subprocess.CompletedProcess(command, 0, json.dumps(observed), ""))
+    monkeypatch.setattr(helper, "_run_with_input", lambda command, payload:
+                        calls.append(json.loads(payload)) or subprocess.CompletedProcess(command, 0, "", ""))
+
+    helper._retire_legacy_source_rules(candidate)
+
+    assert calls == [{"rules": legacy, "interfaces": []}]
+
+
 @pytest.mark.parametrize("old_policy", [
     "", "[Match]\nName=eth2\n[Route]\nTable=200\n",
     "[Match]\nName=eth1\n[Route]\nTable=100\n[Route]\nTable=200\n",

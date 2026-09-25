@@ -11601,6 +11601,27 @@ def _retire_legacy_source_rules(path: Path | None = None) -> None:
                         or (tables and tables != {installed_table})):
                     raise ValueError("outgoing legacy source domain unavailable")
                 table = installed_table
+                # A feature-off legacy baseline may have no selector for this
+                # installed domain. Its live source currently follows the
+                # remaining selector, if exactly one matches. Do not impose
+                # the installed domain on that selector-free old source; the
+                # reconciler proves its effective selector or refuses overlap.
+                selector_free = False
+                for address in link.get("addr_info", []):
+                    if not isinstance(address, dict) or address.get("scope") not in {"global", 0}:
+                        continue
+                    if address.get("valid_life_time") == 0:
+                        continue
+                    try:
+                        source = ip_address(address["local"])
+                    except (KeyError, TypeError, ValueError) as exc:
+                        raise ValueError("outgoing legacy source inventory malformed") from exc
+                    matches = {rule["table"] for rule in legacy
+                               if source in ip_network(rule["source"], strict=True)}
+                    if matches and table not in matches:
+                        selector_free = True
+                if selector_free:
+                    continue
             else:
                 table = (MANAGEMENT_ROUTE_TABLE_ID if row.get("role") == "management"
                          else LAB_ROUTE_TABLE_ID)
