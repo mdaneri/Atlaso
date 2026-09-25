@@ -3407,9 +3407,9 @@ def test_management_handoff_keeps_previous_https_identity(monkeypatch, tmp_path,
     assert "X-Forwarded-Proto https" in holdover
 
 
-@pytest.mark.parametrize("candidate_sync_error", [False, True, "address-timeout", "address-conflict", "certificate",
+@pytest.mark.parametrize("candidate_sync_error", [False, True, "candidate-revalidation-failure", "address-timeout", "address-conflict", "certificate",
                                                   "late-certificate", "late-covered"],
-                         ids=["durable", "sync-failure", "address-timeout", "address-conflict", "certificate",
+                         ids=["durable", "sync-failure", "candidate-revalidation-failure", "address-timeout", "address-conflict", "certificate",
                               "late-certificate", "late-covered"])
 @pytest.mark.parametrize("paired_publishing", [False, True], ids=["source-only", "port-forward-pair"])
 @pytest.mark.parametrize("mapping_change", ["unchanged", "target", "removed"])
@@ -3450,6 +3450,7 @@ def test_management_handoff_candidate_durability_gates_ack(
     nginx_listen_addresses: list[list[str] | None] = []
     retirement_operations: list[str] = []
     wan_calls: list[str] = []
+    stable_address_reads = 0
     def wait_addresses(_path, **kwargs):
         """Reject unstable or conflicting final addresses before WAN and durable ACK.
 
@@ -3457,13 +3458,19 @@ def test_management_handoff_candidate_durability_gates_ack(
             _path: Candidate network intent.
             **kwargs: Readiness boundary selected by the handoff.
         """
+        nonlocal stable_address_reads
         if kwargs.get("stable_samples") == 3:
-            retirement_operations.append("address-ready")
-            if candidate_sync_error == "address-timeout":
+            stable_address_reads += 1
+            if stable_address_reads == 1 and candidate_sync_error == "candidate-revalidation-failure":
                 raise ValueError("Unable to verify candidate addresses: eth1 192.0.2.20/24")
-            if candidate_sync_error == "address-conflict":
+            retirement_operations.append(
+                "candidate-address-ready" if stable_address_reads == 1 else "address-ready"
+            )
+            if stable_address_reads == 2 and candidate_sync_error == "address-timeout":
+                raise ValueError("Unable to verify candidate addresses: eth1 192.0.2.20/24")
+            if stable_address_reads == 2 and candidate_sync_error == "address-conflict":
                 raise ValueError("IP conflict on eth1: 192.0.2.20/24")
-        return {"final": True} if kwargs.get("stable_samples") == 3 else {}
+        return {"final": True} if stable_address_reads == 2 else {}
 
     monkeypatch.setattr(helper, "_wait_network_addresses", wait_addresses)
     monkeypatch.setattr(helper, "_snapshot_management_handoff", lambda _payload: state)
@@ -3649,6 +3656,14 @@ def test_management_handoff_candidate_durability_gates_ack(
         }
     )
 
+    if candidate_sync_error == "candidate-revalidation-failure":
+        assert result == 1
+        assert not durability_calls and not wan_calls and not paired_calls and not nginx_suffixes
+        assert restored == [True] and cleared == [True]
+        payload = json.loads(capsys.readouterr().err.splitlines()[-1])
+        assert payload["management_handoff"] == "rolled back"
+        assert payload["failing_layer"] == "candidate address revalidation"
+        return
     if candidate_sync_error in {"address-timeout", "address-conflict"}:
         assert result == 1
         assert not durability_calls and not wan_calls and not paired_calls
@@ -3696,7 +3711,9 @@ def test_management_handoff_candidate_durability_gates_ack(
     assert restored == []
     assert resolver_calls == ["eth1", "eth1"]
     assert wan_calls == ["candidate-wan"]
-    assert retirement_operations == ["resolver", "final-network", "resolver", "address-ready", "wan"]
+    assert retirement_operations == [
+        "resolver", "candidate-address-ready", "final-network", "resolver", "address-ready", "wan",
+    ]
     assert len(applied_firewalls) == 2
     assert candidate_rule in applied_firewalls[0]
     assert 'iifname "eth0"' in applied_firewalls[0]

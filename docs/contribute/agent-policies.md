@@ -1795,7 +1795,9 @@ preserved with their affected subsystem below. Keep new requirements at their to
 - Converting the dedicated management interface from DHCP to static must discover a usable DHCP-protocol IPv4 default
   route on that exact interface, review its observed address/prefix and on-link gateway together, and preserve the
   gateway in desired state. An absent or intentionally cleared gateway must warn that off-subnet connectivity will be
-  unavailable; shared gateway validation, global Apply, baseline commit, and rollback remain authoritative.
+  unavailable; shared gateway validation, global Apply, baseline commit, and rollback remain authoritative. During a
+  protected handoff, revalidate the candidate address after resolver and DNS activation and before binding nginx;
+  networkd can briefly withdraw a DHCP-to-static address while IPv4 conflict detection restarts.
 - Keep **Static Routes** separate from **Routing Permissions** in operator language. Static Routes choose destination,
   gateway, target interface/VLAN, and metric in the lab route table; Routing Permissions authorize forwarding between
   interface/VLAN networks, with route-role paths generated automatically and Access networks requiring explicit rules.

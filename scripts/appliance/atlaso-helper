@@ -27587,6 +27587,17 @@ def _apply_management_handoff(payload: dict) -> int:
         if not resolver_before_dns:
             apply_candidate_resolver()
         protocol_holdover = _management_handoff_protocol_holdover(state, settings_payload)
+        # Resolver/DNS activation can reconfigure networkd after the first
+        # address observation. In a DHCP-to-static transition using the same
+        # IPv4 address, that can briefly remove the address while IPv4 ACD
+        # restarts. Do not publish an address-bound nginx listener until the
+        # candidate address is assigned and stable again.
+        failing_layer = "candidate address revalidation"
+        address_observation = _wait_network_addresses(
+            Path(str(payload["network_config_path"])),
+            started_at=activation_started,
+            stable_samples=3,
+        )
         failing_layer = "candidate address discovery"
         previous_dynamic_families = {
             (str(path.get("name") or ""), family)
