@@ -392,6 +392,49 @@ def test_wan_projection_reports_bounded_failed_stage(helper, modern, monkeypatch
         helper._applied_wan_network_state()
 
 
+def test_same_address_handoff_requires_candidate_default_before_source_switch(helper, modern, tmp_path):
+    """Only an exact held old source may stage a usable Access default.
+
+    Args:
+        helper: Loaded privileged helper.
+        modern: Admitted native routing snapshot.
+        tmp_path: Owned candidate WAN configuration directory.
+    """
+    state, _commands = modern
+    old_interface = {"name": "eth1", "mac": "02:00:00:00:00:01", "table": 100}
+    state["intent"]["held_addresses"] = [{"interface": old_interface, "address": "192.0.2.10"}]
+    state["sources"]["192.0.2.10"] = 100
+    previous = {"previous_management_routing": {"eth1": {
+        "table": 100, "mac": old_interface["mac"], "cidrs": ["192.0.2.10/24"],
+        "routes": [{"destination": "0.0.0.0/0", "gateway": "192.0.2.1"}],
+    }}}
+
+    assert ("eth1", "192.0.2.0/24") not in helper._applied_wan_network_state()["prefixes"]
+    with pytest.raises(ValueError, match="candidate IPv4 default is not ready"):
+        helper._verify_management_handoff_migrated_defaults(previous)
+
+    state["routes"]["4"].append({"dst": "default", "dev": "eth1", "table": 200,
+                                  "gateway": "192.0.2.1", "metric": 100})
+    helper._verify_management_handoff_migrated_defaults(previous)
+
+    candidate = tmp_path / "candidate-wan.conf"
+    candidate.write_text("[routes]\nroute=0.0.0.0/0\n  interface=eth1\n"
+                         "  gateway=192.0.2.2\n  metric=100\n  enabled=true\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="candidate IPv4 default is not ready"):
+        helper._verify_management_handoff_migrated_defaults(previous, {"wan_config_path": str(candidate)})
+    state["routes"]["4"][-1]["gateway"] = "192.0.2.2"
+    helper._verify_management_handoff_migrated_defaults(previous, {"wan_config_path": str(candidate)})
+
+    state["routes"]["4"][-1]["gateway"] = "198.51.100.1"
+    with pytest.raises(ValueError, match="candidate IPv4 default is not ready"):
+        helper._verify_management_handoff_migrated_defaults(previous)
+
+    state["intent"]["held_addresses"][0]["interface"]["mac"] = "02:00:00:00:00:02"
+    assert ("eth1", "192.0.2.0/24") not in helper._applied_wan_network_state(
+        include_handoff_held_sources=True,
+    )["prefixes"]
+
+
 @pytest.mark.parametrize("family", [4, 6])
 @pytest.mark.parametrize("gateway", [False, True])
 def test_enabled_static_cannot_replace_connected_identity(helper, modern, family, gateway):

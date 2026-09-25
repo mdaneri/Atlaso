@@ -1079,6 +1079,28 @@ def test_restart_completion_task_identity_is_not_path_normalized(monkeypatch):
     assert calls == ["job_0123456789ab"]
 
 
+def test_management_handoff_final_holds_only_same_interface_migration(monkeypatch):
+    """A retired interface cannot keep an obsolete hold in final Network intent.
+
+    Args:
+        monkeypatch: Pytest fixture used to supply the candidate interface roles.
+    """
+    helper = load_helper_module()
+    monkeypatch.setattr(helper, "_parse_network_config", lambda _path: (
+        [{"name": "eth0", "role": "access", "access_management_ui_enabled": "true"},
+         {"name": "eth1", "role": "access", "access_management_ui_enabled": "false"}],
+        [], [],
+    ))
+    state = {"previous_management_routing": {
+        "eth0": {"mac": "02:00:00:00:00:01", "table": 100, "cidrs": ["192.0.2.10/24"]},
+        "eth1": {"mac": "02:00:00:00:00:02", "table": 100, "cidrs": ["198.51.100.10/24"]},
+        "eth2": {"mac": "02:00:00:00:00:03", "table": 100, "cidrs": ["203.0.113.10/24"]},
+    }}
+    assert helper._management_handoff_final_source_holds(state, Path("candidate-network")) == [
+        {"name": "eth0", "mac": "02:00:00:00:00:01", "address": "192.0.2.10", "table": 100},
+    ]
+
+
 def test_management_handoff_applies_and_restores_coupled_wan(monkeypatch):
     """Apply candidate WAN intent and restore its last-applied config through one helper path.
 
@@ -3192,8 +3214,14 @@ def test_management_handoff_candidate_durability_gates_ack(
     monkeypatch.setattr(
         helper,
         "_apply_management_handoff_wan",
-        lambda payload: retirement_operations.append("wan")
+        lambda payload, **_kwargs: guard_events.append("wan")
+        or retirement_operations.append("wan")
         or wan_calls.append(str(payload["wan_config_path"])),
+    )
+    monkeypatch.setattr(
+        helper,
+        "_verify_management_handoff_migrated_defaults",
+        lambda *_args: retirement_operations.append("default-ready"),
     )
     candidate_rule = '    iifname "eth1" tcp dport { 22, 80, 443, 8443 } accept comment "mgmt-console"'
     monkeypatch.setattr(
@@ -3319,7 +3347,8 @@ def test_management_handoff_candidate_durability_gates_ack(
                 retire_connections: Required removal of old owned sessions.
                 retire_rule_ids: Exact changed mapping identities to retire.
             """
-            assert retirement_operations[-1] == "wan"
+            assert retirement_operations[-1] == "seed-retirement"
+            assert retirement_operations.index("wan") < retirement_operations.index("seed-retirement")
             assert not durability_calls
             assert retire_connections is (mapping_change != "unchanged")
             assert retire_rule_ids == ([] if mapping_change == "unchanged" else [1])
@@ -3346,8 +3375,11 @@ def test_management_handoff_candidate_durability_gates_ack(
     assert state["source_transition_guard"] is True
     if candidate_sync_error == "pre-nginx-address-timeout":
         assert guard_events == ["guard-on", "candidate-network", "source-intent"]
-    else:
+    elif candidate_sync_error in {"address-timeout", "address-conflict"}:
         assert guard_events == ["guard-on", "candidate-network", "source-intent", "final-network"]
+    else:
+        assert guard_events == ["guard-on", "candidate-network", "source-intent", "final-network",
+                                "wan", "source-intent"]
 
     if candidate_sync_error == "pre-nginx-address-timeout":
         assert result == 1
@@ -3386,7 +3418,8 @@ def test_management_handoff_candidate_durability_gates_ack(
     assert resolver_calls == ["eth1", "eth1"]
     assert wan_calls == ["candidate-wan"]
     assert retirement_operations == ["source-reconcile", "resolver", "address-ready", "final-network",
-                                     "resolver", "address-ready", "source-reconcile", "seed-retirement", "wan"]
+                                     "resolver", "address-ready", "wan", "default-ready",
+                                     "source-reconcile", "seed-retirement"]
     assert len(applied_firewalls) == 2
     assert candidate_rule in applied_firewalls[0]
     assert 'iifname "eth0"' in applied_firewalls[0]

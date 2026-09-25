@@ -11984,30 +11984,43 @@ def _prepare_network_observation() -> None:
             raise ValueError("Unable to enable native address conflict evidence")
 
 
-def _handle_network(action: str, args: list[str], *, preserve_transition_routes: bool = False) -> int:
+def _handle_network(
+    action: str, args: list[str], *, preserve_transition_routes: bool = False,
+    handoff_held_addresses: list[dict] | None = None,
+) -> int:
     """Serialize network mutation and recovery while leaving observation read-only.
 
     Args:
         action: Validated network operation.
         args: Operation arguments.
         preserve_transition_routes: Keep an enclosing handoff's route seeds active.
+        handoff_held_addresses: Keep exact old sources selected until WAN is ready.
     """
     try:
         with _network_transaction_lock() if action in {"apply", "recover", "acknowledge"} else nullcontext():
-            return _handle_network_locked(action, args, preserve_transition_routes=preserve_transition_routes)
+            return _handle_network_locked(
+                action, args, preserve_transition_routes=preserve_transition_routes,
+                handoff_held_addresses=handoff_held_addresses,
+            )
     except (OSError, ValueError, subprocess.TimeoutExpired) as exc:
         print(str(exc), file=sys.stderr)
         return 2
 
 
-def _handle_network_locked(action: str, args: list[str], *, preserve_transition_routes: bool = False) -> int:
+def _handle_network_locked(
+    action: str, args: list[str], *, preserve_transition_routes: bool = False,
+    handoff_held_addresses: list[dict] | None = None,
+) -> int:
     """Handle network.
 
     Args:
         action: Action consumed by handle network.
         args: Parsed command-line options consumed by the operation.
         preserve_transition_routes: Defer seed retirement to the enclosing handoff.
+        handoff_held_addresses: Exact old-source bindings retained by that handoff.
     """
+    if handoff_held_addresses is not None and (action != "apply" or not preserve_transition_routes):
+        raise ValueError("handoff source holds require a protected Network apply")
     if action == "prepare-observation":
         if args:
             raise ValueError("network prepare-observation accepts no arguments")
@@ -12076,7 +12089,13 @@ def _handle_network_locked(action: str, args: list[str], *, preserve_transition_
         return 2
     try:
         with _network_apply_transaction(config_path):
-            held_sources = _removed_vlan_source_holds(config_path)
+            held_sources = [*_removed_vlan_source_holds(config_path), *(handoff_held_addresses or [])]
+            held_identities = {
+                (row["name"], row["address"], row["mac"], row["table"])
+                for row in held_sources
+            }
+            if len(held_identities) != len(held_sources):
+                raise ValueError("Network source holds are duplicated")
             old_management = _ordinary_network_old_management_bindings(config_path)
             if old_management and not preserve_transition_routes:
                 _seed_transition_routes(
@@ -12111,7 +12130,7 @@ def _handle_network_locked(action: str, args: list[str], *, preserve_transition_
             # Retire old VLANs only after the candidate addresses have activated.
             if _apply_vlan_interfaces(config_path, removed_only=True) != 0:
                 raise ValueError("previous VLAN retirement failed")
-            _install_route_domain_intent(config_path)
+            _install_route_domain_intent(config_path, held_addresses=handoff_held_addresses)
             _apply_route_domain_ingress(config_path)
             _reconcile_route_domains()
             if old_management and not preserve_transition_routes:
@@ -13288,11 +13307,15 @@ def _management_default_gateways_for_target(target: dict[str, str]) -> list[str]
     return _usable_management_default_gateways(target_networks, candidates)
 
 
-def _applied_wan_network_state() -> dict | None:
+def _applied_wan_network_state(*, include_handoff_held_sources: bool = False) -> dict | None:
     """Read canonical applied identity and native connected ownership for WAN.
 
     The isolated installed module validates intent and MAC-bound usable sources;
     no pending Network or WAN target can supply this ownership evidence.
+
+    Args:
+        include_handoff_held_sources: Admit only MAC-bound candidate Access
+            prefixes whose exact source is still held in table 100 by a handoff.
     """
     if not ROUTE_DOMAIN_CONFIG_PATH.exists() and not ROUTE_DOMAIN_CONFIG_PATH.is_symlink():
         return None
@@ -13337,6 +13360,11 @@ def _applied_wan_network_state() -> dict | None:
     for hold in snapshot["intent"]["held_addresses"]:
         row = hold["interface"]
         interfaces.setdefault(row["name"], row)
+    held_candidate_sources = {
+        (hold["interface"]["name"], str(ip_address(hold["address"])), hold["interface"]["mac"])
+        for hold in snapshot["intent"]["held_addresses"]
+        if hold["interface"]["table"] == MANAGEMENT_ROUTE_TABLE_ID
+    } if include_handoff_held_sources else set()
     prefixes = set()
     for link in snapshot["addresses"]:
         admitted = interfaces.get(link["ifname"])
@@ -13344,7 +13372,14 @@ def _applied_wan_network_state() -> dict | None:
             continue
         for address in link.get("addr_info", []):
             source = str(ip_address(address["local"]))
-            if snapshot["sources"].get(source) == LAB_ROUTE_TABLE_ID:
+            held_candidate = (
+                include_handoff_held_sources
+                and snapshot["sources"].get(source) == MANAGEMENT_ROUTE_TABLE_ID
+                and admitted["table"] == LAB_ROUTE_TABLE_ID
+                and admitted.get("management_ui") is True
+                and (link["ifname"], source, admitted["mac"]) in held_candidate_sources
+            )
+            if snapshot["sources"].get(source) == LAB_ROUTE_TABLE_ID or held_candidate:
                 prefixes.add((link["ifname"], str(ip_network(f"{source}/{address['prefixlen']}", strict=False))))
     connected: dict[tuple[str, str], set[int]] = {}
     for family in (4, 6):
@@ -13364,6 +13399,13 @@ def _applied_wan_network_state() -> dict | None:
                                     or (protocol in {"3", "boot", ""} and metric == (0 if family == 4 else 1024))):
                 connected.setdefault(key, set()).add(metric)
     return {"connected": connected, "prefixes": prefixes,
+            "sources": snapshot["sources"],
+            "default_routes": [
+                {**route, "family": family}
+                for family in (4, 6) for route in snapshot["routes"][str(family)]
+                if str(route.get("dst", "default")) in {"default", "0.0.0.0/0", "::/0"}
+            ],
+            "macs": {name: row["mac"] for name, row in interfaces.items()},
             "management_ui": {name: row.get("management_ui") for name, row in interfaces.items()},
             "management_domain": {name: row["table"] == MANAGEMENT_ROUTE_TABLE_ID
                                   for name, row in interfaces.items()}}
@@ -14971,13 +15013,16 @@ def _reconcile_startup_nat() -> int:
     return _apply_wan_nat(parsed, allow_identity_quarantine=True)
 
 
-def _handle_wan(action: str, args: list[str], *, replay: bool = False) -> int:
+def _handle_wan(
+    action: str, args: list[str], *, replay: bool = False, include_handoff_held_sources: bool = False,
+) -> int:
     """Handle WAN.
 
     Args:
         action: Action consumed by handle WAN.
         args: Parsed command-line options consumed by the operation.
         replay: Internal handoff recovery flag; ordinary CLI Apply remains strict.
+        include_handoff_held_sources: Use exact old-source holds during handoff staging.
     """
     if action == "reconcile-nat":
         if args:
@@ -14995,16 +15040,23 @@ def _handle_wan(action: str, args: list[str], *, replay: bool = False) -> int:
     if action == "restore":
         with _wan_replay_config(str(config_path)) as replay_path:
             return _handle_wan_config(action, replay_path, replay=True)
-    return _handle_wan_config(action, config_path, replay=replay)
+    return _handle_wan_config(
+        action, config_path, replay=replay,
+        include_handoff_held_sources=include_handoff_held_sources,
+    )
 
 
-def _handle_wan_config(action: str, config_path: Path, *, replay: bool = False) -> int:
+def _handle_wan_config(
+    action: str, config_path: Path, *, replay: bool = False,
+    include_handoff_held_sources: bool = False,
+) -> int:
     """Validate and execute WAN intent from an admitted or normalized path.
 
     Args:
         action: Validated WAN operation.
         config_path: Admitted staged config or normalized replay snapshot.
         replay: Permit identity quarantine without skipping other recovery stages.
+        include_handoff_held_sources: Admit exact held candidate prefixes for staging.
     """
     # Pre-split saved WAN snapshots still need the #336 identity quarantine.
     # Newly rendered WAN input has no NAT section; the canonical NAT runtime
@@ -15055,7 +15107,9 @@ def _handle_wan_config(action: str, config_path: Path, *, replay: bool = False) 
     if ROUTE_DOMAIN_CONFIG_PATH.exists() or ROUTE_DOMAIN_CONFIG_PATH.is_symlink():
         # Both observations can reject an unsafe or ambiguous native baseline.
         # Admit them before forwarding, routes, NAT, or rules change host state.
-        applied_network_state = _applied_wan_network_state()
+        applied_network_state = _applied_wan_network_state(
+            include_handoff_held_sources=include_handoff_held_sources,
+        )
         if applied_network_state is None:
             raise ValueError("applied Network ownership is unavailable; reapply Network before WAN")
         current_domain_rules = _snapshot_route_domain_rules()
@@ -26712,6 +26766,25 @@ def _management_handoff_held_addresses(state: dict) -> list[dict]:
     ]
 
 
+def _management_handoff_final_source_holds(state: dict, config_path: Path) -> list[dict]:
+    """Retain only table-100 sources on a flagged same-interface Access migration.
+
+    Args:
+        state: Durable old-source routing snapshot.
+        config_path: Final candidate Network intent.
+    """
+    physical, vlans, _removed = _parse_network_config(config_path)
+    migrated = {
+        row["name"] for row in [*physical, *vlans]
+        if row.get("role") == "access"
+        and row.get("access_management_ui_enabled", "false").lower() == "true"
+    }
+    return [
+        row for row in _management_handoff_held_addresses(state)
+        if row["name"] in migrated and row["table"] == MANAGEMENT_ROUTE_TABLE_ID
+    ]
+
+
 def _wait_management_handoff_routes(state: dict, *, attempts: int = 31) -> None:
     """Require snapshotted old routes in their source-selected tables before activation.
 
@@ -27895,15 +27968,87 @@ def _reconcile_management_handoff_lease_mirrors(state: dict) -> None:
             _durable_management_handoff_unlink(path)
 
 
-def _apply_management_handoff_wan(payload: dict) -> None:
+def _apply_management_handoff_wan(payload: dict, *, include_handoff_held_sources: bool = False) -> None:
     """Apply the candidate Routes & WAN config when it joined the handoff.
 
     Args:
         payload: Validated management-handoff manifest.
+        include_handoff_held_sources: Stage routes before the source-domain switch.
     """
     wan_path = str(payload.get("wan_config_path") or "")
-    if wan_path and _handle_wan("apply", [wan_path]) != 0:
+    if wan_path and _handle_wan(
+        "apply", [wan_path], include_handoff_held_sources=include_handoff_held_sources,
+    ) != 0:
         raise ValueError("candidate Routes & WAN apply failed")
+
+
+def _verify_management_handoff_migrated_defaults(state: dict, payload: dict | None = None) -> None:
+    """Prove held same-address sources have a usable candidate default.
+
+    Args:
+        state: Durable pre-handoff routing snapshot and exact old sources.
+        payload: Candidate WAN manifest, when an explicit route is coupled.
+    """
+    applied = _applied_wan_network_state(include_handoff_held_sources=True)
+    if applied is None:
+        raise ValueError("candidate routing-domain ownership is unavailable")
+    wan_path = str((payload or {}).get("wan_config_path") or "")
+    candidate_routes = _parse_wan_config(Path(wan_path))["routes"] if wan_path else []
+    for name, old in state.get("previous_management_routing", {}).items():
+        if (
+            old["table"] != MANAGEMENT_ROUTE_TABLE_ID
+            or applied["macs"].get(name) != old["mac"]
+            or applied["management_ui"].get(name) is not True
+            or applied["management_domain"].get(name) is not False
+        ):
+            continue
+        held_families = {
+            ip_interface(cidr).version
+            for cidr in old["cidrs"]
+            if applied["sources"].get(str(ip_interface(cidr).ip)) == MANAGEMENT_ROUTE_TABLE_ID
+            and (name, str(ip_interface(cidr).network)) in applied["prefixes"]
+        }
+        old_default_families = {
+            ip_network(route["destination"]).version
+            for route in old["routes"]
+            if ip_network(route["destination"]).prefixlen == 0
+        }
+        for family in held_families & old_default_families:
+            expected = [
+                route for route in candidate_routes
+                if route["interface"] == name
+                and ip_network(route["destination_cidr"]).version == family
+                and ip_network(route["destination_cidr"]).prefixlen == 0
+                and _wan_bool(route.get("enabled", ""), default=True)
+            ]
+            prefixes = [
+                ip_network(prefix)
+                for interface, prefix in applied["prefixes"]
+                if interface == name and ip_network(prefix).version == family
+            ]
+            ready = False
+            for route in applied["default_routes"]:
+                if (route["family"] != family or route.get("dev") != name
+                        or route.get("type", "unicast") != "unicast"
+                        or set(route.get("flags", [])) & {"dead", "linkdown"}):
+                    continue
+                try:
+                    gateway = ip_address(route["gateway"])
+                except (KeyError, ValueError, TypeError):
+                    continue
+                if expected and not any(
+                    gateway == ip_address(row["gateway"])
+                    and int(route.get("metric", 0)) == int(row.get("metric", "100") or "100")
+                    for row in expected
+                ):
+                    continue
+                if gateway.version == family and (
+                    (family == 6 and gateway.is_link_local) or any(gateway in network for network in prefixes)
+                ):
+                    ready = True
+                    break
+            if not ready:
+                raise ValueError(f"candidate IPv{family} default is not ready before source migration on {name}")
 
 
 @contextmanager
@@ -28854,8 +28999,12 @@ def _apply_management_handoff(payload: dict) -> int:
         failing_layer = "previous-path retirement"
         for path in holdovers:
             path.unlink(missing_ok=True)
+        handoff_held_addresses = _management_handoff_final_source_holds(
+            state, Path(str(payload["network_config_path"])),
+        )
         if _handle_network(
             "apply", [str(payload["network_config_path"])], preserve_transition_routes=True,
+            handoff_held_addresses=handoff_held_addresses,
         ) != 0:
             raise ValueError("final network apply failed while retiring the previous path")
         failing_layer = "resolver persistence"
@@ -28881,15 +29030,16 @@ def _apply_management_handoff(payload: dict) -> int:
         _wait_network_addresses(
             Path(str(payload["network_config_path"])), started_at=retirement_started, stable_samples=3,
         )
+        if payload.get("wan_config_path"):
+            # Keep the old exact source in table 100 while Routes & WAN
+            # installs the candidate table-200 default on the now-stable link.
+            failing_layer = "Routes & WAN before source migration"
+            _apply_management_handoff_wan(payload, include_handoff_held_sources=True)
         failing_layer = "replacement management route"
+        _verify_management_handoff_migrated_defaults(state, payload)
+        _install_route_domain_intent(Path(str(payload["network_config_path"])))
         _reconcile_route_domains()
         _wait_and_retire_transition_routes(state, MANAGEMENT_HANDOFF_STATE_PATH)
-        if payload.get("wan_config_path"):
-            # The final Network regeneration intentionally replaces networkd
-            # runtime. Reapply the coupled route intent afterwards so policy
-            # rules and default routes survive retirement and reboot.
-            failing_layer = "Routes & WAN persistence"
-            _apply_management_handoff_wan(payload)
         if nat_intent is not None:
             failing_layer = "paired Firewall and Traffic Publishing"
             with _nat_transaction_lock():
