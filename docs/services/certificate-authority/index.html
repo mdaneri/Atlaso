@@ -4133,6 +4133,10 @@ after CA deployment. If a consuming listener also has pending edits, select it i
 the CA unit. If a listener reload fails or Apply is interrupted, retry the CA unit; Atlaso keeps the previous CA apply
 baseline until all selected consumers reload, so the retry includes them again. Export or reload external service trust
 material that pins an individual leaf.</p>
+<p>When Appliance Settings retains address-scoped management listeners during a certificate change, the replacement
+management certificate must contain an IP SAN for every retained non-loopback listener. Settings validation and the
+final nginx activation both reject a replacement that omits one of those addresses. Issue a covering certificate
+before rotating it, or use a management address already covered by the certificate.</p>
 <h2 id="review-requests">Review requests<a class="headerlink" href="#review-requests" title="Permanent link">&para;</a></h2>
 <p>Use <strong>Certificate Requests</strong> to identify the requester, requested names, intended use, and current status before
 approving or rejecting enrollment. Confirm that every requested name belongs to the intended lab boundary.

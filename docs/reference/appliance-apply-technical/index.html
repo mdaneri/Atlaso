@@ -5135,7 +5135,9 @@ addresses are never discovered or probed as management listeners. If the
 public protocol or same-protocol HTTP port changes, address-specific nginx blocks retain the old address, port, and
 HTTP/HTTPS behavior beside the candidate listener until candidate readiness succeeds. Previous HTTPS blocks always use
 separate snapshotted certificate and key files, including when the protocol remains HTTPS while the candidate
-certificate rotates.</p>
+certificate rotates. The pre-retirement candidate certificate check excludes old-only live addresses served by those
+blocks while retaining configured, acquired dynamic, and unrelated secondary candidate addresses. The final
+post-retirement observation checks every still-assigned address against the candidate certificate before commit.</p>
 <p>When DHCP offers the same IPv4 address as a retained static management address, address presence alone is not lease
 proof. Atlaso also requires a live networkd DHCP client, matching interface-index lease address and netmask, and a
 configured DHCP route with the same preferred source and DHCP server. Missing, expired, or inconsistent evidence keeps
