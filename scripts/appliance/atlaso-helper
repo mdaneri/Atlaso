@@ -11531,10 +11531,12 @@ def _retire_legacy_source_rules(path: Path | None = None) -> None:
             observed[link["ifname"]] = link
         bindings = []
         for row in [*physical, *vlans]:
-            if row.get("role") == "unused" or row.get("mode") == "trunk" or row.get("admin_state") == "down":
-                continue
             name = row.get("name", "")
             link = observed.get(name)
+            outgoing = (row.get("role") == "unused" or row.get("mode") == "trunk"
+                        or row.get("admin_state") == "down")
+            if outgoing and link is None:
+                continue
             if link is None and row in vlans:
                 # Candidate VLANs are created after legacy selector retirement.
                 # They have no live source to migrate yet; retain the reviewed
@@ -11556,9 +11558,48 @@ def _retire_legacy_source_rules(path: Path | None = None) -> None:
                 actual = parent.get("address", "") if parent is not None else ""
             if not _valid_network_mac(expected) or actual.lower() != expected.lower():
                 raise ValueError("legacy source interface differs from reviewed MAC identity")
+            if outgoing:
+                if not any(isinstance(address, dict) and address.get("scope") in {"global", 0}
+                           and address.get("valid_life_time") != 0
+                           for address in link.get("addr_info", [])):
+                    continue
+                # Candidate role/state cannot establish the domain of an old
+                # address that has not yet been retired by networkd. Read the
+                # installed, pre-transaction networkd policy for that link.
+                tables: set[int] = set()
+                matched = 0
+                for old_path in (NETWORKD_MGMT_CONFIG_PATH,
+                                 NETWORKD_CONFIG_DIR / _networkd_managed_filename(name, "network")):
+                    try:
+                        old_lines = old_path.read_text(encoding="utf-8").splitlines()
+                    except FileNotFoundError:
+                        continue
+                    section = ""
+                    names: set[str] = set()
+                    old_tables: set[int] = set()
+                    for raw in old_lines:
+                        line = raw.strip()
+                        if line.startswith("[") and line.endswith("]"):
+                            section = line[1:-1]
+                        elif "=" in line and not line.startswith(("#", ";")):
+                            key, value = (part.strip() for part in line.split("=", 1))
+                            if section == "Match" and key == "Name":
+                                names.add(value)
+                            if ((section == "Route" and key == "Table")
+                                    or (section in {"DHCPv4", "IPv6AcceptRA"} and key == "RouteTable")):
+                                if value in {str(MANAGEMENT_ROUTE_TABLE_ID), str(LAB_ROUTE_TABLE_ID)}:
+                                    old_tables.add(int(value))
+                    if names == {name}:
+                        matched += 1
+                        tables.update(old_tables)
+                if matched != 1 or len(tables) != 1:
+                    raise ValueError("outgoing legacy source domain unavailable")
+                table = next(iter(tables))
+            else:
+                table = (MANAGEMENT_ROUTE_TABLE_ID if row.get("role") == "management"
+                         else LAB_ROUTE_TABLE_ID)
             bindings.append({"name": name, "mac": link["address"].lower(),
-                             "table": MANAGEMENT_ROUTE_TABLE_ID if row.get("role") == "management"
-                             else LAB_ROUTE_TABLE_ID})
+                             "table": table})
         payload = {"rules": legacy, "interfaces": bindings}
     result = _run_with_input(
         ["/opt/atlaso/.venv/bin/python", "-I", "-m", "atlaso.route_domains", "--migrate-legacy"],
