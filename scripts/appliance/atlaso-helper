@@ -7257,6 +7257,13 @@ def _appliance_settings_config_errors(
                     errors.append("management HTTPS private key does not match the certificate public key.")
             except (OSError, ValueError) as exc:
                 errors.append(str(exc))
+        if cert_pem is not None:
+            try:
+                scoped_addresses = _existing_management_scoped_addresses()
+                if scoped_addresses is not None:
+                    _management_certificate_covers_scoped_addresses(cert_pem, scoped_addresses)
+            except (OSError, ValueError) as exc:
+                errors.append(str(exc))
     return errors
 
 
@@ -7981,6 +7988,42 @@ def _existing_management_scoped_addresses() -> list[str] | None:
     return sorted(by_protocol[False])
 
 
+def _management_certificate_covers_scoped_addresses(certificate_pem: str, addresses: list[str]) -> None:
+    """Require a replacement leaf to authenticate every retained external listener.
+
+    Args:
+        certificate_pem: Candidate public management certificate.
+        addresses: Previously committed scoped listener addresses.
+
+    Raises:
+        ValueError: If OpenSSL cannot verify an address against the certificate.
+    """
+    external_addresses = []
+    for address in addresses:
+        candidate = ip_address(address)
+        if not candidate.is_loopback:
+            external_addresses.append(candidate)
+    if not external_addresses:
+        return
+    openssl = shutil.which("openssl")
+    if not openssl:
+        raise ValueError("management HTTPS certificate address validation requires OpenSSL")
+    for candidate in external_addresses:
+        try:
+            result = subprocess.run(
+                [openssl, "x509", "-in", "-", "-noout", "-checkip", str(candidate)],
+                input=certificate_pem.encode("utf-8"), capture_output=True,
+                timeout=5, check=False,
+            )
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            raise ValueError("management HTTPS certificate address validation failed") from exc
+        if result.returncode:
+            raise ValueError(
+                f"management HTTPS certificate does not authenticate retained address {candidate}; "
+                "use a certificate covering every retained management listener."
+            )
+
+
 def _configure_atlaso_management_https(
     payload: dict,
     *,
@@ -8006,6 +8049,14 @@ def _configure_atlaso_management_https(
     if enabled:
         cert_path = _ca_managed_path(str(payload["management_https_cert_path"]), "management_https_cert_path")
         key_path = _ca_managed_path(str(payload["management_https_key_path"]), "management_https_key_path")
+        if verify_front_door and listen_addresses is not None:
+            try:
+                _management_certificate_covers_scoped_addresses(
+                    cert_path.read_text(encoding="utf-8"), listen_addresses,
+                )
+            except (OSError, ValueError) as exc:
+                print(str(exc), file=sys.stderr)
+                return 1, None
         _grant_atlaso_service_key_read(key_path)
     site_text = _management_nginx_config(
         payload, cert_path, key_path, listen_addresses=listen_addresses,

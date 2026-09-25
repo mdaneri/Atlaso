@@ -15515,6 +15515,86 @@ def test_appliance_settings_helper_accepts_dhcp_resolver_mode(tmp_path):
     assert errors == []
 
 
+def test_appliance_settings_rejects_rotation_without_retained_address_san(monkeypatch, tmp_path, capsys):
+    """Reject a replacement certificate before mutating a retained scoped listener.
+
+    Args:
+        monkeypatch: Fixture replacing runtime paths and host mutation.
+        tmp_path: Isolated certificate and staged settings directory.
+        capsys: Captured validation error output.
+    """
+    helper = load_helper_module()
+    managed_root = tmp_path / "etc" / "atlaso"
+    cert_path = managed_root / "https" / "certs" / "replacement.crt"
+    key_path = managed_root / "https" / "certs" / "replacement.key"
+    cert_path.parent.mkdir(parents=True)
+    cert_path.write_text("-----BEGIN CERTIFICATE-----\nleaf\n-----END CERTIFICATE-----\n", encoding="utf-8")
+    key_path.write_text("-----BEGIN PRIVATE KEY-----\nkey\n-----END PRIVATE KEY-----\n", encoding="utf-8")
+    apply_dir = tmp_path / "apply" / "appliance-settings"
+    apply_dir.mkdir(parents=True)
+    config_path = apply_dir / "settings.json"
+    config_path.write_text(
+        appliance_settings_json(
+            management_https_enabled=True,
+            management_https_cert_path=str(cert_path),
+            management_https_key_path=str(key_path),
+        ), encoding="utf-8",
+    )
+    monkeypatch.setattr(helper, "CA_MANAGED_PATH_BASE", managed_root)
+    monkeypatch.setattr(helper, "APPLIANCE_SETTINGS_APPLY_DIR", apply_dir)
+    monkeypatch.setattr(helper, "_ca_key_matches_certificate", lambda *_args: True)
+    monkeypatch.setattr(helper.shutil, "which", lambda _name: "/usr/bin/openssl")
+    checked_addresses = []
+
+    def check_certificate(command, **_kwargs):
+        """Model OpenSSL's exact IP SAN match for the candidate leaf."""
+        checked_addresses.append(command[-1])
+        return subprocess.CompletedProcess(command, 0 if command[-1] == "192.168.49.1" else 1)
+
+    monkeypatch.setattr(helper.subprocess, "run", check_certificate)
+    monkeypatch.setattr(helper, "_existing_management_scoped_addresses", lambda: [
+        "127.0.0.1", "::1", "192.168.49.1", "192.168.49.2",
+    ])
+    monkeypatch.setattr(helper, "_apply_hostname", lambda *_args: pytest.fail("host mutation reached"))
+
+    assert helper._handle_appliance_settings("apply", [str(config_path)]) == 2
+    assert "does not authenticate retained address 192.168.49.2" in capsys.readouterr().err
+    assert checked_addresses == ["192.168.49.1", "192.168.49.2"]
+    assert helper._management_certificate_covers_scoped_addresses(
+        cert_path.read_text(encoding="utf-8"), ["127.0.0.1", "::1", "192.168.49.1"],
+    ) is None
+
+
+def test_management_activation_rechecks_retained_certificate_addresses(monkeypatch, tmp_path):
+    """Refuse a swapped replacement certificate before nginx activation.
+
+    Args:
+        monkeypatch: Fixture replacing managed paths and activation.
+        tmp_path: Isolated public certificate path.
+    """
+    helper = load_helper_module()
+    managed_root = tmp_path / "etc" / "atlaso"
+    cert_path = managed_root / "https" / "certs" / "replacement.crt"
+    cert_path.parent.mkdir(parents=True)
+    cert_path.write_text("replacement", encoding="utf-8")
+    monkeypatch.setattr(helper, "CA_MANAGED_PATH_BASE", managed_root)
+    def reject_uncovered_address(*_args):
+        """Report a candidate certificate that lacks a retained listener SAN."""
+        raise ValueError("retained address uncovered")
+
+    monkeypatch.setattr(helper, "_management_certificate_covers_scoped_addresses", reject_uncovered_address)
+    monkeypatch.setattr(helper, "_grant_atlaso_service_key_read", lambda *_args: pytest.fail("mutation reached"))
+
+    result = helper._configure_atlaso_management_https(
+        {"management_https_enabled": True,
+         "management_https_cert_path": str(cert_path),
+         "management_https_key_path": str(cert_path)},
+        listen_addresses=["127.0.0.1", "::1", "192.168.49.2"],
+    )
+
+    assert result == (1, None)
+
+
 def test_appliance_settings_helper_writes_management_nginx_proxy(monkeypatch, tmp_path, capsys):
     """Verify that appliance settings helper writes management nginx proxy.
 

@@ -44,6 +44,11 @@ the CA unit. If a listener reload fails or Apply is interrupted, retry the CA un
 baseline until all selected consumers reload, so the retry includes them again. Export or reload external service trust
 material that pins an individual leaf.
 
+When Appliance Settings retains address-scoped management listeners during a certificate change, the replacement
+management certificate must contain an IP SAN for every retained non-loopback listener. Settings validation and the
+final nginx activation both reject a replacement that omits one of those addresses. Issue a covering certificate
+before rotating it, or use a management address already covered by the certificate.
+
 ## Review requests
 
 Use **Certificate Requests** to identify the requester, requested names, intended use, and current status before
