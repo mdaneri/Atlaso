@@ -644,7 +644,15 @@ def validate_appliance_settings(
         management_name = str(management_interface.get("name") or "")
         if not management_name or management_name not in selected_terminal_interfaces:
             errors.append("Web terminal access requires the management interface.")
-        missing = [name for name in selected_terminal_interfaces if name not in option_names]
+        # A protected Network handoff can select its new dedicated DHCP
+        # listener before the lease exists. Defer only that listener's address
+        # check; all other Web Terminal selections still require a live option.
+        pending_dhcp_management = (
+            management_name if management_interface.get("ipv4_method") == "dhcp"
+            and not management_interface.get("ip") else ""
+        )
+        missing = [name for name in selected_terminal_interfaces
+                   if name not in option_names and name != pending_dhcp_management]
         if missing:
             errors.append(f"Web terminal interfaces are unavailable or have no address: {', '.join(missing)}.")
         disallowed = [

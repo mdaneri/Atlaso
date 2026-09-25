@@ -271,6 +271,43 @@ def test_web_terminal_validation_forces_management_and_rejects_unavailable_selec
     assert "Web terminal interfaces are unavailable or have no address: eth9." in errors
 
 
+def test_web_terminal_validation_defers_only_pending_dhcp_management_address():
+    """Allow a handoff to acquire DHCP while rejecting other absent listeners."""
+    settings = ApplianceSettings(
+        fqdn="core.atlaso.internal",
+        management_https_enabled=True,
+        web_terminal_enabled=True,
+        web_terminal_interfaces_json='["eth1", "eth9"]',
+        config_path="/var/lib/atlaso/apply/appliance-settings/atlaso-settings.json",
+    )
+    management = {"name": "eth0", "ip": "", "ipv4_method": "dhcp"}
+    options = [{"name": "eth1", "addresses": ["192.0.2.25"]}]
+
+    errors, _warnings = validate_appliance_settings(
+        settings,
+        local_dns_enabled=False,
+        management_interface=management,
+        ca_enabled=True,
+        management_https_cert_available=True,
+        web_terminal_options=options,
+    )
+
+    assert normalized_web_terminal_interfaces(settings, management) == ["eth0", "eth1", "eth9"]
+    assert "Web terminal interfaces are unavailable or have no address: eth9." in errors
+    assert not any("eth0" in error for error in errors)
+
+    settings.web_terminal_interfaces_json = '["eth1"]'
+    errors, _warnings = validate_appliance_settings(
+        settings,
+        local_dns_enabled=False,
+        management_interface=management,
+        ca_enabled=True,
+        management_https_cert_available=True,
+        web_terminal_options=options,
+    )
+    assert errors == []
+
+
 def test_terminal_ticket_is_one_use_and_bound_to_session_identity():
     """Verify that terminal ticket is one use and bound to session identity."""
     raw = "one-use-ticket"

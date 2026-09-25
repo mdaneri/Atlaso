@@ -946,6 +946,8 @@ def test_pending_dhcp_management_does_not_require_external_dns(client):
         fallback.oper_state = "up"
         fallback.ip_cidr = "192.0.2.25/24"
         fallback.access_management_ui_enabled = True
+        settings.web_terminal_enabled = True
+        settings.management_https_enabled = True
         settings.external_dns_servers = ""
         dns.enabled = False
         db.commit()
@@ -960,6 +962,10 @@ def test_pending_dhcp_management_does_not_require_external_dns(client):
     assert preview["resolver_mode"] == "dhcp"
     assert not any(
         error.startswith("External DNS servers are required")
+        for error in context["appliance_settings_validation_errors"]
+    )
+    assert not any(
+        error.startswith("Web terminal interfaces are unavailable or have no address: eth0")
         for error in context["appliance_settings_validation_errors"]
     )
 
