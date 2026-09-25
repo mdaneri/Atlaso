@@ -26456,6 +26456,72 @@ def _management_handoff_public_site_with_holdover(
     return previous_site.rstrip() + "\n\n" + "\n\n".join(additions) + "\n"
 
 
+def _management_handoff_publish_final_sites(management_site: str, public_site: str) -> int:
+    """Validate and reload both final nginx sites in one listener transition.
+
+    Args:
+        management_site: Final dedicated management site text.
+        public_site: Final Public Services site text, possibly with no servers.
+
+    Returns:
+        Zero after a single successful reload, or a nonzero validation/reload code.
+    """
+    if _nginx_binary() is None:
+        return 127
+    _install_nginx_include()
+    sites: tuple[tuple[Path, str | None], ...] = (
+        (NGINX_MANAGEMENT_SITE_PATH, management_site),
+        (NGINX_PUBLIC_SERVICES_SITE_PATH, public_site if "server {" in public_site else None),
+    )
+    previous: dict[Path, bytes | None] = {}
+    for path, _text in sites:
+        if path.is_symlink():
+            raise ValueError(f"management handoff nginx site is a symlink: {path}")
+        previous[path] = path.read_bytes() if path.exists() else None
+
+    def write_site(path: Path, content: bytes | None) -> None:
+        """Replace one site without presenting a temporary *.conf to nginx.
+
+        Args:
+            path: Canonical nginx site destination.
+            content: New site bytes or None to remove the site.
+        """
+        if content is None:
+            path.unlink(missing_ok=True)
+            return
+        path.parent.mkdir(parents=True, exist_ok=True)
+        temporary = path.with_suffix(".conf.handoff-tmp")
+        temporary.write_bytes(content)
+        os.chmod(temporary, 0o644)
+        temporary.replace(path)
+
+    published = False
+    try:
+        for path, text in sites:
+            write_site(path, text.encode("utf-8") if text is not None else None)
+        for path, text in sites:
+            if text is None:
+                continue
+            conflict = _nginx_site_conflict(path, text)
+            if conflict:
+                print(conflict, file=sys.stderr)
+                return 2
+        validation = _nginx_test_command()
+        print(validation.stdout, end="")
+        print(validation.stderr, end="", file=sys.stderr)
+        if validation.returncode != 0:
+            return validation.returncode
+        result = _reload_nginx()
+        if result == 0:
+            published = True
+            return 0
+        return result
+    finally:
+        if not published:
+            for path, content in previous.items():
+                write_site(path, content)
+
+
 def _management_handoff_snapshot_backup_path(state: dict, runtime_path: Path) -> Path:
     """Return the durable backup for one snapshotted runtime file.
 
@@ -27973,10 +28039,6 @@ def _apply_management_handoff(payload: dict) -> int:
             if _handle_firewall("apply", [str(transition_path)]) != 0:
                 raise ValueError("final nftables apply failed while retiring the previous path")
         failing_layer = "verified-listener publication"
-        if transitional_public_needed and not deferred_public_sockets and _handle_public_services(
-            "apply", [str(payload["public_services_config_path"])],
-        ) != 0:
-            raise ValueError("candidate public-services nginx could not retire old listeners")
         management_site_addresses = _management_handoff_addresses(
             Path(str(payload["network_config_path"])),
             address_observation=final_address_observation,
@@ -27988,19 +28050,35 @@ def _apply_management_handoff(payload: dict) -> int:
             management_site_addresses = [
                 address for address in candidate_addresses if address not in candidate_public_tls
             ]
-        management_https_result, _restart_delay_seconds = _configure_atlaso_management_https(
-            settings_payload,
-            verify_front_door=False,
-            listen_addresses=[*candidate_addresses, "127.0.0.1", "::1"],
-            https_listen_addresses=[*management_site_addresses, "127.0.0.1", "::1"]
-            if candidate_https else None,
+        final_listen_addresses = [*candidate_addresses, "127.0.0.1", "::1"]
+        final_https_addresses = (
+            [*management_site_addresses, "127.0.0.1", "::1"] if candidate_https else None
         )
-        if management_https_result != 0:
-            raise ValueError("candidate nginx could not publish verified final listeners")
-        if deferred_public_sockets and _handle_public_services(
-            "apply", [str(payload["public_services_config_path"])],
-        ) != 0:
-            raise ValueError("candidate public-services nginx could not publish retired dedicated sockets")
+        if transitional_public_needed:
+            certificate = (
+                _ca_managed_path(str(settings_payload["management_https_cert_path"]), "management_https_cert_path")
+                if candidate_https else None
+            )
+            key = (
+                _ca_managed_path(str(settings_payload["management_https_key_path"]), "management_https_key_path")
+                if candidate_https else None
+            )
+            final_management_site = _management_nginx_config(
+                settings_payload, certificate, key, listen_addresses=final_listen_addresses,
+                https_listen_addresses=final_https_addresses,
+            ).rstrip() + "\n"
+            final_public_site = Path(str(payload["public_services_config_path"])).read_text(encoding="utf-8")
+            if _management_handoff_publish_final_sites(final_management_site, final_public_site) != 0:
+                raise ValueError("candidate nginx could not publish verified final listeners together")
+        else:
+            management_https_result, _restart_delay_seconds = _configure_atlaso_management_https(
+                settings_payload,
+                verify_front_door=False,
+                listen_addresses=final_listen_addresses,
+                https_listen_addresses=final_https_addresses,
+            )
+            if management_https_result != 0:
+                raise ValueError("candidate nginx could not publish verified final listeners")
         failing_layer = "post-retirement readiness"
         final_readiness = _management_handoff_readiness(
             candidate_addresses,

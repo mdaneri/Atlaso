@@ -2907,6 +2907,71 @@ def test_management_handoff_defers_public_tls_on_old_dedicated_socket():
     assert "listen 192.0.2.20:443 ssl default_server;" in transitional
 
 
+def test_management_handoff_publishes_final_tls_owners_in_one_reload(monkeypatch, tmp_path):
+    """The old TLS owner stays live until both final site files validate together.
+
+    Args:
+        monkeypatch: Replaces nginx operations with observable test doubles.
+        tmp_path: Temporary site directory.
+    """
+    helper = load_helper_module()
+    sites = tmp_path / "sites"
+    sites.mkdir()
+    management = sites / "management.conf"
+    public = sites / "public-services.conf"
+    management.write_text("old management\n", encoding="utf-8")
+    public.write_text("old public\n", encoding="utf-8")
+    monkeypatch.setattr(helper, "NGINX_MANAGEMENT_SITE_PATH", management)
+    monkeypatch.setattr(helper, "NGINX_PUBLIC_SERVICES_SITE_PATH", public)
+    monkeypatch.setattr(helper, "_nginx_binary", lambda: "nginx")
+    monkeypatch.setattr(helper, "_install_nginx_include", lambda: None)
+    monkeypatch.setattr(helper, "_nginx_site_conflict", lambda *_args: "")
+    events = []
+
+    def validate():
+        events.append(("validate", management.read_text(), public.read_text()))
+        return subprocess.CompletedProcess([], 0, "", "")
+
+    def reload():
+        events.append(("reload", management.read_text(), public.read_text()))
+        return 0
+
+    monkeypatch.setattr(helper, "_nginx_test_command", validate)
+    monkeypatch.setattr(helper, "_reload_nginx", reload)
+    assert helper._management_handoff_publish_final_sites("new management\n", "server {\n}\n") == 0
+    assert events == [
+        ("validate", "new management\n", "server {\n}\n"),
+        ("reload", "new management\n", "server {\n}\n"),
+    ]
+
+
+def test_management_handoff_restores_both_sites_before_failed_validation(monkeypatch, tmp_path):
+    """A combined-site validation failure leaves the old on-disk pair available.
+
+    Args:
+        monkeypatch: Replaces nginx operations with test doubles.
+        tmp_path: Temporary site directory.
+    """
+    helper = load_helper_module()
+    management = tmp_path / "management.conf"
+    public = tmp_path / "public-services.conf"
+    management.write_text("old management\n", encoding="utf-8")
+    public.write_text("old public\n", encoding="utf-8")
+    monkeypatch.setattr(helper, "NGINX_MANAGEMENT_SITE_PATH", management)
+    monkeypatch.setattr(helper, "NGINX_PUBLIC_SERVICES_SITE_PATH", public)
+    monkeypatch.setattr(helper, "_nginx_binary", lambda: "nginx")
+    monkeypatch.setattr(helper, "_install_nginx_include", lambda: None)
+    monkeypatch.setattr(helper, "_nginx_site_conflict", lambda *_args: "")
+    monkeypatch.setattr(
+        helper, "_nginx_test_command",
+        lambda: subprocess.CompletedProcess([], 1, "", "invalid pair"),
+    )
+    monkeypatch.setattr(helper, "_reload_nginx", lambda: pytest.fail("invalid pair was reloaded"))
+    assert helper._management_handoff_publish_final_sites("new management\n", "server {\n}\n") == 1
+    assert management.read_text(encoding="utf-8") == "old management\n"
+    assert public.read_text(encoding="utf-8") == "old public\n"
+
+
 def test_management_handoff_syncs_transaction_and_backups_before_marker(monkeypatch, tmp_path):
     """Make the transaction directory and backups durable before the marker.
 
