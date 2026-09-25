@@ -26334,22 +26334,69 @@ def _management_handoff_previous_public_tls_addresses(state: dict) -> set[str]:
     return owned
 
 
-def _management_handoff_validate_public_tls_holdover(state: dict) -> None:
-    """Prove the snapshotted Public Services TLS identity survives candidate CA apply.
+def _management_handoff_candidate_public_tls_addresses(path: Path, port: int) -> set[str]:
+    """Return exact candidate Public Services TLS addresses on the management port.
+
+    Args:
+        path: Validated staged Public Services nginx configuration.
+        port: Candidate management HTTPS port.
+    """
+    site = path.read_text(encoding="utf-8")
+    if not site.startswith("# Managed by Atlaso. Local changes may be overwritten.\n"):
+        raise ValueError("candidate Public Services nginx site is not canonical")
+    owned: set[str] = set()
+    for line in site.splitlines():
+        match = re.fullmatch(
+            r"\s*listen (?:([0-9.]+)|\[([0-9a-fA-F:]+)\]):(\d+) ssl(?: default_server)?;", line,
+        )
+        if match is not None and int(match.group(3)) == port:
+            owned.add(str(ip_address(match.group(1) or match.group(2))))
+    return owned
+
+
+def _management_handoff_retained_public_site(state: dict) -> str:
+    """Point old Public Services TLS blocks at snapshotted certificate files.
 
     Args:
         state: Durable handoff snapshot with prior site and certificate files.
     """
-    if not _management_handoff_previous_public_tls_addresses(state):
-        return
     previous_site = _management_handoff_snapshot_text(state, NGINX_PUBLIC_SERVICES_SITE_PATH)
-    if NGINX_PUBLIC_SERVICES_SITE_PATH.read_text(encoding="utf-8") != previous_site:
-        raise ValueError("previous Public Services management TLS site cannot be preserved")
-    for certificate in re.findall(r"(?m)^\s*ssl_certificate(?:_key)?\s+([^;]+);\s*$", previous_site):
-        path = _ca_managed_path(certificate.strip(), "management_https_cert_path")
+    if not _management_handoff_previous_public_tls_addresses(state):
+        return previous_site
+    count = 0
+
+    def retained_certificate(match: re.Match[str]) -> str:
+        """Replace a live TLS path with its durable backup path.
+
+        Args:
+            match: Captured nginx certificate or private-key directive.
+        """
+        nonlocal count
+        path = _ca_managed_path(match.group(2).strip(), "previous_public_tls_path")
         backup = _management_handoff_snapshot_backup_path(state, path)
-        if not path.is_file() or backup.read_bytes() != path.read_bytes():
-            raise ValueError("previous Public Services management TLS identity cannot be preserved")
+        count += 1
+        return f"{match.group(1)}{backup};{match.group(3)}"
+
+    retained = re.sub(
+        r"(?m)^([ \t]*ssl_certificate(?:_key)?[ \t]+)([^;\n]+);([ \t]*)$",
+        retained_certificate,
+        previous_site,
+    )
+    if count < 2:
+        raise ValueError("previous Public Services management TLS identity cannot be preserved")
+    return retained
+
+
+def _management_handoff_validate_public_tls_holdover(state: dict) -> None:
+    """Prove old Public Services TLS still references captured files after CA apply.
+
+    Args:
+        state: Durable handoff snapshot with prior site and certificate files.
+    """
+    if (_management_handoff_previous_public_tls_addresses(state)
+            and NGINX_PUBLIC_SERVICES_SITE_PATH.read_text(encoding="utf-8")
+            != _management_handoff_retained_public_site(state)):
+        raise ValueError("previous Public Services management TLS site cannot be preserved")
 
 
 def _management_handoff_public_site_with_holdover(state: dict, candidate_site: str) -> str:
@@ -26361,7 +26408,7 @@ def _management_handoff_public_site_with_holdover(state: dict, candidate_site: s
     """
     if not _management_handoff_previous_public_tls_addresses(state):
         return candidate_site
-    previous_site = _management_handoff_snapshot_text(state, NGINX_PUBLIC_SERVICES_SITE_PATH)
+    previous_site = _management_handoff_retained_public_site(state)
     block_pattern = re.compile(r"(?ms)^server \{.*?^\}")
 
     def blocks_and_sockets(site: str) -> list[tuple[str, set[str]]]:
@@ -27644,6 +27691,12 @@ def _apply_management_handoff(payload: dict) -> int:
         _write_management_handoff_state(state, "old-path-retained")
         failing_layer = "old listener isolation"
         _scope_management_handoff_old_listener(state)
+        if _management_handoff_previous_public_tls_addresses(state):
+            failing_layer = "previous Public Services TLS holdover"
+            if _install_nginx_site(
+                NGINX_PUBLIC_SERVICES_SITE_PATH, _management_handoff_retained_public_site(state),
+            ) != 0:
+                raise ValueError("previous Public Services TLS holdover could not be installed")
         failing_layer = "certificate"
         settings_payload = _load_appliance_settings_config(
             Path(str(payload["appliance_settings_config_path"]))
@@ -27764,6 +27817,15 @@ def _apply_management_handoff(payload: dict) -> int:
             exclude_previous_holdovers=True,
             include_flagged_access=not public_services_owns_flagged,
         )
+        candidate_public_tls = (
+            _management_handoff_candidate_public_tls_addresses(
+                Path(str(payload["public_services_config_path"])), candidate_public_port,
+            ) if public_services_owns_flagged else set()
+        )
+        if public_services_owns_flagged:
+            management_site_addresses = [
+                address for address in candidate_addresses if address not in candidate_public_tls
+            ]
         initial_listener_addresses = _management_handoff_initial_listener_addresses(
             candidate_addresses, state, candidate_public_port, protocol_holdover,
             preserve_public_http=True,
@@ -27889,6 +27951,10 @@ def _apply_management_handoff(payload: dict) -> int:
             previous_dynamic_families=previous_dynamic_families,
             include_flagged_access=not public_services_owns_flagged,
         )
+        if public_services_owns_flagged:
+            management_site_addresses = [
+                address for address in candidate_addresses if address not in candidate_public_tls
+            ]
         management_https_result, _restart_delay_seconds = _configure_atlaso_management_https(
             settings_payload,
             verify_front_door=False,

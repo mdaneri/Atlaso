@@ -2805,6 +2805,9 @@ def test_management_handoff_preserves_split_public_tls_on_later_apply(monkeypatc
         state["snapshots"].append({"path": str(path), "existed": True, "backup": str(backup)})
 
     helper._scope_management_handoff_old_listener(state)
+    retained_site = helper._management_handoff_retained_public_site(state)
+    assert "ssl_certificate " + str(tmp_path / "management.crt.snapshot") + ";" in retained_site
+    public.write_text(retained_site, encoding="utf-8")
     helper._management_handoff_validate_public_tls_holdover(state)
     holdover = helper._management_handoff_protocol_holdover(state, {"management_upstream_port": 8000})
     assert "listen 192.0.2.10:443 ssl bind;" not in holdover
@@ -2828,8 +2831,15 @@ def test_management_handoff_preserves_split_public_tls_on_later_apply(monkeypatc
         state, removed_text,
     )
     certificate.write_text("rotated certificate", encoding="utf-8")
-    with pytest.raises(ValueError, match="identity cannot be preserved"):
-        helper._management_handoff_validate_public_tls_holdover(state)
+    key.write_text("rotated key", encoding="utf-8")
+    helper._management_handoff_validate_public_tls_holdover(state)
+    same_socket = helper._management_handoff_public_site_with_holdover(state, public_text)
+    assert f"ssl_certificate {certificate};" not in same_socket
+    assert f"ssl_certificate_key {key};" not in same_socket
+    transitional = helper._management_handoff_public_site_with_holdover(state, moved_text)
+    assert "ssl_certificate " + str(tmp_path / "management.crt.snapshot") + ";" in transitional
+    assert "ssl_certificate_key " + str(tmp_path / "management.key.snapshot") + ";" in transitional
+    assert "ssl_certificate " + str(certificate) + ";" in transitional
 
 
 def test_management_handoff_syncs_transaction_and_backups_before_marker(monkeypatch, tmp_path):
@@ -3441,6 +3451,26 @@ def test_ordinary_settings_preserve_committed_management_listener_scope(monkeypa
     assert split_preserved[2:] == (80, 443)
 
 
+def test_management_handoff_keeps_dynamic_flagged_address_on_https(tmp_path):
+    """Only staged Public Services sockets leave the dedicated HTTPS address set.
+
+    Args:
+        tmp_path: Temporary path for a staged Public Services site.
+    """
+    helper = load_helper_module()
+    site = tmp_path / "public.conf"
+    site.write_text(
+        "# Managed by Atlaso. Local changes may be overwritten.\n"
+        "server {\n  listen 192.0.2.10:443 ssl default_server;\n}\n",
+        encoding="utf-8",
+    )
+    candidate_addresses = ["192.0.2.10", "2001:db8::10"]
+    public_tls = helper._management_handoff_candidate_public_tls_addresses(site, 443)
+
+    assert public_tls == {"192.0.2.10"}
+    assert [address for address in candidate_addresses if address not in public_tls] == ["2001:db8::10"]
+
+
 def test_ordinary_settings_refuses_management_binding_change_without_handoff(monkeypatch, tmp_path, capsys):
     """A direct Settings apply cannot reuse a stale HTTP-only scope for HTTPS.
 
@@ -3765,6 +3795,10 @@ def test_management_handoff_candidate_durability_gates_ack(
         return addresses
 
     monkeypatch.setattr(helper, "_management_handoff_addresses", observed_addresses)
+    monkeypatch.setattr(
+        helper, "_management_handoff_candidate_public_tls_addresses",
+        lambda *_args: {"198.51.100.20"},
+    )
     monkeypatch.setattr(helper, "_parse_network_config", lambda _path: ([], [], []))
     monkeypatch.setattr(helper, "_link_exists", lambda _interface: False)
     monkeypatch.setattr(helper, "_clear_management_handoff_state", lambda **_kwargs: cleared.append(True))
