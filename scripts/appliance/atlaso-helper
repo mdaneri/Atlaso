@@ -10020,6 +10020,14 @@ def _systemd_networkd_files(path: Path) -> tuple[dict[str, str], list[str], list
         and row.get("access_management_ui_enabled", "false").strip().lower() == "true"
         and _network_row_has_usable_management_address(row)
     )
+    flagged_dynamic_listener_names = {
+        row.get("name", "")
+        for row in physical_interfaces
+        if row.get("role") == "access"
+        and row.get("mode") == "access"
+        and row.get("admin_state") == "up"
+        and row.get("access_management_ui_enabled", "false").strip().lower() == "true"
+    }
     management_is_effective = bool(
         management
         and (
@@ -10115,15 +10123,17 @@ def _systemd_networkd_files(path: Path) -> tuple[dict[str, str], list[str], list
             lines.extend(["", "[DHCPv4]", "SendRelease=no",
                           "SendDecline=" + ("no" if interface.get("check_duplicate_ip_addresses") == "false" else "yes"),
                           f"RouteTable={MANAGEMENT_ROUTE_TABLE_ID if name == management_name else LAB_ROUTE_TABLE_ID}"])
-            if name == management_name:
+            if name == management_name or name in flagged_dynamic_listener_names:
                 # Unbound host connections first consult main before selecting
-                # a source. Networkd owns this lease-derived route's lifetime.
+                # a source. This also covers a flagged Access listener, whose
+                # lease default otherwise lives only in table 200. Networkd
+                # owns this lease-derived route's lifetime.
                 lines.extend(["", "[Route]", "Destination=0.0.0.0/0", "Gateway=_dhcp4",
                               "GatewayOnLink=yes", "Table=main"])
         if ipv6_enabled and not interface.get("ipv6_cidr"):
             lines.extend(["", "[IPv6AcceptRA]",
                           f"RouteTable={MANAGEMENT_ROUTE_TABLE_ID if name == management_name else LAB_ROUTE_TABLE_ID}"])
-            if name == management_name:
+            if name == management_name or name in flagged_dynamic_listener_names:
                 lines.extend(["", "[Route]", "Destination=::/0", "Gateway=_ipv6ra",
                               "Table=main"])
         for key, family in (("ip_cidr", "ipv4"), ("ipv6_cidr", "ipv6")):

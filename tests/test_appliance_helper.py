@@ -8291,6 +8291,62 @@ def test_network_helper_preserves_automatic_ipv6_for_management(tmp_path):
     assert parsed["Network"].getboolean("IPv6AcceptRA") is True
 
 
+def test_network_helper_renders_dynamic_flagged_listener_defaults_in_main(monkeypatch, tmp_path):
+    """Keep unbound host traffic routed when Access owns the management listener.
+
+    Args:
+        monkeypatch: Pytest fixture for isolated runtime address observation.
+        tmp_path: Temporary directory provided by pytest for isolated files.
+    """
+    helper = load_helper_module()
+    config_path = tmp_path / "atlaso-network.conf"
+    config_path.write_text(
+        "\n".join(
+            [
+                "[physical_interfaces]",
+                "interface=eth0",
+                "  role=access",
+                "  mode=access",
+                "  access_management_ui_enabled=true",
+                "  ipv4_method=dhcp",
+                "  ipv6_enabled=true",
+                "  admin_state=up",
+                "  mtu=1500",
+                "interface=eth1",
+                "  role=access",
+                "  mode=access",
+                "  access_management_ui_enabled=false",
+                "  ipv4_method=dhcp",
+                "  ipv6_enabled=true",
+                "  admin_state=up",
+                "  mtu=1500",
+                "",
+                "[vlan_interfaces]",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    # Networkd must have the conditional main default ready before DHCP/SLAAC
+    # has acquired the candidate listener address.
+    monkeypatch.setattr(helper, "_network_row_has_usable_runtime_management_address", lambda _row: False)
+    monkeypatch.setattr(
+        helper,
+        "_read_existing_management_network_values",
+        lambda _names: {"DNS": [], "Domains": [], "Gateway": [], "Name": []},
+    )
+
+    files, _links, _down = helper._systemd_networkd_files(config_path)
+
+    flagged = files["10-atlaso-eth0.network"]
+    ordinary = files["10-atlaso-eth1.network"]
+    assert "RouteTable=200" in flagged
+    assert "Destination=0.0.0.0/0\nGateway=_dhcp4\nGatewayOnLink=yes\nTable=main" in flagged
+    assert "Destination=::/0\nGateway=_ipv6ra\nTable=main" in flagged
+    assert "RouteTable=200" in ordinary
+    assert "Gateway=_dhcp4" not in ordinary
+    assert "Gateway=_ipv6ra" not in ordinary
+
+
 def test_network_helper_renders_static_management_ipv6_gateway_in_main_and_table_100(tmp_path):
     """Verify that network helper renders static management ipv6 gateway in main and table 100.
 
@@ -9020,7 +9076,7 @@ def test_wan_helper_leaves_modern_management_gateway_to_network(monkeypatch, tmp
         tmp_path: Temporary directory provided by pytest for isolated filesystem state.
     """
     helper = load_helper_module()
-    monkeypatch.setattr(helper, "_applied_wan_network_state", lambda: {})
+    monkeypatch.setattr(helper, "_applied_wan_network_state", lambda **_kwargs: {})
     applied_domains = tmp_path / "route-domains.json"
     applied_domains.write_text('{"schema": 1, "interfaces": [{"name": "eth0", "table": 100, "mac": "00:11:22:33:44:01"}]}', encoding="utf-8")
     monkeypatch.setattr(helper, "ROUTE_DOMAIN_CONFIG_PATH", applied_domains)
@@ -9195,7 +9251,7 @@ def test_wan_helper_preserves_overlapping_prefixes_in_both_domains(monkeypatch, 
         tmp_path: Temporary directory provided by pytest for isolated filesystem state.
     """
     helper = load_helper_module()
-    monkeypatch.setattr(helper, "_applied_wan_network_state", lambda: {})
+    monkeypatch.setattr(helper, "_applied_wan_network_state", lambda **_kwargs: {})
     applied_domains = tmp_path / "route-domains.json"
     applied_domains.write_text('{"schema": 1, "interfaces": [{"name": "eth0", "table": 100, "mac": "00:11:22:33:44:01"}, {"name": "eth1.1", "table": 200, "mac": "00:11:22:33:44:01"}]}', encoding="utf-8")
     monkeypatch.setattr(helper, "ROUTE_DOMAIN_CONFIG_PATH", applied_domains)
@@ -9977,7 +10033,7 @@ def test_wan_apply_preflights_native_state_before_forwarding(monkeypatch, tmp_pa
     observed: list[str] = []
     commands: list[list[str]] = []
 
-    def network_state():
+    def network_state(**_kwargs):
         observed.append("network")
         if failed_observation == "network":
             raise ValueError("unsafe applied Network")
@@ -10032,7 +10088,7 @@ def test_wan_ingress_capacity_precedes_host_mutation(monkeypatch, tmp_path):
     monkeypatch.setattr(helper, "WAN_RUNTIME_CONFIG_PATH", tmp_path / "absent-runtime.conf")
     monkeypatch.setattr(helper, "WAN_SYSCTL_PATH", sysctl_path)
     monkeypatch.setattr(helper, "_wan_config_errors", lambda *args, **kwargs: [])
-    monkeypatch.setattr(helper, "_applied_wan_network_state", lambda: {"connected": {}, "prefixes": set(), "management_ui": {}})
+    monkeypatch.setattr(helper, "_applied_wan_network_state", lambda **_kwargs: {"connected": {}, "prefixes": set(), "management_ui": {}})
     monkeypatch.setattr(helper, "_snapshot_route_domain_rules", lambda: [])
     monkeypatch.setattr(helper, "_run", lambda command: commands.append(command)
                         or subprocess.CompletedProcess(command, 0, "", ""))
@@ -10060,7 +10116,7 @@ def test_wan_apply_reuses_preflighted_native_snapshots(monkeypatch, tmp_path):
     domain_rules: list[dict] = []
     observed: list[str] = []
 
-    def read_network():
+    def read_network(**_kwargs):
         observed.append("network")
         return network_state
 
@@ -10107,7 +10163,7 @@ def test_wan_forwarding_changes_on_guarded_side_of_policy_rules(monkeypatch, tmp
     monkeypatch.setattr(helper, "ROUTE_DOMAIN_CONFIG_PATH", domain)
     monkeypatch.setattr(helper, "WAN_RUNTIME_CONFIG_PATH", tmp_path / "absent.conf")
     monkeypatch.setattr(helper, "_wan_config_errors", lambda *args, **kwargs: [])
-    monkeypatch.setattr(helper, "_applied_wan_network_state", lambda: {})
+    monkeypatch.setattr(helper, "_applied_wan_network_state", lambda **_kwargs: {})
     monkeypatch.setattr(helper, "_snapshot_route_domain_rules", lambda: [])
     monkeypatch.setattr(helper, "_route_domain_ingress_interfaces", lambda *, enforce_capacity: ["eth1"])
     monkeypatch.setattr(helper, "_apply_wan_policy_rules", lambda *args, **kwargs: steps.append("rules") or 0)
@@ -10178,7 +10234,7 @@ def test_wan_helper_apply_routes_nat_and_netem(monkeypatch, tmp_path):
         tmp_path: Temporary directory provided by pytest for isolated filesystem state.
     """
     helper = load_helper_module()
-    monkeypatch.setattr(helper, "_applied_wan_network_state", lambda: {"connected": {}, "prefixes": set(), "management_ui": {}})
+    monkeypatch.setattr(helper, "_applied_wan_network_state", lambda **_kwargs: {"connected": {}, "prefixes": set(), "management_ui": {}})
     applied_domains = tmp_path / "route-domains.json"
     applied_domains.write_text('{"schema": 1, "interfaces": [{"name": "eth1.20", "table": 200, "mac": "00:11:22:33:44:01"}]}', encoding="utf-8")
     monkeypatch.setattr(helper, "ROUTE_DOMAIN_CONFIG_PATH", applied_domains)
