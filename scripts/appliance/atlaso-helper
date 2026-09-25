@@ -13771,7 +13771,7 @@ def _cleanup_wan_policy_rules() -> int:
 
 def _apply_wan_policy_rules(
     parsed: dict[str, list[dict[str, str]]], *, current_domain_rules: list[dict] | None = None,
-    preflighted_ingress: list[str] | None = None,
+    preflighted_ingress: list[str] | None = None, held_ingress_guards: list[str] | None = None,
 ) -> int:
     """Perform apply WAN policy rules.
 
@@ -13779,6 +13779,7 @@ def _apply_wan_policy_rules(
         parsed: Parsed consumed by apply WAN policy rules.
         current_domain_rules: Previously admitted native rule inventory, if available.
         preflighted_ingress: Applied lab ingress admitted before WAN host mutation.
+        held_ingress_guards: Proven held lab links requiring guards until source migration.
     """
     if shutil.which("ip") is None:
         print("ip command not found", file=sys.stderr)
@@ -13788,6 +13789,9 @@ def _apply_wan_policy_rules(
         names = (preflighted_ingress if preflighted_ingress is not None
                  else _route_domain_ingress_interfaces(enforce_capacity=routing_enabled))
         desired = _route_domain_ingress_rules(names if routing_enabled else [])
+        if routing_enabled:
+            for name in sorted(set(held_ingress_guards or []) - set(names)):
+                desired.extend(row for row in _route_domain_ingress_rules([name]) if row["table"] is None)
         _restore_route_domain_rules(desired, current_rules=current_domain_rules)
         return 0
     # A WAN-only Apply before the first Network migration must retain the old
@@ -15309,6 +15313,7 @@ def _handle_wan_config(
     applied_network_state = None
     current_domain_rules = None
     preflighted_ingress = None
+    held_ingress_guards: list[str] = []
     if ROUTE_DOMAIN_CONFIG_PATH.exists() or ROUTE_DOMAIN_CONFIG_PATH.is_symlink():
         # Both observations can reject an unsafe or ambiguous native baseline.
         # Admit them before forwarding, routes, NAT, or rules change host state.
@@ -15318,9 +15323,17 @@ def _handle_wan_config(
         if applied_network_state is None:
             raise ValueError("applied Network ownership is unavailable; reapply Network before WAN")
         current_domain_rules = _snapshot_route_domain_rules()
-        preflighted_ingress = _route_domain_ingress_interfaces(
-            enforce_capacity=feature_settings["routing_enabled"],
-        )
+        if include_handoff_held_sources:
+            preflighted_ingress, guarded_ingress = _route_domain_ingress_projection(
+                enforce_capacity=False,
+            )
+            if feature_settings["routing_enabled"] and len(guarded_ingress) > ROUTE_RULE_PRIORITY_WINDOW:
+                raise ValueError("routing-domain ingress interfaces exceed rule capacity")
+            held_ingress_guards = sorted(set(guarded_ingress) - set(preflighted_ingress))
+        else:
+            preflighted_ingress = _route_domain_ingress_interfaces(
+                enforce_capacity=feature_settings["routing_enabled"],
+            )
     if legacy_nat:
         nat_result = _apply_wan_nat(parsed, allow_identity_quarantine=True) if replay else _apply_wan_nat(parsed)
         if nat_result:
@@ -15334,6 +15347,7 @@ def _handle_wan_config(
     if feature_settings["routing_enabled"]:
         rule_result = _apply_wan_policy_rules(
             parsed, current_domain_rules=current_domain_rules, preflighted_ingress=preflighted_ingress,
+            **({"held_ingress_guards": held_ingress_guards} if include_handoff_held_sources else {}),
         )
         if rule_result != 0:
             return rule_result

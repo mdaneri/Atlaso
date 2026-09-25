@@ -10480,6 +10480,47 @@ def test_wan_ingress_capacity_precedes_host_mutation(monkeypatch, tmp_path):
     assert commands == []
 
 
+def test_handoff_wan_keeps_held_ingress_guard_until_source_migrates(monkeypatch, tmp_path):
+    """WAN staging keeps the terminal guard and later restores the lab lookup.
+
+    Args:
+        monkeypatch: Pytest fixture replacing native WAN mutations.
+        tmp_path: Isolated applied intent and candidate WAN paths.
+    """
+    helper = load_helper_module()
+    wan = tmp_path / "wan.conf"
+    wan.write_text("[feature_settings]\nrouting_enabled=true\n", encoding="utf-8")
+    intent = tmp_path / "route-domains.json"
+    intent.write_text(json.dumps({"schema": 1, "interfaces": [{"name": "eth1", "table": 200}],
+                                  "held_addresses": [{"name": "eth1", "table": 100}]}), encoding="utf-8")
+    monkeypatch.setattr(helper, "ROUTE_DOMAIN_CONFIG_PATH", intent)
+    monkeypatch.setattr(helper, "WAN_RUNTIME_CONFIG_PATH", tmp_path / "absent.conf")
+    monkeypatch.setattr(helper, "_wan_config_errors", lambda *_args, **_kwargs: [])
+    monkeypatch.setattr(helper, "_applied_wan_network_state", lambda **_kwargs: {})
+    monkeypatch.setattr(helper, "_snapshot_route_domain_rules", lambda: [])
+    monkeypatch.setattr(helper.shutil, "which", lambda _name: "/usr/sbin/ip")
+    events: list[str] = []
+    rules: list[list[dict]] = []
+    monkeypatch.setattr(helper, "_restore_route_domain_rules", lambda desired, **_kwargs:
+                        rules.append(desired) or events.append("rules"))
+    monkeypatch.setattr(helper, "_apply_wan_forwarding", lambda _parsed: events.append("forwarding") or 0)
+    monkeypatch.setattr(helper, "_apply_wan_target_routes", lambda *_args, **_kwargs: 0)
+    monkeypatch.setattr(helper, "_apply_wan_routes_and_qdiscs", lambda *_args, **_kwargs: 0)
+    monkeypatch.setattr(helper, "_install_wan_runtime", lambda _path: None)
+
+    assert helper._handle_wan_config("apply", wan, include_handoff_held_sources=True) == 0
+    assert events[:2] == ["rules", "forwarding"]
+    assert {(row["incoming_interface"], row["table"]) for row in rules[-1]} == {("eth1", None)}
+    assert len(rules[-1]) == 2  # Both IPv4 and IPv6 terminal guards survive WAN Apply.
+
+    intent.write_text(json.dumps({"schema": 1, "interfaces": [{"name": "eth1", "table": 200}],
+                                  "held_addresses": []}), encoding="utf-8")
+    assert helper._handle_wan_config("apply", wan) == 0
+    assert {(row["incoming_interface"], row["table"]) for row in rules[-1]} == {
+        ("eth1", 200), ("eth1", None),
+    }
+
+
 def test_wan_apply_reuses_preflighted_native_snapshots(monkeypatch, tmp_path):
     """Downstream WAN stages receive the admitted baseline without reobserving it.
 
