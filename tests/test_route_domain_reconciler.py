@@ -110,6 +110,27 @@ def test_transition_start_seeds_persisted_identity_before_guard(monkeypatch):
     assert events == ["rule", "rule", "guard", "guard"]
 
 
+def test_transition_start_does_not_seed_replaced_persisted_nic(monkeypatch):
+    """A name reused by another MAC gets only the boot source guard.
+
+    Args:
+        monkeypatch: Isolated boot intent and native routing operations.
+    """
+    management = interface()
+    replacement = interface(mac="02:00:00:00:00:03")
+    events = []
+    monkeypatch.setattr(domains, "reconciliation_lock", nullcontext)
+    monkeypatch.setattr(domains, "read_intent", lambda: intent(management))
+    monkeypatch.setattr(domains, "read_native", lambda args:
+                        [link(replacement, "192.0.2.10")] if args == ["address", "show"] else [])
+    monkeypatch.setattr(domains, "run_ip", lambda command: events.append("rule") or "")
+    monkeypatch.setattr(domains, "_set_guard_locked", lambda _family, _enable: events.append("guard"))
+
+    domains.transition_guard(True)
+
+    assert events == ["guard", "guard"]
+
+
 def test_transition_start_guards_before_persisted_vlan_exists(monkeypatch):
     """Boot must protect new sources even before networkd creates a VLAN.
 

@@ -891,11 +891,11 @@ def _seed_transition_sources_locked(bindings: Any, *, allow_absent: bool = False
     """Install exact live lookups before a transition guard can cut off old paths.
 
     Args:
-        bindings: Previous interface names and routing tables to preserve.
+        bindings: Previous interface names, optional pinned MACs, and tables to preserve.
         allow_absent: Permit persisted links not yet created by networkd at boot.
     """
     if (not isinstance(bindings, list) or len(bindings) > 256 or any(
-        not isinstance(row, dict) or set(row) != {"name", "table"}
+        not isinstance(row, dict) or set(row) not in ({"name", "table"}, {"name", "mac", "table"})
         or not isinstance(row["name"], str) or not INTERFACE_PATTERN.fullmatch(row["name"])
         or row["name"] in {"lo", ".", ".."} or type(row["table"]) is not int
         or row["table"] not in {100, 200} for row in bindings
@@ -919,8 +919,16 @@ def _seed_transition_sources_locked(bindings: Any, *, allow_absent: bool = False
             continue
         if link is None:
             raise ReconcileError("previous management source identity unavailable")
-        owners.append(parse_interface({"name": binding["name"], "mac": link.get("address"),
-                                       "table": binding["table"]}))
+        expected_mac = binding.get("mac", link.get("address"))
+        owner = parse_interface({"name": binding["name"], "mac": expected_mac,
+                                 "table": binding["table"]})
+        if not isinstance(link.get("address"), str) or link["address"].lower() != owner.mac:
+            if allow_absent:
+                # A replacement NIC may reuse the persisted Linux name at boot.
+                # Guard new sources but never seed them into the old table.
+                continue
+            raise ReconcileError("previous management source identity unavailable")
+        owners.append(owner)
     sources, incomplete = source_tables(Intent(tuple(owners)), inventory)
     if incomplete or any(table is None for table in sources.values()):
         raise ReconcileError("previous management source identity unavailable")
@@ -972,7 +980,7 @@ def transition_guard(enable: bool, seed_interfaces: Any = None) -> None:
             if bindings is None:
                 # Boot starts the unit before networkd, but a persisted intent
                 # can still identify addresses already present on its links.
-                bindings = [{"name": row.name, "table": row.table}
+                bindings = [{"name": row.name, "mac": row.mac, "table": row.table}
                             for row in read_intent().interfaces]
             if bindings:
                 _seed_transition_sources_locked(bindings, allow_absent=seed_interfaces is None)
