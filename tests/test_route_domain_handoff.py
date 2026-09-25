@@ -811,9 +811,15 @@ def test_candidate_new_address_never_becomes_a_held_old_source(monkeypatch, tmp_
         management_ui: Validated candidate access-listener eligibility to publish.
     """
     helper = load_helper_module()
+    candidate = tmp_path / "candidate.conf"
+    candidate.write_text(
+        "# Network identity pins: reviewed-mac-v1.\n"
+        "[physical_interfaces]\ninterface=eth0\n  mac=02:00:00:00:00:01\n",
+        encoding="utf-8",
+    )
     monkeypatch.setattr(helper, "ROUTE_DOMAIN_CONFIG_PATH", tmp_path / "route-domains.json")
     monkeypatch.setattr(helper, "ROUTE_DOMAIN_SERVICE_PATH", tmp_path / "route-domains.service")
-    monkeypatch.setattr(helper, "_parse_network_config", lambda _path: ([{"name": "eth0", "role": "access",
+    monkeypatch.setattr(helper, "_parse_network_config", lambda _path: ([{"name": "eth0", "mac": "02:00:00:00:00:01", "role": "access",
                         "access_management_ui_enabled": str(management_ui).lower()}], [], []))
     monkeypatch.setattr(helper, "_read_existing_management_network_values", lambda: {"Name": ["eth0"]})
     inventory = [{"ifname": "eth0", "address": "02:00:00:00:00:01", "addr_info": [
@@ -826,7 +832,7 @@ def test_candidate_new_address_never_becomes_a_held_old_source(monkeypatch, tmp_
     published = []
     monkeypatch.setattr(helper, "_durable_management_handoff_state_write", lambda value, _path: published.append(value))
     old = {"name": "eth0", "mac": "02:00:00:00:00:01", "address": "192.0.2.10", "table": 100}
-    helper._install_route_domain_intent(Path("candidate.conf"), held_addresses=[old])
+    helper._install_route_domain_intent(candidate, held_addresses=[old])
     assert published[0]["held_addresses"] == [old]
     assert published[0]["interfaces"] == [{"name": "eth0", "mac": "02:00:00:00:00:01", "table": 200, "management_ui": management_ui}]
     unit = (tmp_path / "route-domains.service").read_text(encoding="utf-8")
