@@ -3476,7 +3476,11 @@ ipv6_cidr=
         """Return only the interface observation confirmed by the helper."""
 
         def scalar(self, _statement):
-            """Supply the observed lease without reading mutable desired settings."""
+            """Supply the observed lease without reading mutable desired settings.
+
+            Args:
+                _statement: Ignored database query for the observed lease.
+            """
             return SimpleNamespace(host_ip_cidr="192.0.2.30/24")
 
     with pytest.raises(RuntimeError, match="did not confirm"):
