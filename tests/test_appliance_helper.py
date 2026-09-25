@@ -1361,6 +1361,14 @@ table inet atlaso {
     )
     assert all("saddr" in rule for rule in rules)
 
+    redirect_rules = helper._management_handoff_candidate_firewall_rules(
+        Path("candidate"), 8443, candidate, http_port=8080,
+    )
+    assert any('iifname "eth1" ip saddr 192.0.2.0/24 tcp dport 8080' in rule
+               for rule in redirect_rules)
+    assert any('iifname "eth1" ip saddr 192.0.2.0/24 tcp dport 8443' in rule
+               for rule in redirect_rules)
+
 
 def test_management_handoff_builds_open_candidate_listener_firewall_rules(monkeypatch):
     """Admit candidate listeners while retaining a previously filtered policy.
@@ -1384,6 +1392,11 @@ def test_management_handoff_builds_open_candidate_listener_firewall_rules(monkey
     assert rules == [
         '    iifname "eth1" tcp dport { 22, 80, 443, 8443 } accept comment "mgmt-console"'
     ]
+    assert helper._management_handoff_candidate_firewall_rules(
+        Path("candidate"), 8443,
+        "flush ruleset\n# Atlaso firewall desired state is disabled.\n",
+        http_port=8080,
+    ) == ['    iifname "eth1" tcp dport { 22, 80, 443, 8080, 8443 } accept comment "mgmt-console"']
 
 
 def test_management_handoff_builds_open_flagged_listener_firewall_rules(monkeypatch):
@@ -2871,6 +2884,29 @@ def test_management_handoff_snapshots_previous_public_certificates(monkeypatch, 
     assert {old_cert, old_key, candidate_cert} <= set(paths)
 
 
+def test_management_handoff_defers_public_tls_on_old_dedicated_socket():
+    """Candidate Public Services waits for a same-address old management TLS listener."""
+    helper = load_helper_module()
+    candidate = (
+        "# Managed by Atlaso. Local changes may be overwritten.\n"
+        "server {\n  listen 192.0.2.10:443 ssl default_server;\n}\n"
+        "server {\n  listen 192.0.2.20:443 ssl default_server;\n}\n"
+    )
+    state = {
+        "previous_https_enabled": True,
+        "previous_management_public_port": 443,
+        "previous_management_addresses": ["192.0.2.10"],
+        "snapshots": [],
+    }
+
+    transitional = helper._management_handoff_public_site_with_holdover(
+        state, candidate, deferred_sockets={"192.0.2.10:443"},
+    )
+
+    assert "listen 192.0.2.10:443" not in transitional
+    assert "listen 192.0.2.20:443 ssl default_server;" in transitional
+
+
 def test_management_handoff_syncs_transaction_and_backups_before_marker(monkeypatch, tmp_path):
     """Make the transaction directory and backups durable before the marker.
 
@@ -3755,7 +3791,7 @@ def test_management_handoff_candidate_durability_gates_ack(
     monkeypatch.setattr(
         helper,
         "_management_handoff_candidate_firewall_rules",
-        lambda _path, _port, _firewall: [candidate_rule],
+        lambda _path, _port, _firewall, **_kwargs: [candidate_rule],
     )
     monkeypatch.setattr(
         helper,
@@ -4114,7 +4150,7 @@ def test_management_handoff_failure_rolls_back_with_truthful_layer(monkeypatch, 
     monkeypatch.setattr(
         helper,
         "_management_handoff_candidate_firewall_rules",
-        lambda _path, _port, _firewall: [],
+        lambda _path, _port, _firewall, **_kwargs: [],
     )
     monkeypatch.setattr(
         helper,
@@ -4190,7 +4226,7 @@ def test_management_handoff_resolver_failure_rolls_back_before_nginx(
     monkeypatch.setattr(
         helper,
         "_management_handoff_candidate_firewall_rules",
-        lambda _path, _port, _firewall: [],
+        lambda _path, _port, _firewall, **_kwargs: [],
     )
     monkeypatch.setattr(helper, "_handle_firewall", lambda *_args: 0)
     monkeypatch.setattr(
@@ -4272,7 +4308,7 @@ def test_management_handoff_orders_resolver_before_dns_shutdown(monkeypatch, tmp
     monkeypatch.setattr(helper, "_apply_management_candidate_network",
                         lambda *_args: events.append("network"))
     monkeypatch.setattr(helper, "_wait_network_addresses", lambda *_args, **_kwargs: {})
-    monkeypatch.setattr(helper, "_management_handoff_candidate_firewall_rules", lambda *_args: [])
+    monkeypatch.setattr(helper, "_management_handoff_candidate_firewall_rules", lambda *_args, **_kwargs: [])
     monkeypatch.setattr(helper, "_management_handoff_firewall_text", lambda *_args, **_kwargs: "table inet atlaso {}\n")
     monkeypatch.setattr(helper, "FIREWALL_CONFIG_PATH", tmp_path / "previous.nft")
     monkeypatch.setattr(helper, "FIREWALL_APPLY_DIR", tmp_path)
@@ -4326,7 +4362,7 @@ def test_management_handoff_never_activates_nginx_with_unhealthy_upstream(monkey
     monkeypatch.setattr(
         helper,
         "_management_handoff_candidate_firewall_rules",
-        lambda _path, _port, _firewall: [],
+        lambda _path, _port, _firewall, **_kwargs: [],
     )
     monkeypatch.setattr(
         helper,

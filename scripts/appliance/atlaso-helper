@@ -25835,6 +25835,7 @@ def _management_handoff_candidate_firewall_rules(
     network_path: Path,
     public_port: int,
     candidate_firewall: str,
+    *, http_port: int | None = None,
 ) -> list[str]:
     """Return minimal candidate-listener admission rules for a transition.
 
@@ -25842,14 +25843,17 @@ def _management_handoff_candidate_firewall_rules(
         network_path: Candidate staged network configuration.
         public_port: Candidate management HTTP or HTTPS front-door port.
         candidate_firewall: Candidate nftables configuration.
+        http_port: Candidate HTTP redirect port when HTTPS is enabled.
 
     Returns:
         Nftables input rules for effective candidate management listeners.
     """
     if public_port < 1 or public_port > 65535:
         raise ValueError("candidate management firewall port must be between 1 and 65535")
+    if http_port is not None and (http_port < 1 or http_port > 65535):
+        raise ValueError("candidate management HTTP redirect port must be between 1 and 65535")
     physical, vlans, _removed = _parse_network_config(network_path)
-    management_ports = ", ".join(str(port) for port in sorted({22, 80, 443, public_port}))
+    management_ports = ", ".join(str(port) for port in sorted({22, 80, 443, public_port, http_port or 80}))
     candidate_disabled = "Atlaso firewall desired state is disabled" in candidate_firewall
     target_rules: list[tuple[str, str, str]] = []
     for row in physical:
@@ -25893,15 +25897,19 @@ def _management_handoff_candidate_firewall_rules(
                 continue
             port_expression = match.group(0).removeprefix("tcp dport ")
             port_tokens = [token.strip() for token in port_expression.strip("{} ").split(",")]
-            port_is_present = any(
-                token.isdigit() and int(token) == public_port
-                or "-" in token
-                and all(part.strip().isdigit() for part in token.split("-", 1))
-                and int(token.split("-", 1)[0]) <= public_port <= int(token.split("-", 1)[1])
-                for token in port_tokens
-            )
-            if not port_is_present:
-                rules.append(f"{line[:match.start()]}tcp dport {public_port}{line[match.end():]}")
+            required_ports = {public_port}
+            if http_port is not None:
+                required_ports.add(http_port)
+            for required_port in sorted(required_ports):
+                port_is_present = any(
+                    token.isdigit() and int(token) == required_port
+                    or "-" in token
+                    and all(part.strip().isdigit() for part in token.split("-", 1))
+                    and int(token.split("-", 1)[0]) <= required_port <= int(token.split("-", 1)[1])
+                    for token in port_tokens
+                )
+                if not port_is_present:
+                    rules.append(f"{line[:match.start()]}tcp dport {required_port}{line[match.end():]}")
     return rules
 
 
@@ -26394,16 +26402,26 @@ def _management_handoff_validate_public_tls_holdover(state: dict) -> None:
         raise ValueError("previous Public Services management TLS site cannot be preserved")
 
 
-def _management_handoff_public_site_with_holdover(state: dict, candidate_site: str) -> str:
+def _management_handoff_public_site_with_holdover(
+    state: dict, candidate_site: str, *, deferred_sockets: set[str] | None = None,
+) -> str:
     """Publish new Public Services sockets while retaining every old site block.
 
     Args:
         state: Durable handoff snapshot with the prior Public Services site.
         candidate_site: Staged candidate Public Services nginx configuration.
+        deferred_sockets: Candidate sockets still owned by the old dedicated listener.
     """
-    if not _management_handoff_previous_public_tls_addresses(state):
+    previous_public_tls = _management_handoff_previous_public_tls_addresses(state)
+    if not previous_public_tls and not deferred_sockets:
         return candidate_site
-    previous_site = _management_handoff_retained_public_site(state)
+    previous_site = (
+        _management_handoff_retained_public_site(state)
+        if previous_public_tls
+        else _management_handoff_snapshot_text(state, NGINX_PUBLIC_SERVICES_SITE_PATH)
+    )
+    if not previous_site:
+        previous_site = "# Managed by Atlaso. Local changes may be overwritten.\n"
     block_pattern = re.compile(r"(?ms)^server \{.*?^\}")
 
     def blocks_and_sockets(site: str) -> list[tuple[str, set[str]]]:
@@ -26427,7 +26445,7 @@ def _management_handoff_public_site_with_holdover(state: dict, candidate_site: s
         return parsed
 
     old_blocks = blocks_and_sockets(previous_site)
-    old_sockets = set().union(*(sockets for _, sockets in old_blocks))
+    old_sockets = set().union(*(sockets for _, sockets in old_blocks)) | (deferred_sockets or set())
     additions: list[str] = []
     for block, sockets in blocks_and_sockets(candidate_site):
         if sockets.intersection(old_sockets):
@@ -27703,6 +27721,7 @@ def _apply_management_handoff(payload: dict) -> int:
         failing_layer = "previous Public Services TLS preservation"
         _management_handoff_validate_public_tls_holdover(state)
         candidate_https = bool(settings_payload.get("management_https_enabled"))
+        candidate_http_port = int(settings_payload.get("management_public_http_port") or 80)
         candidate_public_port = int(
             settings_payload.get(
                 "management_public_https_port" if candidate_https else "management_public_http_port"
@@ -27721,6 +27740,7 @@ def _apply_management_handoff(payload: dict) -> int:
             Path(str(payload["network_config_path"])),
             candidate_public_port,
             candidate_firewall,
+            http_port=candidate_http_port if candidate_https else None,
         )
         final_firewall = _management_handoff_firewall_text(
             candidate_firewall,
@@ -27821,6 +27841,20 @@ def _apply_management_handoff(payload: dict) -> int:
             management_site_addresses = [
                 address for address in candidate_addresses if address not in candidate_public_tls
             ]
+        previous_public_tls = _management_handoff_previous_public_tls_addresses(state)
+        deferred_public_addresses = (
+            candidate_public_tls
+            & (set(state["previous_management_addresses"]) - previous_public_tls)
+            if state["previous_https_enabled"]
+            and int(state["previous_management_public_port"]) == candidate_public_port
+            else set()
+        )
+        deferred_public_sockets = {
+            f"{'[' + address + ']' if ':' in address else address}:{candidate_public_port}"
+            for address in deferred_public_addresses
+        }
+        if deferred_public_addresses and previous_public_tls.intersection(management_site_addresses):
+            raise ValueError("opposing Public Services and dedicated TLS ownership changes require separate applies")
         initial_listener_addresses = _management_handoff_initial_listener_addresses(
             candidate_addresses, state, candidate_public_port, protocol_holdover,
             preserve_public_http=True,
@@ -27844,14 +27878,16 @@ def _apply_management_handoff(payload: dict) -> int:
         )
         if management_https_result != 0:
             raise ValueError("candidate management nginx apply failed")
-        split_public_tls = bool(_management_handoff_previous_public_tls_addresses(state))
+        transitional_public_needed = bool(previous_public_tls or deferred_public_sockets)
         transitional_public_site = None
-        if split_public_tls:
+        if transitional_public_needed:
             public_site = Path(str(payload["public_services_config_path"])).read_text(encoding="utf-8")
-            transitional_public_site = _management_handoff_public_site_with_holdover(state, public_site)
+            transitional_public_site = _management_handoff_public_site_with_holdover(
+                state, public_site, deferred_sockets=deferred_public_sockets,
+            )
         if _handle_public_services(
             "apply", [str(payload["public_services_config_path"])],
-            **({"transitional_text": transitional_public_site} if split_public_tls else {}),
+            **({"transitional_text": transitional_public_site} if transitional_public_needed else {}),
         ) != 0:
             raise ValueError("candidate public-services nginx apply failed")
         if _nginx_test_command().returncode != 0:
@@ -27937,7 +27973,9 @@ def _apply_management_handoff(payload: dict) -> int:
             if _handle_firewall("apply", [str(transition_path)]) != 0:
                 raise ValueError("final nftables apply failed while retiring the previous path")
         failing_layer = "verified-listener publication"
-        if split_public_tls and _handle_public_services("apply", [str(payload["public_services_config_path"])]) != 0:
+        if transitional_public_needed and not deferred_public_sockets and _handle_public_services(
+            "apply", [str(payload["public_services_config_path"])],
+        ) != 0:
             raise ValueError("candidate public-services nginx could not retire old listeners")
         management_site_addresses = _management_handoff_addresses(
             Path(str(payload["network_config_path"])),
@@ -27959,6 +27997,10 @@ def _apply_management_handoff(payload: dict) -> int:
         )
         if management_https_result != 0:
             raise ValueError("candidate nginx could not publish verified final listeners")
+        if deferred_public_sockets and _handle_public_services(
+            "apply", [str(payload["public_services_config_path"])],
+        ) != 0:
+            raise ValueError("candidate public-services nginx could not publish retired dedicated sockets")
         failing_layer = "post-retirement readiness"
         final_readiness = _management_handoff_readiness(
             candidate_addresses,
