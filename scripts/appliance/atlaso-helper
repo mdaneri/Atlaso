@@ -26463,6 +26463,7 @@ def _management_handoff_protocol_holdover(state: dict, payload: dict) -> str:
 
 def _management_handoff_initial_listener_addresses(
     candidate_addresses: list[str], state: dict, candidate_port: int, protocol_holdover: str,
+    *, preserve_public_http: bool = False,
 ) -> list[str]:
     """Keep a previous address on its old listener until final retirement.
 
@@ -26471,12 +26472,17 @@ def _management_handoff_initial_listener_addresses(
         state: Captured previous management listener state.
         candidate_port: New management public port.
         protocol_holdover: Old listener protocol retained during transition.
+        preserve_public_http: Keep old Public Services-owned addresses on the HTTP redirect.
     """
-    if not protocol_holdover or int(state["previous_management_public_port"]) != candidate_port:
+    if int(state["previous_management_public_port"]) != candidate_port:
+        return candidate_addresses
+    public_tls = (_management_handoff_previous_public_tls_addresses(state)
+                  if state.get("previous_https_enabled") else set())
+    if not protocol_holdover and not public_tls:
         return candidate_addresses
     previous_addresses = set(state["previous_management_addresses"])
-    if state.get("previous_https_enabled"):
-        previous_addresses.difference_update(_management_handoff_previous_public_tls_addresses(state))
+    if preserve_public_http:
+        previous_addresses.difference_update(public_tls)
     return [address for address in candidate_addresses if address not in previous_addresses]
 
 
@@ -27743,6 +27749,7 @@ def _apply_management_handoff(payload: dict) -> int:
         )
         initial_listener_addresses = _management_handoff_initial_listener_addresses(
             candidate_addresses, state, candidate_public_port, protocol_holdover,
+            preserve_public_http=True,
         )
         initial_https_addresses = _management_handoff_initial_listener_addresses(
             management_site_addresses, state, candidate_public_port, protocol_holdover,

@@ -2805,7 +2805,11 @@ def test_management_handoff_preserves_split_public_tls_on_later_apply(monkeypatc
     assert ("listen 192.0.2.20:443 ssl bind;" in holdover) == dedicated
     assert helper._management_handoff_initial_listener_addresses(
         ["192.0.2.10", "192.0.2.20"] if dedicated else ["192.0.2.10"], state, 443, holdover,
+        preserve_public_http=True,
     ) == ["192.0.2.10"]
+    assert helper._management_handoff_initial_listener_addresses(
+        ["192.0.2.10", "192.0.2.20"] if dedicated else ["192.0.2.10"], state, 443, holdover,
+    ) == []
 
     moved_text = public_text.replace("192.0.2.10", "192.0.2.11")
     helper._management_handoff_validate_public_tls_holdover(state)
