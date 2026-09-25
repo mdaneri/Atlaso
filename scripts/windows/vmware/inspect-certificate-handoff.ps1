@@ -45,10 +45,37 @@ if (-not (Test-Path -LiteralPath $PythonPath -PathType Leaf) -or
 }
 $env:TEMP = $evidenceRoot
 $env:TMP = $evidenceRoot
+$gitRoot = Join-Path ([Environment]::GetFolderPath([Environment+SpecialFolder]::ProgramFiles)) 'Git'
+$trustedGit = Join-Path $gitRoot 'cmd/git.exe'
+$gitCore = Join-Path $gitRoot 'mingw64/bin/git.exe'
+$trustedGitPins = [Collections.Generic.List[IDisposable]]::new()
+$originalPath = $env:PATH
+try {
+    foreach ($path in @($gitRoot, (Join-Path $gitRoot 'cmd'), (Join-Path $gitRoot 'mingw64'),
+            (Join-Path $gitRoot 'mingw64/bin'), $trustedGit, $gitCore)) {
+        $item = Get-Item -LiteralPath $path -Force -ErrorAction Stop
+        if ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) {
+            throw 'Trusted Git path cannot contain a reparse point.'
+        }
+    }
+    foreach ($path in @($trustedGit, $gitCore)) {
+        $trustedGitPins.Add([IO.FileStream]::new($path, [IO.FileMode]::Open,
+                [IO.FileAccess]::Read, [IO.FileShare]::Read))
+        $signature = Get-AuthenticodeSignature -FilePath $path
+        if ($signature.Status -ne 'Valid' -or
+            $signature.SignerCertificate.Thumbprint -cne '3EB14A3AEF84B7153E139397F0A49E2FAC662B0E') {
+            throw 'Trusted Git executable signature is unavailable or unexpected.'
+        }
+    }
+    $env:PATH = (Join-Path $gitRoot 'cmd') + [IO.Path]::PathSeparator + $originalPath
+    $resolvedGit = Get-Command git -ErrorAction Stop
+    if ($resolvedGit.CommandType -ne 'Application' -or $resolvedGit.Source -cne $trustedGit) {
+        throw 'Certificate helper commands cannot resolve the trusted Git executable.'
+    }
 $planIdentity = Get-Content -LiteralPath $Plan -Raw | ConvertFrom-Json
 $sourceCommit = [string]$planIdentity.source_commit
 if ($sourceCommit -cne $ReviewedSourceCommit -or
-    ([string](& git -C $repoRoot rev-parse --verify 'HEAD^{commit}')).Trim() -cne $sourceCommit) {
+    ([string](& $trustedGit -C $repoRoot rev-parse --verify 'HEAD^{commit}')).Trim() -cne $sourceCommit) {
     throw 'Certificate inspector source commit differs from its plan.'
 }
 $helperPins = [Collections.Generic.List[IDisposable]]::new()
@@ -71,8 +98,8 @@ try {
         }
         $helperPins.Add([IO.FileStream]::new($path, [IO.FileMode]::Open,
                 [IO.FileAccess]::Read, [IO.FileShare]::Read))
-        $expected = ([string](& git -C $repoRoot rev-parse --verify "${sourceCommit}:$relative")).Trim()
-        $actual = ([string](& git hash-object --no-filters -- $path)).Trim()
+        $expected = ([string](& $trustedGit -C $repoRoot rev-parse --verify "${sourceCommit}:$relative")).Trim()
+        $actual = ([string](& $trustedGit hash-object --no-filters -- $path)).Trim()
         if ($LASTEXITCODE -ne 0 -or $expected -notmatch '^[0-9a-f]{40}$' -or $actual -cne $expected) {
             throw 'Certificate helper bytes differ from the admitted source commit.'
         }
@@ -82,7 +109,7 @@ try {
     Import-Module (Join-Path $helperRoot 'Atlaso.OnePasswordCredentials.psm1') -Force
     . (Join-Path $helperRoot 'Atlaso.WorkstationFirstBoot.ps1')
     Import-Module (Join-Path $helperRoot 'Atlaso.SourceSnapshot.psm1') -Force
-    if (([string](& git -C $repoRoot rev-parse --verify 'HEAD^{commit}')).Trim() -cne $sourceCommit) {
+    if (([string](& $trustedGit -C $repoRoot rev-parse --verify 'HEAD^{commit}')).Trim() -cne $sourceCommit) {
         throw 'Certificate helper source commit changed during import.'
     }
 $runtime = Protect-AtlasoCertificatePythonRuntime -PythonPath $PythonPath -EvidenceRoot $evidenceRoot
@@ -127,4 +154,8 @@ try {
 }
 } finally {
     foreach ($pin in $helperPins) { $pin.Dispose() }
+}
+} finally {
+    $env:PATH = $originalPath
+    foreach ($pin in $trustedGitPins) { $pin.Dispose() }
 }

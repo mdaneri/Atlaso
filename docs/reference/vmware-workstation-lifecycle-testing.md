@@ -641,14 +641,36 @@ proof before obtaining the appliance credential through the bounded bridge:
 $repoRoot = 'E:\.codex\worktree\issue-865-dynamic-certificate'
 $reviewedCommit = '<verified full PR head SHA>'
 $relative = 'scripts/windows/vmware/inspect-certificate-peer.ps1'
-$head = (& git -C $repoRoot rev-parse --verify 'HEAD^{commit}').Trim()
-if ($LASTEXITCODE -ne 0 -or $head -cne $reviewedCommit) { throw 'Reviewed certificate head changed.' }
-$source = (& git -C $repoRoot show "${reviewedCommit}:$relative" | Out-String)
-if ($LASTEXITCODE -ne 0 -or -not $source) { throw 'Reviewed certificate entrypoint unavailable.' }
-$entrypoint = [ScriptBlock]::Create($source)
-& $entrypoint -RepositoryRoot $repoRoot -ReviewedSourceCommit $reviewedCommit `
-    -Plan $plan -AddressEvidence $addressEvidence -RuntimeEvidence $runtimeEvidence `
-    -EnvironmentId $environmentId -PythonPath $pythonPath
+$gitRoot = Join-Path ([Environment]::GetFolderPath([Environment+SpecialFolder]::ProgramFiles)) 'Git'
+$trustedGit = Join-Path $gitRoot 'cmd/git.exe'
+$gitCore = Join-Path $gitRoot 'mingw64/bin/git.exe'
+$gitPins = [Collections.Generic.List[IDisposable]]::new()
+try {
+    foreach ($path in @($gitRoot, (Join-Path $gitRoot 'cmd'), (Join-Path $gitRoot 'mingw64'),
+            (Join-Path $gitRoot 'mingw64/bin'), $trustedGit, $gitCore)) {
+        $item = Get-Item -LiteralPath $path -Force -ErrorAction Stop
+        if ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) { throw 'Trusted Git path is redirected.' }
+    }
+    foreach ($path in @($trustedGit, $gitCore)) {
+        $gitPins.Add([IO.FileStream]::new($path, [IO.FileMode]::Open,
+                [IO.FileAccess]::Read, [IO.FileShare]::Read))
+        $signature = Get-AuthenticodeSignature -FilePath $path
+        if ($signature.Status -ne 'Valid' -or
+            $signature.SignerCertificate.Thumbprint -cne '3EB14A3AEF84B7153E139397F0A49E2FAC662B0E') {
+            throw 'Trusted Git signature is unavailable or unexpected.'
+        }
+    }
+    $head = (& $trustedGit -C $repoRoot rev-parse --verify 'HEAD^{commit}').Trim()
+    if ($LASTEXITCODE -ne 0 -or $head -cne $reviewedCommit) { throw 'Reviewed certificate head changed.' }
+    $source = (& $trustedGit -C $repoRoot show "${reviewedCommit}:$relative" | Out-String)
+    if ($LASTEXITCODE -ne 0 -or -not $source) { throw 'Reviewed certificate entrypoint unavailable.' }
+    $entrypoint = [ScriptBlock]::Create($source)
+    & $entrypoint -RepositoryRoot $repoRoot -ReviewedSourceCommit $reviewedCommit `
+        -Plan $plan -AddressEvidence $addressEvidence -RuntimeEvidence $runtimeEvidence `
+        -EnvironmentId $environmentId -PythonPath $pythonPath
+} finally {
+    foreach ($pin in $gitPins) { $pin.Dispose() }
+}
 ```
 
 For the handoff, select the literal `scripts/windows/vmware/inspect-certificate-handoff.ps1` blob and pass

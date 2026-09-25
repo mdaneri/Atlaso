@@ -15547,7 +15547,12 @@ def test_appliance_settings_rejects_rotation_without_retained_address_san(monkey
     checked_addresses = []
 
     def check_certificate(command, **_kwargs):
-        """Model OpenSSL's exact IP SAN match for the candidate leaf."""
+        """Model OpenSSL's exact IP SAN match for the candidate leaf.
+
+        Args:
+            command: OpenSSL invocation and candidate address.
+            **_kwargs: Subprocess options unused by the stub.
+        """
         checked_addresses.append(command[-1])
         return subprocess.CompletedProcess(command, 0 if command[-1] == "192.168.49.1" else 1)
 
@@ -15579,7 +15584,11 @@ def test_management_activation_rechecks_retained_certificate_addresses(monkeypat
     cert_path.write_text("replacement", encoding="utf-8")
     monkeypatch.setattr(helper, "CA_MANAGED_PATH_BASE", managed_root)
     def reject_uncovered_address(*_args):
-        """Report a candidate certificate that lacks a retained listener SAN."""
+        """Report a candidate certificate that lacks a retained listener SAN.
+
+        Args:
+            *_args: Certificate and listener arguments unused by the stub.
+        """
         raise ValueError("retained address uncovered")
 
     monkeypatch.setattr(helper, "_management_certificate_covers_scoped_addresses", reject_uncovered_address)
