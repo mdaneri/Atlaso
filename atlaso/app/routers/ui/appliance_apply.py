@@ -78,6 +78,7 @@ def build_router(dependencies: ApplianceApplyUiDependencies) -> ApplianceApplyUi
         """
         dependencies.invalidate_observed_management_dhcp_dns()
         context = dependencies.appliance_apply_context(db)
+        network_unit = next(unit for unit in context["apply_units"] if unit["id"] == "network")
         units = [
             {
                 "id": unit["id"],
@@ -106,6 +107,10 @@ def build_router(dependencies: ApplianceApplyUiDependencies) -> ApplianceApplyUi
                 "network_candidate_validation_errors": (
                     unit["network_candidate_variant"]["validation_errors"]
                     if unit.get("network_candidate_variant") else []
+                ),
+                "forces_network_selection": bool(
+                    unit["id"] == "wan"
+                    and (not network_unit["has_baseline"] or unit.get("network_address_dependency"))
                 ),
                 "has_baseline": unit["has_baseline"],
                 "selected": unit["valid"],

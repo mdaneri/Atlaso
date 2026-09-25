@@ -3472,6 +3472,7 @@ def test_management_handoff_candidate_durability_gates_ack(
         mapping_change: Effective forwarding difference in the candidate handoff.
     """
     helper = load_helper_module()
+    monkeypatch.setattr(helper, "_network_identity_preflight", lambda _path: None)
     guard_events: list[str] = []
     monkeypatch.setattr(helper, "_stage_candidate_ingress_guards", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(helper, "_retire_legacy_source_rules", lambda *_args: None)
@@ -3833,6 +3834,34 @@ def test_management_handoff_blocks_before_snapshot_when_ordinary_recovery_fails(
     }
 
 
+def test_management_handoff_rejects_replaced_nic_before_snapshot(monkeypatch, tmp_path, capsys):
+    """Protected handoff proves reviewed MACs before journaling or activation.
+
+    Args:
+        monkeypatch: Replace appliance observations and mutation entrypoints.
+        tmp_path: Owned empty handoff state location.
+        capsys: Capture the bounded pre-mutation failure.
+    """
+    helper = load_helper_module()
+    events: list[str] = []
+    monkeypatch.setattr(helper, "MANAGEMENT_HANDOFF_STATE_PATH", tmp_path / "handoff.json")
+    monkeypatch.setattr(helper, "_recover_management_front_door", lambda *, quiet=False: 0)
+    monkeypatch.setattr(helper, "_network_identity_preflight", lambda _path:
+                        events.append("identity") or (_ for _ in ()).throw(
+                            ValueError("candidate Network physical interface differs from reviewed MAC identity")))
+    monkeypatch.setattr(helper, "_snapshot_management_handoff", lambda _payload:
+                        events.append("snapshot") or {})
+    monkeypatch.setattr(helper, "_clear_management_handoff_state", lambda: None)
+
+    result = helper._apply_management_handoff({"network_config_path": "candidate-network"})
+
+    assert result == 1
+    assert events == ["identity"]
+    failure = json.loads(capsys.readouterr().err.splitlines()[-1])
+    assert failure["management_handoff"] == "failed before mutation"
+    assert failure["failing_layer"] == "snapshot"
+
+
 def test_management_handoff_does_not_schedule_precommit_atlaso_restart(monkeypatch, tmp_path):
     """Persist the proven loopback command without restarting Atlaso pre-commit.
 
@@ -3841,6 +3870,7 @@ def test_management_handoff_does_not_schedule_precommit_atlaso_restart(monkeypat
         tmp_path: Temporary root containing the Atlaso systemd drop-in.
     """
     helper = load_helper_module()
+    monkeypatch.setattr(helper, "_network_identity_preflight", lambda _path: None)
     dropin_dir = tmp_path / "atlaso.service.d"
     commands: list[list[str]] = []
     monkeypatch.setattr(helper, "ATLASO_SERVICE_DROPIN_DIR", dropin_dir)
@@ -3885,6 +3915,7 @@ def test_management_handoff_failure_rolls_back_with_truthful_layer(monkeypatch, 
         failing_layer: Network activation or downstream firewall failure under test.
     """
     helper = load_helper_module()
+    monkeypatch.setattr(helper, "_network_identity_preflight", lambda _path: None)
     monkeypatch.setattr(helper, "_stage_candidate_ingress_guards", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(helper, "_retire_legacy_source_rules", lambda *_args: None)
     monkeypatch.setattr(helper, "_wait_management_handoff_routes", lambda *_args: None)
@@ -3967,6 +3998,7 @@ def test_management_handoff_resolver_failure_rolls_back_before_nginx(
         capsys: Pytest fixture used to inspect bounded helper output.
     """
     helper = load_helper_module()
+    monkeypatch.setattr(helper, "_network_identity_preflight", lambda _path: None)
     monkeypatch.setattr(helper, "_stage_candidate_ingress_guards", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(helper, "_retire_legacy_source_rules", lambda *_args: None)
     monkeypatch.setattr(helper, "_wait_management_handoff_routes", lambda *_args: None)
@@ -4059,6 +4091,7 @@ def test_management_handoff_orders_resolver_before_dns_shutdown(monkeypatch, tmp
         resolver_mode: Resolver mode under test.
     """
     helper = load_helper_module()
+    monkeypatch.setattr(helper, "_network_identity_preflight", lambda _path: None)
     events: list[str] = []
     monkeypatch.setattr(helper, "_scope_management_handoff_old_listener",
                         lambda _state: events.append("scoped"))
@@ -4128,6 +4161,7 @@ def test_management_handoff_never_activates_nginx_with_unhealthy_upstream(monkey
         capsys: Pytest fixture used to capture bounded helper output.
     """
     helper = load_helper_module()
+    monkeypatch.setattr(helper, "_network_identity_preflight", lambda _path: None)
     monkeypatch.setattr(helper, "_stage_candidate_ingress_guards", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(helper, "_retire_legacy_source_rules", lambda *_args: None)
     monkeypatch.setattr(helper, "_wait_management_handoff_routes", lambda *_args: None)

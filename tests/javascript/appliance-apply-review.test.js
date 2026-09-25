@@ -15,6 +15,7 @@ test("combined Network and WAN selection surfaces candidate errors and blocks su
   const network = new HTMLInputElement();
   network.checked = true;
   network.value = "network";
+  network.dataset = { valid: "true" };
   const wan = new HTMLInputElement();
   wan.checked = true;
   wan.value = "wan";
@@ -60,4 +61,18 @@ test("combined Network and WAN selection surfaces candidate errors and blocks su
   assert.equal(alert.hidden, true);
   assert.equal(validity.textContent, "valid");
   assert.equal(submit.disabled, false);
+
+  wanRow.dataset.applyForcesNetworkSelection = "true";
+  context.updateApplianceApplySelection();
+  assert.equal(network.checked, true);
+  assert.equal(network.disabled, true);
+  assert.equal(alert.hidden, false);
+  assert.match(selectionSummary.textContent, /review Routing & WAN validation/);
+  assert.equal(submit.disabled, true);
+
+  wan.checked = false;
+  context.updateApplianceApplySelection();
+  assert.equal(network.checked, false);
+  assert.equal(network.disabled, false);
+  assert.equal(alert.hidden, true);
 });

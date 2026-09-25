@@ -179,6 +179,7 @@ def test_combined_wan_rejects_candidate_ingress_over_capacity(client, monkeypatc
     review_wan = next(unit for unit in review.json()["units"] if unit["id"] == "wan")
     assert review_wan["valid"] is True
     assert review_wan["network_candidate_valid"] is False
+    assert review_wan["forces_network_selection"] is True
     assert any("ingress rule capacity" in error
                for error in review_wan["network_candidate_validation_errors"])
 

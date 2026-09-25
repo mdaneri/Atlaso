@@ -29342,6 +29342,9 @@ def _apply_management_handoff(payload: dict) -> int:
         )
         return 1
     try:
+        # The protected path publishes name-matched networkd files too. Prove
+        # every reviewed physical/VLAN parent before snapshot or host mutation.
+        _network_identity_preflight(Path(str(payload["network_config_path"])))
         if NAT_RUNTIME_CONFIG_PATH.with_suffix(".publishing-recovery.json").exists():
             raise ValueError("Traffic Publishing application reconciliation is required before management handoff")
         nat_intent = (Path(payload["nat_config_path"]).read_text(encoding="utf-8")
