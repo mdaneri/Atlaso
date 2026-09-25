@@ -170,7 +170,11 @@ class WindowsFiles:
                                                          ctypes.c_void_p, ctypes.c_uint32]
 
     def mutable_file_identity(self, path: Path) -> str:
-        """Read an ordinary guest-writable disk identity without allowing replacement."""
+        """Read an ordinary guest-writable disk identity without allowing replacement.
+
+        Args:
+            path: Copied guest disk whose native file identity is checked.
+        """
         handle = self.kernel.CreateFileW(str(path), 0x81, 3, None, 3, 0x00200000, None)
         if handle == ctypes.c_void_p(-1).value:
             raise FileRefusal("Cannot pin the copied peer disk identity.")

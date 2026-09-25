@@ -26,7 +26,6 @@ def test_inspect_admits_before_credential_or_peer_connection(
     monkeypatch.setattr(sys, "argv", ["handoff", "--plan", str(plan_path), "--evidence", str(evidence_path)])
     monkeypatch.setattr(handoff, "admit_execution", lambda plan: (_ for _ in ()).throw(handoff.Refusal("peer_original_identity_mismatch")))
     monkeypatch.setattr(handoff, "admin_password", lambda: pytest.fail("admin credential read before admission"))
-    monkeypatch.setattr(handoff, "peer_password", lambda: pytest.fail("peer credential read before admission"))
     monkeypatch.setattr(handoff, "PinnedPeerTransport", lambda *args: pytest.fail("network before admission"))
     with pytest.raises(SystemExit, match="1"):
         handoff.main()
@@ -48,22 +47,32 @@ def test_live_address_ownership_precedes_http_login(
     evidence_path = tmp_path / "evidence.json"
     plan_path.write_text(json.dumps({
         "pr": 871, "source_commit": "a" * 40, "scenario": "static-success",
-        "peer_transport": {"host": "peer", "user": "tester", "ssh_host_key": "key", "private_subnet": "192.168.77.0/24",
+        "peer_transport": {"host": "peer", "user": "tester", "ssh_host_key": "key",
+                           "ssh_public_key": "ssh-ed25519 " + "A" * 44, "private_subnet": "192.168.77.0/24",
                            "baseline_address": "192.168.77.10"},
     }))
     monkeypatch.setattr(sys, "argv", ["handoff", "--plan", str(plan_path), "--evidence", str(evidence_path)])
     monkeypatch.setattr(handoff, "admit_execution", lambda _plan: {})
     monkeypatch.setattr(handoff, "admin_password", lambda: "test-admin-password")
-    monkeypatch.setattr(handoff, "peer_password", lambda: "test-peer-password")
 
     class Peer:
         def __init__(self, *_args):
+            """Create a test-only peer transport.
+
+            Args:
+                *_args: Ignored transport constructor arguments.
+            """
             pass
 
         def __enter__(self):
             return self
 
         def __exit__(self, *_args):
+            """Close the test-only peer transport.
+
+            Args:
+                *_args: Ignored context-manager exit arguments.
+            """
             pass
 
     monkeypatch.setattr(handoff, "PinnedPeerTransport", Peer)
@@ -75,14 +84,12 @@ def test_live_address_ownership_precedes_http_login(
     assert json.loads(evidence_path.read_text())["failure"] == "private_live_preflight_unproven"
 
 
-def test_peer_credential_is_independent_of_admin(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Handle test peer credential is independent of admin for certificate handoff verification.
+def test_admin_bridge_consumes_only_admin_password(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Require the appliance bridge to consume only its designated password.
 
     Args:
         monkeypatch: Pytest fixture for isolated test overrides."""
     monkeypatch.setenv("ATLASO_NATIVE_ADMIN", "admin-password-123")
-    monkeypatch.setenv("ATLASO_NATIVE_PEER", "peer-password-456")
-    assert handoff.peer_password() == "peer-password-456"
     assert handoff.admin_password() == "admin-password-123"
 
 

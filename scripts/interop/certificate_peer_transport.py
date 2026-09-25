@@ -7,6 +7,7 @@ hostname. The peer only forwards bytes over its task-owned private adapter.
 from __future__ import annotations
 
 import base64
+import binascii
 import hashlib
 import http.client
 import ipaddress
@@ -60,23 +61,30 @@ def _run_bridge(bridge: socket.socket, channel: paramiko.Channel) -> None:
 class PinnedPeerTransport(AbstractContextManager["PinnedPeerTransport"]):
     """Open only private-subnet TCP channels through one pinned peer SSH key."""
 
-    def __init__(self, peer_ip: str, username: str, password: str, host_key: str, subnet: str):
+    def __init__(self, peer_ip: str, username: str, public_key: str, host_key: str, subnet: str):
         """Initialize the validated client or test double.
 
         Args:
             peer_ip: Private-LAN peer address.
             username: Account name for this request.
-            password: Credential held in memory for this request.
+            public_key: Exact public key selected from the local SSH agent.
             host_key: Expected SSH host key for the peer.
             subnet: Expected private-LAN subnet."""
         self.peer_ip = str(ipaddress.IPv4Address(peer_ip))
         self.username = username
-        self.password = password
+        self.public_key = public_key
         self.host_key = host_key
         self.subnet = ipaddress.IPv4Network(subnet, strict=False)
         self.transport: paramiko.Transport | None = None
         if not host_key.startswith("SHA256:") or len(host_key) != 50:
             raise PeerTransportRefusal("peer_host_key_pin_invalid")
+        parts = public_key.split()
+        if len(parts) < 2 or parts[0] != "ssh-ed25519":
+            raise PeerTransportRefusal("peer_agent_public_key_invalid")
+        try:
+            self.public_blob = base64.b64decode(parts[1], validate=True)
+        except (ValueError, binascii.Error):
+            raise PeerTransportRefusal("peer_agent_public_key_invalid") from None
 
     def __enter__(self) -> PinnedPeerTransport:
         sock = None
@@ -90,7 +98,11 @@ class PinnedPeerTransport(AbstractContextManager["PinnedPeerTransport"]):
             ).decode("ascii").rstrip("=")
             if observed != self.host_key:
                 raise PeerTransportRefusal("peer_host_key_changed")
-            transport.auth_password(self.username, self.password)
+            matching_keys = [key for key in paramiko.Agent().get_keys()
+                             if key.get_name() == "ssh-ed25519" and key.asbytes() == self.public_blob]
+            if len(matching_keys) != 1:
+                raise PeerTransportRefusal("peer_agent_identity_unavailable")
+            transport.auth_publickey(self.username, matching_keys[0])
             if not transport.is_authenticated():
                 raise PeerTransportRefusal("peer_authentication_failed")
             self.transport = transport

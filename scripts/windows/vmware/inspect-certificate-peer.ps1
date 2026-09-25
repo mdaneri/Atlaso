@@ -15,8 +15,6 @@ New immutable controlled-runtime destination within that same tree.
 Explicit pinned 1Password Environment selector.
 .PARAMETER PythonPath
 Task-owned isolated Python virtual environment with locked native dependencies.
-.PARAMETER SshPassword
-The peer client's SSH password, supplied separately from the appliance admin credential.
 #>
 [CmdletBinding()]
 param(
@@ -26,8 +24,7 @@ param(
     [Parameter(Mandatory)][string]$AddressEvidence,
     [Parameter(Mandatory)][string]$RuntimeEvidence,
     [Parameter(Mandatory)][string]$EnvironmentId,
-    [Parameter(Mandatory)][string]$PythonPath,
-    [Parameter(Mandatory)][SecureString]$SshPassword
+    [Parameter(Mandatory)][string]$PythonPath
 )
 
 $ErrorActionPreference = 'Stop'
@@ -109,19 +106,16 @@ try {
         -ExpectedFileCount $snapshot.FileCount
     $pair = $null
     $plain = $null
-    $peerPlain = $null
     try {
         $pair = Get-AtlasoOnePasswordCredentialPair -RepositoryRoot $repoRoot -EnvironmentId $EnvironmentId `
             -OnePasswordServiceAccountTokenFile (Join-Path $repoRoot '.atlaso-local/onepassword-service-account-token.dpapi') `
             -OnePasswordPython $PythonPath -TimeoutSeconds 300 -ConsumerDescription 'PR871 private address proof'
         $plain = [Net.NetworkCredential]::new('', $pair.AdminPassword).Password
-        $peerPlain = [Net.NetworkCredential]::new('', $SshPassword).Password
         Invoke-AtlasoBoundedProcess -FilePath $PythonPath -ArgumentList $arguments `
-            -EnvironmentVariables @{ ATLASO_NATIVE_ADMIN = $plain; ATLASO_NATIVE_PEER = $peerPlain; TEMP = $evidenceRoot; TMP = $evidenceRoot } `
+            -EnvironmentVariables @{ ATLASO_NATIVE_ADMIN = $plain; TEMP = $evidenceRoot; TMP = $evidenceRoot } `
             -TimeoutSeconds 300 -Action 'PR871 private address proof' -DiscardOutput | Out-Null
     } finally {
         $plain = $null
-        $peerPlain = $null
         if ($pair) { $pair.AdminPassword.Dispose(); $pair.RootPassword.Dispose() }
     }
 } finally {

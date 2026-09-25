@@ -605,12 +605,18 @@ and wheel digests are measured afterward. A discovered DHCP address does not pro
 The certificate scenario must refuse mutation until a controlled network producer proves the candidate static address
 or DHCP reservation belongs to the clone.
 For a dedicated DHCP peer, add `-CertificateDhcpPeer -SiteANetwork lan:<task-owned-name>` and explicitly provide a
-provenance-admitted, prepared `-ClientVmdkPath`. This mode does not auto-create the source client disk. The optional
+provenance-admitted, prepared `-ClientVmdkPath` and `-CertificatePeerPublicKeyPath` for an existing Ed25519 public key
+whose private half is already loaded in the local SSH agent. The runner verifies the exact agent key before creating
+the peer seed. This mode does not auto-create the source client disk. The optional
 `-CertificatePeerCidr` and `-CertificateLeaseAddress` select a small private
 IPv4 subnet and one lease. This mode boots the appliance on the selected management VMnet, pins the management
 `eth0` MAC, and then soft-stops and rewires that same adapter to the task-owned private LAN. The two-adapter
 Alpine peer keeps its `eth0` on the management VMnet for control; its `eth1` serves DHCP on the private LAN.
-The peer's `dnsmasq` seed binds only to its private `eth1` and reserves the appliance `eth0` MAC. Separate
+The peer's NoCloud seed contains only the public key for SSH access, disables password login, binds `dnsmasq` only
+to its private `eth1`, and reserves the appliance `eth0` MAC. The runner uses agent-backed SSH for boot and identity
+readback, pins the observed SSH host key across the seed-removal restart, and never sends a peer password into the
+guest. The copied disk remains writable while VMware runs; its preboot digest is not a lasting byte-integrity claim.
+Separate
 original-intent and original-directory-identity
 receipts precede peer VM creation, and `peer-fixture.json` records its source-disk digest, addresses, MAC, and
 network binding. A management-rewire intent receipt is written before the power-off edit, and a separate
@@ -629,7 +635,7 @@ the native scenario changes the management address and restores the original int
 Load either credentialed wrapper from the reviewed full PR-head Git blob into an in-memory PowerShell script block;
 direct execution of the mutable checkout file is refused. The caller must pin `$reviewedCommit` to the full head
 already verified on the PR and use one of the two literal paths below. For example, load the read-only peer
-proof before obtaining the task-owned `$sshPassword` `SecureString`:
+proof before obtaining the appliance credential through the bounded bridge:
 
 ```powershell
 $repoRoot = 'E:\.codex\worktree\issue-865-dynamic-certificate'
@@ -640,15 +646,14 @@ if ($LASTEXITCODE -ne 0 -or $head -cne $reviewedCommit) { throw 'Reviewed certif
 $source = (& git -C $repoRoot show "${reviewedCommit}:$relative" | Out-String)
 if ($LASTEXITCODE -ne 0 -or -not $source) { throw 'Reviewed certificate entrypoint unavailable.' }
 $entrypoint = [ScriptBlock]::Create($source)
-# Obtain $sshPassword as a SecureString through the approved peer credential flow only now.
 & $entrypoint -RepositoryRoot $repoRoot -ReviewedSourceCommit $reviewedCommit `
     -Plan $plan -AddressEvidence $addressEvidence -RuntimeEvidence $runtimeEvidence `
-    -EnvironmentId $environmentId -PythonPath $pythonPath -SshPassword $sshPassword
+    -EnvironmentId $environmentId -PythonPath $pythonPath
 ```
 
 For the handoff, select the literal `scripts/windows/vmware/inspect-certificate-handoff.ps1` blob and pass
-`-Plan`, `-Evidence`, `-EnvironmentId`, `-PythonPath`, and `-SshPassword` (plus `-Execute` only for the guarded
-native mutation). Do not obtain either credential until after selecting and loading the reviewed entrypoint.
+`-Plan`, `-Evidence`, `-EnvironmentId`, and `-PythonPath` (plus `-Execute` only for the guarded
+native mutation). Do not obtain the appliance credential until after selecting and loading the reviewed entrypoint.
 For both credentialed wrappers, install the task-owned virtual environment from the hash-locked
 `requirements-onepassword-deploy.lock`. They pin the interpreter, base runtime, and isolated import files
 through child termination and refuse an external import path or startup customization.

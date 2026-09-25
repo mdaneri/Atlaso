@@ -158,6 +158,7 @@ def admit_receipts(plan: dict) -> tuple[dict, dict]:
         or file_digest(Path(fixture["client_vmdk_source"])) != fixture["client_vmdk_sha256"]
         or fixture.get("client_vmdk_copy_preboot_sha256") != fixture["client_vmdk_sha256"]
         or copy_identity != fixture.get("client_vmdk_copy_identity")
+        or not str(fixture.get("ssh_public_key", "")).startswith("ssh-ed25519 ")
     ):
         raise Refusal("fixture_original_vm_mismatch")
     segment = bound_json(
@@ -199,7 +200,9 @@ def admit_receipts(plan: dict) -> tuple[dict, dict]:
         or identity.get("peer_ownership_sha256") != fixture["peer_ownership_sha256"]
         or identity.get("peer_fixture_sha256") != plan["peer_fixture"]["sha256"]
         or identity.get("client_vmdk_copy_identity") != fixture.get("client_vmdk_copy_identity")
-        or identity.get("observation") != "owned-vmware-guest-operations-before-management-rewire"
+        or identity.get("ssh_public_key") != fixture.get("ssh_public_key")
+        or transport.get("ssh_public_key") != fixture.get("ssh_public_key")
+        or identity.get("observation") != "owned-vmware-tools-and-agent-ssh-after-management-restart"
         or identity.get("management_network") != fixture.get("management_network")
         or peer_bootstrap_adapter.get("connectiontype", "").lower() != "custom"
         or peer_bootstrap_adapter.get("vnet") != fixture.get("management_network")
@@ -390,12 +393,11 @@ def main() -> int:
             print(json.dumps({"success": True, "stage": "original_receipts_admitted_no_network"}))
             return 0
         admin_password = os.environ.pop("ATLASO_NATIVE_ADMIN", None)
-        peer_password = os.environ.pop("ATLASO_NATIVE_PEER", None)
-        if any(not value or len(value) < 12 or value != value.strip() for value in (admin_password, peer_password)):
+        if not admin_password or len(admin_password) < 12 or admin_password != admin_password.strip():
             raise Refusal("bounded_credential_bridge_required")
         peer_plan = plan["peer_transport"]
         with PinnedPeerTransport(
-            peer_plan["host"], peer_plan["user"], peer_password,
+            peer_plan["host"], peer_plan["user"], peer_plan["ssh_public_key"],
             peer_plan["ssh_host_key"], peer_plan["private_subnet"],
         ) as peer:
             with PinnedApplianceSession(

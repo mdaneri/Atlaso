@@ -151,6 +151,7 @@ def test_original_peer_identity_rejects_changed_endpoint_before_network(
         "client_vmdk_source": "disk.vmdk", "client_vmdk_sha256": "d" * 64,
         "client_vmdk_copy": "peer.vmdk", "client_vmdk_copy_preboot_sha256": "d" * 64,
         "client_vmdk_copy_identity": "00000001:0000000000000002",
+        "ssh_public_key": "ssh-ed25519 " + "A" * 44,
         "lan_segment_receipt": str(root / "lan.json"), "lan_segment_receipt_sha256": "l" * 64,
         "lan_segment_id": "owned-id", "appliance_mac": "00:50:56:aa:bb:cc",
         "management_network": "VMnet8", "lease_address": "192.168.77.10",
@@ -160,9 +161,10 @@ def test_original_peer_identity_rejects_changed_endpoint_before_network(
         "repository": "mdaneri/Atlaso", "pr": 871, "peer_vmx": "peer.vmx",
         "peer_ownership_sha256": "p" * 64, "peer_fixture_sha256": refs["fixture"]["sha256"],
         "client_vmdk_copy_identity": fixture["client_vmdk_copy_identity"],
-        "observation": "owned-vmware-guest-operations-before-management-rewire",
+        "observation": "owned-vmware-tools-and-agent-ssh-after-management-restart",
         "management_network": "VMnet8", "management_address": "192.168.167.42",
         "ssh_user": "alpine", "ssh_host_key": "SHA256:" + "A" * 43,
+        "ssh_public_key": fixture["ssh_public_key"],
     }
     bootstrap = {"schema": 1, "vmx_path": "appliance.vmx", "vm_ownership_sha256": "a" * 64,
                  "predeployment_sha256": "a" * 64, "deployed_commit": "c" * 40}
@@ -193,7 +195,8 @@ def test_original_peer_identity_rejects_changed_endpoint_before_network(
             "bootstrap_runtime": refs["bootstrap"], "rewire_intent": refs["intent"],
             "rewired_runtime": refs["rewire"],
             "appliance_ownership": {"sha256": "a" * 64}, "peer_ownership": {"sha256": "p" * 64},
-            "peer_transport": {"host": "192.168.167.42", "user": "alpine", "ssh_host_key": identity["ssh_host_key"]}}
+            "peer_transport": {"host": "192.168.167.42", "user": "alpine", "ssh_host_key": identity["ssh_host_key"],
+                               "ssh_public_key": fixture["ssh_public_key"]}}
     with pytest.raises(proof.Refusal, match="exclusive_private_lan_and_candidate_ownership_unproven"):
         proof.admit_receipts(plan)
     monkeypatch.setattr(WindowsFiles, "mutable_file_identity", lambda self, path: "replaced")
@@ -209,6 +212,7 @@ def test_original_peer_identity_rejects_changed_endpoint_before_network(
         proof.admit_receipts(plan)
     rewire["predeployment_sha256"] = "a" * 64
     for field, changed in (("host", "192.168.167.43"), ("ssh_host_key", "SHA256:" + "B" * 43),
+                           ("ssh_public_key", "ssh-ed25519 " + "B" * 44),
                            ("user", "root")):
         altered = {**plan, "peer_transport": {**plan["peer_transport"], field: changed}}
         with pytest.raises(proof.Refusal, match="peer_original_identity_mismatch"):

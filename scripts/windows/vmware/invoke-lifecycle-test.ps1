@@ -68,6 +68,8 @@ Prepare an owned private DHCP peer for certificate management handoff.
 Private peer address and prefix for the certificate management segment.
 .PARAMETER CertificateLeaseAddress
 Exact reserved DHCP address for the appliance management MAC.
+.PARAMETER CertificatePeerPublicKeyPath
+Existing Ed25519 public key whose private half is loaded in the local SSH agent.
 .PARAMETER FullEsxiPxeInstall
 Include the full ESXi PXE installation scenario.
 .PARAMETER PxeInstallerIsoPath
@@ -226,6 +228,7 @@ param(
     [Parameter(ParameterSetName = 'Run')]
     [Parameter(ParameterSetName = 'Plan')]
     [string]$CertificateLeaseAddress = '192.168.77.10',
+    [string]$CertificatePeerPublicKeyPath = '',
 
     [Parameter(ParameterSetName = 'Run')]
     [Parameter(ParameterSetName = 'Plan')]
@@ -462,6 +465,9 @@ if ($CertificateDhcpPeer -and ($PullRequestNumber -ne 871 -or -not $CertificateO
 if ($CertificateDhcpPeer -and -not $PlanOnly -and -not $PSBoundParameters.ContainsKey('ClientVmdkPath')) {
     throw '-CertificateDhcpPeer requires an explicit, provenance-admitted -ClientVmdkPath.'
 }
+if ($CertificateDhcpPeer -and -not $PlanOnly -and -not $CertificatePeerPublicKeyPath) {
+    throw '-CertificateDhcpPeer requires -CertificatePeerPublicKeyPath for passwordless bootstrap.'
+}
 if (-not $ApplianceVmxPath) {
     if ($PlanOnly) {
         $ApplianceVmxPath = Join-Path $repoRoot 'image\vmware-workstation\output\Atlaso-VMware\Atlaso-VMware.vmx'
@@ -553,6 +559,7 @@ if ($CertificateOnly) { $arguments += '-CertificateOnly' }
 if ($CertificateDhcpPeer) {
     $arguments += @('-CertificateDhcpPeer', '-CertificatePeerCidr', $CertificatePeerCidr,
         '-CertificateLeaseAddress', $CertificateLeaseAddress)
+    if ($CertificatePeerPublicKeyPath) { $arguments += @('-CertificatePeerPublicKeyPath', $CertificatePeerPublicKeyPath) }
 }
 if ($RoutingWanOnly) { $arguments += '-RoutingWanOnly' }
 if ($FullEsxiPxeInstall) { $arguments += '-FullEsxiPxeInstall' }

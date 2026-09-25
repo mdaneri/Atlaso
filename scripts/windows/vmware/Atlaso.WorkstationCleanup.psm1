@@ -349,8 +349,9 @@ namespace Atlaso
         }
         public static SafeFileHandle PinOrdinaryMutableFile(string path)
         {
-            // The guest must be able to write its disk, but neither it nor a
-            // concurrent producer may replace the file while this handle lives.
+            // The guest must be able to write its disk. This pin prevents
+            // replacement, not in-place modification; certificate peer boot
+            // therefore uses a public-key-only seed with no password to steal.
             SafeFileHandle handle = CreateFileW(path, FileReadAttributes | 0x1,
                 FileShareRead | FileShareWrite, IntPtr.Zero, OpenExisting,
                 0x00200000, IntPtr.Zero);

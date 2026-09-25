@@ -408,14 +408,6 @@ def admin_password():
     return password
 
 
-def peer_password():
-    """Consume the separate client-SSH secret only after peer identity admission."""
-    password = os.environ.pop("ATLASO_NATIVE_PEER", None)
-    if not password or len(password) < 12 or password != password.strip():
-        raise Refusal("bounded_peer_credential_bridge_required")
-    return password
-
-
 def clean_baseline(client):
     """Reject active, pending, malformed, or never-applied baselines.
 
@@ -650,10 +642,9 @@ def main():
             evidence.update(success=True, stage="admitted_no_credentials_or_network")
             return
         password = admin_password()
-        peer_secret = peer_password()
         peer_plan = plan["peer_transport"]
         peer_transport = PinnedPeerTransport(
-            peer_plan["host"], peer_plan["user"], peer_secret,
+            peer_plan["host"], peer_plan["user"], peer_plan["ssh_public_key"],
             peer_plan["ssh_host_key"], peer_plan["private_subnet"],
         )
         peer_transport.__enter__()
@@ -790,7 +781,6 @@ def main():
         if peer_transport is not None:
             peer_transport.__exit__(None, None, None)
         password = None
-        peer_secret = None
         os.environ.pop("ATLASO_NATIVE_ADMIN", None)
         os.environ.pop("ATLASO_NATIVE_PEER", None)
         # Never serialize task bodies, response text, sessions, credentials, or exception text.

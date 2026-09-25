@@ -10,7 +10,7 @@ import re
 import sys
 from pathlib import Path
 
-from create_nocloud_seed_iso import add_file, load_password_from_stdin
+from create_nocloud_seed_iso import add_file
 
 
 def peer_files(args: argparse.Namespace) -> dict[str, str]:
@@ -34,8 +34,8 @@ def peer_files(args: argparse.Namespace) -> dict[str, str]:
         raise ValueError("The peer hostname is invalid.")
     if not re.fullmatch(r"[a-z][a-z0-9_-]{0,31}", args.user):
         raise ValueError("The peer SSH user is invalid.")
-    if not args.password:
-        raise ValueError("A peer SSH password is required.")
+    if not re.fullmatch(r"ssh-ed25519 [A-Za-z0-9+/]+={0,2}(?: [^\r\n]{1,128})?", args.public_key):
+        raise ValueError("An exact Ed25519 peer SSH public key is required.")
 
     # dnsmasq's static range has no dynamic pool: only this exact MAC receives
     # the reservation. eth0 stays on the management network for SSH control.
@@ -46,25 +46,20 @@ def peer_files(args: argparse.Namespace) -> dict[str, str]:
         "dhcp-leasefile=/var/lib/misc/dnsmasq.leases\n"
         "dhcp-authoritative\n"
     )
-    password = json.dumps(args.password, ensure_ascii=True)
     user_data = f"""#cloud-config
 hostname: {args.hostname}
 manage_etc_hosts: true
 disable_root: true
-chpasswd:
-  expire: false
-  users:
-    - name: {args.user}
-      password: {password}
-      type: text
-ssh_pwauth: true
+ssh_pwauth: false
 users:
   - default
   - name: {args.user}
     groups: wheel
     shell: /bin/ash
     sudo: ALL=(ALL) NOPASSWD:ALL
-    lock_passwd: false
+    lock_passwd: true
+    ssh_authorized_keys:
+      - {json.dumps(args.public_key, ensure_ascii=True)}
 package_update: true
 packages:
   - curl
@@ -115,13 +110,11 @@ def main() -> int:
     parser.add_argument("--output", required=True)
     parser.add_argument("--hostname", required=True)
     parser.add_argument("--user", default="alpine")
-    parser.add_argument("--password-stdin", action="store_true", required=True)
+    parser.add_argument("--public-key", required=True)
     parser.add_argument("--server-cidr", required=True)
     parser.add_argument("--lease-address", required=True)
     parser.add_argument("--client-mac", required=True)
     args = parser.parse_args()
-    args.password = ""
-    load_password_from_stdin(args, sys.stdin)
     files = peer_files(args)
     try:
         import pycdlib

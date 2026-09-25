@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import argparse
-import json
 import sys
 from pathlib import Path
 
@@ -27,7 +26,7 @@ def _args(**overrides: str) -> argparse.Namespace:
         "client_mac": "00:50:56:2a:11:22",
         "hostname": "certificate-peer",
         "user": "alpine",
-        "password": 'test: "quoted"',
+        "public_key": "ssh-ed25519 " + "A" * 44 + " test-key",
     }
     values.update(overrides)
     return argparse.Namespace(**values)
@@ -40,10 +39,11 @@ def test_peer_has_exact_mac_static_only_dhcp_on_private_interface() -> None:
     assert "except-interface=eth0\n" in config
     assert "dhcp-range=192.168.77.0,static,255.255.255.0,12h\n" in config
     assert "dhcp-host=00:50:56:2a:11:22,192.168.77.10,12h\n" in config
-    expected_password = json.dumps('test: "quoted"')
-    assert f"password: {expected_password}" in config
     parsed = yaml.safe_load(config)
-    assert parsed["chpasswd"]["users"][0]["password"] == 'test: "quoted"'
+    assert parsed["ssh_pwauth"] is False
+    assert "chpasswd" not in parsed
+    assert parsed["users"][1]["lock_passwd"] is True
+    assert parsed["users"][1]["ssh_authorized_keys"] == ["ssh-ed25519 " + "A" * 44 + " test-key"]
     assert parsed["write_files"][0]["path"] == "/usr/local/etc/atlaso-certificate-peer.conf"
     probe = parsed["write_files"][1]["content"]
     assert "--cacert \"$1\"" in probe
@@ -65,6 +65,7 @@ def test_peer_has_exact_mac_static_only_dhcp_on_private_interface() -> None:
         {"server_cidr": "192.168.77.1/16"},
         {"server_cidr": "192.168.77.0/24"},
         {"hostname": "bad\nconfig"},
+        {"public_key": "ssh-rsa " + "A" * 44},
     ],
 )
 def test_peer_rejects_ambiguous_or_external_input(bad: dict[str, str]) -> None:

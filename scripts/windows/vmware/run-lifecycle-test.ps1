@@ -62,6 +62,8 @@ Prepare an owned private DHCP peer and rewire the certificate appliance manageme
 Private peer address and prefix for the certificate management segment.
 .PARAMETER CertificateLeaseAddress
 Exact reserved DHCP address for the appliance management MAC.
+.PARAMETER CertificatePeerPublicKeyPath
+Existing Ed25519 public key whose private half is loaded in the local SSH agent.
 .PARAMETER RoutingWanOnly
 Run only WAN routing scenario.
 .PARAMETER FullEsxiPxeInstall
@@ -116,6 +118,7 @@ param(
     [switch]$CertificateDhcpPeer,
     [string]$CertificatePeerCidr = '192.168.77.1/24',
     [string]$CertificateLeaseAddress = '192.168.77.10',
+    [string]$CertificatePeerPublicKeyPath = '',
     [switch]$RoutingWanOnly,
     [switch]$FullEsxiPxeInstall,
     [string]$PxeInstallerIsoPath = '',
@@ -142,6 +145,9 @@ if ($CertificateDhcpPeer) {
     }
     if (-not $PlanOnly -and -not (Test-Path -LiteralPath $ClientVmdkPath -PathType Leaf)) {
         throw 'Certificate DHCP peer requires a prepared, explicitly supplied client VMDK.'
+    }
+    if (-not $PlanOnly -and -not (Test-Path -LiteralPath $CertificatePeerPublicKeyPath -PathType Leaf)) {
+        throw 'Certificate DHCP peer requires an existing SSH-agent Ed25519 public key.'
     }
 }
 if ($SignedReleaseRepositoryUrl -and ($OidcOnly -or $RoutingWanOnly -or $CertificateOnly)) {
@@ -1541,8 +1547,8 @@ function New-CertificatePeerSeedIso {
         python -c 'import pycdlib' 2>$null
         if ($LASTEXITCODE -ne 0) { throw 'pycdlib must be installed before creating the certificate peer seed.' }
         $helper = Join-Path $runtimeSourceRoot 'scripts\interop\create_certificate_peer_seed_iso.py'
-        $SshPassword | & python $helper --output $Path --hostname $HostName --user $ClientSshUser `
-            --password-stdin --server-cidr $CertificatePeerCidr --lease-address $CertificateLeaseAddress `
+        & python $helper --output $Path --hostname $HostName --user $ClientSshUser `
+            --public-key $certificatePeerPublicKey --server-cidr $CertificatePeerCidr --lease-address $CertificateLeaseAddress `
             --client-mac $ClientMac | Out-Host
         if ($LASTEXITCODE -ne 0) { throw "Certificate peer seed creation failed for $HostName." }
     }
@@ -1556,71 +1562,124 @@ Task-owned peer VMX path.
 #>
 function Assert-CertificatePeerBootReady {
     param([string]$Path)
-    # Guest-ops results are deliberately not printed: vmrun error text can
-    # include its credential arguments. This check proves first-boot consumed
-    # the seed before a retained peer is detached from its password-bearing ISO.
-    $passwordText = ConvertFrom-SecureString -SecureString $sshPasswordSecure -AsPlainText
-    try {
-        $probe = Invoke-VmrunBounded -Arguments @(
-            '-T', 'ws', '-gu', $ClientSshUser, '-gp', $passwordText,
-            'runScriptInGuest', $Path, '/bin/sh',
-            'cloud-init status --wait >/dev/null 2>&1 && sudo dnsmasq --test --conf-file=/etc/dnsmasq.conf >/dev/null 2>&1 && sudo rc-service dnsmasq status >/dev/null 2>&1'
-        ) -TimeoutSeconds 300
-        if ($probe.ExitCode -ne 0) {
-            throw 'Certificate DHCP peer did not complete first boot with an active, valid dnsmasq configuration.'
-        }
-    } finally {
-        $passwordText = $null
+    $address = Wait-CertificatePeerManagementAddress -Path $Path
+    $probe = Invoke-CertificatePeerSsh -Address $address -Command `
+        'cloud-init status --wait >/dev/null 2>&1 && sudo dnsmasq --test --conf-file=/etc/dnsmasq.conf >/dev/null 2>&1 && sudo rc-service dnsmasq status >/dev/null 2>&1'
+    if ($probe.ExitCode -ne 0) {
+        throw 'Certificate DHCP peer did not complete first boot with an active, valid dnsmasq configuration.'
     }
 }
 
 <#
 .SYNOPSIS
-Capture the owned peer's management address and SSH host key through VMware guest operations.
+Wait for VMware Tools to report the peer management address without guest credentials.
 .PARAMETER Path
-Original task-owned peer VMX path; no network SSH connection is made.
+Owned peer VMX path.
+#>
+function Wait-CertificatePeerManagementAddress {
+    param([Parameter(Mandatory)][string]$Path)
+    $deadline = (Get-Date).AddSeconds(300)
+    while ((Get-Date) -lt $deadline) {
+        $reported = Invoke-VmrunBounded -Arguments @('-T', 'ws', 'getGuestIPAddress', $Path) -TimeoutSeconds 10
+        if (-not $reported.TimedOut -and $reported.ExitCode -eq 0) {
+            $address = Get-GuestIPv4FromAddressText -Lines @($reported.StdOut -split "`r?`n")
+            if ($address) { return $address }
+        }
+        Start-Sleep -Seconds 5
+    }
+    throw 'Certificate peer management address was unavailable from owned VMware Tools.'
+}
+
+<#
+.SYNOPSIS
+Run a peer command using only the selected local SSH agent key.
+.PARAMETER Address
+VMware-reported peer management address.
+.PARAMETER Command
+Read-only guest command with nonsecret output.
+.PARAMETER TimeoutSeconds
+Maximum bounded SSH execution time.
+#>
+function Invoke-CertificatePeerSsh {
+    param(
+        [Parameter(Mandatory)][string]$Address,
+        [Parameter(Mandatory)][string]$Command,
+        [int]$TimeoutSeconds = 300
+    )
+    $ssh = (Get-Command ssh.exe -CommandType Application -ErrorAction Stop).Source
+    $startInfo = [Diagnostics.ProcessStartInfo]::new()
+    $startInfo.FileName = $ssh
+    $startInfo.UseShellExecute = $false
+    $startInfo.CreateNoWindow = $true
+    $startInfo.RedirectStandardOutput = $true
+    $startInfo.RedirectStandardError = $true
+    foreach ($argument in @(
+            '-o', 'BatchMode=yes', '-o', 'PreferredAuthentications=publickey',
+            '-o', 'PasswordAuthentication=no', '-o', 'KbdInteractiveAuthentication=no',
+            '-o', 'IdentitiesOnly=yes',
+            '-o', 'HostKeyAlgorithms=ssh-ed25519',
+            '-o', 'StrictHostKeyChecking=accept-new', '-o', 'HashKnownHosts=no',
+            '-o', 'UpdateHostKeys=no', '-o', "HostKeyAlias=$clientAName",
+            '-o', "UserKnownHostsFile=$certificatePeerKnownHostsPath", '-o', 'ConnectTimeout=10',
+            '-i', $certificatePeerPublicKeySnapshot,
+            "$ClientSshUser@$Address", $Command
+        )) { [void]$startInfo.ArgumentList.Add($argument) }
+    $process = [Diagnostics.Process]::new()
+    $process.StartInfo = $startInfo
+    try {
+        [void]$process.Start()
+        $stdout = $process.StandardOutput.ReadToEndAsync()
+        $stderr = $process.StandardError.ReadToEndAsync()
+        if (-not $process.WaitForExit($TimeoutSeconds * 1000)) {
+            $process.Kill($true)
+            [void]$process.WaitForExit(5000)
+            throw 'Certificate peer SSH command timed out.'
+        }
+        $output = $stdout.GetAwaiter().GetResult()
+        $null = $stderr.GetAwaiter().GetResult()
+        if ($output.Length -gt 1024) { throw 'Certificate peer SSH output exceeded the identity bound.' }
+        return [pscustomobject]@{ ExitCode = $process.ExitCode; Output = @($output -split "`r?`n" | Where-Object { $_ }) }
+    } finally {
+        $process.Dispose()
+    }
+}
+
+<#
+.SYNOPSIS
+Capture the owned peer's management address and SSH host key through VMware Tools and agent SSH.
+.PARAMETER Path
+Original task-owned peer VMX path.
 #>
 function Get-CertificatePeerOriginalIdentity {
     param([Parameter(Mandatory)][string]$Path)
-
-    $token = [guid]::NewGuid().ToString('N')
-    $guestPath = "/tmp/atlaso-peer-identity-$token.txt"
-    $hostPath = Join-Path $resultRoot "peer-identity-$token.txt"
-    $script = "ip -4 -o addr show dev eth0 | awk 'NR == 1 { print `$4 }' > '$guestPath' && cat /etc/ssh/ssh_host_ed25519_key.pub >> '$guestPath'"
-    $passwordText = ConvertFrom-SecureString -SecureString $sshPasswordSecure -AsPlainText
-    try {
-        $query = Invoke-VmrunBounded -Arguments @(
-            '-T', 'ws', '-gu', $ClientSshUser, '-gp', $passwordText,
-            'runScriptInGuest', $Path, '/bin/sh', $script
-        ) -TimeoutSeconds 30
-        if ($query.TimedOut -or $query.ExitCode -ne 0) { throw 'Certificate peer original identity query failed.' }
-        $copy = Invoke-VmrunBounded -Arguments @(
-            '-T', 'ws', '-gu', $ClientSshUser, '-gp', $passwordText,
-            'copyFileFromGuestToHost', $Path, $guestPath, $hostPath
-        ) -TimeoutSeconds 30
-        if ($copy.TimedOut -or $copy.ExitCode -ne 0) { throw 'Certificate peer original identity readback failed.' }
-        if (-not (Test-Path -LiteralPath $hostPath -PathType Leaf) -or (Get-Item -LiteralPath $hostPath).Length -gt 1024) {
-            throw 'Certificate peer original identity readback is missing or oversized.'
-        }
-        $lines = @(Get-Content -LiteralPath $hostPath)
-        $addressMatch = if ($lines.Count -eq 2) { [regex]::Match($lines[0], '^(?<ip>(?:[0-9]{1,3}\.){3}[0-9]{1,3})/[0-9]{1,2}$') }
-        $keyMatch = if ($lines.Count -eq 2) { [regex]::Match($lines[1], '^ssh-ed25519 (?<key>[A-Za-z0-9+/]+={0,2})(?:\s+[^\r\n]{1,128})?$') }
-        if ($lines.Count -ne 2 -or -not $addressMatch.Success -or -not $keyMatch.Success) {
-            throw 'Certificate peer original identity shape is invalid.'
-        }
-        $address = [Net.IPAddress]::Parse($addressMatch.Groups['ip'].Value)
-        if ($address.AddressFamily -ne [Net.Sockets.AddressFamily]::InterNetwork -or
-            $address.ToString() -ceq '0.0.0.0') { throw 'Certificate peer management address is invalid.' }
-        $key = [Convert]::FromBase64String($keyMatch.Groups['key'].Value)
-        $fingerprint = 'SHA256:' + [Convert]::ToBase64String([Security.Cryptography.SHA256]::HashData($key)).TrimEnd('=')
-        if ($fingerprint -notmatch '^SHA256:[A-Za-z0-9+/]{43}$') {
-            throw 'Certificate peer SSH host key is invalid.'
-        }
-        return [ordered]@{ management_address = $address.ToString(); ssh_host_key = $fingerprint }
-    } finally {
-        $passwordText = $null
-        if (Test-Path -LiteralPath $hostPath) { Remove-Item -LiteralPath $hostPath -Force -ErrorAction Stop }
+    $addressFromVmware = Wait-CertificatePeerManagementAddress -Path $Path
+    $query = Invoke-CertificatePeerSsh -Address $addressFromVmware -Command `
+        "ip -4 -o addr show dev eth0 | awk 'NR == 1 { print `$4 }'; cat /etc/ssh/ssh_host_ed25519_key.pub"
+    if ($query.ExitCode -ne 0) { throw 'Certificate peer original identity query failed.' }
+    $lines = @($query.Output)
+    if ($lines.Count -gt 2 -or -not (Test-Path -LiteralPath $certificatePeerKnownHostsPath -PathType Leaf) -or
+        (Get-Item -LiteralPath $certificatePeerKnownHostsPath).Length -gt 1024) {
+        throw 'Certificate peer original identity readback is missing or oversized.'
     }
+    $addressMatch = if ($lines.Count -eq 2) { [regex]::Match($lines[0], '^(?<ip>(?:[0-9]{1,3}\.){3}[0-9]{1,3})/[0-9]{1,2}$') }
+    $keyMatch = if ($lines.Count -eq 2) { [regex]::Match($lines[1], '^ssh-ed25519 (?<key>[A-Za-z0-9+/]+={0,2})(?:\s+[^\r\n]{1,128})?$') }
+    if ($lines.Count -ne 2 -or -not $addressMatch.Success -or -not $keyMatch.Success) {
+        throw 'Certificate peer original identity shape is invalid.'
+    }
+    $address = [Net.IPAddress]::Parse($addressMatch.Groups['ip'].Value)
+    if ($address.AddressFamily -ne [Net.Sockets.AddressFamily]::InterNetwork -or
+        $address.ToString() -ceq '0.0.0.0') { throw 'Certificate peer management address is invalid.' }
+    $key = [Convert]::FromBase64String($keyMatch.Groups['key'].Value)
+    $fingerprint = 'SHA256:' + [Convert]::ToBase64String([Security.Cryptography.SHA256]::HashData($key)).TrimEnd('=')
+    if ($fingerprint -notmatch '^SHA256:[A-Za-z0-9+/]{43}$') {
+        throw 'Certificate peer SSH host key is invalid.'
+    }
+    if ($address.ToString() -cne $addressFromVmware) { throw 'Certificate peer SSH address differs from VMware Tools.' }
+    $knownHost = @(Get-Content -LiteralPath $certificatePeerKnownHostsPath)
+    if ($knownHost.Count -ne 1 -or $knownHost[0] -cne "$clientAName ssh-ed25519 $($keyMatch.Groups['key'].Value)") {
+        throw 'Certificate peer SSH host key differs from the pinned agent connection.'
+    }
+    return [ordered]@{ management_address = $address.ToString(); ssh_host_key = $fingerprint }
 }
 
 <#
@@ -2828,9 +2887,41 @@ $certificatePeerSeedIso = ''
 $certificatePeerVmx = ''
 $certificateDiskSourcePin = $null
 $certificatePeerDiskPin = $null
+$certificateKnownHostsPin = $null
+$certificatePeerPublicKeyPin = $null
+$certificatePeerPublicKey = ''
+$certificatePeerPublicKeySnapshot = Join-Path $resultRoot 'certificate-peer-authorized-key.pub'
+$certificatePeerKnownHostsPath = Join-Path $resultRoot 'certificate-peer-known-hosts'
 $seedArtifactsRetired = [bool]($OidcOnly -or ($CertificateOnly -and -not $CertificateDhcpPeer))
 $scenarioFailure = $null
 try {
+    if ($CertificateDhcpPeer -and -not $PlanOnly) {
+        $keyFile = Get-Item -LiteralPath $CertificatePeerPublicKeyPath -Force -ErrorAction Stop
+        if ($keyFile.PSIsContainer -or ($keyFile.Attributes -band [IO.FileAttributes]::ReparsePoint) -or $keyFile.Length -gt 1024) {
+            throw 'Certificate peer public key must be one ordinary bounded file.'
+        }
+        $certificatePeerPublicKey = (Get-Content -LiteralPath $CertificatePeerPublicKeyPath -Raw).Trim()
+        if ($certificatePeerPublicKey -notmatch '^ssh-ed25519 (?<blob>[A-Za-z0-9+/]+={0,2})(?: [^\r\n]{1,128})?$') {
+            throw 'Certificate peer requires one Ed25519 public key.'
+        }
+        $selectedBlob = $Matches['blob']
+        $agentKeys = @(& ssh-add.exe -L 2>$null)
+        if ($LASTEXITCODE -ne 0 -or -not @($agentKeys | Where-Object { ($_ -split ' ')[0] -ceq 'ssh-ed25519' -and ($_ -split ' ')[1] -ceq $selectedBlob }).Count) {
+            throw 'Certificate peer public key is not loaded in the local SSH agent.'
+        }
+        $keyBytes = [Text.UTF8Encoding]::new($false).GetBytes("$certificatePeerPublicKey`n")
+        $keyStream = [IO.FileStream]::new($certificatePeerPublicKeySnapshot, [IO.FileMode]::CreateNew,
+            [IO.FileAccess]::Write, [IO.FileShare]::None)
+        try {
+            $keyStream.Write($keyBytes, 0, $keyBytes.Length)
+            $keyStream.Flush($true)
+        } finally { $keyStream.Dispose() }
+        $certificatePeerPublicKeyPin = [Atlaso.WorkstationFileIdentity]::PinOrdinaryReadFile($certificatePeerPublicKeySnapshot, $true)
+        if ((Get-FileHash -LiteralPath $certificatePeerPublicKeySnapshot -Algorithm SHA256).Hash -cne
+            [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($keyBytes))) {
+            throw 'Certificate peer public-key snapshot changed before pinning.'
+        }
+    }
     if (-not ($OidcOnly -or $CertificateOnly)) {
         $clientASeedIso = Join-Path $seedRoot "$clientAName-seed.iso"
         $clientBSeedIso = Join-Path $seedRoot "$clientBName-seed.iso"
@@ -2996,6 +3087,7 @@ with WindowsFiles().opened(Path(sys.argv[1]), directory=True) as (_, identity, _
             client_vmdk_copy = $certificatePeerDiskPath
             client_vmdk_copy_preboot_sha256 = $certificatePeerDiskSha256
             client_vmdk_copy_identity = $certificatePeerDiskIdentity
+            ssh_public_key = $certificatePeerPublicKey
             address_ownership_state = 'awaiting-live-readback'
         })
     }
@@ -3203,17 +3295,21 @@ with WindowsFiles().opened(Path(sys.argv[1]), directory=True) as (_, identity, _
     }
     }
     if ($CertificateDhcpPeer) {
-        # The peer needs its seed only for first boot. Retain no password-bearing
-        # ISO in a kept native acceptance lab.
+        # The NoCloud seed contains only a public key. Pin the SSH host key
+        # established on first boot across the required seed-removal restart.
         Assert-CertificatePeerBootReady -Path $certificatePeerVmx
-        if ($CleanupCreatedLab) {
-            $peerIdentityReadback = Get-CertificatePeerOriginalIdentity -Path $certificatePeerVmx
-        }
+        $initialPeerIdentity = Get-CertificatePeerOriginalIdentity -Path $certificatePeerVmx
+        $certificateKnownHostsPin = [Atlaso.WorkstationFileIdentity]::PinOrdinaryReadFile($certificatePeerKnownHostsPath, $true)
         Remove-ClientSeedArtifacts -VmxPaths @($certificatePeerVmx) -SeedPaths @($certificatePeerSeedIso) -Restart:(-not $CleanupCreatedLab)
         $seedArtifactsRetired = $true
         if (-not $CleanupCreatedLab) {
             Assert-CertificatePeerBootReady -Path $certificatePeerVmx
             $peerIdentityReadback = Get-CertificatePeerOriginalIdentity -Path $certificatePeerVmx
+            if ($peerIdentityReadback.ssh_host_key -cne $initialPeerIdentity.ssh_host_key) {
+                throw 'Certificate peer SSH host key changed across seed retirement.'
+            }
+        } else {
+            $peerIdentityReadback = $initialPeerIdentity
         }
         if ([Atlaso.WorkstationFileIdentity]::Get($certificatePeerDiskPath) -cne $certificatePeerDiskIdentity) {
             throw 'Certificate peer copied disk identity changed during boot or seed retirement.'
@@ -3226,7 +3322,8 @@ with WindowsFiles().opened(Path(sys.argv[1]), directory=True) as (_, identity, _
             client_vmdk_copy_identity = $certificatePeerDiskIdentity
             management_network = $ManagementNetwork; management_address = $peerIdentityReadback.management_address
             ssh_user = $ClientSshUser; ssh_host_key = $peerIdentityReadback.ssh_host_key
-            observation = 'owned-vmware-guest-operations-before-management-rewire'
+            ssh_public_key = $certificatePeerPublicKey
+            observation = 'owned-vmware-tools-and-agent-ssh-after-management-restart'
         })
         $certificatePeerDiskPin.Dispose()
         $certificatePeerDiskPin = $null
@@ -3306,6 +3403,8 @@ with WindowsFiles().opened(Path(sys.argv[1]), directory=True) as (_, identity, _
 # the documented seed and task-owned VM cleanup paths inspect that VM.
 if ($scenarioFailure) {
     if ($certificatePeerDiskPin) { $certificatePeerDiskPin.Dispose(); $certificatePeerDiskPin = $null }
+    if ($certificateKnownHostsPin) { $certificateKnownHostsPin.Dispose(); $certificateKnownHostsPin = $null }
+    if ($certificatePeerPublicKeyPin) { $certificatePeerPublicKeyPin.Dispose(); $certificatePeerPublicKeyPin = $null }
     if ($certificateDiskSourcePin) { $certificateDiskSourcePin.Dispose(); $certificateDiskSourcePin = $null }
 }
 
@@ -3371,6 +3470,8 @@ if ($cleanupFailure) {
 }
 } finally {
     if ($certificatePeerDiskPin) { $certificatePeerDiskPin.Dispose() }
+    if ($certificateKnownHostsPin) { $certificateKnownHostsPin.Dispose() }
+    if ($certificatePeerPublicKeyPin) { $certificatePeerPublicKeyPin.Dispose() }
     if ($certificateDiskSourcePin) { $certificateDiskSourcePin.Dispose() }
     for ($pinIndex = $runtimeConsumerPins.Count - 1; $pinIndex -ge 0; $pinIndex--) { $runtimeConsumerPins[$pinIndex].Dispose() }
     if ($preflightGuard) { $preflightGuard.Dispose() }

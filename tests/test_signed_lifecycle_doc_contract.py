@@ -29,7 +29,7 @@ def test_signed_lifecycle_fixture_url_reaches_python_checker() -> None:
     checker = Path("scripts/interop/lifecycle_test.py").read_text(encoding="utf-8")
     assert "@('-SignedReleaseRepositoryUrl', $SignedReleaseRepositoryUrl)" in wrapper
     assert "@('--signed-release-repository-url', $SignedReleaseRepositoryUrl)" in runner
-    guard = "if ($SignedReleaseRepositoryUrl -and ($OidcOnly -or $RoutingWanOnly))"
+    guard = "if ($SignedReleaseRepositoryUrl -and ($OidcOnly -or $RoutingWanOnly -or $CertificateOnly))"
     assert guard in wrapper
     assert guard in runner
     assert wrapper.index(guard) < wrapper.index("if (-not $SkipClientPrepare")

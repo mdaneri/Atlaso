@@ -83,7 +83,6 @@ foreach ($name in @('inspect-certificate-peer.ps1', 'inspect-certificate-handoff
         Plan = $planPath
         EnvironmentId = 'test-environment'
         PythonPath = (Join-Path $proofRoot 'nonexistent-python.exe')
-        SshPassword = [SecureString]::new()
     }
     if ($name -eq 'inspect-certificate-peer.ps1') {
         $parameters.AddressEvidence = Join-Path $proofRoot 'address-result.json'
