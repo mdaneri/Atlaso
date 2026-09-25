@@ -2753,6 +2753,72 @@ def test_management_handoff_accepts_previously_scoped_site(monkeypatch, tmp_path
         })
 
 
+@pytest.mark.parametrize("dedicated", [False, True])
+def test_management_handoff_preserves_split_public_tls_on_later_apply(monkeypatch, tmp_path, dedicated):
+    """A later handoff keeps flagged Access TLS under Public Services ownership."""
+    helper = load_helper_module()
+    management = tmp_path / "management.conf"
+    public = tmp_path / "public.conf"
+    candidate = tmp_path / "candidate.conf"
+    certificate = tmp_path / "management.crt"
+    key = tmp_path / "management.key"
+    certificate.write_text("unchanged certificate", encoding="utf-8")
+    key.write_text("unchanged key", encoding="utf-8")
+    dedicated_http = "  listen 192.0.2.20:80 default_server;\n" if dedicated else ""
+    dedicated_https = "  listen 192.0.2.20:443 ssl default_server;\n" if dedicated else ""
+    management.write_text(
+        "# Managed by Atlaso. Local changes may be overwritten.\n"
+        "server {\n  listen 192.0.2.10:80 default_server;\n"
+        f"{dedicated_http}"
+        "  listen 127.0.0.1:80 default_server;\n"
+        "  listen 127.0.0.1:443 ssl default_server;\n"
+        f"{dedicated_https}"
+        f"  ssl_certificate {certificate};\n  ssl_certificate_key {key};\n}}\n",
+        encoding="utf-8",
+    )
+    public_text = (
+        "# Managed by Atlaso. Local changes may be overwritten.\n"
+        "server {\n  # IP-scoped management HTTPS front door.\n"
+        "  listen 192.0.2.10:443 ssl default_server;\n"
+        f"  ssl_certificate {certificate};\n  ssl_certificate_key {key};\n"
+        "  location /ui/ { proxy_pass http://127.0.0.1:8000; }\n}\n"
+    )
+    public.write_text(public_text, encoding="utf-8")
+    candidate.write_text(public_text, encoding="utf-8")
+    monkeypatch.setattr(helper, "NGINX_MANAGEMENT_SITE_PATH", management)
+    monkeypatch.setattr(helper, "NGINX_PUBLIC_SERVICES_SITE_PATH", public)
+    monkeypatch.setattr(helper, "_ca_managed_path", lambda value, _field: Path(value))
+    monkeypatch.setattr(helper, "_install_nginx_site", lambda *_args: pytest.fail("split site changed"))
+    state = {
+        "previous_https_enabled": True,
+        "previous_management_public_port": 443,
+        "previous_management_addresses": ["192.0.2.10", "192.0.2.20"] if dedicated else ["192.0.2.10"],
+        "snapshots": [],
+    }
+    for path in (management, public, certificate, key):
+        backup = tmp_path / f"{path.name}.snapshot"
+        backup.write_bytes(path.read_bytes())
+        state["snapshots"].append({"path": str(path), "existed": True, "backup": str(backup)})
+    payload = {"public_services_config_path": str(candidate)}
+
+    helper._scope_management_handoff_old_listener(state)
+    helper._management_handoff_validate_public_tls_holdover(state, payload)
+    holdover = helper._management_handoff_protocol_holdover(state, {"management_upstream_port": 8000})
+    assert "listen 192.0.2.10:443 ssl bind;" not in holdover
+    assert ("listen 192.0.2.20:443 ssl bind;" in holdover) == dedicated
+    assert helper._management_handoff_initial_listener_addresses(
+        ["192.0.2.10", "192.0.2.20"] if dedicated else ["192.0.2.10"], state, 443, holdover,
+    ) == ["192.0.2.10"]
+
+    candidate.write_text(public_text.replace("192.0.2.10", "192.0.2.11"), encoding="utf-8")
+    with pytest.raises(ValueError, match="cannot be preserved"):
+        helper._management_handoff_validate_public_tls_holdover(state, payload)
+    candidate.write_text(public_text, encoding="utf-8")
+    certificate.write_text("rotated certificate", encoding="utf-8")
+    with pytest.raises(ValueError, match="identity cannot be preserved"):
+        helper._management_handoff_validate_public_tls_holdover(state, payload)
+
+
 def test_management_handoff_syncs_transaction_and_backups_before_marker(monkeypatch, tmp_path):
     """Make the transaction directory and backups durable before the marker.
 
@@ -3456,10 +3522,10 @@ def test_management_handoff_keeps_previous_https_identity(monkeypatch, tmp_path,
     monkeypatch.setattr(
         helper,
         "_management_handoff_snapshot_text",
-        lambda *_args: (
+        lambda _state, path: (
             f"  ssl_certificate {certificate};\n"
             f"  ssl_certificate_key {key};\n"
-        ),
+        ) if path == helper.NGINX_MANAGEMENT_SITE_PATH else "",
     )
 
     holdover = helper._management_handoff_protocol_holdover(

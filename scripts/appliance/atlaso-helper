@@ -25512,14 +25512,19 @@ def _scope_management_handoff_old_listener(state: dict) -> None:
         else:
             scoped.append(line)
     if already_scoped:
+        public_tls = _management_handoff_previous_public_tls_addresses(state)
         if listeners or any(len(ports) > 1 for ports in scoped_ports.values()) or any(
             (str(address), ssl) not in already_scoped
+            and not (ssl and str(address) in public_tls)
             for address in addresses for ssl in ((False, True) if state["previous_https_enabled"] else (False,))
         ):
             raise ValueError("previous management nginx listener is not canonical")
         public_port = int(state.get("previous_management_public_port") or
                           (443 if state["previous_https_enabled"] else 80))
-        if public_port not in scoped_ports[bool(state["previous_https_enabled"])]:
+        dedicated = not state["previous_https_enabled"] or any(
+            str(address) not in public_tls for address in addresses
+        )
+        if dedicated and public_port not in scoped_ports[bool(state["previous_https_enabled"])]:
             raise ValueError("previous management nginx listener is not canonical")
         return
     expected_listeners = 4 if state["previous_https_enabled"] else 2
@@ -26304,6 +26309,41 @@ def _management_handoff_snapshot_text(state: dict, runtime_path: Path) -> str:
     return ""
 
 
+def _management_handoff_previous_public_tls_addresses(state: dict) -> set[str]:
+    """Identify snapshotted public-service TLS sockets for previous management addresses."""
+    site = _management_handoff_snapshot_text(state, NGINX_PUBLIC_SERVICES_SITE_PATH)
+    if not site:
+        return set()
+    if not site.startswith("# Managed by Atlaso. Local changes may be overwritten.\n"):
+        raise ValueError("previous Public Services nginx site is not canonical")
+    public_port = int(state.get("previous_management_public_port") or 443)
+    previous = {str(ip_address(value)) for value in state.get("previous_management_addresses", [])}
+    owned: set[str] = set()
+    for line in site.splitlines():
+        match = re.fullmatch(r"\s*listen (?:([0-9.]+)|\[([0-9a-fA-F:]+)\]):(\d+) ssl default_server;", line)
+        if match is None or int(match.group(3)) != public_port:
+            continue
+        address = ip_address(match.group(1) or match.group(2))
+        if str(address) in previous:
+            owned.add(str(address))
+    return owned
+
+
+def _management_handoff_validate_public_tls_holdover(state: dict, payload: dict) -> None:
+    """Keep an unchanged Public Services TLS site as the old management path."""
+    if not _management_handoff_previous_public_tls_addresses(state):
+        return
+    previous_site = _management_handoff_snapshot_text(state, NGINX_PUBLIC_SERVICES_SITE_PATH)
+    candidate_site = Path(str(payload["public_services_config_path"])).read_text(encoding="utf-8")
+    if candidate_site != previous_site or NGINX_PUBLIC_SERVICES_SITE_PATH.read_text(encoding="utf-8") != previous_site:
+        raise ValueError("previous Public Services management TLS site cannot be preserved")
+    for certificate in re.findall(r"(?m)^\s*ssl_certificate(?:_key)?\s+([^;]+);\s*$", previous_site):
+        path = _ca_managed_path(certificate.strip(), "management_https_cert_path")
+        backup = _management_handoff_snapshot_backup_path(state, path)
+        if not path.is_file() or backup.read_bytes() != path.read_bytes():
+            raise ValueError("previous Public Services management TLS identity cannot be preserved")
+
+
 def _management_handoff_snapshot_backup_path(state: dict, runtime_path: Path) -> Path:
     """Return the durable backup for one snapshotted runtime file.
 
@@ -26359,8 +26399,11 @@ def _management_handoff_protocol_holdover(state: dict, payload: dict) -> str:
             f"  ssl_certificate_key {holdover_key_path};",
         ]
     blocks: list[str] = []
+    public_tls = _management_handoff_previous_public_tls_addresses(state) if previous_https else set()
     for address in state.get("previous_management_addresses", []):
         parsed = ip_address(str(address))
+        if str(parsed) in public_tls:
+            continue
         listen_address = f"[{parsed}]" if parsed.version == 6 else str(parsed)
         ssl = " ssl" if previous_https else ""
         blocks.extend(
@@ -26378,7 +26421,7 @@ def _management_handoff_protocol_holdover(state: dict, payload: dict) -> str:
                 "",
             ]
         )
-    if not blocks:
+    if not blocks and not public_tls:
         raise ValueError("previous listener addresses are unavailable for protocol preservation")
     return "\n".join(blocks)
 
@@ -26397,6 +26440,8 @@ def _management_handoff_initial_listener_addresses(
     if not protocol_holdover or int(state["previous_management_public_port"]) != candidate_port:
         return candidate_addresses
     previous_addresses = set(state["previous_management_addresses"])
+    if state.get("previous_https_enabled"):
+        previous_addresses.difference_update(_management_handoff_previous_public_tls_addresses(state))
     return [address for address in candidate_addresses if address not in previous_addresses]
 
 
@@ -27549,6 +27594,8 @@ def _apply_management_handoff(payload: dict) -> int:
         ca_path = str(payload.get("ca_config_path") or "")
         if ca_path and _handle_ca("apply", [ca_path]) != 0:
             raise ValueError("candidate management certificate apply failed")
+        failing_layer = "previous Public Services TLS preservation"
+        _management_handoff_validate_public_tls_holdover(state, payload)
         candidate_https = bool(settings_payload.get("management_https_enabled"))
         candidate_public_port = int(
             settings_payload.get(
