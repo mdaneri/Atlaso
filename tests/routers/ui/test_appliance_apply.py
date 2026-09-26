@@ -329,6 +329,37 @@ interface=eth1
     )
 
 
+def test_management_binding_change_requires_protected_handoff():
+    """Protocol and public-port changes cannot reuse the previous nginx scope."""
+    from atlaso.app.ui import management_front_door_binding_changed
+
+    previous = {"config_preview": json.dumps({
+        "management_https_enabled": False,
+        "management_public_http_port": 80,
+        "management_public_https_port": 443,
+    })}
+    same = json.dumps({
+        "management_https_enabled": False,
+        "management_public_http_port": 80,
+        "management_public_https_port": 8443,
+    })
+    enabled = json.dumps({
+        "management_https_enabled": True,
+        "management_public_http_port": 80,
+        "management_public_https_port": 443,
+    })
+    assert not management_front_door_binding_changed(same, previous)
+    assert management_front_door_binding_changed(enabled, previous)
+    assert management_front_door_binding_changed(
+        json.dumps({**json.loads(enabled), "management_public_https_port": 8443}),
+        {"config_preview": enabled},
+    )
+    assert management_front_door_binding_changed(
+        json.dumps({**json.loads(enabled), "management_public_http_port": 8080}),
+        {"config_preview": enabled},
+    )
+
+
 def test_management_gateway_route_migration_couples_only_unapplied_default():
     """Detect the exact default route created from a removed management gateway."""
     from atlaso.app.ui import (
@@ -749,8 +780,43 @@ def test_management_https_applies_pending_ca_before_settings(client, monkeypatch
     with SessionLocal() as db:
         job = db.get(Job, response.json()["job_id"])
         assert job is not None
-        selected = json.loads(job.result or "{}")["selected_units"]
-    assert selected.index("ca") < selected.index("appliance_settings")
+        payload = json.loads(job.result or "{}")
+    assert payload["management_handoff"] is True
+    assert payload["management_handoff_units"][:4] == ["ca", "network", "firewall", "appliance_settings"]
+
+
+def test_management_binding_change_requires_pending_network_selection(client):
+    """Do not silently admit an unrelated pending Network edit into a protocol handoff.
+
+    Args:
+        client: Authenticated test client fixture.
+    """
+    from sqlalchemy import select
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import ApplianceSettings, PhysicalInterface
+    from atlaso.app.ui import appliance_apply_units, update_appliance_apply_baselines
+
+    login(client)
+    with SessionLocal() as db:
+        units = appliance_apply_units(db)
+        update_appliance_apply_baselines(db, units, {unit["id"] for unit in units})
+        settings = db.query(ApplianceSettings).one()
+        settings.management_https_enabled = not settings.management_https_enabled
+        interface = db.scalar(select(PhysicalInterface).where(PhysicalInterface.name == "eth0"))
+        assert interface is not None
+        interface.ip_cidr = "192.168.49.20/24"
+        db.commit()
+
+    csrf = client.get("/dashboard").text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    response = client.post(
+        "/appliance-apply",
+        data={"csrf": csrf, "selected_units": "appliance_settings"},
+        headers={"Accept": "application/json"},
+    )
+
+    assert response.status_code == 422
+    assert "Select Network with Appliance Settings" in response.json()["detail"]
 
 
 def test_applied_https_does_not_reselect_unrelated_pending_ca(client, monkeypatch):

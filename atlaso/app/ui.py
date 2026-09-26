@@ -10240,6 +10240,32 @@ def management_handoff_required(network_unit: dict[str, Any], baseline: dict[str
     return network_management_paths(previous_preview) != current_paths
 
 
+def management_front_door_binding_changed(current_preview: str, baseline: dict[str, Any] | None) -> bool:
+    """Require a protected handoff when the management protocol or public port changes.
+
+    Args:
+        current_preview: Candidate Appliance Settings preview.
+        baseline: Last applied Appliance Settings snapshot, when present.
+    """
+    previous = json_config_object(str((baseline or {}).get("config_preview") or ""))
+    current = json_config_object(current_preview)
+    if not previous or not current:
+        return False
+
+    def binding(settings: dict[str, Any]) -> tuple[bool, int, int | None]:
+        """Return protocol and public ports from one settings snapshot.
+
+        Args:
+            settings: Parsed Appliance Settings values.
+        """
+        https_enabled = bool(settings.get("management_https_enabled"))
+        http_port = int(settings.get("management_public_http_port") or 80)
+        https_port = int(settings.get("management_public_https_port") or 443) if https_enabled else None
+        return https_enabled, http_port, https_port
+
+    return binding(previous) != binding(current)
+
+
 def management_handoff_completes_appliance_settings(
     current_preview: str,
     baseline: dict[str, Any] | None,
@@ -17078,11 +17104,24 @@ def _submit_appliance_apply(
         for dependency in ("network", "wan"):
             if unit_map.get(dependency, {}).get("changed"):
                 selected_ids.add(dependency)
+    binding_change = bool(
+        "appliance_settings" in selected_ids
+        and management_front_door_binding_changed(
+            str(unit_map.get("appliance_settings", {}).get("config_preview") or ""),
+            apply_baselines.get("appliance_settings"),
+        )
+    )
+    if binding_change and unit_map.get("network", {}).get("changed") and "network" not in selected_ids:
+        detail = "Select Network with Appliance Settings to review pending Network changes in the protected handoff."
+        return JSONResponse({"detail": detail}, status_code=422) if wants_json else Response(
+            detail, status_code=422, media_type="text/plain",
+        )
     management_handoff = bool(
         (
             selected_ids.intersection(MANAGEMENT_HANDOFF_UNIT_IDS)
             and unit_map.get("network", {}).get("management_handoff_required")
         )
+        or binding_change
         or (
             "wan" in selected_ids
             and unit_map.get("network", {}).get("management_default_mirror_change")

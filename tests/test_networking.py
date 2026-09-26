@@ -1027,6 +1027,19 @@ def test_management_ui_context_prefers_dedicated_then_flagged_eth0_then_vlan(mon
         [flagged_eth1, dedicated, flagged_eth0],
         [flagged_vlan],
     )["name"] == "eth2"
+    dedicated.oper_state = "missing"
+    assert management_ui_context(
+        [flagged_eth1, dedicated, flagged_eth0],
+        [flagged_vlan],
+    )["name"] == "eth0"
+    dedicated.oper_state = "up"
+    dedicated.admin_state = "down"
+    assert management_ui_context(
+        [flagged_eth1, dedicated, flagged_eth0],
+        [flagged_vlan],
+    )["name"] == "eth0"
+    dedicated.oper_state = "missing"
+    dedicated.admin_state = "up"
     assert management_ui_context(
         [flagged_eth1, flagged_eth0],
         [flagged_vlan],
@@ -1044,6 +1057,12 @@ def test_management_ui_context_prefers_dedicated_then_flagged_eth0_then_vlan(mon
     )
     assert dhcp_context["name"] == "eth0"
     assert dhcp_servers == ["192.0.2.53"]
+    stale_context, stale_servers = management_dhcp_dns_context(
+        [dedicated, flagged_eth1, flagged_eth0],
+        [flagged_vlan],
+    )
+    assert stale_context["name"] == "eth0"
+    assert stale_servers == ["192.0.2.53"]
     assert management_dhcp_dns_context([], [flagged_vlan])[0]["name"] == "eth1.20"
 
 

@@ -7259,9 +7259,9 @@ def _appliance_settings_config_errors(
                 errors.append(str(exc))
         if cert_pem is not None:
             try:
-                scoped_addresses = _existing_management_scoped_addresses()
-                if scoped_addresses is not None:
-                    _management_certificate_covers_scoped_addresses(cert_pem, scoped_addresses)
+                scoped_listeners = _existing_management_scoped_addresses()
+                if scoped_listeners is not None:
+                    _management_certificate_covers_scoped_addresses(cert_pem, scoped_listeners[0])
             except (OSError, ValueError) as exc:
                 errors.append(str(exc))
     return errors
@@ -7747,12 +7747,13 @@ def _public_services_prod_alias_path(alias: str) -> Path:
     return Path(normalized)
 
 
-def _handle_public_services(action: str, args: list[str]) -> int:
+def _handle_public_services(action: str, args: list[str], *, transitional_text: str | None = None) -> int:
     """Handle public services.
 
     Args:
         action: Action consumed by handle public services.
         args: Parsed command-line options consumed by the operation.
+        transitional_text: Candidate listeners joined with snapshotted old listeners.
     """
     if len(args) != 1:
         print(f"public-services {action} requires exactly one staged nginx config path", file=sys.stderr)
@@ -7780,7 +7781,7 @@ def _handle_public_services(action: str, args: list[str]) -> int:
         print(result.stderr, end="", file=sys.stderr)
         return result.returncode
     if action == "apply":
-        text = config_path.read_text(encoding="utf-8")
+        text = transitional_text if transitional_text is not None else config_path.read_text(encoding="utf-8")
         if "server {" not in text:
             result = _remove_nginx_site(NGINX_PUBLIC_SERVICES_SITE_PATH)
         else:
@@ -7865,6 +7866,7 @@ def _management_nginx_config(
     *,
     listen_addresses: list[str] | None = None,
     http_listen_addresses: list[str] | None = None,
+    https_listen_addresses: list[str] | None = None,
 ) -> str:
     """Perform management nginx config.
 
@@ -7874,6 +7876,7 @@ def _management_nginx_config(
         key_path: Filesystem path used for key.
         listen_addresses: Exact addresses exposed by the management listener.
         http_listen_addresses: Addresses allowed on the HTTP redirect during a handoff.
+        https_listen_addresses: Addresses owned by this site on HTTPS.
     """
     fqdn = str(payload["fqdn"])
     https_enabled = bool(payload.get("management_https_enabled"))
@@ -7883,23 +7886,27 @@ def _management_nginx_config(
     upstream_port = int(payload.get("management_upstream_port") or payload.get("management_http_port") or 8000)
     lines = ["# Managed by Atlaso. Local changes may be overwritten."]
     if listen_addresses is None:
-        if http_listen_addresses is not None:
-            raise ValueError("HTTP listener override requires scoped management listeners")
+        if http_listen_addresses is not None or https_listen_addresses is not None:
+            raise ValueError("listener override requires scoped management listeners")
         http_listeners = [f"{public_http_port}", f"[::]:{public_http_port}"]
         https_listeners = [f"{public_https_port}", f"[::]:{public_https_port}"]
     else:
         addresses = [ip_address(address) for address in listen_addresses]
         http_addresses = ([ip_address(address) for address in http_listen_addresses]
                           if http_listen_addresses is not None else addresses)
+        https_addresses = ([ip_address(address) for address in https_listen_addresses]
+                           if https_listen_addresses is not None else addresses)
         if not set(http_addresses) <= set(addresses):
             raise ValueError("HTTP redirect address is not a verified management listener")
+        if not set(https_addresses) <= set(addresses):
+            raise ValueError("HTTPS address is not a verified management listener")
         http_listeners = [
             f"[{address}]:{public_http_port}" if address.version == 6 else f"{address}:{public_http_port}"
             for address in http_addresses
         ]
         https_listeners = [
             f"[{address}]:{public_https_port}" if address.version == 6 else f"{address}:{public_https_port}"
-            for address in addresses
+            for address in https_addresses
         ]
     http_listen_lines = [f"  listen {listener} default_server;" for listener in http_listeners]
     https_listen_lines = [f"  listen {listener} ssl default_server;" for listener in https_listeners]
@@ -7930,23 +7937,24 @@ def _management_nginx_config(
             "}",
             "",
         ])
-    lines.extend(
-        [
-            "server {",
-            *https_listen_lines,
-            f"  server_name {fqdn};",
-            f"  ssl_certificate {cert_path};",
-            f"  ssl_certificate_key {key_path};",
-            *_management_proxy_location(upstream_host, upstream_port, "https"),
-            "}",
-            "",
-        ]
-    )
+    if https_listen_lines:
+        lines.extend(
+            [
+                "server {",
+                *https_listen_lines,
+                f"  server_name {fqdn};",
+                f"  ssl_certificate {cert_path};",
+                f"  ssl_certificate_key {key_path};",
+                *_management_proxy_location(upstream_host, upstream_port, "https"),
+                "}",
+                "",
+            ]
+        )
     return "\n".join(lines)
 
 
-def _existing_management_scoped_addresses() -> list[str] | None:
-    """Carry a committed address scope through an ordinary Settings apply."""
+def _existing_management_scoped_addresses() -> tuple[list[str], list[str], int, int | None] | None:
+    """Carry committed listener scopes and ports through an ordinary Settings apply."""
     if NGINX_MANAGEMENT_SITE_PATH.is_symlink():
         raise ValueError("existing management listener inventory is unsafe")
     if not NGINX_MANAGEMENT_SITE_PATH.exists():
@@ -7967,6 +7975,7 @@ def _existing_management_scoped_addresses() -> list[str] | None:
             raise ValueError("existing management listeners mix wildcard and scoped sockets")
         return None
     by_protocol: dict[bool, set[str]] = {False: set(), True: set()}
+    ports: dict[bool, set[int]] = {False: set(), True: set()}
     for line in listeners:
         match = re.fullmatch(
             r"listen (?:([0-9.]+)|\[([0-9a-fA-F:]+)\]):(\d+)( ssl)? default_server;", line,
@@ -7979,13 +7988,18 @@ def _existing_management_scoped_addresses() -> list[str] | None:
                 or str(address) != (match.group(1) or match.group(2))):
             raise ValueError("existing management listener address is invalid")
         protocol = match.group(4) is not None
+        ports[protocol].add(int(match.group(3)))
         if str(address) in by_protocol[protocol]:
             raise ValueError("existing management listener is duplicated")
         by_protocol[protocol].add(str(address))
-    if (not by_protocol[False] or by_protocol[True] and by_protocol[False] != by_protocol[True]
+    if (not by_protocol[False] or not by_protocol[True] <= by_protocol[False]
+            or len(ports[False]) != 1 or len(ports[True]) > 1
             or not {"127.0.0.1", "::1"} <= by_protocol[False]):
         raise ValueError("existing management listener scope is incomplete")
-    return sorted(by_protocol[False])
+    return (
+        sorted(by_protocol[False]), sorted(by_protocol[True]),
+        next(iter(ports[False])), next(iter(ports[True])) if ports[True] else None,
+    )
 
 
 def _management_certificate_covers_scoped_addresses(certificate_pem: str, addresses: list[str]) -> None:
@@ -8031,6 +8045,7 @@ def _configure_atlaso_management_https(
     verify_front_door: bool = True,
     listen_addresses: list[str] | None = None,
     http_listen_addresses: list[str] | None = None,
+    https_listen_addresses: list[str] | None = None,
 ) -> tuple[int, int | None]:
     """Install the management front door without interrupting its upstream.
 
@@ -8040,6 +8055,7 @@ def _configure_atlaso_management_https(
         verify_front_door: Whether to prove the ordinary current-address path.
         listen_addresses: Exact addresses exposed by the management listener.
         http_listen_addresses: Addresses allowed on the HTTP redirect during a handoff.
+        https_listen_addresses: Addresses owned by this site on HTTPS.
     """
     enabled = bool(payload.get("management_https_enabled"))
     port = int(payload.get("management_upstream_port") or payload.get("management_http_port") or 8000)
@@ -8061,6 +8077,7 @@ def _configure_atlaso_management_https(
     site_text = _management_nginx_config(
         payload, cert_path, key_path, listen_addresses=listen_addresses,
         http_listen_addresses=http_listen_addresses,
+        https_listen_addresses=https_listen_addresses,
     ).rstrip() + "\n"
     if listen_addresses == [] and not site_suffix.strip():
         raise ValueError("management handoff has no verified listener address")
@@ -9228,6 +9245,16 @@ def _handle_appliance_settings(action: str, args: list[str]) -> int:
         return 2
 
     payload = _load_appliance_settings_config(config_path)
+    scoped_listeners = _existing_management_scoped_addresses()
+    if scoped_listeners is not None:
+        https_enabled = bool(payload.get("management_https_enabled"))
+        http_port = int(payload.get("management_public_http_port") or 80)
+        https_port = int(payload.get("management_public_https_port") or 443)
+        if (http_port != scoped_listeners[2]
+                or https_enabled != bool(scoped_listeners[1])
+                or (https_enabled and https_port != scoped_listeners[3])):
+            print("management front-door binding change requires a protected handoff", file=sys.stderr)
+            return 2
     fqdn = str(payload["fqdn"])
     management_interface = str(payload["management_interface"])
     resolver_mode = str(payload["resolver_mode"])
@@ -9253,7 +9280,9 @@ def _handle_appliance_settings(action: str, args: list[str]) -> int:
     if vcfdt_ceip != 0:
         return vcfdt_ceip
     management_https, management_restart_delay_seconds = _configure_atlaso_management_https(
-        payload, listen_addresses=_existing_management_scoped_addresses(),
+        payload,
+        listen_addresses=scoped_listeners[0] if scoped_listeners is not None else None,
+        https_listen_addresses=scoped_listeners[1] if scoped_listeners is not None else None,
     )
     if management_https != 0:
         return management_https
@@ -25251,25 +25280,20 @@ def _management_handoff_certificate_paths(payload: dict) -> list[Path]:
 
 
 def _management_handoff_previous_certificate_paths() -> list[Path]:
-    """Return certificate files referenced by the applied management site.
+    """Return certificate files referenced by previous managed nginx sites.
 
     Returns:
-        The validated certificate and key paths used by the previous listener.
+        The validated certificate and key paths used by previous listeners.
     """
-    if not NGINX_MANAGEMENT_SITE_PATH.is_file():
-        return []
-    try:
-        site_text = NGINX_MANAGEMENT_SITE_PATH.read_text(encoding="utf-8")
-    except OSError:
-        return []
     paths: list[Path] = []
-    for directive, field in (
-        ("ssl_certificate", "management_https_cert_path"),
-        ("ssl_certificate_key", "management_https_key_path"),
-    ):
-        match = re.search(rf"(?m)^\s*{directive}\s+([^;]+);\s*$", site_text)
-        if match is not None:
-            paths.append(_ca_managed_path(match.group(1).strip(), field))
+    for site_path in (NGINX_MANAGEMENT_SITE_PATH, NGINX_PUBLIC_SERVICES_SITE_PATH):
+        if not site_path.is_file():
+            continue
+        site_text = site_path.read_text(encoding="utf-8")
+        for match in re.finditer(
+            r"(?m)^[ \t]*ssl_certificate(?:_key)?[ \t]+([^;\n]+);[ \t]*$", site_text,
+        ):
+            paths.append(_ca_managed_path(match.group(1).strip(), "previous_nginx_tls_path"))
     return paths
 
 
@@ -25484,14 +25508,19 @@ def _scope_management_handoff_old_listener(state: dict) -> None:
         else:
             scoped.append(line)
     if already_scoped:
+        public_tls = _management_handoff_previous_public_tls_addresses(state)
         if listeners or any(len(ports) > 1 for ports in scoped_ports.values()) or any(
             (str(address), ssl) not in already_scoped
+            and not (ssl and str(address) in public_tls)
             for address in addresses for ssl in ((False, True) if state["previous_https_enabled"] else (False,))
         ):
             raise ValueError("previous management nginx listener is not canonical")
         public_port = int(state.get("previous_management_public_port") or
                           (443 if state["previous_https_enabled"] else 80))
-        if public_port not in scoped_ports[bool(state["previous_https_enabled"])]:
+        dedicated = not state["previous_https_enabled"] or any(
+            str(address) not in public_tls for address in addresses
+        )
+        if dedicated and public_port not in scoped_ports[bool(state["previous_https_enabled"])]:
             raise ValueError("previous management nginx listener is not canonical")
         return
     expected_listeners = 4 if state["previous_https_enabled"] else 2
@@ -25806,6 +25835,7 @@ def _management_handoff_candidate_firewall_rules(
     network_path: Path,
     public_port: int,
     candidate_firewall: str,
+    *, http_port: int | None = None,
 ) -> list[str]:
     """Return minimal candidate-listener admission rules for a transition.
 
@@ -25813,14 +25843,17 @@ def _management_handoff_candidate_firewall_rules(
         network_path: Candidate staged network configuration.
         public_port: Candidate management HTTP or HTTPS front-door port.
         candidate_firewall: Candidate nftables configuration.
+        http_port: Candidate HTTP redirect port when HTTPS is enabled.
 
     Returns:
         Nftables input rules for effective candidate management listeners.
     """
     if public_port < 1 or public_port > 65535:
         raise ValueError("candidate management firewall port must be between 1 and 65535")
+    if http_port is not None and (http_port < 1 or http_port > 65535):
+        raise ValueError("candidate management HTTP redirect port must be between 1 and 65535")
     physical, vlans, _removed = _parse_network_config(network_path)
-    management_ports = ", ".join(str(port) for port in sorted({22, 80, 443, public_port}))
+    management_ports = ", ".join(str(port) for port in sorted({22, 80, 443, public_port, http_port or 80}))
     candidate_disabled = "Atlaso firewall desired state is disabled" in candidate_firewall
     target_rules: list[tuple[str, str, str]] = []
     for row in physical:
@@ -25864,15 +25897,19 @@ def _management_handoff_candidate_firewall_rules(
                 continue
             port_expression = match.group(0).removeprefix("tcp dport ")
             port_tokens = [token.strip() for token in port_expression.strip("{} ").split(",")]
-            port_is_present = any(
-                token.isdigit() and int(token) == public_port
-                or "-" in token
-                and all(part.strip().isdigit() for part in token.split("-", 1))
-                and int(token.split("-", 1)[0]) <= public_port <= int(token.split("-", 1)[1])
-                for token in port_tokens
-            )
-            if not port_is_present:
-                rules.append(f"{line[:match.start()]}tcp dport {public_port}{line[match.end():]}")
+            required_ports = {public_port}
+            if http_port is not None:
+                required_ports.add(http_port)
+            for required_port in sorted(required_ports):
+                port_is_present = any(
+                    token.isdigit() and int(token) == required_port
+                    or "-" in token
+                    and all(part.strip().isdigit() for part in token.split("-", 1))
+                    and int(token.split("-", 1)[0]) <= required_port <= int(token.split("-", 1)[1])
+                    for token in port_tokens
+                )
+                if not port_is_present:
+                    rules.append(f"{line[:match.start()]}tcp dport {required_port}{line[match.end():]}")
     return rules
 
 
@@ -25939,6 +25976,7 @@ def _management_handoff_addresses(
     address_observation: dict | None = None,
     discovery_attempts: int = 45,
     exclude_previous_holdovers: bool = False,
+    include_flagged_access: bool = True,
 ) -> list[str]:
     """Return configured and all assigned global candidate management addresses.
 
@@ -25949,6 +25987,7 @@ def _management_handoff_addresses(
         address_observation: Complete live link readback, including secondary assigned addresses.
         discovery_attempts: Bounded runtime-address discovery attempts.
         exclude_previous_holdovers: Exclude old-only addresses while their old TLS listener is retained.
+        include_flagged_access: Include Access listeners served by the Public Services nginx site.
 
     Returns:
         The candidate listener address list.
@@ -25957,16 +25996,16 @@ def _management_handoff_addresses(
     rows = [
         row for row in physical
         if row.get("role") == "management"
-        or (
+        or (include_flagged_access and (
             row.get("role") == "access"
             and row.get("mode") == "access"
             and row.get("admin_state") == "up"
             and row.get("access_management_ui_enabled", "false").lower() == "true"
-        )
+        ))
     ]
     rows.extend(
         row for row in vlans
-        if row.get("role") == "access"
+        if include_flagged_access and row.get("role") == "access"
         and row.get("access_management_ui_enabled", "false").lower() == "true"
     )
     addresses: list[str] = []
@@ -26274,6 +26313,219 @@ def _management_handoff_snapshot_text(state: dict, runtime_path: Path) -> str:
     return ""
 
 
+def _management_handoff_previous_public_tls_addresses(state: dict) -> set[str]:
+    """Identify snapshotted public-service TLS sockets for previous management addresses.
+
+    Args:
+        state: Durable handoff snapshot with prior listeners and addresses.
+    """
+    site = _management_handoff_snapshot_text(state, NGINX_PUBLIC_SERVICES_SITE_PATH)
+    if not site:
+        return set()
+    if not site.startswith("# Managed by Atlaso. Local changes may be overwritten.\n"):
+        raise ValueError("previous Public Services nginx site is not canonical")
+    public_port = int(state.get("previous_management_public_port") or 443)
+    previous = {str(ip_address(value)) for value in state.get("previous_management_addresses", [])}
+    owned: set[str] = set()
+    for line in site.splitlines():
+        match = re.fullmatch(r"\s*listen (?:([0-9.]+)|\[([0-9a-fA-F:]+)\]):(\d+) ssl default_server;", line)
+        if match is None or int(match.group(3)) != public_port:
+            continue
+        address = ip_address(match.group(1) or match.group(2))
+        if str(address) in previous:
+            owned.add(str(address))
+    return owned
+
+
+def _management_handoff_candidate_public_tls_addresses(path: Path, port: int) -> set[str]:
+    """Return exact candidate Public Services TLS addresses on the management port.
+
+    Args:
+        path: Validated staged Public Services nginx configuration.
+        port: Candidate management HTTPS port.
+    """
+    site = path.read_text(encoding="utf-8")
+    if not site.startswith("# Managed by Atlaso. Local changes may be overwritten.\n"):
+        raise ValueError("candidate Public Services nginx site is not canonical")
+    owned: set[str] = set()
+    for line in site.splitlines():
+        match = re.fullmatch(
+            r"\s*listen (?:([0-9.]+)|\[([0-9a-fA-F:]+)\]):(\d+) ssl(?: default_server)?;", line,
+        )
+        if match is not None and int(match.group(3)) == port:
+            owned.add(str(ip_address(match.group(1) or match.group(2))))
+    return owned
+
+
+def _management_handoff_retained_public_site(state: dict) -> str:
+    """Point old Public Services TLS blocks at snapshotted certificate files.
+
+    Args:
+        state: Durable handoff snapshot with prior site and certificate files.
+    """
+    previous_site = _management_handoff_snapshot_text(state, NGINX_PUBLIC_SERVICES_SITE_PATH)
+    if not _management_handoff_previous_public_tls_addresses(state):
+        return previous_site
+    count = 0
+
+    def retained_certificate(match: re.Match[str]) -> str:
+        """Replace a live TLS path with its durable backup path.
+
+        Args:
+            match: Captured nginx certificate or private-key directive.
+        """
+        nonlocal count
+        path = _ca_managed_path(match.group(2).strip(), "previous_public_tls_path")
+        backup = _management_handoff_snapshot_backup_path(state, path)
+        count += 1
+        return f"{match.group(1)}{backup};{match.group(3)}"
+
+    retained = re.sub(
+        r"(?m)^([ \t]*ssl_certificate(?:_key)?[ \t]+)([^;\n]+);([ \t]*)$",
+        retained_certificate,
+        previous_site,
+    )
+    if count < 2:
+        raise ValueError("previous Public Services management TLS identity cannot be preserved")
+    return retained
+
+
+def _management_handoff_validate_public_tls_holdover(state: dict) -> None:
+    """Prove old Public Services TLS still references captured files after CA apply.
+
+    Args:
+        state: Durable handoff snapshot with prior site and certificate files.
+    """
+    if (_management_handoff_previous_public_tls_addresses(state)
+            and NGINX_PUBLIC_SERVICES_SITE_PATH.read_text(encoding="utf-8")
+            != _management_handoff_retained_public_site(state)):
+        raise ValueError("previous Public Services management TLS site cannot be preserved")
+
+
+def _management_handoff_public_site_with_holdover(
+    state: dict, candidate_site: str, *, deferred_sockets: set[str] | None = None,
+) -> str:
+    """Publish new Public Services sockets while retaining every old site block.
+
+    Args:
+        state: Durable handoff snapshot with the prior Public Services site.
+        candidate_site: Staged candidate Public Services nginx configuration.
+        deferred_sockets: Candidate sockets still owned by the old dedicated listener.
+    """
+    previous_public_tls = _management_handoff_previous_public_tls_addresses(state)
+    if not previous_public_tls and not deferred_sockets:
+        return candidate_site
+    previous_site = (
+        _management_handoff_retained_public_site(state)
+        if previous_public_tls
+        else _management_handoff_snapshot_text(state, NGINX_PUBLIC_SERVICES_SITE_PATH)
+    )
+    if not previous_site:
+        previous_site = "# Managed by Atlaso. Local changes may be overwritten.\n"
+    block_pattern = re.compile(r"(?ms)^server \{.*?^\}")
+
+    def blocks_and_sockets(site: str) -> list[tuple[str, set[str]]]:
+        """Require managed top-level server blocks and collect their exact sockets.
+
+        Args:
+            site: Managed nginx site configuration to parse.
+        """
+        if not site.startswith("# Managed by Atlaso. Local changes may be overwritten.\n"):
+            raise ValueError("Public Services handoff site is not canonical")
+        blocks = list(block_pattern.finditer(site))
+        remainder = block_pattern.sub("", site)
+        if any(line.strip() and not line.lstrip().startswith("#") for line in remainder.splitlines()):
+            raise ValueError("Public Services handoff site is not canonical")
+        parsed: list[tuple[str, set[str]]] = []
+        for match in blocks:
+            sockets = set(re.findall(r"(?m)^  listen ([^ ;]+)(?: [^;]+)?;\s*$", match.group()))
+            if not sockets:
+                raise ValueError("Public Services handoff server has no listener")
+            parsed.append((match.group(), sockets))
+        return parsed
+
+    old_blocks = blocks_and_sockets(previous_site)
+    old_sockets = set().union(*(sockets for _, sockets in old_blocks)) | (deferred_sockets or set())
+    additions: list[str] = []
+    for block, sockets in blocks_and_sockets(candidate_site):
+        if sockets.intersection(old_sockets):
+            if not sockets.issubset(old_sockets):
+                raise ValueError("Public Services handoff server mixes old and new sockets")
+            continue
+        additions.append(block)
+    return previous_site.rstrip() + "\n\n" + "\n\n".join(additions) + "\n"
+
+
+def _management_handoff_publish_final_sites(management_site: str, public_site: str) -> int:
+    """Validate and reload both final nginx sites in one listener transition.
+
+    Args:
+        management_site: Final dedicated management site text.
+        public_site: Final Public Services site text, possibly with no servers.
+
+    Returns:
+        Zero after a single successful reload, or a nonzero validation/reload code.
+    """
+    if _nginx_binary() is None:
+        return 127
+    if _vcf_depot_auth_required(public_site) and _write_vcf_depot_htpasswd(
+        _vcf_depot_auth_username(public_site)
+    ) != 0:
+        return 2
+    _install_nginx_include()
+    sites: tuple[tuple[Path, str | None], ...] = (
+        (NGINX_MANAGEMENT_SITE_PATH, management_site),
+        (NGINX_PUBLIC_SERVICES_SITE_PATH, public_site if "server {" in public_site else None),
+    )
+    previous: dict[Path, bytes | None] = {}
+    for path, _text in sites:
+        if path.is_symlink():
+            raise ValueError(f"management handoff nginx site is a symlink: {path}")
+        previous[path] = path.read_bytes() if path.exists() else None
+
+    def write_site(path: Path, content: bytes | None) -> None:
+        """Replace one site without presenting a temporary *.conf to nginx.
+
+        Args:
+            path: Canonical nginx site destination.
+            content: New site bytes or None to remove the site.
+        """
+        if content is None:
+            path.unlink(missing_ok=True)
+            return
+        path.parent.mkdir(parents=True, exist_ok=True)
+        temporary = path.with_suffix(".conf.handoff-tmp")
+        temporary.write_bytes(content)
+        os.chmod(temporary, 0o644)
+        temporary.replace(path)
+
+    published = False
+    try:
+        for path, text in sites:
+            write_site(path, text.encode("utf-8") if text is not None else None)
+        for path, text in sites:
+            if text is None:
+                continue
+            conflict = _nginx_site_conflict(path, text)
+            if conflict:
+                print(conflict, file=sys.stderr)
+                return 2
+        validation = _nginx_test_command()
+        print(validation.stdout, end="")
+        print(validation.stderr, end="", file=sys.stderr)
+        if validation.returncode != 0:
+            return validation.returncode
+        result = _reload_nginx()
+        if result == 0:
+            published = True
+            return 0
+        return result
+    finally:
+        if not published:
+            for path, content in previous.items():
+                write_site(path, content)
+
+
 def _management_handoff_snapshot_backup_path(state: dict, runtime_path: Path) -> Path:
     """Return the durable backup for one snapshotted runtime file.
 
@@ -26329,8 +26581,11 @@ def _management_handoff_protocol_holdover(state: dict, payload: dict) -> str:
             f"  ssl_certificate_key {holdover_key_path};",
         ]
     blocks: list[str] = []
+    public_tls = _management_handoff_previous_public_tls_addresses(state) if previous_https else set()
     for address in state.get("previous_management_addresses", []):
         parsed = ip_address(str(address))
+        if str(parsed) in public_tls:
+            continue
         listen_address = f"[{parsed}]" if parsed.version == 6 else str(parsed)
         ssl = " ssl" if previous_https else ""
         blocks.extend(
@@ -26348,13 +26603,14 @@ def _management_handoff_protocol_holdover(state: dict, payload: dict) -> str:
                 "",
             ]
         )
-    if not blocks:
+    if not blocks and not public_tls:
         raise ValueError("previous listener addresses are unavailable for protocol preservation")
     return "\n".join(blocks)
 
 
 def _management_handoff_initial_listener_addresses(
     candidate_addresses: list[str], state: dict, candidate_port: int, protocol_holdover: str,
+    *, preserve_public_http: bool = False,
 ) -> list[str]:
     """Keep a previous address on its old listener until final retirement.
 
@@ -26363,10 +26619,17 @@ def _management_handoff_initial_listener_addresses(
         state: Captured previous management listener state.
         candidate_port: New management public port.
         protocol_holdover: Old listener protocol retained during transition.
+        preserve_public_http: Keep old Public Services-owned addresses on the HTTP redirect.
     """
-    if not protocol_holdover or int(state["previous_management_public_port"]) != candidate_port:
+    if int(state["previous_management_public_port"]) != candidate_port:
+        return candidate_addresses
+    public_tls = (_management_handoff_previous_public_tls_addresses(state)
+                  if state.get("previous_https_enabled") else set())
+    if not protocol_holdover and not public_tls:
         return candidate_addresses
     previous_addresses = set(state["previous_management_addresses"])
+    if preserve_public_http:
+        previous_addresses.difference_update(public_tls)
     return [address for address in candidate_addresses if address not in previous_addresses]
 
 
@@ -27511,6 +27774,12 @@ def _apply_management_handoff(payload: dict) -> int:
         _write_management_handoff_state(state, "old-path-retained")
         failing_layer = "old listener isolation"
         _scope_management_handoff_old_listener(state)
+        if _management_handoff_previous_public_tls_addresses(state):
+            failing_layer = "previous Public Services TLS holdover"
+            if _install_nginx_site(
+                NGINX_PUBLIC_SERVICES_SITE_PATH, _management_handoff_retained_public_site(state),
+            ) != 0:
+                raise ValueError("previous Public Services TLS holdover could not be installed")
         failing_layer = "certificate"
         settings_payload = _load_appliance_settings_config(
             Path(str(payload["appliance_settings_config_path"]))
@@ -27519,7 +27788,10 @@ def _apply_management_handoff(payload: dict) -> int:
         ca_path = str(payload.get("ca_config_path") or "")
         if ca_path and _handle_ca("apply", [ca_path]) != 0:
             raise ValueError("candidate management certificate apply failed")
+        failing_layer = "previous Public Services TLS preservation"
+        _management_handoff_validate_public_tls_holdover(state)
         candidate_https = bool(settings_payload.get("management_https_enabled"))
+        candidate_http_port = int(settings_payload.get("management_public_http_port") or 80)
         candidate_public_port = int(
             settings_payload.get(
                 "management_public_https_port" if candidate_https else "management_public_http_port"
@@ -27538,6 +27810,7 @@ def _apply_management_handoff(payload: dict) -> int:
             Path(str(payload["network_config_path"])),
             candidate_public_port,
             candidate_firewall,
+            http_port=candidate_http_port if candidate_https else None,
         )
         final_firewall = _management_handoff_firewall_text(
             candidate_firewall,
@@ -27587,6 +27860,17 @@ def _apply_management_handoff(payload: dict) -> int:
         if not resolver_before_dns:
             apply_candidate_resolver()
         protocol_holdover = _management_handoff_protocol_holdover(state, settings_payload)
+        # Resolver/DNS activation can reconfigure networkd after the first
+        # address observation. In a DHCP-to-static transition using the same
+        # IPv4 address, that can briefly remove the address while IPv4 ACD
+        # restarts. Do not publish an address-bound nginx listener until the
+        # candidate address is assigned and stable again.
+        failing_layer = "candidate address revalidation"
+        address_observation = _wait_network_addresses(
+            Path(str(payload["network_config_path"])),
+            started_at=activation_started,
+            stable_samples=3,
+        )
         failing_layer = "candidate address discovery"
         previous_dynamic_families = {
             (str(path.get("name") or ""), family)
@@ -27606,8 +27890,47 @@ def _apply_management_handoff(payload: dict) -> int:
         )
         failing_layer = "certificate prerequisite"
         candidate_ca = _management_handoff_candidate_ca(public_certificate, candidate_addresses)
+        # Public Services renders flagged Access management sockets only on its
+        # HTTPS/443 front door. Other configured management ports and HTTP stay
+        # on the dedicated nginx site alongside any dedicated-role addresses.
+        public_services_owns_flagged = candidate_https and candidate_public_port == 443
+        management_site_addresses = _management_handoff_addresses(
+            Path(str(payload["network_config_path"])),
+            address_observation=address_observation,
+            previous_addresses=set(state["previous_management_addresses"]),
+            previous_dynamic_families=previous_dynamic_families,
+            exclude_previous_holdovers=True,
+            include_flagged_access=not public_services_owns_flagged,
+        )
+        candidate_public_tls = (
+            _management_handoff_candidate_public_tls_addresses(
+                Path(str(payload["public_services_config_path"])), candidate_public_port,
+            ) if public_services_owns_flagged else set()
+        )
+        if public_services_owns_flagged:
+            management_site_addresses = [
+                address for address in candidate_addresses if address not in candidate_public_tls
+            ]
+        previous_public_tls = _management_handoff_previous_public_tls_addresses(state)
+        deferred_public_addresses = (
+            candidate_public_tls
+            & (set(state["previous_management_addresses"]) - previous_public_tls)
+            if state["previous_https_enabled"]
+            and int(state["previous_management_public_port"]) == candidate_public_port
+            else set()
+        )
+        deferred_public_sockets = {
+            f"{'[' + address + ']' if ':' in address else address}:{candidate_public_port}"
+            for address in deferred_public_addresses
+        }
+        if deferred_public_addresses and previous_public_tls.intersection(management_site_addresses):
+            raise ValueError("opposing Public Services and dedicated TLS ownership changes require separate applies")
         initial_listener_addresses = _management_handoff_initial_listener_addresses(
             candidate_addresses, state, candidate_public_port, protocol_holdover,
+            preserve_public_http=True,
+        )
+        initial_https_addresses = _management_handoff_initial_listener_addresses(
+            management_site_addresses, state, candidate_public_port, protocol_holdover,
         )
         initial_http_addresses = None
         if protocol_holdover and not state["previous_https_enabled"] and candidate_https:
@@ -27621,10 +27944,21 @@ def _apply_management_handoff(payload: dict) -> int:
             verify_front_door=False,
             listen_addresses=initial_listener_addresses,
             http_listen_addresses=initial_http_addresses,
+            https_listen_addresses=initial_https_addresses if candidate_https else None,
         )
         if management_https_result != 0:
             raise ValueError("candidate management nginx apply failed")
-        if _handle_public_services("apply", [str(payload["public_services_config_path"])]) != 0:
+        transitional_public_needed = bool(previous_public_tls or deferred_public_sockets)
+        transitional_public_site = None
+        if transitional_public_needed:
+            public_site = Path(str(payload["public_services_config_path"])).read_text(encoding="utf-8")
+            transitional_public_site = _management_handoff_public_site_with_holdover(
+                state, public_site, deferred_sockets=deferred_public_sockets,
+            )
+        if _handle_public_services(
+            "apply", [str(payload["public_services_config_path"])],
+            **({"transitional_text": transitional_public_site} if transitional_public_needed else {}),
+        ) != 0:
             raise ValueError("candidate public-services nginx apply failed")
         if _nginx_test_command().returncode != 0:
             raise ValueError("candidate nginx validation failed")
@@ -27709,13 +28043,46 @@ def _apply_management_handoff(payload: dict) -> int:
             if _handle_firewall("apply", [str(transition_path)]) != 0:
                 raise ValueError("final nftables apply failed while retiring the previous path")
         failing_layer = "verified-listener publication"
-        management_https_result, _restart_delay_seconds = _configure_atlaso_management_https(
-            settings_payload,
-            verify_front_door=False,
-            listen_addresses=[*candidate_addresses, "127.0.0.1", "::1"],
+        management_site_addresses = _management_handoff_addresses(
+            Path(str(payload["network_config_path"])),
+            address_observation=final_address_observation,
+            previous_addresses=set(state["previous_management_addresses"]),
+            previous_dynamic_families=previous_dynamic_families,
+            include_flagged_access=not public_services_owns_flagged,
         )
-        if management_https_result != 0:
-            raise ValueError("candidate nginx could not publish verified final listeners")
+        if public_services_owns_flagged:
+            management_site_addresses = [
+                address for address in candidate_addresses if address not in candidate_public_tls
+            ]
+        final_listen_addresses = [*candidate_addresses, "127.0.0.1", "::1"]
+        final_https_addresses = (
+            [*management_site_addresses, "127.0.0.1", "::1"] if candidate_https else None
+        )
+        if transitional_public_needed:
+            certificate = (
+                _ca_managed_path(str(settings_payload["management_https_cert_path"]), "management_https_cert_path")
+                if candidate_https else None
+            )
+            key = (
+                _ca_managed_path(str(settings_payload["management_https_key_path"]), "management_https_key_path")
+                if candidate_https else None
+            )
+            final_management_site = _management_nginx_config(
+                settings_payload, certificate, key, listen_addresses=final_listen_addresses,
+                https_listen_addresses=final_https_addresses,
+            ).rstrip() + "\n"
+            final_public_site = Path(str(payload["public_services_config_path"])).read_text(encoding="utf-8")
+            if _management_handoff_publish_final_sites(final_management_site, final_public_site) != 0:
+                raise ValueError("candidate nginx could not publish verified final listeners together")
+        else:
+            management_https_result, _restart_delay_seconds = _configure_atlaso_management_https(
+                settings_payload,
+                verify_front_door=False,
+                listen_addresses=final_listen_addresses,
+                https_listen_addresses=final_https_addresses,
+            )
+            if management_https_result != 0:
+                raise ValueError("candidate nginx could not publish verified final listeners")
         failing_layer = "post-retirement readiness"
         final_readiness = _management_handoff_readiness(
             candidate_addresses,

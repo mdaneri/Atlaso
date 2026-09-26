@@ -10,7 +10,7 @@ function functionSource(name) {
   const ordinaryStart = appSource.indexOf(`function ${name}(`);
   const start = asyncStart >= 0 ? asyncStart : ordinaryStart;
   assert.notEqual(start, -1, `${name} must exist in app.js`);
-  const bodyStart = appSource.indexOf("{", start);
+  const bodyStart = appSource.indexOf(") {", start) + 2;
   let depth = 0;
   for (let index = bodyStart; index < appSource.length; index += 1) {
     if (appSource[index] === "{") depth += 1;
@@ -20,7 +20,7 @@ function functionSource(name) {
   throw new Error(`Unable to extract ${name}`);
 }
 
-function conversionScenario(overrides = {}, confirmed = true) {
+function conversionScenario(overrides = {}, confirmed = true, saveFails = false) {
   const data = {
     name: "eth0",
     role: "management",
@@ -43,13 +43,14 @@ function conversionScenario(overrides = {}, confirmed = true) {
   };
   const context = vm.createContext({
     requestConfirmation: async (options) => { confirmationOptions = options; return confirmed; },
-    savePhysicalInterfaceRow: async () => { saved = true; },
+    savePhysicalInterfaceRow: async () => { if (saveFails) throw new Error("save rejected"); saved = true; },
     showNetworkMessage() {},
   });
   vm.runInContext(
     `${functionSource("isValidIpv4Address")}
      ${functionSource("isValidCidr")}
      ${functionSource("ipv4GatewayIsOnLink")}
+     ${functionSource("canConvertPhysicalDhcpToStatic")}
      ${functionSource("convertManagementDhcpInterfaceToStatic")}
      globalThis.run = convertManagementDhcpInterfaceToStatic;`,
     context,
@@ -82,6 +83,127 @@ test("cancelling DHCP conversion preserves the DHCP row", async () => {
   assert.equal(result.data.ipv4_method, "dhcp");
   assert.equal(result.data.gateway, "");
 });
+
+test("legacy Access management DHCP can be converted without changing role or IPv6 intent", async () => {
+  const result = await conversionScenario({
+    role: "access", mode: "access", admin_up: true, access_management_ui_enabled: true,
+    ipv6_enabled: true, ipv6_cidr: "", host_ipv6_cidr: "fd00:167::219/64",
+  });
+  assert.equal(result.saved, true);
+  assert.equal(result.data.role, "access");
+  assert.equal(result.data.access_management_ui_enabled, true);
+  assert.equal(result.data.ipv4_method, "static");
+  assert.equal(result.data.ip_cidr, "192.168.167.219/24");
+  assert.equal(result.data.gateway, "");
+  assert.equal(result.data.ipv6_cidr, "");
+  assert.equal(result.data.ipv6_enabled, true);
+  assert.match(result.confirmationOptions.message, /Routes & WAN/);
+  assert.match(result.confirmationOptions.message, /global appliance apply/i);
+});
+
+test("administratively down legacy Access DHCP can recover before being re-enabled", async () => {
+  const result = await conversionScenario({
+    role: "access", mode: "access", admin_up: false, access_management_ui_enabled: true,
+  });
+  assert.equal(result.saved, true);
+  assert.equal(result.data.admin_up, false);
+  assert.equal(result.data.role, "access");
+  assert.equal(result.data.ipv4_method, "static");
+  assert.equal(result.data.ip_cidr, "192.168.167.219/24");
+  assert.equal(result.data.gateway, "");
+});
+
+test("Access DHCP recovery cancellation and ineligible rows never save", async () => {
+  const access = { role: "access", mode: "access", admin_up: true, access_management_ui_enabled: true };
+  const cancelled = await conversionScenario(access, false);
+  assert.equal(cancelled.saved, false);
+  assert.equal(cancelled.data.ipv4_method, "dhcp");
+  const failed = await conversionScenario(access, true, true);
+  assert.equal(failed.saved, false);
+  assert.equal(failed.data.ipv4_method, "dhcp");
+  assert.equal(failed.data.ip_cidr, "");
+  assert.equal(failed.data.role, "access");
+  assert.equal(failed.data.access_management_ui_enabled, true);
+  for (const override of [{ access_management_ui_enabled: false }, { mode: "trunk" }, { host_ip_cidr: "" }, { oper_state: "missing" }]) {
+    const rejected = await conversionScenario({ ...access, ...override });
+    assert.equal(rejected.saved, false);
+    assert.equal(rejected.confirmationOptions, null);
+  }
+});
+
+function physicalGridScenario() {
+  let options;
+  const requests = [];
+  class Element {
+    constructor() {
+      this.dataset = { canWrite: "true", csrf: "csrf", roleOptions: "[]", modeOptions: "[]", ipv4MethodOptions: "[]", interfaces: "[]" };
+      this.listeners = {};
+      this.classList = { toggle() {}, add() {} };
+    }
+    addEventListener(name, listener) { this.listeners[name] = listener; }
+    setAttribute() {}
+    focus() {}
+    select() {}
+  }
+  const tableElement = new Element();
+  const context = vm.createContext({
+    HTMLElement: Element, Tabulator: {}, FormData, URL,
+    document: { getElementById: (id) => id === "physical-interfaces-table" ? tableElement : null, createElement: () => new Element() },
+    window: { AtlasoUiPatterns: { createGrid: (value) => { options = value.options; return { table: {} }; } } },
+    roleValues: (value) => value, labeledValues: (value) => value,
+    physicalRoleFormatter() {}, atlasoBooleanFormatter() {}, networkAddressStatusFormatter() {},
+    adminStateFormatter() {}, operStateFormatter() {}, clearCaMessage() {}, showTransientGridStatus() {},
+    showNetworkMessage: (_id, message) => { throw new Error(message); },
+    managementUiPath: (path) => `/ui/management${path}`,
+    refreshNetworkSideStack: async () => {},
+    fetch: async (url, request) => { requests.push({ url, request }); return { ok: true }; },
+  });
+  const names = ["isValidIpv4Address", "isValidIpv6Address", "isValidCidr", "cidrInputEditor", "canConvertPhysicalDhcpToStatic", "postNetworkAction", "autoSavePhysicalInterface", "initializePhysicalInterfacesTable"];
+  vm.runInContext(`${names.map(functionSource).join("\n")} initializePhysicalInterfacesTable();`, context);
+  return { options, requests };
+}
+
+test("Access DHCP row exposes recovery while retaining the unsupported-DHCP edit restriction", () => {
+  const { options } = physicalGridScenario();
+  const data = { role: "access", mode: "access", admin_up: true, access_management_ui_enabled: true, ipv4_method: "dhcp", host_ip_cidr: "192.168.167.219/24" };
+  const row = { getData: () => data };
+  const conversion = options.rowContextMenu.find((item) => item.label === "Convert DHCP lease to static");
+  assert.equal(conversion.disabled(row), false);
+  assert.equal(options.columns.find((column) => column.field === "ipv4_method").editable({ getRow: () => row }), false);
+  data.admin_up = false;
+  assert.equal(conversion.disabled(row), false);
+  data.access_management_ui_enabled = false;
+  assert.equal(conversion.disabled(row), true);
+  data.access_management_ui_enabled = true;
+  data.oper_state = "missing";
+  assert.equal(conversion.disabled(row), true);
+});
+
+for (const [field, address] of [["ip_cidr", "192.168.168.30/24"], ["ipv6_cidr", "fd00:168::30/64"]]) {
+  test(`Access management ${field} editor submits the address and retained exposure`, async () => {
+    const { options, requests } = physicalGridScenario();
+    const data = {
+      id: 7, role: "access", mode: "access", admin_up: true, access_management_ui_enabled: true,
+      ipv4_method: "static", ip_cidr: "192.168.167.219/24", gateway: "", ipv6_enabled: true,
+      ipv6_cidr: "fd00:167::219/64", ipv6_gateway: "",
+    };
+    const row = { getData: () => data };
+    const cell = { getRow: () => row, getValue: () => data[field] };
+    const column = options.columns.find((candidate) => candidate.field === field);
+    assert.equal(column.editable(cell), true);
+    let saved;
+    const input = column.editor(cell, () => {}, (value) => { data[field] = value; saved = column.cellEdited(cell); }, () => assert.fail("valid address cancelled"), column.editorParams);
+    input.value = address;
+    input.listeners.keydown({ key: "Enter", preventDefault() {} });
+    await saved;
+    assert.equal(requests.length, 1);
+    assert.equal(requests[0].url, "/ui/management/physical-interfaces/7/edit");
+    assert.equal(requests[0].request.body.get(field), address);
+    assert.equal(requests[0].request.body.get("access_management_ui_enabled"), "on");
+    assert.equal(requests[0].request.body.get("role"), "access");
+    assert.equal(requests[0].request.body.get("admin_state"), "up");
+  });
+}
 
 test("clearing a configured gateway requires the routed-connectivity warning", async () => {
   let options = null;

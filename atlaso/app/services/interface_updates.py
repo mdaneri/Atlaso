@@ -1122,6 +1122,9 @@ def _preserve_management_dhcp_dns_on_static_conversion(
     interface: PhysicalInterface,
     *,
     new_role: str,
+    new_mode: str,
+    new_management_ui_enabled: bool,
+    new_admin_state: str,
     old_ipv4_method: str,
     new_ipv4_method: str,
 ) -> list[str]:
@@ -1131,16 +1134,45 @@ def _preserve_management_dhcp_dns_on_static_conversion(
         db: Active database session.
         interface: Management interface being converted.
         new_role: Normalized desired interface role.
+        new_mode: Desired interface mode.
+        new_management_ui_enabled: Whether the desired Access listener remains enabled.
+        new_admin_state: Desired administrative state.
         old_ipv4_method: Previous normalized IPv4 method.
         new_ipv4_method: Desired normalized IPv4 method.
     """
-    if (
-        new_role != "management"
-        or old_ipv4_method != "dhcp"
-        or new_ipv4_method != "static"
+    if old_ipv4_method != "dhcp" or new_ipv4_method != "static":
+        return []
+    if new_role != "management" and not (
+        new_role == "access" and new_mode == "access"
+        and new_management_ui_enabled and new_admin_state == "up"
     ):
         return []
-    _management, observed_servers = management_dhcp_dns_context([interface])
+    # Evaluate listener eligibility using the proposed role, mode, flag, and
+    # admin state while retaining the old DHCP method for lease DNS discovery.
+    # A separate view keeps the ORM row untouched until the update commits.
+    candidate = PhysicalInterface(
+        name=interface.name,
+        mac_address=interface.mac_address,
+        role=new_role,
+        mode=new_mode,
+        admin_state=new_admin_state,
+        oper_state=interface.oper_state,
+        access_management_ui_enabled=new_management_ui_enabled,
+        ipv4_method=old_ipv4_method,
+        host_ip_cidr=interface.host_ip_cidr,
+        ip_cidr=interface.ip_cidr,
+        ipv6_enabled=interface.ipv6_enabled,
+        ipv6_cidr=interface.ipv6_cidr,
+        host_ipv6_cidr=interface.host_ipv6_cidr,
+    )
+    interfaces = [
+        candidate if row.name == interface.name else row
+        for row in db.scalars(select(PhysicalInterface)).all()
+    ]
+    vlans = list(db.scalars(select(VlanInterface)).all())
+    management, observed_servers = management_dhcp_dns_context(interfaces, vlans)
+    if management.get("name") != interface.name:
+        return []
     if not observed_servers:
         return []
     preserved: list[str] = []
@@ -1413,6 +1445,9 @@ def update_physical_interface_desired_state(
             db,
             interface,
             new_role=role_value,
+            new_mode=new_mode,
+            new_management_ui_enabled=management_ui_value,
+            new_admin_state=admin_state_value,
             old_ipv4_method=old_ipv4_method,
             new_ipv4_method=ipv4_method_value,
         )
