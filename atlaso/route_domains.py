@@ -210,26 +210,18 @@ def source_tables(intent: Intent, inventory: Any) -> tuple[dict[str, int | None]
     if not isinstance(inventory, list) or len(inventory) > 4096:
         raise ReconcileError("invalid native address inventory")
     links: dict[str, dict[str, Any]] = {}
+    link_sources: dict[str, set[str]] = {}
+    occurrences: dict[str, set[str]] = {}
     for link in inventory:
         if not isinstance(link, dict) or not isinstance(link.get("ifname"), str):
             raise ReconcileError("invalid native link inventory")
         if link["ifname"] in links:
             raise ReconcileError("ambiguous native link inventory")
         links[link["ifname"]] = link
-    holds = {(row.interface.name, row.address): row for row in intent.held_addresses}
-    owners = {(row.name, row.mac): row for row in intent.interfaces}
-    for row in intent.held_addresses:
-        owners.setdefault((row.interface.name, row.interface.mac), row.interface)
-    sources: dict[str, set[int]] = {}
-    incomplete = False
-    for interface in owners.values():
-        link = links.get(interface.name)
-        if link is None or str(link.get("address", "")).lower() != interface.mac:
-            incomplete = True
-            continue
         entries = link.get("addr_info")
         if not isinstance(entries, list) or len(entries) > 4096:
             raise ReconcileError("invalid native addresses")
+        assigned: set[str] = set()
         for entry in entries:
             if not isinstance(entry, dict):
                 raise ReconcileError("invalid native address")
@@ -241,9 +233,24 @@ def source_tables(intent: Intent, inventory: Any) -> tuple[dict[str, int | None]
             if entry.get("valid_life_time") == 0:
                 continue
             try:
-                source = usable_address(entry.get("local"))
+                assigned.add(usable_address(entry.get("local")))
             except ReconcileError:
                 continue
+        link_sources[link["ifname"]] = assigned
+        for source in assigned:
+            occurrences.setdefault(source, set()).add(link["ifname"])
+    holds = {(row.interface.name, row.address): row for row in intent.held_addresses}
+    owners = {(row.name, row.mac): row for row in intent.interfaces}
+    for row in intent.held_addresses:
+        owners.setdefault((row.interface.name, row.interface.mac), row.interface)
+    sources: dict[str, set[int]] = {}
+    incomplete = False
+    for interface in owners.values():
+        link = links.get(interface.name)
+        if link is None or str(link.get("address", "")).lower() != interface.mac:
+            incomplete = True
+            continue
+        for source in link_sources[interface.name]:
             hold = holds.get((interface.name, source))
             if hold is not None and hold.interface.mac == interface.mac:
                 table = hold.interface.table
@@ -252,7 +259,10 @@ def source_tables(intent: Intent, inventory: Any) -> tuple[dict[str, int | None]
             else:
                 table = interface.table
             sources.setdefault(source, set()).add(table)
-    return {source: next(iter(tables)) if len(tables) == 1 else None for source, tables in sources.items()}, incomplete
+    return {
+        source: next(iter(tables)) if len(tables) == 1 and len(occurrences[source]) == 1 else None
+        for source, tables in sources.items()
+    }, incomplete
 
 
 def removed_interface_holds(
@@ -958,8 +968,10 @@ def _seed_transition_sources_locked(bindings: Any, *, allow_absent: bool = False
             raise ReconcileError("previous management source identity unavailable")
         owners.append(owner)
     sources, incomplete = source_tables(Intent(tuple(owners)), inventory)
-    if incomplete or any(table is None for table in sources.values()):
+    if incomplete:
         raise ReconcileError("previous management source identity unavailable")
+    if any(table is None for table in sources.values()):
+        raise ReconcileError("ambiguous previous management source")
     for source in sources:
         appearances = 0
         for link in inventory:

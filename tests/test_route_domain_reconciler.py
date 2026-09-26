@@ -321,6 +321,30 @@ def test_shared_source_is_guarded_without_arbitrary_table(monkeypatch):
     assert commands == [domains.rule_command("add", next(iter(desired))), domains.rule_command("del", next(iter(old)))]
 
 
+@pytest.mark.parametrize("source", ["192.0.2.10", "2001:db8::10"])
+def test_unmanaged_duplicate_source_quarantines_owned_lookup(source):
+    """A live duplicate on an unmanaged link cannot inherit the owned table.
+
+    Args:
+        source: Assigned IPv4 or IPv6 address duplicated across links.
+    """
+    management = interface()
+    unmanaged = interface("eth9", "02:00:00:00:00:09", 200)
+    native = [link(management, source), link(unmanaged, source)]
+    assert domains.source_tables(intent(management), native) == ({source: None}, False)
+    old = {domains.Rule(5000, source, 100)}
+    assert domains.plan_rules({source: None}, old) == {domains.Rule(5001, source, None)}
+
+
+def test_expired_unmanaged_duplicate_does_not_quarantine_live_source():
+    """Only usable native addresses count as duplicate link ownership."""
+    management = interface()
+    unmanaged = interface("eth9", "02:00:00:00:00:09", 200)
+    native = [link(management, "192.0.2.10"),
+              link(unmanaged, {"local": "192.0.2.10", "valid_life_time": 0})]
+    assert domains.source_tables(intent(management), native) == ({"192.0.2.10": 100}, False)
+
+
 def test_renewal_and_slaac_expiry_install_new_pairs_before_retiring_old(monkeypatch):
     """Renewal keeps unrelated stable priorities while safely replacing expired sources.
 
