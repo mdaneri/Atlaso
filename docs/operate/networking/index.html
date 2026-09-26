@@ -4340,6 +4340,15 @@ DHCP address and route; a failed protected management handoff rolls back to the 
 management prefix in policy table <code>100</code>, a source rule selecting that table, and the default route through the reviewed
 gateway. The connected route keeps replies to the VMware host or another same-subnet client on-link after reboot; the
 default route continues to carry off-subnet appliance traffic.</p>
+<p>If an existing <strong>Access</strong> interface with <strong>Management UI</strong> enabled still shows <strong>DHCP</strong>, use the same <strong>Convert DHCP lease
+to static</strong> row action to recover editable static IPv4 desired state. Refresh host inventory first if no address is
+observed. The confirmation preserves the Access role, Management UI exposure, and IPv6 configuration. It copies only
+the observed IPv4 address and prefix; Access gateways remain owned by <strong>Routes &amp; WAN</strong>. Review any required static
+routes before Apply to avoid losing off-subnet connectivity. Cancel leaves desired state unchanged. After conversion,
+edit <strong>IPv4 CIDR</strong> normally, or <strong>IPv6 CIDR</strong> when IPv6 is enabled, and review the protected management handoff through
+global Appliance Apply. When this Access interface is the effective management listener, conversion preserves its
+observed DHCP DNS in empty resolver and DNS-forwarder settings; explicit DNS values remain unchanged. This recovery
+action does not enable DHCP for new Access configurations.</p>
 <h3 id="assign-an-interface-role">Assign an interface role<a class="headerlink" href="#assign-an-interface-role" title="Permanent link">&para;</a></h3>
 <p>Physical and VLAN interfaces share one role contract:</p>
 <ul>

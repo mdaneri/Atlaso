@@ -4185,11 +4185,9 @@ also validate listener conflicts. See <a href="../traffic-publishing/">Traffic P
 <li>Open a component row to inspect its bounded, redacted result.</li>
 <li>Wait for completion; the dialog, sidebar badge, pending count, and global write lock update without a page reload.</li>
 </ol>
-<p>If another session starts a new Apply immediately after the current master finishes, the monitor completes the current
-task's terminal refresh before following the newer task.</p>
-<p>Components run sequentially. If one component fails, Atlaso stops the sequence and marks the remaining components
-<strong>skipped</strong>. Other write operations are locked while the master task is pending or running; read-only pages, task
-inspection, authentication actions, and safe cancellation remain available.</p>
+<p>If another session starts an Apply after the current one, the monitor finishes the current task's refresh first.</p>
+<p>Components run sequentially. On failure, Atlaso marks the rest <strong>skipped</strong>. Writes are locked while a master task
+is pending or running; read-only pages, task inspection, authentication, and safe cancellation remain available.</p>
 <p>A management-path change is the exception to independent component execution. Atlaso selects Certificate Authority,
 Network, Firewall, Appliance Settings, and Public Services together after all other dependencies expand, then runs one
 recoverable handoff. It retains the previous addresses, listener, firewall policy, and TLS identity until bounded Atlaso
@@ -4235,7 +4233,9 @@ the last-applied external or DHCP resolver active until then, so an unapplied se
 When disabling applied local DNS, selecting <strong>DNS/DHCP (dnsmasq)</strong> includes <strong>Appliance Settings</strong> first, moving the
 management resolver away from <code>127.0.0.1</code> before the local listener stops.
 If enabling Management HTTPS creates a pending CA-managed certificate, the review includes <strong>Certificate Authority</strong> and
-installs its files before <strong>Appliance Settings</strong>. The protected management handoff uses the same ordering.</p>
+installs its files before <strong>Appliance Settings</strong>. Changing the management HTTP/HTTPS mode or public listener port uses
+the protected handoff to recompute Network, Firewall, and Public Services listeners together. If Network has separate
+pending edits, select Network explicitly with Appliance Settings before submitting that change.</p>
 <p>Examples include checking service health, resolving a managed DNS name, reaching the intended listener, or confirming
 installed configuration from the appliance console. Use the service-specific procedure; a green UI status is insufficient.</p>
 <p>In development, adapters normally run in dry-run mode. A successful dry-run proves that Atlaso validated and recorded
