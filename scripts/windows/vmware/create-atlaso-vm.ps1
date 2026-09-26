@@ -29,6 +29,10 @@ Required depot virtual capacity.
 Required backup virtual capacity.
 .PARAMETER SkipLabNetworkAdapters
 Configure only the management adapter.
+.PARAMETER CloneCreated
+Optional lifecycle ownership callback invoked with the newly cloned directory and VMX before either is configured.
+.PARAMETER CloneCreatedContext
+Explicit parent ownership data forwarded to the creation callback without consulting child script variables.
 #>
 [CmdletBinding(SupportsShouldProcess = $true)]
 param(
@@ -48,7 +52,9 @@ param(
     [string]$DepotDiskSize = '500GB',
     [ValidateScript({ $_ -eq '500GB' })]
     [string]$BackupDiskSize = '500GB',
-    [switch]$SkipLabNetworkAdapters
+    [switch]$SkipLabNetworkAdapters,
+    [scriptblock]$CloneCreated,
+    [object]$CloneCreatedContext
 )
 
 $ErrorActionPreference = 'Stop'
@@ -152,7 +158,7 @@ VMX file to update.
 .PARAMETER Key
 VMX assignment key.
 .PARAMETER Value
-VMX assignment value.
+Literal replacement text encoded as a quoted VMX assignment.
 #>
 function Set-VmxValue {
     param(
@@ -357,6 +363,10 @@ if ($PSCmdlet.ShouldProcess($targetVmx, "Clone Atlaso Workstation VM from $resol
 
 if (-not (Test-Path -LiteralPath $targetVmx)) {
     throw "VMware clone completed but target VMX was not found: $targetVmx"
+}
+
+if ($null -ne $CloneCreated) {
+    & $CloneCreated $resolvedOutputDirectory $targetVmx $CloneCreatedContext
 }
 
 $null = Get-AtlasoVmwarePayloadLayout -VmxPath $targetVmx -RequireExactlyTwoVmdks

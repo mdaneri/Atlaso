@@ -9,6 +9,420 @@ import pytest
 from tests.routers.ui.helpers import login
 
 
+@pytest.mark.parametrize("baseline_kind", ["missing", "legacy", "modern"])
+@pytest.mark.parametrize("selection", ["wan", "nat"])
+@pytest.mark.parametrize("invalid_network", [False, True])
+def test_initial_wan_submission_includes_network_dependency(client, monkeypatch, baseline_kind, selection, invalid_network, handoff=False):
+    """Expand fresh WAN dependencies before validation without coupling upgrades.
+
+    Args:
+        client: Isolated HTTP application fixture.
+        monkeypatch: Keep jobs pending and inject controlled unit validation.
+        baseline_kind: Saved Network baseline migration state.
+        selection: Direct WAN selection or NAT that adds WAN transitively.
+        invalid_network: Whether the Network dependency has a validation error.
+        handoff: Whether Network requires the protected management transaction.
+    """
+    from atlaso.app import ui
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Job
+
+    login(client)
+    page = client.get("/dashboard")
+    csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    with SessionLocal() as db:
+        baselines = ui.load_appliance_apply_baselines(db)
+        baselines.pop("network", None)
+        if baseline_kind != "missing":
+            preview = "[physical_interfaces]\n"
+            if baseline_kind == "modern":
+                preview = "# Network runtime revision: exact-source-routing-v1.\n" + preview
+            baselines["network"] = {"snapshot_hash": "prior-network", "config_preview": preview}
+        ui.save_appliance_apply_baselines(db, baselines)
+        db.commit()
+        units = ui.appliance_apply_units(db)
+        count_before = db.query(Job).count()
+    for unit in units:
+        if unit["id"] == "network":
+            # Test the fresh dependency independently of NAT's changed-state rule.
+            unit["changed"] = False
+            unit["management_handoff_required"] = handoff
+            unit["management_default_mirror_change"] = False
+            unit["validation_errors"] = ["invalid Network dependency"] if invalid_network else []
+        elif unit["id"] == "wan":
+            unit["changed"] = True
+            unit["validation_errors"] = []
+        elif unit["id"] == "nat":
+            unit["context"]["traffic_publishing_settings"] = SimpleNamespace(effective_nat_enabled=selection == "nat")
+            unit["context"]["port_forward_effective"] = False
+            unit["validation_errors"] = []
+    monkeypatch.setattr(ui, "appliance_apply_units", lambda _db: units)
+    monkeypatch.setattr(ui, "run_appliance_apply_job", lambda _job_id: None)
+    response = client.post("/appliance-apply", data={"csrf": csrf, "selected_units": selection},
+                           headers={"Accept": "application/json"})
+    blocked = baseline_kind == "missing" and invalid_network
+    assert response.status_code == (422 if blocked else 202)
+    with SessionLocal() as db:
+        assert db.query(Job).count() == count_before + (0 if blocked else 1)
+        if not blocked:
+            job = db.get(Job, response.json()["job_id"])
+            payload = json.loads(job.result)
+            selected = payload["selected_units"]
+            assert payload["management_handoff"] is handoff
+            if handoff:
+                assert set(ui.MANAGEMENT_HANDOFF_UNIT_IDS).issubset(selected)
+            assert ("network" in selected) is (baseline_kind == "missing")
+            assert "wan" in selected
+            if baseline_kind == "missing":
+                assert selected.index("network") < selected.index("wan")
+
+
+def test_initial_wan_dependency_expands_protected_management_handoff(client, monkeypatch):
+    """Compute protected handoff after adding the initial Network dependency.
+
+    Args:
+        client: Isolated HTTP application fixture.
+        monkeypatch: Replace host execution and the Network handoff requirement.
+    """
+    test_initial_wan_submission_includes_network_dependency(client, monkeypatch, "missing", "wan", False, handoff=True)
+
+
+@pytest.mark.parametrize("baseline_kind", ["modern", "legacy", "missing"])
+def test_wan_review_uses_applied_network_ingress_with_pending_network(client, baseline_kind):
+    """Keep WAN-only selectors on applied intent and label combined Apply correctly.
+
+    Args:
+        client: Isolated application database fixture.
+        baseline_kind: Applied Network migration state to project.
+    """
+    from atlaso.app import ui
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.services.routes_wan import save_routes_wan_settings
+
+    with SessionLocal() as db:
+        save_routes_wan_settings(db, routing_enabled=True, nat_enabled=False, wan_simulation_enabled=False)
+        baseline_preview = "[physical_interfaces]\ninterface=eth9\n  role=access\n  mode=access\n  admin_state=up\n"
+        baseline_preview += "  ip_cidr=192.0.2.10/24\n  ipv6_enabled=true\n  ipv6_cidr=2001:db8:1::10/64\n"
+        baseline_preview += "interface=eth8\n  role=route\n  mode=access\n  admin_state=down\n"
+        baseline_preview += "interface=eth7\n  role=access\n  mode=trunk\n  admin_state=up\n"
+        baseline_preview += "interface=eth6\n  role=management\n  mode=access\n  admin_state=up\n"
+        if baseline_kind == "modern":
+            baseline_preview = "# Network runtime revision: exact-source-routing-v1.\n" + baseline_preview
+        baselines = ui.load_appliance_apply_baselines(db)
+        baselines.pop("network", None)
+        if baseline_kind != "missing":
+            baselines["network"] = {"config_preview": baseline_preview, "snapshot_hash": "prior-network"}
+        ui.save_appliance_apply_baselines(db, baselines)
+        db.commit()
+        page = ui.routes_wan_context(db)
+        units = ui.appliance_apply_units(db)
+        assert next(unit for unit in units if unit["id"] == "network")["changed"]
+        wan = next(unit for unit in units if unit["id"] == "wan")
+        candidate = wan["network_candidate_variant"]["config_preview"]
+        candidate_names = set(ui.wan_network_ingress_from_preview(
+            next(unit for unit in units if unit["id"] == "network")["config_preview"]
+        ))
+        candidate_commands = [line for line in candidate.splitlines() if "rule add iif " in line]
+        assert len(candidate_commands) == 4 * len(candidate_names)
+        assert {line.split(" iif ", 1)[1].split()[0] for line in candidate_commands} == candidate_names
+        assert "candidate Network intent applied before WAN" in candidate
+        for preview in (page["wan_config_preview"], wan["config_preview"]):
+            commands = [line for line in preview.splitlines() if "rule add iif " in line]
+            if baseline_kind == "missing":
+                network = next(unit for unit in units if unit["id"] == "network")
+                names = set(ui.wan_network_ingress_from_preview(network["config_preview"]))
+                assert len(commands) == 4 * len(names)
+                assert {line.split(" iif ", 1)[1].split()[0] for line in commands} == names
+                assert "Initial WAN Apply automatically includes Network first" in preview
+                assert "pre-migration baselines" not in preview
+            else:
+                assert len(commands) == (4 if baseline_kind == "modern" else 0)
+                assert all(" iif eth9 " in line for line in commands)
+                assert "not pending Network edits" in preview
+                assert "If Network is applied first in the same task" in preview
+                if baseline_kind == "modern":
+                    assert "Connected routes and dedicated-management defaults are maintained by Network" in preview
+                    assert "route replace 192.0.2.0/24" not in preview
+                    assert "route del 192.0.2.0/24" not in preview
+                    assert "route replace 2001:db8:1::/64" not in preview
+                    assert "route del 2001:db8:1::/64" not in preview
+                if baseline_kind == "legacy":
+                    assert "pre-migration baselines retain legacy WAN handling" in preview
+
+
+def test_combined_wan_rejects_candidate_ingress_over_capacity(client, monkeypatch):
+    """Combined Apply refuses a newly enabled Routing window before Network runs.
+
+    Args:
+        client: Authenticated API test client.
+        monkeypatch: Replace host execution with bounded test observations.
+    """
+    from atlaso.app import ui
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.services.routes_wan import save_routes_wan_settings
+
+    login(client)
+    with SessionLocal() as db:
+        save_routes_wan_settings(db, routing_enabled=True, nat_enabled=False,
+                                 wan_simulation_enabled=False)
+        monkeypatch.setattr(ui, "wan_network_ingress_from_preview",
+                            lambda _preview: [f"lab{index}" for index in range(101)])
+        units = ui.appliance_apply_units(db)
+        wan = next(unit for unit in units if unit["id"] == "wan")
+        combined = ui.appliance_apply_units_for_selection(units, {"network", "wan"})
+        selected_wan = next(unit for unit in combined if unit["id"] == "wan")
+        assert selected_wan is wan["network_candidate_variant"]
+        assert any("ingress rule capacity" in error for error in selected_wan["validation_errors"])
+
+    review = client.get("/appliance-apply/review")
+    assert review.status_code == 200
+    review_wan = next(unit for unit in review.json()["units"] if unit["id"] == "wan")
+    assert review_wan["valid"] is True
+    assert review_wan["network_candidate_valid"] is False
+    assert review_wan["forces_network_selection"] is True
+    assert any("ingress rule capacity" in error
+               for error in review_wan["network_candidate_validation_errors"])
+
+
+def test_network_only_rejects_ingress_over_applied_routing_capacity(client, monkeypatch):
+    """Network alone cannot overflow the already-applied Routing window.
+
+    Args:
+        client: Authenticated API test client.
+        monkeypatch: Replace candidate ingress with a bounded oversized set.
+    """
+    from atlaso.app import ui
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Job, PhysicalInterface
+    from atlaso.app.services.routes_wan import save_routes_wan_settings
+
+    login(client)
+    with SessionLocal() as db:
+        save_routes_wan_settings(db, routing_enabled=True, nat_enabled=False,
+                                 wan_simulation_enabled=False)
+        applied = ui.appliance_apply_units(db)
+        ui.update_appliance_apply_baselines(db, applied, {unit["id"] for unit in applied})
+        interface = db.query(PhysicalInterface).first()
+        assert interface is not None
+        interface.mtu = 1400
+        db.commit()
+    monkeypatch.setattr(ui, "wan_network_ingress_from_preview",
+                        lambda _preview: [f"lab{index}" for index in range(101)])
+    with SessionLocal() as db:
+        units = ui.appliance_apply_units(db)
+        network = next(unit for unit in units if unit["id"] == "network")
+        assert any("applied Routing & WAN ingress rule capacity" in error
+                   for error in network["validation_errors"])
+        selected = ui.appliance_apply_units_for_selection(units, {"network"})
+        assert selected is units
+
+    review = client.get("/appliance-apply/review")
+    assert review.status_code == 200
+    review_network = next(unit for unit in review.json()["units"] if unit["id"] == "network")
+    assert review_network["valid"] is False
+    assert any("applied Routing & WAN ingress rule capacity" in error
+               for error in review_network["validation_errors"])
+    monkeypatch.setattr(ui, "run_appliance_apply_job", lambda _job_id: None)
+    page = client.get("/dashboard")
+    csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    with SessionLocal() as db:
+        count_before = db.query(Job).count()
+    response = client.post("/appliance-apply", data={"csrf": csrf, "selected_units": "network"},
+                           headers={"Accept": "application/json"})
+    assert response.status_code == 422, response.text
+    with SessionLocal() as db:
+        assert db.query(Job).count() == count_before
+
+
+def test_fresh_wan_ingress_matches_helper_for_mixed_network_links(client, tmp_path):
+    """Project active addressless links without admitting down or unused targets.
+
+    Args:
+        client: Isolated application database fixture.
+        tmp_path: Owned test directory for the helper's read-only Network input.
+    """
+    from atlaso.app import ui
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import PhysicalInterface, VlanInterface
+    from atlaso.app.services.routes_wan import save_routes_wan_settings
+    from tests.test_appliance_helper import load_helper_module
+
+    with SessionLocal() as db:
+        for interface in db.query(PhysicalInterface):
+            interface.role = "unused"
+        for vlan in db.query(VlanInterface):
+            vlan.enabled = False
+        for name, role, mode, state, address in [
+            ("active", "access", "access", "up", "192.0.2.10/24"),
+            ("dynamic", "route", "access", "up", ""),
+            ("down", "access", "access", "down", "192.0.3.10/24"),
+            ("unused", "unused", "access", "up", "192.0.4.10/24"),
+            ("trunk", "access", "trunk", "up", ""),
+            ("mgmt", "management", "access", "up", "192.0.5.10/24"),
+        ]:
+            db.add(PhysicalInterface(name=name, role=role, mode=mode, admin_state=state,
+                                     mac_address="02:00:00:00:00:01", driver="vmxnet3", speed="1 Gbps",
+                                     ipv4_method="static" if address else "dhcp", ip_cidr=address,
+                                     ipv6_enabled=True))
+        db.add(VlanInterface(name="trunk.42", parent_interface="trunk", vlan_id=42,
+                             role="route", enabled=True, ip_cidr="", ipv6_cidr=""))
+        db.add(VlanInterface(name="trunk.43", parent_interface="trunk", vlan_id=43,
+                             role="access", enabled=False, ip_cidr="192.0.6.10/24"))
+        baselines = ui.load_appliance_apply_baselines(db)
+        baselines.pop("network", None)
+        ui.save_appliance_apply_baselines(db, baselines)
+        save_routes_wan_settings(db, routing_enabled=True, nat_enabled=False, wan_simulation_enabled=False)
+        db.commit()
+        page = ui.routes_wan_context(db)
+        units = ui.appliance_apply_units(db)
+        network = next(unit for unit in units if unit["id"] == "network")
+        config_path = tmp_path / "network.conf"
+        config_path.write_text(network["config_preview"], encoding="utf-8")
+        expected = load_helper_module()._route_domain_ingress_interfaces(config_path)
+        assert expected == ["active", "dynamic", "trunk.42"]
+        wan = next(unit for unit in units if unit["id"] == "wan")
+        for preview in (page["wan_config_preview"], wan["config_preview"]):
+            commands = [line for line in preview.splitlines() if "rule add iif " in line]
+            assert len(commands) == 4 * len(expected)
+            assert {line.split(" iif ", 1)[1].split()[0] for line in commands} == set(expected)
+            assert "Initial WAN Apply automatically includes Network first" in preview
+
+
+@pytest.mark.parametrize("apply_succeeds", [False, True])
+def test_network_runtime_revision_requires_successful_upgrade_apply(client, monkeypatch, apply_succeeds):
+    """Offer unchanged legacy Network intent until its revised runtime is applied.
+
+    Args:
+        client: Isolated application database fixture.
+        monkeypatch: Replace only the privileged execution boundary.
+        apply_succeeds: Whether the simulated Network execution succeeds.
+    """
+    from atlaso.app import ui
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Job, JobStatus, JobStep
+
+    marker = "# Network runtime revision: exact-source-routing-v1.\n"
+    with SessionLocal() as db:
+        unit = next(item for item in ui.appliance_apply_units(db) if item["id"] == "network")
+        assert marker in unit["config_preview"]
+        legacy_preview = unit["config_preview"].replace(marker, "")
+        legacy_hash = ui.appliance_snapshot_hash({
+            "unit_id": "network", "summary": unit["summary"], "config_path": unit["config_path"],
+            "config_preview": legacy_preview, "snapshot_marker": None,
+        })
+        legacy_unit = {**unit, "snapshot_hash": legacy_hash, "config_preview": legacy_preview}
+        ui.update_appliance_apply_baselines(db, [legacy_unit], {"network"})
+        db.add(Job(id="previous-apply", type="appliance-apply", status=JobStatus.SUCCEEDED.value,
+                   created_by="admin", result="{}"))
+        db.commit()
+        context = ui.appliance_apply_context(db)
+        assert context["initial_apply_required"] is False
+        pending = next(item for item in context["review_apply_units"] if item["id"] == "network")
+        assert pending["changed"] and pending["valid"] and pending["has_baseline"]
+        assert pending["config_preview"].replace(marker, "") == legacy_preview
+        assert pending["management_handoff_required"] is False
+        job = Job(id="network-revision-upgrade", type="appliance-apply", status=JobStatus.PENDING.value,
+                  created_by="admin", result=json.dumps({"selected_units": ["network"],
+                  "captured_units": [{"unit_id": "network", "snapshot_hash": pending["snapshot_hash"]}]}))
+        db.add(job)
+        db.add(JobStep(id="network-revision-upgrade:network", job=job, component_key="network",
+                       label="Network", position=1, status=JobStatus.PENDING.value, result="{}"))
+        db.commit()
+
+    executed = []
+
+    def execute(candidate, **_kwargs):
+        """Return a controlled result without executing host operations.
+
+        Args:
+            candidate: Real Network unit approved by the ordinary review flow.
+            **_kwargs: Production execution options.
+        """
+        executed.append(candidate["snapshot_hash"])
+        return {"unit_id": "network", "label": "Network", "success": apply_succeeds,
+                "status": JobStatus.SUCCEEDED.value if apply_succeeds else JobStatus.FAILED.value,
+                "dry_run": True, "commands": []}
+
+    monkeypatch.setattr(ui, "execute_appliance_apply_unit", execute)
+    ui.run_appliance_apply_job("network-revision-upgrade")
+    assert executed == [unit["snapshot_hash"]]
+    with SessionLocal() as db:
+        completed = db.get(Job, "network-revision-upgrade")
+        assert completed.status == (JobStatus.SUCCEEDED.value if apply_succeeds else JobStatus.FAILED.value)
+        baseline = ui.load_appliance_apply_baselines(db)["network"]
+        assert baseline["snapshot_hash"] == (unit["snapshot_hash"] if apply_succeeds else legacy_hash)
+        assert baseline["config_preview"] == (unit["config_preview"] if apply_succeeds else legacy_preview)
+        context = ui.appliance_apply_context(db)
+        assert any(item["id"] == "network" for item in context["review_apply_units"]) is (not apply_succeeds)
+        current = next(item for item in context["apply_units"] if item["id"] == "network")
+        assert current["changed"] is (not apply_succeeds)
+
+
+@pytest.mark.parametrize("enabled_default", [False, True])
+def test_legacy_flagged_default_network_revision_couples_wan_handoff(client, monkeypatch, enabled_default):
+    """A Network-only migration preserves the flagged listener's off-subnet reply route.
+
+    Args:
+        client: Authenticated test client.
+        monkeypatch: Pytest fixture replacing external dependencies.
+        enabled_default: Whether the default route is enabled.
+    """
+    from sqlalchemy import select
+
+    from atlaso.app import ui
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Job, PhysicalInterface, Route
+
+    login(client)
+    marker = "# Network runtime revision: exact-source-routing-v1.\n"
+    with SessionLocal() as db:
+        interface = db.scalar(select(PhysicalInterface).where(PhysicalInterface.name == "eth2"))
+        assert interface is not None
+        interface.role = "access"
+        interface.mode = "access"
+        interface.admin_state = "up"
+        interface.oper_state = "up"
+        interface.ipv4_method = "static"
+        interface.ip_cidr = "192.168.50.10/24"
+        interface.access_management_ui_enabled = True
+        db.add(Route(destination_cidr="0.0.0.0/0", gateway="192.168.50.1",
+                     interface_name="eth2", enabled=enabled_default))
+        db.commit()
+        units = ui.appliance_apply_units(db)
+        assert not next(unit for unit in units if unit["id"] == "network")["management_domain_migration_required"]
+        ui.update_appliance_apply_baselines(db, units, {unit["id"] for unit in units})
+        baselines = ui.load_appliance_apply_baselines(db)
+        assert marker in baselines["network"]["config_preview"]
+        baselines["network"]["config_preview"] = baselines["network"]["config_preview"].replace(marker, "")
+        baselines["network"]["snapshot_hash"] = "legacy-network-revision"
+        ui.save_appliance_apply_baselines(db, baselines)
+        db.commit()
+        refreshed = {unit["id"]: unit for unit in ui.appliance_apply_units(db)}
+        assert refreshed["network"]["changed"]
+        assert not refreshed["network"]["management_handoff_required"]
+        assert refreshed["network"]["management_domain_migration_required"] is enabled_default
+
+    review = client.get("/appliance-apply/review")
+    assert review.status_code == 200
+    review_network = next(unit for unit in review.json()["units"] if unit["id"] == "network")
+    assert review_network["forces_wan_selection"] is enabled_default
+
+    monkeypatch.setattr(ui, "run_appliance_apply_job", lambda _job_id: None)
+    page = client.get("/dashboard")
+    csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    response = client.post("/appliance-apply", data={"csrf": csrf, "selected_units": "network"},
+                           headers={"Accept": "application/json"})
+    assert response.status_code == 202, response.text
+    with SessionLocal() as db:
+        payload = json.loads(db.get(Job, response.json()["job_id"]).result)
+    assert payload["management_handoff"] is enabled_default
+    if enabled_default:
+        assert set(ui.MANAGEMENT_HANDOFF_UNIT_IDS) | {"wan"} <= set(payload["management_handoff_units"])
+        assert "wan" in payload["selected_units"]
+    else:
+        assert "wan" not in payload["selected_units"]
+
+
 @pytest.mark.parametrize("commit_fails", [False, True])
 @pytest.mark.parametrize("cleanup_fails", [False, True])
 def test_network_apply_acknowledges_only_durable_executed_baseline(client, monkeypatch, commit_fails, cleanup_fails):
@@ -564,6 +978,83 @@ def test_appliance_settings_uses_last_applied_dns_state_for_resolver(client):
     assert disabling_context["local_dns_enabled"] is False
     assert disabling_preview["resolver_mode"] != "local_dns"
     assert disabling_preview["resolver_servers"] != ["127.0.0.1"]
+
+
+def test_pending_dhcp_management_does_not_require_external_dns(client, monkeypatch):
+    """Keep pending dedicated DHCP resolver ahead of a usable Access fallback.
+
+    Args:
+        client: Authenticated test client.
+        monkeypatch: Replace the applied Network baseline for a lease-loss check.
+    """
+    from atlaso.app import ui
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import ApplianceSettings, DnsSettings, PhysicalInterface
+
+    with SessionLocal() as db:
+        interface = db.query(PhysicalInterface).filter_by(name="eth0").one()
+        settings = db.query(ApplianceSettings).one()
+        dns = db.query(DnsSettings).one()
+        interface.role = "management"
+        interface.mode = "access"
+        interface.admin_state = "up"
+        interface.oper_state = "up"
+        interface.ipv4_method = "dhcp"
+        interface.ip_cidr = None
+        interface.host_ip_cidr = None
+        fallback = db.query(PhysicalInterface).filter_by(name="eth1").one_or_none()
+        if fallback is None:
+            fallback = PhysicalInterface(name="eth1", mac_address="02:00:00:00:00:02")
+            db.add(fallback)
+        fallback.role = "access"
+        fallback.mode = "access"
+        fallback.admin_state = "up"
+        fallback.oper_state = "up"
+        fallback.ip_cidr = "192.0.2.25/24"
+        fallback.access_management_ui_enabled = True
+        settings.web_terminal_enabled = True
+        settings.management_https_enabled = True
+        settings.external_dns_servers = ""
+        dns.enabled = False
+        db.commit()
+
+        context = ui.appliance_settings_context(db, reconcile_dns=False)
+        units = ui.appliance_apply_units(db, reconcile=False)
+        settings_unit = next(unit for unit in units if unit["id"] == "appliance_settings")
+        network_unit = next(unit for unit in units if unit["id"] == "network")
+        applied_network_preview = ui.network_context(db)["network_config_preview"]
+        monkeypatch.setattr(ui, "load_appliance_apply_baselines", lambda _db: {
+            "network": {"config_preview": applied_network_preview},
+        })
+        applied_units = ui.appliance_apply_units(db, reconcile=False)
+        applied_settings_unit = next(unit for unit in applied_units if unit["id"] == "appliance_settings")
+        applied_network_unit = next(unit for unit in applied_units if unit["id"] == "network")
+
+    assert context["management_interface"]["name"] == "eth0"
+    assert context["management_interface"]["ip"] == ""
+    assert context["appliance_settings_resolver_mode"] == "dhcp"
+    preview = json.loads(context["appliance_settings_config_preview"])
+    assert preview["management_interface"] == "eth0"
+    assert preview["resolver_mode"] == "dhcp"
+    assert not any(
+        error.startswith("External DNS servers are required")
+        for error in context["appliance_settings_validation_errors"]
+    )
+    assert any(
+        error.startswith("Web terminal interfaces are unavailable or have no address: eth0")
+        for error in context["appliance_settings_validation_errors"]
+    )
+    assert network_unit["management_handoff_required"] is True
+    assert not any(
+        error.startswith("Web terminal interfaces are unavailable or have no address: eth0")
+        for error in settings_unit["validation_errors"]
+    )
+    assert applied_network_unit["management_handoff_required"] is False
+    assert any(
+        error.startswith("Web terminal interfaces are unavailable or have no address: eth0")
+        for error in applied_settings_unit["validation_errors"]
+    )
+
 
 
 def test_local_dns_enable_applies_listener_before_host_resolver(client):
@@ -2043,6 +2534,207 @@ def test_appliance_apply_review_returns_management_address_connection_warning(cl
     assert "from 192.168.49.1/24 to 192.168.49.20/24" in network["connection_warnings"][0]
 
 
+@pytest.mark.parametrize("network_selected", [False, True])
+def test_wan_apply_preview_uses_selected_network_ownership(client, monkeypatch, network_selected):
+    """Review and submitted WAN snapshot agree on applied versus candidate Network.
+
+    Args:
+        client: Isolated HTTP application fixture.
+        monkeypatch: Keep the submitted task pending for snapshot inspection.
+        network_selected: Whether Network is explicitly selected in the request.
+    """
+    from sqlalchemy import select
+
+    from atlaso.app import ui
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Job, PhysicalInterface, Route
+
+    login(client)
+    with SessionLocal() as db:
+        db.query(Route).delete()
+        interface = db.scalar(select(PhysicalInterface).where(PhysicalInterface.name == "eth2"))
+        assert interface is not None
+        interface.role = "access"
+        interface.mode = "access"
+        interface.admin_state = "up"
+        interface.oper_state = "up"
+        interface.ipv4_method = "static"
+        interface.ip_cidr = "192.168.50.10/24"
+        interface.access_management_ui_enabled = True
+        db.add(Route(destination_cidr="0.0.0.0/0", gateway="192.168.50.1",
+                     interface_name="eth2", enabled=True))
+        db.commit()
+        units = ui.appliance_apply_units(db)
+        ui.update_appliance_apply_baselines(db, units, {unit["id"] for unit in units})
+        interface.access_management_ui_enabled = False
+        db.commit()
+        wan = next(unit for unit in ui.appliance_apply_units(db) if unit["id"] == "wan")
+        candidate = wan["network_candidate_variant"]
+        assert wan["config_preview"] != candidate["config_preview"]
+
+    review = client.get("/appliance-apply/review")
+    assert review.status_code == 200
+    review_wan = next(unit for unit in review.json()["units"] if unit["id"] == "wan")
+    assert review_wan["config_preview"] == wan["config_preview"]
+    assert review_wan["network_candidate_preview"] == candidate["config_preview"]
+
+    monkeypatch.setattr(ui, "run_appliance_apply_job", lambda _job_id: None)
+    page = client.get("/dashboard")
+    csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    selection = ["wan", "network"] if network_selected else ["wan"]
+    response = client.post("/appliance-apply", data={"csrf": csrf, "selected_units": selection},
+                           headers={"Accept": "application/json"})
+    assert response.status_code == 202, response.text
+    with SessionLocal() as db:
+        payload = json.loads(db.get(Job, response.json()["job_id"]).result)
+    expected = candidate if "network" in payload["selected_units"] else wan
+    captured = next(unit for unit in payload["captured_units"] if unit["unit_id"] == "wan")
+    assert captured["snapshot_hash"] == expected["snapshot_hash"]
+    assert captured["config_preview"] == expected["config_preview"]
+
+
+@pytest.mark.parametrize("scenario", ["changed_address", "unrelated_network_edit", "invalid_network",
+                                       "disabled_route", "routing_off", "activate_trunk",
+                                       "activate_admin_down", "activate_unused", "change_domain",
+                                       "enable_management_listener"])
+@pytest.mark.parametrize("gateway_present", [True, False], ids=["gateway", "direct"])
+def test_wan_gateway_target_address_requires_network_apply(client, monkeypatch, scenario, gateway_present):
+    """A pending route's new target prefix or routing owner requires Network first.
+
+    Args:
+        client: Isolated HTTP application fixture.
+        monkeypatch: Keep submitted jobs pending and inject invalid Network state.
+        scenario: Address or ownership dependency, unrelated edit, or inactive route.
+        gateway_present: Whether the route uses a gateway or only its target link.
+    """
+    from sqlalchemy import select
+
+    from atlaso.app import ui
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Job, PhysicalInterface, Route
+    from atlaso.app.services.routes_wan import save_routes_wan_settings
+
+    login(client)
+    with SessionLocal() as db:
+        db.query(Route).delete()
+        save_routes_wan_settings(db, routing_enabled=True, nat_enabled=False, wan_simulation_enabled=False)
+        interface = db.scalar(select(PhysicalInterface).where(PhysicalInterface.name == "eth2"))
+        assert interface is not None
+        interface.role = "unused" if scenario == "activate_unused" else (
+            "management" if scenario == "change_domain" else "access"
+        )
+        interface.mode = "trunk" if scenario == "activate_trunk" else "access"
+        interface.admin_state = "down" if scenario == "activate_admin_down" else "up"
+        interface.oper_state = "up"
+        interface.ipv4_method = "static"
+        interface.ip_cidr = "192.0.2.10/24"
+        route = Route(destination_cidr="0.0.0.0/0" if scenario == "enable_management_listener" and gateway_present
+                      else "198.51.100.0/24", gateway="192.0.2.1" if gateway_present else None,
+                      interface_name="eth2", enabled=True)
+        db.add(route)
+        db.commit()
+        units = ui.appliance_apply_units(db)
+        ui.update_appliance_apply_baselines(db, units, {unit["id"] for unit in units})
+        if scenario == "enable_management_listener":
+            interface.access_management_ui_enabled = True
+        elif scenario.startswith("activate_") or scenario == "change_domain":
+            interface.role = "access"
+            interface.mode = "access"
+            interface.admin_state = "up"
+            if not gateway_present:
+                route.destination_cidr = "198.51.101.0/24"
+        elif scenario == "unrelated_network_edit":
+            interface.mtu = 1400
+            if gateway_present:
+                route.gateway = "192.0.2.2"
+            else:
+                route.destination_cidr = "198.51.101.0/24"
+        else:
+            interface.ip_cidr = "192.0.3.10/24"
+            if gateway_present:
+                route.gateway = "192.0.3.1"
+            else:
+                route.destination_cidr = "198.51.101.0/24"
+            if scenario == "disabled_route":
+                route.enabled = False
+            elif scenario == "routing_off":
+                save_routes_wan_settings(db, routing_enabled=False, nat_enabled=False,
+                                         wan_simulation_enabled=False)
+        db.commit()
+        units = ui.appliance_apply_units(db)
+        network = next(unit for unit in units if unit["id"] == "network")
+        wan = next(unit for unit in units if unit["id"] == "wan")
+        expected_dependency = scenario in {"changed_address", "invalid_network", "activate_trunk",
+                                           "activate_admin_down", "activate_unused", "change_domain",
+                                           "enable_management_listener"}
+        assert network["changed"]
+        assert wan["network_address_dependency"] is expected_dependency
+        assert wan["changed"]
+        if scenario == "invalid_network":
+            network["validation_errors"] = ["invalid Network dependency"]
+        count_before = db.query(Job).count()
+
+    page = client.get("/dashboard")
+    csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    monkeypatch.setattr(ui, "appliance_apply_units", lambda _db: units)
+    monkeypatch.setattr(ui, "run_appliance_apply_job", lambda _job_id: None)
+    response = client.post("/appliance-apply", data={"csrf": csrf, "selected_units": "wan"},
+                           headers={"Accept": "application/json"})
+    assert response.status_code == (422 if scenario == "invalid_network" else 202), response.text
+    with SessionLocal() as db:
+        assert db.query(Job).count() == count_before + (0 if scenario == "invalid_network" else 1)
+        if scenario == "invalid_network":
+            return
+        payload = json.loads(db.get(Job, response.json()["job_id"]).result)
+    selected = payload["selected_units"]
+    assert ("network" in selected) is expected_dependency
+    assert "wan" in selected
+    if expected_dependency:
+        assert selected.index("network") < selected.index("wan")
+    captured = next(unit for unit in payload["captured_units"] if unit["unit_id"] == "wan")
+    expected_wan = wan["network_candidate_variant"] if expected_dependency else wan
+    assert captured["config_preview"] == expected_wan["config_preview"]
+
+
+def test_network_only_ingress_reconciliation_does_not_leave_wan_pending(client):
+    """Network-owned ingress changes do not create an independent WAN Apply.
+
+    Args:
+        client: Isolated HTTP application fixture.
+    """
+    from sqlalchemy import select
+
+    from atlaso.app import ui
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import PhysicalInterface
+    from atlaso.app.services.routes_wan import save_routes_wan_settings
+
+    with SessionLocal() as db:
+        save_routes_wan_settings(db, routing_enabled=True, nat_enabled=False, wan_simulation_enabled=False)
+        interface = db.scalar(select(PhysicalInterface).where(PhysicalInterface.name == "eth2"))
+        assert interface is not None
+        interface.role = "access"
+        interface.mode = "access"
+        interface.admin_state = "down"
+        db.commit()
+        units = ui.appliance_apply_units(db)
+        applied = ui.appliance_apply_units_for_selection(
+            units, {unit["id"] for unit in units}
+        )
+        ui.update_appliance_apply_baselines(db, applied, {unit["id"] for unit in applied})
+        interface.admin_state = "up"
+        db.commit()
+        before = ui.appliance_apply_units(db)
+        assert next(unit for unit in before if unit["id"] == "network")["changed"]
+        wan_before = next(unit for unit in before if unit["id"] == "wan")
+        assert not wan_before["changed"]
+        assert not wan_before["network_candidate_variant"]["changed"]
+        ui.update_appliance_apply_baselines(db, before, {"network"})
+        after = ui.appliance_apply_units(db)
+        assert not next(unit for unit in after if unit["id"] == "network")["changed"]
+        assert not next(unit for unit in after if unit["id"] == "wan")["changed"]
+
+
 def test_management_move_leaves_unselected_dns_enablement_pending(client):
     """Bundle required handoff units without applying pending DNS enablement.
 
@@ -2184,6 +2876,62 @@ def test_mirror_changing_listener_edit_forces_wan_into_handoff(
     }
     assert "wan" in payload["selected_units"]
     assert any(unit["unit_id"] == "wan" for unit in payload["units"])
+
+
+def test_modern_flagged_listener_enable_forces_candidate_wan_handoff(client, monkeypatch):
+    """A Network-only selection must install the new listener's default mirror.
+
+    Args:
+        client: HTTP test client used to submit the applied-state change.
+        monkeypatch: Prevent asynchronous execution while inspecting the queued job.
+    """
+    from sqlalchemy import select
+
+    from atlaso.app import ui
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Job, PhysicalInterface, Route
+
+    login(client)
+    with SessionLocal() as db:
+        db.query(Route).delete()
+        interface = db.scalar(select(PhysicalInterface).where(PhysicalInterface.name == "eth2"))
+        assert interface is not None
+        interface.role = "access"
+        interface.mode = "access"
+        interface.admin_state = "up"
+        interface.oper_state = "up"
+        interface.ipv4_method = "static"
+        interface.ip_cidr = "192.168.50.10/24"
+        interface.access_management_ui_enabled = False
+        db.add(Route(destination_cidr="0.0.0.0/0", gateway="192.168.50.1",
+                     interface_name="eth2", enabled=True))
+        db.commit()
+        units = ui.appliance_apply_units(db)
+        ui.update_appliance_apply_baselines(db, units, {unit["id"] for unit in units})
+        assert "# Network runtime revision: exact-source-routing-v1." in ui.load_appliance_apply_baselines(db)["network"]["config_preview"]
+        interface.access_management_ui_enabled = True
+        db.commit()
+        current = {unit["id"]: unit for unit in ui.appliance_apply_units(db)}
+        assert current["network"]["management_default_mirror_change"] is True
+        assert current["network"]["management_domain_migration_required"] is False
+        assert current["wan"]["network_candidate_variant"]["changed"] is True
+
+    review = client.get("/appliance-apply/review")
+    assert review.status_code == 200
+    review_network = next(unit for unit in review.json()["units"] if unit["id"] == "network")
+    assert review_network["forces_wan_selection"] is True
+
+    monkeypatch.setattr(ui, "run_appliance_apply_job", lambda _job_id: None)
+    page = client.get("/dashboard")
+    csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    response = client.post("/appliance-apply", data={"csrf": csrf, "selected_units": "network"},
+                           headers={"Accept": "application/json"})
+    assert response.status_code == 202, response.text
+    with SessionLocal() as db:
+        payload = json.loads(db.get(Job, response.json()["job_id"]).result)
+    assert payload["management_handoff"] is True
+    assert set(ui.MANAGEMENT_HANDOFF_UNIT_IDS) | {"wan"} <= set(payload["management_handoff_units"])
+    assert "wan" in payload["selected_units"]
 
 
 @pytest.mark.parametrize("route_change", ["gateway", "metric", "disable", "remove"])
@@ -2707,6 +3455,78 @@ ipv6_cidr=
         ]
 
 
+@pytest.mark.parametrize("initial_ip", ["", "2001:db8::30"])
+def test_management_handoff_baselines_only_captured_settings_with_proven_dhcp_lease(initial_ip):
+    """A DHCP handoff resolves its captured IPv4 even when IPv6 is already present.
+
+    Args:
+        initial_ip: Captured management address before the DHCPv4 lease arrives.
+    """
+    import atlaso.app.ui as ui
+
+    network_preview = """\
+[physical_interfaces]
+interface=eth0
+role=management
+mode=access
+admin_state=up
+ipv4_method=dhcp
+ip_cidr=
+ipv6_enabled=false
+ipv6_cidr=
+"""
+    if initial_ip:
+        network_preview = network_preview.replace(
+            "ipv6_enabled=false\nipv6_cidr=",
+            "ipv6_enabled=true\nipv6_cidr=2001:db8::30/64",
+        )
+    captured = {
+        "management_interface": "eth0", "management_ip": initial_ip, "management_ip_cidr": "",
+        "web_terminal_enabled": True,
+        "web_terminal_addresses": [initial_ip, "198.51.100.10"] if initial_ip else ["198.51.100.10"],
+        "root_ssh_enabled": False,
+    }
+    unit = ui.make_appliance_apply_unit(
+        unit_id="appliance_settings", label="Appliance Settings", page_url="/settings",
+        context={}, summary=["captured settings"], validation_errors=[], config_path="/tmp/settings.json",
+        config_preview=json.dumps(captured), baseline=None,
+    )
+    original_hash = unit["snapshot_hash"]
+
+    class ObservedDb:
+        """Return only the interface observation confirmed by the helper."""
+
+        def scalar(self, _statement):
+            """Supply the observed lease without reading mutable desired settings.
+
+            Args:
+                _statement: Ignored database query for the observed lease.
+            """
+            return SimpleNamespace(host_ip_cidr="192.0.2.30/24")
+
+    with pytest.raises(RuntimeError, match="did not confirm"):
+        ui.baseline_management_handoff_dhcp_settings(
+            ObservedDb(), unit, network_preview, {"candidate_addresses": ["192.0.2.31"]},
+        )
+    assert unit["snapshot_hash"] == original_hash
+    ui.baseline_management_handoff_dhcp_settings(
+        ObservedDb(), unit, network_preview, {"candidate_addresses": ["192.0.2.30"]},
+    )
+    resolved = json.loads(unit["config_preview"])
+    assert resolved["management_ip"] == "192.0.2.30"
+    assert resolved["management_ip_cidr"] == "192.0.2.30/24"
+    assert resolved["web_terminal_addresses"] == [
+        "192.0.2.30", *([initial_ip] if initial_ip else []), "198.51.100.10",
+    ]
+    assert resolved["root_ssh_enabled"] is False
+    assert unit["snapshot_hash"] != original_hash
+    assert unit["snapshot_hash"] == ui.make_appliance_apply_unit(
+        unit_id="appliance_settings", label="Appliance Settings", page_url="/settings",
+        context={}, summary=["captured settings"], validation_errors=[], config_path="/tmp/settings.json",
+        config_preview=unit["raw_config_preview"], baseline=None,
+    )["snapshot_hash"]
+
+
 def test_management_handoff_staging_failure_clears_unstarted_runtime_lock(client, monkeypatch):
     """Do not retain the Apply lock when the helper proves no transaction began.
 
@@ -2962,13 +3782,25 @@ def test_management_handoff_exception_reconciliation_selects_transaction_boundar
     assert adapter.calls == ["recover", "acknowledge:job-after-commit"]
 
 
-def test_appliance_apply_json_submission_returns_master_with_live_child_status(client):
+@pytest.mark.parametrize("existing_baseline", [False, True])
+def test_appliance_apply_json_submission_returns_master_with_live_child_status(client, existing_baseline):
     """Verify JSON submission returns the master and live child status.
 
     Args:
         client: HTTP test client used to exercise the Atlaso application.
+        existing_baseline: Whether Network has already been successfully applied.
     """
+    from atlaso.app import ui
+    from atlaso.app.database import SessionLocal
+
     login(client)
+    if existing_baseline:
+        with SessionLocal() as db:
+            ui.update_appliance_apply_baselines(db, ui.appliance_apply_units(db), {"network"})
+            db.commit()
+    expected_components = ["wan", "nat"] if existing_baseline else [
+        "appliance_settings", "network", "firewall", "wan", "nat", "ca", "public_services",
+    ]
     page = client.get("/dashboard")
     csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
 
@@ -2984,7 +3816,7 @@ def test_appliance_apply_json_submission_returns_master_with_live_child_status(c
     assert payload["status_url"] == f"/tasks/{payload['job_id']}/status"
     assert payload["task"]["type"] == "appliance-apply"
     assert [(step["component_key"], step["status"]) for step in payload["task"]["_children"]] == [
-        ("wan", "pending"), ("nat", "pending")
+        (component, "pending") for component in expected_components
     ]
 
     status_response = client.get(payload["status_url"])
@@ -2992,7 +3824,7 @@ def test_appliance_apply_json_submission_returns_master_with_live_child_status(c
     task = status_response.json()["task"]
     assert task["status"] == "succeeded"
     assert [(step["component_key"], step["status"]) for step in task["_children"]] == [
-        ("wan", "succeeded"), ("nat", "succeeded")
+        (component, "succeeded") for component in expected_components
     ]
 
 

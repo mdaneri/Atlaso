@@ -415,7 +415,14 @@ def management_dhcp_dns_context(
         if vlans is not None
         else management_interface_context(interfaces)
     )
+    if not management.get("name"):
+        # A pending static-to-DHCP handoff has no observed lease yet. Keep its
+        # desired resolver method so Apply can acquire DHCP DNS, but do not
+        # claim an address or DNS observation before Network has activated it.
+        management = _pending_dhcp_management_context(interfaces) or management
     if management.get("ipv4_method") != "dhcp":
+        return management, []
+    if not management.get("ip"):
         return management, []
     servers = []
     seen: set[str] = set()
@@ -475,6 +482,28 @@ def management_interface_context(interfaces: list[PhysicalInterface]) -> dict[st
     return {"name": "", "ip": "", "ip_cidr": "", "ipv4_cidr": "", "ipv6_cidr": "", "addresses": [], "ipv4_method": "static"}
 
 
+def _pending_dhcp_management_context(interfaces: list[PhysicalInterface]) -> dict[str, Any] | None:
+    """Keep one desired dedicated DHCP listener selected before it has a lease.
+
+    Args:
+        interfaces: Observed physical and VLAN interface rows.
+    """
+    pending = [
+        interface for interface in interfaces
+        if normalize_interface_role(interface.role) == "management"
+        and normalize_interface_mode(interface.mode) == "access"
+        and interface.admin_state == "up"
+        and interface.oper_state != "missing"
+        and normalize_ipv4_method(interface.ipv4_method) == "dhcp"
+    ]
+    if len(pending) != 1:
+        return None
+    return {
+        "name": pending[0].name, "ip": "", "ip_cidr": "", "ipv4_cidr": "",
+        "ipv6_cidr": "", "addresses": [], "ipv4_method": "dhcp",
+    }
+
+
 def management_ui_context(
     interfaces: list[PhysicalInterface],
     vlans: list[VlanInterface],
@@ -488,6 +517,9 @@ def management_ui_context(
     dedicated = management_interface_context(interfaces)
     if dedicated.get("ip"):
         return dedicated
+    pending_dedicated = _pending_dhcp_management_context(interfaces)
+    if pending_dedicated is not None:
+        return pending_dedicated
     physical_candidates = sorted(
         (
             interface
@@ -556,6 +588,7 @@ def validate_appliance_settings(
     ca_enabled: bool = False,
     management_https_cert_available: bool = False,
     web_terminal_options: list[dict[str, Any]] | None = None,
+    allow_pending_dhcp_management: bool = False,
 ) -> tuple[list[str], list[str]]:
     """Validate appliance settings.
 
@@ -567,6 +600,7 @@ def validate_appliance_settings(
         ca_enabled: Ca enabled supplied by the caller.
         management_https_cert_available: Management https cert available supplied by the caller.
         web_terminal_options: Web terminal options supplied by the caller.
+        allow_pending_dhcp_management: A protected Network handoff will acquire this lease before Settings.
 
     Returns:
         The validate appliance settings result.
@@ -612,7 +646,15 @@ def validate_appliance_settings(
         management_name = str(management_interface.get("name") or "")
         if not management_name or management_name not in selected_terminal_interfaces:
             errors.append("Web terminal access requires the management interface.")
-        missing = [name for name in selected_terminal_interfaces if name not in option_names]
+        # A protected Network handoff can select its new dedicated DHCP
+        # listener before the lease exists. Defer only that listener's address
+        # check; all other Web Terminal selections still require a live option.
+        pending_dhcp_management = (
+            management_name if management_interface.get("ipv4_method") == "dhcp"
+            and not management_interface.get("ip") and allow_pending_dhcp_management else ""
+        )
+        missing = [name for name in selected_terminal_interfaces
+                   if name not in option_names and name != pending_dhcp_management]
         if missing:
             errors.append(f"Web terminal interfaces are unavailable or have no address: {', '.join(missing)}.")
         disallowed = [

@@ -26,6 +26,8 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Read the client password from standard input instead of argv.",
     )
+    parser.add_argument("--routing-overlap-guest", action="store_true",
+                        help="Install private routing-fixture tools without starting a DHCP/RA service.")
     return parser.parse_args()
 
 
@@ -82,11 +84,61 @@ ssh_pwauth: true"""
     ssh_authorized_keys:
       - {args.public_key}"""
 
+    fixture_mode = bool(getattr(args, "routing_overlap_guest", False))
+    # Alpine cloud-init 26.1 may warn when its optional console-fingerprint
+    # helper is absent; the private fixture never needs to print host keys.
+    fixture_ssh_policy = "\nssh:\n  emit_keys_to_console: false" if fixture_mode else ""
+    fixture_packages = (
+        "\n  - dnsmasq\n  - radvd\n  - python3\n  - nftables\n  - ethtool"
+        "\n  - sudo\n  - open-vm-tools\n  - open-vm-tools-openrc\n  - open-vm-tools-vix"
+        if fixture_mode else ""
+    )
+    fixture_services = (
+        "\n  - rc-update add open-vm-tools default\n  - rc-service open-vm-tools start"
+        "\n  - ethtool -K eth0 lro off\n  - ethtool -K eth1 lro off"
+        if fixture_mode else ""
+    )
+    # The credential-bearing seed is detached after the first boot. Restrict
+    # subsequent boots to the now-absent NoCloud source and its immediate None
+    # fallback instead of probing EC2 metadata for four minutes.
+    fixture_datasources = (
+        "\n  - path: /etc/cloud/cloud.cfg.d/99-atlaso-fixture-datasources.cfg"
+        "\n    permissions: '0644'"
+        "\n    content: |"
+        "\n      datasource_list: [ NoCloud, None ]"
+        if fixture_mode else ""
+    )
+    fixture_forwarding = (
+        "\n  - path: /etc/ssh/sshd_config.d/99-atlaso-private-fixture.conf"
+        "\n    permissions: '0644'"
+        "\n    content: |"
+        "\n      DisableForwarding no"
+        "\n      AllowTcpForwarding local"
+        "\n      PermitOpen 192.0.2.10:22 192.0.2.10:443"
+        "\n      GatewayPorts no"
+        "\n  - path: /usr/local/sbin/atlaso-private-fixture-sshd"
+        "\n    permissions: '0755'"
+        "\n    content: |"
+        "\n      #!/bin/sh"
+        "\n      set -eu"
+        "\n      config=/etc/ssh/sshd_config"
+        "\n      grep -q '^Include /etc/ssh/sshd_config.d/\\*.conf' \"$config\" || sed -i '1i Include /etc/ssh/sshd_config.d/*.conf' \"$config\""
+        "\n      sshd -t"
+        "\n      sshd -T | grep -q '^disableforwarding no$'"
+        "\n      sshd -T | grep -q '^allowtcpforwarding local$'"
+        "\n      sshd -T | grep -q 'permitopen .*192.0.2.10:22'"
+        "\n      sshd -T | grep -q 'permitopen .*192.0.2.10:443'"
+        if fixture_mode else ""
+    )
+    fixture_forwarding_command = "\n  - /usr/local/sbin/atlaso-private-fixture-sshd" if fixture_mode else ""
+    # YAML treats a bare `true` as a boolean; cloud-init runcmd requires strings.
+    refresh_command = "'true'" if fixture_mode else "/usr/local/sbin/atlaso-refresh-test-dhcp || true"
+
     user_data = f"""#cloud-config
 hostname: {args.hostname}
 manage_etc_hosts: true
 disable_root: true
-{password_block}
+{password_block}{fixture_ssh_policy}
 users:
   - default
   - name: {args.user}
@@ -108,7 +160,7 @@ packages:
   - iputils
   - openssl
   - openssh-client
-  - sshpass
+  - sshpass{fixture_packages}
 write_files:
   - path: /usr/local/sbin/atlaso-refresh-test-dhcp
     permissions: '0755'
@@ -117,17 +169,26 @@ write_files:
       for iface in eth1 eth2; do
         ip link set "$iface" up 2>/dev/null || true
         udhcpc -i "$iface" -H "$(hostname -s)" -q -n -t 5 2>/dev/null || true
-      done
-runcmd:
+      done{fixture_datasources}{fixture_forwarding}
+runcmd:{fixture_forwarding_command}
   - rc-update add sshd default || true
-  - rc-service sshd restart || true
-  - /usr/local/sbin/atlaso-refresh-test-dhcp || true
+  - rc-service sshd restart || true{fixture_services}
+  - {refresh_command}
 """
 
     return {
         "user-data": user_data,
         "meta-data": f"instance-id: {args.hostname}\nlocal-hostname: {args.hostname}\n",
-        "network-config": """version: 2
+        "network-config": ("""version: 2
+ethernets:
+  eth0:
+    dhcp4: true
+  eth1:
+    dhcp4: false
+    dhcp6: false
+    accept-ra: false
+    optional: true
+""" if fixture_mode else """version: 2
 ethernets:
   eth0:
     dhcp4: true
@@ -137,7 +198,7 @@ ethernets:
   eth2:
     dhcp4: true
     optional: true
-""",
+"""),
     }
 
 

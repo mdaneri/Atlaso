@@ -372,6 +372,93 @@ Unless overridden, the build wrapper chooses `.30` in the selected management su
 leaves final appliance management on DHCP and
 discovers the runtime address through VMware Tools.
 
+## Isolated routing-overlap fixture contracts
+
+The opt-in `-RoutingOverlapOnly` mode exercises DHCP/SLAAC overlap through the canonical lifecycle wrapper.
+`-RoutingWanOnly` retains its existing static routing scenario. Focused unit tests do not replace native acceptance
+for automatic IPv6 acquisition, lease expiry, rollback, or reboot.
+The native source-rule proof also requires the persistent, dual-family local-origin terminal guard at priority 6004
+after Apply and after address renewal; otherwise a newly acquired DHCP or SLAAC source could use the main table
+before its exact lookup/unreachable pair is installed. Priorities 6000–6002 allow only unspecified, link-local, and
+loopback sources into the main table. Priority 6003 sends link-local destinations to main for unbound source selection.
+The guard starts
+before networkd at boot and remains active
+through ordinary Network Apply. It is retired only after restoring a pre-routing-domain state or factory reset.
+Use a prepared client disk with `-SkipClientPrepare -ClientVmdkPath <owned-client-disk>` and
+`-ApplianceSshUser root`; the existing management VMnet
+is used only for control access to the two clients. Do not supply an appliance IP/URL override or dry-run Apply.
+Original external ownership must be enabled; human runs opt in with `-OwnershipRoot` and a UUID `-OwnershipTaskId`.
+Pass distinct protected `-RootPassword` and `-AdminPassword` identities from the supported credential provider.
+Select an owned prepared Python environment with the repository development dependencies available under
+`python -I -B`; user-site-only packages are intentionally excluded and fail preflight before resource creation.
+
+The topology admission contract requires independent task/PR/source identity, original creation-receipt digests for
+two distinct task-owned LAN segments, complete enabled VMX adapter observations, and exact guest MAC/interface
+matches. The appliance has only private management and lab links. Both client guests retain a separate existing
+control VMnet; test prefixes must not overlap its observed prefixes. Shared segment registrations without creation
+receipts, extra adapters, ambiguous interfaces, and mismatched receipt owners are refused before configuration.
+
+Server configuration is bound only to the admitted private management interface. DHCP is restricted to the appliance
+MAC and reservation; RA advertises a short-lived private IPv6 prefix. The fixture changes no Windows networking
+and configures no NAT. To advertise a nonzero IPv6 router lifetime, client A temporarily enables global IPv6
+forwarding only after installing its own IPv6 forward-drop guard. It captures and restores all/default/per-interface
+forwarding and RA settings, keeps forwarding disabled on each admitted NIC, and refuses NICs with LRO enabled.
+The disposable Alpine client seed disables LRO on its two VMXNET3 NICs before fixture admission; failure to do so
+fails first-boot setup. The controller still verifies the live state before changing forwarding.
+The original guard handles are removed only after restoration readback. The transport uses in-process, pinned SSH
+channels to
+only the private appliance's SSH and HTTPS ports, opens no host listener, and verifies HTTPS with the explicit
+appliance CA and private target identity. It does not follow redirects to another origin or load ambient SSH keys.
+The Alpine control-client seed admits only local SSH forwarding to `192.0.2.10:22` and `192.0.2.10:443`, and checks
+the effective sshd policy before the fixture starts; all other forwarding destinations remain refused.
+The private lifecycle waits for first-boot HTTPS to publish a nonempty CA before pinning its trust observation.
+If the owned fixture's first-boot console reports the known transient DHCP activation review while `eth0` already
+holds its reserved `192.0.2.10` address, the lifecycle submits the unchanged DHCP/disabled-IPv6 settings through
+the supported console correction path once. An unexpected review or a CA still absent after the bounded wait
+fails instead of probing with null trust.
+
+The wrapper publishes pinned provider readback and public guest NIC/SSH identities before bootstrap. The private
+clients have no DHCP or RA client on their fixture NIC. Their controller receipts bind original directory, link,
+process, and firewall identities before use. HTTPS verifies the provider-observed appliance CA and private address;
+no host port forward or insecure legacy HTTP client is used. The scenario records native acquired addresses,
+source rules, route selection, DHCP and RA expiry, and ordinary Apply restoration. It also verifies a same-address
+static-to-DHCP transition while the original server lease remains unexpired, requiring the measured appliance
+helper's independent current client-lease proof, exact interface identity, and source rules. A static-classified
+address alone or a server reservation alone cannot satisfy this phase. The private peer serves fixture-only DNS on
+its isolated interface; the scenario stages that resolver for the static phase, then restores the original DNS
+settings when DHCP resumes and during baseline recovery. An uncertain Apply outcome
+preserves the running fixture and public job identity for reconciliation before any further cleanup. Failed temporary
+token revocation cannot replace that unknown-outcome signal or authorize stopping the fixture.
+Negative DAD Apply and reboot are separate acceptance cases and are not claimed by this mode.
+Do not launch ad hoc DHCP/RA servers on shared VMnets or mark native acceptance passed from
+unit-test results alone.
+
+Agent lifecycle creation uses the originating `CODEX_THREAD_ID` and independently resolves the active
+`desktop.git-worktree-root` before creating the result directory. Human CLI runs keep the existing canonical identity
+behavior without new required arguments; they can opt into external creation records using `-OwnershipRoot` and an
+optional `-OwnershipTaskId`. The explicit root must contain the source checkout and remain outside its removal scopes.
+When enabled, creation publishes each original Windows filesystem
+identity with task, repository, source commit, and PR bindings in a durable sibling manifest under that configured
+root. The empty result root is recorded before source extraction; each clone is recorded immediately after the
+provider creates it and before configuration; client directories are recorded before their first artifact is copied.
+`vmware-identity.json` references these external manifests and their hashes. Existing retained labs are never adopted
+or given retrospective creation records. VM-only cleanup retains the result root; the existing artifact-root cleanup
+procedure still applies after VM cleanup and evidence preservation.
+
+Before uploading a replacement helper or installing the lifecycle wheel, the wrapper collects
+`source-image-network.json` through bounded VMware guest operations using the root credential established by that
+run's first-boot environment. The inspector reads only the installed package version, routing service state, and
+validated public routing intent; it does not change networking or import appliance application code. Missing source
+routing support remains explicit evidence. A target without the canonical routing-domain handler refuses a source
+with retained intent or a loaded/active routing service before either deployment step. This inspection is distinct
+from postdeployment runtime acceptance.
+
+After deployment, `deployed-runtime-identity.json` binds the original VM manifest hash and admitted source commit to
+measured wheel/helper digests, the target interface/MAC, and matching expected/installed payload digests. The guest
+inspector compares the uploaded wheel's payload with installed files and rejects stale extra Atlaso files; the host
+checks wheel and helper hashes against the immutable build inputs. This proves the inspected on-disk runtime bytes,
+not continuous execution or transient publication behavior.
+
 ## Appliance Update status and ordering acceptance
 
 For the 0.9.220 to 0.9.223 updater transition, use a brand-new normal test VM with a unique name and destination. Run
@@ -546,6 +633,15 @@ SSH password as one bounded standard-input line to the repository-controlled hel
 multiline, and oversized input before replacing an existing seed artifact. After successful lifecycle client access
 proves that cloud-init consumed each seed, the runner stops the clients, detaches and deletes both ISOs with absence
 verification, then restarts a retained lab. Failure cleanup also stops affected clients and requires verified seed absence.
+The isolated routing-overlap clients install a fixture-only cloud-init datasource list containing NoCloud and None.
+Once their credential-bearing seeds are detached, this prevents later boots from waiting for unrelated network
+metadata services before SSH and VMware Tools become available.
+The clients also install Alpine's VIX guest-operations plugin; the base VMware Tools daemon alone cannot satisfy the
+runner's authenticated `vmrun` inventory and controller operations.
+Provisioning readiness requires completed cloud-init with no errors. After seed removal, the fixture accepts only
+cloud-init's known `DataSourceNone` fallback warning; other recoverable warnings still refuse the run.
+The fixture suppresses optional SSH-key console output so an Alpine cloud-init image missing that console helper does
+not report a provisioning warning for an otherwise completed first boot.
 For a full ESXi PXE install, the consumer rotates
 the encrypted `Lifecycle ESXi` vault entry and persists only
 `{{vault.lifecycle_esxi.esx.lifecycle.root.password}}` in the Kickstart source; Atlaso resolves that marker for the

@@ -514,6 +514,7 @@ from atlaso.app.services.public_services import (
     render_public_services_nginx_config,
 )
 from atlaso.app.services.routes_wan import (
+    ROUTE_RULE_PRIORITY_WINDOW,
     WAN_CONFIG_PATH,
     WAN_MODES,
     canonical_route_destination,
@@ -527,6 +528,7 @@ from atlaso.app.services.routes_wan import (
     route_to_dict,
     routing_rule_to_dict,
     validate_wan_state,
+    wan_config_target_entries,
     wan_policy_to_dict,
 )
 from atlaso.app.services.service_dns_defaults import (
@@ -2564,13 +2566,17 @@ def ensure_dns_for_appliance_settings(
     return "+".join(actions) if actions else None
 
 
-def appliance_settings_context(db: Session, *, reconcile_dns: bool = True, applying_dns: bool = False) -> dict[str, Any]:
+def appliance_settings_context(
+    db: Session, *, reconcile_dns: bool = True, applying_dns: bool = False,
+    allow_pending_dhcp_management: bool = False,
+) -> dict[str, Any]:
     """Return appliance settings context.
 
     Args:
         db: Active database session.
         reconcile_dns: Reconcile dns supplied by the caller.
         applying_dns: DNS activation is ordered before these resolver settings in the same Apply.
+        allow_pending_dhcp_management: Protected Network handoff will acquire the selected lease first.
     """
     settings = get_appliance_settings_row(db)
     dns_settings = get_dns_settings_row(db)
@@ -2597,6 +2603,7 @@ def appliance_settings_context(db: Session, *, reconcile_dns: bool = True, apply
         ca_enabled=bool(ca_settings.enabled),
         management_https_cert_available=management_https_cert_available,
         web_terminal_options=terminal_options,
+        allow_pending_dhcp_management=allow_pending_dhcp_management,
     )
     if settings.root_ssh_enabled and get_settings().dry_run_system_adapters:
         validation_warnings.append("Root SSH is enabled as desired state, but dry-run system adapters are active. Global appliance apply will record intent without changing sshd.")
@@ -5751,6 +5758,10 @@ def routes_wan_context(db: Session) -> dict:
         routing_rules,
         source_groups=source_groups,
         settings=feature_settings,
+        applied_network_ingress=wan_applied_network_ingress(db),
+        desired_network_ingress=wan_network_ingress_from_preview(render_network_config(
+            interfaces=list(db.scalars(select(PhysicalInterface))), vlans=list(db.scalars(select(VlanInterface))))),
+        network_owned_targets=wan_network_owned_targets(db),
     )
     return {
         "routes": routes,
@@ -10097,6 +10108,93 @@ def network_interface_entries(config_preview: str) -> list[dict[str, str]]:
     return rows
 
 
+def wan_applied_network_ingress(db: Session) -> list[str] | None:
+    """Project WAN ingress selectors from the saved Network baseline.
+
+    Args:
+        db: Active database session containing successful Apply baselines.
+    """
+    baseline = load_appliance_apply_baselines(db).get("network")
+    if baseline is None:
+        return None
+    preview = str(baseline.get("config_preview") or "")
+    if "# Network runtime revision: exact-source-routing-v1." not in preview.splitlines():
+        return []
+    return wan_network_ingress_from_preview(preview)
+
+
+def wan_network_ingress_from_preview(preview: str) -> list[str]:
+    """Match the helper's ingress ownership predicate on rendered Network rows.
+
+    Args:
+        preview: Rendered applied or desired Network configuration.
+    """
+    rows = network_interface_entries(preview)
+    return sorted({row["name"] for row in rows
+                   if row.get("role") in {"access", "route"}
+                   and row.get("mode") != "trunk" and row.get("admin_state") != "down"})
+
+
+def wan_network_owned_targets(db: Session, *, network_preview: str | None = None) -> list[dict[str, str]] | None:
+    """Project modern Network ownership without consuming pending WAN targets.
+
+    Args:
+        db: Active database session containing desired and applied Network state.
+        network_preview: Candidate Network rendering when both units are selected.
+    """
+    baseline = load_appliance_apply_baselines(db).get("network")
+    if network_preview is not None:
+        preview = network_preview
+    elif baseline is None:
+        preview = render_network_config(interfaces=list(db.scalars(select(PhysicalInterface))),
+                                        vlans=list(db.scalars(select(VlanInterface))))
+    else:
+        preview = str(baseline.get("config_preview") or "")
+        if "# Network runtime revision: exact-source-routing-v1." not in preview.splitlines():
+            return None
+    targets = []
+    for row in network_interface_entries(preview):
+        if row.get("role") not in {"management", "access", "route"} or row.get("mode") == "trunk" or row.get("admin_state") == "down":
+            continue
+        targets.append({**row, "routing_domain": "management" if row.get("role") == "management" else "lab",
+                        "management_ui": "true" if row.get("role") == "access" and row.get("access_management_ui_enabled") == "true" else "",
+                        "ip_cidr": row.get("ip_cidr", "") if row.get("ipv4_method", "static") != "dhcp" else "",
+                        "ipv6_cidr": row.get("ipv6_cidr", "") if row.get("ipv6_enabled", "true") == "true" else ""})
+    return targets
+
+
+def wan_apply_comparison_preview(preview: str, *, network_projection_only: bool) -> str:
+    """Exclude Network-owned render projections from WAN pending detection.
+
+    Args:
+        preview: Applied or desired WAN configuration rendering.
+        network_projection_only: Whether changed targets are unreferenced by WAN rows.
+
+    Returns:
+        Stable WAN intent while retaining commands that may need WAN Apply.
+    """
+    excluded_comments = (
+        "# Initial WAN Apply automatically includes Network first",
+        "# Ingress commands below reflect the last-applied Network baseline",
+        "# Ingress commands below reflect the candidate Network intent",
+        "# If Network is applied first in the same task",
+        "# No modern ingress selectors are available from this baseline",
+    )
+    lines: list[str] = []
+    section = ""
+    for line in preview.splitlines():
+        if line.startswith("[") and line.endswith("]"):
+            section = line
+        if network_projection_only and section in {"[targets]", "[retired_targets]"} and not line.startswith("["):
+            continue
+        if line.startswith(excluded_comments):
+            continue
+        if network_projection_only and (line.startswith("ip rule add iif ") or line.startswith("ip -6 rule add iif ")):
+            continue
+        lines.append(line)
+    return "\n".join(lines)
+
+
 def network_management_paths(config_preview: str) -> list[dict[str, str]]:
     """Return every effective management browser path in a network preview.
 
@@ -10219,6 +10317,63 @@ def refresh_management_handoff_dynamic_observations(
                 )
             setattr(interface, attribute, cidr)
     db.flush()
+
+
+def baseline_management_handoff_dhcp_settings(
+    db: Session,
+    settings_unit: dict[str, Any],
+    network_preview: str,
+    handoff_evidence: dict[str, Any],
+) -> None:
+    """Bind the captured Settings baseline to the helper-confirmed DHCP lease.
+
+    Args:
+        db: Apply transaction with refreshed native interface observations.
+        settings_unit: Exact captured Settings unit staged for the handoff.
+        network_preview: Exact captured Network intent used by the helper.
+        handoff_evidence: Successful helper result with confirmed candidate addresses.
+    """
+    captured = json_config_object(str(settings_unit.get("raw_config_preview") or ""))
+    name = str(captured.get("management_interface") or "")
+    paths = [
+        path for path in network_management_paths(network_preview)
+        if path.get("kind") == "physical" and path.get("name") == name
+        and path.get("role") == "management" and path.get("ipv4_method") == "dhcp"
+        and not path.get("ip_cidr")
+    ]
+    if len(paths) != 1:
+        if captured.get("management_ip"):
+            return
+        raise RuntimeError("Protected handoff has no captured pending DHCP management listener.")
+    interface = db.scalar(select(PhysicalInterface).where(PhysicalInterface.name == name))
+    cidr = str(interface.host_ip_cidr or "") if interface is not None else ""
+    address = address_from_cidr(cidr)
+    if not address or address not in handoff_evidence.get("candidate_addresses", []):
+        raise RuntimeError("Protected handoff did not confirm the resolved DHCP management address.")
+    captured["management_ip"] = address
+    captured["management_ip_cidr"] = cidr
+    if captured.get("web_terminal_enabled"):
+        addresses = captured.get("web_terminal_addresses") or []
+        if not isinstance(addresses, list):
+            raise RuntimeError("Captured Web Terminal addresses are invalid.")
+        captured["web_terminal_addresses"] = [
+            address, *[value for value in addresses if value != address],
+        ]
+    rendered = json.dumps(captured, indent=2, sort_keys=True) + "\n"
+    resolved = make_appliance_apply_unit(
+        unit_id="appliance_settings",
+        label=settings_unit["label"],
+        page_url=settings_unit["page_url"],
+        context=settings_unit["context"],
+        summary=settings_unit["summary"],
+        validation_errors=settings_unit["validation_errors"],
+        validation_warnings=settings_unit["validation_warnings"],
+        config_path=settings_unit["config_path"],
+        config_preview=rendered,
+        baseline=None,
+    )
+    for key in ("raw_config_preview", "config_preview", "snapshot_hash"):
+        settings_unit[key] = resolved[key]
 
 
 def management_handoff_required(network_unit: dict[str, Any], baseline: dict[str, Any] | None) -> bool:
@@ -11229,8 +11384,15 @@ def appliance_apply_units(db: Session, *, reconcile: bool = True, applying_dns: 
 
     baselines = load_appliance_apply_baselines(db)
     local_users = local_users_apply_context(db, baselines.get("local_users"))
-    appliance_settings = appliance_settings_context(db, reconcile_dns=reconcile, applying_dns=applying_dns)
     network = network_context(db)
+    network_baseline = baselines.get("network")
+    pending_management_handoff = management_handoff_required(
+        {"config_preview": network["network_config_preview"]}, network_baseline,
+    )
+    appliance_settings = appliance_settings_context(
+        db, reconcile_dns=reconcile, applying_dns=applying_dns,
+        allow_pending_dhcp_management=pending_management_handoff,
+    )
     wan = routes_wan_context(db)
     nat = traffic_publishing_context(db)
     firewall = firewall_context(db, reconcile=reconcile)
@@ -11248,7 +11410,6 @@ def appliance_apply_units(db: Session, *, reconcile: bool = True, applying_dns: 
     vcf_registry = vcf_private_registry_context(db, reconcile=reconcile)
     public_services = public_services_context(db, reconcile=reconcile)
 
-    network_baseline = baselines.get("network")
     network_removed_vlans = removed_network_vlan_entries(
         network["network_config_preview"],
         successful_network_apply_vlan_entries(db, network_baseline),
@@ -11264,6 +11425,22 @@ def appliance_apply_units(db: Session, *, reconcile: bool = True, applying_dns: 
     if network_removed_vlans:
         network_summary.append(f"{len(network_removed_vlans)} VLAN removals")
     network_validation_errors = list(network["network_validation_errors"])
+    # Network-only Apply still changes the ingress rules of an already-applied
+    # Routing runtime. Validate that runtime's window before queuing Network.
+    applied_wan_preview = str((baselines.get("wan") or {}).get("config_preview") or "")
+    applied_routing_enabled = False
+    in_feature_settings = False
+    for line in applied_wan_preview.splitlines():
+        line = line.strip()
+        if line.startswith("[") and line.endswith("]"):
+            in_feature_settings = line == "[feature_settings]"
+        elif in_feature_settings and line == "routing_enabled=true":
+            applied_routing_enabled = True
+    if (applied_routing_enabled and len(wan_network_ingress_from_preview(
+            network["network_config_preview"])) > ROUTE_RULE_PRIORITY_WINDOW):
+        network_validation_errors.append(
+            "Network exceeds the applied Routing & WAN ingress rule capacity."
+        )
     network_baseline_preview = str((network_baseline or {}).get("config_preview") or "")
     if (
         get_settings().environment == "appliance"
@@ -11306,6 +11483,9 @@ def appliance_apply_units(db: Session, *, reconcile: bool = True, applying_dns: 
         source_groups=wan["wan_source_groups"],
         previous_config_preview=str((wan_baseline or {}).get("config_preview") or ""),
         settings=wan["routes_wan_settings"],
+        applied_network_ingress=wan_applied_network_ingress(db),
+        desired_network_ingress=wan_network_ingress_from_preview(network["network_config_preview"]),
+        network_owned_targets=wan_network_owned_targets(db),
     )
     wan_summary = [
         f"{len(wan['routes'])} routes",
@@ -11325,6 +11505,128 @@ def appliance_apply_units(db: Session, *, reconcile: bool = True, applying_dns: 
         config_preview=wan["wan_config_preview"],
         baseline=wan_baseline,
     )
+    # Couple effective routes to a pending Network change on their own target.
+    # A gateway needs the candidate prefix, while a direct dev route also needs
+    # the candidate link's routing role and administrative state to be active.
+    applied_network_rows = {
+        row["name"]: row for row in network_interface_entries(network_baseline_preview)
+    }
+    desired_network_rows = {
+        row["name"]: row for row in network_interface_entries(network["network_config_preview"])
+    }
+    applied_management_ui = {
+        row["name"] for row in (wan_network_owned_targets(db) or [])
+        if row.get("management_ui")
+    }
+    route_target_changes: set[str] = set()
+    for route in wan["routes"]:
+        if not route.enabled:
+            continue
+        if not (wan["routes_wan_settings"].routing_enabled or (
+            default_route_family(route.destination_cidr) is not None
+            and route.interface_name in applied_management_ui
+        )):
+            continue
+        try:
+            family = ip_address(route.gateway).version if route.gateway else ip_network(
+                route.destination_cidr, strict=False,
+            ).version
+        except ValueError:
+            continue  # WAN validation reports malformed routes before task submission.
+        address_fields = ("ip_cidr", "ipv4_method") if family == 4 else ("ipv6_cidr", "ipv6_enabled")
+        previous = applied_network_rows.get(route.interface_name, {})
+        desired = desired_network_rows.get(route.interface_name, {})
+        routing_fields = ("role", "mode", "admin_state", "access_management_ui_enabled")
+        if any(previous.get(field, "") != desired.get(field, "")
+               for field in (*address_fields, *routing_fields)):
+            route_target_changes.add(route.interface_name)
+    wan_unit["network_address_dependency"] = bool(network_unit["changed"] and route_target_changes)
+    previous_targets = {
+        row["name"]: row for row in wan_config_target_entries(
+            str((wan_baseline or {}).get("config_preview") or "")
+        )
+    }
+    current_targets = {
+        row["name"]: row for row in wan_config_target_entries(wan_unit["config_preview"])
+    }
+    changed_target_names = {
+        name for name in previous_targets.keys() | current_targets.keys()
+        if previous_targets.get(name) != current_targets.get(name)
+    }
+    wan_referenced_targets = {
+        *(route.interface_name for route in wan["routes"]),
+        *(rule.source_interface for rule in wan["routing_rules"]),
+        *(rule.destination_interface for rule in wan["routing_rules"]),
+        *(rule.outbound_interface for rule in wan["nat_rules"]),
+    }
+    network_projection_only = changed_target_names.isdisjoint(wan_referenced_targets)
+    if (
+        wan_baseline is not None
+        and wan_unit["changed"]
+        and wan_unit["summary"] == wan_baseline.get("summary")
+        and wan_unit["config_path"] == wan_baseline.get("config_path")
+        and wan_apply_comparison_preview(
+            wan_unit["config_preview"],
+            network_projection_only=network_projection_only,
+        ) == wan_apply_comparison_preview(
+            str(wan_baseline.get("config_preview") or ""),
+            network_projection_only=network_projection_only,
+        )
+    ):
+        wan_unit["changed"] = False
+        wan_unit["config_diff"] = ""
+    # A combined Apply publishes Network before WAN. Keep the applied-Network
+    # rendering for WAN-only Apply, and capture the candidate rendering for the
+    # review selection, submit snapshot, and execution snapshot.
+    candidate_network_ingress = wan_network_ingress_from_preview(network["network_config_preview"])
+    candidate_wan_errors = list(wan["wan_validation_errors"])
+    if (wan["routes_wan_settings"].routing_enabled
+            and len(candidate_network_ingress) > ROUTE_RULE_PRIORITY_WINDOW):
+        candidate_wan_errors.append("Routing & WAN exceeds the candidate Network ingress rule capacity.")
+    candidate_wan_preview = render_wan_config(
+        wan["routes"], wan["policies"], wan["nat_rules"], wan["wan_all_targets"],
+        wan["routing_rules"], removed_routes=wan_removed_routes,
+        source_groups=wan["wan_source_groups"],
+        previous_config_preview=str((wan_baseline or {}).get("config_preview") or ""),
+        settings=wan["routes_wan_settings"],
+        candidate_network_ingress=candidate_network_ingress,
+        network_owned_targets=wan_network_owned_targets(
+            db, network_preview=network["network_config_preview"]
+        ),
+    )
+    candidate_wan = make_appliance_apply_unit(
+        unit_id="wan", label="Routing & WAN", page_url="/routes-wan",
+        context={**wan, "wan_config_preview": candidate_wan_preview},
+        summary=wan_summary, validation_errors=candidate_wan_errors,
+        config_path=wan["wan_config_path"], config_preview=candidate_wan_preview,
+        baseline=wan_baseline,
+    )
+    candidate_targets = {
+        row["name"]: row for row in wan_config_target_entries(candidate_wan_preview)
+    }
+    candidate_target_changes = {
+        name for name in previous_targets.keys() | candidate_targets.keys()
+        if previous_targets.get(name) != candidate_targets.get(name)
+    }
+    candidate_network_projection_only = candidate_target_changes.isdisjoint(wan_referenced_targets)
+    if (
+        wan_baseline is not None
+        and candidate_wan["changed"]
+        and candidate_wan["summary"] == wan_baseline.get("summary")
+        and candidate_wan["config_path"] == wan_baseline.get("config_path")
+        and wan_apply_comparison_preview(
+            candidate_wan_preview,
+            network_projection_only=candidate_network_projection_only,
+        ) == wan_apply_comparison_preview(
+            str(wan_baseline.get("config_preview") or ""),
+            network_projection_only=candidate_network_projection_only,
+        )
+    ):
+        candidate_wan["changed"] = False
+        candidate_wan["config_diff"] = ""
+    wan_unit["network_candidate_variant"] = candidate_wan
+    if network_unit["changed"] and candidate_wan["changed"]:
+        wan_unit["changed"] = True
     gateway_route_migrations = management_gateway_route_migrations(
         network_unit,
         network_baseline,
@@ -11333,9 +11635,24 @@ def appliance_apply_units(db: Session, *, reconcile: bool = True, applying_dns: 
     )
     network_unit["management_gateway_route_migrations"] = gateway_route_migrations
     network_unit["management_default_mirror_change"] = bool(
-        mirrored_management_default_routes(wan["wan_config_preview"])
+        mirrored_management_default_routes(candidate_wan_preview)
         != mirrored_management_default_routes(
             str((wan_baseline or {}).get("config_preview") or "")
+        )
+    )
+    flagged_management_names = {
+        path["name"] for path in network_management_paths(network["network_config_preview"])
+        if path["role"] == "access"
+    }
+    network_unit["management_domain_migration_required"] = bool(
+        network_baseline_preview
+        and "# Network runtime revision: exact-source-routing-v1." not in network_baseline_preview.splitlines()
+        and flagged_management_names
+        and any(
+            interface_name in flagged_management_names
+            for _destination, interface_name, _gateway, _metric in mirrored_management_default_routes(
+                candidate_wan_preview
+            )
         )
     )
 
@@ -11846,6 +12163,26 @@ def appliance_apply_context(db: Session) -> dict[str, Any]:
         "submitted_apply_unit_ids": submitted_ids,
         "initial_apply_required": initial_apply_required,
     }
+
+
+def appliance_apply_units_for_selection(
+    units: list[dict[str, Any]], selected_ids: set[str]
+) -> list[dict[str, Any]]:
+    """Use the Network candidate WAN snapshot only when both units apply.
+
+    Args:
+        units: Rendered appliance Apply units and WAN variants.
+        selected_ids: Final expanded set of units selected for this task.
+
+    Returns:
+        Units with the WAN snapshot matching the selected Network state.
+    """
+    if not {"network", "wan"}.issubset(selected_ids):
+        return units
+    return [
+        unit.get("network_candidate_variant", unit) if unit["id"] == "wan" else unit
+        for unit in units
+    ]
 
 
 def dashboard_appliance_apply_units(db: Session) -> list[dict[str, Any]]:
@@ -14359,6 +14696,7 @@ def execute_management_handoff(
         else bool(
             network.get("management_gateway_route_migrations")
             or network.get("management_default_mirror_change")
+            or network.get("management_domain_migration_required")
         )
     )
     wan = units_by_id["wan"] if wan_required else None
@@ -16005,7 +16343,11 @@ def run_appliance_apply_job(job_id: str, *, force_real: bool = False) -> None:
             }
             invalidate_observed_management_dhcp_dns()
             invalidate_appliance_apply_status_projection()
-            current_units = appliance_apply_units(db, applying_dns=True) if job_result.get("dns_resolver_activation") else appliance_apply_units(db)
+            current_units = appliance_apply_units_for_selection(
+                appliance_apply_units(db, applying_dns=True)
+                if job_result.get("dns_resolver_activation") else appliance_apply_units(db),
+                set(selected_order),
+            )
             current_by_id = {unit["id"]: unit for unit in current_units}
             missing_ids = [unit_id for unit_id in selected_order if unit_id not in current_by_id]
             if missing_ids:
@@ -16014,6 +16356,22 @@ def run_appliance_apply_job(job_id: str, *, force_real: bool = False) -> None:
             invalid_units = [unit["label"] for unit in selected_units if unit["validation_errors"]]
             if invalid_units:
                 raise ApplianceApplyJobError(f"Desired state became invalid before execution: {', '.join(invalid_units)}.")
+            if (
+                "network" in selected_order
+                and (
+                    current_by_id["network"].get("management_domain_migration_required")
+                    or current_by_id["network"].get("management_default_mirror_change")
+                )
+                and not (
+                    job_result.get("management_handoff")
+                    and "wan" in selected_order
+                    and set(MANAGEMENT_HANDOFF_UNIT_IDS).issubset(selected_order)
+                )
+            ):
+                raise ApplianceApplyJobError(
+                    "The management listener requires a protected Network and Routing & WAN migration. "
+                    "Submit the appliance changes again."
+                )
             changed_after_submit = [
                 unit["label"]
                 for unit in selected_units
@@ -16146,6 +16504,12 @@ def run_appliance_apply_job(job_id: str, *, force_real: bool = False) -> None:
                         if not group_result.get("dry_run"):
                             refresh_management_handoff_dynamic_observations(
                                 db,
+                                str(current_by_id["network"].get("config_preview") or ""),
+                                group_result["management_handoff"],
+                            )
+                            baseline_management_handoff_dhcp_settings(
+                                db,
+                                current_by_id["appliance_settings"],
                                 str(current_by_id["network"].get("config_preview") or ""),
                                 group_result["management_handoff"],
                             )
@@ -17078,6 +17442,18 @@ def _submit_appliance_apply(
         for dependency in ("network", "wan"):
             if unit_map.get(dependency, {}).get("changed"):
                 selected_ids.add(dependency)
+    # A fresh WAN preview includes desired ingress selectors. Establish their
+    # Network intent first, including when NAT added WAN transitively above.
+    # Existing baselines retain independent WAN Apply and its applied intent.
+    if "wan" in selected_ids and (
+        load_appliance_apply_baselines(db).get("network") is None
+        or unit_map["wan"].get("network_address_dependency")
+    ):
+        selected_ids.add("network")
+    management_domain_migration = bool(
+        "network" in selected_ids
+        and unit_map.get("network", {}).get("management_domain_migration_required")
+    )
     management_handoff = bool(
         (
             selected_ids.intersection(MANAGEMENT_HANDOFF_UNIT_IDS)
@@ -17087,6 +17463,7 @@ def _submit_appliance_apply(
             "wan" in selected_ids
             and unit_map.get("network", {}).get("management_default_mirror_change")
         )
+        or management_domain_migration
     )
     if management_handoff:
         selected_ids.update(
@@ -17096,6 +17473,7 @@ def _submit_appliance_apply(
             (
                 unit_map.get("network", {}).get("management_gateway_route_migrations")
                 or unit_map.get("network", {}).get("management_default_mirror_change")
+                or management_domain_migration
             )
             and "wan" in unit_map
         ):
@@ -17142,6 +17520,8 @@ def _submit_appliance_apply(
     if not selected_ids:
         detail = "Select at least one appliance change to submit."
         return JSONResponse({"detail": detail}, status_code=422) if wants_json else Response(detail, status_code=422, media_type="text/plain")
+    units = appliance_apply_units_for_selection(units, selected_ids)
+    unit_map = {unit["id"]: unit for unit in units}
     invalid_units = [unit for unit in units if unit["id"] in selected_ids and unit["validation_errors"]]
     if invalid_units:
         detail = "Resolve validation errors before submitting appliance changes."

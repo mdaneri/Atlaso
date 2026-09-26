@@ -707,6 +707,8 @@ def test_render_network_config_includes_physical_roles_for_networkd_apply():
     )
 
     assert "interface=eth0" in config
+    assert "# Network identity pins: reviewed-mac-v1." in config
+    assert "  mac=00:15:5d:aa:bb:01" in config
     assert "  role=management" in config
     assert "  ipv4_method=static" in config
 
@@ -1045,6 +1047,39 @@ def test_management_ui_context_prefers_dedicated_then_flagged_eth0_then_vlan(mon
     assert dhcp_context["name"] == "eth0"
     assert dhcp_servers == ["192.0.2.53"]
     assert management_dhcp_dns_context([], [flagged_vlan])[0]["name"] == "eth1.20"
+
+
+def test_pending_dhcp_management_uses_dhcp_resolver_without_claiming_a_lease(monkeypatch):
+    """A protected handoff may review DHCP DNS before its first lease exists.
+
+    Args:
+        monkeypatch: Pytest fixture replacing external dependencies.
+    """
+    pending = PhysicalInterface(
+        name="eth0", role="management", mode="access", ipv4_method="dhcp",
+        ip_cidr=None, host_ip_cidr=None, admin_state="up", oper_state="up",
+    )
+    flagged_fallback = PhysicalInterface(
+        name="eth1", role="access", mode="access", ip_cidr="192.0.2.25/24",
+        access_management_ui_enabled=True, admin_state="up", oper_state="up",
+    )
+    monkeypatch.setattr(
+        appliance_settings_service,
+        "observed_management_dhcp_dns_servers",
+        lambda _name: pytest.fail("unacquired DHCP DNS must not be observed"),
+    )
+
+    management, servers = management_dhcp_dns_context([flagged_fallback, pending], [])
+
+    assert management["name"] == "eth0"
+    assert management["ipv4_method"] == "dhcp"
+    assert management["ip"] == ""
+    assert management["addresses"] == []
+    assert servers == []
+    assert management_ui_context([flagged_fallback, pending], [])["name"] == "eth0"
+    assert appliance_settings_service.resolver_mode_for_settings(
+        local_dns_enabled=False, management_interface=management, external_servers=[],
+    ) == "dhcp"
 
 
 def test_validate_network_state_rejects_lockout_and_non_access_flag():

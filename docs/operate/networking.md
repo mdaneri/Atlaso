@@ -48,10 +48,41 @@ off-subnet HTTPS, DNS, repository, and update access will stop after Apply. Off-
 interface address remain invalid. Cancel the review or revert the pending Network desired state to retain the applied
 DHCP address and route; a failed protected management handoff rolls back to the last-applied DHCP path.
 
-For a static dedicated-management address with a gateway, Atlaso persists three related networkd objects: the connected
-management prefix in policy table `100`, a source rule selecting that table, and the default route through the reviewed
-gateway. The connected route keeps replies to the VMware host or another same-subnet client on-link after reboot; the
-default route continues to carry off-subnet appliance traffic.
+Dedicated-management connected routes use table `100`; Access, Route, and VLAN connected routes use table `200`.
+Connected routes remain available without a gateway and when forwarding is disabled. A configured management gateway
+adds the off-subnet default route. Networkd owns DHCP/IPv6 router-advertisement routes and their expiry in the same
+domain tables; the management default also remains available to appliance connections that have not selected a source.
+
+### Reusing a prefix on separate networks
+
+The dedicated management network and a separate lab network may use the same prefix with different appliance addresses.
+Atlaso selects local reply routes by the appliance's exact source address, rather than assigning the entire prefix to
+whichever interface appears first. An Access interface exposing Management UI still belongs to the lab routing domain;
+its off-subnet paths require Routes & WAN configuration. If its domain has no matching route, traffic fails instead of
+falling through to a route on the other network. Forwarded lab traffic selects the lab table by its incoming interface.
+If that lookup has no matching route, an interface-specific unreachable rule stops evaluation before the main table,
+including its management default. Existing firewall and Routing Permission checks still decide whether forwarding is
+allowed. These forwarded-traffic rules do not match appliance-local traffic on `lo`.
+
+After upgrading, **Network** appears as pending in Appliance Apply even when interface settings are unchanged. Its
+versioned configuration marker makes this one-time migration selectable. Review and apply **Network** to install this
+domain ownership and migrate previous prefix rules. A successful Network Apply clears the pending migration; a failed
+migration leaves it pending for retry. If an existing access-role Management UI listener has an enabled default route,
+Atlaso includes **Routing & WAN** in a protected management handoff. That handoff retains the old route until its
+lab-domain replacement is ready, then applies the captured WAN configuration. Other migrations use the already-applied
+forwarding setting and do not apply pending Routes & WAN edits. Rollback restores the prior rules, network files,
+routing service state, and any WAN runtime included in the handoff. Subsequent WAN Apply uses the applied Network ownership.
+Before the transition guard is enabled, Atlaso records the old listener's observed connected and default routes in
+the Network transaction, stages any missing copies in its source-selected table, then installs exact rules for proven
+live sources. It retires only those recorded temporary routes after networkd installs replacements, or during rollback.
+This preserves gatewayless static and DHCP management access when the older setup has no prefix rule or table-100 route.
+At boot, the guard is installed even if networkd has not yet created a persisted VLAN;
+only sources on links already present are seeded, and later reconciliation classifies the remaining links.
+
+The routing service follows DHCP and IPv6 address events and periodically reconciles missed events. Protected Apply
+waits for address activation and synchronously verifies source rules before readiness. Address changes outside Apply are
+asynchronous; this is not a guarantee of uninterrupted routing during lease changes. Reusing the exact same appliance IP
+in both domains is ambiguous and is rejected. Keep distinct appliance addresses even when their prefixes overlap.
 
 ### Assign an interface role
 
@@ -204,9 +235,13 @@ The **WAN Policies** wizard groups delay/capacity settings separately from packe
 policy to a Static Route identifies its target interface or VLAN; WAN Simulation v1 impairs all traffic on that target,
 not only traffic matching the route destination.
 
-The **Routing & WAN Settings** card controls Routing and WAN Simulation. Routing owns lab routes, routing permissions,
-and IPv4/IPv6 forwarding; WAN Simulation independently owns saved `tc/netem` assignments. Traffic Publishing owns
-NAT enablement and remains suspended while Routing is off. Fresh installs and factory reset start all switches off;
+The **Routing & WAN Settings** card controls Routing and WAN Simulation. Routing owns explicit lab static routes,
+forwarded lab ingress rules, routing permissions, and IPv4/IPv6 forwarding. Connected routes and exact local-source
+rules remain active in both routing domains while Routing is off, preserving appliance replies without enabling
+forwarding. WAN Simulation independently owns saved `tc/netem` assignments. Traffic Publishing owns
+NAT enablement and remains suspended while Routing is off. When Routing is on, Apply checks the 100-interface
+lab ingress rule capacity before changing candidate networking; Routing off needs no lab ingress rules.
+Fresh installs and factory reset start all switches off;
 disabling them preserves their saved rows. Saving does not change Photon. Submit the **Routing & WAN** (`wan`) and
 **Traffic Publishing** (`nat`) units through global Appliance Apply after reviewing their configuration.
 The Routing row on the Services page and local console changes the same saved **Routing enabled** switch. Direct

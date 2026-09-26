@@ -1100,10 +1100,13 @@ def render_network_config(
     lines = [
         "# Managed by Atlaso. Local changes may be overwritten.",
         "# Dry-run preview of desired Linux network state.",
+        "# Network runtime revision: exact-source-routing-v1.",
+        "# Network identity pins: reviewed-mac-v1.",
         "# Static management gateways install in the main table and management policy table 100.",
         "",
         "[physical_interfaces]",
     ]
+    physical_by_name = {interface.name: interface for interface in interfaces}
     for interface in interfaces:
         if interface.oper_state == "missing":
             continue
@@ -1112,6 +1115,7 @@ def render_network_config(
         lines.extend(
             [
                 f"interface={interface.name}",
+                f"  mac={interface.mac_address or ''}",
                 f"  check_duplicate_ip_addresses={'false' if interface.check_duplicate_ip_addresses is False else 'true'}",
                 f"  role={role}",
                 f"  mode={mode}",
@@ -1131,11 +1135,13 @@ def render_network_config(
         if not vlan.enabled:
             continue
         role = normalize_interface_role(vlan.role)
+        parent = physical_by_name.get(vlan.parent_interface)
         lines.extend(
             [
                 f"vlan={vlan.name}",
                 f"  check_duplicate_ip_addresses={'false' if vlan.check_duplicate_ip_addresses is False else 'true'}",
                 f"  parent={vlan.parent_interface}",
+                f"  parent_mac={parent.mac_address or '' if parent else ''}",
                 f"  vlan_id={vlan.vlan_id}",
                 f"  ip_cidr={vlan.ip_cidr or ''}",
                 f"  ipv6_cidr={vlan.ipv6_cidr or ''}",

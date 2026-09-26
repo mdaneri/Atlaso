@@ -243,7 +243,7 @@ def test_management_rollback_restores_wan_with_legacy_nat_retired(runtime, monke
     ):
         monkeypatch.setattr(
             helper, operation,
-            lambda parsed, *_args, operation=operation: restored.update({operation: parsed}) or 0,
+            lambda parsed, *_args, operation=operation, **_kwargs: restored.update({operation: parsed}) or 0,
         )
     persisted = config.parent / "persisted.conf"
     monkeypatch.setattr(
@@ -369,7 +369,7 @@ def test_identity_quarantine_continues_only_recovery(runtime, monkeypatch, capsy
         "_apply_wan_forwarding", "_apply_wan_target_routes",
         "_apply_wan_policy_rules", "_apply_wan_routes_and_qdiscs",
     ):
-        monkeypatch.setattr(helper, operation, lambda *_args, operation=operation: calls.append(operation) or 0)
+        monkeypatch.setattr(helper, operation, lambda *_args, operation=operation, **_kwargs: calls.append(operation) or 0)
     monkeypatch.setattr(helper, "_install_wan_runtime", lambda *_args: calls.append("persist"))
     if entrypoint == "rollback":
         evidence = []

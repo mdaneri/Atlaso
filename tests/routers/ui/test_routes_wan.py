@@ -619,7 +619,8 @@ def test_routes_wan_autosave_endpoints_and_apply_task(client):
     assert "Default route" in refreshed.text
     assert "0.0.0.0/0" in refreshed.text
     assert "source_resolved=192.168.50.0/24" in nat_page.text
-    assert "ip rule add from 192.168.50.0/24 table 200" in refreshed.text
+    assert "ip rule add iif eth1.20 table 200" in refreshed.text
+    assert "ip rule add from 192.168.50.0/24 table 200" not in refreshed.text
     assert "tc qdisc replace dev eth1.20" in refreshed.text
     with SessionLocal() as db:
         rule = db.execute(select(NatRule).where(NatRule.name == "Metro outbound")).scalar_one()
@@ -637,7 +638,8 @@ def test_routes_wan_autosave_endpoints_and_apply_task(client):
         assert "NAT rules" in (job.result or "")
         assert "explicit routing rules" in (job.result or "")
         assert '"unit_id": "nat"' in (job.result or "")
-        assert "ip rule add from 192.168.50.0/24 table 200" in (job.result or "")
+        assert "ip rule add iif eth1.20 table 200" in (job.result or "")
+        assert "ip rule add from 192.168.50.0/24 table 200" not in (job.result or "")
         assert "ip route replace 0.0.0.0/0 via 192.168.20.254 dev eth1.20 metric 120 table 200" in (job.result or "")
         assert "tc qdisc replace dev eth1.20" in (job.result or "")
 

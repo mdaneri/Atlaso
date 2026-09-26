@@ -2190,9 +2190,12 @@ preserved with their affected subsystem below. Keep new requirements at their to
 - Persist the global Routing, NAT, and WAN Simulation switches as safe settings. Fresh install and factory reset are
   off; legacy Routing/WAN settings derive once from effective enabled rows. Explicit legacy NAT intent migrates to the
   canonical Traffic Publishing setting. Keep every route, permission, NAT rule, WAN
-  policy, and assignment saved while its feature is off. Routing gates lab routes, rules, and IPv4/IPv6 forwarding;
-  NAT is effective only with Routing; WAN Simulation is independent. Management reachability remains outside the lab
-  Routing switch.
+  policy, and assignment saved while its feature is off. Routing gates explicit lab static routes, forwarded lab
+  ingress rules, and IPv4/IPv6 forwarding; NAT is effective only with Routing; WAN Simulation is independent.
+  Network-owned connected routes and exact local-source lookup/unreachable rules in management table `100` and lab
+  table `200` remain active for configured interfaces regardless of the Routing switch. These preserve locally
+  originated and reply traffic in its own domain, including overlapping prefixes on separate layer-2 networks;
+  they do not enable forwarding. Management reachability remains outside the lab Routing switch.
 - Label path entries **Static Routes** and forwarding authorization **Routing Permissions**. Keep Static Routes,
   explicit Routing Permissions, and WAN Policies on Routing & WAN, with Source NAT on Traffic Publishing.
   All four remain wizard-backed Tabulator collections using the ESX

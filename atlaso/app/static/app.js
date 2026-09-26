@@ -18392,6 +18392,11 @@ function applianceApplyReviewRow(unit) {
   row.className = "appliance-apply-review-row";
   row.dataset.applyUnitId = unit.id || "";
   row.dataset.applyConnectionWarnings = JSON.stringify(Array.isArray(unit.connection_warnings) ? unit.connection_warnings : []);
+  if (unit.network_candidate_valid !== null && unit.network_candidate_valid !== undefined) {
+    row.dataset.applyCandidateValid = String(Boolean(unit.network_candidate_valid));
+  }
+  if (unit.forces_network_selection) row.dataset.applyForcesNetworkSelection = "true";
+  if (unit.forces_wan_selection) row.dataset.applyForcesWanSelection = "true";
 
   const head = document.createElement("div");
   head.className = "appliance-apply-review-row-head";
@@ -18404,9 +18409,9 @@ function applianceApplyReviewRow(unit) {
   checkbox.checked = Boolean(unit.selected && unit.valid);
   checkbox.disabled = !unit.valid;
   checkbox.dataset.applianceApplyReviewCheckbox = "";
+  checkbox.dataset.valid = String(Boolean(unit.valid));
   if (unit.requires_dns_selection) {
     checkbox.dataset.requiresDnsSelection = "";
-    checkbox.dataset.valid = String(Boolean(unit.valid));
   }
   const labelText = document.createElement("span");
   const strong = document.createElement("strong");
@@ -18421,6 +18426,7 @@ function applianceApplyReviewRow(unit) {
   const validity = document.createElement("span");
   validity.className = `status-pill ${unit.valid ? "good" : "warn"}`;
   validity.textContent = unit.valid ? "valid" : "needs attention";
+  validity.dataset.applyValidity = "";
   const edit = document.createElement("a");
   edit.className = "text-link";
   edit.href = unit.page_url || managementUiPath("/dashboard");
@@ -18482,11 +18488,27 @@ function applianceApplyReviewRow(unit) {
     });
     row.append(alert);
   }
+  if (unit.network_candidate_valid === false) {
+    const candidateAlert = document.createElement("div");
+    candidateAlert.className = "alert error hidden";
+    candidateAlert.dataset.applyCandidateErrors = "";
+    const candidateErrors = Array.isArray(unit.network_candidate_validation_errors)
+      ? unit.network_candidate_validation_errors : [];
+    (candidateErrors.length ? candidateErrors : ["Routing & WAN needs attention when Network is applied in this task."])
+      .forEach((message) => {
+        const line = document.createElement("div");
+        line.textContent = String(message);
+        candidateAlert.append(line);
+      });
+    row.append(candidateAlert);
+  }
 
   const details = document.createElement("details");
   details.className = "config-diff";
   const detailsSummary = document.createElement("summary");
-  detailsSummary.textContent = unit.config_diff ? "Config diff" : "Current config preview";
+  detailsSummary.textContent = unit.network_candidate_preview && unit.network_candidate_preview !== unit.config_preview
+    ? "Routing & WAN when Network is not applied"
+    : (unit.config_diff ? "Config diff" : "Current config preview");
   const pre = document.createElement("pre");
   const code = document.createElement("code");
   code.className = unit.config_diff ? "language-diff" : "";
@@ -18495,6 +18517,20 @@ function applianceApplyReviewRow(unit) {
   details.append(detailsSummary, pre);
   row.append(details);
   highlightConfigPreviewElement(code);
+  if (unit.network_candidate_preview && unit.network_candidate_preview !== unit.config_preview) {
+    const candidateDetails = document.createElement("details");
+    candidateDetails.className = "config-diff";
+    const candidateSummary = document.createElement("summary");
+    candidateSummary.textContent = "Routing & WAN when Network is applied in this task";
+    const candidatePre = document.createElement("pre");
+    const candidateCode = document.createElement("code");
+    candidateCode.className = unit.network_candidate_diff ? "language-diff" : "";
+    candidateCode.textContent = unit.network_candidate_diff || unit.network_candidate_preview;
+    candidatePre.append(candidateCode);
+    candidateDetails.append(candidateSummary, candidatePre);
+    row.append(candidateDetails);
+    highlightConfigPreviewElement(candidateCode);
+  }
   return row;
 }
 
@@ -18507,6 +18543,55 @@ function updateApplianceApplySelection() {
     checkbox.disabled = !(dnsCheckbox instanceof HTMLInputElement && dnsCheckbox.checked) || checkbox.dataset.valid === "false";
     checkbox.checked = !checkbox.disabled;
   });
+  const networkCheckbox = modal.querySelector('[data-appliance-apply-review-checkbox][value="network"]');
+  const networkRow = modal.querySelector('[data-apply-unit-id="network"]');
+  const wanRow = modal.querySelector('[data-apply-unit-id="wan"]');
+  const wanCheckbox = wanRow?.querySelector('[data-appliance-apply-review-checkbox]');
+  const forcedNetwork = Boolean(wanCheckbox?.checked
+    && wanCheckbox?.dataset.forcedByNetwork !== "true"
+    && wanRow?.dataset.applyForcesNetworkSelection === "true");
+  if (networkCheckbox instanceof HTMLInputElement) {
+    if (forcedNetwork && networkCheckbox.dataset.forcedByWan !== "true") {
+      networkCheckbox.dataset.checkedBeforeWan = String(networkCheckbox.checked);
+      networkCheckbox.dataset.forcedByWan = "true";
+      networkCheckbox.checked = true;
+      networkCheckbox.disabled = true;
+    } else if (!forcedNetwork && networkCheckbox.dataset.forcedByWan === "true") {
+      networkCheckbox.checked = networkCheckbox.dataset.checkedBeforeWan === "true";
+      networkCheckbox.disabled = networkCheckbox.dataset.valid === "false";
+      delete networkCheckbox.dataset.checkedBeforeWan;
+      delete networkCheckbox.dataset.forcedByWan;
+    }
+  }
+  const forcedWan = Boolean(networkCheckbox?.checked
+    && networkCheckbox?.dataset.forcedByWan !== "true"
+    && networkRow?.dataset.applyForcesWanSelection === "true");
+  if (wanCheckbox instanceof HTMLInputElement) {
+    if (forcedWan && wanCheckbox.dataset.forcedByNetwork !== "true") {
+      wanCheckbox.dataset.checkedBeforeNetwork = String(wanCheckbox.checked);
+      wanCheckbox.dataset.forcedByNetwork = "true";
+      wanCheckbox.checked = true;
+      wanCheckbox.disabled = true;
+    } else if (!forcedWan && wanCheckbox.dataset.forcedByNetwork === "true") {
+      wanCheckbox.checked = wanCheckbox.dataset.checkedBeforeNetwork === "true";
+      wanCheckbox.disabled = wanCheckbox.dataset.valid === "false";
+      delete wanCheckbox.dataset.checkedBeforeNetwork;
+      delete wanCheckbox.dataset.forcedByNetwork;
+    }
+  }
+  const invalidCombinedWan = Boolean(networkCheckbox?.checked && wanCheckbox?.checked
+    && wanRow?.dataset.applyCandidateValid === "false");
+  const invalidForcedNetwork = Boolean(forcedNetwork && networkCheckbox?.dataset.valid === "false");
+  if (wanRow instanceof HTMLElement) {
+    wanRow.querySelector('[data-apply-candidate-errors]')?.classList.toggle("hidden", !invalidCombinedWan);
+    const validity = wanRow.querySelector('[data-apply-validity]');
+    if (validity instanceof HTMLElement && wanCheckbox instanceof HTMLInputElement) {
+      const valid = wanCheckbox.dataset.valid !== "false" && !invalidCombinedWan;
+      validity.classList.toggle("good", valid);
+      validity.classList.toggle("warn", !valid);
+      validity.textContent = valid ? "valid" : "needs attention";
+    }
+  }
   const selectedCheckboxes = Array.from(modal.querySelectorAll("[data-appliance-apply-review-checkbox]:checked"));
   const selected = selectedCheckboxes.length;
   const incompleteFormatConfirmations = selectedCheckboxes.some((checkbox) => {
@@ -18515,12 +18600,14 @@ function updateApplianceApplySelection() {
     return Array.from(row.querySelectorAll("[data-esx-format-confirmation]")).some((input) => input instanceof HTMLInputElement && input.value !== input.dataset.expected);
   });
   if (selectionSummary instanceof HTMLElement) {
-    selectionSummary.textContent = incompleteFormatConfirmations
-      ? `${selected} component${selected === 1 ? "" : "s"} selected · complete disk format confirmation`
-      : `${selected} component${selected === 1 ? "" : "s"} selected`;
+    selectionSummary.textContent = invalidCombinedWan || invalidForcedNetwork
+      ? `${selected} components selected · review ${invalidForcedNetwork ? "Network" : "Routing & WAN"} validation`
+      : (incompleteFormatConfirmations
+        ? `${selected} component${selected === 1 ? "" : "s"} selected · complete disk format confirmation`
+        : `${selected} component${selected === 1 ? "" : "s"} selected`);
   }
   if (submit instanceof HTMLButtonElement) {
-    submit.disabled = selected === 0 || incompleteFormatConfirmations;
+    submit.disabled = selected === 0 || incompleteFormatConfirmations || invalidCombinedWan || invalidForcedNetwork;
   }
   if (connectionWarning instanceof HTMLElement) {
     const messages = new Set();
