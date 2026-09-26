@@ -112,6 +112,19 @@ def build_router(dependencies: ApplianceApplyUiDependencies) -> ApplianceApplyUi
                     unit["id"] == "wan"
                     and (not network_unit["has_baseline"] or unit.get("network_address_dependency"))
                 ),
+                "forces_wan_selection": bool(
+                    unit["id"] == "network"
+                    and (
+                        network_unit.get("management_domain_migration_required")
+                        or (
+                            network_unit.get("management_handoff_required")
+                            and (
+                                network_unit.get("management_gateway_route_migrations")
+                                or network_unit.get("management_default_mirror_change")
+                            )
+                        )
+                    )
+                ),
                 "has_baseline": unit["has_baseline"],
                 "selected": unit["valid"],
                 "requires_dns_selection": unit.get("requires_dns_selection", False),

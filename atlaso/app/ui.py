@@ -10334,8 +10334,6 @@ def baseline_management_handoff_dhcp_settings(
         handoff_evidence: Successful helper result with confirmed candidate addresses.
     """
     captured = json_config_object(str(settings_unit.get("raw_config_preview") or ""))
-    if captured.get("management_ip"):
-        return
     name = str(captured.get("management_interface") or "")
     paths = [
         path for path in network_management_paths(network_preview)
@@ -10344,6 +10342,8 @@ def baseline_management_handoff_dhcp_settings(
         and not path.get("ip_cidr")
     ]
     if len(paths) != 1:
+        if captured.get("management_ip"):
+            return
         raise RuntimeError("Protected handoff has no captured pending DHCP management listener.")
     interface = db.scalar(select(PhysicalInterface).where(PhysicalInterface.name == name))
     cidr = str(interface.host_ip_cidr or "") if interface is not None else ""

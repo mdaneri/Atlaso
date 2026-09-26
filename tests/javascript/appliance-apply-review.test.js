@@ -20,6 +20,7 @@ test("combined Network and WAN selection surfaces candidate errors and blocks su
   wan.checked = true;
   wan.value = "wan";
   wan.disabled = false;
+  wan.dataset = { valid: "true" };
   const alert = new HTMLElement();
   alert.hidden = true;
   alert.classList = { toggle: (_name, value) => { alert.hidden = value; } };
@@ -27,6 +28,8 @@ test("combined Network and WAN selection surfaces candidate errors and blocks su
   validity.classList = { toggle: () => {} };
   const wanRow = new HTMLElement();
   wanRow.dataset = { applyCandidateValid: "false" };
+  const networkRow = new HTMLElement();
+  networkRow.dataset = {};
   wanRow.querySelector = (selector) => ({
     "[data-appliance-apply-review-checkbox]": wan,
     "[data-apply-candidate-errors]": alert,
@@ -38,6 +41,7 @@ test("combined Network and WAN selection surfaces candidate errors and blocks su
   const modal = new HTMLDialogElement();
   modal.querySelector = (selector) => ({
     '[data-appliance-apply-review-checkbox][value="network"]': network,
+    '[data-apply-unit-id="network"]': networkRow,
     '[data-apply-unit-id="wan"]': wanRow,
   })[selector] || null;
   modal.querySelectorAll = (selector) => selector === "[data-appliance-apply-review-checkbox]:checked"
@@ -74,5 +78,22 @@ test("combined Network and WAN selection surfaces candidate errors and blocks su
   context.updateApplianceApplySelection();
   assert.equal(network.checked, false);
   assert.equal(network.disabled, false);
+  assert.equal(alert.hidden, true);
+
+  networkRow.dataset.applyForcesWanSelection = "true";
+  network.checked = true;
+  context.updateApplianceApplySelection();
+  assert.equal(wan.checked, true);
+  assert.equal(wan.disabled, true);
+  assert.equal(alert.hidden, false);
+  assert.match(selectionSummary.textContent, /review Routing & WAN validation/);
+  assert.equal(submit.disabled, true);
+  context.updateApplianceApplySelection();
+  assert.equal(network.disabled, false);
+
+  network.checked = false;
+  context.updateApplianceApplySelection();
+  assert.equal(wan.checked, false);
+  assert.equal(wan.disabled, false);
   assert.equal(alert.hidden, true);
 });

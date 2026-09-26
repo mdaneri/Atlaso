@@ -18396,6 +18396,7 @@ function applianceApplyReviewRow(unit) {
     row.dataset.applyCandidateValid = String(Boolean(unit.network_candidate_valid));
   }
   if (unit.forces_network_selection) row.dataset.applyForcesNetworkSelection = "true";
+  if (unit.forces_wan_selection) row.dataset.applyForcesWanSelection = "true";
 
   const head = document.createElement("div");
   head.className = "appliance-apply-review-row-head";
@@ -18543,9 +18544,11 @@ function updateApplianceApplySelection() {
     checkbox.checked = !checkbox.disabled;
   });
   const networkCheckbox = modal.querySelector('[data-appliance-apply-review-checkbox][value="network"]');
+  const networkRow = modal.querySelector('[data-apply-unit-id="network"]');
   const wanRow = modal.querySelector('[data-apply-unit-id="wan"]');
   const wanCheckbox = wanRow?.querySelector('[data-appliance-apply-review-checkbox]');
   const forcedNetwork = Boolean(wanCheckbox?.checked
+    && wanCheckbox?.dataset.forcedByNetwork !== "true"
     && wanRow?.dataset.applyForcesNetworkSelection === "true");
   if (networkCheckbox instanceof HTMLInputElement) {
     if (forcedNetwork && networkCheckbox.dataset.forcedByWan !== "true") {
@@ -18560,6 +18563,22 @@ function updateApplianceApplySelection() {
       delete networkCheckbox.dataset.forcedByWan;
     }
   }
+  const forcedWan = Boolean(networkCheckbox?.checked
+    && networkCheckbox?.dataset.forcedByWan !== "true"
+    && networkRow?.dataset.applyForcesWanSelection === "true");
+  if (wanCheckbox instanceof HTMLInputElement) {
+    if (forcedWan && wanCheckbox.dataset.forcedByNetwork !== "true") {
+      wanCheckbox.dataset.checkedBeforeNetwork = String(wanCheckbox.checked);
+      wanCheckbox.dataset.forcedByNetwork = "true";
+      wanCheckbox.checked = true;
+      wanCheckbox.disabled = true;
+    } else if (!forcedWan && wanCheckbox.dataset.forcedByNetwork === "true") {
+      wanCheckbox.checked = wanCheckbox.dataset.checkedBeforeNetwork === "true";
+      wanCheckbox.disabled = wanCheckbox.dataset.valid === "false";
+      delete wanCheckbox.dataset.checkedBeforeNetwork;
+      delete wanCheckbox.dataset.forcedByNetwork;
+    }
+  }
   const invalidCombinedWan = Boolean(networkCheckbox?.checked && wanCheckbox?.checked
     && wanRow?.dataset.applyCandidateValid === "false");
   const invalidForcedNetwork = Boolean(forcedNetwork && networkCheckbox?.dataset.valid === "false");
@@ -18567,7 +18586,7 @@ function updateApplianceApplySelection() {
     wanRow.querySelector('[data-apply-candidate-errors]')?.classList.toggle("hidden", !invalidCombinedWan);
     const validity = wanRow.querySelector('[data-apply-validity]');
     if (validity instanceof HTMLElement && wanCheckbox instanceof HTMLInputElement) {
-      const valid = !wanCheckbox.disabled && !invalidCombinedWan;
+      const valid = wanCheckbox.dataset.valid !== "false" && !invalidCombinedWan;
       validity.classList.toggle("good", valid);
       validity.classList.toggle("warn", !valid);
       validity.textContent = valid ? "valid" : "needs attention";

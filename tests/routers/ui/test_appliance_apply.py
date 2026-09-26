@@ -402,6 +402,11 @@ def test_legacy_flagged_default_network_revision_couples_wan_handoff(client, mon
         assert not refreshed["network"]["management_handoff_required"]
         assert refreshed["network"]["management_domain_migration_required"] is enabled_default
 
+    review = client.get("/appliance-apply/review")
+    assert review.status_code == 200
+    review_network = next(unit for unit in review.json()["units"] if unit["id"] == "network")
+    assert review_network["forces_wan_selection"] is enabled_default
+
     monkeypatch.setattr(ui, "run_appliance_apply_job", lambda _job_id: None)
     page = client.get("/dashboard")
     csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
@@ -2911,6 +2916,11 @@ def test_modern_flagged_listener_enable_forces_candidate_wan_handoff(client, mon
         assert current["network"]["management_domain_migration_required"] is False
         assert current["wan"]["network_candidate_variant"]["changed"] is True
 
+    review = client.get("/appliance-apply/review")
+    assert review.status_code == 200
+    review_network = next(unit for unit in review.json()["units"] if unit["id"] == "network")
+    assert review_network["forces_wan_selection"] is True
+
     monkeypatch.setattr(ui, "run_appliance_apply_job", lambda _job_id: None)
     page = client.get("/dashboard")
     csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
@@ -3445,8 +3455,13 @@ ipv6_cidr=
         ]
 
 
-def test_management_handoff_baselines_only_captured_settings_with_proven_dhcp_lease():
-    """A successful protected handoff must not leave its captured Settings baseline lease-less."""
+@pytest.mark.parametrize("initial_ip", ["", "2001:db8::30"])
+def test_management_handoff_baselines_only_captured_settings_with_proven_dhcp_lease(initial_ip):
+    """A DHCP handoff resolves its captured IPv4 even when IPv6 is already present.
+
+    Args:
+        initial_ip: Captured management address before the DHCPv4 lease arrives.
+    """
     import atlaso.app.ui as ui
 
     network_preview = """\
@@ -3460,9 +3475,15 @@ ip_cidr=
 ipv6_enabled=false
 ipv6_cidr=
 """
+    if initial_ip:
+        network_preview = network_preview.replace(
+            "ipv6_enabled=false\nipv6_cidr=",
+            "ipv6_enabled=true\nipv6_cidr=2001:db8::30/64",
+        )
     captured = {
-        "management_interface": "eth0", "management_ip": "", "management_ip_cidr": "",
-        "web_terminal_enabled": True, "web_terminal_addresses": ["198.51.100.10"],
+        "management_interface": "eth0", "management_ip": initial_ip, "management_ip_cidr": "",
+        "web_terminal_enabled": True,
+        "web_terminal_addresses": [initial_ip, "198.51.100.10"] if initial_ip else ["198.51.100.10"],
         "root_ssh_enabled": False,
     }
     unit = ui.make_appliance_apply_unit(
@@ -3494,7 +3515,9 @@ ipv6_cidr=
     resolved = json.loads(unit["config_preview"])
     assert resolved["management_ip"] == "192.0.2.30"
     assert resolved["management_ip_cidr"] == "192.0.2.30/24"
-    assert resolved["web_terminal_addresses"] == ["192.0.2.30", "198.51.100.10"]
+    assert resolved["web_terminal_addresses"] == [
+        "192.0.2.30", *([initial_ip] if initial_ip else []), "198.51.100.10",
+    ]
     assert resolved["root_ssh_enabled"] is False
     assert unit["snapshot_hash"] != original_hash
     assert unit["snapshot_hash"] == ui.make_appliance_apply_unit(
