@@ -925,12 +925,15 @@ def transition_exemptions_present(rows: Any, family: int) -> set[int]:
     return present
 
 
-def _seed_transition_sources_locked(bindings: Any, *, allow_absent: bool = False) -> None:
+def _seed_transition_sources_locked(
+    bindings: Any, *, allow_absent: bool = False, held_addresses: tuple[HeldAddress, ...] = (),
+) -> None:
     """Install exact live lookups before a transition guard can cut off old paths.
 
     Args:
         bindings: Previous interface names, optional pinned MACs, and tables to preserve.
         allow_absent: Permit persisted links not yet created by networkd at boot.
+        held_addresses: Persisted old-source table overrides during a handoff.
     """
     if (not isinstance(bindings, list) or len(bindings) > 256 or any(
         not isinstance(row, dict) or set(row) not in ({"name", "table"}, {"name", "mac", "table"})
@@ -967,7 +970,9 @@ def _seed_transition_sources_locked(bindings: Any, *, allow_absent: bool = False
                 continue
             raise ReconcileError("previous management source identity unavailable")
         owners.append(owner)
-    sources, incomplete = source_tables(Intent(tuple(owners)), inventory)
+    accepted = {(row.name, row.mac) for row in owners}
+    holds = tuple(row for row in held_addresses if (row.interface.name, row.interface.mac) in accepted)
+    sources, incomplete = source_tables(Intent(tuple(owners), holds), inventory)
     if incomplete:
         raise ReconcileError("previous management source identity unavailable")
     if any(table is None for table in sources.values()):
@@ -1017,13 +1022,18 @@ def transition_guard(enable: bool, seed_interfaces: Any = None) -> None:
     with reconciliation_lock():
         if enable:
             bindings = seed_interfaces
+            held_addresses: tuple[HeldAddress, ...] = ()
             if bindings is None:
                 # Boot starts the unit before networkd, but a persisted intent
                 # can still identify addresses already present on its links.
+                persisted = read_intent()
                 bindings = [{"name": row.name, "mac": row.mac, "table": row.table}
-                            for row in read_intent().interfaces]
+                            for row in persisted.interfaces]
+                held_addresses = persisted.held_addresses
             if bindings:
-                _seed_transition_sources_locked(bindings, allow_absent=seed_interfaces is None)
+                _seed_transition_sources_locked(
+                    bindings, allow_absent=seed_interfaces is None, held_addresses=held_addresses,
+                )
         for family in (4, 6):
             _set_guard_locked(family, enable)
 

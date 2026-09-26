@@ -28938,8 +28938,18 @@ def _restore_management_handoff(state: dict) -> dict:
 
         attempt(f"{' '.join(command)}", run_reload)
     attempt("resolver restore", lambda: _restore_management_handoff_resolver(state, commands))
+    before_links = len(errors)
     attempt("network link restore", lambda: _restore_management_handoff_links(state, commands))
-    attempt("routing-domain restore", lambda: _restore_route_domains(state))
+    route_sources_ready = len(errors) == before_links
+    if route_sources_ready and _restored_legacy_route_baseline(state):
+        before_sources = len(errors)
+        attempt(
+            "legacy routing-domain source restore",
+            lambda: _restore_legacy_route_domain_sources(state["previous_route_domain_rules"]),
+        )
+        route_sources_ready = len(errors) == before_sources
+    if route_sources_ready:
+        attempt("routing-domain restore", lambda: _restore_route_domains(state))
     if state.get("dnsmasq_included"):
         def restore_dnsmasq() -> None:
             """Restore DNS after the previous listener addresses are active."""
@@ -29011,7 +29021,7 @@ def _restore_management_handoff(state: dict) -> dict:
         "Routes & WAN rollback",
         lambda: _restore_management_handoff_wan(state, commands),
     )
-    if "previous_route_domain_rules" in state:
+    if route_sources_ready and "previous_route_domain_rules" in state:
         attempt("routing-domain rule restore", lambda: _restore_route_domain_rules(state["previous_route_domain_rules"]))
     if not errors:
         attempt("transition route seed retirement", lambda: _retire_transition_routes(

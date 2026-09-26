@@ -110,6 +110,36 @@ def test_transition_start_seeds_persisted_identity_before_guard(monkeypatch):
     assert events == ["rule", "rule", "guard", "guard"]
 
 
+def test_transition_start_preserves_held_table_on_same_interface(monkeypatch):
+    """A watcher restart must not reclassify a held old source as candidate WAN.
+
+    Args:
+        monkeypatch: Isolated boot intent and native routing operations.
+    """
+    candidate = interface(table=200)
+    held = {"name": candidate["name"], "mac": candidate["mac"],
+            "address": "192.0.2.10", "table": 100}
+    old_lookup = domains.Rule(5000, "192.0.2.10", 100)
+    events = []
+    monkeypatch.setattr(domains, "reconciliation_lock", nullcontext)
+    monkeypatch.setattr(domains, "read_intent", lambda: intent(candidate, held_addresses=[held]))
+    monkeypatch.setattr(domains, "read_native", lambda args:
+                        [link(candidate, "192.0.2.10")] if args == ["address", "show"]
+                        else [native_rule(old_lookup)] if args == ["-4", "rule", "show"] else [])
+    monkeypatch.setattr(domains, "run_ip", lambda command: events.append(("rule", command)) or "")
+    monkeypatch.setattr(domains, "_set_guard_locked", lambda family, enable:
+                        events.append(("guard", (family, enable))))
+
+    domains.transition_guard(True)
+
+    assert events[0][0] == "rule"
+    assert "unreachable" in events[0][1]
+    assert all("table" not in command for kind, command in events if kind == "rule")
+    assert [event for event in events if event[0] == "guard"] == [
+        ("guard", (4, True)), ("guard", (6, True)),
+    ]
+
+
 def test_transition_start_does_not_seed_replaced_persisted_nic(monkeypatch):
     """A name reused by another MAC gets only the boot source guard.
 

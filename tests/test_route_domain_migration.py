@@ -1026,6 +1026,62 @@ def test_legacy_source_restore_waits_for_restored_links(helper, monkeypatch, tmp
     assert events == []
 
 
+@pytest.mark.parametrize("source_restore_fails", [False, True])
+def test_handoff_rollback_restores_legacy_selector_before_reconcile(
+    helper, monkeypatch, tmp_path, source_restore_fails,
+):
+    """Protected rollback keeps the old selector before canonical rule retirement.
+
+    Args:
+        helper: Loaded appliance helper module under test.
+        monkeypatch: Replace host rollback operations with ordered observations.
+        tmp_path: Isolated rollback directory without live host files.
+        source_restore_fails: Simulate refusal to reinstate the old selector.
+    """
+    events = []
+    state = {"snapshots": [], "previous_route_domain_rules": [
+        {"family": 4, "priority": 1000, "table": 100, "source": "192.0.2.0/24",
+         "incoming_interface": "", "protocol": 4},
+    ]}
+    monkeypatch.setattr(helper, "NETWORKD_CONFIG_DIR", tmp_path)
+    monkeypatch.setattr(helper, "NAT_RUNTIME_CONFIG_PATH", tmp_path / "absent-nat.conf")
+    monkeypatch.setattr(helper, "_capture_management_handoff_lease_updates", lambda _state: None)
+    monkeypatch.setattr(helper, "_stop_route_domains_for_restore", lambda _state: None)
+    monkeypatch.setattr(helper, "_quiesce_management_handoff_firewall", lambda *_args: None)
+    monkeypatch.setattr(helper, "_restore_management_handoff_resolver", lambda *_args: None)
+    monkeypatch.setattr(helper, "_restore_management_handoff_links", lambda *_args: events.append("links"))
+    monkeypatch.setattr(helper, "_restored_legacy_route_baseline", lambda _state: True)
+
+    def restore_source(_rules):
+        """Model old selector recovery before canonical reconciliation.
+
+        Args:
+            _rules: Journaled old selectors supplied to the test double.
+        """
+        events.append("legacy-source")
+        if source_restore_fails:
+            raise ValueError("priority occupied")
+
+    monkeypatch.setattr(helper, "_restore_legacy_route_domain_sources", restore_source)
+    monkeypatch.setattr(helper, "_restore_route_domains", lambda _state: events.append("canonical"))
+    monkeypatch.setattr(helper, "_restore_management_handoff_wan", lambda *_args: events.append("wan"))
+    monkeypatch.setattr(helper, "_restore_route_domain_rules", lambda _rules: events.append("rules"))
+    monkeypatch.setattr(helper, "_retire_transition_routes", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(helper, "_restore_management_handoff_firewall", lambda *_args: None)
+    monkeypatch.setattr(helper, "_nginx_binary", lambda: "nginx")
+    monkeypatch.setattr(helper, "_nginx_test_command", lambda: subprocess.CompletedProcess([], 0))
+    monkeypatch.setattr(helper, "_run", lambda command: subprocess.CompletedProcess(command, 0))
+    monkeypatch.setattr(helper, "_management_handoff_readiness", lambda *_args: {"stable_samples": 3})
+
+    if source_restore_fails:
+        with pytest.raises(ValueError, match="legacy routing-domain source restore"):
+            helper._restore_management_handoff(state)
+        assert events == ["links", "legacy-source", "wan"]
+    else:
+        helper._restore_management_handoff(state)
+        assert events == ["links", "legacy-source", "canonical", "wan", "rules"]
+
+
 def test_legacy_source_restore_adds_prior_prefix_without_removing_rules(helper, monkeypatch):
     """Install only an admitted old prefix source before canonical reconciliation.
 
