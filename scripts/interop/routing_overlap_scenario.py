@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import ipaddress
 import json
 import re
@@ -12,6 +13,8 @@ from collections.abc import Callable
 from typing import Any
 
 import paramiko
+from cryptography import x509
+from cryptography.x509.oid import ExtensionOID
 
 from scripts.interop.lifecycle_test import extract_csrf
 from scripts.interop.routing_overlap import (
@@ -21,7 +24,7 @@ from scripts.interop.routing_overlap import (
     verify_route_selection,
     verify_source_rules,
 )
-from scripts.interop.routing_overlap_transport import FixtureHttpClient
+from scripts.interop.routing_overlap_transport import FixtureHttpClient, TLSChannel
 
 FIELDS = (
     "role", "mode", "ipv4_method", "ip_cidr", "gateway", "ipv6_enabled",
@@ -123,6 +126,95 @@ def _rules(snapshot: dict[str, Any]) -> dict[int, list[dict[str, Any]]]:
     return {int(key): value for key, value in snapshot["rules"].items()}
 
 
+def _management_slaac_candidate(topology: AdmittedTopology) -> ipaddress.IPv6Address:
+    """Derive the fixture's expected modified-EUI-64 management SLAAC identity.
+
+    Args:
+        topology: Independently admitted fixture topology.
+    """
+    prefix = ipaddress.ip_network(topology.ipv6_prefix, strict=True)
+    mac = topology.link("appliance", 0).mac
+    if not isinstance(prefix, ipaddress.IPv6Network) or prefix.prefixlen != 64:
+        raise OverlapPrerequisiteError("management SLAAC requires an admitted IPv6 /64")
+    if not re.fullmatch(r"(?:[0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}", mac):
+        raise OverlapPrerequisiteError("management SLAAC requires an admitted Ethernet MAC")
+    octets = bytearray.fromhex(mac.replace(":", ""))
+    octets[0] ^= 0x02
+    iid = octets[:3] + b"\xff\xfe" + octets[3:]
+    return ipaddress.IPv6Address(int(prefix.network_address) | int.from_bytes(iid, "big"))
+
+
+def _served_management_certificate(
+    client: FixtureHttpClient, candidate: ipaddress.IPv6Address, required_addresses: list[str],
+) -> dict[str, Any]:
+    """Require the live CA-validated HTTPS leaf to cover the native candidate IP.
+
+    Args:
+        client: Authenticated private HTTPS client with an admitted gateway.
+        candidate: Static management address whose future SLAAC identity was derived from its MAC.
+        required_addresses: Every assigned global management address that must be covered by the served leaf.
+    """
+    gateway = client.gateway
+    channel = gateway.channel(443)
+    try:
+        stream = TLSChannel(channel, gateway.context, gateway.target)
+        der = stream.tls.getpeercert(binary_form=True)
+        leaf = x509.load_der_x509_certificate(der)
+        addresses = leaf.extensions.get_extension_for_oid(ExtensionOID.SUBJECT_ALTERNATIVE_NAME).value
+        covered = [str(address) for address in addresses.get_values_for_type(x509.IPAddress)]
+        missing = sorted(set(required_addresses) - set(covered))
+        if str(candidate) not in covered or missing:
+            raise OverlapPrerequisiteError("served management certificate lacks a native candidate IP SAN")
+        return {"chain_validated": True, "target_ip_validated": True,
+                "served_der_sha256": hashlib.sha256(der).hexdigest(), "ip_sans": covered,
+                "candidate_san_validated": str(candidate)}
+    except OverlapPrerequisiteError:
+        raise
+    except Exception:  # noqa: BLE001 - TLS and certificate diagnostics may contain transport details.
+        raise OverlapPrerequisiteError("served management certificate could not be CA-validated") from None
+    finally:
+        channel.close()
+
+
+def _prepare_management_certificate(
+    client: FixtureHttpClient, connect: Callable[[], paramiko.SSHClient], topology: AdmittedTopology,
+) -> dict[str, Any]:
+    """Stage and prove the future SLAAC identity before enabling route activation.
+
+    Args:
+        client: Authenticated private pinned HTTPS client.
+        connect: Fresh pinned root SSH factory for native address evidence.
+        topology: Independently admitted fixture topology.
+    """
+    interface = topology.link("appliance", 0).interface
+    candidate = _management_slaac_candidate(topology)
+    client.json_request("PATCH", f"/api/v1/interfaces/physical/{interface}", json_body={
+        "ipv6_enabled": True, "ipv6_cidr": f"{candidate}/64", "ipv6_gateway": None,
+    })
+    applied = _apply(client, ["network", "firewall", "wan", "appliance_settings"],
+                     stage="management-ipv6-certificate-preparation")
+    native = _snapshot(connect)
+    native_links = [row for row in native.get("links", []) if row.get("ifname") == interface]
+    matches = [row for row in _addresses(native, interface) if row.get("local") == str(candidate)]
+    if (len(native_links) != 1 or native_links[0].get("address") != topology.link("appliance", 0).mac
+            or len(matches) != 1 or matches[0].get("scope") != "global" or matches[0].get("dynamic") is True
+            or matches[0].get("tentative") or matches[0].get("dadfailed")):
+        raise OverlapPrerequisiteError("management IPv6 certificate preparation lacks the exact native static address")
+    required_addresses = sorted({str(ipaddress.ip_address(row["local"])) for row in _addresses(native, interface)
+                                 if row.get("scope") == "global" and not row.get("tentative")
+                                 and not row.get("dadfailed")})
+    if str(candidate) not in required_addresses:
+        raise OverlapPrerequisiteError("management IPv6 certificate preparation lost its native candidate address")
+    client.json_request("POST", "/api/v1/interfaces/refresh")
+    observed = client.json_request("GET", f"/api/v1/interfaces/physical/{interface}")
+    if observed.get("host_ipv6_cidr") != f"{candidate}/64":
+        raise OverlapPrerequisiteError("management IPv6 certificate preparation was not retained as observed host state")
+    certificate = _served_management_certificate(client, candidate, required_addresses)
+    return {"apply": applied, "native_static_address": str(candidate),
+            "observed_host_ipv6_cidr": observed["host_ipv6_cidr"],
+            "native_candidate_addresses": required_addresses, "certificate": certificate}
+
+
 def _prove(snapshot: dict[str, Any], topology: AdmittedTopology) -> dict[str, int]:
     """Require acquired DHCP/SLAAC sources and their exact isolation rules.
 
@@ -132,18 +224,21 @@ def _prove(snapshot: dict[str, Any], topology: AdmittedTopology) -> dict[str, in
     """
     management = topology.link("appliance", 0).interface
     lab = topology.link("appliance", 1).interface
+    expected_slaac = str(_management_slaac_candidate(topology))
     dynamic = _addresses(snapshot, management)
     dhcp = [row for row in dynamic if row.get("local") == "192.0.2.10"
             and row.get("dynamic") is True and isinstance(row.get("valid_life_time"), int)
             and 0 < row["valid_life_time"] <= 180]
     slaac = [row for row in dynamic if row.get("family") == "inet6"
-             and ipaddress.ip_address(row["local"]) in ipaddress.ip_network("fd74:1::/64")
+             and ipaddress.ip_address(row["local"]) in ipaddress.ip_network(topology.ipv6_prefix)
              and row.get("dynamic") is True and not row.get("tentative") and not row.get("dadfailed")
              and isinstance(row.get("valid_life_time"), int) and 0 < row["valid_life_time"] <= 120]
     static = {row["local"] for row in _addresses(snapshot, lab)
               if not row.get("tentative") and not row.get("dadfailed")}
     if len(dhcp) != 1 or not slaac or not {"192.0.2.20", "fd74:1::20"} <= static:
         raise OverlapPrerequisiteError("native DHCP/SLAAC and static overlap are not ready")
+    if not any(row.get("local") == expected_slaac for row in slaac):
+        raise OverlapPrerequisiteError("native SLAAC did not acquire the prepared management certificate identity")
     if not any(row.get("dst") == "default" and row.get("dev") == management
                and str(row.get("protocol")) in {"ra", "9"}
                for row in snapshot["management_routes"]["6"]):
@@ -704,6 +799,11 @@ def _run_authenticated(
     restore_allowed = True
     stage = "candidate-network"
     try:
+        stage = "management-ipv6-certificate-preparation"
+        evidence["management_certificate_preparation"] = _prepare_management_certificate(
+            client, connect_appliance, topology,
+        )
+        stage = "candidate-network"
         client.json_request("PATCH", f"/api/v1/interfaces/physical/{management}", json_body={
             "role": "management", "mode": "access", "ipv4_method": "dhcp", "ip_cidr": None,
             "gateway": None, "ipv6_enabled": True, "ipv6_cidr": None, "ipv6_gateway": None, "admin_state": "up",

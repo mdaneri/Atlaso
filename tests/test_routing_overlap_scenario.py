@@ -1,13 +1,21 @@
 """Keep native routing evidence and recovery gates fail-closed."""
 
 import copy
+import hashlib
 import io
+import ipaddress
 import json
+import ssl
 import subprocess
 import time
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
 import pytest
+from cryptography import x509
+from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives.asymmetric import rsa
+from cryptography.x509.oid import NameOID
 
 from scripts.interop import routing_overlap_scenario as scenario
 from scripts.interop.routing_overlap import (
@@ -83,7 +91,8 @@ def topology():
 @pytest.fixture
 def native():
     """Use native iproute JSON spellings, including numeric protocol/action strings."""
-    sources = {"192.0.2.10": 100, "fd74:1::abcd": 100, "192.0.2.20": 200, "fd74:1::20": 200}
+    sources = {"192.0.2.10": 100, "fd74:1::250:56ff:fe00:10": 100,
+               "192.0.2.20": 200, "fd74:1::20": 200}
     rules = {"4": [], "6": []}
     for index, (source, table) in enumerate(sources.items()):
         family = "6" if ":" in source else "4"
@@ -102,9 +111,10 @@ def native():
         rules[family].append({"src": "all", "srclen": 0, "iif": "lo", "protocol": "2",
                               "priority": 6004, "action": "7"})
     return {
-        "links": [{"ifname": "eth0", "addr_info": [
+        "links": [{"ifname": "eth0", "address": "00:50:56:00:00:10", "addr_info": [
             {"family": "inet", "local": "192.0.2.10", "dynamic": True, "valid_life_time": 100, "scope": "global"},
-            {"family": "inet6", "local": "fd74:1::abcd", "dynamic": True, "valid_life_time": 60, "scope": "global"}]},
+            {"family": "inet6", "local": "fd74:1::250:56ff:fe00:10", "dynamic": True,
+             "valid_life_time": 60, "scope": "global"}]},
             {"ifname": "eth1", "addr_info": [{"local": "192.0.2.20", "scope": "global"},
                                                {"local": "fd74:1::20", "scope": "global"}]}],
         "rules": rules,
@@ -119,10 +129,184 @@ def test_native_proof_requires_acquired_sources_and_ra_default(native, topology)
         native: Complete iproute observations.
         topology: Admitted fixture identities.
     """
-    assert scenario._prove(native, topology)["fd74:1::abcd"] == 100
+    assert scenario._prove(native, topology)["fd74:1::250:56ff:fe00:10"] == 100
     native["management_routes"]["6"] = []
     with pytest.raises(OverlapPrerequisiteError, match="RA default"):
         scenario._prove(native, topology)
+
+
+def test_management_candidate_uses_admitted_mac_modified_eui64(topology):
+    """Derive the static certificate-preparation address from admitted NIC identity.
+
+    Args:
+        topology: Independently admitted fixture interface identities.
+    """
+    assert str(scenario._management_slaac_candidate(topology)) == "fd74:1::250:56ff:fe00:10"
+
+
+def test_slaac_proof_rejects_a_different_native_identity(native, topology):
+    """A dynamic address in the right prefix cannot replace the prepared SAN identity.
+
+    Args:
+        native: Complete synthetic native observations.
+        topology: Independently admitted fixture identities.
+    """
+    native["links"][0]["addr_info"][1]["local"] = "fd74:1::abcd"
+    with pytest.raises(OverlapPrerequisiteError, match="prepared management certificate identity"):
+        scenario._prove(native, topology)
+
+
+def test_static_certificate_preparation_precedes_route_fixture_apply(monkeypatch, topology):
+    """Stage the exact static SAN address and prove its native ownership before handoff.
+
+    Args:
+        monkeypatch: Replace Apply, native observation, and the TLS certificate boundary.
+        topology: Independently admitted fixture identities.
+    """
+    client = FakeClient()
+    candidate = "fd74:1::250:56ff:fe00:10"
+    events = []
+    monkeypatch.setattr(scenario, "_apply", lambda current, units=None, **kwargs:
+                        events.append(("apply", units, kwargs["stage"])) or {"status": "succeeded"})
+    monkeypatch.setattr(scenario, "_snapshot", lambda connect: {
+        "links": [{"ifname": "eth0", "address": topology.link("appliance", 0).mac, "addr_info": [
+            {"local": "192.0.2.10", "scope": "global"},
+            {"local": candidate, "scope": "global"},
+        ]}]})
+
+    def certificate(current, address, required_addresses):
+        """Record the served-leaf check after native static address proof.
+
+        Args:
+            current: Authenticated private fixture client.
+            address: Expected future SLAAC address.
+            required_addresses: Assigned global management candidates requiring SAN coverage.
+        """
+        assert current is client
+        events.append(("certificate", str(address), required_addresses))
+        return {"chain_validated": True, "candidate_san_validated": str(address)}
+
+    monkeypatch.setattr(scenario, "_served_management_certificate", certificate)
+    result = scenario._prepare_management_certificate(client, lambda: None, topology)
+    assert client.rows["eth0"]["ipv6_cidr"] == f"{candidate}/64"
+    assert events == [
+        ("apply", ["network", "firewall", "wan", "appliance_settings"],
+         "management-ipv6-certificate-preparation"),
+        ("certificate", candidate, ["192.0.2.10", candidate]),
+    ]
+    assert result["native_static_address"] == candidate
+    assert result["certificate"]["candidate_san_validated"] == candidate
+    assert result["observed_host_ipv6_cidr"] == f"{candidate}/64"
+    assert any(call[:2] == ("POST", "/api/v1/interfaces/refresh") for call in client.calls)
+
+
+@pytest.mark.parametrize("invalid", ["wrong-address", "dynamic", "tentative", "dadfailed"])
+def test_static_certificate_preparation_rejects_unproven_candidate(monkeypatch, topology, invalid):
+    """Do not hand off or test SLAAC unless the exact candidate is natively static and assigned.
+
+    Args:
+        monkeypatch: Replace Apply, native observation, and served certificate boundary.
+        topology: Independently admitted fixture identities.
+        invalid: Native state that must block certificate preparation.
+    """
+    client = FakeClient()
+    candidate = "fd74:1::250:56ff:fe00:10"
+    address = {"local": candidate, "scope": "global"}
+    if invalid == "wrong-address":
+        address["local"] = "fd74:1::abcd"
+    elif invalid == "dynamic":
+        address["dynamic"] = True
+    elif invalid == "tentative":
+        address["tentative"] = True
+    elif invalid == "dadfailed":
+        address["dadfailed"] = True
+    monkeypatch.setattr(scenario, "_apply", lambda current, units=None, **kwargs: {"status": "succeeded"})
+    monkeypatch.setattr(scenario, "_snapshot", lambda connect: {
+        "links": [{"ifname": "eth0", "address": topology.link("appliance", 0).mac,
+                   "addr_info": [address]}]})
+    monkeypatch.setattr(scenario, "_served_management_certificate", lambda current, target, required:
+                        pytest.fail("certificate must not be accepted before native identity proof"))
+    with pytest.raises(OverlapPrerequisiteError, match="exact native static address"):
+        scenario._prepare_management_certificate(client, lambda: None, topology)
+
+
+@pytest.mark.parametrize("san_case", ["complete", "missing-candidate", "missing-baseline"])
+def test_served_management_leaf_must_cover_native_candidates(monkeypatch, topology, san_case):
+    """Inspect the TLS peer leaf after the admitted CA-validated handshake.
+
+    Args:
+        monkeypatch: Substitute only the authenticated TLS stream.
+        topology: Independently admitted fixture identities.
+        san_case: Whether the served leaf covers all candidates, or omits one required SAN.
+    """
+    candidate = scenario._management_slaac_candidate(topology)
+    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "fixture")])
+    cert = (x509.CertificateBuilder().subject_name(name).issuer_name(name).public_key(key.public_key())
+            .serial_number(1).not_valid_before(datetime.now(timezone.utc) - timedelta(minutes=1))
+            .not_valid_after(datetime.now(timezone.utc) + timedelta(minutes=10))
+            .add_extension(x509.SubjectAlternativeName([
+                *([] if san_case == "missing-candidate" else [x509.IPAddress(candidate)]),
+                *([] if san_case == "missing-baseline" else [x509.IPAddress(ipaddress.ip_address("192.0.2.10"))]),
+            ]), critical=False)
+            .sign(key, hashes.SHA256()))
+    der = cert.public_bytes(serialization.Encoding.DER)
+    closed = []
+    gateway = SimpleNamespace(target="192.0.2.10", context=object(),
+                              channel=lambda port: SimpleNamespace(close=lambda: closed.append(port)))
+    client = SimpleNamespace(gateway=gateway)
+
+    def tls_stream(opened, context, target):
+        """Expose a TLS peer certificate after the production handshake boundary.
+
+        Args:
+            opened: Admitted direct-tcpip channel.
+            context: Explicit CA-validating TLS context.
+            target: Original private HTTPS target.
+        """
+        assert target == gateway.target
+        return SimpleNamespace(tls=SimpleNamespace(getpeercert=lambda binary_form: der))
+
+    monkeypatch.setattr(scenario, "TLSChannel", tls_stream)
+    required = [str(candidate), "192.0.2.10"]
+    if san_case == "complete":
+        evidence = scenario._served_management_certificate(client, candidate, required)
+        assert evidence["candidate_san_validated"] == str(candidate)
+        assert evidence["served_der_sha256"] == hashlib.sha256(der).hexdigest()
+        assert evidence["ip_sans"] == [str(candidate), "192.0.2.10"]
+    else:
+        with pytest.raises(OverlapPrerequisiteError, match="lacks a native candidate IP SAN"):
+            scenario._served_management_certificate(client, candidate, required)
+    assert closed == [443]
+
+
+def test_served_management_leaf_rejects_tls_handshake_failure(monkeypatch, topology):
+    """A failed CA/IP-verifying TLS handshake blocks certificate acceptance.
+
+    Args:
+        monkeypatch: Substitute the TLS handshake boundary.
+        topology: Independently admitted fixture identities.
+    """
+    closed = []
+    gateway = SimpleNamespace(target="192.0.2.10", context=object(),
+                              channel=lambda port: SimpleNamespace(close=lambda: closed.append(port)))
+    client = SimpleNamespace(gateway=gateway)
+
+    def failed_handshake(opened, context, target):
+        """Fail before exposing a peer certificate, as an invalid chain would.
+
+        Args:
+            opened: Admitted direct-tcpip channel.
+            context: Explicit CA-validating TLS context.
+            target: Original private HTTPS target.
+        """
+        raise ssl.SSLError("synthetic certificate verification failure")
+
+    monkeypatch.setattr(scenario, "TLSChannel", failed_handshake)
+    with pytest.raises(OverlapPrerequisiteError, match="could not be CA-validated"):
+        candidate = scenario._management_slaac_candidate(topology)
+        scenario._served_management_certificate(client, candidate, [str(candidate)])
+    assert closed == [443]
 
 
 @pytest.mark.parametrize("field,value", [("dynamic", False), ("valid_life_time", 0),
@@ -202,6 +386,10 @@ class FakeClient:
             if method == "PATCH":
                 self.external_dns_servers = list(json_body["external_dns_servers"])
             return {"external_dns_servers": list(self.external_dns_servers)}
+        if path == "/api/v1/interfaces/refresh":
+            if method == "POST":
+                self.rows["eth0"]["host_ipv6_cidr"] = self.rows["eth0"]["ipv6_cidr"]
+            return [copy.deepcopy(self.rows["eth0"])]
         name = path.rsplit("/", 1)[1]
         if method == "PATCH":
             self.rows[name].update(json_body)
@@ -239,6 +427,7 @@ def test_failed_acquisition_restores_both_interfaces_and_revokes(monkeypatch, to
         raise OverlapPrerequisiteError("native acquisition failed")
 
     monkeypatch.setattr(scenario, "_ready", fail_ready)
+    monkeypatch.setattr(scenario, "_prepare_management_certificate", lambda *args: {"phase": "prepared"})
     monkeypatch.setattr(scenario, "_apply", lambda current, units=None, **kwargs: applies.append(copy.deepcopy(current.rows)) or {"status": "succeeded"})
     monkeypatch.setattr(scenario, "_snapshot", lambda connect: {"links": [
         {"ifname": "eth0", "addr_info": [{"local": "192.0.2.10", "scope": "global"}]},
@@ -252,6 +441,81 @@ def test_failed_acquisition_restores_both_interfaces_and_revokes(monkeypatch, to
     assert actions == ["resume-dhcp", "resume-ra"]
     assert client.calls[-1][:2] == ("POST", "/api/v1/api-tokens/1/revoke")
     assert client.bearer_token == ""
+
+
+def test_management_certificate_preparation_failure_restores_original_baseline(monkeypatch, topology):
+    """A known preparation failure returns desired state to the original baseline.
+
+    Args:
+        monkeypatch: Replace preparation and recovery boundaries.
+        topology: Admitted fixture identities.
+    """
+    client = FakeClient()
+    baseline = copy.deepcopy(client.rows)
+    restored = []
+
+    def failed_preparation(current, _connect, _topology):
+        """Leave a staged address then report a definite native preparation failure.
+
+        Args:
+            current: Authenticated synthetic client.
+            _connect: Unused pinned SSH factory.
+            _topology: Admitted interface identity.
+        """
+        current.rows["eth0"].update(ipv6_enabled=True, ipv6_cidr="fd74:1::250:56ff:fe00:10/64")
+        raise OverlapPrerequisiteError("static certificate preparation failed")
+
+    def restore(current, _connect, _server_action, captured, _dns):
+        """Restore the exact saved interface state after the failed stage.
+
+        Args:
+            current: Authenticated synthetic client.
+            _connect: Unused pinned SSH factory.
+            _server_action: Unused server callback.
+            captured: Original desired baseline.
+            _dns: Original resolver state.
+        """
+        restored.append(copy.deepcopy(captured))
+        current.rows = copy.deepcopy(baseline)
+        return {"restored": True}
+
+    monkeypatch.setattr(scenario, "_prepare_management_certificate", failed_preparation)
+    monkeypatch.setattr(scenario, "_restore", restore)
+    with pytest.raises(OverlapPrerequisiteError, match="management-ipv6-certificate-preparation: static certificate"):
+        scenario._run_authenticated(client, lambda: None, topology, lambda action: {})
+    assert client.rows == baseline
+    assert len(restored) == 1
+    assert restored[0]["eth0"]["ipv6_enabled"] is False
+    assert restored[0]["eth0"]["ipv6_cidr"] is None
+
+
+def test_management_certificate_preparation_unknown_apply_prohibits_restore(monkeypatch, topology):
+    """An indeterminate accepted prep Apply preserves the fixture without a second Apply.
+
+    Args:
+        monkeypatch: Replace preparation and recovery boundaries.
+        topology: Admitted fixture identities.
+    """
+    client = FakeClient()
+    restorations = []
+
+    def unknown_preparation(current, _connect, _topology):
+        """Retain the uncertain staged identity before raising its task sentinel.
+
+        Args:
+            current: Authenticated synthetic client.
+            _connect: Unused pinned SSH factory.
+            _topology: Admitted interface identity.
+        """
+        current.rows["eth0"].update(ipv6_enabled=True, ipv6_cidr="fd74:1::250:56ff:fe00:10/64")
+        raise scenario.ApplyOutcomeUnknown("preparation job_abc remains active")
+
+    monkeypatch.setattr(scenario, "_prepare_management_certificate", unknown_preparation)
+    monkeypatch.setattr(scenario, "_restore", lambda *args: restorations.append(args))
+    with pytest.raises(scenario.ApplyOutcomeUnknown, match="preparation job_abc"):
+        scenario._run_authenticated(client, lambda: None, topology, lambda action: {})
+    assert restorations == []
+    assert client.rows["eth0"]["ipv6_cidr"] == "fd74:1::250:56ff:fe00:10/64"
 
 
 def test_restore_attempts_both_interfaces_after_server_failure(monkeypatch):
@@ -362,6 +626,7 @@ def test_unknown_apply_outcome_does_not_start_restoration(monkeypatch, topology)
         raise scenario.ApplyOutcomeUnknown("Apply job_abc still running")
 
     monkeypatch.setattr(scenario, "_apply", uncertain)
+    monkeypatch.setattr(scenario, "_prepare_management_certificate", lambda *args: {"phase": "prepared"})
     with pytest.raises(scenario.ApplyOutcomeUnknown, match="job_abc"):
         scenario._run_authenticated(client, lambda: None, topology, lambda action: {})
     assert len([call for call in client.calls if call[0] == "PATCH"]) == 2
@@ -395,6 +660,7 @@ def test_failed_restoration_requires_fixture_preservation(monkeypatch, topology)
         raise OverlapPrerequisiteError("baseline Apply failed")
 
     monkeypatch.setattr(scenario, "_apply", failed_apply)
+    monkeypatch.setattr(scenario, "_prepare_management_certificate", lambda *args: {"phase": "prepared"})
     monkeypatch.setattr(scenario, "_restore", failed_restoration)
     with pytest.raises(scenario.RestorationIncomplete, match="restoration: baseline Apply failed"):
         scenario._run_authenticated(client, lambda: None, topology, lambda action: {})
@@ -459,6 +725,7 @@ def test_ambiguous_submission_prohibits_recovery_mutation(monkeypatch, topology,
     monkeypatch.setattr(client, "request", lambda method, path, **kwargs:
                         (200, '<input name="csrf" value="synthetic">', {}) if method == "GET"
                         else (status, body, {}))
+    monkeypatch.setattr(scenario, "_prepare_management_certificate", lambda *args: {"phase": "prepared"})
     with pytest.raises(scenario.ApplyOutcomeUnknown):
         scenario._run_authenticated(client, lambda: None, topology, lambda action: {})
     assert len([call for call in client.calls if call[0] == "PATCH"]) == 2
