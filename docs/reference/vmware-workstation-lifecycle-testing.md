@@ -379,7 +379,8 @@ then requires native assignment and a CA-validated served certificate containing
 to SLAAC. The preparation address is not counted as SLAAC; native acquisition must later prove the same address
 as dynamic and usable before overlap checks continue. A known preparation failure restores the original IPv4-only
 management and unused-lab baseline through the ordinary audited Apply. An unknown Apply outcome or incomplete
-restoration preserves the fixture for recovery. The mode then exercises DHCP/SLAAC overlap through the canonical lifecycle wrapper.
+restoration preserves the fixture for recovery. The mode then exercises DHCP/SLAAC overlap through the canonical
+lifecycle wrapper.
 `-RoutingWanOnly` retains its existing static routing scenario. It enables the global Routing/WAN settings before
 the first Apply and host forwarding checks. The Access routing permission is added only after the fixture proves
 that Access traffic is blocked without that permission. Focused unit tests do not replace native acceptance
