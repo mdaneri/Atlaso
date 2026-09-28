@@ -2659,6 +2659,80 @@ def test_wan_apply_preview_uses_selected_network_ownership(client, monkeypatch, 
     assert captured["config_preview"] == expected["config_preview"]
 
 
+@pytest.mark.parametrize("selected_unit", ["network", "nat"])
+def test_nat_review_locks_network_wan_pair_and_rejects_invalid_candidate(client, monkeypatch, selected_unit):
+    """Review and submission use the same NAT-forced Network/WAN candidate pair.
+
+    Args:
+        client: Authenticated application test client.
+        monkeypatch: Fixture for replacing runtime dependencies.
+        selected_unit: Unit selected for the reviewed Apply request.
+    """
+    from sqlalchemy import select
+
+    from atlaso.app import ui
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Job, PhysicalInterface, Route
+    from atlaso.app.services.routes_wan import save_routes_wan_settings
+    from atlaso.app.services.traffic_publishing import save_traffic_publishing_settings
+
+    login(client)
+    with SessionLocal() as db:
+        save_routes_wan_settings(db, routing_enabled=True, nat_enabled=False, wan_simulation_enabled=False)
+        save_traffic_publishing_settings(db, nat_enabled=True)
+        interface = db.scalar(select(PhysicalInterface).where(PhysicalInterface.name == "eth2"))
+        assert interface is not None
+        interface.role = "access"
+        interface.mode = "access"
+        interface.admin_state = "up"
+        interface.oper_state = "up"
+        interface.ipv4_method = "static"
+        interface.ip_cidr = "192.0.2.10/24"
+        db.add(Route(destination_cidr="198.51.100.0/24", gateway="192.0.2.1",
+                     interface_name="eth2", enabled=True))
+        db.commit()
+        baseline_units = ui.appliance_apply_units(db)
+        ui.update_appliance_apply_baselines(db, baseline_units, {unit["id"] for unit in baseline_units})
+        interface.mtu = 1400
+        route = db.scalar(select(Route).where(Route.destination_cidr == "198.51.100.0/24"))
+        assert route is not None
+        route.metric += 1
+        db.commit()
+        units = ui.appliance_apply_units(db)
+        unit_map = {unit["id"]: unit for unit in units}
+        assert unit_map["network"]["changed"]
+        assert unit_map["wan"]["changed"]
+        assert not unit_map["network"].get("management_handoff_required")
+        assert not unit_map["wan"].get("network_address_dependency")
+        assert unit_map["network"]["forces_wan_selection"] is True
+        assert unit_map["wan"]["forces_network_selection"] is True
+        candidate = unit_map["wan"]["network_candidate_variant"]
+        candidate["valid"] = False
+        candidate["validation_errors"] = ["candidate WAN validation failure"]
+        count_before = db.query(Job).count()
+
+    monkeypatch.setattr(ui, "appliance_apply_units", lambda _db, **_kwargs: units)
+    review = client.get("/appliance-apply/review")
+    assert review.status_code == 200
+    review_units = {unit["id"]: unit for unit in review.json()["units"]}
+    assert review_units["network"]["forces_wan_selection"] is True
+    assert review_units["wan"]["forces_network_selection"] is True
+    assert review_units["wan"]["network_candidate_valid"] is False
+    assert review_units["wan"]["network_candidate_validation_errors"] == ["candidate WAN validation failure"]
+
+    page = client.get("/dashboard")
+    csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    response = client.post(
+        "/appliance-apply",
+        data={"csrf": csrf, "selected_units": selected_unit},
+        headers={"Accept": "application/json"},
+    )
+    assert response.status_code == 422
+    assert "Resolve validation errors" in response.json()["detail"]
+    with SessionLocal() as db:
+        assert db.query(Job).count() == count_before
+
+
 @pytest.mark.parametrize("scenario", ["changed_address", "unrelated_network_edit", "invalid_network",
                                        "disabled_route", "routing_off", "activate_trunk",
                                        "activate_admin_down", "activate_unused", "change_domain",
@@ -2799,6 +2873,83 @@ def test_network_only_ingress_reconciliation_does_not_leave_wan_pending(client):
         after = ui.appliance_apply_units(db)
         assert not next(unit for unit in after if unit["id"] == "network")["changed"]
         assert not next(unit for unit in after if unit["id"] == "wan")["changed"]
+
+
+@pytest.mark.parametrize(
+    ("preview", "expected"),
+    [
+        ("[routes]\nroute=198.51.100.0/24\n", True),
+        ("[routes]\nroute=198.51.100.0/24\nenabled=false\n", False),
+        (
+            "[targets]\ntarget=eth1\nrole=route\nip_cidr=192.0.2.1/24\n"
+            "target=eth2\nrole=route\nipv6_cidr=2001:db8::1/64\n",
+            True,
+        ),
+        (
+            "[feature_settings]\nrouting_enabled=false\n"
+            "[routes]\nroute=198.51.100.0/24\n",
+            False,
+        ),
+    ],
+    ids=["legacy-route-defaults-enabled", "legacy-disabled-route", "legacy-targets", "explicit-off-wins"],
+)
+def test_applied_wan_routing_gate_matches_legacy_helper_inference(preview, expected):
+    """Keep applied-state Network validation aligned with the helper's legacy inference.
+
+    Args:
+        preview: Persisted Routing and WAN configuration preview.
+        expected: Expected effective routing state.
+    """
+    from atlaso.app.ui import _wan_preview_routing_enabled
+
+    assert _wan_preview_routing_enabled(preview) is expected
+
+
+@pytest.mark.parametrize(
+    ("routing_enabled", "expected_error"),
+    [(None, True), (False, False)],
+    ids=["legacy-inferred-on", "explicit-off"],
+)
+def test_network_ingress_capacity_uses_applied_legacy_routing_state(
+    client, monkeypatch, routing_enabled, expected_error,
+):
+    """Apply Network capacity checks use inferred legacy Routing unless explicitly disabled.
+
+    Args:
+        client: Application test client.
+        monkeypatch: Fixture for replacing the ingress inventory.
+        routing_enabled: Explicit routing state, or None for a legacy baseline.
+        expected_error: Whether the applied ingress inventory exceeds capacity.
+    """
+    from atlaso.app import ui
+    from atlaso.app.database import SessionLocal
+
+    with SessionLocal() as db:
+        units = ui.appliance_apply_units(db)
+        ui.update_appliance_apply_baselines(db, units, {unit["id"] for unit in units})
+        baselines = ui.load_appliance_apply_baselines(db)
+        feature_settings = (
+            f"[feature_settings]\nrouting_enabled={str(routing_enabled).lower()}\n\n"
+            if routing_enabled is not None
+            else ""
+        )
+        baselines["wan"] = {
+            **baselines["wan"],
+            "config_preview": f"{feature_settings}[routes]\nroute=198.51.100.0/24\n",
+            "snapshot_hash": "legacy-applied-wan",
+        }
+        ui.save_appliance_apply_baselines(db, baselines)
+        db.commit()
+
+        monkeypatch.setattr(
+            ui,
+            "wan_network_ingress_from_preview",
+            lambda _preview: [f"eth{index}" for index in range(ui.ROUTE_RULE_PRIORITY_WINDOW + 1)],
+        )
+        network = next(unit for unit in ui.appliance_apply_units(db) if unit["id"] == "network")
+
+    assert any("applied Routing & WAN ingress rule capacity" in error
+               for error in network["validation_errors"]) is expected_error
 
 
 def test_management_move_leaves_unselected_dns_enablement_pending(client):

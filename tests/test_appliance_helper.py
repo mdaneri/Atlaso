@@ -11154,14 +11154,15 @@ def test_legacy_source_migration_sends_reviewed_interface_domains(monkeypatch, t
 
 @pytest.mark.parametrize("role,mode,admin_state", [
     ("unused", "access", "up"), ("access", "trunk", "up"), ("access", "access", "down"),
+    ("management", "access", "up"), ("access", "access", "up"),
 ])
 @pytest.mark.parametrize("old_routes", [
     "", "[Route]\nDestination=10.42.0.0/16\nPreferredSource=10.42.0.2\nTable=200\n",
 ])
-def test_legacy_source_migration_retains_outgoing_old_domain(
+def test_legacy_source_migration_retains_live_old_domain(
     monkeypatch, tmp_path, role, mode, admin_state, old_routes,
 ):
-    """An outgoing live source uses its installed domain, not candidate state.
+    """A live source uses its installed domain even when reclassified as Management.
 
     Args:
         monkeypatch: Pytest fixture replacing native observations.
@@ -11209,17 +11210,19 @@ def test_legacy_source_migration_retains_outgoing_old_domain(
     ]}]
 
 
-def test_legacy_source_migration_recognizes_marker_free_outgoing_management(monkeypatch, tmp_path):
+@pytest.mark.parametrize("role", ["unused", "access"])
+def test_legacy_source_migration_recognizes_marker_free_old_management(monkeypatch, tmp_path, role):
     """The installed management filename establishes old table 100 without markers.
 
     Args:
         monkeypatch: Pytest fixture replacing native observations.
         tmp_path: Owned candidate and applied networkd file directory.
+        role: Candidate role replacing the old Management role.
     """
     helper = load_helper_module()
     candidate = tmp_path / "candidate.conf"
     candidate.write_text(
-        "[physical_interfaces]\ninterface=eth0\n  role=unused\n  mode=access\n"
+        f"[physical_interfaces]\ninterface=eth0\n  role={role}\n  mode=access\n"
         "  admin_state=up\n  mac=02:00:00:00:00:10\n", encoding="utf-8",
     )
     networkd = tmp_path / "networkd"
@@ -11289,18 +11292,20 @@ def test_legacy_source_migration_uses_only_live_selector_for_outgoing_lab(monkey
     "", "[Match]\nName=eth2\n[Route]\nTable=200\n",
     "[Match]\nName=eth1\n[Route]\nTable=100\n[Route]\nTable=200\n",
 ])
-def test_legacy_source_migration_refuses_unproven_outgoing_domain(monkeypatch, tmp_path, old_policy):
+@pytest.mark.parametrize("role", ["unused", "management"])
+def test_legacy_source_migration_refuses_unproven_live_domain(monkeypatch, tmp_path, old_policy, role):
     """A retired candidate role cannot assign an ambiguous live old source.
 
     Args:
         monkeypatch: Pytest fixture replacing native observations.
         tmp_path: Owned candidate and applied networkd file directory.
         old_policy: Missing, misbound, or ambiguous applied domain evidence.
+        role: Outgoing or reclassified Management candidate role.
     """
     helper = load_helper_module()
     candidate = tmp_path / "candidate.conf"
     candidate.write_text(
-        "[physical_interfaces]\ninterface=eth1\n  role=unused\n  mode=access\n"
+        f"[physical_interfaces]\ninterface=eth1\n  role={role}\n  mode=access\n"
         "  admin_state=up\n  mac=02:00:00:00:00:20\n", encoding="utf-8",
     )
     networkd = tmp_path / "networkd"
@@ -11317,7 +11322,7 @@ def test_legacy_source_migration_refuses_unproven_outgoing_domain(monkeypatch, t
     monkeypatch.setattr(helper, "_snapshot_route_domain_rules", lambda: legacy)
     monkeypatch.setattr(helper, "_network_observation_command", lambda command:
                         subprocess.CompletedProcess(command, 0, json.dumps(observed), ""))
-    with pytest.raises(ValueError, match="outgoing legacy source domain unavailable"):
+    with pytest.raises(ValueError, match="live legacy source domain unavailable"):
         helper._retire_legacy_source_rules(candidate)
 
 

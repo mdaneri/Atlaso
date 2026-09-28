@@ -374,6 +374,10 @@ discovers the runtime address through VMware Tools.
 
 ## Isolated routing-overlap fixture contracts
 
+Certificate handoff preparation requires independent proof that the candidate management address belongs exclusively
+to the appliance; the [certificate peer procedure](#single-command-run) describes the current producer
+limitation. A MAC-derived address and task-owned VM receipts alone do not provide this proof.
+
 The opt-in `-RoutingOverlapOnly` mode first applies the MAC-derived management IPv6 address as static state,
 then requires native assignment and a CA-validated served certificate containing that address before switching
 to SLAAC. The preparation address is not counted as SLAAC; native acquisition must later prove the same address
@@ -392,6 +396,9 @@ loopback sources into the main table. Priority 6003 sends link-local destination
 The guard starts
 before networkd at boot and remains active
 through ordinary Network Apply. It is retired only after restoring a pre-routing-domain state or factory reset.
+During first-Apply migration, every still-live source keeps the domain of its installed networkd policy, including
+an Access link being reclassified as Management. The candidate role takes effect after Network activation;
+missing or ambiguous installed ownership refuses migration before source selectors are retired.
 Use a prepared client disk with `-SkipClientPrepare -ClientVmdkPath <owned-client-disk>` and
 `-ApplianceSshUser root`; the existing management VMnet
 is used only for control access to the two clients. Do not supply an appliance IP/URL override or dry-run Apply.

@@ -11594,11 +11594,12 @@ def _retire_legacy_source_rules(path: Path | None = None) -> None:
                 actual = parent.get("address", "") if parent is not None else ""
             if not _valid_network_mac(expected) or actual.lower() != expected.lower():
                 raise ValueError("legacy source interface differs from reviewed MAC identity")
-            if outgoing:
-                if not any(isinstance(address, dict) and address.get("scope") in {"global", 0}
-                           and address.get("valid_life_time") != 0
-                           for address in link.get("addr_info", [])):
-                    continue
+            live_source = any(isinstance(address, dict) and address.get("scope") in {"global", 0}
+                              and address.get("valid_life_time") != 0
+                              for address in link.get("addr_info", []))
+            if outgoing and not live_source:
+                continue
+            if live_source:
                 # Candidate role/state cannot establish the domain of an old
                 # address that has not yet been retired by networkd. Read the
                 # installed, pre-transaction networkd policy for that link.
@@ -11635,7 +11636,7 @@ def _retire_legacy_source_rules(path: Path | None = None) -> None:
                                            else LAB_ROUTE_TABLE_ID)
                 if (matched != 1 or installed_table is None or len(tables) > 1
                         or (tables and tables != {installed_table})):
-                    raise ValueError("outgoing legacy source domain unavailable")
+                    raise ValueError("live legacy source domain unavailable")
                 table = installed_table
                 # A feature-off legacy baseline may have no selector for this
                 # installed domain. Its live source currently follows the
@@ -11651,7 +11652,7 @@ def _retire_legacy_source_rules(path: Path | None = None) -> None:
                     try:
                         source = ip_address(address["local"])
                     except (KeyError, TypeError, ValueError) as exc:
-                        raise ValueError("outgoing legacy source inventory malformed") from exc
+                        raise ValueError("live legacy source inventory malformed") from exc
                     matches = {rule["table"] for rule in legacy
                                if source in ip_network(rule["source"], strict=True)}
                     if matches and table not in matches:

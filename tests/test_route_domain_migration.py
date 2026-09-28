@@ -117,6 +117,72 @@ def test_overlapping_legacy_prefixes_follow_mac_bound_interface_domains(monkeypa
                    for command in source_commands if "table" in command)
 
 
+@pytest.mark.parametrize("overlap", [False, True])
+def test_reclassified_management_link_keeps_live_legacy_lab_sources(monkeypatch, tmp_path, overlap):
+    """First Apply preserves Access sources until the Management candidate activates.
+
+    Args:
+        monkeypatch: Replace native observations and capture actual migration commands.
+        tmp_path: Owned Network and installed networkd policy directory.
+        overlap: Whether Management selectors also match the live Access sources.
+    """
+    helper = load_helper_module()
+    candidate = tmp_path / "network.conf"
+    candidate.write_text(
+        "[physical_interfaces]\ninterface=eth1\n  role=management\n  mode=access\n"
+        "  admin_state=up\n  mac=02:00:00:00:00:20\n", encoding="utf-8",
+    )
+    networkd = tmp_path / "networkd"
+    networkd.mkdir()
+    (networkd / "10-atlaso-eth1.network").write_text(
+        "[Match]\nName=eth1\n[Network]\nAddress=10.42.2.5/24\nAddress=2001:db8:42::5/64\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(helper, "NETWORKD_CONFIG_DIR", networkd)
+    monkeypatch.setattr(helper, "NETWORKD_MGMT_CONFIG_PATH", networkd / "00-atlaso-mgmt.network")
+    legacy = [
+        {"family": family, "priority": priority, "table": table, "source": prefix,
+         "incoming_interface": "", "protocol": 4}
+        for family, prefix, table, priority in (
+            (4, "10.42.0.0/16" if overlap else "10.43.0.0/16", 100, 1000),
+            (6, "2001:db8:42::/64" if overlap else "2001:db8:43::/64", 100, 1000),
+            (4, "10.42.2.0/24", 200, 2000), (6, "2001:db8:42::/64", 200, 2000),
+        )
+    ]
+    native = [{"ifname": "eth1", "address": "02:00:00:00:00:20", "addr_info": [
+        {"scope": "global", "local": "10.42.2.5", "valid_life_time": 3600},
+        {"scope": "global", "local": "2001:db8:42::5", "valid_life_time": 3600},
+    ]}]
+    commands = []
+    monkeypatch.setattr(helper, "_snapshot_route_domain_rules", lambda: legacy)
+    monkeypatch.setattr(helper, "_network_observation_command", lambda command:
+                        subprocess.CompletedProcess(command, 0, json.dumps(native), ""))
+    monkeypatch.setattr(domains, "reconciliation_lock", nullcontext)
+    monkeypatch.setattr(domains.subprocess, "run", lambda *_args, **_kwargs:
+                        subprocess.CompletedProcess([], 3, b"", b""))
+    monkeypatch.setattr(domains, "read_native", lambda args: native if args == ["address", "show"] else [])
+    monkeypatch.setattr(domains, "run_ip", lambda command: commands.append(command) or "")
+
+    def migrate(command, payload):
+        """Exercise the installed migration entry point with the helper's bindings.
+
+        Args:
+            command: Reviewed reconciler invocation.
+            payload: MAC-bound live source ownership from the helper.
+        """
+        domains.migrate_legacy_sources(json.loads(payload))
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    monkeypatch.setattr(helper, "_run_with_input", migrate)
+    helper._retire_legacy_source_rules(candidate)
+
+    exact_lookups = [command for command in commands if "from" in command and "table" in command
+                     and command[command.index("from") + 1] in {"10.42.2.5/32", "2001:db8:42::5/128"}]
+    assert len(exact_lookups) == 2
+    assert all(command[command.index("table") + 1] == "200" for command in exact_lookups)
+    assert len([command for command in commands if "del" in command]) == 4
+
+
 def test_overlapping_legacy_source_refuses_replaced_interface(monkeypatch):
     """A same-name MAC replacement cannot claim a reviewed source domain.
 

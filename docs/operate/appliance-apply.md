@@ -56,6 +56,9 @@ Atlaso groups related settings into apply units. DNS and DHCP share one `DNS/DHC
 can require **Appliance Settings**, **Public Services**, and **Firewall**. A management-to-access conversion with a
 gateway change also selects **Routing & WAN** with Network and uses the protected handoff. A WAN-only change
 to a mirrored management default uses the same handoff. Each WAN unit executes from its captured snapshot.
+When effective source NAT or port forwarding depends on changed Network and WAN state, reviewing Network also
+selects and locks **Routing & WAN**. The review validates that WAN candidate before submission, so required changes
+and any blocking errors are visible together.
 
 **Routing & WAN** owns routing and WAN simulation; **Traffic Publishing** owns source NAT and port forwarding.
 Turning either feature off removes its runtime state while preserving saved rows. NAT is **suspended** while Routing

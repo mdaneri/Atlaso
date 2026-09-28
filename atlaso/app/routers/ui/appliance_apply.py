@@ -110,12 +110,17 @@ def build_router(dependencies: ApplianceApplyUiDependencies) -> ApplianceApplyUi
                 ),
                 "forces_network_selection": bool(
                     unit["id"] == "wan"
-                    and (not network_unit["has_baseline"] or unit.get("network_address_dependency"))
+                    and (
+                        not network_unit["has_baseline"]
+                        or unit.get("network_address_dependency")
+                        or unit.get("forces_network_selection")
+                    )
                 ),
                 "forces_wan_selection": bool(
                     unit["id"] == "network"
                     and (
-                        network_unit.get("management_domain_migration_required")
+                        unit.get("forces_wan_selection")
+                        or network_unit.get("management_domain_migration_required")
                         or (
                             network_unit.get("management_handoff_required")
                             and (

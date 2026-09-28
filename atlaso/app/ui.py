@@ -11026,6 +11026,104 @@ def make_appliance_apply_unit(
     }
 
 
+def _wan_preview_routing_enabled(config_preview: str) -> bool:
+    """Return the effective Routing gate represented by an applied WAN preview.
+
+    Legacy WAN snapshots omitted ``[feature_settings]`` and let the helper infer
+    Routing from active routes, targets, routing rules, or NAT rules. Keep the
+    Network-only capacity check aligned with that helper behavior.
+
+    Args:
+        config_preview: Last-applied WAN configuration preview.
+    """
+    sections: dict[str, list[dict[str, str]]] = {
+        "feature_settings": [], "targets": [], "routes": [], "routing_rules": [], "nat_rules": [],
+    }
+    record_keys = {"targets": "target", "routes": "route", "routing_rules": "routing", "nat_rules": "nat"}
+    current_section = ""
+    current: dict[str, str] | None = None
+    for raw_line in config_preview.splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("[") and line.endswith("]"):
+            current_section = line[1:-1]
+            current = None
+            if current_section == "feature_settings":
+                current = {}
+                sections[current_section].append(current)
+            continue
+        if current_section not in sections or "=" not in line:
+            continue
+        key, value = (part.strip() for part in line.split("=", 1))
+        if current_section == "feature_settings":
+            if current is not None:
+                current[key] = value
+        elif key == record_keys.get(current_section):
+            field = "name" if current_section == "targets" else "destination_cidr" if current_section == "routes" else "name"
+            current = {field: value}
+            sections[current_section].append(current)
+        elif current is not None:
+            current[key] = value
+
+    def enabled(row: dict[str, str]) -> bool:
+        """Apply the helper's legacy enabled-by-default rule to a config row.
+
+        Args:
+            row: Parsed legacy WAN record.
+        """
+        value = row.get("enabled", "").strip().lower()
+        return value == "" or value in {"1", "true", "yes", "on", "enabled"}
+
+    feature_settings = sections["feature_settings"]
+    if feature_settings:
+        return feature_settings[0].get("routing_enabled", "false").strip().lower() in {
+            "1", "true", "yes", "on", "enabled",
+        }
+    enabled_routes = [row for row in sections["routes"] if enabled(row)]
+    active_route_targets = {
+        row.get("name", "")
+        for row in sections["targets"]
+        if row.get("name")
+        and row.get("role") == "route"
+        and row.get("routing_domain", "lab") == "lab"
+        and any(
+            value and _valid_ip_interface(value)
+            for value in (row.get("ip_cidr", ""), row.get("ipv6_cidr", ""))
+        )
+    }
+    return bool(enabled_routes) or len(active_route_targets) >= 2 or any(
+        enabled(row) for row in sections["routing_rules"]
+    ) or any(enabled(row) for row in sections["nat_rules"])
+
+
+def _valid_ip_interface(value: str) -> bool:
+    """Return whether a legacy WAN target address is a valid interface CIDR.
+
+    Args:
+        value: Candidate IPv4 or IPv6 interface address.
+    """
+    try:
+        ip_interface(value)
+    except ValueError:
+        return False
+    return True
+
+
+def _appliance_apply_nat_requires_routing(unit_map: dict[str, dict[str, Any]]) -> bool:
+    """Return whether Traffic Publishing depends on Routing & WAN.
+
+    Args:
+        unit_map: Current Appliance Apply units keyed by stable unit ID.
+    """
+    nat_context = unit_map.get("nat", {}).get("context", {})
+    settings = nat_context.get("traffic_publishing_settings")
+    return bool(
+        getattr(settings, "effective_nat_enabled", False)
+        or nat_context.get("port_forward_effective")
+    )
+
+
 def local_users_apply_context(db: Session, baseline: dict[str, Any] | None = None) -> dict[str, Any]:
     """Return local users apply context.
 
@@ -11454,14 +11552,7 @@ def appliance_apply_units(db: Session, *, reconcile: bool = True, applying_dns: 
     # Network-only Apply still changes the ingress rules of an already-applied
     # Routing runtime. Validate that runtime's window before queuing Network.
     applied_wan_preview = str((baselines.get("wan") or {}).get("config_preview") or "")
-    applied_routing_enabled = False
-    in_feature_settings = False
-    for line in applied_wan_preview.splitlines():
-        line = line.strip()
-        if line.startswith("[") and line.endswith("]"):
-            in_feature_settings = line == "[feature_settings]"
-        elif in_feature_settings and line == "routing_enabled=true":
-            applied_routing_enabled = True
+    applied_routing_enabled = _wan_preview_routing_enabled(applied_wan_preview)
     if (applied_routing_enabled and len(wan_network_ingress_from_preview(
             network["network_config_preview"])) > ROUTE_RULE_PRIORITY_WINDOW):
         network_validation_errors.append(
@@ -11942,6 +12033,15 @@ def appliance_apply_units(db: Session, *, reconcile: bool = True, applying_dns: 
             unit["config_preview"],
             baselines.get(unit["id"]),
         )
+    unit_map = {unit["id"]: unit for unit in units}
+    if _appliance_apply_nat_requires_routing(unit_map):
+        network_unit = unit_map.get("network", {})
+        wan_unit = unit_map.get("wan", {})
+        if network_unit.get("changed") and wan_unit.get("changed"):
+            # The review modal already locks this pair for route and management
+            # dependencies. NAT can force the same Network/WAN candidate pair.
+            network_unit["forces_wan_selection"] = True
+            wan_unit["forces_network_selection"] = True
     return units
 
 
@@ -17462,9 +17562,7 @@ def _submit_appliance_apply(
         selected_ids.add("nat")
     if publishing_pair_required and "nat" in selected_ids and "firewall" in unit_map:
         selected_ids.add("firewall")
-    nat_activation = unit_map.get("nat", {}).get("context", {}).get("traffic_publishing_settings")
-    if "nat" in selected_ids and (getattr(nat_activation, "effective_nat_enabled", False)
-                                  or unit_map.get("nat", {}).get("context", {}).get("port_forward_effective")):
+    if "nat" in selected_ids and _appliance_apply_nat_requires_routing(unit_map):
         for dependency in ("network", "wan"):
             if unit_map.get(dependency, {}).get("changed"):
                 selected_ids.add(dependency)
