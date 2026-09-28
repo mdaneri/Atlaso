@@ -9395,15 +9395,22 @@ async function togglePhysicalInterfaceFromMenu(row, csrf) {
   }
 }
 
+function canConvertPhysicalDhcpToStatic(data) {
+  return data.oper_state !== "missing" && data.ipv4_method === "dhcp" && (data.role === "management" || (
+    data.role === "access" && data.mode === "access" && data.access_management_ui_enabled
+  ));
+}
+
 async function convertManagementDhcpInterfaceToStatic(row, csrf) {
   const data = row.getData();
+  const accessManagement = data.role === "access";
   const observedIpv4 = String(data.host_ip_cidr || "").trim();
   const [observedIpv4Address = "", observedIpv4Prefix = ""] = observedIpv4.split("/");
   const observedGatewayCandidate = String(data.host_ipv4_gateway || "").trim();
   const observedGateway = ipv4GatewayIsOnLink(observedGatewayCandidate, observedIpv4) ? observedGatewayCandidate : "";
   const observedIpv6 = String(data.host_ipv6_cidr || "").trim();
-  if (data.role !== "management" || data.ipv4_method !== "dhcp") {
-    showNetworkMessage("physical-interface-error", "Only a management interface using IPv4 DHCP can be converted to static addressing.");
+  if (!canConvertPhysicalDhcpToStatic(data)) {
+    showNetworkMessage("physical-interface-error", "Only a management interface or an Access interface with Management UI using IPv4 DHCP can be converted to static addressing.");
     return;
   }
   if (!observedIpv4) {
@@ -9412,10 +9419,14 @@ async function convertManagementDhcpInterfaceToStatic(row, csrf) {
   }
   const confirmed = await requestConfirmation({
     title: `Convert ${data.name} DHCP lease to static?`,
-    message: observedGateway
+    message: accessManagement
+      ? "Review the observed IPv4 address and prefix. Access and Management UI exposure remain unchanged. Access gateways belong to Routes & WAN; this action does not copy the DHCP gateway. Review the required static routes there before global appliance apply, or off-subnet connectivity may be lost."
+      : observedGateway
       ? "Review the observed IPv4 address, prefix, and DHCP-learned gateway together. Atlaso will preserve them as static desired state; global appliance apply remains the host-mutation boundary."
       : "No usable DHCP-learned IPv4 gateway was observed. Saving without a gateway intentionally removes off-subnet routed connectivity; only same-subnet management remains. Global appliance apply remains the host-mutation boundary.",
-    detail: `IPv4 address: ${observedIpv4Address}\nIPv4 prefix: /${observedIpv4Prefix}\nIPv4 gateway: ${observedGateway || "none - off-subnet connectivity unavailable"}${observedIpv6 ? `\nIPv6 CIDR: ${observedIpv6}` : ""}`,
+    detail: accessManagement
+      ? `IPv4 address: ${observedIpv4Address}\nIPv4 prefix: /${observedIpv4Prefix}\nObserved DHCP gateway: ${observedGateway || "none"} (not copied)\nIPv6: unchanged`
+      : `IPv4 address: ${observedIpv4Address}\nIPv4 prefix: /${observedIpv4Prefix}\nIPv4 gateway: ${observedGateway || "none - off-subnet connectivity unavailable"}${observedIpv6 ? `\nIPv6 CIDR: ${observedIpv6}` : ""}`,
     detailLabel: "Proposed static network",
     label: "Convert to static",
   });
@@ -9434,10 +9445,12 @@ async function convertManagementDhcpInterfaceToStatic(row, csrf) {
     await row.update({
       ipv4_method: "static",
       ip_cidr: observedIpv4 || data.ip_cidr || "",
-      gateway: observedGateway,
-      ipv6_cidr: observedIpv6 || data.ipv6_cidr || "",
-      ipv6_gateway: "",
-      ipv6_enabled: Boolean(observedIpv6 || data.ipv6_enabled),
+      gateway: accessManagement ? "" : observedGateway,
+      ...(accessManagement ? {} : {
+        ipv6_cidr: observedIpv6 || data.ipv6_cidr || "",
+        ipv6_gateway: "",
+        ipv6_enabled: Boolean(observedIpv6 || data.ipv6_enabled),
+      }),
     });
     await savePhysicalInterfaceRow(row, csrf, "Converted");
   } catch (_error) {
@@ -9620,7 +9633,7 @@ function initializePhysicalInterfacesTable() {
           label: "Convert DHCP lease to static",
           disabled: (component) => {
             const data = component.getData();
-            return data.role !== "management" || data.ipv4_method !== "dhcp" || !data.host_ip_cidr;
+            return !canConvertPhysicalDhcpToStatic(data) || !data.host_ip_cidr;
           },
           action: (event, row) => convertManagementDhcpInterfaceToStatic(row, csrf),
         },

@@ -514,7 +514,13 @@ def management_ui_context(
         interfaces: Desired physical interfaces eligible to host the management UI.
         vlans: Desired VLAN interfaces eligible to host the management UI.
     """
-    dedicated = management_interface_context(interfaces)
+    dedicated = management_interface_context(
+        [
+            interface
+            for interface in interfaces
+            if interface.oper_state != "missing" and interface.admin_state == "up"
+        ]
+    )
     if dedicated.get("ip"):
         return dedicated
     pending_dedicated = _pending_dhcp_management_context(interfaces)

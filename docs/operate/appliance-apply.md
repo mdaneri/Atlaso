@@ -90,12 +90,10 @@ Valid changed units are selected by default; invalid units are not. Unselected u
 4. Open a component row to inspect its bounded, redacted result.
 5. Wait for completion; the dialog, sidebar badge, pending count, and global write lock update without a page reload.
 
-If another session starts a new Apply immediately after the current master finishes, the monitor completes the current
-task's terminal refresh before following the newer task.
+If another session starts an Apply after the current one, the monitor finishes the current task's refresh first.
 
-Components run sequentially. If one component fails, Atlaso stops the sequence and marks the remaining components
-**skipped**. Other write operations are locked while the master task is pending or running; read-only pages, task
-inspection, authentication actions, and safe cancellation remain available.
+Components run sequentially. On failure, Atlaso marks the rest **skipped**. Writes are locked while a master task
+is pending or running; read-only pages, task inspection, authentication, and safe cancellation remain available.
 
 A management-path change is the exception to independent component execution. Atlaso selects Certificate Authority,
 Network, Firewall, Appliance Settings, and Public Services together after all other dependencies expand, then runs one
@@ -148,7 +146,9 @@ the last-applied external or DHCP resolver active until then, so an unapplied se
 When disabling applied local DNS, selecting **DNS/DHCP (dnsmasq)** includes **Appliance Settings** first, moving the
 management resolver away from `127.0.0.1` before the local listener stops.
 If enabling Management HTTPS creates a pending CA-managed certificate, the review includes **Certificate Authority** and
-installs its files before **Appliance Settings**. The protected management handoff uses the same ordering.
+installs its files before **Appliance Settings**. Changing the management HTTP/HTTPS mode or public listener port uses
+the protected handoff to recompute Network, Firewall, and Public Services listeners together. If Network has separate
+pending edits, select Network explicitly with Appliance Settings before submitting that change.
 
 Examples include checking service health, resolving a managed DNS name, reaching the intended listener, or confirming
 installed configuration from the appliance console. Use the service-specific procedure; a green UI status is insufficient.

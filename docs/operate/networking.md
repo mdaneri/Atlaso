@@ -84,6 +84,16 @@ waits for address activation and synchronously verifies source rules before read
 asynchronous; this is not a guarantee of uninterrupted routing during lease changes. Reusing the exact same appliance IP
 in both domains is ambiguous and is rejected. Keep distinct appliance addresses even when their prefixes overlap.
 
+If an existing **Access** interface with **Management UI** enabled still shows **DHCP**, use the same **Convert DHCP lease
+to static** row action to recover editable static IPv4 desired state. Refresh host inventory first if no address is
+observed. The confirmation preserves the Access role, Management UI exposure, and IPv6 configuration. It copies only
+the observed IPv4 address and prefix; Access gateways remain owned by **Routes & WAN**. Review any required static
+routes before Apply to avoid losing off-subnet connectivity. Cancel leaves desired state unchanged. After conversion,
+edit **IPv4 CIDR** normally, or **IPv6 CIDR** when IPv6 is enabled, and review the protected management handoff through
+global Appliance Apply. When this Access interface is the effective management listener, conversion preserves its
+observed DHCP DNS in empty resolver and DNS-forwarder settings; explicit DNS values remain unchanged. This recovery
+action does not enable DHCP for new Access configurations.
+
 ### Assign an interface role
 
 Physical and VLAN interfaces share one role contract:

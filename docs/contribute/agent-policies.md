@@ -1795,7 +1795,11 @@ preserved with their affected subsystem below. Keep new requirements at their to
 - Converting the dedicated management interface from DHCP to static must discover a usable DHCP-protocol IPv4 default
   route on that exact interface, review its observed address/prefix and on-link gateway together, and preserve the
   gateway in desired state. An absent or intentionally cleared gateway must warn that off-subnet connectivity will be
-  unavailable; shared gateway validation, global Apply, baseline commit, and rollback remain authoritative.
+  unavailable; shared gateway validation, global Apply, baseline commit, and rollback remain authoritative. During a
+  protected handoff, revalidate the candidate address after resolver and DNS activation and before binding nginx;
+  networkd can briefly withdraw a DHCP-to-static address while IPv4 conflict detection restarts. Preserve observed
+  DHCP DNS from the prospective effective listener when the same desired-state edit enables its Access role, flag, or
+  admin state, without changing the persisted interface before validation.
 - Keep **Static Routes** separate from **Routing Permissions** in operator language. Static Routes choose destination,
   gateway, target interface/VLAN, and metric in the lab route table; Routing Permissions authorize forwarding between
   interface/VLAN networks, with route-role paths generated automatically and Access networks requiring explicit rules.
@@ -1882,7 +1886,12 @@ preserved with their affected subsystem below. Keep new requirements at their to
   service-owned.
 - Public Services apply stages `/var/lib/atlaso/apply/public-services/atlaso-public-services.conf` as the `atlaso`
   service user before invoking the root helper. The helper installs `/etc/atlaso/nginx/sites.d/public-services.conf`,
-  reloads nginx, and keeps management nginx config separate.
+  reloads nginx, and keeps management nginx config separate. During a protected handoff, the Public Services site owns
+  flagged Access management sockets on HTTPS port 443; the dedicated management site publishes the HTTP redirect for
+  those addresses and owns the management front door for HTTP or a different HTTPS port. Keep the verified HTTP and
+  HTTPS listener scopes separate through final publication and later ordinary Settings apply, so the sites never bind
+  the same socket twice. A management protocol or public-port change requires the protected handoff to recompute both
+  listener scopes with the candidate Network and Public Services configuration before publication.
 - The generated public-services nginx config should create HTTP server blocks only for ESXi PXE service IPs, redirect
   `/pxe/esxi` to `/pxe/esxi/`, proxy dynamic PXE requests to the app, serve PXE static content through a narrow nginx
   alias, and avoid exposing public portal, CA, request, depot, management, broad depot roots, registry, or unrelated
