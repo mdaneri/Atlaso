@@ -375,7 +375,9 @@ discovers the runtime address through VMware Tools.
 ## Isolated routing-overlap fixture contracts
 
 The opt-in `-RoutingOverlapOnly` mode exercises DHCP/SLAAC overlap through the canonical lifecycle wrapper.
-`-RoutingWanOnly` retains its existing static routing scenario. Focused unit tests do not replace native acceptance
+`-RoutingWanOnly` retains its existing static routing scenario. It enables the global Routing/WAN settings before
+the first Apply and host forwarding checks. The Access routing permission is added only after the fixture proves
+that Access traffic is blocked without that permission. Focused unit tests do not replace native acceptance
 for automatic IPv6 acquisition, lease expiry, rollback, or reboot.
 The native source-rule proof also requires the persistent, dual-family local-origin terminal guard at priority 6004
 after Apply and after address renewal; otherwise a newly acquired DHCP or SLAAC source could use the main table
