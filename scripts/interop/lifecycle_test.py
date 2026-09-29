@@ -4900,7 +4900,8 @@ def remove_stale_route_role_deny(client: HttpClient, args: argparse.Namespace) -
     if not matches:
         return {"removed": False}
     if len(matches) != 1 or any(matches[0].get(key) != payload[key] for key in (
-        "source_interface", "destination_interface", "description", "policy", "ip_family"
+        "source_interface", "destination_interface", "priority", "description",
+        "enabled", "policy", "ip_family"
     )):
         raise LifecycleError("A route-role deny name collision needs manual review before lifecycle cleanup")
     removed = remove_route_role_deny(client, matches[0]["id"])

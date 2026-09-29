@@ -909,10 +909,12 @@ def test_route_role_deny_lifecycle_reconciles_stale_override_before_forwarding_p
     assert lifecycle.remove_stale_route_role_deny(client, args) == {"removed": True, "removed_rule_id": 17}
     assert client.calls == [("GET", "/api/v1/routing-permissions"),
                             ("DELETE", "/api/v1/routing-permissions/17")]
-    client.saved["description"] = "Unrelated operator rule"
-    with pytest.raises(lifecycle.LifecycleError, match="name collision"):
-        lifecycle.remove_stale_route_role_deny(client, args)
-    assert client.calls[-1] == ("GET", "/api/v1/routing-permissions")
+    for field, changed in (("description", "Unrelated operator rule"),
+                           ("enabled", False), ("priority", 200)):
+        client.saved = {**payload, "id": 17, "generated": False, field: changed}
+        with pytest.raises(lifecycle.LifecycleError, match="name collision"):
+            lifecycle.remove_stale_route_role_deny(client, args)
+        assert client.calls[-1] == ("GET", "/api/v1/routing-permissions")
 
     steps = []
 
