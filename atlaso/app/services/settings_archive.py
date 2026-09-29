@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from copy import deepcopy
 from datetime import datetime, timezone
 from ipaddress import ip_address, ip_interface, ip_network
@@ -2679,7 +2680,15 @@ def _validate_archive_relationships(data: dict[str, list[dict[str, Any]]]) -> No
         if errors:
             raise ValueError(f"Settings archive port-forward row {row_index} is invalid: {errors[0]}")
 
+    routing_permission_names: set[str] = set()
     for row_index, row in enumerate(data.get("routing_rules", []), start=1):
+        name = row.get("name")
+        if not isinstance(name, str) or not name.strip() or len(name) > 120 or re.search(r"[\r\n\v\f\x1c-\x1e\x85\u2028\u2029]", name):
+            raise ValueError(f"Settings archive routing permission row {row_index} has an invalid name.")
+        normalized_name = name.strip().lower()
+        if normalized_name in routing_permission_names:
+            raise ValueError(f"Settings archive routing permission row {row_index} has a duplicate name.")
+        routing_permission_names.add(normalized_name)
         policy = row.get("policy", "allow")
         family = row.get("ip_family", 0)
         if not isinstance(policy, str) or policy not in {"automatic", "allow", "deny"}:
@@ -2697,6 +2706,8 @@ def _validate_archive_relationships(data: dict[str, list[dict[str, Any]]]) -> No
             )
         source = str(row.get("source_interface") or "")
         destination = str(row.get("destination_interface") or "")
+        if not re.fullmatch(r"[A-Za-z0-9_.:-]{1,80}", source) or not re.fullmatch(r"[A-Za-z0-9_.:-]{1,80}", destination):
+            raise ValueError(f"Settings archive routing permission row {row_index} needs canonical interface names.")
         if archive_routes_wan_settings.routing_enabled and enabled and (
             source not in route_target_names or destination not in route_target_names
         ):
