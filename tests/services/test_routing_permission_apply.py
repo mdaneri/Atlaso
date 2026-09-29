@@ -109,6 +109,8 @@ def test_access_only_topology_change_requires_paired_apply(client, selected):
         update_appliance_apply_baselines(db, units, {unit["id"] for unit in units})
         db.commit()
         assert routing_permission_apply_state(db) == "applied"
+
+
         original = routing_permission_fingerprint(db)
 
         first.ip_cidr = "10.85.2.1/24"
@@ -141,6 +143,44 @@ def test_access_only_topology_change_requires_paired_apply(client, selected):
         assert payload["routing_publishing_network"] is True
         assert job.status == "succeeded", job.error
         assert routing_permission_apply_state(db) == "applied"
+
+
+def test_apply_rejects_enabled_permission_after_endpoint_loses_forwarding_role(client):
+    """A role edit cannot silently retire a saved deny while Routing is active.
+
+    Args:
+        client: Isolated application client with dry-run adapters.
+    """
+    from sqlalchemy import select
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import PhysicalInterface, RoutingRule
+    from atlaso.app.services.routes_wan import save_routes_wan_settings
+    from atlaso.app.ui import (
+        appliance_apply_units,
+        routes_wan_context,
+        update_appliance_apply_baselines,
+    )
+
+    login(client)
+    with SessionLocal() as db:
+        save_routes_wan_settings(db, routing_enabled=True, nat_enabled=False, wan_simulation_enabled=False)
+        db.add(RoutingRule(name="Retained denial", enabled=True, source_interface="eth2",
+                           destination_interface="eth1.20", policy="deny", ip_family=4))
+        db.commit()
+        units = appliance_apply_units(db)
+        update_appliance_apply_baselines(db, units, {unit["id"] for unit in units})
+        endpoint = db.scalar(select(PhysicalInterface).where(PhysicalInterface.name == "eth2"))
+        assert endpoint is not None
+        endpoint.role = "unused"
+        db.commit()
+        errors = routes_wan_context(db)["routing_validation_errors"]
+        assert any("Retained denial source must be" in error for error in errors)
+
+    csrf = client.get("/routes-wan").text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    response = client.post("/appliance-apply", data={"csrf": csrf, "selected_units": "firewall"},
+                           headers={"Accept": "application/json"})
+    assert response.status_code == 422, response.text
 
 
 def test_nat_only_selection_pairs_new_access_endpoint_with_firewall(client):

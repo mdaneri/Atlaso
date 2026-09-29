@@ -5611,7 +5611,7 @@ def routes_wan_context(db: Session) -> dict:
         {target["name"] for target in nat_targets},
         source_groups,
         routing_rules,
-        {target["name"] for target in targets},
+        {target["name"] for target in targets if target.get("role") in {"access", "route"}},
         {
             target["name"]: (target.get("ip_cidr"), target.get("ipv6_cidr"))
             for target in targets

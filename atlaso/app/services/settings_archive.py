@@ -2182,6 +2182,11 @@ def _validate_archive_relationships(data: dict[str, list[dict[str, Any]]]) -> No
         }
     )
     route_target_names = set(route_target_families)
+    routing_permission_target_names = {
+        name for name in route_target_names
+        if normalize_interface_role((physical_interfaces.get(name) or vlan_interfaces.get(name) or {}).get("role"))
+        in {"access", "route"}
+    }
     management_target_names: set[str] = set()
     for name in route_target_names:
         physical = physical_interfaces.get(name)
@@ -2709,7 +2714,7 @@ def _validate_archive_relationships(data: dict[str, list[dict[str, Any]]]) -> No
         if not re.fullmatch(r"[A-Za-z0-9_.:-]{1,80}", source) or not re.fullmatch(r"[A-Za-z0-9_.:-]{1,80}", destination):
             raise ValueError(f"Settings archive routing permission row {row_index} needs canonical interface names.")
         if archive_routes_wan_settings.routing_enabled and enabled and (
-            source not in route_target_names or destination not in route_target_names
+            source not in routing_permission_target_names or destination not in routing_permission_target_names
         ):
             raise ValueError(
                 f"The settings archive row {row_index} in 'routing_rules' has an ineligible interface."
@@ -2755,7 +2760,7 @@ def _validate_archive_relationships(data: dict[str, list[dict[str, Any]]]) -> No
             RoutingRule(**_model_kwargs_with_scalar_defaults(RoutingRule, row))
             for row in data.get("routing_rules", [])
         ],
-        routing_target_names=route_target_names,
+        routing_target_names=routing_permission_target_names,
         route_target_cidrs=route_target_cidrs,
         management_target_names=management_target_names,
         routing_enabled=archive_routes_wan_settings.routing_enabled,

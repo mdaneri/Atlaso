@@ -568,6 +568,25 @@ def test_routing_deny_archive_round_trip_and_legacy_default(client):
             assert db.scalar(select(RoutingRule).where(RoutingRule.name == "Deny relationship")).policy == "allow"
 
 
+def test_archive_rejects_enabled_permission_on_unused_endpoint(client):
+    """Restore cannot retain an enabled deny that Apply would omit.
+
+    Args:
+        client: Isolated archive database fixture.
+    """
+    from atlaso.app.models import RoutingRule
+
+    with SessionLocal() as db:
+        db.add(RoutingRule(name="Retained denial", enabled=True, source_interface="eth1.20",
+                           destination_interface="eth2", policy="deny", ip_family=4))
+        db.commit()
+        archive = export_settings_archive(db, actor="test")
+    _set_routes_wan_setting(archive, key=ROUTING_ENABLED_SETTING_KEY, value=True)
+    next(row for row in archive["data"]["vlan_interfaces"] if row["name"] == "eth1.20")["role"] = "unused"
+    with SessionLocal() as db, pytest.raises(ValueError, match="ineligible interface"):
+        restore_settings_archive(db, archive)
+
+
 def test_archive_rejects_malformed_dormant_routing_interfaces(client):
     """Dormancy may preserve absent targets, but never malformed names.
 
