@@ -17121,7 +17121,10 @@ def _submit_appliance_apply(
             and unit_map.get("network", {}).get("management_default_mirror_change")
         )
     )
-    if management_handoff and routing_permission_pair_required and unit_map.get("network", {}).get("changed"):
+    # A first apply has no recorded forwarding state to transition away from.
+    if (management_handoff and routing_permission_pair_required
+            and unit_map.get("network", {}).get("changed")
+            and (apply_baselines.get("wan") or {}).get("config_preview")):
         previous_wan = str((apply_baselines.get("wan") or {}).get("config_preview") or "")
         previous_routing_off = bool(re.search(r"(?m)^routing_enabled=false$", previous_wan))
         desired_wan_settings = unit_map.get("wan", {}).get("context", {}).get("routes_wan_settings")
