@@ -204,6 +204,10 @@ but are intentionally absent from Swagger because they predate the reviewed glob
 desired state and use `/ui/management/appliance-apply`; do not build new automation around the legacy direct-apply routes.
 The legacy Firewall Apply response retains its validation result. If `valid` is false, `reloaded` is false and the
 configuration is not applied; this includes disabled Firewall states that cannot enforce routing denials.
+It also rejects pending routing permission fingerprints, including a removed or disabled permission, routing-switch
+change, or changed target topology. Apply Routing & WAN and Firewall together through global Appliance Apply first.
+Once both executed baselines match current routing intent, the compatibility route can apply unrelated Firewall
+changes without advancing either paired baseline.
 
 ## Delete an ESXi Host Reference
 

@@ -229,6 +229,7 @@ def test_legacy_firewall_apply_preserves_routing_denials_when_disabled(client, m
         RoutingRule,
     )
     from atlaso.app.services.routes_wan import save_routes_wan_settings
+    from atlaso.app.ui import appliance_apply_units, update_appliance_apply_baselines
 
     token, _ = create_token(client, scopes=["write:firewall"])
     headers = {"Authorization": f"Bearer {token}"}
@@ -257,6 +258,8 @@ def test_legacy_firewall_apply_preserves_routing_denials_when_disabled(client, m
     with SessionLocal() as db:
         assert db.scalar(select(AuditEvent.id).where(AuditEvent.action == "apply_firewall_dry_run")) is None
         save_routes_wan_settings(db, routing_enabled=False, nat_enabled=False, wan_simulation_enabled=False)
+        units = appliance_apply_units(db)
+        update_appliance_apply_baselines(db, units, {"wan", "firewall"})
         db.commit()
     accepted = client.post("/api/v1/firewall/apply", headers=headers)
     assert accepted.status_code == 200, accepted.text
@@ -264,3 +267,89 @@ def test_legacy_firewall_apply_preserves_routing_denials_when_disabled(client, m
     assert len(calls) == 1
     with SessionLocal() as db:
         assert db.scalar(select(AuditEvent.id).where(AuditEvent.action == "apply_firewall_dry_run")) is not None
+
+
+@pytest.mark.parametrize("change", ["deny", "allow", "disable", "delete", "routing-off", "topology"])
+def test_legacy_firewall_apply_rejects_pending_routing_intent(client, monkeypatch, change):
+    """Never publish valid pending routing intent through the unpaired legacy route.
+
+    Args:
+        client: Isolated application HTTP client.
+        monkeypatch: Track the adapter publication boundary.
+        change: Valid desired-state edit requiring paired application.
+    """
+    from sqlalchemy import select
+
+    from atlaso.app.adapters.system import SystemAdapter
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import (
+        AuditEvent,
+        FirewallSettings,
+        PhysicalInterface,
+        RoutingRule,
+        Setting,
+    )
+    from atlaso.app.services.routes_wan import save_routes_wan_settings
+    from atlaso.app.services.routing_permissions import routing_permission_apply_state
+    from atlaso.app.ui import appliance_apply_units, update_appliance_apply_baselines
+
+    token, _ = create_token(client, scopes=["write:firewall", "read:firewall"])
+    headers = {"Authorization": f"Bearer {token}"}
+    with SessionLocal() as db:
+        db.scalar(select(FirewallSettings)).enabled = True
+        for name, cidr, mac in (("pair-a", "10.86.1.1/24", "02:00:00:00:86:11"), ("pair-b", "10.86.2.1/24", "02:00:00:00:86:12")):
+            db.add(PhysicalInterface(name=name, role="route", mode="access", ip_cidr=cidr, mac_address=mac))
+        rule = RoutingRule(name="Paired forwarding", enabled=True, source_interface="pair-a", destination_interface="pair-b", policy="automatic", ip_family=4)
+        db.add(rule)
+        save_routes_wan_settings(db, routing_enabled=True, nat_enabled=False, wan_simulation_enabled=False)
+        db.commit()
+        units = appliance_apply_units(db)
+        update_appliance_apply_baselines(db, units, {"wan", "firewall"})
+        db.commit()
+        assert routing_permission_apply_state(db) == "applied"
+        if change in {"deny", "allow"}:
+            rule.policy = change
+        elif change == "disable":
+            rule.enabled = False
+        elif change == "delete":
+            db.delete(rule)
+        elif change == "routing-off":
+            save_routes_wan_settings(db, routing_enabled=False, nat_enabled=False, wan_simulation_enabled=False)
+        else:
+            db.scalar(select(PhysicalInterface).where(PhysicalInterface.name == "pair-a")).ip_cidr = "10.86.3.1/24"
+        db.commit()
+        assert routing_permission_apply_state(db) == "pending"
+        baseline_before = db.scalar(select(Setting).where(Setting.key == "appliance_apply.baselines.v1")).value
+
+    calls = []
+    original_apply = SystemAdapter.apply_firewall_config
+
+    def track_apply(adapter, config_path):
+        """Track publication without changing the dry-run adapter contract."""
+        calls.append(config_path)
+        return original_apply(adapter, config_path)
+
+    monkeypatch.setattr(SystemAdapter, "apply_firewall_config", track_apply)
+    validation = client.get("/api/v1/firewall/validate", headers=headers)
+    assert validation.status_code == 200, validation.text
+    assert validation.json()["valid"] is True
+    rejected = client.post("/api/v1/firewall/apply", headers=headers)
+    assert rejected.status_code == 200, rejected.text
+    assert rejected.json()["valid"] is False
+    assert rejected.json()["reloaded"] is False
+    assert any("global Appliance Apply" in error for error in rejected.json()["errors"])
+    assert calls == []
+    with SessionLocal() as db:
+        assert db.scalar(select(AuditEvent.id).where(AuditEvent.action == "apply_firewall_dry_run")) is None
+        assert db.scalar(select(Setting).where(Setting.key == "appliance_apply.baselines.v1")).value == baseline_before
+        units = appliance_apply_units(db)
+        update_appliance_apply_baselines(db, units, {"wan", "firewall"})
+        db.commit()
+        assert routing_permission_apply_state(db) == "applied"
+        baseline_applied = db.scalar(select(Setting).where(Setting.key == "appliance_apply.baselines.v1")).value
+    accepted = client.post("/api/v1/firewall/apply", headers=headers)
+    assert accepted.status_code == 200, accepted.text
+    assert accepted.json()["valid"] is True
+    assert len(calls) == 1
+    with SessionLocal() as db:
+        assert db.scalar(select(Setting).where(Setting.key == "appliance_apply.baselines.v1")).value == baseline_applied
