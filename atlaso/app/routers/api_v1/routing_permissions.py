@@ -21,6 +21,7 @@ from atlaso.app.services.network_objects import acquire_network_objects_write_lo
 from atlaso.app.services.routes_wan import ensure_routes_wan_settings
 from atlaso.app.services.routing_permissions import (
     routing_permission_apply_state,
+    routing_permission_name_conflicts,
     routing_permission_rows,
     routing_permission_targets,
     validate_routing_permission,
@@ -71,10 +72,8 @@ def _validate(payload: RoutingPermissionCreate, db: Session, *, exclude_rule_id:
         db: Database session containing existing rules and targets.
         exclude_rule_id: Existing rule identifier omitted during replacement.
     """
-    normalized_name = payload.name.strip().lower()
-    for rule in db.scalars(select(RoutingRule)):
-        if rule.id != exclude_rule_id and rule.name.strip().lower() == normalized_name:
-            raise HTTPException(409, "A Routing Permission with that name already exists.")
+    if routing_permission_name_conflicts(db, payload.name, exclude_rule_id=exclude_rule_id):
+        raise HTTPException(409, "A Routing Permission with that name already exists.")
     candidate = RoutingRule(**payload.model_dump())
     errors = validate_routing_permission(candidate, routing_permission_targets(db), db=db)
     if errors:

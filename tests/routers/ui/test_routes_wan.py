@@ -188,6 +188,42 @@ def test_routes_wan_generated_routing_permissions_offer_wizard_override(client):
     assert "Override routing permission" in response.text
 
 
+def test_routing_permission_browser_names_match_apply_uniqueness(client):
+    """Create and edit reject case-only collisions without changing saved intent."""
+    from sqlalchemy import select
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import RoutingRule
+
+    login(client)
+    page = client.get("/routes-wan")
+    csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    path = "/routes-wan/routing-rules"
+    payload = {
+        "name": "Lab path", "source_interface": "eth2", "destination_interface": "eth1.20",
+        "policy": "deny", "ip_family": "4", "priority": "100", "enabled": "on", "csrf": csrf,
+    }
+    created = client.post(path, data=payload, follow_redirects=False)
+    assert created.status_code == 303, created.text
+    duplicate = client.post(path, data={**payload, "name": "lab PATH"}, follow_redirects=False)
+    assert duplicate.status_code == 409, duplicate.text
+    line_break = client.post(path, data={**payload, "name": "reviewed\nrouting=Injected"}, follow_redirects=False)
+    assert line_break.status_code == 422, line_break.text
+    with SessionLocal() as db:
+        row = db.scalar(select(RoutingRule).where(RoutingRule.name == "Lab path"))
+        assert row is not None
+        rule_id = row.id
+
+    self_rename = client.post(f"{path}/{rule_id}/edit", data={**payload, "name": "lAb PaTh"}, follow_redirects=False)
+    assert self_rename.status_code == 303, self_rename.text
+    other = client.post(path, data={**payload, "name": "Other path"}, follow_redirects=False)
+    assert other.status_code == 303, other.text
+    collision = client.post(f"{path}/{rule_id}/edit", data={**payload, "name": "other PATH"}, follow_redirects=False)
+    assert collision.status_code == 409, collision.text
+    with SessionLocal() as db:
+        assert [rule.name for rule in db.scalars(select(RoutingRule).order_by(RoutingRule.id))] == ["lAb PaTh", "Other path"]
+
+
 def test_routes_wan_settings_autosave_reports_suspended_nat(client):
     """Autosave global settings and expose NAT's effective suspended state.
 
@@ -607,10 +643,15 @@ def test_routes_wan_autosave_endpoints_and_apply_task(client):
 
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import Job, NatRule, RoutingRule, WanPolicy
+    from atlaso.app.ui import appliance_apply_units, update_appliance_apply_baselines
 
     login(client)
     page = client.get("/routes-wan")
     csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    with SessionLocal() as db:
+        initial_units = appliance_apply_units(db)
+        update_appliance_apply_baselines(db, initial_units, {unit["id"] for unit in initial_units})
+        db.commit()
     settings_response = client.post(
         "/routes-wan/settings",
         headers={"X-Atlaso-Autosave": "1"},

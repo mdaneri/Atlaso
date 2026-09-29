@@ -212,6 +212,25 @@ def test_duplicate_routing_permission_name_returns_conflict_without_partial_audi
         assert len(list(db.scalars(select(AuditEvent).where(AuditEvent.action == "create_routing_permission")))) == 1
 
 
+@pytest.mark.parametrize("name", ["reviewed\nrouting=Injected", "reviewed\r\n[section]", "reviewed\u2028routing=Injected"])
+def test_routing_permission_rejects_line_separators_before_persistence(client, name):
+    """A saved name cannot add a line or section to rendered WAN configuration."""
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import AuditEvent, RoutingRule
+
+    _prepare_targets()
+    writer, _ = create_token(client, scopes=["write:routes"])
+    response = client.post(
+        "/api/v1/routing-permissions",
+        json=_permission_payload(name=name),
+        headers={"Authorization": f"Bearer {writer}"},
+    )
+    assert response.status_code == 422, response.text
+    with SessionLocal() as db:
+        assert list(db.scalars(select(RoutingRule))) == []
+        assert list(db.scalars(select(AuditEvent).where(AuditEvent.action == "create_routing_permission"))) == []
+
+
 def test_routing_permission_replace_rejects_normalized_collision_and_allows_self_rename(client):
     """Reject case-insensitive collisions without mutating or auditing, but exclude the saved row.
 

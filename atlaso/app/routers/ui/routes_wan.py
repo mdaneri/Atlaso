@@ -41,6 +41,7 @@ from atlaso.app.services.routes_wan import (
     default_route_family as route_default_family,
 )
 from atlaso.app.services.routing_permissions import (
+    routing_permission_name_conflicts,
     routing_permission_targets,
     validate_routing_permission,
 )
@@ -783,6 +784,8 @@ def build_router(dependencies: RoutesWanUiDependencies) -> RoutesWanUiRouter:
         if isinstance(parsed, Response):
             return parsed
         name_value, source_value, destination_value, priority_value = parsed
+        if routing_permission_name_conflicts(db, name_value):
+            return Response("A Routing Permission with that name already exists.", status_code=409, media_type="text/plain")
         family = parse_int_form_value(ip_family, "IP family", default=0, minimum=0)
         if isinstance(family, Response):
             return family
@@ -861,6 +864,8 @@ def build_router(dependencies: RoutesWanUiDependencies) -> RoutesWanUiRouter:
         if isinstance(parsed, Response):
             return parsed
         name_value, source_value, destination_value, priority_value = parsed
+        if routing_permission_name_conflicts(db, name_value, exclude_rule_id=rule.id):
+            return Response("A Routing Permission with that name already exists.", status_code=409, media_type="text/plain")
         family = parse_int_form_value(ip_family, "IP family", default=0, minimum=0)
         if isinstance(family, Response):
             return family

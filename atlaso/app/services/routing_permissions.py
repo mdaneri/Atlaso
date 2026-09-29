@@ -28,6 +28,16 @@ from atlaso.app.services.routes_wan import (
 )
 
 ROUTING_POLICIES = {"automatic", "allow", "deny"}
+_LINE_SEPARATORS = re.compile(r"[\r\n\v\f\x1c-\x1e\x85\u2028\u2029]")
+
+
+def routing_permission_name_conflicts(db: Session, name: str, *, exclude_rule_id: int | None = None) -> bool:
+    """Match the case-insensitive name rule used when validating WAN state."""
+    normalized_name = name.strip().lower()
+    return any(
+        rule.id != exclude_rule_id and rule.name.strip().lower() == normalized_name
+        for rule in db.scalars(select(RoutingRule))
+    )
 
 
 def routing_policy(rule: RoutingRule) -> str:
@@ -96,6 +106,8 @@ def validate_routing_permission(rule: RoutingRule, targets: list[dict[str, Any]]
         errors.append("Routing permission IP family must be 0 (both), 4, or 6.")
     if not rule.name or not rule.name.strip() or len(rule.name) > 120:
         errors.append("Routing permission needs a name of at most 120 characters.")
+    elif _LINE_SEPARATORS.search(rule.name):
+        errors.append("Routing permission name must not contain line breaks.")
     if rule.priority is not None and rule.priority < 0:
         errors.append("Routing permission priority cannot be negative.")
     by_name = {target["name"]: target for target in targets}

@@ -199,6 +199,8 @@ are suspended. To roll an override back, edit its policy to **Automatic** or rem
 then apply again after the paired Apply succeeds. The applied baseline changes only after successful apply, so a
 pending or failed apply must not be reported as active forwarding policy.
 Disabled permissions can retain an unavailable interface or IP family; re-enabling requires valid current topology.
+Permission names must be unique regardless of case and cannot contain line breaks; the browser wizard and API reject
+conflicts before saving, so a later Apply cannot fail on two names that differ only by capitalization.
 
 Global Apply automatically pairs WAN and Firewall when permission state changes. An active deny, including the
 automatic Access default, requires Firewall to be enabled. Access defaults are enforced before broad forwarding
