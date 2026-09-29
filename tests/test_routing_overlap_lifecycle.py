@@ -198,7 +198,7 @@ def test_client_seed_installs_fixture_tools_only_when_requested(enabled):
                     "open-vm-tools", "open-vm-tools-openrc", "open-vm-tools-vix"):
         assert (f"  - {package}\n" in data) == enabled
     for command in ("rc-update add open-vm-tools default", "rc-service open-vm-tools start",
-                    "ethtool -K eth0 lro off", "ethtool -K eth1 lro off"):
+                    "rc-update add local default", "/etc/local.d/atlaso-fixture-lro.start"):
         assert (f"  - {command}\n" in data) == enabled
         assert f"{command} || true" not in data
     assert "rc-service dnsmasq" not in data and "rc-service radvd" not in data
@@ -210,8 +210,20 @@ def test_client_seed_installs_fixture_tools_only_when_requested(enabled):
     forwarding_files = [item for item in config["write_files"]
                         if item["path"] == "/etc/ssh/sshd_config.d/99-atlaso-private-fixture.conf"]
     assert len(forwarding_files) == int(enabled)
+    lro_files = [item for item in config["write_files"]
+                 if item["path"] == "/etc/local.d/atlaso-fixture-lro.start"]
+    assert len(lro_files) == int(enabled)
     assert ("/usr/local/sbin/atlaso-private-fixture-sshd" in commands) == enabled
     if enabled:
+        assert lro_files[0]["permissions"] == "0755"
+        assert lro_files[0]["content"].splitlines() == [
+            "#!/bin/sh", "set -eu", "ethtool -K eth0 lro off", "ethtool -K eth1 lro off",
+            "ethtool -k eth0 | grep -Eq '^large-receive-offload: off( \\[fixed\\])?$'",
+            "ethtool -k eth1 | grep -Eq '^large-receive-offload: off( \\[fixed\\])?$'",
+        ]
+        assert commands.index("rc-update add local default") < commands.index(
+            "/etc/local.d/atlaso-fixture-lro.start")
+        assert commands[-1] == "/etc/local.d/atlaso-fixture-lro.start"
         assert "AllowTcpForwarding local" in forwarding_files[0]["content"]
         assert "PermitOpen 192.0.2.10:22 192.0.2.10:443" in forwarding_files[0]["content"]
         assert commands[0] == "/usr/local/sbin/atlaso-private-fixture-sshd"

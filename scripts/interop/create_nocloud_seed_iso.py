@@ -95,9 +95,27 @@ ssh_pwauth: true"""
     )
     fixture_services = (
         "\n  - rc-update add open-vm-tools default\n  - rc-service open-vm-tools start"
-        "\n  - ethtool -K eth0 lro off\n  - ethtool -K eth1 lro off"
+        "\n  - rc-update add local default"
         if fixture_mode else ""
     )
+    # VMXNET3 restores LRO on reboot. OpenRC's local service reruns this
+    # fixture-only hook at every boot; first boot invokes it explicitly so
+    # cloud-init fails if either interface cannot be prepared.
+    fixture_lro = (
+        "\n  - path: /etc/local.d/atlaso-fixture-lro.start"
+        "\n    permissions: '0755'"
+        "\n    content: |"
+        "\n      #!/bin/sh"
+        "\n      set -eu"
+        "\n      ethtool -K eth0 lro off"
+        "\n      ethtool -K eth1 lro off"
+        "\n      ethtool -k eth0 | grep -Eq '^large-receive-offload: off( \\[fixed\\])?$'"
+        "\n      ethtool -k eth1 | grep -Eq '^large-receive-offload: off( \\[fixed\\])?$'"
+        if fixture_mode else ""
+    )
+    # The explicit first-boot invocation must be last in runcmd: cloud-init
+    # reports the script's final exit status, even if an earlier command fails.
+    fixture_lro_command = "\n  - /etc/local.d/atlaso-fixture-lro.start" if fixture_mode else ""
     # The credential-bearing seed is detached after the first boot. Restrict
     # subsequent boots to the now-absent NoCloud source and its immediate None
     # fallback instead of probing EC2 metadata for four minutes.
@@ -169,11 +187,11 @@ write_files:
       for iface in eth1 eth2; do
         ip link set "$iface" up 2>/dev/null || true
         udhcpc -i "$iface" -H "$(hostname -s)" -q -n -t 5 2>/dev/null || true
-      done{fixture_datasources}{fixture_forwarding}
+      done{fixture_datasources}{fixture_forwarding}{fixture_lro}
 runcmd:{fixture_forwarding_command}
   - rc-update add sshd default || true
   - rc-service sshd restart || true{fixture_services}
-  - {refresh_command}
+  - {refresh_command}{fixture_lro_command}
 """
 
     return {
