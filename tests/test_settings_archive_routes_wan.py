@@ -533,3 +533,36 @@ def test_archive_rejects_malformed_disabled_nat_ingress(client):
         candidate["data"]["nat_rules"][0]["inbound_interfaces"] = [bad]
         with SessionLocal() as db, pytest.raises(ValueError, match="canonical interface"):
             restore_settings_archive(db, candidate)
+
+
+def test_routing_deny_archive_round_trip_and_legacy_default(client):
+    """Keep policy/family across restore and preserve legacy allow defaults.
+
+    Args:
+        client: Isolated archive database fixture.
+    """
+    from atlaso.app.models import RoutingRule
+
+    with SessionLocal() as db:
+        db.add(RoutingRule(name="Deny relationship", enabled=True, source_interface="eth2",
+                           destination_interface="eth1.20", policy="deny", ip_family=4))
+        db.commit()
+        archive = export_settings_archive(db, actor="test")
+        row = next(row for row in archive["data"]["routing_rules"] if row["name"] == "Deny relationship")
+        assert (row["policy"], row["ip_family"]) == ("deny", 4)
+        restore_settings_archive(db, archive)
+        restored = db.scalar(select(RoutingRule).where(RoutingRule.name == "Deny relationship"))
+        assert (restored.policy, restored.ip_family) == ("deny", 4)
+        legacy = deepcopy(archive)
+        for row in legacy["data"]["routing_rules"]:
+            row.pop("policy", None)
+            row.pop("ip_family", None)
+        restore_settings_archive(db, legacy)
+        restored = db.scalar(select(RoutingRule).where(RoutingRule.name == "Deny relationship"))
+        assert (restored.policy, restored.ip_family) == ("allow", 0)
+        for fields in ({"policy": "permit"}, {"ip_family": False}, {"source_interface": "eth0", "policy": "deny"}):
+            invalid = deepcopy(archive)
+            invalid["data"]["routing_rules"][0].update(fields)
+            with pytest.raises(ValueError):
+                restore_settings_archive(db, invalid)
+            assert db.scalar(select(RoutingRule).where(RoutingRule.name == "Deny relationship")).policy == "allow"

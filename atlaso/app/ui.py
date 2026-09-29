@@ -472,7 +472,6 @@ from atlaso.app.services.networking import (
     is_canonical_network_role,
     normalize_interface_mode,
     normalize_interface_role,
-    normalize_ipv4_method,
     physical_interface_to_dict,
     render_network_config,
     trunk_parent_option,
@@ -519,15 +518,18 @@ from atlaso.app.services.routes_wan import (
     canonical_route_destination,
     default_route_family,
     ensure_routes_wan_settings,
-    generated_route_role_rules,
     mirrored_management_default_routes,
-    nat_eligible_target_names,
     nat_rule_to_dict,
     render_wan_config,
     route_to_dict,
-    routing_rule_to_dict,
     validate_wan_state,
     wan_policy_to_dict,
+)
+from atlaso.app.services.routing_permissions import (
+    routing_permission_apply_state,
+    routing_permission_fingerprint,
+    routing_permission_rows,
+    routing_permission_targets,
 )
 from atlaso.app.services.service_dns_defaults import (
     NTP_DNS_DESCRIPTION,
@@ -4445,6 +4447,7 @@ def firewall_context(db: Session, *, reconcile: bool = True) -> dict:
             physical_interfaces,
             vlan_interfaces,
             db.execute(select(RoutingRule).order_by(RoutingRule.priority, RoutingRule.name)).scalars().all(),
+            routing_enabled=ensure_routes_wan_settings(db).routing_enabled,
         )
     )
     config_preview = render_nftables_config(
@@ -4476,6 +4479,7 @@ def firewall_context(db: Session, *, reconcile: bool = True) -> dict:
     except ValueError:
         validation_errors.append("Resolve port-forward source validation in Traffic Publishing before Apply.")
     return {
+        "routing_permission_fingerprint": routing_permission_fingerprint(db),
         "firewall_settings": settings,
         "firewall_rules": editable_rules,
         "firewall_rules_json": [firewall_rule_to_dict(rule) for rule in editable_rules],
@@ -5513,85 +5517,13 @@ def wan_route_targets(db: Session) -> list[dict[str, str]]:
     return [target for target in wan_routing_targets(db) if target["routing_domain"] == "lab"]
 
 
-def wan_routing_targets(db: Session) -> list[dict[str, str]]:
-    """Return wan routing targets.
+def wan_routing_targets(db: Session) -> list[dict[str, Any]]:
+    """Return canonical routing topology shared with permission API validation.
 
     Args:
-        db: Active database session.
+        db: Desired-state database session.
     """
-    interfaces = db.execute(select(PhysicalInterface).order_by(PhysicalInterface.name)).scalars().all()
-    vlans = db.execute(select(VlanInterface).order_by(VlanInterface.parent_interface, VlanInterface.vlan_id)).scalars().all()
-    eligible_nat = nat_eligible_target_names(list(interfaces), list(vlans))
-    interfaces_by_name = {interface.name: interface for interface in interfaces}
-    targets: list[dict[str, str]] = []
-    for interface in interfaces:
-        if interface.oper_state == "missing":
-            continue
-        mode = normalize_interface_mode(interface.mode)
-        role = normalize_interface_role(interface.role)
-        addresses = interface_addresses_from_cidrs(interface.ip_cidr, interface.ipv6_cidr)
-        if mode == "trunk" or not addresses:
-            continue
-        address_label = " / ".join(addresses)
-        routing_domain = "management" if role == "management" else "lab"
-        targets.append(
-            {
-                "name": interface.name,
-                "nat_allowed": interface.name in eligible_nat,
-                "nat_physical_interface": interface.name,
-                "nat_physical_mac": interface.mac_address or "",
-                "kind": "physical",
-                "role": role,
-                "ip_cidr": interface.ip_cidr or "",
-                "gateway": interface.gateway or "",
-                "ipv4_method": normalize_ipv4_method(interface.ipv4_method),
-                "ipv6_cidr": interface.ipv6_cidr or "",
-                "ipv6_gateway": interface.ipv6_gateway or "",
-                "addresses": addresses,
-                "routing_domain": routing_domain,
-                "route_allowed": routing_domain == "lab",
-                "management_ui": bool(
-                    role == "access"
-                    and mode == "access"
-                    and str(interface.admin_state or "").lower() == "up"
-                    and interface.access_management_ui_enabled
-                ),
-                "label": f"{interface.name} - physical / {role} / {address_label}",
-            }
-        )
-    for vlan in vlans:
-        parent = interfaces_by_name.get(vlan.parent_interface)
-        role = normalize_interface_role(vlan.role)
-        addresses = interface_addresses_from_cidrs(vlan.ip_cidr, vlan.ipv6_cidr)
-        if not vlan.enabled or not addresses:
-            continue
-        address_label = " / ".join(addresses)
-        routing_domain = "management" if role == "management" else "lab"
-        targets.append(
-            {
-                "name": vlan.name,
-                "nat_allowed": vlan.name in eligible_nat,
-                "nat_physical_interface": vlan.parent_interface,
-                "nat_physical_mac": parent.mac_address if parent else "",
-                "kind": "vlan",
-                "role": role,
-                "ip_cidr": vlan.ip_cidr or "",
-                "ipv6_cidr": vlan.ipv6_cidr or "",
-                "addresses": addresses,
-                "routing_domain": routing_domain,
-                "route_allowed": routing_domain == "lab",
-                "management_ui": bool(
-                    role == "access"
-                    and vlan.access_management_ui_enabled
-                    and parent is not None
-                    and parent.oper_state != "missing"
-                    and str(parent.admin_state or "").lower() == "up"
-                    and normalize_interface_mode(parent.mode) == "trunk"
-                ),
-                "label": f"{vlan.name} - VLAN {vlan.vlan_id} on {vlan.parent_interface} / {role} / {address_label}",
-            }
-        )
-    return targets
+    return routing_permission_targets(db)
 
 
 def wan_nat_targets_from_route_targets(targets: list[dict[str, str]]) -> list[dict[str, str]]:
@@ -5656,7 +5588,11 @@ def routes_wan_context(db: Session) -> dict:
     routing_rules = db.execute(select(RoutingRule).order_by(RoutingRule.priority, RoutingRule.name)).scalars().all()
     all_targets = wan_routing_targets(db)
     targets = wan_route_targets(db)
-    generated_routing_rows = generated_route_role_rules(targets)
+    permission_rows = routing_permission_rows(all_targets, list(routing_rules), ensure_routes_wan_settings(db).routing_enabled)
+    apply_state = routing_permission_apply_state(db)
+    for row in permission_rows:
+        row["apply_state"] = apply_state
+    generated_routing_rows = [row for row in permission_rows if row["generated"]]
     routing_summary = {
         "generated_count": len(generated_routing_rows),
         "explicit_count": len(routing_rules),
@@ -5759,7 +5695,8 @@ def routes_wan_context(db: Session) -> dict:
         "routing_rules": routing_rules,
         "route_rows": [route_to_dict(route) for route in routes],
         "nat_rule_rows": [nat_rule_to_dict(rule) for rule in nat_rules],
-        "routing_rule_rows": [routing_rule_to_dict(rule) for rule in routing_rules],
+        "routing_rule_rows": [row for row in permission_rows if not row["generated"]],
+        "routing_permission_fingerprint": routing_permission_fingerprint(db),
         "generated_routing_rule_rows": generated_routing_rows,
         "routing_summary": routing_summary,
         "policy_rows": [wan_policy_to_dict(policy) for policy in policies],
@@ -14646,6 +14583,9 @@ def update_appliance_apply_baselines(db: Session, units: list[dict[str, Any]], s
             "summary": unit["summary"],
             "applied_at": applied_at,
         }
+        permission_fingerprint = unit.get("context", {}).get("routing_permission_fingerprint")
+        if unit["id"] in {"wan", "firewall"} and permission_fingerprint:
+            baseline["routing_permission_fingerprint"] = permission_fingerprint
         runtime_config_preview = unit.get("runtime_config_preview")
         if isinstance(runtime_config_preview, str):
             baseline["runtime_config_preview"] = runtime_config_preview
@@ -17098,6 +17038,10 @@ def _submit_appliance_apply(
         selected_ids.add("nat")
     if publishing_pair_required and "nat" in selected_ids and "firewall" in unit_map:
         selected_ids.add("firewall")
+    if selected_ids.intersection({"wan", "firewall", "network"}):
+        fingerprint = routing_permission_fingerprint(db)
+        if any((apply_baselines.get(unit) or {}).get("routing_permission_fingerprint") != fingerprint for unit in ("wan", "firewall")):
+            selected_ids.update(unit for unit in ("wan", "firewall") if unit in unit_map)
     nat_activation = unit_map.get("nat", {}).get("context", {}).get("traffic_publishing_settings")
     if "nat" in selected_ids and (getattr(nat_activation, "effective_nat_enabled", False)
                                   or unit_map.get("nat", {}).get("context", {}).get("port_forward_effective")):

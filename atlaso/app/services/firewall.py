@@ -517,6 +517,7 @@ def managed_routing_firewall_rules(
     interfaces: list[PhysicalInterface],
     vlans: list[VlanInterface],
     routing_rules: list[RoutingRule] | None = None,
+    *, routing_enabled: bool = True,
 ) -> list[FirewallRule]:
     """Return managed routing firewall rules.
 
@@ -524,6 +525,7 @@ def managed_routing_firewall_rules(
         interfaces: Interfaces consumed by managed routing firewall rules.
         vlans: Vlans consumed by managed routing firewall rules.
         routing_rules: Routing rules consumed by managed routing firewall rules.
+        routing_enabled: Global lab routing activation; isolation remains protected.
     """
     targets = routing_firewall_targets(interfaces, vlans)
     targets_by_name = {target["name"]: target for target in targets}
@@ -533,6 +535,8 @@ def managed_routing_firewall_rules(
 
     for lab in lab_targets:
         for management in management_targets:
+            if not _common_routing_networks(lab["networks"], management["networks"]):
+                continue
             rules.append(
                 _routing_firewall_rule(
                     name=f"isolate-{_slug(lab['name'])}-to-{_slug(management['name'])}",
@@ -556,14 +560,19 @@ def managed_routing_firewall_rules(
                 )
             )
 
+    if not routing_enabled:
+        return rules
+
     route_targets = [target for target in lab_targets if target["role"] == "route"]
     for source in route_targets:
         for destination in route_targets:
-            if source["name"] == destination["name"]:
+            if source["name"] == destination["name"] or not _common_routing_networks(source["networks"], destination["networks"]):
                 continue
             rules.append(
                 _routing_firewall_rule(
                     name=f"route-{_slug(source['name'])}-to-{_slug(destination['name'])}",
+                    destination_interface=destination["name"],
+                    policy_phase="automatic",
                     action="accept",
                     source_interface=source["name"],
                     source_networks=source["networks"],
@@ -576,21 +585,33 @@ def managed_routing_firewall_rules(
     for rule in routing_rules or []:
         if not rule.enabled:
             continue
+        policy = rule.policy if rule.policy is not None else "allow"
+        family = rule.ip_family if rule.ip_family is not None else 0
+        if policy == "automatic":
+            continue
+        if policy not in {"allow", "deny"} or family not in {0, 4, 6}:
+            raise ValueError("Invalid routing permission policy or family.")
         source = targets_by_name.get(rule.source_interface)
         destination = targets_by_name.get(rule.destination_interface)
         if not source or not destination:
             continue
-        if source["role"] == "management" or destination["role"] == "management":
+        if source["role"] not in {"route", "access"} or destination["role"] not in {"route", "access"}:
             continue
         if source["name"] == destination["name"]:
             continue
+        source_networks = [network for network in source["networks"] if not family or ip_network(network).version == family]
+        destination_networks = [network for network in destination["networks"] if not family or ip_network(network).version == family]
+        if not _common_routing_networks(source_networks, destination_networks):
+            continue
         rules.append(
             _routing_firewall_rule(
-                name=f"routing-{_slug(rule.name)}",
-                action="accept",
+                name=f"routing-{rule.id or _slug(rule.name)}-{_slug(rule.name)}",
+                destination_interface=destination["name"],
+                policy_phase=policy,
+                action="drop" if policy == "deny" else "accept",
                 source_interface=source["name"],
-                source_networks=source["networks"],
-                destination_networks=destination["networks"],
+                source_networks=source_networks,
+                destination_networks=destination_networks,
                 priority=rule.priority,
                 description=f"{ATLASO_ROUTING_FIREWALL_RULE_MARKER} from explicit routing rule {rule.name}.",
             )
@@ -895,6 +916,8 @@ def validate_firewall_state(
         The validate firewall state result.
     """
     errors = validate_firewall_settings(settings)
+    if not settings.enabled and any(rule.enabled and rule.routing_policy_phase == "deny" for rule in generated_rules or []):
+        errors.append("Enable Firewall before applying an explicit routing deny; forwarding cannot be denied while Firewall is disabled.")
     seen_names: set[str] = set()
     for rule in effective_firewall_rules(
         rules,
@@ -964,6 +987,14 @@ def render_nftables_config(
         lines.append(f"    type filter hook {chain_name} priority {hook_priority}; policy {policy};")
         if chain_name == "input" and settings.allow_loopback:
             lines.append('    iifname "lo" accept comment "Atlaso loopback"')
+        chain_rules = [item for item in effective_firewall_rules(
+            rules, generated_rules, replace_atlaso_dhcp_rules, replace_atlaso_dns_rules,
+            replace_atlaso_service_rules,
+        ) if item.enabled and item.direction == chain_name]
+        prelude = [item for item in chain_rules if item.routing_policy_phase in {"deny", "isolation"}]
+        for rule in sorted(prelude, key=lambda item: item.priority):
+            for rendered_rule in _rule_family_variants(rule, source_groups_by_id):
+                lines.append(f"    {_render_rule(rendered_rule, source_groups_by_id)}")
         if settings.allow_established:
             lines.append('    ct state established,related accept comment "Atlaso established traffic"')
         if chain_name == "input" and not replace_atlaso_service_rules:
@@ -972,18 +1003,8 @@ def render_nftables_config(
             lines.append('    meta l4proto icmp accept comment "Atlaso ICMP diagnostics"')
             lines.append('    meta l4proto ipv6-icmp accept comment "Atlaso IPv6 ICMP diagnostics"')
         for rule in sorted(
-            [
-                item
-                for item in effective_firewall_rules(
-                    rules,
-                    generated_rules,
-                    replace_atlaso_dhcp_rules,
-                    replace_atlaso_dns_rules,
-                    replace_atlaso_service_rules,
-                )
-                if item.enabled and item.direction == chain_name
-            ],
-            key=lambda item: item.priority,
+            [item for item in chain_rules if item not in prelude],
+            key=lambda item: (0 if item.routing_policy_phase == "allow" else 1 if item.routing_policy_phase == "automatic" else 2, item.priority),
         ):
             for rendered_rule in _rule_family_variants(rule, source_groups_by_id):
                 lines.append(f"    {_render_rule(rendered_rule, source_groups_by_id)}")
@@ -1007,6 +1028,8 @@ def _render_rule(rule: FirewallRule, source_groups_by_id: dict[str, dict] | None
     """
     source_groups_by_id = source_groups_by_id or {}
     parts: list[str] = []
+    if rule.routing_destination_interface:
+        parts.append(f'oifname "{rule.routing_destination_interface}"')
     if rule.interface_name.strip():
         interface_key = "oifname" if rule.direction == "output" else "iifname"
         parts.append(f'{interface_key} "{rule.interface_name.strip()}"')
@@ -1052,6 +1075,8 @@ def _rule_family_variants(rule: FirewallRule, source_groups_by_id: dict[str, dic
         if destination_families and family not in destination_families:
             continue
         variant = FirewallRule(
+            routing_destination_interface=rule.routing_destination_interface,
+            routing_policy_phase=rule.routing_policy_phase,
             name=rule.name,
             direction=rule.direction,
             action=rule.action,
@@ -1178,6 +1203,16 @@ def _service_firewall_rule(
     )
 
 
+def _common_routing_networks(source: list[str], destination: list[str]) -> set[int]:
+    """Find address families that can actually cross this directed topology path.
+
+    Args:
+        source: Configured ingress prefixes.
+        destination: Configured egress prefixes.
+    """
+    return {ip_network(n).version for n in source} & {ip_network(n).version for n in destination}
+
+
 def _routing_firewall_rule(
     *,
     name: str,
@@ -1187,6 +1222,8 @@ def _routing_firewall_rule(
     destination_networks: list[str],
     priority: int,
     description: str,
+    destination_interface: str = "",
+    policy_phase: str = "",
 ) -> FirewallRule:
     """Return routing firewall rule.
 
@@ -1196,16 +1233,21 @@ def _routing_firewall_rule(
         source_interface: Source interface supplied by the caller.
         source_networks: Source networks supplied by the caller.
         destination_networks: Destination networks supplied by the caller.
+        destination_interface: Exact egress boundary for lab authorization.
+        policy_phase: Canonical deny/allow/automatic precedence phase.
         priority: Ordering priority assigned to the item.
         description: Human-readable description of the resource.
     """
+    common = _common_routing_networks(source_networks, destination_networks)
     return FirewallRule(
+        routing_destination_interface=destination_interface,
+        routing_policy_phase="isolation" if description == ATLASO_MANAGEMENT_ISOLATION_RULE_MARKER else policy_phase,
         name=name,
         direction="forward",
         action=action,
         protocol="any",
-        source="\n".join(source_networks or ["any"]),
-        destination="\n".join(destination_networks or ["any"]),
+        source="\n".join(n for n in source_networks if ip_network(n).version in common),
+        destination="\n".join(n for n in destination_networks if ip_network(n).version in common),
         destination_port="",
         interface_name=source_interface,
         priority=priority,

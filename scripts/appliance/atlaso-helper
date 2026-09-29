@@ -12174,6 +12174,11 @@ def _wan_config_errors(
             priority = 0
         if priority < 0:
             errors.append(f"NAT rule {name or '<missing>'} priority cannot be negative.")
+    for rule in parsed["routing_rules"]:
+        if rule.get("policy", "allow") not in {"automatic", "allow", "deny"}:
+            errors.append("Routing permission policy must be automatic, allow, or deny.")
+        if rule.get("ip_family", "0") not in {"0", "4", "6"}:
+            errors.append("Routing permission IP family must be 0, 4, or 6.")
     for rule in parsed["routing_rules"] if routing_enabled else []:
         name = rule.get("name", "")
         source = rule.get("source_interface", "")
@@ -12190,6 +12195,11 @@ def _wan_config_errors(
                     default=True,
                 ):
                     errors.append(f"Routing rule {name or '<missing>'} {label} cannot use management routing domain {target_name}.")
+        if enabled and source in targets and destination in targets:
+            family = rule.get("ip_family", "0")
+            fields = ("ip_cidr", "ipv6_cidr") if family == "0" else ("ip_cidr",) if family == "4" else ("ipv6_cidr",)
+            if not any(targets[source].get(field) and targets[destination].get(field) for field in fields):
+                errors.append(f"Routing rule {name} has no common selected IP family.")
         if enabled and source and destination and source == destination:
             errors.append(f"Routing rule {name or '<missing>'} must use different source and destination interfaces.")
         try:

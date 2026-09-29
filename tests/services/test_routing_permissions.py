@@ -1,0 +1,134 @@
+"""Verify directed routing permission policy and family scoping."""
+
+import pytest
+
+from atlaso.app.models import RoutingRule
+from atlaso.app.services.routing_permissions import (
+    routing_permission_rows,
+    validate_routing_permission,
+)
+
+
+def target(name, role, ipv4="192.0.2.1/24", ipv6="2001:db8::1/64", **changes):
+    """Build a configured lab interface or VLAN target."""
+    return {
+        "name": name,
+        "role": role,
+        "kind": "physical",
+        "ip_cidr": ipv4,
+        "ipv6_cidr": ipv6,
+        "routing_domain": "lab",
+        **changes,
+    }
+
+
+def rule(name, source, destination, policy="allow", ip_family=0, **changes):
+    """Build one explicit directed permission."""
+    values = {
+        "name": name,
+        "source_interface": source,
+        "destination_interface": destination,
+        "policy": policy,
+        "ip_family": ip_family,
+        "enabled": True,
+    }
+    values.update(changes)
+    return RoutingRule(**values)
+
+
+def explicit_row(rows, source, destination, family):
+    """Find one explicit projected permission."""
+    return next(
+        row
+        for row in rows
+        if not row["generated"]
+        and row["source_interface"] == source
+        and row["destination_interface"] == destination
+        and row["ip_family"] == family
+    )
+
+
+def test_route_pairs_follow_automatic_default_and_access_requires_allow():
+    """Route pairs inherit allow while Access pairs default to deny."""
+    targets = [target("route-a", "route"), target("route-b", "route"), target("access-a", "access")]
+
+    rows = routing_permission_rows(targets, [])
+
+    generated = next(row for row in rows if row["source_interface"] == "route-a" and row["destination_interface"] == "route-b")
+    assert generated["generated"] is True
+    assert generated["policy"] == "automatic"
+    assert generated["effective_action"] == "automatic allow"
+    access_rule = rule("Access to route", "access-a", "route-a", policy="automatic")
+    assert explicit_row(routing_permission_rows(targets, [access_rule]), "access-a", "route-a", 0)["effective_action"] == "automatic deny"
+    access_rule.policy = "allow"
+    assert explicit_row(routing_permission_rows(targets, [access_rule]), "access-a", "route-a", 0)["effective_action"] == "explicit allow"
+
+
+def test_deny_overrides_allow_for_same_direction_but_not_reverse_direction():
+    """Conflicting policies resolve to deny only for their directed pair."""
+    targets = [target("access-a", "access"), target("route-a", "route")]
+    rules = [
+        rule("Allow access to route", "access-a", "route-a", policy="allow"),
+        rule("Deny access to route", "access-a", "route-a", policy="deny"),
+        rule("Allow route to access", "route-a", "access-a", policy="allow"),
+    ]
+
+    rows = routing_permission_rows(targets, rules)
+
+    assert explicit_row(rows, "access-a", "route-a", 0)["effective_action"] == "explicit deny"
+    assert explicit_row(rows, "route-a", "access-a", 0)["effective_action"] == "explicit allow"
+
+
+def test_family_scoping_and_global_routing_suspension():
+    """An IPv4 override does not change IPv6, and Routing off suspends both."""
+    targets = [target("access-a", "access"), target("route-a", "route")]
+    rules = [rule("Deny IPv4", "access-a", "route-a", policy="deny", ip_family=4)]
+
+    rows = routing_permission_rows(targets, rules)
+
+    ipv4 = explicit_row(rows, "access-a", "route-a", 4)
+    assert ipv4["source_networks"] == ["192.0.2.0/24"]
+    assert ipv4["effective_action"] == "explicit deny"
+    assert ipv4["family_effective_actions"] == {"4": "explicit deny"}
+    suspended = routing_permission_rows(targets, rules, routing_enabled=False)
+    assert explicit_row(suspended, "access-a", "route-a", 4)["effective_action"] == "suspended"
+
+
+def test_generated_dual_stack_pair_explains_different_family_results():
+    """A legitimate IPv4-only deny is distinct from an invalid scope."""
+    targets = [target("route-a", "route"), target("route-b", "route")]
+    rows = routing_permission_rows(targets, [rule("IPv4 deny", "route-a", "route-b", "deny", 4)])
+    generated = next(row for row in rows if row["generated"] and row["source_interface"] == "route-a")
+    assert generated["effective_action"] == "IPv4: explicit deny; IPv6: automatic allow"
+    assert generated["family_effective_actions"] == {"4": "explicit deny", "6": "automatic allow"}
+
+
+@pytest.mark.parametrize(
+    "changes,fragment",
+    [
+        ({"policy": "permit"}, "policy must be automatic, allow, or deny"),
+        ({"ip_family": 5}, "IP family must be 0 (both), 4, or 6"),
+        ({"source_interface": "management"}, "protected management rules cannot be overridden"),
+        ({"destination_interface": "access-a"}, "source and destination must be different"),
+    ],
+)
+def test_invalid_policy_family_management_and_self_target_are_rejected(changes, fragment):
+    """Reject unsupported values and protected or degenerate scopes."""
+    targets = [target("access-a", "access"), target("route-a", "route"),
+               target("management", "management", routing_domain="management")]
+    candidate = rule("Candidate", "access-a", "route-a", **changes)
+
+    assert any(fragment in error for error in validate_routing_permission(candidate, targets))
+
+
+def test_family_without_common_prefix_is_rejected():
+    """Both endpoints must have prefixes in the selected family."""
+    targets = [
+        target("ipv4-only", "access", ipv6=""),
+        target("ipv6-only", "route", ipv4="", ipv6="2001:db8::1/64"),
+    ]
+    candidate = rule("No common family", "ipv4-only", "ipv6-only")
+
+    errors = validate_routing_permission(candidate, targets)
+
+    assert any("common configured address family" in error for error in errors)

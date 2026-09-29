@@ -2,6 +2,7 @@
 
 from datetime import datetime, timezone
 from enum import StrEnum
+from typing import ClassVar
 from uuid import uuid4
 
 from sqlalchemy import (
@@ -369,6 +370,8 @@ class RoutingRule(Base):
         source_interface: Persisted source interface for the routingrule resource.
         destination_interface: Persisted destination interface for the routingrule resource.
         priority: Persisted priority for the routingrule resource.
+        policy: Explicit allow, deny, or automatic topology inheritance.
+        ip_family: Zero for both families, or four/six for one family.
         description: Operator-facing purpose or context for the resource.
         created_at: UTC timestamp when the resource was created.
         updated_at: UTC timestamp when the resource was last updated.
@@ -381,6 +384,8 @@ class RoutingRule(Base):
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     source_interface: Mapped[str] = mapped_column(String(80), index=True)
     destination_interface: Mapped[str] = mapped_column(String(80), index=True)
+    policy: Mapped[str] = mapped_column(String(16), default="allow", server_default="allow")
+    ip_family: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     priority: Mapped[int] = mapped_column(Integer, default=100)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
@@ -805,6 +810,9 @@ class FirewallRule(Base):
         updated_at: UTC timestamp when the resource was last updated.
     """
     __tablename__ = "firewall_rules"
+    # Transient canonical routing metadata; operator firewall rows cannot set it.
+    routing_destination_interface: ClassVar[str] = ""
+    routing_policy_phase: ClassVar[str] = ""
     __table_args__ = (UniqueConstraint("name", name="uq_firewall_rule_name"),)
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)

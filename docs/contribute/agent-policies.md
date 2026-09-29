@@ -1802,7 +1802,11 @@ preserved with their affected subsystem below. Keep new requirements at their to
   admin state, without changing the persisted interface before validation.
 - Keep **Static Routes** separate from **Routing Permissions** in operator language. Static Routes choose destination,
   gateway, target interface/VLAN, and metric in the lab route table; Routing Permissions authorize forwarding between
-  interface/VLAN networks, with route-role paths generated automatically and Access networks requiring explicit rules.
+  interface/VLAN networks, with route-role paths allowed automatically and Access networks requiring explicit allows.
+  Persist overrides for generated topology as ordinary operator-owned policies without changing generated rows or
+  interface roles. An explicit deny wins over allow and automatic policy for the same directed pair and family; the
+  reverse direction and IPv4/IPv6 are independent. Management must never be an eligible endpoint. Keep topology rows
+  read-only while exposing their wizard action for creating a persistent override.
   The Static Route wizard must make **Default route** mutually exclusive with **Destination CIDR**, require an explicit
   IPv4 or IPv6 family plus a same-family next-hop gateway for defaults, persist canonical `0.0.0.0/0` or `::/0`, and
   allow only one default per family. Destination-specific routes keep a required CIDR and optional gateway for directly
@@ -1813,7 +1817,8 @@ preserved with their affected subsystem below. Keep new requirements at their to
   All five are
   wizard-backed Tabulator collections. Add launches
   from the bottom row; edit launches from row double-click or the context menu; generated routing permissions remain
-  read-only; and ordinary persisted **Enabled** state remains directly editable without host mutation.
+  read-only while their context action opens the wizard to create a persistent override; and ordinary persisted
+  **Enabled** state remains directly editable without host mutation.
 - Network Objects Source Groups use a full-height compact wizard-backed Tabulator. The add-row native button opens on
   one click or native keyboard activation, while row double-click remains edit-only. The Entries step exposes an
   exclusive **Any source** switch that persists canonical `entries: ["any"]`; explicit addresses, CIDRs, and stable
@@ -2231,9 +2236,14 @@ preserved with their affected subsystem below. Keep new requirements at their to
   Port forwards require Routing and paired Firewall/NAT validation, publication, rollback, and baseline recording.
   Generated admission is read-only and owned by its port-forward resource. Retire only owned connection marks when
   removing effective mappings; never flush unrelated connections. Do not add automatic broad NAT or
-  non-reviewable NAT inferred only from interface role. Route-role networks may forward to other route-role networks by
-  default; access networks require explicit routing rules; management is never a route, NAT, or routing-permission
-  target.
+  non-reviewable NAT inferred only from interface role. Routing permission policy is `automatic`, `allow`, or `deny`,
+  with family scope `0` (both), `4` (IPv4), or `6` (IPv6). Route-role pairs allow automatically; Access networks need
+  explicit allow. Deny overrides allow and automatic policy only for the same directed pair and family; the reverse
+  direction and other family remain independent. Render exact ingress/egress network matches and place deny policy
+  ahead of established-flow and broad forwarding accepts. Routing disabled suspends saved permission policy. Apply
+  permission changes with Routing & WAN and Firewall together; preserve desired/applied baselines and additive startup
+  reconciliation across upgrades. Management is never a route, NAT, or routing-permission target, and routing policy
+  must not alter management INPUT handling.
 - Source NAT requires one or more explicit inbound interfaces and one distinct outbound interface. Both sides use enabled,
   available access-mode physical interfaces or enabled VLANs on available trunk parents, with matching-family CIDRs
   and an access or route role. The dedicated management role and wrong-family targets are excluded;

@@ -36,7 +36,7 @@ def test_routes_wan_policy_form_renders(client):
     assert "routes-wan-nat-table" in nat_page.text
     assert "routes-wan-policies-table" in response.text
     assert "auto route-role" in response.text
-    assert "explicit access" in response.text
+    assert "explicit policies" in response.text
     assert "management isolated" in response.text
     assert "No automatic route-role paths" in response.text
     assert "data-mode-options" not in response.text
@@ -46,6 +46,13 @@ def test_routes_wan_policy_form_renders(client):
     assert "+ Add routing permission here" in app_js
     assert "+ Add NAT rule here" in app_js
     assert "+ Add WAN policy here" in app_js
+    assert 'name="policy"' in response.text
+    assert 'name="ip_family"' in response.text
+    assert "Override routing permission" in app_js
+    assert "Override routing permission" in Path("atlaso/app/templates/routes_wan.html").read_text(encoding="utf-8")
+    assert "effective_action" in app_js
+    assert "apply_state" in app_js
+    assert 'await postWanAction(managementUiPath(`${path}/${data.id}/edit`), data, csrf, { reload: false })' in app_js
     assert "autoSaveWanRoute" not in app_js
     assert "autoSaveWanRoutingRule" not in app_js
     assert "autoSaveWanNatRule" not in app_js
@@ -90,6 +97,52 @@ def test_routes_wan_policy_form_renders(client):
     assert "tc qdisc del" in response.text
     assert "[nat_rules]" in nat_page.text
     assert "Review appliance changes" in response.text
+
+
+def test_routes_wan_generated_routing_permissions_offer_wizard_override(client):
+    """Generated route-role paths remain read-only and expose the existing override wizard.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+    """
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import PhysicalInterface
+
+    with SessionLocal() as db:
+        db.add_all(
+            [
+                PhysicalInterface(
+                    name="route855a",
+                    mac_address="00:50:56:aa:85:5a",
+                    mode="access",
+                    role="route",
+                    ip_cidr="192.0.2.1/24",
+                    ipv6_cidr="",
+                    admin_state="up",
+                    oper_state="up",
+                ),
+                PhysicalInterface(
+                    name="route855b",
+                    mac_address="00:50:56:aa:85:5b",
+                    mode="access",
+                    role="route",
+                    ip_cidr="198.51.100.1/24",
+                    ipv6_cidr="",
+                    admin_state="up",
+                    oper_state="up",
+                ),
+            ]
+        )
+        db.commit()
+
+    login(client)
+    response = client.get("/routes-wan")
+
+    assert response.status_code == 200
+    assert "route855a to route855b" in response.text
+    assert 'data-routes-wan-wizard-open="routing" data-routes-wan-override="true"' in response.text
+    assert 'data-routes-wan-source="route855a" data-routes-wan-destination="route855b"' in response.text
+    assert "Override routing permission" in response.text
 
 
 def test_routes_wan_settings_autosave_reports_suspended_nat(client):
@@ -590,12 +643,41 @@ def test_routes_wan_autosave_endpoints_and_apply_task(client):
             "destination_interface": "eth2",
             "priority": "120",
             "description": "Allow SiteA toward WAN link",
+            "policy": "deny",
+            "ip_family": "4",
             "enabled": "on",
             "csrf": csrf,
         },
         follow_redirects=False,
     )
     assert routing_response.status_code == 303
+    with SessionLocal() as db:
+        routing = db.execute(select(RoutingRule).where(RoutingRule.name == "SiteA to WAN")).scalar_one()
+        routing_id = routing.id
+        assert routing.policy == "deny"
+        assert routing.ip_family == 4
+
+    routing_edit_response = client.post(
+        f"/routes-wan/routing-rules/{routing_id}/edit",
+        data={
+            "name": "SiteA to WAN",
+            "source_interface": "eth1.20",
+            "destination_interface": "eth2",
+            "priority": "120",
+            "description": "Allow SiteA toward WAN link",
+            "policy": "automatic",
+            "ip_family": "0",
+            "enabled": "on",
+            "csrf": csrf,
+        },
+        follow_redirects=False,
+    )
+    assert routing_edit_response.status_code == 303
+    with SessionLocal() as db:
+        routing = db.execute(select(RoutingRule).where(RoutingRule.id == routing_id)).scalar_one()
+        assert routing.policy == "automatic"
+        assert routing.ip_family == 0
+        assert db.execute(select(Job).where(Job.type == "appliance-apply")).scalar_one_or_none() is None
     management_routing_response = client.post(
         "/routes-wan/routing-rules",
         data={
@@ -626,6 +708,8 @@ def test_routes_wan_autosave_endpoints_and_apply_task(client):
         assert rule.outbound_interface == "eth2"
         routing = db.execute(select(RoutingRule).where(RoutingRule.name == "SiteA to WAN")).scalar_one()
         assert routing.source_interface == "eth1.20"
+        assert routing.policy == "automatic"
+        assert routing.ip_family == 0
 
     apply_response = client.post("/appliance-apply", data={"csrf": csrf, "selected_units": "wan"})
     assert_apply_redirect(apply_response)

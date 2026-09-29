@@ -179,6 +179,7 @@ from atlaso.app.services.networking import (
     normalize_interface_role,
 )
 from atlaso.app.services.ntp import default_ntp_upstream_fields
+from atlaso.app.services.routes_wan import ensure_routes_wan_settings
 from atlaso.app.services.service_dns_defaults import (
     factory_service_hostname,
     reconcile_factory_service_identities,
@@ -746,6 +747,7 @@ def firewall_validation_payload(db: Session) -> tuple[FirewallSettings, list[Fir
             physical_interfaces,
             vlan_interfaces,
             db.execute(select(RoutingRule).order_by(RoutingRule.priority, RoutingRule.name)).scalars().all(),
+            routing_enabled=ensure_routes_wan_settings(db).routing_enabled,
         )
     )
     return (
