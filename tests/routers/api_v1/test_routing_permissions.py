@@ -237,3 +237,29 @@ def test_api_can_disable_a_permission_after_topology_disappears(client, drift):
     assert disabled.json()["policy"] == "deny"
     assert disabled.json()["ip_family"] == 4
     assert client.put(path, json=_permission_payload(), headers=headers).status_code == 422
+
+
+@pytest.mark.parametrize("field", ["source_interface", "destination_interface"])
+def test_api_rejects_malformed_disabled_interface_names_on_create_and_replace(client, field):
+    """Reject malformed dormant scope without changing the saved permission.
+
+    Args:
+        client: Isolated application client.
+        field: Endpoint containing an invalid interface identity.
+    """
+    _prepare_targets()
+    writer, _ = create_token(client, scopes=["read:routes", "write:routes"])
+    headers = {"Authorization": f"Bearer {writer}"}
+    path = "/api/v1/routing-permissions"
+    payload = _permission_payload(enabled=False)
+    created = client.post(path, json=payload, headers=headers)
+    assert created.status_code == 201, created.text
+    invalid = {**payload, "name": "Malformed", field: "gone\nrouting=Injected"}
+    rejected = client.post(path, json=invalid, headers=headers)
+    assert rejected.status_code == 422, rejected.text
+    replaced = client.put(f"{path}/{created.json()['id']}", json=invalid, headers=headers)
+    assert replaced.status_code == 422, replaced.text
+    rows = client.get(path, headers=headers)
+    saved = next(row for row in rows.json() if row["id"] == created.json()["id"])
+    assert saved[field] == payload[field]
+    assert saved["name"] == payload["name"]

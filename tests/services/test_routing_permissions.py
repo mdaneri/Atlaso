@@ -148,3 +148,29 @@ def test_disabled_stale_scope_can_be_retained_but_management_and_enums_stay_prot
     candidate.source_interface = "gone"
     candidate.policy = "permit"
     assert any("policy must" in error for error in validate_routing_permission(candidate, targets))
+
+
+@pytest.mark.parametrize("enabled", [False, True])
+@pytest.mark.parametrize("field", ["source_interface", "destination_interface"])
+@pytest.mark.parametrize("name", ["", "gone\nrouting=Injected", "gone\rnext", "gone target", "gone=target", "x" * 81])
+def test_interface_syntax_is_required_even_for_disabled_permissions(enabled, field, name):
+    """Keep unavailable identities serializable regardless of activation state.
+
+    Args:
+        enabled: Proposed activation state.
+        field: Endpoint being validated.
+        name: Invalid interface identity.
+    """
+    candidate = rule("Dormant", "gone.10", "route-a", enabled=enabled)
+    setattr(candidate, field, name)
+    assert any("canonical interface name" in error for error in validate_routing_permission(candidate, [target("route-a", "route")]))
+
+
+@pytest.mark.parametrize("name", ["gone.10", "missing-eth0", "vlan_10", "eth0:1"])
+def test_disabled_permissions_accept_canonical_unavailable_names(name):
+    """Retain valid dormant physical, alias and VLAN identities.
+
+    Args:
+        name: Canonical unavailable interface identity.
+    """
+    assert validate_routing_permission(rule("Dormant", name, "route-a", enabled=False), [target("route-a", "route")]) == []

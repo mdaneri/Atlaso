@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from ipaddress import ip_interface, ip_network
 from typing import Any
 
@@ -99,6 +100,8 @@ def validate_routing_permission(rule: RoutingRule, targets: list[dict[str, Any]]
         protected_names.update(db.scalars(select(PhysicalInterface.name).where(PhysicalInterface.role == "management")))
         protected_names.update(db.scalars(select(VlanInterface.name).where(VlanInterface.role == "management")))
     for label, name in (("source", rule.source_interface), ("destination", rule.destination_interface)):
+        if not name or not re.fullmatch(r"[A-Za-z0-9_.:-]{1,80}", name):
+            errors.append(f"Routing permission {label} must use a canonical interface name of at most 80 characters.")
         target = by_name.get(name)
         if name in protected_names or (target and (target.get("role") == "management" or target.get("routing_domain") == "management")):
             errors.append(f"Routing permission {label} must be a non-management Access or Route interface/VLAN; protected management rules cannot be overridden.")
