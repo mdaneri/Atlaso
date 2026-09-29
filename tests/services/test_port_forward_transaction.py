@@ -537,7 +537,11 @@ def test_four_unit_group_recovers_kill_before_network_journal_creation(transacti
     network = _enable_network_pair_test_seams(helper, monkeypatch, events)
 
     def interrupted_before_network(_content):
-        """Simulate process death before the Network helper receives the candidate."""
+        """Simulate process death before the Network helper receives the candidate.
+
+        Args:
+            _content: Candidate Network configuration, unused by the simulated interruption.
+        """
         raise KeyboardInterrupt
 
     monkeypatch.setattr(helper, "_publishing_apply_network", interrupted_before_network)

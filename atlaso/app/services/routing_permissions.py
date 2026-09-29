@@ -32,7 +32,13 @@ _LINE_SEPARATORS = re.compile(r"[\r\n\v\f\x1c-\x1e\x85\u2028\u2029]")
 
 
 def routing_permission_name_conflicts(db: Session, name: str, *, exclude_rule_id: int | None = None) -> bool:
-    """Match the case-insensitive name rule used when validating WAN state."""
+    """Match the case-insensitive name rule used when validating WAN state.
+
+    Args:
+        db: Session containing saved permissions.
+        name: Proposed permission name.
+        exclude_rule_id: Existing permission to omit during an edit.
+    """
     normalized_name = name.strip().lower()
     return any(
         rule.id != exclude_rule_id and rule.name.strip().lower() == normalized_name

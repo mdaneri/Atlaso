@@ -833,12 +833,25 @@ def test_route_role_deny_lifecycle_uses_saved_override_and_restores_generated_be
             self.calls = []
 
         def json_request(self, method, path, *, json_body=None):
+            """Capture a Routing Permission API JSON request.
+
+            Args:
+                method: HTTP method to request.
+                path: API path to request.
+                json_body: Optional request payload.
+            """
             self.calls.append((method, path, json_body))
             if method == "GET":
                 return []
             return {"id": 17, "policy": "deny", "apply_state": "pending"}
 
         def request(self, method, path):
+            """Capture a Routing Permission API request.
+
+            Args:
+                method: HTTP method to request.
+                path: API path to request.
+            """
             self.calls.append((method, path, None))
             return 204, "", {}
 

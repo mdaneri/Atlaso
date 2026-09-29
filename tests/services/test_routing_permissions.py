@@ -56,7 +56,11 @@ def rule(name, source, destination, policy="allow", ip_family=0, **changes):
 
 @pytest.mark.parametrize("separator", ["\r", "\r\n", "\v", "\f", "\x85", "\u2028", "\u2029"])
 def test_render_wan_config_keeps_legacy_permission_text_on_one_line(separator):
-    """Persisted text with any line separator cannot become a WAN record."""
+    """Persisted text with any line separator cannot become a WAN record.
+
+    Args:
+        separator: Legacy line separator in saved text.
+    """
     permission = rule(
         f"reviewed{separator}[routes]", "eth1", "eth2",
         description=f"reviewed{separator}[routes]{separator}route=Injected",

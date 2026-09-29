@@ -569,7 +569,11 @@ def test_routing_deny_archive_round_trip_and_legacy_default(client):
 
 
 def test_archive_rejects_malformed_dormant_routing_interfaces(client):
-    """Dormancy may preserve absent targets, but never malformed names."""
+    """Dormancy may preserve absent targets, but never malformed names.
+
+    Args:
+        client: Isolated archive database fixture.
+    """
     from atlaso.app.models import RoutingRule
 
     with SessionLocal() as db:
@@ -591,7 +595,11 @@ def test_archive_rejects_malformed_dormant_routing_interfaces(client):
 
 
 def test_archive_rejects_case_insensitive_dormant_routing_name_collision(client):
-    """Names must remain usable when Routing is later enabled."""
+    """Names must remain usable when Routing is later enabled.
+
+    Args:
+        client: Isolated archive database fixture.
+    """
     from atlaso.app.models import RoutingRule
 
     with SessionLocal() as db:

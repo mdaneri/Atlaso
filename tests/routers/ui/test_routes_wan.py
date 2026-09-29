@@ -189,7 +189,11 @@ def test_routes_wan_generated_routing_permissions_offer_wizard_override(client):
 
 
 def test_routing_permission_browser_names_match_apply_uniqueness(client):
-    """Create and edit reject case-only collisions without changing saved intent."""
+    """Create and edit reject case-only collisions without changing saved intent.
+
+    Args:
+        client: Isolated browser client.
+    """
     from sqlalchemy import select
 
     from atlaso.app.database import SessionLocal

@@ -214,7 +214,12 @@ def test_duplicate_routing_permission_name_returns_conflict_without_partial_audi
 
 @pytest.mark.parametrize("name", ["reviewed\nrouting=Injected", "reviewed\r\n[section]", "reviewed\u2028routing=Injected"])
 def test_routing_permission_rejects_line_separators_before_persistence(client, name):
-    """A saved name cannot add a line or section to rendered WAN configuration."""
+    """A saved name cannot add a line or section to rendered WAN configuration.
+
+    Args:
+        client: Isolated API client.
+        name: Name containing a line separator.
+    """
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import AuditEvent, RoutingRule
 

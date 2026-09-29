@@ -142,7 +142,11 @@ def test_access_only_topology_change_requires_paired_apply(client):
 
 
 def test_nat_only_selection_pairs_new_access_endpoint_with_firewall(client):
-    """NAT dependency expansion cannot activate Access topology under stale policy."""
+    """NAT dependency expansion cannot activate Access topology under stale policy.
+
+    Args:
+        client: Isolated application client.
+    """
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import Job, PhysicalInterface
     from atlaso.app.services.routes_wan import save_routes_wan_settings
@@ -207,7 +211,12 @@ def test_routing_permission_change_waits_for_forwarding_off_during_management_ha
     original_units = ui.appliance_apply_units
 
     def handoff_units(db, **kwargs):
-        """Mark only the pending Network change as management-affecting."""
+        """Mark only the pending Network change as management-affecting.
+
+        Args:
+            db: Session used to build Apply units.
+            **kwargs: Options forwarded to the unit builder.
+        """
         units = original_units(db, **kwargs)
         next(unit for unit in units if unit["id"] == "network")["management_handoff_required"] = True
         return units
