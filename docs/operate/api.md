@@ -202,6 +202,8 @@ so preserved inactive rows are not reported as active runtime intent. Shared int
 Legacy `/api/v1/dns/apply`, `/api/v1/dhcp/apply`, and `/api/v1/firewall/apply` routes remain available for compatibility
 but are intentionally absent from Swagger because they predate the reviewed global workflow. New clients must save
 desired state and use `/ui/management/appliance-apply`; do not build new automation around the legacy direct-apply routes.
+The legacy Firewall Apply response retains its validation result. If `valid` is false, `reloaded` is false and the
+configuration is not applied; this includes disabled Firewall states that cannot enforce routing denials.
 
 ## Delete an ESXi Host Reference
 

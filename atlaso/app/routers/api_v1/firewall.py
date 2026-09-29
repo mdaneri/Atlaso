@@ -321,7 +321,10 @@ def build_router(dependencies: FirewallApiDependencies) -> FirewallApiRouter:
             identity: Authenticated identity authorizing the operation.
             db: Active database session used by the operation.
         """
+        acquire_network_objects_write_lock(db)
         validation = validate_firewall(identity, db)
+        if not validation.valid:
+            return ConfigApplyResponse(**validation.model_dump(), reloaded=False)
         apply_result = SystemAdapter().apply_firewall_config(validation.config_path)
         record_audit(db, actor=identity.username, action="apply_firewall_dry_run", resource_type="firewall", detail=" ".join(apply_result.command))
         payload = validation.model_dump()

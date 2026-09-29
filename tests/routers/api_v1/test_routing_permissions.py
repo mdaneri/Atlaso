@@ -197,12 +197,53 @@ def test_duplicate_routing_permission_name_returns_conflict_without_partial_audi
     duplicate = client.post(path, json=payload, headers=headers)
     assert duplicate.status_code == 409, duplicate.text
     assert duplicate.json()["error_code"] == "HTTP_ERROR"
+    normalized_duplicate = client.post(path, json={**payload, "name": "api PERMISSION"}, headers=headers)
+    assert normalized_duplicate.status_code == 409, normalized_duplicate.text
+    assert normalized_duplicate.json()["error_code"] == "HTTP_ERROR"
 
     with SessionLocal() as db:
         assert db.scalar(select(RoutingRule.id).where(RoutingRule.name == payload["name"])) is not None
         assert db.scalar(select(AuditEvent.id).where(AuditEvent.action == "create_routing_permission")) is not None
         assert len(list(db.scalars(select(RoutingRule).where(RoutingRule.name == payload["name"])))) == 1
         assert len(list(db.scalars(select(AuditEvent).where(AuditEvent.action == "create_routing_permission")))) == 1
+
+
+def test_routing_permission_replace_rejects_normalized_collision_and_allows_self_rename(client):
+    """Reject case-insensitive collisions without mutating or auditing, but exclude the saved row.
+
+    Args:
+        client: Isolated Atlaso HTTP client.
+    """
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import AuditEvent, RoutingRule
+
+    _prepare_targets()
+    writer, _ = create_token(client, scopes=["write:routes"])
+    headers = {"Authorization": f"Bearer {writer}"}
+    path = "/api/v1/routing-permissions"
+    first = client.post(path, json=_permission_payload(name="API permission"), headers=headers)
+    second = client.post(path, json=_permission_payload(name="Second permission", priority=101), headers=headers)
+    assert first.status_code == 201, first.text
+    assert second.status_code == 201, second.text
+    first_path = f"{path}/{first.json()['id']}"
+
+    self_rename = client.put(first_path, json=_permission_payload(name="aPi PeRmIsSiOn"), headers=headers)
+    assert self_rename.status_code == 200, self_rename.text
+    assert self_rename.json()["name"] == "aPi PeRmIsSiOn"
+
+    collision = client.put(
+        first_path,
+        json=_permission_payload(name="sEcOnD pErMiSsIoN"),
+        headers=headers,
+    )
+    assert collision.status_code == 409, collision.text
+    assert collision.json()["error_code"] == "HTTP_ERROR"
+
+    with SessionLocal() as db:
+        rules = list(db.scalars(select(RoutingRule).order_by(RoutingRule.id)))
+        actions = list(db.scalars(select(AuditEvent.action).where(AuditEvent.resource_type == "routing_permission").order_by(AuditEvent.id)))
+    assert [rule.name for rule in rules] == ["aPi PeRmIsSiOn", "Second permission"]
+    assert actions == ["create_routing_permission", "create_routing_permission", "update_routing_permission"]
 
 
 @pytest.mark.parametrize("drift", ["missing", "family"])

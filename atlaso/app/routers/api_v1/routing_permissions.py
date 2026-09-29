@@ -54,7 +54,11 @@ def _saved_rule(db: Session, rule_id: str) -> RoutingRule:
     return rule
 
 
-def _validate(payload: RoutingPermissionCreate, db: Session) -> None:
+def _validate(payload: RoutingPermissionCreate, db: Session, *, exclude_rule_id: int | None = None) -> None:
+    normalized_name = payload.name.strip().lower()
+    for rule in db.scalars(select(RoutingRule)):
+        if rule.id != exclude_rule_id and rule.name.strip().lower() == normalized_name:
+            raise HTTPException(409, "A Routing Permission with that name already exists.")
     candidate = RoutingRule(**payload.model_dump())
     errors = validate_routing_permission(candidate, routing_permission_targets(db), db=db)
     if errors:
@@ -142,7 +146,7 @@ def replace_routing_permission(rule_id: RuleId, payload: RoutingPermissionCreate
     """
     acquire_network_objects_write_lock(db)
     row = _saved_rule(db, rule_id)
-    _validate(payload, db)
+    _validate(payload, db, exclude_rule_id=row.id)
     for field, value in payload.model_dump().items():
         setattr(row, field, value)
     try:

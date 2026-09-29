@@ -207,3 +207,60 @@ def test_firewall_description_write_limit_preserves_legacy_reads(client, valid_n
     assert note_schema["x-maxLengthUtf16CodeUnits"] == 1000
     assert "maxLength" not in note_schema
     assert all("maxLength" not in item for item in note_schema["anyOf"])
+
+
+@pytest.mark.parametrize("policy", ["automatic", "deny"])
+def test_legacy_firewall_apply_preserves_routing_denials_when_disabled(client, monkeypatch, policy):
+    """Reject invalid compatibility applies before applying or recording success.
+
+    Args:
+        client: Isolated application HTTP client.
+        monkeypatch: Track the dry-run adapter apply boundary.
+        policy: Automatic Access isolation or an explicit route-pair deny.
+    """
+    from sqlalchemy import select
+
+    from atlaso.app.adapters.system import SystemAdapter
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import (
+        AuditEvent,
+        FirewallSettings,
+        PhysicalInterface,
+        RoutingRule,
+    )
+    from atlaso.app.services.routes_wan import save_routes_wan_settings
+
+    token, _ = create_token(client, scopes=["write:firewall"])
+    headers = {"Authorization": f"Bearer {token}"}
+    with SessionLocal() as db:
+        db.scalar(select(FirewallSettings)).enabled = False
+        for name, role, cidr in (("guard-a", "access" if policy == "automatic" else "route", "10.85.1.1/24"), ("guard-b", "route", "10.85.2.1/24")):
+            db.add(PhysicalInterface(name=name, role=role, mode="access", ip_cidr=cidr, mac_address="02:00:00:00:85:11" if name == "guard-a" else "02:00:00:00:85:12"))
+        db.add(RoutingRule(name="Protected forwarding", enabled=True, source_interface="guard-a", destination_interface="guard-b", policy=policy, ip_family=4))
+        save_routes_wan_settings(db, routing_enabled=True, nat_enabled=False, wan_simulation_enabled=False)
+        db.commit()
+    calls = []
+    original_apply = SystemAdapter.apply_firewall_config
+
+    def track_apply(adapter, config_path):
+        """Record calls while preserving the existing dry-run behavior."""
+        calls.append(config_path)
+        return original_apply(adapter, config_path)
+
+    monkeypatch.setattr(SystemAdapter, "apply_firewall_config", track_apply)
+    rejected = client.post("/api/v1/firewall/apply", headers=headers)
+    assert rejected.status_code == 200, rejected.text
+    assert rejected.json()["valid"] is False
+    assert rejected.json()["reloaded"] is False
+    assert any("Enable Firewall" in error for error in rejected.json()["errors"])
+    assert calls == []
+    with SessionLocal() as db:
+        assert db.scalar(select(AuditEvent.id).where(AuditEvent.action == "apply_firewall_dry_run")) is None
+        save_routes_wan_settings(db, routing_enabled=False, nat_enabled=False, wan_simulation_enabled=False)
+        db.commit()
+    accepted = client.post("/api/v1/firewall/apply", headers=headers)
+    assert accepted.status_code == 200, accepted.text
+    assert accepted.json()["valid"] is True
+    assert len(calls) == 1
+    with SessionLocal() as db:
+        assert db.scalar(select(AuditEvent.id).where(AuditEvent.action == "apply_firewall_dry_run")) is not None
