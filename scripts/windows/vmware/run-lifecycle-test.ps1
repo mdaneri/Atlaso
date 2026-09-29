@@ -3828,7 +3828,7 @@ if ($scenarioFailure) {
             $seedCleanupFailure,
             $cleanupFailure
         ) | Where-Object { $null -ne $_ } | ForEach-Object { $_.Exception.Message }
-        $combinedMessage = "Lifecycle scenario failed: $($scenarioFailure.Exception.Message) Cleanup also failed; VM artifacts were preserved at '$vmRoot': $($cleanupMessages -join '; ')"
+        $combinedMessage = "Lifecycle scenario failed: $($scenarioFailure.Exception.Message) Cleanup also failed: $($cleanupMessages -join '; ')"
         throw [System.InvalidOperationException]::new($combinedMessage, $scenarioFailure.Exception)
     }
     throw $scenarioFailure

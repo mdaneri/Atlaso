@@ -3250,7 +3250,8 @@ def test_vmware_lifecycle_cleanup_only_removes_existing_lifecycle_vms():
     assert "VMware artifact directory remains after recursive cleanup; refusing to report success" in cleanup_module
     assert "Atlaso.WorkstationCleanup.psm1" in runner
     assert "Remove-AtlasoWorkstationVmArtifacts" in runner
-    assert "Cleanup also failed; VM artifacts were preserved" in runner
+    assert "Cleanup also failed: $($cleanupMessages -join '; ')" in runner
+    assert "VM artifacts were preserved at '$vmRoot'" not in runner
     assert "Remove-Item -LiteralPath $vmRoot -Recurse -Force" not in runner
     assert "-CleanupVmsOnly" in docs
 
