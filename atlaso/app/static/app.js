@@ -7538,17 +7538,95 @@ function wanPolicyFormatter(cell, policyLabels) {
   return escapeHtml(policyLabels[String(value)] || value);
 }
 
-async function saveWanEnabledState(cell, csrf, path, errorId, fallbackMessage) {
+async function saveWanEnabledState(cell, csrf, path, errorId, fallbackMessage, options = {}) {
   const data = cell.getRow().getData();
   clearCaMessage(errorId);
   try {
     await postWanAction(managementUiPath(`${path}/${data.id}/edit`), data, csrf, { reload: false });
-    showTransientGridStatus("Saved");
-    await refreshNetworkSideStack();
   } catch (error) {
     cell.restoreOldValue?.();
     showWanMessage(errorId, error instanceof Error ? error.message : fallbackMessage);
+    return;
   }
+  showTransientGridStatus("Saved");
+  if (typeof options.afterSave === "function") {
+    try {
+      await options.afterSave();
+    } catch (_error) {
+      showWanMessage(errorId, options.refreshFailureMessage || "The routing permission was saved, but its displayed effective state could not be refreshed. Reload the page to see the latest state.");
+      return;
+    }
+  }
+  try {
+    await refreshNetworkSideStack();
+  } catch (error) {
+    if (typeof options.afterSave === "function") {
+      showWanMessage(errorId, "The routing permission and its displayed state were saved, but the network status panel could not be refreshed.");
+      return;
+    }
+    cell.restoreOldValue?.();
+    showWanMessage(errorId, error instanceof Error ? error.message : fallbackMessage);
+  }
+}
+
+async function refreshRoutesWanRoutingProjection(tableElement, table) {
+  const response = await fetch(window.location.href, {
+    credentials: "same-origin",
+    headers: { "X-Requested-With": "AtlasoRoutingPermissionRefresh", Accept: "text/html" },
+  });
+  if (!response.ok) throw new Error("The routing permission projection could not be refreshed.");
+  const nextDocument = new DOMParser().parseFromString(await response.text(), "text/html");
+  const nextElement = nextDocument.getElementById("routes-wan-routing-table");
+  if (!nextElement) throw new Error("The routing permission projection is missing from the refreshed page.");
+
+  let explicitRows;
+  let generatedRows;
+  let targetOptions;
+  try {
+    explicitRows = JSON.parse(nextElement.dataset.rules);
+    generatedRows = JSON.parse(nextElement.dataset.generatedRules);
+    targetOptions = JSON.parse(nextElement.dataset.targetOptions);
+  } catch (_error) {
+    throw new Error("The routing permission projection on the refreshed page is invalid.");
+  }
+  const validRows = (rows, generated) => Array.isArray(rows) && rows.every((row) =>
+    row && typeof row === "object"
+    && (typeof row.id === "string" || typeof row.id === "number")
+    && String(row.id).length > 0
+    && row.generated === generated
+    && typeof row.effective_action === "string"
+    && typeof row.apply_state === "string");
+  if (!validRows(explicitRows, false) || !validRows(generatedRows, true)
+    || !Array.isArray(targetOptions)
+    || !targetOptions.every((target) => target && typeof target.name === "string" && typeof target.label === "string")) {
+    throw new Error("The routing permission projection on the refreshed page is invalid.");
+  }
+  if (!table || typeof table.getRows !== "function" || typeof table.updateData !== "function") {
+    throw new Error("The Routing Permissions grid is unavailable for refresh.");
+  }
+  const currentRows = table.getRows("all").map((row) => row.getData());
+  const currentIds = currentRows.map((row) => String(row.id));
+  if (currentIds.some((id) => !id) || new Set(currentIds).size !== currentIds.length) {
+    throw new Error("The Routing Permissions grid has invalid row identities.");
+  }
+  const projectedRows = [
+    ...generatedRows.map((row) => ({ ...row, kind: "auto route-role rule" })),
+    ...explicitRows.map((row) => ({ ...row, kind: "explicit access rule" })),
+  ];
+  if (currentIds.includes("__new__")) {
+    projectedRows.push({ id: "__new__", is_new: true, generated: false });
+  }
+  const projectedIds = projectedRows.map((row) => String(row.id));
+  if (new Set(projectedIds).size !== projectedIds.length
+    || projectedIds.length !== currentIds.length
+    || projectedIds.some((id) => !currentIds.includes(id))) {
+    throw new Error("Routing Permissions changed while the grid was refreshing. Reload the page to continue.");
+  }
+  await table.updateData(projectedRows);
+  tableElement.dataset.rules = JSON.stringify(explicitRows);
+  tableElement.dataset.generatedRules = JSON.stringify(generatedRows);
+  tableElement.dataset.targetOptions = JSON.stringify(targetOptions);
+  return targetOptions;
 }
 
 const routesWanWizardOpeners = new Map();
@@ -7939,11 +8017,12 @@ function initializeRoutesWanRoutingTable() {
   const csrf = tableElement.dataset.csrf || "";
   const canWrite = tableElement.dataset.canWrite === "true";
   const targets = JSON.parse(tableElement.dataset.targetOptions || "[]");
-  const targetValues = Object.fromEntries(targets.map((target) => [target.name, target.label]));
+  let targetValues = Object.fromEntries(targets.map((target) => [target.name, target.label]));
   const generatedRows = JSON.parse(tableElement.dataset.generatedRules || "[]");
   const explicitRows = JSON.parse(tableElement.dataset.rules || "[]").map((row) => ({ ...row, kind: "explicit access rule" }));
   const generatedWithKind = generatedRows.map((row) => ({ ...row, kind: "auto route-role rule" }));
   const rows = canWrite ? [...generatedWithKind, ...explicitRows, { id: "__new__", is_new: true, generated: false }] : [...generatedWithKind, ...explicitRows];
+  let table;
   const editRow = (row, launcher = null) => {
     const data = row?.getData?.() || row;
     if (!canWrite || !data || data.is_new || data.generated) return;
@@ -8065,7 +8144,20 @@ function initializeRoutesWanRoutingTable() {
           hozAlign: "center",
           width: 100,
           headerSort: false,
-          cellEdited: (cell) => saveWanEnabledState(cell, csrf, "/routes-wan/routing-rules", "routes-wan-routing-error", "The routing permission could not be saved."),
+          cellEdited: (cell) => saveWanEnabledState(
+            cell,
+            csrf,
+            "/routes-wan/routing-rules",
+            "routes-wan-routing-error",
+            "The routing permission could not be saved.",
+            {
+              afterSave: async () => {
+                const refreshedTargets = await refreshRoutesWanRoutingProjection(tableElement, table);
+                targetValues = Object.fromEntries(refreshedTargets.map((target) => [target.name, target.label]));
+              },
+              refreshFailureMessage: "The routing permission was saved, but its displayed effective state could not be refreshed. Reload the page to see the latest state.",
+            },
+          ),
         },
         {
           title: "Description",
@@ -8092,7 +8184,7 @@ function initializeRoutesWanRoutingTable() {
         row.getElement().classList.toggle("readonly-row", Boolean(data.generated));
       },
     };
-    window.AtlasoUiPatterns.createGrid({
+    table = window.AtlasoUiPatterns.createGrid({
       element: tableElement,
       pattern: "wizard-backed",
       permission: {
