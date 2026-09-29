@@ -228,6 +228,12 @@ def test_removed_vlan_keeps_installed_legacy_domain_before_link_retirement(monke
     monkeypatch.setattr(domains, "run_ip", lambda command: commands.append(command) or "")
 
     def migrate(command, payload):
+        """Capture legacy source migration through the helper boundary.
+
+        Args:
+            command: Helper command being intercepted.
+            payload: Serialized legacy source migration request.
+        """
         domains.migrate_legacy_sources(json.loads(payload))
         return subprocess.CompletedProcess(command, 0, "", "")
 
