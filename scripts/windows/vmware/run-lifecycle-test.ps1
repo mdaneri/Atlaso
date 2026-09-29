@@ -3760,9 +3760,15 @@ with WindowsFiles().opened(Path(sys.argv[1]), directory=True) as (_, identity, _
 if ($overlapRecoveryUncertain) {
     throw "Private Apply or restoration is not safely complete. Preserve the running lab and original evidence at '$resultRoot'; reconcile its public job and baseline before restoration or cleanup."
 }
+$overlapStopFailure = $null
 if ($overlapStarted -and $null -ne $overlapDescriptor -and -not $diagnosticTerminationUnproven) {
     try { Invoke-RoutingOverlapPhase -Phase stop -Descriptor $overlapDescriptor } catch {
-        $scenarioFailure = $_
+        if ($scenarioFailure) {
+            # A stop failure must not replace the scenario's original exception.
+            $overlapStopFailure = $_
+        } else {
+            $scenarioFailure = $_
+        }
     }
 }
 
@@ -3816,8 +3822,9 @@ if ($CleanupCreatedLab) {
 }
 
 if ($scenarioFailure) {
-    if ($seedCleanupFailure -or $cleanupFailure) {
+    if ($overlapStopFailure -or $seedCleanupFailure -or $cleanupFailure) {
         $cleanupMessages = @(
+            $overlapStopFailure,
             $seedCleanupFailure,
             $cleanupFailure
         ) | Where-Object { $null -ne $_ } | ForEach-Object { $_.Exception.Message }
