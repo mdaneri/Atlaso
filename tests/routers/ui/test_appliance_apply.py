@@ -785,6 +785,45 @@ def test_management_https_applies_pending_ca_before_settings(client, monkeypatch
     assert payload["management_handoff_units"][:4] == ["ca", "network", "firewall", "appliance_settings"]
 
 
+def test_management_binding_handoff_pairs_pending_routing_permission(client, monkeypatch):
+    """An Appliance Settings handoff includes both routing enforcement owners.
+
+    Args:
+        client: Isolated authenticated test client.
+        monkeypatch: Keeps the submitted job available for inspection.
+    """
+    from atlaso.app import ui
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import ApplianceSettings, CaSettings, Job, RoutingRule
+    from atlaso.app.services.routes_wan import save_routes_wan_settings
+
+    login(client)
+    with SessionLocal() as db:
+        settings = db.query(ApplianceSettings).one()
+        db.query(CaSettings).one().enabled = True
+        save_routes_wan_settings(db, routing_enabled=True, nat_enabled=False, wan_simulation_enabled=False)
+        db.commit()
+        units = ui.appliance_apply_units(db)
+        ui.update_appliance_apply_baselines(db, units, {unit["id"] for unit in units})
+        settings.management_https_enabled = True
+        db.add(RoutingRule(name="Handoff permission", enabled=True, source_interface="eth2",
+                           destination_interface="eth1.20", policy="allow", ip_family=4))
+        db.commit()
+        ui.ca_context(db)
+
+    monkeypatch.setattr(ui, "run_appliance_apply_job", lambda _job_id: None)
+    csrf = client.get("/dashboard").text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    response = client.post("/appliance-apply", data={"csrf": csrf, "selected_units": "appliance_settings"},
+                           headers={"Accept": "application/json"})
+    assert response.status_code == 202, response.text
+    with SessionLocal() as db:
+        job = db.get(Job, response.json()["job_id"])
+        assert job is not None
+        payload = json.loads(job.result or "{}")
+    assert payload["management_handoff"] is True
+    assert {"wan", "firewall"} <= set(payload["selected_units"])
+
+
 def test_management_binding_change_requires_pending_network_selection(client):
     """Do not silently admit an unrelated pending Network edit into a protocol handoff.
 

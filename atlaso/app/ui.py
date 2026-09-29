@@ -17123,6 +17123,16 @@ def _submit_appliance_apply(
             and unit_map.get("network", {}).get("management_default_mirror_change")
         )
     )
+    if management_handoff and not routing_permission_pair_required:
+        # Appliance Settings can start a handoff before an enforcement owner
+        # is selected; pair any pending permission change before expansion.
+        fingerprint = routing_permission_fingerprint(db)
+        routing_permission_pair_required = any(
+            (apply_baselines.get(unit) or {}).get("routing_permission_fingerprint") != fingerprint
+            for unit in ("wan", "firewall")
+        )
+        if routing_permission_pair_required:
+            selected_ids.update(unit for unit in ("wan", "firewall") if unit in unit_map)
     # A first apply has no recorded forwarding state to transition away from.
     if (management_handoff and routing_permission_pair_required
             and unit_map.get("network", {}).get("changed")
