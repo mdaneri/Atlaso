@@ -12,6 +12,10 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from atlaso.app.models import PhysicalInterface, RoutingRule, Setting, VlanInterface
+from atlaso.app.services.firewall import (
+    managed_routing_firewall_rules,
+    routing_firewall_targets,
+)
 from atlaso.app.services.networking import (
     normalize_interface_mode,
     normalize_interface_role,
@@ -165,14 +169,39 @@ def routing_permission_rows(targets: list[dict[str, Any]], rules: list[RoutingRu
 
 
 def routing_permission_fingerprint(db: Session) -> str:
-    """Bind applied authorization to saved scope, topology and global activation.
+    """Bind applied authorization to every generated forwarding boundary.
 
     Args:
         db: Desired-state database session.
     """
     rules = list(db.scalars(select(RoutingRule).order_by(RoutingRule.id)))
-    rows = routing_permission_rows(routing_permission_targets(db), rules, ensure_routes_wan_settings(db).routing_enabled)
-    return hashlib.sha256(json.dumps(rows, sort_keys=True).encode()).hexdigest()
+    interfaces = list(db.scalars(select(PhysicalInterface).order_by(PhysicalInterface.name)))
+    vlans = list(db.scalars(select(VlanInterface).order_by(VlanInterface.parent_interface, VlanInterface.vlan_id)))
+    routing_enabled = ensure_routes_wan_settings(db).routing_enabled
+    rows = routing_permission_rows(routing_permission_targets(db), rules, routing_enabled)
+    generated = managed_routing_firewall_rules(interfaces, vlans, rules, routing_enabled=routing_enabled)
+    policy = {
+        "routing_enabled": routing_enabled,
+        "rows": rows,
+        # Include targets even when there is only one Access boundary and no
+        # directed pair yet. A later Network Apply must not silently retain an
+        # old Firewall baseline when that boundary gains a peer or a family.
+        "targets": routing_firewall_targets(interfaces, vlans),
+        "generated_firewall": [
+            {
+                "name": rule.name,
+                "source_interface": rule.interface_name,
+                "destination_interface": rule.routing_destination_interface,
+                "phase": rule.routing_policy_phase,
+                "action": rule.action,
+                "source": rule.source,
+                "destination": rule.destination,
+                "priority": rule.priority,
+            }
+            for rule in generated
+        ],
+    }
+    return hashlib.sha256(json.dumps(policy, sort_keys=True).encode()).hexdigest()
 
 
 def routing_permission_apply_state(db: Session) -> str:

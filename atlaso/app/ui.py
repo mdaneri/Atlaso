@@ -17190,6 +17190,15 @@ def _submit_appliance_apply(
         selected_ordered_units = [unit for unit in selected_ordered_units if unit["id"] != "ca"]
         settings_index = next(index for index, unit in enumerate(selected_ordered_units) if unit["id"] == "appliance_settings")
         selected_ordered_units.insert(settings_index, unit_map["ca"])
+    if not management_handoff and {"wan", "firewall"}.issubset(selected_ids) and not ensure_routes_wan_settings(db).routing_enabled:
+        # Disabling Routing removes its generated Firewall drops. Stop WAN
+        # forwarding first so a failed WAN Apply cannot expose traffic under
+        # an accept-forward policy, even when Firewall/NAT publish as a pair.
+        wan_index = next(index for index, unit in enumerate(selected_ordered_units) if unit["id"] == "wan")
+        firewall_index = next(index for index, unit in enumerate(selected_ordered_units) if unit["id"] == "firewall")
+        if wan_index > firewall_index:
+            selected_ordered_units.pop(wan_index)
+            selected_ordered_units.insert(firewall_index, unit_map["wan"])
     skipped_changed_units = [
         {"unit_id": unit["id"], "label": unit["label"], "summary": unit["summary"]}
         for unit in units
