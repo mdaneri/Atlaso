@@ -13622,6 +13622,140 @@ def _publishing_files() -> tuple[Path, ...]:
             WAN_NAT_CONFIG_PATH, WAN_NAT_SERVICE_PATH)
 
 
+@contextmanager
+def _publishing_wan_stage(content: str):
+    """Materialize journaled WAN intent beneath its admitted staging directory.
+
+    Args:
+        content: Bounded candidate or rollback configuration captured in the
+            root-owned Traffic Publishing journal.
+    """
+    WAN_APPLY_DIR.mkdir(parents=True, exist_ok=True)
+    temporary = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w", encoding="utf-8", suffix=".conf", prefix="publishing-wan-",
+            dir=WAN_APPLY_DIR, delete=False,
+        ) as handle:
+            temporary = Path(handle.name)
+            handle.write(content)
+        os.chmod(temporary, 0o600)
+        yield temporary
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
+
+
+def _publishing_apply_wan(content: str) -> None:
+    """Apply journaled WAN routes while forwarding remains quiesced.
+
+    Args:
+        content: Candidate or prior Routes & WAN snapshot from the journal.
+    """
+    with _publishing_wan_stage(content) as path:
+        result = _handle_wan("apply", [str(path)], defer_forwarding=True)
+    if result:
+        raise ValueError("Routes & WAN apply failed during paired publication")
+
+
+def _publishing_wan_record_valid(wan: object) -> bool:
+    """Check journaled WAN candidates and exact prior helper-owned state.
+
+    Args:
+        wan: Untrusted parsed JSON value from the durable publishing journal.
+    """
+    if not isinstance(wan, dict) or set(wan) != {
+        "candidate", "rollback", "previous_files", "previous_enabled", "previous_forwarding",
+    }:
+        return False
+    if any(not isinstance(wan[key], str) or len(wan[key]) > 2_000_000 for key in ("candidate", "rollback")):
+        return False
+    if type(wan["previous_enabled"]) is not bool:
+        return False
+    if not isinstance(wan["previous_forwarding"], dict) or set(wan["previous_forwarding"]) != {"ipv4", "ipv6"}:
+        return False
+    if any(type(value) is not bool for value in wan["previous_forwarding"].values()):
+        return False
+    files = wan["previous_files"]
+    expected = {str(WAN_RUNTIME_CONFIG_PATH), str(WAN_SERVICE_PATH), str(WAN_SYSCTL_PATH)}
+    if not isinstance(files, dict) or set(files) != expected:
+        return False
+    return all(
+        isinstance(snapshot, dict) and set(snapshot) == {"content", "mode"}
+        and (snapshot["content"] is None or isinstance(snapshot["content"], str))
+        and (snapshot["mode"] is None or (type(snapshot["mode"]) is int and 0 <= snapshot["mode"] <= 0o777))
+        and ((snapshot["content"] is None) == (snapshot["mode"] is None))
+        and (snapshot["content"] is None or len(snapshot["content"]) <= 2_000_000)
+        for snapshot in files.values()
+    )
+
+
+def _publishing_wan_file_snapshot(path: Path) -> dict[str, str | int | None]:
+    """Capture one helper-owned WAN config or service file before publication.
+
+    Args:
+        path: Fixed runtime or service path in the WAN transaction inventory.
+    """
+    if not path.exists() and not path.is_symlink():
+        return {"content": None, "mode": None}
+    metadata = path.lstat()
+    if not stat.S_ISREG(metadata.st_mode) or path.is_symlink() or metadata.st_size > 2_000_000:
+        raise ValueError("Routes & WAN rollback file is unsafe or exceeds its size bound")
+    return {"content": path.read_text(encoding="utf-8"), "mode": stat.S_IMODE(metadata.st_mode)}
+
+
+def _publishing_restore_wan_files(wan: dict) -> None:
+    """Restore exact WAN runtime, service, and sysctl file presence and mode.
+
+    Args:
+        wan: Validated root-owned transaction journal record.
+    """
+    if not _publishing_wan_record_valid(wan):
+        raise ValueError("Routes & WAN recovery inventory is invalid")
+    for raw_path, snapshot in wan["previous_files"].items():
+        path = Path(raw_path)
+        content = snapshot["content"]
+        if content is None:
+            path.unlink(missing_ok=True)
+            if path.parent.exists():
+                _fsync_directory(path.parent)
+            continue
+        _nat_write(path, content)
+        os.chmod(path, snapshot["mode"])
+        _fsync_file(path)
+
+
+def _publishing_snapshot_wan_forwarding() -> dict[str, bool]:
+    """Read live forwarding state, rejecting unknown or failed observations."""
+    result: dict[str, bool] = {}
+    for family, key in (("ipv4", "net.ipv4.ip_forward"), ("ipv6", "net.ipv6.conf.all.forwarding")):
+        observed = _run(["sysctl", "-n", key])
+        value = observed.stdout.strip()
+        if observed.returncode or value not in {"0", "1"}:
+            raise ValueError("Could not establish previous WAN forwarding state")
+        result[family] = value == "1"
+    return result
+
+
+def _publishing_restore_wan_forwarding(wan: dict) -> None:
+    """Restore exact prior kernel forwarding only after Firewall/NAT rollback.
+
+    Args:
+        wan: Validated root-owned transaction journal record.
+    """
+    if not _publishing_wan_record_valid(wan):
+        raise ValueError("Routes & WAN forwarding recovery inventory is invalid")
+    for family, key in (("ipv4", "net.ipv4.ip_forward"), ("ipv6", "net.ipv6.conf.all.forwarding")):
+        value = "1" if wan["previous_forwarding"][family] else "0"
+        applied = _run(["sysctl", "-w", f"{key}={value}"])
+        if applied.returncode:
+            raise ValueError("Could not restore previous WAN forwarding state")
+    enabled = wan["previous_enabled"]
+    if (_run(["systemctl", "enable" if enabled else "disable", "atlaso-wan.service"]).returncode
+            and WAN_SERVICE_PATH.exists()):
+        raise ValueError("Could not restore Routes & WAN service enablement")
+
+
 def _publishing_restore(state: dict) -> None:
     """Restore both runtimes and service enablement before clearing recovery state.
 
@@ -13629,11 +13763,13 @@ def _publishing_restore(state: dict) -> None:
         state: Root-owned snapshot captured before paired publication.
     """
     files = _publishing_files()
+    wan = state.get("wan")
     if (set(state.get("files", {})) != {str(path) for path in files}
             or any(value is not None and not isinstance(value, str) for value in state["files"].values())
             or set(state.get("enabled", {})) != {"atlaso-firewall.service", "atlaso-nat.service"}
             or any(type(value) is not bool for value in state["enabled"].values())
-            or type(state.get("retire_connections")) is not bool):
+            or type(state.get("retire_connections")) is not bool
+            or (wan is not None and not _publishing_wan_record_valid(wan))):
         raise ValueError("Traffic Publishing recovery inventory is invalid")
     previous_intent = state["files"][str(NAT_RUNTIME_CONFIG_PATH)] or ""
     previous_firewall = state["files"][str(FIREWALL_CONFIG_PATH)] or "flush ruleset\n"
@@ -13643,6 +13779,11 @@ def _publishing_restore(state: dict) -> None:
         # A disappeared or replaced interface cannot receive an old translation.
         restored_firewall = previous_firewall
         restored_nat = _render_wan_nat_config([], port_forwards=[])
+    if wan is not None:
+        # Apply the prior route and policy state while forwarding stays off.
+        if _set_wan_forwarding(False):
+            raise ValueError("Traffic Publishing recovery could not quiesce WAN forwarding")
+        _publishing_apply_wan(wan["rollback"])
     if state["retire_connections"]:
         if _run_with_input(["nft", "-f", "-"], _quiesce_port_forward_config()).returncode:
             raise ValueError("Traffic Publishing recovery could not quiesce translations")
@@ -13666,10 +13807,14 @@ def _publishing_restore(state: dict) -> None:
         service_path = FIREWALL_SERVICE_PATH if service == "atlaso-firewall.service" else WAN_NAT_SERVICE_PATH
         if result.returncode and service_path.exists():
             raise ValueError("Traffic Publishing recovery could not restore service enablement")
+    if wan is not None:
+        _publishing_restore_wan_files(wan)
+        _publishing_restore_wan_forwarding(wan)
 
 
 def _publishing_install(intent: str, firewall: str, nat_program: str, *, retire_connections: bool,
-                        retire_rule_ids: list[int] | None = None) -> None:
+                        retire_rule_ids: list[int] | None = None, wan_candidate: str | None = None,
+                        persist_wan_forwarding: bool = True) -> None:
     """Install a validated complete pair without independently restarting Firewall.
 
     Args:
@@ -13678,6 +13823,8 @@ def _publishing_install(intent: str, firewall: str, nat_program: str, *, retire_
         nat_program: Complete generated translation and retirement guard program.
         retire_connections: Retire only Atlaso-owned destination translations first.
         retire_rule_ids: Exact changed identities, or all owned connections for legacy recovery.
+        wan_candidate: Optional WAN config whose forwarding is enabled after publication.
+        persist_wan_forwarding: Keep boot forwarding disabled until application acknowledgement.
     """
     if retire_connections:
         if _run_with_input(["nft", "-f", "-"], _quiesce_port_forward_config()).returncode:
@@ -13699,6 +13846,11 @@ def _publishing_install(intent: str, firewall: str, nat_program: str, *, retire_
     if (_run(["systemctl", "enable", "atlaso-firewall.service"]).returncode
             or _run(["systemctl", "enable" if enabled else "disable", "atlaso-nat.service"]).returncode):
         raise ValueError("Traffic Publishing boot replay enablement failed")
+    if wan_candidate is not None and _apply_wan_forwarding(
+        _parse_wan_config(WAN_RUNTIME_CONFIG_PATH, content=wan_candidate),
+        persist=persist_wan_forwarding,
+    ):
+        raise ValueError("Routes & WAN forwarding publication failed")
 
 
 def _port_forward_changed_ids(previous_intent: str, candidate_intent: str) -> list[int]:
@@ -13719,13 +13871,18 @@ def _port_forward_changed_ids(previous_intent: str, candidate_intent: str) -> li
                   if previous_mappings.get(identity) != candidate_mappings.get(identity))
 
 
-def _publishing_apply(job_id: str, nat_path: str, firewall_path: str, *, validate_only: bool = False) -> dict:
+def _publishing_apply(
+    job_id: str, nat_path: str, firewall_path: str, wan_candidate_path: str | None = None,
+    wan_rollback_path: str | None = None, *, validate_only: bool = False,
+) -> dict:
     """Stage one paired publication and retain rollback until application commit.
 
     Args:
         job_id: Exact global Appliance Apply owner.
         nat_path: Admitted typed NAT configuration staged by that task.
         firewall_path: Admitted Firewall configuration captured with NAT.
+        wan_candidate_path: Optional managed staged Routes & WAN candidate.
+        wan_rollback_path: Optional managed staged last-applied Routes & WAN snapshot.
         validate_only: Validate the complete pair without snapshots or mutation.
     """
     if re.fullmatch(r"job_[0-9a-f]{12}", job_id) is None:
@@ -13738,6 +13895,41 @@ def _publishing_apply(job_id: str, nat_path: str, firewall_path: str, *, validat
     firewall = firewall_candidate.read_text(encoding="utf-8")
     if len(intent) > 2_000_000 or len(firewall) > 2_000_000:
         raise ValueError("Traffic Publishing paired snapshot exceeds its size bound")
+    if (wan_candidate_path is None) != (wan_rollback_path is None):
+        raise ValueError("Paired Routes & WAN publication requires both candidate and rollback snapshots")
+    wan = None
+    if wan_candidate_path is not None and wan_rollback_path is not None:
+        wan_candidate = _validate_wan_config_path(wan_candidate_path)
+        wan_rollback = _validate_wan_config_path(wan_rollback_path)
+        if (not wan_candidate.is_relative_to(WAN_APPLY_DIR) or not wan_rollback.is_relative_to(WAN_APPLY_DIR)
+                or wan_candidate == WAN_RUNTIME_CONFIG_PATH or wan_rollback == WAN_RUNTIME_CONFIG_PATH):
+            raise ValueError("Paired Routes & WAN snapshots must use the managed WAN staging directory")
+        wan_candidate_content = wan_candidate.read_text(encoding="utf-8")
+        wan_rollback_content = wan_rollback.read_text(encoding="utf-8")
+        if len(wan_candidate_content) > 2_000_000 or len(wan_rollback_content) > 2_000_000:
+            raise ValueError("Routes & WAN paired snapshot exceeds its size bound")
+        for staged, content in ((wan_candidate, wan_candidate_content), (wan_rollback, wan_rollback_content)):
+            errors = _wan_config_errors(staged, parsed=_parse_wan_config(staged, content=content))
+            if errors:
+                raise ValueError("Routes & WAN paired snapshot failed validation: " + "; ".join(errors))
+        previous_forwarding = _publishing_snapshot_wan_forwarding()
+        if WAN_RUNTIME_CONFIG_PATH.is_file():
+            previous_runtime = _parse_wan_config(WAN_RUNTIME_CONFIG_PATH)
+            previous_expected = _wan_forwarding_required(previous_runtime)
+            if previous_forwarding != {"ipv4": previous_expected, "ipv6": previous_expected}:
+                raise ValueError("Live WAN forwarding disagrees with the applied WAN baseline")
+        wan = {
+            "candidate": wan_candidate_content,
+            "rollback": wan_rollback_content,
+            "previous_files": {
+                str(staged_path): _publishing_wan_file_snapshot(staged_path)
+                for staged_path in (WAN_RUNTIME_CONFIG_PATH, WAN_SERVICE_PATH, WAN_SYSCTL_PATH)
+            },
+            "previous_enabled": _run(["systemctl", "is-enabled", "atlaso-wan.service"]).returncode == 0,
+            "previous_forwarding": previous_forwarding,
+        }
+        if not _publishing_wan_record_valid(wan):
+            raise ValueError("Routes & WAN rollback snapshot is invalid")
     final_firewall, nat_program, _active_forwards = _publishing_program(intent, firewall, observed=not validate_only)
     combined = final_firewall.rstrip() + "\n" + nat_program
     if _validate_wan_nat_config(combined).returncode:
@@ -13761,10 +13953,19 @@ def _publishing_apply(job_id: str, nat_path: str, firewall_path: str, *, validat
         "candidate": {"intent": intent, "firewall": firewall},
         "runtime_restored": False,
     }
+    if wan is not None:
+        state["wan"] = wan
     _nat_write(marker, json.dumps(state, sort_keys=True))
     try:
-        _publishing_install(intent, final_firewall, nat_program, retire_connections=state["retire_connections"],
-                            retire_rule_ids=changed_ids)
+        if wan is not None:
+            if _set_wan_forwarding(False):
+                raise ValueError("Could not quiesce WAN forwarding before paired publication")
+            _publishing_apply_wan(wan["candidate"])
+        _publishing_install(
+            intent, final_firewall, nat_program, retire_connections=state["retire_connections"],
+            retire_rule_ids=changed_ids, wan_candidate=wan["candidate"] if wan is not None else None,
+            persist_wan_forwarding=wan is None,
+        )
         state["phase"] = "awaiting-application-commit"
         _nat_write(marker, json.dumps(state, sort_keys=True))
     except (OSError, ValueError) as original:
@@ -13800,16 +14001,31 @@ def _publishing_acknowledge(job_id: str) -> None:
         # pair but retains this root-owned candidate until the application proves
         # that both baselines committed. Revalidate before recovering forward.
         candidate = state.get("candidate")
+        wan = state.get("wan")
         if (not isinstance(candidate, dict) or set(candidate) != {"intent", "firewall"}
                 or any(not isinstance(value, str) or len(value) > 2_000_000 for value in candidate.values())):
             raise ValueError("Traffic Publishing recovery candidate is invalid")
+        if wan is not None and not _publishing_wan_record_valid(wan):
+            raise ValueError("Routes & WAN recovery candidate is invalid")
+        if wan is not None:
+            if _set_wan_forwarding(False):
+                raise ValueError("Traffic Publishing recovery could not quiesce WAN forwarding")
+            _publishing_apply_wan(wan["candidate"])
         firewall, program, _active = _publishing_program(candidate["intent"], candidate["firewall"], observed=True)
         if _validate_wan_nat_config(firewall.rstrip() + "\n" + program).returncode:
             raise ValueError("Traffic Publishing committed candidate no longer validates")
         _publishing_install(candidate["intent"], firewall, program, retire_connections=state["retire_connections"],
-                            retire_rule_ids=state.get("retire_rule_ids"))
+                            retire_rule_ids=state.get("retire_rule_ids"),
+                            wan_candidate=wan["candidate"] if wan is not None else None,
+                            persist_wan_forwarding=False)
         state["runtime_restored"] = False
         _nat_write(marker, json.dumps(state, sort_keys=True))
+    wan = state.get("wan")
+    if wan is not None:
+        if not _publishing_wan_record_valid(wan):
+            raise ValueError("Routes & WAN recovery candidate is invalid")
+        if _apply_wan_forwarding(_parse_wan_config(WAN_RUNTIME_CONFIG_PATH, content=wan["candidate"])):
+            raise ValueError("Routes & WAN committed forwarding could not be persisted")
     _nat_write(receipt, json.dumps({"job_id": job_id, "phase": "committed"}))
     marker.unlink()
     _fsync_directory(marker.parent)
@@ -13831,14 +14047,47 @@ def _publishing_boot_restore() -> bool:
     receipt = NAT_RUNTIME_CONFIG_PATH.with_suffix(".publishing-commit.json")
     committed = json.loads(receipt.read_text(encoding="utf-8")) if receipt.exists() else {}
     if committed == {"job_id": state["job_id"], "phase": "committed"}:
+        wan = state.get("wan")
+        candidate = state.get("candidate")
+        if wan is not None:
+            if (not _publishing_wan_record_valid(wan)
+                    or not isinstance(candidate, dict) or set(candidate) != {"intent", "firewall"}
+                    or any(not isinstance(value, str) or len(value) > 2_000_000 for value in candidate.values())):
+                raise ValueError("Traffic Publishing committed recovery candidate is invalid")
+            firewall, program, _active = _publishing_program(candidate["intent"], candidate["firewall"], observed=True)
+            if _validate_wan_nat_config(firewall.rstrip() + "\n" + program).returncode:
+                raise ValueError("Traffic Publishing committed recovery candidate no longer validates")
+            _publishing_install(candidate["intent"], firewall, program,
+                                retire_connections=state["retire_connections"],
+                                retire_rule_ids=state.get("retire_rule_ids"), wan_candidate=wan["candidate"])
         marker.unlink()
         _fsync_directory(marker.parent)
-        return False
+        return wan is not None
     # Publish recovery intent before touching either runtime. A second interruption
     # must not turn an application-committed candidate into an old-rule receipt.
     state["runtime_restored"] = True
     _nat_write(marker, json.dumps(state, sort_keys=True))
     _publishing_restore(state)
+    return True
+
+
+def _publishing_wan_journal_pending() -> bool:
+    """Return whether WAN boot replay must defer forwarding to paired recovery.
+
+    Raises:
+        ValueError: The paired journal exists but its WAN ownership record is malformed.
+    """
+    marker = NAT_RUNTIME_CONFIG_PATH.with_suffix(".publishing-recovery.json")
+    if not marker.exists():
+        return False
+    state = json.loads(marker.read_text(encoding="utf-8"))
+    wan = state.get("wan") if isinstance(state, dict) else None
+    if wan is None:
+        return False
+    if (re.fullmatch(r"job_[0-9a-f]{12}", str(state.get("job_id") or "")) is None
+            or state.get("phase") not in {"prepared", "awaiting-application-commit"}
+            or not _publishing_wan_record_valid(wan)):
+        raise ValueError("Routes & WAN publishing journal is invalid")
     return True
 
 
@@ -13958,8 +14207,8 @@ def _handle_nat(action: str, args: list[str]) -> int:
     try:
         with _nat_transaction_lock() if action not in {"validate", "validate-publishing"} else nullcontext():
             if action in {"validate-publishing", "apply-publishing"}:
-                if len(args) != 3:
-                    raise ValueError("Paired publication requires one task and two managed snapshots")
+                if len(args) not in {3, 5}:
+                    raise ValueError("Paired publication requires one task, two or four managed snapshots")
                 if action == "apply-publishing":
                     _nat_recover()
                 result = _publishing_apply(*args, validate_only=action == "validate-publishing")
@@ -14223,24 +14472,27 @@ def _wan_forwarding_required(parsed: dict[str, list[dict[str, str]]]) -> bool:
     return _wan_feature_settings(parsed)["routing_enabled"]
 
 
-def _apply_wan_forwarding(parsed: dict[str, list[dict[str, str]]]) -> int:
-    """Perform apply WAN forwarding.
+def _set_wan_forwarding(enabled: bool, *, persist: bool = True) -> int:
+    """Persist and apply the system-wide IPv4 and IPv6 forwarding state.
 
     Args:
-        parsed: Parsed consumed by apply WAN forwarding.
+        enabled: Whether forwarding should be enabled after the corresponding
+            Firewall and Traffic Publishing policy is active.
+        persist: Persist the boot-time sysctl only after the application owner acknowledges.
     """
-    value = "1" if _wan_forwarding_required(parsed) else "0"
-    WAN_SYSCTL_PATH.write_text(
-        "\n".join(
-            [
-                f"net.ipv4.ip_forward = {value}",
-                f"net.ipv6.conf.all.forwarding = {value}",
-                "",
-            ]
-        ),
-        encoding="utf-8",
-    )
-    os.chmod(WAN_SYSCTL_PATH, 0o644)
+    value = "1" if enabled else "0"
+    if persist:
+        WAN_SYSCTL_PATH.write_text(
+            "\n".join(
+                [
+                    f"net.ipv4.ip_forward = {value}",
+                    f"net.ipv6.conf.all.forwarding = {value}",
+                    "",
+                ]
+            ),
+            encoding="utf-8",
+        )
+        os.chmod(WAN_SYSCTL_PATH, 0o644)
     for key in ("net.ipv4.ip_forward", "net.ipv6.conf.all.forwarding"):
         sysctl = _run(["sysctl", "-w", f"{key}={value}"])
         print(sysctl.stdout, end="")
@@ -14248,6 +14500,16 @@ def _apply_wan_forwarding(parsed: dict[str, list[dict[str, str]]]) -> int:
         if sysctl.returncode != 0:
             return sysctl.returncode
     return 0
+
+
+def _apply_wan_forwarding(parsed: dict[str, list[dict[str, str]]], *, persist: bool = True) -> int:
+    """Apply forwarding intent from one validated WAN snapshot.
+
+    Args:
+        parsed: Validated Routes & WAN config.
+        persist: Persist the boot-time sysctl policy.
+    """
+    return _set_wan_forwarding(_wan_forwarding_required(parsed), persist=persist)
 
 
 def _reconcile_startup_nat() -> int:
@@ -14282,13 +14544,15 @@ def _reconcile_startup_nat() -> int:
     return _apply_wan_nat(parsed, allow_identity_quarantine=True)
 
 
-def _handle_wan(action: str, args: list[str], *, replay: bool = False) -> int:
+def _handle_wan(action: str, args: list[str], *, replay: bool = False, defer_forwarding: bool = False) -> int:
     """Handle WAN.
 
     Args:
         action: Action consumed by handle WAN.
         args: Parsed command-line options consumed by the operation.
         replay: Internal handoff recovery flag; ordinary CLI Apply remains strict.
+        defer_forwarding: Apply routes and policy without enabling forwarding,
+            allowing a paired Firewall publication to complete first.
     """
     if action == "reconcile-nat":
         if args:
@@ -14304,18 +14568,26 @@ def _handle_wan(action: str, args: list[str], *, replay: bool = False) -> int:
         print(str(exc), file=sys.stderr)
         return 2
     if action == "restore":
+        try:
+            defer_forwarding = defer_forwarding or _publishing_wan_journal_pending()
+        except (OSError, ValueError, json.JSONDecodeError) as exc:
+            print(f"Routes & WAN publishing recovery is unavailable: {exc}", file=sys.stderr)
+            return 1
         with _wan_replay_config(str(config_path)) as replay_path:
-            return _handle_wan_config(action, replay_path, replay=True)
-    return _handle_wan_config(action, config_path, replay=replay)
+            return _handle_wan_config(action, replay_path, replay=True, defer_forwarding=defer_forwarding)
+    return _handle_wan_config(action, config_path, replay=replay, defer_forwarding=defer_forwarding)
 
 
-def _handle_wan_config(action: str, config_path: Path, *, replay: bool = False) -> int:
+def _handle_wan_config(
+    action: str, config_path: Path, *, replay: bool = False, defer_forwarding: bool = False,
+) -> int:
     """Validate and execute WAN intent from an admitted or normalized path.
 
     Args:
         action: Validated WAN operation.
         config_path: Admitted staged config or normalized replay snapshot.
         replay: Permit identity quarantine without skipping other recovery stages.
+        defer_forwarding: Leave forwarding unchanged until paired policy publication.
     """
     # Pre-split saved WAN snapshots still need the #336 identity quarantine.
     # Newly rendered WAN input has no NAT section; the canonical NAT runtime
@@ -14364,9 +14636,10 @@ def _handle_wan_config(action: str, config_path: Path, *, replay: bool = False) 
         nat_result = _apply_wan_nat(parsed, allow_identity_quarantine=True) if replay else _apply_wan_nat(parsed)
         if nat_result:
             return nat_result
-    forwarding_result = _apply_wan_forwarding(parsed)
-    if forwarding_result != 0:
-        return forwarding_result
+    if not defer_forwarding:
+        forwarding_result = _apply_wan_forwarding(parsed)
+        if forwarding_result != 0:
+            return forwarding_result
     target_route_result = _apply_wan_target_routes(parsed, previous_parsed)
     if target_route_result != 0:
         return target_route_result

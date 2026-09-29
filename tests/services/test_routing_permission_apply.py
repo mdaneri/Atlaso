@@ -140,17 +140,20 @@ def test_access_only_topology_change_requires_paired_apply(client):
         assert routing_permission_apply_state(db) == "applied"
 
 
-def test_routing_shutdown_stops_wan_before_removing_access_drops(client, monkeypatch):
-    """A failed WAN shutdown cannot publish the permissive Firewall snapshot.
+@pytest.mark.parametrize("routing_disabled", [False, True])
+def test_routing_permission_pair_fails_as_one_group(client, monkeypatch, routing_disabled):
+    """A failed permission publication cannot advance either applied owner.
 
     Args:
         client: Isolated application client with dry-run system adapters.
-        monkeypatch: Inject a WAN failure and observe Firewall publication.
+        monkeypatch: Inject a coupled helper failure and observe unit calls.
+        routing_disabled: Disable Routing or relax an Access deny while enabled.
     """
     from atlaso.app.adapters.system import AdapterResult, SystemAdapter
     from atlaso.app.database import SessionLocal
-    from atlaso.app.models import Job, PhysicalInterface
+    from atlaso.app.models import Job, PhysicalInterface, RoutingRule
     from atlaso.app.services.routes_wan import save_routes_wan_settings
+    from atlaso.app.services.routing_permissions import routing_permission_apply_state
     from atlaso.app.ui import appliance_apply_units, update_appliance_apply_baselines
 
     login(client)
@@ -160,24 +163,51 @@ def test_routing_shutdown_stops_wan_before_removing_access_drops(client, monkeyp
                                      mode="access", role="access", admin_state="up", oper_state="up",
                                      ip_cidr=f"10.86.{index}.1/24"))
         save_routes_wan_settings(db, routing_enabled=True, nat_enabled=False, wan_simulation_enabled=False)
+        permission = RoutingRule(name="Access deny", enabled=True, source_interface="access-1",
+                                 destination_interface="access-2", policy="deny", ip_family=4)
+        db.add(permission)
         db.commit()
         units = appliance_apply_units(db)
         update_appliance_apply_baselines(db, units, {unit["id"] for unit in units})
         db.commit()
-        save_routes_wan_settings(db, routing_enabled=False, nat_enabled=False, wan_simulation_enabled=False)
+        if routing_disabled:
+            save_routes_wan_settings(db, routing_enabled=False, nat_enabled=False, wan_simulation_enabled=False)
+        else:
+            permission.policy = "allow"
         db.commit()
+        assert routing_permission_apply_state(db) == "pending"
 
-    firewall_calls = []
+    coupled_calls = []
+    independent_calls = []
 
-    def fail_wan(_adapter, _path):
-        return AdapterResult(command=["wan", "apply"], dry_run=True, stderr="injected WAN failure", returncode=1)
+    def fail_coupled(_adapter, job_id, nat_path, firewall_path, wan_path, wan_rollback_path):
+        """Fail one captured group after observing its exact five arguments.
 
-    def record_firewall(_adapter, path):
-        firewall_calls.append(path)
-        return AdapterResult(command=["firewall", "apply"], dry_run=True)
+        Args:
+            _adapter: Dry-run host adapter.
+            job_id: Exact Apply owner.
+            nat_path: Captured translation stage.
+            firewall_path: Captured Firewall stage.
+            wan_path: Captured WAN stage.
+            wan_rollback_path: Last-applied WAN rollback stage.
+        """
+        coupled_calls.append((job_id, nat_path, firewall_path, wan_path, wan_rollback_path))
+        return AdapterResult(command=["nat", "apply-publishing"], dry_run=True,
+                             stderr="injected coupled failure", returncode=1)
 
-    monkeypatch.setattr(SystemAdapter, "apply_wan_config", fail_wan)
-    monkeypatch.setattr(SystemAdapter, "apply_firewall_config", record_firewall)
+    def record_independent(_adapter, path):
+        """Detect any independent WAN or Firewall publication.
+
+        Args:
+            _adapter: Dry-run host adapter.
+            path: Independent staged configuration.
+        """
+        independent_calls.append(path)
+        return AdapterResult(command=["independent", "apply"], dry_run=True)
+
+    monkeypatch.setattr(SystemAdapter, "apply_traffic_publishing", fail_coupled)
+    monkeypatch.setattr(SystemAdapter, "apply_wan_config", record_independent)
+    monkeypatch.setattr(SystemAdapter, "apply_firewall_config", record_independent)
     page = client.get("/routes-wan")
     csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
     response = client.post("/appliance-apply", data={"csrf": csrf, "selected_units": "wan"},
@@ -188,6 +218,9 @@ def test_routing_shutdown_stops_wan_before_removing_access_drops(client, monkeyp
         assert job is not None
         payload = json.loads(job.result)
         assert payload["management_handoff"] is False
+        assert payload["routing_publishing_pair"] is True
         assert payload["selected_units"].index("wan") < payload["selected_units"].index("firewall")
         assert job.status == "failed"
-        assert firewall_calls == []
+        assert len(coupled_calls) == 1
+        assert independent_calls == []
+        assert routing_permission_apply_state(db) == "pending"

@@ -13873,17 +13873,18 @@ def synchronize_routing_service_runtime(
 def execute_traffic_publishing_pair(
     db: Session, job: Job, units: list[dict[str, Any]], *, adapter: SystemAdapter,
 ) -> list[dict[str, Any]]:
-    """Publish Firewall and NAT with one durable application-commit decision.
+    """Publish Firewall/NAT and optional WAN with one application commit.
 
     Args:
         db: Global Apply transaction and baseline owner.
         job: Already admitted global task; never a service-specific task.
-        units: Exact captured Firewall and NAT units, unchanged since admission.
+        units: Exact captured Firewall, NAT and optional WAN units.
         adapter: Shared dry-run or real constrained helper boundary.
     """
     by_id = {unit["id"]: unit for unit in units}
-    if set(by_id) != {"firewall", "nat"}:
-        raise ApplianceApplyJobError("Paired Traffic Publishing requires both captured units.")
+    if set(by_id) not in ({"firewall", "nat"}, {"wan", "firewall", "nat"}):
+        raise ApplianceApplyJobError("Paired publication requires captured Firewall/NAT and optional WAN units.")
+    has_wan = "wan" in by_id
     payload = _job_payload(job)
     payload["traffic_publishing_runtime_commit_pending"] = not adapter.dry_run
     payload["traffic_publishing_application_committed"] = False
@@ -13894,17 +13895,42 @@ def execute_traffic_publishing_pair(
     try:
         nat_path = NAT_CONFIG_PATH
         firewall_path = FIREWALL_STAGED_CONFIG_PATH
+        wan_path = WAN_CONFIG_PATH if has_wan else ""
+        wan_rollback_path = MANAGEMENT_HANDOFF_WAN_ROLLBACK_PATH if has_wan else ""
         if not adapter.dry_run:
             nat_path = stage_appliance_apply_config(nat_path, by_id["nat"]["raw_config_preview"])
             firewall_path = stage_appliance_apply_config(firewall_path, by_id["firewall"]["raw_config_preview"])
-        commands.append(adapter.validate_traffic_publishing(job.id, nat_path, firewall_path))
+            if has_wan:
+                wan_path = stage_appliance_apply_config(wan_path, by_id["wan"]["raw_config_preview"])
+                wan_rollback_path = stage_appliance_apply_config(
+                    wan_rollback_path,
+                    wan_rollback_config_preview(
+                        str(by_id["wan"]["raw_config_preview"]),
+                        load_appliance_apply_baselines(db).get("wan"),
+                    ),
+                )
+        if has_wan:
+            commands.append(adapter.validate_traffic_publishing(
+                job.id, nat_path, firewall_path, wan_path, wan_rollback_path,
+            ))
+        else:
+            commands.append(adapter.validate_traffic_publishing(job.id, nat_path, firewall_path))
         if commands[-1].returncode == 0:
-            commands.append(adapter.apply_traffic_publishing(job.id, nat_path, firewall_path))
+            if has_wan:
+                commands.append(adapter.apply_traffic_publishing(
+                    job.id, nat_path, firewall_path, wan_path, wan_rollback_path,
+                ))
+            else:
+                commands.append(adapter.apply_traffic_publishing(job.id, nat_path, firewall_path))
         succeeded = all(command.returncode == 0 for command in commands)
         if succeeded:
             # Never refresh desired state here: edits made during native publication
             # belong to the next Apply, not to this pair's committed baselines.
-            update_appliance_apply_baselines(db, units, {"firewall", "nat"})
+            update_appliance_apply_baselines(db, units, set(by_id))
+            if has_wan and not adapter.dry_run:
+                synchronize_routing_service_runtime(
+                    db, routing_enabled=by_id["wan"]["context"]["routes_wan_settings"].routing_enabled,
+                )
             payload = _job_payload(job)
             payload["traffic_publishing_application_committed"] = not adapter.dry_run
             job.result = json.dumps(payload, indent=2)
@@ -13945,7 +13971,7 @@ def execute_traffic_publishing_pair(
         "summary": unit["summary"], "validation_errors": unit["validation_errors"],
         "validation_warnings": unit["validation_warnings"], "config_path": unit["config_path"],
         "config_preview": unit["config_preview"], "config_diff": unit["config_diff"],
-        "error": "" if succeeded else "Paired Firewall and Traffic Publishing did not complete; inspect task recovery evidence.",
+        "error": "" if succeeded else "Paired routing or Traffic Publishing did not complete; inspect task recovery evidence.",
     } for unit in units]
 
 
@@ -15996,6 +16022,9 @@ def run_appliance_apply_job(job_id: str, *, force_real: bool = False) -> None:
             cancelled = False
             handoff_completed = False
             publishing_completed = False
+            publishing_unit_ids = {"firewall", "nat"} | (
+                {"wan"} if job_result.get("routing_publishing_pair") else set()
+            )
             handoff_unit_ids = set(
                 job_result.get("management_handoff_units", [])
                 if job_result.get("management_handoff")
@@ -16016,7 +16045,7 @@ def run_appliance_apply_job(job_id: str, *, force_real: bool = False) -> None:
                 # A bundled transaction already completed these rows. A later request
                 # must not turn their successful final result into cancellation.
                 if (handoff_completed and unit["id"] in handoff_unit_ids) or (
-                    publishing_completed and job_result.get("traffic_publishing_pair") and unit["id"] in {"firewall", "nat"}
+                    publishing_completed and job_result.get("traffic_publishing_pair") and unit["id"] in publishing_unit_ids
                 ):
                     continue
                 db.refresh(job)
@@ -16272,10 +16301,13 @@ def run_appliance_apply_job(job_id: str, *, force_real: bool = False) -> None:
                         break
                     continue
 
-                if job_result.get("traffic_publishing_pair") and unit["id"] in {"firewall", "nat"}:
+                if job_result.get("traffic_publishing_pair") and unit["id"] in publishing_unit_ids:
                     if publishing_completed:
                         continue
-                    pair = [current_by_id[unit_id] for unit_id in ("firewall", "nat")]
+                    pair = [current_by_id[unit_id] for unit_id in (
+                        ("wan", "firewall", "nat") if job_result.get("routing_publishing_pair")
+                        else ("firewall", "nat")
+                    )]
                     for paired_unit in pair:
                         paired_step = steps_by_key.get(paired_unit["id"])
                         if paired_step is None:
@@ -17038,9 +17070,14 @@ def _submit_appliance_apply(
         selected_ids.add("nat")
     if publishing_pair_required and "nat" in selected_ids and "firewall" in unit_map:
         selected_ids.add("firewall")
+    routing_permission_pair_required = False
     if selected_ids.intersection({"wan", "firewall", "network"}):
         fingerprint = routing_permission_fingerprint(db)
-        if any((apply_baselines.get(unit) or {}).get("routing_permission_fingerprint") != fingerprint for unit in ("wan", "firewall")):
+        routing_permission_pair_required = any(
+            (apply_baselines.get(unit) or {}).get("routing_permission_fingerprint") != fingerprint
+            for unit in ("wan", "firewall")
+        )
+        if routing_permission_pair_required:
             selected_ids.update(unit for unit in ("wan", "firewall") if unit in unit_map)
     nat_activation = unit_map.get("nat", {}).get("context", {}).get("traffic_publishing_settings")
     if "nat" in selected_ids and (getattr(nat_activation, "effective_nat_enabled", False)
@@ -17136,9 +17173,17 @@ def _submit_appliance_apply(
         selected_ordered_units.remove(dns_unit)
         ntp_index = next(index for index, unit in enumerate(selected_ordered_units) if unit["id"] == "ntpd")
         selected_ordered_units.insert(ntp_index + 1, dns_unit)
-    traffic_publishing_pair = publishing_pair_required and not management_handoff and {"firewall", "nat"}.issubset(selected_ids)
+    routing_publishing_pair = bool(
+        routing_permission_pair_required and not management_handoff
+        and {"wan", "firewall", "nat"}.issubset(selected_ids)
+    )
+    traffic_publishing_pair = bool(
+        (publishing_pair_required or routing_publishing_pair) and not management_handoff
+        and {"firewall", "nat"}.issubset(selected_ids)
+    )
     if traffic_publishing_pair:
-        # Network/WAN must finish before either member publishes its captured pair.
+        # Keep Network before publication. When permissions changed, WAN joins
+        # Firewall/NAT in the same captured, recoverable helper transaction.
         selected_ordered_units = [unit for unit in selected_ordered_units if unit["id"] != "firewall"]
         nat_index = next(index for index, unit in enumerate(selected_ordered_units) if unit["id"] == "nat")
         selected_ordered_units.insert(nat_index, unit_map["firewall"])
@@ -17190,15 +17235,6 @@ def _submit_appliance_apply(
         selected_ordered_units = [unit for unit in selected_ordered_units if unit["id"] != "ca"]
         settings_index = next(index for index, unit in enumerate(selected_ordered_units) if unit["id"] == "appliance_settings")
         selected_ordered_units.insert(settings_index, unit_map["ca"])
-    if not management_handoff and {"wan", "firewall"}.issubset(selected_ids) and not ensure_routes_wan_settings(db).routing_enabled:
-        # Disabling Routing removes its generated Firewall drops. Stop WAN
-        # forwarding first so a failed WAN Apply cannot expose traffic under
-        # an accept-forward policy, even when Firewall/NAT publish as a pair.
-        wan_index = next(index for index, unit in enumerate(selected_ordered_units) if unit["id"] == "wan")
-        firewall_index = next(index for index, unit in enumerate(selected_ordered_units) if unit["id"] == "firewall")
-        if wan_index > firewall_index:
-            selected_ordered_units.pop(wan_index)
-            selected_ordered_units.insert(firewall_index, unit_map["wan"])
     skipped_changed_units = [
         {"unit_id": unit["id"], "label": unit["label"], "summary": unit["summary"]}
         for unit in units
@@ -17250,6 +17286,7 @@ def _submit_appliance_apply(
         "refresh_vcf_depot_software_depot_id": refresh_vcf_depot_software_depot_id,
         "management_handoff": management_handoff,
         "traffic_publishing_pair": traffic_publishing_pair,
+        "routing_publishing_pair": routing_publishing_pair,
         "management_handoff_units": [
             unit_id
             for unit_id in (*MANAGEMENT_HANDOFF_UNIT_IDS, "dnsmasq", "wan", "nat")

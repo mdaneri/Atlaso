@@ -3,11 +3,13 @@
 import json
 import subprocess
 from contextlib import nullcontext
+from pathlib import Path
 
 import pytest
 
 from atlaso.app.models import PortForward
 from atlaso.app.services.port_forwarding import render_port_forward_records
+from atlaso.app.services.routes_wan import RoutesWanSettings, render_wan_config
 from atlaso.app.services.traffic_publishing import (
     TrafficPublishingSettings,
     nat_targets,
@@ -112,25 +114,42 @@ def transaction(tmp_path, monkeypatch):
     helper = load_helper_module()
     paths = {
         "NAT_APPLY_DIR": tmp_path / "staged-nat", "FIREWALL_APPLY_DIR": tmp_path / "staged-firewall",
+        "WAN_APPLY_DIR": tmp_path / "staged-wan",
         "NAT_RUNTIME_CONFIG_PATH": tmp_path / "runtime.conf", "WAN_NAT_CONFIG_PATH": tmp_path / "nat.nft",
         "WAN_NAT_SERVICE_PATH": tmp_path / "nat.service", "FIREWALL_CONFIG_PATH": tmp_path / "firewall.nft",
         "FIREWALL_SERVICE_PATH": tmp_path / "firewall.service",
+        "WAN_RUNTIME_CONFIG_PATH": tmp_path / "wan-runtime.conf", "WAN_SYSCTL_PATH": tmp_path / "wan-forwarding.conf",
+        "WAN_SERVICE_PATH": tmp_path / "wan.service",
     }
     for key, path in paths.items():
         monkeypatch.setattr(helper, key, path)
     paths["NAT_APPLY_DIR"].mkdir()
     paths["FIREWALL_APPLY_DIR"].mkdir()
+    paths["WAN_APPLY_DIR"].mkdir()
     intent = render_nat_config([], nat_targets(interfaces(), []), [], TrafficPublishingSettings(False, True))
     old = intent + render_port_forward_records([], [])
     candidate = intent + render_port_forward_records([PortForward(id=1, **payload())], [])
     nat_path = paths["NAT_APPLY_DIR"] / "candidate.conf"
     firewall_path = paths["FIREWALL_APPLY_DIR"] / "candidate.nft"
+    wan_candidate_path = paths["WAN_APPLY_DIR"] / "candidate.conf"
+    wan_enabled_candidate_path = paths["WAN_APPLY_DIR"] / "candidate-enabled.conf"
+    wan_rollback_path = paths["WAN_APPLY_DIR"] / "rollback.conf"
+    wan_target = [{"name": "eth1", "kind": "physical", "role": "access", "ip_cidr": "192.0.2.10/24",
+                   "routing_domain": "lab", "route_allowed": "true"}]
+    wan_candidate = render_wan_config([], targets=wan_target, settings=RoutesWanSettings(False, False, False))
+    wan_enabled_candidate = render_wan_config([], targets=wan_target, settings=RoutesWanSettings(True, False, True))
+    wan_rollback = render_wan_config([], targets=wan_target, settings=RoutesWanSettings(True, False, False))
     nat_path.write_text(candidate)
     firewall_path.write_text(FIREWALL)
+    wan_candidate_path.write_text(wan_candidate)
+    wan_enabled_candidate_path.write_text(wan_enabled_candidate)
+    wan_rollback_path.write_text(wan_rollback)
     previous = {
         paths["NAT_RUNTIME_CONFIG_PATH"]: old, paths["WAN_NAT_CONFIG_PATH"]: helper._render_wan_nat_config([], port_forwards=[]),
         paths["WAN_NAT_SERVICE_PATH"]: "prior nat service", paths["FIREWALL_CONFIG_PATH"]: FIREWALL,
         paths["FIREWALL_SERVICE_PATH"]: "prior firewall service",
+        paths["WAN_RUNTIME_CONFIG_PATH"]: wan_rollback,
+        paths["WAN_SERVICE_PATH"]: "prior wan service", paths["WAN_SYSCTL_PATH"]: "prior forwarding config",
     }
     for path, content in previous.items():
         path.write_text(content)
@@ -256,6 +275,394 @@ def test_pair_validation_has_no_persistence_or_kernel_mutation(transaction):
     assert programs == [] and commands == []
     assert all(path.read_text() == content for path, content in previous.items())
     assert not helper.NAT_RUNTIME_CONFIG_PATH.with_suffix(".publishing-recovery.json").exists()
+
+
+def _enable_wan_pair_test_seams(helper, monkeypatch, *, events=None):
+    """Replace WAN host mutations with bounded state changes for group tests.
+
+    Args:
+        helper: Isolated helper module.
+        monkeypatch: Test-owned replacements.
+        events: Optional ordered event trace.
+    """
+    events = events if events is not None else []
+    old_intent = helper.NAT_RUNTIME_CONFIG_PATH.read_text()
+    old_firewall = helper.FIREWALL_CONFIG_PATH.read_text()
+    old_firewall, old_nat, _ = helper._publishing_program(old_intent, old_firewall, observed=True)
+    old_pair = old_firewall.rstrip() + "\n" + old_nat
+
+    def apply_wan(action, args, *, replay=False, defer_forwarding=False):
+        """Record one admitted WAN stage and emulate runtime persistence.
+
+        Args:
+            action: WAN operation.
+            args: Exact staged path.
+            replay: Unused replay flag.
+            defer_forwarding: Must remain true for the paired transaction.
+        """
+        assert action == "apply" and defer_forwarding
+        content = helper._validate_wan_config_path(args[0]).read_text()
+        enabled = helper._wan_forwarding_required(helper._parse_wan_config(Path(args[0]), content=content))
+        events.append(("wan", enabled))
+        helper.WAN_RUNTIME_CONFIG_PATH.write_text(content)
+        return 0
+
+    monkeypatch.setattr(helper, "_handle_wan", apply_wan)
+    monkeypatch.setattr(helper, "_publishing_snapshot_wan_forwarding", lambda: {"ipv4": True, "ipv6": True})
+    def set_forwarding(enabled, *, persist=True):
+        """Record a forwarding quiesce and optionally persist it.
+
+        Args:
+            enabled: Desired forwarding state.
+            persist: Whether to write the boot policy.
+        """
+        events.append(("quiesce", enabled))
+        if persist:
+            value = "1" if enabled else "0"
+            helper.WAN_SYSCTL_PATH.write_text(
+                f"net.ipv4.ip_forward = {value}\nnet.ipv6.conf.all.forwarding = {value}\n"
+            )
+        return 0
+
+    def apply_forwarding(parsed, *, persist=True):
+        """Record parsed forwarding intent and optional boot policy.
+
+        Args:
+            parsed: Parsed WAN candidate.
+            persist: Whether to write the boot policy.
+        """
+        enabled = helper._wan_forwarding_required(parsed)
+        events.append(("forwarding", enabled))
+        if persist:
+            value = "1" if enabled else "0"
+            helper.WAN_SYSCTL_PATH.write_text(
+                f"net.ipv4.ip_forward = {value}\nnet.ipv6.conf.all.forwarding = {value}\n"
+            )
+        return 0
+
+    monkeypatch.setattr(helper, "_set_wan_forwarding", set_forwarding)
+    monkeypatch.setattr(helper, "_apply_wan_forwarding", apply_forwarding)
+    install = helper._publishing_install
+
+    def trace_install(*args, **kwargs):
+        """Record the combined Firewall/NAT publication.
+
+        Args:
+            *args: Original positional installation arguments.
+            **kwargs: Original keyword installation arguments.
+        """
+        events.append(("publish", None))
+        return install(*args, **kwargs)
+
+    monkeypatch.setattr(helper, "_publishing_install", trace_install)
+    run_input = helper._run_with_input
+
+    def trace_restore_policy(command, content):
+        """Record restoration of the previous nft policy.
+
+        Args:
+            command: Host nft command.
+            content: Complete nft program.
+        """
+        if command == ["nft", "-f", "-"] and content == old_pair:
+            events.append(("restore-policy", None))
+        return run_input(command, content)
+
+    monkeypatch.setattr(helper, "_run_with_input", trace_restore_policy)
+    restore_forwarding = helper._publishing_restore_wan_forwarding
+
+    def trace_restore_forwarding(wan):
+        """Record restoration of the previous forwarding state.
+
+        Args:
+            wan: Journaled previous WAN state.
+        """
+        events.append(("restore-forwarding", wan["previous_forwarding"]))
+        return restore_forwarding(wan)
+
+    monkeypatch.setattr(helper, "_publishing_restore_wan_forwarding", trace_restore_forwarding)
+    return events
+
+
+def test_three_unit_group_publishes_firewall_nat_before_forwarding(transaction, monkeypatch):
+    """Candidate WAN intent is installed with forwarding off before Firewall/NAT.
+
+    Args:
+        transaction: Isolated helper and durable snapshots.
+        monkeypatch: Replace only host WAN operations.
+    """
+    helper, nat, firewall, _previous, programs, _commands = transaction
+    events = _enable_wan_pair_test_seams(helper, monkeypatch)
+    wan_candidate = helper.WAN_APPLY_DIR / "candidate.conf"
+    wan_rollback = helper.WAN_APPLY_DIR / "rollback.conf"
+
+    result = helper._publishing_apply(JOB, str(nat), str(firewall), str(wan_candidate), str(wan_rollback))
+
+    state = json.loads(helper.NAT_RUNTIME_CONFIG_PATH.with_suffix(".publishing-recovery.json").read_text())
+    assert result["publishing"] == "awaiting application commit"
+    assert state["wan"]["candidate"] == wan_candidate.read_text()
+    assert state["wan"]["rollback"] == wan_rollback.read_text()
+    assert events == [
+        ("quiesce", False), ("wan", False), ("publish", None),
+        ("forwarding", False),
+    ]
+    assert programs[1].index("table inet atlaso") < programs[1].index("table ip atlaso_nat")
+
+
+def test_wan_forwarding_failure_after_pair_publication_rolls_back_group(transaction, monkeypatch):
+    """A forwarding failure after nft publication restores WAN and Firewall/NAT.
+
+    Args:
+        transaction: Isolated helper and durable snapshots.
+        monkeypatch: Inject candidate forwarding failure after publication.
+    """
+    helper, nat, firewall, previous, programs, _commands = transaction
+    events = _enable_wan_pair_test_seams(helper, monkeypatch)
+    apply_forwarding = helper._apply_wan_forwarding
+    failed = False
+
+    def fail_candidate_forwarding(parsed, *, persist=True):
+        """Fail candidate forwarding once after policy publication.
+
+        Args:
+            parsed: Parsed WAN candidate.
+            persist: Whether to write the boot policy.
+        """
+        nonlocal failed
+        enabled = helper._wan_forwarding_required(parsed)
+        if not enabled and not failed:
+            failed = True
+            events.append(("forwarding-failed", enabled))
+            return 1
+        return apply_forwarding(parsed, persist=persist)
+
+    monkeypatch.setattr(helper, "_apply_wan_forwarding", fail_candidate_forwarding)
+    with pytest.raises(ValueError, match="previous Firewall and NAT were restored"):
+        helper._publishing_apply(
+            JOB, str(nat), str(firewall),
+            str(helper.WAN_APPLY_DIR / "candidate.conf"), str(helper.WAN_APPLY_DIR / "rollback.conf"),
+        )
+
+    assert failed
+    assert events == [
+        ("quiesce", False), ("wan", False), ("publish", None), ("forwarding-failed", False),
+        ("quiesce", False), ("wan", True), ("restore-policy", None),
+        ("restore-forwarding", {"ipv4": True, "ipv6": True}),
+    ]
+    assert helper.WAN_RUNTIME_CONFIG_PATH.read_text() == (helper.WAN_APPLY_DIR / "rollback.conf").read_text()
+    assert all(path.read_text() == content for path, content in previous.items())
+    assert programs[-1].startswith("flush ruleset")
+    assert not helper.NAT_RUNTIME_CONFIG_PATH.with_suffix(".publishing-recovery.json").exists()
+
+
+def test_interrupted_three_unit_group_restores_then_replays_candidate_on_ack(transaction, monkeypatch):
+    """Boot recovery restores prior WAN and policy; owner ack can then replay forward.
+
+    Args:
+        transaction: Isolated helper and durable snapshots.
+        monkeypatch: Replace only host WAN operations.
+    """
+    helper, nat, firewall, _previous, programs, _commands = transaction
+    events = _enable_wan_pair_test_seams(helper, monkeypatch)
+    wan_candidate = helper.WAN_APPLY_DIR / "candidate.conf"
+    wan_rollback = helper.WAN_APPLY_DIR / "rollback.conf"
+    helper._publishing_apply(JOB, str(nat), str(firewall), str(wan_candidate), str(wan_rollback))
+    events.clear()
+    programs.clear()
+
+    assert helper._publishing_boot_restore()
+    marker = helper.NAT_RUNTIME_CONFIG_PATH.with_suffix(".publishing-recovery.json")
+    assert json.loads(marker.read_text())["runtime_restored"] is True
+    assert helper.WAN_RUNTIME_CONFIG_PATH.read_text() == wan_rollback.read_text()
+    assert events == [
+        ("quiesce", False), ("wan", True), ("restore-policy", None),
+        ("restore-forwarding", {"ipv4": True, "ipv6": True}),
+    ]
+    events.clear()
+    programs.clear()
+
+    helper._publishing_acknowledge(JOB)
+
+    assert helper.WAN_RUNTIME_CONFIG_PATH.read_text() == wan_candidate.read_text()
+    assert events == [
+        ("quiesce", False), ("wan", False), ("publish", None),
+        ("forwarding", False), ("forwarding", False),
+    ]
+    assert not marker.exists()
+    assert json.loads(helper.NAT_RUNTIME_CONFIG_PATH.with_suffix(".publishing-commit.json").read_text()) == {
+        "job_id": JOB, "phase": "committed",
+    }
+
+
+def test_enabled_routing_publishes_policy_before_forwarding(transaction, monkeypatch):
+    """Routing enable turns forwarding on only after candidate Firewall/NAT publication.
+
+    Args:
+        transaction: Isolated helper and durable snapshots.
+        monkeypatch: Replace only host WAN operations.
+    """
+    helper, nat, firewall, _previous, _programs, _commands = transaction
+    events = _enable_wan_pair_test_seams(helper, monkeypatch)
+
+    helper._publishing_apply(
+        JOB, str(nat), str(firewall),
+        str(helper.WAN_APPLY_DIR / "candidate-enabled.conf"), str(helper.WAN_APPLY_DIR / "rollback.conf"),
+    )
+
+    assert events == [
+        ("quiesce", False), ("wan", True), ("publish", None), ("forwarding", True),
+    ]
+    assert "net.ipv4.ip_forward = 0" in helper.WAN_SYSCTL_PATH.read_text()
+    events.clear()
+
+    helper._publishing_acknowledge(JOB)
+
+    assert "net.ipv4.ip_forward = 1" in helper.WAN_SYSCTL_PATH.read_text()
+    assert events == [("forwarding", True)]
+
+
+def test_wan_boot_replay_defers_forwarding_while_group_journal_is_pending(transaction, monkeypatch):
+    """WAN unit cannot enable forwarding before NAT recovery examines its journal.
+
+    Args:
+        transaction: Isolated helper and durable snapshots.
+        monkeypatch: Capture the boot replay defer flag.
+    """
+    from contextlib import contextmanager
+
+    helper, nat, firewall, _previous, _programs, _commands = transaction
+    real_handle_wan = helper._handle_wan
+    _enable_wan_pair_test_seams(helper, monkeypatch)
+    helper._publishing_apply(
+        JOB, str(nat), str(firewall),
+        str(helper.WAN_APPLY_DIR / "candidate-enabled.conf"), str(helper.WAN_APPLY_DIR / "rollback.conf"),
+    )
+    calls = []
+
+    @contextmanager
+    def replay_config(path):
+        """Yield the test-owned WAN replay path.
+
+        Args:
+            path: Existing WAN runtime configuration path.
+        """
+        yield Path(path)
+
+    def handle_config(action, path, *, replay=False, defer_forwarding=False):
+        """Capture replay forwarding behavior without changing the host.
+
+        Args:
+            action: Requested WAN operation.
+            path: Replay configuration path.
+            replay: Whether this is a boot replay.
+            defer_forwarding: Whether publication owns forwarding activation.
+        """
+        calls.append((action, replay, defer_forwarding))
+        return 0
+
+    monkeypatch.setattr(helper, "_wan_replay_config", replay_config)
+    monkeypatch.setattr(helper, "_handle_wan", real_handle_wan)
+    monkeypatch.setattr(helper, "_handle_wan_config", handle_config)
+
+    assert helper._handle_wan("restore", [str(helper.WAN_RUNTIME_CONFIG_PATH)]) == 0
+    assert calls == [("restore", True, True)]
+    assert "net.ipv4.ip_forward = 0" in helper.WAN_SYSCTL_PATH.read_text()
+
+
+def test_wan_mutation_failure_prevents_candidate_pair_publication(transaction, monkeypatch):
+    """A candidate WAN failure leaves candidate Firewall/NAT unpublished.
+
+    Args:
+        transaction: Isolated helper and durable snapshots.
+        monkeypatch: Fail the candidate WAN application and allow rollback.
+    """
+    helper, nat, firewall, _previous, _programs, _commands = transaction
+    events = _enable_wan_pair_test_seams(helper, monkeypatch)
+    apply_wan = helper._publishing_apply_wan
+    failed = False
+
+    def fail_candidate_once(content):
+        """Fail the candidate route update before nft publication.
+
+        Args:
+            content: Staged WAN candidate or rollback text.
+        """
+        nonlocal failed
+        if not failed and content == (helper.WAN_APPLY_DIR / "candidate-enabled.conf").read_text():
+            failed = True
+            events.append(("wan-failed", True))
+            raise ValueError("injected candidate WAN failure")
+        return apply_wan(content)
+
+    monkeypatch.setattr(helper, "_publishing_apply_wan", fail_candidate_once)
+    with pytest.raises(ValueError, match="previous Firewall and NAT were restored"):
+        helper._publishing_apply(
+            JOB, str(nat), str(firewall),
+            str(helper.WAN_APPLY_DIR / "candidate-enabled.conf"), str(helper.WAN_APPLY_DIR / "rollback.conf"),
+        )
+
+    assert failed
+    assert not any(event[0] == "publish" for event in events)
+    assert events == [
+        ("quiesce", False), ("wan-failed", True), ("quiesce", False),
+        ("wan", True), ("restore-policy", None),
+        ("restore-forwarding", {"ipv4": True, "ipv6": True}),
+    ]
+
+
+def test_first_apply_rollback_preserves_missing_wan_runtime_files(transaction, monkeypatch):
+    """An initial grouped Apply restores absent runtime, service, and sysctl files.
+
+    Args:
+        transaction: Isolated helper and durable snapshots.
+        monkeypatch: Fail candidate WAN mutation after recording an absent baseline.
+    """
+    helper, nat, firewall, _previous, _programs, _commands = transaction
+    events = _enable_wan_pair_test_seams(helper, monkeypatch)
+    prior_files = (helper.WAN_RUNTIME_CONFIG_PATH, helper.WAN_SERVICE_PATH, helper.WAN_SYSCTL_PATH)
+    for path in prior_files:
+        path.unlink()
+    monkeypatch.setattr(helper, "_publishing_snapshot_wan_forwarding", lambda: {"ipv4": False, "ipv6": False})
+    run = helper._run
+
+    def service_disabled(command):
+        """Report the initially absent WAN service as disabled.
+
+        Args:
+            command: Host command requested by the helper.
+        """
+        if command == ["systemctl", "is-enabled", "atlaso-wan.service"]:
+            return subprocess.CompletedProcess(command, 1, "", "")
+        return run(command)
+
+    monkeypatch.setattr(helper, "_run", service_disabled)
+    apply_wan = helper._publishing_apply_wan
+    failed = False
+
+    def fail_initial_apply(content):
+        """Fail the first candidate WAN apply after snapshot capture.
+
+        Args:
+            content: Staged WAN candidate or rollback text.
+        """
+        nonlocal failed
+        if not failed and content == (helper.WAN_APPLY_DIR / "candidate-enabled.conf").read_text():
+            failed = True
+            events.append(("wan-failed", True))
+            raise ValueError("injected candidate WAN failure")
+        return apply_wan(content)
+
+    monkeypatch.setattr(helper, "_publishing_apply_wan", fail_initial_apply)
+    with pytest.raises(ValueError, match="previous Firewall and NAT were restored"):
+        helper._publishing_apply(
+            JOB, str(nat), str(firewall),
+            str(helper.WAN_APPLY_DIR / "candidate-enabled.conf"), str(helper.WAN_APPLY_DIR / "rollback.conf"),
+        )
+
+    assert all(not path.exists() for path in prior_files)
+    assert events[-2:] == [
+        ("restore-policy", None), ("restore-forwarding", {"ipv4": False, "ipv6": False}),
+    ]
 
 
 def test_legacy_publication_cannot_bypass_the_pair(transaction):
