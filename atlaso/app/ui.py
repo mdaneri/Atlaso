@@ -17098,6 +17098,8 @@ def _submit_appliance_apply(
         )
         if routing_permission_pair_required:
             selected_ids.update(unit for unit in ("wan", "firewall") if unit in unit_map)
+            if unit_map.get("network", {}).get("changed"):
+                selected_ids.add("network")
     binding_change = bool(
         "appliance_settings" in selected_ids
         and management_front_door_binding_changed(

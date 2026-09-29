@@ -81,11 +81,13 @@ def test_one_baseline_or_stale_snapshot_cannot_claim_applied(client):
         assert routing_permission_apply_state(db) == "pending"
 
 
-def test_access_only_topology_change_requires_paired_apply(client):
+@pytest.mark.parametrize("selected", ["network", "wan", "firewall"])
+def test_access_only_topology_change_requires_paired_apply(client, selected):
     """Access defaults remain paired even without an explicit permission row.
 
     Args:
         client: Isolated application client with dry-run system adapters.
+        selected: Operator-selected publication unit.
     """
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import Job, PhysicalInterface
@@ -128,7 +130,7 @@ def test_access_only_topology_change_requires_paired_apply(client):
 
     page = client.get("/routes-wan")
     csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
-    response = client.post("/appliance-apply", data={"csrf": csrf, "selected_units": "network"},
+    response = client.post("/appliance-apply", data={"csrf": csrf, "selected_units": selected},
                            headers={"Accept": "application/json"})
     assert response.status_code == 202, response.text
     with SessionLocal() as db:

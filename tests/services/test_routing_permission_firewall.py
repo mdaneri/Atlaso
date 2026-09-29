@@ -81,6 +81,22 @@ def test_deny_precedes_established_diagnostics_and_overlapping_accepts():
     assert 'comment "routing-41-deny-vlan"' not in config.split("chain forward {", 1)[0]
 
 
+def test_long_permission_name_has_bounded_unique_nft_comment():
+    """Maximum-length names still render distinct nftables comments."""
+    interfaces, vlans = topology()
+    first = RoutingRule(id=41, name="x" * 120, enabled=True, source_interface="a",
+                        destination_interface="b", policy="deny", ip_family=4, priority=100)
+    second = RoutingRule(id=42, name="x" * 119 + "y", enabled=True, source_interface="a",
+                         destination_interface="b", policy="deny", ip_family=4, priority=101)
+    generated = managed_routing_firewall_rules(interfaces, vlans, [first, second])
+    names = [rule.name for rule in generated if rule.name.startswith("routing-")]
+    assert len(names) == 2
+    assert len(set(names)) == 2
+    assert all(len(name.encode()) <= 128 for name in names)
+    config = render_nftables_config(settings(), [], generated, replace_atlaso_service_rules=True)
+    assert all(f'comment "{name}"' in config for name in names)
+
+
 @pytest.mark.parametrize("policy", ["allow", "automatic"])
 def test_operator_forward_drop_priority_precedes_routing_accepts(policy):
     """An operator restriction retains its ordinary lower-priority-first ordering.

@@ -608,9 +608,10 @@ def managed_routing_firewall_rules(
         if policy == "allow":
             common_families = {ip_network(network).version for network in source_networks} & {ip_network(network).version for network in destination_networks}
             allowed_pairs.update((source["name"], destination["name"], version) for version in common_families)
+        rule_identity = str(rule.id) if rule.id is not None else hashlib.sha256(rule.name.encode()).hexdigest()[:12]
         rules.append(
             _routing_firewall_rule(
-                name=f"routing-{rule.id or _slug(rule.name)}-{_slug(rule.name)}",
+                name=f"routing-{rule_identity}-{_slug(rule.name)[:90]}",
                 destination_interface=destination["name"],
                 policy_phase=policy,
                 action="drop" if policy == "deny" else "accept",
