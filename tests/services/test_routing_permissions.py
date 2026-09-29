@@ -132,3 +132,19 @@ def test_family_without_common_prefix_is_rejected():
     errors = validate_routing_permission(candidate, targets)
 
     assert any("common configured address family" in error for error in errors)
+
+
+def test_disabled_stale_scope_can_be_retained_but_management_and_enums_stay_protected():
+    """Disabling unavailable topology preserves intent without admitting unsafe policy."""
+    candidate = rule("Stale", "gone", "route-a", "deny", 4, enabled=False)
+    targets = [target("route-a", "route", ipv4="", ipv6="2001:db8::1/64"),
+               target("management", "management", routing_domain="management")]
+    assert validate_routing_permission(candidate, targets) == []
+    candidate.enabled = True
+    assert validate_routing_permission(candidate, targets)
+    candidate.enabled = False
+    candidate.source_interface = "management"
+    assert any("protected management" in error for error in validate_routing_permission(candidate, targets))
+    candidate.source_interface = "gone"
+    candidate.policy = "permit"
+    assert any("policy must" in error for error in validate_routing_permission(candidate, targets))

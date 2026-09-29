@@ -3,7 +3,50 @@
 import re
 from pathlib import Path
 
+import pytest
+
 from tests.routers.ui.helpers import assert_apply_redirect, login
+
+
+@pytest.mark.parametrize("drift", ["missing", "family"])
+def test_ui_can_disable_a_stale_routing_permission(client, drift):
+    """The Enabled transport retains a stale rule instead of forcing its deletion.
+
+    Args:
+        client: Isolated application client.
+        drift: Missing interface or missing selected address family.
+    """
+    from sqlalchemy import select
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import PhysicalInterface, RoutingRule
+
+    login(client)
+    page = client.get("/routes-wan")
+    csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    with SessionLocal() as db:
+        row = RoutingRule(name="Stale UI denial", enabled=True, source_interface="eth2",
+                          destination_interface="eth1.20", policy="deny", ip_family=4)
+        db.add(row)
+        db.flush()
+        rule_id = row.id
+        source = db.scalar(select(PhysicalInterface).where(PhysicalInterface.name == "eth2"))
+        if drift == "missing":
+            source.oper_state = "missing"
+        else:
+            source.ip_cidr = ""
+            source.ipv6_cidr = "2001:db8:50::1/64"
+        db.commit()
+    data = {"name": "Stale UI denial", "source_interface": "eth2", "destination_interface": "eth1.20",
+            "policy": "deny", "ip_family": "4", "priority": "100", "csrf": csrf}
+    path = f"/routes-wan/routing-rules/{rule_id}/edit"
+    assert client.post(path, data={**data, "enabled": "on"}, follow_redirects=False).status_code == 422
+    response = client.post(path, data=data, follow_redirects=False)
+    assert response.status_code == 303, response.text
+    with SessionLocal() as db:
+        row = db.get(RoutingRule, rule_id)
+        assert row.enabled is False
+        assert (row.policy, row.ip_family, row.source_interface, row.destination_interface) == ("deny", 4, "eth2", "eth1.20")
 
 
 def test_routes_wan_policy_form_renders(client):

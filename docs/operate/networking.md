@@ -198,6 +198,7 @@ submit both **Routing & WAN** (`wan`) and **Firewall** together. With Routing di
 are suspended. To roll an override back, edit its policy to **Automatic** or remove the override; generated defaults
 then apply again after the paired Apply succeeds. The applied baseline changes only after successful apply, so a
 pending or failed apply must not be reported as active forwarding policy.
+Disabled permissions can retain an unavailable interface or IP family; re-enabling requires valid current topology.
 
 Global Apply automatically pairs WAN and Firewall when permission state changes. An active deny requires Firewall
 to be enabled. The API exposes the same desired and effective state at `GET /api/v1/routing-permissions`

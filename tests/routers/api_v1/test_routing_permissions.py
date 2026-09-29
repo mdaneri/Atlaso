@@ -1,5 +1,6 @@
 """Exercise Routing Permission API authorization and desired-state behavior."""
 
+import pytest
 from sqlalchemy import select
 
 from tests.routers.api_v1.helpers import create_token
@@ -103,17 +104,27 @@ def test_routing_permission_crud_requires_routes_scope_and_preserves_policy(clie
     assert actions == ["create_routing_permission", "update_routing_permission", "delete_routing_permission"]
 
 
-def test_routing_permission_management_target_is_rejected(client):
+@pytest.mark.parametrize("unavailable", [False, True])
+def test_routing_permission_management_target_is_rejected(client, unavailable):
     """Reject a management interface even when paired with a valid lab target.
 
     Args:
         client: Isolated Atlaso HTTP client.
+        unavailable: Whether management is missing and the proposed permission disabled.
     """
     _prepare_targets()
+    if unavailable:
+        from atlaso.app.database import SessionLocal
+        from atlaso.app.models import PhysicalInterface
+
+        with SessionLocal() as db:
+            management = db.scalar(select(PhysicalInterface).where(PhysicalInterface.name == "eth0"))
+            management.oper_state = "missing"
+            db.commit()
     writer, _ = create_token(client, scopes=["write:routes"])
     response = client.post(
         "/api/v1/routing-permissions",
-        json=_permission_payload(source_interface="eth0"),
+        json=_permission_payload(source_interface="eth0", enabled=not unavailable),
         headers={"Authorization": f"Bearer {writer}"},
     )
     assert response.status_code == 422, response.text
@@ -192,3 +203,37 @@ def test_duplicate_routing_permission_name_returns_conflict_without_partial_audi
         assert db.scalar(select(AuditEvent.id).where(AuditEvent.action == "create_routing_permission")) is not None
         assert len(list(db.scalars(select(RoutingRule).where(RoutingRule.name == payload["name"])))) == 1
         assert len(list(db.scalars(select(AuditEvent).where(AuditEvent.action == "create_routing_permission")))) == 1
+
+
+@pytest.mark.parametrize("drift", ["missing", "family"])
+def test_api_can_disable_a_permission_after_topology_disappears(client, drift):
+    """Keep stale desired state disabled while rejecting reactivation.
+
+    Args:
+        client: Isolated application client.
+        drift: Unavailable interface or loss of the selected family.
+    """
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import PhysicalInterface
+
+    _prepare_targets()
+    writer, _ = create_token(client, scopes=["read:routes", "write:routes"])
+    headers = {"Authorization": f"Bearer {writer}"}
+    created = client.post("/api/v1/routing-permissions", json=_permission_payload(), headers=headers)
+    assert created.status_code == 201, created.text
+    with SessionLocal() as db:
+        source = db.scalar(select(PhysicalInterface).where(PhysicalInterface.name == "eth2"))
+        if drift == "missing":
+            source.oper_state = "missing"
+        else:
+            source.ip_cidr = ""
+            source.ipv6_cidr = "2001:db8:50::1/64"
+        db.commit()
+    path = f"/api/v1/routing-permissions/{created.json()['id']}"
+    disabled = client.put(path, json=_permission_payload(enabled=False), headers=headers)
+    assert disabled.status_code == 200, disabled.text
+    assert disabled.json()["enabled"] is False
+    assert disabled.json()["effective_action"] == "suspended"
+    assert disabled.json()["policy"] == "deny"
+    assert disabled.json()["ip_family"] == 4
+    assert client.put(path, json=_permission_payload(), headers=headers).status_code == 422

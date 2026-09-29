@@ -56,7 +56,7 @@ def _saved_rule(db: Session, rule_id: str) -> RoutingRule:
 
 def _validate(payload: RoutingPermissionCreate, db: Session) -> None:
     candidate = RoutingRule(**payload.model_dump())
-    errors = validate_routing_permission(candidate, routing_permission_targets(db))
+    errors = validate_routing_permission(candidate, routing_permission_targets(db), db=db)
     if errors:
         raise HTTPException(422, "; ".join(errors))
 

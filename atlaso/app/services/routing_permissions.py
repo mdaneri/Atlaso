@@ -74,12 +74,13 @@ def target_networks(target: dict[str, Any], family: int = 0) -> list[str]:
     return networks
 
 
-def validate_routing_permission(rule: RoutingRule, targets: list[dict[str, Any]]) -> list[str]:
+def validate_routing_permission(rule: RoutingRule, targets: list[dict[str, Any]], *, db: Session | None = None) -> list[str]:
     """Reject malformed scope and management conflicts even while Routing is off.
 
     Args:
         rule: Complete proposed desired-state permission.
         targets: Current configured interface/VLAN topology.
+        db: Optional persisted inventory protecting unavailable management targets during writes.
     """
     errors: list[str] = []
     policy = routing_policy(rule)
@@ -93,16 +94,22 @@ def validate_routing_permission(rule: RoutingRule, targets: list[dict[str, Any]]
     if rule.priority is not None and rule.priority < 0:
         errors.append("Routing permission priority cannot be negative.")
     by_name = {target["name"]: target for target in targets}
+    protected_names: set[str] = set()
+    if db is not None:
+        protected_names.update(db.scalars(select(PhysicalInterface.name).where(PhysicalInterface.role == "management")))
+        protected_names.update(db.scalars(select(VlanInterface.name).where(VlanInterface.role == "management")))
     for label, name in (("source", rule.source_interface), ("destination", rule.destination_interface)):
         target = by_name.get(name)
-        if target is None or target.get("role") not in {"route", "access"} or target.get("routing_domain") == "management":
+        if name in protected_names or (target and (target.get("role") == "management" or target.get("routing_domain") == "management")):
             errors.append(f"Routing permission {label} must be a non-management Access or Route interface/VLAN; protected management rules cannot be overridden.")
-        elif family in {0, 4, 6} and not target_networks(target, family):
+        elif rule.enabled is not False and (target is None or target.get("role") not in {"route", "access"}):
+            errors.append(f"Routing permission {label} must be a non-management Access or Route interface/VLAN.")
+        elif rule.enabled is not False and family in {0, 4, 6} and target and not target_networks(target, family):
             errors.append(f"Routing permission {label} has no configured prefix for the selected IP family.")
     if rule.source_interface == rule.destination_interface:
         errors.append("Routing permission source and destination must be different.")
     source, destination = by_name.get(rule.source_interface), by_name.get(rule.destination_interface)
-    if source and destination and family in {0, 4, 6}:
+    if rule.enabled is not False and source and destination and family in {0, 4, 6}:
         common = {ip_network(n).version for n in target_networks(source, family)} & {ip_network(n).version for n in target_networks(destination, family)}
         if not common:
             errors.append("Routing permission targets need a common configured address family.")

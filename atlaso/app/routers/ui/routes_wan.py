@@ -533,6 +533,7 @@ def build_router(dependencies: RoutesWanUiDependencies) -> RoutesWanUiRouter:
         destination_interface: str,
         priority: str,
         db: Session,
+        *, enabled: bool = True,
     ) -> tuple[str, str, str, int] | Response:
         """Validate routing rule form values.
 
@@ -542,6 +543,7 @@ def build_router(dependencies: RoutesWanUiDependencies) -> RoutesWanUiRouter:
             destination_interface: Destination interface supplied by the caller.
             priority: Ordering priority assigned to the item.
             db: Active database session.
+            enabled: Whether current topology must support active forwarding.
 
         Returns:
             The validate routing rule form values result.
@@ -552,9 +554,9 @@ def build_router(dependencies: RoutesWanUiDependencies) -> RoutesWanUiRouter:
         target_names = {target["name"] for target in wan_route_targets(db)}
         source_value = source_interface.strip()
         destination_value = destination_interface.strip()
-        if source_value not in target_names:
+        if not source_value or (enabled and source_value not in target_names):
             return Response("Choose a non-management source interface or VLAN with an IP CIDR.", status_code=422, media_type="text/plain")
-        if destination_value not in target_names:
+        if not destination_value or (enabled and destination_value not in target_names):
             return Response("Choose a non-management destination interface or VLAN with an IP CIDR.", status_code=422, media_type="text/plain")
         if source_value == destination_value:
             return Response("Routing source and destination must be different.", status_code=422, media_type="text/plain")
@@ -777,7 +779,7 @@ def build_router(dependencies: RoutesWanUiDependencies) -> RoutesWanUiRouter:
         if not identity.can("write:routes"):
             raise HTTPException(status_code=403, detail="Routes write permission is required")
         acquire_network_objects_write_lock(db)
-        parsed = validate_routing_rule_form_values(name, source_interface, destination_interface, priority, db)
+        parsed = validate_routing_rule_form_values(name, source_interface, destination_interface, priority, db, enabled=enabled == "on")
         if isinstance(parsed, Response):
             return parsed
         name_value, source_value, destination_value, priority_value = parsed
@@ -785,8 +787,8 @@ def build_router(dependencies: RoutesWanUiDependencies) -> RoutesWanUiRouter:
         if isinstance(family, Response):
             return family
         candidate = RoutingRule(name=name_value, source_interface=source_value, destination_interface=destination_value,
-                                priority=priority_value, policy=policy, ip_family=family)
-        errors = validate_routing_permission(candidate, routing_permission_targets(db))
+                                priority=priority_value, policy=policy, ip_family=family, enabled=enabled == "on")
+        errors = validate_routing_permission(candidate, routing_permission_targets(db), db=db)
         if errors:
             return Response("; ".join(errors), status_code=422, media_type="text/plain")
         rule = RoutingRule(
@@ -855,7 +857,7 @@ def build_router(dependencies: RoutesWanUiDependencies) -> RoutesWanUiRouter:
         rule = db.get(RoutingRule, rule_id)
         if not rule:
             raise HTTPException(status_code=404, detail="Routing rule not found")
-        parsed = validate_routing_rule_form_values(name, source_interface, destination_interface, priority, db)
+        parsed = validate_routing_rule_form_values(name, source_interface, destination_interface, priority, db, enabled=enabled == "on")
         if isinstance(parsed, Response):
             return parsed
         name_value, source_value, destination_value, priority_value = parsed
@@ -863,8 +865,8 @@ def build_router(dependencies: RoutesWanUiDependencies) -> RoutesWanUiRouter:
         if isinstance(family, Response):
             return family
         candidate = RoutingRule(name=name_value, source_interface=source_value, destination_interface=destination_value,
-                                priority=priority_value, policy=policy, ip_family=family)
-        errors = validate_routing_permission(candidate, routing_permission_targets(db))
+                                priority=priority_value, policy=policy, ip_family=family, enabled=enabled == "on")
+        errors = validate_routing_permission(candidate, routing_permission_targets(db), db=db)
         if errors:
             return Response("; ".join(errors), status_code=422, media_type="text/plain")
         rule.name = name_value
