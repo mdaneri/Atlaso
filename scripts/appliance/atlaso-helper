@@ -13838,10 +13838,16 @@ def _publishing_restore(state: dict) -> None:
             raise ValueError("Traffic Publishing recovery could not quiesce WAN forwarding")
         if network is not None and network["phase"] in {"attempting", "applied"}:
             pending_network = _network_transaction_state()
-            if not pending_network or pending_network.get("job_id") != state["job_id"]:
-                raise ValueError("Paired Network rollback journal is missing or belongs to another task")
-            if _handle_network("recover", [state["job_id"]]):
-                raise ValueError("Paired Network rollback remains incomplete")
+            if not pending_network and network["phase"] == "attempting":
+                # Network durably journals before its first runtime mutation.
+                # A kill before that journal exists is a safe no-op here; the
+                # same absence follows Network's own completed failure rollback.
+                pass
+            else:
+                if not pending_network or pending_network.get("job_id") != state["job_id"]:
+                    raise ValueError("Paired Network rollback journal is missing or belongs to another task")
+                if _handle_network("recover", [state["job_id"]]):
+                    raise ValueError("Paired Network rollback remains incomplete")
             network["phase"] = "rolled-back"
             _nat_write(NAT_RUNTIME_CONFIG_PATH.with_suffix(".publishing-recovery.json"), json.dumps(state, sort_keys=True))
         _publishing_apply_wan(wan["rollback"])

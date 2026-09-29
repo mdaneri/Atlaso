@@ -525,6 +525,62 @@ def test_four_unit_group_boot_restores_network_before_forward_replay(transaction
     assert "net.ipv4.ip_forward = 1" in helper.WAN_SYSCTL_PATH.read_text()
 
 
+def test_four_unit_group_recovers_kill_before_network_journal_creation(transaction, monkeypatch):
+    """An outer attempting marker without an inner journal restores as no-op Network.
+
+    Args:
+        transaction: Isolated helper and durable snapshots.
+        monkeypatch: Interrupt exactly before Network starts its own journal.
+    """
+    helper, nat, firewall, _previous, _programs, _commands = transaction
+    events = _enable_wan_pair_test_seams(helper, monkeypatch)
+    network = _enable_network_pair_test_seams(helper, monkeypatch, events)
+
+    def interrupted_before_network(_content):
+        """Simulate process death before the Network helper receives the candidate."""
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(helper, "_publishing_apply_network", interrupted_before_network)
+    with pytest.raises(KeyboardInterrupt):
+        helper._publishing_apply(
+            JOB, str(nat), str(firewall), str(helper.WAN_APPLY_DIR / "candidate-enabled.conf"),
+            str(helper.WAN_APPLY_DIR / "rollback.conf"), str(network),
+        )
+    marker = helper.NAT_RUNTIME_CONFIG_PATH.with_suffix(".publishing-recovery.json")
+    assert json.loads(marker.read_text())["network"]["phase"] == "attempting"
+    assert helper._network_transaction_state() == {}
+    events.clear()
+
+    assert helper._publishing_boot_restore()
+    restored = json.loads(marker.read_text())
+    assert restored["runtime_restored"] is True
+    assert restored["network"]["phase"] == "rolled-back"
+    assert ("network-recover", None) not in events
+    assert events.index(("wan", True)) < events.index(("restore-forwarding", {"ipv4": True, "ipv6": True}))
+    helper._publishing_recover()
+    assert not marker.exists()
+
+
+def test_four_unit_group_refuses_missing_journal_after_network_applied(transaction, monkeypatch):
+    """A lost journal after proven Network mutation cannot be treated as a no-op.
+
+    Args:
+        transaction: Isolated helper and durable snapshots.
+        monkeypatch: Hide the Network rollback journal after candidate application.
+    """
+    helper, nat, firewall, _previous, _programs, _commands = transaction
+    events = _enable_wan_pair_test_seams(helper, monkeypatch)
+    network = _enable_network_pair_test_seams(helper, monkeypatch, events)
+    helper._publishing_apply(
+        JOB, str(nat), str(firewall), str(helper.WAN_APPLY_DIR / "candidate-enabled.conf"),
+        str(helper.WAN_APPLY_DIR / "rollback.conf"), str(network),
+    )
+    monkeypatch.setattr(helper, "_network_transaction_state", lambda: {})
+
+    with pytest.raises(ValueError, match="Paired Network rollback journal is missing"):
+        helper._publishing_boot_restore()
+
+
 def test_four_unit_group_committed_receipt_retries_network_ack_after_boot(transaction, monkeypatch):
     """A committed group keeps its journal until Network acknowledgement succeeds.
 
