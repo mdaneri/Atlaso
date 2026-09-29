@@ -7575,6 +7575,22 @@ function restoreNatOutboundSelection(select, savedValue) {
   select.value = savedValue;
 }
 
+function restoreRoutingInterfaceSelection(select, savedValue, enabled) {
+  if (!(select instanceof HTMLSelectElement)) return;
+  select.querySelectorAll("[data-unavailable]").forEach((option) => option.remove());
+  if (!savedValue) {
+    select.value = "";
+    return;
+  }
+  const available = [...select.options].some((option) => option.value === savedValue);
+  if (!available && !enabled) {
+    const option = new Option(`${savedValue} (unavailable; disabled permission only)`, savedValue);
+    option.dataset.unavailable = "true";
+    select.add(option);
+  }
+  select.value = savedValue;
+}
+
 function routesWanNatIngressError(selected, outbound, available, dormantEdit = false) {
   if (!dormantEdit && !selected.length) return "Select at least one inbound interface or VLAN.";
   if (selected.some((name) => name === outbound || (!dormantEdit && !available.includes(name)))) {
@@ -8754,10 +8770,11 @@ function initializeRoutesWanWizards() {
           setRoutesWanField(form, "description", row?.description || "");
           const source = routesWanField(form, "source_interface");
           const destination = routesWanField(form, "destination_interface");
-          setRoutesWanField(form, "source_interface", row?.source_interface || source?.options?.[0]?.value || "");
-          setRoutesWanField(form, "destination_interface", row?.destination_interface || destination?.options?.[1]?.value || destination?.options?.[0]?.value || "");
+          const enabled = row?.enabled ?? true;
+          restoreRoutingInterfaceSelection(source, row?.source_interface || source?.options?.[0]?.value || "", enabled);
+          restoreRoutingInterfaceSelection(destination, row?.destination_interface || destination?.options?.[1]?.value || destination?.options?.[0]?.value || "", enabled);
           setRoutesWanField(form, "priority", row?.priority ?? 100);
-          setRoutesWanField(form, "enabled", row?.enabled ?? true);
+          setRoutesWanField(form, "enabled", enabled);
           setRoutesWanField(form, "policy", row?.policy || (override ? "automatic" : "allow"));
           setRoutesWanField(form, "ip_family", row?.ip_family ?? 0);
         } else if (kind === "nat") {

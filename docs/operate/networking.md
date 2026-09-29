@@ -200,8 +200,10 @@ then apply again after the paired Apply succeeds. The applied baseline changes o
 pending or failed apply must not be reported as active forwarding policy.
 Disabled permissions can retain an unavailable interface or IP family; re-enabling requires valid current topology.
 
-Global Apply automatically pairs WAN and Firewall when permission state changes. An active deny requires Firewall
-to be enabled. The API exposes the same desired and effective state at `GET /api/v1/routing-permissions`
+Global Apply automatically pairs WAN and Firewall when permission state changes. An active deny, including the
+automatic Access default, requires Firewall to be enabled. Access defaults are enforced before broad forwarding
+accepts, regardless of the forward-chain policy. The API exposes the same desired and effective state at
+`GET /api/v1/routing-permissions`
 (`read:routes`); `POST`, complete `PUT /{id}`, and `DELETE /{id}` require `write:routes`. Generated identifiers
 cannot be changed. These operations save desired state; they do not apply it to Photon.
 

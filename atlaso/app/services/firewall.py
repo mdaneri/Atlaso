@@ -582,14 +582,13 @@ def managed_routing_firewall_rules(
                 )
             )
 
+    allowed_pairs: set[tuple[str, str, int]] = set()
     for rule in routing_rules or []:
         if not rule.enabled:
             continue
         policy = rule.policy if rule.policy is not None else "allow"
         family = rule.ip_family if rule.ip_family is not None else 0
-        if policy == "automatic":
-            continue
-        if policy not in {"allow", "deny"} or family not in {0, 4, 6}:
+        if policy not in {"automatic", "allow", "deny"} or family not in {0, 4, 6}:
             raise ValueError("Invalid routing permission policy or family.")
         source = targets_by_name.get(rule.source_interface)
         destination = targets_by_name.get(rule.destination_interface)
@@ -603,6 +602,11 @@ def managed_routing_firewall_rules(
         destination_networks = [network for network in destination["networks"] if not family or ip_network(network).version == family]
         if not _common_routing_networks(source_networks, destination_networks):
             continue
+        if policy == "automatic":
+            continue
+        if policy == "allow":
+            common_families = {ip_network(network).version for network in source_networks} & {ip_network(network).version for network in destination_networks}
+            allowed_pairs.update((source["name"], destination["name"], version) for version in common_families)
         rules.append(
             _routing_firewall_rule(
                 name=f"routing-{rule.id or _slug(rule.name)}-{_slug(rule.name)}",
@@ -616,6 +620,25 @@ def managed_routing_firewall_rules(
                 description=f"{ATLASO_ROUTING_FIREWALL_RULE_MARKER} from explicit routing rule {rule.name}.",
             )
         )
+    permission_targets = [target for target in lab_targets if target["role"] in {"route", "access"}]
+    for source in permission_targets:
+        for destination in permission_targets:
+            if source["name"] == destination["name"] or source["role"] == destination["role"] == "route":
+                continue
+            for version in (4, 6):
+                if (source["name"], destination["name"], version) in allowed_pairs:
+                    continue
+                source_networks = [network for network in source["networks"] if ip_network(network).version == version]
+                destination_networks = [network for network in destination["networks"] if ip_network(network).version == version]
+                if not source_networks or not destination_networks:
+                    continue
+                rules.append(_routing_firewall_rule(
+                    name=f"routing-default-deny-{_slug(source['name'])}-to-{_slug(destination['name'])}-ipv{version}",
+                    destination_interface=destination["name"], policy_phase="deny", action="drop",
+                    source_interface=source["name"], source_networks=source_networks,
+                    destination_networks=destination_networks, priority=30,
+                    description=f"{ATLASO_ROUTING_FIREWALL_RULE_MARKER} from automatic Access isolation.",
+                ))
     return rules
 
 
@@ -917,7 +940,7 @@ def validate_firewall_state(
     """
     errors = validate_firewall_settings(settings)
     if not settings.enabled and any(rule.enabled and rule.routing_policy_phase == "deny" for rule in generated_rules or []):
-        errors.append("Enable Firewall before applying an explicit routing deny; forwarding cannot be denied while Firewall is disabled.")
+        errors.append("Enable Firewall before applying a routing deny (explicit or automatic); forwarding cannot be denied while Firewall is disabled.")
     seen_names: set[str] = set()
     for rule in effective_firewall_rules(
         rules,

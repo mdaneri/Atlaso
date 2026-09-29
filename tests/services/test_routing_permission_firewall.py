@@ -118,3 +118,57 @@ def test_upgrade_adds_defaults_without_losing_existing_permissions():
         _reconcile_routing_permission_columns(connection)
         assert {column["name"] for column in inspect(connection).get_columns("routing_rules")} >= {"policy", "ip_family"}
         assert connection.execute(text("SELECT name, policy, ip_family FROM routing_rules")).one() == ("Legacy", "allow", 0)
+
+
+@pytest.mark.parametrize("destination_role", ["route", "access"])
+@pytest.mark.parametrize("saved_automatic", [False, True])
+def test_access_automatic_denial_is_enforced_with_accept_forward_policy(destination_role, saved_automatic):
+    """Enforce Access defaults before established traffic and broad accepts.
+
+    Args:
+        destination_role: Other lab endpoint role.
+        saved_automatic: Include a saved automatic permission or use defaults.
+    """
+    interfaces, vlans = topology()
+    interfaces[1].role = "access"
+    interfaces[2].role = destination_role
+    permissions = [RoutingRule(name="Inherit", enabled=True, source_interface="a", destination_interface="b", policy="automatic", ip_family=4)] if saved_automatic else []
+    generated = managed_routing_firewall_rules(interfaces, vlans, permissions)
+    firewall = settings()
+    firewall.default_forward_policy = "accept"
+    broad = FirewallRule(name="Broad", direction="forward", action="accept", protocol="any", source="any", destination="any", destination_port="", interface_name="", enabled=True, priority=0)
+    config = render_nftables_config(firewall, [broad], generated, replace_atlaso_service_rules=True)
+    forward = config.split("chain forward {", 1)[1].split("chain output {", 1)[0]
+    for version in (4, 6):
+        marker = f'comment "routing-default-deny-a-to-b-ipv{version}"'
+        assert marker in forward
+        assert forward.index(marker) < forward.index("ct state established")
+        assert forward.index(marker) < forward.index("Atlaso ICMP diagnostics")
+        assert forward.index(marker) < forward.index('comment "Broad"')
+    firewall.enabled = False
+    assert any("Enable Firewall" in error for error in validate_firewall_state(firewall, [], generated))
+    suspended = managed_routing_firewall_rules(interfaces, vlans, permissions, routing_enabled=False)
+    assert not any(item.routing_policy_phase == "deny" for item in suspended)
+    assert validate_firewall_state(firewall, [], suspended) == []
+
+
+@pytest.mark.parametrize("enabled", [False, True])
+def test_explicit_access_allow_suppresses_only_its_directed_family_default(enabled):
+    """Preserve per-family allow precedence and independent reverse decisions.
+
+    Args:
+        enabled: Whether the explicit IPv4 allow is active.
+    """
+    interfaces, vlans = topology()
+    interfaces[1].role = "access"
+    allow = RoutingRule(id=50, name="Allow IPv4", enabled=enabled, source_interface="a", destination_interface="b", policy="allow", ip_family=4, priority=100)
+    generated = managed_routing_firewall_rules(interfaces, vlans, [allow])
+    names = {item.name for item in generated}
+    assert ("routing-default-deny-a-to-b-ipv4" in names) is not enabled
+    assert "routing-default-deny-a-to-b-ipv6" in names
+    assert "routing-default-deny-b-to-a-ipv4" in names
+    assert "routing-default-deny-b-to-a-ipv6" in names
+    deny = RoutingRule(id=51, name="Deny IPv4", enabled=True, source_interface="a", destination_interface="b", policy="deny", ip_family=4, priority=999)
+    config = render_nftables_config(settings(), [], managed_routing_firewall_rules(interfaces, vlans, [allow, deny]), replace_atlaso_service_rules=True)
+    if enabled:
+        assert config.index('comment "routing-51-deny-ipv4"') < config.index('comment "routing-50-allow-ipv4"')
