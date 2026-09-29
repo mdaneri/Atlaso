@@ -868,6 +868,74 @@ def test_route_role_deny_lifecycle_uses_saved_override_and_restores_generated_be
     assert 'test "$rc" -ne 0' in lifecycle.client_a_route_role_to_wan_command(args, expect_success=False)
 
 
+def test_route_role_deny_lifecycle_reconciles_stale_override_before_forwarding_probe(monkeypatch):
+    """A resumed run removes its old deny before proving generated forwarding.
+
+    Args:
+        monkeypatch: Replaces lifecycle steps with an ordering recorder.
+    """
+    lifecycle = load_lifecycle_module()
+    args = lifecycle.parse_args(["--password", "test", "--routing-wan-only", "--plan-only"])
+    payload = lifecycle.route_role_deny_payload(args)
+
+    class FakeClient:
+        """Expose one lifecycle-owned saved override."""
+
+        def __init__(self):
+            self.calls = []
+            self.saved = {**payload, "id": 17, "generated": False}
+
+        def json_request(self, method, path):
+            """Return the stale override.
+
+            Args:
+                method: HTTP method under test.
+                path: API path under test.
+            """
+            self.calls.append((method, path))
+            return [self.saved]
+
+        def request(self, method, path):
+            """Remove the stale override.
+
+            Args:
+                method: HTTP method under test.
+                path: API path under test.
+            """
+            self.calls.append((method, path))
+            return 204, "", {}
+
+    client = FakeClient()
+    assert lifecycle.remove_stale_route_role_deny(client, args) == {"removed": True, "removed_rule_id": 17}
+    assert client.calls == [("GET", "/api/v1/routing-permissions"),
+                            ("DELETE", "/api/v1/routing-permissions/17")]
+    client.saved["description"] = "Unrelated operator rule"
+    with pytest.raises(lifecycle.LifecycleError, match="name collision"):
+        lifecycle.remove_stale_route_role_deny(client, args)
+    assert client.calls[-1] == ("GET", "/api/v1/routing-permissions")
+
+    steps = []
+
+    def record_step(_results, name, _operation, *_args):
+        """Record ordering without making appliance changes.
+
+        Args:
+            _results: Unused result list.
+            name: Lifecycle step name.
+            _operation: Unused step callable.
+            *_args: Unused step arguments.
+        """
+        steps.append(name)
+        if name == "configure-route-role-deny":
+            return {"id": 17}
+        return {}
+
+    monkeypatch.setattr(lifecycle, "run_step", record_step)
+    lifecycle.run_routing_wan_lifecycle([], client, args)
+    assert steps.index("remove-stale-route-role-deny") < steps.index("apply-routing-wan-before-access-rule")
+    assert steps.index("remove-stale-route-role-deny") < steps.index("route-role-routing-check")
+
+
 def test_oidc_only_plan_is_focused_and_mutually_exclusive():
     """Verify that oidc only plan is focused and mutually exclusive."""
     lifecycle = load_lifecycle_module()

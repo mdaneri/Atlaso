@@ -4869,14 +4869,13 @@ def route_role_routing_check(args: argparse.Namespace) -> dict[str, Any]:
     return {"client_b_setup": client_b, "client_a_route_role": client_a}
 
 
-def configure_route_role_deny(client: HttpClient, args: argparse.Namespace) -> dict[str, Any]:
-    """Override generated route-role forwarding with an explicit IPv4 deny.
+def route_role_deny_payload(args: argparse.Namespace) -> dict[str, Any]:
+    """Describe the lifecycle-owned route-role override.
 
     Args:
-        client: Authenticated appliance client.
         args: Lifecycle interface identities.
     """
-    payload = {
+    return {
         "name": "Lifecycle route-role deny override",
         "enabled": True,
         "source_interface": f"{args.trunk_interface}.{args.vlan_id}",
@@ -4886,6 +4885,36 @@ def configure_route_role_deny(client: HttpClient, args: argparse.Namespace) -> d
         "policy": "deny",
         "ip_family": 4,
     }
+
+
+def remove_stale_route_role_deny(client: HttpClient, args: argparse.Namespace) -> dict[str, Any]:
+    """Remove an interrupted prior run's override before the first route probe.
+
+    Args:
+        client: Authenticated appliance client.
+        args: Lifecycle interface identities.
+    """
+    payload = route_role_deny_payload(args)
+    existing = client.json_request("GET", "/api/v1/routing-permissions")
+    matches = [row for row in existing if row.get("name") == payload["name"] and not row.get("generated")]
+    if not matches:
+        return {"removed": False}
+    if len(matches) != 1 or any(matches[0].get(key) != payload[key] for key in (
+        "source_interface", "destination_interface", "description", "policy", "ip_family"
+    )):
+        raise LifecycleError("A route-role deny name collision needs manual review before lifecycle cleanup")
+    removed = remove_route_role_deny(client, matches[0]["id"])
+    return {"removed": True, **removed}
+
+
+def configure_route_role_deny(client: HttpClient, args: argparse.Namespace) -> dict[str, Any]:
+    """Override generated route-role forwarding with an explicit IPv4 deny.
+
+    Args:
+        client: Authenticated appliance client.
+        args: Lifecycle interface identities.
+    """
+    payload = route_role_deny_payload(args)
     existing = client.json_request("GET", "/api/v1/routing-permissions")
     saved = next((row for row in existing if row.get("name") == payload["name"] and not row.get("generated")), None)
     if saved is None:
@@ -5472,6 +5501,7 @@ def run_routing_wan_lifecycle(results: list[StepResult], client: HttpClient, arg
     run_step(results, "configure-firewall", configure_firewall, client, args)
     policy = run_step(results, "configure-wan-policy", configure_wan_policy, client, args)
     run_step(results, "configure-routes-nat", configure_routes_nat, client, args, policy)
+    run_step(results, "remove-stale-route-role-deny", remove_stale_route_role_deny, client, args)
     run_step(results, "apply-routing-wan-before-access-rule", apply_units, client, ["network", "firewall", "wan"], args)
     run_step(results, "host-state-checks-before-access-rule", routing_host_state_checks, args)
     run_step(results, "route-role-routing-check", route_role_routing_check, args)
