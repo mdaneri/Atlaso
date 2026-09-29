@@ -13658,6 +13658,56 @@ def _publishing_apply_wan(content: str) -> None:
         raise ValueError("Routes & WAN apply failed during paired publication")
 
 
+@contextmanager
+def _publishing_network_stage(content: str):
+    """Materialize captured Network intent in the managed staging directory.
+
+    Args:
+        content: Journaled Network candidate bound to the global Apply task.
+    """
+    NETWORK_APPLY_DIR.mkdir(parents=True, exist_ok=True)
+    temporary = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w", encoding="utf-8", suffix=".conf", prefix="publishing-network-",
+            dir=NETWORK_APPLY_DIR, delete=False,
+        ) as handle:
+            temporary = Path(handle.name)
+            handle.write(content)
+        os.chmod(temporary, 0o600)
+        yield temporary
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
+
+
+def _publishing_apply_network(content: str) -> None:
+    """Apply Network under its existing task-owned rollback journal.
+
+    Args:
+        content: Validated Network candidate with an exact task marker.
+    """
+    with _publishing_network_stage(content) as path:
+        if _handle_network("apply", [str(path)]):
+            raise ValueError("Network apply failed during paired publication")
+
+
+def _publishing_network_record_valid(network: object, job_id: str) -> bool:
+    """Validate a bounded Network candidate and its transaction phase.
+
+    Args:
+        network: Untrusted parsed publishing journal member.
+        job_id: Exact global Appliance Apply owner.
+    """
+    if (not isinstance(network, dict) or set(network) != {"candidate", "phase"}
+            or not isinstance(network["candidate"], str) or len(network["candidate"]) > 2_000_000
+            or not isinstance(network["phase"], str)
+            or network["phase"] not in {"not-started", "attempting", "applied", "rolled-back", "committed"}):
+        return False
+    binding = re.search(r"(?m)^# atlaso-network-task: ([A-Za-z0-9_-]{1,128})$", network["candidate"])
+    return binding is not None and binding[1] == job_id
+
+
 def _publishing_wan_record_valid(wan: object) -> bool:
     """Check journaled WAN candidates and exact prior helper-owned state.
 
@@ -13764,12 +13814,15 @@ def _publishing_restore(state: dict) -> None:
     """
     files = _publishing_files()
     wan = state.get("wan")
+    network = state.get("network")
     if (set(state.get("files", {})) != {str(path) for path in files}
             or any(value is not None and not isinstance(value, str) for value in state["files"].values())
             or set(state.get("enabled", {})) != {"atlaso-firewall.service", "atlaso-nat.service"}
             or any(type(value) is not bool for value in state["enabled"].values())
             or type(state.get("retire_connections")) is not bool
-            or (wan is not None and not _publishing_wan_record_valid(wan))):
+            or (wan is not None and not _publishing_wan_record_valid(wan))
+            or (network is not None and wan is None)
+            or (network is not None and not _publishing_network_record_valid(network, str(state.get("job_id") or "")))):
         raise ValueError("Traffic Publishing recovery inventory is invalid")
     previous_intent = state["files"][str(NAT_RUNTIME_CONFIG_PATH)] or ""
     previous_firewall = state["files"][str(FIREWALL_CONFIG_PATH)] or "flush ruleset\n"
@@ -13783,6 +13836,14 @@ def _publishing_restore(state: dict) -> None:
         # Apply the prior route and policy state while forwarding stays off.
         if _set_wan_forwarding(False):
             raise ValueError("Traffic Publishing recovery could not quiesce WAN forwarding")
+        if network is not None and network["phase"] in {"attempting", "applied"}:
+            pending_network = _network_transaction_state()
+            if not pending_network or pending_network.get("job_id") != state["job_id"]:
+                raise ValueError("Paired Network rollback journal is missing or belongs to another task")
+            if _handle_network("recover", [state["job_id"]]):
+                raise ValueError("Paired Network rollback remains incomplete")
+            network["phase"] = "rolled-back"
+            _nat_write(NAT_RUNTIME_CONFIG_PATH.with_suffix(".publishing-recovery.json"), json.dumps(state, sort_keys=True))
         _publishing_apply_wan(wan["rollback"])
     if state["retire_connections"]:
         if _run_with_input(["nft", "-f", "-"], _quiesce_port_forward_config()).returncode:
@@ -13873,7 +13934,8 @@ def _port_forward_changed_ids(previous_intent: str, candidate_intent: str) -> li
 
 def _publishing_apply(
     job_id: str, nat_path: str, firewall_path: str, wan_candidate_path: str | None = None,
-    wan_rollback_path: str | None = None, *, validate_only: bool = False,
+    wan_rollback_path: str | None = None, network_candidate_path: str | None = None,
+    *, validate_only: bool = False,
 ) -> dict:
     """Stage one paired publication and retain rollback until application commit.
 
@@ -13883,6 +13945,7 @@ def _publishing_apply(
         firewall_path: Admitted Firewall configuration captured with NAT.
         wan_candidate_path: Optional managed staged Routes & WAN candidate.
         wan_rollback_path: Optional managed staged last-applied Routes & WAN snapshot.
+        network_candidate_path: Optional managed staged Network candidate.
         validate_only: Validate the complete pair without snapshots or mutation.
     """
     if re.fullmatch(r"job_[0-9a-f]{12}", job_id) is None:
@@ -13897,6 +13960,16 @@ def _publishing_apply(
         raise ValueError("Traffic Publishing paired snapshot exceeds its size bound")
     if (wan_candidate_path is None) != (wan_rollback_path is None):
         raise ValueError("Paired Routes & WAN publication requires both candidate and rollback snapshots")
+    network = None
+    if network_candidate_path is not None:
+        if wan_candidate_path is None:
+            raise ValueError("Paired Network publication requires Routes & WAN snapshots")
+        network_candidate = _validate_network_config_path(network_candidate_path)
+        network_content = network_candidate.read_text(encoding="utf-8")
+        network = {"candidate": network_content, "phase": "not-started"}
+        if (not _publishing_network_record_valid(network, job_id)
+                or _network_config_errors(network_candidate)):
+            raise ValueError("Paired Network candidate is invalid or belongs to another task")
     wan = None
     if wan_candidate_path is not None and wan_rollback_path is not None:
         wan_candidate = _validate_wan_config_path(wan_candidate_path)
@@ -13955,11 +14028,31 @@ def _publishing_apply(
     }
     if wan is not None:
         state["wan"] = wan
+    if network is not None:
+        state["network"] = network
     _nat_write(marker, json.dumps(state, sort_keys=True))
     try:
         if wan is not None:
             if _set_wan_forwarding(False):
                 raise ValueError("Could not quiesce WAN forwarding before paired publication")
+            if network is not None:
+                network["phase"] = "attempting"
+                _nat_write(marker, json.dumps(state, sort_keys=True))
+                try:
+                    _publishing_apply_network(network["candidate"])
+                except (OSError, ValueError):
+                    if not _network_transaction_state():
+                        # The Network helper either rejected before mutation or
+                        # completed its own rollback before returning failure.
+                        network["phase"] = "rolled-back"
+                        _nat_write(marker, json.dumps(state, sort_keys=True))
+                    raise
+                pending_network = _network_transaction_state()
+                if (not pending_network or pending_network.get("job_id") != job_id
+                        or pending_network.get("phase") != "awaiting-commit"):
+                    raise ValueError("Paired Network rollback journal was not retained")
+                network["phase"] = "applied"
+                _nat_write(marker, json.dumps(state, sort_keys=True))
             _publishing_apply_wan(wan["candidate"])
         _publishing_install(
             intent, final_firewall, nat_program, retire_connections=state["retire_connections"],
@@ -13996,6 +14089,9 @@ def _publishing_acknowledge(job_id: str) -> None:
     state = json.loads(marker.read_text(encoding="utf-8"))
     if state.get("job_id") != job_id or state.get("phase") != "awaiting-application-commit":
         raise ValueError("Traffic Publishing commit does not match the pending transaction")
+    network = state.get("network")
+    if network is not None and not _publishing_network_record_valid(network, job_id):
+        raise ValueError("Paired Network recovery candidate is invalid")
     if state.get("runtime_restored") is True:
         # Boot cannot inspect the application transaction. It restores the prior
         # pair but retains this root-owned candidate until the application proves
@@ -14010,6 +14106,18 @@ def _publishing_acknowledge(job_id: str) -> None:
         if wan is not None:
             if _set_wan_forwarding(False):
                 raise ValueError("Traffic Publishing recovery could not quiesce WAN forwarding")
+            if network is not None:
+                if network["phase"] != "rolled-back":
+                    raise ValueError("Paired Network recovery state is not ready for replay")
+                network["phase"] = "attempting"
+                _nat_write(marker, json.dumps(state, sort_keys=True))
+                _publishing_apply_network(network["candidate"])
+                pending_network = _network_transaction_state()
+                if (not pending_network or pending_network.get("job_id") != job_id
+                        or pending_network.get("phase") != "awaiting-commit"):
+                    raise ValueError("Replayed Network rollback journal was not retained")
+                network["phase"] = "applied"
+                _nat_write(marker, json.dumps(state, sort_keys=True))
             _publishing_apply_wan(wan["candidate"])
         firewall, program, _active = _publishing_program(candidate["intent"], candidate["firewall"], observed=True)
         if _validate_wan_nat_config(firewall.rstrip() + "\n" + program).returncode:
@@ -14020,6 +14128,8 @@ def _publishing_acknowledge(job_id: str) -> None:
                             persist_wan_forwarding=False)
         state["runtime_restored"] = False
         _nat_write(marker, json.dumps(state, sort_keys=True))
+    if network is not None and network["phase"] not in {"applied", "committed"}:
+        raise ValueError("Paired Network candidate was not applied")
     wan = state.get("wan")
     if wan is not None:
         if not _publishing_wan_record_valid(wan):
@@ -14027,6 +14137,11 @@ def _publishing_acknowledge(job_id: str) -> None:
         if _apply_wan_forwarding(_parse_wan_config(WAN_RUNTIME_CONFIG_PATH, content=wan["candidate"])):
             raise ValueError("Routes & WAN committed forwarding could not be persisted")
     _nat_write(receipt, json.dumps({"job_id": job_id, "phase": "committed"}))
+    if network is not None and network["phase"] == "applied":
+        if _handle_network("acknowledge", [job_id]):
+            raise ValueError("Paired Network commit acknowledgement failed")
+        network["phase"] = "committed"
+        _nat_write(marker, json.dumps(state, sort_keys=True))
     marker.unlink()
     _fsync_directory(marker.parent)
 
@@ -14048,7 +14163,12 @@ def _publishing_boot_restore() -> bool:
     committed = json.loads(receipt.read_text(encoding="utf-8")) if receipt.exists() else {}
     if committed == {"job_id": state["job_id"], "phase": "committed"}:
         wan = state.get("wan")
+        network = state.get("network")
         candidate = state.get("candidate")
+        if network is not None:
+            if (not _publishing_network_record_valid(network, state["job_id"])
+                    or network["phase"] not in {"applied", "committed"}):
+                raise ValueError("Traffic Publishing committed Network candidate is invalid")
         if wan is not None:
             if (not _publishing_wan_record_valid(wan)
                     or not isinstance(candidate, dict) or set(candidate) != {"intent", "firewall"}
@@ -14060,6 +14180,9 @@ def _publishing_boot_restore() -> bool:
             _publishing_install(candidate["intent"], firewall, program,
                                 retire_connections=state["retire_connections"],
                                 retire_rule_ids=state.get("retire_rule_ids"), wan_candidate=wan["candidate"])
+        if network is not None and network["phase"] == "applied":
+            if _handle_network("acknowledge", [state["job_id"]]):
+                raise ValueError("Traffic Publishing committed Network acknowledgement failed")
         marker.unlink()
         _fsync_directory(marker.parent)
         return wan is not None
@@ -14207,8 +14330,8 @@ def _handle_nat(action: str, args: list[str]) -> int:
     try:
         with _nat_transaction_lock() if action not in {"validate", "validate-publishing"} else nullcontext():
             if action in {"validate-publishing", "apply-publishing"}:
-                if len(args) not in {3, 5}:
-                    raise ValueError("Paired publication requires one task, two or four managed snapshots")
+                if len(args) not in {3, 5, 6}:
+                    raise ValueError("Paired publication requires one task and two, four, or five managed snapshots")
                 if action == "apply-publishing":
                     _nat_recover()
                 result = _publishing_apply(*args, validate_only=action == "validate-publishing")

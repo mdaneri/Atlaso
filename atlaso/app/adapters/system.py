@@ -147,7 +147,7 @@ class SystemAdapter:
 
     def validate_traffic_publishing(
         self, job_id: str, nat_path: str, firewall_path: str,
-        wan_path: str = "", wan_rollback_path: str = "",
+        wan_path: str = "", wan_rollback_path: str = "", network_path: str = "",
     ) -> AdapterResult:
         """Validate the complete captured Firewall and translation pair.
 
@@ -157,16 +157,18 @@ class SystemAdapter:
             firewall_path: Task-owned staged Firewall snapshot.
             wan_path: Optional staged Routes & WAN candidate for a routing-policy group.
             wan_rollback_path: Matching staged last-applied Routes & WAN rollback.
+            network_path: Optional staged Network candidate in the same routing group.
         """
-        if bool(wan_path) != bool(wan_rollback_path):
+        if bool(wan_path) != bool(wan_rollback_path) or (network_path and not wan_path):
             raise ValueError("Paired routing publication requires both WAN snapshots.")
         return self._helper_result("nat", "validate-publishing", job_id, nat_path, firewall_path,
                                    *((wan_path, wan_rollback_path) if wan_path else ()),
+                                   *((network_path,) if network_path else ()),
                                    dry_run_message="dry-run: paired Firewall and NAT validation recorded")
 
     def apply_traffic_publishing(
         self, job_id: str, nat_path: str, firewall_path: str,
-        wan_path: str = "", wan_rollback_path: str = "",
+        wan_path: str = "", wan_rollback_path: str = "", network_path: str = "",
     ) -> AdapterResult:
         """Publish both runtimes while retaining rollback for application commit.
 
@@ -176,11 +178,13 @@ class SystemAdapter:
             firewall_path: Task-owned staged Firewall snapshot.
             wan_path: Optional staged Routes & WAN candidate for a routing-policy group.
             wan_rollback_path: Matching staged last-applied Routes & WAN rollback.
+            network_path: Optional staged Network candidate in the same routing group.
         """
-        if bool(wan_path) != bool(wan_rollback_path):
+        if bool(wan_path) != bool(wan_rollback_path) or (network_path and not wan_path):
             raise ValueError("Paired routing publication requires both WAN snapshots.")
         return self._helper_result("nat", "apply-publishing", job_id, nat_path, firewall_path,
                                    *((wan_path, wan_rollback_path) if wan_path else ()),
+                                   *((network_path,) if network_path else ()),
                                    dry_run_message="dry-run: paired Firewall and NAT publication recorded")
 
     def acknowledge_traffic_publishing(self, job_id: str) -> AdapterResult:

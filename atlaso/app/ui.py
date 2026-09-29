@@ -13873,18 +13873,20 @@ def synchronize_routing_service_runtime(
 def execute_traffic_publishing_pair(
     db: Session, job: Job, units: list[dict[str, Any]], *, adapter: SystemAdapter,
 ) -> list[dict[str, Any]]:
-    """Publish Firewall/NAT and optional WAN with one application commit.
+    """Publish Firewall/NAT with optional WAN and Network in one commit.
 
     Args:
         db: Global Apply transaction and baseline owner.
         job: Already admitted global task; never a service-specific task.
-        units: Exact captured Firewall, NAT and optional WAN units.
+        units: Exact captured Firewall, NAT, and optional WAN/Network units.
         adapter: Shared dry-run or real constrained helper boundary.
     """
     by_id = {unit["id"]: unit for unit in units}
-    if set(by_id) not in ({"firewall", "nat"}, {"wan", "firewall", "nat"}):
-        raise ApplianceApplyJobError("Paired publication requires captured Firewall/NAT and optional WAN units.")
+    if set(by_id) not in ({"firewall", "nat"}, {"wan", "firewall", "nat"},
+                          {"network", "wan", "firewall", "nat"}):
+        raise ApplianceApplyJobError("Paired publication requires captured Firewall/NAT, WAN, and optional Network units.")
     has_wan = "wan" in by_id
+    has_network = "network" in by_id
     payload = _job_payload(job)
     payload["traffic_publishing_runtime_commit_pending"] = not adapter.dry_run
     payload["traffic_publishing_application_committed"] = False
@@ -13897,6 +13899,7 @@ def execute_traffic_publishing_pair(
         firewall_path = FIREWALL_STAGED_CONFIG_PATH
         wan_path = WAN_CONFIG_PATH if has_wan else ""
         wan_rollback_path = MANAGEMENT_HANDOFF_WAN_ROLLBACK_PATH if has_wan else ""
+        network_path = NETWORK_STAGED_CONFIG_PATH if has_network else ""
         if not adapter.dry_run:
             nat_path = stage_appliance_apply_config(nat_path, by_id["nat"]["raw_config_preview"])
             firewall_path = stage_appliance_apply_config(firewall_path, by_id["firewall"]["raw_config_preview"])
@@ -13909,9 +13912,17 @@ def execute_traffic_publishing_pair(
                         load_appliance_apply_baselines(db).get("wan"),
                     ),
                 )
+            if has_network:
+                network_preview = network_config_with_removed_vlans(
+                    by_id["network"]["raw_config_preview"], by_id["network"].get("removed_vlan_interfaces", []),
+                )
+                network_path = stage_appliance_apply_config(
+                    network_path, f"# atlaso-network-task: {job.id}\n" + network_preview,
+                )
         if has_wan:
             commands.append(adapter.validate_traffic_publishing(
                 job.id, nat_path, firewall_path, wan_path, wan_rollback_path,
+                *((network_path,) if has_network else ()),
             ))
         else:
             commands.append(adapter.validate_traffic_publishing(job.id, nat_path, firewall_path))
@@ -13919,6 +13930,7 @@ def execute_traffic_publishing_pair(
             if has_wan:
                 commands.append(adapter.apply_traffic_publishing(
                     job.id, nat_path, firewall_path, wan_path, wan_rollback_path,
+                    *((network_path,) if has_network else ()),
                 ))
             else:
                 commands.append(adapter.apply_traffic_publishing(job.id, nat_path, firewall_path))
@@ -16024,7 +16036,7 @@ def run_appliance_apply_job(job_id: str, *, force_real: bool = False) -> None:
             publishing_completed = False
             publishing_unit_ids = {"firewall", "nat"} | (
                 {"wan"} if job_result.get("routing_publishing_pair") else set()
-            )
+            ) | ({"network"} if job_result.get("routing_publishing_network") else set())
             handoff_unit_ids = set(
                 job_result.get("management_handoff_units", [])
                 if job_result.get("management_handoff")
@@ -16305,7 +16317,8 @@ def run_appliance_apply_job(job_id: str, *, force_real: bool = False) -> None:
                     if publishing_completed:
                         continue
                     pair = [current_by_id[unit_id] for unit_id in (
-                        ("wan", "firewall", "nat") if job_result.get("routing_publishing_pair")
+                        (("network", "wan", "firewall", "nat") if job_result.get("routing_publishing_network")
+                         else ("wan", "firewall", "nat")) if job_result.get("routing_publishing_pair")
                         else ("firewall", "nat")
                     )]
                     for paired_unit in pair:
@@ -17108,6 +17121,19 @@ def _submit_appliance_apply(
             and unit_map.get("network", {}).get("management_default_mirror_change")
         )
     )
+    if management_handoff and routing_permission_pair_required and unit_map.get("network", {}).get("changed"):
+        previous_wan = str((apply_baselines.get("wan") or {}).get("config_preview") or "")
+        previous_routing_off = bool(re.search(r"(?m)^routing_enabled=false$", previous_wan))
+        desired_wan_settings = unit_map.get("wan", {}).get("context", {}).get("routes_wan_settings")
+        desired_routing_off = getattr(desired_wan_settings, "routing_enabled", True) is False
+        if not (previous_routing_off and desired_routing_off):
+            detail = (
+                "Disable Routing and apply that change first, then apply the management Network change. "
+                "Re-enable Routing after the management handoff completes."
+            )
+            return JSONResponse({"detail": detail}, status_code=422) if wants_json else Response(
+                detail, status_code=422, media_type="text/plain",
+            )
     if management_handoff:
         selected_ids.update(
             unit_id for unit_id in MANAGEMENT_HANDOFF_UNIT_IDS if unit_id in unit_map
@@ -17176,6 +17202,10 @@ def _submit_appliance_apply(
     routing_publishing_pair = bool(
         routing_permission_pair_required and not management_handoff
         and {"wan", "firewall", "nat"}.issubset(selected_ids)
+    )
+    routing_publishing_network = bool(
+        routing_publishing_pair and "network" in selected_ids
+        and unit_map.get("network", {}).get("changed")
     )
     traffic_publishing_pair = bool(
         (publishing_pair_required or routing_publishing_pair) and not management_handoff
@@ -17287,6 +17317,7 @@ def _submit_appliance_apply(
         "management_handoff": management_handoff,
         "traffic_publishing_pair": traffic_publishing_pair,
         "routing_publishing_pair": routing_publishing_pair,
+        "routing_publishing_network": routing_publishing_network,
         "management_handoff_units": [
             unit_id
             for unit_id in (*MANAGEMENT_HANDOFF_UNIT_IDS, "dnsmasq", "wan", "nat")

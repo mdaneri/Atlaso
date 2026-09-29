@@ -115,6 +115,7 @@ def transaction(tmp_path, monkeypatch):
     paths = {
         "NAT_APPLY_DIR": tmp_path / "staged-nat", "FIREWALL_APPLY_DIR": tmp_path / "staged-firewall",
         "WAN_APPLY_DIR": tmp_path / "staged-wan",
+        "NETWORK_APPLY_DIR": tmp_path / "staged-network",
         "NAT_RUNTIME_CONFIG_PATH": tmp_path / "runtime.conf", "WAN_NAT_CONFIG_PATH": tmp_path / "nat.nft",
         "WAN_NAT_SERVICE_PATH": tmp_path / "nat.service", "FIREWALL_CONFIG_PATH": tmp_path / "firewall.nft",
         "FIREWALL_SERVICE_PATH": tmp_path / "firewall.service",
@@ -126,6 +127,7 @@ def transaction(tmp_path, monkeypatch):
     paths["NAT_APPLY_DIR"].mkdir()
     paths["FIREWALL_APPLY_DIR"].mkdir()
     paths["WAN_APPLY_DIR"].mkdir()
+    paths["NETWORK_APPLY_DIR"].mkdir()
     intent = render_nat_config([], nat_targets(interfaces(), []), [], TrafficPublishingSettings(False, True))
     old = intent + render_port_forward_records([], [])
     candidate = intent + render_port_forward_records([PortForward(id=1, **payload())], [])
@@ -382,6 +384,189 @@ def _enable_wan_pair_test_seams(helper, monkeypatch, *, events=None):
 
     monkeypatch.setattr(helper, "_publishing_restore_wan_forwarding", trace_restore_forwarding)
     return events
+
+
+def _enable_network_pair_test_seams(helper, monkeypatch, events):
+    """Emulate the retained Network journal inside a four-unit publication.
+
+    Args:
+        helper: Isolated privileged helper module.
+        monkeypatch: Test-owned host boundary replacements.
+        events: Ordered publication and rollback trace.
+    """
+    transaction = {}
+    monkeypatch.setattr(helper, "_network_config_errors", lambda _path: [])
+
+    def network_state():
+        """Return the current emulated Network transaction journal."""
+        return transaction.copy()
+
+    def handle_network(action, args):
+        """Record apply, rollback, and commit acknowledgement.
+
+        Args:
+            action: Requested Network transaction operation.
+            args: Exact staged path or owning job ID.
+        """
+        events.append(("network-" + action, None))
+        if action == "apply":
+            assert f"# atlaso-network-task: {JOB}" in Path(args[0]).read_text()
+            transaction.update(job_id=JOB, phase="awaiting-commit")
+        else:
+            assert args == [JOB]
+            transaction.clear()
+        return 0
+
+    monkeypatch.setattr(helper, "_network_transaction_state", network_state)
+    monkeypatch.setattr(helper, "_handle_network", handle_network)
+    path = helper.NETWORK_APPLY_DIR / "candidate.conf"
+    path.write_text(f"# atlaso-network-task: {JOB}\n# changed Access prefix\n")
+    return path
+
+
+def test_four_unit_group_quiesces_before_network_and_recovers_on_wan_failure(transaction, monkeypatch):
+    """A failed paired WAN step restores Network before forwarding returns.
+
+    Args:
+        transaction: Isolated helper and durable snapshots.
+        monkeypatch: Replace host Network and WAN operations.
+    """
+    helper, nat, firewall, _previous, _programs, _commands = transaction
+    events = _enable_wan_pair_test_seams(helper, monkeypatch)
+    network = _enable_network_pair_test_seams(helper, monkeypatch, events)
+    apply_wan = helper._publishing_apply_wan
+    failed = False
+
+    def fail_candidate_wan(content):
+        """Reject only the candidate WAN route update.
+
+        Args:
+            content: Captured WAN candidate or rollback text.
+        """
+        nonlocal failed
+        if not failed and content == (helper.WAN_APPLY_DIR / "candidate.conf").read_text():
+            failed = True
+            events.append(("wan-failed", None))
+            raise ValueError("injected WAN failure")
+        return apply_wan(content)
+
+    monkeypatch.setattr(helper, "_publishing_apply_wan", fail_candidate_wan)
+    with pytest.raises(ValueError, match="previous Firewall and NAT were restored"):
+        helper._publishing_apply(
+            JOB, str(nat), str(firewall), str(helper.WAN_APPLY_DIR / "candidate.conf"),
+            str(helper.WAN_APPLY_DIR / "rollback.conf"), str(network),
+        )
+    assert failed
+    assert events.index(("quiesce", False)) < events.index(("network-apply", None))
+    assert events.index(("network-recover", None)) < events.index(
+        ("restore-forwarding", {"ipv4": True, "ipv6": True}),
+    )
+    assert not helper.NAT_RUNTIME_CONFIG_PATH.with_suffix(".publishing-recovery.json").exists()
+
+
+def test_four_unit_group_acknowledges_network_only_after_application_commit(transaction, monkeypatch):
+    """Network rollback remains available until the full group is acknowledged.
+
+    Args:
+        transaction: Isolated helper and durable snapshots.
+        monkeypatch: Replace host Network and WAN operations.
+    """
+    helper, nat, firewall, _previous, _programs, _commands = transaction
+    events = _enable_wan_pair_test_seams(helper, monkeypatch)
+    network = _enable_network_pair_test_seams(helper, monkeypatch, events)
+    helper._publishing_apply(
+        JOB, str(nat), str(firewall), str(helper.WAN_APPLY_DIR / "candidate-enabled.conf"),
+        str(helper.WAN_APPLY_DIR / "rollback.conf"), str(network),
+    )
+    assert events.index(("network-apply", None)) < events.index(("publish", None))
+    assert ("network-acknowledge", None) not in events
+    assert helper._network_transaction_state()["phase"] == "awaiting-commit"
+    assert "net.ipv4.ip_forward = 0" in helper.WAN_SYSCTL_PATH.read_text()
+
+    helper._publishing_acknowledge(JOB)
+
+    assert ("network-acknowledge", None) in events
+    assert events.index(("publish", None)) < events.index(("forwarding", True))
+    assert helper._network_transaction_state() == {}
+    assert "net.ipv4.ip_forward = 1" in helper.WAN_SYSCTL_PATH.read_text()
+
+
+def test_four_unit_group_boot_restores_network_before_forward_replay(transaction, monkeypatch):
+    """An undecided boot restores Network, then committed Apply replays the group.
+
+    Args:
+        transaction: Isolated helper and durable snapshots.
+        monkeypatch: Replace host Network and WAN operations.
+    """
+    helper, nat, firewall, _previous, _programs, _commands = transaction
+    events = _enable_wan_pair_test_seams(helper, monkeypatch)
+    network = _enable_network_pair_test_seams(helper, monkeypatch, events)
+    helper._publishing_apply(
+        JOB, str(nat), str(firewall), str(helper.WAN_APPLY_DIR / "candidate-enabled.conf"),
+        str(helper.WAN_APPLY_DIR / "rollback.conf"), str(network),
+    )
+    events.clear()
+
+    assert helper._publishing_boot_restore()
+    assert events.index(("network-recover", None)) < events.index(
+        ("restore-forwarding", {"ipv4": True, "ipv6": True}),
+    )
+    state = json.loads(helper.NAT_RUNTIME_CONFIG_PATH.with_suffix(".publishing-recovery.json").read_text())
+    assert state["runtime_restored"] is True
+    assert state["network"]["phase"] == "rolled-back"
+    assert helper._network_transaction_state() == {}
+    events.clear()
+
+    helper._publishing_acknowledge(JOB)
+
+    assert events.index(("network-apply", None)) < events.index(("publish", None))
+    assert events.index(("publish", None)) < events.index(("network-acknowledge", None))
+    assert helper._network_transaction_state() == {}
+    assert "net.ipv4.ip_forward = 1" in helper.WAN_SYSCTL_PATH.read_text()
+
+
+def test_four_unit_group_committed_receipt_retries_network_ack_after_boot(transaction, monkeypatch):
+    """A committed group keeps its journal until Network acknowledgement succeeds.
+
+    Args:
+        transaction: Isolated helper and durable snapshots.
+        monkeypatch: Interrupt the first Network acknowledgement.
+    """
+    helper, nat, firewall, _previous, _programs, _commands = transaction
+    events = _enable_wan_pair_test_seams(helper, monkeypatch)
+    network = _enable_network_pair_test_seams(helper, monkeypatch, events)
+    helper._publishing_apply(
+        JOB, str(nat), str(firewall), str(helper.WAN_APPLY_DIR / "candidate-enabled.conf"),
+        str(helper.WAN_APPLY_DIR / "rollback.conf"), str(network),
+    )
+    handle_network = helper._handle_network
+    failed = False
+
+    def fail_first_ack(action, args):
+        """Leave one exact Network journal pending after application commit.
+
+        Args:
+            action: Requested Network operation.
+            args: Exact staged path or task owner.
+        """
+        nonlocal failed
+        if action == "acknowledge" and not failed:
+            failed = True
+            return 1
+        return handle_network(action, args)
+
+    monkeypatch.setattr(helper, "_handle_network", fail_first_ack)
+    with pytest.raises(ValueError, match="Network commit acknowledgement failed"):
+        helper._publishing_acknowledge(JOB)
+    receipt = helper.NAT_RUNTIME_CONFIG_PATH.with_suffix(".publishing-commit.json")
+    marker = helper.NAT_RUNTIME_CONFIG_PATH.with_suffix(".publishing-recovery.json")
+    assert receipt.exists() and marker.exists()
+    assert helper._network_transaction_state()["phase"] == "awaiting-commit"
+
+    assert helper._publishing_boot_restore()
+    assert not marker.exists()
+    assert helper._network_transaction_state() == {}
+    assert ("network-acknowledge", None) in events
 
 
 def test_three_unit_group_publishes_firewall_nat_before_forwarding(transaction, monkeypatch):
