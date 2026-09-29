@@ -33,7 +33,11 @@ Writer = Annotated[Identity, Depends(require_scope("write:routes"))]
 
 
 def _permission_rows(db: Session) -> list[RoutingPermissionResponse]:
-    """Build the explicit and generated desired-state projection."""
+    """Build the explicit and generated desired-state projection.
+
+    Args:
+        db: Database session containing saved rules and interface targets.
+    """
     settings = ensure_routes_wan_settings(db)
     targets = routing_permission_targets(db)
     rules = list(db.scalars(select(RoutingRule).order_by(RoutingRule.priority, RoutingRule.name)))
@@ -43,7 +47,12 @@ def _permission_rows(db: Session) -> list[RoutingPermissionResponse]:
 
 
 def _saved_rule(db: Session, rule_id: str) -> RoutingRule:
-    """Resolve a persisted rule while rejecting generated identifiers."""
+    """Resolve a persisted rule while rejecting generated identifiers.
+
+    Args:
+        db: Database session used to load the saved rule.
+        rule_id: Persisted rule identifier supplied by the request path.
+    """
     if rule_id.startswith("generated:"):
         raise HTTPException(409, "Generated Routing Permissions are read-only.")
     if not rule_id.isdecimal() or int(rule_id) < 1:
@@ -55,6 +64,13 @@ def _saved_rule(db: Session, rule_id: str) -> RoutingRule:
 
 
 def _validate(payload: RoutingPermissionCreate, db: Session, *, exclude_rule_id: int | None = None) -> None:
+    """Validate a permission and reject normalized name conflicts.
+
+    Args:
+        payload: Requested permission values to validate and persist.
+        db: Database session containing existing rules and targets.
+        exclude_rule_id: Existing rule identifier omitted during replacement.
+    """
     normalized_name = payload.name.strip().lower()
     for rule in db.scalars(select(RoutingRule)):
         if rule.id != exclude_rule_id and rule.name.strip().lower() == normalized_name:

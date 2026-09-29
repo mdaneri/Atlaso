@@ -39,7 +39,14 @@ def settings():
 
 
 def default_deny_name(rules: list[FirewallRule], source: str, destination: str, family: int) -> str:
-    """Find one generated default denial by its exact directed family."""
+    """Find one generated default denial by its exact directed family.
+
+    Args:
+        rules: Renderable firewall rules to search.
+        source: Source interface in the directed pair.
+        destination: Destination interface in the directed pair.
+        family: Address family version to match.
+    """
     return next(
         rule.name
         for rule in rules
@@ -97,7 +104,12 @@ def test_operator_forward_drop_priority_precedes_routing_accepts(policy):
 
 @pytest.mark.parametrize("policy,expected", [("allow", True), ("automatic", False), ("deny", True)])
 def test_automatic_revert_and_dual_stack_are_exact(policy, expected):
-    """Inheritance removes only the override and retains route-role admission."""
+    """Inheritance removes only the override and retains route-role admission.
+
+    Args:
+        policy: Explicit policy or automatic inheritance under test.
+        expected: Whether an explicit override should appear in the config.
+    """
     interfaces, vlans = topology()
     rule = RoutingRule(id=10, name="Override", enabled=True, source_interface="a", destination_interface="b",
                        policy=policy, ip_family=0, priority=100)

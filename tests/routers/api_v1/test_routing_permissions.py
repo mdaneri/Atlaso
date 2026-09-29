@@ -7,7 +7,11 @@ from tests.routers.api_v1.helpers import create_token
 
 
 def _permission_payload(**overrides: object) -> dict[str, object]:
-    """Return one valid complete permission request body."""
+    """Return one valid complete permission request body.
+
+    Args:
+        **overrides: Request fields replacing the valid defaults.
+    """
     return {
         "name": "API permission",
         "enabled": True,

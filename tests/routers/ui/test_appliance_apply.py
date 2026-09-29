@@ -3049,8 +3049,11 @@ def test_appliance_apply_json_submission_returns_master_with_live_child_status(c
     assert payload["job_id"].startswith("job_")
     assert payload["status_url"] == f"/tasks/{payload['job_id']}/status"
     assert payload["task"]["type"] == "appliance-apply"
+    # First-boot management handoff and pending routing intent expand WAN into
+    # the protected group, paired Firewall and the required NAT replay.
+    expected_units = ("appliance_settings", "network", "firewall", "wan", "nat", "ca", "public_services")
     assert [(step["component_key"], step["status"]) for step in payload["task"]["_children"]] == [
-        ("wan", "pending"), ("nat", "pending")
+        (unit, "pending") for unit in expected_units
     ]
 
     status_response = client.get(payload["status_url"])
@@ -3058,7 +3061,7 @@ def test_appliance_apply_json_submission_returns_master_with_live_child_status(c
     task = status_response.json()["task"]
     assert task["status"] == "succeeded"
     assert [(step["component_key"], step["status"]) for step in task["_children"]] == [
-        ("wan", "succeeded"), ("nat", "succeeded")
+        (unit, "succeeded") for unit in expected_units
     ]
 
 

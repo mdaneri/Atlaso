@@ -163,5 +163,5 @@ def test_firewall_apply_replays_unchanged_nat_after_ruleset_replacement(client, 
             job = db.get(Job, response.json()["job_id"])
             assert job.status == "succeeded"
             if selection == "firewall":
-                assert json.loads(job.result)["selected_units"] == ["firewall", "nat"]
-                assert [step.component_key for step in sorted(job.steps, key=lambda step: step.position)] == ["firewall", "nat"]
+                assert json.loads(job.result)["selected_units"] == ["firewall", "wan", "nat"]
+                assert [step.component_key for step in sorted(job.steps, key=lambda step: step.position)] == ["firewall", "wan", "nat"]

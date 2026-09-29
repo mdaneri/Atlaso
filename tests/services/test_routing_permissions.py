@@ -10,7 +10,15 @@ from atlaso.app.services.routing_permissions import (
 
 
 def target(name, role, ipv4="192.0.2.1/24", ipv6="2001:db8::1/64", **changes):
-    """Build a configured lab interface or VLAN target."""
+    """Build a configured lab interface or VLAN target.
+
+    Args:
+        name: Interface name used to identify the target.
+        role: Routing role assigned to the target.
+        ipv4: IPv4 interface address and prefix, when configured.
+        ipv6: IPv6 interface address and prefix, when configured.
+        **changes: Target fields replacing the fixture defaults.
+    """
     return {
         "name": name,
         "role": role,
@@ -23,7 +31,16 @@ def target(name, role, ipv4="192.0.2.1/24", ipv6="2001:db8::1/64", **changes):
 
 
 def rule(name, source, destination, policy="allow", ip_family=0, **changes):
-    """Build one explicit directed permission."""
+    """Build one explicit directed permission.
+
+    Args:
+        name: Display name for the permission.
+        source: Source interface name.
+        destination: Destination interface name.
+        policy: Requested allow, deny, or automatic policy.
+        ip_family: Address family scope, with zero selecting both families.
+        **changes: Rule fields replacing the fixture defaults.
+    """
     values = {
         "name": name,
         "source_interface": source,
@@ -37,7 +54,14 @@ def rule(name, source, destination, policy="allow", ip_family=0, **changes):
 
 
 def explicit_row(rows, source, destination, family):
-    """Find one explicit projected permission."""
+    """Find one explicit projected permission.
+
+    Args:
+        rows: Permission projections to search.
+        source: Source interface in the directed pair.
+        destination: Destination interface in the directed pair.
+        family: Address family value to match.
+    """
     return next(
         row
         for row in rows
@@ -113,7 +137,12 @@ def test_generated_dual_stack_pair_explains_different_family_results():
     ],
 )
 def test_invalid_policy_family_management_and_self_target_are_rejected(changes, fragment):
-    """Reject unsupported values and protected or degenerate scopes."""
+    """Reject unsupported values and protected or degenerate scopes.
+
+    Args:
+        changes: Invalid rule fields supplied by this parameterized case.
+        fragment: Expected validation message fragment.
+    """
     targets = [target("access-a", "access"), target("route-a", "route"),
                target("management", "management", routing_domain="management")]
     candidate = rule("Candidate", "access-a", "route-a", **changes)

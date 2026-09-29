@@ -244,7 +244,12 @@ def test_legacy_firewall_apply_preserves_routing_denials_when_disabled(client, m
     original_apply = SystemAdapter.apply_firewall_config
 
     def track_apply(adapter, config_path):
-        """Record calls while preserving the existing dry-run behavior."""
+        """Record calls while preserving the existing dry-run behavior.
+
+        Args:
+            adapter: System adapter receiving the firewall apply request.
+            config_path: Generated firewall configuration path.
+        """
         calls.append(config_path)
         return original_apply(adapter, config_path)
 
@@ -325,7 +330,12 @@ def test_legacy_firewall_apply_rejects_pending_routing_intent(client, monkeypatc
     original_apply = SystemAdapter.apply_firewall_config
 
     def track_apply(adapter, config_path):
-        """Track publication without changing the dry-run adapter contract."""
+        """Track publication without changing the dry-run adapter contract.
+
+        Args:
+            adapter: System adapter receiving the firewall apply request.
+            config_path: Generated firewall configuration path.
+        """
         calls.append(config_path)
         return original_apply(adapter, config_path)
 

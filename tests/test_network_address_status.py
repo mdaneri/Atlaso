@@ -520,7 +520,7 @@ def test_postgresql_startup_adds_address_checks_under_schema_lock(monkeypatch):
     from atlaso.app import database
 
     calls = []
-    columns = {table: [{"name": "id"}] for table in ("physical_interfaces", "vlan_interfaces")}
+    columns = {table: [{"name": "id"}] for table in ("physical_interfaces", "vlan_interfaces", "routing_rules")}
     columns["jobs"] = [{"name": name} for name in (
         "id", "cancel_requested_at", "cancel_requested_by", "cancel_completed_at", "cancel_outcome",
     )]
@@ -536,8 +536,13 @@ def test_postgresql_startup_adds_address_checks_under_schema_lock(monkeypatch):
         calls.append(sql)
         if sql.startswith("ALTER TABLE"):
             assert "pg_advisory_xact_lock" in calls[0]
-            assert sql.endswith("BOOLEAN NOT NULL DEFAULT TRUE")
-            columns[sql.split()[2]].append({"name": "check_duplicate_ip_addresses"})
+            table = sql.split()[2]
+            if table == "routing_rules":
+                assert sql.endswith(("VARCHAR(16) NOT NULL DEFAULT 'allow'", "INTEGER NOT NULL DEFAULT 0"))
+                columns[table].append({"name": sql.split()[5]})
+            else:
+                assert sql.endswith("BOOLEAN NOT NULL DEFAULT TRUE")
+                columns[table].append({"name": "check_duplicate_ip_addresses"})
 
     connection = SimpleNamespace(execute=execute, dialect=SimpleNamespace(name="postgresql"))
     engine = SimpleNamespace(dialect=SimpleNamespace(name="postgresql"), begin=lambda: nullcontext(connection))
@@ -546,7 +551,8 @@ def test_postgresql_startup_adds_address_checks_under_schema_lock(monkeypatch):
     monkeypatch.setattr(database, "_reconcile_nat_ingress_column", lambda _connection: None)
     database._create_database_schema(engine)
     database._create_database_schema(engine)
-    assert len([sql for sql in calls if sql.startswith("ALTER TABLE")]) == 2
+    assert len([sql for sql in calls if sql.startswith("ALTER TABLE")]) == 4
+    assert {column["name"] for column in columns["routing_rules"]} == {"id", "policy", "ip_family"}
     assert len([sql for sql in calls if "pg_advisory_xact_lock" in sql]) == 2
 
 
