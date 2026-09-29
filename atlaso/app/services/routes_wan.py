@@ -1116,7 +1116,7 @@ def render_wan_config(
     for rule in sorted(routing_rules, key=lambda item: item.priority):
         lines.extend(
             [
-                f"routing={rule.name}",
+                f"routing={' '.join(rule.name.splitlines())}",
                 f"  enabled={_bool_value(rule.enabled)}",
                 f"  source_interface={rule.source_interface}",
                 f"  destination_interface={rule.destination_interface}",
@@ -1124,7 +1124,7 @@ def render_wan_config(
                 f"  policy={rule.policy if rule.policy is not None else 'allow'}",
                 f"  ip_family={rule.ip_family if rule.ip_family is not None else 0}",
                 "  generated=false",
-                f"  description={(rule.description or '').replace(chr(10), ' ')}",
+                f"  description={' '.join((rule.description or '').splitlines())}",
             ]
         )
 

@@ -17083,6 +17083,12 @@ def _submit_appliance_apply(
         selected_ids.add("nat")
     if publishing_pair_required and "nat" in selected_ids and "firewall" in unit_map:
         selected_ids.add("firewall")
+    nat_activation = unit_map.get("nat", {}).get("context", {}).get("traffic_publishing_settings")
+    if "nat" in selected_ids and (getattr(nat_activation, "effective_nat_enabled", False)
+                                  or unit_map.get("nat", {}).get("context", {}).get("port_forward_effective")):
+        for dependency in ("network", "wan"):
+            if unit_map.get(dependency, {}).get("changed"):
+                selected_ids.add(dependency)
     routing_permission_pair_required = False
     if selected_ids.intersection({"wan", "firewall", "network"}):
         fingerprint = routing_permission_fingerprint(db)
@@ -17092,12 +17098,6 @@ def _submit_appliance_apply(
         )
         if routing_permission_pair_required:
             selected_ids.update(unit for unit in ("wan", "firewall") if unit in unit_map)
-    nat_activation = unit_map.get("nat", {}).get("context", {}).get("traffic_publishing_settings")
-    if "nat" in selected_ids and (getattr(nat_activation, "effective_nat_enabled", False)
-                                  or unit_map.get("nat", {}).get("context", {}).get("port_forward_effective")):
-        for dependency in ("network", "wan"):
-            if unit_map.get(dependency, {}).get("changed"):
-                selected_ids.add(dependency)
     binding_change = bool(
         "appliance_settings" in selected_ids
         and management_front_door_binding_changed(

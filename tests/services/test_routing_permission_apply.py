@@ -141,6 +141,44 @@ def test_access_only_topology_change_requires_paired_apply(client):
         assert routing_permission_apply_state(db) == "applied"
 
 
+def test_nat_only_selection_pairs_new_access_endpoint_with_firewall(client):
+    """NAT dependency expansion cannot activate Access topology under stale policy."""
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Job, PhysicalInterface
+    from atlaso.app.services.routes_wan import save_routes_wan_settings
+    from atlaso.app.services.routing_permissions import routing_permission_apply_state
+    from atlaso.app.ui import appliance_apply_units, update_appliance_apply_baselines
+
+    login(client)
+    with SessionLocal() as db:
+        db.add(PhysicalInterface(name="nat-access-a", mac_address="02:00:00:00:85:41", mode="access",
+                                 role="access", admin_state="up", oper_state="up", ip_cidr="10.85.41.1/24"))
+        save_routes_wan_settings(db, routing_enabled=True, nat_enabled=True, wan_simulation_enabled=False)
+        db.commit()
+        units = appliance_apply_units(db)
+        update_appliance_apply_baselines(db, units, {unit["id"] for unit in units})
+        db.commit()
+        db.add(PhysicalInterface(name="nat-access-b", mac_address="02:00:00:00:85:42", mode="access",
+                                 role="access", admin_state="up", oper_state="up", ip_cidr="10.85.42.1/24"))
+        db.commit()
+        assert routing_permission_apply_state(db) == "pending"
+        assert next(unit for unit in appliance_apply_units(db) if unit["id"] == "network")["changed"]
+
+    page = client.get("/routes-wan")
+    csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    response = client.post("/appliance-apply", data={"csrf": csrf, "selected_units": "nat"},
+                           headers={"Accept": "application/json"})
+    assert response.status_code == 202, response.text
+    with SessionLocal() as db:
+        job = db.get(Job, response.json()["job_id"])
+        assert job is not None
+        payload = json.loads(job.result)
+        assert {"network", "wan", "firewall", "nat"} <= set(payload["selected_units"])
+        assert payload["routing_publishing_pair"] is True
+        assert job.status == "succeeded", job.error
+        assert routing_permission_apply_state(db) == "applied"
+
+
 def test_routing_permission_change_waits_for_forwarding_off_during_management_handoff(client, monkeypatch):
     """A handoff must not expose a new Access link under old forwarding policy.
 

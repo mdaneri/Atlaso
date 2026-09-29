@@ -3,6 +3,7 @@
 import pytest
 
 from atlaso.app.models import RoutingRule
+from atlaso.app.services.routes_wan import render_wan_config
 from atlaso.app.services.routing_permissions import (
     routing_permission_rows,
     validate_routing_permission,
@@ -51,6 +52,20 @@ def rule(name, source, destination, policy="allow", ip_family=0, **changes):
     }
     values.update(changes)
     return RoutingRule(**values)
+
+
+@pytest.mark.parametrize("separator", ["\r", "\r\n", "\v", "\f", "\x85", "\u2028", "\u2029"])
+def test_render_wan_config_keeps_legacy_permission_text_on_one_line(separator):
+    """Persisted text with any line separator cannot become a WAN record."""
+    permission = rule(
+        f"reviewed{separator}[routes]", "eth1", "eth2",
+        description=f"reviewed{separator}[routes]{separator}route=Injected",
+    )
+    config = render_wan_config([], routing_rules=[permission])
+    assert "routing=reviewed [routes]\n" in config
+    assert "  description=reviewed [routes] route=Injected\n" in config
+    assert config.count("route=Injected") == 1
+    assert separator not in config
 
 
 def explicit_row(rows, source, destination, family):
