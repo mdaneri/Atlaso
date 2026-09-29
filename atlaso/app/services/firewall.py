@@ -1,5 +1,6 @@
 """Implement firewall service behavior."""
 
+import hashlib
 import json
 import re
 from ipaddress import ip_network
@@ -633,7 +634,7 @@ def managed_routing_firewall_rules(
                 if not source_networks or not destination_networks:
                     continue
                 rules.append(_routing_firewall_rule(
-                    name=f"routing-default-deny-{_slug(source['name'])}-to-{_slug(destination['name'])}-ipv{version}",
+                    name=_routing_default_deny_name(source["name"], destination["name"], version),
                     destination_interface=destination["name"], policy_phase="deny", action="drop",
                     source_interface=source["name"], source_networks=source_networks,
                     destination_networks=destination_networks, priority=30,
@@ -1402,6 +1403,19 @@ def _slug(value: str) -> str:
     """
     slug = re.sub(r"[^a-z0-9]+", "-", value.strip().lower()).strip("-")
     return slug or "dhcp-scope"
+
+
+def _routing_default_deny_name(source_name: str, destination_name: str, family: int) -> str:
+    """Return a stable bounded name for one directed automatic Access denial.
+
+    Args:
+        source_name: Exact ingress interface identity.
+        destination_name: Exact egress interface identity.
+        family: IP version governed by this rule.
+    """
+    identity = json.dumps([source_name, destination_name, family], ensure_ascii=False, separators=(",", ":"))
+    digest = hashlib.sha256(identity.encode("utf-8")).hexdigest()
+    return f"routing-default-deny-ipv{family}-{digest}"
 
 
 def _ordered_unique(values: list[str]) -> list[str]:

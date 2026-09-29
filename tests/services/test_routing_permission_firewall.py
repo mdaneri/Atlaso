@@ -1,5 +1,7 @@
 """Verify routing denials at the nftables enforcement and upgrade boundaries."""
 
+from ipaddress import ip_network
+
 import pytest
 from sqlalchemy import create_engine, inspect, text
 
@@ -34,6 +36,18 @@ def settings():
     """Enable broad diagnostics and established traffic for precedence checks."""
     return FirewallSettings(enabled=True, allow_established=True, allow_icmp=True,
                             default_input_policy="drop", default_forward_policy="drop", default_output_policy="accept")
+
+
+def default_deny_name(rules: list[FirewallRule], source: str, destination: str, family: int) -> str:
+    """Find one generated default denial by its exact directed family."""
+    return next(
+        rule.name
+        for rule in rules
+        if rule.routing_policy_phase == "deny"
+        and rule.interface_name == source
+        and rule.routing_destination_interface == destination
+        and ip_network(rule.source).version == family
+    )
 
 
 def test_deny_precedes_established_diagnostics_and_overlapping_accepts():
@@ -140,7 +154,7 @@ def test_access_automatic_denial_is_enforced_with_accept_forward_policy(destinat
     config = render_nftables_config(firewall, [broad], generated, replace_atlaso_service_rules=True)
     forward = config.split("chain forward {", 1)[1].split("chain output {", 1)[0]
     for version in (4, 6):
-        marker = f'comment "routing-default-deny-a-to-b-ipv{version}"'
+        marker = f'comment "{default_deny_name(generated, "a", "b", version)}"'
         assert marker in forward
         assert forward.index(marker) < forward.index("ct state established")
         assert forward.index(marker) < forward.index("Atlaso ICMP diagnostics")
@@ -150,6 +164,43 @@ def test_access_automatic_denial_is_enforced_with_accept_forward_policy(destinat
     suspended = managed_routing_firewall_rules(interfaces, vlans, permissions, routing_enabled=False)
     assert not any(item.routing_policy_phase == "deny" for item in suspended)
     assert validate_firewall_state(firewall, [], suspended) == []
+
+
+def test_access_default_deny_names_are_stable_and_unique_for_exact_directed_targets():
+    """Keep generated Access denials distinct despite slug and pair-boundary collisions."""
+    interface_names = ["lab-a", "lab.a", "Lab-a", "LAB-A", "a", "a-to-b", "b", "b-to-c", "c"]
+    interfaces = [
+        PhysicalInterface(
+            name=name,
+            role="access",
+            mode="access",
+            ip_cidr=f"10.{index}.0.1/24",
+            ipv6_cidr=f"2001:db8:{index}::1/64",
+        )
+        for index, name in enumerate(interface_names, start=1)
+    ]
+
+    generated = managed_routing_firewall_rules(interfaces, [])
+    repeated = managed_routing_firewall_rules(interfaces, [])
+    generated_names = [rule.name for rule in generated]
+    assert generated_names == [rule.name for rule in repeated]
+    assert len(generated_names) == len(set(name.lower() for name in generated_names))
+
+    names_by_identity = {}
+    for rule in generated:
+        family = ip_network(rule.source).version
+        identity = (rule.interface_name, rule.routing_destination_interface, family)
+        assert identity not in names_by_identity
+        assert len(rule.name) <= 120
+        assert rule.name.startswith(f"routing-default-deny-ipv{family}-")
+        assert len(rule.name.rsplit("-", 1)[-1]) == 64
+        names_by_identity[identity] = rule.name
+
+    assert names_by_identity[("lab-a", "lab.a", 4)] != names_by_identity[("lab.a", "lab-a", 4)]
+    assert names_by_identity[("lab-a", "lab.a", 4)] != names_by_identity[("LAB-A", "lab.a", 4)]
+    assert names_by_identity[("a", "b-to-c", 4)] != names_by_identity[("a-to-b", "c", 4)]
+    assert names_by_identity[("lab-a", "lab.a", 4)] != names_by_identity[("lab-a", "lab.a", 6)]
+    assert validate_firewall_state(settings(), [], generated) == []
 
 
 @pytest.mark.parametrize("enabled", [False, True])
@@ -163,11 +214,15 @@ def test_explicit_access_allow_suppresses_only_its_directed_family_default(enabl
     interfaces[1].role = "access"
     allow = RoutingRule(id=50, name="Allow IPv4", enabled=enabled, source_interface="a", destination_interface="b", policy="allow", ip_family=4, priority=100)
     generated = managed_routing_firewall_rules(interfaces, vlans, [allow])
-    names = {item.name for item in generated}
-    assert ("routing-default-deny-a-to-b-ipv4" in names) is not enabled
-    assert "routing-default-deny-a-to-b-ipv6" in names
-    assert "routing-default-deny-b-to-a-ipv4" in names
-    assert "routing-default-deny-b-to-a-ipv6" in names
+    identities = {
+        (item.interface_name, item.routing_destination_interface, ip_network(item.source).version)
+        for item in generated
+        if item.routing_policy_phase == "deny"
+    }
+    assert (("a", "b", 4) in identities) is not enabled
+    assert ("a", "b", 6) in identities
+    assert ("b", "a", 4) in identities
+    assert ("b", "a", 6) in identities
     deny = RoutingRule(id=51, name="Deny IPv4", enabled=True, source_interface="a", destination_interface="b", policy="deny", ip_family=4, priority=999)
     config = render_nftables_config(settings(), [], managed_routing_firewall_rules(interfaces, vlans, [allow, deny]), replace_atlaso_service_rules=True)
     if enabled:
