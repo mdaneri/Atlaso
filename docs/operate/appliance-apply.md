@@ -116,14 +116,9 @@ Safe cancellation does not interrupt the component already running. Every helper
 continues to completion. After the component returns, Atlaso skips the remaining components and releases the mutation
 lock when the master task becomes terminal.
 
-An ordinary real Appliance Settings component keeps the management front door online. Before nginx changes, Atlaso
-requires consecutive success from the configured loopback `/openapi.json`; after reload it requires the same upstream
-and the guest-local management address/public-port front door to remain healthy. The active Atlaso worker is not
-restarted. If activation or readiness fails, the helper restores the exact prior nginx and systemd files, reloads the
-restored front door, and fails the component instead of exposing a continuing 502 response. Those snapshots and their
-marker are synced before publication; an interrupted activation is rolled back by the Atlaso service pre-start gate
-before the application can serve again. Before cleanup, the helper records durable readiness or rollback completion;
-prepared state triggers recovery, while terminal state only retries cleanup before any wider transaction begins.
+An ordinary Appliance Settings Apply keeps management access online without restarting the Atlaso worker. It checks
+the front door before and after activation and restores the previous configuration if readiness fails. See the
+[technical reference](../reference/appliance-apply-technical.md) for durable recovery and interruption handling.
 
 The dialog still understands the bounded **Applying management settings; Atlaso is reconnecting to task status.** state
 when following a retained task created by an older release that contains authenticated restart metadata. Current
