@@ -198,7 +198,7 @@ def test_client_seed_installs_fixture_tools_only_when_requested(enabled):
                     "open-vm-tools", "open-vm-tools-openrc", "open-vm-tools-vix"):
         assert (f"  - {package}\n" in data) == enabled
     for command in ("rc-update add open-vm-tools default", "rc-service open-vm-tools start",
-                    "rc-update add local default", "/etc/local.d/atlaso-fixture-lro.start"):
+                    "rc-update add local default"):
         assert (f"  - {command}\n" in data) == enabled
         assert f"{command} || true" not in data
     assert "rc-service dnsmasq" not in data and "rc-service radvd" not in data
@@ -221,9 +221,11 @@ def test_client_seed_installs_fixture_tools_only_when_requested(enabled):
             "ethtool -k eth0 | grep -Eq '^large-receive-offload: off( \\[fixed\\])?$'",
             "ethtool -k eth1 | grep -Eq '^large-receive-offload: off( \\[fixed\\])?$'",
         ]
-        assert commands.index("rc-update add local default") < commands.index(
-            "/etc/local.d/atlaso-fixture-lro.start")
-        assert commands[-1] == "/etc/local.d/atlaso-fixture-lro.start"
+        assert commands[-1] == (
+            "sh -ec 'test -L /etc/runlevels/default/local; "
+            "/etc/local.d/atlaso-fixture-lro.start'"
+        )
+        assert commands.index("rc-update add local default") < len(commands) - 1
         assert "AllowTcpForwarding local" in forwarding_files[0]["content"]
         assert "PermitOpen 192.0.2.10:22 192.0.2.10:443" in forwarding_files[0]["content"]
         assert commands[0] == "/usr/local/sbin/atlaso-private-fixture-sshd"

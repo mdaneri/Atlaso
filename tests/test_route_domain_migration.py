@@ -183,6 +183,63 @@ def test_reclassified_management_link_keeps_live_legacy_lab_sources(monkeypatch,
     assert len([command for command in commands if "del" in command]) == 4
 
 
+def test_removed_vlan_keeps_installed_legacy_domain_before_link_retirement(monkeypatch, tmp_path):
+    """A removed but live VLAN retains its installed domain despite overlapping selectors.
+
+    Args:
+        monkeypatch: Replace native observations and capture migration commands.
+        tmp_path: Owned candidate and installed networkd policy directory.
+    """
+    helper = load_helper_module()
+    candidate = tmp_path / "network.conf"
+    candidate.write_text(
+        "[physical_interfaces]\ninterface=eth1\n  role=access\n  mode=trunk\n"
+        "  admin_state=up\n  mac=02:00:00:00:00:20\n"
+        "[removed_vlan_interfaces]\nvlan=eth1.120\n  parent=eth1\n  vlan_id=120\n",
+        encoding="utf-8",
+    )
+    networkd = tmp_path / "networkd"
+    networkd.mkdir()
+    (networkd / "10-atlaso-eth1.120.network").write_text(
+        "[Match]\nName=eth1.120\n[Network]\nAddress=10.42.2.5/24\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(helper, "NETWORKD_CONFIG_DIR", networkd)
+    monkeypatch.setattr(helper, "NETWORKD_MGMT_CONFIG_PATH", networkd / "00-atlaso-mgmt.network")
+    legacy = [
+        {"family": 4, "priority": priority, "table": table, "source": "10.42.2.0/24",
+         "incoming_interface": "", "protocol": 4}
+        for priority, table in ((1000, 100), (2000, 200))
+    ]
+    native = [
+        {"ifname": "eth1", "address": "02:00:00:00:00:20", "addr_info": []},
+        {"ifname": "eth1.120", "address": "02:00:00:00:00:21", "addr_info": [
+            {"scope": "global", "local": "10.42.2.5", "valid_life_time": 3600},
+        ]},
+    ]
+    commands = []
+    monkeypatch.setattr(helper, "_snapshot_route_domain_rules", lambda: legacy)
+    monkeypatch.setattr(helper, "_network_observation_command", lambda command:
+                        subprocess.CompletedProcess(command, 0, json.dumps(native), ""))
+    monkeypatch.setattr(domains, "reconciliation_lock", nullcontext)
+    monkeypatch.setattr(domains.subprocess, "run", lambda *_args, **_kwargs:
+                        subprocess.CompletedProcess([], 3, b"", b""))
+    monkeypatch.setattr(domains, "read_native", lambda args: native if args == ["address", "show"] else [])
+    monkeypatch.setattr(domains, "run_ip", lambda command: commands.append(command) or "")
+
+    def migrate(command, payload):
+        domains.migrate_legacy_sources(json.loads(payload))
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    monkeypatch.setattr(helper, "_run_with_input", migrate)
+    helper._retire_legacy_source_rules(candidate)
+
+    exact = [command for command in commands if "from" in command and "table" in command
+             and command[command.index("from") + 1] == "10.42.2.5/32"]
+    assert len(exact) == 1
+    assert exact[0][exact[0].index("table") + 1] == "200"
+
+
 def test_overlapping_legacy_source_refuses_replaced_interface(monkeypatch):
     """A same-name MAC replacement cannot claim a reviewed source domain.
 

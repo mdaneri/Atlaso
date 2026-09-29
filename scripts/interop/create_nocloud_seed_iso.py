@@ -100,7 +100,7 @@ ssh_pwauth: true"""
     )
     # VMXNET3 restores LRO on reboot. OpenRC's local service reruns this
     # fixture-only hook at every boot; first boot invokes it explicitly so
-    # cloud-init fails if either interface cannot be prepared.
+    # cloud-init fails if registration or either interface cannot be prepared.
     fixture_lro = (
         "\n  - path: /etc/local.d/atlaso-fixture-lro.start"
         "\n    permissions: '0755'"
@@ -115,7 +115,11 @@ ssh_pwauth: true"""
     )
     # The explicit first-boot invocation must be last in runcmd: cloud-init
     # reports the script's final exit status, even if an earlier command fails.
-    fixture_lro_command = "\n  - /etc/local.d/atlaso-fixture-lro.start" if fixture_mode else ""
+    fixture_lro_command = (
+        "\n  - sh -ec 'test -L /etc/runlevels/default/local; "
+        "/etc/local.d/atlaso-fixture-lro.start'"
+        if fixture_mode else ""
+    )
     # The credential-bearing seed is detached after the first boot. Restrict
     # subsequent boots to the now-absent NoCloud source and its immediate None
     # fallback instead of probing EC2 metadata for four minutes.

@@ -11541,14 +11541,15 @@ def _retire_legacy_source_rules(path: Path | None = None) -> None:
     they must be gone before candidate addresses can appear on any link.
 
     Args:
-        path: Preflighted candidate Network file, providing MAC-bound domain ownership.
+        path: Preflighted candidate Network file, including removed VLANs whose
+            still-live sources require MAC-bound installed-domain ownership.
     """
     legacy = [row for row in _snapshot_route_domain_rules() if not row["incoming_interface"]]
     if not legacy:
         return
     payload: list[dict] | dict = legacy
     if path is not None:
-        physical, vlans, _removed = _parse_network_config(path)
+        physical, vlans, removed = _parse_network_config(path)
         observation = _network_observation_command(["ip", "-j", "address", "show"])
         if observation.returncode:
             raise ValueError("legacy source interface inventory unavailable")
@@ -11566,10 +11567,12 @@ def _retire_legacy_source_rules(path: Path | None = None) -> None:
                 raise ValueError("legacy source interface inventory ambiguous")
             observed[link["ifname"]] = link
         bindings = []
-        for row in [*physical, *vlans]:
+        reviewed_physical = {row.get("name"): row.get("mac", "") for row in physical}
+        for row in [*physical, *vlans, *removed]:
             name = row.get("name", "")
             link = observed.get(name)
-            outgoing = (row.get("role") == "unused" or row.get("mode") == "trunk"
+            removing = row in removed
+            outgoing = (removing or row.get("role") == "unused" or row.get("mode") == "trunk"
                         or row.get("admin_state") == "down")
             if outgoing and link is None:
                 continue
@@ -11589,7 +11592,8 @@ def _retire_legacy_source_rules(path: Path | None = None) -> None:
                 expected = row.get("mac", "")
                 actual = link["address"]
             else:
-                expected = row.get("parent_mac", "")
+                expected = (reviewed_physical.get(row.get("parent", ""), "") if removing
+                            else row.get("parent_mac", ""))
                 parent = observed.get(row.get("parent", ""))
                 actual = parent.get("address", "") if parent is not None else ""
             if not _valid_network_mac(expected) or actual.lower() != expected.lower():
