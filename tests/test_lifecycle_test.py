@@ -821,6 +821,40 @@ def test_routing_wan_only_plan_and_routing_rule_payload():
     }
 
 
+def test_route_role_deny_lifecycle_uses_saved_override_and_restores_generated_behavior():
+    """The focused lifecycle exercises an explicit deny over generated route-role allow."""
+    lifecycle = load_lifecycle_module()
+    args = lifecycle.parse_args(["--password", "test", "--routing-wan-only", "--plan-only"])
+
+    class FakeClient:
+        """Capture only the public Routing Permission API requests."""
+
+        def __init__(self):
+            self.calls = []
+
+        def json_request(self, method, path, *, json_body=None):
+            self.calls.append((method, path, json_body))
+            if method == "GET":
+                return []
+            return {"id": 17, "policy": "deny", "apply_state": "pending"}
+
+        def request(self, method, path):
+            self.calls.append((method, path, None))
+            return 204, "", {}
+
+    client = FakeClient()
+    override = lifecycle.configure_route_role_deny(client, args)
+    restored = lifecycle.remove_route_role_deny(client, override["id"])
+
+    assert override == {"id": 17, "source_interface": f"{args.trunk_interface}.{args.vlan_id}"}
+    assert client.calls[1][0:2] == ("POST", "/api/v1/routing-permissions")
+    assert client.calls[1][2]["policy"] == "deny"
+    assert client.calls[1][2]["ip_family"] == 4
+    assert restored == {"removed_rule_id": 17}
+    assert client.calls[2][0:2] == ("DELETE", "/api/v1/routing-permissions/17")
+    assert 'test "$rc" -ne 0' in lifecycle.client_a_route_role_to_wan_command(args, expect_success=False)
+
+
 def test_oidc_only_plan_is_focused_and_mutually_exclusive():
     """Verify that oidc only plan is focused and mutually exclusive."""
     lifecycle = load_lifecycle_module()
