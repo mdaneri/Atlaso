@@ -1004,7 +1004,7 @@ def render_nftables_config(
             lines.append('    meta l4proto ipv6-icmp accept comment "Atlaso IPv6 ICMP diagnostics"')
         for rule in sorted(
             [item for item in chain_rules if item not in prelude],
-            key=lambda item: (0 if item.routing_policy_phase == "allow" else 1 if item.routing_policy_phase == "automatic" else 2, item.priority),
+            key=lambda item: item.priority,
         ):
             for rendered_rule in _rule_family_variants(rule, source_groups_by_id):
                 lines.append(f"    {_render_rule(rendered_rule, source_groups_by_id)}")

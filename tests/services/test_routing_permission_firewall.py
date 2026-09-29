@@ -60,6 +60,27 @@ def test_deny_precedes_established_diagnostics_and_overlapping_accepts():
     assert 'comment "routing-41-deny-vlan"' not in config.split("chain forward {", 1)[0]
 
 
+@pytest.mark.parametrize("policy", ["allow", "automatic"])
+def test_operator_forward_drop_priority_precedes_routing_accepts(policy):
+    """An operator restriction retains its ordinary lower-priority-first ordering.
+
+    Args:
+        policy: Explicit allow or inherited route-role authorization.
+    """
+    interfaces, vlans = topology()
+    permission = RoutingRule(id=11, name="Allow path", enabled=True, source_interface="a", destination_interface="b",
+                             policy=policy, ip_family=4, priority=100)
+    drop = FirewallRule(name="Operator restriction", direction="forward", action="drop", protocol="tcp",
+                        source="10.0.0.0/24", destination="10.0.1.0/24", destination_port="443",
+                        interface_name="a", enabled=True, priority=0)
+    generated = managed_routing_firewall_rules(interfaces, vlans, [permission])
+    config = render_nftables_config(settings(), [drop], generated, replace_atlaso_service_rules=True)
+    forward = config.split("chain forward {", 1)[1].split("chain output {", 1)[0]
+    assert forward.index('comment "Operator restriction"') < forward.index('comment "route-a-to-b"')
+    if policy == "allow":
+        assert forward.index('comment "Operator restriction"') < forward.index('comment "routing-11-allow-path"')
+
+
 @pytest.mark.parametrize("policy,expected", [("allow", True), ("automatic", False), ("deny", True)])
 def test_automatic_revert_and_dual_stack_are_exact(policy, expected):
     """Inheritance removes only the override and retains route-role admission."""
