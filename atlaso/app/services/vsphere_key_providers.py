@@ -361,6 +361,7 @@ def render_provider_config(settings: KmsSettings, providers: list[VsphereKeyProv
     Args:
         settings: Appliance-wide listener settings.
         providers: Provider trust graph to render.
+        server_fingerprint: Issued KMS server identity used for immutable deployment paths.
 
     Returns:
         Deterministic JSON desired state.

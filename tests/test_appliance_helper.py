@@ -12320,6 +12320,7 @@ def test_kms_helper_apply_installs_atlaso_kmip_service(monkeypatch, tmp_path, le
     """Verify that kms helper apply installs atlaso kmip service.
 
     Args:
+        legacy_active: Whether the legacy listener is active before replacement.
         monkeypatch: Pytest fixture used to replace dependencies for the test.
         tmp_path: Temporary directory provided by pytest for isolated filesystem state.
     """
@@ -12422,7 +12423,12 @@ def test_kms_helper_apply_installs_atlaso_kmip_service(monkeypatch, tmp_path, le
 
     if legacy_active:
         def fail_upgrade_restart(command, **kwargs):
-            """Exercise rollback before any replacement unit existed."""
+            """Exercise rollback before any replacement unit existed.
+
+            Args:
+                command: Service command being simulated.
+                **kwargs: Forwarded bounded command options.
+            """
             if command == ["systemctl", "restart", "atlaso-kmip.service"]:
                 commands.append(command)
                 return subprocess.CompletedProcess(command, 1, "", "")
@@ -12489,7 +12495,15 @@ def test_kms_helper_apply_installs_atlaso_kmip_service(monkeypatch, tmp_path, le
         original_method = getattr(Path, failed_method)
 
         def fail_snapshot(path, *args, failed_name=failed_name, original_method=original_method, **kwargs):
-            """Simulate a full filesystem or permission failure before cutover."""
+            """Simulate a full filesystem or permission failure before cutover.
+
+            Args:
+                path: Request or snapshot path being exercised.
+                failed_name: Snapshot filename selected for fault injection.
+                original_method: Original filesystem method used for other paths.
+                *args: Forwarded filesystem method arguments.
+                **kwargs: Forwarded bounded command options.
+            """
             if path.parent.name == ".cutover-rollback" and path.name == failed_name:
                 raise OSError("snapshot unavailable")
             return original_method(path, *args, **kwargs)
@@ -12512,7 +12526,12 @@ def test_kms_helper_apply_installs_atlaso_kmip_service(monkeypatch, tmp_path, le
     failed_restart = False
 
     def fail_first_restart(command, **kwargs):
-        """Simulate a failed cutover followed by successful recovery."""
+        """Simulate a failed cutover followed by successful recovery.
+
+        Args:
+            command: Service command being simulated.
+            **kwargs: Forwarded bounded command options.
+        """
         nonlocal failed_restart
         if command == ["systemctl", "restart", "atlaso-kmip.service"] and not failed_restart:
             commands.append(command)
@@ -12535,7 +12554,12 @@ def test_kms_helper_apply_installs_atlaso_kmip_service(monkeypatch, tmp_path, le
     health_samples = 0
 
     def fail_delayed_startup(command, **kwargs):
-        """An initially active replacement exits during the stability window."""
+        """An initially active replacement exits during the stability window.
+
+        Args:
+            command: Service command being simulated.
+            **kwargs: Forwarded bounded command options.
+        """
         nonlocal health_samples
         if command == ["systemctl", "is-active", "--quiet", "atlaso-kmip.service"]:
             health_samples += 1
@@ -12557,7 +12581,15 @@ def test_kms_helper_apply_installs_atlaso_kmip_service(monkeypatch, tmp_path, le
         cutover_failed = False
 
         def fail_rotation_with_prior_state(command, *, prior_active=prior_active, prior_enabled=prior_enabled, state_commands=state_commands, **kwargs):
-            """Restore service activation and boot enablement independently."""
+            """Restore service activation and boot enablement independently.
+
+            Args:
+                command: Service command being simulated.
+                prior_active: Whether the previous listener was active.
+                prior_enabled: Whether the previous listener was enabled at boot.
+                state_commands: Recorded service commands for this prior-state scenario.
+                **kwargs: Forwarded bounded command options.
+            """
             nonlocal cutover_failed
             state_commands.append(command)
             if command[:3] == ["systemctl", "show", "atlaso-kmip.service"]:
@@ -12585,7 +12617,15 @@ def test_kms_helper_apply_installs_atlaso_kmip_service(monkeypatch, tmp_path, le
     for failed_unit in ("atlaso-kmip.service", "atlaso-kms.service"):
         for probe_code, probe_output in ((1, ""), (0, "LoadState=loaded\nActiveState=unknown\nUnitFileState=disabled\n")):
             def ambiguous_probe(command, *, failed_unit=failed_unit, probe_code=probe_code, probe_output=probe_output, **kwargs):
-                """Reject manager errors and unrecognized prior unit states."""
+                """Reject manager errors and unrecognized prior unit states.
+
+                Args:
+                    command: Service command being simulated.
+                    failed_unit: Service unit selected for probe failure.
+                    probe_code: Simulated manager query exit code.
+                    probe_output: Simulated manager state response.
+                    **kwargs: Forwarded bounded command options.
+                """
                 if command[:3] == ["systemctl", "show", failed_unit]:
                     return subprocess.CompletedProcess(command, probe_code, probe_output, "")
                 return fake_run(command, **kwargs)
@@ -12600,7 +12640,12 @@ def test_kms_helper_apply_installs_atlaso_kmip_service(monkeypatch, tmp_path, le
             assert not (managed_root / "kmip" / ".cutover-rollback").exists()
 
     def fail_all_restarts(command, **kwargs):
-        """Leave a durable snapshot when the previous service cannot restart."""
+        """Leave a durable snapshot when the previous service cannot restart.
+
+        Args:
+            command: Service command being simulated.
+            **kwargs: Forwarded bounded command options.
+        """
         if command in (["systemctl", "restart", "atlaso-kmip.service"], ["systemctl", "restart", "atlaso-kms.service"]):
             return subprocess.CompletedProcess(command, 1, "", "")
         return fake_run(command, **kwargs)

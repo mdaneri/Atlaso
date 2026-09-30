@@ -1730,7 +1730,17 @@ def build_routers(
         entry_id: int,
         confirmed_https_fingerprint: str,
     ):
-        """Resolve one Vault credential after out-of-band HTTPS confirmation."""
+        """Resolve one Vault credential after out-of-band HTTPS confirmation.
+
+        Args:
+            db: Active database session.
+            identity: Authenticated administrator identity.
+            host: Normalized vCenter hostname or address.
+            cluster_id: Registered Atlaso KMIP cluster identifier.
+            vault_id: Selected Vault identifier.
+            entry_id: Selected Vault entry identifier.
+            confirmed_https_fingerprint: Out-of-band confirmed HTTPS certificate fingerprint.
+        """
         observed = certificate_fingerprint(vcenter_https_leaf(host))
         if observed != confirmed_https_fingerprint.strip().upper():
             raise EnrollmentError(
@@ -1777,7 +1787,14 @@ def build_routers(
         csrf: str = Form(...),
         identity: Identity = Depends(require_session_identity),
     ) -> JSONResponse:
-        """Show the vCenter HTTPS fingerprint before any credential access."""
+        """Show the vCenter HTTPS fingerprint before any credential access.
+
+        Args:
+            request: Incoming HTTP request.
+            hostname: vCenter hostname or address supplied by the administrator.
+            csrf: CSRF token authorizing this request.
+            identity: Authenticated administrator identity.
+        """
         verify_csrf(request, csrf)
         if not identity.has_role("admin"):
             raise HTTPException(status_code=403, detail="Administrator role required.")
@@ -1799,7 +1816,19 @@ def build_routers(
         identity: Identity = Depends(require_session_identity),
         db: Session = Depends(get_db),
     ) -> JSONResponse:
-        """Inspect vCenter's public KMIP client identity without trusting it."""
+        """Inspect vCenter's public KMIP client identity without trusting it.
+
+        Args:
+            request: Incoming HTTP request.
+            hostname: vCenter hostname or address supplied by the administrator.
+            cluster_id: Registered Atlaso KMIP cluster identifier.
+            vault_id: Selected Vault identifier.
+            entry_id: Selected Vault entry identifier.
+            confirmed_https_fingerprint: Out-of-band confirmed HTTPS certificate fingerprint.
+            csrf: CSRF token authorizing this request.
+            identity: Authenticated administrator identity.
+            db: Active database session.
+        """
         verify_csrf(request, csrf)
         if not identity.has_role("admin"):
             raise HTTPException(status_code=403, detail="Administrator role required.")
@@ -1841,7 +1870,23 @@ def build_routers(
         identity: Identity = Depends(require_session_identity),
         db: Session = Depends(get_db),
     ) -> JSONResponse:
-        """Approve one freshly rechecked client certificate for one provider."""
+        """Approve one freshly rechecked client certificate for one provider.
+
+        Args:
+            request: Incoming HTTP request.
+            provider_id: Provider namespace receiving the approved certificate.
+            vcenter_id: Existing trusted vCenter identifier when refreshing.
+            name: Reviewed trusted vCenter display name.
+            hostname: vCenter hostname or address supplied by the administrator.
+            cluster_id: Registered Atlaso KMIP cluster identifier.
+            vault_id: Selected Vault identifier.
+            entry_id: Selected Vault entry identifier.
+            confirmed_https_fingerprint: Out-of-band confirmed HTTPS certificate fingerprint.
+            expected_client_fingerprint: Public client certificate fingerprint approved after inspection.
+            csrf: CSRF token authorizing this request.
+            identity: Authenticated administrator identity.
+            db: Active database session.
+        """
         verify_csrf(request, csrf)
         if not identity.has_role("admin"):
             raise HTTPException(status_code=403, detail="Administrator role required.")

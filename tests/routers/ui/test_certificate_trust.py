@@ -446,7 +446,12 @@ def test_public_ca_root_page_is_unauthenticated(client):
 def test_vcenter_enrollment_requires_confirmed_https_before_vault_use(
     client, monkeypatch
 ) -> None:
-    """A changed HTTPS identity cannot trigger Vault secret decryption."""
+    """A changed HTTPS identity cannot trigger Vault secret decryption.
+
+    Args:
+        client: Isolated authenticated HTTP test client.
+        monkeypatch: Fixture replacing public probing and secret access.
+    """
     from atlaso.app.routers.ui import certificate_trust as transport
 
     csrf = _login(client)
@@ -490,7 +495,12 @@ def test_vcenter_enrollment_requires_confirmed_https_before_vault_use(
 def test_vcenter_enrollment_approval_binds_only_inspected_client_to_provider(
     client, monkeypatch
 ) -> None:
-    """Approval stores an exact certificate in one provider's desired state."""
+    """Approval stores an exact certificate in one provider's desired state.
+
+    Args:
+        client: Isolated authenticated HTTP test client.
+        monkeypatch: Fixture replacing vCenter discovery.
+    """
     from atlaso.app.routers.ui import certificate_trust as transport
 
     csrf = _login(client)

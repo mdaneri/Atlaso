@@ -405,7 +405,11 @@ def test_ca_apply_payload_includes_crl_for_revoked_certificates():
 
 @pytest.mark.parametrize("hostname", ["kms.atlaso.internal", ".".join(["a" * 63] * 3 + ["b" * 61])])
 def test_kms_ca_payload_stages_certificate_by_fingerprint(hostname):
-    """Keep the previous KMS identity available during certificate rotation."""
+    """Keep the previous KMS identity available during certificate rotation.
+
+    Args:
+        hostname: KMS certificate hostname, including the maximum DNS name length.
+    """
     settings = CaSettings(enabled=True, publish_crl=False, storage_path="/etc/atlaso/ca")
     certificate = CaCertificate(
         enabled=True,

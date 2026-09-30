@@ -40,6 +40,12 @@ class _FakeVcenter:
     def __init__(
         self, certificate: str, *, endpoint: str = "kms.atlaso.example.test"
     ) -> None:
+        """Initialize public identity and cluster responses for the fake vCenter.
+
+        Args:
+            certificate: Public certificate returned by the fake vCenter.
+            endpoint: KMIP hostname registered in the fake cluster.
+        """
         self.certificate = certificate
         self.endpoint = endpoint
         self.headers: dict[str, str] = {}
@@ -49,9 +55,19 @@ class _FakeVcenter:
         return self
 
     def __exit__(self, *_args):
+        """Close the fake session without suppressing exceptions.
+
+        Args:
+            *_args: Context-manager exception details ignored by the fake session.
+        """
         pass
 
     def get(self, path: str) -> httpx.Response:
+        """Return the fake managed-object service metadata.
+
+        Args:
+            path: Request or snapshot path being exercised.
+        """
         self.calls.append(path)
         return httpx.Response(
             200,
@@ -65,6 +81,12 @@ class _FakeVcenter:
         )
 
     def post(self, path: str, *, json=None) -> httpx.Response:
+        """Emulate login, cluster discovery, certificate retrieval, and logout.
+
+        Args:
+            path: Request or snapshot path being exercised.
+            json: Request payload inspected by the fake vCenter.
+        """
         self.calls.append(path)
         if path.endswith("/Login"):
             assert json == {"userName": "admin", "password": "test-secret"}
@@ -95,6 +117,11 @@ class _FakeVcenter:
 def test_discovery_reads_only_registered_atlaso_cluster_and_logs_out(
     monkeypatch,
 ) -> None:
+    """Verify discovery checks the registered Atlaso endpoint and logs out.
+
+    Args:
+        monkeypatch: Fixture replacing vCenter network calls.
+    """
     pem = _client_certificate()
     fake = _FakeVcenter(pem)
     monkeypatch.setattr(
@@ -128,6 +155,11 @@ def test_discovery_reads_only_registered_atlaso_cluster_and_logs_out(
 def test_discovery_rejects_wrong_atlaso_endpoint_before_client_certificate(
     monkeypatch,
 ) -> None:
+    """Reject a cluster targeting another endpoint before reading its certificate.
+
+    Args:
+        monkeypatch: Fixture replacing vCenter network calls.
+    """
     fake = _FakeVcenter(_client_certificate(), endpoint="other.example.test")
     monkeypatch.setattr(
         enrollment, "vcenter_https_leaf", lambda _host: b"test-https-leaf"
@@ -153,6 +185,11 @@ def test_discovery_rejects_wrong_atlaso_endpoint_before_client_certificate(
 def test_discovery_rejects_changed_https_identity_before_authentication(
     monkeypatch,
 ) -> None:
+    """Reject a changed HTTPS identity before sending credentials.
+
+    Args:
+        monkeypatch: Fixture replacing vCenter network calls.
+    """
     monkeypatch.setattr(
         enrollment, "vcenter_https_leaf", lambda _host: b"unexpected-leaf"
     )

@@ -17,7 +17,12 @@ KMS_DNS_RECORD_DESCRIPTION = "Atlaso app-owned KMS/KMIP endpoint record."
 
 
 def kms_server_certificate_paths(certificate_name: str, fingerprint: str) -> tuple[str, str, str]:
-    """Return immutable deployment paths for one CA-issued KMS identity."""
+    """Return immutable deployment paths for one CA-issued KMS identity.
+
+    Args:
+        certificate_name: Stable CA certificate basename.
+        fingerprint: Full SHA-256 certificate fingerprint.
+    """
     if not re.fullmatch(r"[A-Za-z0-9_.-]+", certificate_name) or not re.fullmatch(r"[0-9a-f]{64}", fingerprint):
         raise ValueError("KMS server certificate identity is invalid.")
     # Reserve room for the fingerprint and longest suffix within NAME_MAX=255.

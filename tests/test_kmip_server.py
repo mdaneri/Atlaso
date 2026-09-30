@@ -574,6 +574,7 @@ def test_configuration_accepts_no_provider_for_certificate_only_bootstrap(tmp_pa
     """An empty provider map authorizes no KMIP key operations.
 
     Args:
+        enabled: Whether the certificate-only listener is enabled.
         tmp_path: Temporary directory provided by pytest for isolated filesystem state.
     """
     document = {

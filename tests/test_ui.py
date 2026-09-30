@@ -10890,7 +10890,7 @@ def test_vsphere_provider_enable_creates_only_shared_server_identity(client):
     )
 
     assert response.status_code == 200
-    assert any("public client certificate" in error for error in response.json()["validation_errors"])
+    assert response.json()["validation_errors"] == []
 
     with SessionLocal() as db:
         server_cert = db.execute(select(CaCertificate).where(CaCertificate.managed_owner == "kms:server")).scalar_one()

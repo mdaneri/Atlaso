@@ -39,7 +39,12 @@ class DiscoveredClient:
 
 
 def vcenter_https_leaf(host: str, *, timeout: float = 8.0) -> bytes:
-    """Probe only the public HTTPS leaf; callers must confirm its fingerprint."""
+    """Probe only the public HTTPS leaf; callers must confirm its fingerprint.
+
+    Args:
+        host: Normalized vCenter hostname or address.
+        timeout: Maximum seconds allowed for the public certificate probe.
+    """
     host = normalize_vcenter_hostname(host)
     if not host:
         raise EnrollmentError("Enter a vCenter hostname or address.")
@@ -61,12 +66,23 @@ def vcenter_https_leaf(host: str, *, timeout: float = 8.0) -> bytes:
 
 
 def certificate_fingerprint(leaf: bytes) -> str:
-    """Return an uppercase, colon-separated SHA-256 fingerprint."""
+    """Return an uppercase, colon-separated SHA-256 fingerprint.
+
+    Args:
+        leaf: Public DER-encoded HTTPS certificate.
+    """
     digest = hashlib.sha256(leaf).hexdigest().upper()
     return ":".join(digest[index : index + 2] for index in range(0, len(digest), 2))
 
 
 def _reference(content: dict, field: str, expected_type: str) -> str:
+    """Validate and return a managed-object reference from service metadata.
+
+    Args:
+        content: Decoded service metadata.
+        field: Metadata field containing the managed-object reference.
+        expected_type: Required managed-object type.
+    """
     value = content.get(field)
     if not isinstance(value, dict) or value.get("type") != expected_type:
         raise EnrollmentError(
@@ -79,6 +95,11 @@ def _reference(content: dict, field: str, expected_type: str) -> str:
 
 
 def _json(response: httpx.Response) -> object:
+    """Decode a bounded successful vCenter response.
+
+    Args:
+        response: Bounded vCenter HTTP response.
+    """
     if response.status_code < 200 or response.status_code >= 300:
         raise EnrollmentError("The vCenter KMIP discovery request failed.")
     if len(response.content) > 262_144:
@@ -90,6 +111,11 @@ def _json(response: httpx.Response) -> object:
 
 
 def _pinned_context(leaf: bytes) -> ssl.SSLContext:
+    """Trust only the inspected public leaf for the discovery session.
+
+    Args:
+        leaf: Public DER-encoded HTTPS certificate.
+    """
     certificate = x509.load_der_x509_certificate(leaf)
     context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
     context.minimum_version = ssl.TLSVersion.TLSv1_2
@@ -116,6 +142,15 @@ def discover_vcenter_client(
 
     The returned certificate remains untrusted until an administrator approves
     its exact fingerprint for one Atlaso provider and applies desired state.
+
+    Args:
+        host: Normalized vCenter hostname or address.
+        cluster_id: Registered Atlaso KMIP cluster identifier.
+        username: Vault account name used for discovery.
+        password: Password held in memory for the pinned session.
+        confirmed_https_fingerprint: Out-of-band confirmed HTTPS certificate fingerprint.
+        atlaso_host: Expected Atlaso KMIP endpoint hostname.
+        atlaso_port: Expected Atlaso KMIP listener port.
     """
     host = normalize_vcenter_hostname(host)
     atlaso_host = normalize_vcenter_hostname(atlaso_host)
