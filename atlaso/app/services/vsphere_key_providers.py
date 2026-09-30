@@ -31,6 +31,7 @@ from atlaso.app.services.kms import (
     KMS_DEFAULT_DATABASE_PATH,
     KMS_DEFAULT_KEK_PATH,
     KMS_SERVER_CERT_BASE,
+    kms_server_certificate_paths,
 )
 
 MAX_PUBLIC_CERTIFICATE_BYTES = 65_536
@@ -354,7 +355,7 @@ def validate_provider_state(providers: list[VsphereKeyProvider]) -> list[str]:
     return list(dict.fromkeys(errors))
 
 
-def render_provider_config(settings: KmsSettings, providers: list[VsphereKeyProvider]) -> str:
+def render_provider_config(settings: KmsSettings, providers: list[VsphereKeyProvider], *, server_fingerprint: str = "") -> str:
     """Render the bounded daemon configuration for all enabled providers.
 
     Args:
@@ -365,6 +366,10 @@ def render_provider_config(settings: KmsSettings, providers: list[VsphereKeyProv
         Deterministic JSON desired state.
     """
     certificate_name = safe_certificate_name(settings.server_certificate or settings.hostname)
+    certificate_path = f"{KMS_SERVER_CERT_BASE}/{certificate_name}.crt"
+    private_key_path = f"{KMS_SERVER_CERT_BASE}/{certificate_name}.key"
+    if server_fingerprint:
+        certificate_path, private_key_path, _ = kms_server_certificate_paths(certificate_name, server_fingerprint)
     listen_addresses = split_addresses(settings.listen_address)
     rendered_listen_addresses = listen_addresses if settings.enabled and listen_addresses else ["127.0.0.1"]
     rendered_providers = []
@@ -396,8 +401,8 @@ def render_provider_config(settings: KmsSettings, providers: list[VsphereKeyProv
         "enabled": bool(settings.enabled),
         "listen": {"addresses": rendered_listen_addresses, "port": settings.port},
         "tls": {
-            "certificate_path": f"{KMS_SERVER_CERT_BASE}/{certificate_name}.crt",
-            "private_key_path": f"{KMS_SERVER_CERT_BASE}/{certificate_name}.key",
+            "certificate_path": certificate_path,
+            "private_key_path": private_key_path,
             "ca_path": "/etc/atlaso/kmip/client-trust.pem",
         },
         "store": {

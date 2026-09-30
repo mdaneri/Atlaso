@@ -12441,6 +12441,46 @@ def test_kms_helper_apply_installs_atlaso_kmip_service(monkeypatch, tmp_path):
         assert kms_credential_path.stat().st_mode & 0o777 == 0o600
         assert runtime_trust_path.stat().st_mode & 0o777 == 0o640
 
+    previous_config = (managed_root / "kmip" / "server.json").read_bytes()
+    previous_trust = runtime_trust_path.read_bytes()
+    previous_credential = kms_credential_path.read_bytes()
+    changed_config = json.loads(config_path.read_text(encoding="utf-8"))
+    changed_config["providers"][0]["name"] = "Replacement provider"
+    config_path.write_text(json.dumps(changed_config), encoding="utf-8")
+    trust_path.write_text("-----BEGIN CERTIFICATE-----\nnew-root\n-----END CERTIFICATE-----\n", encoding="utf-8")
+    failed_restart = False
+
+    def fail_first_restart(command, **kwargs):
+        """Simulate a failed cutover followed by successful recovery."""
+        nonlocal failed_restart
+        commands.append(command)
+        if command == ["systemctl", "restart", "atlaso-kmip.service"] and not failed_restart:
+            failed_restart = True
+            return subprocess.CompletedProcess(command, 1, "", "")
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    monkeypatch.setattr(helper, "_run", fail_first_restart)
+    assert helper._handle_kms("apply", [str(config_path)]) == 1
+    assert failed_restart
+    assert (managed_root / "kmip" / "server.json").read_bytes() == previous_config
+    assert runtime_trust_path.read_bytes() == previous_trust
+    assert kms_credential_path.read_bytes() == previous_credential
+    assert commands.count(["systemctl", "restart", "atlaso-kmip.service"]) >= 3
+    assert not (managed_root / "kmip" / ".cutover-rollback").exists()
+
+    def fail_all_restarts(command, **kwargs):
+        """Leave a durable snapshot when the previous service cannot restart."""
+        if command == ["systemctl", "restart", "atlaso-kmip.service"]:
+            return subprocess.CompletedProcess(command, 1, "", "")
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    monkeypatch.setattr(helper, "_run", fail_all_restarts)
+    assert helper._handle_kms("apply", [str(config_path)]) == 1
+    rollback_dir = managed_root / "kmip" / ".cutover-rollback"
+    assert (rollback_dir / "server.json").read_bytes() == previous_config
+    assert json.loads((rollback_dir / "state.json").read_text(encoding="utf-8")) == {"was_active": True}
+    assert helper._handle_kms("apply", [str(config_path)]) == 2
+
 
 def test_kms_helper_rejects_symlinked_staged_public_trust_bundle(monkeypatch, tmp_path):
     """Verify staged vCenter trust cannot escape through a symbolic link.

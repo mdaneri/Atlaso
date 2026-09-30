@@ -78,6 +78,23 @@ Settings backups preserve public certificate history, including certificates tha
 Restore revalidates each PEM body and exact fingerprint while retaining its expired status; an expired record never
 becomes usable trust merely because it was restored.
 
+Atlaso CA issues the KMS server certificate automatically. On renewal, CA Apply deploys the new certificate and
+private key under paths containing that certificate's SHA-256 fingerprint. Appliance Apply then switches the KMIP
+service to those paths. The helper checks that the restarted service is active and restores the previous config,
+client trust bundle, runtime credential, and service unit if cutover fails. The previous server certificate files
+remain available for that rollback. After a successful server certificate rotation, refresh the KMS server trust
+in vCenter as required by its selected KMS trust mode.
+If automatic recovery cannot restart the prior service, the helper preserves a root-only snapshot at
+`/etc/atlaso/kmip/.cutover-rollback` and blocks another apply. On the appliance console, inspect
+`journalctl -u atlaso-kmip.service` and the snapshot's `state.json`. Restore `server.json` and `client-trust.pem` to
+their matching files in `/etc/atlaso/kmip/` with owner `root:atlaso-kmip` and mode `0640`; restore `credential` to
+`/etc/atlaso/kmip/atlaso-secrets-key.cred` with owner `root:root` and mode `0600`; restore `service-unit` to
+`/etc/systemd/system/atlaso-kmip.service` with owner `root:root` and mode `0644`. Only files present in the snapshot
+existed before cutover. Run `systemctl daemon-reload`; restart `atlaso-kmip.service` and check `systemctl is-active`
+if `state.json` says it was active, otherwise stop and disable it. Verify the restored service before removing the
+snapshot directory and retrying Appliance Apply. The prior fingerprint-specific server certificate and key remain
+at their original paths.
+
 ## Health and lifecycle counts
 
 **Health & lifecycle** reports saved provider state, apply readiness, shared-daemon state, and authenticated redacted

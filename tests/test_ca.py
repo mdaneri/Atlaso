@@ -1,5 +1,6 @@
 """Test ca behavior."""
 
+import json
 from pathlib import Path
 
 import pytest
@@ -400,6 +401,31 @@ def test_ca_apply_payload_includes_crl_for_revoked_certificates():
     assert payload["root"]["crl_path"].endswith("/atlaso-ca.crl")
     assert "BEGIN X509 CRL" in payload["root"]["crl_pem"]
     assert payload["certificates"] == []
+
+
+def test_kms_ca_payload_stages_certificate_by_fingerprint():
+    """Keep the previous KMS identity available during certificate rotation."""
+    settings = CaSettings(enabled=True, publish_crl=False, storage_path="/etc/atlaso/ca")
+    certificate = CaCertificate(
+        enabled=True,
+        status="issued",
+        managed_owner="kms:server",
+        common_name="kms.atlaso.internal",
+        fingerprint="b" * 64,
+        cert_path="/etc/atlaso/kmip/certs/kms.atlaso.internal.crt",
+        key_path="/etc/atlaso/kmip/certs/kms.atlaso.internal.key",
+        chain_path="/etc/atlaso/kmip/certs/kms.atlaso.internal-chain.pem",
+    )
+    payload = json.loads(render_ca_apply_payload(settings, [certificate], include_private_keys=False))
+    deployed = payload["certificates"][0]
+    assert deployed["cert_path"].endswith(f"-{'b' * 64}.crt")
+    assert deployed["key_path"].endswith(f"-{'b' * 64}.key")
+    assert deployed["chain_path"].endswith(f"-{'b' * 64}-chain.pem")
+    assert certificate.cert_path == "/etc/atlaso/kmip/certs/kms.atlaso.internal.crt"
+    certificate.status = "planned"
+    certificate.fingerprint = ""
+    planned = json.loads(render_ca_apply_payload(settings, [certificate], include_private_keys=False))
+    assert planned["certificates"][0]["cert_path"] == certificate.cert_path
 
 
 def test_existing_root_ca_material_is_not_rotated_by_identity_edits():

@@ -5254,7 +5254,19 @@ def kms_context(db: Session, *, reconcile: bool = True, include_runtime_counts: 
         for trusted in trusted_vcenters
         for certificate in trusted.certificates
     ]
-    config_preview = render_provider_config(settings, providers)
+    server_certificate = db.execute(
+        select(CaCertificate)
+        .where(CaCertificate.managed_owner == "kms:server")
+        .order_by(CaCertificate.id.desc())
+    ).scalars().first()
+    config_preview = render_provider_config(
+        settings, providers,
+        server_fingerprint=(
+            server_certificate.fingerprint
+            if server_certificate and server_certificate.enabled and server_certificate.status == "issued"
+            else ""
+        ),
+    )
     trust_bundle = render_client_trust_bundle(db, providers)
     validation_errors = [
         *ca_state_errors,
@@ -5277,11 +5289,6 @@ def kms_context(db: Session, *, reconcile: bool = True, include_runtime_counts: 
             validation_errors.append("KMS cannot be activated until Certificate Authority state is healthy.")
         elif not ca_certificate_available(db, "kms:server"):
             validation_errors.append("KMS requires an issued CA-managed server certificate before apply.")
-    server_certificate = db.execute(
-        select(CaCertificate)
-        .where(CaCertificate.managed_owner == "kms:server")
-        .order_by(CaCertificate.id.desc())
-    ).scalars().first()
     runtime = service_runtime_status(db, "kms")
     status_snapshot = runtime_status_snapshot() if include_runtime_counts else {}
     runtime_counts = status_snapshot.get("providers")

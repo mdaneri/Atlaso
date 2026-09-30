@@ -6372,43 +6372,75 @@ def _handle_kms(action: str, args: list[str]) -> int:
     os.chown(KMS_CONFIG_DIR, 0, group.gr_gid)
     staged_trust_path = KMS_APPLY_DIR / KMS_STAGED_CLIENT_TRUST_PATH.name
     runtime_trust_path = KMS_CONFIG_DIR / KMS_CLIENT_TRUST_PATH.name
-    shutil.copyfile(staged_trust_path, runtime_trust_path)
-    os.chmod(runtime_trust_path, 0o640)
-    os.chown(runtime_trust_path, 0, group.gr_gid)
-    shutil.copy2(config_path, KMS_CONFIG_PATH)
-    os.chmod(KMS_CONFIG_PATH, 0o640)
-    os.chown(KMS_CONFIG_PATH, 0, group.gr_gid)
-    try:
-        _install_kms_credential()
-    except ValueError as exc:
-        print(str(exc), file=sys.stderr)
+    cutover_paths = (runtime_trust_path, KMS_CONFIG_PATH, KMS_CREDENTIAL_PATH, KMS_SERVICE_PATH)
+    previous_files = {
+        path: (path.read_bytes(), path.stat().st_mode & 0o777, path.stat().st_uid, path.stat().st_gid)
+        if path.is_file() else None
+        for path in cutover_paths
+    }
+    rollback_dir = KMS_CONFIG_DIR / ".cutover-rollback"
+    if rollback_dir.exists():
+        print("KMS recovery snapshot exists; reconcile it before another apply.", file=sys.stderr)
         return 2
-    _install_kms_service(KMS_CONFIG_PATH)
-    retire_legacy = _run(["systemctl", "disable", "--now", "atlaso-kms.service"])
-    print(retire_legacy.stdout, end="")
-    print(retire_legacy.stderr, end="", file=sys.stderr)
-    if retire_legacy.returncode not in {0, 1}:
-        return retire_legacy.returncode
-    daemon_reload = _run(["systemctl", "daemon-reload"])
-    print(daemon_reload.stdout, end="")
-    print(daemon_reload.stderr, end="", file=sys.stderr)
-    if daemon_reload.returncode != 0:
-        return daemon_reload.returncode
-    capture = _run([str(ATLASO_VENV_PYTHON_PATH), "-I", "-m",
-                    "atlaso.app.services.external_history_lifecycle", "kms-cutover"], timeout=120)
-    if capture.returncode != 0:
-        print("KMS log history cutover failed; recovery state was preserved.", file=sys.stderr)
-        return capture.returncode
-    enable = _run(["systemctl", "enable", "atlaso-kmip.service"])
-    print(enable.stdout, end="")
-    print(enable.stderr, end="", file=sys.stderr)
-    if enable.returncode != 0:
-        return enable.returncode
-    restart = _run(["systemctl", "restart", "atlaso-kmip.service"])
-    print(restart.stdout, end="")
-    print(restart.stderr, end="", file=sys.stderr)
-    if restart.returncode != 0:
-        return restart.returncode
+    rollback_dir.mkdir(mode=0o700)
+    for name, path in zip(("client-trust.pem", "server.json", "credential", "service-unit"), cutover_paths, strict=True):
+        previous = previous_files[path]
+        if previous is not None:
+            backup = rollback_dir / name
+            backup.write_bytes(previous[0])
+            backup.chmod(0o600)
+    was_active = _run(["systemctl", "is-active", "--quiet", "atlaso-kmip.service"], timeout=30).returncode == 0
+    state_backup = rollback_dir / "state.json"
+    state_backup.write_text(json.dumps({"was_active": was_active}, sort_keys=True), encoding="utf-8")
+    state_backup.chmod(0o600)
+    try:
+        shutil.copyfile(staged_trust_path, runtime_trust_path)
+        os.chmod(runtime_trust_path, 0o640)
+        os.chown(runtime_trust_path, 0, group.gr_gid)
+        shutil.copy2(config_path, KMS_CONFIG_PATH)
+        os.chmod(KMS_CONFIG_PATH, 0o640)
+        os.chown(KMS_CONFIG_PATH, 0, group.gr_gid)
+        _install_kms_credential()
+        _install_kms_service(KMS_CONFIG_PATH)
+        for command in (["systemctl", "daemon-reload"],
+                        [str(ATLASO_VENV_PYTHON_PATH), "-I", "-m",
+                         "atlaso.app.services.external_history_lifecycle", "kms-cutover"],
+                        ["systemctl", "enable", "atlaso-kmip.service"],
+                        ["systemctl", "restart", "atlaso-kmip.service"],
+                        ["systemctl", "is-active", "--quiet", "atlaso-kmip.service"]):
+            completed = _run(command, timeout=120 if "kms-cutover" in command else 30)
+            if completed.returncode != 0:
+                raise RuntimeError("KMS cutover or health check failed.")
+        retire_legacy = _run(["systemctl", "disable", "--now", "atlaso-kms.service"], timeout=30)
+        if retire_legacy.returncode not in {0, 1}:
+            raise RuntimeError("KMS legacy service retirement failed.")
+    except (OSError, ValueError, RuntimeError, subprocess.TimeoutExpired):
+        try:
+            for path, previous in previous_files.items():
+                if previous is None:
+                    path.unlink(missing_ok=True)
+                    continue
+                contents, mode, uid, gid = previous
+                with tempfile.NamedTemporaryFile(dir=path.parent, prefix=f".{path.name}.", delete=False) as temporary:
+                    temporary.write(contents)
+                    replacement = Path(temporary.name)
+                replacement.chmod(mode)
+                os.chown(replacement, uid, gid)
+                os.replace(replacement, path)
+            reload = _run(["systemctl", "daemon-reload"], timeout=30)
+            recovery = _run(
+                ["systemctl", "restart", "atlaso-kmip.service"] if was_active
+                else ["systemctl", "disable", "--now", "atlaso-kmip.service"], timeout=30
+            )
+            if reload.returncode != 0 or recovery.returncode != 0:
+                raise RuntimeError("KMS recovery service operation failed.")
+        except (OSError, RuntimeError, subprocess.TimeoutExpired):
+            print(f"KMS cutover failed; preserve recovery snapshot at {rollback_dir} and restore the prior service state.", file=sys.stderr)
+            return 1
+        shutil.rmtree(rollback_dir)
+        print("KMS cutover failed; previous runtime state was restored.", file=sys.stderr)
+        return 1
+    shutil.rmtree(rollback_dir)
     print(
         json.dumps(
             {

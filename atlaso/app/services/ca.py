@@ -21,6 +21,7 @@ from sqlalchemy.orm import Session
 from atlaso.app.config import get_settings
 from atlaso.app.models import CaCertificate, CaProfile, CaSettings, utcnow
 from atlaso.app.secrets import decrypt_secret, encrypt_secret, secret_key_status
+from atlaso.app.services.kms import kms_server_certificate_paths
 
 CA_STAGED_CONFIG_PATH = "/var/lib/atlaso/apply/ca/atlaso-ca.json"
 CA_DEFAULT_PORTAL_HOSTNAME = "ca.atlaso.internal"
@@ -974,6 +975,11 @@ def render_ca_apply_payload(settings: CaSettings, certificates: list[CaCertifica
         private_key_pem = ""
         if certificate.private_key_encrypted:
             private_key_pem = decrypt_secret(certificate.private_key_encrypted) if include_private_keys else "[redacted]"
+        cert_path, key_path, chain_path = certificate.cert_path, certificate.key_path, certificate.chain_path
+        if certificate.managed_owner == "kms:server" and certificate.status == "issued":
+            cert_path, key_path, chain_path = kms_server_certificate_paths(
+                PurePosixPath(certificate.cert_path).stem, certificate.fingerprint
+            )
         payload["certificates"].append(
             {
                 "common_name": certificate.common_name,
@@ -981,9 +987,9 @@ def render_ca_apply_payload(settings: CaSettings, certificates: list[CaCertifica
                 "certificate_pem": certificate.certificate_pem,
                 "chain_pem": certificate.chain_pem or f"{certificate.certificate_pem}{settings.root_certificate_pem}",
                 "private_key_pem": private_key_pem,
-                "cert_path": certificate.cert_path,
-                "key_path": certificate.key_path,
-                "chain_path": certificate.chain_path,
+                "cert_path": cert_path,
+                "key_path": key_path,
+                "chain_path": chain_path,
                 "fingerprint": certificate.fingerprint,
                 "expires_at": certificate.expires_at.isoformat() if certificate.expires_at else "",
             }
