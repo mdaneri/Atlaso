@@ -17425,6 +17425,17 @@ def _submit_appliance_apply(
     if ca_required_for_nts:
         selected_ids.add("ca")
     apply_baselines = load_appliance_apply_baselines(db)
+    kms_settings_for_apply = unit_map.get("kms", {}).get("context", {}).get("kms_settings")
+    if (
+        "kms" in selected_ids
+        and getattr(kms_settings_for_apply, "enabled", False)
+        and "ca" in unit_map
+        and "kms" in rotated_ca_certificate_consumers(
+            unit_map["ca"], apply_baselines.get("ca") or {"config_preview": "{}"}
+        )
+    ):
+        # Fingerprint-specific KMS paths need the matching CA files first.
+        selected_ids.add("ca")
     settings_for_apply = unit_map.get("appliance_settings", {}).get("context", {}).get("appliance_settings")
     applied_settings_preview = str((apply_baselines.get("appliance_settings") or {}).get("config_preview") or "")
     applied_ca_preview = str((apply_baselines.get("ca") or {}).get("config_preview") or "")
