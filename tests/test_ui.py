@@ -5953,27 +5953,6 @@ def test_settings_archive_preflight_rejects_invalid_collection_row_and_required_
             "enabled": True,
         }
     ]
-    enabled_kms_without_provider = deepcopy(archive)
-    enabled_kms_without_provider["data"]["kms_settings"][0].update(
-        {
-            "enabled": True,
-            "listen_interface": "eth2",
-            "listen_address": "192.168.50.1",
-        }
-    )
-    kms_certificate = deepcopy(enabled_kms_without_provider["data"]["ca_certificates"][0])
-    kms_certificate.update(
-        {
-            "managed_owner": "kms:server",
-            "status": "issued",
-            "certificate_pem": "certificate",
-            "private_key_encrypted": "encrypted-key",
-        }
-    )
-    enabled_kms_without_provider["data"]["ca_certificates"].append(kms_certificate)
-    enabled_kms_without_provider["data"]["vsphere_key_providers"] = []
-    enabled_kms_without_provider["data"]["vsphere_trusted_vcenters"] = []
-    enabled_kms_without_provider["data"]["vsphere_trusted_vcenter_certificates"] = []
     invalid_provider_id = deepcopy(archive)
     invalid_provider_id["data"]["vsphere_key_providers"].append(
         {"id": "not-a-uuid", "name": "Invalid provider ID", "enabled": False}
@@ -6582,7 +6561,6 @@ def test_settings_archive_preflight_rejects_invalid_collection_row_and_required_
         (enabled_certificate_with_disabled_profile, "references a disabled CA profile"),
         (weak_ca_profile, "Certificate Authority state is invalid: .*RSA key size must be at least 2048"),
         (enabled_kms_without_ca, "enables KMS without an enabled CA"),
-        (enabled_kms_without_provider, "KMS trust state is invalid: At least one enabled provider"),
         (invalid_provider_id, "invalid provider ID"),
         (invalid_vcenter_id, "invalid trusted vCenter ID"),
         (invalid_provider_enabled_type, "has an invalid enabled value"),

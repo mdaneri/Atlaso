@@ -3025,13 +3025,6 @@ def _validate_archive_relationships(data: dict[str, list[dict[str, Any]]]) -> No
             "The settings archive KMS state is invalid: KMS must retain bounded certificate and operation policy."
         )
     if kms_row.get("enabled", False):
-        if not any(
-            row.get("enabled", False)
-            for row in data.get("vsphere_key_providers", [])
-        ):
-            raise ValueError(
-                "The settings archive KMS trust state is invalid: At least one enabled provider with a current public client certificate is required."
-            )
         ca_row = data["ca_settings"][0]
         kms_certificate_ready = _archive_managed_certificate_ready(
             data.get("ca_certificates", []),

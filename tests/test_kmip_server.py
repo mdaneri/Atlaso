@@ -569,15 +569,16 @@ def test_certificate_fingerprint_is_der_sha256(tmp_path: Path) -> None:
     ).hexdigest()
 
 
-def test_disabled_configuration_accepts_no_provider(tmp_path: Path) -> None:
-    """Verify that disabled configuration accepts no provider.
+@pytest.mark.parametrize("enabled", [False, True])
+def test_configuration_accepts_no_provider_for_certificate_only_bootstrap(tmp_path: Path, enabled: bool) -> None:
+    """An empty provider map authorizes no KMIP key operations.
 
     Args:
         tmp_path: Temporary directory provided by pytest for isolated filesystem state.
     """
     document = {
         "schema_version": 1,
-        "enabled": False,
+        "enabled": enabled,
         "listen": {"addresses": ["127.0.0.1"], "port": 5696},
         "tls": {
             "certificate_path": str(tmp_path / "server.crt"),

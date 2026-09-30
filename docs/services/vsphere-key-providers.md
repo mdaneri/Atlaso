@@ -32,15 +32,30 @@ behavior.
 
 *Figure: the provider, trusted-vCenter, certificate, and lifecycle tools with listener settings in the right rail.*
 
-## Add a provider and trusted vCenter
+## Enroll from vCenter
 
-1. On **Providers**, add a unique name, description, and saved enabled state. Atlaso assigns an immutable provider UUID.
-2. On **Trusted vCenters**, select the provider and enter the vCenter name and optional operational hostname.
-3. Paste exactly one current public X.509 client certificate. Atlaso rejects private-key blocks, malformed or expired
-   certificates, CA certificates, and certificates that cannot perform client authentication.
-4. Review the exact provider assignment and save the record.
-5. Review **Pending Appliance Changes**, then run global **Appliance Apply** for the internal `kms` unit.
-6. Download the public Atlaso server chain from the listener rail and configure the shared endpoint in vCenter.
+1. Enable Atlaso's Certificate Authority, configure the KMS hostname and listener, and add an enabled provider namespace.
+   Atlaso issues and manages the shared KMIP server certificate from its CA when KMS is enabled. Run global
+   **Appliance Apply** to deploy the server certificate and listener. Keep the provider's immutable UUID for the
+   later approval step.
+2. In the VCF 9.1 vSphere Client, add Atlaso's hostname and port as a standard KMS/key provider. Use vCenter's
+   **Establish Trust** controls to trust Atlaso's server identity. The Atlaso listener rail exposes its public server
+   chain. A root-CA trust choice is preferable where vCenter supports it, because vCenter versions that pin only the
+   leaf need trust re-establishment after server-certificate renewal. Confirm the server identity independently.
+3. In vCenter, create or select the KMS cluster's client certificate with **Make KMS trust vCenter**. The private key
+   stays in vCenter. Give an Atlaso Vault entry a vCenter account with `Cryptographer.ManageKeyServers` permission;
+   Atlaso uses it only for authenticated, read-only certificate discovery.
+4. In Atlaso **Trusted vCenters**, choose **Enroll from vCenter**. Select the provider, enter the vCenter host and its
+   exact KMS cluster ID, and choose the Vault credential. Inspect vCenter HTTPS, confirm its SHA-256 fingerprint through
+   an independent trusted source, then inspect the public KMIP client certificate. Review its exact fingerprint and
+   provider assignment before approval. Atlaso re-reads the certificate on approval and rejects a changed identity.
+5. Review **Pending Appliance Changes** and run global **Appliance Apply** for `kms`. Until that apply completes,
+   vCenter's client certificate is not usable for KMIP key operations. Recheck the connection in vCenter.
+
+This path starts in vCenter and does not require a pre-created trusted-vCenter row or manual public-certificate paste
+in Atlaso. The Vault credential is referenced by its stable vault and entry IDs; its password is not copied into
+provider state. Discovery requires the selected vCenter cluster to point only to the configured Atlaso hostname and
+port. Client authorization remains an exact fingerprint-to-provider-UUID mapping.
 
 Certificate fingerprints are normalized SHA-256 values and are unique appliance-wide. The same fingerprint cannot be
 assigned to another trusted vCenter or provider. Atlaso stores canonical public PEM and parsed public metadata only; it
@@ -52,9 +67,12 @@ by supplying a different `listen_addresses` value.
 
 ## Rotate or retire public trust
 
-Use **Add public certificate** on a trusted-vCenter row or **Add replacement certificate** on a certificate row. Apply
-the overlapping trust bundle globally, move vCenter to the new certificate, and then use **Retire certificate**. An
-enabled trusted vCenter cannot lose its last usable fingerprint. Vault-assisted rotation belongs to issue #171.
+Use **Refresh from vCenter** on the trusted-vCenter row after preparing a replacement client certificate in vCenter.
+Inspect and approve its new public fingerprint, then apply the overlapping trust bundle globally before switching
+vCenter to the replacement. Retire the old certificate only after reconnect and key retrieval succeed. If discovery
+is unavailable during recovery, **Add public certificate manually** remains an explicit fallback. Atlaso rejects
+private-key blocks, malformed or expired certificates, CA certificates, and certificates that cannot perform client
+authentication. An enabled trusted vCenter cannot lose its last usable fingerprint.
 
 Settings backups preserve public certificate history, including certificates that expire after they were accepted.
 Restore revalidates each PEM body and exact fingerprint while retaining its expired status; an expired record never

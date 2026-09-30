@@ -340,25 +340,17 @@ def validate_provider_state(providers: list[VsphereKeyProvider]) -> list[str]:
     """
     errors: list[str] = []
     fingerprints: dict[str, str] = {}
-    if not any(provider.enabled for provider in providers):
-        errors.append("At least one enabled provider with a current public client certificate is required.")
     for provider in providers:
         enabled_vcenters = [item for item in provider.trusted_vcenters if item.enabled]
-        if provider.enabled and not enabled_vcenters:
-            errors.append(f"Provider {provider.name} requires an enabled trusted vCenter.")
-        usable_count = 0
         for trusted in enabled_vcenters:
             usable = usable_certificates(trusted)
             if not usable:
                 errors.append(f"Trusted vCenter {trusted.name} requires a current public client certificate.")
-            usable_count += len(usable)
             for certificate in usable:
                 previous = fingerprints.get(certificate.fingerprint_sha256)
                 if previous and previous != provider.id:
                     errors.append("A vCenter certificate fingerprint cannot be assigned across providers.")
                 fingerprints[certificate.fingerprint_sha256] = provider.id
-        if provider.enabled and usable_count == 0:
-            errors.append(f"Provider {provider.name} has no usable exact certificate fingerprint.")
     return list(dict.fromkeys(errors))
 
 
@@ -387,6 +379,10 @@ def render_provider_config(settings: KmsSettings, providers: list[VsphereKeyProv
                 for certificate in usable_certificates(trusted)
             }
         )
+        if not fingerprints:
+            # A listener with no approved clients may present its server identity
+            # for vCenter-first enrollment, but cannot authorize KMIP requests.
+            continue
         rendered_providers.append(
             {
                 "id": normalize_provider_id(provider.id),

@@ -5909,6 +5909,11 @@ function updateKmsDerivedAddress(form, payload = {}) {
 }
 
 let vsphereCertificateWizard = null;
+let vsphereEnrollmentWizard = null;
+
+function openVsphereEnrollmentWizard(data = {}, launcher = null) {
+  vsphereEnrollmentWizard?.open({ launcher, context: data });
+}
 
 function openVsphereCertificateWizard(data = {}, launcher = null) {
   const form = document.querySelector("[data-vsphere-certificate-form]");
@@ -5923,6 +5928,89 @@ function openVsphereCertificateWizard(data = {}, launcher = null) {
 function initializeVsphereKeyProviderTables() {
   const providerElement = document.getElementById("vsphere-providers-table");
   if (!(providerElement instanceof HTMLElement) || !window.AtlasoUiPatterns) return;
+  const enrollmentForm = document.querySelector("[data-vsphere-enrollment-form]");
+  const enrollmentDialog = document.getElementById("vsphere-enrollment-dialog");
+  if (enrollmentForm instanceof HTMLFormElement && enrollmentDialog instanceof HTMLDialogElement) {
+    const vaultChoice = enrollmentForm.querySelector("[data-vsphere-vault-entry]");
+    const clientSummary = enrollmentForm.querySelector("[data-vsphere-enrollment-client]");
+    const httpsSummary = enrollmentForm.querySelector("[data-vsphere-enrollment-https]");
+    const showError = (message) => {
+      const error = enrollmentForm.querySelector("[data-atlaso-wizard-error]");
+      if (error) { error.textContent = message; error.classList.remove("hidden"); }
+    };
+    const clearClient = () => {
+      enrollmentForm.elements.expected_client_fingerprint.value = "";
+      if (clientSummary) clientSummary.textContent = "";
+    };
+    const request = async (suffix) => {
+      const selected = String(vaultChoice?.value || "").split("|");
+      enrollmentForm.elements.vault_id.value = selected[0] || "";
+      enrollmentForm.elements.entry_id.value = selected[1] || "";
+      return atlasoGridWizardRequest(
+        managementUiPath(`/vsphere-key-providers/enrollment/${suffix}`),
+        new FormData(enrollmentForm),
+      );
+    };
+    enrollmentForm.querySelector("[data-vsphere-enrollment-probe]")?.addEventListener("click", async (event) => {
+      const button = event.currentTarget;
+      button.disabled = true;
+      clearClient();
+      try {
+        const result = await request("probe");
+        if (httpsSummary) httpsSummary.textContent = `Observed HTTPS SHA-256: ${result.https_fingerprint}. Confirm this through an independent trusted source, then enter it below.`;
+      } catch (error) { showError(error.message || "Could not inspect vCenter HTTPS."); }
+      finally { button.disabled = false; }
+    });
+    enrollmentForm.querySelector("[data-vsphere-enrollment-inspect]")?.addEventListener("click", async (event) => {
+      const button = event.currentTarget;
+      button.disabled = true;
+      clearClient();
+      try {
+        const result = await request("inspect");
+        enrollmentForm.elements.expected_client_fingerprint.value = result.client_fingerprint;
+        if (clientSummary) clientSummary.textContent = `Client SHA-256: ${result.client_fingerprint}. Subject: ${result.subject}. Expires: ${result.expires_at}. Cluster: ${result.cluster_id}.`;
+      } catch (error) { showError(error.message || "Could not inspect the vCenter client certificate."); }
+      finally { button.disabled = false; }
+    });
+    enrollmentForm.querySelectorAll('input[name="hostname"], input[name="cluster_id"], input[name="confirmed_https_fingerprint"], select[name="provider_id"], [data-vsphere-vault-entry]').forEach((input) => {
+      input.addEventListener("input", clearClient);
+      input.addEventListener("change", clearClient);
+    });
+    vsphereEnrollmentWizard = window.AtlasoUiPatterns.createWizard({
+      form: enrollmentForm,
+      dialog: enrollmentDialog,
+      steps: [
+        { id: "target", title: "Choose the vCenter and provider", description: "Start with the registered KMIP cluster in vCenter." },
+        { id: "identity", title: "Verify vCenter identity", description: "Confirm HTTPS independently, then inspect its public KMIP client certificate." },
+        { id: "review", title: "Approve exact trust", description: "Bind the inspected client fingerprint to one provider namespace." },
+      ],
+      onOpen: ({ context }) => {
+        enrollmentForm.reset();
+        enrollmentForm.elements.vcenter_id.value = context?.is_new ? "" : (context?.id || "");
+        if (context && !context.is_new) {
+          enrollmentForm.elements.provider_id.value = context.provider_id || "";
+          enrollmentForm.elements.name.value = context.name || "";
+          enrollmentForm.elements.hostname.value = context.hostname || "";
+        }
+        clearClient();
+        if (httpsSummary) httpsSummary.textContent = "Confirm the shown fingerprint using an independent trusted source before continuing.";
+      },
+      prepareReview: () => renderAtlasoWizardReview(enrollmentForm, [
+        { label: "Provider", field: "provider_id" },
+        { label: "vCenter", field: "name" },
+        { label: "Host", field: "hostname" },
+        { label: "KMIP cluster", field: "cluster_id" },
+        { label: "Approved client SHA-256", field: "expected_client_fingerprint" },
+      ]),
+      onSubmit: async () => {
+        if (!enrollmentForm.elements.expected_client_fingerprint.value) return { valid: false, message: "Inspect the vCenter client certificate before approval." };
+        await request("approve");
+        window.location.reload();
+        return { valid: true };
+      },
+    });
+    document.querySelector("[data-vsphere-enrollment-open]")?.addEventListener("click", (event) => openVsphereEnrollmentWizard({}, event.currentTarget));
+  }
   const vcenterProviderSelect = document.querySelector('[data-vsphere-vcenter-form] select[name="provider_id"]');
   const certificateTargetSelect = document.querySelector('[data-vsphere-certificate-form] select[name="target"]');
   const upsertOption = (select, value, label) => {
@@ -6026,7 +6114,10 @@ function initializeVsphereKeyProviderTables() {
     actionErrorSelector: "#vsphere-vcenter-error",
     defaults: { provider_id: providers[0]?.id || "", name: "", hostname: "", description: "", certificate_pem: "", enabled: false },
     canEdit: () => true,
-    extraActions: [{ label: "Add public certificate", action: (_event, row) => openVsphereCertificateWizard(row.getData(), row.getElement()) }],
+    extraActions: [
+      { label: "Refresh from vCenter", action: (_event, row) => openVsphereEnrollmentWizard(row.getData(), row.getElement()) },
+      { label: "Add public certificate manually", action: (_event, row) => openVsphereCertificateWizard(row.getData(), row.getElement()) },
+    ],
     steps: [
       { id: "identity", title: "Define the trusted vCenter", description: "Assign its stable identity to one provider namespace." },
       { id: "certificate", title: "Provide public trust", description: "Paste one current public X.509 client certificate. Private keys are forbidden." },

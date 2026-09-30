@@ -375,8 +375,8 @@ def parse_config(document: object) -> ServiceConfig:
     provider_values = document["providers"]
     if not isinstance(provider_values, list):
         raise ConfigurationError("KMIP providers must be a list.")
-    if document["enabled"] and not provider_values:
-        raise ConfigurationError("Enabled KMIP configuration requires at least one provider.")
+    # An enabled listener with no approved provider fingerprints is a safe
+    # enrollment bootstrap: it serves its TLS identity and authorizes no keys.
     providers = tuple(_provider(item) for item in provider_values)
     if len({provider.id for provider in providers}) != len(providers):
         raise ConfigurationError("KMIP provider IDs must be unique.")

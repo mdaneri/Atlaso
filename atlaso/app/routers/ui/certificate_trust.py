@@ -27,6 +27,7 @@ from atlaso.app.database import get_db
 from atlaso.app.models import (
     CaCertificate,
     CaProfile,
+    VaultEntry,
     VsphereKeyProvider,
     VsphereTrustedVcenter,
     VsphereTrustedVcenterCertificate,
@@ -60,6 +61,13 @@ from atlaso.app.services.dnsmasq import (
 from atlaso.app.services.kms import (
     KMS_DEFAULT_CONFIG_PATH,
     KMS_DEFAULT_DATABASE_PATH,
+)
+from atlaso.app.services.vaults import list_vaults
+from atlaso.app.services.vsphere_enrollment import (
+    EnrollmentError,
+    certificate_fingerprint,
+    discover_vcenter_client,
+    vcenter_https_leaf,
 )
 from atlaso.app.services.vsphere_key_providers import (
     authenticated_provider_counts,
@@ -1687,14 +1695,233 @@ def build_routers(
         Returns:
             The endpoint response.
         """
+        context = kms_context(db)
+        context["vsphere_vault_credential_choices"] = []
+        if identity.has_role("admin"):
+            context["vsphere_vault_credential_choices"] = [
+                {
+                    "vault_id": vault.id,
+                    "entry_id": entry.id,
+                    "label": f"{vault.name} / {entry.key} ({entry.username})",
+                }
+                for vault in list_vaults(db)
+                for entry in vault.entries
+                if entry.secret_type == "vcf_password"
+                and entry.username
+                and entry.encrypted_value
+            ]
         return render(
             request,
             "kms.html",
             {
                 "identity": identity,
-                **kms_context(db),
+                **context,
                 "appliance_apply_status": appliance_apply_status(db, "kms"),
             },
+        )
+
+    def _discover_client(
+        db: Session,
+        identity: Identity,
+        *,
+        host: str,
+        cluster_id: str,
+        vault_id: int,
+        entry_id: int,
+        confirmed_https_fingerprint: str,
+    ):
+        """Resolve one Vault credential after out-of-band HTTPS confirmation."""
+        observed = certificate_fingerprint(vcenter_https_leaf(host))
+        if observed != confirmed_https_fingerprint.strip().upper():
+            raise EnrollmentError(
+                "Confirm the current vCenter HTTPS fingerprint before using a Vault credential."
+            )
+        entry = db.execute(
+            select(VaultEntry).where(
+                VaultEntry.id == entry_id, VaultEntry.vault_id == vault_id
+            )
+        ).scalar_one_or_none()
+        if (
+            entry is None
+            or entry.secret_type != "vcf_password"
+            or not entry.username
+            or not entry.encrypted_value
+        ):
+            raise EnrollmentError(
+                "Choose a Vault entry with a vCenter username and password."
+            )
+        settings = get_kms_settings_row(db)
+        discovered = discover_vcenter_client(
+            host=host,
+            cluster_id=cluster_id,
+            username=entry.username,
+            password=decrypt_secret(entry.encrypted_value),
+            confirmed_https_fingerprint=observed,
+            atlaso_host=settings.hostname,
+            atlaso_port=settings.port,
+        )
+        record_audit(
+            db,
+            actor=identity.username,
+            action="discover_vsphere_client_certificate",
+            resource_type="vault_entry",
+            resource_id=str(entry.id),
+            detail=f"vault_id={vault_id}; cluster_id={cluster_id}; public_certificate=true",
+        )
+        return discovered
+
+    @kms_router.post("/vsphere-key-providers/enrollment/probe", response_model=None)
+    def probe_vsphere_enrollment(
+        request: Request,
+        hostname: str = Form(...),
+        csrf: str = Form(...),
+        identity: Identity = Depends(require_session_identity),
+    ) -> JSONResponse:
+        """Show the vCenter HTTPS fingerprint before any credential access."""
+        verify_csrf(request, csrf)
+        if not identity.has_role("admin"):
+            raise HTTPException(status_code=403, detail="Administrator role required.")
+        try:
+            fingerprint = certificate_fingerprint(vcenter_https_leaf(hostname))
+        except (ValueError, EnrollmentError) as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        return JSONResponse({"https_fingerprint": fingerprint})
+
+    @kms_router.post("/vsphere-key-providers/enrollment/inspect", response_model=None)
+    def inspect_vsphere_enrollment(
+        request: Request,
+        hostname: str = Form(...),
+        cluster_id: str = Form(...),
+        vault_id: int = Form(...),
+        entry_id: int = Form(...),
+        confirmed_https_fingerprint: str = Form(...),
+        csrf: str = Form(...),
+        identity: Identity = Depends(require_session_identity),
+        db: Session = Depends(get_db),
+    ) -> JSONResponse:
+        """Inspect vCenter's public KMIP client identity without trusting it."""
+        verify_csrf(request, csrf)
+        if not identity.has_role("admin"):
+            raise HTTPException(status_code=403, detail="Administrator role required.")
+        try:
+            discovered = _discover_client(
+                db,
+                identity,
+                host=hostname,
+                cluster_id=cluster_id,
+                vault_id=vault_id,
+                entry_id=entry_id,
+                confirmed_https_fingerprint=confirmed_https_fingerprint,
+            )
+        except (ValueError, EnrollmentError) as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        return JSONResponse(
+            {
+                "client_fingerprint": discovered.fingerprint_sha256,
+                "subject": discovered.subject,
+                "expires_at": discovered.not_valid_after,
+                "cluster_id": discovered.cluster_id,
+                "vcenter_host": discovered.vcenter_host,
+            }
+        )
+
+    @kms_router.post("/vsphere-key-providers/enrollment/approve", response_model=None)
+    def approve_vsphere_enrollment(
+        request: Request,
+        provider_id: str = Form(...),
+        vcenter_id: str = Form(""),
+        name: str = Form(...),
+        hostname: str = Form(...),
+        cluster_id: str = Form(...),
+        vault_id: int = Form(...),
+        entry_id: int = Form(...),
+        confirmed_https_fingerprint: str = Form(...),
+        expected_client_fingerprint: str = Form(...),
+        csrf: str = Form(...),
+        identity: Identity = Depends(require_session_identity),
+        db: Session = Depends(get_db),
+    ) -> JSONResponse:
+        """Approve one freshly rechecked client certificate for one provider."""
+        verify_csrf(request, csrf)
+        if not identity.has_role("admin"):
+            raise HTTPException(status_code=403, detail="Administrator role required.")
+        provider = db.get(VsphereKeyProvider, provider_id)
+        if provider is None or not provider.enabled:
+            raise HTTPException(
+                status_code=422, detail="Choose an enabled provider namespace."
+            )
+        try:
+            discovered = _discover_client(
+                db,
+                identity,
+                host=hostname,
+                cluster_id=cluster_id,
+                vault_id=vault_id,
+                entry_id=entry_id,
+                confirmed_https_fingerprint=confirmed_https_fingerprint,
+            )
+            if (
+                discovered.fingerprint_sha256
+                != expected_client_fingerprint.strip().lower()
+            ):
+                raise EnrollmentError(
+                    "The vCenter client certificate changed since inspection."
+                )
+            if not name.strip() or len(name.strip()) > 120:
+                raise EnrollmentError("Enter a vCenter name of 1 to 120 characters.")
+            if vcenter_id:
+                vcenter = db.get(VsphereTrustedVcenter, vcenter_id)
+                if (
+                    vcenter is None
+                    or vcenter.provider_id != provider.id
+                    or vcenter.hostname != discovered.vcenter_host
+                ):
+                    raise EnrollmentError(
+                        "The existing vCenter does not match this provider and host."
+                    )
+            else:
+                vcenter = VsphereTrustedVcenter(
+                    id=str(uuid4()),
+                    provider_id=provider.id,
+                    name=name.strip(),
+                    hostname=discovered.vcenter_host,
+                    enabled=True,
+                )
+                db.add(vcenter)
+                db.flush()
+            parsed = parse_public_certificate(discovered.certificate_pem)
+            certificate = VsphereTrustedVcenterCertificate(
+                id=str(uuid4()),
+                trusted_vcenter_id=vcenter.id,
+                source="vcenter_api_discovered",
+                **parsed,
+            )
+            db.add(certificate)
+            mark_provider_desired_changed(provider)
+            db.commit()
+        except (ValueError, EnrollmentError) as exc:
+            db.rollback()
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except IntegrityError as exc:
+            db.rollback()
+            raise HTTPException(
+                status_code=409,
+                detail="vCenter name or client fingerprint is already assigned.",
+            ) from exc
+        record_audit(
+            db,
+            actor=identity.username,
+            action="approve_vsphere_client_certificate",
+            resource_type="vsphere_trusted_vcenter",
+            resource_id=vcenter.id,
+            detail=f"provider_id={provider.id}; fingerprint_sha256={certificate.fingerprint_sha256}; public_certificate=true",
+        )
+        return JSONResponse(
+            {
+                "status": "saved_pending_appliance_apply",
+                "trusted_vcenter_id": vcenter.id,
+                "client_fingerprint": certificate.fingerprint_sha256,
+            }
         )
 
     @kms_router.get(

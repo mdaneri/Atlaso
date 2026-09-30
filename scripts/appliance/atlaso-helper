@@ -6012,8 +6012,8 @@ def _kms_config_errors(path: Path) -> list[str]:
     if not isinstance(providers, list):
         errors.append("KMS providers must be a list.")
         providers = []
-    if enabled and not providers:
-        errors.append("Enabled KMS config requires at least one provider.")
+    # An empty provider list is the certificate-only enrollment bootstrap.
+    # Exact client authorization remains empty until an approved Apply.
 
     address_values = listen.get("addresses", [])
     if not isinstance(address_values, list) or not address_values:
