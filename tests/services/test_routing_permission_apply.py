@@ -57,6 +57,53 @@ def test_routing_permission_apply_captures_both_units(client, selected):
         assert routing_permission_apply_state(db) == "pending"
 
 
+@pytest.mark.parametrize("field,value", [("mtu", 1400), ("admin_state", "down")])
+def test_permission_apply_leaves_unrelated_network_edits_pending(client, field, value):
+    """WAN selection does not apply Network edits outside routing topology.
+
+    Args:
+        client: Isolated application client with dry-run adapters.
+        field: Network setting unrelated to routing permission boundaries.
+        value: Pending Network setting value.
+    """
+    from sqlalchemy import select
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Job, PhysicalInterface, RoutingRule
+    from atlaso.app.services.routes_wan import save_routes_wan_settings
+    from atlaso.app.ui import (
+        appliance_apply_units,
+        load_appliance_apply_baselines,
+        update_appliance_apply_baselines,
+    )
+
+    login(client)
+    with SessionLocal() as db:
+        save_routes_wan_settings(db, routing_enabled=True, nat_enabled=False, wan_simulation_enabled=False)
+        db.commit()
+        units = appliance_apply_units(db)
+        update_appliance_apply_baselines(db, units, {unit["id"] for unit in units})
+        db.commit()
+        original_network = load_appliance_apply_baselines(db)["network"]
+        endpoint = db.scalar(select(PhysicalInterface).where(PhysicalInterface.name == "eth2"))
+        assert endpoint is not None
+        setattr(endpoint, field, value)
+        db.add(RoutingRule(name="Pending denial", enabled=True, source_interface="eth2",
+                           destination_interface="eth1.20", policy="deny", ip_family=4))
+        db.commit()
+        assert next(unit for unit in appliance_apply_units(db) if unit["id"] == "network")["changed"]
+
+    csrf = client.get("/routes-wan").text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    response = client.post("/appliance-apply", data={"csrf": csrf, "selected_units": "wan"},
+                           headers={"Accept": "application/json"})
+    assert response.status_code == 202, response.text
+    with SessionLocal() as db:
+        job = db.get(Job, response.json()["job_id"])
+        assert job is not None and job.status == "succeeded", job.error if job else "missing job"
+        assert "network" not in json.loads(job.result)["selected_units"]
+        assert load_appliance_apply_baselines(db)["network"] == original_network
+
+
 def test_one_baseline_or_stale_snapshot_cannot_claim_applied(client):
     """A newer edit remains pending when an older captured snapshot finishes.
 

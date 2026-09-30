@@ -10034,6 +10034,19 @@ def network_interface_entries(config_preview: str) -> list[dict[str, str]]:
     return rows
 
 
+def routing_network_topology_entries(config_preview: str) -> list[tuple[str, ...]]:
+    """Project only Network fields that define routing permission boundaries.
+
+    Args:
+        config_preview: Desired or applied Network configuration.
+    """
+    fields = ("kind", "name", "role", "mode", "ip_cidr", "ipv6_cidr")
+    return sorted(
+        tuple(row.get(field, "") for field in fields)
+        for row in network_interface_entries(config_preview)
+    )
+
+
 def network_management_paths(config_preview: str) -> list[dict[str, str]]:
     """Return every effective management browser path in a network preview.
 
@@ -17098,7 +17111,12 @@ def _submit_appliance_apply(
         )
         if routing_permission_pair_required:
             selected_ids.update(unit for unit in ("wan", "firewall") if unit in unit_map)
-            if unit_map.get("network", {}).get("changed"):
+            network_preview = str(unit_map.get("network", {}).get("raw_config_preview")
+                                  or unit_map.get("network", {}).get("config_preview") or "")
+            applied_network_preview = str((apply_baselines.get("network") or {}).get("config_preview") or "")
+            if (unit_map.get("network", {}).get("changed")
+                    and (not applied_network_preview or routing_network_topology_entries(network_preview)
+                         != routing_network_topology_entries(applied_network_preview))):
                 selected_ids.add("network")
     binding_change = bool(
         "appliance_settings" in selected_ids
