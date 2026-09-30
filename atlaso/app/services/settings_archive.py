@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from copy import deepcopy
 from datetime import datetime, timezone
 from ipaddress import ip_address, ip_interface, ip_network
@@ -2181,6 +2182,11 @@ def _validate_archive_relationships(data: dict[str, list[dict[str, Any]]]) -> No
         }
     )
     route_target_names = set(route_target_families)
+    routing_permission_target_names = {
+        name for name in route_target_names
+        if normalize_interface_role((physical_interfaces.get(name) or vlan_interfaces.get(name) or {}).get("role"))
+        in {"access", "route"}
+    }
     management_target_names: set[str] = set()
     for name in route_target_names:
         physical = physical_interfaces.get(name)
@@ -2679,7 +2685,25 @@ def _validate_archive_relationships(data: dict[str, list[dict[str, Any]]]) -> No
         if errors:
             raise ValueError(f"Settings archive port-forward row {row_index} is invalid: {errors[0]}")
 
+    routing_permission_names: set[str] = set()
     for row_index, row in enumerate(data.get("routing_rules", []), start=1):
+        name = row.get("name")
+        if not isinstance(name, str) or not name.strip() or len(name) > 120 or re.search(r"[\r\n\v\f\x1c-\x1e\x85\u2028\u2029]", name):
+            raise ValueError(f"Settings archive routing permission row {row_index} has an invalid name.")
+        normalized_name = name.strip().lower()
+        if normalized_name in routing_permission_names:
+            raise ValueError(f"Settings archive routing permission row {row_index} has a duplicate name.")
+        routing_permission_names.add(normalized_name)
+        policy = row.get("policy", "allow")
+        family = row.get("ip_family", 0)
+        if not isinstance(policy, str) or policy not in {"automatic", "allow", "deny"}:
+            raise ValueError(f"Settings archive routing permission row {row_index} has an invalid policy.")
+        if not isinstance(family, int) or isinstance(family, bool) or family not in {0, 4, 6}:
+            raise ValueError(f"Settings archive routing permission row {row_index} has an invalid IP family.")
+        for name in (row.get("source_interface"), row.get("destination_interface")):
+            target = physical_interfaces.get(name) or vlan_interfaces.get(name) or {}
+            if normalize_interface_role(target.get("role")) == "management":
+                raise ValueError("Routing permissions cannot override protected management rules.")
         enabled = row.get("enabled", True)
         if not isinstance(enabled, bool):
             raise ValueError(
@@ -2687,12 +2711,19 @@ def _validate_archive_relationships(data: dict[str, list[dict[str, Any]]]) -> No
             )
         source = str(row.get("source_interface") or "")
         destination = str(row.get("destination_interface") or "")
+        if not re.fullmatch(r"[A-Za-z0-9_.:-]{1,80}", source) or not re.fullmatch(r"[A-Za-z0-9_.:-]{1,80}", destination):
+            raise ValueError(f"Settings archive routing permission row {row_index} needs canonical interface names.")
         if archive_routes_wan_settings.routing_enabled and enabled and (
-            source not in route_target_names or destination not in route_target_names
+            source not in routing_permission_target_names or destination not in routing_permission_target_names
         ):
             raise ValueError(
                 f"The settings archive row {row_index} in 'routing_rules' has an ineligible interface."
             )
+        if archive_routes_wan_settings.routing_enabled and enabled and source in route_target_names and destination in route_target_names:
+            common = route_target_families[source] & route_target_families[destination]
+            selected = {"ipv4", "ipv6"} if family == 0 else {f"ipv{family}"}
+            if not common & selected:
+                raise ValueError(f"Settings archive routing permission row {row_index} has no common selected IP family.")
         if archive_routes_wan_settings.routing_enabled and enabled and source == destination:
             raise ValueError(
                 f"The settings archive row {row_index} in 'routing_rules' has identical source and destination interfaces."
@@ -2729,7 +2760,7 @@ def _validate_archive_relationships(data: dict[str, list[dict[str, Any]]]) -> No
             RoutingRule(**_model_kwargs_with_scalar_defaults(RoutingRule, row))
             for row in data.get("routing_rules", [])
         ],
-        routing_target_names=route_target_names,
+        routing_target_names=routing_permission_target_names,
         route_target_cidrs=route_target_cidrs,
         management_target_names=management_target_names,
         routing_enabled=archive_routes_wan_settings.routing_enabled,

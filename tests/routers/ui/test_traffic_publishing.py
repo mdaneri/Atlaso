@@ -124,7 +124,7 @@ def test_suspended_nat_apply_keeps_routing_baseline_independent(client):
 
 
 def test_firewall_apply_replays_unchanged_nat_after_ruleset_replacement(client, monkeypatch):
-    """Keep NAT in the ordered job when Firewall replaces its kernel ruleset.
+    """Keep pending Network and NAT in Firewall's ordered routing publication.
 
     Args:
         client: Synchronous dry-run Apply fixture.
@@ -163,5 +163,6 @@ def test_firewall_apply_replays_unchanged_nat_after_ruleset_replacement(client, 
             job = db.get(Job, response.json()["job_id"])
             assert job.status == "succeeded"
             if selection == "firewall":
-                assert json.loads(job.result)["selected_units"] == ["firewall", "nat"]
-                assert [step.component_key for step in sorted(job.steps, key=lambda step: step.position)] == ["firewall", "nat"]
+                assert json.loads(job.result)["selected_units"] == ["network", "wan", "firewall", "nat"]
+                assert json.loads(job.result)["routing_publishing_pair"] is True
+                assert [step.component_key for step in sorted(job.steps, key=lambda step: step.position)] == ["network", "wan", "firewall", "nat"]

@@ -475,6 +475,8 @@ def routing_rule_to_dict(rule: RoutingRule) -> dict:
         "priority": rule.priority,
         "description": rule.description or "",
         "generated": False,
+        "policy": rule.policy or "allow",
+        "ip_family": rule.ip_family or 0,
     }
 
 
@@ -492,7 +494,10 @@ def generated_route_role_rules(targets: list[dict[str, str]]) -> list[dict]:
                 continue
             rows.append(
                 {
-                    "id": f"generated:{source['name']}:{destination['name']}",
+                    "id": (
+                        f"generated:{len(source['name'])}:{source['name']}"
+                        f":{len(destination['name'])}:{destination['name']}"
+                    ),
                     "name": f"{source['name']} to {destination['name']}",
                     "enabled": True,
                     "source_interface": source["name"],
@@ -705,6 +710,11 @@ def validate_wan_state(
             if rule.enabled and not rule.masquerade:
                 errors.append(f"NAT rule {rule.name} must use masquerade; destination NAT and port forwarding are not supported in v1.")
 
+    for permission in routing_rules or []:
+        if permission.policy is not None and permission.policy not in {"automatic", "allow", "deny"}:
+            errors.append(f"Routing rule {permission.name} has an invalid policy.")
+        if permission.ip_family is not None and (isinstance(permission.ip_family, bool) or permission.ip_family not in {0, 4, 6}):
+            errors.append(f"Routing rule {permission.name} has an invalid IP family.")
     if routing_enabled:
         routing_target_names = routing_target_names or target_names
         seen_routing_names: set[str] = set()
@@ -721,6 +731,12 @@ def validate_wan_state(
                 errors.append(f"Routing rule {rule.name} destination must be a non-management access or route interface.")
             if rule.enabled and rule.source_interface == rule.destination_interface:
                 errors.append(f"Routing rule {rule.name} must use different source and destination interfaces.")
+            if rule.enabled and route_target_cidrs and rule.source_interface in route_target_cidrs and rule.destination_interface in route_target_cidrs:
+                family = rule.ip_family if rule.ip_family is not None else 0
+                source_families = {ip_network(value, strict=False).version for value in route_target_cidrs[rule.source_interface] if value}
+                destination_families = {ip_network(value, strict=False).version for value in route_target_cidrs[rule.destination_interface] if value}
+                if not (source_families & destination_families & ({4, 6} if family == 0 else {family})):
+                    errors.append(f"Routing rule {rule.name} needs a common configured IP family.")
             if rule.priority < 0:
                 errors.append(f"Routing rule {rule.name} has a negative priority.")
 
@@ -1133,13 +1149,15 @@ def render_wan_config(
     for rule in sorted(routing_rules, key=lambda item: item.priority):
         lines.extend(
             [
-                f"routing={rule.name}",
+                f"routing={' '.join(rule.name.splitlines())}",
                 f"  enabled={_bool_value(rule.enabled)}",
                 f"  source_interface={rule.source_interface}",
                 f"  destination_interface={rule.destination_interface}",
                 f"  priority={rule.priority}",
+                f"  policy={rule.policy if rule.policy is not None else 'allow'}",
+                f"  ip_family={rule.ip_family if rule.ip_family is not None else 0}",
                 "  generated=false",
-                f"  description={(rule.description or '').replace(chr(10), ' ')}",
+                f"  description={' '.join((rule.description or '').splitlines())}",
             ]
         )
 

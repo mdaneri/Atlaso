@@ -7629,6 +7629,218 @@
         "title": "RoutesWanSettingsUpdate",
         "type": "object"
       },
+      "RoutingPermissionCreate": {
+        "additionalProperties": false,
+        "description": "Complete desired state for one explicit Routing Permission.",
+        "properties": {
+          "description": {
+            "default": "",
+            "description": "Operator purpose or review context for this permission.",
+            "maxLength": 1000,
+            "title": "Description",
+            "type": "string"
+          },
+          "destination_interface": {
+            "description": "Eligible destination interface or VLAN name; management targets are prohibited.",
+            "maxLength": 80,
+            "minLength": 1,
+            "title": "Destination Interface",
+            "type": "string"
+          },
+          "enabled": {
+            "default": true,
+            "description": "Whether this saved permission is intended to be active when Routing is enabled and applied.",
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "ip_family": {
+            "default": 0,
+            "description": "Address family governed by this permission: 0 means both IPv4 and IPv6, 4 means IPv4, and 6 means IPv6.",
+            "enum": [
+              0,
+              4,
+              6
+            ],
+            "title": "Ip Family",
+            "type": "integer"
+          },
+          "name": {
+            "description": "Unique operator-facing name for this permission.",
+            "maxLength": 120,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "policy": {
+            "default": "allow",
+            "description": "Traffic decision: allow, deny, or automatic route-role behavior.",
+            "enum": [
+              "automatic",
+              "allow",
+              "deny"
+            ],
+            "title": "Policy",
+            "type": "string"
+          },
+          "priority": {
+            "default": 100,
+            "description": "Order within one policy phase. Deny always precedes allow and automatic, independent of priority.",
+            "maximum": 2147483647.0,
+            "minimum": 0.0,
+            "title": "Priority",
+            "type": "integer"
+          },
+          "source_interface": {
+            "description": "Eligible source interface or VLAN name; management targets are prohibited.",
+            "maxLength": 80,
+            "minLength": 1,
+            "title": "Source Interface",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "source_interface",
+          "destination_interface"
+        ],
+        "title": "RoutingPermissionCreate",
+        "type": "object"
+      },
+      "RoutingPermissionResponse": {
+        "description": "Return explicit desired state and generated read-only projections.",
+        "properties": {
+          "address_family": {
+            "description": "Human-readable address-family projection, including both families when selected.",
+            "title": "Address Family",
+            "type": "string"
+          },
+          "apply_state": {
+            "description": "Whether both WAN and Firewall Apply baselines match the current Routing Permission desired state.",
+            "enum": [
+              "pending",
+              "applied"
+            ],
+            "title": "Apply State",
+            "type": "string"
+          },
+          "description": {
+            "description": "Operator purpose or generated-rule explanation.",
+            "title": "Description",
+            "type": "string"
+          },
+          "destination_interface": {
+            "description": "Destination interface or VLAN identity.",
+            "title": "Destination Interface",
+            "type": "string"
+          },
+          "destination_networks": {
+            "description": "Destination CIDR networks currently represented by this permission.",
+            "items": {
+              "type": "string"
+            },
+            "title": "Destination Networks",
+            "type": "array"
+          },
+          "effective_action": {
+            "description": "Current projected action after applying saved policy and routing state.",
+            "title": "Effective Action",
+            "type": "string"
+          },
+          "enabled": {
+            "description": "Saved enablement intent for an explicit permission.",
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "family_effective_actions": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "description": "Effective action for each address family in this row's scope, keyed by IP version 4 or 6.",
+            "title": "Family Effective Actions",
+            "type": "object"
+          },
+          "generated": {
+            "description": "Whether this row is generated from route-role intent and cannot be edited or deleted.",
+            "title": "Generated",
+            "type": "boolean"
+          },
+          "id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "string"
+              }
+            ],
+            "description": "Saved database identifier, or a stable generated identifier for a read-only route-role permission.",
+            "title": "Id"
+          },
+          "ip_family": {
+            "description": "Address family governed by the permission; 0 means both families.",
+            "enum": [
+              0,
+              4,
+              6
+            ],
+            "title": "Ip Family",
+            "type": "integer"
+          },
+          "name": {
+            "description": "Operator-facing permission name.",
+            "title": "Name",
+            "type": "string"
+          },
+          "policy": {
+            "description": "Saved or effective traffic decision.",
+            "enum": [
+              "automatic",
+              "allow",
+              "deny"
+            ],
+            "title": "Policy",
+            "type": "string"
+          },
+          "priority": {
+            "description": "Permission evaluation order; lower values are evaluated first.",
+            "title": "Priority",
+            "type": "integer"
+          },
+          "source_interface": {
+            "description": "Source interface or VLAN identity.",
+            "title": "Source Interface",
+            "type": "string"
+          },
+          "source_networks": {
+            "description": "Source CIDR networks currently represented by this permission.",
+            "items": {
+              "type": "string"
+            },
+            "title": "Source Networks",
+            "type": "array"
+          }
+        },
+        "required": [
+          "id",
+          "generated",
+          "name",
+          "enabled",
+          "source_interface",
+          "destination_interface",
+          "priority",
+          "description",
+          "policy",
+          "ip_family",
+          "effective_action",
+          "family_effective_actions",
+          "source_networks",
+          "destination_networks",
+          "address_family",
+          "apply_state"
+        ],
+        "title": "RoutingPermissionResponse",
+        "type": "object"
+      },
       "ServiceActionResponse": {
         "description": "Fields returned by the Atlaso service action API.\n\nAttributes:\n    service: Returned service value for this service action resource.\n    action: Returned action value for this service action resource.\n    dry_run: Whether the operation reports command intent without mutating appliance host state.\n    command: Ordered collection of command values represented by this service action schema.",
         "properties": {
@@ -17569,6 +17781,245 @@
           }
         ],
         "summary": "Assign Route Wan Policy",
+        "tags": [
+          "Routes"
+        ]
+      }
+    },
+    "/api/v1/routing-permissions": {
+      "get": {
+        "description": "Read explicit and generated Routing Permission intent.\n\nRequires `read:routes`. Includes both saved records and read-only generated\nroute-role rows. This is desired-state projection only; enforcement changes\nrequire global Appliance Apply through the paired WAN and Firewall units.",
+        "operationId": "listRoutingPermissions",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/RoutingPermissionResponse"
+                  },
+                  "title": "Response Listroutingpermissions",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Read explicit and generated Routing Permission intent. The response body matches the documented success schema."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Invalid current saved state returned as ProblemDetails."
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Routing Permissions",
+        "tags": [
+          "Routes"
+        ]
+      },
+      "post": {
+        "description": "Save one explicit permission without applying it to the appliance.\n\nRequires `write:routes`. Validates current interface targets while holding\nthe shared network-object write lock, then commits desired state and its\naudit event together. Global Appliance Apply through the paired WAN and Firewall units owns host\nenforcement.",
+        "operationId": "createRoutingPermission",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RoutingPermissionCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RoutingPermissionResponse"
+                }
+              }
+            },
+            "description": "Save one explicit permission without applying it to the appliance. The response body matches the documented success schema."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A permission name already exists."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Invalid permission intent returned as ProblemDetails."
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Create Routing Permission",
+        "tags": [
+          "Routes"
+        ]
+      }
+    },
+    "/api/v1/routing-permissions/{rule_id}": {
+      "delete": {
+        "description": "Delete saved permission intent without changing appliance state.\n\nRequires `write:routes`. Generated route-role permissions cannot be deleted.\nThe deletion and audit are transactional; global Appliance Apply through\nthe paired WAN and Firewall units removes the applied rule.",
+        "operationId": "deleteRoutingPermission",
+        "parameters": [
+          {
+            "description": "Saved routing permission identifier, or generated identifier that can be read but not changed.",
+            "in": "path",
+            "name": "rule_id",
+            "required": true,
+            "schema": {
+              "description": "Saved routing permission identifier, or generated identifier that can be read but not changed.",
+              "minLength": 1,
+              "title": "Rule Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Delete saved permission intent without changing appliance state. The operation completed successfully and returns no response body."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "The saved permission does not exist."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Generated permissions are read-only."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "The request parameters or body failed Atlaso validation. The response includes a request ID that can be correlated with operational logs."
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Delete Routing Permission",
+        "tags": [
+          "Routes"
+        ]
+      },
+      "put": {
+        "description": "Replace all desired fields of one explicit permission.\n\nRequires `write:routes`. A complete body prevents accidental loss of\npolicy, family, or interface intent. Save and audit are one transaction;\nhost state changes only through global Appliance Apply's paired WAN and Firewall units.",
+        "operationId": "replaceRoutingPermission",
+        "parameters": [
+          {
+            "description": "Saved routing permission identifier, or generated identifier that can be read but not changed.",
+            "in": "path",
+            "name": "rule_id",
+            "required": true,
+            "schema": {
+              "description": "Saved routing permission identifier, or generated identifier that can be read but not changed.",
+              "minLength": 1,
+              "title": "Rule Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RoutingPermissionCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RoutingPermissionResponse"
+                }
+              }
+            },
+            "description": "Replace all desired fields of one explicit permission. The response body matches the documented success schema."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "The saved permission does not exist."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Generated permissions are read-only or the name is already used."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Invalid permission intent returned as ProblemDetails."
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Replace Routing Permission",
         "tags": [
           "Routes"
         ]

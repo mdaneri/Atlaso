@@ -40,6 +40,11 @@ from atlaso.app.services.routes_wan import (
 from atlaso.app.services.routes_wan import (
     default_route_family as route_default_family,
 )
+from atlaso.app.services.routing_permissions import (
+    routing_permission_name_conflicts,
+    routing_permission_targets,
+    validate_routing_permission,
+)
 from atlaso.app.services.traffic_publishing import (
     nat_targets,
     save_traffic_publishing_settings,
@@ -529,6 +534,7 @@ def build_router(dependencies: RoutesWanUiDependencies) -> RoutesWanUiRouter:
         destination_interface: str,
         priority: str,
         db: Session,
+        *, enabled: bool = True,
     ) -> tuple[str, str, str, int] | Response:
         """Validate routing rule form values.
 
@@ -538,6 +544,7 @@ def build_router(dependencies: RoutesWanUiDependencies) -> RoutesWanUiRouter:
             destination_interface: Destination interface supplied by the caller.
             priority: Ordering priority assigned to the item.
             db: Active database session.
+            enabled: Whether current topology must support active forwarding.
 
         Returns:
             The validate routing rule form values result.
@@ -548,9 +555,9 @@ def build_router(dependencies: RoutesWanUiDependencies) -> RoutesWanUiRouter:
         target_names = {target["name"] for target in wan_route_targets(db)}
         source_value = source_interface.strip()
         destination_value = destination_interface.strip()
-        if source_value not in target_names:
+        if not source_value or (enabled and source_value not in target_names):
             return Response("Choose a non-management source interface or VLAN with an IP CIDR.", status_code=422, media_type="text/plain")
-        if destination_value not in target_names:
+        if not destination_value or (enabled and destination_value not in target_names):
             return Response("Choose a non-management destination interface or VLAN with an IP CIDR.", status_code=422, media_type="text/plain")
         if source_value == destination_value:
             return Response("Routing source and destination must be different.", status_code=422, media_type="text/plain")
@@ -742,6 +749,8 @@ def build_router(dependencies: RoutesWanUiDependencies) -> RoutesWanUiRouter:
         source_interface: str = Form(""),
         destination_interface: str = Form(""),
         priority: str = Form("100"),
+        policy: str = Form("allow"),
+        ip_family: str = Form("0"),
         description: str = Form(""),
         enabled: str | None = Form(None),
         csrf: str = Form(...),
@@ -756,6 +765,8 @@ def build_router(dependencies: RoutesWanUiDependencies) -> RoutesWanUiRouter:
             source_interface: Source interface supplied by the caller.
             destination_interface: Destination interface supplied by the caller.
             priority: Ordering priority assigned to the item.
+            policy: Explicit allow/deny or automatic inheritance.
+            ip_family: Zero for both families, four/six for a family override.
             description: Human-readable description of the resource.
             enabled: Whether the requested behavior is enabled.
             csrf: Validated CSRF token authorizing the request.
@@ -766,15 +777,30 @@ def build_router(dependencies: RoutesWanUiDependencies) -> RoutesWanUiRouter:
             The endpoint response.
         """
         verify_csrf(request, csrf)
-        parsed = validate_routing_rule_form_values(name, source_interface, destination_interface, priority, db)
+        if not identity.can("write:routes"):
+            raise HTTPException(status_code=403, detail="Routes write permission is required")
+        acquire_network_objects_write_lock(db)
+        parsed = validate_routing_rule_form_values(name, source_interface, destination_interface, priority, db, enabled=enabled == "on")
         if isinstance(parsed, Response):
             return parsed
         name_value, source_value, destination_value, priority_value = parsed
+        if routing_permission_name_conflicts(db, name_value):
+            return Response("A Routing Permission with that name already exists.", status_code=409, media_type="text/plain")
+        family = parse_int_form_value(ip_family, "IP family", default=0, minimum=0)
+        if isinstance(family, Response):
+            return family
+        candidate = RoutingRule(name=name_value, source_interface=source_value, destination_interface=destination_value,
+                                priority=priority_value, policy=policy, ip_family=family, enabled=enabled == "on")
+        errors = validate_routing_permission(candidate, routing_permission_targets(db), db=db)
+        if errors:
+            return Response("; ".join(errors), status_code=422, media_type="text/plain")
         rule = RoutingRule(
             name=name_value,
             source_interface=source_value,
             destination_interface=destination_value,
             priority=priority_value,
+            policy=policy,
+            ip_family=family,
             description=description.strip() or None,
             enabled=enabled == "on",
         )
@@ -796,6 +822,8 @@ def build_router(dependencies: RoutesWanUiDependencies) -> RoutesWanUiRouter:
         source_interface: str = Form(""),
         destination_interface: str = Form(""),
         priority: str = Form("100"),
+        policy: str = Form("allow"),
+        ip_family: str = Form("0"),
         description: str = Form(""),
         enabled: str | None = Form(None),
         csrf: str = Form(...),
@@ -811,6 +839,8 @@ def build_router(dependencies: RoutesWanUiDependencies) -> RoutesWanUiRouter:
             source_interface: Source interface supplied by the caller.
             destination_interface: Destination interface supplied by the caller.
             priority: Ordering priority assigned to the item.
+            policy: Explicit allow/deny or automatic inheritance.
+            ip_family: Zero for both families, four/six for a family override.
             description: Human-readable description of the resource.
             enabled: Whether the requested behavior is enabled.
             csrf: Validated CSRF token authorizing the request.
@@ -824,17 +854,32 @@ def build_router(dependencies: RoutesWanUiDependencies) -> RoutesWanUiRouter:
             HTTPException: If the request cannot be fulfilled.
         """
         verify_csrf(request, csrf)
+        if not identity.can("write:routes"):
+            raise HTTPException(status_code=403, detail="Routes write permission is required")
+        acquire_network_objects_write_lock(db)
         rule = db.get(RoutingRule, rule_id)
         if not rule:
             raise HTTPException(status_code=404, detail="Routing rule not found")
-        parsed = validate_routing_rule_form_values(name, source_interface, destination_interface, priority, db)
+        parsed = validate_routing_rule_form_values(name, source_interface, destination_interface, priority, db, enabled=enabled == "on")
         if isinstance(parsed, Response):
             return parsed
         name_value, source_value, destination_value, priority_value = parsed
+        if routing_permission_name_conflicts(db, name_value, exclude_rule_id=rule.id):
+            return Response("A Routing Permission with that name already exists.", status_code=409, media_type="text/plain")
+        family = parse_int_form_value(ip_family, "IP family", default=0, minimum=0)
+        if isinstance(family, Response):
+            return family
+        candidate = RoutingRule(name=name_value, source_interface=source_value, destination_interface=destination_value,
+                                priority=priority_value, policy=policy, ip_family=family, enabled=enabled == "on")
+        errors = validate_routing_permission(candidate, routing_permission_targets(db), db=db)
+        if errors:
+            return Response("; ".join(errors), status_code=422, media_type="text/plain")
         rule.name = name_value
         rule.source_interface = source_value
         rule.destination_interface = destination_value
         rule.priority = priority_value
+        rule.policy = policy
+        rule.ip_family = family
         rule.description = description.strip() or None
         rule.enabled = enabled == "on"
         db.add(rule)
@@ -871,6 +916,9 @@ def build_router(dependencies: RoutesWanUiDependencies) -> RoutesWanUiRouter:
             HTTPException: If the request cannot be fulfilled.
         """
         verify_csrf(request, csrf)
+        if not identity.can("write:routes"):
+            raise HTTPException(status_code=403, detail="Routes write permission is required")
+        acquire_network_objects_write_lock(db)
         rule = db.get(RoutingRule, rule_id)
         if not rule:
             raise HTTPException(status_code=404, detail="Routing rule not found")

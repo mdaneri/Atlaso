@@ -8,6 +8,7 @@ import html
 import importlib.util
 import io
 import json
+import shutil
 import ssl
 import subprocess
 import sys
@@ -821,6 +822,209 @@ def test_routing_wan_only_plan_and_routing_rule_payload():
     }
 
 
+@pytest.mark.parametrize("reverse_status", [303, 422])
+def test_routing_lifecycle_reviews_both_access_directions(reverse_status):
+    """The WAN probe needs an explicit reverse permission for reply packets.
+
+    Args:
+        reverse_status: Appliance response to the return-path permission.
+    """
+    lifecycle = load_lifecycle_module()
+    args = lifecycle.parse_args(["--password", "test", "--routing-wan-only", "--plan-only"])
+    submitted = []
+
+    class Client:
+        def request(self, method, path, **kwargs):
+            """Record permission submissions and inject the reverse response.
+
+            Args:
+                method: Requested HTTP method.
+                path: Appliance endpoint.
+                **kwargs: Submitted form and redirect options.
+            """
+            if method == "GET":
+                return 200, '<input name="csrf" value="test-token">', {}
+            assert path == "/routes-wan/routing-rules"
+            submitted.append(kwargs["form"])
+            return (303 if len(submitted) == 1 else reverse_status), "", {"Location": "/routes-wan"}
+
+    if reverse_status == 422:
+        with pytest.raises(lifecycle.LifecycleError, match="HTTP 422"):
+            lifecycle.configure_routing_permissions(Client(), args)
+    else:
+        result = lifecycle.configure_routing_permissions(Client(), args)
+        assert result["return_permission"]["created_or_updated"] is True
+    assert [(row["source_interface"], row["destination_interface"]) for row in submitted] == [
+        (args.site_interface, args.wan_interface),
+        (args.wan_interface, args.site_interface),
+    ]
+    assert len({row["name"] for row in submitted}) == 2
+
+
+def test_focused_routing_enables_global_settings_before_first_apply(monkeypatch):
+    """Fresh appliances enable Routing, NAT, and WAN before route publication.
+
+    Args:
+        monkeypatch: Replaces unrelated lifecycle steps with a recorder.
+    """
+    lifecycle = load_lifecycle_module()
+    args = lifecycle.parse_args(["--password", "test", "--routing-wan-only", "--plan-only"])
+    observed = []
+
+    class Client:
+        def json_request(self, method, path, *, json_body):
+            """Record the global settings request.
+
+            Args:
+                method: HTTP request method.
+                path: Appliance API path.
+                json_body: Desired feature settings.
+            """
+            observed.append((method, path, json_body))
+            return json_body
+
+    def record_step(_results, name, operation, *step_args):
+        """Run only the settings operation while recording lifecycle order.
+
+        Args:
+            _results: Unused result list.
+            name: Lifecycle step name.
+            operation: Operation under test.
+            *step_args: Operation arguments.
+        """
+        observed.append(name)
+        if name == "configure-routing-wan-settings":
+            return operation(*step_args)
+        if name == "configure-route-role-deny":
+            return {"id": 17}
+        return {}
+
+    monkeypatch.setattr(lifecycle, "run_step", record_step)
+    lifecycle.run_routing_wan_lifecycle([], Client(), args)
+
+    settings = ("PUT", "/api/v1/routes-wan/settings",
+                {"routing_enabled": True, "nat_enabled": True, "wan_simulation_enabled": True})
+    assert observed.count(settings) == 1
+    assert observed.index(settings) < observed.index("apply-routing-wan-before-access-rule")
+
+
+def test_route_role_deny_lifecycle_uses_saved_override_and_restores_generated_behavior():
+    """The focused lifecycle exercises an explicit deny over generated route-role allow."""
+    lifecycle = load_lifecycle_module()
+    args = lifecycle.parse_args(["--password", "test", "--routing-wan-only", "--plan-only"])
+
+    class FakeClient:
+        """Capture only the public Routing Permission API requests."""
+
+        def __init__(self):
+            self.calls = []
+
+        def json_request(self, method, path, *, json_body=None):
+            """Capture a Routing Permission API JSON request.
+
+            Args:
+                method: HTTP method to request.
+                path: API path to request.
+                json_body: Optional request payload.
+            """
+            self.calls.append((method, path, json_body))
+            if method == "GET":
+                return []
+            return {"id": 17, "policy": "deny", "apply_state": "pending"}
+
+        def request(self, method, path):
+            """Capture a Routing Permission API request.
+
+            Args:
+                method: HTTP method to request.
+                path: API path to request.
+            """
+            self.calls.append((method, path, None))
+            return 204, "", {}
+
+    client = FakeClient()
+    override = lifecycle.configure_route_role_deny(client, args)
+    restored = lifecycle.remove_route_role_deny(client, override["id"])
+
+    assert override == {"id": 17, "source_interface": f"{args.trunk_interface}.{args.vlan_id}"}
+    assert client.calls[1][0:2] == ("POST", "/api/v1/routing-permissions")
+    assert client.calls[1][2]["policy"] == "deny"
+    assert client.calls[1][2]["ip_family"] == 4
+    assert restored == {"removed_rule_id": 17}
+    assert client.calls[2][0:2] == ("DELETE", "/api/v1/routing-permissions/17")
+    assert 'test "$rc" -eq 1' in lifecycle.client_a_route_role_to_wan_command(args, expect_success=False)
+
+
+def test_route_role_deny_lifecycle_reconciles_stale_override_before_forwarding_probe(monkeypatch):
+    """A resumed run removes its old deny before proving generated forwarding.
+
+    Args:
+        monkeypatch: Replaces lifecycle steps with an ordering recorder.
+    """
+    lifecycle = load_lifecycle_module()
+    args = lifecycle.parse_args(["--password", "test", "--routing-wan-only", "--plan-only"])
+    payload = lifecycle.route_role_deny_payload(args)
+
+    class FakeClient:
+        """Expose one lifecycle-owned saved override."""
+
+        def __init__(self):
+            self.calls = []
+            self.saved = {**payload, "id": 17, "generated": False}
+
+        def json_request(self, method, path):
+            """Return the stale override.
+
+            Args:
+                method: HTTP method under test.
+                path: API path under test.
+            """
+            self.calls.append((method, path))
+            return [self.saved]
+
+        def request(self, method, path):
+            """Remove the stale override.
+
+            Args:
+                method: HTTP method under test.
+                path: API path under test.
+            """
+            self.calls.append((method, path))
+            return 204, "", {}
+
+    client = FakeClient()
+    assert lifecycle.remove_stale_route_role_deny(client, args) == {"removed": True, "removed_rule_id": 17}
+    assert client.calls == [("GET", "/api/v1/routing-permissions"),
+                            ("DELETE", "/api/v1/routing-permissions/17")]
+    for field, changed in (("description", "Unrelated operator rule"),
+                           ("enabled", False), ("priority", 200)):
+        client.saved = {**payload, "id": 17, "generated": False, field: changed}
+        with pytest.raises(lifecycle.LifecycleError, match="name collision"):
+            lifecycle.remove_stale_route_role_deny(client, args)
+        assert client.calls[-1] == ("GET", "/api/v1/routing-permissions")
+
+    steps = []
+
+    def record_step(_results, name, _operation, *_args):
+        """Record ordering without making appliance changes.
+
+        Args:
+            _results: Unused result list.
+            name: Lifecycle step name.
+            _operation: Unused step callable.
+            *_args: Unused step arguments.
+        """
+        steps.append(name)
+        if name == "configure-route-role-deny":
+            return {"id": 17}
+        return {}
+
+    monkeypatch.setattr(lifecycle, "run_step", record_step)
+    lifecycle.run_routing_wan_lifecycle([], client, args)
+    assert steps.index("remove-stale-route-role-deny") < steps.index("apply-routing-wan-before-access-rule")
+    assert steps.index("remove-stale-route-role-deny") < steps.index("route-role-routing-check")
+
+
 def test_oidc_only_plan_is_focused_and_mutually_exclusive():
     """Verify that oidc only plan is focused and mutually exclusive."""
     lifecycle = load_lifecycle_module()
@@ -1617,6 +1821,10 @@ def test_routing_wan_only_enables_global_settings_before_apply_and_access_rule(m
     monkeypatch.setattr(lifecycle, "configure_firewall", lambda *_args: {})
     monkeypatch.setattr(lifecycle, "configure_wan_policy", lambda *_args: {"id": 1})
     monkeypatch.setattr(lifecycle, "configure_routes_nat", lambda *_args: {})
+    monkeypatch.setattr(lifecycle, "remove_stale_route_role_deny", lambda *_args: {})
+    monkeypatch.setattr(lifecycle, "configure_route_role_deny", lambda *_args: {"id": 17})
+    monkeypatch.setattr(lifecycle, "route_role_deny_check", lambda *_args: {})
+    monkeypatch.setattr(lifecycle, "remove_route_role_deny", lambda *_args: {})
     monkeypatch.setattr(
         lifecycle,
         "apply_units",
@@ -1642,7 +1850,11 @@ def test_routing_wan_only_enables_global_settings_before_apply_and_access_rule(m
         "configure_routing_permissions",
         lambda *_args: events.append(("access-rule",)),
     )
-    monkeypatch.setattr(lifecycle, "client_checks", lambda *_args: {})
+    monkeypatch.setattr(
+        lifecycle,
+        "access_routing_allowed_check",
+        lambda *_args: events.append(("allowed-access-check",)),
+    )
     monkeypatch.setattr(lifecycle, "wan_packet_loss_check", lambda *_args: {})
 
     lifecycle.run_routing_wan_lifecycle([], Client(), argparse.Namespace())
@@ -1652,12 +1864,14 @@ def test_routing_wan_only_enables_global_settings_before_apply_and_access_rule(m
     host_check_index = next(i for i, event in enumerate(events) if event[0] == "host-state-check")
     blocked_check_index = next(i for i, event in enumerate(events) if event[0] == "blocked-access-check")
     access_rule_index = next(i for i, event in enumerate(events) if event[0] == "access-rule")
+    allowed_check_index = next(i for i, event in enumerate(events) if event[0] == "allowed-access-check")
 
     assert events[settings_index] == (
         "settings", "PUT", "/api/v1/routes-wan/settings",
         {"routing_enabled": True, "nat_enabled": True, "wan_simulation_enabled": True},
     )
     assert settings_index < first_apply_index < host_check_index < blocked_check_index < access_rule_index
+    assert access_rule_index < allowed_check_index
     assert events[first_apply_index] == ("apply", ("network", "firewall", "wan"))
 
 
@@ -1747,12 +1961,68 @@ def test_routing_probe_commands_cover_block_allow_and_route_role_paths():
     route_role = lifecycle.client_a_route_role_to_wan_command(args)
     client_b = lifecycle.client_b_wan_setup_command(args, include_site_route=False, include_vlan_route=True)
 
-    assert "test \"$rc\" -ne 0" in blocked
-    assert "test \"$rc\" -ne 0" not in allowed
+    assert "test \"$rc\" -eq 1" in blocked
+    assert "test \"$rc\" -eq 1" not in allowed
     assert "ip route replace 172.31.50.0/24 via 192.168.50.1 dev eth1" in allowed
     assert "ip link add link eth2 name eth2.50 type vlan id 50" in route_role
     assert "ip route replace 172.31.50.0/24 via 192.168.60.1 dev eth2.50" in route_role
     assert "ip route replace 192.168.60.0/24 via 172.31.50.1 dev eth1" in client_b
+
+
+@pytest.mark.parametrize("probe_kind", ["route", "access", "wan-setup"])
+@pytest.mark.parametrize(
+    "failure,ping_status",
+    [("none", 1), ("none", 0), ("none", 2), ("addr", 1), ("route", 1),
+     ("link", 1), ("vlan", 1), ("module", 1)],
+)
+def test_routing_probes_reject_setup_and_local_ping_errors(probe_kind, failure, ping_status):
+    """Execute the generated shell with failed prerequisites and realistic ping statuses.
+
+    Args:
+        probe_kind: Routing client command to exercise.
+        failure: Network setup operation that the shell mock rejects.
+        ping_status: Mock ping status: reply, no reply, or local error.
+    """
+    shell = shutil.which("sh")
+    if shell is None:
+        git = shutil.which("git")
+        candidate = Path(git).parent.parent / "bin" / "sh.exe" if git else None
+        if candidate and candidate.is_file():
+            shell = str(candidate)
+    if shell is None:
+        pytest.skip("A POSIX shell is required to execute the lifecycle client commands")
+    lifecycle = load_lifecycle_module()
+    args = lifecycle.parse_args(["--password", "test"])
+    if probe_kind == "route":
+        command = lifecycle.client_a_route_role_to_wan_command(args, expect_success=False)
+        applicable = {"addr", "route", "link", "vlan", "module"}
+    elif probe_kind == "access":
+        command = lifecycle.client_a_access_to_wan_command(args, expect_success=False)
+        applicable = {"route"}
+    else:
+        command = lifecycle.client_b_wan_setup_command(args, include_vlan_route=True)
+        applicable = {"addr", "route", "link"}
+    mocks = (
+        f"failure={failure}; "
+        'sudo() { shift; "$@"; }; '
+        'modprobe() { test "$failure" != module; }; '
+        'ip() { case "$*" in '
+        '"link show "*) return 1;; '
+        '"link add "*) test "$failure" != vlan;; '
+        '"link set "*) test "$failure" != link;; '
+        '"addr replace "*) test "$failure" != addr;; '
+        '"route replace "*) test "$failure" != route;; '
+        '*) return 0;; esac; }; '
+        f'ping() {{ echo ping-executed; return {ping_status}; }}; '
+    )
+    result = subprocess.run([shell, "-c", mocks + command], capture_output=True, text=True, check=False)
+    setup_failed = failure in applicable
+    expected_success = not setup_failed and (probe_kind == "wan-setup" or ping_status == 1)
+    assert (result.returncode == 0) == expected_success, result.stderr
+    if setup_failed or probe_kind == "wan-setup":
+        assert "ping-executed" not in result.stdout
+    else:
+        assert "ping-executed" in result.stdout
 
 
 def test_routing_host_firewall_check_uses_default_drop_isolation():

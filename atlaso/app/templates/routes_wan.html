@@ -84,7 +84,7 @@
           </div>
           <div class="routing-state-pills" aria-label="Routing state summary">
             <span class="status-pill {{ 'good' if routing_summary.generated_count else 'muted' }}">{{ routing_summary.generated_count }} auto route-role</span>
-            <span class="status-pill {{ 'good' if routing_summary.explicit_count else 'muted' }}">{{ routing_summary.explicit_count }} explicit access</span>
+            <span class="status-pill {{ 'good' if routing_summary.explicit_count else 'muted' }}">{{ routing_summary.explicit_count }} explicit policies</span>
             <span class="status-pill warn">management isolated</span>
           </div>
         </div>
@@ -106,7 +106,7 @@
         ></div>
         <table id="routes-wan-routing-fallback" class="data-table dns-fallback-table">
           <thead>
-            <tr><th>Name</th><th>Source</th><th>Destination</th><th>Priority</th><th>Status</th><th>Description</th><th>Actions</th></tr>
+            <tr><th>Name</th><th>Source</th><th>Destination</th><th>Networks</th><th>Family</th><th>Permission</th><th>Effective state</th><th>Desired state</th><th>Priority</th><th>Description</th><th>Actions</th></tr>
           </thead>
           <tbody>
             {% for rule in generated_routing_rule_rows %}
@@ -114,19 +114,27 @@
                 <td>{{ rule.name }}</td>
                 <td>{{ rule.source_interface }}</td>
                 <td>{{ rule.destination_interface }}</td>
+                <td>{{ (rule.source_networks or [])|join(", ") }} → {{ (rule.destination_networks or [])|join(", ") }}</td>
+                <td>{{ rule.address_family or "Unavailable" }}</td>
+                <td>{{ rule.policy or "automatic" }}</td>
+                <td><span class="status-pill {{ 'good' if rule.effective_action in ['automatic allow', 'explicit allow'] else 'warn' if rule.effective_action in ['suspended', 'conflict'] else 'muted' }}">{{ rule.effective_action or "automatic allow" }}</span></td>
+                <td><span class="status-pill {{ 'good' if rule.apply_state == 'applied' else 'warn' }}">{{ rule.apply_state or "pending" }}</span></td>
                 <td>{{ rule.priority }}</td>
-                <td><span class="status-pill good">generated</span></td>
                 <td>{{ rule.description }}</td>
-                <td></td>
+                <td>{% if routes_wan_can_write %}<button class="button tiny" type="button" data-routes-wan-wizard-open="routing" data-routes-wan-override="true" data-routes-wan-source="{{ rule.source_interface }}" data-routes-wan-destination="{{ rule.destination_interface }}">Override routing permission</button>{% endif %}</td>
               </tr>
             {% endfor %}
-            {% for rule in routing_rules %}
+            {% for rule in routing_rule_rows %}
               <tr>
                 <td>{{ rule.name }}</td>
                 <td>{{ rule.source_interface }}</td>
                 <td>{{ rule.destination_interface }}</td>
+                <td>{{ (rule.source_networks or [])|join(", ") }} → {{ (rule.destination_networks or [])|join(", ") }}</td>
+                <td>{{ rule.address_family or "Unavailable" }}</td>
+                <td>{{ rule.policy or "allow" }}</td>
+                <td><span class="status-pill {{ 'good' if rule.effective_action in ['automatic allow', 'explicit allow'] else 'warn' if rule.effective_action in ['suspended', 'conflict'] else 'muted' }}">{{ rule.effective_action or ("explicit allow" if rule.enabled else "suspended") }}</span></td>
+                <td><span class="status-pill {{ 'good' if rule.apply_state == 'applied' else 'warn' }}">{{ rule.apply_state or "pending" }}</span></td>
                 <td>{{ rule.priority }}</td>
-                <td><span class="status-pill {{ 'good' if rule.enabled else 'muted' }}">{{ "enabled" if rule.enabled else "disabled" }}</span></td>
                 <td>{{ rule.description or "" }}</td>
                 <td>
                   <form
@@ -297,16 +305,16 @@
 
 {% set routing_steps = [
   {"id": "identity", "label": "Identity", "summary": "Name and purpose"},
-  {"id": "direction", "label": "Direction", "summary": "Source and destination"},
+  {"id": "direction", "label": "Direction", "summary": "Source, destination, and permission"},
   {"id": "state", "label": "State", "summary": "Enable or disable"},
   {"id": "review", "label": "Review", "summary": "Confirm permission"}
 ] %}
-{% call resource_wizard("routes-wan-routing-dialog", "routes-wan-wizard", management_ui_root ~ "/routes-wan/routing-rules", routing_steps, "Add routing permission", "Describe the explicit forwarding path required by an Access network.", "Add routing permission", form_data_value="routing") %}
+{% call resource_wizard("routes-wan-routing-dialog", "routes-wan-wizard", management_ui_root ~ "/routes-wan/routing-rules", routing_steps, "Add routing permission", "Describe the forwarding permission for a source and destination network.", "Add routing permission", form_data_value="routing") %}
     <input type="hidden" name="csrf" value="{{ csrf_token }}">
         <section class="vcf-sddc-step-page" data-atlaso-wizard-step="identity"><div class="form-stack"><label><span class="field-label"><span>Name</span><button class="help-icon" type="button" data-help="Unique operator-facing name for this explicit routing permission.">i</button></span><input name="name" maxlength="120" required></label><label><span class="field-label"><span>Description</span><button class="help-icon" type="button" data-help="Why this source network is permitted to forward traffic to the destination network.">i</button></span><textarea name="description" rows="3" maxlength="1000"></textarea></label></div></section>
-        <section class="vcf-sddc-step-page hidden" data-atlaso-wizard-step="direction"><div class="form-grid"><label><span class="field-label"><span>Source interface or VLAN</span><button class="help-icon" type="button" data-help="Non-management network from which forwarded traffic originates.">i</button></span><select name="source_interface" required>{% for target in wan_route_targets %}<option value="{{ target.name }}">{{ target.label }}</option>{% endfor %}</select></label><label><span class="field-label"><span>Destination interface or VLAN</span><button class="help-icon" type="button" data-help="Different non-management network to which traffic may be forwarded.">i</button></span><select name="destination_interface" required>{% for target in wan_route_targets %}<option value="{{ target.name }}">{{ target.label }}</option>{% endfor %}</select></label><label><span class="field-label"><span>Priority</span><button class="help-icon" type="button" data-help="Non-negative ordering value recorded with the explicit forwarding permission.">i</button></span><input type="number" name="priority" min="0" value="100" required></label></div></section>
+        <section class="vcf-sddc-step-page hidden" data-atlaso-wizard-step="direction"><div class="form-grid"><label><span class="field-label"><span>Source interface or VLAN</span><button class="help-icon" type="button" data-help="Non-management network from which forwarded traffic originates.">i</button></span><select name="source_interface" required>{% for target in wan_route_targets %}<option value="{{ target.name }}">{{ target.label }}</option>{% endfor %}</select></label><label><span class="field-label"><span>Destination interface or VLAN</span><button class="help-icon" type="button" data-help="Different non-management network to which traffic may be forwarded.">i</button></span><select name="destination_interface" required>{% for target in wan_route_targets %}<option value="{{ target.name }}">{{ target.label }}</option>{% endfor %}</select></label><label><span class="field-label"><span>Routing permission</span><button class="help-icon" type="button" data-help="Allow explicitly permits this path, deny blocks it, and automatic follows topology generated forwarding. Management remains isolated.">i</button></span><select name="policy" aria-label="Routing permission"><option value="allow">Allow</option><option value="deny">Deny</option><option value="automatic">Automatic</option></select></label><label><span class="field-label"><span>IP family</span><button class="help-icon" type="button" data-help="Limit this permission to IPv4 or IPv6, or use both families. The selected family is validated against the source and destination networks.">i</button></span><select name="ip_family" aria-label="IP family"><option value="0">IPv4 and IPv6</option><option value="4">IPv4</option><option value="6">IPv6</option></select></label><label><span class="field-label"><span>Priority</span><button class="help-icon" type="button" data-help="Non-negative ordering value recorded with the explicit forwarding permission.">i</button></span><input type="number" name="priority" min="0" value="100" required></label></div></section>
         <section class="vcf-sddc-step-page hidden" data-atlaso-wizard-step="state"><label class="switch-field"><span class="field-label"><span>Permission enabled</span><button class="help-icon" type="button" data-help="Enabled permissions enter forwarding desired state. Firewall and host forwarding change only through global appliance apply.">i</button></span><input class="switch-input" type="checkbox" name="enabled" checked><span class="switch-track" aria-hidden="true"></span></label></section>
-        <section class="vcf-sddc-step-page hidden" data-atlaso-wizard-step="review"><div class="settings-list"><div><span>Permission</span><strong data-routes-wan-review="routing-name"></strong></div><div><span>Forwarding path</span><strong data-routes-wan-review="routing-path"></strong></div><div><span>Priority</span><strong data-routes-wan-review="routing-priority"></strong></div><div><span>State</span><strong data-routes-wan-review="routing-state"></strong></div></div><p class="muted">Management remains isolated. Saving changes desired state only; forwarding changes through global appliance apply.</p></section>
+        <section class="vcf-sddc-step-page hidden" data-atlaso-wizard-step="review"><div class="settings-list"><div><span>Permission</span><strong data-routes-wan-review="routing-name"></strong></div><div><span>Forwarding path</span><strong data-routes-wan-review="routing-path"></strong></div><div><span>Permission and family</span><strong data-routes-wan-review="routing-policy"></strong></div><div><span>Priority</span><strong data-routes-wan-review="routing-priority"></strong></div><div><span>State</span><strong data-routes-wan-review="routing-state"></strong></div></div><p class="muted">Management remains isolated. Saving changes desired state only; forwarding changes through global appliance apply.</p></section>
 {% endcall %}
 
 {% set policy_steps = [

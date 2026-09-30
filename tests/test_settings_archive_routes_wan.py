@@ -533,3 +533,104 @@ def test_archive_rejects_malformed_disabled_nat_ingress(client):
         candidate["data"]["nat_rules"][0]["inbound_interfaces"] = [bad]
         with SessionLocal() as db, pytest.raises(ValueError, match="canonical interface"):
             restore_settings_archive(db, candidate)
+
+
+def test_routing_deny_archive_round_trip_and_legacy_default(client):
+    """Keep policy/family across restore and preserve legacy allow defaults.
+
+    Args:
+        client: Isolated archive database fixture.
+    """
+    from atlaso.app.models import RoutingRule
+
+    with SessionLocal() as db:
+        db.add(RoutingRule(name="Deny relationship", enabled=True, source_interface="eth2",
+                           destination_interface="eth1.20", policy="deny", ip_family=4))
+        db.commit()
+        archive = export_settings_archive(db, actor="test")
+        row = next(row for row in archive["data"]["routing_rules"] if row["name"] == "Deny relationship")
+        assert (row["policy"], row["ip_family"]) == ("deny", 4)
+        restore_settings_archive(db, archive)
+        restored = db.scalar(select(RoutingRule).where(RoutingRule.name == "Deny relationship"))
+        assert (restored.policy, restored.ip_family) == ("deny", 4)
+        legacy = deepcopy(archive)
+        for row in legacy["data"]["routing_rules"]:
+            row.pop("policy", None)
+            row.pop("ip_family", None)
+        restore_settings_archive(db, legacy)
+        restored = db.scalar(select(RoutingRule).where(RoutingRule.name == "Deny relationship"))
+        assert (restored.policy, restored.ip_family) == ("allow", 0)
+        for fields in ({"policy": "permit"}, {"ip_family": False}, {"source_interface": "eth0", "policy": "deny"}):
+            invalid = deepcopy(archive)
+            invalid["data"]["routing_rules"][0].update(fields)
+            with pytest.raises(ValueError):
+                restore_settings_archive(db, invalid)
+            assert db.scalar(select(RoutingRule).where(RoutingRule.name == "Deny relationship")).policy == "allow"
+
+
+def test_archive_rejects_enabled_permission_on_unused_endpoint(client):
+    """Restore cannot retain an enabled deny that Apply would omit.
+
+    Args:
+        client: Isolated archive database fixture.
+    """
+    from atlaso.app.models import RoutingRule
+
+    with SessionLocal() as db:
+        db.add(RoutingRule(name="Retained denial", enabled=True, source_interface="eth1.20",
+                           destination_interface="eth2", policy="deny", ip_family=4))
+        db.commit()
+        archive = export_settings_archive(db, actor="test")
+    _set_routes_wan_setting(archive, key=ROUTING_ENABLED_SETTING_KEY, value=True)
+    next(row for row in archive["data"]["vlan_interfaces"] if row["name"] == "eth1.20")["role"] = "unused"
+    with SessionLocal() as db, pytest.raises(ValueError, match="ineligible interface"):
+        restore_settings_archive(db, archive)
+
+
+def test_archive_rejects_malformed_dormant_routing_interfaces(client):
+    """Dormancy may preserve absent targets, but never malformed names.
+
+    Args:
+        client: Isolated archive database fixture.
+    """
+    from atlaso.app.models import RoutingRule
+
+    with SessionLocal() as db:
+        db.add(RoutingRule(name="Dormant permission", enabled=False, source_interface="eth2",
+                           destination_interface="eth1.20", policy="deny", ip_family=4))
+        db.commit()
+        archive = export_settings_archive(db, actor="test")
+    _set_routes_wan_setting(archive, key=ROUTING_ENABLED_SETTING_KEY, value=False)
+    row = next(row for row in archive["data"]["routing_rules"] if row["name"] == "Dormant permission")
+    row["source_interface"] = "missing-source"
+    row["destination_interface"] = "missing-destination"
+    with SessionLocal() as db:
+        restore_settings_archive(db, archive)
+    for bad in ("eth2\nInjected=1", "eth2,eth3", "a" * 81):
+        invalid = deepcopy(archive)
+        next(row for row in invalid["data"]["routing_rules"] if row["name"] == "Dormant permission")["source_interface"] = bad
+        with SessionLocal() as db, pytest.raises(ValueError, match="canonical interface"):
+            restore_settings_archive(db, invalid)
+
+
+def test_archive_rejects_case_insensitive_dormant_routing_name_collision(client):
+    """Names must remain usable when Routing is later enabled.
+
+    Args:
+        client: Isolated archive database fixture.
+    """
+    from atlaso.app.models import RoutingRule
+
+    with SessionLocal() as db:
+        db.add_all([
+            RoutingRule(name="Deny relationship", enabled=False, source_interface="eth2",
+                        destination_interface="eth1.20", policy="deny", ip_family=4),
+            RoutingRule(name="Other relationship", enabled=False, source_interface="eth1.20",
+                        destination_interface="eth2", policy="allow", ip_family=4),
+        ])
+        db.commit()
+        archive = export_settings_archive(db, actor="test")
+    _set_routes_wan_setting(archive, key=ROUTING_ENABLED_SETTING_KEY, value=False)
+    next(row for row in archive["data"]["routing_rules"] if row["name"] == "Other relationship")["name"] = " deny RELATIONSHIP "
+    with SessionLocal() as db, pytest.raises(ValueError, match="duplicate name"):
+        restore_settings_archive(db, archive)

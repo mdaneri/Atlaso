@@ -1,0 +1,334 @@
+"""Exercise Routing Permission API authorization and desired-state behavior."""
+
+import pytest
+from sqlalchemy import select
+
+from tests.routers.api_v1.helpers import create_token
+
+
+def _permission_payload(**overrides: object) -> dict[str, object]:
+    """Return one valid complete permission request body.
+
+    Args:
+        **overrides: Request fields replacing the valid defaults.
+    """
+    return {
+        "name": "API permission",
+        "enabled": True,
+        "source_interface": "eth2",
+        "destination_interface": "eth1.20",
+        "priority": 100,
+        "description": "Reviewed test rule",
+        "policy": "deny",
+        "ip_family": 4,
+        **overrides,
+    }
+
+
+def _prepare_targets() -> None:
+    """Make two isolated lab targets available to current API validation."""
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import PhysicalInterface, VlanInterface
+
+    with SessionLocal() as db:
+        source = db.scalar(select(PhysicalInterface).where(PhysicalInterface.name == "eth2"))
+        destination = db.scalar(select(VlanInterface).where(VlanInterface.name == "eth1.20"))
+        assert source is not None and destination is not None
+        source.role = "access"
+        source.mode = "access"
+        source.admin_state = "up"
+        source.oper_state = "up"
+        source.ip_cidr = "192.0.2.1/24"
+        destination.role = "access"
+        destination.enabled = True
+        destination.ip_cidr = "198.51.100.1/24"
+        db.commit()
+
+
+def _prepare_generated_targets() -> None:
+    """Create two route-role targets that produce generated permissions."""
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import PhysicalInterface, VlanInterface
+
+    with SessionLocal() as db:
+        source = db.scalar(select(PhysicalInterface).where(PhysicalInterface.name == "eth2"))
+        destination = db.scalar(select(VlanInterface).where(VlanInterface.name == "eth1.20"))
+        assert source is not None and destination is not None
+        source.role = "route"
+        source.mode = "access"
+        source.admin_state = "up"
+        source.oper_state = "up"
+        source.ip_cidr = "192.0.2.1/24"
+        destination.role = "route"
+        destination.enabled = True
+        destination.ip_cidr = "198.51.100.1/24"
+        db.commit()
+
+
+def test_routing_permission_crud_requires_routes_scope_and_preserves_policy(client):
+    """Save, replace and remove desired state under Routes scopes only.
+
+    Args:
+        client: Isolated Atlaso HTTP client.
+    """
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import AuditEvent
+
+    _prepare_targets()
+    reader, _ = create_token(client, scopes=["read:routes"])
+    writer, _ = create_token(client, scopes=["read:routes", "write:routes"])
+    other_writer, _ = create_token(client, scopes=["read:firewall", "write:firewall"])
+    headers = {"Authorization": f"Bearer {writer}"}
+    path = "/api/v1/routing-permissions"
+
+    assert client.post(path, json=_permission_payload(), headers={"Authorization": f"Bearer {other_writer}"}).status_code == 403
+    assert client.post(path, json=_permission_payload(), headers={"Authorization": f"Bearer {reader}"}).status_code == 403
+    created = client.post(path, json=_permission_payload(), headers=headers)
+    assert created.status_code == 201, created.text
+    saved = created.json()
+    assert saved["generated"] is False
+    assert saved["policy"] == "deny"
+    assert saved["ip_family"] == 4
+
+    rule_path = f"{path}/{saved['id']}"
+    assert client.get(path, headers={"Authorization": f"Bearer {reader}"}).status_code == 200
+    replacement = client.put(rule_path, json=_permission_payload(policy="automatic", ip_family=0), headers=headers)
+    assert replacement.status_code == 200, replacement.text
+    assert replacement.json()["policy"] == "automatic"
+    assert replacement.json()["ip_family"] == 0
+    assert replacement.json()["apply_state"] == "pending"
+    assert client.delete(rule_path, headers=headers).status_code == 204
+
+    with SessionLocal() as db:
+        actions = list(db.scalars(
+            select(AuditEvent.action)
+            .where(AuditEvent.resource_type == "routing_permission")
+            .order_by(AuditEvent.id)
+        ))
+    assert actions == ["create_routing_permission", "update_routing_permission", "delete_routing_permission"]
+
+
+@pytest.mark.parametrize("unavailable", [False, True])
+def test_routing_permission_management_target_is_rejected(client, unavailable):
+    """Reject a management interface even when paired with a valid lab target.
+
+    Args:
+        client: Isolated Atlaso HTTP client.
+        unavailable: Whether management is missing and the proposed permission disabled.
+    """
+    _prepare_targets()
+    if unavailable:
+        from atlaso.app.database import SessionLocal
+        from atlaso.app.models import PhysicalInterface
+
+        with SessionLocal() as db:
+            management = db.scalar(select(PhysicalInterface).where(PhysicalInterface.name == "eth0"))
+            management.oper_state = "missing"
+            db.commit()
+    writer, _ = create_token(client, scopes=["write:routes"])
+    response = client.post(
+        "/api/v1/routing-permissions",
+        json=_permission_payload(source_interface="eth0", enabled=not unavailable),
+        headers={"Authorization": f"Bearer {writer}"},
+    )
+    assert response.status_code == 422, response.text
+    assert response.json()["status"] == 422
+    assert response.json()["error_code"] == "HTTP_ERROR"
+
+
+def test_generated_routing_permissions_are_read_only(client):
+    """Reject update and delete attempts against generated permission rows.
+
+    Args:
+        client: Isolated Atlaso HTTP client.
+    """
+    _prepare_generated_targets()
+    reader, _ = create_token(client, scopes=["read:routes"])
+    writer, _ = create_token(client, scopes=["write:routes"])
+    path = "/api/v1/routing-permissions"
+    rows = client.get(path, headers={"Authorization": f"Bearer {reader}"})
+    assert rows.status_code == 200, rows.text
+    generated = next(row for row in rows.json() if row["generated"])
+    generated_path = f"{path}/{generated['id']}"
+
+    replaced = client.put(
+        generated_path,
+        json=_permission_payload(name="Generated replacement"),
+        headers={"Authorization": f"Bearer {writer}"},
+    )
+    assert replaced.status_code == 409, replaced.text
+    assert replaced.json()["error_code"] == "HTTP_ERROR"
+    deleted = client.delete(generated_path, headers={"Authorization": f"Bearer {writer}"})
+    assert deleted.status_code == 409, deleted.text
+    assert deleted.json()["error_code"] == "HTTP_ERROR"
+
+
+def test_routing_permission_rejects_unknown_policy_and_boolean_family(client):
+    """Reject enum violations and bool values masquerading as integer families.
+
+    Args:
+        client: Isolated Atlaso HTTP client.
+    """
+    _prepare_targets()
+    writer, _ = create_token(client, scopes=["write:routes"])
+    headers = {"Authorization": f"Bearer {writer}"}
+    path = "/api/v1/routing-permissions"
+    for invalid in (
+        _permission_payload(policy="accept"),
+        _permission_payload(ip_family=True),
+    ):
+        response = client.post(path, json=invalid, headers=headers)
+        assert response.status_code == 422, response.text
+        assert response.json()["error_code"] == "VALIDATION_ERROR"
+
+
+def test_duplicate_routing_permission_name_returns_conflict_without_partial_audit(client):
+    """Roll back duplicate desired state without adding a second audit event.
+
+    Args:
+        client: Isolated Atlaso HTTP client.
+    """
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import AuditEvent, RoutingRule
+
+    _prepare_targets()
+    writer, _ = create_token(client, scopes=["write:routes"])
+    headers = {"Authorization": f"Bearer {writer}"}
+    path = "/api/v1/routing-permissions"
+    payload = _permission_payload()
+    created = client.post(path, json=payload, headers=headers)
+    assert created.status_code == 201, created.text
+    duplicate = client.post(path, json=payload, headers=headers)
+    assert duplicate.status_code == 409, duplicate.text
+    assert duplicate.json()["error_code"] == "HTTP_ERROR"
+    normalized_duplicate = client.post(path, json={**payload, "name": "api PERMISSION"}, headers=headers)
+    assert normalized_duplicate.status_code == 409, normalized_duplicate.text
+    assert normalized_duplicate.json()["error_code"] == "HTTP_ERROR"
+
+    with SessionLocal() as db:
+        assert db.scalar(select(RoutingRule.id).where(RoutingRule.name == payload["name"])) is not None
+        assert db.scalar(select(AuditEvent.id).where(AuditEvent.action == "create_routing_permission")) is not None
+        assert len(list(db.scalars(select(RoutingRule).where(RoutingRule.name == payload["name"])))) == 1
+        assert len(list(db.scalars(select(AuditEvent).where(AuditEvent.action == "create_routing_permission")))) == 1
+
+
+@pytest.mark.parametrize("name", ["reviewed\nrouting=Injected", "reviewed\r\n[section]", "reviewed\u2028routing=Injected"])
+def test_routing_permission_rejects_line_separators_before_persistence(client, name):
+    """A saved name cannot add a line or section to rendered WAN configuration.
+
+    Args:
+        client: Isolated API client.
+        name: Name containing a line separator.
+    """
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import AuditEvent, RoutingRule
+
+    _prepare_targets()
+    writer, _ = create_token(client, scopes=["write:routes"])
+    response = client.post(
+        "/api/v1/routing-permissions",
+        json=_permission_payload(name=name),
+        headers={"Authorization": f"Bearer {writer}"},
+    )
+    assert response.status_code == 422, response.text
+    with SessionLocal() as db:
+        assert list(db.scalars(select(RoutingRule))) == []
+        assert list(db.scalars(select(AuditEvent).where(AuditEvent.action == "create_routing_permission"))) == []
+
+
+def test_routing_permission_replace_rejects_normalized_collision_and_allows_self_rename(client):
+    """Reject case-insensitive collisions without mutating or auditing, but exclude the saved row.
+
+    Args:
+        client: Isolated Atlaso HTTP client.
+    """
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import AuditEvent, RoutingRule
+
+    _prepare_targets()
+    writer, _ = create_token(client, scopes=["write:routes"])
+    headers = {"Authorization": f"Bearer {writer}"}
+    path = "/api/v1/routing-permissions"
+    first = client.post(path, json=_permission_payload(name="API permission"), headers=headers)
+    second = client.post(path, json=_permission_payload(name="Second permission", priority=101), headers=headers)
+    assert first.status_code == 201, first.text
+    assert second.status_code == 201, second.text
+    first_path = f"{path}/{first.json()['id']}"
+
+    self_rename = client.put(first_path, json=_permission_payload(name="aPi PeRmIsSiOn"), headers=headers)
+    assert self_rename.status_code == 200, self_rename.text
+    assert self_rename.json()["name"] == "aPi PeRmIsSiOn"
+
+    collision = client.put(
+        first_path,
+        json=_permission_payload(name="sEcOnD pErMiSsIoN"),
+        headers=headers,
+    )
+    assert collision.status_code == 409, collision.text
+    assert collision.json()["error_code"] == "HTTP_ERROR"
+
+    with SessionLocal() as db:
+        rules = list(db.scalars(select(RoutingRule).order_by(RoutingRule.id)))
+        actions = list(db.scalars(select(AuditEvent.action).where(AuditEvent.resource_type == "routing_permission").order_by(AuditEvent.id)))
+    assert [rule.name for rule in rules] == ["aPi PeRmIsSiOn", "Second permission"]
+    assert actions == ["create_routing_permission", "create_routing_permission", "update_routing_permission"]
+
+
+@pytest.mark.parametrize("drift", ["missing", "family"])
+def test_api_can_disable_a_permission_after_topology_disappears(client, drift):
+    """Keep stale desired state disabled while rejecting reactivation.
+
+    Args:
+        client: Isolated application client.
+        drift: Unavailable interface or loss of the selected family.
+    """
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import PhysicalInterface
+
+    _prepare_targets()
+    writer, _ = create_token(client, scopes=["read:routes", "write:routes"])
+    headers = {"Authorization": f"Bearer {writer}"}
+    created = client.post("/api/v1/routing-permissions", json=_permission_payload(), headers=headers)
+    assert created.status_code == 201, created.text
+    with SessionLocal() as db:
+        source = db.scalar(select(PhysicalInterface).where(PhysicalInterface.name == "eth2"))
+        if drift == "missing":
+            source.oper_state = "missing"
+        else:
+            source.ip_cidr = ""
+            source.ipv6_cidr = "2001:db8:50::1/64"
+        db.commit()
+    path = f"/api/v1/routing-permissions/{created.json()['id']}"
+    disabled = client.put(path, json=_permission_payload(enabled=False), headers=headers)
+    assert disabled.status_code == 200, disabled.text
+    assert disabled.json()["enabled"] is False
+    assert disabled.json()["effective_action"] == "suspended"
+    assert disabled.json()["policy"] == "deny"
+    assert disabled.json()["ip_family"] == 4
+    assert client.put(path, json=_permission_payload(), headers=headers).status_code == 422
+
+
+@pytest.mark.parametrize("field", ["source_interface", "destination_interface"])
+def test_api_rejects_malformed_disabled_interface_names_on_create_and_replace(client, field):
+    """Reject malformed dormant scope without changing the saved permission.
+
+    Args:
+        client: Isolated application client.
+        field: Endpoint containing an invalid interface identity.
+    """
+    _prepare_targets()
+    writer, _ = create_token(client, scopes=["read:routes", "write:routes"])
+    headers = {"Authorization": f"Bearer {writer}"}
+    path = "/api/v1/routing-permissions"
+    payload = _permission_payload(enabled=False)
+    created = client.post(path, json=payload, headers=headers)
+    assert created.status_code == 201, created.text
+    invalid = {**payload, "name": "Malformed", field: "gone\nrouting=Injected"}
+    rejected = client.post(path, json=invalid, headers=headers)
+    assert rejected.status_code == 422, rejected.text
+    replaced = client.put(f"{path}/{created.json()['id']}", json=invalid, headers=headers)
+    assert replaced.status_code == 422, replaced.text
+    rows = client.get(path, headers=headers)
+    saved = next(row for row in rows.json() if row["id"] == created.json()["id"])
+    assert saved[field] == payload[field]
+    assert saved["name"] == payload["name"]

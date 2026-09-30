@@ -7629,17 +7629,95 @@ function wanPolicyFormatter(cell, policyLabels) {
   return escapeHtml(policyLabels[String(value)] || value);
 }
 
-async function saveWanEnabledState(cell, csrf, path, errorId, fallbackMessage) {
+async function saveWanEnabledState(cell, csrf, path, errorId, fallbackMessage, options = {}) {
   const data = cell.getRow().getData();
   clearCaMessage(errorId);
   try {
     await postWanAction(managementUiPath(`${path}/${data.id}/edit`), data, csrf, { reload: false });
-    showTransientGridStatus("Saved");
-    await refreshNetworkSideStack();
   } catch (error) {
     cell.restoreOldValue?.();
     showWanMessage(errorId, error instanceof Error ? error.message : fallbackMessage);
+    return;
   }
+  showTransientGridStatus("Saved");
+  if (typeof options.afterSave === "function") {
+    try {
+      await options.afterSave();
+    } catch (_error) {
+      showWanMessage(errorId, options.refreshFailureMessage || "The routing permission was saved, but its displayed effective state could not be refreshed. Reload the page to see the latest state.");
+      return;
+    }
+  }
+  try {
+    await refreshNetworkSideStack();
+  } catch (error) {
+    if (typeof options.afterSave === "function") {
+      showWanMessage(errorId, "The routing permission and its displayed state were saved, but the network status panel could not be refreshed.");
+      return;
+    }
+    cell.restoreOldValue?.();
+    showWanMessage(errorId, error instanceof Error ? error.message : fallbackMessage);
+  }
+}
+
+async function refreshRoutesWanRoutingProjection(tableElement, table) {
+  const response = await fetch(window.location.href, {
+    credentials: "same-origin",
+    headers: { "X-Requested-With": "AtlasoRoutingPermissionRefresh", Accept: "text/html" },
+  });
+  if (!response.ok) throw new Error("The routing permission projection could not be refreshed.");
+  const nextDocument = new DOMParser().parseFromString(await response.text(), "text/html");
+  const nextElement = nextDocument.getElementById("routes-wan-routing-table");
+  if (!nextElement) throw new Error("The routing permission projection is missing from the refreshed page.");
+
+  let explicitRows;
+  let generatedRows;
+  let targetOptions;
+  try {
+    explicitRows = JSON.parse(nextElement.dataset.rules);
+    generatedRows = JSON.parse(nextElement.dataset.generatedRules);
+    targetOptions = JSON.parse(nextElement.dataset.targetOptions);
+  } catch (_error) {
+    throw new Error("The routing permission projection on the refreshed page is invalid.");
+  }
+  const validRows = (rows, generated) => Array.isArray(rows) && rows.every((row) =>
+    row && typeof row === "object"
+    && (typeof row.id === "string" || typeof row.id === "number")
+    && String(row.id).length > 0
+    && row.generated === generated
+    && typeof row.effective_action === "string"
+    && typeof row.apply_state === "string");
+  if (!validRows(explicitRows, false) || !validRows(generatedRows, true)
+    || !Array.isArray(targetOptions)
+    || !targetOptions.every((target) => target && typeof target.name === "string" && typeof target.label === "string")) {
+    throw new Error("The routing permission projection on the refreshed page is invalid.");
+  }
+  if (!table || typeof table.getRows !== "function" || typeof table.updateData !== "function") {
+    throw new Error("The Routing Permissions grid is unavailable for refresh.");
+  }
+  const currentRows = table.getRows("all").map((row) => row.getData());
+  const currentIds = currentRows.map((row) => String(row.id));
+  if (currentIds.some((id) => !id) || new Set(currentIds).size !== currentIds.length) {
+    throw new Error("The Routing Permissions grid has invalid row identities.");
+  }
+  const projectedRows = [
+    ...generatedRows.map((row) => ({ ...row, kind: "auto route-role rule" })),
+    ...explicitRows.map((row) => ({ ...row, kind: "explicit access rule" })),
+  ];
+  if (currentIds.includes("__new__")) {
+    projectedRows.push({ id: "__new__", is_new: true, generated: false });
+  }
+  const projectedIds = projectedRows.map((row) => String(row.id));
+  if (new Set(projectedIds).size !== projectedIds.length
+    || projectedIds.length !== currentIds.length
+    || projectedIds.some((id) => !currentIds.includes(id))) {
+    throw new Error("Routing Permissions changed while the grid was refreshing. Reload the page to continue.");
+  }
+  await table.updateData(projectedRows);
+  tableElement.dataset.rules = JSON.stringify(explicitRows);
+  tableElement.dataset.generatedRules = JSON.stringify(generatedRows);
+  tableElement.dataset.targetOptions = JSON.stringify(targetOptions);
+  return targetOptions;
 }
 
 const routesWanWizardOpeners = new Map();
@@ -7660,6 +7738,22 @@ function restoreNatOutboundSelection(select, savedValue) {
   select.querySelectorAll("[data-unavailable]").forEach((option) => option.remove());
   if (![...select.options].some((option) => option.value === savedValue)) {
     const option = new Option(savedValue ? `${savedValue} (unavailable)` : "Needs outbound review", savedValue);
+    option.dataset.unavailable = "true";
+    select.add(option);
+  }
+  select.value = savedValue;
+}
+
+function restoreRoutingInterfaceSelection(select, savedValue, enabled) {
+  if (!(select instanceof HTMLSelectElement)) return;
+  select.querySelectorAll("[data-unavailable]").forEach((option) => option.remove());
+  if (!savedValue) {
+    select.value = "";
+    return;
+  }
+  const available = [...select.options].some((option) => option.value === savedValue);
+  if (!available && !enabled) {
+    const option = new Option(`${savedValue} (unavailable; disabled permission only)`, savedValue);
     option.dataset.unavailable = "true";
     select.add(option);
   }
@@ -8014,11 +8108,12 @@ function initializeRoutesWanRoutingTable() {
   const csrf = tableElement.dataset.csrf || "";
   const canWrite = tableElement.dataset.canWrite === "true";
   const targets = JSON.parse(tableElement.dataset.targetOptions || "[]");
-  const targetValues = Object.fromEntries(targets.map((target) => [target.name, target.label]));
+  let targetValues = Object.fromEntries(targets.map((target) => [target.name, target.label]));
   const generatedRows = JSON.parse(tableElement.dataset.generatedRules || "[]");
   const explicitRows = JSON.parse(tableElement.dataset.rules || "[]").map((row) => ({ ...row, kind: "explicit access rule" }));
   const generatedWithKind = generatedRows.map((row) => ({ ...row, kind: "auto route-role rule" }));
   const rows = canWrite ? [...generatedWithKind, ...explicitRows, { id: "__new__", is_new: true, generated: false }] : [...generatedWithKind, ...explicitRows];
+  let table;
   const editRow = (row, launcher = null) => {
     const data = row?.getData?.() || row;
     if (!canWrite || !data || data.is_new || data.generated) return;
@@ -8034,6 +8129,11 @@ function initializeRoutesWanRoutingTable() {
       placeholder: "No routing permissions configured.",
       reactiveData: false,
       rowContextMenu: canWrite ? [
+        {
+          label: "Override routing permission",
+          action: (_event, row) => openRoutesWanWizard("routing", { ...row.getData(), generated_override: true, policy: "automatic", ip_family: 0 }, row.getElement()),
+          disabled: (component) => !component.getData().generated,
+        },
         {
           label: "Edit routing permission",
           action: (_event, row) => editRow(row),
@@ -8066,22 +8166,59 @@ function initializeRoutesWanRoutingTable() {
             if (data.is_new) {
               return '<span class="status-pill warn">new explicit</span>';
             }
-            return '<span class="status-pill muted">explicit access</span>';
+            return '<span class="status-pill muted">explicit policy</span>';
           },
           width: 140,
           headerSort: false,
         },
         {
           title: "Source",
-          field: "source_interface",
-          formatter: (cell) => cell.getRow().getData().is_new ? "" : escapeHtml(targetValues[cell.getValue()] || cell.getValue()),
+          field: "source_networks",
+          formatter: (cell) => {
+            const data = cell.getRow().getData();
+            if (data.is_new) return "";
+            const networks = Array.isArray(cell.getValue()) ? cell.getValue().join(", ") : cell.getValue();
+            return escapeHtml(networks ? `${data.source_interface}: ${networks}` : targetValues[data.source_interface] || data.source_interface || "Unavailable");
+          },
           minWidth: 220,
         },
         {
           title: "Destination",
-          field: "destination_interface",
-          formatter: (cell) => cell.getRow().getData().is_new ? "" : escapeHtml(targetValues[cell.getValue()] || cell.getValue()),
+          field: "destination_networks",
+          formatter: (cell) => {
+            const data = cell.getRow().getData();
+            if (data.is_new) return "";
+            const networks = Array.isArray(cell.getValue()) ? cell.getValue().join(", ") : cell.getValue();
+            return escapeHtml(networks ? `${data.destination_interface}: ${networks}` : targetValues[data.destination_interface] || data.destination_interface || "Unavailable");
+          },
           minWidth: 220,
+        },
+        { title: "Family", field: "address_family", formatter: (cell) => cell.getRow().getData().is_new ? "" : escapeHtml(cell.getValue() || "Unavailable"), width: 120 },
+        { title: "Permission", field: "policy", formatter: (cell) => cell.getRow().getData().is_new ? "" : escapeHtml(cell.getValue() || (cell.getRow().getData().generated ? "automatic" : "allow")), width: 125 },
+        {
+          title: "Effective state",
+          field: "effective_action",
+          formatter: (cell) => {
+            const data = cell.getRow().getData();
+            if (data.is_new) return "";
+            const state = cell.getValue() || (data.generated ? "automatic allow" : data.enabled ? "explicit allow" : "suspended");
+            const tone = ["automatic allow", "explicit allow"].includes(state) ? "good" : ["explicit deny", "conflict", "suspended"].some((value) => state.includes(value)) ? "warn" : "muted";
+            return `<span class="status-pill ${tone}">${escapeHtml(state)}</span>`;
+          },
+          minWidth: 150,
+          headerSort: false,
+        },
+        {
+          title: "Desired state",
+          field: "apply_state",
+          formatter: (cell) => {
+            const data = cell.getRow().getData();
+            if (data.is_new) return "";
+            const state = cell.getValue() || "pending";
+            return `<span class="status-pill ${state === "applied" ? "good" : "warn"}">${escapeHtml(state)}</span>`;
+          },
+          width: 120,
+          headerSort: false,
         },
         {
           title: "Priority",
@@ -8098,13 +8235,38 @@ function initializeRoutesWanRoutingTable() {
           hozAlign: "center",
           width: 100,
           headerSort: false,
-          cellEdited: (cell) => saveWanEnabledState(cell, csrf, "/routes-wan/routing-rules", "routes-wan-routing-error", "The routing permission could not be saved."),
+          cellEdited: (cell) => saveWanEnabledState(
+            cell,
+            csrf,
+            "/routes-wan/routing-rules",
+            "routes-wan-routing-error",
+            "The routing permission could not be saved.",
+            {
+              afterSave: async () => {
+                const refreshedTargets = await refreshRoutesWanRoutingProjection(tableElement, table);
+                targetValues = Object.fromEntries(refreshedTargets.map((target) => [target.name, target.label]));
+              },
+              refreshFailureMessage: "The routing permission was saved, but its displayed effective state could not be refreshed. Reload the page to see the latest state.",
+            },
+          ),
         },
         {
           title: "Description",
           field: "description",
           formatter: (cell) => cell.getRow().getData().is_new ? "" : escapeHtml(cell.getValue()),
           minWidth: 190,
+        },
+        {
+          title: "Override",
+          field: "generated",
+          formatter: (cell) => {
+            const data = cell.getRow().getData();
+            return data.generated && canWrite
+              ? `<button class="button tiny" type="button" data-routes-wan-wizard-open="routing" data-routes-wan-override="true" data-routes-wan-source="${escapeHtml(data.source_interface)}" data-routes-wan-destination="${escapeHtml(data.destination_interface)}">Override routing permission</button>`
+              : "";
+          },
+          width: 190,
+          headerSort: false,
         },
       ],
       rowFormatter: (row) => {
@@ -8113,7 +8275,7 @@ function initializeRoutesWanRoutingTable() {
         row.getElement().classList.toggle("readonly-row", Boolean(data.generated));
       },
     };
-    window.AtlasoUiPatterns.createGrid({
+    table = window.AtlasoUiPatterns.createGrid({
       element: tableElement,
       pattern: "wizard-backed",
       permission: {
@@ -8539,8 +8701,8 @@ function initializeRoutesWanWizards() {
       editAction: (id) => managementUiPath(`/routes-wan/routing-rules/${id}/edit`),
       tab: "routes-wan-routing-panel",
       steps: [
-        { id: "identity", title: "Name the permission", description: "Describe the explicit forwarding path required by an Access network." },
-        { id: "direction", title: "Choose forwarding direction", description: "Select different non-management source and destination networks." },
+        { id: "identity", title: "Name the permission", description: "Describe the forwarding policy for this directed network path." },
+        { id: "direction", title: "Choose forwarding direction and policy", description: "Select different non-management networks, the permission, and its IP family." },
         { id: "state", title: "Choose permission state", description: "Enable the forwarding permission now or retain it disabled." },
         { id: "review", title: "Review the permission", description: "Confirm direction, priority, and management isolation." },
       ],
@@ -8681,6 +8843,9 @@ function initializeRoutesWanWizards() {
         const destination = routesWanField(form, "destination_interface");
         setRoutesWanReview(form, "routing-name", routesWanField(form, "name")?.value);
         setRoutesWanReview(form, "routing-path", `${source?.selectedOptions?.[0]?.textContent?.trim() || source?.value} → ${destination?.selectedOptions?.[0]?.textContent?.trim() || destination?.value}`);
+        const policy = routesWanField(form, "policy");
+        const family = routesWanField(form, "ip_family");
+        setRoutesWanReview(form, "routing-policy", `${policy?.selectedOptions?.[0]?.textContent?.trim() || "Allow"} · ${family?.selectedOptions?.[0]?.textContent?.trim() || "IPv4 and IPv6"}`);
         setRoutesWanReview(form, "routing-priority", routesWanField(form, "priority")?.value);
         setRoutesWanReview(form, "routing-state", routesWanField(form, "enabled")?.checked ? "Enabled" : "Disabled");
       } else if (kind === "nat") {
@@ -8767,10 +8932,11 @@ function initializeRoutesWanWizards() {
       validateStep,
       prepareReview,
       onOpen: ({ context: row }) => {
-        const editing = Boolean(row?.id);
+        const override = Boolean(row?.generated_override);
+        const editing = Boolean(row?.id) && !override;
         form.action = editing ? config.editAction(row.id) : config.createAction;
-        if (modalTitle instanceof HTMLElement) modalTitle.textContent = `${editing ? "Edit" : "Add"} ${config.noun}`;
-        if (submit instanceof HTMLButtonElement) submit.textContent = `${editing ? "Update" : "Add"} ${config.noun}`;
+        if (modalTitle instanceof HTMLElement) modalTitle.textContent = `${editing ? "Edit" : override ? "Override" : "Add"} ${config.noun}`;
+        if (submit instanceof HTMLButtonElement) submit.textContent = `${editing ? "Update" : override ? "Add override" : "Add"} ${config.noun}`;
         if (kind === "route") {
           const defaultFamily = row?.default_route_family || routesWanDefaultFamily(row?.destination_cidr);
           setRoutesWanField(form, "destination_cidr", row?.destination_cidr || "");
@@ -8787,10 +8953,13 @@ function initializeRoutesWanWizards() {
           setRoutesWanField(form, "description", row?.description || "");
           const source = routesWanField(form, "source_interface");
           const destination = routesWanField(form, "destination_interface");
-          setRoutesWanField(form, "source_interface", row?.source_interface || source?.options?.[0]?.value || "");
-          setRoutesWanField(form, "destination_interface", row?.destination_interface || destination?.options?.[1]?.value || destination?.options?.[0]?.value || "");
+          const enabled = row?.enabled ?? true;
+          restoreRoutingInterfaceSelection(source, row?.source_interface || source?.options?.[0]?.value || "", enabled);
+          restoreRoutingInterfaceSelection(destination, row?.destination_interface || destination?.options?.[1]?.value || destination?.options?.[0]?.value || "", enabled);
           setRoutesWanField(form, "priority", row?.priority ?? 100);
-          setRoutesWanField(form, "enabled", row?.enabled ?? true);
+          setRoutesWanField(form, "enabled", enabled);
+          setRoutesWanField(form, "policy", row?.policy || (override ? "automatic" : "allow"));
+          setRoutesWanField(form, "ip_family", row?.ip_family ?? 0);
         } else if (kind === "nat") {
           setRoutesWanField(form, "ip_family", row?.ip_family || 4);
           setRoutesWanField(form, "translation_mode", row?.translation_mode || "masquerade");
@@ -8853,7 +9022,15 @@ function initializeRoutesWanWizards() {
     if (!(event.target instanceof Element)) return;
     const launcher = event.target.closest("[data-routes-wan-wizard-open]");
     if (!(launcher instanceof HTMLElement)) return;
-    openRoutesWanWizard(launcher.dataset.routesWanWizardOpen, null, launcher);
+    const override = launcher.dataset.routesWanOverride === "true";
+    const context = override ? {
+      generated_override: true,
+      policy: "automatic",
+      ip_family: 0,
+      source_interface: launcher.dataset.routesWanSource || "",
+      destination_interface: launcher.dataset.routesWanDestination || "",
+    } : null;
+    openRoutesWanWizard(launcher.dataset.routesWanWizardOpen, context, launcher);
   });
 }
 

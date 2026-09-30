@@ -82,7 +82,10 @@ Atlaso CA issues the KMS server certificate automatically. On renewal, CA Apply 
 private key under paths containing that certificate's SHA-256 fingerprint. Appliance Apply then switches the KMIP
 service to those paths. The helper checks that the restarted service is active and restores the previous config,
 client trust bundle, runtime credential, and service unit if cutover fails. The previous server certificate files
-remain available for that rollback. The helper retains the snapshot through six consecutive active-state checks
+remain available for that rollback.
+Before mutation, the helper queries systemd's load, activation, and boot-enablement properties for both units.
+Manager failures, transitional states, and unsupported enablement states block apply instead of guessing prior state.
+The helper retains the snapshot through six consecutive active-state checks
 spaced one second apart; a startup failure during that window triggers rollback. This bounded stability check does
 not establish live vCenter interoperability. During upgrade, the helper stops the legacy `atlaso-kms.service` before starting
 its replacement and restores the legacy listener's prior active and enabled state if cutover fails. After a

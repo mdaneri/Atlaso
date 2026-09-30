@@ -79,6 +79,7 @@ def _create_database_schema(bind: Engine) -> None:
                 Base.metadata.create_all(bind=connection)
                 _reconcile_task_cancellation_columns(connection)
                 _reconcile_nat_ingress_column(connection)
+                _reconcile_routing_permission_columns(connection)
                 _reconcile_interface_address_check_columns(connection)
             except Exception:
                 connection.rollback()
@@ -94,13 +95,28 @@ def _create_database_schema(bind: Engine) -> None:
             Base.metadata.create_all(bind=connection)
             _reconcile_task_cancellation_columns(connection)
             _reconcile_nat_ingress_column(connection)
+            _reconcile_routing_permission_columns(connection)
             _reconcile_interface_address_check_columns(connection)
         return
     with bind.begin() as connection:
         Base.metadata.create_all(bind=connection)
         _reconcile_task_cancellation_columns(connection)
         _reconcile_nat_ingress_column(connection)
+        _reconcile_routing_permission_columns(connection)
         _reconcile_interface_address_check_columns(connection)
+
+
+def _reconcile_routing_permission_columns(connection: Connection) -> None:
+    """Preserve legacy permissions across appliance updates under the schema lock.
+
+    Args:
+        connection: Serialized startup schema transaction.
+    """
+    columns = {column["name"] for column in inspect(connection).get_columns("routing_rules")}
+    if "policy" not in columns:
+        connection.execute(text("ALTER TABLE routing_rules ADD COLUMN policy VARCHAR(16) NOT NULL DEFAULT 'allow'"))
+    if "ip_family" not in columns:
+        connection.execute(text("ALTER TABLE routing_rules ADD COLUMN ip_family INTEGER NOT NULL DEFAULT 0"))
 
 
 def _reconcile_interface_address_check_columns(connection: Connection) -> None:
