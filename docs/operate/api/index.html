@@ -4363,7 +4363,13 @@ list includes both inbound and outbound interfaces of enabled NAT rules only whi
 so preserved inactive rows are not reported as active runtime intent. Shared interfaces appear once in the sorted list.</p>
 <p>Legacy <code>/api/v1/dns/apply</code>, <code>/api/v1/dhcp/apply</code>, and <code>/api/v1/firewall/apply</code> routes remain available for compatibility
 but are intentionally absent from Swagger because they predate the reviewed global workflow. New clients must save
-desired state and use <code>/ui/management/appliance-apply</code>; do not build new automation around the legacy direct-apply routes.</p>
+desired state and use <code>/ui/management/appliance-apply</code>; do not build new automation around the legacy direct-apply routes.
+The legacy Firewall Apply response retains its validation result. If <code>valid</code> is false, <code>reloaded</code> is false and the
+configuration is not applied; this includes disabled Firewall states that cannot enforce routing denials.
+It also rejects pending routing permission fingerprints, including a removed or disabled permission, routing-switch
+change, or changed target topology. Apply Routing &amp; WAN and Firewall together through global Appliance Apply first.
+Once both executed baselines match current routing intent, the compatibility route can apply unrelated Firewall
+changes without advancing either paired baseline.</p>
 <h2 id="delete-an-esxi-host-reference">Delete an ESXi Host Reference<a class="headerlink" href="#delete-an-esxi-host-reference" title="Permanent link">&para;</a></h2>
 <p><code>DELETE /api/v1/esxi-pxe/hosts/{host_id}</code> requires <code>write:esxi-pxe</code> and
 removes one saved Host Reference. By default, Atlaso retains matching Network
