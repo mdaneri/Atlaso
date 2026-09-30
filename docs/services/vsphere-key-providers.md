@@ -82,8 +82,9 @@ Atlaso CA issues the KMS server certificate automatically. On renewal, CA Apply 
 private key under paths containing that certificate's SHA-256 fingerprint. Appliance Apply then switches the KMIP
 service to those paths. The helper checks that the restarted service is active and restores the previous config,
 client trust bundle, runtime credential, and service unit if cutover fails. The previous server certificate files
-remain available for that rollback. After a successful server certificate rotation, refresh the KMS server trust
-in vCenter as required by its selected KMS trust mode.
+remain available for that rollback. During upgrade, the helper stops the legacy `atlaso-kms.service` before starting
+its replacement and restores the legacy listener's prior active and enabled state if cutover fails. After a
+successful server certificate rotation, refresh the KMS server trust in vCenter as required by its selected KMS trust mode.
 If automatic recovery cannot restart the prior service, the helper preserves a root-only snapshot at
 `/etc/atlaso/kmip/.cutover-rollback` and blocks another apply. On the appliance console, inspect
 `journalctl -u atlaso-kmip.service` and the snapshot's `state.json`. Restore `server.json` and `client-trust.pem` to
@@ -91,7 +92,9 @@ their matching files in `/etc/atlaso/kmip/` with owner `root:atlaso-kmip` and mo
 `/etc/atlaso/kmip/atlaso-secrets-key.cred` with owner `root:root` and mode `0600`; restore `service-unit` to
 `/etc/systemd/system/atlaso-kmip.service` with owner `root:root` and mode `0644`. Only files present in the snapshot
 existed before cutover. Run `systemctl daemon-reload`; restart `atlaso-kmip.service` and check `systemctl is-active`
-if `state.json` says it was active, otherwise stop and disable it. Verify the restored service before removing the
+if `state.json` says it was active, otherwise stop and disable it. Restore `atlaso-kms.service` enablement from
+`legacy_was_enabled`, and restart it only when `legacy_was_active` is true; stop the replacement first to release the
+shared port. Verify the restored service before removing the
 snapshot directory and retrying Appliance Apply. The prior fingerprint-specific server certificate and key remain
 at their original paths.
 

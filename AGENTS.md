@@ -61,7 +61,7 @@ sections as needed. Resolve unknown applicability before mutation rather than tr
 | cleanup | Creating task worktrees or disposable validation resources (ownership section), resource release, destructive cleanup, completed-task handoff | [Cleanup policy](docs/contribute/completed-task-cleanup.md) |
 | community | Community participation | [Code of conduct](CODE_OF_CONDUCT.md) |
 
-## Review and delegation entry points
+## Review and delegation
 
 For every PR review load the review route, even for an assignment mentioning individual files. Complete analysis and verification
 before one consolidated review. Never repeatedly review an unchanged head without
@@ -74,6 +74,6 @@ Delegation never expands permissions. The implementation route owns the Luna con
 For UI work complete the **Mandatory UI Design Guide Gate** in the UI guide: classify the interaction, name the reused
 Atlaso reference, and obtain explicit maintainer approval for `custom/other` before implementation.
 
-See [progressive policy](docs/contribute/progressive-policy.md) for measurement.
+See [progressive policy](docs/contribute/progressive-policy.md).
 
-VCF `vcf` SSH / `su` edits/recovery: [VCF Helper](docs/services/vcf-helper.md).
+See [VCF SSH/su](docs/services/vcf-helper.md) and [KMIP trust](docs/services/vsphere-key-providers.md).

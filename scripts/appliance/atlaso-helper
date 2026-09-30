@@ -6390,8 +6390,14 @@ def _handle_kms(action: str, args: list[str]) -> int:
             backup.write_bytes(previous[0])
             backup.chmod(0o600)
     was_active = _run(["systemctl", "is-active", "--quiet", "atlaso-kmip.service"], timeout=30).returncode == 0
+    legacy_was_active = _run(["systemctl", "is-active", "--quiet", "atlaso-kms.service"], timeout=30).returncode == 0
+    legacy_was_enabled = _run(["systemctl", "is-enabled", "--quiet", "atlaso-kms.service"], timeout=30).returncode == 0
     state_backup = rollback_dir / "state.json"
-    state_backup.write_text(json.dumps({"was_active": was_active}, sort_keys=True), encoding="utf-8")
+    state_backup.write_text(json.dumps({
+        "was_active": was_active,
+        "legacy_was_active": legacy_was_active,
+        "legacy_was_enabled": legacy_was_enabled,
+    }, sort_keys=True), encoding="utf-8")
     state_backup.chmod(0o600)
     try:
         shutil.copyfile(staged_trust_path, runtime_trust_path)
@@ -6402,6 +6408,11 @@ def _handle_kms(action: str, args: list[str]) -> int:
         os.chown(KMS_CONFIG_PATH, 0, group.gr_gid)
         _install_kms_credential()
         _install_kms_service(KMS_CONFIG_PATH)
+        # Release the shared KMIP port before starting the replacement. The
+        # captured legacy state is restored if any later cutover step fails.
+        retire_legacy = _run(["systemctl", "disable", "--now", "atlaso-kms.service"], timeout=30)
+        if retire_legacy.returncode not in {0, 1}:
+            raise RuntimeError("KMS legacy service retirement failed.")
         for command in (["systemctl", "daemon-reload"],
                         [str(ATLASO_VENV_PYTHON_PATH), "-I", "-m",
                          "atlaso.app.services.external_history_lifecycle", "kms-cutover"],
@@ -6411,11 +6422,11 @@ def _handle_kms(action: str, args: list[str]) -> int:
             completed = _run(command, timeout=120 if "kms-cutover" in command else 30)
             if completed.returncode != 0:
                 raise RuntimeError("KMS cutover or health check failed.")
-        retire_legacy = _run(["systemctl", "disable", "--now", "atlaso-kms.service"], timeout=30)
-        if retire_legacy.returncode not in {0, 1}:
-            raise RuntimeError("KMS legacy service retirement failed.")
     except (OSError, ValueError, RuntimeError, subprocess.TimeoutExpired):
         try:
+            stopped = _run(["systemctl", "stop", "atlaso-kmip.service"], timeout=30)
+            if stopped.returncode not in ({0} if was_active else {0, 5}):
+                raise RuntimeError("KMS replacement could not stop for recovery.")
             for path, previous in previous_files.items():
                 if previous is None:
                     path.unlink(missing_ok=True)
@@ -6432,8 +6443,18 @@ def _handle_kms(action: str, args: list[str]) -> int:
                 ["systemctl", "restart", "atlaso-kmip.service"] if was_active
                 else ["systemctl", "disable", "--now", "atlaso-kmip.service"], timeout=30
             )
-            if reload.returncode != 0 or recovery.returncode != 0:
+            recovery_codes = {0, 1} if not was_active and previous_files[KMS_SERVICE_PATH] is None else {0}
+            if reload.returncode != 0 or recovery.returncode not in recovery_codes:
                 raise RuntimeError("KMS recovery service operation failed.")
+            legacy_enablement = _run(
+                ["systemctl", "enable" if legacy_was_enabled else "disable", "atlaso-kms.service"], timeout=30
+            )
+            if legacy_enablement.returncode not in ({0} if legacy_was_enabled else {0, 1}):
+                raise RuntimeError("KMS legacy enablement recovery failed.")
+            if legacy_was_active:
+                legacy_recovery = _run(["systemctl", "restart", "atlaso-kms.service"], timeout=30)
+                if legacy_recovery.returncode != 0:
+                    raise RuntimeError("KMS legacy listener recovery failed.")
         except (OSError, RuntimeError, subprocess.TimeoutExpired):
             print(f"KMS cutover failed; preserve recovery snapshot at {rollback_dir} and restore the prior service state.", file=sys.stderr)
             return 1

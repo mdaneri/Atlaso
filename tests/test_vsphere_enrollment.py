@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ssl
 from datetime import datetime, timedelta, timezone
 
 import httpx
@@ -180,4 +181,5 @@ def test_pinned_https_context_uses_only_the_observed_leaf() -> None:
     )
     context = enrollment._pinned_context(leaf)
     assert context.verify_mode.name == "CERT_REQUIRED"
+    assert context.minimum_version == ssl.TLSVersion.TLSv1_2
     assert context.cert_store_stats()["x509"] == 1

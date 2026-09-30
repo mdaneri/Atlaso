@@ -44,6 +44,7 @@ def vcenter_https_leaf(host: str, *, timeout: float = 8.0) -> bytes:
     if not host:
         raise EnrollmentError("Enter a vCenter hostname or address.")
     context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+    context.minimum_version = ssl.TLSVersion.TLSv1_2
     context.check_hostname = False
     context.verify_mode = ssl.CERT_NONE
     try:
@@ -91,6 +92,7 @@ def _json(response: httpx.Response) -> object:
 def _pinned_context(leaf: bytes) -> ssl.SSLContext:
     certificate = x509.load_der_x509_certificate(leaf)
     context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+    context.minimum_version = ssl.TLSVersion.TLSv1_2
     context.check_hostname = False
     context.verify_mode = ssl.CERT_REQUIRED
     context.verify_flags |= ssl.VERIFY_X509_PARTIAL_CHAIN
