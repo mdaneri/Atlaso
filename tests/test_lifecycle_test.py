@@ -853,7 +853,7 @@ def test_focused_routing_enables_global_settings_before_first_apply(monkeypatch)
             *step_args: Operation arguments.
         """
         observed.append(name)
-        if name == "configure-routing-settings":
+        if name == "configure-routing-wan-settings":
             return operation(*step_args)
         if name == "configure-route-role-deny":
             return {"id": 17}
@@ -1734,6 +1734,99 @@ def test_lifecycle_enables_routing_before_wan_apply(monkeypatch):
         {"routing_enabled": True, "nat_enabled": True, "wan_simulation_enabled": True},
     )]
     assert result["settings"] == calls[0][2]
+
+
+def test_routing_wan_only_enables_global_settings_before_apply_and_access_rule(monkeypatch):
+    """Enable global routing gates before Apply while delaying explicit access permission.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace lifecycle operations.
+    """
+    lifecycle = load_lifecycle_module()
+    events = []
+
+    class Client:
+        def json_request(self, method, path, *, json_body):
+            """Record the Routes/WAN global settings update.
+
+            Args:
+                method: HTTP method requested by the lifecycle.
+                path: API path receiving the settings update.
+                json_body: Desired global Routes/WAN settings.
+
+            Returns:
+                The supplied settings payload.
+            """
+            events.append(("settings", method, path, json_body))
+            return json_body
+
+    def step(results, name, func, *args):
+        """Record and invoke one lifecycle step.
+
+        Args:
+            results: Result list passed through by the lifecycle runner.
+            name: Lifecycle step name being executed.
+            func: Operation called for this step.
+            *args: Arguments passed to the lifecycle operation.
+
+        Returns:
+            The operation result.
+        """
+        events.append(("step", name))
+        return func(*args)
+
+    monkeypatch.setattr(lifecycle, "run_step", step)
+    monkeypatch.setattr(lifecycle, "appliance_health", lambda *_args: {})
+    monkeypatch.setattr(lifecycle, "configure_network", lambda *_args: {})
+    monkeypatch.setattr(lifecycle, "configure_firewall", lambda *_args: {})
+    monkeypatch.setattr(lifecycle, "configure_wan_policy", lambda *_args: {"id": 1})
+    monkeypatch.setattr(lifecycle, "configure_routes_nat", lambda *_args: {})
+    monkeypatch.setattr(lifecycle, "remove_stale_route_role_deny", lambda *_args: {})
+    monkeypatch.setattr(lifecycle, "configure_route_role_deny", lambda *_args: {"id": 17})
+    monkeypatch.setattr(lifecycle, "route_role_deny_check", lambda *_args: {})
+    monkeypatch.setattr(lifecycle, "remove_route_role_deny", lambda *_args: {})
+    monkeypatch.setattr(
+        lifecycle,
+        "apply_units",
+        lambda _client, units, _args: events.append(("apply", tuple(units))),
+    )
+    monkeypatch.setattr(
+        lifecycle,
+        "routing_host_state_checks",
+        lambda *_args: events.append(("host-state-check",)),
+    )
+    monkeypatch.setattr(
+        lifecycle,
+        "route_role_routing_check",
+        lambda *_args: events.append(("route-role-check",)),
+    )
+    monkeypatch.setattr(
+        lifecycle,
+        "access_routing_blocked_check",
+        lambda *_args: events.append(("blocked-access-check",)),
+    )
+    monkeypatch.setattr(
+        lifecycle,
+        "configure_routing_permissions",
+        lambda *_args: events.append(("access-rule",)),
+    )
+    monkeypatch.setattr(lifecycle, "client_checks", lambda *_args: {})
+    monkeypatch.setattr(lifecycle, "wan_packet_loss_check", lambda *_args: {})
+
+    lifecycle.run_routing_wan_lifecycle([], Client(), argparse.Namespace())
+
+    settings_index = next(i for i, event in enumerate(events) if event[0] == "settings")
+    first_apply_index = next(i for i, event in enumerate(events) if event[0] == "apply")
+    host_check_index = next(i for i, event in enumerate(events) if event[0] == "host-state-check")
+    blocked_check_index = next(i for i, event in enumerate(events) if event[0] == "blocked-access-check")
+    access_rule_index = next(i for i, event in enumerate(events) if event[0] == "access-rule")
+
+    assert events[settings_index] == (
+        "settings", "PUT", "/api/v1/routes-wan/settings",
+        {"routing_enabled": True, "nat_enabled": True, "wan_simulation_enabled": True},
+    )
+    assert settings_index < first_apply_index < host_check_index < blocked_check_index < access_rule_index
+    assert events[first_apply_index] == ("apply", ("network", "firewall", "wan"))
 
 
 def test_apply_units_retries_once_when_desired_state_drifts(monkeypatch):

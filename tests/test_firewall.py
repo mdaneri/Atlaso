@@ -221,6 +221,23 @@ def test_managed_routing_firewall_rules_isolate_management_and_allow_route_role_
     assert 'iifname "eth3" ip saddr 172.20.3.0/24 ip daddr 172.20.1.0/24 accept' not in config
 
 
+def test_managed_routing_firewall_rules_skip_disjoint_address_families():
+    """An IPv6-only Access network cannot match IPv4-only management traffic."""
+    settings = FirewallSettings(enabled=True, default_input_policy="drop", default_forward_policy="drop", default_output_policy="accept")
+    interfaces = [
+        PhysicalInterface(name="eth0", role="management", mode="access", ip_cidr="192.0.2.10/24", mac_address="00:50:56:00:00:10"),
+        PhysicalInterface(name="eth1", role="access", mode="access", ipv6_cidr="fd00:50::20/64", mac_address="00:50:56:00:00:11"),
+    ]
+
+    rules = managed_routing_firewall_rules(interfaces, [])
+    config = render_nftables_config(settings, [], rules, replace_atlaso_service_rules=True)
+
+    assert "isolate-eth1-to-eth0" not in config
+    assert "isolate-eth0-to-eth1" not in config
+    assert "ip6 saddr fd00:50::/64 ip daddr" not in config
+    assert "ip saddr 192.0.2.0/24 ip6 daddr" not in config
+
+
 def test_managed_service_firewall_rules_include_all_enabled_service_listeners():
     """Verify that managed service firewall rules include all enabled service listeners."""
     rules = managed_service_firewall_rules(

@@ -226,7 +226,12 @@ def test_global_submission_publishes_captured_port_forward_pair(client, monkeypa
             kms.listen_address = interface.ip_cidr.split("/")[0]
         db.commit()
         before = ui.appliance_apply_units(db)
+        # Model an existing appliance: WAN previews depend on the established
+        # Network baseline, rather than the first-Apply projection.
+        ui.update_appliance_apply_baselines(db, before, {"network"})
+        before = ui.appliance_apply_units(db)
         ui.update_appliance_apply_baselines(db, before, {unit["id"] for unit in before})
+        assert not next(unit for unit in ui.appliance_apply_units(db) if unit["id"] == "wan")["changed"]
         interface = db.scalar(select(PhysicalInterface).where(PhysicalInterface.name == "eth2"))
         forwarding = payload(ingress_interface="eth2", listener_address=interface.ip_cidr.split("/")[0])
         if release_listener:

@@ -1,5 +1,7 @@
 """Test routes wan behavior."""
 
+import pytest
+
 from atlaso.app.models import NatRule, Route, RoutingRule, Setting, WanPolicy
 from atlaso.app.services.routes_wan import (
     ROUTES_WAN_SETTING_KEYS,
@@ -14,6 +16,43 @@ from atlaso.app.services.routes_wan import (
     validate_nat_source,
     validate_wan_state,
 )
+
+
+@pytest.mark.parametrize("family", [4, 6])
+@pytest.mark.parametrize("retirement", ["disabled", "removed", "routing-off"])
+@pytest.mark.parametrize("metric,gateway_present", [(0, False), (100, False), (1024, False), (1024, True)])
+@pytest.mark.parametrize("owns_prefix", [False, True])
+def test_static_retirement_preview_preserves_connected_routes(family, retirement, metric, gateway_present, owns_prefix):
+    """Match precise native retirement selectors for a connected destination.
+
+    Args:
+        family: Address family to render.
+        retirement: Desired action that retires the static row.
+        metric: Saved static route metric.
+        gateway_present: Whether the row has a distinguishing next hop.
+        owns_prefix: Whether this target owns the connected prefix in its domain.
+    """
+    prefix = "192.0.2.0/24" if family == 4 else "2001:db8::/64"
+    address = "192.0.2.10/24" if family == 4 else "2001:db8::10/64"
+    gateway = ("192.0.2.1" if family == 4 else "2001:db8::1") if gateway_present else ""
+    route = Route(destination_cidr=prefix, interface_name="eth1", metric=metric,
+                  gateway=gateway, enabled=retirement != "disabled")
+    target = {"name": "eth1", "routing_domain": "lab", "ip_cidr" if family == 4 else "ipv6_cidr": address}
+    targets = [target] if owns_prefix else [{**target, "name": "eth0"}, target]
+    preview = render_wan_config([] if retirement == "removed" else [route], targets=targets,
+                               removed_routes=[{"destination_cidr": prefix, "interface_name": "eth1",
+                                                "metric": str(metric), "gateway": gateway}] if retirement == "removed" else [],
+                               settings=RoutesWanSettings(retirement != "routing-off", False, False))
+    command = f"ip {'-6 ' if family == 6 else ''}route del {prefix} dev eth1 table 200"
+    alias = owns_prefix and not gateway and (metric == 0 or (family == 6 and metric == 1024))
+    if not owns_prefix:
+        assert command + "  #" in preview
+    elif alias:
+        assert command not in preview
+        assert f"Retain Network-owned connected route {prefix}" in preview
+    else:
+        expected = command + f" metric {metric}" + (f" via {gateway}" if gateway else "")
+        assert expected + "  #" in preview
 
 
 def test_feature_settings_render_full_saved_intent_with_effective_gates():
@@ -62,14 +101,43 @@ def test_feature_settings_render_full_saved_intent_with_effective_gates():
     assert "nat=Lab NAT" not in config
     assert "policy=Slow WAN" in config
     assert "ip route replace 10.20.0.0/24" not in config
-    assert "ip route del 192.0.2.0/24 dev eth1 table 200" in config
-    assert 'for priority in $(seq 2000 2099); do ip rule del priority "$priority"' in config
-    assert 'for priority in $(seq 2000 2099); do ip -6 rule del priority "$priority"' in config
+    assert "ip route replace 192.0.2.0/24 dev eth1 table 200" in config
+    assert "rule add iif" not in config
+    assert "owned IPv4/IPv6 lab ingress lookups and terminal guards to an empty set" in config
+    assert "rule del priority" not in config
     assert "masquerade comment \"Lab NAT\"" not in config
     assert "nft -f /etc/atlaso/nftables.d/atlaso-nat.nft" not in config
     assert "tc qdisc replace dev eth1 root netem delay 100ms" in config
     assert "net.ipv4.ip_forward=0" in config
     assert "net.ipv6.conf.all.forwarding=0" in config
+
+
+@pytest.mark.parametrize("routing_enabled", [False, True])
+def test_wan_preview_orders_ingress_guards_before_enabling_forwarding(routing_enabled):
+    """The captured preview follows the helper's enable and disable ordering.
+
+    Args:
+        routing_enabled: Whether lab routing is enabled in this case.
+    """
+    config = render_wan_config(
+        [],
+        settings=RoutesWanSettings(routing_enabled, False, False),
+        applied_network_ingress=["eth1"],
+    )
+    lines = config.splitlines()
+    forwarding = [
+        lines.index(f"sysctl -w net.ipv4.ip_forward={int(routing_enabled)}  # global Routing switch"),
+        lines.index(f"sysctl -w net.ipv6.conf.all.forwarding={int(routing_enabled)}  # global Routing switch"),
+    ]
+    if routing_enabled:
+        guard = lines.index("ip rule add iif eth1 unreachable priority 2100 protocol 2")
+        lookup = lines.index("ip rule add iif eth1 table 200 priority 2000 protocol 2")
+        assert guard < lookup < min(forwarding)
+    else:
+        assert max(forwarding) < lines.index(
+            "# Routing disabled: reconcile owned IPv4/IPv6 lab ingress lookups and terminal guards to an empty set."
+        )
+        assert "rule add iif eth1" not in config
 
 
 def test_disabled_route_preview_guards_unknown_target_cleanup():
@@ -443,11 +511,58 @@ def test_flagged_management_default_route_also_preserves_host_default():
     }
 
 
-def test_disabled_routing_preview_keeps_flagged_management_host_default():
-    """Render the protected main-table mutation independently of lab Routing."""
+@pytest.mark.parametrize("family", [4, 6])
+def test_modern_wan_preview_keeps_applied_network_ownership(family):
+    """Pending prefixes and management flags cannot rewrite applied ownership.
+
+    Args:
+        family: Address family for connected and default routes.
+    """
+    old = "192.0.2.10/24" if family == 4 else "2001:db8:1::10/64"
+    new = "198.51.100.10/24" if family == 4 else "2001:db8:2::10/64"
+    prefix = "192.0.2.0/24" if family == 4 else "2001:db8:1::/64"
+    new_prefix = "198.51.100.0/24" if family == 4 else "2001:db8:2::/64"
+    destination = "0.0.0.0/0" if family == 4 else "::/0"
+    gateway = "192.0.2.1" if family == 4 else "2001:db8:1::1"
+    key = "ip_cidr" if family == 4 else "ipv6_cidr"
+    applied = {"name": "eth1", "routing_domain": "lab", key: old, "management_ui": True}
+    pending = {**applied, key: new, "management_ui": False}
+    previous = render_wan_config([], targets=[applied])
+    routes = [Route(destination_cidr=destination, interface_name="eth1", gateway=gateway, metric=90, enabled=True),
+              Route(destination_cidr=prefix, interface_name="eth1", metric=100, enabled=False)]
+    preview = render_wan_config(routes, targets=[pending], previous_config_preview=previous,
+                               network_owned_targets=[applied], settings=RoutesWanSettings(False, False, False))
+    family_flag = "-6 " if family == 6 else ""
+    command = f"ip {family_flag}route replace {destination} via {gateway} dev eth1 metric 90"
+    assert command + " table 200" in preview
+    assert command + "  # flagged-management host default" in preview
+    for connected in (prefix, new_prefix):
+        assert f"ip {family_flag}route del {connected}" not in preview
+        assert f"ip {family_flag}route replace {connected}" not in preview
+    assert "after resolving native Network connected ownership" in preview
+    assert "combined Apply uses the newly applied Network intent" in preview
+    assert "older runtime intent without management eligibility requires Network reapply" in preview
+    combined = render_wan_config(routes, targets=[pending], network_owned_targets=[pending],
+                                 settings=RoutesWanSettings(False, False, False))
+    assert command + " table 200" not in combined
+    pending_flag_only = render_wan_config(routes, targets=[applied], network_owned_targets=[pending],
+                                         settings=RoutesWanSettings(False, False, False))
+    assert command + " table 200" not in pending_flag_only
+    assert command + "  # flagged-management host default" not in pending_flag_only
+
+
+@pytest.mark.parametrize("family", [4, 6])
+def test_disabled_routing_preview_keeps_flagged_management_host_default(family):
+    """Retain the management default in both main and source-selected tables.
+
+    Args:
+        family: Management default address family.
+    """
+    destination = "0.0.0.0/0" if family == 4 else "::/0"
+    gateway = "192.0.2.1" if family == 4 else "2001:db8::1"
     route = Route(
-        destination_cidr="0.0.0.0/0",
-        gateway="192.0.2.1",
+        destination_cidr=destination,
+        gateway=gateway,
         interface_name="eth1",
         metric=90,
         enabled=True,
@@ -468,11 +583,10 @@ def test_disabled_routing_preview_keeps_flagged_management_host_default():
         settings=RoutesWanSettings(False, False, False),
     )
 
-    assert "ip route replace 0.0.0.0/0 via 192.0.2.1 dev eth1 metric 90 table 200" not in config
-    assert (
-        "ip route replace 0.0.0.0/0 via 192.0.2.1 dev eth1 metric 90"
-        "  # flagged-management host default"
-    ) in config
+    command = f"ip {'-6 ' if family == 6 else ''}route replace {destination} via {gateway} dev eth1 metric 90"
+    assert command + " table 200" in config
+    assert command + "  # flagged-management host default" in config
+    assert f"route del {destination} dev eth1 table 200" not in config
 
 
 def test_flagged_management_default_cleanup_uses_last_applied_mirroring():
@@ -714,8 +828,61 @@ def test_render_wan_config_uses_ipv6_route_commands():
 
     assert "  ipv6_cidr=2001:db8:50::1/64" in config
     assert "  routing_domain=lab" in config
-    assert "ip -6 rule add from 2001:db8:50::/64 table 200 priority 2000" in config
+    assert "ip -6 rule add iif eth2.50 table 200 priority 2000 protocol 2" in config
     assert "ip -6 route replace 2001:db8:100::/64 via 2001:db8:50::fe dev eth2.50 metric 120 table 200" in config
+
+
+@pytest.mark.parametrize("routing_enabled", [False, True])
+def test_legacy_wan_preview_matches_source_rule_migration(routing_enabled):
+    """Show the legacy cleanup and only the helper's owned source rules.
+
+    Args:
+        routing_enabled: Whether lab routing is enabled in this case.
+    """
+    targets = [
+        {"name": "eth0", "routing_domain": "management", "ip_cidr": "192.0.2.10/24",
+         "ipv6_cidr": "2001:db8:1::10/64", "gateway": "192.0.2.1", "ipv6_gateway": "fe80::1"},
+        {"name": "eth1", "routing_domain": "lab", "ip_cidr": "198.51.100.10/24",
+         "ipv6_cidr": "2001:db8:2::10/64"},
+        {"name": "eth2", "routing_domain": "lab", "ip_cidr": "198.51.100.20/24"},
+        {"name": "eth3", "routing_domain": "management", "ip_cidr": "203.0.113.10/24",
+         "gateway": "198.51.100.1"},
+    ]
+    preview = render_wan_config(
+        [], targets=targets, applied_network_ingress=[], network_owned_targets=None,
+        settings=RoutesWanSettings(routing_enabled=routing_enabled),
+    )
+    commands = preview.splitlines()
+
+    cleanup = [line for line in commands if line.startswith(("ip rule del priority ", "ip -6 rule del priority "))]
+    assert len(cleanup) == 4 * 100
+    assert "ip rule del priority 1000" in cleanup
+    assert "ip -6 rule del priority 1099" in cleanup
+    assert "ip rule del priority 2000" in cleanup
+    assert "ip -6 rule del priority 2099" in cleanup
+    source_rules = [line for line in commands if "rule add from " in line]
+    expected = [
+        "ip rule add from 192.0.2.0/24 table 100 priority 1000",
+        "ip -6 rule add from 2001:db8:1::/64 table 100 priority 1000",
+    ]
+    if routing_enabled:
+        expected += [
+            "ip rule add from 198.51.100.0/24 table 200 priority 2001",
+            "ip -6 rule add from 2001:db8:2::/64 table 200 priority 2001",
+        ]
+    assert source_rules == expected
+    assert "Local source-address rules remain reconciled from applied Network intent." not in preview
+
+
+def test_modern_wan_preview_does_not_show_legacy_source_rule_migration():
+    """An empty modern ingress set is not a pre-migration Network baseline."""
+    target = {"name": "eth0", "routing_domain": "management", "ip_cidr": "192.0.2.10/24",
+              "gateway": "192.0.2.1"}
+    preview = render_wan_config(
+        [], targets=[target], applied_network_ingress=[], network_owned_targets=[target],
+    )
+    assert "rule del priority 1000" not in preview
+    assert "rule add from " not in preview
 
 
 def test_render_wan_config_keeps_management_and_lab_route_tables_separate():
@@ -748,11 +915,11 @@ def test_render_wan_config_keeps_management_and_lab_route_tables_separate():
     assert "management=100 atlaso_mgmt" in config
     assert "lab=200 atlaso_lab" in config
     assert "  gateway=192.168.49.254" in config
-    assert "ip rule add from 192.168.49.0/24 table 100 priority 1000" in config
+    assert "rule add from" not in config
     assert "ip route replace 192.168.49.0/24 dev eth0 table 100" in config
     assert "ip route replace default via 192.168.49.254 dev eth0\n" in config
     assert "ip route replace default via 192.168.49.254 dev eth0 table 100" in config
-    assert "ip rule add from 172.20.0.0/24 table 200 priority 2001" in config
+    assert "ip rule add iif eth1 table 200 priority 2000 protocol 2" in config
     assert "ip route replace 172.20.0.0/24 dev eth1 table 200" in config
     assert "ip route replace 0.0.0.0/0 via 172.20.0.254 dev eth1 metric 100 table 200" in config
 
@@ -782,8 +949,8 @@ def test_render_wan_config_emits_dual_stack_management_defaults_in_main_and_tabl
     assert "ip -6 route replace default via fe80::1 dev eth0 table 100" in config
 
 
-def test_render_wan_config_gives_management_ownership_of_duplicate_vlan_network():
-    """Verify that render wan config gives management ownership of duplicate vlan network."""
+def test_render_wan_config_preserves_overlapping_prefixes_in_both_domains():
+    """Keep identical management and access prefixes in their independent tables."""
     config = render_wan_config(
         [],
         targets=[
@@ -809,15 +976,16 @@ def test_render_wan_config_gives_management_ownership_of_duplicate_vlan_network(
         ],
     )
 
-    assert "ip rule add from 192.168.1.0/24 table 100 priority 1000" in config
+    assert "rule add from" not in config
     assert "ip route replace 192.168.1.0/24 dev eth0 table 100" in config
     assert "ip rule add from 192.168.1.0/24 table 200" not in config
-    assert "ip route replace 192.168.1.0/24 dev eth1.1 table 200" not in config
-    assert "# 192.168.1.0/24 on eth1.1 reuses the subnet owned by eth0; no duplicate policy route generated" in config
+    assert "ip route replace 192.168.1.0/24 dev eth1.1 table 200" in config
+    assert "ip rule add iif eth1.1 table 200 priority 2000 protocol 2" in config
+    assert "ip -6 rule add iif eth1.1 table 200 priority 2000 protocol 2" in config
 
 
-def test_render_wan_config_keeps_gatewayless_management_on_main_table():
-    """Verify that render wan config keeps gatewayless management on main table."""
+def test_render_wan_config_keeps_gatewayless_management_connected_route():
+    """Keep gatewayless management peers reachable through the dedicated table."""
     config = render_wan_config(
         [],
         targets=[
@@ -835,8 +1003,8 @@ def test_render_wan_config_keeps_gatewayless_management_on_main_table():
     )
 
     assert "ip rule add from 192.168.1.0/24 table 100" not in config
-    assert "ip route replace 192.168.1.0/24 dev eth0 table 100" not in config
-    assert "# 192.168.1.0/24 on eth0 has no management default gateway; the main routing table remains authoritative" in config
+    assert "ip route replace 192.168.1.0/24 dev eth0 table 100" in config
+    assert "route replace default" not in config
 
 
 def test_validate_wan_state_rejects_ipv6_nat_sources_and_gateway_family_mismatch():
