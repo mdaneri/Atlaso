@@ -6460,6 +6460,9 @@ def _handle_kms(action: str, args: list[str]) -> int:
                 raise RuntimeError("KMS listener did not remain active after cutover.")
             if sample < 5:
                 time.sleep(1)
+        # A failed retirement of recovery files must restore the prior runtime
+        # before reporting failure and leaving its applied baseline unchanged.
+        shutil.rmtree(rollback_dir)
     except (OSError, ValueError, RuntimeError, subprocess.TimeoutExpired):
         try:
             stopped = _run(["systemctl", "stop", "atlaso-kmip.service"], timeout=30)
@@ -6502,10 +6505,13 @@ def _handle_kms(action: str, args: list[str]) -> int:
         except (OSError, RuntimeError, subprocess.TimeoutExpired):
             print(f"KMS cutover failed; preserve recovery snapshot at {rollback_dir} and restore the prior service state.", file=sys.stderr)
             return 1
-        shutil.rmtree(rollback_dir)
+        try:
+            shutil.rmtree(rollback_dir)
+        except OSError:
+            print(f"KMS cutover failed; previous runtime was restored, but snapshot cleanup remains pending at {rollback_dir}.", file=sys.stderr)
+            return 1
         print("KMS cutover failed; previous runtime state was restored.", file=sys.stderr)
         return 1
-    shutil.rmtree(rollback_dir)
     print(
         json.dumps(
             {

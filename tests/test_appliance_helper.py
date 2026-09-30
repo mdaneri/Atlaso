@@ -12523,6 +12523,42 @@ def test_kms_helper_apply_installs_atlaso_kmip_service(monkeypatch, tmp_path, le
     changed_config["providers"][0]["name"] = "Replacement provider"
     config_path.write_text(json.dumps(changed_config), encoding="utf-8")
     trust_path.write_text("-----BEGIN CERTIFICATE-----\nnew-root\n-----END CERTIFICATE-----\n", encoding="utf-8")
+    original_rmtree = helper.shutil.rmtree
+    for persistent_cleanup_failure in (False, True):
+        cleanup_attempts = 0
+        rollback_dir = managed_root / "kmip" / ".cutover-rollback"
+
+        def fail_snapshot_cleanup(path, *args, rollback_dir=rollback_dir, persistent_cleanup_failure=persistent_cleanup_failure, **kwargs):
+            """Fail snapshot retirement after healthy cutover and during recovery.
+
+            Args:
+                path: Snapshot directory being removed.
+                rollback_dir: Snapshot path owned by this cutover scenario.
+                persistent_cleanup_failure: Whether recovery cleanup also fails.
+                *args: Forwarded removal arguments.
+                **kwargs: Forwarded removal options.
+            """
+            nonlocal cleanup_attempts
+            if Path(path) == rollback_dir:
+                cleanup_attempts += 1
+                if cleanup_attempts == 1 or persistent_cleanup_failure:
+                    # Exercise a partially removed snapshot, not just failure
+                    # before the first file was deleted.
+                    (rollback_dir / "server.json").unlink(missing_ok=True)
+                    raise OSError("snapshot cleanup unavailable")
+            return original_rmtree(path, *args, **kwargs)
+
+        with monkeypatch.context() as cleanup_patch:
+            cleanup_patch.setattr(helper.shutil, "rmtree", fail_snapshot_cleanup)
+            assert helper._handle_kms("apply", [str(config_path)]) == 1
+        assert cleanup_attempts == 2
+        assert (managed_root / "kmip" / "server.json").read_bytes() == previous_config
+        assert runtime_trust_path.read_bytes() == previous_trust
+        assert kms_credential_path.read_bytes() == previous_credential
+        assert rollback_dir.exists() == persistent_cleanup_failure
+        if persistent_cleanup_failure:
+            assert helper._handle_kms("apply", [str(config_path)]) == 2
+            original_rmtree(rollback_dir)
     failed_restart = False
 
     def fail_first_restart(command, **kwargs):
