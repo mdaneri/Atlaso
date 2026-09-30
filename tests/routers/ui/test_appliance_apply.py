@@ -245,7 +245,12 @@ def test_routing_topology_detects_disabled_vlan():
 
 
 def test_pending_vlan_disable_joins_routing_permission_apply(client, monkeypatch):
-    """WAN selection publishes a disabled VLAN with its routing permission pair."""
+    """WAN selection publishes a disabled VLAN with its routing permission pair.
+
+    Args:
+        client: Isolated authenticated application client.
+        monkeypatch: Retains the queued Apply job for selection inspection.
+    """
     from atlaso.app import ui
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import Job, VlanInterface
