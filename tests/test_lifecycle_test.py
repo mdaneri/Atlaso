@@ -1810,7 +1810,11 @@ def test_routing_wan_only_enables_global_settings_before_apply_and_access_rule(m
         "configure_routing_permissions",
         lambda *_args: events.append(("access-rule",)),
     )
-    monkeypatch.setattr(lifecycle, "client_checks", lambda *_args: {})
+    monkeypatch.setattr(
+        lifecycle,
+        "access_routing_allowed_check",
+        lambda *_args: events.append(("allowed-access-check",)),
+    )
     monkeypatch.setattr(lifecycle, "wan_packet_loss_check", lambda *_args: {})
 
     lifecycle.run_routing_wan_lifecycle([], Client(), argparse.Namespace())
@@ -1820,12 +1824,14 @@ def test_routing_wan_only_enables_global_settings_before_apply_and_access_rule(m
     host_check_index = next(i for i, event in enumerate(events) if event[0] == "host-state-check")
     blocked_check_index = next(i for i, event in enumerate(events) if event[0] == "blocked-access-check")
     access_rule_index = next(i for i, event in enumerate(events) if event[0] == "access-rule")
+    allowed_check_index = next(i for i, event in enumerate(events) if event[0] == "allowed-access-check")
 
     assert events[settings_index] == (
         "settings", "PUT", "/api/v1/routes-wan/settings",
         {"routing_enabled": True, "nat_enabled": True, "wan_simulation_enabled": True},
     )
     assert settings_index < first_apply_index < host_check_index < blocked_check_index < access_rule_index
+    assert access_rule_index < allowed_check_index
     assert events[first_apply_index] == ("apply", ("network", "firewall", "wan"))
 
 

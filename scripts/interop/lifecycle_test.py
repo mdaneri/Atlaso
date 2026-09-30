@@ -4864,6 +4864,23 @@ def access_routing_blocked_check(args: argparse.Namespace) -> dict[str, Any]:
     return {"client_b_setup": client_b, "client_a_blocked": client_a}
 
 
+def access_routing_allowed_check(args: argparse.Namespace) -> dict[str, Any]:
+    """Prove the explicit Access permission forwards packets to the WAN peer.
+
+    Args:
+        args: Lifecycle client and interface identities.
+    """
+    if args.skip_client_checks:
+        return {"skipped": "client checks disabled"}
+    if not args.client_a_host or not args.client_b_host:
+        return {"skipped": "client hosts not provided"}
+    client_b = ssh_command(args.client_b_host, args, client_b_wan_setup_command(args), role="client")
+    require_success(client_b, "client B WAN setup after access routing rule")
+    client_a = ssh_command(args.client_a_host, args, client_a_access_to_wan_command(args, expect_success=True), role="client")
+    require_success(client_a, "client A access-to-WAN allowed")
+    return {"client_b_setup": client_b, "client_a_allowed": client_a}
+
+
 def route_role_routing_check(args: argparse.Namespace) -> dict[str, Any]:
     """Return route role routing check.
 
@@ -5523,7 +5540,7 @@ def run_routing_wan_lifecycle(results: list[StepResult], client: HttpClient, arg
     run_step(results, "configure-routing-permissions", configure_routing_permissions, client, args)
     run_step(results, "apply-routing-wan-after-access-rule", apply_units, client, ["firewall", "wan"], args)
     run_step(results, "host-state-checks", routing_host_state_checks, args)
-    run_step(results, "client-checks", client_checks, args)
+    run_step(results, "access-routing-allowed-check", access_routing_allowed_check, args)
     deny = run_step(results, "configure-route-role-deny", configure_route_role_deny, client, args)
     run_step(results, "apply-route-role-deny", apply_units, client, ["firewall", "wan"], args)
     run_step(results, "route-role-deny-check", route_role_deny_check, args)

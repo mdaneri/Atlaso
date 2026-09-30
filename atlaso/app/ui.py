@@ -10051,7 +10051,7 @@ def routing_network_topology_entries(config_preview: str) -> list[tuple[str, ...
     Args:
         config_preview: Desired or applied Network configuration.
     """
-    fields = ("kind", "name", "role", "mode", "ip_cidr", "ipv6_cidr")
+    fields = ("kind", "name", "role", "mode", "enabled", "ip_cidr", "ipv6_cidr")
     return sorted(
         tuple(row.get(field, "") for field in fields)
         for row in network_interface_entries(config_preview)

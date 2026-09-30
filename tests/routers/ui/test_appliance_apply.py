@@ -234,6 +234,51 @@ def test_network_only_rejects_ingress_over_applied_routing_capacity(client, monk
         assert db.query(Job).count() == count_before
 
 
+def test_routing_topology_detects_disabled_vlan():
+    """A disabled desired VLAN must not reuse the applied routing boundary."""
+    from atlaso.app.ui import routing_network_topology_entries
+
+    applied = "[vlan_interfaces]\nvlan=eth2.50\nrole=access\nenabled=true\n"
+    desired = applied.replace("enabled=true", "enabled=false")
+
+    assert routing_network_topology_entries(applied) != routing_network_topology_entries(desired)
+
+
+def test_pending_vlan_disable_joins_routing_permission_apply(client, monkeypatch):
+    """WAN selection publishes a disabled VLAN with its routing permission pair."""
+    from atlaso.app import ui
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Job, VlanInterface
+
+    login(client)
+    with SessionLocal() as db:
+        vlan = db.query(VlanInterface).filter_by(name="eth1.20").one()
+        vlan.enabled = True
+        db.commit()
+        units = ui.appliance_apply_units(db)
+        ui.update_appliance_apply_baselines(db, units, {unit["id"] for unit in units})
+        vlan.enabled = False
+        baselines = ui.load_appliance_apply_baselines(db)
+        for unit in ("wan", "firewall"):
+            baselines[unit]["routing_permission_fingerprint"] = "pending-routing-permission"
+        ui.save_appliance_apply_baselines(db, baselines)
+        db.commit()
+
+    monkeypatch.setattr(ui, "run_appliance_apply_job", lambda _job_id: None)
+    csrf = client.get("/dashboard").text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    response = client.post(
+        "/appliance-apply",
+        data={"csrf": csrf, "selected_units": "wan"},
+        headers={"Accept": "application/json"},
+    )
+
+    assert response.status_code == 202, response.text
+    with SessionLocal() as db:
+        payload = json.loads(db.get(Job, response.json()["job_id"]).result)
+    assert {"network", "firewall", "wan"} <= set(payload["selected_units"])
+    assert payload["selected_units"].index("network") < payload["selected_units"].index("wan")
+
+
 def test_fresh_wan_ingress_matches_helper_for_mixed_network_links(client, tmp_path):
     """Project active addressless links without admitting down or unused targets.
 
@@ -2859,19 +2904,23 @@ def test_wan_gateway_target_address_requires_network_apply(client, monkeypatch, 
     monkeypatch.setattr(ui, "run_appliance_apply_job", lambda _job_id: None)
     response = client.post("/appliance-apply", data={"csrf": csrf, "selected_units": "wan"},
                            headers={"Accept": "application/json"})
-    assert response.status_code == (422 if scenario == "invalid_network" else 202), response.text
+    rejected = scenario in {"invalid_network", "change_domain"}
+    assert response.status_code == (422 if rejected else 202), response.text
     with SessionLocal() as db:
-        assert db.query(Job).count() == count_before + (0 if scenario == "invalid_network" else 1)
-        if scenario == "invalid_network":
+        assert db.query(Job).count() == count_before + (0 if rejected else 1)
+        if rejected:
             return
         payload = json.loads(db.get(Job, response.json()["job_id"]).result)
     selected = payload["selected_units"]
-    assert ("network" in selected) is expected_dependency
+    # Routing permission pairing also publishes a pending Network address
+    # change when the route itself is disabled or global Routing turns off.
+    expected_network = expected_dependency or scenario in {"disabled_route", "routing_off"}
+    assert ("network" in selected) is expected_network
     assert "wan" in selected
-    if expected_dependency:
+    if expected_network:
         assert selected.index("network") < selected.index("wan")
     captured = next(unit for unit in payload["captured_units"] if unit["unit_id"] == "wan")
-    expected_wan = wan["network_candidate_variant"] if expected_dependency else wan
+    expected_wan = wan["network_candidate_variant"] if expected_network else wan
     assert captured["config_preview"] == expected_wan["config_preview"]
 
 
