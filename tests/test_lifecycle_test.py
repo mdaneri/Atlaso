@@ -821,6 +821,45 @@ def test_routing_wan_only_plan_and_routing_rule_payload():
     }
 
 
+@pytest.mark.parametrize("reverse_status", [303, 422])
+def test_routing_lifecycle_reviews_both_access_directions(reverse_status):
+    """The WAN probe needs an explicit reverse permission for reply packets.
+
+    Args:
+        reverse_status: Appliance response to the return-path permission.
+    """
+    lifecycle = load_lifecycle_module()
+    args = lifecycle.parse_args(["--password", "test", "--routing-wan-only", "--plan-only"])
+    submitted = []
+
+    class Client:
+        def request(self, method, path, **kwargs):
+            """Record permission submissions and inject the reverse response.
+
+            Args:
+                method: Requested HTTP method.
+                path: Appliance endpoint.
+                **kwargs: Submitted form and redirect options.
+            """
+            if method == "GET":
+                return 200, '<input name="csrf" value="test-token">', {}
+            assert path == "/routes-wan/routing-rules"
+            submitted.append(kwargs["form"])
+            return (303 if len(submitted) == 1 else reverse_status), "", {"Location": "/routes-wan"}
+
+    if reverse_status == 422:
+        with pytest.raises(lifecycle.LifecycleError, match="HTTP 422"):
+            lifecycle.configure_routing_permissions(Client(), args)
+    else:
+        result = lifecycle.configure_routing_permissions(Client(), args)
+        assert result["return_permission"]["created_or_updated"] is True
+    assert [(row["source_interface"], row["destination_interface"]) for row in submitted] == [
+        (args.site_interface, args.wan_interface),
+        (args.wan_interface, args.site_interface),
+    ]
+    assert len({row["name"] for row in submitted}) == 2
+
+
 def test_focused_routing_enables_global_settings_before_first_apply(monkeypatch):
     """Fresh appliances enable Routing, NAT, and WAN before route publication.
 

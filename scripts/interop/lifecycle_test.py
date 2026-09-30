@@ -1622,20 +1622,33 @@ def configure_routing_permissions(client: HttpClient, args: argparse.Namespace) 
     if status >= 400:
         raise LifecycleError(f"GET /routes-wan failed with HTTP {status}")
     csrf = extract_csrf(body)
-    payload = routing_rule_form_payload(args)
-    status, response_body, headers = client.request(
-        "POST",
-        "/routes-wan/routing-rules",
-        form={**payload, "csrf": csrf},
-        follow_redirects=False,
-    )
-    if status in {302, 303}:
-        return {"created_or_updated": True, "routing_rule": payload, "location": header_value(headers, "Location")}
-    if status == 409 or "already exists" in response_body.lower():
-        return {"created_or_updated": False, "routing_rule": payload, "reason": "already exists"}
-    if status >= 400:
-        raise LifecycleError(f"Routing permission setup failed with HTTP {status}: {response_body[:500]}")
-    return {"created_or_updated": True, "routing_rule": payload}
+    forward = routing_rule_form_payload(args)
+    reverse = {
+        **forward,
+        "name": "Lifecycle WAN to SiteA",
+        "source_interface": args.wan_interface,
+        "destination_interface": args.site_interface,
+        "description": "Lifecycle explicit return-path routing permission.",
+    }
+    # Permissions are directed: automatic Access isolation also covers replies.
+    # Review both directions explicitly rather than bypassing the reverse deny.
+    results = []
+    for payload in (forward, reverse):
+        status, response_body, headers = client.request(
+            "POST",
+            "/routes-wan/routing-rules",
+            form={**payload, "csrf": csrf},
+            follow_redirects=False,
+        )
+        exists = status == 409 or "already exists" in response_body.lower()
+        if status >= 400 and not exists:
+            raise LifecycleError(f"Routing permission setup failed with HTTP {status}: {response_body[:500]}")
+        results.append({
+            "created_or_updated": not exists,
+            "routing_rule": payload,
+            "location": header_value(headers, "Location"),
+        })
+    return {**results[0], "return_permission": results[1]}
 
 
 def configure_routing_wan_settings(client: HttpClient) -> dict[str, Any]:
