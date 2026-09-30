@@ -821,6 +821,53 @@ def test_routing_wan_only_plan_and_routing_rule_payload():
     }
 
 
+def test_focused_routing_enables_global_settings_before_first_apply(monkeypatch):
+    """Fresh appliances enable Routing, NAT, and WAN before route publication.
+
+    Args:
+        monkeypatch: Replaces unrelated lifecycle steps with a recorder.
+    """
+    lifecycle = load_lifecycle_module()
+    args = lifecycle.parse_args(["--password", "test", "--routing-wan-only", "--plan-only"])
+    observed = []
+
+    class Client:
+        def json_request(self, method, path, *, json_body):
+            """Record the global settings request.
+
+            Args:
+                method: HTTP request method.
+                path: Appliance API path.
+                json_body: Desired feature settings.
+            """
+            observed.append((method, path, json_body))
+            return json_body
+
+    def record_step(_results, name, operation, *step_args):
+        """Run only the settings operation while recording lifecycle order.
+
+        Args:
+            _results: Unused result list.
+            name: Lifecycle step name.
+            operation: Operation under test.
+            *step_args: Operation arguments.
+        """
+        observed.append(name)
+        if name == "configure-routing-settings":
+            return operation(*step_args)
+        if name == "configure-route-role-deny":
+            return {"id": 17}
+        return {}
+
+    monkeypatch.setattr(lifecycle, "run_step", record_step)
+    lifecycle.run_routing_wan_lifecycle([], Client(), args)
+
+    settings = ("PUT", "/api/v1/routes-wan/settings",
+                {"routing_enabled": True, "nat_enabled": True, "wan_simulation_enabled": True})
+    assert observed.count(settings) == 1
+    assert observed.index(settings) < observed.index("apply-routing-wan-before-access-rule")
+
+
 def test_route_role_deny_lifecycle_uses_saved_override_and_restores_generated_behavior():
     """The focused lifecycle exercises an explicit deny over generated route-role allow."""
     lifecycle = load_lifecycle_module()
