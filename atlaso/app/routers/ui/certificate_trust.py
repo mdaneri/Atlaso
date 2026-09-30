@@ -1879,6 +1879,7 @@ def build_routers(
                     raise EnrollmentError(
                         "The existing vCenter does not match this provider and host."
                     )
+                vcenter.name = name.strip()
             else:
                 vcenter = VsphereTrustedVcenter(
                     id=str(uuid4()),

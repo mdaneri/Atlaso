@@ -578,12 +578,14 @@ def test_vcenter_enrollment_approval_binds_only_inspected_client_to_provider(
         transport, "discover_vcenter_client", lambda **_kwargs: replacement_discovery
     )
     data["vcenter_id"] = approved.json()["trusted_vcenter_id"]
+    data["name"] = "Renamed vCenter"
     data["expected_client_fingerprint"] = str(replacement["fingerprint_sha256"])
     rotated = client.post("/vsphere-key-providers/enrollment/approve", data=data)
     assert rotated.status_code == 200, rotated.text
     with SessionLocal() as db:
         trusted = db.get(VsphereTrustedVcenter, data["vcenter_id"])
         assert trusted is not None
+        assert trusted.name == "Renamed vCenter"
         assert {item.fingerprint_sha256 for item in trusted.certificates} == {
             parsed["fingerprint_sha256"],
             replacement["fingerprint_sha256"],

@@ -6115,7 +6115,7 @@ function initializeVsphereKeyProviderTables() {
     defaults: { provider_id: providers[0]?.id || "", name: "", hostname: "", description: "", certificate_pem: "", enabled: false },
     canEdit: () => true,
     extraActions: [
-      { label: "Refresh from vCenter", action: (_event, row) => openVsphereEnrollmentWizard(row.getData(), row.getElement()) },
+      ...(vsphereEnrollmentWizard ? [{ label: "Refresh from vCenter", action: (_event, row) => openVsphereEnrollmentWizard(row.getData(), row.getElement()) }] : []),
       { label: "Add public certificate manually", action: (_event, row) => openVsphereCertificateWizard(row.getData(), row.getElement()) },
     ],
     steps: [
