@@ -435,6 +435,32 @@ def test_kms_ca_payload_stages_certificate_by_fingerprint(hostname):
     assert planned["certificates"][0]["cert_path"] == certificate.cert_path
 
 
+@pytest.mark.parametrize("legacy_path,fingerprint", [("", ""), ("/etc/atlaso/kmip/certs/kms.crt", ""), ("", "b" * 64), ("/etc/atlaso/kmip/certs/kms.crt", "invalid")])
+def test_kms_ca_payload_preserves_invalid_legacy_identity_for_validation(legacy_path, fingerprint):
+    """Read-only payloads expose incomplete KMS rows without deriving invalid paths.
+
+    Args:
+        legacy_path: Stored certificate path from an incomplete legacy row.
+        fingerprint: Stored missing or malformed certificate fingerprint.
+    """
+    settings = CaSettings(
+        enabled=True, publish_crl=False, storage_path="/etc/atlaso/ca",
+        portal_hostname="ca.example.test", root_common_name="Test Root",
+        key_algorithm="RSA", key_size=2048, root_valid_days=3650,
+    )
+    certificate = CaCertificate(
+        enabled=True, status="issued", managed_owner="kms:server", common_name="kms.example.test",
+        fingerprint=fingerprint, cert_path=legacy_path, key_path="", chain_path="",
+    )
+    payload = json.loads(render_ca_apply_payload(settings, [certificate], include_private_keys=False))
+    assert payload["certificates"][0]["cert_path"] == legacy_path
+    from atlaso.app.services.ca import validate_ca_state
+
+    assert any("invalid KMS server identity" in error for error in validate_ca_state(
+        settings=settings, profiles=[], certificates=[certificate]
+    ))
+
+
 def test_existing_root_ca_material_is_not_rotated_by_identity_edits():
     """Verify that existing root ca material is not rotated by identity edits."""
     settings = CaSettings(

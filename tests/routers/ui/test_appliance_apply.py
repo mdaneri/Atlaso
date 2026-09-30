@@ -2269,11 +2269,13 @@ def test_appliance_apply_router_owns_exact_transport_set():
     ]
 
 
-def test_appliance_apply_status_tolerates_duplicate_managed_certificate_owners(client):
+@pytest.mark.parametrize("fingerprint", ["", "invalid"])
+def test_appliance_apply_status_tolerates_duplicate_managed_certificate_owners(client, fingerprint):
     """Verify that status tolerates duplicate managed certificate owners.
 
     Args:
         client: HTTP test client used to exercise the Atlaso application.
+        fingerprint: Missing or malformed fingerprint from a legacy row.
     """
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import CaCertificate
@@ -2291,6 +2293,7 @@ def test_appliance_apply_status_tolerates_duplicate_managed_certificate_owners(c
                     common_name="newer-kms.atlaso.internal",
                     managed_owner="kms:server",
                     status="issued",
+                    fingerprint=fingerprint,
                     certificate_pem="test-certificate",
                     private_key_encrypted="test-encrypted-key",
                 ),

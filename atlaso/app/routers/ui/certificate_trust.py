@@ -1874,12 +1874,13 @@ def build_routers(
                 if (
                     vcenter is None
                     or vcenter.provider_id != provider.id
-                    or vcenter.hostname != discovered.vcenter_host
+                    or (vcenter.hostname and vcenter.hostname != discovered.vcenter_host)
                 ):
                     raise EnrollmentError(
                         "The existing vCenter does not match this provider and host."
                     )
                 vcenter.name = name.strip()
+                vcenter.hostname = discovered.vcenter_host
             else:
                 vcenter = VsphereTrustedVcenter(
                     id=str(uuid4()),

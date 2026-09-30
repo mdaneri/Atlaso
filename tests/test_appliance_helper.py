@@ -12484,6 +12484,27 @@ def test_kms_helper_apply_installs_atlaso_kmip_service(monkeypatch, tmp_path, le
     previous_config = (managed_root / "kmip" / "server.json").read_bytes()
     previous_trust = runtime_trust_path.read_bytes()
     previous_credential = kms_credential_path.read_bytes()
+    for failed_method, failed_name in (("write_bytes", "server.json"), ("chmod", "server.json"),
+                                       ("write_text", "state.json"), ("chmod", "state.json")):
+        original_method = getattr(Path, failed_method)
+
+        def fail_snapshot(path, *args, failed_name=failed_name, original_method=original_method, **kwargs):
+            """Simulate a full filesystem or permission failure before cutover."""
+            if path.parent.name == ".cutover-rollback" and path.name == failed_name:
+                raise OSError("snapshot unavailable")
+            return original_method(path, *args, **kwargs)
+
+        before_commands = len(commands)
+        before_credentials = list(credential_inputs)
+        with monkeypatch.context() as snapshot_patch:
+            snapshot_patch.setattr(Path, failed_method, fail_snapshot)
+            assert helper._handle_kms("apply", [str(config_path)]) == 1
+        assert not (managed_root / "kmip" / ".cutover-rollback").exists()
+        assert all(command[:2] == ["systemctl", "show"] for command in commands[before_commands:])
+        assert credential_inputs == before_credentials
+        assert (managed_root / "kmip" / "server.json").read_bytes() == previous_config
+        assert runtime_trust_path.read_bytes() == previous_trust
+        assert kms_credential_path.read_bytes() == previous_credential
     changed_config = json.loads(config_path.read_text(encoding="utf-8"))
     changed_config["providers"][0]["name"] = "Replacement provider"
     config_path.write_text(json.dumps(changed_config), encoding="utf-8")

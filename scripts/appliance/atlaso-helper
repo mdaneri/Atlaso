@@ -6399,23 +6399,37 @@ def _handle_kms(action: str, args: list[str]) -> int:
         if path.is_file() else None
         for path in cutover_paths
     }
-    rollback_dir.mkdir(mode=0o700)
-    for name, path in zip(("client-trust.pem", "server.json", "credential", "service-unit"), cutover_paths, strict=True):
-        previous = previous_files[path]
-        if previous is not None:
-            backup = rollback_dir / name
-            backup.write_bytes(previous[0])
-            backup.chmod(0o600)
     was_active, was_enabled = service_states["atlaso-kmip.service"]
     legacy_was_active, legacy_was_enabled = service_states["atlaso-kms.service"]
-    state_backup = rollback_dir / "state.json"
-    state_backup.write_text(json.dumps({
-        "was_active": was_active,
-        "was_enabled": was_enabled,
-        "legacy_was_active": legacy_was_active,
-        "legacy_was_enabled": legacy_was_enabled,
-    }, sort_keys=True), encoding="utf-8")
-    state_backup.chmod(0o600)
+    snapshot_created = False
+    try:
+        rollback_dir.mkdir(mode=0o700)
+        snapshot_created = True
+        for name, path in zip(("client-trust.pem", "server.json", "credential", "service-unit"), cutover_paths, strict=True):
+            previous = previous_files[path]
+            if previous is not None:
+                backup = rollback_dir / name
+                backup.write_bytes(previous[0])
+                backup.chmod(0o600)
+        state_backup = rollback_dir / "state.json"
+        state_backup.write_text(json.dumps({
+            "was_active": was_active,
+            "was_enabled": was_enabled,
+            "legacy_was_active": legacy_was_active,
+            "legacy_was_enabled": legacy_was_enabled,
+        }, sort_keys=True), encoding="utf-8")
+        state_backup.chmod(0o600)
+    except OSError:
+        # No runtime files or service state have changed. Remove only the
+        # incomplete snapshot this attempt created, never an existing one.
+        if snapshot_created:
+            try:
+                shutil.rmtree(rollback_dir)
+            except OSError:
+                print(f"KMS snapshot preparation failed; incomplete snapshot cleanup required at {rollback_dir}.", file=sys.stderr)
+                return 1
+        print("KMS snapshot preparation failed; runtime cutover was not started.", file=sys.stderr)
+        return 1
     try:
         shutil.copyfile(staged_trust_path, runtime_trust_path)
         os.chmod(runtime_trust_path, 0o640)

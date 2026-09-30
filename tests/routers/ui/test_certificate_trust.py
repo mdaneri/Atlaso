@@ -586,12 +586,24 @@ def test_vcenter_enrollment_approval_binds_only_inspected_client_to_provider(
     data["vcenter_id"] = approved.json()["trusted_vcenter_id"]
     data["name"] = "Renamed vCenter"
     data["expected_client_fingerprint"] = str(replacement["fingerprint_sha256"])
+    with SessionLocal() as db:
+        trusted = db.get(VsphereTrustedVcenter, data["vcenter_id"])
+        trusted.hostname = "different.example.test"
+        db.commit()
+    mismatched = client.post("/vsphere-key-providers/enrollment/approve", data=data)
+    assert mismatched.status_code == 422
+    with SessionLocal() as db:
+        trusted = db.get(VsphereTrustedVcenter, data["vcenter_id"])
+        assert len(trusted.certificates) == 1
+        trusted.hostname = ""
+        db.commit()
     rotated = client.post("/vsphere-key-providers/enrollment/approve", data=data)
     assert rotated.status_code == 200, rotated.text
     with SessionLocal() as db:
         trusted = db.get(VsphereTrustedVcenter, data["vcenter_id"])
         assert trusted is not None
         assert trusted.name == "Renamed vCenter"
+        assert trusted.hostname == "vcsa.example.test"
         assert {item.fingerprint_sha256 for item in trusted.certificates} == {
             parsed["fingerprint_sha256"],
             replacement["fingerprint_sha256"],

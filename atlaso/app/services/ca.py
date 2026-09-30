@@ -977,9 +977,14 @@ def render_ca_apply_payload(settings: CaSettings, certificates: list[CaCertifica
             private_key_pem = decrypt_secret(certificate.private_key_encrypted) if include_private_keys else "[redacted]"
         cert_path, key_path, chain_path = certificate.cert_path, certificate.key_path, certificate.chain_path
         if certificate.managed_owner == "kms:server" and certificate.status == "issued":
-            cert_path, key_path, chain_path = kms_server_certificate_paths(
-                PurePosixPath(certificate.cert_path).stem, certificate.fingerprint
-            )
+            try:
+                cert_path, key_path, chain_path = kms_server_certificate_paths(
+                    PurePosixPath(certificate.cert_path or "").stem, certificate.fingerprint or ""
+                )
+            except ValueError:
+                # Preserve incomplete legacy rows for read-only validation.
+                # validate_ca_state blocks applying an invalid identity.
+                pass
         payload["certificates"].append(
             {
                 "common_name": certificate.common_name,
@@ -1260,6 +1265,13 @@ def validate_ca_state(
     for certificate in certificates:
         if not certificate.enabled:
             continue
+        if certificate.managed_owner == "kms:server" and certificate.status == "issued":
+            try:
+                kms_server_certificate_paths(
+                    PurePosixPath(certificate.cert_path or "").stem, certificate.fingerprint or ""
+                )
+            except ValueError:
+                errors.append(f"Certificate {certificate.common_name or certificate.id} has an invalid KMS server identity.")
         for value, label in (
             (certificate.cert_path, f"Certificate {certificate.common_name or certificate.id} certificate path"),
             (certificate.key_path, f"Certificate {certificate.common_name or certificate.id} private-key path"),

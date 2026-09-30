@@ -5268,6 +5268,7 @@ def kms_context(db: Session, *, reconcile: bool = True, include_runtime_counts: 
         server_fingerprint=(
             server_certificate.fingerprint
             if server_certificate and server_certificate.enabled and server_certificate.status == "issued"
+            and re.fullmatch(r"[0-9a-f]{64}", server_certificate.fingerprint or "")
             else ""
         ),
     )
