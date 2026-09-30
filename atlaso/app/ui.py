@@ -472,7 +472,6 @@ from atlaso.app.services.networking import (
     is_canonical_network_role,
     normalize_interface_mode,
     normalize_interface_role,
-    normalize_ipv4_method,
     physical_interface_to_dict,
     render_network_config,
     trunk_parent_option,
@@ -520,16 +519,19 @@ from atlaso.app.services.routes_wan import (
     canonical_route_destination,
     default_route_family,
     ensure_routes_wan_settings,
-    generated_route_role_rules,
     mirrored_management_default_routes,
-    nat_eligible_target_names,
     nat_rule_to_dict,
     render_wan_config,
     route_to_dict,
-    routing_rule_to_dict,
     validate_wan_state,
     wan_config_target_entries,
     wan_policy_to_dict,
+)
+from atlaso.app.services.routing_permissions import (
+    routing_permission_apply_state,
+    routing_permission_fingerprint,
+    routing_permission_rows,
+    routing_permission_targets,
 )
 from atlaso.app.services.service_dns_defaults import (
     NTP_DNS_DESCRIPTION,
@@ -4452,6 +4454,7 @@ def firewall_context(db: Session, *, reconcile: bool = True) -> dict:
             physical_interfaces,
             vlan_interfaces,
             db.execute(select(RoutingRule).order_by(RoutingRule.priority, RoutingRule.name)).scalars().all(),
+            routing_enabled=ensure_routes_wan_settings(db).routing_enabled,
         )
     )
     config_preview = render_nftables_config(
@@ -4483,6 +4486,7 @@ def firewall_context(db: Session, *, reconcile: bool = True) -> dict:
     except ValueError:
         validation_errors.append("Resolve port-forward source validation in Traffic Publishing before Apply.")
     return {
+        "routing_permission_fingerprint": routing_permission_fingerprint(db),
         "firewall_settings": settings,
         "firewall_rules": editable_rules,
         "firewall_rules_json": [firewall_rule_to_dict(rule) for rule in editable_rules],
@@ -5520,85 +5524,13 @@ def wan_route_targets(db: Session) -> list[dict[str, str]]:
     return [target for target in wan_routing_targets(db) if target["routing_domain"] == "lab"]
 
 
-def wan_routing_targets(db: Session) -> list[dict[str, str]]:
-    """Return wan routing targets.
+def wan_routing_targets(db: Session) -> list[dict[str, Any]]:
+    """Return canonical routing topology shared with permission API validation.
 
     Args:
-        db: Active database session.
+        db: Desired-state database session.
     """
-    interfaces = db.execute(select(PhysicalInterface).order_by(PhysicalInterface.name)).scalars().all()
-    vlans = db.execute(select(VlanInterface).order_by(VlanInterface.parent_interface, VlanInterface.vlan_id)).scalars().all()
-    eligible_nat = nat_eligible_target_names(list(interfaces), list(vlans))
-    interfaces_by_name = {interface.name: interface for interface in interfaces}
-    targets: list[dict[str, str]] = []
-    for interface in interfaces:
-        if interface.oper_state == "missing":
-            continue
-        mode = normalize_interface_mode(interface.mode)
-        role = normalize_interface_role(interface.role)
-        addresses = interface_addresses_from_cidrs(interface.ip_cidr, interface.ipv6_cidr)
-        if mode == "trunk" or not addresses:
-            continue
-        address_label = " / ".join(addresses)
-        routing_domain = "management" if role == "management" else "lab"
-        targets.append(
-            {
-                "name": interface.name,
-                "nat_allowed": interface.name in eligible_nat,
-                "nat_physical_interface": interface.name,
-                "nat_physical_mac": interface.mac_address or "",
-                "kind": "physical",
-                "role": role,
-                "ip_cidr": interface.ip_cidr or "",
-                "gateway": interface.gateway or "",
-                "ipv4_method": normalize_ipv4_method(interface.ipv4_method),
-                "ipv6_cidr": interface.ipv6_cidr or "",
-                "ipv6_gateway": interface.ipv6_gateway or "",
-                "addresses": addresses,
-                "routing_domain": routing_domain,
-                "route_allowed": routing_domain == "lab",
-                "management_ui": bool(
-                    role == "access"
-                    and mode == "access"
-                    and str(interface.admin_state or "").lower() == "up"
-                    and interface.access_management_ui_enabled
-                ),
-                "label": f"{interface.name} - physical / {role} / {address_label}",
-            }
-        )
-    for vlan in vlans:
-        parent = interfaces_by_name.get(vlan.parent_interface)
-        role = normalize_interface_role(vlan.role)
-        addresses = interface_addresses_from_cidrs(vlan.ip_cidr, vlan.ipv6_cidr)
-        if not vlan.enabled or not addresses:
-            continue
-        address_label = " / ".join(addresses)
-        routing_domain = "management" if role == "management" else "lab"
-        targets.append(
-            {
-                "name": vlan.name,
-                "nat_allowed": vlan.name in eligible_nat,
-                "nat_physical_interface": vlan.parent_interface,
-                "nat_physical_mac": parent.mac_address if parent else "",
-                "kind": "vlan",
-                "role": role,
-                "ip_cidr": vlan.ip_cidr or "",
-                "ipv6_cidr": vlan.ipv6_cidr or "",
-                "addresses": addresses,
-                "routing_domain": routing_domain,
-                "route_allowed": routing_domain == "lab",
-                "management_ui": bool(
-                    role == "access"
-                    and vlan.access_management_ui_enabled
-                    and parent is not None
-                    and parent.oper_state != "missing"
-                    and str(parent.admin_state or "").lower() == "up"
-                    and normalize_interface_mode(parent.mode) == "trunk"
-                ),
-                "label": f"{vlan.name} - VLAN {vlan.vlan_id} on {vlan.parent_interface} / {role} / {address_label}",
-            }
-        )
-    return targets
+    return routing_permission_targets(db)
 
 
 def wan_nat_targets_from_route_targets(targets: list[dict[str, str]]) -> list[dict[str, str]]:
@@ -5663,7 +5595,11 @@ def routes_wan_context(db: Session) -> dict:
     routing_rules = db.execute(select(RoutingRule).order_by(RoutingRule.priority, RoutingRule.name)).scalars().all()
     all_targets = wan_routing_targets(db)
     targets = wan_route_targets(db)
-    generated_routing_rows = generated_route_role_rules(targets)
+    permission_rows = routing_permission_rows(all_targets, list(routing_rules), ensure_routes_wan_settings(db).routing_enabled)
+    apply_state = routing_permission_apply_state(db)
+    for row in permission_rows:
+        row["apply_state"] = apply_state
+    generated_routing_rows = [row for row in permission_rows if row["generated"]]
     routing_summary = {
         "generated_count": len(generated_routing_rows),
         "explicit_count": len(routing_rules),
@@ -5682,7 +5618,7 @@ def routes_wan_context(db: Session) -> dict:
         {target["name"] for target in nat_targets},
         source_groups,
         routing_rules,
-        {target["name"] for target in targets},
+        {target["name"] for target in targets if target.get("role") in {"access", "route"}},
         {
             target["name"]: (target.get("ip_cidr"), target.get("ipv6_cidr"))
             for target in targets
@@ -5770,7 +5706,8 @@ def routes_wan_context(db: Session) -> dict:
         "routing_rules": routing_rules,
         "route_rows": [route_to_dict(route) for route in routes],
         "nat_rule_rows": [nat_rule_to_dict(rule) for rule in nat_rules],
-        "routing_rule_rows": [routing_rule_to_dict(rule) for rule in routing_rules],
+        "routing_rule_rows": [row for row in permission_rows if not row["generated"]],
+        "routing_permission_fingerprint": routing_permission_fingerprint(db),
         "generated_routing_rule_rows": generated_routing_rows,
         "routing_summary": routing_summary,
         "policy_rows": [wan_policy_to_dict(policy) for policy in policies],
@@ -10108,6 +10045,19 @@ def network_interface_entries(config_preview: str) -> list[dict[str, str]]:
     return rows
 
 
+def routing_network_topology_entries(config_preview: str) -> list[tuple[str, ...]]:
+    """Project only Network fields that define routing permission boundaries.
+
+    Args:
+        config_preview: Desired or applied Network configuration.
+    """
+    fields = ("kind", "name", "role", "mode", "enabled", "ip_cidr", "ipv6_cidr")
+    return sorted(
+        tuple(row.get(field, "") for field in fields)
+        for row in network_interface_entries(config_preview)
+    )
+
+
 def wan_applied_network_ingress(db: Session) -> list[str] | None:
     """Project WAN ingress selectors from the saved Network baseline.
 
@@ -14373,17 +14323,20 @@ def synchronize_routing_service_runtime(
 def execute_traffic_publishing_pair(
     db: Session, job: Job, units: list[dict[str, Any]], *, adapter: SystemAdapter,
 ) -> list[dict[str, Any]]:
-    """Publish Firewall and NAT with one durable application-commit decision.
+    """Publish Firewall/NAT with optional WAN and Network in one commit.
 
     Args:
         db: Global Apply transaction and baseline owner.
         job: Already admitted global task; never a service-specific task.
-        units: Exact captured Firewall and NAT units, unchanged since admission.
+        units: Exact captured Firewall, NAT, and optional WAN/Network units.
         adapter: Shared dry-run or real constrained helper boundary.
     """
     by_id = {unit["id"]: unit for unit in units}
-    if set(by_id) != {"firewall", "nat"}:
-        raise ApplianceApplyJobError("Paired Traffic Publishing requires both captured units.")
+    if set(by_id) not in ({"firewall", "nat"}, {"wan", "firewall", "nat"},
+                          {"network", "wan", "firewall", "nat"}):
+        raise ApplianceApplyJobError("Paired publication requires captured Firewall/NAT, WAN, and optional Network units.")
+    has_wan = "wan" in by_id
+    has_network = "network" in by_id
     payload = _job_payload(job)
     payload["traffic_publishing_runtime_commit_pending"] = not adapter.dry_run
     payload["traffic_publishing_application_committed"] = False
@@ -14394,17 +14347,52 @@ def execute_traffic_publishing_pair(
     try:
         nat_path = NAT_CONFIG_PATH
         firewall_path = FIREWALL_STAGED_CONFIG_PATH
+        wan_path = WAN_CONFIG_PATH if has_wan else ""
+        wan_rollback_path = MANAGEMENT_HANDOFF_WAN_ROLLBACK_PATH if has_wan else ""
+        network_path = NETWORK_STAGED_CONFIG_PATH if has_network else ""
         if not adapter.dry_run:
             nat_path = stage_appliance_apply_config(nat_path, by_id["nat"]["raw_config_preview"])
             firewall_path = stage_appliance_apply_config(firewall_path, by_id["firewall"]["raw_config_preview"])
-        commands.append(adapter.validate_traffic_publishing(job.id, nat_path, firewall_path))
+            if has_wan:
+                wan_path = stage_appliance_apply_config(wan_path, by_id["wan"]["raw_config_preview"])
+                wan_rollback_path = stage_appliance_apply_config(
+                    wan_rollback_path,
+                    wan_rollback_config_preview(
+                        str(by_id["wan"]["raw_config_preview"]),
+                        load_appliance_apply_baselines(db).get("wan"),
+                    ),
+                )
+            if has_network:
+                network_preview = network_config_with_removed_vlans(
+                    by_id["network"]["raw_config_preview"], by_id["network"].get("removed_vlan_interfaces", []),
+                )
+                network_path = stage_appliance_apply_config(
+                    network_path, f"# atlaso-network-task: {job.id}\n" + network_preview,
+                )
+        if has_wan:
+            commands.append(adapter.validate_traffic_publishing(
+                job.id, nat_path, firewall_path, wan_path, wan_rollback_path,
+                *((network_path,) if has_network else ()),
+            ))
+        else:
+            commands.append(adapter.validate_traffic_publishing(job.id, nat_path, firewall_path))
         if commands[-1].returncode == 0:
-            commands.append(adapter.apply_traffic_publishing(job.id, nat_path, firewall_path))
+            if has_wan:
+                commands.append(adapter.apply_traffic_publishing(
+                    job.id, nat_path, firewall_path, wan_path, wan_rollback_path,
+                    *((network_path,) if has_network else ()),
+                ))
+            else:
+                commands.append(adapter.apply_traffic_publishing(job.id, nat_path, firewall_path))
         succeeded = all(command.returncode == 0 for command in commands)
         if succeeded:
             # Never refresh desired state here: edits made during native publication
             # belong to the next Apply, not to this pair's committed baselines.
-            update_appliance_apply_baselines(db, units, {"firewall", "nat"})
+            update_appliance_apply_baselines(db, units, set(by_id))
+            if has_wan and not adapter.dry_run:
+                synchronize_routing_service_runtime(
+                    db, routing_enabled=by_id["wan"]["context"]["routes_wan_settings"].routing_enabled,
+                )
             payload = _job_payload(job)
             payload["traffic_publishing_application_committed"] = not adapter.dry_run
             job.result = json.dumps(payload, indent=2)
@@ -14445,7 +14433,7 @@ def execute_traffic_publishing_pair(
         "summary": unit["summary"], "validation_errors": unit["validation_errors"],
         "validation_warnings": unit["validation_warnings"], "config_path": unit["config_path"],
         "config_preview": unit["config_preview"], "config_diff": unit["config_diff"],
-        "error": "" if succeeded else "Paired Firewall and Traffic Publishing did not complete; inspect task recovery evidence.",
+        "error": "" if succeeded else "Paired routing or Traffic Publishing did not complete; inspect task recovery evidence.",
     } for unit in units]
 
 
@@ -15084,6 +15072,9 @@ def update_appliance_apply_baselines(db: Session, units: list[dict[str, Any]], s
             "summary": unit["summary"],
             "applied_at": applied_at,
         }
+        permission_fingerprint = unit.get("context", {}).get("routing_permission_fingerprint")
+        if unit["id"] in {"wan", "firewall"} and permission_fingerprint:
+            baseline["routing_permission_fingerprint"] = permission_fingerprint
         runtime_config_preview = unit.get("runtime_config_preview")
         if isinstance(runtime_config_preview, str):
             baseline["runtime_config_preview"] = runtime_config_preview
@@ -16514,6 +16505,9 @@ def run_appliance_apply_job(job_id: str, *, force_real: bool = False) -> None:
             cancelled = False
             handoff_completed = False
             publishing_completed = False
+            publishing_unit_ids = {"firewall", "nat"} | (
+                {"wan"} if job_result.get("routing_publishing_pair") else set()
+            ) | ({"network"} if job_result.get("routing_publishing_network") else set())
             handoff_unit_ids = set(
                 job_result.get("management_handoff_units", [])
                 if job_result.get("management_handoff")
@@ -16534,7 +16528,7 @@ def run_appliance_apply_job(job_id: str, *, force_real: bool = False) -> None:
                 # A bundled transaction already completed these rows. A later request
                 # must not turn their successful final result into cancellation.
                 if (handoff_completed and unit["id"] in handoff_unit_ids) or (
-                    publishing_completed and job_result.get("traffic_publishing_pair") and unit["id"] in {"firewall", "nat"}
+                    publishing_completed and job_result.get("traffic_publishing_pair") and unit["id"] in publishing_unit_ids
                 ):
                     continue
                 db.refresh(job)
@@ -16796,10 +16790,14 @@ def run_appliance_apply_job(job_id: str, *, force_real: bool = False) -> None:
                         break
                     continue
 
-                if job_result.get("traffic_publishing_pair") and unit["id"] in {"firewall", "nat"}:
+                if job_result.get("traffic_publishing_pair") and unit["id"] in publishing_unit_ids:
                     if publishing_completed:
                         continue
-                    pair = [current_by_id[unit_id] for unit_id in ("firewall", "nat")]
+                    pair = [current_by_id[unit_id] for unit_id in (
+                        (("network", "wan", "firewall", "nat") if job_result.get("routing_publishing_network")
+                         else ("wan", "firewall", "nat")) if job_result.get("routing_publishing_pair")
+                        else ("firewall", "nat")
+                    )]
                     for paired_unit in pair:
                         paired_step = steps_by_key.get(paired_unit["id"])
                         if paired_step is None:
@@ -17566,6 +17564,22 @@ def _submit_appliance_apply(
         for dependency in ("network", "wan"):
             if unit_map.get(dependency, {}).get("changed"):
                 selected_ids.add(dependency)
+    routing_permission_pair_required = False
+    if selected_ids.intersection({"wan", "firewall", "network"}):
+        fingerprint = routing_permission_fingerprint(db)
+        routing_permission_pair_required = any(
+            (apply_baselines.get(unit) or {}).get("routing_permission_fingerprint") != fingerprint
+            for unit in ("wan", "firewall")
+        )
+        if routing_permission_pair_required:
+            selected_ids.update(unit for unit in ("wan", "firewall") if unit in unit_map)
+            network_preview = str(unit_map.get("network", {}).get("raw_config_preview")
+                                  or unit_map.get("network", {}).get("config_preview") or "")
+            applied_network_preview = str((apply_baselines.get("network") or {}).get("config_preview") or "")
+            if (unit_map.get("network", {}).get("changed")
+                    and (not applied_network_preview or routing_network_topology_entries(network_preview)
+                         != routing_network_topology_entries(applied_network_preview))):
+                selected_ids.add("network")
     # A fresh WAN preview includes desired ingress selectors. Establish their
     # Network intent first, including when NAT added WAN transitively above.
     # Existing baselines retain independent WAN Apply and its applied intent.
@@ -17602,6 +17616,32 @@ def _submit_appliance_apply(
         )
         or management_domain_migration
     )
+    if management_handoff and not routing_permission_pair_required:
+        # Appliance Settings can start a handoff before an enforcement owner
+        # is selected; pair any pending permission change before expansion.
+        fingerprint = routing_permission_fingerprint(db)
+        routing_permission_pair_required = any(
+            (apply_baselines.get(unit) or {}).get("routing_permission_fingerprint") != fingerprint
+            for unit in ("wan", "firewall")
+        )
+        if routing_permission_pair_required:
+            selected_ids.update(unit for unit in ("wan", "firewall") if unit in unit_map)
+    # A first apply has no recorded forwarding state to transition away from.
+    if (management_handoff and routing_permission_pair_required
+            and unit_map.get("network", {}).get("changed")
+            and (apply_baselines.get("wan") or {}).get("config_preview")):
+        previous_wan = str((apply_baselines.get("wan") or {}).get("config_preview") or "")
+        previous_routing_off = bool(re.search(r"(?m)^routing_enabled=false$", previous_wan))
+        desired_wan_settings = unit_map.get("wan", {}).get("context", {}).get("routes_wan_settings")
+        desired_routing_off = getattr(desired_wan_settings, "routing_enabled", True) is False
+        if not (previous_routing_off and desired_routing_off):
+            detail = (
+                "Disable Routing and apply that change first, then apply the management Network change. "
+                "Re-enable Routing after the management handoff completes."
+            )
+            return JSONResponse({"detail": detail}, status_code=422) if wants_json else Response(
+                detail, status_code=422, media_type="text/plain",
+            )
     if management_handoff:
         selected_ids.update(
             unit_id for unit_id in MANAGEMENT_HANDOFF_UNIT_IDS if unit_id in unit_map
@@ -17670,9 +17710,21 @@ def _submit_appliance_apply(
         selected_ordered_units.remove(dns_unit)
         ntp_index = next(index for index, unit in enumerate(selected_ordered_units) if unit["id"] == "ntpd")
         selected_ordered_units.insert(ntp_index + 1, dns_unit)
-    traffic_publishing_pair = publishing_pair_required and not management_handoff and {"firewall", "nat"}.issubset(selected_ids)
+    routing_publishing_pair = bool(
+        routing_permission_pair_required and not management_handoff
+        and {"wan", "firewall", "nat"}.issubset(selected_ids)
+    )
+    routing_publishing_network = bool(
+        routing_publishing_pair and "network" in selected_ids
+        and unit_map.get("network", {}).get("changed")
+    )
+    traffic_publishing_pair = bool(
+        (publishing_pair_required or routing_publishing_pair) and not management_handoff
+        and {"firewall", "nat"}.issubset(selected_ids)
+    )
     if traffic_publishing_pair:
-        # Network/WAN must finish before either member publishes its captured pair.
+        # Keep Network before publication. When permissions changed, WAN joins
+        # Firewall/NAT in the same captured, recoverable helper transaction.
         selected_ordered_units = [unit for unit in selected_ordered_units if unit["id"] != "firewall"]
         nat_index = next(index for index, unit in enumerate(selected_ordered_units) if unit["id"] == "nat")
         selected_ordered_units.insert(nat_index, unit_map["firewall"])
@@ -17775,6 +17827,8 @@ def _submit_appliance_apply(
         "refresh_vcf_depot_software_depot_id": refresh_vcf_depot_software_depot_id,
         "management_handoff": management_handoff,
         "traffic_publishing_pair": traffic_publishing_pair,
+        "routing_publishing_pair": routing_publishing_pair,
+        "routing_publishing_network": routing_publishing_network,
         "management_handoff_units": [
             unit_id
             for unit_id in (*MANAGEMENT_HANDOFF_UNIT_IDS, "dnsmasq", "wan", "nat")

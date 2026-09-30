@@ -257,6 +257,7 @@ def test_facades_register_extracted_domains_in_exact_order():
     assert {route.endpoint.__module__ for route in v1.routes_wan_router.routes} == {
         "atlaso.app.routers.api_v1.routes_wan",
         "atlaso.app.routers.api_v1.port_forwards",
+        "atlaso.app.routers.api_v1.routing_permissions",
     }
     assert {
         route.endpoint.__module__ for route in v1.dashboard_monitor_router.routes

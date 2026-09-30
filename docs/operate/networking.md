@@ -208,13 +208,38 @@ the same intended interfaces.
   either a default-route family or destination CIDR, the next-hop gateway when required, output target, metric, enabled
   state, and optional interface-level WAN policy.
 - A **Routing Permission** authorizes forwarded traffic from one non-management interface/VLAN network to another.
-  Route-role networks generate these paths automatically. Access networks remain blocked until an explicit permission
-  is enabled. Management is never an eligible source or destination.
+  Route-role networks allow these paths automatically. Access networks remain blocked until an explicit allow is
+  enabled. An explicit deny overrides the generated/default result for only the selected direction and IP family;
+  the reverse direction has its own decision. Management is never an eligible source or destination.
 
 Use the bottom add row in each tab to open the shared reviewed wizard. Double-click a saved row or use **Edit** in its
 row menu to update it. The standard step rail remains beside the form on wide screens and adapts to the narrow layout.
 Each wizard retains entered values while moving backward, validates before Review, and saves only after the final
 add/update action. A saved row's **Enabled** value remains directly editable; this changes desired state only.
+
+Generated route-role permission rows stay read-only. Use their row action to open the Routing Permission wizard and
+save a persistent override for the selected source, destination, and IP family. The override does not change the
+underlying interface roles or generated topology. **Automatic** follows the defaults: route-role pairs allow
+forwarding, while Access networks need an explicit allow. **Allow** requests forwarding, and **Deny** blocks it. If an
+allow and deny cover the same directed pair and family, deny wins. Choose IPv4, IPv6, or both families; a rule for one
+family does not affect the other. The opposite direction is evaluated independently.
+
+Saved permission changes are desired state. Review pending and applied state in the global Appliance Apply view, then
+submit both **Routing & WAN** (`wan`) and **Firewall** together. With Routing disabled, permissions remain saved but
+are suspended. To roll an override back, edit its policy to **Automatic** or remove the override; generated defaults
+then apply again after the paired Apply succeeds. The applied baseline changes only after successful apply, so a
+pending or failed apply must not be reported as active forwarding policy.
+Disabled permissions can retain an unavailable interface or IP family; re-enabling requires valid current topology.
+Permission names must be unique regardless of case and cannot contain line breaks; the browser wizard and API reject
+conflicts before saving, so a later Apply cannot fail on two names that differ only by capitalization.
+Descriptions remain readable in desired state; Apply flattens line breaks to spaces in the generated WAN configuration.
+
+Global Apply automatically pairs WAN and Firewall when permission state changes. An active deny, including the
+automatic Access default, requires Firewall to be enabled. Access defaults are enforced before broad forwarding
+accepts, regardless of the forward-chain policy. The API exposes the same desired and effective state at
+`GET /api/v1/routing-permissions`
+(`read:routes`); `POST`, complete `PUT /{id}`, and `DELETE /{id}` require `write:routes`. Generated identifiers
+cannot be changed. These operations save desired state; they do not apply it to Photon.
 
 In the Static Route **Path** step, **Default route** and **Destination CIDR** appear as one peer choice row. Enable
 **Default route** and choose the native **IP family** IPv4 or IPv6 radio when this path should match every destination

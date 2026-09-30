@@ -768,7 +768,7 @@ def lifecycle_plan(args: argparse.Namespace) -> dict[str, Any]:
             "1280x800 framebuffer and 50-row by 160-column tty1 console geometry",
             "interface and VLAN desired state",
             "DNS and DHCP desired state",
-            "firewall, routing, NAT, and WAN desired state",
+            "firewall, routing, NAT, and WAN desired state with explicit route-role deny override and restoration",
             "CA desired state, root certificate download, atomic generated certificate request with explicit SAN verification, client CSR request, issued certificate download, and client-side verification",
             "NTPsec desired state, NTS upstream and server mode, ntpq health, UDP/123 compatibility, and Alpine chrony-nts authenticated synchronization",
             "vSphere Key Provider desired state, DNS/firewall apply, KMIP service, and TLS client-certificate probe",
@@ -1622,20 +1622,33 @@ def configure_routing_permissions(client: HttpClient, args: argparse.Namespace) 
     if status >= 400:
         raise LifecycleError(f"GET /routes-wan failed with HTTP {status}")
     csrf = extract_csrf(body)
-    payload = routing_rule_form_payload(args)
-    status, response_body, headers = client.request(
-        "POST",
-        "/routes-wan/routing-rules",
-        form={**payload, "csrf": csrf},
-        follow_redirects=False,
-    )
-    if status in {302, 303}:
-        return {"created_or_updated": True, "routing_rule": payload, "location": header_value(headers, "Location")}
-    if status == 409 or "already exists" in response_body.lower():
-        return {"created_or_updated": False, "routing_rule": payload, "reason": "already exists"}
-    if status >= 400:
-        raise LifecycleError(f"Routing permission setup failed with HTTP {status}: {response_body[:500]}")
-    return {"created_or_updated": True, "routing_rule": payload}
+    forward = routing_rule_form_payload(args)
+    reverse = {
+        **forward,
+        "name": "Lifecycle WAN to SiteA",
+        "source_interface": args.wan_interface,
+        "destination_interface": args.site_interface,
+        "description": "Lifecycle explicit return-path routing permission.",
+    }
+    # Permissions are directed: automatic Access isolation also covers replies.
+    # Review both directions explicitly rather than bypassing the reverse deny.
+    results = []
+    for payload in (forward, reverse):
+        status, response_body, headers = client.request(
+            "POST",
+            "/routes-wan/routing-rules",
+            form={**payload, "csrf": csrf},
+            follow_redirects=False,
+        )
+        exists = status == 409 or "already exists" in response_body.lower()
+        if status >= 400 and not exists:
+            raise LifecycleError(f"Routing permission setup failed with HTTP {status}: {response_body[:500]}")
+        results.append({
+            "created_or_updated": not exists,
+            "routing_rule": payload,
+            "location": header_value(headers, "Location"),
+        })
+    return {**results[0], "return_permission": results[1]}
 
 
 def configure_routing_wan_settings(client: HttpClient) -> dict[str, Any]:
@@ -4791,15 +4804,15 @@ def client_b_wan_setup_command(args: argparse.Namespace, *, include_site_route: 
     wan_peer_ip = second_host_address(args.wan_cidr)
     routes: list[str] = []
     if include_site_route:
-        routes.append(f"$ELEV ip route replace {site.network} via {wan_ip} dev eth1;")
+        routes.append(f"$ELEV ip route replace {site.network} via {wan_ip} dev eth1 &&")
     if include_vlan_route:
-        routes.append(f"$ELEV ip route replace {vlan.network} via {wan_ip} dev eth1;")
+        routes.append(f"$ELEV ip route replace {vlan.network} via {wan_ip} dev eth1 &&")
     return (
-        f"ELEV=\"$({elevation_probe()})\"; test -n \"$ELEV\"; "
-        f"$ELEV ip addr replace {wan_peer_ip}/{wan.network.prefixlen} dev eth1; "
-        "$ELEV ip link set eth1 up; "
+        f"ELEV=\"$({elevation_probe()})\" && test -n \"$ELEV\" && "
+        f"$ELEV ip addr replace {wan_peer_ip}/{wan.network.prefixlen} dev eth1 && "
+        "$ELEV ip link set eth1 up && "
         f"{' '.join(routes)} "
-        "ip -br addr; ip route"
+        "ip -br addr && ip route"
     )
 
 
@@ -4814,34 +4827,41 @@ def client_a_access_to_wan_command(args: argparse.Namespace, *, expect_success: 
     wan = ip_interface(args.wan_cidr)
     site_ip = str(site.ip)
     wan_peer_ip = second_host_address(args.wan_cidr)
-    expectation = "" if expect_success else '; rc=$?; test "$rc" -ne 0'
+    probe = f"ping -c 2 -W 2 {wan_peer_ip}"
+    if not expect_success:
+        probe = '{ ' + probe + '; rc=$?; test "$rc" -eq 1; }'
     return (
-        f"ELEV=\"$({elevation_probe()})\"; test -n \"$ELEV\"; "
-        "$ELEV /usr/local/sbin/atlaso-refresh-test-dhcp 2>/dev/null || /usr/local/sbin/atlaso-refresh-test-dhcp 2>/dev/null || true; "
-        f"$ELEV ip route replace {wan.network} via {site_ip} dev eth1; "
-        f"ping -c 2 -W 2 {wan_peer_ip}{expectation}"
+        f"ELEV=\"$({elevation_probe()})\" && test -n \"$ELEV\" && "
+        "{ $ELEV /usr/local/sbin/atlaso-refresh-test-dhcp 2>/dev/null || /usr/local/sbin/atlaso-refresh-test-dhcp 2>/dev/null || true; } && "
+        f"$ELEV ip route replace {wan.network} via {site_ip} dev eth1 && "
+        f"{probe}"
     )
 
 
-def client_a_route_role_to_wan_command(args: argparse.Namespace) -> str:
+def client_a_route_role_to_wan_command(args: argparse.Namespace, *, expect_success: bool = True) -> str:
     """Return client a route role to wan command.
 
     Args:
         args: Parsed command-line options consumed by the operation.
+        expect_success: Whether the forwarding probe must succeed.
     """
     vlan = ip_interface(args.vlan_cidr)
     wan = ip_interface(args.wan_cidr)
     vlan_peer_ip = second_host_address(args.vlan_cidr)
     vlan_ip = str(vlan.ip)
     wan_peer_ip = second_host_address(args.wan_cidr)
+    probe = f"ping -c 2 -W 2 {wan_peer_ip}"
+    if not expect_success:
+        probe = '{ ' + probe + '; rc=$?; test "$rc" -eq 1; }'
     return (
-        f"ELEV=\"$({elevation_probe()})\"; test -n \"$ELEV\"; "
-        "$ELEV modprobe 8021q 2>/dev/null || true; "
-        f"$ELEV ip link add link eth2 name eth2.{args.vlan_id} type vlan id {args.vlan_id} 2>/dev/null || true; "
-        f"$ELEV ip addr replace {vlan_peer_ip}/{vlan.network.prefixlen} dev eth2.{args.vlan_id}; "
-        f"$ELEV ip link set eth2 up; $ELEV ip link set eth2.{args.vlan_id} up; "
-        f"$ELEV ip route replace {wan.network} via {vlan_ip} dev eth2.{args.vlan_id}; "
-        f"ping -c 2 -W 2 {wan_peer_ip}"
+        f"ELEV=\"$({elevation_probe()})\" && test -n \"$ELEV\" && "
+        "$ELEV modprobe 8021q && "
+        f"{{ ip link show dev eth2.{args.vlan_id} >/dev/null 2>&1 || "
+        f"$ELEV ip link add link eth2 name eth2.{args.vlan_id} type vlan id {args.vlan_id}; }} && "
+        f"$ELEV ip addr replace {vlan_peer_ip}/{vlan.network.prefixlen} dev eth2.{args.vlan_id} && "
+        f"$ELEV ip link set eth2 up && $ELEV ip link set eth2.{args.vlan_id} up && "
+        f"$ELEV ip route replace {wan.network} via {vlan_ip} dev eth2.{args.vlan_id} && "
+        f"{probe}"
     )
 
 
@@ -4862,6 +4882,23 @@ def access_routing_blocked_check(args: argparse.Namespace) -> dict[str, Any]:
     return {"client_b_setup": client_b, "client_a_blocked": client_a}
 
 
+def access_routing_allowed_check(args: argparse.Namespace) -> dict[str, Any]:
+    """Prove the explicit Access permission forwards packets to the WAN peer.
+
+    Args:
+        args: Lifecycle client and interface identities.
+    """
+    if args.skip_client_checks:
+        return {"skipped": "client checks disabled"}
+    if not args.client_a_host or not args.client_b_host:
+        return {"skipped": "client hosts not provided"}
+    client_b = ssh_command(args.client_b_host, args, client_b_wan_setup_command(args), role="client")
+    require_success(client_b, "client B WAN setup after access routing rule")
+    client_a = ssh_command(args.client_a_host, args, client_a_access_to_wan_command(args, expect_success=True), role="client")
+    require_success(client_a, "client A access-to-WAN allowed")
+    return {"client_b_setup": client_b, "client_a_allowed": client_a}
+
+
 def route_role_routing_check(args: argparse.Namespace) -> dict[str, Any]:
     """Return route role routing check.
 
@@ -4877,6 +4914,92 @@ def route_role_routing_check(args: argparse.Namespace) -> dict[str, Any]:
     client_a = ssh_command(args.client_a_host, args, client_a_route_role_to_wan_command(args), role="client")
     require_success(client_a, "client A route-role VLAN-to-WAN probe")
     return {"client_b_setup": client_b, "client_a_route_role": client_a}
+
+
+def route_role_deny_payload(args: argparse.Namespace) -> dict[str, Any]:
+    """Describe the lifecycle-owned route-role override.
+
+    Args:
+        args: Lifecycle interface identities.
+    """
+    return {
+        "name": "Lifecycle route-role deny override",
+        "enabled": True,
+        "source_interface": f"{args.trunk_interface}.{args.vlan_id}",
+        "destination_interface": args.wan_interface,
+        "priority": 100,
+        "description": "Lifecycle check that explicit deny outranks generated route-role allow.",
+        "policy": "deny",
+        "ip_family": 4,
+    }
+
+
+def remove_stale_route_role_deny(client: HttpClient, args: argparse.Namespace) -> dict[str, Any]:
+    """Remove an interrupted prior run's override before the first route probe.
+
+    Args:
+        client: Authenticated appliance client.
+        args: Lifecycle interface identities.
+    """
+    payload = route_role_deny_payload(args)
+    existing = client.json_request("GET", "/api/v1/routing-permissions")
+    matches = [row for row in existing if row.get("name") == payload["name"] and not row.get("generated")]
+    if not matches:
+        return {"removed": False}
+    if len(matches) != 1 or any(matches[0].get(key) != payload[key] for key in (
+        "source_interface", "destination_interface", "priority", "description",
+        "enabled", "policy", "ip_family"
+    )):
+        raise LifecycleError("A route-role deny name collision needs manual review before lifecycle cleanup")
+    removed = remove_route_role_deny(client, matches[0]["id"])
+    return {"removed": True, **removed}
+
+
+def configure_route_role_deny(client: HttpClient, args: argparse.Namespace) -> dict[str, Any]:
+    """Override generated route-role forwarding with an explicit IPv4 deny.
+
+    Args:
+        client: Authenticated appliance client.
+        args: Lifecycle interface identities.
+    """
+    payload = route_role_deny_payload(args)
+    existing = client.json_request("GET", "/api/v1/routing-permissions")
+    saved = next((row for row in existing if row.get("name") == payload["name"] and not row.get("generated")), None)
+    if saved is None:
+        result = client.json_request("POST", "/api/v1/routing-permissions", json_body=payload)
+    else:
+        result = client.json_request("PUT", f"/api/v1/routing-permissions/{saved['id']}", json_body=payload)
+    if result.get("policy") != "deny" or result.get("apply_state") not in {"pending", "applied"}:
+        raise LifecycleError("Route-role deny override was not saved as enforceable intent")
+    return {"id": result["id"], "source_interface": payload["source_interface"]}
+
+
+def route_role_deny_check(args: argparse.Namespace) -> dict[str, Any]:
+    """Prove route-role traffic is blocked after the deny reaches the host.
+
+    Args:
+        args: Lifecycle client and interface identities.
+    """
+    if args.skip_client_checks or not args.client_a_host or not args.client_b_host:
+        return {"skipped": "route-role deny needs both lifecycle clients"}
+    client_b = ssh_command(args.client_b_host, args, client_b_wan_setup_command(args, include_site_route=False, include_vlan_route=True), role="client")
+    require_success(client_b, "client B WAN route-role setup before deny")
+    client_a = ssh_command(args.client_a_host, args, client_a_route_role_to_wan_command(args, expect_success=False), role="client")
+    require_success(client_a, "client A route-role denial")
+    return {"client_b_setup": client_b, "client_a_blocked": client_a}
+
+
+def remove_route_role_deny(client: HttpClient, rule_id: int | str) -> dict[str, Any]:
+    """Restore generated route-role behavior before the remaining WAN checks.
+
+    Args:
+        client: Authenticated appliance client.
+        rule_id: Exact saved override created by this lifecycle scenario.
+    """
+    status, _body, _headers = client.request("DELETE", f"/api/v1/routing-permissions/{rule_id}")
+    if status != 204:
+        raise LifecycleError(f"Route-role deny removal failed with HTTP {status}")
+    return {"removed_rule_id": rule_id}
 
 
 def client_checks(args: argparse.Namespace) -> dict[str, Any]:
@@ -5427,6 +5550,7 @@ def run_routing_wan_lifecycle(results: list[StepResult], client: HttpClient, arg
     run_step(results, "configure-firewall", configure_firewall, client, args)
     policy = run_step(results, "configure-wan-policy", configure_wan_policy, client, args)
     run_step(results, "configure-routes-nat", configure_routes_nat, client, args, policy)
+    run_step(results, "remove-stale-route-role-deny", remove_stale_route_role_deny, client, args)
     run_step(results, "apply-routing-wan-before-access-rule", apply_units, client, ["network", "firewall", "wan"], args)
     run_step(results, "host-state-checks-before-access-rule", routing_host_state_checks, args)
     run_step(results, "route-role-routing-check", route_role_routing_check, args)
@@ -5434,7 +5558,13 @@ def run_routing_wan_lifecycle(results: list[StepResult], client: HttpClient, arg
     run_step(results, "configure-routing-permissions", configure_routing_permissions, client, args)
     run_step(results, "apply-routing-wan-after-access-rule", apply_units, client, ["firewall", "wan"], args)
     run_step(results, "host-state-checks", routing_host_state_checks, args)
-    run_step(results, "client-checks", client_checks, args)
+    run_step(results, "access-routing-allowed-check", access_routing_allowed_check, args)
+    deny = run_step(results, "configure-route-role-deny", configure_route_role_deny, client, args)
+    run_step(results, "apply-route-role-deny", apply_units, client, ["firewall", "wan"], args)
+    run_step(results, "route-role-deny-check", route_role_deny_check, args)
+    run_step(results, "remove-route-role-deny", remove_route_role_deny, client, deny["id"])
+    run_step(results, "apply-route-role-restore", apply_units, client, ["firewall", "wan"], args)
+    run_step(results, "route-role-restored-check", route_role_routing_check, args)
     run_step(results, "wan-packet-loss-check", wan_packet_loss_check, client, args)
 
 
@@ -5580,14 +5710,18 @@ def format_step_summary(step: dict[str, Any]) -> str:
         "apply-lifecycle-units",
         "apply-routing-wan-before-access-rule",
         "apply-routing-wan-after-access-rule",
+        "apply-route-role-deny",
+        "apply-route-role-restore",
     }:
         detail = ", ".join(evidence.get("selected_units", []))
     elif name in {"host-state-checks", "host-state-checks-before-access-rule"}:
         detail = ", ".join(sorted(evidence.keys()))
     elif name == "access-routing-blocked-check":
         detail = "SiteA access to WAN blocked before explicit permission"
-    elif name == "route-role-routing-check":
+    elif name in {"route-role-routing-check", "route-role-restored-check"}:
         detail = "route-role VLAN to WAN forwarding passed"
+    elif name == "route-role-deny-check":
+        detail = "explicit IPv4 deny blocked generated route-role forwarding"
     elif name == "configure-routing-permissions":
         rule = evidence.get("routing_rule") or {}
         detail = f"{rule.get('source_interface', '')} to {rule.get('destination_interface', '')}"

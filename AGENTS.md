@@ -61,14 +61,16 @@ sections as needed. Resolve unknown applicability before mutation rather than tr
 | cleanup | Creating task worktrees or disposable validation resources (ownership section), resource release, destructive cleanup, completed-task handoff | [Cleanup policy](docs/contribute/completed-task-cleanup.md) |
 | community | Community participation | [Code of conduct](CODE_OF_CONDUCT.md) |
 
+[Routing](docs/operate/networking.md).
+
 ## Review and delegation entry points
 
 For every PR review load the review route, even for an assignment mentioning individual files. Complete analysis and verification
 before one consolidated review. Never repeatedly review an unchanged head without
 material new evidence; relevant commits still require re-review under that contract.
 
-A delegating agent includes the startup gate, exact resolved worktree/state roots, owned files, applicable routes,
-expected result, and focused checks in each prompt, then verifies compliance and the returned diff before using it.
+A delegating agent's prompt lists the startup gate, exact worktree/state roots, owned files, routes, result, and focused
+checks; verify compliance and the diff before use.
 Delegation never expands permissions. The implementation route owns the Luna contract and unavailable-worker fallback.
 
 For UI work complete the **Mandatory UI Design Guide Gate** in the UI guide: classify the interaction, name the reused

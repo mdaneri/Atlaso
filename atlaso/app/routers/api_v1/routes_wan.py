@@ -24,6 +24,9 @@ from atlaso.app.models import (
 )
 from atlaso.app.openapi import DocumentedAPIRoute
 from atlaso.app.routers.api_v1.port_forwards import router as port_forwards_router
+from atlaso.app.routers.api_v1.routing_permissions import (
+    router as routing_permissions_router,
+)
 from atlaso.app.schemas import (
     NatRuleCreate,
     NatRuleResponse,
@@ -852,4 +855,5 @@ def build_router(dependencies: RoutesWanApiDependencies) -> RoutesWanApiRouter:
         "get_wan_status": get_wan_status,
     }
     router.routes.extend(port_forwards_router.routes)
+    router.routes.extend(routing_permissions_router.routes)
     return RoutesWanApiRouter(router=router, endpoints=endpoints)

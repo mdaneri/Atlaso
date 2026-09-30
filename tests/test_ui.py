@@ -1109,7 +1109,7 @@ def test_shared_ui_pattern_shell_and_wizard_contracts(client):
     base = (templates / "base.html").read_text(encoding="utf-8")
     public_base = (templates / "public_portal_base.html").read_text(encoding="utf-8")
     for shell, app_asset in (
-        (base, "/static/app.js?v=access-address-852-3"),
+        (base, "/static/app.js?v=routing-policy-855-5"),
         (public_base, "/static/app.js?v=access-address-852-3"),
         (base, "/static/appliance-apply-polling.js?v=issue-420-6"),
     ):
@@ -1780,7 +1780,7 @@ def test_monitor_page_renders_template_and_browser_assets(client):
     assert "swagger-link-icon" in page.text
     assert "/static/app.css?v=tooltip-848-3" in page.text
     assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-10" in page.text
-    assert "/static/app.js?v=access-address-852-3" in page.text
+    assert "/static/app.js?v=routing-policy-855-5" in page.text
     app_css = client.get("/static/app.css")
     assert app_css.status_code == 200
     assert ".split-workspace > .wide-panel" in app_css.text
@@ -14370,11 +14370,12 @@ def test_global_appliance_apply_tracks_baselines_diffs_and_skips(client):
     with SessionLocal() as db:
         baseline = db.execute(select(Setting).where(Setting.key == "appliance_apply.baselines.v1")).scalar_one()
         assert '"firewall"' in baseline.value
+        assert '"wan"' in baseline.value
         baseline_job = db.execute(select(Job).where(Job.type == "appliance-apply").order_by(Job.created_at.desc())).scalars().first()
         assert baseline_job is not None
         steps = db.scalars(select(JobStep).where(JobStep.job_id == baseline_job.id)).all()
         assert {(step.component_key, step.status) for step in steps} == {
-            (unit_id, "succeeded") for unit_id in (*MANAGEMENT_HANDOFF_UNIT_IDS, "nat")
+            (unit_id, "succeeded") for unit_id in (*MANAGEMENT_HANDOFF_UNIT_IDS, "wan", "nat")
         }
 
     firewall_page = client.get("/firewall")

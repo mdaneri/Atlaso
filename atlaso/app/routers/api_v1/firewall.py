@@ -41,6 +41,7 @@ from atlaso.app.services.firewall import (
     validate_firewall_rule,
 )
 from atlaso.app.services.network_objects import acquire_network_objects_write_lock
+from atlaso.app.services.routing_permissions import routing_permission_apply_state
 
 Endpoint = Callable[..., Any]
 
@@ -315,13 +316,23 @@ def build_router(dependencies: FirewallApiDependencies) -> FirewallApiRouter:
         """Apply Firewall.
 
         Requires the `write:firewall` API scope. The action runs through the endpoint's existing audited
-        adapter or task boundary; inspect the returned state before treating the operation as complete.
+        adapter boundary only when valid and the routing permission fingerprint matches both executed
+        WAN and Firewall baselines. Pending routing changes require global Appliance Apply; this legacy
+        route returns valid=false and reloaded=false without publishing them or advancing baselines.
 
         Args:
             identity: Authenticated identity authorizing the operation.
             db: Active database session used by the operation.
         """
+        acquire_network_objects_write_lock(db)
         validation = validate_firewall(identity, db)
+        if not validation.valid:
+            return ConfigApplyResponse(**validation.model_dump(), reloaded=False)
+        if routing_permission_apply_state(db) != "applied":
+            payload = validation.model_dump()
+            payload["valid"] = False
+            payload["errors"] = [*validation.errors, "Pending routing permission changes require paired Routing & WAN and Firewall through global Appliance Apply."]
+            return ConfigApplyResponse(**payload, reloaded=False)
         apply_result = SystemAdapter().apply_firewall_config(validation.config_path)
         record_audit(db, actor=identity.username, action="apply_firewall_dry_run", resource_type="firewall", detail=" ".join(apply_result.command))
         payload = validation.model_dump()
