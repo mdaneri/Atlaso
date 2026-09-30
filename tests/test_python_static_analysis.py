@@ -137,6 +137,8 @@ def test_static_analysis_configuration_is_pinned_and_scoped() -> None:
         "warn_unused_configs": True,
         "follow_imports": "silent",
         "files": [
+            "atlaso/route_domains.py",
+            "scripts/interop/routing_overlap_guest.py",
             "atlaso/app/services/vcf_lab_remote.py",
             "atlaso/app/services/vcf_lab_overrides.py",
             "atlaso/app/services/remote_ssh.py",

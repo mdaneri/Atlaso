@@ -1065,7 +1065,9 @@ def _rule_family_variants(rule: FirewallRule, source_groups_by_id: dict[str, dic
             description=rule.description,
         )
         variants.append(variant)
-    return variants or [rule]
+    # An IPv4 source can never reach an IPv6 destination (or vice versa).
+    # Emitting the unsplit rule would produce conflicting nft address families.
+    return variants
 
 
 def _validate_ports(raw_ports: str) -> list[str]:

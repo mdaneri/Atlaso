@@ -35,6 +35,7 @@ LAB_ROUTE_TABLE_ID = 200
 MANAGEMENT_ROUTE_RULE_PRIORITY = 1000
 LAB_ROUTE_RULE_PRIORITY = 2000
 ROUTE_RULE_PRIORITY_WINDOW = 100
+LAB_ROUTE_GUARD_PRIORITY = LAB_ROUTE_RULE_PRIORITY + ROUTE_RULE_PRIORITY_WINDOW
 MANAGEMENT_ROUTE_TABLE_NAME = "atlaso_mgmt"
 LAB_ROUTE_TABLE_NAME = "atlaso_lab"
 DEFAULT_ROUTE_DESTINATIONS = {4: "0.0.0.0/0", 6: "::/0"}
@@ -764,23 +765,17 @@ def _target_networks(target: dict[str, str]) -> list:
     ]
 
 
-def _target_network_owners(targets: list[dict[str, str]]) -> dict[str, int]:
-    """Return target network owners.
+def _target_network_owners(targets: list[dict[str, str]]) -> dict[tuple[str, str], int]:
+    """Choose one connected-route owner per routing domain and prefix.
 
     Args:
-        targets: Targets consumed by target network owners.
+        targets: Ordered interface targets with their routing-domain ownership.
     """
-    owners: dict[str, int] = {}
+    owners: dict[tuple[str, str], int] = {}
     for index, target in enumerate(targets):
+        domain = target.get("routing_domain", "lab")
         for network in _target_networks(target):
-            key = str(network)
-            owner_index = owners.get(key)
-            if owner_index is None:
-                owners[key] = index
-                continue
-            owner = targets[owner_index]
-            if owner.get("routing_domain") != "management" and target.get("routing_domain") == "management":
-                owners[key] = index
+            owners.setdefault((domain, str(network)), index)
     return owners
 
 
@@ -952,6 +947,33 @@ def mirrored_management_default_keys(config_preview: str) -> set[tuple[str, str]
     }
 
 
+def _static_route_cleanup_preview(destination: str, name: str, metric: int, gateway: str,
+                                  target: dict[str, str], targets: list[dict[str, str]]) -> str:
+    """Describe static retirement without deleting a Network-owned connected route.
+
+    Args:
+        destination: Saved destination prefix.
+        name: Saved output interface.
+        metric: Saved static route metric.
+        gateway: Saved next hop, if present.
+        target: Current connected target on this interface.
+        targets: Ordered targets determining the connected-prefix owner.
+    """
+    network = ip_network(destination, strict=False)
+    family = "-6 " if network.version == 6 else ""
+    command = f"ip {family}route del {destination} dev {name} table {LAB_ROUTE_TABLE_ID}"
+    domain = target.get("routing_domain", "lab")
+    connected = (domain != "management" and network in _target_networks(target)
+                 and _target_network_owners(targets).get((domain, str(network))) == targets.index(target))
+    if connected:
+        if not gateway and (metric == 0 or (network.version == 6 and metric == 1024)):
+            return f"# Retain Network-owned connected route {destination} dev {name} table {LAB_ROUTE_TABLE_ID}"
+        command += f" metric {metric}"
+        if gateway:
+            command += f" via {gateway}"
+    return command if target else _link_guarded_cleanup(command, name)
+
+
 def render_wan_config(
     routes: list[Route],
     policies: list[WanPolicy] | None = None,
@@ -962,6 +984,10 @@ def render_wan_config(
     source_groups: list[dict] | None = None,
     previous_config_preview: str = "",
     settings: RoutesWanSettings | None = None,
+    applied_network_ingress: list[str] | None = None,
+    desired_network_ingress: list[str] | None = None,
+    candidate_network_ingress: list[str] | None = None,
+    network_owned_targets: list[dict[str, str]] | None = None,
 ) -> str:
     """Render wan config.
 
@@ -975,6 +1001,10 @@ def render_wan_config(
         source_groups: Source Groups available to the rule.
         previous_config_preview: Last-applied configuration used to retire prior host defaults.
         settings: Saved global activation state. Omission preserves the legacy active behavior.
+        applied_network_ingress: Applied lab interfaces; None projects targets for initial Network-first Apply.
+        desired_network_ingress: Fresh Network-first projection from rendered desired Network intent.
+        candidate_network_ingress: Effective ingress after Network applies in this task.
+        network_owned_targets: Modern Network-owned targets; None retains pre-migration WAN behavior.
 
     Returns:
         The rendered wan config.
@@ -1140,27 +1170,89 @@ def render_wan_config(
         ]
     )
 
+    legacy_source_rules = (
+        applied_network_ingress == []
+        and candidate_network_ingress is None
+        and network_owned_targets is None
+    )
+    if legacy_source_rules:
+        lines.append("# Pre-migration WAN Apply clears both owned source-rule windows; absent priorities are ignored.")
+        for base_priority in (MANAGEMENT_ROUTE_RULE_PRIORITY, LAB_ROUTE_RULE_PRIORITY):
+            for priority in range(base_priority, base_priority + ROUTE_RULE_PRIORITY_WINDOW):
+                lines.append(f"ip rule del priority {priority}")
+                lines.append(f"ip -6 rule del priority {priority}")
+
     forwarding_value = 1 if settings.routing_enabled else 0
-    lines.append(
-        f"sysctl -w net.ipv4.ip_forward={forwarding_value}  # global Routing switch"
-    )
-    lines.append(
-        f"sysctl -w net.ipv6.conf.all.forwarding={forwarding_value}  # global Routing switch"
-    )
+    forwarding_commands = [
+        f"sysctl -w net.ipv4.ip_forward={forwarding_value}  # global Routing switch",
+        f"sysctl -w net.ipv6.conf.all.forwarding={forwarding_value}  # global Routing switch",
+    ]
     if not settings.routing_enabled:
-        final_lab_priority = LAB_ROUTE_RULE_PRIORITY + ROUTE_RULE_PRIORITY_WINDOW - 1
-        lines.append(
-            f"for priority in $(seq {LAB_ROUTE_RULE_PRIORITY} {final_lab_priority}); do "
-            'ip rule del priority "$priority" 2>/dev/null || true; done'
-            "  # disabled Routing lab policy cleanup"
+        lines.extend(forwarding_commands)
+        lines.append("# Routing disabled: reconcile owned IPv4/IPv6 lab ingress lookups and terminal guards to an empty set.")
+        if legacy_source_rules:
+            lines.append("# Pre-migration WAN Apply still restores management source rules while Routing is disabled.")
+        else:
+            lines.append("# Local source-address rules remain reconciled from applied Network intent.")
+    else:
+        if candidate_network_ingress is not None:
+            lines.append("# Ingress commands below reflect the candidate Network intent applied before WAN in this task.")
+        elif applied_network_ingress is not None:
+            lines.append("# Ingress commands below reflect the last-applied Network baseline, not pending Network edits.")
+            lines.append("# If Network is applied first in the same task, ingress uses that successfully applied Network intent instead.")
+            if not applied_network_ingress:
+                lines.append("# No modern ingress selectors are available from this baseline; pre-migration baselines retain legacy WAN handling.")
+        else:
+            lines.append("# Initial WAN Apply automatically includes Network first; no applied Network baseline is available.")
+        ingress_projection = (
+            candidate_network_ingress if candidate_network_ingress is not None
+            else applied_network_ingress if applied_network_ingress is not None
+            else desired_network_ingress
         )
-        lines.append(
-            f"for priority in $(seq {LAB_ROUTE_RULE_PRIORITY} {final_lab_priority}); do "
-            'ip -6 rule del priority "$priority" 2>/dev/null || true; done'
-            "  # disabled Routing IPv6 lab policy cleanup"
-        )
+        ingress_names = sorted(set(ingress_projection)) if ingress_projection is not None else sorted(
+            {target["name"] for target in targets if target.get("routing_domain") != "management"})
+        # The helper installs terminal guards before introducing lab lookups.
+        for name in ingress_names:
+            for route_family in ("", "-6 "):
+                lines.append(f"ip {route_family}rule add iif {name} unreachable priority {LAB_ROUTE_GUARD_PRIORITY} protocol 2")
+        for index, name in enumerate(ingress_names):
+            for route_family in ("", "-6 "):
+                lines.append(f"ip {route_family}rule add iif {name} table {LAB_ROUTE_TABLE_ID} priority {LAB_ROUTE_RULE_PRIORITY + index} protocol 2")
+        lines.extend(forwarding_commands)
     target_network_owners = _target_network_owners(targets)
-    for interface_name, network in sorted(retired_target_networks):
+    if legacy_source_rules:
+        for index, target in enumerate(targets):
+            management = target.get("routing_domain", "lab") == "management"
+            if not management and not settings.routing_enabled:
+                continue
+            networks = _target_networks(target)
+            gateway_versions: set[int] = set()
+            if management:
+                for key in ("gateway", "ipv6_gateway"):
+                    try:
+                        gateway = ip_address(str(target.get(key) or ""))
+                    except ValueError:
+                        continue
+                    if any(network.version == gateway.version and (
+                        gateway in network or gateway.version == 6 and gateway.is_link_local
+                    ) for network in networks):
+                        gateway_versions.add(gateway.version)
+            for network in networks:
+                if target_network_owners[(target.get("routing_domain", "lab"), str(network))] != index:
+                    continue
+                if management and network.version not in gateway_versions:
+                    continue
+                route_family = "-6 " if network.version == 6 else ""
+                table = MANAGEMENT_ROUTE_TABLE_ID if management else LAB_ROUTE_TABLE_ID
+                base_priority = MANAGEMENT_ROUTE_RULE_PRIORITY if management else LAB_ROUTE_RULE_PRIORITY
+                lines.append(f"ip {route_family}rule add from {network} table {table} priority {base_priority + index}")
+    if network_owned_targets is not None:
+        lines.append("# Connected routes and dedicated-management defaults are maintained by Network, not pending WAN targets.")
+        lines.append("# Static cleanup below reflects applied Network intent; combined Apply uses the newly applied Network intent.")
+        lines.append("# Dynamic connected-route identities are resolved from applied Network ownership and native addresses at execution.")
+        lines.append("# Static additions cannot replace a native Network connected-route identity; redundant no-gateway aliases are retained.")
+        lines.append("# Default-route classification on older runtime intent without management eligibility requires Network reapply.")
+    for interface_name, network in sorted(retired_target_networks if network_owned_targets is None else set()):
         route_family = "-6 " if ip_network(network, strict=False).version == 6 else ""
         lines.append(
             _link_guarded_cleanup(
@@ -1169,17 +1261,9 @@ def render_wan_config(
             )
             + "  # retired omitted or ineligible WAN target"
         )
-    for index, target in enumerate(targets):
+    for index, target in enumerate(targets if network_owned_targets is None else []):
         management = target.get("routing_domain") == "management"
         table = MANAGEMENT_ROUTE_TABLE_ID if management else LAB_ROUTE_TABLE_ID
-        if not management and not settings.routing_enabled:
-            for network in _target_networks(target):
-                route_family = "-6 " if network.version == 6 else ""
-                lines.append(
-                    f"ip {route_family}route del {network} dev {target['name']} table {table}"
-                )
-            continue
-        priority = (MANAGEMENT_ROUTE_RULE_PRIORITY if management else LAB_ROUTE_RULE_PRIORITY) + index
         gateways = [
             str(target.get(key, "") or "").strip()
             for key in ("gateway", "ipv6_gateway")
@@ -1192,17 +1276,14 @@ def render_wan_config(
             except ValueError:
                 continue
         for network in _target_networks(target):
-            owner_index = target_network_owners[str(network)]
+            owner_index = target_network_owners[(target.get("routing_domain", "lab"), str(network))]
             if owner_index != index:
                 owner_name = targets[owner_index]["name"]
                 lines.append(f"# {network} on {target['name']} reuses the subnet owned by {owner_name}; no duplicate policy route generated")
                 continue
-            if management and network.version not in gateway_by_version:
-                lines.append(f"# {network} on {target['name']} has no management default gateway; the main routing table remains authoritative")
-                continue
             route_family = "-6 " if network.version == 6 else ""
-            lines.append(f"ip {route_family}rule add from {network} table {table} priority {priority}")
             lines.append(f"ip {route_family}route replace {network} dev {target['name']} table {table}")
+        lines.append(f"# Local source-address rules for {target['name']} are reconciled from applied Network intent.")
         if management and gateways:
             for version, gateway in sorted(gateway_by_version.items()):
                 route_family = "-6 " if version == 6 else ""
@@ -1218,7 +1299,8 @@ def render_wan_config(
         destination = ip_network(destination_cidr, strict=False)
         route_family = "-6 " if destination.version == 6 else ""
         route_target = next(
-            (target for target in targets if target.get("name") == route.interface_name),
+            (target for target in (targets if network_owned_targets is None else network_owned_targets)
+             if target.get("name") == route.interface_name),
             {},
         )
         management_ui_default = bool(
@@ -1228,22 +1310,15 @@ def render_wan_config(
             destination_cidr,
             route.interface_name,
         ) in previously_mirrored_defaults
-        route_effective = route.enabled and settings.routing_enabled
+        route_effective = route.enabled and (settings.routing_enabled or management_ui_default)
         if not route_effective:
-            cleanup_command = f"ip {route_family}route del {destination_cidr} dev {route.interface_name} table {LAB_ROUTE_TABLE_ID}"
-            if not route_target:
-                cleanup_command = _link_guarded_cleanup(
-                    cleanup_command,
-                    route.interface_name,
-                )
+            cleanup_command = (
+                _static_route_cleanup_preview(destination_cidr, route.interface_name, route.metric, route.gateway or "", route_target, targets)
+                if network_owned_targets is None else
+                f"# Retire static route {destination_cidr} dev {route.interface_name} metric {route.metric} via {route.gateway or 'none'} after resolving native Network connected ownership"
+            )
             lines.append(cleanup_command + "  # disabled desired route")
-            if route.enabled and management_ui_default:
-                main_command = ["ip", "-6", "route", "replace", destination_cidr] if destination.version == 6 else ["ip", "route", "replace", destination_cidr]
-                if route.gateway:
-                    main_command.extend(["via", route.gateway])
-                main_command.extend(["dev", route.interface_name, "metric", str(route.metric)])
-                lines.append(" ".join(main_command) + "  # flagged-management host default")
-            elif (not route.enabled) and (management_ui_default or previously_mirrored_default):
+            if (not route.enabled) and (management_ui_default or previously_mirrored_default):
                 lines.append(
                     f"ip {route_family}route del {destination_cidr} dev {route.interface_name}"
                     "  # disabled flagged-management default"
@@ -1282,15 +1357,18 @@ def render_wan_config(
         route_target = next(
             (
                 target
-                for target in targets
+                for target in (targets if network_owned_targets is None else network_owned_targets)
                 if target.get("name") == route.get("interface_name", "")
             ),
             {},
         )
         interface_name = str(route.get("interface_name", ""))
-        cleanup_command = f"ip {route_family}route del {route.get('destination_cidr', '')} dev {interface_name} table {LAB_ROUTE_TABLE_ID}"
-        if not route_target:
-            cleanup_command = _link_guarded_cleanup(cleanup_command, interface_name)
+        cleanup_command = (
+            _static_route_cleanup_preview(str(route.get("destination_cidr", "")), interface_name,
+                                          int(str(route.get("metric", "100")) or "100"), str(route.get("gateway") or ""), route_target, targets)
+            if network_owned_targets is None else
+            f"# Retire static route {route.get('destination_cidr', '')} dev {interface_name} metric {route.get('metric', '100')} via {route.get('gateway') or 'none'} after resolving native Network connected ownership"
+        )
         lines.append(cleanup_command + "  # removed managed route")
         removed_key = (
             canonical_route_destination(str(route.get("destination_cidr", ""))),

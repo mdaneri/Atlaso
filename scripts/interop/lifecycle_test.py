@@ -1638,6 +1638,21 @@ def configure_routing_permissions(client: HttpClient, args: argparse.Namespace) 
     return {"created_or_updated": True, "routing_rule": payload}
 
 
+def configure_routing_wan_settings(client: HttpClient) -> dict[str, Any]:
+    """Enable global routing and WAN features required by the lifecycle.
+
+    Args:
+        client: Client consumed by the settings update.
+
+    Returns:
+        The enabled Routes/WAN settings.
+    """
+    return client.json_request(
+        "PUT", "/api/v1/routes-wan/settings",
+        json_body={"routing_enabled": True, "nat_enabled": True, "wan_simulation_enabled": True},
+    )
+
+
 def configure_firewall_wan(client: HttpClient, args: argparse.Namespace) -> dict[str, Any]:
     """Update firewall wan.
 
@@ -1649,10 +1664,7 @@ def configure_firewall_wan(client: HttpClient, args: argparse.Namespace) -> dict
     Returns:
         The configure firewall wan result.
     """
-    settings = client.json_request(
-        "PUT", "/api/v1/routes-wan/settings",
-        json_body={"routing_enabled": True, "nat_enabled": True, "wan_simulation_enabled": True},
-    )
+    settings = configure_routing_wan_settings(client)
     firewall = configure_firewall(client, args)
     policy = configure_wan_policy(client, args)
     routes_nat = configure_routes_nat(client, args, policy)
@@ -5411,6 +5423,7 @@ def run_routing_wan_lifecycle(results: list[StepResult], client: HttpClient, arg
     """
     run_step(results, "appliance-health", appliance_health, client, args)
     run_step(results, "configure-network", configure_network, client, args)
+    run_step(results, "configure-routing-wan-settings", configure_routing_wan_settings, client)
     run_step(results, "configure-firewall", configure_firewall, client, args)
     policy = run_step(results, "configure-wan-policy", configure_wan_policy, client, args)
     run_step(results, "configure-routes-nat", configure_routes_nat, client, args, policy)
