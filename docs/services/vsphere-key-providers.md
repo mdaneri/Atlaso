@@ -80,7 +80,8 @@ becomes usable trust merely because it was restored.
 
 Atlaso CA issues the KMS server certificate automatically. On renewal, CA Apply deploys the new certificate and
 private key under paths containing that certificate's SHA-256 fingerprint. Appliance Apply then switches the KMIP
-service to those paths. The helper checks that the restarted service is active and restores the previous config,
+service to those paths. Long names are shortened with a hash of the full name so every filename fits the filesystem limit.
+The helper checks that the restarted service is active and restores the previous config,
 client trust bundle, runtime credential, and service unit if cutover fails. The previous server certificate files
 remain available for that rollback.
 Before mutation, the helper queries systemd's load, activation, and boot-enablement properties for both units.

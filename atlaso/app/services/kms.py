@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import re
 
 KMS_DEFAULT_DATABASE_PATH = "/var/lib/atlaso/kmip/store.db"
@@ -19,6 +20,11 @@ def kms_server_certificate_paths(certificate_name: str, fingerprint: str) -> tup
     """Return immutable deployment paths for one CA-issued KMS identity."""
     if not re.fullmatch(r"[A-Za-z0-9_.-]+", certificate_name) or not re.fullmatch(r"[0-9a-f]{64}", fingerprint):
         raise ValueError("KMS server certificate identity is invalid.")
+    # Reserve room for the fingerprint and longest suffix within NAME_MAX=255.
+    # Hash the full name so equal truncated prefixes remain distinct.
+    if len(certificate_name) > 179:
+        name_digest = hashlib.sha256(certificate_name.encode("ascii")).hexdigest()[:16]
+        certificate_name = f"{certificate_name[:162]}-{name_digest}"
     base = f"{KMS_SERVER_CERT_BASE}/{certificate_name}-{fingerprint}"
     return f"{base}.crt", f"{base}.key", f"{base}-chain.pem"
 

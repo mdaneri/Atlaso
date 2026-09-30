@@ -403,25 +403,32 @@ def test_ca_apply_payload_includes_crl_for_revoked_certificates():
     assert payload["certificates"] == []
 
 
-def test_kms_ca_payload_stages_certificate_by_fingerprint():
+@pytest.mark.parametrize("hostname", ["kms.atlaso.internal", ".".join(["a" * 63] * 3 + ["b" * 61])])
+def test_kms_ca_payload_stages_certificate_by_fingerprint(hostname):
     """Keep the previous KMS identity available during certificate rotation."""
     settings = CaSettings(enabled=True, publish_crl=False, storage_path="/etc/atlaso/ca")
     certificate = CaCertificate(
         enabled=True,
         status="issued",
         managed_owner="kms:server",
-        common_name="kms.atlaso.internal",
+        common_name=hostname,
         fingerprint="b" * 64,
-        cert_path="/etc/atlaso/kmip/certs/kms.atlaso.internal.crt",
-        key_path="/etc/atlaso/kmip/certs/kms.atlaso.internal.key",
-        chain_path="/etc/atlaso/kmip/certs/kms.atlaso.internal-chain.pem",
+        cert_path=f"/etc/atlaso/kmip/certs/{hostname}.crt",
+        key_path=f"/etc/atlaso/kmip/certs/{hostname}.key",
+        chain_path=f"/etc/atlaso/kmip/certs/{hostname}-chain.pem",
     )
     payload = json.loads(render_ca_apply_payload(settings, [certificate], include_private_keys=False))
     deployed = payload["certificates"][0]
     assert deployed["cert_path"].endswith(f"-{'b' * 64}.crt")
     assert deployed["key_path"].endswith(f"-{'b' * 64}.key")
     assert deployed["chain_path"].endswith(f"-{'b' * 64}-chain.pem")
-    assert certificate.cert_path == "/etc/atlaso/kmip/certs/kms.atlaso.internal.crt"
+    assert certificate.cert_path == f"/etc/atlaso/kmip/certs/{hostname}.crt"
+    for field in ("cert_path", "key_path", "chain_path"):
+        assert len(Path(deployed[field]).name.encode("utf-8")) <= 255
+    from atlaso.app.services.kms import kms_server_certificate_paths
+
+    assert tuple(deployed[field] for field in ("cert_path", "key_path", "chain_path")) == kms_server_certificate_paths(hostname, "b" * 64)
+    assert kms_server_certificate_paths(hostname + "x", "b" * 64) != kms_server_certificate_paths(hostname, "b" * 64)
     certificate.status = "planned"
     certificate.fingerprint = ""
     planned = json.loads(render_ca_apply_payload(settings, [certificate], include_private_keys=False))
