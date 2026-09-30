@@ -8,6 +8,7 @@ import html
 import importlib.util
 import io
 import json
+import shutil
 import ssl
 import subprocess
 import sys
@@ -951,7 +952,7 @@ def test_route_role_deny_lifecycle_uses_saved_override_and_restores_generated_be
     assert client.calls[1][2]["ip_family"] == 4
     assert restored == {"removed_rule_id": 17}
     assert client.calls[2][0:2] == ("DELETE", "/api/v1/routing-permissions/17")
-    assert 'test "$rc" -ne 0' in lifecycle.client_a_route_role_to_wan_command(args, expect_success=False)
+    assert 'test "$rc" -eq 1' in lifecycle.client_a_route_role_to_wan_command(args, expect_success=False)
 
 
 def test_route_role_deny_lifecycle_reconciles_stale_override_before_forwarding_probe(monkeypatch):
@@ -1960,12 +1961,68 @@ def test_routing_probe_commands_cover_block_allow_and_route_role_paths():
     route_role = lifecycle.client_a_route_role_to_wan_command(args)
     client_b = lifecycle.client_b_wan_setup_command(args, include_site_route=False, include_vlan_route=True)
 
-    assert "test \"$rc\" -ne 0" in blocked
-    assert "test \"$rc\" -ne 0" not in allowed
+    assert "test \"$rc\" -eq 1" in blocked
+    assert "test \"$rc\" -eq 1" not in allowed
     assert "ip route replace 172.31.50.0/24 via 192.168.50.1 dev eth1" in allowed
     assert "ip link add link eth2 name eth2.50 type vlan id 50" in route_role
     assert "ip route replace 172.31.50.0/24 via 192.168.60.1 dev eth2.50" in route_role
     assert "ip route replace 192.168.60.0/24 via 172.31.50.1 dev eth1" in client_b
+
+
+@pytest.mark.parametrize("probe_kind", ["route", "access", "wan-setup"])
+@pytest.mark.parametrize(
+    "failure,ping_status",
+    [("none", 1), ("none", 0), ("none", 2), ("addr", 1), ("route", 1),
+     ("link", 1), ("vlan", 1), ("module", 1)],
+)
+def test_routing_probes_reject_setup_and_local_ping_errors(probe_kind, failure, ping_status):
+    """Execute the generated shell with failed prerequisites and realistic ping statuses.
+
+    Args:
+        probe_kind: Routing client command to exercise.
+        failure: Network setup operation that the shell mock rejects.
+        ping_status: Mock ping status: reply, no reply, or local error.
+    """
+    shell = shutil.which("sh")
+    if shell is None:
+        git = shutil.which("git")
+        candidate = Path(git).parent.parent / "bin" / "sh.exe" if git else None
+        if candidate and candidate.is_file():
+            shell = str(candidate)
+    if shell is None:
+        pytest.skip("A POSIX shell is required to execute the lifecycle client commands")
+    lifecycle = load_lifecycle_module()
+    args = lifecycle.parse_args(["--password", "test"])
+    if probe_kind == "route":
+        command = lifecycle.client_a_route_role_to_wan_command(args, expect_success=False)
+        applicable = {"addr", "route", "link", "vlan", "module"}
+    elif probe_kind == "access":
+        command = lifecycle.client_a_access_to_wan_command(args, expect_success=False)
+        applicable = {"route"}
+    else:
+        command = lifecycle.client_b_wan_setup_command(args, include_vlan_route=True)
+        applicable = {"addr", "route", "link"}
+    mocks = (
+        f"failure={failure}; "
+        'sudo() { shift; "$@"; }; '
+        'modprobe() { test "$failure" != module; }; '
+        'ip() { case "$*" in '
+        '"link show "*) return 1;; '
+        '"link add "*) test "$failure" != vlan;; '
+        '"link set "*) test "$failure" != link;; '
+        '"addr replace "*) test "$failure" != addr;; '
+        '"route replace "*) test "$failure" != route;; '
+        '*) return 0;; esac; }; '
+        f'ping() {{ echo ping-executed; return {ping_status}; }}; '
+    )
+    result = subprocess.run([shell, "-c", mocks + command], capture_output=True, text=True, check=False)
+    setup_failed = failure in applicable
+    expected_success = not setup_failed and (probe_kind == "wan-setup" or ping_status == 1)
+    assert (result.returncode == 0) == expected_success, result.stderr
+    if setup_failed or probe_kind == "wan-setup":
+        assert "ping-executed" not in result.stdout
+    else:
+        assert "ping-executed" in result.stdout
 
 
 def test_routing_host_firewall_check_uses_default_drop_isolation():

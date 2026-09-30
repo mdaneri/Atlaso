@@ -4804,15 +4804,15 @@ def client_b_wan_setup_command(args: argparse.Namespace, *, include_site_route: 
     wan_peer_ip = second_host_address(args.wan_cidr)
     routes: list[str] = []
     if include_site_route:
-        routes.append(f"$ELEV ip route replace {site.network} via {wan_ip} dev eth1;")
+        routes.append(f"$ELEV ip route replace {site.network} via {wan_ip} dev eth1 &&")
     if include_vlan_route:
-        routes.append(f"$ELEV ip route replace {vlan.network} via {wan_ip} dev eth1;")
+        routes.append(f"$ELEV ip route replace {vlan.network} via {wan_ip} dev eth1 &&")
     return (
-        f"ELEV=\"$({elevation_probe()})\"; test -n \"$ELEV\"; "
-        f"$ELEV ip addr replace {wan_peer_ip}/{wan.network.prefixlen} dev eth1; "
-        "$ELEV ip link set eth1 up; "
+        f"ELEV=\"$({elevation_probe()})\" && test -n \"$ELEV\" && "
+        f"$ELEV ip addr replace {wan_peer_ip}/{wan.network.prefixlen} dev eth1 && "
+        "$ELEV ip link set eth1 up && "
         f"{' '.join(routes)} "
-        "ip -br addr; ip route"
+        "ip -br addr && ip route"
     )
 
 
@@ -4827,12 +4827,14 @@ def client_a_access_to_wan_command(args: argparse.Namespace, *, expect_success: 
     wan = ip_interface(args.wan_cidr)
     site_ip = str(site.ip)
     wan_peer_ip = second_host_address(args.wan_cidr)
-    expectation = "" if expect_success else '; rc=$?; test "$rc" -ne 0'
+    probe = f"ping -c 2 -W 2 {wan_peer_ip}"
+    if not expect_success:
+        probe = '{ ' + probe + '; rc=$?; test "$rc" -eq 1; }'
     return (
-        f"ELEV=\"$({elevation_probe()})\"; test -n \"$ELEV\"; "
-        "$ELEV /usr/local/sbin/atlaso-refresh-test-dhcp 2>/dev/null || /usr/local/sbin/atlaso-refresh-test-dhcp 2>/dev/null || true; "
-        f"$ELEV ip route replace {wan.network} via {site_ip} dev eth1; "
-        f"ping -c 2 -W 2 {wan_peer_ip}{expectation}"
+        f"ELEV=\"$({elevation_probe()})\" && test -n \"$ELEV\" && "
+        "{ $ELEV /usr/local/sbin/atlaso-refresh-test-dhcp 2>/dev/null || /usr/local/sbin/atlaso-refresh-test-dhcp 2>/dev/null || true; } && "
+        f"$ELEV ip route replace {wan.network} via {site_ip} dev eth1 && "
+        f"{probe}"
     )
 
 
@@ -4848,15 +4850,18 @@ def client_a_route_role_to_wan_command(args: argparse.Namespace, *, expect_succe
     vlan_peer_ip = second_host_address(args.vlan_cidr)
     vlan_ip = str(vlan.ip)
     wan_peer_ip = second_host_address(args.wan_cidr)
-    expectation = "" if expect_success else '; rc=$?; test "$rc" -ne 0'
+    probe = f"ping -c 2 -W 2 {wan_peer_ip}"
+    if not expect_success:
+        probe = '{ ' + probe + '; rc=$?; test "$rc" -eq 1; }'
     return (
-        f"ELEV=\"$({elevation_probe()})\"; test -n \"$ELEV\"; "
-        "$ELEV modprobe 8021q 2>/dev/null || true; "
-        f"$ELEV ip link add link eth2 name eth2.{args.vlan_id} type vlan id {args.vlan_id} 2>/dev/null || true; "
-        f"$ELEV ip addr replace {vlan_peer_ip}/{vlan.network.prefixlen} dev eth2.{args.vlan_id}; "
-        f"$ELEV ip link set eth2 up; $ELEV ip link set eth2.{args.vlan_id} up; "
-        f"$ELEV ip route replace {wan.network} via {vlan_ip} dev eth2.{args.vlan_id}; "
-        f"ping -c 2 -W 2 {wan_peer_ip}{expectation}"
+        f"ELEV=\"$({elevation_probe()})\" && test -n \"$ELEV\" && "
+        "$ELEV modprobe 8021q && "
+        f"{{ ip link show dev eth2.{args.vlan_id} >/dev/null 2>&1 || "
+        f"$ELEV ip link add link eth2 name eth2.{args.vlan_id} type vlan id {args.vlan_id}; }} && "
+        f"$ELEV ip addr replace {vlan_peer_ip}/{vlan.network.prefixlen} dev eth2.{args.vlan_id} && "
+        f"$ELEV ip link set eth2 up && $ELEV ip link set eth2.{args.vlan_id} up && "
+        f"$ELEV ip route replace {wan.network} via {vlan_ip} dev eth2.{args.vlan_id} && "
+        f"{probe}"
     )
 
 
