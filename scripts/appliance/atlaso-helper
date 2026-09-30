@@ -6311,6 +6311,10 @@ def _handle_kms(action: str, args: list[str]) -> int:
     except ValueError as exc:
         print(str(exc), file=sys.stderr)
         return 2
+    rollback_dir = KMS_CONFIG_DIR / ".cutover-rollback"
+    if action == "apply" and rollback_dir.exists():
+        print("KMS recovery snapshot exists; reconcile it before another apply.", file=sys.stderr)
+        return 2
     try:
         enabled = _kms_config_enabled(config_path)
         if action == "apply" and enabled:
@@ -6378,10 +6382,6 @@ def _handle_kms(action: str, args: list[str]) -> int:
         if path.is_file() else None
         for path in cutover_paths
     }
-    rollback_dir = KMS_CONFIG_DIR / ".cutover-rollback"
-    if rollback_dir.exists():
-        print("KMS recovery snapshot exists; reconcile it before another apply.", file=sys.stderr)
-        return 2
     rollback_dir.mkdir(mode=0o700)
     for name, path in zip(("client-trust.pem", "server.json", "credential", "service-unit"), cutover_paths, strict=True):
         previous = previous_files[path]
@@ -6390,11 +6390,13 @@ def _handle_kms(action: str, args: list[str]) -> int:
             backup.write_bytes(previous[0])
             backup.chmod(0o600)
     was_active = _run(["systemctl", "is-active", "--quiet", "atlaso-kmip.service"], timeout=30).returncode == 0
+    was_enabled = _run(["systemctl", "is-enabled", "--quiet", "atlaso-kmip.service"], timeout=30).returncode == 0
     legacy_was_active = _run(["systemctl", "is-active", "--quiet", "atlaso-kms.service"], timeout=30).returncode == 0
     legacy_was_enabled = _run(["systemctl", "is-enabled", "--quiet", "atlaso-kms.service"], timeout=30).returncode == 0
     state_backup = rollback_dir / "state.json"
     state_backup.write_text(json.dumps({
         "was_active": was_active,
+        "was_enabled": was_enabled,
         "legacy_was_active": legacy_was_active,
         "legacy_was_enabled": legacy_was_enabled,
     }, sort_keys=True), encoding="utf-8")
@@ -6446,12 +6448,18 @@ def _handle_kms(action: str, args: list[str]) -> int:
                 os.chown(replacement, uid, gid)
                 os.replace(replacement, path)
             reload = _run(["systemctl", "daemon-reload"], timeout=30)
+            enablement = _run(
+                ["systemctl", "enable" if was_enabled else "disable", "atlaso-kmip.service"], timeout=30
+            )
             recovery = _run(
                 ["systemctl", "restart", "atlaso-kmip.service"] if was_active
-                else ["systemctl", "disable", "--now", "atlaso-kmip.service"], timeout=30
+                else ["systemctl", "stop", "atlaso-kmip.service"], timeout=30
             )
-            recovery_codes = {0, 1} if not was_active and previous_files[KMS_SERVICE_PATH] is None else {0}
-            if reload.returncode != 0 or recovery.returncode not in recovery_codes:
+            missing_unit = previous_files[KMS_SERVICE_PATH] is None
+            enablement_codes = {0, 1} if not was_enabled and missing_unit else {0}
+            recovery_codes = {0, 5} if not was_active and missing_unit else {0}
+            if (reload.returncode != 0 or enablement.returncode not in enablement_codes
+                    or recovery.returncode not in recovery_codes):
                 raise RuntimeError("KMS recovery service operation failed.")
             legacy_enablement = _run(
                 ["systemctl", "enable" if legacy_was_enabled else "disable", "atlaso-kms.service"], timeout=30
