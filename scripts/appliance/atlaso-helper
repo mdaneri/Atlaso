@@ -6417,11 +6417,18 @@ def _handle_kms(action: str, args: list[str]) -> int:
                         [str(ATLASO_VENV_PYTHON_PATH), "-I", "-m",
                          "atlaso.app.services.external_history_lifecycle", "kms-cutover"],
                         ["systemctl", "enable", "atlaso-kmip.service"],
-                        ["systemctl", "restart", "atlaso-kmip.service"],
-                        ["systemctl", "is-active", "--quiet", "atlaso-kmip.service"]):
+                        ["systemctl", "restart", "atlaso-kmip.service"]):
             completed = _run(command, timeout=120 if "kms-cutover" in command else 30)
             if completed.returncode != 0:
                 raise RuntimeError("KMS cutover or health check failed.")
+        # Type=simple becomes active before startup finishes. Retain recovery
+        # files through a bounded stability window rather than one early sample.
+        for sample in range(6):
+            active = _run(["systemctl", "is-active", "--quiet", "atlaso-kmip.service"], timeout=5)
+            if active.returncode != 0:
+                raise RuntimeError("KMS listener did not remain active after cutover.")
+            if sample < 5:
+                time.sleep(1)
     except (OSError, ValueError, RuntimeError, subprocess.TimeoutExpired):
         try:
             stopped = _run(["systemctl", "stop", "atlaso-kmip.service"], timeout=30)

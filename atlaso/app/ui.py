@@ -5298,7 +5298,11 @@ def kms_context(db: Session, *, reconcile: bool = True, include_runtime_counts: 
             "provider_id": provider.id,
             "provider_name": provider.name,
             "desired_state": "enabled" if provider.enabled else "disabled",
-            "readiness": "ready" if provider.enabled and not validate_provider_state([provider]) else "needs attention",
+            "readiness": (
+                "needs attention" if not provider.enabled or validate_provider_state([provider])
+                else "enrollment required" if not provider_to_dict(provider)["usable_certificate_count"]
+                else "ready"
+            ),
             "runtime_state": str(status_snapshot.get("runtime_state") or runtime["label"]),
             "pre_active_count": runtime_counts.get(provider.id, {}).get("pre_active"),
             "active_count": runtime_counts.get(provider.id, {}).get("active"),

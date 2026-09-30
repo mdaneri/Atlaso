@@ -516,6 +516,10 @@ def test_vcenter_enrollment_approval_binds_only_inspected_client_to_provider(
         db.commit()
         provider_id = provider.id
         vault_id, entry_id = vault.id, entry.id
+        from atlaso.app.ui import kms_context
+
+        health = kms_context(db, include_runtime_counts=False)["vsphere_status_rows"]
+        assert next(row for row in health if row["provider_id"] == provider_id)["readiness"] == "enrollment required"
 
     discovered = DiscoveredClient(
         certificate_pem=public_pem,
@@ -563,6 +567,8 @@ def test_vcenter_enrollment_approval_binds_only_inspected_client_to_provider(
             trusted.certificates[0].fingerprint_sha256 == parsed["fingerprint_sha256"]
         )
         assert trusted.certificates[0].source == "vcenter_api_discovered"
+        health = kms_context(db, include_runtime_counts=False)["vsphere_status_rows"]
+        assert next(row for row in health if row["provider_id"] == provider_id)["readiness"] == "ready"
 
     replacement_pem, _ = _public_client_certificate("vcsa-rotation.example.test")
     replacement = parse_public_certificate(replacement_pem)

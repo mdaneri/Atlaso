@@ -12374,7 +12374,7 @@ def test_kms_helper_apply_installs_atlaso_kmip_service(monkeypatch, tmp_path, le
         if command == ["systemctl", "is-enabled", "--quiet", "atlaso-kms.service"]:
             return subprocess.CompletedProcess(command, 0 if legacy_active else 1, "", "")
         if command == ["systemctl", "is-active", "--quiet", "atlaso-kmip.service"]:
-            if len(commands) > 1 and commands[-2] == ["systemctl", "restart", "atlaso-kmip.service"]:
+            if ["systemctl", "restart", "atlaso-kmip.service"] in commands:
                 return subprocess.CompletedProcess(command, 0, "", "")
             return subprocess.CompletedProcess(command, 3 if legacy_active else 0, "", "")
         return subprocess.CompletedProcess(command, 0, "", "")
@@ -12401,6 +12401,7 @@ def test_kms_helper_apply_installs_atlaso_kmip_service(monkeypatch, tmp_path, le
     monkeypatch.setattr(helper, "CA_MANAGED_PATH_BASE", managed_root)
     monkeypatch.setattr(helper, "_run", fake_run)
     monkeypatch.setattr(helper, "_run_with_input", fake_run_with_input)
+    monkeypatch.setattr(helper.time, "sleep", lambda _seconds: None)
     monkeypatch.setattr(helper, "_command_path", lambda name: Path("/usr/bin") / name)
     monkeypatch.setattr(helper.pwd, "getpwnam", lambda _name: SimpleNamespace(pw_uid=1001))
     monkeypatch.setattr(helper.grp, "getgrnam", lambda _name: SimpleNamespace(gr_gid=1002))
@@ -12502,6 +12503,26 @@ def test_kms_helper_apply_installs_atlaso_kmip_service(monkeypatch, tmp_path, le
         assert ["systemctl", "restart", "atlaso-kms.service"] in commands
     assert not (managed_root / "kmip" / ".cutover-rollback").exists()
 
+    health_samples = 0
+
+    def fail_delayed_startup(command, **kwargs):
+        """An initially active replacement exits during the stability window."""
+        nonlocal health_samples
+        if command == ["systemctl", "is-active", "--quiet", "atlaso-kmip.service"]:
+            health_samples += 1
+            if health_samples == 3:
+                assert (managed_root / "kmip" / ".cutover-rollback").is_dir()
+                return subprocess.CompletedProcess(command, 3, "", "")
+        return fake_run(command, **kwargs)
+
+    monkeypatch.setattr(helper, "_run", fail_delayed_startup)
+    assert helper._handle_kms("apply", [str(config_path)]) == 1
+    assert health_samples == 3
+    assert (managed_root / "kmip" / "server.json").read_bytes() == previous_config
+    assert runtime_trust_path.read_bytes() == previous_trust
+    assert kms_credential_path.read_bytes() == previous_credential
+    assert not (managed_root / "kmip" / ".cutover-rollback").exists()
+
     def fail_all_restarts(command, **kwargs):
         """Leave a durable snapshot when the previous service cannot restart."""
         if command in (["systemctl", "restart", "atlaso-kmip.service"], ["systemctl", "restart", "atlaso-kms.service"]):
@@ -12513,7 +12534,7 @@ def test_kms_helper_apply_installs_atlaso_kmip_service(monkeypatch, tmp_path, le
     rollback_dir = managed_root / "kmip" / ".cutover-rollback"
     assert (rollback_dir / "server.json").read_bytes() == previous_config
     assert json.loads((rollback_dir / "state.json").read_text(encoding="utf-8")) == {
-        "was_active": not legacy_active,
+        "was_active": True,
         "legacy_was_active": legacy_active,
         "legacy_was_enabled": legacy_active,
     }

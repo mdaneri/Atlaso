@@ -82,7 +82,9 @@ Atlaso CA issues the KMS server certificate automatically. On renewal, CA Apply 
 private key under paths containing that certificate's SHA-256 fingerprint. Appliance Apply then switches the KMIP
 service to those paths. The helper checks that the restarted service is active and restores the previous config,
 client trust bundle, runtime credential, and service unit if cutover fails. The previous server certificate files
-remain available for that rollback. During upgrade, the helper stops the legacy `atlaso-kms.service` before starting
+remain available for that rollback. The helper retains the snapshot through six consecutive active-state checks
+spaced one second apart; a startup failure during that window triggers rollback. This bounded stability check does
+not establish live vCenter interoperability. During upgrade, the helper stops the legacy `atlaso-kms.service` before starting
 its replacement and restores the legacy listener's prior active and enabled state if cutover fails. After a
 successful server certificate rotation, refresh the KMS server trust in vCenter as required by its selected KMS trust mode.
 If automatic recovery cannot restart the prior service, the helper preserves a root-only snapshot at
@@ -104,6 +106,9 @@ at their original paths.
 counts for **Pre-Active**, **Active**, and total operational keys. Counts come from the protected wrapped-key store
 through the fixed `atlaso-helper kms status` operation. If authentication, integrity verification, or store access is
 unavailable, Atlaso reports **Not reported** and null counts; it never substitutes zero.
+
+Providers without a usable approved client certificate show **Enrollment required** and are omitted from the runtime
+namespace until trust is approved. The certificate-only bootstrap listener remains valid.
 
 Operational keys are daemon-owned. No browser or REST operation creates, edits, exports, deletes, or lists operational
 key identifiers, and KMIP Destroy remains outside the bounded protocol contract.
