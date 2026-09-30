@@ -107,6 +107,19 @@ def test_route_pairs_follow_automatic_default_and_access_requires_allow():
     assert explicit_row(routing_permission_rows(targets, [access_rule]), "access-a", "route-a", 0)["effective_action"] == "explicit allow"
 
 
+def test_generated_permission_ids_distinguish_colon_partitioned_names():
+    """Different directed pairs retain unique, stable grid identities."""
+    targets = [target(name, "route") for name in ("a:b", "c", "a", "b:c")]
+    rows = routing_permission_rows(targets, [])
+    ids = {(row["source_interface"], row["destination_interface"]): row["id"] for row in rows if row["generated"]}
+    assert len(ids) == len(set(ids.values()))
+    assert ids[("a:b", "c")] != ids[("a", "b:c")]
+    reversed_rows = routing_permission_rows(list(reversed(targets)), [])
+    reversed_ids = {(row["source_interface"], row["destination_interface"]): row["id"]
+                    for row in reversed_rows if row["generated"]}
+    assert ids == reversed_ids
+
+
 def test_deny_overrides_allow_for_same_direction_but_not_reverse_direction():
     """Conflicting policies resolve to deny only for their directed pair."""
     targets = [target("access-a", "access"), target("route-a", "route")]

@@ -493,7 +493,10 @@ def generated_route_role_rules(targets: list[dict[str, str]]) -> list[dict]:
                 continue
             rows.append(
                 {
-                    "id": f"generated:{source['name']}:{destination['name']}",
+                    "id": (
+                        f"generated:{len(source['name'])}:{source['name']}"
+                        f":{len(destination['name'])}:{destination['name']}"
+                    ),
                     "name": f"{source['name']} to {destination['name']}",
                     "enabled": True,
                     "source_interface": source["name"],
