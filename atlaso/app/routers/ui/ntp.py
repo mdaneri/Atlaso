@@ -88,7 +88,19 @@ def build_router(dependencies: NtpUiDependencies) -> NtpUiRouter:
         Returns:
             The endpoint response.
         """
-        context = dependencies.ntp_context(db)
+        context = dependencies.ntp_context(db, include_runtime_health=True)
+        clock_status = context.get("ntp_clock_status")
+        if not isinstance(clock_status, dict) or not clock_status:
+            clock_status = {}
+            raw_status = context.get("ntp_ntpq_status")
+            if isinstance(raw_status, str):
+                try:
+                    parsed_status = json.loads(raw_status)
+                except json.JSONDecodeError:
+                    parsed_status = {}
+                if isinstance(parsed_status, dict):
+                    clock_status = parsed_status
+        context["ntp_clock_status"] = clock_status
         return dependencies.render(
             request,
             "ntp.html",
@@ -137,6 +149,7 @@ def build_router(dependencies: NtpUiDependencies) -> NtpUiRouter:
     def update_ntp_settings_from_ui(
         request: Request,
         enabled: str | None = Form(None),
+        time_source: str | None = Form(None),
         hostname: str = Form(""),
         listen_interfaces: list[str] = Form(default_factory=list),
         listen_addresses: list[str] = Form(default_factory=list),
@@ -165,6 +178,7 @@ def build_router(dependencies: NtpUiDependencies) -> NtpUiRouter:
         Args:
             request: Incoming HTTP request.
             enabled: Whether the requested behavior is enabled.
+            time_source: Remembered clock source used when the NTP server is disabled.
             hostname: DNS hostname of the target resource.
             listen_interfaces: Interfaces on which the service should listen.
             listen_addresses: Addresses on which the service should listen.
@@ -195,7 +209,17 @@ def build_router(dependencies: NtpUiDependencies) -> NtpUiRouter:
             HTTPException: If the request cannot be fulfilled.
         """
         dependencies.verify_csrf(request, csrf)
+        if time_source is not None and time_source not in {
+            "ntp_client",
+            "vmware_tools",
+        }:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail="Time source must be ntp_client or vmware_tools.",
+            )
         settings = dependencies.get_ntp_settings_row(db)
+        if time_source is not None:
+            settings.time_source = time_source
         previous_hostname = settings.hostname
         capability_result = (
             dependencies.system_adapter_factory().read_ntpd_capabilities()
@@ -342,7 +366,7 @@ def build_router(dependencies: NtpUiDependencies) -> NtpUiRouter:
             db, settings, identity.username, previous_hostname=previous_hostname
         )
         db.commit()
-        if settings.nts_server_enabled:
+        if settings.enabled and settings.nts_server_enabled:
             dependencies.ensure_ca_state(db)
         record_audit(
             db,
@@ -359,6 +383,8 @@ def build_router(dependencies: NtpUiDependencies) -> NtpUiRouter:
                     "status": "saved",
                     "updated_at": saved_settings.updated_at.isoformat(),
                     "enabled": saved_settings.enabled,
+                    "time_source": context["ntp_settings_json"]["time_source"],
+                    "time_mode": context["ntp_settings_json"]["time_mode"],
                     "hostname": saved_settings.hostname,
                     "listen_interface": dependencies.primary_listen_interface(
                         saved_settings.listen_interface

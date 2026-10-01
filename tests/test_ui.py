@@ -3638,8 +3638,8 @@ def test_ntp_validation_rejects_enabled_service_without_bind_or_upstreams(client
     assert "At least one NTP upstream server is required." in payload["validation_errors"]
 
 
-def test_ntp_validation_allows_disabled_service_without_upstreams(client):
-    """Verify that ntp validation allows disabled service without upstreams.
+def test_ntp_validation_allows_vmware_time_source_without_upstreams(client):
+    """Verify that VMware Tools mode needs no NTP upstreams.
 
     Args:
         client: HTTP test client used to exercise the Atlaso application.
@@ -3650,6 +3650,7 @@ def test_ntp_validation_allows_disabled_service_without_upstreams(client):
     response = client.post(
         "/ntp/settings",
         data={
+            "time_source": "vmware_tools",
             "hostname": "ntp.atlaso.internal",
             "listen_interfaces_present": "1",
             "listen_addresses_present": "1",

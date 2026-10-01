@@ -91,6 +91,10 @@ NTP_STAGED_CONFIG_PATH = "/var/lib/atlaso/apply/ntpd/atlaso-ntp.conf"
 NTP_EFFECTIVE_CONFIG_PATH = "/etc/ntp.conf"
 NTP_DRIFT_PATH = "/var/lib/ntp/ntp.drift"
 NTP_NTS_COOKIE_PATH = "/var/lib/ntp/nts-keys"
+NTP_TIME_SOURCE_NTP_CLIENT = "ntp_client"
+NTP_TIME_SOURCE_VMWARE_TOOLS = "vmware_tools"
+NTP_TIME_MODE_NTP_SERVER = "ntp_server"
+NTP_TIME_SOURCES = frozenset({NTP_TIME_SOURCE_NTP_CLIENT, NTP_TIME_SOURCE_VMWARE_TOOLS})
 
 HOSTNAME_PATTERN = re.compile(r"^(?=.{1,253}$)([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$")
 BRACKETED_SOURCE_PATTERN = re.compile(r"^\[([^\]]+)\](?::(\d+))?$")
@@ -309,6 +313,20 @@ def normalize_hostname(value: str | None) -> str:
     return str(value or "").strip().strip(".").lower()
 
 
+def ntp_time_mode(settings: NtpSettings) -> str:
+    """Return the effective appliance time mode from persisted NTP settings.
+
+    Enabled NTP server mode takes precedence while preserving the separately
+    selected source for when server mode is disabled.
+    """
+    if settings.enabled:
+        return NTP_TIME_MODE_NTP_SERVER
+    selected_source = str(getattr(settings, "time_source", "") or NTP_TIME_SOURCE_NTP_CLIENT)
+    if selected_source in NTP_TIME_SOURCES:
+        return selected_source
+    return NTP_TIME_SOURCE_NTP_CLIENT
+
+
 def ntp_settings_to_dict(settings: NtpSettings) -> dict:
     """Return ntp settings to dict.
 
@@ -318,6 +336,8 @@ def ntp_settings_to_dict(settings: NtpSettings) -> dict:
     return {
         "id": settings.id,
         "enabled": settings.enabled,
+        "time_source": getattr(settings, "time_source", None) or NTP_TIME_SOURCE_NTP_CLIENT,
+        "time_mode": ntp_time_mode(settings),
         "hostname": settings.hostname,
         "listen_interface": settings.listen_interface,
         "listen_interfaces": split_interfaces(settings.listen_interface),
@@ -350,13 +370,30 @@ def validate_ntp_state(settings: NtpSettings, available_interfaces: set[str]) ->
         The validate ntp state result.
     """
     errors: list[str] = []
+    selected_source = getattr(settings, "time_source", None) or NTP_TIME_SOURCE_NTP_CLIENT
+    if selected_source not in NTP_TIME_SOURCES:
+        errors.append("Time source must be ntp_client or vmware_tools.")
+    time_mode = ntp_time_mode(settings)
     hostname = normalize_hostname(settings.hostname)
     if not hostname or not HOSTNAME_PATTERN.fullmatch(hostname):
         errors.append("NTP hostname must be a valid fully qualified DNS name.")
     duplicate_source = duplicate_ntp_upstream_source(ntp_upstream_sources(settings))
     if duplicate_source:
         errors.append(f"NTP upstream source {duplicate_source} is duplicated. Source names must be unique.")
-    if settings.enabled:
+    sources = enabled_ntp_sources(settings)
+    if time_mode in {NTP_TIME_MODE_NTP_SERVER, NTP_TIME_SOURCE_NTP_CLIENT}:
+        if not sources:
+            errors.append("At least one NTP upstream server is required.")
+        for source in sources:
+            server = str(source.get("source") or "").strip()
+            try:
+                _host, _port, is_ip = parse_ntp_source(server)
+            except ValueError:
+                errors.append(f"NTP upstream server {server} must be an IPv4 address, IPv6 address, or fully qualified DNS name with an optional port.")
+                continue
+            if source.get("use_nts") and is_ip:
+                errors.append(f"NTS upstream {server} must use a certificate-valid DNS hostname, not an IP address.")
+    if time_mode == NTP_TIME_MODE_NTP_SERVER:
         listen_interfaces = split_interfaces(settings.listen_interface)
         if not listen_interfaces:
             errors.append("NTP listen interface is required when the service is enabled.")
@@ -371,21 +408,9 @@ def validate_ntp_state(settings: NtpSettings, available_interfaces: set[str]) ->
                 ip_address(address)
             except ValueError:
                 errors.append(f"NTP listen address {address} must be a valid IPv4 or IPv6 address.")
-        sources = enabled_ntp_sources(settings)
-        if not sources:
-            errors.append("At least one NTP upstream server is required.")
-        for source in sources:
-            server = str(source.get("source") or "").strip()
-            try:
-                _host, _port, is_ip = parse_ntp_source(server)
-            except ValueError:
-                errors.append(f"NTP upstream server {server} must be an IPv4 address, IPv6 address, or fully qualified DNS name with an optional port.")
-                continue
-            if source.get("use_nts") and is_ip:
-                errors.append(f"NTS upstream {server} must use a certificate-valid DNS hostname, not an IP address.")
     if settings.port != 123:
         errors.append("NTP port must be UDP 123.")
-    if settings.nts_server_enabled:
+    if time_mode == NTP_TIME_MODE_NTP_SERVER and settings.nts_server_enabled:
         for label, raw_path in {"certificate": settings.nts_server_cert_path, "key": settings.nts_server_key_path}.items():
             path = raw_path.strip()
             if not path:
@@ -434,30 +459,41 @@ def render_ntp_config(settings: NtpSettings) -> str:
     Returns:
         The rendered ntp config.
     """
-    sources = enabled_ntp_sources(settings)
-    listen_addresses = split_addresses(settings.listen_address)
+    time_mode = ntp_time_mode(settings)
+    sources = enabled_ntp_sources(settings) if time_mode != NTP_TIME_SOURCE_VMWARE_TOOLS else []
+    listen_addresses = split_addresses(settings.listen_address) if time_mode == NTP_TIME_MODE_NTP_SERVER else []
     allow_entries = split_allow_clients(settings.allow_clients) or ["any"]
     lines = [
         "# Managed by Atlaso. Local changes may be overwritten.",
+        f"# Atlaso time mode: {time_mode}",
         f"# Atlaso NTP enabled: {str(bool(settings.enabled)).lower()}",
         f"# Atlaso NTP hostname: {normalize_hostname(settings.hostname)}",
         f"# Atlaso NTP listen interfaces: {', '.join(split_interfaces(settings.listen_interface)) or 'none'}",
         f"# Atlaso NTP listen addresses: {', '.join(listen_addresses) or 'none'}",
         f"# Atlaso NTP client allow list: {', '.join(allow_entries)}",
         f"driftfile {NTP_DRIFT_PATH}",
-        "interface ignore wildcard",
     ]
-    lines.extend(f"interface listen {address}" for address in listen_addresses)
+    if time_mode == NTP_TIME_MODE_NTP_SERVER:
+        lines.append("interface ignore wildcard")
+        lines.extend(f"interface listen {address}" for address in listen_addresses)
     lines.extend(["restrict 127.0.0.1", "restrict ::1"])
-    lines.append("restrict source kod limited nomodify noquery")
-    if "any" in allow_entries:
-        lines.append("restrict default kod limited nomodify noquery")
+    if time_mode == NTP_TIME_SOURCE_NTP_CLIENT:
+        # Permit replies from configured upstreams while ignoring other NTP
+        # traffic, including sources configured with a custom UDP port.
+        lines.append("restrict default ignore")
+        lines.append("restrict source nomodify noquery")
+    elif time_mode == NTP_TIME_MODE_NTP_SERVER:
+        lines.append("restrict source kod limited nomodify noquery")
     else:
         lines.append("restrict default ignore")
+    if time_mode == NTP_TIME_MODE_NTP_SERVER and "any" in allow_entries:
+        lines.append("restrict default kod limited nomodify noquery")
+    elif time_mode == NTP_TIME_MODE_NTP_SERVER:
+        lines.append("restrict default ignore")
         lines.extend(_restrict_line(entry) for entry in allow_entries)
-    if settings.minsources is not None:
+    if time_mode in {NTP_TIME_MODE_NTP_SERVER, NTP_TIME_SOURCE_NTP_CLIENT} and settings.minsources is not None:
         lines.append(f"tos minsane {settings.minsources}")
-    if settings.nts_server_enabled:
+    if time_mode == NTP_TIME_MODE_NTP_SERVER and settings.nts_server_enabled:
         lines.extend(
             [
                 "nts enable",

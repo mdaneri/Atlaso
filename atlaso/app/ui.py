@@ -2263,11 +2263,11 @@ def ntp_context(db: Session, *, include_runtime_health: bool = False, reconcile:
             db.commit()
             db.refresh(settings)
     config_preview = render_ntp_config(settings)
-    ca_state_errors = ensure_ca_state(db) if reconcile and settings.nts_server_enabled else []
+    ca_state_errors = ensure_ca_state(db) if reconcile and settings.enabled and settings.nts_server_enabled else []
     validation_errors = [*ca_state_errors, *validate_ntp_state(settings, {interface["name"] for interface in available_interfaces})]
     if settings.enabled and ntp_dns_record_conflict(db, settings):
         validation_errors.append("NTP hostname or generated target conflicts with an operator-owned DNS record.")
-    if settings.nts_server_enabled:
+    if settings.enabled and settings.nts_server_enabled:
         ca_settings = get_ca_settings_row(db)
         if not ca_settings.enabled:
             validation_errors.append("NTPsec NTS server mode requires Certificate Authority to be enabled.")
@@ -2275,9 +2275,11 @@ def ntp_context(db: Session, *, include_runtime_health: bool = False, reconcile:
             validation_errors.append("NTPsec NTS server mode requires healthy Certificate Authority state.")
         elif not ca_certificate_available(db, "ntp:nts"):
             validation_errors.append("NTPsec NTS server mode requires an issued CA-managed server certificate before apply.")
-    nts_requested = settings.nts_server_enabled or any(
-        bool(source.get("enabled", True)) and bool(source.get("use_nts"))
-        for source in ntp_upstream_sources(settings)
+    nts_requested = (settings.enabled and settings.nts_server_enabled) or (
+        ntp_settings_to_dict(settings)["time_mode"] != "vmware_tools" and any(
+            bool(source.get("enabled", True)) and bool(source.get("use_nts"))
+            for source in ntp_upstream_sources(settings)
+        )
     )
     if not ntp_nts_capability_known and nts_requested:
         validation_errors.append(
@@ -17420,6 +17422,7 @@ def _submit_appliance_apply(
     ntp_settings_for_apply = unit_map.get("ntpd", {}).get("context", {}).get("ntp_settings")
     ca_required_for_nts = bool(
         "ntpd" in selected_ids
+        and getattr(ntp_settings_for_apply, "enabled", False)
         and getattr(ntp_settings_for_apply, "nts_server_enabled", False)
         and "ca" in unit_map
     )

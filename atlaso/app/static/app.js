@@ -7454,12 +7454,66 @@ function initializeNtpSettings(root = document) {
     }
     if (form.dataset.ntpSettingsInitialized === "1") return;
     form.dataset.ntpSettingsInitialized = "1";
+    const enabledInput = form.querySelector('input[name="enabled"]');
+    const timeSourceSelect = form.querySelector("[data-time-source-select]");
+    const preservedTimeSource = form.querySelector("[data-time-source-preserved]");
+    if (enabledInput instanceof HTMLInputElement) {
+      updateNtpTimeSourceControl(form, enabledInput.checked);
+      enabledInput.addEventListener("change", () => {
+        updateNtpTimeSourceControl(form, enabledInput.checked);
+      });
+    }
+    if (
+      timeSourceSelect instanceof HTMLSelectElement
+      && preservedTimeSource instanceof HTMLInputElement
+    ) {
+      timeSourceSelect.addEventListener("change", () => {
+        preservedTimeSource.value = timeSourceSelect.value;
+      });
+    }
     form.addEventListener("atlaso:autosave-success", (event) => {
       const payload = event.detail || {};
       updateNtpSettingsPreview(form, payload);
       updateNtpValidation(payload);
+      updateNtpTimeSourceControl(form, payload.time_mode === "ntp_server", payload.time_source);
+      updateNtpClockDesiredMode(root, payload);
     });
   });
+}
+
+function updateNtpClockDesiredMode(root, payload = {}) {
+  const desiredMode = root.querySelector("[data-clock-desired-mode]");
+  if (!(desiredMode instanceof HTMLElement)) return;
+  const modeLabels = {
+    ntp_client: "NTP client",
+    ntp_server: "NTP/NTS server",
+    vmware_tools: "VMware Tools",
+  };
+  const label = modeLabels[payload.time_mode];
+  if (label) desiredMode.textContent = label;
+}
+
+function updateNtpTimeSourceControl(form, serverEnabled, timeSource) {
+  const timeSourceSelect = form.querySelector("[data-time-source-select]");
+  const preservedTimeSource = form.querySelector("[data-time-source-preserved]");
+  const clientHelp = form.querySelector("[data-time-source-client-help]");
+  const serverReason = form.querySelector("[data-time-source-server-reason]");
+  if (timeSource === "ntp_client" || timeSource === "vmware_tools") {
+    if (timeSourceSelect instanceof HTMLSelectElement) {
+      timeSourceSelect.value = timeSource;
+    }
+    if (preservedTimeSource instanceof HTMLInputElement) {
+      preservedTimeSource.value = timeSource;
+    }
+  }
+  if (timeSourceSelect instanceof HTMLSelectElement) {
+    timeSourceSelect.disabled = serverEnabled;
+  }
+  if (preservedTimeSource instanceof HTMLInputElement) {
+    preservedTimeSource.disabled = !serverEnabled;
+  }
+  if (clientHelp instanceof HTMLElement) clientHelp.hidden = serverEnabled;
+  if (serverReason instanceof HTMLElement) serverReason.hidden = !serverEnabled;
 }
 
 function formatNTPsecSourceHealthSection(name, section = {}) {
@@ -7482,13 +7536,81 @@ function formatNTPsecSourceHealthSection(name, section = {}) {
 
 function formatNTPsecSourceHealthPayload(payload = {}) {
   const sections = payload.status && typeof payload.status === "object" ? payload.status : {};
+  const details = [];
+  if (sections.mode) {
+    const modeLabels = {
+      ntp_client: "NTP client",
+      ntp_server: "NTP/NTS server",
+      vmware_tools: "VMware Tools",
+    };
+    details.push(`Effective mode: ${modeLabels[sections.mode] || sections.mode}`);
+  }
+  const selectedController = sections.selected_controller;
+  if (selectedController && typeof selectedController === "object") {
+    const controllerLabels = {
+      ntpd: "NTPsec",
+      vmware_tools: "VMware Tools time sync",
+    };
+    const controllerName = controllerLabels[selectedController.name] || selectedController.name || "unknown";
+    const controllerState = selectedController.active === true
+      ? "active"
+      : selectedController.active === false
+        ? "inactive"
+        : "status unavailable";
+    details.push(`Selected controller: ${controllerName} (${controllerState})`);
+    if (selectedController.detail) details.push(String(selectedController.detail));
+  }
+  const synchronization = sections.synchronization;
+  if (synchronization && typeof synchronization === "object") {
+    const state = synchronization.state || "unknown";
+    const healthy = synchronization.healthy === true ? "healthy" : synchronization.healthy === false ? "unhealthy" : "unknown";
+    details.push(`NTP synchronization: ${state} (${healthy})`);
+    if (synchronization.detail) details.push(String(synchronization.detail));
+  } else {
+    details.push("NTP synchronization: not reported");
+  }
+  const daemonConflicts = sections.daemon_conflicts;
+  if (daemonConflicts && typeof daemonConflicts === "object") {
+    const daemonLabels = {
+      ntpd: "NTPsec",
+      chronyd: "chronyd",
+      systemd_timesyncd: "systemd-timesyncd",
+      vmware_tools: "VMware Tools time sync",
+    };
+    details.push("Clock daemons:");
+    for (const [name, daemon] of Object.entries(daemonConflicts)) {
+      const state = daemon?.active === true ? "active" : daemon?.active === false ? "inactive" : "status unavailable";
+      details.push(`  ${daemonLabels[name] || name}: ${state}${daemon?.detail ? ` — ${daemon.detail}` : ""}`);
+    }
+  }
   const names = ["peers", "variables", "nts"];
   if (names.some((name) => sections[name])) {
-    return names.map((name) => formatNTPsecSourceHealthSection(name, sections[name] || {})).join("\n\n");
+    details.push(...names.map((name) => formatNTPsecSourceHealthSection(name, sections[name] || {})));
+    return details.join("\n\n");
   }
   const stdout = String(payload.stdout || "").trimEnd();
   const stderr = String(payload.stderr || "").trimEnd();
-  return [stdout, stderr ? `stderr: ${stderr}` : ""].filter(Boolean).join("\n\n") || "No NTPsec source health output was returned.";
+  details.push(stdout, stderr ? `stderr: ${stderr}` : "");
+  return details.filter(Boolean).join("\n\n") || "No NTPsec source health output was returned.";
+}
+
+function classifyNTPsecSourceHealth(responseOk, payload = {}) {
+  if (payload.dry_run) {
+    return { text: "dry-run", state: "muted" };
+  }
+  const statusPayload = payload.status && typeof payload.status === "object" ? payload.status : {};
+  const failedSection = ["peers", "variables", "nts"].some(
+    (name) => Number(statusPayload[name]?.returncode ?? 0) !== 0,
+  );
+  if (
+    !responseOk
+    || !payload.ok
+    || failedSection
+    || statusPayload.synchronization?.healthy !== true
+  ) {
+    return { text: "needs attention", state: "warn" };
+  }
+  return { text: "healthy", state: "good" };
 }
 
 function setNTPsecSourceHealthStatus(statusElement, text, state) {
@@ -7542,14 +7664,8 @@ function initializeNTPsecSourceHealthModal() {
       });
       const payload = await response.json();
       output.textContent = formatNTPsecSourceHealthPayload(payload);
-      const failedSection = Object.values(payload.status || {}).some((section) => Number(section?.returncode ?? 0) !== 0);
-      if (!response.ok || !payload.ok || failedSection) {
-        setNTPsecSourceHealthStatus(status, "needs attention", "warn");
-      } else if (payload.dry_run) {
-        setNTPsecSourceHealthStatus(status, "dry-run", "muted");
-      } else {
-        setNTPsecSourceHealthStatus(status, "healthy", "good");
-      }
+      const health = classifyNTPsecSourceHealth(response.ok, payload);
+      setNTPsecSourceHealthStatus(status, health.text, health.state);
     } catch (error) {
       output.textContent = error instanceof Error ? error.message : "Unable to check NTPsec source health.";
       setNTPsecSourceHealthStatus(status, "failed", "warn");

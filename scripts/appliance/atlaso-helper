@@ -101,7 +101,7 @@ COMMANDS: dict[str, set[str]] = {
     "ca": {"validate", "apply"},
     "kms": {"validate", "apply", "status"},
     "ldap": {"validate", "apply", "status", "export", "logs", "authenticate"},
-    "ntpd": {"validate", "apply", "status", "logs", "capabilities"},
+    "ntpd": {"validate", "apply", "status", "logs", "capabilities", "reconcile", "guard"},
     "nginx": {"logs", "access-logs", "error-logs"},
     "vcf-backups": {"validate", "preflight", "apply"},
     "vcf-private-registry": {"validate", "apply", "relocate-bundles"},
@@ -179,6 +179,7 @@ SYSTEMD_RUN_REAL_ACTIONS = {
     "reset-network-runtime",
     "reset-retained-runtime",
     "apply-root-password",
+    "reconcile",
 }
 SYSTEMD_RUN_CHILD_ENV = "ATLASO_HELPER_SYSTEMD_RUN_CHILD"
 SYSTEMD_RUN_ACTION_UNIT_PREFIX = "atlaso-helper-action"
@@ -194,6 +195,8 @@ NO_PATH_ACTIONS = {
     ("dnsmasq", "logs"),
     ("dnsmasq", "reload"),
     ("ntpd", "status"),
+    ("ntpd", "reconcile"),
+    ("ntpd", "guard"),
     ("ntpd", "logs"),
     ("ntpd", "capabilities"),
     ("ldap", "status"),
@@ -239,6 +242,7 @@ NON_PATH_ARGUMENT_ACTIONS = {
     ("nat", "acknowledge-publishing"),
     ("nat", "recover-publishing"),
     ("diagnostics", "source"),
+    ("ntpd", "guard"),
     ("local-users", "authenticate"),
     ("ldap", "authenticate"),
     ("automation", "run"),
@@ -450,6 +454,12 @@ NTP_STATE_DIR = Path("/var/lib/ntp")
 NTP_DRIFT_PATH = NTP_STATE_DIR / "ntp.drift"
 NTP_NTS_COOKIE_PATH = NTP_STATE_DIR / "nts-keys"
 NTP_CERT_DIR = Path("/etc/atlaso/ntp/certs")
+NTP_TIME_MODE_PREFIX = "# Atlaso time mode:"
+NTP_SYSTEMD_DIR = Path("/etc/systemd/system")
+NTP_GUARD_SERVICE_PATH = NTP_SYSTEMD_DIR / "atlaso-time-sync-guard.service"
+NTP_NTPD_DROPIN_PATH = NTP_SYSTEMD_DIR / "ntpd.service.d" / "atlaso-time-sync.conf"
+NTP_VMTOOLS_DROPIN_PATH = NTP_SYSTEMD_DIR / "vmtoolsd.service.d" / "atlaso-time-sync.conf"
+NTP_ALLOWED_MODES = {"ntp_client", "ntp_server", "vmware_tools"}
 NETWORK_APPLY_DIR = Path("/var/lib/atlaso/apply/network")
 NETWORK_TRANSACTION_DIR = ATLASO_STATE_DIR / "network-transaction"
 MANAGEMENT_HANDOFF_APPLY_DIR = Path("/var/lib/atlaso/apply/management-handoff")
@@ -577,6 +587,15 @@ def _run(
         timeout: Maximum time allowed for the operation to complete.
         env: Environment variables supplied to the child process.
     """
+    if Path(command[0]).name == "nft" and "-f" in command:
+        source_index = command.index("-f") + 1
+        if source_index < len(command) and command[source_index] != "-":
+            program = Path(command[source_index]).read_text(encoding="utf-8")
+            guarded = _ntpd_preserve_client_packet_guard(program)
+            if guarded != program:
+                guarded_command = [*command]
+                guarded_command[source_index] = "-"
+                return subprocess.run(guarded_command, input=guarded, check=False, capture_output=True, text=True, timeout=timeout, env=env)
     return subprocess.run(command, check=False, capture_output=True, text=True, timeout=timeout, env=env)
 
 
@@ -588,6 +607,8 @@ def _run_with_input(command: list[str], input_text: str, *, timeout: float | Non
         input_text: Text supplied to the invoked command through standard input.
         timeout: Optional maximum subprocess duration.
     """
+    if Path(command[0]).name == "nft" and "-f" in command:
+        input_text = _ntpd_preserve_client_packet_guard(input_text)
     return subprocess.run(command, input=input_text, check=False, capture_output=True, text=True, timeout=timeout)
 
 
@@ -6540,6 +6561,38 @@ def _ntpd_config_enabled(path: Path) -> bool:
     return False
 
 
+def _ntpd_config_managed(path: Path) -> bool:
+    """Return whether the config carries an Atlaso time ownership marker."""
+    if not path.is_file():
+        return False
+    for line in path.read_text(encoding="utf-8").splitlines():
+        stripped = line.strip().lower()
+        if stripped.startswith("# atlaso ntp enabled:") or stripped.startswith(NTP_TIME_MODE_PREFIX.lower()):
+            return True
+    return False
+
+
+def _ntpd_time_mode(path: Path) -> str:
+    """Resolve the effective host clock mode from an applied or staged config."""
+    selected: str | None = None
+    marker_count = 0
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if line.strip().lower().startswith(NTP_TIME_MODE_PREFIX.lower()):
+            marker_count += 1
+            selected = line.split(":", 1)[1].strip().lower()
+    if marker_count > 1:
+        raise ValueError("time mode marker must appear exactly once")
+    if selected is not None and selected not in NTP_ALLOWED_MODES:
+        raise ValueError("time mode marker must be ntp_client, ntp_server, or vmware_tools")
+    if _ntpd_config_enabled(path):
+        return "ntp_server"
+    if selected is None:
+        # Before the time-source setting existed, a disabled NTP server meant
+        # there was no managed NTP client to start.
+        return "disabled"
+    return selected
+
+
 def _parse_ntpd_server(value: str) -> tuple[str, int | None, bool]:
     """Parse ntpd server.
 
@@ -6590,7 +6643,109 @@ def _parse_ntpd_server(value: str) -> tuple[str, int | None, bool]:
     return str(parsed_host), port, True
 
 
-def _ntpd_config_errors(path: Path) -> list[str]:
+def _ntpd_client_packet_guard_program(mode: str) -> str:
+    """Render the fixed subsystem-owned client ingress policy.
+
+    Args:
+        mode: Validated applied clock mode; the caller must first stop ntpd.
+    """
+    if mode not in NTP_ALLOWED_MODES and mode != "disabled":
+        raise ValueError("Unsupported appliance time mode.")
+    # An atomic batch replaces only this fixed subsystem-owned table. No
+    # ordinary firewall/NAT rule or connection tracking state is changed.
+    commands = [
+        "add table inet atlaso_time_sync",
+        "delete table inet atlaso_time_sync",
+    ]
+    if mode == "ntp_client":
+        commands.extend([
+            "table inet atlaso_time_sync {",
+            "  chain input {",
+            "    type filter hook input priority -200; policy accept;",
+            '    iifname "lo" return comment "Atlaso time-sync local diagnostics"',
+            # NTP's three mode bits are in the first payload byte after the
+            # eight-byte UDP header. Only server replies (mode 4) may reach
+            # the client; remote mode 3/6 requests remain blocked even from
+            # a configured upstream or an established UDP flow.
+            '    udp dport 123 @th,64,8 & 0x07 == 0x04 return comment "Atlaso time-sync upstream replies"',
+            '    udp dport 123 drop comment "Atlaso time-sync client-only"',
+            "  }",
+            "}",
+        ])
+    return "\n".join(commands) + "\n"
+
+
+def _ntpd_preserve_client_packet_guard(program: str) -> str:
+    """Preserve applied client isolation in atomic Firewall/NAT replacements.
+
+    Args:
+        program: An admitted nftables batch, including rollback or handoff.
+    """
+    if not re.search(r"(?m)^\s*flush\s+ruleset\s*(?:$|;)", program):
+        return program
+    if NTP_CONFIG_PATH.is_file() and _ntpd_config_managed(NTP_CONFIG_PATH):
+        if _ntpd_time_mode(NTP_CONFIG_PATH) == "ntp_client":
+            return program.rstrip() + "\n" + _ntpd_client_packet_guard_program("ntp_client")
+    return program
+
+
+def _ntpd_client_packet_guard(mode: str) -> None:
+    """Install client isolation after the caller has stopped ntpd.
+
+    Args:
+        mode: Validated applied clock mode.
+    """
+    program = _ntpd_client_packet_guard_program(mode)
+    nft = shutil.which("nft")
+    if nft is None:
+        raise RuntimeError("nft is required to enforce appliance client-only time service.")
+    try:
+        result = _run_with_input([nft, "-f", "-"], program, timeout=5)
+    except subprocess.TimeoutExpired as exc:
+        raise RuntimeError("Client-only NTP packet guard timed out; ntpd remains stopped.") from exc
+    if result.returncode != 0:
+        raise RuntimeError("Client-only NTP packet guard failed; ntpd remains stopped.")
+
+
+def _ntpd_client_packet_guard_status() -> dict[str, object]:
+    """Verify the installed client-only ingress rules, including their order."""
+    nft = shutil.which("nft")
+    if nft is None:
+        return {"active": None, "detail": "nft is unavailable; client-only ingress cannot be verified."}
+    try:
+        result = _run([nft, "-j", "list", "table", "inet", "atlaso_time_sync"], timeout=1)
+        if result.returncode != 0:
+            return {"active": False, "detail": "Client-only NTP packet guard is missing or unreadable."}
+        document = json.loads(result.stdout)
+        entries = document.get("nftables", [])
+        chains = [entry["chain"] for entry in entries if "chain" in entry]
+        rules = [entry["rule"] for entry in entries if "rule" in entry]
+        port_match = {"match": {"op": "==", "left": {"payload": {"protocol": "udp", "field": "dport"}}, "right": 123}}
+        expected = [
+            [{"match": {"op": "==", "left": {"meta": {"key": "iifname"}}, "right": "lo"}}, {"return": None}],
+            [port_match, {"match": {"op": "==", "left": {"&": [{"payload": {"base": "th", "offset": 64, "len": 8}}, 7]}, "right": 4}}, {"return": None}],
+            [port_match, {"drop": None}],
+        ]
+        active = (
+            len(chains) == 1
+            and chains[0].get("name") == "input"
+            and chains[0].get("hook") == "input"
+            and chains[0].get("type") == "filter"
+            and chains[0].get("prio") == -200
+            and chains[0].get("policy") == "accept"
+            and len(rules) == 3
+            and all(rule.get("chain") == "input" for rule in rules)
+            and [rule.get("expr") for rule in rules] == expected
+        )
+    except (OSError, subprocess.TimeoutExpired, ValueError, AttributeError, TypeError, KeyError):
+        return {"active": None, "detail": "Client-only NTP packet guard could not be inspected."}
+    return {
+        "active": active,
+        "detail": "Client-only NTP requests are blocked." if active else "Client-only NTP packet guard has drifted; submit appliance changes.",
+    }
+
+
+def _ntpd_config_errors(path: Path, mode: str | None = None) -> list[str]:
     """Perform ntpd config errors.
 
     Args:
@@ -6606,7 +6761,22 @@ def _ntpd_config_errors(path: Path) -> list[str]:
     nts_server_enabled = False
     nts_requested = False
     restrict_lines: list[list[str]] = []
-    enabled = _ntpd_config_enabled(path)
+    enabled_markers = [
+        line.split(":", 1)[1].strip().lower()
+        for line in path.read_text(encoding="utf-8").splitlines()
+        if line.strip().lower().startswith("# atlaso ntp enabled:")
+    ]
+    if len(enabled_markers) != 1:
+        errors.append("ntpd config must include exactly one Atlaso NTP enabled marker.")
+    elif enabled_markers[0] not in {"true", "false"}:
+        errors.append("Atlaso NTP enabled marker must be true or false.")
+    try:
+        effective_mode = mode or _ntpd_time_mode(path)
+    except ValueError as exc:
+        errors.append(str(exc))
+        effective_mode = "disabled"
+    serving = effective_mode == "ntp_server"
+    using_ntpd = effective_mode in {"ntp_client", "ntp_server"}
 
     def add_allow_entry(value: str) -> None:
         """Perform add allow entry.
@@ -6655,9 +6825,9 @@ def _ntpd_config_errors(path: Path) -> list[str]:
         elif lower.startswith("# atlaso ntp client allow list:"):
             for item in line.split(":", 1)[1].replace(",", "\n").splitlines():
                 add_allow_entry(item)
-    if enabled and not servers:
+    if using_ntpd and not servers:
         errors.append("ntpd config must include at least one server line.")
-    if enabled:
+    if using_ntpd:
         for raw_line in path.read_text(encoding="utf-8").splitlines():
             parts = raw_line.strip().split()
             if len(parts) < 2 or parts[0].lower() != "server":
@@ -6672,10 +6842,21 @@ def _ntpd_config_errors(path: Path) -> list[str]:
                 continue
             if is_ip and "nts" in {part.lower() for part in parts[2:]}:
                 errors.append(f"NTS server {server} must use a certificate-valid DNS hostname, not an IP address.")
-    if enabled and not listen_addresses:
+    if serving and not listen_addresses:
         errors.append("enabled ntpd config must include at least one interface listen address.")
-    if enabled and "interface ignore wildcard" not in path.read_text(encoding="utf-8").lower():
+    if serving and "interface ignore wildcard" not in path.read_text(encoding="utf-8").lower():
         errors.append("enabled ntpd config must ignore all interfaces before explicit listeners.")
+    if not serving and listen_addresses:
+        errors.append("client-only time mode cannot listen for NTP clients.")
+    if effective_mode == "ntp_client" and (nts_server_enabled or nts_server_cert or nts_server_key or nts_cookie_dir):
+        errors.append("client-only time mode cannot enable the NTS server.")
+    if effective_mode == "ntp_client":
+        default_restrictions = [tokens for tokens in restrict_lines if len(tokens) >= 2 and tokens[1] == "default"]
+        source_restrictions = [tokens for tokens in restrict_lines if len(tokens) >= 2 and tokens[1] == "source"]
+        if not default_restrictions or "ignore" not in default_restrictions[-1][2:]:
+            errors.append("client-only time config must ignore unsolicited NTP clients by default.")
+        if not source_restrictions or not {"nomodify", "noquery"}.issubset(set(source_restrictions[-1][2:])):
+            errors.append("client-only time config must restrict upstream sources from modification and queries.")
     for address in listen_addresses:
         try:
             ip_address(address)
@@ -6698,7 +6879,7 @@ def _ntpd_config_errors(path: Path) -> list[str]:
             errors.append("ntpd NTS server config must include nts cookie storage.")
         elif not nts_cookie_dir.startswith("/"):
             errors.append("ntpd NTS cookie storage path must be absolute.")
-    if enabled and nts_requested and not _ntpd_supports_nts():
+    if using_ntpd and nts_requested and not _ntpd_supports_nts():
         errors.append("installed ntpd is not the required NTPsec implementation with NTS support.")
     if allow_entries:
         if "any" in allow_entries and len(allow_entries) > 1:
@@ -6710,7 +6891,7 @@ def _ntpd_config_errors(path: Path) -> list[str]:
                 ip_network(entry, strict=False)
             except ValueError:
                 errors.append(f"ntpd client allow entry {entry} must be 'any' or a valid IPv4/IPv6 CIDR.")
-    if enabled:
+    if serving:
         default_restrictions = [tokens for tokens in restrict_lines if len(tokens) >= 2 and tokens[1] == "default"]
         if not default_restrictions:
             errors.append("enabled ntpd config must include a default access restriction.")
@@ -6879,20 +7060,262 @@ def _grant_ntpd_nts_server_key_read(config_path: Path) -> Path | None:
     return key_path
 
 
+def _ntpd_run_checked(command: list[str], description: str, *, timeout: float = 5) -> subprocess.CompletedProcess[str]:
+    """Run one bounded host time-control command and preserve actionable errors."""
+    try:
+        result = _run(command, timeout=timeout)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise RuntimeError(f"{description} failed: {type(exc).__name__}.") from exc
+    if result.returncode != 0:
+        raise RuntimeError(f"{description} failed with exit code {result.returncode}.")
+    return result
+
+
+def _ntpd_set_vmware_timesync(enabled: bool) -> None:
+    """Set and verify VMware Tools periodic time synchronization."""
+    toolbox = shutil.which("vmware-toolbox-cmd")
+    if toolbox is None:
+        tools_service = _ntpd_service_state("vmtoolsd.service")
+        if not enabled and tools_service.get("active") is False:
+            return
+        raise RuntimeError("VMware Tools time-sync command is unavailable; clock source transition was not completed.")
+    action = "enable" if enabled else "disable"
+    _ntpd_run_checked([toolbox, "timesync", action], f"VMware Tools time-sync {action}")
+    status = _ntpd_vmware_timesync_state()
+    if status.get("active") is not enabled:
+        raise RuntimeError(f"VMware Tools time-sync {action} could not be verified.")
+
+
+def _ntpd_stop_service(unit: str, *, disable: bool = True) -> None:
+    """Disable one competing service and verify it is inactive."""
+    try:
+        command = ["systemctl", "disable", "--now", unit] if disable else ["systemctl", "stop", unit]
+        _run(command, timeout=5)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise RuntimeError(f"Could not stop {unit}: {type(exc).__name__}.") from exc
+    state = _ntpd_service_state(unit)
+    if state.get("active") is not False or (disable and state.get("enabled") is not False):
+        requirement = "stopped and disabled" if disable else "stopped"
+        raise RuntimeError(f"Could not verify {unit} is {requirement}.")
+
+
+def _ntpd_start_service(unit: str, *, restart: bool = False) -> None:
+    """Enable and start one selected system clock service."""
+    _ntpd_run_checked(["systemctl", "enable", unit], f"Enable {unit}")
+    operation = "restart" if restart else "start"
+    _ntpd_run_checked(["systemctl", operation, unit], f"{operation.title()} {unit}")
+    service_state = _ntpd_service_state(unit)
+    if service_state.get("active") is not True or service_state.get("enabled") is not True:
+        raise RuntimeError(f"Could not verify {unit} is active and enabled.")
+
+
+def _ntpd_wait_synchronized(timeout_seconds: float = 30) -> None:
+    """Require NTPsec's own synchronized leap and system state after apply."""
+    ntpq = shutil.which("ntpq")
+    if ntpq is None:
+        raise RuntimeError("ntpq is unavailable; ntpd is active but synchronization could not be verified.")
+    deadline = time.monotonic() + timeout_seconds
+    last_state = "ntpq has not reported synchronization state"
+    while time.monotonic() < deadline:
+        try:
+            result = _run([ntpq, "-c", "rv"], timeout=2)
+        except (OSError, subprocess.TimeoutExpired):
+            last_state = "ntpq synchronization probe failed"
+        else:
+            variables = result.stdout.lower()
+            if result.returncode == 0 and "leap_none" in variables and "sync_ntp" in variables:
+                return
+            last_state = "NTPsec has not reported leap_none and sync_ntp"
+        time.sleep(min(2, max(0, deadline - time.monotonic())))
+    raise RuntimeError(
+        f"ntpd is active as the only selected clock source, but did not synchronize within {timeout_seconds:g} seconds: {last_state}."
+    )
+
+
+def _ntpd_write_managed_file(path: Path, contents: str) -> None:
+    """Write one root-owned managed systemd file with an atomic replacement."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(f".{path.name}.atlaso-tmp")
+    temporary.write_text(contents, encoding="utf-8")
+    os.chmod(temporary, 0o644)
+    os.replace(temporary, path)
+
+
+def _ntpd_install_guards() -> None:
+    """Install boot and service-restart hooks for applied clock ownership."""
+    _ntpd_write_managed_file(
+        NTP_GUARD_SERVICE_PATH,
+        "\n".join([
+            "[Unit]",
+            "Description=Reconcile the selected Atlaso appliance clock source",
+            "After=vmtoolsd.service",
+            "After=atlaso-firewall.service",
+            "Before=ntpd.service",
+            "ConditionPathExists=/etc/ntp.conf",
+            "[Service]",
+            "Type=oneshot",
+            "ExecStart=/opt/atlaso/bin/atlaso-helper ntpd guard boot --real",
+            "[Install]",
+            "WantedBy=multi-user.target",
+            "",
+        ]),
+    )
+    _ntpd_write_managed_file(
+        NTP_NTPD_DROPIN_PATH,
+        "\n".join([
+            "[Unit]",
+            "After=vmtoolsd.service",
+            "After=atlaso-firewall.service",
+            "[Service]",
+            "ExecStartPre=/opt/atlaso/bin/atlaso-helper ntpd guard pre-ntpd --real",
+            "",
+        ]),
+    )
+    _ntpd_write_managed_file(
+        NTP_VMTOOLS_DROPIN_PATH,
+        "\n".join([
+            "[Service]",
+            "ExecStartPre=/opt/atlaso/bin/atlaso-helper ntpd guard pre-vmtoolsd --real",
+            "ExecStartPost=/opt/atlaso/bin/atlaso-helper ntpd guard post-vmtoolsd --real",
+            "",
+        ]),
+    )
+    _ntpd_run_checked(["systemctl", "daemon-reload"], "Reload systemd after installing clock guards")
+    _ntpd_run_checked(["systemctl", "enable", "atlaso-time-sync-guard.service"], "Enable appliance clock guard")
+
+
+def _ntpd_transition(mode: str, config_path: Path | None = None, *, restart: bool = True) -> None:
+    """Move between clock sources without running two synchronizers together."""
+    if mode not in NTP_ALLOWED_MODES and mode != "disabled":
+        raise ValueError("Unsupported appliance time mode.")
+    if mode == "disabled":
+        _ntpd_stop_service("ntpd.service")
+        _ntpd_client_packet_guard("disabled")
+        _remove_ntpd_nts_server_material()
+        return
+    # Stop and verify every daemon before changing packet policy or the selected
+    # clock source. VMware Tools synchronization is changed only after ntpd and
+    # the alternative system daemons are proven inactive.
+    for unit in ("ntpd.service", "chronyd.service", "systemd-timesyncd.service"):
+        _ntpd_stop_service(unit)
+    _ntpd_client_packet_guard(mode)
+    if mode in {"ntp_client", "ntp_server"}:
+        _ntpd_set_vmware_timesync(False)
+        if config_path is None:
+            config_path = NTP_CONFIG_PATH
+        _install_ntpd_config(config_path)
+        if mode == "ntp_server":
+            if _ntpd_nts_server_enabled(config_path):
+                _grant_ntpd_nts_server_key_read(config_path)
+            else:
+                _remove_ntpd_nts_server_material()
+        else:
+            _remove_ntpd_nts_server_material()
+        _ntpd_start_service("ntpd.service", restart=restart)
+        _ntpd_wait_synchronized()
+        return
+    if mode == "vmware_tools":
+        if not NTP_CONFIG_PATH.is_file() and config_path is None:
+            raise RuntimeError("Applied NTP config is unavailable; apply the selected VMware Tools clock source first.")
+        _remove_ntpd_nts_server_material()
+        _ntpd_set_vmware_timesync(True)
+        return
+def _ntpd_reconcile_applied() -> dict[str, object]:
+    """Reconcile only Atlaso-owned applied config; never import vendor config."""
+    if not NTP_CONFIG_PATH.is_file() or not _ntpd_config_managed(NTP_CONFIG_PATH):
+        return {
+            "ntpd": "reconcile required",
+            "managed": False,
+            "mode": "unmanaged",
+            "detail": "Apply time-source settings to select and enforce a clock controller.",
+        }
+    mode = _ntpd_time_mode(NTP_CONFIG_PATH)
+    if mode == "disabled":
+        return {
+            "ntpd": "reconcile required",
+            "managed": True,
+            "mode": "disabled",
+            "detail": "Legacy config has no selected clock source; apply time-source settings to activate one.",
+        }
+    _ntpd_install_guards()
+    _ntpd_transition(mode, restart=True)
+    return {"ntpd": "reconcile complete", "managed": True, "mode": mode}
+
+
+def _ntpd_guard(phase: str) -> int:
+    """Enforce selected clock ownership at boot and service restart boundaries."""
+    if phase not in {"boot", "pre-vmtoolsd", "post-vmtoolsd", "pre-ntpd"}:
+        print("ntpd guard requires boot, pre-vmtoolsd, post-vmtoolsd, or pre-ntpd", file=sys.stderr)
+        return 2
+    if not NTP_CONFIG_PATH.is_file() or not _ntpd_config_managed(NTP_CONFIG_PATH):
+        # Vendor configuration is never imported or started automatically.
+        if phase == "pre-ntpd":
+            print("No Atlaso-owned time config is applied; run appliance Apply before starting ntpd.", file=sys.stderr)
+            return 1
+        return 0
+    try:
+        mode = _ntpd_time_mode(NTP_CONFIG_PATH)
+        if phase == "pre-vmtoolsd":
+            _ntpd_stop_service("ntpd.service", disable=mode == "vmware_tools")
+            for unit in ("chronyd.service", "systemd-timesyncd.service"):
+                _ntpd_stop_service(unit)
+            _ntpd_client_packet_guard(mode)
+        elif phase == "pre-ntpd":
+            if mode not in {"ntp_client", "ntp_server", "vmware_tools"}:
+                raise RuntimeError("No active NTP time mode is selected; apply time-source settings before starting ntpd.")
+            if mode == "vmware_tools":
+                for unit in ("chronyd.service", "systemd-timesyncd.service"):
+                    _ntpd_stop_service(unit)
+                _ntpd_client_packet_guard(mode)
+                _ntpd_set_vmware_timesync(True)
+                raise RuntimeError("ntpd is not the selected clock source; VMware Tools mode is active.")
+            for unit in ("chronyd.service", "systemd-timesyncd.service"):
+                _ntpd_stop_service(unit)
+            _ntpd_client_packet_guard(mode)
+            _ntpd_set_vmware_timesync(False)
+        elif phase == "post-vmtoolsd":
+            if mode == "vmware_tools":
+                for unit in ("ntpd.service", "chronyd.service", "systemd-timesyncd.service"):
+                    _ntpd_stop_service(unit)
+                _ntpd_client_packet_guard(mode)
+                _ntpd_set_vmware_timesync(True)
+            elif mode in {"ntp_client", "ntp_server"}:
+                _ntpd_client_packet_guard(mode)
+                _ntpd_set_vmware_timesync(False)
+                for unit in ("chronyd.service", "systemd-timesyncd.service"):
+                    _ntpd_stop_service(unit)
+                _ntpd_run_checked(["systemctl", "enable", "ntpd.service"], "Enable ntpd.service")
+                _ntpd_run_checked(["systemctl", "start", "--no-block", "ntpd.service"], "Queue ntpd.service after VMware Tools restart")
+        elif phase == "boot":
+            if mode == "vmware_tools":
+                _ntpd_stop_service("ntpd.service")
+            for unit in ("chronyd.service", "systemd-timesyncd.service"):
+                _ntpd_stop_service(unit)
+            _ntpd_client_packet_guard(mode)
+            if mode == "vmware_tools":
+                _ntpd_set_vmware_timesync(True)
+            elif mode in {"ntp_client", "ntp_server"}:
+                _ntpd_set_vmware_timesync(False)
+    except (OSError, RuntimeError, ValueError) as exc:
+        print(f"Appliance clock guard failed: {exc}", file=sys.stderr)
+        return 1
+    return 0
+
+
 def _ntpd_status() -> int:
     """Perform ntpd status.
 
     """
     ntpq = shutil.which("ntpq")
-    if ntpq is None:
-        print(json.dumps({"error": "ntpq command not found"}, sort_keys=True))
-        return 0
-    payload = {}
+    payload: dict[str, object] = {}
     for key, command in {
-        "peers": [ntpq, "-pn"],
-        "variables": [ntpq, "-c", "rv"],
-        "nts": [ntpq, "-c", "ntsinfo"],
+        "peers": [ntpq or "ntpq", "-pn"],
+        "variables": [ntpq or "ntpq", "-c", "rv"],
+        "nts": [ntpq or "ntpq", "-c", "ntsinfo"],
     }.items():
+        if ntpq is None:
+            payload[key] = {"returncode": 127, "stdout": "", "stderr": "ntpq command not found"}
+            continue
         try:
             result = _run(command, timeout=1.5)
             payload[key] = {
@@ -6906,8 +7329,209 @@ def _ntpd_status() -> int:
                 "stdout": "",
                 "stderr": "ntpq status command timed out after 1.5 seconds",
             }
+    mode = "unmanaged"
+    if NTP_CONFIG_PATH.is_file() and _ntpd_config_managed(NTP_CONFIG_PATH):
+        try:
+            mode = _ntpd_time_mode(NTP_CONFIG_PATH)
+        except ValueError:
+            mode = "invalid"
+    all_sources = {
+        "ntpd": _ntpd_service_state("ntpd.service"),
+        "chronyd": _ntpd_service_state("chronyd.service"),
+        "systemd_timesyncd": _ntpd_service_state("systemd-timesyncd.service"),
+        "vmware_tools": _ntpd_vmware_timesync_state(),
+    }
+    selected_name = "ntpd" if mode in {"ntp_client", "ntp_server"} else "vmware_tools" if mode == "vmware_tools" else None
+    selected_state = all_sources.get(selected_name) if selected_name else None
+    selected_controller = {
+        "name": selected_name,
+        "active": selected_state.get("active") if isinstance(selected_state, dict) else None,
+        "enabled": selected_state.get("enabled") if isinstance(selected_state, dict) else None,
+        "detail": selected_state.get("detail", "") if isinstance(selected_state, dict) else "No managed clock controller is selected.",
+    }
+    daemon_conflicts = {name: state for name, state in all_sources.items() if name != selected_name}
+    client_packet_guard: dict[str, object] | None = None
+    if mode == "ntp_client":
+        client_packet_guard = _ntpd_client_packet_guard_status()
+        payload["client_packet_guard"] = client_packet_guard
+    variables = payload["variables"]
+    variable_text = ""
+    if isinstance(variables, dict):
+        variable_text = f"{variables.get('stdout', '')} {variables.get('stderr', '')}".lower()
+    ntpd_reports_sync = (
+        isinstance(variables, dict)
+        and variables.get("returncode") == 0
+        and "leap_none" in variable_text
+        and "sync_ntp" in variable_text
+    )
+    peers_payload = payload["peers"]
+    peer_rows: list[list[str]] = []
+    if isinstance(peers_payload, dict) and peers_payload.get("returncode") == 0:
+        peer_rows = [
+            line.split()
+            for line in str(peers_payload.get("stdout") or "").splitlines()
+            if line.strip() and not line.lstrip().startswith("remote")
+        ]
+    selected_peer: dict[str, object] | None = None
+    for fields in peer_rows:
+        if len(fields) >= 7 and "*" in fields[0]:
+            selected_peer = {"address": fields[0].lstrip("*+-#ox."), "stratum": fields[2], "reach": fields[6]}
+            break
+    payload["upstream"] = {
+        "selected": selected_peer,
+        "reach_zero": bool(peer_rows) and all(len(fields) >= 7 and fields[6] == "0" for fields in peer_rows),
+    }
+    if mode in {"ntp_client", "ntp_server"}:
+        active_conflicts = [
+            name for name, state in daemon_conflicts.items()
+            if isinstance(state, dict) and (state.get("active") is True or state.get("enabled") is True)
+        ]
+        conflict_active = bool(active_conflicts)
+        conflict_unknown = any(
+            isinstance(state, dict) and (state.get("active") is None or state.get("enabled") is None)
+            for state in daemon_conflicts.values()
+        )
+        guard_missing = mode == "ntp_client" and client_packet_guard is not None and client_packet_guard.get("active") is False
+        if selected_controller["active"] is False:
+            ntpd_healthy = False
+            detail = "ntpd.service is inactive. Apply the selected NTP mode and inspect the ntpd service log."
+        elif selected_controller["enabled"] is False:
+            ntpd_healthy = False
+            detail = "ntpd.service is disabled and will not persist across boot. Reapply the selected NTP mode."
+        elif conflict_active:
+            ntpd_healthy = False
+            detail = f"Competing clock source(s) are active or enabled: {', '.join(active_conflicts)}. Disable them before relying on NTPsec."
+        elif guard_missing:
+            ntpd_healthy = False
+            detail = "The client-only UDP/123 packet guard is missing or differs from the applied policy. Reapply NTP settings."
+        elif mode == "ntp_client" and client_packet_guard is not None and client_packet_guard.get("active") is None:
+            ntpd_healthy = None
+            detail = "The client-only UDP/123 packet guard could not be verified."
+        elif conflict_unknown or selected_controller["active"] is None or selected_controller["enabled"] is None:
+            ntpd_healthy = None
+            detail = "A clock-controller service state could not be proven."
+        elif not isinstance(variables, dict) or variables.get("returncode") != 0:
+            ntpd_healthy = None
+            detail = "NTPsec synchronization state is unavailable; check the ntpq status probe."
+        elif "leap_alarm" in variable_text:
+            ntpd_healthy = False
+            detail = "NTPsec reports leap_alarm. Check upstream reachability and the NTPsec service log."
+        elif peer_rows and all(len(fields) >= 7 and fields[6] == "0" for fields in peer_rows):
+            ntpd_healthy = False
+            detail = "No upstream replies are recorded; check reachability, UDP return traffic, and NTS-KE diagnostics when NTS is enabled."
+        elif "no_sys_peer" in variable_text:
+            ntpd_healthy = False
+            detail = "NTPsec has no selected system peer. Check configured upstreams and NTS-KE diagnostics when NTS is enabled."
+        elif not ntpd_reports_sync:
+            ntpd_healthy = False
+            detail = "NTPsec has not reported leap_none and sync_ntp. Check the selected upstream and service log."
+        else:
+            ntpd_healthy = True
+            detail = "NTPsec reports leap_none and sync_ntp with no enabled competing clock source."
+        if ntpd_healthy is True and mode == "ntp_client":
+            detail = "NTPsec reports leap_none and sync_ntp, the client packet guard is active, and no competing clock source is enabled."
+        payload["synchronization"] = {
+            "state": "synchronized" if ntpd_healthy is True else "unsynchronized" if ntpd_healthy is False else "unavailable",
+            "healthy": ntpd_healthy,
+            "detail": detail,
+        }
+    elif mode == "vmware_tools":
+        active_conflicts = [
+            name for name, state in daemon_conflicts.items()
+            if isinstance(state, dict) and (state.get("active") is True or state.get("enabled") is True)
+        ]
+        conflict_active = bool(active_conflicts)
+        timesync_enabled = selected_controller["active"] is True
+        if conflict_active:
+            vmware_health: bool | None = False
+            vmware_detail = f"Competing clock source(s) are active or enabled: {', '.join(active_conflicts)}. Stop them before relying on VMware Tools."
+        elif selected_controller["active"] is False:
+            vmware_health = False
+            vmware_detail = "VMware Tools periodic time synchronization is disabled. Reapply the selected time source."
+        else:
+            vmware_health = None
+            vmware_detail = "VMware Tools reports its time-sync setting; it does not expose guest clock synchronization health."
+        payload["synchronization"] = {
+            "state": "unavailable",
+            "healthy": vmware_health,
+            "detail": vmware_detail,
+        }
+        payload["vmware_timesync_enabled"] = timesync_enabled
+    else:
+        payload["synchronization"] = {
+            "state": "unavailable",
+            "healthy": None,
+            "detail": "Apply a managed time-source configuration to report synchronization health.",
+        }
+    payload["mode"] = mode
+    payload["selected_controller"] = selected_controller
+    payload["daemon_conflicts"] = daemon_conflicts
     print(json.dumps(payload, sort_keys=True))
     return 0
+
+
+def _ntpd_service_state(unit: str) -> dict[str, object]:
+    """Read one bounded systemd service state."""
+    systemctl = shutil.which("systemctl")
+    if systemctl is None:
+        return {"active": None, "enabled": None, "detail": "systemctl command not found"}
+    try:
+        active_result = _run([systemctl, "is-active", unit], timeout=0.25)
+        enabled_result = _run([systemctl, "is-enabled", unit], timeout=0.25)
+    except (OSError, subprocess.TimeoutExpired):
+        return {"active": None, "enabled": None, "detail": "service state probe failed"}
+    active_state = active_result.stdout.strip().lower()
+    enabled_state = enabled_result.stdout.strip().lower()
+    enabled_output = f"{enabled_result.stdout} {enabled_result.stderr}".lower()
+    unit_missing = (
+        active_result.returncode == 4
+        or enabled_state == "not-found"
+        or "could not be found" in enabled_output
+    )
+    if unit_missing:
+        return {"active": False, "enabled": False, "detail": "unit not installed"}
+    if active_result.returncode == 0 and active_state == "active":
+        active: bool | None = True
+    elif active_result.returncode in {3, 4} or active_state in {"inactive", "failed", "unknown", "not-found"}:
+        active = False
+    else:
+        active = None
+    if enabled_result.returncode == 0 and enabled_state in {"enabled", "enabled-runtime"}:
+        enabled: bool | None = True
+    elif enabled_state in {"disabled", "masked", "not-found"}:
+        enabled = False
+    else:
+        enabled = None
+    detail = active_state or "inactive"
+    if enabled is None:
+        detail = f"{detail}; enabled state is indeterminate"
+    elif enabled:
+        detail = f"{detail}; enabled"
+    else:
+        detail = f"{detail}; disabled"
+    return {"active": active, "enabled": enabled, "detail": detail}
+
+
+def _ntpd_vmware_timesync_state() -> dict[str, object]:
+    """Read VMware Tools periodic time-sync setting with a bounded probe."""
+    toolbox = shutil.which("vmware-toolbox-cmd")
+    if toolbox is None:
+        tools_service = _ntpd_service_state("vmtoolsd.service")
+        if tools_service.get("active") is False:
+            return {"active": False, "enabled": False, "detail": "VMware Tools service is inactive"}
+        return {"active": None, "enabled": None, "detail": "VMware Tools time-sync command is unavailable"}
+    try:
+        result = _run([toolbox, "timesync", "status"], timeout=0.75)
+    except (OSError, subprocess.TimeoutExpired):
+        return {"active": None, "enabled": None, "detail": "VMware Tools time-sync status probe failed"}
+    output = f"{result.stdout} {result.stderr}".strip().lower()
+    if result.returncode == 0 and "enabled" in output and "disabled" not in output:
+        return {"active": True, "enabled": True, "detail": "enabled"}
+    # open-vm-tools uses EX_UNAVAILABLE (69) for a successfully reported
+    # disabled setting; enabled status returns 0.
+    if result.returncode in {0, 69} and "disabled" in output:
+        return {"active": False, "enabled": False, "detail": "disabled"}
+    return {"active": None, "enabled": None, "detail": "VMware Tools time-sync state is indeterminate"}
 
 
 def _ntpd_logs() -> int:
@@ -7015,6 +7639,22 @@ def _handle_ntpd(action: str, args: list[str]) -> int:
             print("ntpd status does not accept a path", file=sys.stderr)
             return 2
         return _ntpd_status()
+    if action == "reconcile":
+        if args:
+            print("ntpd reconcile does not accept arguments", file=sys.stderr)
+            return 2
+        try:
+            payload = _ntpd_reconcile_applied()
+        except (OSError, RuntimeError, ValueError) as exc:
+            print(f"Applied appliance clock reconciliation failed: {exc}", file=sys.stderr)
+            return 1
+        print(json.dumps(payload, sort_keys=True))
+        return 0
+    if action == "guard":
+        if len(args) != 1:
+            print("ntpd guard requires one phase", file=sys.stderr)
+            return 2
+        return _ntpd_guard(args[0])
     if len(args) != 1:
         print(f"ntpd {action} requires exactly one staged config path", file=sys.stderr)
         return 2
@@ -7023,71 +7663,46 @@ def _handle_ntpd(action: str, args: list[str]) -> int:
     except ValueError as exc:
         print(str(exc), file=sys.stderr)
         return 2
-    errors = _ntpd_config_errors(config_path)
-    enabled = _ntpd_config_enabled(config_path)
-    if enabled:
+    try:
+        mode = _ntpd_time_mode(config_path)
+    except (OSError, ValueError) as exc:
+        print(f"Invalid ntpd time mode: {exc}", file=sys.stderr)
+        return 2
+    errors = _ntpd_config_errors(config_path, mode)
+    if mode in {"ntp_client", "ntp_server"}:
         errors.extend(_ntpd_runtime_identity_errors())
     if action == "validate":
         if errors:
             for error in errors:
                 print(error, file=sys.stderr)
             return 2
-        print(json.dumps({"ntpd": "validation ok", "enabled": enabled, "service": "ntpd.service"}, sort_keys=True))
+        print(json.dumps({"ntpd": "validation ok", "mode": mode, "enabled": mode == "ntp_server", "service": "ntpd.service"}, sort_keys=True))
         return 0
     if errors:
         for error in errors:
             print(error, file=sys.stderr)
         return 2
-    removed_nts_server_material: list[str] = []
-    if not enabled or not _ntpd_nts_server_enabled(config_path):
-        try:
-            removed_nts_server_material = _remove_ntpd_nts_server_material()
-        except OSError as exc:
-            print(f"NTS server material cleanup failed: {exc}", file=sys.stderr)
-            return 2
-    if not enabled:
-        disable = _run(["systemctl", "disable", "--now", "ntpd.service"])
-        print(disable.stdout, end="")
-        print(disable.stderr, end="", file=sys.stderr)
-        if disable.returncode != 0:
-            return disable.returncode
-        print(
-            json.dumps(
-                {
-                    "ntpd": "apply complete",
-                    "enabled": False,
-                    "service": "ntpd.service",
-                    "removed_nts_server_material": removed_nts_server_material,
-                },
-                sort_keys=True,
-            )
-        )
-        return 0
     try:
-        _install_ntpd_config(config_path)
-        _grant_ntpd_nts_server_key_read(config_path)
-    except (OSError, RuntimeError) as exc:
-        print(f"ntpd config installation failed: {exc}", file=sys.stderr)
-        return 2
-    for command in [
-        ["systemctl", "disable", "--now", "chronyd.service"],
-        ["systemctl", "disable", "--now", "systemd-timesyncd"],
-        ["systemctl", "enable", "ntpd.service"],
-        ["systemctl", "restart", "ntpd.service"],
-    ]:
-        result = _run(command)
-        print(result.stdout, end="")
-        print(result.stderr, end="", file=sys.stderr)
-        if result.returncode != 0 and command[:3] != ["systemctl", "disable", "--now"]:
-            return result.returncode
+        if mode != "disabled":
+            _ntpd_write_managed_file(NTP_CONFIG_PATH, config_path.read_text(encoding="utf-8"))
+            _ntpd_install_guards()
+        if mode in {"ntp_client", "ntp_server"}:
+            # Restore the managed NTP state directory after the marker copy,
+            # then apply the exact staged config through the package-aware path.
+            _ntpd_transition(mode, config_path, restart=True)
+        else:
+            _ntpd_transition(mode, config_path if mode == "vmware_tools" else None)
+    except (OSError, RuntimeError, ValueError) as exc:
+        print(f"ntpd clock-source transition failed: {exc}", file=sys.stderr)
+        return 1
     print(
         json.dumps(
             {
                 "ntpd": "apply complete",
-                "enabled": True,
-                "config_path": str(NTP_CONFIG_PATH),
-                "service": "ntpd.service",
-                "removed_nts_server_material": removed_nts_server_material,
+                "enabled": mode == "ntp_server",
+                "mode": mode,
+                "config_path": str(NTP_CONFIG_PATH) if mode != "disabled" else None,
+                "service": "ntpd.service" if mode in {"ntp_client", "ntp_server"} else None,
             },
             sort_keys=True,
         )
@@ -31151,6 +31766,8 @@ def main(argv: list[str]) -> int:
 
     if (group, action) == ("nat", "status"):
         return _handle_nat(action, normalized_args)
+    if real_apply and (group, action) == ("ntpd", "status"):
+        return _handle_ntpd(action, normalized_args)
 
     if real_apply and (group, action) == ("appliance-update", "check") and os.environ.get(SYSTEMD_RUN_CHILD_ENV) != "1":
         if shutil.which("systemd-run") is None:

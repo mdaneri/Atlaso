@@ -721,6 +721,7 @@ class NtpSettings(Base):
     Attributes:
         id: Unique database identifier for the resource.
         enabled: Whether the resource is enabled.
+        time_source: Persisted source mode when NTP server mode is disabled.
         hostname: Persisted hostname for the ntpsettings resource.
         listen_interface: Persisted listen interface for the ntpsettings resource.
         listen_address: Persisted listen address for the ntpsettings resource.
@@ -740,6 +741,9 @@ class NtpSettings(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    time_source: Mapped[str] = mapped_column(
+        String(32), nullable=False, default="ntp_client", server_default="ntp_client"
+    )
     hostname: Mapped[str] = mapped_column(String(180), default="ntp.atlaso.internal")
     listen_interface: Mapped[str] = mapped_column(String(240), default="")
     listen_address: Mapped[str] = mapped_column(String(240), default="")

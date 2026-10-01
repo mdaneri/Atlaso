@@ -38,6 +38,39 @@ This verified appliance view provides visual orientation before you begin.
    hostname through the DNS/DHCP unit after NTP succeeds when its managed record changed. If managed LDAP is active,
    Atlaso also includes any changed CA, DNS/DHCP, Firewall, and Managed LDAP dependency units in the same task.
 
+## Appliance clock source
+
+When the NTP service is disabled, **Appliance time source** selects one clock authority:
+
+- **NTP client** is the default. Atlaso uses its configured upstream NTP/NTS sources to discipline the appliance
+  clock and disables VMware Tools periodic guest time synchronization.
+- **VMware Tools** uses the hypervisor's guest time synchronization and disables Atlaso's NTP client service.
+
+These sources are mutually exclusive because both can adjust the same system clock. Enabling the NTP service makes the
+managed **NTP/NTS server** the effective clock mode; NTPsec uses the configured upstream sources and Atlaso disables
+VMware Tools time synchronization. The remembered client choice is retained while server mode is on and becomes
+effective again when the NTP service is disabled. The NTS server switch controls NTS Key Establishment for clients;
+it does not select the appliance clock mode by itself.
+
+The selection autosaves as desired state. Global Appliance Apply performs the host transition and verifies its result;
+the page reports the effective mode, NTP synchronization health, and detected local daemon states separately from the
+saved choice. Startup, restore, appliance updates, and reboot preserve the same mutual-exclusion rule. Settings archive
+and restore include the selected source. Factory reset returns the source to the documented **NTP client** default.
+
+For read-only diagnosis on the appliance, inspect the Atlaso status and VMware Tools time-sync interfaces:
+
+```sh
+atlaso-helper ntpd status
+vmware-toolbox-cmd timesync status
+```
+
+An unsynchronized NTP client or server may indicate an unreachable upstream, NTS key-establishment failure, missing
+NTP replies, `leap_alarm` or no system peer, or another active local clock daemon. VMware Tools being active while
+NTP client or server mode is effective is a clock-source conflict. A listening UDP 123 or TCP 4460 socket alone does
+not mean the appliance clock is synchronized. Use the status details, correct upstream reachability or the conflicting
+service through the supported appliance workflow, and apply again. If helper status is unavailable, Atlaso reports the
+effective state as unknown instead of claiming the clock is healthy.
+
 Appliance Settings does not own time enforcement. DNS/DHCP also does not apply NTP configuration.
 The configured NTP hostname serves both NTP and NTS; Atlaso creates one managed CNAME with A and AAAA targets for
 the selected listener addresses. Disable NTP to remove those owned records while preserving operator DNS rows.
