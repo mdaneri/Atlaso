@@ -1153,3 +1153,17 @@ def test_render_network_config_includes_dual_stack_physical_and_vlan_cidrs():
     assert "vlan=eth1.20" in config
     assert "  ip_cidr=192.168.20.1/24" in config
     assert "  ipv6_cidr=2001:db8:20::1/64" in config
+
+
+@pytest.mark.parametrize("state", [{"tentative": True}, {"dadfailed": True}, {"flags": ["tentative"]}, {"flags": ["dadfailed"]}])
+def test_parse_linux_ip_interfaces_rejects_unusable_address_states(state):
+    """Skip unusable native addresses while retaining a later usable address.
+
+    Args:
+        state: Boolean or flags representation of native address readiness.
+    """
+    bad = {"family": "inet6", "local": "2001:db8::1", "prefixlen": 64, "scope": "global", **state}
+    row = {"ifname": "eth0", "link_type": "ether", "address": "00:15:5d:aa:bb:01", "addr_info": [bad]}
+    assert parse_linux_ip_interfaces(json.dumps([row]))[0].host_ipv6_cidr is None
+    row["addr_info"].append({"family": "inet6", "local": "2001:db8::2", "prefixlen": 64, "scope": "global"})
+    assert parse_linux_ip_interfaces(json.dumps([row]))[0].host_ipv6_cidr == "2001:db8::2/64"

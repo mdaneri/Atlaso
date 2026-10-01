@@ -75,7 +75,7 @@ def test_access_management_address_edit_matches_console_desired_state(
     console_units = []
     monkeypatch.setattr(appliance_console, "_management_interface", lambda db: db.get(PhysicalInterface, interface_id))
     monkeypatch.setattr(appliance_console, "_ensure_no_active_apply", lambda: None)
-    monkeypatch.setattr(appliance_console, "_refresh_management_addresses", lambda interface_id: None)
+    monkeypatch.setattr(appliance_console, "_refresh_management_addresses", lambda interface_id, **kwargs: None)
     monkeypatch.setattr(appliance_console, "_recover_management_plane", lambda stage: None)
     monkeypatch.setattr(appliance_console, "_submit_console_apply", lambda units: console_units.append(units) or "test-console-job")
     appliance_console.configure_management(

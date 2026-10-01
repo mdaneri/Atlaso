@@ -1529,7 +1529,7 @@ def test_console_management_correction_reconciles_firewall_bootstrap_and_setting
     monkeypatch.setattr(
         appliance_console,
         "_refresh_management_addresses",
-        lambda interface_id: events.append(("observe", interface_id)),
+        lambda interface_id, **kwargs: events.append(("observe", interface_id)),
     )
     monkeypatch.setattr(
         appliance_console,
@@ -1603,6 +1603,14 @@ def test_console_management_refreshes_changed_dhcp_lease_before_recovery_and_set
         """
         if units == {"appliance_settings"}:
             capture("settings")
+        else:
+            with SessionLocal() as db:
+                db.add(appliance_console.Job(
+                    id="job_test", type="appliance-apply", status="succeeded", created_by="console:root",
+                    result=json.dumps({"captured_units": [{"unit_id": "network", "config_preview":
+                        "[physical_interfaces]\ninterface=eth0\nipv4_method=dhcp\nipv6_enabled=false\n"}]}),
+                ))
+                db.commit()
         return "job_test"
 
     monkeypatch.setattr(appliance_console, "_submit_console_apply", submit)
@@ -1803,11 +1811,12 @@ def test_console_management_observation_failure_stops_dependent_work(client, mon
     selected = []
     monkeypatch.setattr(appliance_console, "_submit_console_apply", lambda units: selected.append(units) or "job_network")
 
-    def fail_observation(interface_id):
+    def fail_observation(interface_id, **kwargs):
         """Stop dependent work with a controlled observation failure.
 
         Args:
             interface_id: Stable identity of the selected management interface.
+            **kwargs: Completed-task observation options.
         """
         raise ConsoleOperationError("fresh management address observation failed")
 
@@ -2427,3 +2436,43 @@ def test_console_first_boot_https_contract_accepts_annotated_active_outer_includ
     monkeypatch.setattr(helper, "NGINX_MANAGEMENT_SITE_PATH", management_config)
 
     assert helper._console_first_boot_https_contract_is_complete() is True
+
+
+@pytest.mark.parametrize("pending_cidr", [None, "192.168.167.175/24"])
+def test_console_observation_uses_applied_snapshot_with_pending_edits(client, monkeypatch, pending_cidr):
+    """Verify an applied static address independently and retain newer pending intent.
+
+    Args:
+        client: Initialized application database fixture.
+        monkeypatch: Replace native discovery with the applied static address.
+        pending_cidr: New static address, or a newer DHCP selection.
+    """
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.services.networking import HostPhysicalInterface
+
+    with SessionLocal() as db:
+        target = appliance_console._management_interface(db)
+        target.ipv4_method = "static" if pending_cidr else "dhcp"
+        target.ip_cidr = pending_cidr
+        target.ipv6_enabled = False
+        target.ipv6_cidr = None
+        interface_id = target.id
+        observed = HostPhysicalInterface(
+            name=target.name, mac_address=target.mac_address, driver=None, speed=None,
+            host_ip_cidr="192.168.167.173/24", host_mtu=1500, host_admin_state="up", oper_state="up",
+        )
+        db.add(appliance_console.Job(
+            id="job_applied", type="appliance-apply", status="succeeded", created_by="console:root",
+            result=json.dumps({"captured_units": [{"unit_id": "network", "config_preview":
+                f"[physical_interfaces]\ninterface={target.name}\nipv4_method=static\n"
+                "ip_cidr=192.168.167.173/24\nipv6_enabled=false\n"}]}),
+        ))
+        db.commit()
+    monkeypatch.setattr(appliance_console, "discover_host_physical_interfaces", lambda **kwargs: [observed])
+    with pytest.raises(ConsoleOperationError, match="newer address edits remain pending"):
+        appliance_console._refresh_management_addresses(interface_id, network_job_id="job_applied", timeout=0)
+    with SessionLocal() as db:
+        target = db.get(appliance_console.PhysicalInterface, interface_id)
+        assert target.ip_cidr == pending_cidr
+        assert target.ipv4_method == ("static" if pending_cidr else "dhcp")
+        assert target.host_ip_cidr == "192.168.167.173/24"

@@ -1214,16 +1214,39 @@ def _recover_management_plane(stage: str) -> None:
         raise ConsoleOperationError(f"{stage}, but management-plane recovery failed: {detail}")
 
 
-def _refresh_management_addresses(interface_id: int, *, timeout: float = 30) -> None:
+def _refresh_management_addresses(
+    interface_id: int, *, network_job_id: str | None = None, timeout: float = 30,
+) -> None:
     """Observe the corrected link before recovery captures certificates and Settings.
 
     Args:
         interface_id: Stable identity of the physical interface edited by the console.
+        network_job_id: Completed task containing the exact submitted Network snapshot.
         timeout: Maximum seconds to wait for every requested address family.
 
     Raises:
         ConsoleOperationError: If fresh host inventory cannot confirm the corrected addresses.
     """
+    with SessionLocal() as db:
+        target = db.get(PhysicalInterface, interface_id)
+        if target is None:
+            raise ConsoleOperationError("The applied management interface is unavailable.")
+        expected = (target.ipv4_method, target.ip_cidr, target.ipv6_enabled, target.ipv6_cidr)
+        if network_job_id is not None:
+            from atlaso.app.ui import network_interface_entries
+
+            job = db.get(Job, network_job_id)
+            payload = json.loads(job.result or "{}") if job is not None else {}
+            units = [unit for unit in payload.get("captured_units", []) if unit.get("unit_id") == "network"]
+            rows = network_interface_entries(str(units[0].get("config_preview") or "")) if len(units) == 1 else []
+            matches = [row for row in rows if row.get("kind") == "physical" and row.get("name") == target.name]
+            if job is None or job.status != JobStatus.SUCCEEDED.value or len(matches) != 1:
+                raise ConsoleOperationError("The completed task's management Network snapshot is unavailable.")
+            row = matches[0]
+            expected = (
+                row.get("ipv4_method", "static"), row.get("ip_cidr") or None,
+                row.get("ipv6_enabled", "false").lower() == "true", row.get("ipv6_cidr") or None,
+            )
     deadline = time.monotonic() + timeout
     while True:
         with SessionLocal() as db:
@@ -1238,9 +1261,9 @@ def _refresh_management_addresses(interface_id: int, *, timeout: float = 30) -> 
             observed = matches[0] if len(matches) == 1 else None
             required = []
             if interface is not None and observed is not None:
-                required.append((4, observed.host_ip_cidr, interface.ip_cidr))
-                if interface.ipv6_enabled:
-                    required.append((6, observed.host_ipv6_cidr, interface.ipv6_cidr))
+                required.append((4, observed.host_ip_cidr, expected[1] if expected[0] != "dhcp" else None))
+                if expected[2]:
+                    required.append((6, observed.host_ipv6_cidr, expected[3]))
             verified = bool(
                 observed is not None
                 and observed.host_admin_state == "up" and observed.oper_state == "up"
@@ -1248,22 +1271,29 @@ def _refresh_management_addresses(interface_id: int, *, timeout: float = 30) -> 
             for family, observed_cidr, desired in required:
                 try:
                     address = ip_interface(observed_cidr or "")
-                    expected = ip_interface(desired) if desired else None
+                    expected_address = ip_interface(desired) if desired else None
                 except ValueError:
                     verified = False
                     continue
                 if (
                     address.version != family or address.ip.is_unspecified
                     or address.ip.is_loopback or address.ip.is_link_local or address.ip.is_multicast
-                    or (expected is not None and address != expected)
+                    or (expected_address is not None and address != expected_address)
                 ):
                     verified = False
             if verified and interface is not None and observed is not None:
                 # Polling must never interpret unavailable discovery as removal or
                 # reconcile unrelated desired state. Publish only the verified target.
+                db.refresh(interface)
                 interface.host_ip_cidr = observed.host_ip_cidr
                 interface.host_ipv6_cidr = observed.host_ipv6_cidr
+                pending = (interface.ipv4_method, interface.ip_cidr, interface.ipv6_enabled, interface.ipv6_cidr) != expected
                 db.commit()
+                if pending:
+                    raise ConsoleOperationError(
+                        "The applied management addresses were observed, but newer address edits remain pending. "
+                        "Certificate recovery and Appliance Settings were not started; apply or reconcile those edits first."
+                    )
                 return
         remaining = deadline - time.monotonic()
         if remaining <= 0:
@@ -1333,7 +1363,7 @@ def configure_management(
             detail=f"ipv4_method={method}; ipv6_mode={mode}; dns_servers={len(dns_servers)}",
         )
     network_job_id = _submit_console_apply({"network", "firewall"})
-    _refresh_management_addresses(interface_id)
+    _refresh_management_addresses(interface_id, network_job_id=network_job_id)
     _recover_management_plane("Network and Firewall were applied")
     settings_job_id = _submit_console_apply({"appliance_settings"})
     _recover_management_plane("Appliance Settings were applied")

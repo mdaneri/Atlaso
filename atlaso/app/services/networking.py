@@ -266,6 +266,9 @@ def _host_ip_cidr(row: dict, family: str) -> str | None:
             continue
         if address.get("scope") in {"host", "link"}:
             continue
+        flags = address.get("flags") or []
+        if any(address.get(flag) or flag in flags for flag in ("tentative", "dadfailed")):
+            continue
         local = address.get("local")
         prefixlen = address.get("prefixlen")
         if local and prefixlen is not None:
