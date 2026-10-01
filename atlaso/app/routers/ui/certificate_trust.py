@@ -27,6 +27,7 @@ from atlaso.app.database import get_db
 from atlaso.app.models import (
     CaCertificate,
     CaProfile,
+    VaultEntry,
     VsphereKeyProvider,
     VsphereTrustedVcenter,
     VsphereTrustedVcenterCertificate,
@@ -60,6 +61,14 @@ from atlaso.app.services.dnsmasq import (
 from atlaso.app.services.kms import (
     KMS_DEFAULT_CONFIG_PATH,
     KMS_DEFAULT_DATABASE_PATH,
+)
+from atlaso.app.services.vaults import list_vaults, vault_entry_uris
+from atlaso.app.services.vsphere_enrollment import (
+    EnrollmentError,
+    certificate_fingerprint,
+    discover_vcenter_client,
+    vcenter_https_endpoint,
+    vcenter_https_leaf,
 )
 from atlaso.app.services.vsphere_key_providers import (
     authenticated_provider_counts,
@@ -1687,14 +1696,358 @@ def build_routers(
         Returns:
             The endpoint response.
         """
+        context = kms_context(db)
+        context["vsphere_vault_credential_choices"] = []
+        if identity.has_role("admin"):
+            for vault in list_vaults(db):
+                for entry in vault.entries:
+                    if (
+                        entry.secret_type != "vcf_password"
+                        or not entry.username
+                        or not entry.encrypted_value
+                    ):
+                        continue
+                    for index, uri in enumerate(vault_entry_uris(entry)):
+                        try:
+                            host, port = vcenter_https_endpoint(uri)
+                        except EnrollmentError:
+                            continue
+                        authority = (
+                            f"[{host}]:{port}" if ":" in host else f"{host}:{port}"
+                        )
+                        context["vsphere_vault_credential_choices"].append(
+                            {
+                                "vault_id": vault.id,
+                                "entry_id": entry.id,
+                                "uri_index": index,
+                                "hostname": host,
+                                "port": port,
+                                "label": f"{vault.name} / {entry.key} ({entry.username}) — https://{authority} (URI {index + 1})",
+                            }
+                        )
         return render(
             request,
             "kms.html",
             {
                 "identity": identity,
-                **kms_context(db),
+                **context,
                 "appliance_apply_status": appliance_apply_status(db, "kms"),
             },
+        )
+
+    def _enrollment_target(
+        db: Session, host: str, vault_id: int, entry_id: int, uri_index: int
+    ):
+        """Bind a selected Vault URI before probing or decrypting credentials.
+
+        Args:
+            db: Active database session.
+            host: Submitted vCenter hostname or address.
+            vault_id: Selected Vault identifier.
+            entry_id: Selected Vault entry identifier.
+            uri_index: Selected saved URI position.
+        """
+        entry = db.execute(
+            select(VaultEntry).where(
+                VaultEntry.id == entry_id, VaultEntry.vault_id == vault_id
+            )
+        ).scalar_one_or_none()
+        if (
+            entry is None
+            or entry.secret_type != "vcf_password"
+            or not entry.username
+            or not entry.encrypted_value
+        ):
+            raise EnrollmentError(
+                "Choose a Vault entry with a vCenter username and password."
+            )
+        uris = vault_entry_uris(entry)
+        if uri_index < 0 or uri_index >= len(uris):
+            raise EnrollmentError("Choose a saved HTTPS URI for this vCenter.")
+        saved_host, port = vcenter_https_endpoint(uris[uri_index])
+        if normalize_vsphere_vcenter_hostname(host) != saved_host:
+            raise EnrollmentError(
+                "The vCenter host must match the selected saved HTTPS URI."
+            )
+        return entry, saved_host, port
+
+    def _discover_client(
+        db: Session,
+        identity: Identity,
+        *,
+        host: str,
+        cluster_id: str,
+        vault_id: int,
+        entry_id: int,
+        uri_index: int,
+        confirmed_https_fingerprint: str,
+    ):
+        """Resolve one Vault credential after out-of-band HTTPS confirmation.
+
+        Args:
+            db: Active database session.
+            identity: Authenticated administrator identity.
+            host: Normalized vCenter hostname or address.
+            cluster_id: Registered Atlaso KMIP cluster identifier.
+            vault_id: Selected Vault identifier.
+            entry_id: Selected Vault entry identifier.
+            uri_index: Selected saved HTTPS URI position.
+            confirmed_https_fingerprint: Out-of-band confirmed HTTPS certificate fingerprint.
+        """
+        entry, host, port = _enrollment_target(db, host, vault_id, entry_id, uri_index)
+        observed = certificate_fingerprint(vcenter_https_leaf(host, port=port))
+        if observed != confirmed_https_fingerprint.strip().upper():
+            raise EnrollmentError(
+                "Confirm the current vCenter HTTPS fingerprint before using a Vault credential."
+            )
+        settings = get_kms_settings_row(db)
+        discovered = discover_vcenter_client(
+            host=host,
+            port=port,
+            cluster_id=cluster_id,
+            username=entry.username,
+            password=decrypt_secret(entry.encrypted_value),
+            confirmed_https_fingerprint=observed,
+            atlaso_host=settings.hostname,
+            atlaso_port=settings.port,
+        )
+        record_audit(
+            db,
+            actor=identity.username,
+            action="discover_vsphere_client_certificate",
+            resource_type="vault_entry",
+            resource_id=str(entry.id),
+            detail=f"vault_id={vault_id}; cluster_id={cluster_id}; public_certificate=true",
+        )
+        return discovered
+
+    @kms_router.post("/vsphere-key-providers/enrollment/probe", response_model=None)
+    def probe_vsphere_enrollment(
+        request: Request,
+        hostname: str = Form(...),
+        vault_id: int = Form(...),
+        entry_id: int = Form(...),
+        uri_index: int = Form(...),
+        csrf: str = Form(...),
+        identity: Identity = Depends(require_session_identity),
+        db: Session = Depends(get_db),
+    ) -> JSONResponse:
+        """Show the vCenter HTTPS fingerprint before any credential access.
+
+        Args:
+            request: Incoming HTTP request.
+            hostname: vCenter hostname or address supplied by the administrator.
+            vault_id: Selected Vault identifier.
+            entry_id: Selected Vault entry identifier.
+            uri_index: Selected saved HTTPS URI position.
+            db: Active database session.
+            csrf: CSRF token authorizing this request.
+            identity: Authenticated administrator identity.
+        """
+        verify_csrf(request, csrf)
+        if not identity.has_role("admin"):
+            raise HTTPException(status_code=403, detail="Administrator role required.")
+        try:
+            _entry, host, port = _enrollment_target(
+                db, hostname, vault_id, entry_id, uri_index
+            )
+            fingerprint = certificate_fingerprint(vcenter_https_leaf(host, port=port))
+        except (ValueError, EnrollmentError) as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        return JSONResponse({"https_fingerprint": fingerprint})
+
+    @kms_router.post("/vsphere-key-providers/enrollment/inspect", response_model=None)
+    def inspect_vsphere_enrollment(
+        request: Request,
+        hostname: str = Form(...),
+        cluster_id: str = Form(...),
+        vault_id: int = Form(...),
+        entry_id: int = Form(...),
+        uri_index: int = Form(...),
+        confirmed_https_fingerprint: str = Form(...),
+        csrf: str = Form(...),
+        identity: Identity = Depends(require_session_identity),
+        db: Session = Depends(get_db),
+    ) -> JSONResponse:
+        """Inspect vCenter's public KMIP client identity without trusting it.
+
+        Args:
+            request: Incoming HTTP request.
+            hostname: vCenter hostname or address supplied by the administrator.
+            cluster_id: Registered Atlaso KMIP cluster identifier.
+            vault_id: Selected Vault identifier.
+            entry_id: Selected Vault entry identifier.
+            uri_index: Selected saved HTTPS URI position.
+            confirmed_https_fingerprint: Out-of-band confirmed HTTPS certificate fingerprint.
+            csrf: CSRF token authorizing this request.
+            identity: Authenticated administrator identity.
+            db: Active database session.
+        """
+        verify_csrf(request, csrf)
+        if not identity.has_role("admin"):
+            raise HTTPException(status_code=403, detail="Administrator role required.")
+        try:
+            discovered = _discover_client(
+                db,
+                identity,
+                host=hostname,
+                cluster_id=cluster_id,
+                vault_id=vault_id,
+                entry_id=entry_id,
+                uri_index=uri_index,
+                confirmed_https_fingerprint=confirmed_https_fingerprint,
+            )
+        except (ValueError, EnrollmentError) as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        return JSONResponse(
+            {
+                "client_fingerprint": discovered.fingerprint_sha256,
+                "subject": discovered.subject,
+                "expires_at": discovered.not_valid_after,
+                "cluster_id": discovered.cluster_id,
+                "vcenter_host": discovered.vcenter_host,
+            }
+        )
+
+    @kms_router.post("/vsphere-key-providers/enrollment/approve", response_model=None)
+    def approve_vsphere_enrollment(
+        request: Request,
+        provider_id: str = Form(...),
+        vcenter_id: str = Form(""),
+        name: str = Form(...),
+        hostname: str = Form(...),
+        cluster_id: str = Form(...),
+        vault_id: int = Form(...),
+        entry_id: int = Form(...),
+        uri_index: int = Form(...),
+        confirmed_https_fingerprint: str = Form(...),
+        expected_client_fingerprint: str = Form(...),
+        csrf: str = Form(...),
+        identity: Identity = Depends(require_session_identity),
+        db: Session = Depends(get_db),
+    ) -> JSONResponse:
+        """Approve one freshly rechecked client certificate for one provider.
+
+        Args:
+            request: Incoming HTTP request.
+            provider_id: Provider namespace receiving the approved certificate.
+            vcenter_id: Existing trusted vCenter identifier when refreshing.
+            name: Reviewed trusted vCenter display name.
+            hostname: vCenter hostname or address supplied by the administrator.
+            cluster_id: Registered Atlaso KMIP cluster identifier.
+            vault_id: Selected Vault identifier.
+            entry_id: Selected Vault entry identifier.
+            uri_index: Selected saved HTTPS URI position.
+            confirmed_https_fingerprint: Out-of-band confirmed HTTPS certificate fingerprint.
+            expected_client_fingerprint: Public client certificate fingerprint approved after inspection.
+            csrf: CSRF token authorizing this request.
+            identity: Authenticated administrator identity.
+            db: Active database session.
+        """
+        verify_csrf(request, csrf)
+        if not identity.has_role("admin"):
+            raise HTTPException(status_code=403, detail="Administrator role required.")
+        provider = db.get(VsphereKeyProvider, provider_id)
+        if provider is None or not provider.enabled:
+            raise HTTPException(
+                status_code=422, detail="Choose an enabled provider namespace."
+            )
+        try:
+            discovered = _discover_client(
+                db,
+                identity,
+                host=hostname,
+                cluster_id=cluster_id,
+                vault_id=vault_id,
+                entry_id=entry_id,
+                uri_index=uri_index,
+                confirmed_https_fingerprint=confirmed_https_fingerprint,
+            )
+            if (
+                discovered.fingerprint_sha256
+                != expected_client_fingerprint.strip().lower()
+            ):
+                raise EnrollmentError(
+                    "The vCenter client certificate changed since inspection."
+                )
+            if not name.strip() or len(name.strip()) > 120:
+                raise EnrollmentError("Enter a vCenter name of 1 to 120 characters.")
+            if vcenter_id:
+                vcenter = db.get(VsphereTrustedVcenter, vcenter_id)
+                if (
+                    vcenter is None
+                    or vcenter.provider_id != provider.id
+                    or (
+                        vcenter.hostname and vcenter.hostname != discovered.vcenter_host
+                    )
+                ):
+                    raise EnrollmentError(
+                        "The existing vCenter does not match this provider and host."
+                    )
+                desired_changed = (
+                    vcenter.name != name.strip()
+                    or vcenter.hostname != discovered.vcenter_host
+                )
+                vcenter.name = name.strip()
+                vcenter.hostname = discovered.vcenter_host
+            else:
+                desired_changed = True
+                vcenter = VsphereTrustedVcenter(
+                    id=str(uuid4()),
+                    provider_id=provider.id,
+                    name=name.strip(),
+                    hostname=discovered.vcenter_host,
+                    enabled=True,
+                )
+                db.add(vcenter)
+                db.flush()
+            parsed = parse_public_certificate(discovered.certificate_pem)
+            certificate = db.execute(
+                select(VsphereTrustedVcenterCertificate).where(
+                    VsphereTrustedVcenterCertificate.fingerprint_sha256
+                    == parsed["fingerprint_sha256"]
+                )
+            ).scalar_one_or_none()
+            if certificate is not None:
+                if certificate.trusted_vcenter_id != vcenter.id:
+                    raise EnrollmentError(
+                        "The client fingerprint is already assigned to another vCenter."
+                    )
+            else:
+                certificate = VsphereTrustedVcenterCertificate(
+                    id=str(uuid4()),
+                    trusted_vcenter_id=vcenter.id,
+                    source="vcenter_api_discovered",
+                    **parsed,
+                )
+                db.add(certificate)
+                desired_changed = True
+            if desired_changed:
+                mark_provider_desired_changed(provider)
+            db.commit()
+        except (ValueError, EnrollmentError) as exc:
+            db.rollback()
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except IntegrityError as exc:
+            db.rollback()
+            raise HTTPException(
+                status_code=409,
+                detail="vCenter name or client fingerprint is already assigned.",
+            ) from exc
+        record_audit(
+            db,
+            actor=identity.username,
+            action="approve_vsphere_client_certificate",
+            resource_type="vsphere_trusted_vcenter",
+            resource_id=vcenter.id,
+            detail=f"provider_id={provider.id}; fingerprint_sha256={certificate.fingerprint_sha256}; public_certificate=true",
+        )
+        return JSONResponse(
+            {
+                "status": "saved_pending_appliance_apply",
+                "trusted_vcenter_id": vcenter.id,
+                "client_fingerprint": certificate.fingerprint_sha256,
+            }
         )
 
     @kms_router.get(

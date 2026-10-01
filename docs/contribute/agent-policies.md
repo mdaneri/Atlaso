@@ -1538,6 +1538,9 @@ preserved with their affected subsystem below. Keep new requirements at their to
   `/etc/atlaso/kmip/server.json` and `/etc/atlaso/kmip/client-trust.pem` and manages the hardened unprivileged service.
   The trust bundle contains only the internal CA public root and imported public vCenter certificates. Never generate,
   accept, export, or expose a vCenter client private key or plaintext operational key material.
+  Permit an enabled certificate-only listener with zero approved client fingerprints during vCenter-first enrollment;
+  that state presents Atlaso's CA-managed server identity but authorizes no KMIP key operation. Only an administrator's
+  verified exact client-fingerprint assignment to one provider, followed by global Apply, enables key access.
 - The Python `atlaso-kmip` service implements only the candidate VCF 9.1 contract in
   `atlaso/app/kmip/contracts/vcf_9_1.json`; keep the implementation experimental until issue #172 records the live
   VCF 9.1 acceptance and recovery evidence required to promote the contract to `observed`. A provider UUID defines an

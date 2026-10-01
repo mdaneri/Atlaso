@@ -1326,6 +1326,56 @@ def test_management_https_applies_pending_ca_before_settings(client, monkeypatch
     assert payload["management_handoff_units"][:4] == ["ca", "network", "firewall", "appliance_settings"]
 
 
+@pytest.mark.parametrize("certificate_state", ["no_baseline", "new", "rotated", "applied", "disabled"])
+def test_kms_apply_includes_only_unapplied_server_certificate(client, monkeypatch, certificate_state):
+    """Install a new KMS leaf before the listener without admitting unrelated CA edits.
+
+    Args:
+        client: Isolated authenticated test client.
+        monkeypatch: Keep the submitted job available for inspection.
+        certificate_state: Applied certificate and desired listener scenario.
+    """
+    from atlaso.app import ui
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import CaSettings, Job, KmsSettings
+
+    login(client)
+    with SessionLocal() as db:
+        db.query(CaSettings).one().enabled = True
+        settings = db.query(KmsSettings).one()
+        settings.enabled = True
+        db.commit()
+        units = ui.appliance_apply_units(db)
+        ca_unit = next(unit for unit in units if unit["id"] == "ca")
+        preview = json.loads(ca_unit["config_preview"])
+        certificate = next(row for row in preview["certificates"] if row["managed_owner"] == "kms:server")
+        if certificate_state == "new":
+            preview["certificates"].remove(certificate)
+        elif certificate_state == "rotated":
+            certificate["fingerprint"] = "previous-kms-leaf"
+        ca_unit["config_preview"] = json.dumps(preview)
+        ui.update_appliance_apply_baselines(
+            db, units, {unit["id"] for unit in units if certificate_state != "no_baseline" or unit["id"] != "ca"}
+        )
+        settings.port += 1
+        if certificate_state == "disabled":
+            settings.enabled = False
+        db.commit()
+
+    monkeypatch.setattr(ui, "run_appliance_apply_job", lambda _job_id: None)
+    csrf = client.get("/dashboard").text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    response = client.post("/appliance-apply", data={"csrf": csrf, "selected_units": "kms"},
+                           headers={"Accept": "application/json"})
+    assert response.status_code == 202, response.text
+    with SessionLocal() as db:
+        job = db.get(Job, response.json()["job_id"])
+        assert job is not None
+        payload = json.loads(job.result or "{}")
+    assert ("ca" in payload["selected_units"]) == (certificate_state in {"no_baseline", "new", "rotated"})
+    if "ca" in payload["selected_units"]:
+        assert payload["selected_units"].index("ca") < payload["selected_units"].index("kms")
+
+
 def test_management_binding_handoff_pairs_pending_routing_permission(client, monkeypatch):
     """An Appliance Settings handoff includes both routing enforcement owners.
 
@@ -2219,11 +2269,13 @@ def test_appliance_apply_router_owns_exact_transport_set():
     ]
 
 
-def test_appliance_apply_status_tolerates_duplicate_managed_certificate_owners(client):
+@pytest.mark.parametrize("fingerprint", ["", "invalid"])
+def test_appliance_apply_status_tolerates_duplicate_managed_certificate_owners(client, fingerprint):
     """Verify that status tolerates duplicate managed certificate owners.
 
     Args:
         client: HTTP test client used to exercise the Atlaso application.
+        fingerprint: Missing or malformed fingerprint from a legacy row.
     """
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import CaCertificate
@@ -2241,6 +2293,7 @@ def test_appliance_apply_status_tolerates_duplicate_managed_certificate_owners(c
                     common_name="newer-kms.atlaso.internal",
                     managed_owner="kms:server",
                     status="issued",
+                    fingerprint=fingerprint,
                     certificate_pem="test-certificate",
                     private_key_encrypted="test-encrypted-key",
                 ),

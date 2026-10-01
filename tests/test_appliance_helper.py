@@ -12315,10 +12315,12 @@ def test_kms_helper_rejects_coerced_json_types(
     assert any(expected in error for error in helper._kms_config_errors(config_path))
 
 
-def test_kms_helper_apply_installs_atlaso_kmip_service(monkeypatch, tmp_path):
+@pytest.mark.parametrize("legacy_active", [False, True])
+def test_kms_helper_apply_installs_atlaso_kmip_service(monkeypatch, tmp_path, legacy_active):
     """Verify that kms helper apply installs atlaso kmip service.
 
     Args:
+        legacy_active: Whether the legacy listener is active before replacement.
         monkeypatch: Pytest fixture used to replace dependencies for the test.
         tmp_path: Temporary directory provided by pytest for isolated filesystem state.
     """
@@ -12368,6 +12370,22 @@ def test_kms_helper_apply_installs_atlaso_kmip_service(monkeypatch, tmp_path):
             **kwargs: Bounded execution options for history cutover.
         """
         commands.append(command)
+        if command[:2] == ["systemctl", "show"]:
+            if command[2] == "atlaso-kms.service":
+                state = "active" if legacy_active else "inactive"
+                enabled = "enabled" if legacy_active else "disabled"
+            else:
+                state = "active" if service_path.exists() or not legacy_active else "inactive"
+                enabled = "enabled" if service_path.exists() else "disabled"
+            return subprocess.CompletedProcess(command, 0, f"LoadState=loaded\nActiveState={state}\nUnitFileState={enabled}\n", "")
+        if command == ["systemctl", "is-active", "--quiet", "atlaso-kms.service"]:
+            return subprocess.CompletedProcess(command, 0 if legacy_active else 3, "", "")
+        if command == ["systemctl", "is-enabled", "--quiet", "atlaso-kms.service"]:
+            return subprocess.CompletedProcess(command, 0 if legacy_active else 1, "", "")
+        if command == ["systemctl", "is-active", "--quiet", "atlaso-kmip.service"]:
+            if ["systemctl", "restart", "atlaso-kmip.service"] in commands:
+                return subprocess.CompletedProcess(command, 0, "", "")
+            return subprocess.CompletedProcess(command, 3 if legacy_active else 0, "", "")
         return subprocess.CompletedProcess(command, 0, "", "")
 
     def fake_run_with_input(command, input_text):
@@ -12392,6 +12410,7 @@ def test_kms_helper_apply_installs_atlaso_kmip_service(monkeypatch, tmp_path):
     monkeypatch.setattr(helper, "CA_MANAGED_PATH_BASE", managed_root)
     monkeypatch.setattr(helper, "_run", fake_run)
     monkeypatch.setattr(helper, "_run_with_input", fake_run_with_input)
+    monkeypatch.setattr(helper.time, "sleep", lambda _seconds: None)
     monkeypatch.setattr(helper, "_command_path", lambda name: Path("/usr/bin") / name)
     monkeypatch.setattr(helper.pwd, "getpwnam", lambda _name: SimpleNamespace(pw_uid=1001))
     monkeypatch.setattr(helper.grp, "getgrnam", lambda _name: SimpleNamespace(gr_gid=1002))
@@ -12401,6 +12420,30 @@ def test_kms_helper_apply_installs_atlaso_kmip_service(monkeypatch, tmp_path):
         lambda path, uid, gid: ownership.append((Path(path), uid, gid)),
         raising=False,
     )
+
+    if legacy_active:
+        def fail_upgrade_restart(command, **kwargs):
+            """Exercise rollback before any replacement unit existed.
+
+            Args:
+                command: Service command being simulated.
+                **kwargs: Forwarded bounded command options.
+            """
+            if command == ["systemctl", "restart", "atlaso-kmip.service"]:
+                commands.append(command)
+                return subprocess.CompletedProcess(command, 1, "", "")
+            if command == ["systemctl", "disable", "--now", "atlaso-kmip.service"] and not service_path.exists():
+                return subprocess.CompletedProcess(command, 1, "", "")
+            return fake_run(command, **kwargs)
+
+        monkeypatch.setattr(helper, "_run", fail_upgrade_restart)
+        assert helper._handle_kms("apply", [str(config_path)]) == 1
+        assert ["systemctl", "restart", "atlaso-kms.service"] in commands
+        assert not service_path.exists()
+        assert not (managed_root / "kmip" / ".cutover-rollback").exists()
+        commands.clear()
+        credential_inputs.clear()
+        monkeypatch.setattr(helper, "_run", fake_run)
 
     assert helper._handle_kms("apply", [str(config_path)]) == 0
 
@@ -12426,6 +12469,9 @@ def test_kms_helper_apply_installs_atlaso_kmip_service(monkeypatch, tmp_path):
     assert ["systemctl", "disable", "--now", "atlaso-kms.service"] in commands
     assert ["systemctl", "enable", "atlaso-kmip.service"] in commands
     assert ["systemctl", "restart", "atlaso-kmip.service"] in commands
+    assert commands.index(["systemctl", "disable", "--now", "atlaso-kms.service"]) < commands.index(
+        ["systemctl", "restart", "atlaso-kmip.service"]
+    )
     assert credential_inputs == [
         (
             [str(Path("/usr/bin") / "systemd-creds"), "encrypt", "--name=atlaso-secrets-key", "-", "-"],
@@ -12440,6 +12486,225 @@ def test_kms_helper_apply_installs_atlaso_kmip_service(monkeypatch, tmp_path):
     if os.name != "nt":
         assert kms_credential_path.stat().st_mode & 0o777 == 0o600
         assert runtime_trust_path.stat().st_mode & 0o777 == 0o640
+
+    previous_config = (managed_root / "kmip" / "server.json").read_bytes()
+    previous_trust = runtime_trust_path.read_bytes()
+    previous_credential = kms_credential_path.read_bytes()
+    for failed_method, failed_name in (("write_bytes", "server.json"), ("chmod", "server.json"),
+                                       ("write_text", "state.json"), ("chmod", "state.json")):
+        original_method = getattr(Path, failed_method)
+
+        def fail_snapshot(path, *args, failed_name=failed_name, original_method=original_method, **kwargs):
+            """Simulate a full filesystem or permission failure before cutover.
+
+            Args:
+                path: Request or snapshot path being exercised.
+                failed_name: Snapshot filename selected for fault injection.
+                original_method: Original filesystem method used for other paths.
+                *args: Forwarded filesystem method arguments.
+                **kwargs: Forwarded bounded command options.
+            """
+            if path.parent.name == ".cutover-rollback" and path.name == failed_name:
+                raise OSError("snapshot unavailable")
+            return original_method(path, *args, **kwargs)
+
+        before_commands = len(commands)
+        before_credentials = list(credential_inputs)
+        with monkeypatch.context() as snapshot_patch:
+            snapshot_patch.setattr(Path, failed_method, fail_snapshot)
+            assert helper._handle_kms("apply", [str(config_path)]) == 1
+        assert not (managed_root / "kmip" / ".cutover-rollback").exists()
+        assert all(command[:2] == ["systemctl", "show"] for command in commands[before_commands:])
+        assert credential_inputs == before_credentials
+        assert (managed_root / "kmip" / "server.json").read_bytes() == previous_config
+        assert runtime_trust_path.read_bytes() == previous_trust
+        assert kms_credential_path.read_bytes() == previous_credential
+    changed_config = json.loads(config_path.read_text(encoding="utf-8"))
+    changed_config["providers"][0]["name"] = "Replacement provider"
+    config_path.write_text(json.dumps(changed_config), encoding="utf-8")
+    trust_path.write_text("-----BEGIN CERTIFICATE-----\nnew-root\n-----END CERTIFICATE-----\n", encoding="utf-8")
+    original_rmtree = helper.shutil.rmtree
+    for persistent_cleanup_failure in (False, True):
+        cleanup_attempts = 0
+        rollback_dir = managed_root / "kmip" / ".cutover-rollback"
+
+        def fail_snapshot_cleanup(path, *args, rollback_dir=rollback_dir, persistent_cleanup_failure=persistent_cleanup_failure, **kwargs):
+            """Fail snapshot retirement after healthy cutover and during recovery.
+
+            Args:
+                path: Snapshot directory being removed.
+                rollback_dir: Snapshot path owned by this cutover scenario.
+                persistent_cleanup_failure: Whether recovery cleanup also fails.
+                *args: Forwarded removal arguments.
+                **kwargs: Forwarded removal options.
+            """
+            nonlocal cleanup_attempts
+            if Path(path) == rollback_dir:
+                cleanup_attempts += 1
+                if cleanup_attempts == 1 or persistent_cleanup_failure:
+                    # Exercise a partially removed snapshot, not just failure
+                    # before the first file was deleted.
+                    (rollback_dir / "server.json").unlink(missing_ok=True)
+                    raise OSError("snapshot cleanup unavailable")
+            return original_rmtree(path, *args, **kwargs)
+
+        with monkeypatch.context() as cleanup_patch:
+            cleanup_patch.setattr(helper.shutil, "rmtree", fail_snapshot_cleanup)
+            assert helper._handle_kms("apply", [str(config_path)]) == 1
+        assert cleanup_attempts == 2
+        assert (managed_root / "kmip" / "server.json").read_bytes() == previous_config
+        assert runtime_trust_path.read_bytes() == previous_trust
+        assert kms_credential_path.read_bytes() == previous_credential
+        assert rollback_dir.exists() == persistent_cleanup_failure
+        if persistent_cleanup_failure:
+            assert helper._handle_kms("apply", [str(config_path)]) == 2
+            original_rmtree(rollback_dir)
+    failed_restart = False
+
+    def fail_first_restart(command, **kwargs):
+        """Simulate a failed cutover followed by successful recovery.
+
+        Args:
+            command: Service command being simulated.
+            **kwargs: Forwarded bounded command options.
+        """
+        nonlocal failed_restart
+        if command == ["systemctl", "restart", "atlaso-kmip.service"] and not failed_restart:
+            commands.append(command)
+            failed_restart = True
+            return subprocess.CompletedProcess(command, 1, "", "")
+        return fake_run(command, **kwargs)
+
+    monkeypatch.setattr(helper, "_run", fail_first_restart)
+    assert helper._handle_kms("apply", [str(config_path)]) == 1
+    assert failed_restart
+    assert (managed_root / "kmip" / "server.json").read_bytes() == previous_config
+    assert runtime_trust_path.read_bytes() == previous_trust
+    assert kms_credential_path.read_bytes() == previous_credential
+    assert commands.count(["systemctl", "restart", "atlaso-kmip.service"]) >= (2 if legacy_active else 3)
+    if legacy_active:
+        assert ["systemctl", "enable", "atlaso-kms.service"] in commands
+        assert ["systemctl", "restart", "atlaso-kms.service"] in commands
+    assert not (managed_root / "kmip" / ".cutover-rollback").exists()
+
+    health_samples = 0
+
+    def fail_delayed_startup(command, **kwargs):
+        """An initially active replacement exits during the stability window.
+
+        Args:
+            command: Service command being simulated.
+            **kwargs: Forwarded bounded command options.
+        """
+        nonlocal health_samples
+        if command == ["systemctl", "is-active", "--quiet", "atlaso-kmip.service"]:
+            health_samples += 1
+            if health_samples == 2:
+                assert (managed_root / "kmip" / ".cutover-rollback").is_dir()
+                return subprocess.CompletedProcess(command, 3, "", "")
+        return fake_run(command, **kwargs)
+
+    monkeypatch.setattr(helper, "_run", fail_delayed_startup)
+    assert helper._handle_kms("apply", [str(config_path)]) == 1
+    assert health_samples == 2
+    assert (managed_root / "kmip" / "server.json").read_bytes() == previous_config
+    assert runtime_trust_path.read_bytes() == previous_trust
+    assert kms_credential_path.read_bytes() == previous_credential
+    assert not (managed_root / "kmip" / ".cutover-rollback").exists()
+
+    for prior_active, prior_enabled in ((False, False), (False, True), (True, False), (True, True)):
+        state_commands = []
+        cutover_failed = False
+
+        def fail_rotation_with_prior_state(command, *, prior_active=prior_active, prior_enabled=prior_enabled, state_commands=state_commands, **kwargs):
+            """Restore service activation and boot enablement independently.
+
+            Args:
+                command: Service command being simulated.
+                prior_active: Whether the previous listener was active.
+                prior_enabled: Whether the previous listener was enabled at boot.
+                state_commands: Recorded service commands for this prior-state scenario.
+                **kwargs: Forwarded bounded command options.
+            """
+            nonlocal cutover_failed
+            state_commands.append(command)
+            if command[:3] == ["systemctl", "show", "atlaso-kmip.service"]:
+                state = "active" if prior_active else "inactive"
+                enabled = "enabled" if prior_enabled else "disabled"
+                return subprocess.CompletedProcess(command, 0, f"LoadState=loaded\nActiveState={state}\nUnitFileState={enabled}\n", "")
+            if command == ["systemctl", "is-active", "--quiet", "atlaso-kmip.service"]:
+                return subprocess.CompletedProcess(command, 0 if prior_active else 3, "", "")
+            if command == ["systemctl", "is-enabled", "--quiet", "atlaso-kmip.service"]:
+                return subprocess.CompletedProcess(command, 0 if prior_enabled else 1, "", "")
+            if command == ["systemctl", "restart", "atlaso-kmip.service"] and not cutover_failed:
+                cutover_failed = True
+                return subprocess.CompletedProcess(command, 1, "", "")
+            return fake_run(command, **kwargs)
+
+        monkeypatch.setattr(helper, "_run", fail_rotation_with_prior_state)
+        assert helper._handle_kms("apply", [str(config_path)]) == 1
+        enablement = [command for command in state_commands if command[1] in {"enable", "disable"} and command[-1] == "atlaso-kmip.service"]
+        assert enablement[-1] == ["systemctl", "enable" if prior_enabled else "disable", "atlaso-kmip.service"]
+        assert state_commands.count(["systemctl", "restart", "atlaso-kmip.service"]) == (2 if prior_active else 1)
+        assert (managed_root / "kmip" / "server.json").read_bytes() == previous_config
+        assert kms_credential_path.read_bytes() == previous_credential
+    assert not (managed_root / "kmip" / ".cutover-rollback").exists()
+
+    for failed_unit in ("atlaso-kmip.service", "atlaso-kms.service"):
+        for probe_code, probe_output in ((1, ""), (0, "LoadState=loaded\nActiveState=unknown\nUnitFileState=disabled\n")):
+            def ambiguous_probe(command, *, failed_unit=failed_unit, probe_code=probe_code, probe_output=probe_output, **kwargs):
+                """Reject manager errors and unrecognized prior unit states.
+
+                Args:
+                    command: Service command being simulated.
+                    failed_unit: Service unit selected for probe failure.
+                    probe_code: Simulated manager query exit code.
+                    probe_output: Simulated manager state response.
+                    **kwargs: Forwarded bounded command options.
+                """
+                if command[:3] == ["systemctl", "show", failed_unit]:
+                    return subprocess.CompletedProcess(command, probe_code, probe_output, "")
+                return fake_run(command, **kwargs)
+
+            monkeypatch.setattr(helper, "_run", ambiguous_probe)
+            before_ownership = list(ownership)
+            before_credentials = list(credential_inputs)
+            assert helper._handle_kms("apply", [str(config_path)]) == 2
+            assert ownership == before_ownership
+            assert credential_inputs == before_credentials
+            assert (managed_root / "kmip" / "server.json").read_bytes() == previous_config
+            assert not (managed_root / "kmip" / ".cutover-rollback").exists()
+
+    def fail_all_restarts(command, **kwargs):
+        """Leave a durable snapshot when the previous service cannot restart.
+
+        Args:
+            command: Service command being simulated.
+            **kwargs: Forwarded bounded command options.
+        """
+        if command in (["systemctl", "restart", "atlaso-kmip.service"], ["systemctl", "restart", "atlaso-kms.service"]):
+            return subprocess.CompletedProcess(command, 1, "", "")
+        return fake_run(command, **kwargs)
+
+    monkeypatch.setattr(helper, "_run", fail_all_restarts)
+    assert helper._handle_kms("apply", [str(config_path)]) == 1
+    rollback_dir = managed_root / "kmip" / ".cutover-rollback"
+    assert (rollback_dir / "server.json").read_bytes() == previous_config
+    assert json.loads((rollback_dir / "state.json").read_text(encoding="utf-8")) == {
+        "was_active": True,
+        "was_enabled": True,
+        "legacy_was_active": legacy_active,
+        "legacy_was_enabled": legacy_active,
+    }
+    assert helper._handle_kms("apply", [str(config_path)]) == 2
+    disabled_config = json.loads(config_path.read_text(encoding="utf-8"))
+    disabled_config["enabled"] = False
+    config_path.write_text(json.dumps(disabled_config), encoding="utf-8")
+    before_commands = list(commands)
+    assert helper._handle_kms("apply", [str(config_path)]) == 2
+    assert commands == before_commands
+    assert kms_credential_path.read_bytes() == previous_credential
+    assert (rollback_dir / "server.json").read_bytes() == previous_config
 
 
 def test_kms_helper_rejects_symlinked_staged_public_trust_bundle(monkeypatch, tmp_path):

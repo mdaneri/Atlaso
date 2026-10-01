@@ -31,6 +31,7 @@ from atlaso.app.services.kms import (
     KMS_DEFAULT_DATABASE_PATH,
     KMS_DEFAULT_KEK_PATH,
     KMS_SERVER_CERT_BASE,
+    kms_server_certificate_paths,
 )
 
 MAX_PUBLIC_CERTIFICATE_BYTES = 65_536
@@ -340,39 +341,36 @@ def validate_provider_state(providers: list[VsphereKeyProvider]) -> list[str]:
     """
     errors: list[str] = []
     fingerprints: dict[str, str] = {}
-    if not any(provider.enabled for provider in providers):
-        errors.append("At least one enabled provider with a current public client certificate is required.")
     for provider in providers:
         enabled_vcenters = [item for item in provider.trusted_vcenters if item.enabled]
-        if provider.enabled and not enabled_vcenters:
-            errors.append(f"Provider {provider.name} requires an enabled trusted vCenter.")
-        usable_count = 0
         for trusted in enabled_vcenters:
             usable = usable_certificates(trusted)
             if not usable:
                 errors.append(f"Trusted vCenter {trusted.name} requires a current public client certificate.")
-            usable_count += len(usable)
             for certificate in usable:
                 previous = fingerprints.get(certificate.fingerprint_sha256)
                 if previous and previous != provider.id:
                     errors.append("A vCenter certificate fingerprint cannot be assigned across providers.")
                 fingerprints[certificate.fingerprint_sha256] = provider.id
-        if provider.enabled and usable_count == 0:
-            errors.append(f"Provider {provider.name} has no usable exact certificate fingerprint.")
     return list(dict.fromkeys(errors))
 
 
-def render_provider_config(settings: KmsSettings, providers: list[VsphereKeyProvider]) -> str:
+def render_provider_config(settings: KmsSettings, providers: list[VsphereKeyProvider], *, server_fingerprint: str = "") -> str:
     """Render the bounded daemon configuration for all enabled providers.
 
     Args:
         settings: Appliance-wide listener settings.
         providers: Provider trust graph to render.
+        server_fingerprint: Issued KMS server identity used for immutable deployment paths.
 
     Returns:
         Deterministic JSON desired state.
     """
     certificate_name = safe_certificate_name(settings.server_certificate or settings.hostname)
+    certificate_path = f"{KMS_SERVER_CERT_BASE}/{certificate_name}.crt"
+    private_key_path = f"{KMS_SERVER_CERT_BASE}/{certificate_name}.key"
+    if server_fingerprint:
+        certificate_path, private_key_path, _ = kms_server_certificate_paths(certificate_name, server_fingerprint)
     listen_addresses = split_addresses(settings.listen_address)
     rendered_listen_addresses = listen_addresses if settings.enabled and listen_addresses else ["127.0.0.1"]
     rendered_providers = []
@@ -387,6 +385,10 @@ def render_provider_config(settings: KmsSettings, providers: list[VsphereKeyProv
                 for certificate in usable_certificates(trusted)
             }
         )
+        if not fingerprints:
+            # A listener with no approved clients may present its server identity
+            # for vCenter-first enrollment, but cannot authorize KMIP requests.
+            continue
         rendered_providers.append(
             {
                 "id": normalize_provider_id(provider.id),
@@ -400,8 +402,8 @@ def render_provider_config(settings: KmsSettings, providers: list[VsphereKeyProv
         "enabled": bool(settings.enabled),
         "listen": {"addresses": rendered_listen_addresses, "port": settings.port},
         "tls": {
-            "certificate_path": f"{KMS_SERVER_CERT_BASE}/{certificate_name}.crt",
-            "private_key_path": f"{KMS_SERVER_CERT_BASE}/{certificate_name}.key",
+            "certificate_path": certificate_path,
+            "private_key_path": private_key_path,
             "ca_path": "/etc/atlaso/kmip/client-trust.pem",
         },
         "store": {

@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import hashlib
+import re
+
 KMS_DEFAULT_DATABASE_PATH = "/var/lib/atlaso/kmip/store.db"
 KMS_DEFAULT_KEK_PATH = "/var/lib/atlaso/kmip/kek.json"
 KMS_DEFAULT_CONFIG_PATH = "/etc/atlaso/kmip/server.json"
@@ -11,6 +14,24 @@ KMS_LOG_PATH = "/var/log/atlaso/kmip/server.log"
 KMS_SERVER_CERT_BASE = "/etc/atlaso/kmip/certs"
 KMS_CLIENT_TRUST_PATH = "/etc/atlaso/kmip/client-trust.pem"
 KMS_DNS_RECORD_DESCRIPTION = "Atlaso app-owned KMS/KMIP endpoint record."
+
+
+def kms_server_certificate_paths(certificate_name: str, fingerprint: str) -> tuple[str, str, str]:
+    """Return immutable deployment paths for one CA-issued KMS identity.
+
+    Args:
+        certificate_name: Stable CA certificate basename.
+        fingerprint: Full SHA-256 certificate fingerprint.
+    """
+    if not re.fullmatch(r"[A-Za-z0-9_.-]+", certificate_name) or not re.fullmatch(r"[0-9a-f]{64}", fingerprint):
+        raise ValueError("KMS server certificate identity is invalid.")
+    # Reserve room for the fingerprint and longest suffix within NAME_MAX=255.
+    # Hash the full name so equal truncated prefixes remain distinct.
+    if len(certificate_name) > 179:
+        name_digest = hashlib.sha256(certificate_name.encode("ascii")).hexdigest()[:16]
+        certificate_name = f"{certificate_name[:162]}-{name_digest}"
+    base = f"{KMS_SERVER_CERT_BASE}/{certificate_name}-{fingerprint}"
+    return f"{base}.crt", f"{base}.key", f"{base}-chain.pem"
 
 
 def split_csv(value: str | None) -> list[str]:

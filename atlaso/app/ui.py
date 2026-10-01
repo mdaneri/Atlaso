@@ -5258,7 +5258,20 @@ def kms_context(db: Session, *, reconcile: bool = True, include_runtime_counts: 
         for trusted in trusted_vcenters
         for certificate in trusted.certificates
     ]
-    config_preview = render_provider_config(settings, providers)
+    server_certificate = db.execute(
+        select(CaCertificate)
+        .where(CaCertificate.managed_owner == "kms:server")
+        .order_by(CaCertificate.id.desc())
+    ).scalars().first()
+    config_preview = render_provider_config(
+        settings, providers,
+        server_fingerprint=(
+            server_certificate.fingerprint
+            if server_certificate and server_certificate.enabled and server_certificate.status == "issued"
+            and re.fullmatch(r"[0-9a-f]{64}", server_certificate.fingerprint or "")
+            else ""
+        ),
+    )
     trust_bundle = render_client_trust_bundle(db, providers)
     validation_errors = [
         *ca_state_errors,
@@ -5281,11 +5294,6 @@ def kms_context(db: Session, *, reconcile: bool = True, include_runtime_counts: 
             validation_errors.append("KMS cannot be activated until Certificate Authority state is healthy.")
         elif not ca_certificate_available(db, "kms:server"):
             validation_errors.append("KMS requires an issued CA-managed server certificate before apply.")
-    server_certificate = db.execute(
-        select(CaCertificate)
-        .where(CaCertificate.managed_owner == "kms:server")
-        .order_by(CaCertificate.id.desc())
-    ).scalars().first()
     runtime = service_runtime_status(db, "kms")
     status_snapshot = runtime_status_snapshot() if include_runtime_counts else {}
     runtime_counts = status_snapshot.get("providers")
@@ -5295,7 +5303,11 @@ def kms_context(db: Session, *, reconcile: bool = True, include_runtime_counts: 
             "provider_id": provider.id,
             "provider_name": provider.name,
             "desired_state": "enabled" if provider.enabled else "disabled",
-            "readiness": "ready" if provider.enabled and not validate_provider_state([provider]) else "needs attention",
+            "readiness": (
+                "needs attention" if not provider.enabled or validate_provider_state([provider])
+                else "enrollment required" if not provider_to_dict(provider)["usable_certificate_count"]
+                else "ready"
+            ),
             "runtime_state": str(status_snapshot.get("runtime_state") or runtime["label"]),
             "pre_active_count": runtime_counts.get(provider.id, {}).get("pre_active"),
             "active_count": runtime_counts.get(provider.id, {}).get("active"),
@@ -17414,6 +17426,17 @@ def _submit_appliance_apply(
     if ca_required_for_nts:
         selected_ids.add("ca")
     apply_baselines = load_appliance_apply_baselines(db)
+    kms_settings_for_apply = unit_map.get("kms", {}).get("context", {}).get("kms_settings")
+    if (
+        "kms" in selected_ids
+        and getattr(kms_settings_for_apply, "enabled", False)
+        and "ca" in unit_map
+        and "kms" in rotated_ca_certificate_consumers(
+            unit_map["ca"], apply_baselines.get("ca") or {"config_preview": "{}"}
+        )
+    ):
+        # Fingerprint-specific KMS paths need the matching CA files first.
+        selected_ids.add("ca")
     settings_for_apply = unit_map.get("appliance_settings", {}).get("context", {}).get("appliance_settings")
     applied_settings_preview = str((apply_baselines.get("appliance_settings") or {}).get("config_preview") or "")
     applied_ca_preview = str((apply_baselines.get("ca") or {}).get("config_preview") or "")

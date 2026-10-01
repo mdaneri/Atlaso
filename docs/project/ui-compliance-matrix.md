@@ -186,7 +186,7 @@ are explicitly inventoried so route/template changes cannot silently escape the 
 - Identity, CA, and vSphere Key Providers: `ca-csr-dialog`, `ca-profile-dialog`, `ca-certificate-dialog`,
   `ldap-organization-dialog`, `ldap-user-dialog`, `ldap-group-dialog`, `ldap-bind-secret-modal`,
   `ldap-password-modal`, `ldap-group-members-modal`, `ldap-generate-modal`, `vsphere-provider-dialog`,
-  `vsphere-vcenter-dialog`, and `vsphere-certificate-dialog`.
+  `vsphere-vcenter-dialog`, `vsphere-certificate-dialog`, and `vsphere-enrollment-dialog`.
 - Network Boot and storage: `network-boot-host-dialog`, `network-boot-upload-dialog`,
   `network-boot-promote-dialog`, `esxi-iso-upload-dialog`, `sddc-ova-upload-dialog`, `esxi-custom-variable-wizard-dialog`,
   `esxi-boot-authorization-dialog`, `kickstart-wizard-dialog`, `esx-storage-volume-modal`, and
@@ -232,6 +232,15 @@ behavior. Any future sortable, filterable, selectable, navigable, editable, or a
 shared Tabulator foundation or receive explicit maintainer approval through a separately labeled issue.
 
 ## Completion rule
+
+### vCenter-first enrollment (#171)
+
+`vsphere-enrollment-dialog` uses the wizard-backed Tabulator pattern with ESX Storage and VCF Helper
+remote credential references. Administrator-only entry, HTTPS fingerprint confirmation, public certificate
+inspection, explicit provider approval, recoverable errors, and desired-state Apply remain separate steps.
+The existing manual public-certificate fallback remains available. The dedicated Atlaso-Docs VM capture
+and desktop/narrow visual verification are pending under maintainer direction. Live VCF 9.1 acceptance
+is tracked separately in #172; this matrix entry does not claim either gate passed.
 
 Issue #799 reorganizes the existing Maintenance (`backup_restore.html`) page into LDAP, Backup, Reset and Diagnostics
 tabs. Recovery actions retain their original routes and safeguards. `partials/diagnostics.html` contains the

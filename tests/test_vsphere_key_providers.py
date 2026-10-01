@@ -216,6 +216,9 @@ def test_rendered_trust_uses_exact_enabled_fingerprints_and_public_pem_only(clie
         assert private_pem not in trust_bundle
         assert "PRIVATE KEY" not in trust_bundle
         assert "legacy-metadata-only" not in json.dumps(rendered)
+        rotated = json.loads(render_provider_config(settings, [provider], server_fingerprint="a" * 64))
+        assert rotated["tls"]["certificate_path"].endswith(f"-{'a' * 64}.crt")
+        assert rotated["tls"]["private_key_path"].endswith(f"-{'a' * 64}.key")
 
 
 def test_public_certificate_validation_rejects_expiry_and_private_key_blocks() -> None:

@@ -1,5 +1,6 @@
 """Test ca behavior."""
 
+import json
 from pathlib import Path
 
 import pytest
@@ -400,6 +401,68 @@ def test_ca_apply_payload_includes_crl_for_revoked_certificates():
     assert payload["root"]["crl_path"].endswith("/atlaso-ca.crl")
     assert "BEGIN X509 CRL" in payload["root"]["crl_pem"]
     assert payload["certificates"] == []
+
+
+@pytest.mark.parametrize("hostname", ["kms.atlaso.internal", ".".join(["a" * 63] * 3 + ["b" * 61])])
+def test_kms_ca_payload_stages_certificate_by_fingerprint(hostname):
+    """Keep the previous KMS identity available during certificate rotation.
+
+    Args:
+        hostname: KMS certificate hostname, including the maximum DNS name length.
+    """
+    settings = CaSettings(enabled=True, publish_crl=False, storage_path="/etc/atlaso/ca")
+    certificate = CaCertificate(
+        enabled=True,
+        status="issued",
+        managed_owner="kms:server",
+        common_name=hostname,
+        fingerprint="b" * 64,
+        cert_path=f"/etc/atlaso/kmip/certs/{hostname}.crt",
+        key_path=f"/etc/atlaso/kmip/certs/{hostname}.key",
+        chain_path=f"/etc/atlaso/kmip/certs/{hostname}-chain.pem",
+    )
+    payload = json.loads(render_ca_apply_payload(settings, [certificate], include_private_keys=False))
+    deployed = payload["certificates"][0]
+    assert deployed["cert_path"].endswith(f"-{'b' * 64}.crt")
+    assert deployed["key_path"].endswith(f"-{'b' * 64}.key")
+    assert deployed["chain_path"].endswith(f"-{'b' * 64}-chain.pem")
+    assert certificate.cert_path == f"/etc/atlaso/kmip/certs/{hostname}.crt"
+    for field in ("cert_path", "key_path", "chain_path"):
+        assert len(Path(deployed[field]).name.encode("utf-8")) <= 255
+    from atlaso.app.services.kms import kms_server_certificate_paths
+
+    assert tuple(deployed[field] for field in ("cert_path", "key_path", "chain_path")) == kms_server_certificate_paths(hostname, "b" * 64)
+    assert kms_server_certificate_paths(hostname + "x", "b" * 64) != kms_server_certificate_paths(hostname, "b" * 64)
+    certificate.status = "planned"
+    certificate.fingerprint = ""
+    planned = json.loads(render_ca_apply_payload(settings, [certificate], include_private_keys=False))
+    assert planned["certificates"][0]["cert_path"] == certificate.cert_path
+
+
+@pytest.mark.parametrize("legacy_path,fingerprint", [("", ""), ("/etc/atlaso/kmip/certs/kms.crt", ""), ("", "b" * 64), ("/etc/atlaso/kmip/certs/kms.crt", "invalid")])
+def test_kms_ca_payload_preserves_invalid_legacy_identity_for_validation(legacy_path, fingerprint):
+    """Read-only payloads expose incomplete KMS rows without deriving invalid paths.
+
+    Args:
+        legacy_path: Stored certificate path from an incomplete legacy row.
+        fingerprint: Stored missing or malformed certificate fingerprint.
+    """
+    settings = CaSettings(
+        enabled=True, publish_crl=False, storage_path="/etc/atlaso/ca",
+        portal_hostname="ca.example.test", root_common_name="Test Root",
+        key_algorithm="RSA", key_size=2048, root_valid_days=3650,
+    )
+    certificate = CaCertificate(
+        enabled=True, status="issued", managed_owner="kms:server", common_name="kms.example.test",
+        fingerprint=fingerprint, cert_path=legacy_path, key_path="", chain_path="",
+    )
+    payload = json.loads(render_ca_apply_payload(settings, [certificate], include_private_keys=False))
+    assert payload["certificates"][0]["cert_path"] == legacy_path
+    from atlaso.app.services.ca import validate_ca_state
+
+    assert any("invalid KMS server identity" in error for error in validate_ca_state(
+        settings=settings, profiles=[], certificates=[certificate]
+    ))
 
 
 def test_existing_root_ca_material_is_not_rotated_by_identity_edits():

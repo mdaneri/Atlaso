@@ -1109,7 +1109,7 @@ def test_shared_ui_pattern_shell_and_wizard_contracts(client):
     base = (templates / "base.html").read_text(encoding="utf-8")
     public_base = (templates / "public_portal_base.html").read_text(encoding="utf-8")
     for shell, app_asset in (
-        (base, "/static/app.js?v=routing-policy-855-5"),
+        (base, "/static/app.js?v=vsphere-enrollment-171-2"),
         (public_base, "/static/app.js?v=access-address-852-3"),
         (base, "/static/appliance-apply-polling.js?v=issue-420-6"),
     ):
@@ -1780,7 +1780,7 @@ def test_monitor_page_renders_template_and_browser_assets(client):
     assert "swagger-link-icon" in page.text
     assert "/static/app.css?v=tooltip-848-3" in page.text
     assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-10" in page.text
-    assert "/static/app.js?v=routing-policy-855-5" in page.text
+    assert "/static/app.js?v=vsphere-enrollment-171-2" in page.text
     app_css = client.get("/static/app.css")
     assert app_css.status_code == 200
     assert ".split-workspace > .wide-panel" in app_css.text
@@ -5953,27 +5953,6 @@ def test_settings_archive_preflight_rejects_invalid_collection_row_and_required_
             "enabled": True,
         }
     ]
-    enabled_kms_without_provider = deepcopy(archive)
-    enabled_kms_without_provider["data"]["kms_settings"][0].update(
-        {
-            "enabled": True,
-            "listen_interface": "eth2",
-            "listen_address": "192.168.50.1",
-        }
-    )
-    kms_certificate = deepcopy(enabled_kms_without_provider["data"]["ca_certificates"][0])
-    kms_certificate.update(
-        {
-            "managed_owner": "kms:server",
-            "status": "issued",
-            "certificate_pem": "certificate",
-            "private_key_encrypted": "encrypted-key",
-        }
-    )
-    enabled_kms_without_provider["data"]["ca_certificates"].append(kms_certificate)
-    enabled_kms_without_provider["data"]["vsphere_key_providers"] = []
-    enabled_kms_without_provider["data"]["vsphere_trusted_vcenters"] = []
-    enabled_kms_without_provider["data"]["vsphere_trusted_vcenter_certificates"] = []
     invalid_provider_id = deepcopy(archive)
     invalid_provider_id["data"]["vsphere_key_providers"].append(
         {"id": "not-a-uuid", "name": "Invalid provider ID", "enabled": False}
@@ -6582,7 +6561,6 @@ def test_settings_archive_preflight_rejects_invalid_collection_row_and_required_
         (enabled_certificate_with_disabled_profile, "references a disabled CA profile"),
         (weak_ca_profile, "Certificate Authority state is invalid: .*RSA key size must be at least 2048"),
         (enabled_kms_without_ca, "enables KMS without an enabled CA"),
-        (enabled_kms_without_provider, "KMS trust state is invalid: At least one enabled provider"),
         (invalid_provider_id, "invalid provider ID"),
         (invalid_vcenter_id, "invalid trusted vCenter ID"),
         (invalid_provider_enabled_type, "has an invalid enabled value"),
@@ -10912,7 +10890,7 @@ def test_vsphere_provider_enable_creates_only_shared_server_identity(client):
     )
 
     assert response.status_code == 200
-    assert any("public client certificate" in error for error in response.json()["validation_errors"])
+    assert response.json()["validation_errors"] == []
 
     with SessionLocal() as db:
         server_cert = db.execute(select(CaCertificate).where(CaCertificate.managed_owner == "kms:server")).scalar_one()
