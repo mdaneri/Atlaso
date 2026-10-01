@@ -1988,6 +1988,10 @@ def test_vmware_source_snapshot_resists_during_packer_checkout_changes(
         text=True,
     )
     assert result.returncode == 0, result.stdout + result.stderr
+    evidence_root = tmp_path / "source-snapshot" / "certificate-repository" / "test-results"
+    assert f"Certificate evidence root: {evidence_root}" in result.stdout
+    for entrypoint in ("inspect-certificate-peer.ps1", "inspect-certificate-handoff.ps1"):
+        assert f"Certificate entrypoint admission checks passed: {entrypoint}" in result.stdout
     assert "Atlaso immutable source snapshot tests passed." in result.stdout
 
 

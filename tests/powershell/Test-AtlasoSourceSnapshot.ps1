@@ -39,8 +39,12 @@ try {
 } finally {
     $mutableDiskPin.Dispose()
 }
-$proofRoot = Join-Path $OutputDirectory 'certificate-proof-pins'
-New-Item -ItemType Directory -Path $proofRoot | Out-Null
+# Admission runs before helper imports or credentials. Model an original isolated
+# repository so its evidence boundary is independent of pytest's temp location.
+$certificateRepository = Join-Path $OutputDirectory 'certificate-repository'
+$certificateEvidenceRoot = Join-Path $certificateRepository 'test-results'
+$proofRoot = Join-Path $certificateEvidenceRoot 'certificate-proof-pins'
+New-Item -ItemType Directory -Path $proofRoot -Force | Out-Null
 $receiptPath = Join-Path $proofRoot 'original.json'
 $segmentPath = Join-Path $proofRoot 'segment.json'
 $fixturePath = Join-Path $proofRoot 'fixture.json'
@@ -78,7 +82,7 @@ try {
 foreach ($name in @('inspect-certificate-peer.ps1', 'inspect-certificate-handoff.ps1')) {
     $wrapperPath = Join-Path $RepositoryRoot (Join-Path 'scripts/windows/vmware' $name)
     $parameters = @{
-        RepositoryRoot = $RepositoryRoot
+        RepositoryRoot = $certificateRepository
         ReviewedSourceCommit = 'a' * 40
         Plan = $planPath
         EnvironmentId = 'test-environment'
@@ -95,12 +99,41 @@ foreach ($name in @('inspect-certificate-peer.ps1', 'inspect-certificate-handoff
         throw 'A mutable certificate entrypoint accepted direct credential-bearing execution.'
     }
     $entrypoint = [ScriptBlock]::Create([IO.File]::ReadAllText($wrapperPath))
-    $memoryFailure = try { & $entrypoint @parameters; '' } catch { $_.Exception.Message }
-    if ($memoryFailure -notlike '*requires an existing plan/Python*' -and
-        $memoryFailure -notlike '*Python, plan, and new evidence destination*') {
-        throw 'An in-memory certificate entrypoint did not reach pre-credential admission.'
+    $evidenceParameters = if ($name -eq 'inspect-certificate-peer.ps1') {
+        @('AddressEvidence', 'RuntimeEvidence')
+    } else { @('Evidence') }
+    foreach ($parameterName in @('Plan') + $evidenceParameters) {
+        $outsideParameters = $parameters.Clone()
+        # This sibling shares the boundary's prefix, but is not its descendant.
+        $outsideParameters[$parameterName] = Join-Path $certificateRepository 'test-results-outside/result.json'
+        $outsideFailure = try { & $entrypoint @outsideParameters; '' } catch { $_.Exception.Message }
+        if ($outsideFailure -notlike '*paths must remain beneath the original owned test-results root*') {
+            throw "Certificate entrypoint $name admitted an out-of-root $parameterName path."
+        }
     }
+    $admissionPattern = if ($name -eq 'inspect-certificate-peer.ps1') {
+        '*requires an existing plan/Python*'
+    } else { '*Python, plan, and new evidence destination*' }
+    $memoryFailure = try { & $entrypoint @parameters; '' } catch { $_.Exception.Message }
+    if ($memoryFailure -notlike $admissionPattern) {
+        throw "Certificate entrypoint $name did not reach missing-Python admission: $memoryFailure"
+    }
+    # A synthetic executable leaf satisfies only the existence guard. Each
+    # existing destination must stop execution before that leaf could be run.
+    $existingPython = Join-Path $proofRoot 'synthetic-python.exe'
+    [IO.File]::WriteAllText($existingPython, 'not an executable')
+    foreach ($parameterName in $evidenceParameters) {
+        $existingParameters = $parameters.Clone()
+        $existingParameters.PythonPath = $existingPython
+        $existingParameters[$parameterName] = $receiptPath
+        $existingFailure = try { & $entrypoint @existingParameters; '' } catch { $_.Exception.Message }
+        if ($existingFailure -notlike $admissionPattern) {
+            throw "Certificate entrypoint $name did not reject existing $parameterName evidence."
+        }
+    }
+    Write-Output "Certificate entrypoint admission checks passed: $name"
 }
+Write-Output "Certificate evidence root: $certificateEvidenceRoot"
 $sourceRepository = Join-Path $OutputDirectory 'source-repository'
 $firstStaging = Join-Path $OutputDirectory 'first-staging'
 New-Item -ItemType Directory -Path $sourceRepository, $firstStaging | Out-Null
