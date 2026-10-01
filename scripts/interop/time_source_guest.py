@@ -838,7 +838,7 @@ def run_action(payload):
     if action == "fixture_identity":
         interface_name = payload.get("interface_name")
         expected = ipaddress.IPv4Interface(payload["fixture_cidr"])
-        rows = json.loads(subprocess.check_output(["ip", "-j", "-4", "addr", "show"], timeout=5))
+        rows = json.loads(subprocess.check_output(["ip", "-j", "addr", "show"], timeout=5))
         link = next((row for row in rows if row.get("ifname") == interface_name), {})
         if not any(info.get("local") == str(expected.ip) and info.get("prefixlen") == expected.network.prefixlen for info in link.get("addr_info", [])):
             raise SafeFailure("identity", "The owned fixture address is not assigned to its selected guest interface.")

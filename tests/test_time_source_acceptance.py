@@ -28,6 +28,109 @@ def _load_guest_module():
     return module
 
 
+def test_fixture_identity_reads_all_family_inventory_for_mac_and_ipv4_proof(monkeypatch):
+    """The identity probe uses link inventory because IPv4-only output can omit MAC."""
+    guest = _load_guest_module()
+    payload = {
+        "action": "fixture_identity",
+        "fixture_cidr": "192.0.2.87/24",
+        "interface_name": "ens192",
+    }
+    ipv4_only_rows = [{
+        "ifname": "ens192",
+        "addr_info": [{"family": "inet", "local": "192.0.2.87", "prefixlen": 24}],
+    }]
+    all_family_rows = [{
+        "ifname": "ens192",
+        "address": "00:0c:29:2b:d2:52",
+        "addr_info": [
+            {"family": "inet", "local": "192.0.2.87", "prefixlen": 24},
+            {"family": "inet6", "local": "fe80::20c:29ff:fe2b:d252", "prefixlen": 64},
+        ],
+    }]
+    commands = []
+
+    def check_output(command, *, timeout):
+        commands.append((command, timeout))
+        if command == ["ip", "-j", "-4", "addr", "show"]:
+            return json.dumps(ipv4_only_rows).encode()
+        assert command == ["ip", "-j", "addr", "show"]
+        return json.dumps(all_family_rows).encode()
+
+    monkeypatch.setattr(guest.subprocess, "check_output", check_output)
+
+    identity = guest.run_action(payload)
+
+    assert commands == [(["ip", "-j", "addr", "show"], 5)]
+    assert identity == {
+        "fixture_address": "192.0.2.87",
+        "fixture_interface": "ens192",
+        "fixture_mac": "00:0c:29:2b:d2:52",
+    }
+
+
+@pytest.mark.parametrize(
+    ("interface_name", "fixture_cidr", "rows", "reason"),
+    [
+        (
+            "ens224",
+            "192.0.2.87/24",
+            [{"ifname": "ens192", "address": "00:0c:29:2b:d2:52", "addr_info": [
+                {"family": "inet", "local": "192.0.2.87", "prefixlen": 24}
+            ]}],
+            "address is not assigned",
+        ),
+        (
+            "ens192",
+            "192.0.2.87/24",
+            [{"ifname": "ens192", "address": "00:0c:29:2b:d2:52", "addr_info": [
+                {"family": "inet", "local": "192.0.2.88", "prefixlen": 24}
+            ]}],
+            "address is not assigned",
+        ),
+        (
+            "ens192",
+            "192.0.2.87/24",
+            [{"ifname": "ens192", "address": "00:0c:29:2b:d2:52", "addr_info": [
+                {"family": "inet", "local": "192.0.2.87", "prefixlen": 25}
+            ]}],
+            "address is not assigned",
+        ),
+        (
+            "ens192",
+            "192.0.2.87/24",
+            [{"ifname": "ens192", "address": "not-a-mac", "addr_info": [
+                {"family": "inet", "local": "192.0.2.87", "prefixlen": 24}
+            ]}],
+            "hardware identity is unavailable",
+        ),
+    ],
+    ids=["wrong-interface", "wrong-address", "wrong-cidr-prefix", "invalid-mac"],
+)
+def test_fixture_identity_rejects_mismatched_guest_network_identity(
+    monkeypatch, interface_name, fixture_cidr, rows, reason
+):
+    """A matching address, prefix, selected interface, and MAC are all required."""
+    guest = _load_guest_module()
+    commands = []
+
+    def check_output(command, *, timeout):
+        commands.append((command, timeout))
+        assert command == ["ip", "-j", "addr", "show"]
+        return json.dumps(rows).encode()
+
+    monkeypatch.setattr(guest.subprocess, "check_output", check_output)
+
+    with pytest.raises(guest.SafeFailure, match=reason):
+        guest.run_action({
+            "action": "fixture_identity",
+            "fixture_cidr": fixture_cidr,
+            "interface_name": interface_name,
+        })
+
+    assert commands == [(["ip", "-j", "addr", "show"], 5)]
+
+
 def _enable_vmware_capability(monkeypatch) -> None:
     """Render VMware Tools as a selectable saved source in the real NTP page."""
     monkeypatch.setattr(
