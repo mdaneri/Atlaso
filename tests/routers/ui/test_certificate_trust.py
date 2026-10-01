@@ -643,6 +643,9 @@ def test_enrollment_saved_endpoint_binding_and_choices(client, monkeypatch) -> N
         client: Isolated authenticated HTTP test client.
         monkeypatch: Fixture replacing network and secret access.
     """
+    import re
+    from urllib.parse import urlsplit
+
     from atlaso.app.routers.ui import certificate_trust as transport
 
     csrf = _login(client)
@@ -685,7 +688,13 @@ def test_enrollment_saved_endpoint_binding_and_choices(client, monkeypatch) -> N
     assert f'value="{vault_id}|{entry_id}|2"' in page.text
     assert f'value="{vault_id}|{entry_id}|0"' not in page.text
     assert f'value="{vault_id}|{empty_id}|' not in page.text
-    assert "https://vcsa.example.test:8443" in page.text
+    label = re.search(
+        rf'value="{vault_id}\|{entry_id}\|1">[^<]* (https://[^ ]+) ', page.text
+    )
+    assert label is not None
+    endpoint = urlsplit(label.group(1))
+    assert endpoint.hostname == "vcsa.example.test"
+    assert endpoint.port == 8443
     data = {
         "provider_id": provider_id,
         "name": "Bound vCenter",
