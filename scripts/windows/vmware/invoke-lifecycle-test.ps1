@@ -68,6 +68,8 @@ Run the focused WAN routing scenario.
 Run isolated DHCP and SLAAC same-prefix acceptance on task-owned private LAN segments.
 .PARAMETER OidcOnly
 Run only the OIDC lifecycle scenario.
+.PARAMETER TimeSourceOnly
+Run focused NTP clock-source Apply and host/client UDP acceptance without lifecycle clients.
 .PARAMETER CertificateOnly
 Prepare a retained appliance clone for the certificate handoff acceptance scenario.
 .PARAMETER CertificateDhcpPeer
@@ -234,6 +236,10 @@ param(
 
     [Parameter(ParameterSetName = 'Run')]
     [Parameter(ParameterSetName = 'Plan')]
+    [switch]$TimeSourceOnly,
+
+    [Parameter(ParameterSetName = 'Run')]
+    [Parameter(ParameterSetName = 'Plan')]
     [switch]$CertificateOnly,
 
     [Parameter(ParameterSetName = 'Run')]
@@ -289,14 +295,14 @@ $applianceIpWasPassed = $PSBoundParameters.ContainsKey('ApplianceIPAddress')
 Import-Module (Join-Path $PSScriptRoot 'Atlaso.VmwareTestIdentity.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'Atlaso.OidcSiteNetwork.psm1') -Force
 . (Join-Path $PSScriptRoot 'Atlaso.LifecycleSecretStaging.ps1')
-if ($OidcOnly -and $SiteANetwork.StartsWith('lan:', [StringComparison]::OrdinalIgnoreCase)) {
-    throw '-OidcOnly requires a host-reachable SiteANetwork; VMware LAN segments cannot carry the host-side verified OIDC probe.'
+if (($OidcOnly -or $TimeSourceOnly) -and $SiteANetwork.StartsWith('lan:', [StringComparison]::OrdinalIgnoreCase)) {
+    throw '-OidcOnly and -TimeSourceOnly require a host-reachable SiteANetwork; VMware LAN segments cannot carry the host-side verified probe.'
 }
-if ($OidcOnly -and $SiteInterface -ne 'eth1') {
-    throw '-OidcOnly requires SiteInterface eth1 because its Site A vmnet is attached to the appliance second adapter.'
+if (($OidcOnly -or $TimeSourceOnly) -and $SiteInterface -ne 'eth1') {
+    throw '-OidcOnly and -TimeSourceOnly require SiteInterface eth1 because Site A is attached to the appliance second adapter.'
 }
-if ($SignedReleaseRepositoryUrl -and ($OidcOnly -or $RoutingWanOnly -or $CertificateOnly)) {
-    throw '-SignedReleaseRepositoryUrl requires the full lifecycle; it cannot be combined with -OidcOnly, -RoutingWanOnly, or -CertificateOnly.'
+if ($SignedReleaseRepositoryUrl -and ($OidcOnly -or $TimeSourceOnly -or $RoutingWanOnly -or $CertificateOnly)) {
+    throw '-SignedReleaseRepositoryUrl requires the full lifecycle; it cannot be combined with -OidcOnly, -TimeSourceOnly, -RoutingWanOnly, or -CertificateOnly.'
 }
 if ($SignedReleaseRepositoryUrl) {
     [Uri]$fixtureUri = $null
@@ -452,7 +458,7 @@ if ($PSCmdlet.ParameterSetName -eq 'CleanupVms') {
     return
 }
 
-if ($OidcOnly) {
+if ($OidcOnly -or $TimeSourceOnly) {
     Assert-AtlasoOidcSiteNetwork -SiteANetwork $SiteANetwork -SiteCidr $SiteCidr `
         -PrepareNetworksPath (Join-Path $PSScriptRoot 'prepare-networks.ps1') `
         -VmrunPath $VmrunPath -BridgedInterfaceAlias $BridgedInterfaceAlias
@@ -465,15 +471,15 @@ if (-not $PlanOnly) {
     if ($null -eq $SshPassword) {
         $SshPassword = $AdminPassword
     }
-    if (-not ($OidcOnly -or $RoutingWanOnly -or $CertificateOnly -or $RoutingOverlapOnly) -and $null -eq $VcfBackupPassword) {
+    if (-not ($OidcOnly -or $TimeSourceOnly -or $RoutingWanOnly -or $CertificateOnly -or $RoutingOverlapOnly) -and $null -eq $VcfBackupPassword) {
         $VcfBackupPassword = Read-Host -Prompt 'VCF Backup lifecycle password' -AsSecureString
     }
     if ($FullEsxiPxeInstall -and $null -eq $EsxiPassword) {
         $EsxiPassword = Read-Host -Prompt 'ESXi root password for lifecycle probing' -AsSecureString
     }
 }
-if (@(@($OidcOnly, $RoutingWanOnly, $CertificateOnly, $RoutingOverlapOnly, $FullEsxiPxeInstall) | Where-Object { $_ }).Count -gt 1) {
-    throw "-OidcOnly, -RoutingWanOnly, -CertificateOnly, -RoutingOverlapOnly, and -FullEsxiPxeInstall are mutually exclusive."
+if (@(@($OidcOnly, $TimeSourceOnly, $RoutingWanOnly, $CertificateOnly, $RoutingOverlapOnly, $FullEsxiPxeInstall) | Where-Object { $_ }).Count -gt 1) {
+    throw "-OidcOnly, -TimeSourceOnly, -RoutingWanOnly, -CertificateOnly, -RoutingOverlapOnly, and -FullEsxiPxeInstall are mutually exclusive."
 }
 if ($RoutingOverlapOnly -and -not $PlanOnly -and (-not $SkipClientPrepare -or -not $ClientVmdkPath -or $ApplianceSshUser -cne 'root' -or
     $ApplianceIPAddress -or $ApplianceUrl -or $AllowDryRunApply -or $ManagementNetwork -notmatch '^VMnet\d+$')) {
@@ -512,7 +518,7 @@ if (-not $applianceIpWasPassed) {
 }
 if (-not $PlanOnly -and $PSCmdlet.ParameterSetName -eq 'Run' -and -not $RoutingOverlapOnly) {
     $usesLanSegments = @($SiteANetwork, $SiteBNetwork, $TrunkNetwork) | Where-Object { $_.StartsWith('lan:') }
-    if (-not $usesLanSegments -and -not $CertificateOnly) {
+    if (-not $usesLanSegments -and -not ($CertificateOnly -or $TimeSourceOnly)) {
         $lifecycleNetworkPlan = Get-ManagementNetworkPlan -NetworkName $ManagementNetwork -Vmrun $VmrunPath -BridgeAlias $BridgedInterfaceAlias -AllLifecycleNetworks
         if ($lifecycleNetworkPlan.missing_networks.Count -gt 0) {
             throw "Missing VMware Workstation lifecycle networks: $($lifecycleNetworkPlan.missing_networks -join ', '). Create them in Virtual Network Editor, pass lan:<segment-name> for isolated Workstation LAN segments, or run -PrepareNetworksOnly after configuring Workstation host-only vmnets."
@@ -521,14 +527,14 @@ if (-not $PlanOnly -and $PSCmdlet.ParameterSetName -eq 'Run' -and -not $RoutingO
 }
 $effectiveApplianceUrl = if ($ApplianceUrl) { $ApplianceUrl } elseif ($ApplianceIPAddress) { "https://${ApplianceIPAddress}" } else { "" }
 
-if (-not $SkipClientPrepare -and -not $CertificateOnly -and -not $PlanOnly) {
+if (-not $SkipClientPrepare -and -not ($TimeSourceOnly -or $CertificateOnly) -and -not $PlanOnly) {
     & (Join-Path $PSScriptRoot 'prepare-tiny-linux-client.ps1')
     if (-not $?) {
         throw "Tiny Linux VMware client preparation failed."
     }
 }
 
-$effectiveSkipBackupRestoreTest = [bool]($SkipBackupRestoreTest -or $RoutingWanOnly -or $OidcOnly -or $CertificateOnly -or $RoutingOverlapOnly)
+$effectiveSkipBackupRestoreTest = [bool]($SkipBackupRestoreTest -or $RoutingWanOnly -or $OidcOnly -or $TimeSourceOnly -or $CertificateOnly -or $RoutingOverlapOnly)
 $powerShell7Path = Resolve-PowerShell7Path
 
 $secretBundlePath = ''
@@ -582,6 +588,7 @@ if (-not $KeepVms) { $arguments += '-CleanupCreatedLab' }
 if ($AllowDryRunApply) { $arguments += '-AllowDryRunApply' }
 if ($effectiveSkipBackupRestoreTest) { $arguments += '-SkipBackupRestoreTest' }
 if ($OidcOnly) { $arguments += '-OidcOnly' }
+if ($TimeSourceOnly) { $arguments += '-TimeSourceOnly' }
 if ($CertificateOnly) { $arguments += '-CertificateOnly' }
 if ($CertificateDhcpPeer) {
     $arguments += @('-CertificateDhcpPeer', '-CertificatePeerCidr', $CertificatePeerCidr,
@@ -604,6 +611,7 @@ Write-Host "Client VMDK: $ClientVmdkPath"
 Write-Host "Appliance URL: $(if ($effectiveApplianceUrl) { $effectiveApplianceUrl } else { 'discovered at runtime' })"
 Write-Host ("Routing/WAN only: {0}" -f ([bool]$RoutingWanOnly))
 Write-Host ("OIDC only: {0}" -f ([bool]$OidcOnly))
+Write-Host ("Time-source only: {0}" -f ([bool]$TimeSourceOnly))
 Write-Host ("Full ESXi PXE install: {0}" -f ([bool]$FullEsxiPxeInstall))
 Write-Host ("Backup/restore validation: {0}" -f (-not $effectiveSkipBackupRestoreTest))
 Write-Host ("Cleanup created VMs: {0}" -f (-not $KeepVms))

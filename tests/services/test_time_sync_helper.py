@@ -19,7 +19,7 @@ def test_ntpd_adapter_uses_bounded_apply_and_reconcile_commands(monkeypatch):
     adapter.reconcile_ntpd_time()
 
     assert calls[0][0:3] == ("ntpd", "apply", ("/tmp/ntp.conf",))
-    assert calls[0][3]["timeout_seconds"] == 90
+    assert calls[0][3]["timeout_seconds"] == 150
     assert calls[1][0:3] == ("ntpd", "reconcile", ())
     assert calls[1][3]["timeout_seconds"] == 90
 

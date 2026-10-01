@@ -12,6 +12,7 @@ import base64
 import hashlib
 import html
 import http.cookiejar
+import importlib.util
 import json
 import random
 import re
@@ -189,6 +190,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--certificate-baseline-result", default="", help="Compare restored CA certificate evidence with a previous lifecycle result.json.")
     parser.add_argument("--restored-state-run", action="store_true", help="Run restored-state checks instead of configuring desired state from scratch.")
     parser.add_argument("--routing-wan-only", action="store_true", help="Run only network, routing, NAT, WAN, and client forwarding checks.")
+    parser.add_argument("--time-source-only", action="store_true", help="Verify all clock sources, ingress behavior, controller conflicts, and reboot persistence on one owned VMware appliance.")
+    parser.add_argument("--time-source-site-network", default="", help="Host VMware adapter used by the owned time-source fixture.")
     parser.add_argument(
         "--oidc-only",
         action="store_true",
@@ -196,6 +199,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument("--plan-only", action="store_true", help="Write the intended lifecycle plan without changing the appliance.")
     args = parser.parse_args(argv)
+    if args.time_source_only and (args.oidc_only or args.routing_wan_only or args.restored_state_run or args.restore_settings_backup or args.export_settings_backup or args.signed_release_repository_url):
+        parser.error("--time-source-only cannot be combined with another lifecycle mode, backup, or signed release scenario.")
     if args.oidc_only and (args.routing_wan_only or args.restored_state_run):
         parser.error("--oidc-only cannot be combined with --routing-wan-only or --restored-state-run.")
     return args
@@ -233,7 +238,7 @@ def load_lifecycle_secrets(args: argparse.Namespace, stream: TextIO) -> None:
     esxi_password = payload.get("esxi_password", "")
     if not isinstance(vcf_backup_password, str):
         raise LifecycleError("Lifecycle secret input contains an invalid VCF Backup password.")
-    if not (args.oidc_only or args.routing_wan_only) and not vcf_backup_password:
+    if not (args.oidc_only or args.routing_wan_only or args.time_source_only) and not vcf_backup_password:
         raise LifecycleError("Lifecycle secret input requires a VCF Backup password for the full lifecycle.")
     if not isinstance(esxi_password, str):
         raise LifecycleError("Lifecycle secret input contains an invalid ESXi password.")
@@ -753,6 +758,15 @@ def lifecycle_plan(args: argparse.Namespace) -> dict[str, Any]:
     Args:
         args: Parsed command-line options consumed by the operation.
     """
+    if args.time_source_only:
+        return {
+            "appliance_url": args.appliance_url,
+            "time_source_only": True,
+            "interfaces": {"site": {"name": args.site_interface, "ip_cidr": args.site_cidr, "mode": "access"}},
+            "apply_units": ["network", "firewall", "ntpd"],
+            "checks": ["NTP client synchronization and verified ingress refusal", "exclusive VMware host clock synchronization", "NTP server replies and remembered clock source", "controller conflict diagnostics", "VMware Tools restart and reboot persistence"],
+            "client_checks_enabled": False,
+        }
     vlan_name = f"{args.trunk_interface}.{args.vlan_id}"
     oidc_check = (
         "OIDC Authorization Code, explicit Local selection, client-specific "
@@ -5802,15 +5816,27 @@ def main() -> int:
         if args.pxe_test_mode == "esxi":
             if not args.esxi_password:
                 raise LifecycleError("The lifecycle secret input must include an ESXi password for an ESXi PXE run.")
-        client = HttpClient(args.appliance_url)
-        if args.oidc_only:
-            run_oidc_lifecycle(results, client, args)
-        elif args.routing_wan_only:
-            run_routing_wan_lifecycle(results, client, args)
-        elif args.restored_state_run:
-            run_restored_lifecycle(results, client, args)
+        if args.time_source_only:
+            module_path = Path(__file__).with_name("time_source_acceptance.py")
+            spec = importlib.util.spec_from_file_location("atlaso_time_source_acceptance", module_path)
+            if spec is None or spec.loader is None:
+                raise LifecycleError("The focused time-source acceptance module is unavailable.")
+            module = importlib.util.module_from_spec(spec)
+            sys.modules[spec.name] = module
+            spec.loader.exec_module(module)
+            evidence = run_step(results, "time-source-acceptance", lambda: module.run_time_source_acceptance(args))
+            if evidence is None:
+                raise LifecycleError("The focused time-source acceptance did not produce evidence.")
         else:
-            run_full_lifecycle(results, client, args)
+            client = HttpClient(args.appliance_url)
+            if args.oidc_only:
+                run_oidc_lifecycle(results, client, args)
+            elif args.routing_wan_only:
+                run_routing_wan_lifecycle(results, client, args)
+            elif args.restored_state_run:
+                run_restored_lifecycle(results, client, args)
+            else:
+                run_full_lifecycle(results, client, args)
         result["status"] = "passed"
         return_code = 0
     except Exception as exc:  # noqa: BLE001 - record a final safe lifecycle result for any integration failure.

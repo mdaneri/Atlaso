@@ -592,7 +592,7 @@ class SystemAdapter:
             "apply",
             config_path,
             dry_run_message="dry-run: NTPsec apply command recorded",
-            timeout_seconds=90,
+            timeout_seconds=150,
         )
 
     def reconcile_ntpd_time(self) -> AdapterResult:

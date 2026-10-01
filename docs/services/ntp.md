@@ -61,7 +61,12 @@ interrupted before controller verification, startup and service guards restore i
 new controller after a power loss. NTS private material stays in its managed location until verification.
 Legacy configurations require Apply before startup can establish their clock authority; startup stops uncertain
 legacy controllers until then. If old NTS material cleanup fails after controller verification, Atlaso retains the
-verified new mode and leaves Apply pending for a cleanup retry.
+verified new mode and leaves Apply pending for a cleanup retry. NTP synchronization verification allows up to 60 seconds,
+including recovery after a clock step when switching from VMware Tools.
+VMware Tools Apply also waits up to 60 seconds for two advancing host-time observations that agree with the guest
+clock within two seconds. This tolerance accounts for the host-time command's whole-second precision. An enabled
+periodic-sync setting alone cannot complete Apply. Status reports clock disagreement as unhealthy and an unavailable
+host-time comparison as unknown.
 Startup, restore, appliance updates, and reboot preserve the same mutual-exclusion rule. Settings archive
 and restore include the selected source. Factory reset returns the source to the documented **NTP client** default.
 

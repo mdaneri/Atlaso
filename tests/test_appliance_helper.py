@@ -19090,6 +19090,8 @@ def test_ntpd_transition_covers_each_clock_source_change(monkeypatch, tmp_path, 
     monkeypatch.setattr(helper, "_ntpd_nts_server_enabled", lambda _path: False)
     monkeypatch.setattr(helper, "_ntpd_start_service", lambda unit, restart=False: operations.append(f"start:{unit}"))
     monkeypatch.setattr(helper, "_ntpd_wait_synchronized", lambda: operations.append("wait-synchronized"))
+    monkeypatch.setattr(helper, "_ntpd_wait_vmware_synchronized", lambda: operations.append("wait-vmware-synchronized"))
+    monkeypatch.setattr(helper, "_ntpd_checkpoint_verified", lambda: operations.append("checkpoint-verified"))
 
     helper._ntpd_transition(next_mode, tmp_path / "applied.conf")
 
@@ -19100,12 +19102,137 @@ def test_ntpd_transition_covers_each_clock_source_change(monkeypatch, tmp_path, 
     ]
     assert f"guard:{next_mode}" in operations
     if next_mode == "vmware_tools":
-        assert operations[-1] == "vmware:True"
+        assert operations.index("vmware:True") < operations.index("wait-vmware-synchronized")
+        assert operations.index("wait-vmware-synchronized") < operations.index("checkpoint-verified")
         assert "start:ntpd.service" not in operations
         assert "wait-synchronized" not in operations
     else:
         assert operations.index("vmware:False") < operations.index("start:ntpd.service")
         assert operations.index("start:ntpd.service") < operations.index("wait-synchronized")
+        assert operations.index("wait-synchronized") < operations.index("checkpoint-verified")
+
+
+@pytest.mark.parametrize("health", [False, None], ids=["unaligned", "unavailable"])
+def test_ntpd_vmware_wait_rejects_unaligned_or_unavailable_clock_observations(monkeypatch, health):
+    """VMware authority is not verified when host-time alignment is false or unknown."""
+    helper = load_helper_module()
+    elapsed = [0.0]
+    observations: list[dict[str, object]] = []
+    monkeypatch.setattr(helper.time, "monotonic", lambda: elapsed[0])
+    monkeypatch.setattr(helper.time, "sleep", lambda seconds: elapsed.__setitem__(0, elapsed[0] + seconds))
+    observation = {"healthy": health, "detail": "test host-time observation"}
+    monkeypatch.setattr(helper, "_ntpd_vmware_clock_state", lambda: observations.append(observation) or observation)
+
+    with pytest.raises(RuntimeError, match="synchronization with advancing host time was not verified"):
+        helper._ntpd_wait_vmware_synchronized(timeout_seconds=4)
+
+    assert len(observations) == 2
+    assert elapsed[0] == 4
+
+
+def test_ntpd_vmware_wait_requires_two_advancing_aligned_samples(monkeypatch):
+    """VMware selection waits for two aligned host-time samples that advance."""
+    helper = load_helper_module()
+    elapsed = [0.0]
+    samples = iter((100.0, 102.0))
+    monkeypatch.setattr(helper.time, "monotonic", lambda: elapsed[0])
+    monkeypatch.setattr(helper.time, "sleep", lambda seconds: elapsed.__setitem__(0, elapsed[0] + seconds))
+    monkeypatch.setattr(
+        helper,
+        "_ntpd_vmware_clock_state",
+        lambda: {"healthy": True, "host_timestamp": next(samples)},
+    )
+
+    helper._ntpd_wait_vmware_synchronized()
+
+    assert elapsed[0] == 2
+
+
+def test_ntpd_vmware_wait_rejects_frozen_aligned_host_time(monkeypatch):
+    """Repeatedly aligned observations are insufficient when VMware host time does not advance."""
+    helper = load_helper_module()
+    elapsed = [0.0]
+    probes = 0
+    monkeypatch.setattr(helper.time, "monotonic", lambda: elapsed[0])
+    monkeypatch.setattr(helper.time, "sleep", lambda seconds: elapsed.__setitem__(0, elapsed[0] + seconds))
+
+    def frozen_observation() -> dict[str, object]:
+        nonlocal probes
+        probes += 1
+        return {"healthy": True, "host_timestamp": 100.0}
+
+    monkeypatch.setattr(helper, "_ntpd_vmware_clock_state", frozen_observation)
+
+    with pytest.raises(RuntimeError, match="synchronization with advancing host time was not verified"):
+        helper._ntpd_wait_vmware_synchronized(timeout_seconds=4)
+
+    assert probes == 2
+    assert elapsed[0] == 4
+
+
+@pytest.mark.parametrize(
+    ("guest_offset", "expected_health", "expected_offset"),
+    [(0.2, True, 0.3), (4.2, False, 4.3)],
+    ids=["aligned", "drift"],
+)
+def test_ntpd_vmware_clock_state_parses_photon_host_time_and_checks_environment(
+    monkeypatch, guest_offset, expected_health, expected_offset
+):
+    """Parse Photon host time with a pinned locale and timezone and compare its clock offset."""
+    helper = load_helper_module()
+    host_timestamp = helper.datetime(2026, 10, 1, 19, 28, 11, tzinfo=helper.timezone.utc).timestamp()
+    times = iter((host_timestamp + guest_offset, host_timestamp + guest_offset + 0.2))
+    calls: list[tuple[list[str], float, dict[str, str]]] = []
+    monkeypatch.setattr(helper.shutil, "which", lambda command: "/usr/bin/vmware-toolbox-cmd")
+    monkeypatch.setattr(helper.time, "time", lambda: next(times))
+
+    def fake_run(command, *, timeout, env):
+        calls.append((command, timeout, env))
+        return subprocess.CompletedProcess(command, 0, "01 Oct 2026 19:28:11\n", "")
+
+    monkeypatch.setattr(helper, "_run", fake_run)
+
+    state = helper._ntpd_vmware_clock_state()
+
+    assert state["healthy"] is expected_health
+    assert state["offset_seconds"] == expected_offset
+    assert calls == [
+        (
+            ["/usr/bin/vmware-toolbox-cmd", "stat", "hosttime"],
+            1,
+            {**helper.os.environ, "LC_ALL": "C", "TZ": "UTC"},
+        )
+    ]
+
+
+@pytest.mark.parametrize(
+    ("returncode", "stdout", "timeout_error"),
+    [
+        (0, "bad host-time output\n", False),
+        (1, "01 Oct 2026 19:28:11\n", False),
+        (124, "", True),
+    ],
+    ids=["malformed", "nonzero", "timeout"],
+)
+def test_ntpd_vmware_clock_state_reports_unknown_for_invalid_probe(
+    monkeypatch, returncode, stdout, timeout_error
+):
+    """Malformed, unsuccessful, and timed-out host-time probes never claim alignment."""
+    helper = load_helper_module()
+    monkeypatch.setattr(helper.shutil, "which", lambda _command: "/usr/bin/vmware-toolbox-cmd")
+    monkeypatch.setattr(helper.time, "time", lambda: 1_798_000_000.0)
+
+    def fake_run(command, **_kwargs):
+        if timeout_error:
+            raise subprocess.TimeoutExpired(command, 1)
+        return subprocess.CompletedProcess(command, returncode, stdout, "probe failed" if returncode else "")
+
+    monkeypatch.setattr(helper, "_run", fake_run)
+
+    state = helper._ntpd_vmware_clock_state()
+
+    assert state["healthy"] is None
+    assert state["detail"] == "VMware host clock comparison is unavailable."
 
 
 @pytest.mark.parametrize(
@@ -19285,6 +19412,32 @@ def test_ntpd_apply_restores_previous_mode_after_vmware_verification_failure(mon
     monkeypatch.setattr(helper, "_ntpd_transition", lambda mode, **_kwargs: next_start_modes.append(mode))
     assert helper._ntpd_reconcile_applied()["mode"] == "ntp_client"
     assert next_start_modes == ["ntp_client"]
+
+
+def test_ntpd_wait_synchronized_accepts_sync_after_thirty_seconds(monkeypatch):
+    """The default bounded wait accepts a VMware-induced clock step resolving after 30 seconds."""
+    helper = load_helper_module()
+    elapsed = [0.0]
+    probes: list[float] = []
+    monkeypatch.setattr(helper.shutil, "which", lambda command: "/usr/bin/ntpq" if command == "ntpq" else None)
+    monkeypatch.setattr(helper.time, "monotonic", lambda: elapsed[0])
+    monkeypatch.setattr(helper.time, "sleep", lambda seconds: elapsed.__setitem__(0, elapsed[0] + seconds))
+
+    def probe(command, *, timeout):
+        assert command == ["/usr/bin/ntpq", "-c", "rv"]
+        assert timeout == 2
+        probes.append(elapsed[0])
+        if elapsed[0] >= 34:
+            return subprocess.CompletedProcess(command, 0, "leap_none, sync_ntp", "")
+        return subprocess.CompletedProcess(command, 0, "leap_alarm, no_sys_peer", "")
+
+    monkeypatch.setattr(helper, "_run", probe)
+
+    helper._ntpd_wait_synchronized()
+
+    assert probes[-1] == 34
+    assert probes[-1] > 30
+    assert elapsed[0] < 60
 
 
 def test_ntpd_apply_wait_failure_restores_nts_server_assets_before_rollback(monkeypatch, tmp_path, capsys):
@@ -19479,6 +19632,52 @@ def test_ntpd_first_apply_failure_restores_absence_or_unmanaged_config(
     assert vmware_changes == [True, False]
     assert "no managed clock mode was active" in capsys.readouterr().err
     assert helper._ntpd_reconcile_applied()["managed"] is (prior_content is not None and b"Atlaso" in prior_content)
+
+
+@pytest.mark.parametrize("observation", [False, None], ids=["unaligned", "unavailable"])
+def test_ntpd_vmware_sync_failure_rolls_back_previous_controller(monkeypatch, tmp_path, capsys, observation):
+    """An unaligned or unavailable VMware host-time observation cannot commit a candidate mode."""
+    helper = load_helper_module()
+    applied = tmp_path / "etc" / "ntp.conf"
+    staged = tmp_path / "apply" / "ntpd" / "atlaso-ntp.conf"
+    staged.parent.mkdir(parents=True)
+    previous = ntpd_config_text(enabled=False, server="", listen_address="").replace(
+        "# Atlaso NTP enabled: false\n",
+        "# Atlaso NTP enabled: false\n# Atlaso time mode: ntp_client\n",
+    )
+    candidate = ntpd_config_text(enabled=False, server="", listen_address="").replace(
+        "# Atlaso NTP enabled: false\n",
+        "# Atlaso NTP enabled: false\n# Atlaso time mode: vmware_tools\n",
+    )
+    applied.parent.mkdir(parents=True)
+    applied.write_text(previous, encoding="utf-8")
+    staged.write_text(candidate, encoding="utf-8")
+    monkeypatch.setattr(helper, "NTP_APPLY_DIR", staged.parent)
+    monkeypatch.setattr(helper, "NTP_CONFIG_PATH", applied)
+    monkeypatch.setattr(helper, "_ntpd_install_guards", lambda: None)
+    monkeypatch.setattr(helper, "_ntpd_supports_nts", lambda: True)
+    monkeypatch.setattr(helper, "_ntpd_runtime_identity_errors", lambda: [])
+    monkeypatch.setattr(helper, "_ntpd_stop_service", lambda _unit: None)
+    monkeypatch.setattr(helper, "_ntpd_client_packet_guard", lambda _mode: None)
+    monkeypatch.setattr(helper, "_install_ntpd_config", lambda _path: None)
+    monkeypatch.setattr(helper, "_ntpd_nts_server_enabled", lambda _path: False)
+    monkeypatch.setattr(helper, "_remove_ntpd_nts_server_material", lambda: [])
+    monkeypatch.setattr(helper, "_ntpd_start_service", lambda _unit, **_kwargs: None)
+    monkeypatch.setattr(helper, "_ntpd_wait_synchronized", lambda: None)
+    monkeypatch.setattr(
+        helper,
+        "_ntpd_wait_vmware_synchronized",
+        lambda: (_ for _ in ()).throw(RuntimeError(f"VMware host clock observation is {observation!r}")),
+    )
+    vmware_changes: list[bool] = []
+    monkeypatch.setattr(helper, "_ntpd_set_vmware_timesync", vmware_changes.append)
+
+    assert helper._handle_ntpd("apply", [str(staged)]) == 1
+
+    assert applied.read_text(encoding="utf-8") == previous
+    assert helper._ntpd_applied_time_mode(applied) == "ntp_client"
+    assert vmware_changes == [True, False]
+    assert "Restored previous applied ntp_client clock mode" in capsys.readouterr().err
 
 
 def test_ntpd_apply_reports_rollback_sync_failure_but_keeps_previous_config(monkeypatch, tmp_path, capsys):
@@ -19882,6 +20081,53 @@ def test_ntpd_status_reports_runtime_drift_and_sync_failures(
     assert payload["synchronization"]["healthy"] is expected_health
     if scenario in {"vmware-conflict", "chronyd-conflict"}:
         assert "competing clock source" in payload["synchronization"]["detail"].lower()
+
+
+@pytest.mark.parametrize(
+    ("observation", "expected_health", "expected_state"),
+    [
+        ({"healthy": True, "offset_seconds": 0.5, "detail": "aligned"}, True, "synchronized"),
+        ({"healthy": False, "offset_seconds": 4.0, "detail": "clock drift"}, False, "unsynchronized"),
+        ({"healthy": None, "detail": "host-time probe unavailable"}, None, "unavailable"),
+    ],
+    ids=["aligned", "drift", "unknown"],
+)
+def test_ntpd_status_reports_observed_vmware_clock_health(
+    monkeypatch, tmp_path, capsys, observation, expected_health, expected_state
+):
+    """VMware status reflects observed host-time alignment, not only the enabled flag."""
+    helper = load_helper_module()
+    config = tmp_path / "ntp.conf"
+    config.write_text(
+        "# Atlaso NTP enabled: false\n# Atlaso time mode: vmware_tools\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(helper, "NTP_CONFIG_PATH", config)
+    monkeypatch.setattr(helper, "_ntpd_config_managed", lambda _path: True)
+    monkeypatch.setattr(helper.shutil, "which", lambda _command: None)
+    monkeypatch.setattr(
+        helper,
+        "_ntpd_service_state",
+        lambda _unit: {"active": False, "enabled": False, "detail": "inactive"},
+    )
+    monkeypatch.setattr(
+        helper,
+        "_ntpd_vmware_timesync_state",
+        lambda: {"active": True, "enabled": True, "detail": "periodic sync enabled"},
+    )
+    monkeypatch.setattr(helper, "_ntpd_vmware_clock_state", lambda: observation)
+
+    assert helper._ntpd_status() == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["selected_controller"]["name"] == "vmware_tools"
+    assert payload["vmware_timesync_enabled"] is True
+    assert payload["synchronization"]["healthy"] is expected_health
+    assert payload["synchronization"]["state"] == expected_state
+    if expected_health is not None:
+        assert payload["vmware_clock_comparison"]["offset_seconds"] == observation["offset_seconds"]
+    else:
+        assert payload["vmware_clock_comparison"]["healthy"] is None
+        assert "offset_seconds" not in payload["vmware_clock_comparison"]
 
 
 def test_appliance_settings_hostname_fallback_writes_etc_hostname(monkeypatch, tmp_path):
