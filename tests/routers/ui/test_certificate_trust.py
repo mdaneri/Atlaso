@@ -596,6 +596,45 @@ def test_vcenter_enrollment_approval_binds_only_inspected_client_to_provider(
             == "ready"
         )
 
+    data["vcenter_id"] = approved.json()["trusted_vcenter_id"]
+    data["name"] = "Refreshed vCenter"
+    refreshed = client.post("/vsphere-key-providers/enrollment/approve", data=data)
+    assert refreshed.status_code == 200, refreshed.text
+    with SessionLocal() as db:
+        trusted = db.get(VsphereTrustedVcenter, data["vcenter_id"])
+        assert trusted.name == "Refreshed vCenter"
+        assert len(trusted.certificates) == 1
+        original_certificate_id = trusted.certificates[0].id
+        desired_updated_at = db.get(VsphereKeyProvider, provider_id).updated_at
+    unchanged = client.post("/vsphere-key-providers/enrollment/approve", data=data)
+    assert unchanged.status_code == 200, unchanged.text
+    with SessionLocal() as db:
+        trusted = db.get(VsphereTrustedVcenter, data["vcenter_id"])
+        assert len(trusted.certificates) == 1
+        assert trusted.certificates[0].id == original_certificate_id
+        assert (
+            db.get(VsphereKeyProvider, provider_id).updated_at == desired_updated_at
+        )
+        other = VsphereTrustedVcenter(
+            id=str(uuid4()),
+            provider_id=provider_id,
+            name="Other vCenter",
+            hostname="vcsa.example.test",
+            enabled=True,
+        )
+        db.add(other)
+        db.commit()
+        other_id = other.id
+    assigned_elsewhere = client.post(
+        "/vsphere-key-providers/enrollment/approve",
+        data={**data, "vcenter_id": other_id, "name": "Other rename"},
+    )
+    assert assigned_elsewhere.status_code == 422
+    with SessionLocal() as db:
+        other = db.get(VsphereTrustedVcenter, other_id)
+        assert other.name == "Other vCenter"
+        assert other.certificates == []
+
     replacement_pem, _ = _public_client_certificate("vcsa-rotation.example.test")
     replacement = parse_public_certificate(replacement_pem)
     replacement_discovery = DiscoveredClient(
@@ -650,7 +689,9 @@ def test_enrollment_saved_endpoint_binding_and_choices(client, monkeypatch) -> N
 
     csrf = _login(client)
     with SessionLocal() as db:
-        provider = VsphereKeyProvider(id=str(uuid4()), name=f"Binding {uuid4()}", enabled=True)
+        provider = VsphereKeyProvider(
+            id=str(uuid4()), name=f"Binding {uuid4()}", enabled=True
+        )
         db.add(provider)
         vault = Vault(name=f"binding-{uuid4()}", created_by="admin")
         db.add(vault)

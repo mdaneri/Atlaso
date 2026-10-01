@@ -1984,9 +1984,14 @@ def build_routers(
                     raise EnrollmentError(
                         "The existing vCenter does not match this provider and host."
                     )
+                desired_changed = (
+                    vcenter.name != name.strip()
+                    or vcenter.hostname != discovered.vcenter_host
+                )
                 vcenter.name = name.strip()
                 vcenter.hostname = discovered.vcenter_host
             else:
+                desired_changed = True
                 vcenter = VsphereTrustedVcenter(
                     id=str(uuid4()),
                     provider_id=provider.id,
@@ -1997,14 +2002,28 @@ def build_routers(
                 db.add(vcenter)
                 db.flush()
             parsed = parse_public_certificate(discovered.certificate_pem)
-            certificate = VsphereTrustedVcenterCertificate(
-                id=str(uuid4()),
-                trusted_vcenter_id=vcenter.id,
-                source="vcenter_api_discovered",
-                **parsed,
-            )
-            db.add(certificate)
-            mark_provider_desired_changed(provider)
+            certificate = db.execute(
+                select(VsphereTrustedVcenterCertificate).where(
+                    VsphereTrustedVcenterCertificate.fingerprint_sha256
+                    == parsed["fingerprint_sha256"]
+                )
+            ).scalar_one_or_none()
+            if certificate is not None:
+                if certificate.trusted_vcenter_id != vcenter.id:
+                    raise EnrollmentError(
+                        "The client fingerprint is already assigned to another vCenter."
+                    )
+            else:
+                certificate = VsphereTrustedVcenterCertificate(
+                    id=str(uuid4()),
+                    trusted_vcenter_id=vcenter.id,
+                    source="vcenter_api_discovered",
+                    **parsed,
+                )
+                db.add(certificate)
+                desired_changed = True
+            if desired_changed:
+                mark_provider_desired_changed(provider)
             db.commit()
         except (ValueError, EnrollmentError) as exc:
             db.rollback()
