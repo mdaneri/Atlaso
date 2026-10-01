@@ -24,6 +24,14 @@ USERNAME = "admin"
 TLS_CONTEXT = None
 PYTHON = "/opt/atlaso/.venv/bin/python"
 MODES = {"ntp_client", "ntp_server", "vmware_tools"}
+WEB_ACTIONS = {
+    "prepare_server_interface",
+    "apply",
+    "status",
+    "wait_status",
+    "conflict_enable",
+    "server_probe",
+}
 
 
 class SafeFailure(Exception):
@@ -37,6 +45,8 @@ class FormParser(HTMLParser):
         self.fields, self.interfaces = [], []
         self.in_form, self.form_action = False, "/ntp/settings"
         self.text_name, self.text_parts = None, []
+        self.select = None
+        self.option = None
 
     def handle_starttag(self, tag, attrs):
         a = {k: (v or "") for k, v in attrs}
@@ -46,6 +56,23 @@ class FormParser(HTMLParser):
             self.interfaces.append(a["data-tag-option"])
         if tag == "textarea" and self.in_form:
             self.text_name, self.text_parts = a.get("name"), []
+        if tag == "select":
+            form_owned = self.in_form or a.get("form") == "ntp-settings-form"
+            self.select = {
+                "name": a.get("name", ""),
+                "successful": form_owned and bool(a.get("name")) and "disabled" not in a,
+                "multiple": "multiple" in a,
+                "options": [],
+            }
+            return
+        if tag == "option" and self.select is not None:
+            self.option = {
+                "value": a.get("value"),
+                "selected": "selected" in a,
+                "disabled": "disabled" in a,
+                "text": [],
+            }
+            return
         if tag != "input" or not a.get("name") or "disabled" in a:
             return
         if not self.in_form and a.get("form") != "ntp-settings-form":
@@ -58,6 +85,30 @@ class FormParser(HTMLParser):
         self.fields.append((a["name"], a.get("value", "")))
 
     def handle_endtag(self, tag):
+        if tag == "option" and self.option is not None and self.select is not None:
+            option = self.option
+            value = option["value"]
+            if value is None:
+                value = " ".join("".join(option["text"]).split())
+            self.select["options"].append(
+                {"value": value, "selected": option["selected"], "disabled": option["disabled"]}
+            )
+            self.option = None
+        if tag == "select" and self.select is not None:
+            select = self.select
+            self.select = None
+            if not select["successful"]:
+                return
+            options = select["options"]
+            selected = [option for option in options if option["selected"]]
+            if not select["multiple"] and not selected:
+                selected = next((option for option in options if not option["disabled"]), None)
+                selected = [] if selected is None else [selected]
+            self.fields.extend(
+                (select["name"], option["value"])
+                for option in selected
+                if not option["disabled"]
+            )
         if tag == "textarea" and self.text_name:
             self.fields.append((self.text_name, "".join(self.text_parts)))
             self.text_name, self.text_parts = None, []
@@ -67,6 +118,8 @@ class FormParser(HTMLParser):
     def handle_data(self, data):
         if self.text_name:
             self.text_parts.append(data)
+        if self.option is not None:
+            self.option["text"].append(data)
 
 
 class TokenParser(HTMLParser):
@@ -132,6 +185,30 @@ def request(opener, path, *, data=None, headers=None, timeout=20, follow=True):
     with response:
         body = response.read(2_000_000)
         return response.status, response.url, response.headers, body
+
+
+def initialize_tls_context(host, *, timeout_seconds=15):
+    """Trust the guest's served public leaf after bounded listener recovery."""
+    deadline = time.monotonic() + timeout_seconds
+    while True:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise SafeFailure(
+                "https-listener", "The appliance HTTPS listener did not recover before the bounded deadline."
+            )
+        try:
+            leaf = ssl.get_server_certificate((host, 443), timeout=min(5, remaining))
+            context = ssl.create_default_context(cadata=leaf)
+            context.verify_flags |= ssl.VERIFY_X509_PARTIAL_CHAIN
+            context.check_hostname = False
+            return context
+        except (OSError, ssl.SSLError, ValueError):
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise SafeFailure(
+                    "https-listener", "The appliance HTTPS listener did not recover before the bounded deadline."
+                ) from None
+            time.sleep(min(1, remaining))
 
 
 def login(password):
@@ -885,6 +962,7 @@ def run_action(payload):
 
 def main():
     global BASE, HOST, TLS_CONTEXT, USERNAME
+    TLS_CONTEXT = None
     try:
         request_data = json.loads(sys.stdin.readline(65537))
         USERNAME = request_data.get("username", "admin")
@@ -903,12 +981,10 @@ def main():
                 "The pinned management address is not assigned to this guest.",
             )
         BASE = "https://%s/ui/management" % HOST
-        # The certificate pin is obtained inside the independently pinned SSH
-        # guest. Trust only that served public leaf for this local HTTPS session.
-        leaf = ssl.get_server_certificate((HOST, 443), timeout=5)
-        TLS_CONTEXT = ssl.create_default_context(cadata=leaf)
-        TLS_CONTEXT.verify_flags |= ssl.VERIFY_X509_PARTIAL_CHAIN
-        TLS_CONTEXT.check_hostname = False
+        if request_data.get("action") in WEB_ACTIONS:
+            # The certificate pin is obtained inside the independently pinned
+            # SSH guest. Read-only boot and host actions do not depend on nginx.
+            TLS_CONTEXT = initialize_tls_context(HOST)
         result = run_action(request_data)
         reply(True, **result)
     except SafeFailure as exc:

@@ -986,6 +986,7 @@ cat >/etc/systemd/system/atlaso-firewall.service <<'EOF'
 [Unit]
 Description=Atlaso nftables firewall
 DefaultDependencies=no
+RequiresMountsFor=/opt/atlaso
 Before=network-pre.target
 Wants=network-pre.target
 

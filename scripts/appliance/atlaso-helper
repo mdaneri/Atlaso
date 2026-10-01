@@ -7486,6 +7486,13 @@ def _ntpd_recover_interrupted_apply(*, allow_active: bool = False) -> None:
         if not isinstance(data, str):
             raise RuntimeError("Previous clock configuration bytes are invalid.")
         previous["data"] = base64.b64decode(data, validate=True)
+    if not previous["managed"] or previous["mode"] not in {"ntp_client", "ntp_server", "vmware_tools"}:
+        # Restoring absence or unproven vendor intent cannot authorize a
+        # controller already activated by the interrupted candidate. Keep the
+        # journal and candidate config until every candidate is proven stopped.
+        stop_errors = _ntpd_fail_closed_stop()
+        if stop_errors:
+            raise RuntimeError("Unable to stop unverified candidate clock controllers: " + "; ".join(stop_errors))
     _ntpd_restore_applied_config(previous)
     _ntpd_clear_transaction()
 
@@ -17272,6 +17279,7 @@ def _firewall_service_text() -> str:
                 "[Unit]",
                 "Description=Atlaso nftables firewall",
                 "DefaultDependencies=no",
+                "RequiresMountsFor=/opt/atlaso",
                 "Before=network-pre.target",
                 "Wants=network-pre.target",
                 "",

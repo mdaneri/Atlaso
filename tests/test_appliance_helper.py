@@ -1723,6 +1723,7 @@ def test_firewall_service_uses_helper_replay_command(monkeypatch, tmp_path):
     unit = helper._firewall_service_text()
 
     assert "ExecStart=/opt/atlaso/bin/atlaso-helper firewall replay --real" in unit
+    assert "RequiresMountsFor=/opt/atlaso" in unit
     assert "ExecStart=/usr/sbin/nft" not in unit
 
 
@@ -20507,11 +20508,129 @@ def test_ntpd_interrupted_initial_apply_recovers_original_absence(monkeypatch, t
     helper._ntpd_begin_transaction(snapshot)
     applied.write_text("# candidate config\n", encoding="utf-8")
     monkeypatch.setattr(helper, "_release_transaction_owner_alive", lambda _owner: False)
+    operations: list[tuple[str, object]] = []
+    monkeypatch.setattr(helper, "_ntpd_stop_service", lambda unit, **_kwargs: operations.append(("stop", unit)))
+    monkeypatch.setattr(helper, "_ntpd_client_packet_guard", lambda mode: operations.append(("guard", mode)))
+    monkeypatch.setattr(helper, "_ntpd_set_vmware_timesync", lambda enabled: operations.append(("vmware", enabled)))
 
     helper._ntpd_recover_interrupted_apply()
 
     assert not applied.exists()
     assert not helper._ntpd_transaction_path().exists()
+    assert operations == [
+        ("stop", "ntpd.service"),
+        ("stop", "chronyd.service"),
+        ("stop", "systemd-timesyncd.service"),
+        ("guard", "disabled"),
+        ("vmware", False),
+    ]
+
+
+def test_ntpd_interrupted_first_vmware_apply_stops_candidate_before_clearing_journal(
+    monkeypatch, tmp_path
+):
+    """Crash recovery disables a pre-checkpoint VMware candidate before retiring evidence."""
+    helper = load_helper_module()
+    applied = tmp_path / "etc" / "ntp.conf"
+    applied.parent.mkdir(parents=True)
+    monkeypatch.setattr(helper, "NTP_CONFIG_PATH", applied)
+    prior_snapshot = helper._ntpd_snapshot_applied_config()
+    assert prior_snapshot["exists"] is False
+    helper._ntpd_begin_transaction(prior_snapshot)
+    candidate = ntpd_config_text(enabled=False, server="", listen_address="").replace(
+        "# Atlaso NTP enabled: false\n",
+        "# Atlaso NTP enabled: false\n# Atlaso time mode: vmware_tools\n",
+    )
+    applied.write_text(candidate, encoding="utf-8")
+    monkeypatch.setattr(helper, "_release_transaction_owner_alive", lambda _owner: False)
+    candidate_controllers = {
+        "ntpd.service": False,
+        "chronyd.service": False,
+        "systemd-timesyncd.service": False,
+        "vmware_tools": True,
+    }
+    operations: list[tuple[str, object]] = []
+
+    def stop_service(unit: str, **_kwargs) -> None:
+        operations.append(("stop", unit))
+        candidate_controllers[unit] = False
+
+    def set_vmware(enabled: bool) -> None:
+        operations.append(("vmware", enabled))
+        candidate_controllers["vmware_tools"] = enabled
+
+    monkeypatch.setattr(helper, "_ntpd_stop_service", stop_service)
+    monkeypatch.setattr(helper, "_ntpd_client_packet_guard", lambda mode: operations.append(("guard", mode)))
+    monkeypatch.setattr(helper, "_ntpd_set_vmware_timesync", set_vmware)
+    clear_transaction = helper._ntpd_clear_transaction
+
+    def verify_safety_before_clear() -> None:
+        assert all(not active for active in candidate_controllers.values())
+        assert operations == [
+            ("stop", "ntpd.service"),
+            ("stop", "chronyd.service"),
+            ("stop", "systemd-timesyncd.service"),
+            ("guard", "disabled"),
+            ("vmware", False),
+        ]
+        assert not applied.exists()
+        clear_transaction()
+
+    monkeypatch.setattr(helper, "_ntpd_clear_transaction", verify_safety_before_clear)
+
+    assert helper._ntpd_guard("boot") == 0
+
+    assert not applied.exists()
+    assert not helper._ntpd_transaction_path().exists()
+    assert all(not active for active in candidate_controllers.values())
+    assert operations == [
+        ("stop", "ntpd.service"),
+        ("stop", "chronyd.service"),
+        ("stop", "systemd-timesyncd.service"),
+        ("guard", "disabled"),
+        ("vmware", False),
+    ]
+
+
+def test_ntpd_interrupted_initial_apply_retains_candidate_and_journal_when_stop_fails(
+    monkeypatch, tmp_path, capsys
+):
+    """A failed stop refuses to restore absence or retire crash-recovery evidence."""
+    helper = load_helper_module()
+    applied = tmp_path / "etc" / "ntp.conf"
+    applied.parent.mkdir(parents=True)
+    monkeypatch.setattr(helper, "NTP_CONFIG_PATH", applied)
+    helper._ntpd_begin_transaction(helper._ntpd_snapshot_applied_config())
+    candidate = ntpd_config_text(enabled=False, server="", listen_address="").replace(
+        "# Atlaso NTP enabled: false\n",
+        "# Atlaso NTP enabled: false\n# Atlaso time mode: vmware_tools\n",
+    )
+    applied.write_text(candidate, encoding="utf-8")
+    monkeypatch.setattr(helper, "_release_transaction_owner_alive", lambda _owner: False)
+    operations: list[tuple[str, object]] = []
+
+    def stop_service(unit: str, **_kwargs) -> None:
+        operations.append(("stop", unit))
+        if unit == "ntpd.service":
+            raise RuntimeError("candidate ntpd may still be active")
+
+    monkeypatch.setattr(helper, "_ntpd_stop_service", stop_service)
+    monkeypatch.setattr(helper, "_ntpd_client_packet_guard", lambda mode: operations.append(("guard", mode)))
+    monkeypatch.setattr(helper, "_ntpd_set_vmware_timesync", lambda enabled: operations.append(("vmware", enabled)))
+
+    assert helper._ntpd_guard("boot") == 1
+
+    assert applied.read_text(encoding="utf-8") == candidate
+    journal = json.loads(helper._ntpd_transaction_path().read_text(encoding="utf-8"))
+    assert journal["phase"] == "prepared"
+    assert "Unable to stop unverified candidate clock controllers" in capsys.readouterr().err
+    assert operations == [
+        ("stop", "ntpd.service"),
+        ("stop", "chronyd.service"),
+        ("stop", "systemd-timesyncd.service"),
+        ("guard", "disabled"),
+        ("vmware", False),
+    ]
 
 
 def test_ntpd_live_apply_is_allowed_by_guard_but_blocks_another_apply(monkeypatch, tmp_path, capsys):
