@@ -7,6 +7,7 @@ import re
 import socket
 import ssl
 from dataclasses import dataclass
+from urllib.parse import urlsplit
 
 import httpx
 from cryptography import x509
@@ -38,11 +39,35 @@ class DiscoveredClient:
     vcenter_host: str
 
 
-def vcenter_https_leaf(host: str, *, timeout: float = 8.0) -> bytes:
+def vcenter_https_endpoint(uri: str) -> tuple[str, int]:
+    """Resolve a saved credential-free HTTPS URI to its exact TLS endpoint.
+
+    Args:
+        uri: Saved Vault URI selected for enrollment.
+    """
+    try:
+        parsed = urlsplit(uri)
+        host = normalize_vcenter_hostname(parsed.hostname or "")
+        port = parsed.port if parsed.port is not None else 443
+        if (
+            parsed.scheme != "https"
+            or parsed.username is not None
+            or parsed.password is not None
+            or not host
+            or not 1 <= port <= 65535
+        ):
+            raise ValueError
+    except ValueError as exc:
+        raise EnrollmentError("Choose a saved HTTPS URI for this vCenter.") from exc
+    return host, port
+
+
+def vcenter_https_leaf(host: str, *, port: int = 443, timeout: float = 8.0) -> bytes:
     """Probe only the public HTTPS leaf; callers must confirm its fingerprint.
 
     Args:
         host: Normalized vCenter hostname or address.
+        port: Saved HTTPS endpoint port.
         timeout: Maximum seconds allowed for the public certificate probe.
     """
     host = normalize_vcenter_hostname(host)
@@ -53,7 +78,7 @@ def vcenter_https_leaf(host: str, *, timeout: float = 8.0) -> bytes:
     context.check_hostname = False
     context.verify_mode = ssl.CERT_NONE
     try:
-        with socket.create_connection((host, 443), timeout=timeout) as raw:
+        with socket.create_connection((host, port), timeout=timeout) as raw:
             with context.wrap_socket(raw, server_hostname=host) as connection:
                 leaf = connection.getpeercert(binary_form=True)
     except (OSError, ssl.SSLError) as exc:
@@ -137,6 +162,7 @@ def discover_vcenter_client(
     confirmed_https_fingerprint: str,
     atlaso_host: str,
     atlaso_port: int,
+    port: int = 443,
 ) -> DiscoveredClient:
     """Read one registered cluster's client cert over a pinned vCenter session.
 
@@ -151,6 +177,7 @@ def discover_vcenter_client(
         confirmed_https_fingerprint: Out-of-band confirmed HTTPS certificate fingerprint.
         atlaso_host: Expected Atlaso KMIP endpoint hostname.
         atlaso_port: Expected Atlaso KMIP listener port.
+        port: Saved vCenter HTTPS endpoint port.
     """
     host = normalize_vcenter_hostname(host)
     atlaso_host = normalize_vcenter_hostname(atlaso_host)
@@ -159,7 +186,7 @@ def discover_vcenter_client(
         raise EnrollmentError(
             "Enter a valid vCenter, Atlaso endpoint, and KMIP cluster ID."
         )
-    leaf = vcenter_https_leaf(host)
+    leaf = vcenter_https_leaf(host, port=port)
     observed = certificate_fingerprint(leaf)
     if observed != confirmed_https_fingerprint.strip().upper():
         raise EnrollmentError(
@@ -171,7 +198,7 @@ def discover_vcenter_client(
     api_host = f"[{host}]" if ":" in host else host
     try:
         with httpx.Client(
-            base_url=f"https://{api_host}",
+            base_url=f"https://{api_host}:{port}",
             verify=_pinned_context(leaf),
             follow_redirects=False,
             trust_env=False,

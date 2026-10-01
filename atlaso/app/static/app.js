@@ -5942,10 +5942,16 @@ function initializeVsphereKeyProviderTables() {
       enrollmentForm.elements.expected_client_fingerprint.value = "";
       if (clientSummary) clientSummary.textContent = "";
     };
+    vaultChoice?.addEventListener("change", () => {
+      enrollmentForm.elements.hostname.value = vaultChoice.selectedOptions[0]?.dataset.hostname || "";
+      enrollmentForm.elements.confirmed_https_fingerprint.value = "";
+      clearClient();
+    });
     const request = async (suffix) => {
       const selected = String(vaultChoice?.value || "").split("|");
       enrollmentForm.elements.vault_id.value = selected[0] || "";
       enrollmentForm.elements.entry_id.value = selected[1] || "";
+      enrollmentForm.elements.uri_index.value = selected[2] || "";
       return atlasoGridWizardRequest(
         managementUiPath(`/vsphere-key-providers/enrollment/${suffix}`),
         new FormData(enrollmentForm),

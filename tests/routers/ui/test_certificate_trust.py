@@ -463,6 +463,7 @@ def test_vcenter_enrollment_requires_confirmed_https_before_vault_use(
             vault_id=vault.id,
             key="vcenter-admin",
             secret_type="vcf_password",
+            uris_json='["https://vcsa.example.test"]',
             username="administrator",
             encrypted_value=encrypt_secret("test-secret"),
             created_by="admin",
@@ -470,7 +471,9 @@ def test_vcenter_enrollment_requires_confirmed_https_before_vault_use(
         db.add(entry)
         db.commit()
         vault_id, entry_id = vault.id, entry.id
-    monkeypatch.setattr(transport, "vcenter_https_leaf", lambda _host: b"changed-leaf")
+    monkeypatch.setattr(
+        transport, "vcenter_https_leaf", lambda _host, **_kwargs: b"changed-leaf"
+    )
     monkeypatch.setattr(
         transport,
         "decrypt_secret",
@@ -484,6 +487,7 @@ def test_vcenter_enrollment_requires_confirmed_https_before_vault_use(
             "cluster_id": "Atlaso-KMIP",
             "vault_id": vault_id,
             "entry_id": entry_id,
+            "uri_index": 0,
             "confirmed_https_fingerprint": "00" * 32,
             "csrf": csrf,
         },
@@ -518,6 +522,7 @@ def test_vcenter_enrollment_approval_binds_only_inspected_client_to_provider(
             vault_id=vault.id,
             key="vcenter-admin",
             secret_type="vcf_password",
+            uris_json='["https://vcsa.example.test"]',
             username="administrator",
             encrypted_value=encrypt_secret("test-secret"),
             created_by="admin",
@@ -529,7 +534,12 @@ def test_vcenter_enrollment_approval_binds_only_inspected_client_to_provider(
         from atlaso.app.ui import kms_context
 
         health = kms_context(db, include_runtime_counts=False)["vsphere_status_rows"]
-        assert next(row for row in health if row["provider_id"] == provider_id)["readiness"] == "enrollment required"
+        assert (
+            next(row for row in health if row["provider_id"] == provider_id)[
+                "readiness"
+            ]
+            == "enrollment required"
+        )
 
     discovered = DiscoveredClient(
         certificate_pem=public_pem,
@@ -540,7 +550,7 @@ def test_vcenter_enrollment_approval_binds_only_inspected_client_to_provider(
         vcenter_host="vcsa.example.test",
     )
     monkeypatch.setattr(
-        transport, "vcenter_https_leaf", lambda _host: b"confirmed-leaf"
+        transport, "vcenter_https_leaf", lambda _host, **_kwargs: b"confirmed-leaf"
     )
     monkeypatch.setattr(
         transport, "discover_vcenter_client", lambda **_kwargs: discovered
@@ -552,6 +562,7 @@ def test_vcenter_enrollment_approval_binds_only_inspected_client_to_provider(
         "cluster_id": "Atlaso-KMIP",
         "vault_id": vault_id,
         "entry_id": entry_id,
+        "uri_index": 0,
         "confirmed_https_fingerprint": certificate_fingerprint(b"confirmed-leaf"),
         "expected_client_fingerprint": "00" * 32,
         "csrf": csrf,
@@ -578,7 +589,12 @@ def test_vcenter_enrollment_approval_binds_only_inspected_client_to_provider(
         )
         assert trusted.certificates[0].source == "vcenter_api_discovered"
         health = kms_context(db, include_runtime_counts=False)["vsphere_status_rows"]
-        assert next(row for row in health if row["provider_id"] == provider_id)["readiness"] == "ready"
+        assert (
+            next(row for row in health if row["provider_id"] == provider_id)[
+                "readiness"
+            ]
+            == "ready"
+        )
 
     replacement_pem, _ = _public_client_certificate("vcsa-rotation.example.test")
     replacement = parse_public_certificate(replacement_pem)
@@ -618,3 +634,123 @@ def test_vcenter_enrollment_approval_binds_only_inspected_client_to_provider(
             parsed["fingerprint_sha256"],
             replacement["fingerprint_sha256"],
         }
+
+
+def test_enrollment_saved_endpoint_binding_and_choices(client, monkeypatch) -> None:
+    """Reject substituted endpoints before secret use and preserve URI ports.
+
+    Args:
+        client: Isolated authenticated HTTP test client.
+        monkeypatch: Fixture replacing network and secret access.
+    """
+    from atlaso.app.routers.ui import certificate_trust as transport
+
+    csrf = _login(client)
+    with SessionLocal() as db:
+        provider = VsphereKeyProvider(id=str(uuid4()), name=f"Binding {uuid4()}", enabled=True)
+        db.add(provider)
+        vault = Vault(name=f"binding-{uuid4()}", created_by="admin")
+        db.add(vault)
+        db.flush()
+        entry = VaultEntry(
+            vault_id=vault.id,
+            key="bound-vcenter",
+            secret_type="vcf_password",
+            username="administrator",
+            encrypted_value=encrypt_secret("test-secret"),
+            uris_json=json.dumps(
+                [
+                    "ssh://vcsa.example.test",
+                    "https://vcsa.example.test:8443/ui",
+                    "https://other.example.test",
+                ]
+            ),
+            created_by="admin",
+        )
+        empty = VaultEntry(
+            vault_id=vault.id,
+            key="no-endpoint",
+            secret_type="vcf_password",
+            username="administrator",
+            encrypted_value=encrypt_secret("test-secret"),
+            created_by="admin",
+        )
+        db.add_all([entry, empty])
+        db.commit()
+        vault_id, entry_id, empty_id = vault.id, entry.id, empty.id
+        provider_id = provider.id
+    page = client.get("/vsphere-key-providers")
+    assert page.status_code == 200
+    assert f'value="{vault_id}|{entry_id}|1"' in page.text
+    assert f'value="{vault_id}|{entry_id}|2"' in page.text
+    assert f'value="{vault_id}|{entry_id}|0"' not in page.text
+    assert f'value="{vault_id}|{empty_id}|' not in page.text
+    assert "https://vcsa.example.test:8443" in page.text
+    data = {
+        "provider_id": provider_id,
+        "name": "Bound vCenter",
+        "expected_client_fingerprint": "00" * 32,
+        "hostname": "vcsa.example.test",
+        "cluster_id": "Atlaso-KMIP",
+        "vault_id": vault_id,
+        "entry_id": entry_id,
+        "uri_index": 1,
+        "confirmed_https_fingerprint": certificate_fingerprint(b"leaf"),
+        "csrf": csrf,
+    }
+    monkeypatch.setattr(
+        transport,
+        "decrypt_secret",
+        lambda _secret: (_ for _ in ()).throw(AssertionError("Vault decrypted")),
+    )
+    monkeypatch.setattr(
+        transport,
+        "vcenter_https_leaf",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("network used")),
+    )
+    for changes in (
+        {"hostname": "attacker.example.test"},
+        {"uri_index": 0},
+        {"uri_index": -1},
+        {"uri_index": 99},
+        {"uri_index": 2},
+        {"entry_id": empty_id},
+        {"vault_id": vault_id + 10000},
+    ):
+        for route in ("probe", "inspect", "approve"):
+            response = client.post(
+                f"/vsphere-key-providers/enrollment/{route}", data={**data, **changes}
+            )
+            assert response.status_code == 422, response.text
+    seen = []
+
+    def probe(host, *, port):
+        """Capture the saved endpoint used by the public probe.
+
+        Args:
+            host: Resolved saved endpoint hostname.
+            port: Resolved saved endpoint port.
+        """
+        seen.append((host, port))
+        return b"leaf"
+
+    monkeypatch.setattr(transport, "vcenter_https_leaf", probe)
+    response = client.post("/vsphere-key-providers/enrollment/probe", data=data)
+    assert response.status_code == 200
+    assert seen == [("vcsa.example.test", 8443)]
+    monkeypatch.setattr(transport, "decrypt_secret", lambda _secret: "test-secret")
+
+    def discover(**kwargs):
+        """Capture the saved endpoint used by authenticated discovery.
+
+        Args:
+            **kwargs: Discovery arguments containing the resolved endpoint.
+        """
+        assert kwargs["host"] == "vcsa.example.test"
+        assert kwargs["port"] == 8443
+        raise transport.EnrollmentError("endpoint captured")
+
+    monkeypatch.setattr(transport, "discover_vcenter_client", discover)
+    response = client.post("/vsphere-key-providers/enrollment/inspect", data=data)
+    assert response.status_code == 422
+    assert "endpoint captured" in response.text

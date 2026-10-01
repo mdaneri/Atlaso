@@ -62,11 +62,12 @@ from atlaso.app.services.kms import (
     KMS_DEFAULT_CONFIG_PATH,
     KMS_DEFAULT_DATABASE_PATH,
 )
-from atlaso.app.services.vaults import list_vaults
+from atlaso.app.services.vaults import list_vaults, vault_entry_uris
 from atlaso.app.services.vsphere_enrollment import (
     EnrollmentError,
     certificate_fingerprint,
     discover_vcenter_client,
+    vcenter_https_endpoint,
     vcenter_https_leaf,
 )
 from atlaso.app.services.vsphere_key_providers import (
@@ -1698,18 +1699,32 @@ def build_routers(
         context = kms_context(db)
         context["vsphere_vault_credential_choices"] = []
         if identity.has_role("admin"):
-            context["vsphere_vault_credential_choices"] = [
-                {
-                    "vault_id": vault.id,
-                    "entry_id": entry.id,
-                    "label": f"{vault.name} / {entry.key} ({entry.username})",
-                }
-                for vault in list_vaults(db)
-                for entry in vault.entries
-                if entry.secret_type == "vcf_password"
-                and entry.username
-                and entry.encrypted_value
-            ]
+            for vault in list_vaults(db):
+                for entry in vault.entries:
+                    if (
+                        entry.secret_type != "vcf_password"
+                        or not entry.username
+                        or not entry.encrypted_value
+                    ):
+                        continue
+                    for index, uri in enumerate(vault_entry_uris(entry)):
+                        try:
+                            host, port = vcenter_https_endpoint(uri)
+                        except EnrollmentError:
+                            continue
+                        authority = (
+                            f"[{host}]:{port}" if ":" in host else f"{host}:{port}"
+                        )
+                        context["vsphere_vault_credential_choices"].append(
+                            {
+                                "vault_id": vault.id,
+                                "entry_id": entry.id,
+                                "uri_index": index,
+                                "hostname": host,
+                                "port": port,
+                                "label": f"{vault.name} / {entry.key} ({entry.username}) — https://{authority} (URI {index + 1})",
+                            }
+                        )
         return render(
             request,
             "kms.html",
@@ -1720,32 +1735,18 @@ def build_routers(
             },
         )
 
-    def _discover_client(
-        db: Session,
-        identity: Identity,
-        *,
-        host: str,
-        cluster_id: str,
-        vault_id: int,
-        entry_id: int,
-        confirmed_https_fingerprint: str,
+    def _enrollment_target(
+        db: Session, host: str, vault_id: int, entry_id: int, uri_index: int
     ):
-        """Resolve one Vault credential after out-of-band HTTPS confirmation.
+        """Bind a selected Vault URI before probing or decrypting credentials.
 
         Args:
             db: Active database session.
-            identity: Authenticated administrator identity.
-            host: Normalized vCenter hostname or address.
-            cluster_id: Registered Atlaso KMIP cluster identifier.
+            host: Submitted vCenter hostname or address.
             vault_id: Selected Vault identifier.
             entry_id: Selected Vault entry identifier.
-            confirmed_https_fingerprint: Out-of-band confirmed HTTPS certificate fingerprint.
+            uri_index: Selected saved URI position.
         """
-        observed = certificate_fingerprint(vcenter_https_leaf(host))
-        if observed != confirmed_https_fingerprint.strip().upper():
-            raise EnrollmentError(
-                "Confirm the current vCenter HTTPS fingerprint before using a Vault credential."
-            )
         entry = db.execute(
             select(VaultEntry).where(
                 VaultEntry.id == entry_id, VaultEntry.vault_id == vault_id
@@ -1760,9 +1761,49 @@ def build_routers(
             raise EnrollmentError(
                 "Choose a Vault entry with a vCenter username and password."
             )
+        uris = vault_entry_uris(entry)
+        if uri_index < 0 or uri_index >= len(uris):
+            raise EnrollmentError("Choose a saved HTTPS URI for this vCenter.")
+        saved_host, port = vcenter_https_endpoint(uris[uri_index])
+        if normalize_vsphere_vcenter_hostname(host) != saved_host:
+            raise EnrollmentError(
+                "The vCenter host must match the selected saved HTTPS URI."
+            )
+        return entry, saved_host, port
+
+    def _discover_client(
+        db: Session,
+        identity: Identity,
+        *,
+        host: str,
+        cluster_id: str,
+        vault_id: int,
+        entry_id: int,
+        uri_index: int,
+        confirmed_https_fingerprint: str,
+    ):
+        """Resolve one Vault credential after out-of-band HTTPS confirmation.
+
+        Args:
+            db: Active database session.
+            identity: Authenticated administrator identity.
+            host: Normalized vCenter hostname or address.
+            cluster_id: Registered Atlaso KMIP cluster identifier.
+            vault_id: Selected Vault identifier.
+            entry_id: Selected Vault entry identifier.
+            uri_index: Selected saved HTTPS URI position.
+            confirmed_https_fingerprint: Out-of-band confirmed HTTPS certificate fingerprint.
+        """
+        entry, host, port = _enrollment_target(db, host, vault_id, entry_id, uri_index)
+        observed = certificate_fingerprint(vcenter_https_leaf(host, port=port))
+        if observed != confirmed_https_fingerprint.strip().upper():
+            raise EnrollmentError(
+                "Confirm the current vCenter HTTPS fingerprint before using a Vault credential."
+            )
         settings = get_kms_settings_row(db)
         discovered = discover_vcenter_client(
             host=host,
+            port=port,
             cluster_id=cluster_id,
             username=entry.username,
             password=decrypt_secret(entry.encrypted_value),
@@ -1784,14 +1825,22 @@ def build_routers(
     def probe_vsphere_enrollment(
         request: Request,
         hostname: str = Form(...),
+        vault_id: int = Form(...),
+        entry_id: int = Form(...),
+        uri_index: int = Form(...),
         csrf: str = Form(...),
         identity: Identity = Depends(require_session_identity),
+        db: Session = Depends(get_db),
     ) -> JSONResponse:
         """Show the vCenter HTTPS fingerprint before any credential access.
 
         Args:
             request: Incoming HTTP request.
             hostname: vCenter hostname or address supplied by the administrator.
+            vault_id: Selected Vault identifier.
+            entry_id: Selected Vault entry identifier.
+            uri_index: Selected saved HTTPS URI position.
+            db: Active database session.
             csrf: CSRF token authorizing this request.
             identity: Authenticated administrator identity.
         """
@@ -1799,7 +1848,10 @@ def build_routers(
         if not identity.has_role("admin"):
             raise HTTPException(status_code=403, detail="Administrator role required.")
         try:
-            fingerprint = certificate_fingerprint(vcenter_https_leaf(hostname))
+            _entry, host, port = _enrollment_target(
+                db, hostname, vault_id, entry_id, uri_index
+            )
+            fingerprint = certificate_fingerprint(vcenter_https_leaf(host, port=port))
         except (ValueError, EnrollmentError) as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         return JSONResponse({"https_fingerprint": fingerprint})
@@ -1811,6 +1863,7 @@ def build_routers(
         cluster_id: str = Form(...),
         vault_id: int = Form(...),
         entry_id: int = Form(...),
+        uri_index: int = Form(...),
         confirmed_https_fingerprint: str = Form(...),
         csrf: str = Form(...),
         identity: Identity = Depends(require_session_identity),
@@ -1824,6 +1877,7 @@ def build_routers(
             cluster_id: Registered Atlaso KMIP cluster identifier.
             vault_id: Selected Vault identifier.
             entry_id: Selected Vault entry identifier.
+            uri_index: Selected saved HTTPS URI position.
             confirmed_https_fingerprint: Out-of-band confirmed HTTPS certificate fingerprint.
             csrf: CSRF token authorizing this request.
             identity: Authenticated administrator identity.
@@ -1840,6 +1894,7 @@ def build_routers(
                 cluster_id=cluster_id,
                 vault_id=vault_id,
                 entry_id=entry_id,
+                uri_index=uri_index,
                 confirmed_https_fingerprint=confirmed_https_fingerprint,
             )
         except (ValueError, EnrollmentError) as exc:
@@ -1864,6 +1919,7 @@ def build_routers(
         cluster_id: str = Form(...),
         vault_id: int = Form(...),
         entry_id: int = Form(...),
+        uri_index: int = Form(...),
         confirmed_https_fingerprint: str = Form(...),
         expected_client_fingerprint: str = Form(...),
         csrf: str = Form(...),
@@ -1881,6 +1937,7 @@ def build_routers(
             cluster_id: Registered Atlaso KMIP cluster identifier.
             vault_id: Selected Vault identifier.
             entry_id: Selected Vault entry identifier.
+            uri_index: Selected saved HTTPS URI position.
             confirmed_https_fingerprint: Out-of-band confirmed HTTPS certificate fingerprint.
             expected_client_fingerprint: Public client certificate fingerprint approved after inspection.
             csrf: CSRF token authorizing this request.
@@ -1903,6 +1960,7 @@ def build_routers(
                 cluster_id=cluster_id,
                 vault_id=vault_id,
                 entry_id=entry_id,
+                uri_index=uri_index,
                 confirmed_https_fingerprint=confirmed_https_fingerprint,
             )
             if (
@@ -1919,7 +1977,9 @@ def build_routers(
                 if (
                     vcenter is None
                     or vcenter.provider_id != provider.id
-                    or (vcenter.hostname and vcenter.hostname != discovered.vcenter_host)
+                    or (
+                        vcenter.hostname and vcenter.hostname != discovered.vcenter_host
+                    )
                 ):
                     raise EnrollmentError(
                         "The existing vCenter does not match this provider and host."

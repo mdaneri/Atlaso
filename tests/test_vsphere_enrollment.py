@@ -125,13 +125,25 @@ def test_discovery_reads_only_registered_atlaso_cluster_and_logs_out(
     pem = _client_certificate()
     fake = _FakeVcenter(pem)
     monkeypatch.setattr(
-        enrollment, "vcenter_https_leaf", lambda _host: b"test-https-leaf"
+        enrollment, "vcenter_https_leaf", lambda _host, **_kwargs: b"test-https-leaf"
     )
     monkeypatch.setattr(enrollment, "_pinned_context", lambda _leaf: object())
-    monkeypatch.setattr(enrollment.httpx, "Client", lambda **_kwargs: fake)
+    def client_factory(**kwargs):
+        """Check the saved port reaches the pinned HTTP client.
+
+        Args:
+            **kwargs: HTTP client configuration.
+        """
+        assert kwargs["base_url"] == "https://vcsa.example.test:8443"
+        assert kwargs["trust_env"] is False
+        assert kwargs["follow_redirects"] is False
+        return fake
+
+    monkeypatch.setattr(enrollment.httpx, "Client", client_factory)
 
     result = enrollment.discover_vcenter_client(
         host="vcsa.example.test",
+        port=8443,
         cluster_id="Atlaso-KMIP",
         username="admin",
         password="test-secret",
@@ -162,7 +174,7 @@ def test_discovery_rejects_wrong_atlaso_endpoint_before_client_certificate(
     """
     fake = _FakeVcenter(_client_certificate(), endpoint="other.example.test")
     monkeypatch.setattr(
-        enrollment, "vcenter_https_leaf", lambda _host: b"test-https-leaf"
+        enrollment, "vcenter_https_leaf", lambda _host, **_kwargs: b"test-https-leaf"
     )
     monkeypatch.setattr(enrollment, "_pinned_context", lambda _leaf: object())
     monkeypatch.setattr(enrollment.httpx, "Client", lambda **_kwargs: fake)
@@ -191,7 +203,7 @@ def test_discovery_rejects_changed_https_identity_before_authentication(
         monkeypatch: Fixture replacing vCenter network calls.
     """
     monkeypatch.setattr(
-        enrollment, "vcenter_https_leaf", lambda _host: b"unexpected-leaf"
+        enrollment, "vcenter_https_leaf", lambda _host, **_kwargs: b"unexpected-leaf"
     )
     monkeypatch.setattr(
         enrollment.httpx,
@@ -220,3 +232,43 @@ def test_pinned_https_context_uses_only_the_observed_leaf() -> None:
     assert context.verify_mode.name == "CERT_REQUIRED"
     assert context.minimum_version == ssl.TLSVersion.TLSv1_2
     assert context.cert_store_stats()["x509"] == 1
+
+
+@pytest.mark.parametrize(
+    "uri,expected",
+    [
+        ("https://VCSA.example.test/ui", ("vcsa.example.test", 443)),
+        ("https://vcsa.example.test:8443", ("vcsa.example.test", 8443)),
+        ("https://[2001:db8::1]:9443/ui", ("2001:db8::1", 9443)),
+    ],
+)
+def test_saved_https_endpoint(uri, expected) -> None:
+    """Resolve the saved HTTPS authority without changing its port.
+
+    Args:
+        uri: Saved HTTPS URI to resolve.
+        expected: Expected normalized hostname and port.
+    """
+    assert enrollment.vcenter_https_endpoint(uri) == expected
+
+
+@pytest.mark.parametrize(
+    "uri",
+    [
+        "ssh://vcsa.example.test",
+        "http://vcsa.example.test",
+        "https://user:secret@vcsa.example.test",
+        "https://vcsa.example.test:0",
+        "https://vcsa.example.test:99999",
+        "https://vcsa.example.test:bad",
+        "https:///missing",
+    ],
+)
+def test_invalid_saved_https_endpoint(uri) -> None:
+    """Reject unsupported or credential-bearing saved endpoints.
+
+    Args:
+        uri: Invalid saved URI to reject.
+    """
+    with pytest.raises(enrollment.EnrollmentError):
+        enrollment.vcenter_https_endpoint(uri)

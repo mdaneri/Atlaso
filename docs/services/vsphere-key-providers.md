@@ -44,9 +44,12 @@ behavior.
    leaf need trust re-establishment after server-certificate renewal. Confirm the server identity independently.
 3. In vCenter, create or select the KMS cluster's client certificate with **Make KMS trust vCenter**. The private key
    stays in vCenter. Give an Atlaso Vault entry a vCenter account with `Cryptographer.ManageKeyServers` permission;
-   Atlaso uses it only for authenticated, read-only certificate discovery.
-4. In Atlaso **Trusted vCenters**, choose **Enroll from vCenter**. Select the provider, enter the vCenter host and its
-   exact KMS cluster ID, and choose the Vault credential. Inspect vCenter HTTPS, confirm its SHA-256 fingerprint through
+   Save each authorized vCenter HTTPS URI, including its port, on that entry. Atlaso uses it only for authenticated,
+   read-only certificate discovery. Entries without a saved HTTPS URI cannot be selected.
+4. In Atlaso **Trusted vCenters**, choose **Enroll from vCenter**. Select the provider and one saved Vault HTTPS
+   endpoint, then enter the exact KMS cluster ID. The selected URI supplies the hostname and port; Atlaso checks that
+   binding before probing or decrypting the credential. URI paths do not change the vCenter API path. Inspect vCenter
+   HTTPS, confirm its SHA-256 fingerprint through
    an independent trusted source, then inspect the public KMIP client certificate. Review its exact fingerprint and
    provider assignment before approval. Atlaso re-reads the certificate on approval and rejects a changed identity.
 5. Review **Pending Appliance Changes** and run global **Appliance Apply** for `kms`. Until that apply completes,
