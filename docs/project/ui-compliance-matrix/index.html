@@ -3586,6 +3586,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#vcenter-first-enrollment-171" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        vCenter-first enrollment (#171)
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#vcf-lab-overrides-849-873" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -3938,6 +3949,17 @@
   
     <nav class="md-nav" aria-label="Completion rule">
       <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#vcenter-first-enrollment-171" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        vCenter-first enrollment (#171)
+      </span>
+    </span>
+  </a>
+  
+</li>
         
           <li class="md-nav__item">
   <a href="#vcf-lab-overrides-849-873" class="md-nav__link">
@@ -4571,7 +4593,7 @@ are explicitly inventoried so route/template changes cannot silently escape the 
 <li>Identity, CA, and vSphere Key Providers: <code>ca-csr-dialog</code>, <code>ca-profile-dialog</code>, <code>ca-certificate-dialog</code>,
   <code>ldap-organization-dialog</code>, <code>ldap-user-dialog</code>, <code>ldap-group-dialog</code>, <code>ldap-bind-secret-modal</code>,
   <code>ldap-password-modal</code>, <code>ldap-group-members-modal</code>, <code>ldap-generate-modal</code>, <code>vsphere-provider-dialog</code>,
-  <code>vsphere-vcenter-dialog</code>, and <code>vsphere-certificate-dialog</code>.</li>
+  <code>vsphere-vcenter-dialog</code>, <code>vsphere-certificate-dialog</code>, and <code>vsphere-enrollment-dialog</code>.</li>
 <li>Network Boot and storage: <code>network-boot-host-dialog</code>, <code>network-boot-upload-dialog</code>,
   <code>network-boot-promote-dialog</code>, <code>esxi-iso-upload-dialog</code>, <code>sddc-ova-upload-dialog</code>, <code>esxi-custom-variable-wizard-dialog</code>,
   <code>esxi-boot-authorization-dialog</code>, <code>kickstart-wizard-dialog</code>, <code>esx-storage-volume-modal</code>, and
@@ -4612,6 +4634,13 @@ manifest, configuration, or result summaries remain semantic markup only while t
 behavior. Any future sortable, filterable, selectable, navigable, editable, or actionable collection must use the
 shared Tabulator foundation or receive explicit maintainer approval through a separately labeled issue.</p>
 <h2 id="completion-rule">Completion rule<a class="headerlink" href="#completion-rule" title="Permanent link">&para;</a></h2>
+<h3 id="vcenter-first-enrollment-171">vCenter-first enrollment (#171)<a class="headerlink" href="#vcenter-first-enrollment-171" title="Permanent link">&para;</a></h3>
+<p><code>vsphere-enrollment-dialog</code> uses the wizard-backed Tabulator pattern with ESX Storage and VCF Helper
+remote credential references. Administrator-only entry, HTTPS fingerprint confirmation, public certificate
+inspection, explicit provider approval, recoverable errors, and desired-state Apply remain separate steps.
+The existing manual public-certificate fallback remains available. The dedicated Atlaso-Docs VM capture
+and desktop/narrow visual verification are pending under maintainer direction. Live VCF 9.1 acceptance
+is tracked separately in #172; this matrix entry does not claim either gate passed.</p>
 <p>Issue #799 reorganizes the existing Maintenance (<code>backup_restore.html</code>) page into LDAP, Backup, Reset and Diagnostics
 tabs. Recovery actions retain their original routes and safeguards. <code>partials/diagnostics.html</code> contains the
 wizard-backed Tabulator collection using Automation Schedules and ESX Storage, the <code>diagnostics-wizard</code> four-step

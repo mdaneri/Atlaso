@@ -1920,10 +1920,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#add-a-provider-and-trusted-vcenter" class="md-nav__link">
+  <a href="#enroll-from-vcenter" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        Add a provider and trusted vCenter
+        Enroll from vCenter
       </span>
     </span>
   </a>
@@ -3884,10 +3884,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#add-a-provider-and-trusted-vcenter" class="md-nav__link">
+  <a href="#enroll-from-vcenter" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        Add a provider and trusted vCenter
+        Enroll from vCenter
       </span>
     </span>
   </a>
@@ -4120,16 +4120,33 @@ and recovery work in issue #172 is complete. Do not describe the current candida
 behavior.</p>
 <p><img alt="vSphere Key Providers in the clean-appliance desktop viewport." src="../../assets/screenshots/vsphere-key-providers-clean-desktop.webp" /></p>
 <p><em>Figure: the provider, trusted-vCenter, certificate, and lifecycle tools with listener settings in the right rail.</em></p>
-<h2 id="add-a-provider-and-trusted-vcenter">Add a provider and trusted vCenter<a class="headerlink" href="#add-a-provider-and-trusted-vcenter" title="Permanent link">&para;</a></h2>
+<h2 id="enroll-from-vcenter">Enroll from vCenter<a class="headerlink" href="#enroll-from-vcenter" title="Permanent link">&para;</a></h2>
 <ol>
-<li>On <strong>Providers</strong>, add a unique name, description, and saved enabled state. Atlaso assigns an immutable provider UUID.</li>
-<li>On <strong>Trusted vCenters</strong>, select the provider and enter the vCenter name and optional operational hostname.</li>
-<li>Paste exactly one current public X.509 client certificate. Atlaso rejects private-key blocks, malformed or expired
-   certificates, CA certificates, and certificates that cannot perform client authentication.</li>
-<li>Review the exact provider assignment and save the record.</li>
-<li>Review <strong>Pending Appliance Changes</strong>, then run global <strong>Appliance Apply</strong> for the internal <code>kms</code> unit.</li>
-<li>Download the public Atlaso server chain from the listener rail and configure the shared endpoint in vCenter.</li>
+<li>Enable Atlaso's Certificate Authority, configure the KMS hostname and listener, and add an enabled provider namespace.
+   Atlaso issues and manages the shared KMIP server certificate from its CA when KMS is enabled. Run global
+   <strong>Appliance Apply</strong> to deploy the server certificate and listener. Keep the provider's immutable UUID for the
+   later approval step.</li>
+<li>In the VCF 9.1 vSphere Client, add Atlaso's hostname and port as a standard KMS/key provider. Use vCenter's
+   <strong>Establish Trust</strong> controls to trust Atlaso's server identity. The Atlaso listener rail exposes its public server
+   chain. A root-CA trust choice is preferable where vCenter supports it, because vCenter versions that pin only the
+   leaf need trust re-establishment after server-certificate renewal. Confirm the server identity independently.</li>
+<li>In vCenter, create or select the KMS cluster's client certificate with <strong>Make KMS trust vCenter</strong>. The private key
+   stays in vCenter. Give an Atlaso Vault entry a vCenter account with <code>Cryptographer.ManageKeyServers</code> permission;
+   Save each authorized vCenter HTTPS URI, including its port, on that entry. Atlaso uses it only for authenticated,
+   read-only certificate discovery. Entries without a saved HTTPS URI cannot be selected.</li>
+<li>In Atlaso <strong>Trusted vCenters</strong>, choose <strong>Enroll from vCenter</strong>. Select the provider and one saved Vault HTTPS
+   endpoint, then enter the exact KMS cluster ID. The selected URI supplies the hostname and port; Atlaso checks that
+   binding before probing or decrypting the credential. URI paths do not change the vCenter API path. Inspect vCenter
+   HTTPS, confirm its SHA-256 fingerprint through
+   an independent trusted source, then inspect the public KMIP client certificate. Review its exact fingerprint and
+   provider assignment before approval. Atlaso re-reads the certificate on approval and rejects a changed identity.</li>
+<li>Review <strong>Pending Appliance Changes</strong> and run global <strong>Appliance Apply</strong> for <code>kms</code>. Until that apply completes,
+   vCenter's client certificate is not usable for KMIP key operations. Recheck the connection in vCenter.</li>
 </ol>
+<p>This path starts in vCenter and does not require a pre-created trusted-vCenter row or manual public-certificate paste
+in Atlaso. The Vault credential is referenced by its stable vault and entry IDs; its password is not copied into
+provider state. Discovery requires the selected vCenter cluster to point only to the configured Atlaso hostname and
+port. Client authorization remains an exact fingerprint-to-provider-UUID mapping.</p>
 <p>Certificate fingerprints are normalized SHA-256 values and are unique appliance-wide. The same fingerprint cannot be
 assigned to another trusted vCenter or provider. Atlaso stores canonical public PEM and parsed public metadata only; it
 does not generate, accept, export, or reveal a vCenter client private key.</p>
@@ -4137,17 +4154,49 @@ does not generate, accept, export, or reveal a vCenter client private key.</p>
 and IPv6 listener addresses from those selected interfaces; API callers cannot bind the service to an unrelated address
 by supplying a different <code>listen_addresses</code> value.</p>
 <h2 id="rotate-or-retire-public-trust">Rotate or retire public trust<a class="headerlink" href="#rotate-or-retire-public-trust" title="Permanent link">&para;</a></h2>
-<p>Use <strong>Add public certificate</strong> on a trusted-vCenter row or <strong>Add replacement certificate</strong> on a certificate row. Apply
-the overlapping trust bundle globally, move vCenter to the new certificate, and then use <strong>Retire certificate</strong>. An
-enabled trusted vCenter cannot lose its last usable fingerprint. Vault-assisted rotation belongs to issue #171.</p>
+<p>Use <strong>Refresh from vCenter</strong> on the trusted-vCenter row after preparing a replacement client certificate in vCenter.
+Inspect and approve its new public fingerprint, then apply the overlapping trust bundle globally before switching
+vCenter to the replacement. Retire the old certificate only after reconnect and key retrieval succeed. If discovery
+is unavailable during recovery, <strong>Add public certificate manually</strong> remains an explicit fallback. Atlaso rejects
+private-key blocks, malformed or expired certificates, CA certificates, and certificates that cannot perform client
+authentication. An enabled trusted vCenter cannot lose its last usable fingerprint.</p>
 <p>Settings backups preserve public certificate history, including certificates that expire after they were accepted.
 Restore revalidates each PEM body and exact fingerprint while retaining its expired status; an expired record never
 becomes usable trust merely because it was restored.</p>
+<p>Atlaso CA issues the KMS server certificate automatically. On renewal, CA Apply deploys the new certificate and
+private key under paths containing that certificate's SHA-256 fingerprint. Appliance Apply then switches the KMIP
+service to those paths. Long names are shortened with a hash of the full name so every filename fits the filesystem limit.
+The helper checks that the restarted service is active and restores the previous config,
+client trust bundle, runtime credential, and service unit if cutover fails. The previous server certificate files
+remain available for that rollback.
+Before mutation, the helper queries systemd's load, activation, and boot-enablement properties for both units.
+Manager failures, transitional states, and unsupported enablement states block apply instead of guessing prior state.
+The helper retains the snapshot through six consecutive active-state checks
+spaced one second apart; a startup failure during that window triggers rollback. This bounded stability check does
+not establish live vCenter interoperability. During upgrade, the helper stops the legacy <code>atlaso-kms.service</code> before starting
+its replacement and restores the legacy listener's prior active and enabled state if cutover fails. After a
+successful server certificate rotation, refresh the KMS server trust in vCenter as required by its selected KMS trust mode.
+If automatic recovery cannot restart the prior service, the helper preserves a root-only snapshot at
+<code>/etc/atlaso/kmip/.cutover-rollback</code> and blocks both enabled and disabled applies before runtime mutation.
+On the appliance console, inspect
+<code>journalctl -u atlaso-kmip.service</code> and the snapshot's <code>state.json</code>. Restore <code>server.json</code> and <code>client-trust.pem</code> to
+their matching files in <code>/etc/atlaso/kmip/</code> with owner <code>root:atlaso-kmip</code> and mode <code>0640</code>; restore <code>credential</code> to
+<code>/etc/atlaso/kmip/atlaso-secrets-key.cred</code> with owner <code>root:root</code> and mode <code>0600</code>; restore <code>service-unit</code> to
+<code>/etc/systemd/system/atlaso-kmip.service</code> with owner <code>root:root</code> and mode <code>0644</code>. Only files present in the snapshot
+existed before cutover. Run <code>systemctl daemon-reload</code>; restart <code>atlaso-kmip.service</code> and check <code>systemctl is-active</code>
+if <code>state.json</code> says it was active, otherwise stop it. Independently restore its boot enablement from <code>was_enabled</code>.
+Restore <code>atlaso-kms.service</code> enablement from
+<code>legacy_was_enabled</code>, and restart it only when <code>legacy_was_active</code> is true; stop the replacement first to release the
+shared port. Verify the restored service before removing the
+snapshot directory and retrying Appliance Apply. The prior fingerprint-specific server certificate and key remain
+at their original paths.</p>
 <h2 id="health-and-lifecycle-counts">Health and lifecycle counts<a class="headerlink" href="#health-and-lifecycle-counts" title="Permanent link">&para;</a></h2>
 <p><strong>Health &amp; lifecycle</strong> reports saved provider state, apply readiness, shared-daemon state, and authenticated redacted
 counts for <strong>Pre-Active</strong>, <strong>Active</strong>, and total operational keys. Counts come from the protected wrapped-key store
 through the fixed <code>atlaso-helper kms status</code> operation. If authentication, integrity verification, or store access is
 unavailable, Atlaso reports <strong>Not reported</strong> and null counts; it never substitutes zero.</p>
+<p>Providers without a usable approved client certificate show <strong>Enrollment required</strong> and are omitted from the runtime
+namespace until trust is approved. The certificate-only bootstrap listener remains valid.</p>
 <p>Operational keys are daemon-owned. No browser or REST operation creates, edits, exports, deletes, or lists operational
 key identifiers, and KMIP Destroy remains outside the bounded protocol contract.</p>
 <h2 id="removal-safeguards">Removal safeguards<a class="headerlink" href="#removal-safeguards" title="Permanent link">&para;</a></h2>
