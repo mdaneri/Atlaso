@@ -32,6 +32,7 @@ WEB_ACTIONS = {
     "conflict_enable",
     "server_probe",
 }
+WAIT_STATUS_TLS_TIMEOUT_SECONDS = 120
 
 
 class SafeFailure(Exception):
@@ -984,7 +985,14 @@ def main():
         if request_data.get("action") in WEB_ACTIONS:
             # The certificate pin is obtained inside the independently pinned
             # SSH guest. Read-only boot and host actions do not depend on nginx.
-            TLS_CONTEXT = initialize_tls_context(HOST)
+            tls_timeout = (
+                WAIT_STATUS_TLS_TIMEOUT_SECONDS
+                if request_data.get("action") == "wait_status"
+                else 15
+            )
+            TLS_CONTEXT = initialize_tls_context(
+                HOST, timeout_seconds=tls_timeout
+            )
         result = run_action(request_data)
         reply(True, **result)
     except SafeFailure as exc:

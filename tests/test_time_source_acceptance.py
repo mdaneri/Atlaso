@@ -113,6 +113,39 @@ def test_non_web_boot_id_action_does_not_open_https_listener(monkeypatch):
     assert json.loads(stdout.getvalue()) == {"ok": True, "boot_id": "boot-id"}
 
 
+@pytest.mark.parametrize(
+    ("action", "expected_timeout"),
+    [("wait_status", 120), ("status", 15)],
+)
+def test_web_action_uses_action_specific_listener_recovery_budget(
+    monkeypatch, action, expected_timeout
+):
+    """Allow post-reboot status polling to wait for HTTPS bootstrap."""
+    guest = _load_guest_module()
+    stdout = io.StringIO()
+    payload = {"action": action, "host": "192.168.100.2", "username": "admin"}
+    observed = []
+    monkeypatch.setattr(guest.sys, "stdin", io.StringIO(json.dumps(payload) + "\n"))
+    monkeypatch.setattr(guest.sys, "stdout", stdout)
+    monkeypatch.setattr(
+        guest.subprocess,
+        "check_output",
+        lambda *_args, **_kwargs: b'[{"addr_info":[{"local":"192.168.100.2"}]}]',
+    )
+    monkeypatch.setattr(
+        guest,
+        "initialize_tls_context",
+        lambda host, *, timeout_seconds: observed.append((host, timeout_seconds))
+        or object(),
+    )
+    monkeypatch.setattr(guest, "run_action", lambda _request: {"healthy": True})
+
+    guest.main()
+
+    assert observed == [("192.168.100.2", expected_timeout)]
+    assert json.loads(stdout.getvalue()) == {"ok": True, "healthy": True}
+
+
 def test_web_tls_initialization_retries_listener_recovery_within_deadline(monkeypatch):
     """Retry a transient closed listener, then trust the exact served leaf."""
     guest = _load_guest_module()
@@ -168,8 +201,15 @@ def test_web_tls_initialization_fails_safely_when_listener_never_recovers(monkey
 
 
 def test_wait_status_host_budget_covers_web_listener_and_clock_recovery():
-    """Leave bounded time for HTTPS recovery, login, and the guest's 90s poll."""
-    assert host_acceptance._ACTION_TIMEOUTS["wait_status"] == 150
+    """Keep the channel budget above TLS, login, health wait, and response bounds."""
+    guest = _load_guest_module()
+    minimum_seconds = (
+        guest.WAIT_STATUS_TLS_TIMEOUT_SECONDS + (2 * 20) + 90 + 20
+    )
+    host_budget = host_acceptance._ACTION_TIMEOUTS["wait_status"]
+
+    assert host_budget > minimum_seconds
+    assert host_budget <= 330
 
 
 def test_rendered_ntp_page_keeps_source_when_select_is_enabled_and_hidden_copy_disabled(
