@@ -19545,15 +19545,19 @@ def test_ntpd_boot_guard_keeps_only_the_applied_mode(monkeypatch, tmp_path, mode
     calls: list[tuple[object, ...]] = []
     monkeypatch.setattr(helper, "_ntpd_stop_service", lambda unit, **kwargs: calls.append(("stop", unit, kwargs)))
     monkeypatch.setattr(helper, "_ntpd_client_packet_guard", lambda value: calls.append(("guard", value)))
-    monkeypatch.setattr(helper, "_ntpd_set_vmware_timesync", lambda value: calls.append(("vmware", value)))
+    monkeypatch.setattr(
+        helper,
+        "_ntpd_set_vmware_timesync",
+        lambda value, **kwargs: calls.append(("vmware", value, kwargs)),
+    )
 
     assert helper._ntpd_guard("boot") == 0
     if mode == "vmware_tools":
         assert ("stop", "ntpd.service", {}) in calls
-        assert ("vmware", True) in calls
+        assert ("vmware", True, {}) in calls
     else:
         assert not any(call[0] == "stop" and call[1] == "ntpd.service" for call in calls)
-        assert ("vmware", False) in calls
+        assert ("vmware", False, {}) in calls
     assert ("guard", mode) in calls
 
 
@@ -19569,17 +19573,21 @@ def test_ntpd_vmtools_restart_hooks_preserve_selected_mode(monkeypatch, tmp_path
     calls: list[tuple[object, ...]] = []
     monkeypatch.setattr(helper, "_ntpd_stop_service", lambda unit, **kwargs: calls.append(("stop", unit, kwargs)))
     monkeypatch.setattr(helper, "_ntpd_client_packet_guard", lambda value: calls.append(("guard", value)))
-    monkeypatch.setattr(helper, "_ntpd_set_vmware_timesync", lambda value: calls.append(("vmware", value)))
+    monkeypatch.setattr(
+        helper,
+        "_ntpd_set_vmware_timesync",
+        lambda value, **kwargs: calls.append(("vmware", value, kwargs)),
+    )
     monkeypatch.setattr(helper, "_ntpd_run_checked", lambda command, _description: calls.append(("command", *command)))
 
     assert helper._ntpd_guard("pre-vmtoolsd") == 0
     assert helper._ntpd_guard("post-vmtoolsd") == 0
     if mode == "vmware_tools":
-        assert ("vmware", True) in calls
+        assert ("vmware", True, {"require_active": False}) in calls
         assert not any(call[:2] == ("command", "systemctl", "start") for call in calls)
     else:
         assert ("stop", "ntpd.service", {"disable": False}) in calls
-        assert ("vmware", False) in calls
+        assert ("vmware", False, {"require_active": False}) in calls
         assert ("command", "systemctl", "start", "--no-block", "ntpd.service") in calls
 
 
@@ -19607,6 +19615,7 @@ def test_ntpd_vmtools_failed_start_execstoppost_restores_ntp_controller(monkeypa
 
     state = {"ntpd": True, "chronyd": False, "timesyncd": False, "vmware": False, "packet_guard": None}
     commands: list[list[str]] = []
+    vmware_calls: list[tuple[bool, dict[str, object]]] = []
 
     def stop_service(unit: str, **_kwargs) -> None:
         if unit == "ntpd.service":
@@ -19623,7 +19632,11 @@ def test_ntpd_vmtools_failed_start_execstoppost_restores_ntp_controller(monkeypa
 
     monkeypatch.setattr(helper, "_ntpd_stop_service", stop_service)
     monkeypatch.setattr(helper, "_ntpd_client_packet_guard", lambda value: state.__setitem__("packet_guard", value))
-    monkeypatch.setattr(helper, "_ntpd_set_vmware_timesync", lambda enabled: state.__setitem__("vmware", enabled))
+    def set_vmware(enabled: bool, **kwargs) -> None:
+        vmware_calls.append((enabled, kwargs))
+        state["vmware"] = enabled
+
+    monkeypatch.setattr(helper, "_ntpd_set_vmware_timesync", set_vmware)
     monkeypatch.setattr(helper, "_ntpd_run_checked", run_checked)
 
     assert helper._ntpd_guard("pre-vmtoolsd") == 0
@@ -19642,6 +19655,7 @@ def test_ntpd_vmtools_failed_start_execstoppost_restores_ntp_controller(monkeypa
     }
     assert ["systemctl", "enable", "ntpd.service"] in commands
     assert ["systemctl", "start", "--no-block", "ntpd.service"] in commands
+    assert vmware_calls == [(False, {"require_active": False})]
 
 
 def test_ntpd_apply_restores_previous_mode_after_vmware_verification_failure(monkeypatch, tmp_path, capsys):

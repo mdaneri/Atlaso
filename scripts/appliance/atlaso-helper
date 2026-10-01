@@ -7129,7 +7129,7 @@ def _ntpd_run_checked(command: list[str], description: str, *, timeout: float = 
     return result
 
 
-def _ntpd_set_vmware_timesync(enabled: bool) -> None:
+def _ntpd_set_vmware_timesync(enabled: bool, *, require_active: bool = True) -> None:
     """Set and verify VMware Tools periodic time synchronization."""
     toolbox = shutil.which("vmware-toolbox-cmd")
     if toolbox is None:
@@ -7141,7 +7141,7 @@ def _ntpd_set_vmware_timesync(enabled: bool) -> None:
     _ntpd_run_checked([toolbox, "timesync", action], f"VMware Tools time-sync {action}")
     status = _ntpd_vmware_timesync_state()
     if status.get("periodic_enabled") is not enabled or (
-        enabled and status.get("active") is not True
+        enabled and require_active and status.get("active") is not True
     ):
         raise RuntimeError(f"VMware Tools time-sync {action} could not be verified.")
 
@@ -7761,14 +7761,16 @@ def _ntpd_guard(phase: str) -> int:
             _ntpd_client_packet_guard(mode)
             _ntpd_set_vmware_timesync(False)
         elif phase == "post-vmtoolsd":
+            # This hook runs while vmtoolsd is activating or deactivating.
+            # Verify its persistent flag here; Apply and health verify activity.
             if mode == "vmware_tools":
                 for unit in ("ntpd.service", "chronyd.service", "systemd-timesyncd.service"):
                     _ntpd_stop_service(unit)
                 _ntpd_client_packet_guard(mode)
-                _ntpd_set_vmware_timesync(True)
+                _ntpd_set_vmware_timesync(True, require_active=False)
             elif mode in {"ntp_client", "ntp_server"}:
                 _ntpd_client_packet_guard(mode)
-                _ntpd_set_vmware_timesync(False)
+                _ntpd_set_vmware_timesync(False, require_active=False)
                 for unit in ("chronyd.service", "systemd-timesyncd.service"):
                     _ntpd_stop_service(unit)
                 _ntpd_run_checked(["systemctl", "enable", "ntpd.service"], "Enable ntpd.service")
