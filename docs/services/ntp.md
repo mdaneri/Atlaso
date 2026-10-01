@@ -56,7 +56,11 @@ it does not select the appliance clock mode by itself.
 
 The selection autosaves as desired state. Global Appliance Apply performs the host transition and verifies its result;
 the page reports the effective mode, NTP synchronization health, and detected local daemon states separately from the
-saved choice. Startup, restore, appliance updates, and reboot preserve the same mutual-exclusion rule. Settings archive
+saved choice. Before changing applied configuration, Atlaso durably records the prior configuration. If Apply is
+interrupted before controller verification, startup and service guards restore it; a verified checkpoint retains the
+new controller after a power loss. NTS private material stays in its managed location until verification.
+Legacy configurations require Apply before startup can establish their clock authority.
+Startup, restore, appliance updates, and reboot preserve the same mutual-exclusion rule. Settings archive
 and restore include the selected source. Factory reset returns the source to the documented **NTP client** default.
 
 For read-only diagnosis on the appliance, inspect the Atlaso status and VMware Tools time-sync interfaces:

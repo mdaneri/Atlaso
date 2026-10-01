@@ -6593,6 +6593,13 @@ def _ntpd_time_mode(path: Path) -> str:
     return selected
 
 
+def _ntpd_applied_time_mode(path: Path) -> str:
+    """Do not infer applied authority from a potentially stale legacy enable marker."""
+    if not any(line.strip().lower().startswith(NTP_TIME_MODE_PREFIX.lower()) for line in path.read_text(encoding="utf-8").splitlines()):
+        return "unmanaged"
+    return _ntpd_time_mode(path)
+
+
 def _parse_ntpd_server(value: str) -> tuple[str, int | None, bool]:
     """Parse ntpd server.
 
@@ -7222,6 +7229,7 @@ def _ntpd_transition(mode: str, config_path: Path | None = None, *, restart: boo
             _grant_ntpd_nts_server_key_read(config_path)
         _ntpd_start_service("ntpd.service", restart=restart)
         _ntpd_wait_synchronized()
+        _ntpd_checkpoint_verified()
         # Retain the previously applied NTS server material until the new NTP
         # controller has passed its synchronization check. A failed transition
         # can then restore the previous config and its referenced key material.
@@ -7232,6 +7240,7 @@ def _ntpd_transition(mode: str, config_path: Path | None = None, *, restart: boo
         if not NTP_CONFIG_PATH.is_file() and config_path is None:
             raise RuntimeError("Applied NTP config is unavailable; apply the selected VMware Tools clock source first.")
         _ntpd_set_vmware_timesync(True)
+        _ntpd_checkpoint_verified()
         _remove_ntpd_nts_server_material()
         return
 
@@ -7309,6 +7318,103 @@ def _ntpd_restore_nts_server_material(entries: object) -> None:
             os.chown(path, entry["uid"], entry["gid"])
 
 
+def _ntpd_transaction_path() -> Path:
+    """Keep non-secret applied-config recovery evidence beside the config."""
+    return NTP_CONFIG_PATH.with_name(".atlaso-ntpd-transaction.json")
+
+
+def _ntpd_write_transaction(payload: dict[str, object]) -> None:
+    """Publish a root-only checkpoint durably before the corresponding mutation."""
+    path = _ntpd_transaction_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    descriptor, temporary = tempfile.mkstemp(prefix=".atlaso-ntpd-journal-", dir=path.parent)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+            os.chmod(temporary, 0o600)
+            json.dump(payload, handle, sort_keys=True)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, path)
+        _fsync_directory(path.parent)
+    finally:
+        if os.path.exists(temporary):
+            os.unlink(temporary)
+
+
+def _ntpd_read_transaction() -> dict[str, object] | None:
+    """Reject ambiguous recovery state rather than activating a candidate."""
+    path = _ntpd_transaction_path()
+    if not path.exists() and not path.is_symlink():
+        return None
+    info = path.lstat()
+    if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1 or info.st_size > 2 * 1024 * 1024:
+        raise RuntimeError("Clock Apply recovery checkpoint is unsafe; preserve it for recovery.")
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(payload, dict) or payload.get("schema") != 1 or payload.get("phase") not in {"prepared", "verified"}:
+        raise RuntimeError("Clock Apply recovery checkpoint is invalid; preserve it for recovery.")
+    return payload
+
+
+def _ntpd_clear_transaction() -> None:
+    """Retire recovery evidence only after its effective config is durable."""
+    if NTP_CONFIG_PATH.is_file():
+        _fsync_file(NTP_CONFIG_PATH)
+    _fsync_directory(NTP_CONFIG_PATH.parent)
+    _ntpd_transaction_path().unlink(missing_ok=True)
+    _fsync_directory(NTP_CONFIG_PATH.parent)
+
+
+def _ntpd_begin_transaction(snapshot: dict[str, object]) -> None:
+    """Persist config custody without serializing any NTS private material."""
+    previous = {key: value for key, value in snapshot.items() if key != "nts_material"}
+    data = previous.get("data")
+    if isinstance(data, bytes):
+        if len(data) > 1024 * 1024:
+            raise RuntimeError("Previous clock configuration exceeds the recovery limit.")
+        previous["data"] = base64.b64encode(data).decode("ascii")
+    _ntpd_write_transaction({"schema": 1, "phase": "prepared", "owner": _release_transaction_owner(), "previous": previous})
+
+
+def _ntpd_checkpoint_verified() -> None:
+    """Commit verified controller authority before retiring old NTS assets."""
+    payload = _ntpd_read_transaction()
+    if payload is None or payload.get("owner") != _release_transaction_owner():
+        return
+    _fsync_file(NTP_CONFIG_PATH)
+    _fsync_directory(NTP_CONFIG_PATH.parent)
+    payload["phase"] = "verified"
+    payload["config_sha256"] = hashlib.sha256(NTP_CONFIG_PATH.read_bytes()).hexdigest()
+    _ntpd_write_transaction(payload)
+
+
+def _ntpd_recover_interrupted_apply(*, allow_active: bool = False) -> None:
+    """Recover killed helpers and prior boots before guards select authority."""
+    payload = _ntpd_read_transaction()
+    if payload is None:
+        return
+    if _release_transaction_owner_alive(payload.get("owner")):
+        if allow_active:
+            return
+        raise RuntimeError("Another clock Apply is still active; retry after it completes.")
+    if payload["phase"] == "verified":
+        if not NTP_CONFIG_PATH.is_file() or hashlib.sha256(NTP_CONFIG_PATH.read_bytes()).hexdigest() != payload.get("config_sha256"):
+            raise RuntimeError("Verified clock checkpoint does not match the applied configuration.")
+        _ntpd_clear_transaction()
+        return
+    previous = payload.get("previous")
+    required = {"exists", "managed", "mode", "data", "link_target", "file_mode", "uid", "gid"}
+    if not isinstance(previous, dict) or set(previous) != required or type(previous["exists"]) is not bool:
+        raise RuntimeError("Previous clock configuration recovery evidence is invalid.")
+    previous = dict(previous)
+    data = previous["data"]
+    if data is not None:
+        if not isinstance(data, str):
+            raise RuntimeError("Previous clock configuration bytes are invalid.")
+        previous["data"] = base64.b64decode(data, validate=True)
+    _ntpd_restore_applied_config(previous)
+    _ntpd_clear_transaction()
+
+
 def _ntpd_snapshot_applied_config() -> dict[str, object]:
     """Capture the exact prior applied config and its managed clock mode."""
     path = NTP_CONFIG_PATH
@@ -7326,6 +7432,8 @@ def _ntpd_snapshot_applied_config() -> dict[str, object]:
     if not existed:
         return snapshot
     info = path.lstat()
+    if path.is_file() and path.stat().st_size > 1024 * 1024:
+        raise RuntimeError("Previous clock configuration exceeds the recovery limit.")
     if stat.S_ISLNK(info.st_mode):
         snapshot["link_target"] = os.readlink(path)
         if path.is_file():
@@ -7340,8 +7448,8 @@ def _ntpd_snapshot_applied_config() -> dict[str, object]:
     else:
         raise RuntimeError("Applied ntpd config is not a regular file or symlink; refusing transition without rollback evidence.")
     if snapshot["managed"]:
-        snapshot["mode"] = _ntpd_time_mode(path)
-        if snapshot["mode"] == "ntp_server" and _ntpd_nts_server_enabled(path):
+        snapshot["mode"] = _ntpd_applied_time_mode(path)
+        if _ntpd_config_enabled(path) and _ntpd_nts_server_enabled(path):
             snapshot["nts_material"] = _ntpd_snapshot_nts_server_material()
     return snapshot
 
@@ -7430,6 +7538,7 @@ def _ntpd_rollback_failed_apply(snapshot: dict[str, object]) -> str:
     try:
         _ntpd_restore_applied_config(snapshot)
         _ntpd_restore_nts_server_material(snapshot.get("nts_material"))
+        snapshot["restored"] = True
     except (OSError, RuntimeError, ValueError) as restore_error:
         stop_errors = _ntpd_fail_closed_stop()
         suffix = f" Fail-closed stop errors: {'; '.join(stop_errors)}." if stop_errors else ""
@@ -7455,6 +7564,7 @@ def _ntpd_rollback_failed_apply(snapshot: dict[str, object]) -> str:
 
 def _ntpd_reconcile_applied() -> dict[str, object]:
     """Reconcile only Atlaso-owned applied config; never import vendor config."""
+    _ntpd_recover_interrupted_apply()
     if not NTP_CONFIG_PATH.is_file() or not _ntpd_config_managed(NTP_CONFIG_PATH):
         return {
             "ntpd": "reconcile required",
@@ -7462,13 +7572,13 @@ def _ntpd_reconcile_applied() -> dict[str, object]:
             "mode": "unmanaged",
             "detail": "Apply time-source settings to select and enforce a clock controller.",
         }
-    mode = _ntpd_time_mode(NTP_CONFIG_PATH)
-    if mode == "disabled":
+    mode = _ntpd_applied_time_mode(NTP_CONFIG_PATH)
+    if mode in {"disabled", "unmanaged"}:
         return {
             "ntpd": "reconcile required",
             "managed": True,
-            "mode": "disabled",
-            "detail": "Legacy config has no selected clock source; apply time-source settings to activate one.",
+            "mode": mode,
+            "detail": "Legacy config does not prove the last applied clock source; apply time-source settings to select one.",
         }
     _ntpd_install_guards()
     _ntpd_transition(mode, restart=True)
@@ -7480,6 +7590,11 @@ def _ntpd_guard(phase: str) -> int:
     if phase not in {"boot", "pre-vmtoolsd", "post-vmtoolsd", "pre-ntpd"}:
         print("ntpd guard requires boot, pre-vmtoolsd, post-vmtoolsd, or pre-ntpd", file=sys.stderr)
         return 2
+    try:
+        _ntpd_recover_interrupted_apply(allow_active=True)
+    except (OSError, RuntimeError, ValueError) as exc:
+        print(f"Clock Apply recovery failed: {exc}", file=sys.stderr)
+        return 1
     if not NTP_CONFIG_PATH.is_file() or not _ntpd_config_managed(NTP_CONFIG_PATH):
         # Vendor configuration is never imported or started automatically.
         if phase == "pre-ntpd":
@@ -7487,7 +7602,11 @@ def _ntpd_guard(phase: str) -> int:
             return 1
         return 0
     try:
-        mode = _ntpd_time_mode(NTP_CONFIG_PATH)
+        mode = _ntpd_applied_time_mode(NTP_CONFIG_PATH)
+        if mode == "unmanaged":
+            if phase == "pre-ntpd":
+                raise RuntimeError("Legacy clock config does not prove applied authority; run appliance Apply before starting ntpd.")
+            return 0
         if phase == "pre-vmtoolsd":
             _ntpd_stop_service("ntpd.service", disable=mode == "vmware_tools")
             for unit in ("chronyd.service", "systemd-timesyncd.service"):
@@ -7565,7 +7684,7 @@ def _ntpd_status() -> int:
     mode = "unmanaged"
     if NTP_CONFIG_PATH.is_file() and _ntpd_config_managed(NTP_CONFIG_PATH):
         try:
-            mode = _ntpd_time_mode(NTP_CONFIG_PATH)
+            mode = _ntpd_applied_time_mode(NTP_CONFIG_PATH)
         except ValueError:
             mode = "invalid"
     all_sources = {
@@ -7928,7 +8047,10 @@ def _handle_ntpd(action: str, args: list[str]) -> int:
             print(error, file=sys.stderr)
         return 2
     try:
+        _ntpd_recover_interrupted_apply()
         previous_config = _ntpd_snapshot_applied_config()
+        if mode != "disabled":
+            _ntpd_begin_transaction(previous_config)
     except (OSError, RuntimeError, ValueError, subprocess.TimeoutExpired) as exc:
         print(f"Unable to capture previous applied clock configuration: {exc}", file=sys.stderr)
         return 1
@@ -7944,8 +8066,15 @@ def _handle_ntpd(action: str, args: list[str]) -> int:
             _ntpd_transition(mode, config_path if mode == "vmware_tools" else None)
     except (OSError, RuntimeError, ValueError, subprocess.TimeoutExpired) as exc:
         rollback_detail = _ntpd_rollback_failed_apply(previous_config)
+        if previous_config.get("restored") is True:
+            try:
+                _ntpd_clear_transaction()
+            except OSError:
+                rollback_detail += " Recovery checkpoint retirement failed; retry recovery."
         print(f"ntpd clock-source transition failed: {exc}. {rollback_detail}", file=sys.stderr)
         return 1
+    if mode != "disabled":
+        _ntpd_clear_transaction()
     print(
         json.dumps(
             {

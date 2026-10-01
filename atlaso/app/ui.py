@@ -15185,14 +15185,19 @@ def initialize_factory_appliance_apply_baseline(db: Session) -> bool:
 
     _mark_provisioned_bootstrap_admin_applied(db)
     units = appliance_apply_units(db)
-    update_appliance_apply_baselines(db, units, {unit["id"] for unit in units})
+    selected_ids = {unit["id"] for unit in units if unit["id"] != "ntpd"}
+    update_appliance_apply_baselines(db, units, selected_ids)
     db.commit()
+    omitted = len(units) - len(selected_ids)
+    detail = f"{len(selected_ids)} factory desired-state units baselined without host mutation"
+    if omitted:
+        detail += f"; {omitted} unit(s) omitted pending initial Apply"
     record_audit(
         db,
         actor="system",
         action="initialize_factory_appliance_apply_baseline",
         resource_type="appliance_apply",
-        detail=f"{len(units)} factory desired-state units baselined without host mutation",
+        detail=detail,
     )
     return True
 

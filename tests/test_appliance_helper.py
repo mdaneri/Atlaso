@@ -19194,7 +19194,7 @@ def test_ntpd_boot_guard_keeps_only_the_applied_mode(monkeypatch, tmp_path, mode
     config.write_text("# Atlaso NTP enabled: false\n", encoding="utf-8")
     monkeypatch.setattr(helper, "NTP_CONFIG_PATH", config)
     monkeypatch.setattr(helper, "_ntpd_config_managed", lambda _path: True)
-    monkeypatch.setattr(helper, "_ntpd_time_mode", lambda _path: mode)
+    monkeypatch.setattr(helper, "_ntpd_applied_time_mode", lambda _path: mode)
     calls: list[tuple[object, ...]] = []
     monkeypatch.setattr(helper, "_ntpd_stop_service", lambda unit, **kwargs: calls.append(("stop", unit, kwargs)))
     monkeypatch.setattr(helper, "_ntpd_client_packet_guard", lambda value: calls.append(("guard", value)))
@@ -19218,7 +19218,7 @@ def test_ntpd_vmtools_restart_hooks_preserve_selected_mode(monkeypatch, tmp_path
     config.write_text("# Atlaso NTP enabled: false\n", encoding="utf-8")
     monkeypatch.setattr(helper, "NTP_CONFIG_PATH", config)
     monkeypatch.setattr(helper, "_ntpd_config_managed", lambda _path: True)
-    monkeypatch.setattr(helper, "_ntpd_time_mode", lambda _path: mode)
+    monkeypatch.setattr(helper, "_ntpd_applied_time_mode", lambda _path: mode)
     calls: list[tuple[object, ...]] = []
     monkeypatch.setattr(helper, "_ntpd_stop_service", lambda unit, **kwargs: calls.append(("stop", unit, kwargs)))
     monkeypatch.setattr(helper, "_ntpd_client_packet_guard", lambda value: calls.append(("guard", value)))
@@ -19560,7 +19560,104 @@ def test_ntpd_reconcile_leaves_unmanaged_or_legacy_disabled_config_untouched(mon
 
     assert helper._ntpd_reconcile_applied()["managed"] is False
     config.write_text("# Atlaso NTP enabled: false\n", encoding="utf-8")
-    assert helper._ntpd_reconcile_applied()["mode"] == "disabled"
+    assert helper._ntpd_reconcile_applied()["mode"] == "unmanaged"
+
+
+@pytest.mark.parametrize(
+    ("phase", "expected_return"),
+    [("boot", 0), ("pre-vmtoolsd", 0), ("post-vmtoolsd", 0), ("pre-ntpd", 1)],
+)
+def test_ntpd_stale_legacy_enabled_config_never_selects_a_clock_controller(
+    monkeypatch, tmp_path, capsys, phase, expected_return
+):
+    """A legacy enabled marker alone cannot prove that the NTP server was the applied controller."""
+    helper = load_helper_module()
+    config = tmp_path / "ntp.conf"
+    original = ntpd_config_text(enabled=True, server="time.cloudflare.com").encode()
+    config.write_bytes(original)
+    monkeypatch.setattr(helper, "NTP_CONFIG_PATH", config)
+    monkeypatch.setattr(helper, "_ntpd_config_managed", lambda _path: True)
+    monkeypatch.setattr(helper, "_ntpd_install_guards", lambda: pytest.fail("legacy config installed active guards"))
+    monkeypatch.setattr(helper, "_ntpd_transition", lambda *_args, **_kwargs: pytest.fail("legacy server was activated"))
+    mutations: list[str] = []
+    monkeypatch.setattr(helper, "_ntpd_stop_service", lambda *_args, **_kwargs: mutations.append("stop"))
+    monkeypatch.setattr(helper, "_ntpd_client_packet_guard", lambda *_args: mutations.append("packet-guard"))
+    monkeypatch.setattr(helper, "_ntpd_set_vmware_timesync", lambda *_args: mutations.append("vmware"))
+
+    result = helper._ntpd_reconcile_applied()
+    assert result["ntpd"] == "reconcile required"
+    assert result["managed"] is True
+    assert result["mode"] == "unmanaged"
+    assert helper._ntpd_guard(phase) == expected_return
+    assert config.read_bytes() == original
+    assert mutations == []
+    if phase == "pre-ntpd":
+        assert "does not prove applied authority" in capsys.readouterr().err
+
+
+def test_ntpd_failed_apply_preserves_legacy_nts_assets_without_reactivating_legacy_server(
+    monkeypatch, tmp_path, capsys
+):
+    """Rollback preserves uncertain legacy NTS files but never treats them as applied authority."""
+    helper = load_helper_module()
+    applied = tmp_path / "etc" / "ntp.conf"
+    staged = tmp_path / "apply" / "ntpd" / "atlaso-ntp.conf"
+    cert_dir = tmp_path / "etc" / "atlaso" / "ntp" / "certs"
+    cert_path = cert_dir / "server.crt"
+    key_path = cert_dir / "server.key"
+    cookie_dir = tmp_path / "var" / "lib" / "ntp" / "nts-keys"
+    cookie_path = cookie_dir / "cookie.key"
+    staged.parent.mkdir(parents=True)
+    cert_dir.mkdir(parents=True)
+    cookie_dir.mkdir(parents=True)
+    cert_path.write_bytes(b"legacy fixture certificate")
+    key_path.write_bytes(b"legacy fixture key")
+    cookie_path.write_bytes(b"legacy fixture cookie")
+    previous = ntpd_config_text(
+        enabled=True,
+        server="time.cloudflare.com",
+        listen_address="192.0.2.10",
+        allow_clients="any",
+        nts_server_cert_path=str(cert_path),
+        nts_server_key_path=str(key_path),
+    )
+    candidate = ntpd_config_text(
+        enabled=False, server="time.cloudflare.com", listen_address="", allow_clients="192.0.2.0/24"
+    ).replace("# Atlaso NTP enabled: false\n", "# Atlaso NTP enabled: false\n# Atlaso time mode: ntp_client\n")
+    applied.parent.mkdir(parents=True, exist_ok=True)
+    applied.write_text(previous, encoding="utf-8")
+    staged.write_text(candidate, encoding="utf-8")
+    monkeypatch.setattr(helper, "NTP_CONFIG_PATH", applied)
+    monkeypatch.setattr(helper, "NTP_APPLY_DIR", staged.parent)
+    monkeypatch.setattr(helper, "NTP_NTS_COOKIE_PATH", cookie_dir)
+    monkeypatch.setattr(helper, "NTP_CERT_DIR", cert_dir)
+    monkeypatch.setattr(helper, "_ntpd_supports_nts", lambda: True)
+    monkeypatch.setattr(helper, "_ntpd_runtime_identity_errors", lambda: [])
+    monkeypatch.setattr(helper, "_ntpd_config_errors", lambda *_args: [])
+    monkeypatch.setattr(helper, "_ntpd_install_guards", lambda: None)
+    monkeypatch.setattr(helper, "_ntpd_stop_service", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(helper, "_ntpd_client_packet_guard", lambda _mode: None)
+    monkeypatch.setattr(helper, "_ntpd_set_vmware_timesync", lambda _enabled: None)
+    transitions: list[str] = []
+    starts: list[str] = []
+
+    def fail_candidate(mode: str, *_args, **_kwargs) -> None:
+        transitions.append(mode)
+        raise RuntimeError("candidate transition failed")
+
+    monkeypatch.setattr(helper, "_ntpd_transition", fail_candidate)
+    monkeypatch.setattr(helper, "_ntpd_start_service", lambda unit, **_kwargs: starts.append(unit))
+
+    assert helper._handle_ntpd("apply", [str(staged)]) == 1
+
+    assert applied.read_text(encoding="utf-8") == previous
+    assert helper._ntpd_applied_time_mode(applied) == "unmanaged"
+    assert cert_path.read_bytes() == b"legacy fixture certificate"
+    assert key_path.read_bytes() == b"legacy fixture key"
+    assert cookie_path.read_bytes() == b"legacy fixture cookie"
+    assert transitions == ["ntp_client"]
+    assert starts == []
+    assert "no managed clock mode was active" in capsys.readouterr().err
 
 
 def test_ntpd_prestart_guard_rejects_disabled_legacy_config_without_mutation(monkeypatch, tmp_path):
@@ -19570,7 +19667,6 @@ def test_ntpd_prestart_guard_rejects_disabled_legacy_config_without_mutation(mon
     config.write_text("# Atlaso NTP enabled: false\n", encoding="utf-8")
     monkeypatch.setattr(helper, "NTP_CONFIG_PATH", config)
     monkeypatch.setattr(helper, "_ntpd_config_managed", lambda _path: True)
-    monkeypatch.setattr(helper, "_ntpd_time_mode", lambda _path: "disabled")
     mutations: list[str] = []
     monkeypatch.setattr(helper, "_ntpd_stop_service", lambda *_args, **_kwargs: mutations.append("stop"))
     monkeypatch.setattr(helper, "_ntpd_client_packet_guard", lambda *_args: mutations.append("guard"))
@@ -19927,3 +20023,216 @@ def test_wan_helper_preserves_local_routes_when_forwarding_disabled(monkeypatch,
     assert ["ip", "route", "replace", "192.168.20.0/24", "dev", "eth1.20", "table", "200"] in commands
     assert ["ip", "-6", "route", "replace", "2001:db8:20::/64", "dev", "eth1.20", "table", "200"] in commands
     assert not any("rule" in command and "add" in command for command in commands)
+
+
+def test_ntpd_prepared_interrupted_transaction_restores_config_before_guard_selection(monkeypatch, tmp_path):
+    """Boot guard sees the restored prior mode before selecting clock controls."""
+    helper = load_helper_module()
+    applied = tmp_path / "etc" / "ntp.conf"
+    applied.parent.mkdir(parents=True)
+    previous = ntpd_config_text(
+        enabled=False, server="time.cloudflare.com", listen_address="", allow_clients="192.0.2.0/24"
+    ).replace("# Atlaso NTP enabled: false\n", "# Atlaso NTP enabled: false\n# Atlaso time mode: ntp_client\n")
+    candidate = ntpd_config_text(
+        enabled=False, server="", listen_address=""
+    ).replace("# Atlaso NTP enabled: false\n", "# Atlaso NTP enabled: false\n# Atlaso time mode: vmware_tools\n")
+    applied.write_text(previous, encoding="utf-8")
+    monkeypatch.setattr(helper, "NTP_CONFIG_PATH", applied)
+    snapshot = helper._ntpd_snapshot_applied_config()
+    helper._ntpd_begin_transaction(snapshot)
+    applied.write_text(candidate, encoding="utf-8")
+    monkeypatch.setattr(helper, "_release_transaction_owner_alive", lambda _owner: False)
+    monkeypatch.setattr(helper, "_ntpd_stop_service", lambda *_args, **_kwargs: None)
+    selected_modes: list[str] = []
+
+    def install_guard(mode: str) -> None:
+        assert applied.read_text(encoding="utf-8") == previous
+        selected_modes.append(mode)
+
+    monkeypatch.setattr(helper, "_ntpd_client_packet_guard", install_guard)
+    monkeypatch.setattr(helper, "_ntpd_set_vmware_timesync", lambda _enabled: None)
+
+    assert helper._ntpd_guard("boot") == 0
+    assert selected_modes == ["ntp_client"]
+    assert not helper._ntpd_transaction_path().exists()
+
+
+def test_ntpd_interrupted_initial_apply_recovers_original_absence(monkeypatch, tmp_path):
+    """A killed first apply removes its candidate config when no prior file existed."""
+    helper = load_helper_module()
+    applied = tmp_path / "etc" / "ntp.conf"
+    applied.parent.mkdir(parents=True)
+    monkeypatch.setattr(helper, "NTP_CONFIG_PATH", applied)
+    snapshot = helper._ntpd_snapshot_applied_config()
+    helper._ntpd_begin_transaction(snapshot)
+    applied.write_text("# candidate config\n", encoding="utf-8")
+    monkeypatch.setattr(helper, "_release_transaction_owner_alive", lambda _owner: False)
+
+    helper._ntpd_recover_interrupted_apply()
+
+    assert not applied.exists()
+    assert not helper._ntpd_transaction_path().exists()
+
+
+def test_ntpd_live_apply_is_allowed_by_guard_but_blocks_another_apply(monkeypatch, tmp_path, capsys):
+    """A live transaction does not block guard execution and rejects a second apply."""
+    helper = load_helper_module()
+    applied = tmp_path / "etc" / "ntp.conf"
+    staged = tmp_path / "apply" / "ntpd" / "atlaso-ntp.conf"
+    staged.parent.mkdir(parents=True)
+    applied.parent.mkdir(parents=True)
+    previous = ntpd_config_text(
+        enabled=False, server="time.cloudflare.com", listen_address="", allow_clients="192.0.2.0/24"
+    ).replace("# Atlaso NTP enabled: false\n", "# Atlaso NTP enabled: false\n# Atlaso time mode: ntp_client\n")
+    candidate = ntpd_config_text(
+        enabled=False, server="", listen_address=""
+    ).replace("# Atlaso NTP enabled: false\n", "# Atlaso NTP enabled: false\n# Atlaso time mode: ntp_client\n")
+    applied.write_text(previous, encoding="utf-8")
+    staged.write_text(candidate, encoding="utf-8")
+    monkeypatch.setattr(helper, "NTP_CONFIG_PATH", applied)
+    monkeypatch.setattr(helper, "NTP_APPLY_DIR", staged.parent)
+    helper._ntpd_begin_transaction(helper._ntpd_snapshot_applied_config())
+    monkeypatch.setattr(helper, "_release_transaction_owner_alive", lambda _owner: True)
+    monkeypatch.setattr(helper, "_ntpd_stop_service", lambda *_args, **_kwargs: None)
+    guard_modes: list[str] = []
+    monkeypatch.setattr(helper, "_ntpd_client_packet_guard", guard_modes.append)
+    monkeypatch.setattr(helper, "_ntpd_set_vmware_timesync", lambda _enabled: None)
+    monkeypatch.setattr(helper, "_ntpd_config_errors", lambda *_args: [])
+    monkeypatch.setattr(helper, "_ntpd_runtime_identity_errors", lambda: [])
+
+    assert helper._ntpd_guard("boot") == 0
+    assert guard_modes == ["ntp_client"]
+    assert helper._handle_ntpd("apply", [str(staged)]) == 1
+    assert "Another clock Apply is still active" in capsys.readouterr().err
+    assert helper._ntpd_transaction_path().exists()
+
+
+@pytest.mark.parametrize("checkpoint_verified", [False, True])
+def test_ntpd_system_exit_recovery_distinguishes_prepared_and_verified_candidate(
+    monkeypatch, tmp_path, checkpoint_verified
+):
+    """A killed transition rolls back before checkpoint and keeps a hashed verified candidate."""
+    helper = load_helper_module()
+    applied = tmp_path / "etc" / "ntp.conf"
+    staged = tmp_path / "apply" / "ntpd" / "atlaso-ntp.conf"
+    staged.parent.mkdir(parents=True)
+    applied.parent.mkdir(parents=True)
+    previous = ntpd_config_text(
+        enabled=False, server="time.cloudflare.com", listen_address="", allow_clients="192.0.2.0/24"
+    ).replace("# Atlaso NTP enabled: false\n", "# Atlaso NTP enabled: false\n# Atlaso time mode: ntp_client\n")
+    candidate = ntpd_config_text(
+        enabled=False, server="", listen_address=""
+    ).replace("# Atlaso NTP enabled: false\n", "# Atlaso NTP enabled: false\n# Atlaso time mode: vmware_tools\n")
+    applied.write_text(previous, encoding="utf-8")
+    staged.write_text(candidate, encoding="utf-8")
+    monkeypatch.setattr(helper, "NTP_CONFIG_PATH", applied)
+    monkeypatch.setattr(helper, "NTP_APPLY_DIR", staged.parent)
+    monkeypatch.setattr(helper, "_ntpd_config_errors", lambda *_args: [])
+    monkeypatch.setattr(helper, "_ntpd_install_guards", lambda: None)
+
+    def die_during_transition(*_args, **_kwargs):
+        if checkpoint_verified:
+            helper._ntpd_checkpoint_verified()
+        raise SystemExit(99)
+
+    monkeypatch.setattr(helper, "_ntpd_transition", die_during_transition)
+    with pytest.raises(SystemExit, match="99"):
+        helper._handle_ntpd("apply", [str(staged)])
+    transaction_path = helper._ntpd_transaction_path()
+    assert transaction_path.is_relative_to(tmp_path)
+    journal = json.loads(transaction_path.read_text(encoding="utf-8"))
+    assert journal["phase"] == ("verified" if checkpoint_verified else "prepared")
+    monkeypatch.setattr(helper, "_release_transaction_owner_alive", lambda _owner: False)
+
+    helper._ntpd_recover_interrupted_apply()
+
+    assert applied.read_text(encoding="utf-8") == (candidate if checkpoint_verified else previous)
+    assert not transaction_path.exists()
+
+
+def test_ntpd_mismatched_verified_checkpoint_refuses_to_recover(monkeypatch, tmp_path):
+    """A verified checkpoint never accepts config bytes that changed after its hash."""
+    helper = load_helper_module()
+    applied = tmp_path / "etc" / "ntp.conf"
+    applied.parent.mkdir(parents=True)
+    applied.write_text("# verified candidate\n", encoding="utf-8")
+    monkeypatch.setattr(helper, "NTP_CONFIG_PATH", applied)
+    snapshot = helper._ntpd_snapshot_applied_config()
+    helper._ntpd_begin_transaction(snapshot)
+    helper._ntpd_checkpoint_verified()
+    applied.write_text("# drifted candidate\n", encoding="utf-8")
+    monkeypatch.setattr(helper, "_release_transaction_owner_alive", lambda _owner: False)
+
+    with pytest.raises(RuntimeError, match="does not match"):
+        helper._ntpd_recover_interrupted_apply()
+
+    assert helper._ntpd_transaction_path().exists()
+
+
+def test_ntpd_recovery_checkpoint_never_serializes_nts_material(monkeypatch, tmp_path):
+    """Durable config recovery omits transient NTS bytes from its journal."""
+    helper = load_helper_module()
+    applied = tmp_path / "etc" / "ntp.conf"
+    applied.parent.mkdir(parents=True)
+    applied.write_text("# prior managed config\n", encoding="utf-8")
+    monkeypatch.setattr(helper, "NTP_CONFIG_PATH", applied)
+    snapshot = helper._ntpd_snapshot_applied_config()
+    marker = b"synthetic-nts-material-secret-marker"
+    snapshot["nts_material"] = [{"data": marker, "path": tmp_path / "dummy.key"}]
+
+    helper._ntpd_begin_transaction(snapshot)
+
+    journal = helper._ntpd_transaction_path().read_bytes()
+    assert b"nts_material" not in journal
+    assert marker not in journal
+    if helper.os.name == "posix":
+        assert helper.stat.S_IMODE(helper._ntpd_transaction_path().stat().st_mode) == 0o600
+
+
+def test_ntpd_malformed_checkpoint_fails_closed_before_guard_mutation(monkeypatch, tmp_path, capsys):
+    """Malformed transaction evidence prevents the guard from selecting a controller."""
+    helper = load_helper_module()
+    applied = tmp_path / "etc" / "ntp.conf"
+    applied.parent.mkdir(parents=True)
+    applied.write_text("# malformed journal must not change this file\n", encoding="utf-8")
+    monkeypatch.setattr(helper, "NTP_CONFIG_PATH", applied)
+    helper._ntpd_transaction_path().write_text("{malformed", encoding="utf-8")
+    monkeypatch.setattr(
+        helper, "_ntpd_stop_service", lambda *_args, **_kwargs: pytest.fail("clock guard mutated services")
+    )
+    monkeypatch.setattr(
+        helper, "_ntpd_client_packet_guard", lambda *_args: pytest.fail("clock guard mutated nftables")
+    )
+
+    assert helper._ntpd_guard("boot") == 1
+
+    assert applied.read_text(encoding="utf-8") == "# malformed journal must not change this file\n"
+    assert helper._ntpd_transaction_path().exists()
+    assert "Clock Apply recovery failed" in capsys.readouterr().err
+
+
+def test_ntpd_checkpoint_write_failure_refuses_candidate_before_config_mutation(monkeypatch, tmp_path, capsys):
+    """Failure to durably publish the journal prevents an apply from replacing the config."""
+    helper = load_helper_module()
+    applied = tmp_path / "etc" / "ntp.conf"
+    staged = tmp_path / "apply" / "ntpd" / "atlaso-ntp.conf"
+    staged.parent.mkdir(parents=True)
+    applied.parent.mkdir(parents=True)
+    previous = ntpd_config_text(
+        enabled=False, server="time.cloudflare.com", listen_address="", allow_clients="192.0.2.0/24"
+    ).replace("# Atlaso NTP enabled: false\n", "# Atlaso NTP enabled: false\n# Atlaso time mode: ntp_client\n")
+    candidate = ntpd_config_text(
+        enabled=False, server="", listen_address=""
+    ).replace("# Atlaso NTP enabled: false\n", "# Atlaso NTP enabled: false\n# Atlaso time mode: vmware_tools\n")
+    applied.write_text(previous, encoding="utf-8")
+    staged.write_text(candidate, encoding="utf-8")
+    monkeypatch.setattr(helper, "NTP_CONFIG_PATH", applied)
+    monkeypatch.setattr(helper, "NTP_APPLY_DIR", staged.parent)
+    monkeypatch.setattr(helper, "_ntpd_config_errors", lambda *_args: [])
+    monkeypatch.setattr(helper, "_ntpd_write_transaction", lambda _payload: (_ for _ in ()).throw(OSError("checkpoint write failed")))
+
+    assert helper._handle_ntpd("apply", [str(staged)]) == 1
+
+    assert applied.read_text(encoding="utf-8") == previous
+    assert not helper._ntpd_transaction_path().exists()
+    assert "checkpoint write failed" in capsys.readouterr().err

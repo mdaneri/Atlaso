@@ -16100,6 +16100,18 @@ def test_appliance_startup_initializes_factory_apply_baseline(monkeypatch, tmp_p
         assert review.json()["initial_apply_required"] is True
         assert len(review.json()["units"]) == 17
         assert all(unit["selected"] is unit["valid"] for unit in review.json()["units"])
+        with database.SessionLocal() as db:
+            initial_baseline = db.execute(
+                select(Setting).where(Setting.key == "appliance_apply.baselines.v1")
+            ).scalar_one()
+            assert "ntpd" not in json.loads(initial_baseline.value)
+            baseline_event = db.execute(
+                select(AuditEvent).where(
+                    AuditEvent.action == "initialize_factory_appliance_apply_baseline"
+                )
+            ).scalar_one()
+            assert "16 factory desired-state units baselined" in baseline_event.detail
+            assert "1 unit(s) omitted pending initial Apply" in baseline_event.detail
         esxi_pxe_unit = next(
             unit for unit in review.json()["units"] if unit["id"] == "esxi_pxe"
         )
@@ -16141,6 +16153,14 @@ def test_appliance_startup_initializes_factory_apply_baseline(monkeypatch, tmp_p
         baseline = db.execute(select(Setting).where(Setting.key == "appliance_apply.baselines.v1")).scalar_one()
         assert '"local_users"' in baseline.value
         assert '"vcf_private_registry"' in baseline.value
+        applied_ntpd_baseline = json.loads(baseline.value)["ntpd"]
+        from atlaso.app.ui import initialize_factory_appliance_apply_baseline
+
+        assert initialize_factory_appliance_apply_baseline(db) is False
+        preserved_baseline = db.execute(
+            select(Setting).where(Setting.key == "appliance_apply.baselines.v1")
+        ).scalar_one()
+        assert json.loads(preserved_baseline.value)["ntpd"] == applied_ntpd_baseline
         admin = db.execute(select(User).where(User.username == "admin")).scalar_one()
         assert admin.os_sync_status == "applied"
         assert admin.os_password_applied_at is not None

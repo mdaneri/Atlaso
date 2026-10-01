@@ -109,6 +109,15 @@ Repeated setup copies nothing when the destination is already valid. Keep config
 release artifacts, and logs. Record ownership of only the task's copied configuration; later task-worktree cleanup
 must never remove or alter the primary checkout's originals.
 
+### Verify source-snapshot admission
+
+The focused Windows source-snapshot regression runs with PowerShell 7 using
+`python -m pytest -q tests/test_photon_image.py::test_vmware_source_snapshot_resists_during_packer_checkout_changes`.
+Its certificate admission checks create an isolated synthetic repository under the pytest output directory, with plan
+and evidence paths beneath that repository's `test-results` tree. No pytest `--basetemp` override is needed. Both
+inspectors must reject mutable checkout invocation, out-of-root paths, missing Python, and existing evidence before
+any credential access. These admission fixtures do not create VMs or perform certificate handoffs.
+
 ### Release task-owned LAN segments
 
 Lifecycle runs that request `lan:<name>` now create an immutable receipt before registering a new segment.
