@@ -412,13 +412,18 @@ def test_prerelease_nested_export_preserves_protected_mode(tmp_path: Path) -> No
     stub = tmp_path / "scripts/windows/vmware/export-ovf.ps1"
     stub.parent.mkdir(parents=True)
     stub.write_text(
-        "param($SourceVmxPath, $Name, [switch]$Force, $VirtualizationSourceMetadata, [switch]$ProtectedExport)\nif (-not $ProtectedExport) { throw 'Writable nested export' }; 'PROTECTED'\n",
+        "param($SourceVmxPath, $Name, [switch]$Force, $VirtualizationSourceMetadata, "
+        "[switch]$ProtectedExport, [ref]$ExportPackageDirectory)\n"
+        "if (-not $ProtectedExport) { throw 'Writable nested export' }\n"
+        "$ExportPackageDirectory.Value = Join-Path $PSScriptRoot 'package'\n"
+        "'PROTECTED'\n",
         encoding="utf-8",
     )
     wrapper = tmp_path / "invoke.ps1"
     wrapper.write_text(
-        "$ErrorActionPreference = 'Stop'; $RepoRoot = $PSScriptRoot; $vmx = 'test'; $name = 'test'; $sourceMetadata = 'test'\n"
-        + call,
+        "$ErrorActionPreference = 'Stop'; $RepoRoot = $PSScriptRoot; $vmx = 'test'; $name = 'test'; $sourceMetadata = 'test'; $ovaRoot = ''\n"
+        + call
+        + "if (-not $ovaRoot.EndsWith('package')) { throw 'Missing package handoff' }\n",
         encoding="utf-8",
     )
     result = subprocess.run(
