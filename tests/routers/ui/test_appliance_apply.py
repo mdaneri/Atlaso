@@ -750,6 +750,10 @@ interface=eth1
             "name": "eth0",
             "parent": "",
             "parent_admin_state": "",
+            "admin_state": "up",
+            "mode": "access",
+            "parent_mode": "",
+            "management_eligible": "true",
             "check_duplicate_ip_addresses": "false",
             "role": "management",
             "mtu": "",
@@ -767,6 +771,10 @@ interface=eth1
             "name": "eth1",
             "parent": "",
             "parent_admin_state": "",
+            "admin_state": "up",
+            "mode": "access",
+            "parent_mode": "",
+            "management_eligible": "true",
             "check_duplicate_ip_addresses": "false",
             "role": "access",
             "mtu": "",
@@ -791,6 +799,10 @@ interface=eth1
     assert management_handoff_required(
         {"raw_config_preview": checked}, {"config_preview": dedicated},
     )
+
+    down = dedicated.replace("admin_state=up", "admin_state=down", 1)
+    assert network_management_paths(down)[0]["management_eligible"] == "false"
+    assert management_handoff_required({"raw_config_preview": down}, {"config_preview": dedicated})
 
 
 def test_management_binding_change_requires_protected_handoff():

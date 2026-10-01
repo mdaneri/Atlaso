@@ -2479,16 +2479,25 @@ def test_console_observation_uses_applied_snapshot_with_pending_edits(client, mo
         assert target.host_ip_cidr == "192.168.167.173/24"
 
 
-def test_console_recovery_interval_edit_stops_settings_capture(client, monkeypatch):
+@pytest.mark.parametrize("edit", ["address", "admin_down"])
+def test_console_recovery_interval_edit_stops_settings_capture(client, monkeypatch, edit):
     """Reject unapplied management changes made during recovery before Settings admission.
 
     Args:
         client: Initialized application database fixture.
         monkeypatch: Replace privileged execution while preserving real Settings admission.
+        edit: Pending address or administrative-state change during recovery.
     """
     from atlaso.app import ui as ui_module
     from atlaso.app.database import SessionLocal
 
+    if edit == "admin_down":
+        with SessionLocal() as db:
+            db.add(appliance_console.PhysicalInterface(
+                name="eth-console-alternate", mac_address="02:00:00:00:05:33", role="access", mode="access",
+                admin_state="up", oper_state="up", ip_cidr="192.0.2.1/24", access_management_ui_enabled=True,
+            ))
+            db.commit()
     submit_settings = appliance_console._submit_console_apply
 
     def submit(units, **kwargs):
@@ -2517,8 +2526,11 @@ def test_console_recovery_interval_edit_stops_settings_capture(client, monkeypat
         """
         with SessionLocal() as db:
             target = appliance_console._management_interface(db)
-            target.ipv4_method = "static"
-            target.ip_cidr = "192.168.167.175/24"
+            if edit == "address":
+                target.ipv4_method = "static"
+                target.ip_cidr = "192.168.167.175/24"
+            else:
+                target.admin_state = "down"
             db.commit()
 
     monkeypatch.setattr(appliance_console, "_submit_console_apply", submit)
@@ -2528,7 +2540,11 @@ def test_console_recovery_interval_edit_stops_settings_capture(client, monkeypat
     with pytest.raises(ConsoleOperationError, match="changed during recovery"):
         appliance_console.configure_management("dhcp", "", "", "disabled", "", "", "192.0.2.53")
     with SessionLocal() as db:
-        assert appliance_console._management_interface(db).ip_cidr == "192.168.167.175/24"
+        target = appliance_console._management_interface(db)
+        if edit == "address":
+            assert target.ip_cidr == "192.168.167.175/24"
+        else:
+            assert target.admin_state == "down"
         assert db.query(appliance_console.Job).count() == 1
 
 
@@ -2609,3 +2625,62 @@ def test_console_observation_serializes_pending_decision(client, monkeypatch):
         target = db.get(appliance_console.PhysicalInterface, interface_id)
         assert target.ip_cidr == "192.168.167.175/24"
         assert target.host_ip_cidr == "192.168.167.173/24"
+
+
+@pytest.mark.parametrize("edit", ["vlan", "admin_down", "unchanged"])
+def test_console_observation_rejects_other_management_path_edits(client, monkeypatch, edit):
+    """Reject changes outside the observed address tuple before dependent recovery.
+
+    Args:
+        client: Initialized application database fixture.
+        monkeypatch: Supply native evidence for the completed management address.
+        edit: Pending VLAN/admin-state change, or unchanged completed paths.
+    """
+    from sqlalchemy import select
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.services.networking import (
+        HostPhysicalInterface,
+        render_network_config,
+    )
+
+    with SessionLocal() as db:
+        target = appliance_console._management_interface(db)
+        target.ipv4_method = "static"
+        target.ip_cidr = "192.168.167.173/24"
+        target.ipv6_enabled = False
+        target.ipv6_cidr = None
+        interface_id = target.id
+        observed = HostPhysicalInterface(
+            name=target.name, mac_address=target.mac_address, driver=None, speed=None,
+            host_ip_cidr=target.ip_cidr, host_mtu=1500, host_admin_state="up", oper_state="up",
+        )
+        preview = render_network_config(interfaces=list(db.scalars(select(appliance_console.PhysicalInterface))),
+                                        vlans=list(db.scalars(select(appliance_console.VlanInterface))))
+        db.add(appliance_console.Job(
+            id="job_completed_paths", type="appliance-apply", status="succeeded", created_by="console:root",
+            result=json.dumps({"captured_units": [{"unit_id": "network", "config_preview": preview}]}),
+        ))
+        db.commit()
+        if edit == "vlan":
+            db.add(appliance_console.VlanInterface(
+                name=f"{target.name}.533", parent_interface=target.name, vlan_id=533,
+                ip_cidr="192.0.2.1/24", enabled=True, access_management_ui_enabled=True,
+            ))
+        elif edit == "admin_down":
+            target.admin_state = "down"
+        db.commit()
+    monkeypatch.setattr(appliance_console, "discover_host_physical_interfaces", lambda **kwargs: [observed])
+    if edit == "unchanged":
+        appliance_console._refresh_management_addresses(interface_id, network_job_id="job_completed_paths", timeout=0)
+    else:
+        with pytest.raises(ConsoleOperationError, match="Certificate recovery and Appliance Settings were not started"):
+            appliance_console._refresh_management_addresses(interface_id, network_job_id="job_completed_paths", timeout=0)
+    with SessionLocal() as db:
+        target = db.get(appliance_console.PhysicalInterface, interface_id)
+        assert target.host_ip_cidr == "192.168.167.173/24"
+        if edit == "vlan":
+            assert db.scalar(select(appliance_console.VlanInterface).where(
+                appliance_console.VlanInterface.vlan_id == 533)).access_management_ui_enabled is True
+        elif edit == "admin_down":
+            assert target.admin_state == "down"

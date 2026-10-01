@@ -73,6 +73,7 @@ from atlaso.app.models import (  # noqa: E402 - appliance environment must load 
     JobStep,
     PhysicalInterface,
     Setting,
+    VlanInterface,
     utcnow,
 )
 from atlaso.app.services.dnsmasq import (  # noqa: E402 - appliance environment must load before configured imports.
@@ -88,6 +89,7 @@ from atlaso.app.services.network_objects import (  # noqa: E402 - appliance envi
 )
 from atlaso.app.services.networking import (  # noqa: E402 - appliance environment must load before configured imports.
     discover_host_physical_interfaces,
+    render_network_config,
 )
 
 HELPER_PATH = Path("/opt/atlaso/bin/atlaso-helper")
@@ -1250,13 +1252,17 @@ def _refresh_management_addresses(
     Raises:
         ConsoleOperationError: If fresh host inventory cannot confirm the corrected addresses.
     """
+    expected_paths = None
     with SessionLocal() as db:
         target = db.get(PhysicalInterface, interface_id)
         if target is None:
             raise ConsoleOperationError("The applied management interface is unavailable.")
         expected = (target.ipv4_method, target.ip_cidr, target.ipv6_enabled, target.ipv6_cidr)
         if network_job_id is not None:
-            from atlaso.app.ui import network_interface_entries
+            from atlaso.app.ui import (
+                network_interface_entries,
+                network_management_paths,
+            )
 
             job = db.get(Job, network_job_id)
             payload = json.loads(job.result or "{}") if job is not None else {}
@@ -1265,6 +1271,7 @@ def _refresh_management_addresses(
             matches = [row for row in rows if row.get("kind") == "physical" and row.get("name") == target.name]
             if job is None or job.status != JobStatus.SUCCEEDED.value or len(matches) != 1:
                 raise ConsoleOperationError("The completed task's management Network snapshot is unavailable.")
+            expected_paths = network_management_paths(str(units[0].get("config_preview") or ""))
             row = matches[0]
             expected = (
                 row.get("ipv4_method", "static"), row.get("ip_cidr") or None,
@@ -1312,6 +1319,12 @@ def _refresh_management_addresses(
                 interface.host_ip_cidr = observed.host_ip_cidr
                 interface.host_ipv6_cidr = observed.host_ipv6_cidr
                 pending = (interface.ipv4_method, interface.ip_cidr, interface.ipv6_enabled, interface.ipv6_cidr) != expected
+                if expected_paths is not None:
+                    current_preview = render_network_config(
+                        interfaces=list(db.scalars(select(PhysicalInterface))),
+                        vlans=list(db.scalars(select(VlanInterface))),
+                    )
+                    pending = pending or not expected_paths or expected_paths != network_management_paths(current_preview)
                 db.commit()
                 if pending:
                     raise ConsoleOperationError(

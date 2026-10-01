@@ -10173,6 +10173,7 @@ def network_management_paths(config_preview: str) -> list[dict[str, str]]:
         for row in rows
         if row.get("kind") == "physical"
     }
+    physical_modes = {row.get("name", ""): row.get("mode", "") for row in rows if row.get("kind") == "physical"}
     for row in rows:
         dedicated = row.get("kind") == "physical" and row.get("role") == "management"
         flagged_physical = (
@@ -10196,6 +10197,14 @@ def network_management_paths(config_preview: str) -> list[dict[str, str]]:
                 "name": row.get("name", ""),
                 "parent": row.get("parent", ""),
                 "parent_admin_state": physical_admin_states.get(row.get("parent", ""), ""),
+                "admin_state": row.get("admin_state", ""),
+                "mode": row.get("mode", ""),
+                "parent_mode": physical_modes.get(row.get("parent", ""), ""),
+                "management_eligible": "true" if (
+                    physical_admin_states.get(row.get("parent", "")) == "up"
+                    and physical_modes.get(row.get("parent", "")) == "trunk"
+                    if row.get("kind") == "vlan" else row.get("admin_state") == "up" and row.get("mode") == "access"
+                ) else "false",
                 "check_duplicate_ip_addresses": row.get("check_duplicate_ip_addresses", "false"),
                 "role": row.get("role", ""),
                 "mtu": row.get("mtu", ""),
