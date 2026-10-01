@@ -2195,7 +2195,9 @@ def ntpd_capabilities_payload(result: AdapterResult) -> dict[str, Any]:
             payload, index = decoder.raw_decode(text, index)
         except json.JSONDecodeError:
             return {}
-        if isinstance(payload, dict) and "nts" in payload:
+        if isinstance(payload, dict) and (
+            "nts" in payload or "vmware_tools" in payload
+        ):
             capabilities = payload
     return capabilities
 
@@ -2220,6 +2222,32 @@ def ntp_context(db: Session, *, include_runtime_health: bool = False, reconcile:
     ntp_capabilities = ntpd_capabilities_payload(capability_result)
     ntp_nts_capability_known = "nts" in ntp_capabilities
     ntp_nts_supported = ntp_capabilities.get("nts") is True
+    vmware_tools_capability_known = isinstance(
+        ntp_capabilities.get("vmware_tools"), bool
+    )
+    vmware_tools_available = ntp_capabilities.get("vmware_tools") is True
+    if (
+        reconcile
+        and vmware_tools_capability_known
+        and not vmware_tools_available
+        and settings.time_source == "vmware_tools"
+    ):
+        settings.time_source = "ntp_client"
+        settings.updated_at = utcnow()
+        db.add(settings)
+        record_audit(
+            db,
+            actor="system",
+            action="normalize_unavailable_ntp_time_source",
+            resource_type="ntpd",
+            resource_id=str(settings.id),
+            detail=(
+                "VMware Tools time synchronization is unavailable; appliance "
+                "time source was reset to NTP client."
+            ),
+        )
+        db.commit()
+        db.refresh(settings)
     if ntp_nts_capability_known and not ntp_nts_supported:
         upstream_sources = ntp_upstream_sources(settings)
         nts_state_changed = settings.nts_server_enabled or any(bool(source.get("use_nts")) for source in upstream_sources)
@@ -2267,6 +2295,15 @@ def ntp_context(db: Session, *, include_runtime_health: bool = False, reconcile:
     validation_errors = [*ca_state_errors, *validate_ntp_state(settings, {interface["name"] for interface in available_interfaces})]
     if settings.enabled and ntp_dns_record_conflict(db, settings):
         validation_errors.append("NTP hostname or generated target conflicts with an operator-owned DNS record.")
+    if (
+        not settings.enabled
+        and settings.time_source == "vmware_tools"
+        and not vmware_tools_available
+    ):
+        validation_errors.append(
+            "VMware Tools time synchronization is unavailable or could not be verified; "
+            "select NTP client before applying this time-source choice."
+        )
     if settings.enabled and settings.nts_server_enabled:
         ca_settings = get_ca_settings_row(db)
         if not ca_settings.enabled:
@@ -2308,6 +2345,8 @@ def ntp_context(db: Session, *, include_runtime_health: bool = False, reconcile:
         "ntp_nts_capability_known": ntp_nts_capability_known,
         "ntp_nts_supported": ntp_nts_supported,
         "ntp_nts_capabilities": ntp_capabilities,
+        "ntp_vmware_tools_capability_known": vmware_tools_capability_known,
+        "ntp_vmware_tools_available": vmware_tools_available,
     }
 
 

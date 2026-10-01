@@ -90,10 +90,10 @@
           <span class="field-label"><span>Appliance time source</span><button class="help-icon" type="button" data-help="Choose exactly one clock source. VMware Tools periodic guest synchronization and NTP client clock discipline must not run together. The managed NTP/NTS server takes ownership while NTP service is enabled.">i</button></span>
           <select name="time_source" data-time-source-select aria-describedby="ntp-time-source-help"{% if ntp_settings.enabled %} disabled{% endif %}>
             <option value="ntp_client"{% if ntp_settings_json.time_source == "ntp_client" %} selected{% endif %}>NTP client</option>
-            <option value="vmware_tools"{% if ntp_settings_json.time_source == "vmware_tools" %} selected{% endif %}>VMware Tools</option>
+            <option value="vmware_tools"{% if ntp_settings_json.time_source == "vmware_tools" %} selected{% endif %}{% if not ntp_vmware_tools_available %} disabled{% endif %}>{% if ntp_vmware_tools_available %}VMware Tools{% elif ntp_vmware_tools_capability_known %}VMware Tools (unavailable){% else %}VMware Tools (availability unknown){% endif %}</option>
           </select>
           <input type="hidden" name="time_source" value="{{ ntp_settings_json.time_source }}" data-time-source-preserved{% if not ntp_settings.enabled %} disabled{% endif %}>
-          <small id="ntp-time-source-help" class="muted" data-time-source-client-help{% if ntp_settings.enabled %} hidden{% endif %}>Choose one appliance clock source. Changing this saves desired state; host changes take effect through global Appliance Apply.</small>
+          <small id="ntp-time-source-help" class="muted" data-time-source-client-help{% if ntp_settings.enabled %} hidden{% endif %}>{% if not ntp_vmware_tools_available and ntp_vmware_tools_capability_known %}VMware Tools time synchronization is unavailable on this appliance. Any saved VMware Tools choice was normalized to NTP client.{% elif not ntp_vmware_tools_available %}VMware Tools availability could not be verified. Its option remains disabled until Atlaso positively confirms support.{% else %}Choose one appliance clock source. Changing this saves desired state; host changes take effect through global Appliance Apply.{% endif %}</small>
           <small class="muted" data-time-source-server-reason{% if not ntp_settings.enabled %} hidden{% endif %}>Managed NTP/NTS server mode owns the appliance clock while the NTP service is enabled. Your saved client choice is retained.</small>
         </label>
         {% if not ntp_nts_supported %}

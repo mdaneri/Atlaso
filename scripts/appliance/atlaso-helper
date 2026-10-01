@@ -7236,6 +7236,79 @@ def _ntpd_transition(mode: str, config_path: Path | None = None, *, restart: boo
         return
 
 
+def _ntpd_snapshot_nts_server_material() -> list[dict[str, object]]:
+    """Retain bounded rollback material in memory, never a plaintext backup tree."""
+    entries: list[dict[str, object]] = []
+    total_bytes = 0
+    for root in (NTP_NTS_COOKIE_PATH, NTP_CERT_DIR):
+        if not root.exists() and not root.is_symlink():
+            continue
+        pending = [root]
+        while pending:
+            path = pending.pop()
+            info = path.lstat()
+            if len(entries) >= 128:
+                raise RuntimeError("NTS rollback material exceeds the bounded entry limit.")
+            entry: dict[str, object] = {
+                "path": path, "file_mode": stat.S_IMODE(info.st_mode),
+                "uid": info.st_uid, "gid": info.st_gid,
+            }
+            if stat.S_ISDIR(info.st_mode):
+                entry["directory"] = True
+                children: list[Path] = []
+                for child in path.iterdir():
+                    children.append(child)
+                    if len(entries) + 1 + len(pending) + len(children) > 128:
+                        raise RuntimeError("NTS rollback material exceeds the bounded entry limit.")
+                pending.extend(sorted(children, reverse=True))
+            elif stat.S_ISREG(info.st_mode) and info.st_nlink == 1:
+                if info.st_size > 1024 * 1024 or total_bytes + info.st_size > 4 * 1024 * 1024:
+                    raise RuntimeError("NTS rollback material exceeds the bounded byte limit.")
+                descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+                with os.fdopen(descriptor, "rb") as handle:
+                    opened = os.fstat(handle.fileno())
+                    if (opened.st_dev, opened.st_ino) != (info.st_dev, info.st_ino):
+                        raise RuntimeError("NTS rollback material changed during capture.")
+                    data = handle.read(1024 * 1024 + 1)
+                    after = os.fstat(handle.fileno())
+                    if after.st_nlink != 1 or (after.st_size, after.st_mtime_ns) != (info.st_size, info.st_mtime_ns):
+                        raise RuntimeError("NTS rollback material changed during capture.")
+                if len(data) != info.st_size:
+                    raise RuntimeError("NTS rollback material changed during capture.")
+                total_bytes += len(data)
+                entry.update({"directory": False, "exists": True, "data": data, "link_target": None})
+            else:
+                raise RuntimeError("NTS rollback material contains an unsupported link or file type.")
+            entries.append(entry)
+    return entries
+
+
+def _ntpd_restore_nts_server_material(entries: object) -> None:
+    """Restore captured server files and permissions before reactivating its controller."""
+    if not isinstance(entries, list):
+        return
+    directories: list[dict[str, object]] = []
+    for entry in entries:
+        path = entry["path"]
+        if not isinstance(path, Path):
+            raise RuntimeError("NTS rollback material has an invalid path.")
+        if path.is_symlink():
+            raise RuntimeError("NTS rollback destination became a symbolic link.")
+        if entry["directory"]:
+            path.mkdir(mode=0o700, exist_ok=True)
+            directories.append(entry)
+        else:
+            if path.exists() and not path.is_file():
+                raise RuntimeError("NTS rollback destination is no longer a regular file.")
+            _ntpd_restore_applied_config(entry, path=path)
+    # Keep newly recreated parents private while their files are restored.
+    for entry in reversed(directories):
+        path = entry["path"]
+        os.chmod(path, entry["file_mode"])
+        if os.name == "posix":
+            os.chown(path, entry["uid"], entry["gid"])
+
+
 def _ntpd_snapshot_applied_config() -> dict[str, object]:
     """Capture the exact prior applied config and its managed clock mode."""
     path = NTP_CONFIG_PATH
@@ -7268,12 +7341,15 @@ def _ntpd_snapshot_applied_config() -> dict[str, object]:
         raise RuntimeError("Applied ntpd config is not a regular file or symlink; refusing transition without rollback evidence.")
     if snapshot["managed"]:
         snapshot["mode"] = _ntpd_time_mode(path)
+        if snapshot["mode"] == "ntp_server" and _ntpd_nts_server_enabled(path):
+            snapshot["nts_material"] = _ntpd_snapshot_nts_server_material()
     return snapshot
 
 
-def _ntpd_restore_applied_config(snapshot: dict[str, object]) -> None:
+def _ntpd_restore_applied_config(snapshot: dict[str, object], *, path: Path | None = None) -> None:
     """Atomically restore the prior applied config bytes, symlink, or absence."""
-    path = NTP_CONFIG_PATH
+    if path is None:
+        path = NTP_CONFIG_PATH
     if not snapshot["exists"]:
         if path.is_symlink():
             path.unlink()
@@ -7353,6 +7429,7 @@ def _ntpd_rollback_failed_apply(snapshot: dict[str, object]) -> str:
     """Restore previous applied intent and controller after a failed apply."""
     try:
         _ntpd_restore_applied_config(snapshot)
+        _ntpd_restore_nts_server_material(snapshot.get("nts_material"))
     except (OSError, RuntimeError, ValueError) as restore_error:
         stop_errors = _ntpd_fail_closed_stop()
         suffix = f" Fail-closed stop errors: {'; '.join(stop_errors)}." if stop_errors else ""
@@ -7735,14 +7812,19 @@ def _ntpd_capabilities() -> int:
     """Perform ntpd capabilities.
 
     """
+    vmware_tools_available = shutil.which("vmware-toolbox-cmd") is not None
     ntpd = shutil.which("ntpd")
     if ntpd is None:
-        print(json.dumps({"nts": False, "error": "ntpd command not found"}, sort_keys=True))
+        print(json.dumps({
+            "nts": False,
+            "vmware_tools": vmware_tools_available,
+            "error": "ntpd command not found",
+        }, sort_keys=True))
         return 0
     try:
         result = _run([ntpd, "--version"], timeout=2)
     except (OSError, subprocess.TimeoutExpired) as exc:
-        print(json.dumps({"error": str(exc)}, sort_keys=True))
+        print(json.dumps({"vmware_tools": vmware_tools_available, "error": str(exc)}, sort_keys=True))
         return 1
     if result.returncode != 0:
         print(
@@ -7750,6 +7832,7 @@ def _ntpd_capabilities() -> int:
                 {
                     "error": "ntpd version probe failed",
                     "returncode": result.returncode,
+                    "vmware_tools": vmware_tools_available,
                 },
                 sort_keys=True,
             )
@@ -7764,12 +7847,18 @@ def _ntpd_capabilities() -> int:
                     "error": "NTPsec capability identity probe failed",
                     "errors": identity_probe_errors,
                     "version": version_text,
+                    "vmware_tools": vmware_tools_available,
                 },
                 sort_keys=True,
             )
         )
         return 1
-    print(json.dumps({"nts": "ntpsec" in version_text.lower() and not identity_errors, "version": version_text, "errors": identity_errors}, sort_keys=True))
+    print(json.dumps({
+        "nts": "ntpsec" in version_text.lower() and not identity_errors,
+        "vmware_tools": vmware_tools_available,
+        "version": version_text,
+        "errors": identity_errors,
+    }, sort_keys=True))
     return 0
 
 

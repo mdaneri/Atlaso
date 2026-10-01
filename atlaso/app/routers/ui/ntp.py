@@ -218,8 +218,6 @@ def build_router(dependencies: NtpUiDependencies) -> NtpUiRouter:
                 detail="Time source must be ntp_client or vmware_tools.",
             )
         settings = dependencies.get_ntp_settings_row(db)
-        if time_source is not None:
-            settings.time_source = time_source
         previous_hostname = settings.hostname
         capability_result = (
             dependencies.system_adapter_factory().read_ntpd_capabilities()
@@ -227,6 +225,37 @@ def build_router(dependencies: NtpUiDependencies) -> NtpUiRouter:
         ntp_capabilities = dependencies.ntpd_capabilities_payload(capability_result)
         ntp_nts_capability_known = "nts" in ntp_capabilities
         ntp_nts_supported = ntp_capabilities.get("nts") is True
+        ntp_vmware_tools_capability_known = isinstance(
+            ntp_capabilities.get("vmware_tools"), bool
+        )
+        ntp_vmware_tools_available = ntp_capabilities.get("vmware_tools") is True
+        requested_server_mode = enabled == "on"
+        requested_time_source = time_source or settings.time_source
+        preserve_server_remembered_choice = (
+            requested_server_mode
+            and settings.time_source == "vmware_tools"
+            and not ntp_vmware_tools_available
+            and time_source in {None, "vmware_tools"}
+        )
+        if (
+            requested_time_source == "vmware_tools"
+            and not ntp_vmware_tools_available
+            and not preserve_server_remembered_choice
+        ):
+            availability = (
+                "unavailable"
+                if ntp_vmware_tools_capability_known
+                else "could not be verified"
+            )
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail=(
+                    "VMware Tools time synchronization "
+                    f"{availability}; select NTP client before saving this time-source choice."
+                ),
+            )
+        if time_source is not None and not preserve_server_remembered_choice:
+            settings.time_source = time_source
         selected_interfaces, selected_addresses = (
             dependencies.resolve_service_bind_targets(
                 db,

@@ -3638,12 +3638,25 @@ def test_ntp_validation_rejects_enabled_service_without_bind_or_upstreams(client
     assert "At least one NTP upstream server is required." in payload["validation_errors"]
 
 
-def test_ntp_validation_allows_vmware_time_source_without_upstreams(client):
+def test_ntp_validation_allows_vmware_time_source_without_upstreams(
+    client, monkeypatch
+):
     """Verify that VMware Tools mode needs no NTP upstreams.
 
     Args:
         client: HTTP test client used to exercise the Atlaso application.
+        monkeypatch: The pytest monkeypatch fixture.
     """
+    from atlaso.app.adapters.system import AdapterResult
+
+    monkeypatch.setattr(
+        "atlaso.app.ui.SystemAdapter.read_ntpd_capabilities",
+        lambda _self: AdapterResult(
+            command=["atlaso-helper", "ntpd", "capabilities"],
+            dry_run=False,
+            stdout=json.dumps({"nts": True, "vmware_tools": True}),
+        ),
+    )
     login(client)
     page = client.get("/ntp")
     csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]

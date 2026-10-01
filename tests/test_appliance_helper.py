@@ -18686,7 +18686,8 @@ def test_nginx_helper_reads_only_fixed_http_log_files(monkeypatch, tmp_path, cap
     assert "does not accept a path" in capsys.readouterr().err
 
 
-def test_ntpd_helper_capabilities_reports_supported_nts(monkeypatch, capsys):
+@pytest.mark.parametrize("vmware_tools_available", [False, True])
+def test_ntpd_helper_capabilities_reports_supported_nts(monkeypatch, capsys, vmware_tools_available):
     """Verify that ntpd helper capabilities reports supported nts.
 
     Args:
@@ -18694,7 +18695,11 @@ def test_ntpd_helper_capabilities_reports_supported_nts(monkeypatch, capsys):
         capsys: Pytest fixture used to capture standard output and standard error.
     """
     helper = load_helper_module()
-    monkeypatch.setattr(helper.shutil, "which", lambda command: {"ntpd": "/usr/sbin/ntpd", "rpm": "/usr/bin/rpm"}.get(command))
+    monkeypatch.setattr(helper.shutil, "which", lambda command: {
+        "ntpd": "/usr/sbin/ntpd",
+        "rpm": "/usr/bin/rpm",
+        "vmware-toolbox-cmd": "/usr/bin/vmware-toolbox-cmd" if vmware_tools_available else None,
+    }.get(command))
     monkeypatch.setattr(
         helper,
         "_run",
@@ -18702,7 +18707,25 @@ def test_ntpd_helper_capabilities_reports_supported_nts(monkeypatch, capsys):
     )
 
     assert helper._handle_ntpd("capabilities", []) == 0
-    assert json.loads(capsys.readouterr().out)["nts"] is True
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["nts"] is True
+    assert payload["vmware_tools"] is vmware_tools_available
+
+
+def test_ntpd_helper_capabilities_reports_vmware_tools_without_ntpd(monkeypatch, capsys):
+    """VMware source availability remains useful if the ntpd binary is absent."""
+    helper = load_helper_module()
+    monkeypatch.setattr(
+        helper.shutil,
+        "which",
+        lambda command: "/usr/bin/vmware-toolbox-cmd" if command == "vmware-toolbox-cmd" else None,
+    )
+
+    assert helper._handle_ntpd("capabilities", []) == 0
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["nts"] is False
+    assert payload["vmware_tools"] is True
 
 
 def test_ntpd_helper_capabilities_reports_unsupported_identity(monkeypatch, capsys):
@@ -19329,6 +19352,96 @@ def test_ntpd_apply_wait_failure_restores_nts_server_assets_before_rollback(monk
     assert "Restored previous applied ntp_server clock mode" in capsys.readouterr().err
 
 
+def test_ntpd_apply_partial_nts_cleanup_failure_restores_material_before_server_restart(
+    monkeypatch, tmp_path, capsys
+):
+    """A partial old-server cleanup failure restores fixture assets before controller rollback."""
+    helper = load_helper_module()
+    applied = tmp_path / "etc" / "ntp.conf"
+    staged = tmp_path / "apply" / "ntpd" / "atlaso-ntp.conf"
+    cert_dir = tmp_path / "etc" / "atlaso" / "ntp" / "certs"
+    cert_path = cert_dir / "server.crt"
+    key_path = cert_dir / "server.key"
+    cookie_dir = tmp_path / "var" / "lib" / "ntp" / "nts-keys"
+    cookie_path = cookie_dir / "cookie.key"
+    staged.parent.mkdir(parents=True)
+    cert_dir.mkdir(parents=True)
+    cookie_dir.mkdir(parents=True)
+    cert_path.write_bytes(b"fixture certificate")
+    key_path.write_bytes(b"fixture private key")
+    cookie_path.write_bytes(b"fixture cookie")
+    applied.parent.mkdir(parents=True, exist_ok=True)
+    previous = ntpd_config_text(
+        enabled=True,
+        server="time.cloudflare.com",
+        listen_address="192.0.2.10",
+        allow_clients="any",
+        nts_server_cert_path=str(cert_path),
+        nts_server_key_path=str(key_path),
+    ).replace("# Atlaso NTP enabled: true\n", "# Atlaso NTP enabled: true\n# Atlaso time mode: ntp_server\n")
+    candidate = ntpd_config_text(
+        enabled=False,
+        server="time.cloudflare.com",
+        listen_address="",
+        allow_clients="192.0.2.0/24",
+    ).replace("# Atlaso NTP enabled: false\n", "# Atlaso NTP enabled: false\n# Atlaso time mode: ntp_client\n")
+    applied.write_text(previous, encoding="utf-8")
+    staged.write_text(candidate, encoding="utf-8")
+    monkeypatch.setattr(helper, "NTP_APPLY_DIR", staged.parent)
+    monkeypatch.setattr(helper, "NTP_CONFIG_PATH", applied)
+    monkeypatch.setattr(helper, "NTP_NTS_COOKIE_PATH", cookie_dir)
+    monkeypatch.setattr(helper, "NTP_CERT_DIR", cert_dir)
+    monkeypatch.setattr(helper, "_ntpd_supports_nts", lambda: True)
+    monkeypatch.setattr(helper, "_ntpd_runtime_identity_errors", lambda: [])
+    monkeypatch.setattr(helper, "_ntpd_install_guards", lambda: None)
+    monkeypatch.setattr(helper, "_ntpd_client_packet_guard", lambda _mode: None)
+    monkeypatch.setattr(helper, "_install_ntpd_config", lambda _path: None)
+    monkeypatch.setattr(helper, "_ntpd_stop_service", lambda _unit: None)
+    monkeypatch.setattr(helper, "_ntpd_set_vmware_timesync", lambda _enabled: None)
+    monkeypatch.setattr(helper, "_grant_ntpd_nts_server_key_read", lambda _path: None)
+
+    expected = {
+        path: (path.read_bytes(), helper.stat.S_IMODE(path.stat().st_mode))
+        for path in (cert_path, key_path, cookie_path)
+    }
+    expected_dirs = {
+        path: helper.stat.S_IMODE(path.stat().st_mode)
+        for path in (cert_dir, cookie_dir)
+    }
+    cleanup_calls = 0
+
+    def partially_remove_assets():
+        nonlocal cleanup_calls
+        cleanup_calls += 1
+        if cleanup_calls == 1:
+            helper.shutil.rmtree(cookie_dir)
+            helper.shutil.rmtree(cert_dir)
+            raise OSError("injected partial cleanup failure")
+        return []
+
+    monkeypatch.setattr(helper, "_remove_ntpd_nts_server_material", partially_remove_assets)
+    starts: list[str] = []
+
+    def start_service(unit: str, *, restart: bool = False) -> None:
+        starts.append(unit)
+        if len(starts) == 2:
+            assert applied.read_text(encoding="utf-8") == previous
+            for path, (expected_bytes, expected_mode) in expected.items():
+                assert path.read_bytes() == expected_bytes
+                assert helper.stat.S_IMODE(path.stat().st_mode) == expected_mode
+            for path, expected_mode in expected_dirs.items():
+                assert helper.stat.S_IMODE(path.stat().st_mode) == expected_mode
+
+    monkeypatch.setattr(helper, "_ntpd_start_service", start_service)
+    monkeypatch.setattr(helper, "_ntpd_wait_synchronized", lambda: None)
+
+    assert helper._handle_ntpd("apply", [str(staged)]) == 1
+    assert cleanup_calls == 1
+    assert starts == ["ntpd.service", "ntpd.service"]
+    assert helper._ntpd_time_mode(applied) == "ntp_server"
+    assert "injected partial cleanup failure" in capsys.readouterr().err
+
+
 @pytest.mark.parametrize("prior_content", [None, b"vendor ntpd config\nserver vendor.example\n"])
 def test_ntpd_first_apply_failure_restores_absence_or_unmanaged_config(
     monkeypatch, tmp_path, capsys, prior_content
@@ -19413,6 +19526,28 @@ def test_ntpd_apply_reports_rollback_sync_failure_but_keeps_previous_config(monk
     monkeypatch.setattr(helper, "_ntpd_transition", lambda mode, **_kwargs: next_start_modes.append(mode))
     assert helper._ntpd_reconcile_applied()["mode"] == "ntp_client"
     assert next_start_modes == ["ntp_client"]
+
+
+@pytest.mark.parametrize("unsafe_material", ["oversized_file", "too_many_entries", "hard_link"])
+def test_ntpd_rollback_material_rejects_unbounded_or_shared_files(monkeypatch, tmp_path, unsafe_material):
+    """Rollback refuses unsafe custody before changing an applied controller."""
+    helper = load_helper_module()
+    cert_dir = tmp_path / "certs"
+    cert_dir.mkdir()
+    monkeypatch.setattr(helper, "NTP_CERT_DIR", cert_dir)
+    monkeypatch.setattr(helper, "NTP_NTS_COOKIE_PATH", tmp_path / "absent-cookies")
+    fixture = cert_dir / "fixture.key"
+    if unsafe_material == "oversized_file":
+        fixture.write_bytes(b"x" * (1024 * 1024 + 1))
+    elif unsafe_material == "too_many_entries":
+        for index in range(128):
+            (cert_dir / f"fixture-{index}").write_bytes(b"x")
+    else:
+        fixture.write_bytes(b"synthetic fixture")
+        os.link(fixture, cert_dir / "shared.key")
+    with pytest.raises(RuntimeError, match="bounded|unsupported"):
+        helper._ntpd_snapshot_nts_server_material()
+    assert cert_dir.is_dir()
 
 
 def test_ntpd_reconcile_leaves_unmanaged_or_legacy_disabled_config_untouched(monkeypatch, tmp_path):

@@ -45,6 +45,8 @@ When the NTP service is disabled, **Appliance time source** selects one clock au
 - **NTP client** is the default. Atlaso uses its configured upstream NTP/NTS sources to discipline the appliance
   clock and disables VMware Tools periodic guest time synchronization.
 - **VMware Tools** uses the hypervisor's guest time synchronization and disables Atlaso's NTP client service.
+  This choice is available only when the appliance confirms VMware Tools support. Appliances without VMware Tools
+  use NTP client; a restored VMware Tools choice is normalized before Apply.
 
 These sources are mutually exclusive because both can adjust the same system clock. Enabling the NTP service makes the
 managed **NTP/NTS server** the effective clock mode; NTPsec uses the configured upstream sources and Atlaso disables
