@@ -25,7 +25,7 @@ _ACTION_TIMEOUTS = {
     "deployment_identity": 20,
     "prepare_server_interface": 360,
     "install_probe_tools": 120,
-    "apply": 360,
+    "apply": 600,
     "client_capture": 25,
     "tools_restart": 80,
     "wait_status": 360,
@@ -780,9 +780,23 @@ class _AcceptanceRunner:
                 _fail("The server transition lost the remembered VMware Tools selection.")
             self._step("verify-site-fixture-address-ownership", self._verify_fixture_identity)
             self._step("positive-host-ntp-server-probe", lambda: self._probe_server_and_health())
+            self._step(
+                "server-unselected-management-refusal-and-ingress",
+                lambda: self.client_probe(
+                    self.guest, management_host=self.host,
+                    username=self.web_user, password=self.web_password,
+                ),
+            )
             self._step("ntp-server-mode-reboot", lambda: self._reboot("ntp_server"))
             self._step("verify-site-fixture-after-reboot", self._verify_fixture_identity)
             self._step("positive-host-ntp-server-probe-after-reboot", lambda: self._probe_server_and_health())
+            self._step(
+                "server-unselected-management-refusal-after-reboot",
+                lambda: self.client_probe(
+                    self.guest, management_host=self.host,
+                    username=self.web_user, password=self.web_password,
+                ),
+            )
             self._step("restore-vmware-tools-selection", lambda: self._apply("vmware_tools"))
             self._step("apply-final-ntp-client", lambda: self._apply("ntp_client"))
             final_reboot = self._step("final-client-mode-reboot", lambda: self._reboot("ntp_client"))

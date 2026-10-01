@@ -105,8 +105,10 @@ def test_ntp_server_precedes_and_preserves_selected_time_source() -> None:
     assert state["time_mode"] == "ntp_server"
     rendered = render_ntp_config(settings)
     assert "# Atlaso time mode: ntp_server" in rendered
-    assert "interface ignore wildcard" in rendered
-    assert "interface listen 192.0.2.15" in rendered
+    directives = rendered.splitlines()
+    assert directives.index("interface listen all") < directives.index(
+        "interface ignore wildcard"
+    ) < directives.index("interface listen 192.0.2.15")
     assert "nts enable" in rendered
     assert "restrict default ignore" not in rendered
 

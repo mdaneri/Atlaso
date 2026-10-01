@@ -54,6 +54,11 @@ VMware Tools time synchronization. The remembered client choice is retained whil
 effective again when the NTP service is disabled. The NTS server switch controls NTS Key Establishment for clients;
 it does not select the appliance clock mode by itself.
 
+Server mode keeps NTP transport available on routed interfaces so upstream replies can discipline the appliance clock.
+A subsystem-owned packet guard permits upstream replies and local diagnostics, but accepts time-service requests only
+at the selected listener addresses. Firewall replacement and reboot preserve this guard; missing or changed isolation
+makes server health unavailable or unhealthy.
+
 The selection autosaves as desired state. Global Appliance Apply performs the host transition and verifies its result;
 the page reports the effective mode, NTP synchronization health, and detected local daemon states separately from the
 saved choice. Before changing applied configuration, Atlaso durably records the prior configuration. If Apply is
@@ -63,7 +68,10 @@ Legacy configurations require Apply before startup can establish their clock aut
 legacy controllers until then. If old NTS material cleanup fails after controller verification, Atlaso retains the
 verified new mode and leaves Apply pending for a cleanup retry. NTP synchronization verification allows up to 60 seconds,
 including recovery after a clock step when switching from VMware Tools.
-VMware Tools Apply also waits up to 60 seconds for two advancing host-time observations that agree with the guest
+Apply also allows a full synchronization wait during rollback. Recovery evidence remains available for a later retry
+if neither restoring the prior controller nor safely stopping the unverified candidate can be verified.
+VMware Tools Apply enables and starts the Tools service so the selected controller survives reboot. It also waits up
+to 60 seconds for two advancing host-time observations that agree with the guest
 clock within two seconds. This tolerance accounts for the host-time command's whole-second precision. An enabled
 periodic-sync setting alone cannot complete Apply. Status reports clock disagreement as unhealthy and an unavailable
 host-time comparison as unknown.

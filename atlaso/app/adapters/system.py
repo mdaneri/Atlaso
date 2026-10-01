@@ -592,7 +592,9 @@ class SystemAdapter:
             "apply",
             config_path,
             dry_run_message="dry-run: NTPsec apply command recorded",
-            timeout_seconds=150,
+            # Allow the 60-second transition, a 60-second rollback, helper
+            # commands/guards, and journal recovery/retirement overhead.
+            timeout_seconds=360,
         )
 
     def reconcile_ntpd_time(self) -> AdapterResult:
@@ -601,7 +603,9 @@ class SystemAdapter:
             "ntpd",
             "reconcile",
             dry_run_message='{"ntpd":"dry-run reconcile","managed":false,"mode":"unmanaged"}',
-            timeout_seconds=90,
+            # Startup can require one full 60-second clock transition plus
+            # controller guards and recovery overhead.
+            timeout_seconds=180,
         )
 
     def validate_ntpd_config(self, config_path: str) -> AdapterResult:

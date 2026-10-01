@@ -400,3 +400,31 @@ def test_rendered_ntp_page_omits_disabled_select_but_keeps_enabled_hidden_choice
     _parser, values, _csrf = _guest_page_from_rendered_response(guest, page)
 
     assert values["time_source"] == ["vmware_tools"]
+
+
+@pytest.mark.parametrize("guard", [False, None])
+def test_native_server_assertion_rejects_unverified_listener_isolation(guard):
+    """Even synchronized NTP cannot pass native acceptance with unproven isolation."""
+    guest = _load_guest_module()
+    clock = {
+        "mode": "ntp_server", "healthy": True,
+        "controller": {"name": "ntpd", "active": True, "enabled": True},
+        "conflicts": {}, "server_packet_guard": guard,
+    }
+    with pytest.raises(guest.SafeFailure):
+        guest.assert_clock(clock, "ntp_server", "healthy")
+
+    clock["server_packet_guard"] = True
+    guest.assert_clock(clock, "ntp_server", "healthy")
+
+
+@pytest.mark.parametrize("guard, expected", [({"active": True}, True), (None, None), ("invalid", None)])
+def test_native_status_preserves_server_isolation_proof(monkeypatch, guard, expected):
+    """Only structured helper proof can satisfy the server acceptance guard."""
+    guest = _load_guest_module()
+    payload = {"status": {"mode": "ntp_server", "server_packet_guard": guard}}
+    monkeypatch.setattr(guest, "request", lambda *_args, **_kwargs: (200, {}, "", json.dumps(payload)))
+
+    clock = guest.status(object())
+
+    assert clock["server_packet_guard"] is expected

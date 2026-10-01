@@ -335,6 +335,11 @@ def status(opener):
         if isinstance(raw.get("client_packet_guard"), dict)
         else {}
     )
+    server_guard = (
+        raw.get("server_packet_guard")
+        if isinstance(raw.get("server_packet_guard"), dict)
+        else {}
+    )
     compact_conflicts = {
         str(name): {
             key: value.get(key) for key in ("active", "enabled") if key in value
@@ -351,6 +356,7 @@ def status(opener):
         },
         "conflicts": compact_conflicts,
         "client_packet_guard": guard.get("active"),
+        "server_packet_guard": server_guard.get("active"),
     }
 
 
@@ -381,6 +387,10 @@ def assert_clock(clock, expected_mode=None, expected_health="any"):
     if expected_mode == "ntp_client" and clock.get("client_packet_guard") is not True:
         raise SafeFailure(
             "clock-assertion", "Client-only NTP ingress guard is not verified active."
+        )
+    if expected_mode == "ntp_server" and clock.get("server_packet_guard") is not True:
+        raise SafeFailure(
+            "clock-assertion", "NTP server listener isolation is not verified active."
         )
     health = clock.get("healthy")
     expected_value = {"healthy": True, "unhealthy": False, "unknown": None}.get(
@@ -451,7 +461,7 @@ def apply_unit(opener, unit_id, csrf):
             "apply-submit", "Global Appliance Apply did not return a task identifier."
         )
     job_id = match.group(1)
-    deadline = time.monotonic() + 240
+    deadline = time.monotonic() + 420
     task_status = "unknown"
     while time.monotonic() < deadline:
         _, _, _, task_body = request(opener, "/tasks/%s/status" % job_id)

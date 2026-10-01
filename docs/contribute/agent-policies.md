@@ -1482,8 +1482,12 @@ preserved with their affected subsystem below. Keep new requirements at their to
   desired state uses the structured upstream grid with NTS-enabled `time.cloudflare.com` and `nts.netnod.se` rows,
   including descriptions. Per-upstream NTS client mode renders `nts` on source lines; NTS server mode renders
   `nts enable`, the CA-managed certificate chain and key, and persistent cookie storage under `/var/lib/ntp/nts-keys`.
-  The renderer ignores every interface before explicitly listening on selected addresses, uses restrictive client rules
-  that still permit time service, and maps minimum sources to `tos minsane`. Firewall apply owns TCP/4460 NTS-KE access
+  Server rendering opens routed NTP transport interfaces for upstream synchronization and records selected service
+  listener addresses. A subsystem-owned nftables guard permits loopback diagnostics and upstream mode-4 replies,
+  permits UDP/123 service requests only at selected destinations, and drops other UDP/123 traffic before ordinary
+  firewall rules. Preserve this guard across firewall replacement and require it for server health. The renderer uses
+  restrictive client rules that still permit time service and maps minimum sources to `tos minsane`. Firewall apply owns
+  TCP/4460 NTS-KE access
   in addition to UDP/123. The helper requires Photon `ntpsec`, installs `/etc/ntp.conf`, grants the NTS key `root:ntp`
   mode `0640`, disables competing daemons, enables/restarts `ntpd.service`, and exposes bounded source health through
   `ntpq -pn`, `ntpq -c rv`, and `ntpq -c ntsinfo`. When NTS server mode is disabled, NTP apply removes the managed

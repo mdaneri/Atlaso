@@ -474,6 +474,9 @@ def render_ntp_config(settings: NtpSettings) -> str:
         f"driftfile {NTP_DRIFT_PATH}",
     ]
     if time_mode == NTP_TIME_MODE_NTP_SERVER:
+        # NTPsec needs the route-selected local socket to reach upstreams.
+        # The helper's packet guard restricts service to selected destinations.
+        lines.append("interface listen all")
         lines.append("interface ignore wildcard")
         lines.extend(f"interface listen {address}" for address in listen_addresses)
     lines.extend(["restrict 127.0.0.1", "restrict ::1"])

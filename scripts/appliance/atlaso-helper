@@ -6651,8 +6651,23 @@ def _parse_ntpd_server(value: str) -> tuple[str, int | None, bool]:
     return str(parsed_host), port, True
 
 
+def _ntpd_server_listener_addresses() -> list[str]:
+    """Read validated selected service destinations from applied server intent."""
+    addresses: list[str] = []
+    for line in NTP_CONFIG_PATH.read_text(encoding="utf-8").splitlines():
+        parts = line.split()
+        if len(parts) != 3 or parts[:2] != ["interface", "listen"] or parts[2] == "all":
+            continue
+        address = str(ip_address(parts[2]))
+        if address not in addresses:
+            addresses.append(address)
+    if not addresses:
+        raise ValueError("NTP server packet isolation requires selected listener addresses.")
+    return addresses
+
+
 def _ntpd_client_packet_guard_program(mode: str) -> str:
-    """Render the fixed subsystem-owned client ingress policy.
+    """Render fixed clock-subsystem ingress isolation.
 
     Args:
         mode: Validated applied clock mode; the caller must first stop ntpd.
@@ -6665,7 +6680,7 @@ def _ntpd_client_packet_guard_program(mode: str) -> str:
         "add table inet atlaso_time_sync",
         "delete table inet atlaso_time_sync",
     ]
-    if mode == "ntp_client":
+    if mode in {"ntp_client", "ntp_server"}:
         commands.extend([
             "table inet atlaso_time_sync {",
             "  chain input {",
@@ -6676,7 +6691,15 @@ def _ntpd_client_packet_guard_program(mode: str) -> str:
             # the client; remote mode 3/6 requests remain blocked even from
             # a configured upstream or an established UDP flow.
             '    udp dport 123 @th,64,8 & 0x07 == 0x04 return comment "Atlaso time-sync upstream replies"',
-            '    udp dport 123 drop comment "Atlaso time-sync client-only"',
+        ])
+        if mode == "ntp_server":
+            for address in _ntpd_server_listener_addresses():
+                family = "ip" if ip_address(address).version == 4 else "ip6"
+                commands.append(
+                    f'    {family} daddr {address} udp dport 123 return comment "Atlaso time-sync selected listener"'
+                )
+        commands.extend([
+            f'    udp dport 123 drop comment "Atlaso time-sync {"client-only" if mode == "ntp_client" else "listener isolation"}"',
             "  }",
             "}",
         ])
@@ -6684,7 +6707,7 @@ def _ntpd_client_packet_guard_program(mode: str) -> str:
 
 
 def _ntpd_preserve_client_packet_guard(program: str) -> str:
-    """Preserve applied client isolation in atomic Firewall/NAT replacements.
+    """Preserve applied NTP isolation in atomic Firewall/NAT replacements.
 
     Args:
         program: An admitted nftables batch, including rollback or handoff.
@@ -6692,13 +6715,14 @@ def _ntpd_preserve_client_packet_guard(program: str) -> str:
     if not re.search(r"(?m)^\s*flush\s+ruleset\s*(?:$|;)", program):
         return program
     if NTP_CONFIG_PATH.is_file() and _ntpd_config_managed(NTP_CONFIG_PATH):
-        if _ntpd_time_mode(NTP_CONFIG_PATH) == "ntp_client":
-            return program.rstrip() + "\n" + _ntpd_client_packet_guard_program("ntp_client")
+        mode = _ntpd_time_mode(NTP_CONFIG_PATH)
+        if mode in {"ntp_client", "ntp_server"}:
+            return program.rstrip() + "\n" + _ntpd_client_packet_guard_program(mode)
     return program
 
 
 def _ntpd_client_packet_guard(mode: str) -> None:
-    """Install client isolation after the caller has stopped ntpd.
+    """Install NTP listener isolation after the caller has stopped ntpd.
 
     Args:
         mode: Validated applied clock mode.
@@ -6715,8 +6739,8 @@ def _ntpd_client_packet_guard(mode: str) -> None:
         raise RuntimeError("Client-only NTP packet guard failed; ntpd remains stopped.")
 
 
-def _ntpd_client_packet_guard_status() -> dict[str, object]:
-    """Verify the installed client-only ingress rules, including their order."""
+def _ntpd_client_packet_guard_status(mode: str = "ntp_client") -> dict[str, object]:
+    """Verify exact applied NTP ingress rules, including destination and order."""
     nft = shutil.which("nft")
     if nft is None:
         return {"active": None, "detail": "nft is unavailable; client-only ingress cannot be verified."}
@@ -6744,8 +6768,16 @@ def _ntpd_client_packet_guard_status() -> dict[str, object]:
             [port_match, mode_match, {"return": None}]
             for mode_match in mode_matches
         ]
+        listener_rules = []
+        if mode == "ntp_server":
+            for address in _ntpd_server_listener_addresses():
+                family = "ip" if ip_address(address).version == 4 else "ip6"
+                listener_rules.append([
+                    {"match": {"op": "==", "left": {"payload": {"protocol": family, "field": "daddr"}}, "right": address}},
+                    port_match, {"return": None},
+                ])
         expected_rule_sets = [
-            [*expected_prefix, mode_rules, [port_match, {"drop": None}]]
+            [*expected_prefix, mode_rules, *listener_rules, [port_match, {"drop": None}]]
             for mode_rules in expected_rules
         ]
         active = (
@@ -6755,7 +6787,7 @@ def _ntpd_client_packet_guard_status() -> dict[str, object]:
             and chains[0].get("type") == "filter"
             and chains[0].get("prio") == -200
             and chains[0].get("policy") == "accept"
-            and len(rules) == 3
+            and len(rules) == 3 + len(listener_rules)
             and all(rule.get("chain") == "input" for rule in rules)
             and [rule.get("expr") for rule in rules] in expected_rule_sets
         )
@@ -6763,7 +6795,9 @@ def _ntpd_client_packet_guard_status() -> dict[str, object]:
         return {"active": None, "detail": "Client-only NTP packet guard could not be inspected."}
     return {
         "active": active,
-        "detail": "Client-only NTP requests are blocked." if active else "Client-only NTP packet guard has drifted; submit appliance changes.",
+        "detail": (
+            "Client-only NTP requests are blocked." if mode == "ntp_client" else "NTP requests are limited to selected listener addresses."
+        ) if active else "NTP packet isolation has drifted; submit appliance changes.",
     }
 
 
@@ -6826,7 +6860,7 @@ def _ntpd_config_errors(path: Path, mode: str | None = None) -> list[str]:
             parts = line.split()
             if len(parts) != 3:
                 errors.append("ntpd interface listen lines must include one address.")
-            else:
+            elif parts[2] != "all":
                 listen_addresses.append(parts[2])
         elif lower == "nts enable":
             nts_server_enabled = True
@@ -6864,6 +6898,8 @@ def _ntpd_config_errors(path: Path, mode: str | None = None) -> list[str]:
                 continue
             if is_ip and "nts" in {part.lower() for part in parts[2:]}:
                 errors.append(f"NTS server {server} must use a certificate-valid DNS hostname, not an IP address.")
+    if effective_mode == "ntp_client" and "interface listen all" in path.read_text(encoding="utf-8").lower():
+        errors.append("client-only time mode cannot listen for NTP clients.")
     if serving and not listen_addresses:
         errors.append("enabled ntpd config must include at least one interface listen address.")
     if serving and "interface ignore wildcard" not in path.read_text(encoding="utf-8").lower():
@@ -7294,12 +7330,12 @@ def _ntpd_transition(mode: str, config_path: Path | None = None, *, restart: boo
     # the alternative system daemons are proven inactive.
     for unit in ("ntpd.service", "chronyd.service", "systemd-timesyncd.service"):
         _ntpd_stop_service(unit)
-    _ntpd_client_packet_guard(mode)
     if mode in {"ntp_client", "ntp_server"}:
         _ntpd_set_vmware_timesync(False)
         if config_path is None:
             config_path = NTP_CONFIG_PATH
         _install_ntpd_config(config_path)
+        _ntpd_client_packet_guard(mode)
         if mode == "ntp_server" and _ntpd_nts_server_enabled(config_path):
             _grant_ntpd_nts_server_key_read(config_path)
         _ntpd_start_service("ntpd.service", restart=restart)
@@ -7312,8 +7348,12 @@ def _ntpd_transition(mode: str, config_path: Path | None = None, *, restart: boo
             _ntpd_retire_nts_material()
         return
     if mode == "vmware_tools":
+        _ntpd_client_packet_guard(mode)
         if not NTP_CONFIG_PATH.is_file() and config_path is None:
             raise RuntimeError("Applied NTP config is unavailable; apply the selected VMware Tools clock source first.")
+        # Periodic synchronization must survive reboot, including when Tools
+        # was already running but disabled before this transition.
+        _ntpd_start_service("vmtoolsd.service")
         _ntpd_set_vmware_timesync(True)
         _ntpd_wait_vmware_synchronized()
         _ntpd_checkpoint_verified()
@@ -7487,13 +7527,12 @@ def _ntpd_recover_interrupted_apply(*, allow_active: bool = False) -> None:
         if not isinstance(data, str):
             raise RuntimeError("Previous clock configuration bytes are invalid.")
         previous["data"] = base64.b64decode(data, validate=True)
-    if not previous["managed"] or previous["mode"] not in {"ntp_client", "ntp_server", "vmware_tools"}:
-        # Restoring absence or unproven vendor intent cannot authorize a
-        # controller already activated by the interrupted candidate. Keep the
-        # journal and candidate config until every candidate is proven stopped.
-        stop_errors = _ntpd_fail_closed_stop()
-        if stop_errors:
-            raise RuntimeError("Unable to stop unverified candidate clock controllers: " + "; ".join(stop_errors))
+    # The prepared candidate has never earned authority, regardless of the
+    # prior mode. Stop it before restoring prior intent or retiring evidence;
+    # the normal guard/reconcile path can then enforce that prior intent.
+    stop_errors = _ntpd_fail_closed_stop()
+    if stop_errors:
+        raise RuntimeError("Unable to stop unverified candidate clock controllers: " + "; ".join(stop_errors))
     _ntpd_restore_applied_config(previous)
     _ntpd_clear_transaction()
 
@@ -7618,12 +7657,12 @@ def _ntpd_fail_closed_stop() -> list[str]:
 
 def _ntpd_rollback_failed_apply(snapshot: dict[str, object]) -> str:
     """Restore previous applied intent and controller after a failed apply."""
+    snapshot["restored"] = False
     try:
         if _ntpd_read_transaction() is not None:
             _ntpd_begin_transaction(snapshot)
         _ntpd_restore_applied_config(snapshot)
         _ntpd_restore_nts_server_material(snapshot.get("nts_material"))
-        snapshot["restored"] = True
     except (OSError, RuntimeError, ValueError) as restore_error:
         stop_errors = _ntpd_fail_closed_stop()
         suffix = f" Fail-closed stop errors: {'; '.join(stop_errors)}." if stop_errors else ""
@@ -7633,11 +7672,14 @@ def _ntpd_rollback_failed_apply(snapshot: dict[str, object]) -> str:
     if previous_mode in {"ntp_client", "ntp_server", "vmware_tools"}:
         try:
             _ntpd_transition(str(previous_mode), restart=True)
+            snapshot["restored"] = True
             return f"Restored previous applied {previous_mode} clock mode."
         except _NtpdPostCommitCleanupError:
+            snapshot["restored"] = True
             return f"Restored previous applied {previous_mode} clock mode; retired NTS material cleanup still requires Apply."
         except (OSError, RuntimeError, ValueError, subprocess.TimeoutExpired) as rollback_error:
             stop_errors = _ntpd_fail_closed_stop()
+            snapshot["restored"] = not stop_errors
             suffix = f" Fail-closed stop errors: {'; '.join(stop_errors)}." if stop_errors else ""
             return (
                 f"Previous config is restored, but its {previous_mode} controller could not be fully restored: "
@@ -7645,6 +7687,7 @@ def _ntpd_rollback_failed_apply(snapshot: dict[str, object]) -> str:
             )
 
     stop_errors = _ntpd_fail_closed_stop()
+    snapshot["restored"] = not stop_errors
     suffix = f" Fail-closed stop errors: {'; '.join(stop_errors)}." if stop_errors else ""
     return f"Previous config is restored; no managed clock mode was active, so no vendor daemon was started.{suffix}"
 
@@ -7793,9 +7836,12 @@ def _ntpd_status() -> int:
     }
     daemon_conflicts = {name: state for name, state in all_sources.items() if name != selected_name}
     client_packet_guard: dict[str, object] | None = None
-    if mode == "ntp_client":
-        client_packet_guard = _ntpd_client_packet_guard_status()
-        payload["client_packet_guard"] = client_packet_guard
+    if mode in {"ntp_client", "ntp_server"}:
+        client_packet_guard = (
+            _ntpd_client_packet_guard_status() if mode == "ntp_client"
+            else _ntpd_client_packet_guard_status("ntp_server")
+        )
+        payload["client_packet_guard" if mode == "ntp_client" else "server_packet_guard"] = client_packet_guard
     variables = payload["variables"]
     variable_text = ""
     if isinstance(variables, dict):
@@ -7833,7 +7879,7 @@ def _ntpd_status() -> int:
             isinstance(state, dict) and (state.get("active") is None or state.get("enabled") is None)
             for state in daemon_conflicts.values()
         )
-        guard_missing = mode == "ntp_client" and client_packet_guard is not None and client_packet_guard.get("active") is False
+        guard_missing = client_packet_guard is not None and client_packet_guard.get("active") is False
         if selected_controller["active"] is False:
             ntpd_healthy = False
             detail = "ntpd.service is inactive. Apply the selected NTP mode and inspect the ntpd service log."
@@ -7845,10 +7891,10 @@ def _ntpd_status() -> int:
             detail = f"Competing clock source(s) are active or enabled: {', '.join(active_conflicts)}. Disable them before relying on NTPsec."
         elif guard_missing:
             ntpd_healthy = False
-            detail = "The client-only UDP/123 packet guard is missing or differs from the applied policy. Reapply NTP settings."
-        elif mode == "ntp_client" and client_packet_guard is not None and client_packet_guard.get("active") is None:
+            detail = "The UDP/123 listener isolation guard is missing or differs from the applied policy. Reapply NTP settings."
+        elif client_packet_guard is not None and client_packet_guard.get("active") is None:
             ntpd_healthy = None
-            detail = "The client-only UDP/123 packet guard could not be verified."
+            detail = "The UDP/123 listener isolation guard could not be verified."
         elif conflict_unknown or selected_controller["active"] is None or selected_controller["enabled"] is None:
             ntpd_healthy = None
             detail = "A clock-controller service state could not be proven."
@@ -22601,7 +22647,7 @@ def _render_appliance_update_status_html(snapshot: dict[str, object]) -> str:
     title = html.escape(phase_labels.get(phase, "Appliance update in progress"))
     return f"""<!doctype html>
 <html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">
-<meta http-equiv=\"refresh\" content=\"3;url={refresh_target}\"><title>{title} · Atlaso</title>
+<meta http-equiv=\"refresh\" content=\"3;url={refresh_target}\"><title>{title} Ãƒâ€šÃ‚Â· Atlaso</title>
 <style>:root{{color-scheme:dark;background:#07121f;color:#f4f7fb;font:16px system-ui,sans-serif}}body{{margin:0;min-height:100vh;display:grid;place-items:center;background:radial-gradient(circle at top,#17334f,#07121f 55%)}}main{{width:min(42rem,calc(100% - 2rem));background:#0d2033;border:1px solid #31506b;border-radius:1rem;padding:clamp(1.25rem,4vw,2.5rem);box-shadow:0 1rem 3rem #0008}}.brand{{font-weight:800;letter-spacing:.12em;color:#73d6ff}}h1{{font-size:clamp(1.5rem,4vw,2.25rem);margin:.75rem 0 .5rem}}p{{color:#bfd0df}}code{{word-break:break-all;color:#dff6ff}}progress{{width:100%;height:1rem;accent-color:#35bff5}}ol{{list-style:none;padding:0;margin:1.5rem 0 0;display:grid;gap:.65rem}}.step{{display:flex;justify-content:space-between;gap:1rem;align-items:center;border-top:1px solid #29445d;padding:.85rem 0}}small{{display:block;color:#a9bdcf;text-transform:capitalize;margin-top:.2rem}}.percent{{font-variant-numeric:tabular-nums}}footer{{font-size:.875rem;color:#9eb1c1;margin-top:1.5rem}}@media (prefers-contrast:more){{main{{border-width:2px}}}}</style></head>
 <body><main aria-labelledby=\"update-title\"><div class=\"brand\">ATLASO</div><h1 id=\"update-title\">{title}</h1>
 <p>The appliance control plane is temporarily unavailable while this durable task completes.</p><p>Task <code>{task_id}</code></p>
