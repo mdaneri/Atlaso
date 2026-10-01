@@ -1595,11 +1595,12 @@ def test_console_management_refreshes_changed_dhcp_lease_before_recovery_and_set
             interface = db.scalar(select(PhysicalInterface).where(PhysicalInterface.name == "eth0"))
             captures.append((stage, interface.host_ip_cidr))
 
-    def submit(units):
+    def submit(units, **kwargs):
         """Observe address state before Appliance Settings apply.
 
         Args:
             units: Apply units selected by the console.
+            **kwargs: Completed Network snapshot supplied for dependent capture.
         """
         if units == {"appliance_settings"}:
             capture("settings")
@@ -2476,3 +2477,56 @@ def test_console_observation_uses_applied_snapshot_with_pending_edits(client, mo
         assert target.ip_cidr == pending_cidr
         assert target.ipv4_method == ("static" if pending_cidr else "dhcp")
         assert target.host_ip_cidr == "192.168.167.173/24"
+
+
+def test_console_recovery_interval_edit_stops_settings_capture(client, monkeypatch):
+    """Reject unapplied management changes made during recovery before Settings admission.
+
+    Args:
+        client: Initialized application database fixture.
+        monkeypatch: Replace privileged execution while preserving real Settings admission.
+    """
+    from atlaso.app import ui as ui_module
+    from atlaso.app.database import SessionLocal
+
+    submit_settings = appliance_console._submit_console_apply
+
+    def submit(units, **kwargs):
+        """Simulate Network completion and retain the production Settings admission gate.
+
+        Args:
+            units: Requested scoped apply units.
+            **kwargs: Completed Network task binding for Settings.
+        """
+        if units == {"appliance_settings"}:
+            return submit_settings(units, **kwargs)
+        with SessionLocal() as db:
+            network = next(unit for unit in ui_module.appliance_apply_units(db) if unit["id"] == "network")
+            db.add(appliance_console.Job(
+                id="job_network_snapshot", type="appliance-apply", status="succeeded", created_by="console:root",
+                result=json.dumps({"captured_units": [{"unit_id": "network", "config_preview": network["config_preview"]}]}),
+            ))
+            db.commit()
+        return "job_network_snapshot"
+
+    def recover(stage):
+        """Save another management address while the recovery interval is active.
+
+        Args:
+            stage: Description of the initial correction phase.
+        """
+        with SessionLocal() as db:
+            target = appliance_console._management_interface(db)
+            target.ipv4_method = "static"
+            target.ip_cidr = "192.168.167.175/24"
+            db.commit()
+
+    monkeypatch.setattr(appliance_console, "_submit_console_apply", submit)
+    monkeypatch.setattr(appliance_console, "_refresh_management_addresses", lambda *args, **kwargs: None)
+    monkeypatch.setattr(appliance_console, "_recover_management_plane", recover)
+    monkeypatch.setattr(ui_module, "run_appliance_apply_job", lambda *args, **kwargs: pytest.fail("Settings executed"))
+    with pytest.raises(ConsoleOperationError, match="changed during recovery"):
+        appliance_console.configure_management("dhcp", "", "", "disabled", "", "", "192.0.2.53")
+    with SessionLocal() as db:
+        assert appliance_console._management_interface(db).ip_cidr == "192.168.167.175/24"
+        assert db.query(appliance_console.Job).count() == 1

@@ -1093,12 +1093,13 @@ def _ensure_no_active_apply() -> None:
             raise ConsoleOperationError(f"Appliance apply task {active.id} is already {active.status}.")
 
 
-def _submit_console_apply(required_ids: set[str]) -> str:
+def _submit_console_apply(required_ids: set[str], *, network_job_id: str | None = None) -> str:
     # Imported lazily so read-only status remains available even if the web stack has a startup issue.
     """Return submit console apply.
 
     Args:
         required_ids: Stable identifiers of the associated required resources.
+        network_job_id: Completed Network task to atomically recheck before dependent capture.
     Raises:
         ConsoleOperationError: If the operation encounters an invalid state.
     """
@@ -1107,11 +1108,15 @@ def _submit_console_apply(required_ids: set[str]) -> str:
         active_appliance_apply_job,
         active_vcf_depot_execution_job,
         appliance_apply_units,
+        network_management_paths,
         ntp_owned_dns_is_only_pending_change,
         run_appliance_apply_job,
     )
 
     with SessionLocal() as db:
+        if network_job_id is not None:
+            acquire_network_objects_write_lock(db)
+        capture_transaction = db.get_transaction()
         selected_ids = set(required_ids)
         if "vcf_offline_depot" in selected_ids:
             acquire_vcf_depot_admission_gate(db)
@@ -1124,7 +1129,25 @@ def _submit_console_apply(required_ids: set[str]) -> str:
                 raise ConsoleOperationError(
                     f"VCFDT task {active_vcf_job.id} is already {active_vcf_job.status}."
                 )
-        units = appliance_apply_units(db)
+        units = appliance_apply_units(db, reconcile=False) if network_job_id is not None else appliance_apply_units(db)
+        if network_job_id is not None:
+            if db.get_transaction() is not capture_transaction:
+                raise ConsoleOperationError("Settings capture lost its Network writer lock; retry the console correction.")
+            completed = db.get(Job, network_job_id)
+            completed_payload = json.loads(completed.result or "{}") if completed is not None else {}
+            submitted = [unit for unit in completed_payload.get("captured_units", []) if unit.get("unit_id") == "network"]
+            current = [unit for unit in units if unit.get("id") == "network"]
+            if (
+                completed is None or completed.status != JobStatus.SUCCEEDED.value
+                or len(submitted) != 1 or len(current) != 1
+                or not network_management_paths(str(submitted[0].get("config_preview") or ""))
+                or network_management_paths(str(submitted[0].get("config_preview") or ""))
+                != network_management_paths(str(current[0].get("config_preview") or ""))
+            ):
+                raise ConsoleOperationError(
+                    "Management Network changed during recovery. Appliance Settings were not submitted; "
+                    "newer edits remain pending. Apply or reconcile those edits first."
+                )
         unit_map = {unit["id"]: unit for unit in units}
         if (
             unit_map.get("ntpd", {}).get("changed")
@@ -1365,7 +1388,7 @@ def configure_management(
     network_job_id = _submit_console_apply({"network", "firewall"})
     _refresh_management_addresses(interface_id, network_job_id=network_job_id)
     _recover_management_plane("Network and Firewall were applied")
-    settings_job_id = _submit_console_apply({"appliance_settings"})
+    settings_job_id = _submit_console_apply({"appliance_settings"}, network_job_id=network_job_id)
     _recover_management_plane("Appliance Settings were applied")
     with SessionLocal() as db:
         record_audit(

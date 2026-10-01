@@ -1069,7 +1069,12 @@ preserved with their affected subsystem below. Keep new requirements at their to
   release asset names remain canonical and never inherit a transient pull-request number.
 - Validate live appliance readiness through `/openapi.json`, not VMware Tools IP discovery or service color alone.
 - A successful tty1 management-network correction must explicitly apply Network and Firewall from the corrected state,
-  retry unfinished first-boot HTTPS before applying Appliance Settings, validate nginx before reload, ensure nginx and
+  verify fresh usable addresses on an administratively and operationally up link against the completed task's Network
+  snapshot before recovery, reject tentative/DAD-failed addresses, and bound native acquisition to 30 seconds.
+  Publish only verified target observations without reconciling inventory or changing desired state. Preserve newer
+  edits as pending and stop dependent recovery when they drift. Recheck the completed Network management paths under
+  the shared network-object writer lock atomically with Settings capture, including edits during HTTPS recovery.
+  Retry unfinished first-boot HTTPS before applying Appliance Settings, validate nginx before reload, ensure nginx and
   Atlaso are enabled/running, and require stable loopback readiness matching the applied HTTP-only or HTTPS management
   mode before the console reports success. Keep this recovery idempotent and preserve an actionable failing-layer
   message.
