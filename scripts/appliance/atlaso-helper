@@ -7204,22 +7204,164 @@ def _ntpd_transition(mode: str, config_path: Path | None = None, *, restart: boo
         if config_path is None:
             config_path = NTP_CONFIG_PATH
         _install_ntpd_config(config_path)
-        if mode == "ntp_server":
-            if _ntpd_nts_server_enabled(config_path):
-                _grant_ntpd_nts_server_key_read(config_path)
-            else:
-                _remove_ntpd_nts_server_material()
-        else:
-            _remove_ntpd_nts_server_material()
+        if mode == "ntp_server" and _ntpd_nts_server_enabled(config_path):
+            _grant_ntpd_nts_server_key_read(config_path)
         _ntpd_start_service("ntpd.service", restart=restart)
         _ntpd_wait_synchronized()
+        # Retain the previously applied NTS server material until the new NTP
+        # controller has passed its synchronization check. A failed transition
+        # can then restore the previous config and its referenced key material.
+        if mode == "ntp_client" or not _ntpd_nts_server_enabled(config_path):
+            _remove_ntpd_nts_server_material()
         return
     if mode == "vmware_tools":
         if not NTP_CONFIG_PATH.is_file() and config_path is None:
             raise RuntimeError("Applied NTP config is unavailable; apply the selected VMware Tools clock source first.")
-        _remove_ntpd_nts_server_material()
         _ntpd_set_vmware_timesync(True)
+        _remove_ntpd_nts_server_material()
         return
+
+
+def _ntpd_snapshot_applied_config() -> dict[str, object]:
+    """Capture the exact prior applied config and its managed clock mode."""
+    path = NTP_CONFIG_PATH
+    existed = path.exists() or path.is_symlink()
+    snapshot: dict[str, object] = {
+        "exists": existed,
+        "managed": False,
+        "mode": None,
+        "data": None,
+        "link_target": None,
+        "file_mode": None,
+        "uid": None,
+        "gid": None,
+    }
+    if not existed:
+        return snapshot
+    info = path.lstat()
+    if stat.S_ISLNK(info.st_mode):
+        snapshot["link_target"] = os.readlink(path)
+        if path.is_file():
+            snapshot["data"] = path.read_bytes()
+            snapshot["managed"] = _ntpd_config_managed(path)
+    elif stat.S_ISREG(info.st_mode):
+        snapshot["data"] = path.read_bytes()
+        snapshot["file_mode"] = stat.S_IMODE(info.st_mode)
+        snapshot["uid"] = info.st_uid
+        snapshot["gid"] = info.st_gid
+        snapshot["managed"] = _ntpd_config_managed(path)
+    else:
+        raise RuntimeError("Applied ntpd config is not a regular file or symlink; refusing transition without rollback evidence.")
+    if snapshot["managed"]:
+        snapshot["mode"] = _ntpd_time_mode(path)
+    return snapshot
+
+
+def _ntpd_restore_applied_config(snapshot: dict[str, object]) -> None:
+    """Atomically restore the prior applied config bytes, symlink, or absence."""
+    path = NTP_CONFIG_PATH
+    if not snapshot["exists"]:
+        if path.is_symlink():
+            path.unlink()
+        elif path.exists():
+            if not path.is_file():
+                raise RuntimeError("Cannot remove failed ntpd config because the applied path is no longer a file.")
+            path.unlink()
+        if path.exists() or path.is_symlink():
+            raise RuntimeError("Failed ntpd config remained after rollback removal.")
+        return
+
+    link_target = snapshot["link_target"]
+    if isinstance(link_target, str):
+        temporary_link = path.with_name(f".{path.name}.atlaso-rollback-{uuid.uuid4().hex}")
+        try:
+            temporary_link.symlink_to(link_target)
+            os.replace(temporary_link, path)
+        finally:
+            if temporary_link.is_symlink():
+                temporary_link.unlink()
+        if not path.is_symlink() or os.readlink(path) != link_target:
+            raise RuntimeError("Previous ntpd config symlink could not be verified after rollback.")
+        expected_data = snapshot["data"]
+        if isinstance(expected_data, bytes) and path.read_bytes() != expected_data:
+            raise RuntimeError("Previous ntpd config symlink target bytes could not be verified after rollback.")
+        return
+
+    data = snapshot["data"]
+    if not isinstance(data, bytes):
+        raise RuntimeError("Previous ntpd config bytes are unavailable for rollback.")
+    temporary_name: str | None = None
+    try:
+        descriptor, temporary_name = tempfile.mkstemp(prefix=f".{path.name}.atlaso-rollback-", dir=path.parent)
+        with os.fdopen(descriptor, "wb") as handle:
+            handle.write(data)
+            handle.flush()
+            os.fsync(handle.fileno())
+        file_mode = snapshot["file_mode"]
+        uid = snapshot["uid"]
+        gid = snapshot["gid"]
+        if isinstance(file_mode, int):
+            os.chmod(temporary_name, file_mode)
+        if os.name == "posix" and hasattr(os, "chown") and isinstance(uid, int) and isinstance(gid, int):
+            os.chown(temporary_name, uid, gid)
+        os.replace(temporary_name, path)
+        temporary_name = None
+    finally:
+        if temporary_name is not None:
+            try:
+                os.unlink(temporary_name)
+            except FileNotFoundError:
+                pass
+    if path.read_bytes() != data:
+        raise RuntimeError("Previous ntpd config bytes could not be verified after rollback.")
+
+
+def _ntpd_fail_closed_stop() -> list[str]:
+    """Stop all known clock daemons and disable VMware sync after failed rollback."""
+    errors: list[str] = []
+    for unit in ("ntpd.service", "chronyd.service", "systemd-timesyncd.service"):
+        try:
+            _ntpd_stop_service(unit)
+        except (OSError, RuntimeError, ValueError, subprocess.TimeoutExpired) as exc:
+            errors.append(f"{unit}: {exc}")
+    try:
+        _ntpd_client_packet_guard("disabled")
+    except (OSError, RuntimeError, ValueError, subprocess.TimeoutExpired) as exc:
+        errors.append(f"client packet policy: {exc}")
+    try:
+        _ntpd_set_vmware_timesync(False)
+    except (OSError, RuntimeError, ValueError, subprocess.TimeoutExpired) as exc:
+        errors.append(f"VMware Tools time sync: {exc}")
+    return errors
+
+
+def _ntpd_rollback_failed_apply(snapshot: dict[str, object]) -> str:
+    """Restore previous applied intent and controller after a failed apply."""
+    try:
+        _ntpd_restore_applied_config(snapshot)
+    except (OSError, RuntimeError, ValueError) as restore_error:
+        stop_errors = _ntpd_fail_closed_stop()
+        suffix = f" Fail-closed stop errors: {'; '.join(stop_errors)}." if stop_errors else ""
+        return f"Previous applied config restore failed: {restore_error}.{suffix}"
+
+    previous_mode = snapshot.get("mode") if snapshot.get("managed") else None
+    if previous_mode in {"ntp_client", "ntp_server", "vmware_tools"}:
+        try:
+            _ntpd_transition(str(previous_mode), restart=True)
+            return f"Restored previous applied {previous_mode} clock mode."
+        except (OSError, RuntimeError, ValueError, subprocess.TimeoutExpired) as rollback_error:
+            stop_errors = _ntpd_fail_closed_stop()
+            suffix = f" Fail-closed stop errors: {'; '.join(stop_errors)}." if stop_errors else ""
+            return (
+                f"Previous config is restored, but its {previous_mode} controller could not be fully restored: "
+                f"{rollback_error}. Clock daemons were stopped where verification succeeded.{suffix}"
+            )
+
+    stop_errors = _ntpd_fail_closed_stop()
+    suffix = f" Fail-closed stop errors: {'; '.join(stop_errors)}." if stop_errors else ""
+    return f"Previous config is restored; no managed clock mode was active, so no vendor daemon was started.{suffix}"
+
+
 def _ntpd_reconcile_applied() -> dict[str, object]:
     """Reconcile only Atlaso-owned applied config; never import vendor config."""
     if not NTP_CONFIG_PATH.is_file() or not _ntpd_config_managed(NTP_CONFIG_PATH):
@@ -7683,6 +7825,11 @@ def _handle_ntpd(action: str, args: list[str]) -> int:
             print(error, file=sys.stderr)
         return 2
     try:
+        previous_config = _ntpd_snapshot_applied_config()
+    except (OSError, RuntimeError, ValueError, subprocess.TimeoutExpired) as exc:
+        print(f"Unable to capture previous applied clock configuration: {exc}", file=sys.stderr)
+        return 1
+    try:
         if mode != "disabled":
             _ntpd_write_managed_file(NTP_CONFIG_PATH, config_path.read_text(encoding="utf-8"))
             _ntpd_install_guards()
@@ -7692,8 +7839,9 @@ def _handle_ntpd(action: str, args: list[str]) -> int:
             _ntpd_transition(mode, config_path, restart=True)
         else:
             _ntpd_transition(mode, config_path if mode == "vmware_tools" else None)
-    except (OSError, RuntimeError, ValueError) as exc:
-        print(f"ntpd clock-source transition failed: {exc}", file=sys.stderr)
+    except (OSError, RuntimeError, ValueError, subprocess.TimeoutExpired) as exc:
+        rollback_detail = _ntpd_rollback_failed_apply(previous_config)
+        print(f"ntpd clock-source transition failed: {exc}. {rollback_detail}", file=sys.stderr)
         return 1
     print(
         json.dumps(

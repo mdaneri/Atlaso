@@ -1490,6 +1490,14 @@ preserved with their affected subsystem below. Keep new requirements at their to
   server certificate/key and cookie directory without clearing authenticated client sources. The one-time
   `ntp_nts_restoration_v1` reconciliation re-enables and normalizes only canonical Cloudflare and Netnod default rows,
   records a value-free system audit, leaves custom sources unchanged, and never enables NTS server mode.
+- Appliance time synchronization has exactly one controller: VMware Tools periodic synchronization, NTP client, or
+  managed NTP/NTS server. Enabling the server supersedes but preserves the selected client source. Apply and startup
+  stop and verify competing daemons before enabling the selected controller; boot and VMware Tools restart guards
+  retain the applied mode. Failed transitions must preserve the prior authoritative configuration and report recovery
+  failures. Client mode blocks network time requests while accepting upstream replies, including across managed
+  Firewall replacements. Health requires observed synchronization and verified absence of competing controllers;
+  desired state, applied mode, service activity, and clock synchronization are separate diagnostics. See
+  [Appliance clock source](../services/ntp.md#appliance-clock-source).
 - NTPsec NTS controls must reflect the installed `ntpd` feature set. Detect capability through the allowlisted
   `atlaso-helper ntpd capabilities` path; when NTS is unavailable, disable the server switch and upstream NTS editors,
   normalize saved NTS state off, reject NTS enable attempts, and keep ordinary NTP behavior available. A temporarily
