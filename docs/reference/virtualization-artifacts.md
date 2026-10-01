@@ -727,6 +727,10 @@ still requires the matching successful `main` software release; do not weaken th
 Both Windows smokes import separate disposable VMware and Hyper-V VMs, verify offline provider initialization,
 unique identity, cleanup, services and host-facing `/openapi.json`, then reboot and recheck persistent readiness.
 The source stays powered off and its VMX and payload hashes must remain unchanged after export and smoke completion.
+The exporter returns the validated descriptor's package directory to the producer, including when OVF Tool creates
+a child named after the release builder. The producer copies the exact OVA beside the descriptor, manifest,
+provenance, and payload VMDKs and passes that directory to candidate staging; staging still validates only that
+directory's immediate assets and requires the complete, hash-bound package.
 These Windows checks establish candidate acceptance. Actual KVM and Proxmox tests remain mandatory for stable promotion.
 
 New builders live directly at `<StagingRoot>\<rc-tag>\<builder-name>\<builder-name>.vmx`; the redundant `vmware-build`

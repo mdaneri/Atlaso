@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -64,6 +65,88 @@ def test_stages_validated_ova_hyperv_and_flat_helpers_idempotently(tmp_path: Pat
     assert "import-atlaso-proxmox.sh" in first
     assert "import-atlaso-kvm.sh" in first
     assert "verify_virtualization_artifact_index.py" in first
+
+
+@pytest.mark.parametrize("nested", [False, True])
+def test_export_handoff_stages_actual_package_directory(tmp_path: Path, nested: bool) -> None:
+    """Execute the export handoff and stage flat or builder-named OVF packages.
+
+    Args:
+        tmp_path: Owned fixture root.
+        nested: Whether OVF Tool creates its deterministic builder child.
+    """
+
+    pwsh = shutil.which("pwsh")
+    if pwsh is None:
+        pytest.skip("PowerShell is required to execute the producer handoff")
+    repo = Path(__file__).resolve().parents[1]
+    export_root = tmp_path / "image/vmware-workstation/ovf/atlaso-v0.9.216"
+    export_root.mkdir(parents=True)
+    package = export_root / (
+        "Atlaso-Release-v0-9-216-aaaaaaaaaaaa-Photon-Builder-VMware" if nested else "flat"
+    )
+    ova = _ova_package(package)
+    external_ova = export_root.parent / ova.name
+    ova.replace(external_ova)
+    if not nested:
+        for asset in package.iterdir():
+            asset.replace(export_root / asset.name)
+        package.rmdir()
+        package = export_root
+    exporter = (repo / "scripts/windows/vmware/export-ovf.ps1").read_text(encoding="utf-8")
+    producer = (repo / "scripts/windows/virtualization/Atlaso.VirtualizationRelease.psm1").read_text(
+        encoding="utf-8"
+    )
+    # Execute the actual caller block with only the expensive export operation replaced.
+    handoff = producer.split("    $ovaRoot = ''", 1)[1].split("    $hypervRoot =", 1)[0]
+    export_result = exporter[exporter.rindex("if ($null -ne $ExportPackageDirectory)"):]
+    fake_export = tmp_path / "scripts/windows/vmware/export-ovf.ps1"
+    fake_export.parent.mkdir(parents=True)
+    fake_export.write_text(
+        "param($SourceVmxPath, $Name, [switch]$Force, $VirtualizationSourceMetadata, "
+        "[switch]$ProtectedExport, [ref]$ExportPackageDirectory)\n"
+        "$ovfPath = Get-OvfDescriptorPath -OutputDirectory "
+        "(Join-Path $RepoRoot \"image/vmware-workstation/ovf/$Name\")\n"
+        "$ovfPackageDirectory = Split-Path -Parent $ovfPath\n"
+        + export_result,
+        encoding="utf-8",
+    )
+    script = r"""
+param($RepoRoot, $ActualRepo, $Handoff)
+$ErrorActionPreference = 'Stop'
+foreach ($entry in @(
+    @('scripts/windows/vmware/export-ovf.ps1', 'Get-OvfDescriptorPath'),
+    @('scripts/windows/virtualization/Atlaso.VirtualizationRelease.psm1', 'Copy-AtlasoVirtualizationExactAsset')
+)) {
+    $ast = [Management.Automation.Language.Parser]::ParseFile((Join-Path $ActualRepo $entry[0]), [ref]$null, [ref]$null)
+    $function = $ast.Find({param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $entry[1]}, $true)
+    . ([scriptblock]::Create($function.Extent.Text))
+}
+$identity = @{Version='0.9.216'}
+$name = 'atlaso-v0.9.216'
+$vmx = 'unused'
+$sourceMetadata = 'unused'
+$LASTEXITCODE = 0
+$ovaRoot = ''
+. ([scriptblock]::Create($Handoff))
+$ovaRoot | ConvertTo-Json -Compress
+"""
+    harness = tmp_path / "handoff.ps1"
+    harness.write_text(script, encoding="utf-8")
+    result = subprocess.run(
+        [pwsh, "-NoProfile", "-File", str(harness), str(tmp_path), str(repo), handoff],
+        capture_output=True, text=True, check=True,
+    )
+    actual_package = Path(json.loads(result.stdout))
+    assert actual_package == package
+    assert (package / ova.name).read_bytes() == external_ova.read_bytes()
+    hyperv = tmp_path / "atlaso-v0.9.216-hyperv-x86_64.zip"
+    hyperv.write_bytes(b"hyperv-package")
+    staged = staging.stage(
+        ova_directory=actual_package, hyperv_zip=hyperv, output=tmp_path / "release",
+        version="0.9.216", commit="a" * 40,
+    )
+    assert len(staged) == 12
 
 
 def test_refuses_mismatched_release_identity_or_existing_destination(tmp_path: Path) -> None:
@@ -131,14 +214,19 @@ def test_refuses_stale_or_unrelated_staging_assets(tmp_path: Path) -> None:
         )
 
 
-def test_verifies_retained_complete_candidate_without_rebuilding(tmp_path: Path) -> None:
+@pytest.mark.parametrize("nested", [False, True])
+def test_verifies_retained_complete_candidate_without_rebuilding(tmp_path: Path, nested: bool) -> None:
     """A retry accepts only the exact previously smoked candidate bytes.
 
     Args:
         tmp_path: Temporary directory provided by pytest.
+        nested: Whether the package is beneath a deterministic builder directory.
     """
 
     ova_root = tmp_path / "ova"
+    if nested:
+        ova_root.mkdir()
+        ova_root /= "Atlaso-Release-v0-9-216-aaaaaaaaaaaa-Photon-Builder-VMware"
     ova = _ova_package(ova_root)
     hyperv = tmp_path / "atlaso-v0.9.216-hyperv-x86_64.zip"
     hyperv.write_bytes(b"hyperv-package")
@@ -195,6 +283,7 @@ def test_verifies_retained_complete_candidate_without_rebuilding(tmp_path: Path)
         source_metadata=source,
         windows_smoke_evidence=evidence,
     )
+    assert len(staged) == 14
 
     assert staging.verify_staged_candidate(
         candidate=output,
