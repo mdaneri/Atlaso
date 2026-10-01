@@ -1790,6 +1790,8 @@ preserved with their affected subsystem below. Keep new requirements at their to
   never open TCP/22 merely because an unflagged access network exists.
 - Physical-interface desired-state updates from the API and UI use one atomic domain service. Its writers acquire
   the shared network-object transaction lock before mutation so console Settings capture cannot race address saves.
+  VLAN create/edit/enable/disable/delete, missing-interface removal, and host-inventory reconciliation use the same
+  lock before their database reads and writes; flagged VLANs and parent removal can change management paths.
   Capture the previous
   IPv4 and IPv6 CIDRs before mutation, refresh dependent service, ESX Storage, Web Terminal, DHCP, and Network Boot
   bindings before one commit, include child VLAN dependencies when their parent becomes unavailable, roll back every

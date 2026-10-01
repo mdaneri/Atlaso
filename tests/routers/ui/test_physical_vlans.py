@@ -2161,3 +2161,34 @@ def test_access_static_conversion_preserves_dhcp_dns_for_new_listener(client, mo
         assert interface.admin_state == "down"
         assert interface.mode == old_mode
         assert interface.access_management_ui_enabled is False
+
+
+def test_vlan_ui_writers_require_capture_lock_before_lookup(client, monkeypatch):
+    """Refuse UI VLAN mutations and parent removal before an unlocked state read.
+
+    Args:
+        client: Authenticated management UI client fixture.
+        monkeypatch: Simulate refusal to acquire the Settings capture lock.
+    """
+    from atlaso.app.routers.ui import physical_vlans
+
+    def blocked(db):
+        """Refuse writer admission while Settings owns the capture lock.
+
+        Args:
+            db: UI writer transaction requesting capture admission.
+        """
+        raise RuntimeError("capture lock unavailable")
+
+    login(client)
+    page = client.get("/vlan-interfaces")
+    csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    monkeypatch.setattr(physical_vlans, "acquire_network_objects_write_lock", blocked)
+    data = {"parent_interface": "eth1", "vlan_id": "533", "ip_cidr": "192.0.2.1/24",
+            "mtu": "1500", "role": "access", "enabled": "on", "csrf": csrf}
+    for path in (
+        "/ui/management/vlan-interfaces", "/ui/management/vlan-interfaces/99999/edit",
+        "/ui/management/vlan-interfaces/99999/delete", "/ui/management/physical-interfaces/99999/forget",
+    ):
+        with pytest.raises(RuntimeError, match="capture lock unavailable"):
+            client.post(path, data=data)

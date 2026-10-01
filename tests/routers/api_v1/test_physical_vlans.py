@@ -1957,3 +1957,37 @@ def test_physical_interface_api_rejects_child_vlan_listener_on_parent_disable(cl
         assert parent.admin_state == "up"
         assert oidc.listen_interface == vlan_name
         assert oidc.listen_address == "192.168.77.1"
+
+
+def test_vlan_api_writers_require_capture_lock_before_lookup(client, monkeypatch):
+    """Require every VLAN transport writer to enter the shared capture-lock gate first.
+
+    Args:
+        client: Authenticated-capable application test client fixture.
+        monkeypatch: Simulate refusal to acquire the Settings capture lock.
+    """
+    import pytest
+
+    from atlaso.app.routers.api_v1 import physical_vlans
+
+    def blocked(db):
+        """Refuse mutation before any lookup or state validation.
+
+        Args:
+            db: API writer transaction requesting capture admission.
+        """
+        raise RuntimeError("capture lock unavailable")
+
+    token, _metadata = create_token(client, scopes=["write:vlans"])
+    headers = {"Authorization": f"Bearer {token}"}
+    monkeypatch.setattr(physical_vlans, "acquire_network_objects_write_lock", blocked)
+    payload = {"parent_interface": "eth2", "vlan_id": 533, "ip_cidr": "192.0.2.1/24", "role": "access"}
+    for method, path, body in (
+        ("POST", "/api/v1/vlans", payload),
+        ("PATCH", "/api/v1/vlans/99999", payload),
+        ("DELETE", "/api/v1/vlans/99999", None),
+        ("POST", "/api/v1/vlans/99999/enable", None),
+        ("POST", "/api/v1/vlans/99999/disable", None),
+    ):
+        with pytest.raises(RuntimeError, match="capture lock unavailable"):
+            client.request(method, path, headers=headers, json=body)
