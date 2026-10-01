@@ -1211,12 +1211,17 @@ function Invoke-AtlasoVirtualizationPrerelease {
     Assert-AtlasoTemplateSoftwareIdentity -TemplateContract $existingProvenance.template_contract -SoftwareSource $source
     $name = "atlaso-v$($identity.Version)"
     Assert-AtlasoVirtualizationStoragePlan -Plan $storagePlan -Stage 2 -ThroughStage 2
+    $ovaRoot = ''
     & (Join-Path $RepoRoot 'scripts\windows\vmware\export-ovf.ps1') `
-        -SourceVmxPath $vmx -Name $name -Force -VirtualizationSourceMetadata $sourceMetadata -ProtectedExport
+        -SourceVmxPath $vmx -Name $name -Force -VirtualizationSourceMetadata $sourceMetadata -ProtectedExport `
+        -ExportPackageDirectory ([ref]$ovaRoot)
     if ($LASTEXITCODE -ne 0) {
         throw 'Canonical OVA export failed.'
     }
-    $ovaRoot = Join-Path $RepoRoot "image\vmware-workstation\ovf\$name"
+    if ([string]::IsNullOrWhiteSpace($ovaRoot)) {
+        throw 'Canonical OVA export did not return its validated OVF package directory.'
+    }
+    # OVF Tool may place the package beneath a builder-named child of the export root.
     $ovaPath = Join-Path $RepoRoot "image\vmware-workstation\ovf\$name.ova"
     Copy-AtlasoVirtualizationExactAsset `
         -Source $ovaPath `

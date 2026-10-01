@@ -15,6 +15,7 @@ from atlaso.app.services.interface_updates import (
     PhysicalInterfaceUpdateError,
     update_physical_interface_desired_state,
 )
+from atlaso.app.services.network_objects import acquire_network_objects_write_lock
 
 
 @dataclass(frozen=True)
@@ -168,6 +169,7 @@ def mutate_physical_interface_desired_state(
         dns_refresher: Optional app-owned DNS reconciliation callback.
     """
     try:
+        acquire_network_objects_write_lock(db)
         update_result = update_physical_interface_desired_state(
             db,
             interface,

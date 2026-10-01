@@ -612,3 +612,63 @@ def test_mutation_includes_child_vlan_dependencies_and_legacy_dhcp_is_inactive(c
         assert db.execute(
             select(AuditEvent).where(AuditEvent.action == "test_child_vlan_dependency")
         ).scalar_one_or_none() is None
+
+
+def test_physical_interface_writer_waits_for_settings_capture_lock(client, monkeypatch):
+    """Block transport-independent mutation until the Settings capture writer releases its lock.
+
+    Args:
+        client: Initialized application database fixture.
+        monkeypatch: Observe admission to the underlying desired-state mutation.
+    """
+    import threading
+    from concurrent.futures import ThreadPoolExecutor
+
+    from atlaso.app.services import physical_interfaces as service
+    from atlaso.app.services.network_objects import acquire_network_objects_write_lock
+
+    attempted = threading.Event()
+    admitted = threading.Event()
+    original_lock = service.acquire_network_objects_write_lock
+    original_update = service.update_physical_interface_desired_state
+
+    def lock(db):
+        """Observe the shared lock request before the domain mutation.
+
+        Args:
+            db: Writer transaction waiting on Settings capture.
+        """
+        attempted.set()
+        original_lock(db)
+
+    def update(*args, **kwargs):
+        """Observe admission only after the shared writer lock is acquired.
+
+        Args:
+            *args: Underlying mutation arguments.
+            **kwargs: Underlying mutation options.
+        """
+        admitted.set()
+        return original_update(*args, **kwargs)
+
+    def write():
+        """Submit a partial desired-state edit through the shared service."""
+        with SessionLocal() as db:
+            interface = _physical_interface(db)
+            mutate_physical_interface_desired_state(
+                db, interface, PhysicalInterfaceMutation(mtu=1450), audit=_mutation_audit(),
+            )
+
+    monkeypatch.setattr(service, "acquire_network_objects_write_lock", lock)
+    monkeypatch.setattr(service, "update_physical_interface_desired_state", update)
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        with SessionLocal() as capture:
+            acquire_network_objects_write_lock(capture)
+            pending = executor.submit(write)
+            assert attempted.wait(2)
+            assert not admitted.wait(0.1)
+            capture.commit()
+        pending.result(timeout=5)
+    assert admitted.is_set()
+    with SessionLocal() as db:
+        assert _physical_interface(db).mtu == 1450

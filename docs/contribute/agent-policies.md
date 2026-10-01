@@ -1788,7 +1788,9 @@ preserved with their affected subsystem below. Keep new requirements at their to
   HTTP/HTTPS ports. This includes flagged access physical interfaces and VLANs, with the same Source Group predicate in
   desired previews and old/candidate/final handoff rules. Never infer root SSH enablement from firewall admission, and
   never open TCP/22 merely because an unflagged access network exists.
-- Physical-interface desired-state updates from the API and UI use one atomic domain service. Capture the previous
+- Physical-interface desired-state updates from the API and UI use one atomic domain service. Its writers acquire
+  the shared network-object transaction lock before mutation so console Settings capture cannot race address saves.
+  Capture the previous
   IPv4 and IPv6 CIDRs before mutation, refresh dependent service, ESX Storage, Web Terminal, DHCP, and Network Boot
   bindings before one commit, include child VLAN dependencies when their parent becomes unavailable, roll back every
   row when reconciliation fails, rebase reservations and their app-owned DNS records only when one updated DHCP scope

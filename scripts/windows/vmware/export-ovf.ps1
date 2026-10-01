@@ -55,6 +55,8 @@ Return after workflow dispatch instead of waiting for hosted publication.
 Internal verified software-release metadata embedded into OVA provenance.
 .PARAMETER ProtectedExport
 Internal prerelease export mode that checks the PowerCLI baseline without changing source.
+.PARAMETER ExportPackageDirectory
+Optional reference receiving the actual validated OVF package directory after successful low-level export.
 .PARAMETER CandidateOnly
 Produce and smoke a prerelease candidate without changing GitHub.
 .PARAMETER MaximumReleaseAssetBytes
@@ -110,6 +112,7 @@ param(
     [switch]$NoWait,
     [string]$VirtualizationSourceMetadata = '',
     [switch]$ProtectedExport,
+    [ref]$ExportPackageDirectory,
     [switch]$CandidateOnly,
     [ValidateRange(1, 2147483647)]
     [long]$MaximumReleaseAssetBytes = 2147483647,
@@ -1934,4 +1937,7 @@ Write-Host "Atlaso OVA provenance: $provenancePath"
 Write-Host "Atlaso OVF manifest: $manifestPath"
 if ($ovaPath) {
     Write-Host "Atlaso OVA archive: $ovaPath"
+}
+if ($null -ne $ExportPackageDirectory) {
+    $ExportPackageDirectory.Value = $ovfPackageDirectory
 }
