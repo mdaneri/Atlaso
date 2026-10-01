@@ -157,10 +157,12 @@ source restriction. Other pending units remain unselected.
 
 After the first task, the console reads observations through `discover_host_physical_interfaces()` before any
 certificate recovery or Appliance Settings capture. The gate requires one fresh observation matching the edited
-physical interface name and MAC identity,
-and a usable address in every requested family. Retries never reconcile missing interfaces or change desired state;
+physical interface name and MAC identity, an administratively up link with native operational state `up`,
+and a usable address in every requested family. A retained address on a disconnected or down link is insufficient.
+Retries never reconcile missing interfaces or change desired state;
 only verified address observations on the target row are committed. Static observations must match desired CIDRs;
-DHCP and RA/SLAAC observations do not populate static desired fields. Acquisition retries for at most 30 seconds.
+DHCP and RA/SLAAC observations do not populate static desired fields. Acquisition retries for at most 30 seconds,
+with each native discovery subprocess bounded by the remaining deadline.
 An unavailable inventory, missing link, wrong-family address,
 link-local-only acquisition, or incomplete dual stack stops dependent work and cannot record recovery success.
 

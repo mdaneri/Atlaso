@@ -319,16 +319,21 @@ def parse_linux_ip_interfaces(payload: str, *, sysfs_base: Path = Path("/sys/cla
     return interfaces
 
 
-def discover_host_physical_interfaces() -> list[HostPhysicalInterface]:
-    """Return discover host physical interfaces."""
+def discover_host_physical_interfaces(*, timeout: float | None = None) -> list[HostPhysicalInterface]:
+    """Read host physical-interface observations without changing desired state.
+
+    Args:
+        timeout: Optional subprocess deadline in seconds for bounded observation callers.
+    """
     try:
         completed = subprocess.run(
             ["ip", "-j", "address", "show"],
             check=False,
             capture_output=True,
             text=True,
+            timeout=timeout,
         )
-    except OSError:
+    except (OSError, subprocess.TimeoutExpired):
         return []
     if completed.returncode != 0:
         return []

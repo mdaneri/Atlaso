@@ -1572,7 +1572,7 @@ def test_console_management_refreshes_changed_dhcp_lease_before_recovery_and_set
         interface.mac_address = "00:50:56:12:34:56"
         db.commit()
 
-    monkeypatch.setattr(appliance_console, "discover_host_physical_interfaces", lambda: [
+    monkeypatch.setattr(appliance_console, "discover_host_physical_interfaces", lambda **kwargs: [
         networking.HostPhysicalInterface(
             name="eth0", mac_address="00:50:56:12:34:56", driver=None, speed=None,
             host_ip_cidr="192.168.167.174/24", host_mtu=1500, host_admin_state="up", oper_state="up",
@@ -1633,7 +1633,7 @@ def test_console_management_observation_rejects_unverified_addresses(
         name=name, mac_address=mac, driver=None, speed=None, host_ip_cidr=observed,
         host_ipv6_cidr=observed6, host_mtu=1500, host_admin_state="up", oper_state="up",
     )
-    monkeypatch.setattr(appliance_console, "discover_host_physical_interfaces", lambda: [observation] if count else [])
+    monkeypatch.setattr(appliance_console, "discover_host_physical_interfaces", lambda **kwargs: [observation] if count else [])
     with pytest.raises(ConsoleOperationError, match="fresh management address observation"):
         appliance_console._refresh_management_addresses(interface_id, timeout=0)
 
@@ -1659,7 +1659,7 @@ def test_console_management_waits_for_both_dynamic_families(client, monkeypatch)
     from dataclasses import replace
 
     observations = iter([observation, replace(observation, host_ipv6_cidr="2001:db8::174/64")])
-    monkeypatch.setattr(appliance_console, "discover_host_physical_interfaces", lambda: [next(observations)])
+    monkeypatch.setattr(appliance_console, "discover_host_physical_interfaces", lambda **kwargs: [next(observations)])
     monkeypatch.setattr(appliance_console.time, "sleep", lambda seconds: None)
     appliance_console._refresh_management_addresses(interface_id)
     with SessionLocal() as db:
@@ -1683,12 +1683,56 @@ def test_console_management_observation_outage_preserves_entire_database(client,
         interface_id = appliance_console._management_interface(db).id
         db.commit()
         before = {table.name: list(db.execute(table.select())) for table in Base.metadata.sorted_tables}
-    monkeypatch.setattr(appliance_console, "discover_host_physical_interfaces", lambda: [])
+    monkeypatch.setattr(appliance_console, "discover_host_physical_interfaces", lambda **kwargs: [])
     with pytest.raises(ConsoleOperationError, match="fresh management address observation"):
         appliance_console._refresh_management_addresses(interface_id, timeout=0)
     with SessionLocal() as db:
         after = {table.name: list(db.execute(table.select())) for table in Base.metadata.sorted_tables}
     assert after == before
+
+
+@pytest.mark.parametrize("admin_state,oper_state", [("down", "up"), ("up", "down"), ("up", "unknown")])
+def test_console_management_rejects_retained_address_on_down_link(client, monkeypatch, admin_state, oper_state):
+    """A retained usable address cannot prove a disconnected link is ready."""
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.services.networking import HostPhysicalInterface
+
+    with SessionLocal() as db:
+        interface = appliance_console._management_interface(db)
+        interface_id = interface.id
+        old_cidr = interface.host_ip_cidr
+        observation = HostPhysicalInterface(
+            name=interface.name, mac_address=interface.mac_address, driver=None, speed=None,
+            host_ip_cidr=interface.ip_cidr, host_mtu=1500, host_admin_state=admin_state, oper_state=oper_state,
+        )
+    monkeypatch.setattr(appliance_console, "discover_host_physical_interfaces", lambda **kwargs: [observation])
+    with pytest.raises(ConsoleOperationError, match="fresh management address observation"):
+        appliance_console._refresh_management_addresses(interface_id, timeout=0)
+    with SessionLocal() as db:
+        assert db.get(appliance_console.PhysicalInterface, interface_id).host_ip_cidr == old_cidr
+
+
+def test_console_management_bounds_stalled_discovery_by_remaining_deadline(client, monkeypatch):
+    """The production subprocess receives the remaining budget and a stall fails closed."""
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.services import networking
+
+    with SessionLocal() as db:
+        interface_id = appliance_console._management_interface(db).id
+    clock = iter([0, 10, 30])
+    monkeypatch.setattr(
+        appliance_console, "time", SimpleNamespace(monotonic=lambda: next(clock), sleep=lambda seconds: None),
+    )
+    timeouts = []
+
+    def stalled_run(command, **kwargs):
+        timeouts.append(kwargs["timeout"])
+        raise subprocess.TimeoutExpired(command, kwargs["timeout"])
+
+    monkeypatch.setattr(networking.subprocess, "run", stalled_run)
+    with pytest.raises(ConsoleOperationError, match="fresh management address observation"):
+        appliance_console._refresh_management_addresses(interface_id)
+    assert timeouts == [20]
 
 
 def test_console_management_observation_failure_stops_dependent_work(client, monkeypatch):

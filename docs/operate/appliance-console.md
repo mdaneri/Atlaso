@@ -143,6 +143,9 @@ the requested address and prefix;
 DHCP and automatic IPv6 observations remain separate from desired state. If inventory is unavailable or either
 requested family has not acquired a usable address, recovery and Appliance Settings stop with an observation error.
 Check the interface and DHCP/IPv6 acquisition, then retry the console correction.
+The interface must be administratively and operationally up; a retained address on a disconnected link cannot pass.
+Each discovery attempt uses the remaining acquisition timeout, so a stalled command cannot leave the console waiting
+indefinitely.
 
 After observation succeeds, Atlaso retries first-boot HTTPS only when its completion marker is absent, validates nginx
 before any reload, and ensures nginx and Atlaso are enabled and running. After the second task applies Appliance

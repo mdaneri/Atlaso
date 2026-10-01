@@ -1228,7 +1228,7 @@ def _refresh_management_addresses(interface_id: int, *, timeout: float = 30) -> 
     while True:
         with SessionLocal() as db:
             interface = db.get(PhysicalInterface, interface_id)
-            discovered = discover_host_physical_interfaces()
+            discovered = discover_host_physical_interfaces(timeout=max(0, deadline - time.monotonic()))
             matches = [
                 row for row in discovered
                 if interface is not None and row.name == interface.name
@@ -1241,7 +1241,10 @@ def _refresh_management_addresses(interface_id: int, *, timeout: float = 30) -> 
                 required.append((4, observed.host_ip_cidr, interface.ip_cidr))
                 if interface.ipv6_enabled:
                     required.append((6, observed.host_ipv6_cidr, interface.ipv6_cidr))
-            verified = observed is not None
+            verified = bool(
+                observed is not None
+                and observed.host_admin_state == "up" and observed.oper_state == "up"
+            )
             for family, observed_cidr, desired in required:
                 try:
                     address = ip_interface(observed_cidr or "")
