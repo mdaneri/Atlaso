@@ -2227,10 +2227,9 @@ def test_console_management_plane_recovery_retries_bootstrap_and_verifies_readin
     )
     monkeypatch.setattr(helper.time, "sleep", lambda _seconds: None)
     commands: list[list[str]] = []
-    bootstrap_command = (
-        [str(helper.ATLASO_VENV_PYTHON_PATH), "/opt/atlaso/bin/atlaso-bootstrap-https", "--network-job-id", network_job_id]
-        if network_job_id else ["systemctl", "restart", helper.FIRST_BOOT_HTTPS_UNIT]
-    )
+    monkeypatch.setattr(helper, "CONSOLE_BOOTSTRAP_BINDING_DIRECTORY", tmp_path / "binding")
+    monkeypatch.setattr(helper, "fcntl", None)
+    bootstrap_command = ["systemctl", "restart", helper.FIRST_BOOT_HTTPS_UNIT]
 
     def fake_run(command: list[str]) -> subprocess.CompletedProcess[str]:
         """Return deterministic recovery command results.
@@ -2240,6 +2239,11 @@ def test_console_management_plane_recovery_retries_bootstrap_and_verifies_readin
         """
         commands.append(command)
         if command == bootstrap_command:
+            binding = helper.CONSOLE_BOOTSTRAP_BINDING_DIRECTORY / "network.env"
+            if network_job_id:
+                assert binding.read_text() == f"ATLASO_CONSOLE_NETWORK_JOB_ID={network_job_id}\n"
+            else:
+                assert not binding.exists()
             include.write_text(helper.FIRST_BOOT_HTTPS_INCLUDE_TEXT, encoding="utf-8")
             certificate.write_text("certificate", encoding="utf-8")
             key.write_text("key", encoding="utf-8")
@@ -2270,6 +2274,7 @@ def test_console_management_plane_recovery_retries_bootstrap_and_verifies_readin
     assert '"management_https_enabled": true' in output
     assert ["systemctl", "reset-failed", helper.FIRST_BOOT_HTTPS_UNIT] in commands
     assert bootstrap_command in commands
+    assert not (helper.CONSOLE_BOOTSTRAP_BINDING_DIRECTORY / "network.env").exists()
     assert ["/usr/bin/nginx", "-t"] in commands
     assert ["systemctl", "enable", "nginx.service", "atlaso.service"] in commands
     assert ["systemctl", "reload", "nginx.service"] in commands
@@ -2342,6 +2347,8 @@ def test_console_management_plane_recovery_stops_after_nginx_validation_failure(
         capsys: Pytest fixture used to capture standard output and standard error.
     """
     helper = load_helper_module()
+    monkeypatch.setattr(helper, "CONSOLE_BOOTSTRAP_BINDING_DIRECTORY", tmp_path / "binding")
+    monkeypatch.setattr(helper, "fcntl", None)
     marker = tmp_path / "first-boot-https.applied"
     main_config = tmp_path / "nginx.conf"
     main_config.write_text(
@@ -2786,3 +2793,33 @@ def test_console_bootstrap_binds_certificate_issuance_to_completed_network(clien
         errors = bootstrap.ensure_recovery_ca_state(db, "job_certificate_binding" if bound_job else None)
     assert bool(errors) is (edit != "unchanged")
     assert events == (["lock", "issue", "commit"] if edit == "unchanged" else ["lock"])
+
+
+def test_console_bootstrap_binding_cleans_failure_and_preserves_stale_state(tmp_path, monkeypatch):
+    """Release only this invocation's binding and refuse an existing one.
+
+    Args:
+        tmp_path: Isolated runtime directory for the test.
+        monkeypatch: Replace Linux runtime ownership/flock checks in this pure contract test.
+    """
+    helper = load_helper_module()
+    directory = tmp_path / "binding"
+    monkeypatch.setattr(helper, "CONSOLE_BOOTSTRAP_BINDING_DIRECTORY", directory)
+    monkeypatch.setattr(helper, "fcntl", None)
+    binding = directory / "network.env"
+    with pytest.raises(RuntimeError, match="service dependency failed"):
+        with helper._console_bootstrap_binding("job_completed"):
+            assert binding.read_text() == "ATLASO_CONSOLE_NETWORK_JOB_ID=job_completed\n"
+            raise RuntimeError("service dependency failed")
+    assert not binding.exists()
+    with pytest.raises(ValueError, match="binding changed"):
+        with helper._console_bootstrap_binding("job_completed"):
+            replacement = directory / "replacement.env"
+            replacement.write_text("ATLASO_CONSOLE_NETWORK_JOB_ID=replacement_job\n")
+            replacement.replace(binding)
+    assert binding.read_text() == "ATLASO_CONSOLE_NETWORK_JOB_ID=replacement_job\n"
+    binding.write_text("ATLASO_CONSOLE_NETWORK_JOB_ID=previous_job\n")
+    with pytest.raises(ValueError, match="previous console bootstrap binding remains"):
+        with helper._console_bootstrap_binding("job_completed"):
+            pytest.fail("Stale binding was admitted")
+    assert binding.read_text() == "ATLASO_CONSOLE_NETWORK_JOB_ID=previous_job\n"

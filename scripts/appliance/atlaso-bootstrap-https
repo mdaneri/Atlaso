@@ -588,6 +588,10 @@ def main(network_job_id: str | None = None) -> int:
     Args:
         network_job_id: Completed console Network task binding certificate recovery.
     """
+    network_job_id = network_job_id or os.environ.get("ATLASO_CONSOLE_NETWORK_JOB_ID")
+    if network_job_id is not None and not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", network_job_id):
+        print("Invalid completed Network task binding; certificate recovery was not started.")
+        return 2
     if first_boot_https_artifacts_are_complete():
         if not first_boot_https_contract_is_complete():
             ensure_nginx_main_config_includes_atlaso()
@@ -754,8 +758,6 @@ if __name__ == "__main__":
             # Never disclose database connection details or decrypted material.
             verified = False
         raise SystemExit(0 if verified else 2)
-    if len(sys.argv) == 3 and sys.argv[1] == "--network-job-id" and re.fullmatch(r"[A-Za-z0-9_-]{1,128}", sys.argv[2]):
-        raise SystemExit(main(sys.argv[2]))
     if sys.argv[1:]:
         raise SystemExit(2)
     raise SystemExit(main())

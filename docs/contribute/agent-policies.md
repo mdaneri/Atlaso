@@ -1078,7 +1078,9 @@ preserved with their affected subsystem below. Keep new requirements at their to
   path, including dedicated administrative state and effective eligibility, before starting certificate recovery.
   Recheck the completed Network management
   paths under the shared network-object writer lock atomically with Settings capture, including edits during HTTPS recovery.
-  Bind console HTTPS bootstrap to the completed Network task; compare management paths under the shared writer lock
+  Bind console HTTPS bootstrap to the completed Network task through a private, serialized runtime EnvironmentFile
+  consumed by the original systemd unit; retain its data-disk dependency, ordering, and service serialization gates.
+  Compare management paths under the shared writer lock
   and retain that transaction through certificate issuance. Ordinary bootstrap with a Network baseline rejects pending
   management-path edits too. Retry unfinished first-boot HTTPS before applying Appliance Settings, validate nginx before
   reload, ensure nginx and

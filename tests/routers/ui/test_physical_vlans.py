@@ -76,7 +76,7 @@ def test_access_management_address_edit_matches_console_desired_state(
     monkeypatch.setattr(appliance_console, "_management_interface", lambda db: db.get(PhysicalInterface, interface_id))
     monkeypatch.setattr(appliance_console, "_ensure_no_active_apply", lambda: None)
     monkeypatch.setattr(appliance_console, "_refresh_management_addresses", lambda interface_id, **kwargs: None)
-    monkeypatch.setattr(appliance_console, "_recover_management_plane", lambda stage: None)
+    monkeypatch.setattr(appliance_console, "_recover_management_plane", lambda stage, **kwargs: None)
     monkeypatch.setattr(appliance_console, "_submit_console_apply", lambda units, **kwargs: console_units.append(units) or "test-console-job")
     appliance_console.configure_management(
         "static", "192.168.168.30/24", "", "static" if ipv6_cidr else "disabled", ipv6_cidr, "", "192.168.168.2",

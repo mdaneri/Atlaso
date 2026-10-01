@@ -1087,13 +1087,14 @@ def test_photon_provisioning_installs_default_nginx_management_proxy():
     assert "atlaso-bootstrap-https.service" in script
     assert "ExecStart=/opt/atlaso/.venv/bin/python /opt/atlaso/bin/atlaso-bootstrap-https" in bootstrap_unit
     assert "EnvironmentFile=/etc/atlaso/atlaso.env" in bootstrap_unit
+    assert "EnvironmentFile=-/run/atlaso-console-recovery/network.env" in bootstrap_unit
     assert "After=network-online.target atlaso-data-disks.service atlaso-vmware-ovf-customize.service" in bootstrap_unit
     assert "Wants=network-online.target" in bootstrap_unit
     assert "Requires=atlaso-data-disks.service" in bootstrap_unit
     assert "ConditionPathExists" not in bootstrap_unit
     assert '"$ATLASO_HOME/.venv/bin/python" "$ATLASO_HOME/bin/atlaso-bootstrap-https"' not in script
     assert "sync_host_physical_interfaces(db)" in bootstrap
-    assert bootstrap.index("sync_host_physical_interfaces(db)") < bootstrap.index("ensure_ca_state(db)")
+    assert bootstrap.index("sync_host_physical_interfaces(db)") < bootstrap.index("errors = ensure_recovery_ca_state(db, network_job_id)")
     assert "first-boot-development-root-ca.json" in bootstrap
     assert "first-boot-development-root-ca-imported" in bootstrap
     assert "guestinfo.atlaso.test_vm_development_root_ca_imported" in bootstrap
@@ -1105,9 +1106,9 @@ def test_photon_provisioning_installs_default_nginx_management_proxy():
         "scrub_staged_development_root_ca_after_failure()", import_failure
     )
     assert failure_scrub < bootstrap.index("return 2", failure_scrub)
-    committed_import = bootstrap.index("db.commit()")
+    committed_import = bootstrap.index("db.commit()", bootstrap.index("def main("))
     staged_removal = bootstrap.index("remove_staged_development_root_ca()", committed_import)
-    assert committed_import < staged_removal < bootstrap.index("ensure_ca_state(db)")
+    assert committed_import < staged_removal < bootstrap.index("errors = ensure_recovery_ca_state(db, network_job_id)")
     proof_write = bootstrap.index("write_development_root_ca_import_proof(development_root_fingerprint)")
     proof_publish = bootstrap.index("publish_development_root_ca_import_proof()", proof_write)
     marker_write = bootstrap.index("write_text_atomic(MARKER_PATH, COMPLETION_MARKER_TEXT")
