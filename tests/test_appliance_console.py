@@ -1559,7 +1559,12 @@ def test_console_management_correction_reconciles_firewall_bootstrap_and_setting
 
 
 def test_console_management_refreshes_changed_dhcp_lease_before_recovery_and_settings(client, monkeypatch):
-    """Use fresh production discovery before either dependent capture."""
+    """Use fresh production discovery before either dependent capture.
+
+    Args:
+        client: Initialized application database fixture.
+        monkeypatch: Replace host operations and timing with controlled test observations.
+    """
     from sqlalchemy import select
 
     from atlaso.app.database import SessionLocal
@@ -1581,11 +1586,21 @@ def test_console_management_refreshes_changed_dhcp_lease_before_recovery_and_set
     captures = []
 
     def capture(stage):
+        """Record the acquired address at each dependent capture.
+
+        Args:
+            stage: Recovery stage recorded with the captured management address.
+        """
         with SessionLocal() as db:
             interface = db.scalar(select(PhysicalInterface).where(PhysicalInterface.name == "eth0"))
             captures.append((stage, interface.host_ip_cidr))
 
     def submit(units):
+        """Observe address state before Appliance Settings apply.
+
+        Args:
+            units: Apply units selected by the console.
+        """
         if units == {"appliance_settings"}:
             capture("settings")
         return "job_test"
@@ -1617,7 +1632,17 @@ def test_console_management_refreshes_changed_dhcp_lease_before_recovery_and_set
 def test_console_management_observation_rejects_unverified_addresses(
     client, monkeypatch, observed, count, ipv6_enabled, observed6, desired,
 ):
-    """An outage, wrong family, incomplete dual stack or stale static address cannot pass."""
+    """An outage, wrong family, incomplete dual stack or stale static address cannot pass.
+
+    Args:
+        client: Initialized application database fixture.
+        monkeypatch: Replace host operations and timing with controlled test observations.
+        observed: Observed IPv4 CIDR, or no acquired address.
+        count: Whether discovery returns the matching interface.
+        ipv6_enabled: Whether the desired management configuration requires IPv6.
+        observed6: Observed IPv6 CIDR, or no acquired address.
+        desired: Desired static IPv4 CIDR, or dynamic addressing.
+    """
     from atlaso.app.database import SessionLocal
     from atlaso.app.services.networking import HostPhysicalInterface
 
@@ -1639,7 +1664,12 @@ def test_console_management_observation_rejects_unverified_addresses(
 
 
 def test_console_management_waits_for_both_dynamic_families(client, monkeypatch):
-    """A later complete observation can finish acquisition without inventing desired addresses."""
+    """A later complete observation can finish acquisition without inventing desired addresses.
+
+    Args:
+        client: Initialized application database fixture.
+        monkeypatch: Replace host operations and timing with controlled test observations.
+    """
     from atlaso.app.database import SessionLocal
     from atlaso.app.services.networking import HostPhysicalInterface
 
@@ -1670,7 +1700,12 @@ def test_console_management_waits_for_both_dynamic_families(client, monkeypatch)
 
 
 def test_console_management_observation_outage_preserves_entire_database(client, monkeypatch):
-    """An empty discovery cannot erase NIC intent or unrelated bindings during retry."""
+    """An empty discovery cannot erase NIC intent or unrelated bindings during retry.
+
+    Args:
+        client: Initialized application database fixture.
+        monkeypatch: Replace host operations and timing with controlled test observations.
+    """
     from sqlalchemy import select
 
     from atlaso.app.database import Base, SessionLocal
@@ -1693,7 +1728,14 @@ def test_console_management_observation_outage_preserves_entire_database(client,
 
 @pytest.mark.parametrize("admin_state,oper_state", [("down", "up"), ("up", "down"), ("up", "unknown")])
 def test_console_management_rejects_retained_address_on_down_link(client, monkeypatch, admin_state, oper_state):
-    """A retained usable address cannot prove a disconnected link is ready."""
+    """A retained usable address cannot prove a disconnected link is ready.
+
+    Args:
+        client: Initialized application database fixture.
+        monkeypatch: Replace host operations and timing with controlled test observations.
+        admin_state: Observed host administrative link state.
+        oper_state: Observed native operational link state.
+    """
     from atlaso.app.database import SessionLocal
     from atlaso.app.services.networking import HostPhysicalInterface
 
@@ -1713,7 +1755,12 @@ def test_console_management_rejects_retained_address_on_down_link(client, monkey
 
 
 def test_console_management_bounds_stalled_discovery_by_remaining_deadline(client, monkeypatch):
-    """The production subprocess receives the remaining budget and a stall fails closed."""
+    """The production subprocess receives the remaining budget and a stall fails closed.
+
+    Args:
+        client: Initialized application database fixture.
+        monkeypatch: Replace host operations and timing with controlled test observations.
+    """
     from atlaso.app.database import SessionLocal
     from atlaso.app.services import networking
 
@@ -1726,6 +1773,12 @@ def test_console_management_bounds_stalled_discovery_by_remaining_deadline(clien
     timeouts = []
 
     def stalled_run(command, **kwargs):
+        """Simulate a native discovery timeout at the supplied deadline.
+
+        Args:
+            command: Native discovery command whose timeout is simulated.
+            **kwargs: Subprocess options containing the remaining acquisition timeout.
+        """
         timeouts.append(kwargs["timeout"])
         raise subprocess.TimeoutExpired(command, kwargs["timeout"])
 
@@ -1736,7 +1789,12 @@ def test_console_management_bounds_stalled_discovery_by_remaining_deadline(clien
 
 
 def test_console_management_observation_failure_stops_dependent_work(client, monkeypatch):
-    """Network success must not become a false recovery-success audit on observation failure."""
+    """Network success must not become a false recovery-success audit on observation failure.
+
+    Args:
+        client: Initialized application database fixture.
+        monkeypatch: Replace host operations and timing with controlled test observations.
+    """
     from sqlalchemy import select
 
     from atlaso.app.database import SessionLocal
@@ -1746,6 +1804,11 @@ def test_console_management_observation_failure_stops_dependent_work(client, mon
     monkeypatch.setattr(appliance_console, "_submit_console_apply", lambda units: selected.append(units) or "job_network")
 
     def fail_observation(interface_id):
+        """Stop dependent work with a controlled observation failure.
+
+        Args:
+            interface_id: Stable identity of the selected management interface.
+        """
         raise ConsoleOperationError("fresh management address observation failed")
 
     monkeypatch.setattr(appliance_console, "_refresh_management_addresses", fail_observation)
