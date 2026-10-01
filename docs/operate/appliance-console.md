@@ -137,8 +137,9 @@ link-local.
 
 The recovery action updates Atlaso desired state and submits two synchronous, scoped global appliance-apply tasks. The
 first always applies Network and Firewall so stale management-source restrictions cannot survive an address correction.
-Atlaso refreshes host interface inventory and waits up to 30 seconds for a usable observed IPv4 address and, when
-enabled, IPv6 address on the corrected interface. Static observations must match the requested address and prefix;
+Atlaso reads host interface observations without reconciling inventory and waits up to 30 seconds for a usable
+observed IPv4 address and, when enabled, IPv6 address on the corrected interface. Static observations must match
+the requested address and prefix;
 DHCP and automatic IPv6 observations remain separate from desired state. If inventory is unavailable or either
 requested family has not acquired a usable address, recovery and Appliance Settings stop with an observation error.
 Check the interface and DHCP/IPv6 acquisition, then retry the console correction.

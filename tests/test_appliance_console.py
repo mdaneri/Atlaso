@@ -1559,7 +1559,7 @@ def test_console_management_correction_reconciles_firewall_bootstrap_and_setting
 
 
 def test_console_management_refreshes_changed_dhcp_lease_before_recovery_and_settings(client, monkeypatch):
-    """Use the production inventory sync before either dependent capture."""
+    """Use fresh production discovery before either dependent capture."""
     from sqlalchemy import select
 
     from atlaso.app.database import SessionLocal
@@ -1572,7 +1572,7 @@ def test_console_management_refreshes_changed_dhcp_lease_before_recovery_and_set
         interface.mac_address = "00:50:56:12:34:56"
         db.commit()
 
-    monkeypatch.setattr(networking, "discover_host_physical_interfaces", lambda: [
+    monkeypatch.setattr(appliance_console, "discover_host_physical_interfaces", lambda: [
         networking.HostPhysicalInterface(
             name="eth0", mac_address="00:50:56:12:34:56", driver=None, speed=None,
             host_ip_cidr="192.168.167.174/24", host_mtu=1500, host_admin_state="up", oper_state="up",
@@ -1618,26 +1618,77 @@ def test_console_management_observation_rejects_unverified_addresses(
     client, monkeypatch, observed, count, ipv6_enabled, observed6, desired,
 ):
     """An outage, wrong family, incomplete dual stack or stale static address cannot pass."""
-    interface = SimpleNamespace(
-        id=123, inventory_source="host", oper_state="up", host_ip_cidr=observed,
-        ip_cidr=desired, ipv6_enabled=ipv6_enabled, host_ipv6_cidr=observed6, ipv6_cidr=None,
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.services.networking import HostPhysicalInterface
+
+    with SessionLocal() as db:
+        interface = appliance_console._management_interface(db)
+        interface.ip_cidr = desired
+        interface.ipv6_enabled = ipv6_enabled
+        interface.ipv6_cidr = None
+        interface_id = interface.id
+        name, mac = interface.name, interface.mac_address
+        db.commit()
+    observation = HostPhysicalInterface(
+        name=name, mac_address=mac, driver=None, speed=None, host_ip_cidr=observed,
+        host_ipv6_cidr=observed6, host_mtu=1500, host_admin_state="up", oper_state="up",
     )
-    monkeypatch.setattr(appliance_console, "sync_host_physical_interfaces", lambda db: ([interface], count))
+    monkeypatch.setattr(appliance_console, "discover_host_physical_interfaces", lambda: [observation] if count else [])
     with pytest.raises(ConsoleOperationError, match="fresh management address observation"):
-        appliance_console._refresh_management_addresses(123, timeout=0)
+        appliance_console._refresh_management_addresses(interface_id, timeout=0)
 
 
 def test_console_management_waits_for_both_dynamic_families(client, monkeypatch):
     """A later complete observation can finish acquisition without inventing desired addresses."""
-    interface = SimpleNamespace(
-        id=123, inventory_source="host", oper_state="up", host_ip_cidr="192.168.167.174/24",
-        ip_cidr=None, ipv6_enabled=True, host_ipv6_cidr=None, ipv6_cidr=None,
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.services.networking import HostPhysicalInterface
+
+    with SessionLocal() as db:
+        interface = appliance_console._management_interface(db)
+        interface.ip_cidr = None
+        interface.ipv4_method = "dhcp"
+        interface.ipv6_enabled = True
+        interface.ipv6_cidr = None
+        interface_id = interface.id
+        name, mac = interface.name, interface.mac_address
+        db.commit()
+    observation = HostPhysicalInterface(
+        name=name, mac_address=mac, driver=None, speed=None, host_ip_cidr="192.168.167.174/24",
+        host_mtu=1500, host_admin_state="up", oper_state="up",
     )
-    monkeypatch.setattr(appliance_console, "sync_host_physical_interfaces", lambda db: ([interface], 1))
-    monkeypatch.setattr(appliance_console.time, "sleep", lambda seconds: setattr(interface, "host_ipv6_cidr", "2001:db8::174/64"))
-    appliance_console._refresh_management_addresses(123)
-    assert interface.ip_cidr is None
-    assert interface.ipv6_cidr is None
+    from dataclasses import replace
+
+    observations = iter([observation, replace(observation, host_ipv6_cidr="2001:db8::174/64")])
+    monkeypatch.setattr(appliance_console, "discover_host_physical_interfaces", lambda: [next(observations)])
+    monkeypatch.setattr(appliance_console.time, "sleep", lambda seconds: None)
+    appliance_console._refresh_management_addresses(interface_id)
+    with SessionLocal() as db:
+        interface = db.get(appliance_console.PhysicalInterface, interface_id)
+        assert interface.ip_cidr is None
+        assert interface.ipv6_cidr is None
+        assert interface.host_ipv6_cidr == "2001:db8::174/64"
+
+
+def test_console_management_observation_outage_preserves_entire_database(client, monkeypatch):
+    """An empty discovery cannot erase NIC intent or unrelated bindings during retry."""
+    from sqlalchemy import select
+
+    from atlaso.app.database import Base, SessionLocal
+    from atlaso.app.models import PhysicalInterface
+
+    with SessionLocal() as db:
+        for interface in db.scalars(select(PhysicalInterface)):
+            interface.inventory_source = "host"
+            interface.desired_state_source = "console"
+        interface_id = appliance_console._management_interface(db).id
+        db.commit()
+        before = {table.name: list(db.execute(table.select())) for table in Base.metadata.sorted_tables}
+    monkeypatch.setattr(appliance_console, "discover_host_physical_interfaces", lambda: [])
+    with pytest.raises(ConsoleOperationError, match="fresh management address observation"):
+        appliance_console._refresh_management_addresses(interface_id, timeout=0)
+    with SessionLocal() as db:
+        after = {table.name: list(db.execute(table.select())) for table in Base.metadata.sorted_tables}
+    assert after == before
 
 
 def test_console_management_observation_failure_stops_dependent_work(client, monkeypatch):

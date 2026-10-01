@@ -87,7 +87,7 @@ from atlaso.app.services.network_objects import (  # noqa: E402 - appliance envi
     acquire_network_objects_write_lock,
 )
 from atlaso.app.services.networking import (  # noqa: E402 - appliance environment must load before configured imports.
-    sync_host_physical_interfaces,
+    discover_host_physical_interfaces,
 )
 
 HELPER_PATH = Path("/opt/atlaso/bin/atlaso-helper")
@@ -1227,20 +1227,24 @@ def _refresh_management_addresses(interface_id: int, *, timeout: float = 30) -> 
     deadline = time.monotonic() + timeout
     while True:
         with SessionLocal() as db:
-            interfaces, discovered_count = sync_host_physical_interfaces(db)
-            interface = next((row for row in interfaces if row.id == interface_id), None)
+            interface = db.get(PhysicalInterface, interface_id)
+            discovered = discover_host_physical_interfaces()
+            matches = [
+                row for row in discovered
+                if interface is not None and row.name == interface.name
+                and row.mac_address.lower() == (interface.mac_address or "").lower()
+                and row.mac_address
+            ]
+            observed = matches[0] if len(matches) == 1 else None
             required = []
-            if interface is not None:
-                required.append((4, interface.host_ip_cidr, interface.ip_cidr))
+            if interface is not None and observed is not None:
+                required.append((4, observed.host_ip_cidr, interface.ip_cidr))
                 if interface.ipv6_enabled:
-                    required.append((6, interface.host_ipv6_cidr, interface.ipv6_cidr))
-            verified = bool(
-                discovered_count and interface is not None
-                and interface.inventory_source == "host" and interface.oper_state != "missing"
-            )
-            for family, observed, desired in required:
+                    required.append((6, observed.host_ipv6_cidr, interface.ipv6_cidr))
+            verified = observed is not None
+            for family, observed_cidr, desired in required:
                 try:
-                    address = ip_interface(observed or "")
+                    address = ip_interface(observed_cidr or "")
                     expected = ip_interface(desired) if desired else None
                 except ValueError:
                     verified = False
@@ -1251,7 +1255,12 @@ def _refresh_management_addresses(interface_id: int, *, timeout: float = 30) -> 
                     or (expected is not None and address != expected)
                 ):
                     verified = False
-            if verified:
+            if verified and interface is not None and observed is not None:
+                # Polling must never interpret unavailable discovery as removal or
+                # reconcile unrelated desired state. Publish only the verified target.
+                interface.host_ip_cidr = observed.host_ip_cidr
+                interface.host_ipv6_cidr = observed.host_ipv6_cidr
+                db.commit()
                 return
         remaining = deadline - time.monotonic()
         if remaining <= 0:

@@ -155,11 +155,13 @@ Network, DNS, and Firewall edits update desired state and create two synchronous
 the persisted nftables rules are regenerated from the corrected management CIDR instead of retaining an OVF-derived
 source restriction. Other pending units remain unselected.
 
-After the first task, the console refreshes observations through `sync_host_physical_interfaces()` before any
-certificate recovery or Appliance Settings capture. The gate follows the edited physical-interface database identity
-across inventory renames and requires fresh host discovery, a present link, and a usable address in every requested
-family. Static observations must match desired CIDRs; DHCP and RA/SLAAC observations do not populate static desired
-fields. Acquisition retries for at most 30 seconds. An unavailable inventory, missing link, wrong-family address,
+After the first task, the console reads observations through `discover_host_physical_interfaces()` before any
+certificate recovery or Appliance Settings capture. The gate requires one fresh observation matching the edited
+physical interface name and MAC identity,
+and a usable address in every requested family. Retries never reconcile missing interfaces or change desired state;
+only verified address observations on the target row are committed. Static observations must match desired CIDRs;
+DHCP and RA/SLAAC observations do not populate static desired fields. Acquisition retries for at most 30 seconds.
+An unavailable inventory, missing link, wrong-family address,
 link-local-only acquisition, or incomplete dual stack stops dependent work and cannot record recovery success.
 
 Once observations are verified, the constrained console helper retries `atlaso-bootstrap-https.service` when
