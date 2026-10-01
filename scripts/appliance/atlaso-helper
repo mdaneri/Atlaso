@@ -7205,6 +7205,20 @@ def _ntpd_install_guards() -> None:
     _ntpd_run_checked(["systemctl", "enable", "atlaso-time-sync-guard.service"], "Enable appliance clock guard")
 
 
+class _NtpdPostCommitCleanupError(RuntimeError):
+    """The clock authority is verified, but retired server material remains."""
+
+
+def _ntpd_retire_nts_material() -> None:
+    """Never invalidate verified authority solely because old asset removal fails."""
+    try:
+        _remove_ntpd_nts_server_material()
+    except (OSError, RuntimeError, ValueError, subprocess.TimeoutExpired) as exc:
+        raise _NtpdPostCommitCleanupError(
+            "Verified clock mode is retained; old NTS server material cleanup is incomplete. Retry NTP Apply."
+        ) from exc
+
+
 def _ntpd_transition(mode: str, config_path: Path | None = None, *, restart: bool = True) -> None:
     """Move between clock sources without running two synchronizers together."""
     if mode not in NTP_ALLOWED_MODES and mode != "disabled":
@@ -7234,14 +7248,14 @@ def _ntpd_transition(mode: str, config_path: Path | None = None, *, restart: boo
         # controller has passed its synchronization check. A failed transition
         # can then restore the previous config and its referenced key material.
         if mode == "ntp_client" or not _ntpd_nts_server_enabled(config_path):
-            _remove_ntpd_nts_server_material()
+            _ntpd_retire_nts_material()
         return
     if mode == "vmware_tools":
         if not NTP_CONFIG_PATH.is_file() and config_path is None:
             raise RuntimeError("Applied NTP config is unavailable; apply the selected VMware Tools clock source first.")
         _ntpd_set_vmware_timesync(True)
         _ntpd_checkpoint_verified()
-        _remove_ntpd_nts_server_material()
+        _ntpd_retire_nts_material()
         return
 
 
@@ -7366,7 +7380,7 @@ def _ntpd_clear_transaction() -> None:
 
 def _ntpd_begin_transaction(snapshot: dict[str, object]) -> None:
     """Persist config custody without serializing any NTS private material."""
-    previous = {key: value for key, value in snapshot.items() if key != "nts_material"}
+    previous = {key: snapshot[key] for key in ("exists", "managed", "mode", "data", "link_target", "file_mode", "uid", "gid")}
     data = previous.get("data")
     if isinstance(data, bytes):
         if len(data) > 1024 * 1024:
@@ -7536,6 +7550,8 @@ def _ntpd_fail_closed_stop() -> list[str]:
 def _ntpd_rollback_failed_apply(snapshot: dict[str, object]) -> str:
     """Restore previous applied intent and controller after a failed apply."""
     try:
+        if _ntpd_read_transaction() is not None:
+            _ntpd_begin_transaction(snapshot)
         _ntpd_restore_applied_config(snapshot)
         _ntpd_restore_nts_server_material(snapshot.get("nts_material"))
         snapshot["restored"] = True
@@ -7549,6 +7565,8 @@ def _ntpd_rollback_failed_apply(snapshot: dict[str, object]) -> str:
         try:
             _ntpd_transition(str(previous_mode), restart=True)
             return f"Restored previous applied {previous_mode} clock mode."
+        except _NtpdPostCommitCleanupError:
+            return f"Restored previous applied {previous_mode} clock mode; retired NTS material cleanup still requires Apply."
         except (OSError, RuntimeError, ValueError, subprocess.TimeoutExpired) as rollback_error:
             stop_errors = _ntpd_fail_closed_stop()
             suffix = f" Fail-closed stop errors: {'; '.join(stop_errors)}." if stop_errors else ""
@@ -7574,6 +7592,9 @@ def _ntpd_reconcile_applied() -> dict[str, object]:
         }
     mode = _ntpd_applied_time_mode(NTP_CONFIG_PATH)
     if mode in {"disabled", "unmanaged"}:
+        stop_errors = _ntpd_fail_closed_stop()
+        if stop_errors:
+            raise RuntimeError("Unable to stop uncertain legacy clock controllers: " + "; ".join(stop_errors))
         return {
             "ntpd": "reconcile required",
             "managed": True,
@@ -8064,6 +8085,13 @@ def _handle_ntpd(action: str, args: list[str]) -> int:
             _ntpd_transition(mode, config_path, restart=True)
         else:
             _ntpd_transition(mode, config_path if mode == "vmware_tools" else None)
+    except _NtpdPostCommitCleanupError as exc:
+        # The candidate was verified and checkpointed before cleanup began.
+        # Keep its configuration and controller authoritative, including if this
+        # helper dies now. Return failure so desired state stays pending for the
+        # operator's cleanup retry; do not claim complete server asset removal.
+        print(str(exc), file=sys.stderr)
+        return 1
     except (OSError, RuntimeError, ValueError, subprocess.TimeoutExpired) as exc:
         rollback_detail = _ntpd_rollback_failed_apply(previous_config)
         if previous_config.get("restored") is True:

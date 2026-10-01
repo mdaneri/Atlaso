@@ -19352,10 +19352,10 @@ def test_ntpd_apply_wait_failure_restores_nts_server_assets_before_rollback(monk
     assert "Restored previous applied ntp_server clock mode" in capsys.readouterr().err
 
 
-def test_ntpd_apply_partial_nts_cleanup_failure_restores_material_before_server_restart(
+def test_ntpd_apply_partial_nts_cleanup_failure_keeps_verified_candidate_after_recovery(
     monkeypatch, tmp_path, capsys
 ):
-    """A partial old-server cleanup failure restores fixture assets before controller rollback."""
+    """A post-verification cleanup failure retains its candidate through process-death recovery."""
     helper = load_helper_module()
     applied = tmp_path / "etc" / "ntp.conf"
     staged = tmp_path / "apply" / "ntpd" / "atlaso-ntp.conf"
@@ -19400,14 +19400,6 @@ def test_ntpd_apply_partial_nts_cleanup_failure_restores_material_before_server_
     monkeypatch.setattr(helper, "_ntpd_set_vmware_timesync", lambda _enabled: None)
     monkeypatch.setattr(helper, "_grant_ntpd_nts_server_key_read", lambda _path: None)
 
-    expected = {
-        path: (path.read_bytes(), helper.stat.S_IMODE(path.stat().st_mode))
-        for path in (cert_path, key_path, cookie_path)
-    }
-    expected_dirs = {
-        path: helper.stat.S_IMODE(path.stat().st_mode)
-        for path in (cert_dir, cookie_dir)
-    }
     cleanup_calls = 0
 
     def partially_remove_assets():
@@ -19421,25 +19413,29 @@ def test_ntpd_apply_partial_nts_cleanup_failure_restores_material_before_server_
 
     monkeypatch.setattr(helper, "_remove_ntpd_nts_server_material", partially_remove_assets)
     starts: list[str] = []
-
-    def start_service(unit: str, *, restart: bool = False) -> None:
-        starts.append(unit)
-        if len(starts) == 2:
-            assert applied.read_text(encoding="utf-8") == previous
-            for path, (expected_bytes, expected_mode) in expected.items():
-                assert path.read_bytes() == expected_bytes
-                assert helper.stat.S_IMODE(path.stat().st_mode) == expected_mode
-            for path, expected_mode in expected_dirs.items():
-                assert helper.stat.S_IMODE(path.stat().st_mode) == expected_mode
-
-    monkeypatch.setattr(helper, "_ntpd_start_service", start_service)
+    monkeypatch.setattr(helper, "_ntpd_start_service", lambda unit, **_kwargs: starts.append(unit))
     monkeypatch.setattr(helper, "_ntpd_wait_synchronized", lambda: None)
 
     assert helper._handle_ntpd("apply", [str(staged)]) == 1
     assert cleanup_calls == 1
-    assert starts == ["ntpd.service", "ntpd.service"]
-    assert helper._ntpd_time_mode(applied) == "ntp_server"
-    assert "injected partial cleanup failure" in capsys.readouterr().err
+    assert starts == ["ntpd.service"]
+    assert applied.read_text(encoding="utf-8") == candidate
+    assert helper._ntpd_applied_time_mode(applied) == "ntp_client"
+    assert not cookie_dir.exists()
+    assert not cert_dir.exists()
+    journal = json.loads(helper._ntpd_transaction_path().read_text(encoding="utf-8"))
+    assert journal["phase"] == "verified"
+    error = capsys.readouterr().err
+    assert "Verified clock mode is retained" in error
+    assert "Retry NTP Apply" in error
+
+    monkeypatch.setattr(helper, "_release_transaction_owner_alive", lambda _owner: False)
+    helper._ntpd_recover_interrupted_apply()
+
+    assert applied.read_text(encoding="utf-8") == candidate
+    assert helper._ntpd_applied_time_mode(applied) == "ntp_client"
+    assert starts == ["ntpd.service"]
+    assert not helper._ntpd_transaction_path().exists()
 
 
 @pytest.mark.parametrize("prior_content", [None, b"vendor ntpd config\nserver vendor.example\n"])
@@ -19557,10 +19553,24 @@ def test_ntpd_reconcile_leaves_unmanaged_or_legacy_disabled_config_untouched(mon
     monkeypatch.setattr(helper, "NTP_CONFIG_PATH", config)
     monkeypatch.setattr(helper, "_ntpd_install_guards", lambda: pytest.fail("guards installed before explicit Apply"))
     monkeypatch.setattr(helper, "_ntpd_transition", lambda *_args, **_kwargs: pytest.fail("clock changed before explicit Apply"))
+    mutations: list[tuple[object, ...]] = []
+    monkeypatch.setattr(
+        helper, "_ntpd_stop_service", lambda unit, **kwargs: mutations.append(("stop", unit, kwargs))
+    )
+    monkeypatch.setattr(helper, "_ntpd_client_packet_guard", lambda mode: mutations.append(("packet-guard", mode)))
+    monkeypatch.setattr(helper, "_ntpd_set_vmware_timesync", lambda enabled: mutations.append(("vmware", enabled)))
 
     assert helper._ntpd_reconcile_applied()["managed"] is False
+    assert mutations == []
     config.write_text("# Atlaso NTP enabled: false\n", encoding="utf-8")
     assert helper._ntpd_reconcile_applied()["mode"] == "unmanaged"
+    assert mutations == [
+        ("stop", "ntpd.service", {}),
+        ("stop", "chronyd.service", {}),
+        ("stop", "systemd-timesyncd.service", {}),
+        ("packet-guard", "disabled"),
+        ("vmware", False),
+    ]
 
 
 @pytest.mark.parametrize(
@@ -19579,20 +19589,56 @@ def test_ntpd_stale_legacy_enabled_config_never_selects_a_clock_controller(
     monkeypatch.setattr(helper, "_ntpd_config_managed", lambda _path: True)
     monkeypatch.setattr(helper, "_ntpd_install_guards", lambda: pytest.fail("legacy config installed active guards"))
     monkeypatch.setattr(helper, "_ntpd_transition", lambda *_args, **_kwargs: pytest.fail("legacy server was activated"))
-    mutations: list[str] = []
-    monkeypatch.setattr(helper, "_ntpd_stop_service", lambda *_args, **_kwargs: mutations.append("stop"))
-    monkeypatch.setattr(helper, "_ntpd_client_packet_guard", lambda *_args: mutations.append("packet-guard"))
-    monkeypatch.setattr(helper, "_ntpd_set_vmware_timesync", lambda *_args: mutations.append("vmware"))
+    mutations: list[tuple[object, ...]] = []
+    monkeypatch.setattr(
+        helper, "_ntpd_stop_service", lambda unit, **kwargs: mutations.append(("stop", unit, kwargs))
+    )
+    monkeypatch.setattr(helper, "_ntpd_client_packet_guard", lambda mode: mutations.append(("packet-guard", mode)))
+    monkeypatch.setattr(helper, "_ntpd_set_vmware_timesync", lambda enabled: mutations.append(("vmware", enabled)))
 
     result = helper._ntpd_reconcile_applied()
     assert result["ntpd"] == "reconcile required"
     assert result["managed"] is True
     assert result["mode"] == "unmanaged"
+    assert mutations == [
+        ("stop", "ntpd.service", {}),
+        ("stop", "chronyd.service", {}),
+        ("stop", "systemd-timesyncd.service", {}),
+        ("packet-guard", "disabled"),
+        ("vmware", False),
+    ]
+    mutations.clear()
     assert helper._ntpd_guard(phase) == expected_return
     assert config.read_bytes() == original
     assert mutations == []
     if phase == "pre-ntpd":
         assert "does not prove applied authority" in capsys.readouterr().err
+
+
+def test_ntpd_legacy_reconcile_refuses_success_when_controller_stop_fails(monkeypatch, tmp_path):
+    """Uncertain legacy authority reports reconciliation failure when fail-closed stopping fails."""
+    helper = load_helper_module()
+    config = tmp_path / "ntp.conf"
+    config.write_bytes(ntpd_config_text(enabled=True, server="time.cloudflare.com").encode())
+    monkeypatch.setattr(helper, "NTP_CONFIG_PATH", config)
+    monkeypatch.setattr(helper, "_ntpd_config_managed", lambda _path: True)
+    stop_attempts: list[str] = []
+    vmware_changes: list[bool] = []
+
+    def stop_service(unit: str, **_kwargs) -> None:
+        stop_attempts.append(unit)
+        if unit == "ntpd.service":
+            raise RuntimeError("ntpd could not be stopped")
+
+    monkeypatch.setattr(helper, "_ntpd_stop_service", stop_service)
+    monkeypatch.setattr(helper, "_ntpd_client_packet_guard", lambda _mode: None)
+    monkeypatch.setattr(helper, "_ntpd_set_vmware_timesync", vmware_changes.append)
+
+    with pytest.raises(RuntimeError, match="Unable to stop uncertain legacy clock controllers"):
+        helper._ntpd_reconcile_applied()
+
+    assert stop_attempts == ["ntpd.service", "chronyd.service", "systemd-timesyncd.service"]
+    assert vmware_changes == [False]
 
 
 def test_ntpd_failed_apply_preserves_legacy_nts_assets_without_reactivating_legacy_server(
