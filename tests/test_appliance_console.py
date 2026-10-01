@@ -1534,7 +1534,7 @@ def test_console_management_correction_reconciles_firewall_bootstrap_and_setting
     monkeypatch.setattr(
         appliance_console,
         "_recover_management_plane",
-        lambda stage: events.append(("recover", stage)),
+        lambda stage, **kwargs: events.append(("recover", stage)),
     )
 
     result = appliance_console.configure_management(
@@ -1585,11 +1585,12 @@ def test_console_management_refreshes_changed_dhcp_lease_before_recovery_and_set
     ])
     captures = []
 
-    def capture(stage):
+    def capture(stage, **kwargs):
         """Record the acquired address at each dependent capture.
 
         Args:
             stage: Recovery stage recorded with the captured management address.
+            **kwargs: Completed Network task binding for certificate recovery.
         """
         with SessionLocal() as db:
             interface = db.scalar(select(PhysicalInterface).where(PhysicalInterface.name == "eth0"))
@@ -1609,7 +1610,10 @@ def test_console_management_refreshes_changed_dhcp_lease_before_recovery_and_set
                 db.add(appliance_console.Job(
                     id="job_test", type="appliance-apply", status="succeeded", created_by="console:root",
                     result=json.dumps({"captured_units": [{"unit_id": "network", "config_preview":
-                        "[physical_interfaces]\ninterface=eth0\nipv4_method=dhcp\nipv6_enabled=false\n"}]}),
+                        networking.render_network_config(
+                            interfaces=list(db.scalars(select(PhysicalInterface))),
+                            vlans=list(db.scalars(select(appliance_console.VlanInterface))),
+                        )}]}),
                 ))
                 db.commit()
         return "job_test"
@@ -1822,7 +1826,7 @@ def test_console_management_observation_failure_stops_dependent_work(client, mon
         raise ConsoleOperationError("fresh management address observation failed")
 
     monkeypatch.setattr(appliance_console, "_refresh_management_addresses", fail_observation)
-    monkeypatch.setattr(appliance_console, "_recover_management_plane", lambda stage: pytest.fail("recovery started before observation"))
+    monkeypatch.setattr(appliance_console, "_recover_management_plane", lambda stage, **kwargs: pytest.fail("recovery started before observation"))
     with pytest.raises(ConsoleOperationError, match="fresh management address observation"):
         appliance_console.configure_management("dhcp", "", "", "disabled", "", "", "192.0.2.53")
     assert selected == [{"network", "firewall"}]
@@ -2188,13 +2192,15 @@ def test_console_service_restore_keeps_snapshot_when_restoration_is_incomplete(m
     assert state_path.exists()
 
 
-def test_console_management_plane_recovery_retries_bootstrap_and_verifies_readiness(monkeypatch, tmp_path, capsys):
+@pytest.mark.parametrize("network_job_id", [None, "job_completed_network"])
+def test_console_management_plane_recovery_retries_bootstrap_and_verifies_readiness(monkeypatch, tmp_path, capsys, network_job_id):
     """Verify that the helper repairs bootstrap and proves stable loopback readiness.
 
     Args:
         monkeypatch: Pytest fixture used to replace dependencies for the test.
         tmp_path: Temporary directory provided by pytest for isolated filesystem state.
         capsys: Pytest fixture used to capture standard output and standard error.
+        network_job_id: Exact completed Network binding, or ordinary recovery.
     """
     helper = load_helper_module()
     marker = tmp_path / "first-boot-https.applied"
@@ -2221,6 +2227,10 @@ def test_console_management_plane_recovery_retries_bootstrap_and_verifies_readin
     )
     monkeypatch.setattr(helper.time, "sleep", lambda _seconds: None)
     commands: list[list[str]] = []
+    bootstrap_command = (
+        [str(helper.ATLASO_VENV_PYTHON_PATH), "/opt/atlaso/bin/atlaso-bootstrap-https", "--network-job-id", network_job_id]
+        if network_job_id else ["systemctl", "restart", helper.FIRST_BOOT_HTTPS_UNIT]
+    )
 
     def fake_run(command: list[str]) -> subprocess.CompletedProcess[str]:
         """Return deterministic recovery command results.
@@ -2229,7 +2239,7 @@ def test_console_management_plane_recovery_retries_bootstrap_and_verifies_readin
             command: Command and arguments to execute.
         """
         commands.append(command)
-        if command == ["systemctl", "restart", helper.FIRST_BOOT_HTTPS_UNIT]:
+        if command == bootstrap_command:
             include.write_text(helper.FIRST_BOOT_HTTPS_INCLUDE_TEXT, encoding="utf-8")
             certificate.write_text("certificate", encoding="utf-8")
             key.write_text("key", encoding="utf-8")
@@ -2253,13 +2263,13 @@ def test_console_management_plane_recovery_retries_bootstrap_and_verifies_readin
 
     monkeypatch.setattr(helper, "_run", fake_run)
 
-    assert helper._handle_console("recover-management-plane", []) == 0
+    assert helper._handle_console("recover-management-plane", [network_job_id] if network_job_id else []) == 0
     output = capsys.readouterr().out
     assert '"management_plane": "ready"' in output
     assert '"bootstrap_retried": true' in output
     assert '"management_https_enabled": true' in output
     assert ["systemctl", "reset-failed", helper.FIRST_BOOT_HTTPS_UNIT] in commands
-    assert ["systemctl", "restart", helper.FIRST_BOOT_HTTPS_UNIT] in commands
+    assert bootstrap_command in commands
     assert ["/usr/bin/nginx", "-t"] in commands
     assert ["systemctl", "enable", "nginx.service", "atlaso.service"] in commands
     assert ["systemctl", "reload", "nginx.service"] in commands
@@ -2518,11 +2528,12 @@ def test_console_recovery_interval_edit_stops_settings_capture(client, monkeypat
             db.commit()
         return "job_network_snapshot"
 
-    def recover(stage):
+    def recover(stage, **kwargs):
         """Save another management address while the recovery interval is active.
 
         Args:
             stage: Description of the initial correction phase.
+            **kwargs: Completed Network task binding for certificate recovery.
         """
         with SessionLocal() as db:
             target = appliance_console._management_interface(db)
@@ -2684,3 +2695,94 @@ def test_console_observation_rejects_other_management_path_edits(client, monkeyp
                 appliance_console.VlanInterface.vlan_id == 533)).access_management_ui_enabled is True
         elif edit == "admin_down":
             assert target.admin_state == "down"
+
+
+@pytest.mark.parametrize("edit", ["address", "vlan", "admin_down", "unchanged"])
+@pytest.mark.parametrize("bound_job", [True, False])
+def test_console_bootstrap_binds_certificate_issuance_to_completed_network(client, monkeypatch, edit, bound_job):
+    """Reject intervening pending paths before issuance and retain the lock through commit.
+
+    Args:
+        client: Initialized application database fixture.
+        monkeypatch: Replace certificate issuance while recording its transaction ownership.
+        edit: Desired path change admitted before bootstrap, or unchanged completed state.
+        bound_job: Use the console task binding or ordinary saved Network baseline.
+    """
+    import importlib.machinery
+    import importlib.util
+
+    from sqlalchemy import select
+    from sqlalchemy.orm import Session
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.services.networking import render_network_config
+
+    loader = importlib.machinery.SourceFileLoader("atlaso_console_bound_bootstrap", "scripts/appliance/atlaso-bootstrap-https")
+    spec = importlib.util.spec_from_loader(loader.name, loader)
+    bootstrap = importlib.util.module_from_spec(spec)
+    loader.exec_module(bootstrap)
+    with SessionLocal() as db:
+        target = appliance_console._management_interface(db)
+        preview = render_network_config(interfaces=list(db.scalars(select(appliance_console.PhysicalInterface))),
+                                        vlans=list(db.scalars(select(appliance_console.VlanInterface))))
+        db.add(appliance_console.Job(
+            id="job_certificate_binding", type="appliance-apply", status="succeeded", created_by="console:root",
+            result=json.dumps({"captured_units": [{"unit_id": "network", "config_preview": preview}]}),
+        ))
+        db.commit()
+        if edit == "address":
+            target.ip_cidr = "192.0.2.175/24"
+        elif edit == "admin_down":
+            target.admin_state = "down"
+        elif edit == "vlan":
+            db.add(appliance_console.VlanInterface(
+                name=f"{target.name}.534", parent_interface=target.name, vlan_id=534,
+                ip_cidr="198.51.100.1/24", enabled=True, access_management_ui_enabled=True,
+            ))
+        db.commit()
+    events = []
+    lock = bootstrap.acquire_network_objects_write_lock
+    commit = Session.commit
+    ownership = {}
+
+    def acquire(db):
+        """Record the real admitted Network writer transaction.
+
+        Args:
+            db: Bootstrap transaction acquiring writer admission.
+        """
+        lock(db)
+        ownership["db"] = db
+        ownership["transaction"] = db.get_transaction()
+        events.append("lock")
+
+    def issue(db, *, commit):
+        """Assert issuance occurs without releasing Network writer admission.
+
+        Args:
+            db: Admitted bootstrap transaction.
+            commit: Whether issuance may release the guarded transaction.
+        """
+        assert commit is False
+        assert db.get_transaction() is ownership["transaction"]
+        events.append("issue")
+        return []
+
+    def record_commit(db):
+        """Assert issuance publication retains the admitted transaction.
+
+        Args:
+            db: Bootstrap transaction committing the issued certificate state.
+        """
+        assert db is ownership["db"] and db.get_transaction() is ownership["transaction"]
+        events.append("commit")
+        return commit(db)
+
+    monkeypatch.setattr(bootstrap, "acquire_network_objects_write_lock", acquire)
+    monkeypatch.setattr(bootstrap, "ensure_ca_state", issue)
+    monkeypatch.setattr(bootstrap, "load_appliance_apply_baselines", lambda db: {"network": {"config_preview": preview}})
+    monkeypatch.setattr(Session, "commit", record_commit)
+    with SessionLocal() as db:
+        errors = bootstrap.ensure_recovery_ca_state(db, "job_certificate_binding" if bound_job else None)
+    assert bool(errors) is (edit != "unchanged")
+    assert events == (["lock", "issue", "commit"] if edit == "unchanged" else ["lock"])

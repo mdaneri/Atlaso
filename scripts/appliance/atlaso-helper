@@ -24408,11 +24408,12 @@ def _console_first_boot_https_contract_is_complete() -> bool:
     )
 
 
-def _recover_console_management_plane(timeout_seconds: int = 60) -> int:
+def _recover_console_management_plane(timeout_seconds: int = 60, *, network_job_id: str | None = None) -> int:
     """Recover and verify the complete local management plane.
 
     Args:
         timeout_seconds: Maximum readiness wait after service recovery.
+        network_job_id: Completed Network task binding bootstrap certificate mutation.
     """
     bootstrap_retried = False
     atlaso_restarted = False
@@ -24424,7 +24425,8 @@ def _recover_console_management_plane(timeout_seconds: int = 60) -> int:
             )
             _console_recovery_command(
                 "retrying first-boot HTTPS bootstrap",
-                ["systemctl", "restart", FIRST_BOOT_HTTPS_UNIT],
+                ([str(ATLASO_VENV_PYTHON_PATH), "/opt/atlaso/bin/atlaso-bootstrap-https", "--network-job-id", network_job_id]
+                 if network_job_id else ["systemctl", "restart", FIRST_BOOT_HTTPS_UNIT]),
             )
             bootstrap_retried = True
             if not _console_first_boot_https_contract_is_complete():
@@ -24512,6 +24514,11 @@ def _handle_console(action: str, args: list[str]) -> int:
         action: Action consumed by handle console.
         args: Parsed command-line options consumed by the operation.
     """
+    if action == "recover-management-plane" and args:
+        if len(args) != 1 or not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", args[0]):
+            print("console recovery requires one valid completed Network task ID", file=sys.stderr)
+            return 2
+        return _recover_console_management_plane(network_job_id=args[0])
     if args:
         print(f"console {action} does not accept a path", file=sys.stderr)
         return 2

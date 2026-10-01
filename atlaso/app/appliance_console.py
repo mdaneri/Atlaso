@@ -1216,18 +1216,19 @@ def _submit_console_apply(required_ids: set[str], *, network_job_id: str | None 
     return job_id
 
 
-def _recover_management_plane(stage: str) -> None:
+def _recover_management_plane(stage: str, *, network_job_id: str | None = None) -> None:
     """Retry first-boot HTTPS and verify local management readiness.
 
     Args:
         stage: Operator-facing description of the completed correction phase.
+        network_job_id: Completed Network task binding certificate recovery.
 
     Raises:
         ConsoleOperationError: If the constrained recovery helper does not restore readiness.
     """
     try:
         result = _run(
-            [str(HELPER_PATH), "console", "recover-management-plane", "--real"],
+            [str(HELPER_PATH), "console", "recover-management-plane", *([network_job_id] if network_job_id else []), "--real"],
             timeout=120,
         )
     except (OSError, subprocess.TimeoutExpired) as exc:
@@ -1401,9 +1402,9 @@ def configure_management(
         )
     network_job_id = _submit_console_apply({"network", "firewall"})
     _refresh_management_addresses(interface_id, network_job_id=network_job_id)
-    _recover_management_plane("Network and Firewall were applied")
+    _recover_management_plane("Network and Firewall were applied", network_job_id=network_job_id)
     settings_job_id = _submit_console_apply({"appliance_settings"}, network_job_id=network_job_id)
-    _recover_management_plane("Appliance Settings were applied")
+    _recover_management_plane("Appliance Settings were applied", network_job_id=network_job_id)
     with SessionLocal() as db:
         record_audit(
             db,

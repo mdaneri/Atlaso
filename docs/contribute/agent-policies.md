@@ -1078,7 +1078,10 @@ preserved with their affected subsystem below. Keep new requirements at their to
   path, including dedicated administrative state and effective eligibility, before starting certificate recovery.
   Recheck the completed Network management
   paths under the shared network-object writer lock atomically with Settings capture, including edits during HTTPS recovery.
-  Retry unfinished first-boot HTTPS before applying Appliance Settings, validate nginx before reload, ensure nginx and
+  Bind console HTTPS bootstrap to the completed Network task; compare management paths under the shared writer lock
+  and retain that transaction through certificate issuance. Ordinary bootstrap with a Network baseline rejects pending
+  management-path edits too. Retry unfinished first-boot HTTPS before applying Appliance Settings, validate nginx before
+  reload, ensure nginx and
   Atlaso are enabled/running, and require stable loopback readiness matching the applied HTTP-only or HTTPS management
   mode before the console reports success. Keep this recovery idempotent and preserve an actionable failing-layer
   message.

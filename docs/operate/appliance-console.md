@@ -194,6 +194,10 @@ After any console change:
 For systemd ownership, redraw behavior, GRUB branding, service-isolation boundaries, and configuration paths, see the
 [local console technical reference](../reference/appliance-console-technical.md).
 
+Certificate bootstrap is bound to the completed Network task and checks its management paths while holding the shared
+writer lock through issuance. Pending address, VLAN, or administrative-state changes stop recovery before certificate
+mutation.
+
 Before Appliance Settings is submitted, the console rechecks the completed Network management paths under the shared
 network-object writer lock held through Settings capture. An address edit made during HTTPS recovery stops submission
 and remains pending; it cannot enter Settings as though Network had already applied it.
