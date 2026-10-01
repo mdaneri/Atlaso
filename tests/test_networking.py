@@ -1155,15 +1155,28 @@ def test_render_network_config_includes_dual_stack_physical_and_vlan_cidrs():
     assert "  ipv6_cidr=2001:db8:20::1/64" in config
 
 
-@pytest.mark.parametrize("state", [{"tentative": True}, {"dadfailed": True}, {"flags": ["tentative"]}, {"flags": ["dadfailed"]}])
-def test_parse_linux_ip_interfaces_rejects_unusable_address_states(state):
+@pytest.mark.parametrize("state", [
+    {"tentative": True}, {"dadfailed": True}, {"flags": ["tentative"]}, {"flags": ["dadfailed"]},
+    {"valid_life_time": 0},
+])
+@pytest.mark.parametrize("family,bad_address,good_address,prefix,field", [
+    ("inet", "192.0.2.1", "192.0.2.2", 24, "host_ip_cidr"),
+    ("inet6", "2001:db8::1", "2001:db8::2", 64, "host_ipv6_cidr"),
+])
+def test_parse_linux_ip_interfaces_rejects_unusable_address_states(state, family, bad_address, good_address, prefix, field):
     """Skip unusable native addresses while retaining a later usable address.
 
     Args:
-        state: Boolean or flags representation of native address readiness.
+        state: Boolean, flags, or lifetime representation of unusable native state.
+        family: Native IPv4 or IPv6 family to parse.
+        bad_address: Unusable address placed first in native inventory.
+        good_address: Usable address placed after the rejected candidate.
+        prefix: Prefix length shared by the test addresses.
+        field: Parsed host address attribute for the family.
     """
-    bad = {"family": "inet6", "local": "2001:db8::1", "prefixlen": 64, "scope": "global", **state}
+    bad = {"family": family, "local": bad_address, "prefixlen": prefix, "scope": "global", **state}
     row = {"ifname": "eth0", "link_type": "ether", "address": "00:15:5d:aa:bb:01", "addr_info": [bad]}
-    assert parse_linux_ip_interfaces(json.dumps([row]))[0].host_ipv6_cidr is None
-    row["addr_info"].append({"family": "inet6", "local": "2001:db8::2", "prefixlen": 64, "scope": "global"})
-    assert parse_linux_ip_interfaces(json.dumps([row]))[0].host_ipv6_cidr == "2001:db8::2/64"
+    assert getattr(parse_linux_ip_interfaces(json.dumps([row]))[0], field) is None
+    row["addr_info"].append({"family": family, "local": good_address, "prefixlen": prefix,
+                             "scope": "global", "valid_life_time": 300})
+    assert getattr(parse_linux_ip_interfaces(json.dumps([row]))[0], field) == f"{good_address}/{prefix}"
