@@ -2100,7 +2100,7 @@ def test_host_state_checks_verify_vcf_trust_runtime_dependencies(monkeypatch):
     assert encoded_httpx_probe in captured["vcf_trust_dependencies"]
     assert "paramiko" not in captured["vcf_trust_dependencies"]
     encoded_vcf_sdk_probe = lifecycle.base64.b64encode(
-        b'from importlib.metadata import version; assert version("vcf-sdk") == "9.1.0.0"'
+        b'from importlib.metadata import version; assert version("vcf-sdk") == "9.1.1.0"'
     ).decode("ascii")
     powercli_version = json.loads(Path("image/common/powershell/powercli-lock.json").read_text(encoding="utf-8"))["suite_version"]
     encoded_powercli_probe = lifecycle.base64.b64encode(

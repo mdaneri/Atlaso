@@ -87,6 +87,63 @@ def test_client_guard_health_checks_effective_rules(monkeypatch, drift):
     assert status["active"] is (drift is None)
 
 
+def test_client_guard_health_accepts_nft_normalized_mode_bits(monkeypatch):
+    """The live nft rule renders the NTP mode as the exact @th bit range."""
+    helper = load_helper_module()
+    monkeypatch.setattr(helper.shutil, "which", lambda _name: "/usr/sbin/nft")
+    port = {"match": {"op": "==", "left": {"payload": {"protocol": "udp", "field": "dport"}}, "right": 123}}
+    document = {
+        "nftables": [
+            {"metainfo": {"version": "1.1.6", "release_name": "Commodore Bullmoose #7", "json_schema_version": 1}},
+            {"table": {"family": "inet", "name": "atlaso_time_sync", "handle": 14}},
+            {"chain": {"family": "inet", "table": "atlaso_time_sync", "name": "input", "handle": 1, "type": "filter", "hook": "input", "prio": -200, "policy": "accept"}},
+            {"rule": {"family": "inet", "table": "atlaso_time_sync", "chain": "input", "handle": 2, "comment": "Atlaso time-sync local diagnostics", "expr": [
+                {"match": {"op": "==", "left": {"meta": {"key": "iifname"}}, "right": "lo"}}, {"return": None},
+            ]}},
+            {"rule": {"family": "inet", "table": "atlaso_time_sync", "chain": "input", "handle": 3, "comment": "Atlaso time-sync upstream replies", "expr": [
+                port, {"match": {"op": "==", "left": {"payload": {"base": "th", "offset": 69, "len": 3}}, "right": 4}}, {"return": None},
+            ]}},
+            {"rule": {"family": "inet", "table": "atlaso_time_sync", "chain": "input", "handle": 4, "comment": "Atlaso time-sync client-only", "expr": [port, {"drop": None}]}},
+        ]
+    }
+    monkeypatch.setattr(helper, "_run", lambda command, **_kwargs: subprocess.CompletedProcess(
+        command, 0, json.dumps(document), "",
+    ))
+
+    status = helper._ntpd_client_packet_guard_status()
+
+    assert status["active"] is True
+
+
+@pytest.mark.parametrize("drift", ["wrong_offset", "wrong_length", "early_return", "wrong_order"])
+def test_client_guard_rejects_malformed_normalized_mode_rules(monkeypatch, drift):
+    helper = load_helper_module()
+    monkeypatch.setattr(helper.shutil, "which", lambda _name: "/usr/sbin/nft")
+    port = {"match": {"op": "==", "left": {"payload": {"protocol": "udp", "field": "dport"}}, "right": 123}}
+    chain = {"name": "input", "hook": "input", "type": "filter", "prio": -200, "policy": "accept"}
+    rules = [
+        {"chain": "input", "expr": [{"match": {"op": "==", "left": {"meta": {"key": "iifname"}}, "right": "lo"}}, {"return": None}]},
+        {"chain": "input", "expr": [port, {"match": {"op": "==", "left": {"payload": {"base": "th", "offset": 69, "len": 3}}, "right": 4}}, {"return": None}]},
+        {"chain": "input", "expr": [port, {"drop": None}]},
+    ]
+    if drift == "wrong_offset":
+        rules[1]["expr"][1]["match"]["left"]["payload"]["offset"] = 68
+    elif drift == "wrong_length":
+        rules[1]["expr"][1]["match"]["left"]["payload"]["len"] = 8
+    elif drift == "early_return":
+        rules.insert(0, {"chain": "input", "expr": [{"return": None}]})
+    elif drift == "wrong_order":
+        rules[1], rules[2] = rules[2], rules[1]
+    document = {"nftables": [{"chain": chain}, *[{"rule": rule} for rule in rules]]}
+    monkeypatch.setattr(helper, "_run", lambda command, **_kwargs: subprocess.CompletedProcess(
+        command, 0, json.dumps(document), "",
+    ))
+
+    status = helper._ntpd_client_packet_guard_status()
+
+    assert status["active"] is False
+
+
 @pytest.mark.parametrize("mode", ["ntp_client", "ntp_server", "vmware_tools"])
 def test_firewall_replace_preserves_only_applied_client_guard(monkeypatch, tmp_path, mode):
     helper = load_helper_module()

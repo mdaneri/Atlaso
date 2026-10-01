@@ -6721,10 +6721,24 @@ def _ntpd_client_packet_guard_status() -> dict[str, object]:
         chains = [entry["chain"] for entry in entries if "chain" in entry]
         rules = [entry["rule"] for entry in entries if "rule" in entry]
         port_match = {"match": {"op": "==", "left": {"payload": {"protocol": "udp", "field": "dport"}}, "right": 123}}
-        expected = [
+        expected_prefix = [
             [{"match": {"op": "==", "left": {"meta": {"key": "iifname"}}, "right": "lo"}}, {"return": None}],
-            [port_match, {"match": {"op": "==", "left": {"&": [{"payload": {"base": "th", "offset": 64, "len": 8}}, 7]}, "right": 4}}, {"return": None}],
-            [port_match, {"drop": None}],
+        ]
+        # nftables versions may preserve the authored byte mask or normalize
+        # it to the exact three NTP mode bits (the syntax shown by nft list).
+        # Accept only these equivalent typed expressions; rule order remains
+        # significant so a preceding accept/return cannot bypass isolation.
+        mode_matches = [
+            {"match": {"op": "==", "left": {"&": [{"payload": {"base": "th", "offset": 64, "len": 8}}, 7]}, "right": 4}},
+            {"match": {"op": "==", "left": {"payload": {"base": "th", "offset": 69, "len": 3}}, "right": 4}},
+        ]
+        expected_rules = [
+            [port_match, mode_match, {"return": None}]
+            for mode_match in mode_matches
+        ]
+        expected_rule_sets = [
+            [*expected_prefix, mode_rules, [port_match, {"drop": None}]]
+            for mode_rules in expected_rules
         ]
         active = (
             len(chains) == 1
@@ -6735,7 +6749,7 @@ def _ntpd_client_packet_guard_status() -> dict[str, object]:
             and chains[0].get("policy") == "accept"
             and len(rules) == 3
             and all(rule.get("chain") == "input" for rule in rules)
-            and [rule.get("expr") for rule in rules] == expected
+            and [rule.get("expr") for rule in rules] in expected_rule_sets
         )
     except (OSError, subprocess.TimeoutExpired, ValueError, AttributeError, TypeError, KeyError):
         return {"active": None, "detail": "Client-only NTP packet guard could not be inspected."}
