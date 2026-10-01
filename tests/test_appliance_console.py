@@ -1528,6 +1528,11 @@ def test_console_management_correction_reconciles_firewall_bootstrap_and_setting
     monkeypatch.setattr(appliance_console, "_submit_console_apply", fake_submit)
     monkeypatch.setattr(
         appliance_console,
+        "_refresh_management_addresses",
+        lambda interface_id: events.append(("observe", interface_id)),
+    )
+    monkeypatch.setattr(
+        appliance_console,
         "_recover_management_plane",
         lambda stage: events.append(("recover", stage)),
     )
@@ -1543,12 +1548,118 @@ def test_console_management_correction_reconciles_firewall_bootstrap_and_setting
     )
 
     assert result == "tasks job_1 and job_2"
-    assert events == [
+    assert events[1][0] == "observe"
+    assert isinstance(events[1][1], int)
+    assert [event for event in events if event[0] != "observe"] == [
         ("apply", {"network", "firewall"}),
         ("recover", "Network and Firewall were applied"),
         ("apply", {"appliance_settings"}),
         ("recover", "Appliance Settings were applied"),
     ]
+
+
+def test_console_management_refreshes_changed_dhcp_lease_before_recovery_and_settings(client, monkeypatch):
+    """Use the production inventory sync before either dependent capture."""
+    from sqlalchemy import select
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import PhysicalInterface
+    from atlaso.app.services import networking
+
+    with SessionLocal() as db:
+        interface = appliance_console._management_interface(db)
+        interface.host_ip_cidr = "192.168.167.172/24"
+        interface.mac_address = "00:50:56:12:34:56"
+        db.commit()
+
+    monkeypatch.setattr(networking, "discover_host_physical_interfaces", lambda: [
+        networking.HostPhysicalInterface(
+            name="eth0", mac_address="00:50:56:12:34:56", driver=None, speed=None,
+            host_ip_cidr="192.168.167.174/24", host_mtu=1500, host_admin_state="up", oper_state="up",
+        ),
+    ])
+    captures = []
+
+    def capture(stage):
+        with SessionLocal() as db:
+            interface = db.scalar(select(PhysicalInterface).where(PhysicalInterface.name == "eth0"))
+            captures.append((stage, interface.host_ip_cidr))
+
+    def submit(units):
+        if units == {"appliance_settings"}:
+            capture("settings")
+        return "job_test"
+
+    monkeypatch.setattr(appliance_console, "_submit_console_apply", submit)
+    monkeypatch.setattr(appliance_console, "_recover_management_plane", capture)
+    appliance_console.configure_management("dhcp", "", "", "disabled", "", "", "192.0.2.53")
+
+    assert captures == [
+        ("Network and Firewall were applied", "192.168.167.174/24"),
+        ("settings", "192.168.167.174/24"),
+        ("Appliance Settings were applied", "192.168.167.174/24"),
+    ]
+    with SessionLocal() as db:
+        interface = appliance_console._management_interface(db)
+        assert interface.ipv4_method == "dhcp"
+        assert interface.ip_cidr is None
+        assert interface.desired_state_source == "console"
+
+
+@pytest.mark.parametrize("observed,count,ipv6_enabled,observed6,desired", [
+    ("192.168.167.172/24", 0, False, None, None),
+    (None, 1, False, None, None),
+    ("169.254.1.2/16", 1, False, None, None),
+    ("::1/128", 1, False, None, None),
+    ("192.168.167.174/24", 1, True, "fe80::1/64", None),
+    ("192.168.167.172/24", 1, False, None, "192.168.167.173/24"),
+])
+def test_console_management_observation_rejects_unverified_addresses(
+    client, monkeypatch, observed, count, ipv6_enabled, observed6, desired,
+):
+    """An outage, wrong family, incomplete dual stack or stale static address cannot pass."""
+    interface = SimpleNamespace(
+        id=123, inventory_source="host", oper_state="up", host_ip_cidr=observed,
+        ip_cidr=desired, ipv6_enabled=ipv6_enabled, host_ipv6_cidr=observed6, ipv6_cidr=None,
+    )
+    monkeypatch.setattr(appliance_console, "sync_host_physical_interfaces", lambda db: ([interface], count))
+    with pytest.raises(ConsoleOperationError, match="fresh management address observation"):
+        appliance_console._refresh_management_addresses(123, timeout=0)
+
+
+def test_console_management_waits_for_both_dynamic_families(client, monkeypatch):
+    """A later complete observation can finish acquisition without inventing desired addresses."""
+    interface = SimpleNamespace(
+        id=123, inventory_source="host", oper_state="up", host_ip_cidr="192.168.167.174/24",
+        ip_cidr=None, ipv6_enabled=True, host_ipv6_cidr=None, ipv6_cidr=None,
+    )
+    monkeypatch.setattr(appliance_console, "sync_host_physical_interfaces", lambda db: ([interface], 1))
+    monkeypatch.setattr(appliance_console.time, "sleep", lambda seconds: setattr(interface, "host_ipv6_cidr", "2001:db8::174/64"))
+    appliance_console._refresh_management_addresses(123)
+    assert interface.ip_cidr is None
+    assert interface.ipv6_cidr is None
+
+
+def test_console_management_observation_failure_stops_dependent_work(client, monkeypatch):
+    """Network success must not become a false recovery-success audit on observation failure."""
+    from sqlalchemy import select
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import AuditEvent
+
+    selected = []
+    monkeypatch.setattr(appliance_console, "_submit_console_apply", lambda units: selected.append(units) or "job_network")
+
+    def fail_observation(interface_id):
+        raise ConsoleOperationError("fresh management address observation failed")
+
+    monkeypatch.setattr(appliance_console, "_refresh_management_addresses", fail_observation)
+    monkeypatch.setattr(appliance_console, "_recover_management_plane", lambda stage: pytest.fail("recovery started before observation"))
+    with pytest.raises(ConsoleOperationError, match="fresh management address observation"):
+        appliance_console.configure_management("dhcp", "", "", "disabled", "", "", "192.0.2.53")
+    assert selected == [{"network", "firewall"}]
+    with SessionLocal() as db:
+        assert not db.scalars(select(AuditEvent).where(AuditEvent.action == "console_recover_management_plane")).all()
 
 
 def test_console_management_recovery_reports_the_failed_layer(monkeypatch):

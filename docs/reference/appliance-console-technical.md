@@ -155,7 +155,14 @@ Network, DNS, and Firewall edits update desired state and create two synchronous
 the persisted nftables rules are regenerated from the corrected management CIDR instead of retaining an OVF-derived
 source restriction. Other pending units remain unselected.
 
-After the first task, the constrained console helper retries `atlaso-bootstrap-https.service` when
+After the first task, the console refreshes observations through `sync_host_physical_interfaces()` before any
+certificate recovery or Appliance Settings capture. The gate follows the edited physical-interface database identity
+across inventory renames and requires fresh host discovery, a present link, and a usable address in every requested
+family. Static observations must match desired CIDRs; DHCP and RA/SLAAC observations do not populate static desired
+fields. Acquisition retries for at most 30 seconds. An unavailable inventory, missing link, wrong-family address,
+link-local-only acquisition, or incomplete dual stack stops dependent work and cannot record recovery success.
+
+Once observations are verified, the constrained console helper retries `atlaso-bootstrap-https.service` when
 the exact `/var/lib/atlaso/first-boot-https.applied` completion record or the applied management nginx contract is
 missing, empty, unsafe, or inconsistent. The boot unit always invokes the idempotent bootstrap instead of trusting path
 existence as a systemd condition. A valid completion record may accompany either the applied HTTPS front door or a

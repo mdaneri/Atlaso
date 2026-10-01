@@ -125,8 +125,8 @@ authorization result between menus.
 4. Enter static addresses and gateways only when the corresponding mode is **Static**.
 5. Enter external DNS servers.
 6. Review the values and submit the change.
-7. Wait while Atlaso applies corrected Network and Firewall state, retries unfinished first-boot HTTPS, applies
-   Appliance Settings, and verifies local application plus nginx readiness.
+7. Wait while Atlaso applies corrected Network and Firewall state, observes the corrected addresses, retries unfinished
+   first-boot HTTPS, applies Appliance Settings, and verifies local application plus nginx readiness.
 8. Confirm that the console reports both appliance-apply task IDs and shows the expected management address and URL.
 9. Verify that `http://<management-address>/` redirects to HTTPS from another machine.
 10. Verify that `https://<management-address>/openapi.json` returns HTTP 200 from another machine.
@@ -137,10 +137,17 @@ link-local.
 
 The recovery action updates Atlaso desired state and submits two synchronous, scoped global appliance-apply tasks. The
 first always applies Network and Firewall so stale management-source restrictions cannot survive an address correction.
-Atlaso then retries first-boot HTTPS only when its completion marker is absent, validates nginx before any reload, and
-ensures nginx and Atlaso are enabled and running. After the second task applies Appliance Settings, the console requires
-five stable local checks: application `/openapi.json` on port 8000 plus the applied nginx management mode. HTTPS mode
-requires the HTTP redirect and HTTPS `/openapi.json`; HTTP-only mode requires HTTP `/openapi.json`.
+Atlaso refreshes host interface inventory and waits up to 30 seconds for a usable observed IPv4 address and, when
+enabled, IPv6 address on the corrected interface. Static observations must match the requested address and prefix;
+DHCP and automatic IPv6 observations remain separate from desired state. If inventory is unavailable or either
+requested family has not acquired a usable address, recovery and Appliance Settings stop with an observation error.
+Check the interface and DHCP/IPv6 acquisition, then retry the console correction.
+
+After observation succeeds, Atlaso retries first-boot HTTPS only when its completion marker is absent, validates nginx
+before any reload, and ensures nginx and Atlaso are enabled and running. After the second task applies Appliance
+Settings, the console requires five stable local checks: application `/openapi.json` on port 8000 plus the applied
+nginx management mode. HTTPS mode requires the HTTP redirect and HTTPS `/openapi.json`; HTTP-only mode requires
+HTTP `/openapi.json`.
 
 It never falls back to unvalidated host commands. A validation, bootstrap, firewall, nginx, service, or readiness
 failure names the failing layer on the console and leaves unapplied desired state pending for review in the web UI.

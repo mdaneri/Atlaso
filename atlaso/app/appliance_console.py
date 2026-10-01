@@ -86,6 +86,9 @@ from atlaso.app.services.firewall import (  # noqa: E402 - appliance environment
 from atlaso.app.services.network_objects import (  # noqa: E402 - appliance environment must load before configured imports.
     acquire_network_objects_write_lock,
 )
+from atlaso.app.services.networking import (  # noqa: E402 - appliance environment must load before configured imports.
+    sync_host_physical_interfaces,
+)
 
 HELPER_PATH = Path("/opt/atlaso/bin/atlaso-helper")
 PHOTON_RELEASE_PATH = Path("/etc/photon-release")
@@ -1211,6 +1214,55 @@ def _recover_management_plane(stage: str) -> None:
         raise ConsoleOperationError(f"{stage}, but management-plane recovery failed: {detail}")
 
 
+def _refresh_management_addresses(interface_id: int, *, timeout: float = 30) -> None:
+    """Observe the corrected link before recovery captures certificates and Settings.
+
+    Args:
+        interface_id: Stable identity of the physical interface edited by the console.
+        timeout: Maximum seconds to wait for every requested address family.
+
+    Raises:
+        ConsoleOperationError: If fresh host inventory cannot confirm the corrected addresses.
+    """
+    deadline = time.monotonic() + timeout
+    while True:
+        with SessionLocal() as db:
+            interfaces, discovered_count = sync_host_physical_interfaces(db)
+            interface = next((row for row in interfaces if row.id == interface_id), None)
+            required = []
+            if interface is not None:
+                required.append((4, interface.host_ip_cidr, interface.ip_cidr))
+                if interface.ipv6_enabled:
+                    required.append((6, interface.host_ipv6_cidr, interface.ipv6_cidr))
+            verified = bool(
+                discovered_count and interface is not None
+                and interface.inventory_source == "host" and interface.oper_state != "missing"
+            )
+            for family, observed, desired in required:
+                try:
+                    address = ip_interface(observed or "")
+                    expected = ip_interface(desired) if desired else None
+                except ValueError:
+                    verified = False
+                    continue
+                if (
+                    address.version != family or address.ip.is_unspecified
+                    or address.ip.is_loopback or address.ip.is_link_local or address.ip.is_multicast
+                    or (expected is not None and address != expected)
+                ):
+                    verified = False
+            if verified:
+                return
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise ConsoleOperationError(
+                "Network and Firewall were applied, but fresh management address observation "
+                "could not confirm every requested family. Certificate recovery and Appliance "
+                "Settings were not started; check the interface and DHCP/IPv6 acquisition, then retry."
+            )
+        time.sleep(min(1, remaining))
+
+
 def configure_management(
     ipv4_method: str,
     ipv4_cidr: str,
@@ -1244,6 +1296,7 @@ def configure_management(
     with SessionLocal() as db:
         acquire_network_objects_write_lock(db)
         interface = _management_interface(db)
+        interface_id = interface.id
         settings = db.scalar(select(ApplianceSettings).order_by(ApplianceSettings.id))
         if settings is None:
             raise ConsoleOperationError("Appliance Settings desired state is unavailable.")
@@ -1268,6 +1321,7 @@ def configure_management(
             detail=f"ipv4_method={method}; ipv6_mode={mode}; dns_servers={len(dns_servers)}",
         )
     network_job_id = _submit_console_apply({"network", "firewall"})
+    _refresh_management_addresses(interface_id)
     _recover_management_plane("Network and Firewall were applied")
     settings_job_id = _submit_console_apply({"appliance_settings"})
     _recover_management_plane("Appliance Settings were applied")
