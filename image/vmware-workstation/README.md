@@ -1,6 +1,6 @@
 # Atlaso Photon OS VMware Workstation Image
 
-The base image includes Python `vcf-sdk==9.1.0.0` and system-wide `VCF.PowerCLI==9.1.1.25718932`. Provisioning fails if
+The base image includes Python `vcf-sdk==9.1.1.0` and system-wide `VCF.PowerCLI==9.1.1.25718932`. Provisioning fails if
 PowerCLI cannot import or `Connect-VIServer` is unavailable to the unprivileged bootstrap administrator. Provisioning
 also disables and verifies PowerCLI CEIP participation at `AllUsers` scope; Appliance Settings can change that central
 preference after deployment without product-specific prompts. The system module tree remains root-owned and writable
