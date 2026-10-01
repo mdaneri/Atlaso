@@ -33,6 +33,7 @@ WEB_ACTIONS = {
     "server_probe",
 }
 WAIT_STATUS_TLS_TIMEOUT_SECONDS = 120
+WAIT_STATUS_LOGIN_READY_TIMEOUT_SECONDS = 60
 
 
 class SafeFailure(Exception):
@@ -212,20 +213,66 @@ def initialize_tls_context(host, *, timeout_seconds=15):
             time.sleep(min(1, remaining))
 
 
-def login(password):
+def wait_for_login_form(opener, *, timeout):
+    """Wait for a readable login form using safe, repeatable GET requests only."""
+    deadline = time.monotonic() + timeout
+    target = BASE.rstrip("/") + "/login"
+    while True:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise SafeFailure(
+                "login-readiness", "The login page did not become ready before the bounded deadline."
+            )
+        req = Request(target)
+        try:
+            with opener.open(req, timeout=min(5, remaining)) as response:
+                if response.status != 200:
+                    raise SafeFailure(
+                        "login-readiness", "The login page returned an unexpected response."
+                    )
+                body = response.read(2_000_000)
+        except HTTPError as exc:
+            if exc.code not in {502, 503, 504}:
+                raise SafeFailure(
+                    "login-readiness", "The login page returned a non-retryable HTTP response."
+                ) from None
+            body = None
+        except (URLError, TimeoutError, OSError):
+            body = None
+        if body is not None:
+            parser = TokenParser()
+            parser.feed(body.decode("utf-8", "replace"))
+            if not parser.token:
+                raise SafeFailure(
+                    "login-readiness", "The login page did not expose its CSRF field."
+                )
+            return parser.token
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise SafeFailure(
+                "login-readiness", "The login page did not become ready before the bounded deadline."
+            )
+        time.sleep(min(1, remaining))
+
+
+def login(password, *, readiness_timeout=0):
     opener = build_opener(
         HTTPCookieProcessor(http.cookiejar.CookieJar()),
         __import__("urllib.request", fromlist=["HTTPSHandler"]).HTTPSHandler(
             context=TLS_CONTEXT
         ),
     )
-    _, _, _, body = request(opener, "/login")
-    parser = TokenParser()
-    parser.feed(body.decode("utf-8", "replace"))
-    if not parser.token:
-        raise SafeFailure("login", "Login form did not expose its CSRF field.")
+    if readiness_timeout:
+        token = wait_for_login_form(opener, timeout=readiness_timeout)
+    else:
+        _, _, _, body = request(opener, "/login")
+        parser = TokenParser()
+        parser.feed(body.decode("utf-8", "replace"))
+        token = parser.token
+        if not token:
+            raise SafeFailure("login", "Login form did not expose its CSRF field.")
     fields = urlencode(
-        {"username": USERNAME, "password": password, "csrf": parser.token}
+        {"username": USERNAME, "password": password, "csrf": token}
     ).encode()
     status, _, _, _ = request(
         opener,
@@ -927,7 +974,10 @@ def run_action(payload):
             "returncode": result.returncode,
         }
     if action == "wait_status":
-        opener = login(payload["password"])
+        opener = login(
+            payload["password"],
+            readiness_timeout=WAIT_STATUS_LOGIN_READY_TIMEOUT_SECONDS,
+        )
         return {
             "clock": wait_status(
                 opener,

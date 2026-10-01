@@ -8,6 +8,7 @@ import json
 import re
 import sys
 from pathlib import Path
+from urllib.error import HTTPError, URLError
 
 import pytest
 
@@ -200,16 +201,116 @@ def test_web_tls_initialization_fails_safely_when_listener_never_recovers(monkey
     assert error.value.stage == "https-listener"
 
 
+def test_wait_status_login_retries_read_only_until_ready_then_posts_once(monkeypatch):
+    """Wait through a transient gateway error before the single credential POST."""
+    guest = _load_guest_module()
+    guest.BASE = "https://192.168.100.2/ui/management"
+    opens = []
+    posts = []
+
+    class Response:
+        def __init__(self, status, body=b""):
+            self.status = status
+            self.body = body
+            self.url = "https://192.168.100.2/ui/management/login"
+            self.headers = {}
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def read(self, _limit):
+            return self.body
+
+    class Opener:
+        def open(self, request, *, timeout):
+            opens.append((request.data, timeout))
+            if request.data is not None:
+                posts.append(request.data)
+                return Response(303)
+            if len(opens) == 1:
+                raise HTTPError(request.full_url, 502, "gateway", None, io.BytesIO())
+            return Response(200, b'<input name="csrf" value="ready-token">')
+
+    opener = Opener()
+    monkeypatch.setattr(guest, "build_opener", lambda *_args: opener)
+    monkeypatch.setattr(guest.time, "sleep", lambda _delay: None)
+
+    result = guest.login("test-password", readiness_timeout=60)
+
+    assert result is opener
+    assert len(opens) == 3
+    assert opens[0][0] is None and opens[1][0] is None
+    assert all(timeout <= 5 for _, timeout in opens[:2])
+    assert opens[2][1] == 20
+    assert len(posts) == 1
+    assert b"ready-token" in posts[0]
+
+
+def test_wait_status_login_readiness_deadline_never_posts_credentials(monkeypatch):
+    """Bound repeated transport failures to the readiness deadline."""
+    guest = _load_guest_module()
+    guest.BASE = "https://192.168.100.2/ui/management"
+    clock = [0.0]
+    requests = []
+
+    class Opener:
+        def open(self, request, *, timeout):
+            requests.append((request.data, timeout))
+            raise URLError("private transport detail")
+
+    monkeypatch.setattr(guest, "build_opener", lambda *_args: Opener())
+    monkeypatch.setattr(guest.time, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(
+        guest.time,
+        "sleep",
+        lambda delay: clock.__setitem__(0, clock[0] + delay),
+    )
+
+    with pytest.raises(guest.SafeFailure) as error:
+        guest.login("test-password", readiness_timeout=3)
+
+    assert error.value.stage == "login-readiness"
+    assert len(requests) == 3
+    assert all(body is None and timeout <= 5 for body, timeout in requests)
+
+
+def test_wait_status_login_nonretryable_http_error_never_posts_credentials(monkeypatch):
+    """Fail closed on an authentication response rather than retrying or posting."""
+    guest = _load_guest_module()
+    guest.BASE = "https://192.168.100.2/ui/management"
+    requests = []
+
+    class Opener:
+        def open(self, request, *, timeout):
+            requests.append(request.data)
+            raise HTTPError(request.full_url, 401, "unauthorized", None, io.BytesIO())
+
+    monkeypatch.setattr(guest, "build_opener", lambda *_args: Opener())
+
+    with pytest.raises(guest.SafeFailure) as error:
+        guest.login("test-password", readiness_timeout=60)
+
+    assert error.value.stage == "login-readiness"
+    assert requests == [None]
+
+
 def test_wait_status_host_budget_covers_web_listener_and_clock_recovery():
-    """Keep the channel budget above TLS, login, health wait, and response bounds."""
+    """Keep the host channel above each bounded recovery and HTTP phase."""
     guest = _load_guest_module()
     minimum_seconds = (
-        guest.WAIT_STATUS_TLS_TIMEOUT_SECONDS + (2 * 20) + 90 + 20
+        guest.WAIT_STATUS_TLS_TIMEOUT_SECONDS
+        + guest.WAIT_STATUS_LOGIN_READY_TIMEOUT_SECONDS
+        + 20
+        + 90
+        + 20
     )
     host_budget = host_acceptance._ACTION_TIMEOUTS["wait_status"]
 
     assert host_budget > minimum_seconds
-    assert host_budget <= 330
+    assert host_budget <= 360
 
 
 def test_rendered_ntp_page_keeps_source_when_select_is_enabled_and_hidden_copy_disabled(
