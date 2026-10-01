@@ -472,8 +472,17 @@ def _probe_client_refusal(
     return {"request_delivered": True, "ntp_response_received": False}
 
 
-def _probe_server(address: str, network: ipaddress.IPv4Interface) -> dict[str, Any]:
-    source_address = _host_source_address(address)
+def _probe_server(
+    address: str,
+    network: ipaddress.IPv4Interface,
+    source_address: str | None = None,
+) -> dict[str, Any]:
+    if source_address is None:
+        source_address = _host_source_address(address)
+    try:
+        source_address = str(ipaddress.IPv4Address(source_address))
+    except ValueError:
+        _fail("The host server query source address is invalid.")
     if ipaddress.IPv4Address(source_address) not in network.network:
         _fail("The host server query did not route through the selected site network.")
     packet, transmit = build_ntp_request()
@@ -496,27 +505,75 @@ def _windows_fixture_neighbor(
 ) -> dict[str, str]:
     if os.name != "nt":
         _fail("Host-side fixture ownership verification requires Windows VMware networking.")
-    try:
-        subprocess.run(
-            ["ping.exe", "-n", "1", "-w", "1000", address],
-            capture_output=True,
-            timeout=3,
-            check=False,
-        )
-    except (OSError, subprocess.TimeoutExpired):
-        pass
     script = r'''
 $ErrorActionPreference = 'Stop'
 $request = [Console]::In.ReadLine() | ConvertFrom-Json
-$route = Find-NetRoute -RemoteIPAddress $request.address | Select-Object -First 1
-if ($null -eq $route) { exit 2 }
-$adapter = Get-NetAdapter -InterfaceIndex $route.InterfaceIndex -ErrorAction Stop
-$source = Get-NetIPAddress -InterfaceIndex $route.InterfaceIndex -AddressFamily IPv4 -IPAddress $route.IPAddress -ErrorAction Stop | Select-Object -First 1
-$neighbor = Get-NetNeighbor -InterfaceIndex $route.InterfaceIndex -IPAddress $request.address -AddressFamily IPv4 -ErrorAction SilentlyContinue | Select-Object -First 1
-if ($null -eq $source -or $null -eq $neighbor) { exit 3 }
-[ordered]@{ alias=$adapter.Name; source=$source.IPAddress; mac=$neighbor.LinkLayerAddress; state=[string]$neighbor.State } | ConvertTo-Json -Compress
+<#
+.SYNOPSIS
+Checks whether an IPv4 address belongs to the selected site subnet.
+.PARAMETER address
+The IPv4 address to check.
+.PARAMETER networkAddress
+The site subnet's IPv4 network address.
+.PARAMETER prefixLength
+The site subnet prefix length.
+#>
+function Test-SiteNetwork($address, $networkAddress, $prefixLength) {
+    $addressBytes = ([Net.IPAddress]::Parse($address)).GetAddressBytes()
+    $networkBytes = ([Net.IPAddress]::Parse($networkAddress)).GetAddressBytes()
+    for ($index = 0; $index -lt 4; $index++) {
+        $bits = [Math]::Min(8, [Math]::Max(0, $prefixLength - (8 * $index)))
+        if ($bits -gt 0) {
+            $mask = [int](256 - [Math]::Pow(2, 8 - $bits))
+            if (($addressBytes[$index] -band $mask) -ne ($networkBytes[$index] -band $mask)) { return $false }
+        }
+    }
+    return $true
+}
+$expectedAlias = "VMware Network Adapter $($request.site_network)"
+$adapter = Get-NetAdapter -Name $expectedAlias -ErrorAction Stop
+if ($adapter.Status -ne 'Up') { exit 2 }
+$sources = Get-NetIPAddress -InterfaceIndex $adapter.InterfaceIndex -AddressFamily IPv4 -ErrorAction Stop |
+    Where-Object { $_.PrefixLength -eq $request.prefix_length -and $_.AddressState -eq 'Preferred' -and
+        (Test-SiteNetwork $_.IPAddress $request.network_address $request.prefix_length) }
+if ($null -eq $sources) { exit 3 }
+$selected = $null
+$selectedRoute = $null
+$selectedLocalAddress = $null
+foreach ($source in $sources) {
+    $routeResults = @(Find-NetRoute -LocalIPAddress $source.IPAddress -RemoteIPAddress $request.address)
+    $localAddress = $routeResults | Where-Object {
+        $_.PSObject.Properties['IPAddress'] -and $_.IPAddress -eq $source.IPAddress
+    } | Select-Object -First 1
+    $route = $routeResults | Where-Object {
+        $_.PSObject.Properties['DestinationPrefix']
+    } | Select-Object -First 1
+    if ($null -ne $localAddress -and $null -ne $route -and
+        $localAddress.InterfaceIndex -eq $adapter.InterfaceIndex -and
+        $route.InterfaceIndex -eq $adapter.InterfaceIndex) {
+        $selected = $source
+        $selectedLocalAddress = $localAddress
+        $selectedRoute = $route
+        break
+    }
+}
+if ($null -eq $selected) { exit 4 }
+& ping.exe -S $selected.IPAddress -n 1 -w 1000 $request.address | Out-Null
+$neighbor = Get-NetNeighbor -InterfaceIndex $adapter.InterfaceIndex -IPAddress $request.address -AddressFamily IPv4 -ErrorAction SilentlyContinue | Select-Object -First 1
+if ($null -eq $neighbor) { exit 5 }
+[ordered]@{ alias=$adapter.Name; source=$selected.IPAddress; mac=$neighbor.LinkLayerAddress; state=[string]$neighbor.State;
+    interface_index=[int]$adapter.InterfaceIndex; local_interface_index=[int]$selectedLocalAddress.InterfaceIndex;
+    route_interface_index=[int]$selectedRoute.InterfaceIndex; route_source=$selectedLocalAddress.IPAddress } | ConvertTo-Json -Compress
 '''
-    request = json.dumps({"address": address}, separators=(",", ":")) + "\n"
+    request = json.dumps(
+        {
+            "address": address,
+            "network_address": str(network.network.network_address),
+            "prefix_length": network.network.prefixlen,
+            "site_network": site_network,
+        },
+        separators=(",", ":"),
+    ) + "\n"
     try:
         completed = subprocess.run(
             ["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", script],
@@ -536,17 +593,31 @@ if ($null -eq $source -or $null -eq $neighbor) { exit 3 }
         source = str(ipaddress.IPv4Address(observation["source"]))
         mac = str(observation["mac"]).replace("-", ":").lower()
         neighbor_state = str(observation["state"]).lower()
+        interface_index = int(observation["interface_index"])
+        local_interface_index = int(observation["local_interface_index"])
+        route_interface_index = int(observation["route_interface_index"])
+        route_source = str(ipaddress.IPv4Address(observation["route_source"]))
     except (ValueError, TypeError, KeyError, json.JSONDecodeError):
         _fail("Host-side fixture neighbor response was invalid.")
-    normalized_network = site_network.lower()
+    expected_alias = f"VMware Network Adapter {site_network}"
     if (
-        not alias.lower().endswith(normalized_network)
+        alias.casefold() != expected_alias.casefold()
         or ipaddress.IPv4Address(source) not in network.network
+        or interface_index <= 0
+        or local_interface_index != interface_index
+        or route_interface_index != interface_index
+        or route_source != source
         or mac != expected_mac.replace("-", ":").lower()
         or neighbor_state not in {"reachable", "stale", "delay", "probe"}
     ):
-        _fail("Host route or neighbor MAC does not match the owned site fixture.")
-    return {"interface": site_network, "source_address": source, "guest_mac": mac}
+        _fail("Host route or neighbor MAC does not match the selected VMware site fixture.")
+    return {
+        "interface": site_network,
+        "source_address": source,
+        "guest_mac": mac,
+        "interface_index": str(interface_index),
+        "route_interface_index": str(route_interface_index),
+    }
 
 
 class _AcceptanceRunner:
@@ -571,6 +642,7 @@ class _AcceptanceRunner:
         self.host, self.ssh_user, self.ssh_password, self.web_user, self.web_password, _pin = _identity(args)
         self.interface, self.site_network, self.server_address, self.site = _site_settings(args)
         self.steps: list[dict[str, Any]] = []
+        self.fixture_source_address: str | None = None
 
     def _action(self, action: str, **parameters: Any) -> dict[str, Any]:
         return self.guest.invoke(
@@ -621,7 +693,18 @@ class _AcceptanceRunner:
             or not _valid_mac(mac)
         ):
             _fail("The guest did not report the requested site-interface address and MAC.")
-        return self.fixture_neighbor(self.server_address, self.site, self.site_network, mac)
+        ownership = self.fixture_neighbor(self.server_address, self.site, self.site_network, mac)
+        source_address = ownership.get("source_address")
+        if not isinstance(source_address, str):
+            _fail("The selected VMware site route did not provide a source address.")
+        try:
+            source_address = str(ipaddress.IPv4Address(source_address))
+        except ValueError:
+            _fail("The selected VMware site route returned an invalid source address.")
+        if ipaddress.IPv4Address(source_address) not in self.site.network:
+            _fail("The selected VMware site route source is outside the site subnet.")
+        self.fixture_source_address = source_address
+        return ownership
 
     def _reboot(self, expected_mode: str) -> dict[str, Any]:
         old = self._action("boot_id").get("boot_id")
@@ -730,7 +813,9 @@ class _AcceptanceRunner:
             _fail("Time-source native acceptance failed; detailed diagnostics were suppressed.")
 
     def _probe_server_and_health(self) -> dict[str, Any]:
-        response = self.server_probe(self.server_address, self.site)
+        if self.fixture_source_address is None:
+            _fail("The VMware site route was not verified before the server probe.")
+        response = self.server_probe(self.server_address, self.site, self.fixture_source_address)
         if (
             response.get("peer_address") != self.server_address
             or response.get("peer_port") != 123

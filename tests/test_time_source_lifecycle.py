@@ -143,6 +143,104 @@ def test_client_probe_requires_capture_ready_and_proves_no_ntp_response(monkeypa
     assert ("close", None) in calls
 
 
+def test_server_probe_binds_to_verified_vmnet_source_instead_of_default_route(monkeypatch):
+    """Use the verified site NIC explicitly when Wi-Fi owns the default route."""
+    calls = []
+
+    class FakeSocket:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            pass
+
+        def bind(self, address):
+            calls.append(("bind", address))
+
+        def settimeout(self, timeout):
+            calls.append(("timeout", timeout))
+
+        def sendto(self, packet, address):
+            calls.append(("send", address))
+            self.transmit = packet[40:48]
+
+        def recvfrom(self, _size):
+            return _server_reply(self.transmit), ("192.168.87.11", 123)
+
+    monkeypatch.setattr(acceptance.socket, "socket", lambda *_args, **_kwargs: FakeSocket())
+    monkeypatch.setattr(
+        acceptance,
+        "_host_source_address",
+        lambda _address: pytest.fail("The system default route must not choose the server probe interface."),
+    )
+
+    result = acceptance._probe_server(
+        "192.168.87.11",
+        ipaddress.IPv4Interface("192.168.87.1/24"),
+        source_address="192.168.87.1",
+    )
+
+    assert ("bind", ("192.168.87.1", 0)) in calls
+    assert ("send", ("192.168.87.11", 123)) in calls
+    assert result["mode"] == 4
+
+
+@pytest.mark.parametrize(("route_interface_index", "expected_success"), [(25, True), (7, False)])
+def test_windows_fixture_neighbor_binds_route_to_vmnet_and_rejects_wifi_route(
+    monkeypatch, route_interface_index, expected_success
+):
+    """Select the matching VMnet source and fail if route resolution leaves it for Wi-Fi."""
+    captured = {}
+
+    def fake_run(command, **kwargs):
+        assert command[:3] == ["powershell.exe", "-NoProfile", "-NonInteractive"]
+        captured["script"] = command[-1]
+        captured["request"] = json.loads(kwargs["input"])
+        return SimpleNamespace(
+            returncode=0,
+            stdout=json.dumps(
+                {
+                    "alias": "VMware Network Adapter VMnet1",
+                    "source": "192.168.87.1",
+                    "mac": "00:50:56:aa:bb:cc",
+                    "state": "Reachable",
+                    "interface_index": 25,
+                    "local_interface_index": 25,
+                    "route_interface_index": route_interface_index,
+                    "route_source": "192.168.87.1",
+                }
+            ),
+        )
+
+    monkeypatch.setattr(acceptance, "os", SimpleNamespace(name="nt"))
+    monkeypatch.setattr(acceptance.subprocess, "run", fake_run)
+    fixture = ipaddress.IPv4Interface("192.168.87.11/24")
+
+    if expected_success:
+        evidence = acceptance._windows_fixture_neighbor(
+            str(fixture.ip), fixture, "VMnet1", "00:50:56:aa:bb:cc"
+        )
+        assert evidence["source_address"] == "192.168.87.1"
+        assert evidence["interface_index"] == "25"
+    else:
+        with pytest.raises(acceptance.TimeSourceAcceptanceError):
+            acceptance._windows_fixture_neighbor(
+                str(fixture.ip), fixture, "VMnet1", "00:50:56:aa:bb:cc"
+            )
+
+    assert captured["request"] == {
+        "address": "192.168.87.11",
+        "network_address": "192.168.87.0",
+        "prefix_length": 24,
+        "site_network": "VMnet1",
+    }
+    assert "Get-NetAdapter -Name $expectedAlias" in captured["script"]
+    assert "Find-NetRoute -LocalIPAddress $source.IPAddress -RemoteIPAddress $request.address" in captured["script"]
+    assert "DestinationPrefix" in captured["script"]
+    assert "route.InterfaceIndex -eq $adapter.InterfaceIndex" in captured["script"]
+    assert "ping.exe -S $selected.IPAddress" in captured["script"]
+
+
 @pytest.mark.parametrize(("sudo_status", "expected_prefix"), [(0, "sudo -n "), (1, "sudo -S -p '' ")])
 def test_guest_channel_keeps_password_out_of_command_and_preserves_json_stdin(
     monkeypatch, sudo_status, expected_prefix
@@ -308,6 +406,7 @@ def test_scenario_runs_all_modes_conflict_reboot_and_server_probe_in_order(monke
     monkeypatch.setattr(acceptance.tomllib, "loads", lambda _value: {"project": project})
     monkeypatch.setattr(Path, "read_text", lambda _self, **_kwargs: '[project]\nversion="0.9.384"\n')
     guest = FakeGuest(helper_hash, "0.9.384")
+    probe_sources = []
     args = SimpleNamespace(
         appliance_ssh_host="192.168.100.2",
         appliance_ssh_user="admin",
@@ -327,16 +426,19 @@ def test_scenario_runs_all_modes_conflict_reboot_and_server_probe_in_order(monke
             "request_delivered": True,
             "ntp_response_received": False,
         },
-        server_probe=lambda *_args, **_kwargs: {
-            "peer_address": "192.168.87.11",
-            "peer_port": 123,
-            "mode": 4,
-            "version": 4,
-            "stratum": 2,
-            "leap_alarm": False,
-            "originate_timestamp_matched": True,
-            "transmit_timestamp_present": True,
-        },
+        server_probe=lambda address, network, source_address: (
+            probe_sources.append(source_address)
+            or {
+                "peer_address": address,
+                "peer_port": 123,
+                "mode": 4,
+                "version": 4,
+                "stratum": 2,
+                "leap_alarm": False,
+                "originate_timestamp_matched": True,
+                "transmit_timestamp_present": True,
+            }
+        ),
         fixture_neighbor=lambda *_args, **_kwargs: {"interface": "VMnet1", "source_address": "192.168.87.1", "guest_mac": "00:50:56:aa:bb:cc"},
     )
 
@@ -373,6 +475,7 @@ def test_scenario_runs_all_modes_conflict_reboot_and_server_probe_in_order(monke
     assert guest.actions.count("reboot") == 3
     assert guest.events.count("disconnect") == 3
     assert guest.events.count("reconnect") == 3
+    assert probe_sources == ["192.168.87.1", "192.168.87.1"]
     assert "ssh-secret" not in json.dumps(result)
     assert "web-secret" not in json.dumps(result)
 

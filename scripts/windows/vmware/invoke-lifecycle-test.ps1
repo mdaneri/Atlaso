@@ -461,7 +461,7 @@ if ($PSCmdlet.ParameterSetName -eq 'CleanupVms') {
 if ($OidcOnly -or $TimeSourceOnly) {
     Assert-AtlasoOidcSiteNetwork -SiteANetwork $SiteANetwork -SiteCidr $SiteCidr `
         -PrepareNetworksPath (Join-Path $PSScriptRoot 'prepare-networks.ps1') `
-        -VmrunPath $VmrunPath -BridgedInterfaceAlias $BridgedInterfaceAlias
+        -VmrunPath $VmrunPath -BridgedInterfaceAlias $BridgedInterfaceAlias -BindSiteSource:$TimeSourceOnly
 }
 
 if (-not $PlanOnly) {

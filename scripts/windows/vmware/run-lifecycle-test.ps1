@@ -872,6 +872,7 @@ if ($OidcOnly -or $TimeSourceOnly) {
         SiteCidr = $SiteCidr
         VmrunPath = $VmrunPath
         BridgedInterfaceAlias = $BridgedInterfaceAlias
+        BindSiteSource = [bool]$TimeSourceOnly
     }
     if ($PlanOnly) {
         $siteNetworkArgs['PrepareNetworksPath'] = Join-Path $PSScriptRoot 'prepare-networks.ps1'

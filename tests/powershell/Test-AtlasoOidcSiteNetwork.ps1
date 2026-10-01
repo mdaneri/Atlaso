@@ -31,11 +31,14 @@ try {
             $script:fixtureAddresses
         }
         Set-Item Function:script:Find-NetRoute -Value {
-            param($RemoteIPAddress, $ErrorAction)
+            param($RemoteIPAddress, $LocalIPAddress, $ErrorAction)
+            $script:observedSource = $LocalIPAddress
             [pscustomobject]@{ IPAddress = '192.168.84.1'; InterfaceIndex = 24 }
-            [pscustomobject]@{ DestinationPrefix = '192.168.84.0/24'; InterfaceIndex = $script:fixtureRouteIndex }
+            $routeIndex = if ($LocalIPAddress) { $script:fixtureBoundRouteIndex } else { $script:fixtureRouteIndex }
+            [pscustomobject]@{ DestinationPrefix = '192.168.84.0/24'; InterfaceIndex = $routeIndex }
         }
         $script:fixtureRouteIndex = 24
+        $script:fixtureBoundRouteIndex = 24
     }
 
     & $module {
@@ -65,6 +68,17 @@ try {
     }
     if ($null -eq $wrongRoute -or $wrongRoute.Exception.Message -notlike '*does not route through the selected host adapter*') {
         throw 'A competing Windows route was admitted.'
+    }
+
+    Assert-AtlasoOidcSiteNetwork -SiteANetwork VMnet2 -SiteCidr '192.168.84.3/24' -PrepareNetworksScript $networkPlan -BindSiteSource
+    & $module { if ($script:observedSource -ne '192.168.84.1') { throw 'The explicit site source was not selected.' } }
+    & $module { $script:fixtureBoundRouteIndex = 42 }
+    $wrongBoundRoute = $null
+    try {
+        Assert-AtlasoOidcSiteNetwork -SiteANetwork VMnet2 -SiteCidr '192.168.84.3/24' -PrepareNetworksScript $networkPlan -BindSiteSource
+    } catch { $wrongBoundRoute = $_ }
+    if ($null -eq $wrongBoundRoute -or $wrongBoundRoute.Exception.Message -notlike '*does not route through the selected host adapter*') {
+        throw 'A wrong route from the bound site source was admitted.'
     }
 
     foreach ($unusableAddress in @('192.168.84.0/24', '192.168.84.255/24')) {
