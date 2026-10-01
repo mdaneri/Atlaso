@@ -67,6 +67,7 @@ VMware Tools Apply also waits up to 60 seconds for two advancing host-time obser
 clock within two seconds. This tolerance accounts for the host-time command's whole-second precision. An enabled
 periodic-sync setting alone cannot complete Apply. Status reports clock disagreement as unhealthy and an unavailable
 host-time comparison as unknown.
+VMware Tools restart and failed-start hooks restore the selected NTP controller after temporarily stopping it.
 Startup, restore, appliance updates, and reboot preserve the same mutual-exclusion rule. Settings archive
 and restore include the selected source. Factory reset returns the source to the documented **NTP client** default.
 
@@ -86,7 +87,8 @@ effective state as unknown instead of claiming the clock is healthy.
 
 NTP health uses the current synchronization state. NTPsec's last event can still show
 `no_sys_peer` after synchronization recovers; that historical event does not override
-current `leap_none` and `sync_ntp` state. Firewall Apply and service activation replay
+current `leap_none` and `sync_ntp` state. If every actual upstream peer has zero reach, health reports missing replies
+even while those synchronization flags remain set. Firewall Apply and service activation replay
 the client-only ingress guard in the same nftables transaction as the firewall rules.
 
 Appliance Settings does not own time enforcement. DNS/DHCP also does not apply NTP configuration.

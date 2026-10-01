@@ -19510,6 +19510,67 @@ def test_ntpd_vmtools_restart_hooks_preserve_selected_mode(monkeypatch, tmp_path
         assert ("command", "systemctl", "start", "--no-block", "ntpd.service") in calls
 
 
+@pytest.mark.parametrize("mode", ["ntp_client", "ntp_server"])
+def test_ntpd_vmtools_failed_start_execstoppost_restores_ntp_controller(monkeypatch, tmp_path, mode):
+    """ExecStopPost restores the selected NTP mode after vmtoolsd ExecStart fails."""
+    helper = load_helper_module()
+    config = tmp_path / "ntp.conf"
+    config.write_text("# Atlaso NTP enabled: false\n", encoding="utf-8")
+    monkeypatch.setattr(helper, "NTP_CONFIG_PATH", config)
+    monkeypatch.setattr(helper, "_ntpd_config_managed", lambda _path: True)
+    monkeypatch.setattr(helper, "_ntpd_applied_time_mode", lambda _path: mode)
+    monkeypatch.setattr(helper, "NTP_GUARD_SERVICE_PATH", tmp_path / "atlaso-time-sync-guard.service")
+    monkeypatch.setattr(helper, "NTP_NTPD_DROPIN_PATH", tmp_path / "ntpd.conf")
+    vmtools_dropin = tmp_path / "vmtoolsd.conf"
+    monkeypatch.setattr(helper, "NTP_VMTOOLS_DROPIN_PATH", vmtools_dropin)
+    monkeypatch.setattr(helper, "FIREWALL_SERVICE_PATH", tmp_path / "missing-firewall.service")
+    monkeypatch.setattr(helper, "_ntpd_run_checked", lambda *_args: None)
+
+    helper._ntpd_install_guards()
+
+    assert "ExecStopPost=/opt/atlaso/bin/atlaso-helper ntpd guard post-vmtoolsd --real" in (
+        vmtools_dropin.read_text(encoding="utf-8")
+    )
+
+    state = {"ntpd": True, "chronyd": False, "timesyncd": False, "vmware": False, "packet_guard": None}
+    commands: list[list[str]] = []
+
+    def stop_service(unit: str, **_kwargs) -> None:
+        if unit == "ntpd.service":
+            state["ntpd"] = False
+        elif unit == "chronyd.service":
+            state["chronyd"] = False
+        elif unit == "systemd-timesyncd.service":
+            state["timesyncd"] = False
+
+    def run_checked(command: list[str], _description: str) -> None:
+        commands.append(command)
+        if command == ["systemctl", "start", "--no-block", "ntpd.service"]:
+            state["ntpd"] = True
+
+    monkeypatch.setattr(helper, "_ntpd_stop_service", stop_service)
+    monkeypatch.setattr(helper, "_ntpd_client_packet_guard", lambda value: state.__setitem__("packet_guard", value))
+    monkeypatch.setattr(helper, "_ntpd_set_vmware_timesync", lambda enabled: state.__setitem__("vmware", enabled))
+    monkeypatch.setattr(helper, "_ntpd_run_checked", run_checked)
+
+    assert helper._ntpd_guard("pre-vmtoolsd") == 0
+    assert state["ntpd"] is False
+
+    # The vmtoolsd ExecStart fails here, so systemd invokes the same callback
+    # installed as ExecStopPost rather than ExecStartPost.
+    assert helper._ntpd_guard("post-vmtoolsd") == 0
+
+    assert state == {
+        "ntpd": True,
+        "chronyd": False,
+        "timesyncd": False,
+        "vmware": False,
+        "packet_guard": mode,
+    }
+    assert ["systemctl", "enable", "ntpd.service"] in commands
+    assert ["systemctl", "start", "--no-block", "ntpd.service"] in commands
+
+
 def test_ntpd_apply_restores_previous_mode_after_vmware_verification_failure(monkeypatch, tmp_path, capsys):
     """A failed VMware enable restores the old client config and controller."""
     helper = load_helper_module()
@@ -20175,6 +20236,8 @@ def test_ntpd_status_reports_selected_controller_conflicts_and_guard(monkeypatch
         ("no-system-peer", False),
         ("guard-drift", False),
         ("stale-no-system-peer-event", True),
+        ("reach-zero", False),
+        ("mixed-reach", True),
         ("missing-variables", None),
     ],
 )
@@ -20210,7 +20273,22 @@ def test_ntpd_status_reports_runtime_drift_and_sync_failures(
                     "stale-no-system-peer-event": "leap_none, sync_ntp, no_sys_peer",
                 }.get(scenario, "leap_none, sync_ntp")
                 return subprocess.CompletedProcess(command, 0, values, "")
-            return subprocess.CompletedProcess(command, 0, "*192.0.2.1 .GPS. 1 u 10 64 377 1.0 0.0 0.0\n", "")
+            peer_outputs = {
+                "reach-zero": (
+                    "     remote           refid      st t when poll reach   delay   offset  jitter\n"
+                    "==============================================================================\n"
+                    " 192.0.2.1      .GPS.            1 u   10   64    0   1.000   0.000   0.000\n"
+                    " 192.0.2.2      .GPS.            1 u    5   64    0   1.100   0.100   0.200\n"
+                ),
+                "mixed-reach": (
+                    "     remote           refid      st t when poll reach   delay   offset  jitter\n"
+                    "==============================================================================\n"
+                    "*192.0.2.1      .GPS.            1 u   10   64  377   1.000   0.000   0.000\n"
+                    "+192.0.2.2      .GPS.            1 u    5   64    0   1.100   0.100   0.200\n"
+                ),
+            }
+            peer_output = peer_outputs.get(scenario, "*192.0.2.1 .GPS. 1 u 10 64 377 1.0 0.0 0.0\n")
+            return subprocess.CompletedProcess(command, 0, peer_output, "")
         if command[1] == "is-active":
             unit = command[2]
             active = unit == "ntpd.service" or (scenario == "chronyd-conflict" and unit == "chronyd.service")
@@ -20228,6 +20306,16 @@ def test_ntpd_status_reports_runtime_drift_and_sync_failures(
     assert helper._ntpd_status() == 0
     payload = json.loads(capsys.readouterr().out)
     assert payload["synchronization"]["healthy"] is expected_health
+    if scenario == "reach-zero":
+        assert payload["upstream"]["reach_zero"] is True
+        assert payload["upstream"]["selected"] is None
+    elif scenario == "mixed-reach":
+        assert payload["upstream"]["reach_zero"] is False
+        assert payload["upstream"]["selected"] == {
+            "address": "192.0.2.1",
+            "stratum": "1",
+            "reach": "377",
+        }
     if scenario in {"vmware-conflict", "chronyd-conflict"}:
         assert "competing clock source" in payload["synchronization"]["detail"].lower()
 

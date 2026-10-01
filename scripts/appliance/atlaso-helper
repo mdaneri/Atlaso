@@ -7258,6 +7258,7 @@ def _ntpd_install_guards() -> None:
             "[Service]",
             "ExecStartPre=/opt/atlaso/bin/atlaso-helper ntpd guard pre-vmtoolsd --real",
             "ExecStartPost=/opt/atlaso/bin/atlaso-helper ntpd guard post-vmtoolsd --real",
+            "ExecStopPost=/opt/atlaso/bin/atlaso-helper ntpd guard post-vmtoolsd --real",
             "",
         ]),
     )
@@ -7809,9 +7810,9 @@ def _ntpd_status() -> int:
     peer_rows: list[list[str]] = []
     if isinstance(peers_payload, dict) and peers_payload.get("returncode") == 0:
         peer_rows = [
-            line.split()
-            for line in str(peers_payload.get("stdout") or "").splitlines()
-            if line.strip() and not line.lstrip().startswith("remote")
+            fields
+            for fields in (line.split() for line in str(peers_payload.get("stdout") or "").splitlines())
+            if len(fields) >= 10 and fields[0] != "remote"
         ]
     selected_peer: dict[str, object] | None = None
     for fields in peer_rows:
