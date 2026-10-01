@@ -28,7 +28,7 @@ _ACTION_TIMEOUTS = {
     "apply": 600,
     "client_capture": 25,
     "tools_restart": 80,
-    "wait_status": 360,
+    "wait_status": 600,
     "conflict_enable": 35,
     "ntpwait": 45,
     "status": 35,

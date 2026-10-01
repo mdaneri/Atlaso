@@ -201,12 +201,14 @@ def test_web_tls_initialization_fails_safely_when_listener_never_recovers(monkey
     assert error.value.stage == "https-listener"
 
 
-def test_wait_status_login_retries_read_only_until_ready_then_posts_once(monkeypatch):
+@pytest.mark.parametrize("ready_delay", [1, 85], ids=["brief-gateway-error", "slow-appliance-startup"])
+def test_wait_status_login_retries_read_only_until_ready_then_posts_once(monkeypatch, ready_delay):
     """Wait through a transient gateway error before the single credential POST."""
     guest = _load_guest_module()
     guest.BASE = "https://192.168.100.2/ui/management"
     opens = []
     posts = []
+    clock = [0.0]
 
     class Response:
         def __init__(self, status, body=b""):
@@ -230,21 +232,22 @@ def test_wait_status_login_retries_read_only_until_ready_then_posts_once(monkeyp
             if request.data is not None:
                 posts.append(request.data)
                 return Response(303)
-            if len(opens) == 1:
-                raise HTTPError(request.full_url, 502, "gateway", None, io.BytesIO())
+            if clock[0] < ready_delay:
+                raise HTTPError(request.full_url, 503, "gateway", None, io.BytesIO())
             return Response(200, b'<input name="csrf" value="ready-token">')
 
     opener = Opener()
     monkeypatch.setattr(guest, "build_opener", lambda *_args: opener)
-    monkeypatch.setattr(guest.time, "sleep", lambda _delay: None)
+    monkeypatch.setattr(guest.time, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(guest.time, "sleep", lambda delay: clock.__setitem__(0, clock[0] + delay))
 
-    result = guest.login("test-password", readiness_timeout=60)
+    result = guest.login("test-password", readiness_timeout=guest.WAIT_STATUS_LOGIN_READY_TIMEOUT_SECONDS)
 
     assert result is opener
-    assert len(opens) == 3
-    assert opens[0][0] is None and opens[1][0] is None
-    assert all(timeout <= 5 for _, timeout in opens[:2])
-    assert opens[2][1] == 20
+    assert clock[0] == ready_delay
+    assert len(opens) == ready_delay + 2
+    assert all(data is None and timeout <= 5 for data, timeout in opens[:-1])
+    assert opens[-1][1] == 20
     assert len(posts) == 1
     assert b"ready-token" in posts[0]
 
@@ -310,7 +313,7 @@ def test_wait_status_host_budget_covers_web_listener_and_clock_recovery():
     host_budget = host_acceptance._ACTION_TIMEOUTS["wait_status"]
 
     assert host_budget > minimum_seconds
-    assert host_budget <= 360
+    assert host_budget <= 600
 
 
 def test_rendered_ntp_page_keeps_source_when_select_is_enabled_and_hidden_copy_disabled(

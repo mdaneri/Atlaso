@@ -1650,22 +1650,28 @@ def test_management_handoff_rollback_keeps_old_scope_renewal_only(monkeypatch, t
 
 @pytest.mark.parametrize(
     ("mode", "guard_expected"),
-    [("ntp_client", True), ("ntp_server", False)],
-    ids=["client-guard-replayed", "server-does-not-retain-client-guard"],
+    [
+        ("ntp_client", True),
+        ("ntp_server", True),
+        ("vmware_tools", False),
+        ("disabled", False),
+    ],
+    ids=["client-guard-replayed", "server-guard-replayed", "vmware-no-ntp-guard", "disabled-no-guard"],
 )
 def test_firewall_replay_uses_atomic_nft_wrapper_for_applied_time_mode(
     monkeypatch, tmp_path, mode, guard_expected
 ):
-    """Boot replay routes persisted nft rules through the applied NTP guard wrapper."""
+    """Boot replay preserves the selected NTP guard without editing desired firewall rules."""
     helper = load_helper_module()
     firewall = tmp_path / "atlaso.nft"
     firewall.write_text("flush ruleset\ntable inet atlaso { }\n", encoding="utf-8")
     ntp_config = tmp_path / "ntp.conf"
-    ntp_config.write_text(
-        f"# Atlaso NTP enabled: {'true' if mode == 'ntp_server' else 'false'}\n"
-        f"# Atlaso time mode: {mode}\n",
-        encoding="utf-8",
-    )
+    config_text = f"# Atlaso NTP enabled: {'true' if mode == 'ntp_server' else 'false'}\n"
+    if mode != "disabled":
+        config_text += f"# Atlaso time mode: {mode}\n"
+    if mode == "ntp_server":
+        config_text += "interface listen all\ninterface listen 192.0.2.10\ninterface listen 2001:db8::10\n"
+    ntp_config.write_text(config_text, encoding="utf-8")
     monkeypatch.setattr(helper, "FIREWALL_CONFIG_PATH", firewall)
     monkeypatch.setattr(helper, "NTP_CONFIG_PATH", ntp_config)
     monkeypatch.setattr(helper, "_ntpd_config_managed", lambda _path: True)
@@ -1685,11 +1691,21 @@ def test_firewall_replay_uses_atomic_nft_wrapper_for_applied_time_mode(
         assert command == ["nft", "-f", "-"]
         assert kwargs["input"].startswith(firewall.read_text(encoding="utf-8"))
         assert "table inet atlaso_time_sync" in kwargs["input"]
-        assert 'udp dport 123 drop comment "Atlaso time-sync client-only"' in kwargs["input"]
+        if mode == "ntp_server":
+            assert 'ip daddr 192.0.2.10 udp dport 123 return comment "Atlaso time-sync selected listener"' in kwargs[
+                "input"
+            ]
+            assert 'ip6 daddr 2001:db8::10 udp dport 123 return comment "Atlaso time-sync selected listener"' in kwargs[
+                "input"
+            ]
+            assert 'udp dport 123 drop comment "Atlaso time-sync listener isolation"' in kwargs["input"]
+        else:
+            assert 'udp dport 123 drop comment "Atlaso time-sync client-only"' in kwargs["input"]
     else:
         assert command == ["nft", "-f", str(firewall)]
         assert "input" not in kwargs
         assert "atlaso_time_sync" not in firewall.read_text(encoding="utf-8")
+    assert firewall.read_text(encoding="utf-8") == "flush ruleset\ntable inet atlaso { }\n"
 
 
 def test_firewall_replay_rejects_arguments_and_missing_config(monkeypatch, tmp_path, capsys):
@@ -19998,6 +20014,12 @@ def test_ntpd_apply_reports_rollback_sync_failure_but_keeps_previous_config(
         journal = helper._ntpd_read_transaction()
         assert journal is not None and journal["phase"] == "prepared"
         assert ntpd_stop_attempts == 3
+        monkeypatch.setattr(helper, "_release_transaction_owner_alive", lambda _owner: True)
+        with pytest.raises(RuntimeError, match="Another clock Apply is still active"):
+            helper._ntpd_reconcile_applied()
+        journal = helper._ntpd_read_transaction()
+        assert journal is not None and journal["phase"] == "prepared"
+        monkeypatch.setattr(helper, "_release_transaction_owner_alive", lambda _owner: False)
     else:
         assert helper._ntpd_read_transaction() is None
 
@@ -20237,6 +20259,11 @@ def test_ntpd_vmware_timesync_status_accepts_open_vm_tools_exit_codes(
     monkeypatch.setattr(helper.shutil, "which", lambda _command: "/usr/bin/vmware-toolbox-cmd")
     monkeypatch.setattr(
         helper,
+        "_ntpd_service_state",
+        lambda _unit: {"active": True, "enabled": True, "detail": "active and enabled"},
+    )
+    monkeypatch.setattr(
+        helper,
         "_run",
         lambda *_args, **_kwargs: subprocess.CompletedProcess([], returncode, stdout, ""),
     )
@@ -20244,12 +20271,18 @@ def test_ntpd_vmware_timesync_status_accepts_open_vm_tools_exit_codes(
     state = helper._ntpd_vmware_timesync_state()
     assert state["active"] is expected
     assert state["enabled"] is expected
+    assert state["periodic_enabled"] is expected
 
 
 def test_ntpd_vmware_disable_verification_accepts_disabled_exit_code(monkeypatch):
     """A successful disable is verified against open-vm-tools' actual exit contract."""
     helper = load_helper_module()
     monkeypatch.setattr(helper.shutil, "which", lambda _command: "/usr/bin/vmware-toolbox-cmd")
+    monkeypatch.setattr(
+        helper,
+        "_ntpd_service_state",
+        lambda _unit: {"active": True, "enabled": True, "detail": "active and enabled"},
+    )
     commands: list[list[str]] = []
 
     def fake_run(command: list[str], *, timeout: float | None = None) -> subprocess.CompletedProcess[str]:
@@ -20515,11 +20548,19 @@ def test_ntpd_status_reports_runtime_drift_and_sync_failures(
             return subprocess.CompletedProcess(command, 0, peer_output, "")
         if command[1] == "is-active":
             unit = command[2]
-            active = unit == "ntpd.service" or (scenario == "chronyd-conflict" and unit == "chronyd.service")
+            active = (
+                unit == "ntpd.service"
+                or (scenario == "chronyd-conflict" and unit == "chronyd.service")
+                or (scenario == "vmware-conflict" and unit == "vmtoolsd.service")
+            )
             return subprocess.CompletedProcess(command, 0 if active else 3, "active\n" if active else "inactive\n", "")
         if command[1] == "is-enabled":
             unit = command[2]
-            enabled = unit == "ntpd.service" or (scenario == "chronyd-conflict" and unit == "chronyd.service")
+            enabled = (
+                unit == "ntpd.service"
+                or (scenario == "chronyd-conflict" and unit == "chronyd.service")
+                or (scenario == "vmware-conflict" and unit == "vmtoolsd.service")
+            )
             return subprocess.CompletedProcess(command, 0 if enabled else 1, "enabled\n" if enabled else "disabled\n", "")
         if command[0] == "/usr/bin/vmware-toolbox-cmd":
             is_enabled = scenario == "vmware-conflict"
@@ -20545,16 +20586,17 @@ def test_ntpd_status_reports_runtime_drift_and_sync_failures(
 
 
 @pytest.mark.parametrize(
-    ("observation", "expected_health", "expected_state"),
+    ("observation", "tools_active", "tools_enabled", "expected_health", "expected_state"),
     [
-        ({"healthy": True, "offset_seconds": 0.5, "detail": "aligned"}, True, "synchronized"),
-        ({"healthy": False, "offset_seconds": 4.0, "detail": "clock drift"}, False, "unsynchronized"),
-        ({"healthy": None, "detail": "host-time probe unavailable"}, None, "unavailable"),
+        ({"healthy": True, "offset_seconds": 0.5, "detail": "aligned"}, True, True, True, "synchronized"),
+        ({"healthy": False, "offset_seconds": 4.0, "detail": "clock drift"}, True, True, False, "unsynchronized"),
+        ({"healthy": None, "detail": "host-time probe unavailable"}, True, True, None, "unavailable"),
+        ({"healthy": True, "offset_seconds": 0.5, "detail": "aligned"}, True, False, False, "unsynchronized"),
     ],
-    ids=["aligned", "drift", "unknown"],
+    ids=["aligned", "drift", "unknown", "running-but-disabled"],
 )
 def test_ntpd_status_reports_observed_vmware_clock_health(
-    monkeypatch, tmp_path, capsys, observation, expected_health, expected_state
+    monkeypatch, tmp_path, capsys, observation, tools_active, tools_enabled, expected_health, expected_state
 ):
     """VMware status reflects observed host-time alignment, not only the enabled flag."""
     helper = load_helper_module()
@@ -20574,21 +20616,29 @@ def test_ntpd_status_reports_observed_vmware_clock_health(
     monkeypatch.setattr(
         helper,
         "_ntpd_vmware_timesync_state",
-        lambda: {"active": True, "enabled": True, "detail": "periodic sync enabled"},
+        lambda: {
+            "active": tools_active,
+            "enabled": tools_enabled,
+            "periodic_enabled": True,
+            "detail": "periodic sync enabled",
+        },
     )
     monkeypatch.setattr(helper, "_ntpd_vmware_clock_state", lambda: observation)
 
     assert helper._ntpd_status() == 0
     payload = json.loads(capsys.readouterr().out)
     assert payload["selected_controller"]["name"] == "vmware_tools"
-    assert payload["vmware_timesync_enabled"] is True
+    assert payload["vmware_timesync_enabled"] is tools_active
     assert payload["synchronization"]["healthy"] is expected_health
     assert payload["synchronization"]["state"] == expected_state
-    if expected_health is not None:
+    if tools_enabled and expected_health is not None:
         assert payload["vmware_clock_comparison"]["offset_seconds"] == observation["offset_seconds"]
-    else:
+    elif tools_enabled:
         assert payload["vmware_clock_comparison"]["healthy"] is None
         assert "offset_seconds" not in payload["vmware_clock_comparison"]
+    else:
+        assert "vmware_clock_comparison" not in payload
+        assert "not enabled" in payload["synchronization"]["detail"]
 
 
 def test_appliance_settings_hostname_fallback_writes_etc_hostname(monkeypatch, tmp_path):

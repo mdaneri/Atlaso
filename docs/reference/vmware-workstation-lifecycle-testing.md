@@ -830,7 +830,11 @@ VMware Tools, and NTP server; preserves the VMware preference while server mode 
 exclusivity, observed synchronization, client request refusal, server replies, conflict recovery, and persistence after
 reboot and VMware Tools restart. Ownership, source admission, credential isolation, and cleanup gates remain required.
 Site probes bind the verified host VMnet address and check its selected route and guest neighbor MAC; this supports
-multihomed Windows hosts without changing host routes or adapter settings.
+multihomed Windows hosts without changing host routes or adapter settings. Server-mode probes also capture ingress
+and prove refusal on the unselected management destination before and after reboot. Post-reboot status allows up to
+120 seconds for HTTPS bootstrap and then 240 seconds of read-only login GET retries, covering the bounded startup
+clock reconciliation and application initialization. It submits credentials once after the login form is ready;
+non-retryable HTTP failures still fail immediately.
 
 The web-terminal check likewise probes the site route and management-path isolation from Site Client A,
 while exercising the authenticated page and ticket flow through the reachable management listener.

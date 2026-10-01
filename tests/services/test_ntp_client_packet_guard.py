@@ -31,7 +31,7 @@ def test_client_guard_blocks_requests_but_permits_upstream_responses(monkeypatch
     assert "delete table inet atlaso_time_sync" in rules
 
 
-@pytest.mark.parametrize("mode", ["ntp_server", "vmware_tools", "disabled"])
+@pytest.mark.parametrize("mode", ["vmware_tools", "disabled"])
 def test_other_modes_release_only_time_client_guard(monkeypatch, mode):
     helper = load_helper_module()
     monkeypatch.setattr(helper.shutil, "which", lambda _name: "/usr/sbin/nft")
@@ -44,6 +44,51 @@ def test_other_modes_release_only_time_client_guard(monkeypatch, mode):
     monkeypatch.setattr(helper, "_run_with_input", run)
     helper._ntpd_client_packet_guard(mode)
     assert calls == ["add table inet atlaso_time_sync\ndelete table inet atlaso_time_sync\n"]
+
+
+def _write_applied_server_config(path):
+    path.write_text(
+        "\n".join(
+            [
+                "# Managed by Atlaso. Local changes may be overwritten.",
+                "# Atlaso time mode: ntp_server",
+                "# Atlaso NTP enabled: true",
+                "interface listen all",
+                "interface ignore wildcard",
+                "interface listen 192.0.2.15",
+                "interface listen 2001:db8::15",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+
+def test_server_packet_guard_allows_only_selected_ipv4_and_ipv6_destinations(
+    monkeypatch, tmp_path
+):
+    helper = load_helper_module()
+    monkeypatch.setattr(helper.shutil, "which", lambda _name: "/usr/sbin/nft")
+    config = tmp_path / "ntp.conf"
+    _write_applied_server_config(config)
+    monkeypatch.setattr(helper, "NTP_CONFIG_PATH", config)
+    calls = []
+
+    def run(command, input_text, *, timeout):
+        calls.append((command, input_text, timeout))
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    monkeypatch.setattr(helper, "_run_with_input", run)
+    helper._ntpd_client_packet_guard("ntp_server")
+
+    command, rules, timeout = calls[0]
+    assert command == ["/usr/sbin/nft", "-f", "-"]
+    assert timeout == 5
+    assert 'ip daddr 192.0.2.15 udp dport 123 return comment "Atlaso time-sync selected listener"' in rules
+    assert 'ip6 daddr 2001:db8::15 udp dport 123 return comment "Atlaso time-sync selected listener"' in rules
+    assert rules.index("upstream replies") < rules.index("selected listener")
+    assert rules.index("selected listener") < rules.index("udp dport 123 drop")
+    assert rules.count("selected listener") == 2
 
 
 @pytest.mark.parametrize("failure", ["absent", "rejected", "timeout"])
@@ -145,17 +190,23 @@ def test_client_guard_rejects_malformed_normalized_mode_rules(monkeypatch, drift
 
 
 @pytest.mark.parametrize("mode", ["ntp_client", "ntp_server", "vmware_tools"])
-def test_firewall_replace_preserves_only_applied_client_guard(monkeypatch, tmp_path, mode):
+def test_firewall_replace_preserves_applied_time_sync_guard(monkeypatch, tmp_path, mode):
     helper = load_helper_module()
     applied = tmp_path / "ntp.conf"
-    applied.write_text(
-        f"# Managed by Atlaso. Local changes may be overwritten.\n# Atlaso time mode: {mode}\n# Atlaso NTP enabled: {'true' if mode == 'ntp_server' else 'false'}\n",
-        encoding="utf-8",
-    )
+    if mode == "ntp_server":
+        _write_applied_server_config(applied)
+    else:
+        applied.write_text(
+            f"# Managed by Atlaso. Local changes may be overwritten.\n# Atlaso time mode: {mode}\n# Atlaso NTP enabled: false\n",
+            encoding="utf-8",
+        )
     monkeypatch.setattr(helper, "NTP_CONFIG_PATH", applied)
     program = "flush ruleset\ntable inet atlaso {}\n"
     guarded = helper._ntpd_preserve_client_packet_guard(program)
-    assert ("table inet atlaso_time_sync" in guarded) is (mode == "ntp_client")
+    assert ("table inet atlaso_time_sync" in guarded) is (mode in {"ntp_client", "ntp_server"})
+    if mode == "ntp_server":
+        assert "ip daddr 192.0.2.15 udp dport 123 return" in guarded
+        assert "ip6 daddr 2001:db8::15 udp dport 123 return" in guarded
     assert guarded.startswith(program)
     # A table-scoped NAT update must neither replace nor weaken the guard.
     nat = "flush table ip atlaso_nat\n"

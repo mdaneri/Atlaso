@@ -7140,7 +7140,9 @@ def _ntpd_set_vmware_timesync(enabled: bool) -> None:
     action = "enable" if enabled else "disable"
     _ntpd_run_checked([toolbox, "timesync", action], f"VMware Tools time-sync {action}")
     status = _ntpd_vmware_timesync_state()
-    if status.get("active") is not enabled:
+    if status.get("periodic_enabled") is not enabled or (
+        enabled and status.get("active") is not True
+    ):
         raise RuntimeError(f"VMware Tools time-sync {action} could not be verified.")
 
 
@@ -8014,25 +8016,59 @@ def _ntpd_service_state(unit: str) -> dict[str, object]:
 
 
 def _ntpd_vmware_timesync_state() -> dict[str, object]:
-    """Read VMware Tools periodic time-sync setting with a bounded probe."""
+    """Combine periodic sync with the bounded VMware Tools service state."""
     toolbox = shutil.which("vmware-toolbox-cmd")
-    if toolbox is None:
-        tools_service = _ntpd_service_state("vmtoolsd.service")
-        if tools_service.get("active") is False:
-            return {"active": False, "enabled": False, "detail": "VMware Tools service is inactive"}
-        return {"active": None, "enabled": None, "detail": "VMware Tools time-sync command is unavailable"}
-    try:
-        result = _run([toolbox, "timesync", "status"], timeout=0.75)
-    except (OSError, subprocess.TimeoutExpired):
-        return {"active": None, "enabled": None, "detail": "VMware Tools time-sync status probe failed"}
-    output = f"{result.stdout} {result.stderr}".strip().lower()
-    if result.returncode == 0 and "enabled" in output and "disabled" not in output:
-        return {"active": True, "enabled": True, "detail": "enabled"}
-    # open-vm-tools uses EX_UNAVAILABLE (69) for a successfully reported
-    # disabled setting; enabled status returns 0.
-    if result.returncode in {0, 69} and "disabled" in output:
-        return {"active": False, "enabled": False, "detail": "disabled"}
-    return {"active": None, "enabled": None, "detail": "VMware Tools time-sync state is indeterminate"}
+    tools_service = _ntpd_service_state("vmtoolsd.service")
+    periodic_enabled: bool | None = None
+    setting_detail = "VMware Tools time-sync command is unavailable"
+    if toolbox is not None:
+        try:
+            result = _run([toolbox, "timesync", "status"], timeout=0.75)
+        except (OSError, subprocess.TimeoutExpired):
+            setting_detail = "VMware Tools time-sync status probe failed"
+        else:
+            output = f"{result.stdout} {result.stderr}".strip().lower()
+            if result.returncode == 0 and "enabled" in output and "disabled" not in output:
+                periodic_enabled = True
+                setting_detail = "enabled"
+            # open-vm-tools uses EX_UNAVAILABLE (69) for a successfully reported
+            # disabled setting; enabled status returns 0.
+            elif result.returncode in {0, 69} and "disabled" in output:
+                periodic_enabled = False
+                setting_detail = "disabled"
+            else:
+                setting_detail = "VMware Tools time-sync state is indeterminate"
+    elif tools_service.get("active") is False:
+        setting_detail = "VMware Tools service is inactive; periodic-sync setting is unavailable"
+
+    def combine(setting: bool | None, service_state: object) -> bool | None:
+        """Return three-state conjunction without promoting unknown to true."""
+        if setting is False or service_state is False:
+            return False
+        if setting is True and service_state is True:
+            return True
+        return None
+
+    active = combine(periodic_enabled, tools_service.get("active"))
+    enabled = combine(periodic_enabled, tools_service.get("enabled"))
+    if periodic_enabled is False:
+        detail = "VMware Tools periodic time synchronization is disabled"
+    elif periodic_enabled is True and tools_service.get("active") is False:
+        detail = "Periodic time synchronization is enabled, but vmtoolsd is inactive"
+    elif periodic_enabled is True and tools_service.get("enabled") is False:
+        detail = "Periodic time synchronization is enabled, but vmtoolsd is disabled"
+    elif active is True and enabled is True:
+        detail = "VMware Tools periodic time synchronization is active and enabled"
+    elif periodic_enabled is True:
+        detail = "VMware Tools periodic time-sync service state is indeterminate"
+    else:
+        detail = setting_detail
+    return {
+        "active": active,
+        "enabled": enabled,
+        "periodic_enabled": periodic_enabled,
+        "detail": detail,
+    }
 
 
 def _ntpd_logs() -> int:
