@@ -4,7 +4,7 @@
 #
 #    pip-compile --allow-unsafe --build-deps-for=editable --extra=dev --generate-hashes --index-url=https://pypi.org/simple --no-emit-index-url --output-file=requirements-dev.lock --strip-extras --uploaded-prior-to=P7D pyproject.toml
 #
-# atlaso-declarations-sha256: c02aceea16338badf95e18a47ee8257dfe197279b989ce31be56b74e2c31dfd8
+# atlaso-declarations-sha256: 612969c234bd78a271e713f6e5c065eef694fb71967ff59aade88199ce6a73b4
 annotated-doc==0.0.5 \
     --hash=sha256:117bac03a25ede5df5440e855b32d556049ca169ead221505badf432fed4b101 \
     --hash=sha256:c7e58ce09192557605d8bbd92836d7e1d520ac9580096042c0bfd197efacf1bb
@@ -986,9 +986,9 @@ pyjwt==2.13.0 \
     --hash=sha256:41571c89ca91598c79e8ef18a2d07367d4810fbbd6f637794879baf1b7703423 \
     --hash=sha256:66adcc2aff09b3f1bbd95fc1e1577df8ac8723c978552fd43304c8a290ac5728
     # via atlaso (pyproject.toml)
-pymdown-extensions==11.0.2 \
-    --hash=sha256:259910762019732caa1dfd76f3faa62c59f191d46573e80bcb1d13c0f675bbe5 \
-    --hash=sha256:9506fcbe66fa355a775b768084334238dd6805020ac4b92bea0c0dda6f8f223d
+pymdown-extensions==12.0.1 \
+    --hash=sha256:15d629e8035892b93d788a8424ccea754d4aa3cec247a64cbfe7b15089c9ad7f \
+    --hash=sha256:88fe2c97fb9153b9f2cc1da59f1d7c7cb74971110daf33cccb2a5514e0f7e970
     # via atlaso (pyproject.toml)
 pynacl==1.6.2 \
     --hash=sha256:018494d6d696ae03c7e656e5e74cdfd8ea1326962cc401bcf018f1ed8436811c \
@@ -1045,8 +1045,8 @@ python-multipart==0.0.32 \
     --hash=sha256:be54b7f3fa167bb83e4fcd936b887b708f4e57fe75911c02aebf53efaf8d938e \
     --hash=sha256:ff6d3f776f16878c894e52e107296ffc890e913c611b1a4ec6c44e2821fe2e23
     # via atlaso (pyproject.toml)
-pyvmomi==9.1.0.0 \
-    --hash=sha256:f4b024baa7e5179d14f350dd006b788365e4aaadf15850e36024945a114db92b
+pyvmomi==9.1.1.0 \
+    --hash=sha256:76af3cba85573769daf4e6760aace32e7af34e1bbf343895b8c4798b6bc0e2d2
     # via
     #   vcf-sdk
     #   vcf-vsphere-utils
@@ -1280,42 +1280,42 @@ uvicorn==0.52.4 \
     --hash=sha256:73acfee47a0b133c5de13d219492d62d8a31e935f4fe6e41a232451a15379f86 \
     --hash=sha256:f86e41a149d7d05a9969337e3946a9c171c06a5d42680896daaba624aeac8da1
     # via atlaso (pyproject.toml)
-vcf-fleet-lcm==9.1.0.0 \
-    --hash=sha256:686ede9f9fe16b9a5b931994ff4df0519320bd581b0bf2c860bbff3bab407886
+vcf-fleet-lcm==9.1.1.0 \
+    --hash=sha256:eae8014a87b526db0ac89f1a3039014a182baea143443d805111d0394f37bf78
     # via vcf-sdk
-vcf-installer==9.1.0.0 \
-    --hash=sha256:443c4b48de2f6bdc311b0c715d325837f76ca5d4e9ffdc3a955814f3602a64b5
+vcf-installer==9.1.1.0 \
+    --hash=sha256:dfc1e376720867c1d537bfab407699aa334098a4f3b325cde1038a33afcd4c31
     # via vcf-sdk
-vcf-log-mgmt==9.1.0.0 \
-    --hash=sha256:e0258dbdf2c707ab74d1429098da6f1625c9491af999744a4c12b1582b1f0db1
+vcf-log-mgmt==9.1.1.0 \
+    --hash=sha256:fd7eb5d713ff8d5e294d48d42a843fe4e37d05257a6d52fa2f8c92bed4dba083
     # via vcf-sdk
-vcf-nsx==9.1.0.0 \
-    --hash=sha256:a1265ddceb6f1a92c6c2037d9beba2e6e32bba0d3a2383cbe4f5215aec008648
+vcf-nsx==9.1.1.0 \
+    --hash=sha256:6d491d7495856d1e202eb8626a279f3e1e9b2e24f7cad13e859050fbac500858
     # via vcf-sdk
-vcf-operations==9.1.0.0 \
-    --hash=sha256:32711f4ff113b0b25a81b2f8b687058ae0c320082ae007a319f54728aeefb76c
+vcf-operations==9.1.1.0 \
+    --hash=sha256:a9953b9d189eab995efacf3ed5d9920f07cbe1222d186d4a500540f37729cbf5
     # via vcf-sdk
-vcf-operations-networks==9.1.0.0 \
-    --hash=sha256:c6d281d6f9f7afbe1f0b158468081d6c209d61356110629238821831b90e5593
+vcf-operations-networks==9.1.1.0 \
+    --hash=sha256:a9f3659fc0b20db7fec6f420fdb722122353dff4369667a8850f056e1b1e93d6
     # via vcf-sdk
-vcf-sddc-lcm==9.1.0.0 \
-    --hash=sha256:46702e62dd26a52da23b8800ec0cbfa2fd092fa7c01ca89317fb9dc2cb1c9f3f
+vcf-sddc-lcm==9.1.1.0 \
+    --hash=sha256:94edfedbce1f9e58101987ee2e97b14da63d7579a94a679177aa22064cd3c505
     # via vcf-sdk
-vcf-sdk==9.1.0.0 \
-    --hash=sha256:c2300e29aab94339bb68ddbceb4d6942b7833f3cd4beb4b6c7ed47275204c97e
+vcf-sdk==9.1.1.0 \
+    --hash=sha256:75c44f3f8143dfd1f3db52bdba6fa102b2f8f2fbca30148becbb86803db6069c
     # via atlaso (pyproject.toml)
-vcf-vsphere-utils==9.1.0.0 \
-    --hash=sha256:ac5b06397f37cc2e45bf8aaa5b5a880026db6b2396662eaa13e7bd50973da5e8
+vcf-vsphere-utils==9.1.1.0 \
+    --hash=sha256:34e31a248fb9008a362f75fbb1b9737a4d3ae807f5c8d8790cf9af950d2ca918
     # via vcf-sdk
 virtualenv==21.7.5 \
     --hash=sha256:a73c4246fba3c8901ff9717399f466e00eeca5a3834981f1a6ebb4f1e94de2f8 \
     --hash=sha256:e36ca889510ab6cb0b1dca93c59e5431dd4422a3c88f487358d470c90af8c07a
     # via pre-commit
-vmware-sddc-manager==9.1.0.0 \
-    --hash=sha256:5b091428e78819447885ac92b44a60bdd381893a3538a57abe78718e71efda00
+vmware-sddc-manager==9.1.1.0 \
+    --hash=sha256:61f2d4c9af538cba60b342d424ce20ea092b2dea48c8d88a76294e58318c780d
     # via vcf-sdk
-vmware-vapi-common-client==9.1.0.0 \
-    --hash=sha256:a82992d146355ae6325a3317fea1360b2b214cb2ccaef06ef7c45fa6deb6fcd5
+vmware-vapi-common-client==9.1.1.0 \
+    --hash=sha256:c310bcf05a98134b9349ab8d109ce7219957125adf40b5d92cc682435c12fe43
     # via
     #   vcf-fleet-lcm
     #   vcf-installer
@@ -1328,8 +1328,8 @@ vmware-vapi-common-client==9.1.0.0 \
     #   vmware-sddc-manager
     #   vmware-vcenter
     #   vmware-vsan-data-protection
-vmware-vapi-runtime==9.1.0.0 \
-    --hash=sha256:f0b001ec10e61be6972b06662fc6cbb3bbe84cc5ad9b22bbdceb69d8307edb78
+vmware-vapi-runtime==9.1.1.0 \
+    --hash=sha256:bb7be228f517a64962d91bc5fe0023c172b38060a6ea69b78cd72aff81eb4c6a
     # via
     #   vcf-fleet-lcm
     #   vcf-installer
@@ -1343,11 +1343,11 @@ vmware-vapi-runtime==9.1.0.0 \
     #   vmware-vapi-common-client
     #   vmware-vcenter
     #   vmware-vsan-data-protection
-vmware-vcenter==9.1.0.0 \
-    --hash=sha256:0be971614719d67e21a9dd597e20300db25ba79b45eabc66e74c8431ed3dcc21
+vmware-vcenter==9.1.1.0 \
+    --hash=sha256:69fcf617e46fc33c8229eb8e06d98baefa1c4d91e69963171a8b9accfa6fdaea
     # via vcf-sdk
-vmware-vsan-data-protection==9.1.0.0 \
-    --hash=sha256:d9fa96e5f5e8c943c7c647ec7847a91fa38a2add26ed4c7b5808429b1fd8602d
+vmware-vsan-data-protection==9.1.1.0 \
+    --hash=sha256:0aca207a1619be4b16432279380ae64840c42d17a048b2972fb5bac08c979be9
     # via vcf-sdk
 watchfiles==1.2.0 \
     --hash=sha256:01859b11fd9fbca670f4d5da00fbac282cfea9bd67a2125d8b2833a3b5617ea9 \

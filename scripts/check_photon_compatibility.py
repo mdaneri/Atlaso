@@ -57,8 +57,8 @@ def main() -> int:
             importlib.import_module(module_name)
             print(f"import ok: {module_name}")
         vcf_sdk_version = importlib.metadata.version("vcf-sdk")
-        if vcf_sdk_version != "9.1.0.0":
-            print(f"VCF SDK 9.1.0.0 is required; found {vcf_sdk_version}", file=sys.stderr)
+        if vcf_sdk_version != "9.1.1.0":
+            print(f"VCF SDK 9.1.1.0 is required; found {vcf_sdk_version}", file=sys.stderr)
             return 1
         print(f"vcf-sdk={vcf_sdk_version}")
 

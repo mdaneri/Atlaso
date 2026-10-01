@@ -4322,7 +4322,7 @@ def host_state_checks(args: argparse.Namespace) -> dict[str, Any]:
     site_ip = str(ip_interface(args.site_cidr).ip)
     httpx_probe = base64.b64encode(b"import httpx; print(httpx.__version__)").decode("ascii")
     vcf_sdk_probe = base64.b64encode(
-        b'from importlib.metadata import version; assert version("vcf-sdk") == "9.1.0.0"'
+        b'from importlib.metadata import version; assert version("vcf-sdk") == "9.1.1.0"'
     ).decode("ascii")
     powercli_probe = base64.b64encode(
         (
