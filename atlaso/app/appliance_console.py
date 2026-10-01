@@ -1307,6 +1307,7 @@ def _refresh_management_addresses(
             if verified and interface is not None and observed is not None:
                 # Polling must never interpret unavailable discovery as removal or
                 # reconcile unrelated desired state. Publish only the verified target.
+                acquire_network_objects_write_lock(db)
                 db.refresh(interface)
                 interface.host_ip_cidr = observed.host_ip_cidr
                 interface.host_ipv6_cidr = observed.host_ipv6_cidr

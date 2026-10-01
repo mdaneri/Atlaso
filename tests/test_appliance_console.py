@@ -2530,3 +2530,82 @@ def test_console_recovery_interval_edit_stops_settings_capture(client, monkeypat
     with SessionLocal() as db:
         assert appliance_console._management_interface(db).ip_cidr == "192.168.167.175/24"
         assert db.query(appliance_console.Job).count() == 1
+
+
+def test_console_observation_serializes_pending_decision(client, monkeypatch):
+    """Detect an edit admitted before the observation lock and retain it as pending.
+
+    Args:
+        client: Initialized application database fixture.
+        monkeypatch: Interleave a writer before observation acquires its real lock.
+    """
+    from sqlalchemy.orm import Session
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.services.networking import HostPhysicalInterface
+
+    with SessionLocal() as db:
+        target = appliance_console._management_interface(db)
+        target.ipv4_method = "static"
+        target.ip_cidr = "192.168.167.173/24"
+        target.ipv6_enabled = False
+        target.ipv6_cidr = None
+        interface_id = target.id
+        observed = HostPhysicalInterface(
+            name=target.name, mac_address=target.mac_address, driver=None, speed=None,
+            host_ip_cidr=target.ip_cidr, host_mtu=1500, host_admin_state="up", oper_state="up",
+        )
+        db.commit()
+    lock = appliance_console.acquire_network_objects_write_lock
+    refresh = Session.refresh
+    commit = Session.commit
+    observation = {}
+
+    def acquire(db):
+        """Model a completed writer before observation wins lock admission.
+
+        Args:
+            db: Observation transaction awaiting writer admission.
+        """
+        with SessionLocal() as writer:
+            writer.get(appliance_console.PhysicalInterface, interface_id).ip_cidr = "192.168.167.175/24"
+            writer.commit()
+        lock(db)
+        observation["db"] = db
+        observation["transaction"] = db.get_transaction()
+
+    def locked_refresh(db, instance, *args, **kwargs):
+        """Require the final refresh to run inside the admitted transaction.
+
+        Args:
+            db: Session refreshing the observed interface.
+            instance: Interface being refreshed.
+            *args: Additional refresh arguments.
+            **kwargs: Additional refresh options.
+        """
+        assert db is observation["db"]
+        assert db.get_transaction() is observation["transaction"]
+        return refresh(db, instance, *args, **kwargs)
+
+    def locked_commit(db):
+        """Require observation publication to retain the same transaction.
+
+        Args:
+            db: Session publishing verified host addresses.
+        """
+        if db is observation.get("db"):
+            assert db.get_transaction() is observation["transaction"]
+            observation["committed"] = True
+        return commit(db)
+
+    monkeypatch.setattr(appliance_console, "acquire_network_objects_write_lock", acquire)
+    monkeypatch.setattr(appliance_console, "discover_host_physical_interfaces", lambda **kwargs: [observed])
+    monkeypatch.setattr(Session, "refresh", locked_refresh)
+    monkeypatch.setattr(Session, "commit", locked_commit)
+    with pytest.raises(ConsoleOperationError, match="newer address edits remain pending"):
+        appliance_console._refresh_management_addresses(interface_id, timeout=0)
+    assert observation["committed"] is True
+    with SessionLocal() as db:
+        target = db.get(appliance_console.PhysicalInterface, interface_id)
+        assert target.ip_cidr == "192.168.167.175/24"
+        assert target.host_ip_cidr == "192.168.167.173/24"
