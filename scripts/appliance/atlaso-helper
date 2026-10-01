@@ -96,7 +96,7 @@ COMMANDS: dict[str, set[str]] = {
     "network": {"validate", "apply", "dhcp-dns", "address-status", "prepare-observation", "recover", "acknowledge"},
     "management-front-door": {"recover"},
     "management-handoff": {"validate", "apply", "acknowledge", "recover"},
-    "firewall": {"validate", "apply"},
+    "firewall": {"validate", "apply", "replay"},
     "dnsmasq": {"validate", "apply", "reload", "leases", "logs"},
     "ca": {"validate", "apply"},
     "kms": {"validate", "apply", "status"},
@@ -187,6 +187,7 @@ UPDATE_CHECK_TIMEOUT_SECONDS = 300
 UPDATE_CHECK_STOP_SECONDS = 30
 UPDATE_RELEASE_NOTES_URL_MAX_LENGTH = 2048
 NO_PATH_ACTIONS = {
+    ("firewall", "replay"),
     ("network", "prepare-observation"),
     ("network", "address-status"),
     ("nat", "status"),
@@ -7219,6 +7220,10 @@ def _ntpd_write_managed_file(path: Path, contents: str) -> None:
 
 def _ntpd_install_guards() -> None:
     """Install boot and service-restart hooks for applied clock ownership."""
+    if FIREWALL_SERVICE_PATH.is_file():
+        # Upgrade an existing image's direct nft unit even when Firewall desired
+        # state is unchanged and NTP is the only selected Apply unit.
+        _ntpd_write_managed_file(FIREWALL_SERVICE_PATH, _firewall_service_text())
     _ntpd_write_managed_file(
         NTP_GUARD_SERVICE_PATH,
         "\n".join([
@@ -7848,7 +7853,7 @@ def _ntpd_status() -> int:
         elif peer_rows and all(len(fields) >= 7 and fields[6] == "0" for fields in peer_rows):
             ntpd_healthy = False
             detail = "No upstream replies are recorded; check reachability, UDP return traffic, and NTS-KE diagnostics when NTS is enabled."
-        elif "no_sys_peer" in variable_text:
+        elif "no_sys_peer" in variable_text and not ntpd_reports_sync:
             ntpd_healthy = False
             detail = "NTPsec has no selected system peer. Check configured upstreams and NTS-KE diagnostics when NTS is enabled."
         elif not ntpd_reports_sync:
@@ -17261,7 +17266,7 @@ def _handle_wan_config(
 
 
 def _firewall_service_text() -> str:
-    """Describe Firewall boot replay without starting a second ruleset replace."""
+    """Replay the persisted firewall through the atomic clock-guard wrapper."""
     return "\n".join(
             [
                 "[Unit]",
@@ -17272,7 +17277,7 @@ def _firewall_service_text() -> str:
                 "",
                 "[Service]",
                 "Type=oneshot",
-                f"ExecStart=/usr/sbin/nft -f {FIREWALL_CONFIG_PATH}",
+                "ExecStart=/opt/atlaso/bin/atlaso-helper firewall replay --real",
                 "RemainAfterExit=yes",
                 "",
                 "[Install]",
@@ -17285,8 +17290,12 @@ def _firewall_service_text() -> str:
 def _install_firewall_service() -> None:
     """Install and activate the existing standalone Firewall boot service."""
     FIREWALL_SERVICE_PATH.write_text(_firewall_service_text(), encoding="utf-8")
-    _run(["systemctl", "daemon-reload"])
-    _run(["systemctl", "enable", "--now", "atlaso-firewall.service"])
+    for command in (
+        ["systemctl", "daemon-reload"],
+        ["systemctl", "enable", "--now", "atlaso-firewall.service"],
+    ):
+        if _run(command).returncode != 0:
+            raise RuntimeError("Firewall service activation failed.")
 
 
 def _handle_firewall(action: str, args: list[str]) -> int:
@@ -17296,6 +17305,24 @@ def _handle_firewall(action: str, args: list[str]) -> int:
         action: Action consumed by handle firewall.
         args: Parsed command-line options consumed by the operation.
     """
+    if action == "replay":
+        # systemd must use the same atomic nft transaction as interactive Apply.
+        # Recompute the guard from the applied clock mode on every activation;
+        # persisting a client guard would incorrectly retain it in server mode.
+        if args:
+            print("firewall replay accepts no arguments", file=sys.stderr)
+            return 2
+        if not FIREWALL_CONFIG_PATH.is_file():
+            print("No persisted firewall config is available", file=sys.stderr)
+            return 1
+        try:
+            result = _run(["nft", "-f", str(FIREWALL_CONFIG_PATH)])
+        except (OSError, ValueError) as exc:
+            print(str(exc), file=sys.stderr)
+            return 1
+        print(result.stdout, end="")
+        print(result.stderr, end="", file=sys.stderr)
+        return result.returncode
     if len(args) != 1:
         print(f"firewall {action} requires exactly one staged config path", file=sys.stderr)
         return 2
@@ -17323,7 +17350,11 @@ def _handle_firewall(action: str, args: list[str]) -> int:
     if apply_result.returncode != 0:
         return apply_result.returncode
 
-    _install_firewall_service()
+    try:
+        _install_firewall_service()
+    except (OSError, RuntimeError) as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
     return 0
 
 

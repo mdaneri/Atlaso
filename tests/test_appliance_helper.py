@@ -1648,6 +1648,125 @@ def test_management_handoff_rollback_keeps_old_scope_renewal_only(monkeypatch, t
     assert helper._read_dnsmasq_leases() == 0
 
 
+@pytest.mark.parametrize(
+    ("mode", "guard_expected"),
+    [("ntp_client", True), ("ntp_server", False)],
+    ids=["client-guard-replayed", "server-does-not-retain-client-guard"],
+)
+def test_firewall_replay_uses_atomic_nft_wrapper_for_applied_time_mode(
+    monkeypatch, tmp_path, mode, guard_expected
+):
+    """Boot replay routes persisted nft rules through the applied NTP guard wrapper."""
+    helper = load_helper_module()
+    firewall = tmp_path / "atlaso.nft"
+    firewall.write_text("flush ruleset\ntable inet atlaso { }\n", encoding="utf-8")
+    ntp_config = tmp_path / "ntp.conf"
+    ntp_config.write_text(
+        f"# Atlaso NTP enabled: {'true' if mode == 'ntp_server' else 'false'}\n"
+        f"# Atlaso time mode: {mode}\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(helper, "FIREWALL_CONFIG_PATH", firewall)
+    monkeypatch.setattr(helper, "NTP_CONFIG_PATH", ntp_config)
+    monkeypatch.setattr(helper, "_ntpd_config_managed", lambda _path: True)
+    calls: list[tuple[list[str], dict[str, object]]] = []
+
+    def fake_subprocess_run(command, **kwargs):
+        calls.append((command, kwargs))
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    monkeypatch.setattr(helper.subprocess, "run", fake_subprocess_run)
+
+    assert helper.main(["atlaso-helper", "firewall", "replay", "--real"]) == 0
+
+    assert len(calls) == 1
+    command, kwargs = calls[0]
+    if guard_expected:
+        assert command == ["nft", "-f", "-"]
+        assert kwargs["input"].startswith(firewall.read_text(encoding="utf-8"))
+        assert "table inet atlaso_time_sync" in kwargs["input"]
+        assert 'udp dport 123 drop comment "Atlaso time-sync client-only"' in kwargs["input"]
+    else:
+        assert command == ["nft", "-f", str(firewall)]
+        assert "input" not in kwargs
+        assert "atlaso_time_sync" not in firewall.read_text(encoding="utf-8")
+
+
+def test_firewall_replay_rejects_arguments_and_missing_config(monkeypatch, tmp_path, capsys):
+    """Replay accepts no caller paths and fails when its persisted config is absent."""
+    helper = load_helper_module()
+    firewall = tmp_path / "missing.nft"
+    monkeypatch.setattr(helper, "FIREWALL_CONFIG_PATH", firewall)
+    monkeypatch.setattr(helper.subprocess, "run", lambda *_args, **_kwargs: pytest.fail("nft invoked"))
+
+    assert helper.main(["atlaso-helper", "firewall", "replay", "--real"]) == 1
+    assert "No persisted firewall config is available" in capsys.readouterr().err
+
+    firewall.write_text("flush ruleset\n", encoding="utf-8")
+    assert helper.main(["atlaso-helper", "firewall", "replay", "--real", str(tmp_path / "extra.nft")]) == 2
+    assert "firewall replay accepts no arguments" in capsys.readouterr().err
+
+
+def test_firewall_replay_dry_run_does_not_invoke_nft(monkeypatch):
+    """The replay action remains read-only unless explicitly invoked with --real."""
+    helper = load_helper_module()
+    monkeypatch.setattr(helper.subprocess, "run", lambda *_args, **_kwargs: pytest.fail("dry run invoked nft"))
+
+    assert helper.main(["atlaso-helper", "firewall", "replay"]) == 0
+
+
+def test_firewall_service_uses_helper_replay_command(monkeypatch, tmp_path):
+    """The persistent systemd unit replays rules through Atlaso's guard-aware helper."""
+    helper = load_helper_module()
+    monkeypatch.setattr(helper, "FIREWALL_CONFIG_PATH", tmp_path / "atlaso.nft")
+
+    unit = helper._firewall_service_text()
+
+    assert "ExecStart=/opt/atlaso/bin/atlaso-helper firewall replay --real" in unit
+    assert "ExecStart=/usr/sbin/nft" not in unit
+
+
+@pytest.mark.parametrize("failed_command", ["daemon-reload", "enable"])
+def test_firewall_apply_propagates_service_activation_failure(monkeypatch, tmp_path, capsys, failed_command):
+    """A failed firewall service reload or activation fails the Apply action."""
+    helper = load_helper_module()
+    staged = tmp_path / "staged.nft"
+    staged.write_text("flush ruleset\n", encoding="utf-8")
+    persisted = tmp_path / "state" / "atlaso.nft"
+    service = tmp_path / "systemd" / "atlaso-firewall.service"
+    service.parent.mkdir(parents=True)
+    monkeypatch.setattr(helper, "_validate_firewall_config_path", lambda _value: staged)
+    monkeypatch.setattr(
+        helper,
+        "_validate_firewall_config",
+        lambda _path: subprocess.CompletedProcess([], 0, "", ""),
+    )
+    monkeypatch.setattr(helper, "FIREWALL_CONFIG_DIR", persisted.parent)
+    monkeypatch.setattr(helper, "FIREWALL_CONFIG_PATH", persisted)
+    monkeypatch.setattr(helper, "FIREWALL_SERVICE_PATH", service)
+    commands: list[list[str]] = []
+
+    def fake_run(command):
+        commands.append(command)
+        failed = (failed_command == "daemon-reload" and command == ["systemctl", "daemon-reload"])
+        failed = failed or (failed_command == "enable" and command == [
+            "systemctl", "enable", "--now", "atlaso-firewall.service"
+        ])
+        return subprocess.CompletedProcess(command, 1 if failed else 0, "", "activation failed" if failed else "")
+
+    monkeypatch.setattr(helper, "_run", fake_run)
+
+    assert helper._handle_firewall("apply", [str(staged)]) == 1
+
+    assert persisted.read_text(encoding="utf-8") == "flush ruleset\n"
+    assert commands[-1] == (
+        ["systemctl", "daemon-reload"]
+        if failed_command == "daemon-reload"
+        else ["systemctl", "enable", "--now", "atlaso-firewall.service"]
+    )
+    assert "Firewall service activation failed" in capsys.readouterr().err
+
+
 def test_management_handoff_rollback_restores_absent_firewall(monkeypatch, tmp_path):
     """Disable the candidate service and flush rules for a prior open state.
 
@@ -19050,6 +19169,33 @@ def test_ntpd_client_transition_installs_guard_before_start_and_checks_sync(monk
     ]
 
 
+def test_ntpd_guard_install_upgrades_existing_firewall_unit_without_reapplying_it(monkeypatch, tmp_path):
+    """An NTP-only Apply upgrades the old direct-nft boot unit without restarting Firewall."""
+    helper = load_helper_module()
+    firewall_service = tmp_path / "atlaso-firewall.service"
+    firewall_service.write_text(
+        "[Service]\nExecStart=/usr/sbin/nft -f /etc/atlaso/firewall/atlaso.nft\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(helper, "FIREWALL_SERVICE_PATH", firewall_service)
+    monkeypatch.setattr(helper, "NTP_GUARD_SERVICE_PATH", tmp_path / "atlaso-time-sync-guard.service")
+    monkeypatch.setattr(helper, "NTP_NTPD_DROPIN_PATH", tmp_path / "ntpd.conf")
+    monkeypatch.setattr(helper, "NTP_VMTOOLS_DROPIN_PATH", tmp_path / "vmtoolsd.conf")
+    commands: list[list[str]] = []
+    monkeypatch.setattr(helper, "_ntpd_run_checked", lambda command, _action: commands.append(command))
+
+    helper._ntpd_install_guards()
+
+    assert "ExecStart=/opt/atlaso/bin/atlaso-helper firewall replay --real" in firewall_service.read_text(
+        encoding="utf-8"
+    )
+    assert commands == [
+        ["systemctl", "daemon-reload"],
+        ["systemctl", "enable", "atlaso-time-sync-guard.service"],
+    ]
+    assert not any("atlaso-firewall.service" in command for command in commands)
+
+
 def test_ntpd_client_transition_does_not_start_after_guard_failure(monkeypatch, tmp_path):
     """An unavailable client-only guard leaves ntpd stopped."""
     helper = load_helper_module()
@@ -20027,6 +20173,7 @@ def test_ntpd_status_reports_selected_controller_conflicts_and_guard(monkeypatch
         ("leap-alarm", False),
         ("no-system-peer", False),
         ("guard-drift", False),
+        ("stale-no-system-peer-event", True),
         ("missing-variables", None),
     ],
 )
@@ -20059,6 +20206,7 @@ def test_ntpd_status_reports_runtime_drift_and_sync_failures(
                 values = {
                     "leap-alarm": "leap_alarm",
                     "no-system-peer": "leap_alarm, no_sys_peer",
+                    "stale-no-system-peer-event": "leap_none, sync_ntp, no_sys_peer",
                 }.get(scenario, "leap_none, sync_ntp")
                 return subprocess.CompletedProcess(command, 0, values, "")
             return subprocess.CompletedProcess(command, 0, "*192.0.2.1 .GPS. 1 u 10 64 377 1.0 0.0 0.0\n", "")

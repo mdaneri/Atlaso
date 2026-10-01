@@ -1179,6 +1179,17 @@ def test_photon_provisioning_installs_default_nginx_management_proxy():
     assert "pair through public PyPI" in root_docs
 
 
+def test_provisioning_firewall_replays_through_installed_guard_aware_helper():
+    """First boot must not bypass the atomic client-only NTP ingress guard."""
+    script = Path("image/common/scripts/provision-atlaso.sh").read_text(encoding="utf-8")
+    unit = script.split("cat >/etc/systemd/system/atlaso-firewall.service <<'EOF'", 1)[1].split("\nEOF", 1)[0]
+    assert "ExecStart=/opt/atlaso/bin/atlaso-helper firewall replay --real" in unit
+    assert "ExecStart=/usr/sbin/nft" not in unit
+    assert script.index('"$ATLASO_HOME/bin/atlaso-helper"') < script.index(
+        "cat >/etc/systemd/system/atlaso-firewall.service"
+    )
+
+
 @pytest.mark.parametrize(
     ("address", "method", "source", "expected_source"),
     [

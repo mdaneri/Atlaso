@@ -991,7 +991,7 @@ Wants=network-pre.target
 
 [Service]
 Type=oneshot
-ExecStart=/usr/sbin/nft -f /etc/atlaso/nftables.d/atlaso.nft
+ExecStart=/opt/atlaso/bin/atlaso-helper firewall replay --real
 RemainAfterExit=yes
 
 [Install]

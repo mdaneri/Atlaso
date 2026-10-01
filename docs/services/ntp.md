@@ -84,6 +84,11 @@ not mean the appliance clock is synchronized. Use the status details, correct up
 service through the supported appliance workflow, and apply again. If helper status is unavailable, Atlaso reports the
 effective state as unknown instead of claiming the clock is healthy.
 
+NTP health uses the current synchronization state. NTPsec's last event can still show
+`no_sys_peer` after synchronization recovers; that historical event does not override
+current `leap_none` and `sync_ntp` state. Firewall Apply and service activation replay
+the client-only ingress guard in the same nftables transaction as the firewall rules.
+
 Appliance Settings does not own time enforcement. DNS/DHCP also does not apply NTP configuration.
 The configured NTP hostname serves both NTP and NTS; Atlaso creates one managed CNAME with A and AAAA targets for
 the selected listener addresses. Disable NTP to remove those owned records while preserving operator DNS rows.
