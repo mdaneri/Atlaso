@@ -2633,6 +2633,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#verify-source-snapshot-admission" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Verify source-snapshot admission
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#release-task-owned-lan-segments" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -3965,6 +3976,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#verify-source-snapshot-admission" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Verify source-snapshot admission
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#release-task-owned-lan-segments" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -4312,6 +4334,13 @@ directly to a task-worktree consumer: token resolution requires containment bene
 <p>Repeated setup copies nothing when the destination is already valid. Keep configuration out of commits, pull requests,
 release artifacts, and logs. Record ownership of only the task's copied configuration; later task-worktree cleanup
 must never remove or alter the primary checkout's originals.</p>
+<h3 id="verify-source-snapshot-admission">Verify source-snapshot admission<a class="headerlink" href="#verify-source-snapshot-admission" title="Permanent link">&para;</a></h3>
+<p>The focused Windows source-snapshot regression runs with PowerShell 7 using
+<code>python -m pytest -q tests/test_photon_image.py::test_vmware_source_snapshot_resists_during_packer_checkout_changes</code>.
+Its certificate admission checks create an isolated synthetic repository under the pytest output directory, with plan
+and evidence paths beneath that repository's <code>test-results</code> tree. No pytest <code>--basetemp</code> override is needed. Both
+inspectors must reject mutable checkout invocation, out-of-root paths, missing Python, and existing evidence before
+any credential access. These admission fixtures do not create VMs or perform certificate handoffs.</p>
 <h3 id="release-task-owned-lan-segments">Release task-owned LAN segments<a class="headerlink" href="#release-task-owned-lan-segments" title="Permanent link">&para;</a></h3>
 <p>Lifecycle runs that request <code>lan:&lt;name&gt;</code> now create an immutable receipt before registering a new segment.
 Runtime admission requires a clean source checkout and rechecks its exact commit before VM/segment creation and before
