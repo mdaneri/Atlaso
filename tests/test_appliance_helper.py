@@ -21614,6 +21614,144 @@ def test_ntpd_status_reports_selected_controller_conflicts_and_guard(
 
 
 @pytest.mark.parametrize(
+    ("mode", "journal_state", "expected_mode", "expected_health", "expected_phase"),
+    [
+        ("ntp_client", "prepared", "unverified", None, "prepared"),
+        ("ntp_server", "prepared", "unverified", None, "prepared"),
+        ("vmware_tools", "prepared", "unverified", None, "prepared"),
+        ("ntp_client", "malformed", "unverified", None, "invalid"),
+        ("ntp_client", "verified_match", "ntp_client", True, "verified"),
+        ("ntp_client", "verified_mismatch", "unverified", None, "verified"),
+        ("vmware_tools", "verified_match", "vmware_tools", True, "verified"),
+        ("ntp_client", "absent", "ntp_client", True, "absent"),
+    ],
+    ids=[
+        "prepared-client", "prepared-server", "prepared-vmware", "malformed-journal",
+        "verified-client", "mismatched-verified-client", "verified-vmware", "no-journal",
+    ],
+)
+def test_ntpd_status_does_not_claim_health_for_unverified_transaction(
+    monkeypatch, tmp_path, capsys, mode, journal_state, expected_mode, expected_health, expected_phase
+):
+    """Prepared or malformed Apply state cannot inherit a candidate's healthy probes.
+
+    Args:
+        monkeypatch: Pytest fixture for replacing helper commands and runtime state.
+        tmp_path: Temporary directory for isolated applied config and transaction journal.
+        capsys: Pytest fixture for capturing the bounded status payload.
+        mode: Applied config mode used to select the otherwise healthy clock source.
+        journal_state: Prepared, malformed, verified, mismatched, or absent checkpoint state.
+        expected_mode: Mode that status should report after checking the checkpoint.
+        expected_health: Expected synchronization health after transaction verification.
+        expected_phase: Sanitized checkpoint phase reported by status.
+    """
+    helper = load_helper_module()
+    config = tmp_path / "ntp.conf"
+    enabled = "true" if mode == "ntp_server" else "false"
+    config.write_text(
+        f"# Atlaso NTP enabled: {enabled}\n# Atlaso time mode: {mode}\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(helper, "NTP_CONFIG_PATH", config)
+    monkeypatch.setattr(helper, "_ntpd_config_managed", lambda _path: True)
+    monkeypatch.setattr(helper.shutil, "which", lambda command: "/usr/bin/ntpq" if command == "ntpq" else None)
+    monkeypatch.setattr(
+        helper,
+        "_ntpd_client_packet_guard_status",
+        lambda _mode="ntp_client": {"active": True, "detail": "guard verified"},
+    )
+    if mode == "vmware_tools":
+        monkeypatch.setattr(
+            helper,
+            "_ntpd_service_state",
+            lambda unit: {"active": False, "enabled": False, "detail": "inactive"},
+        )
+        monkeypatch.setattr(
+            helper,
+            "_ntpd_vmware_timesync_state",
+            lambda: {"active": True, "enabled": True, "detail": "active and enabled"},
+        )
+        monkeypatch.setattr(
+            helper,
+            "_ntpd_vmware_clock_state",
+            lambda: {"healthy": True, "offset_seconds": 0.25, "detail": "host time aligned"},
+        )
+    else:
+        monkeypatch.setattr(
+            helper,
+            "_ntpd_service_state",
+            lambda unit: {
+                "active": unit == "ntpd.service",
+                "enabled": unit == "ntpd.service",
+                "detail": "active and enabled" if unit == "ntpd.service" else "inactive",
+            },
+        )
+        monkeypatch.setattr(
+            helper,
+            "_ntpd_vmware_timesync_state",
+            lambda: {"active": False, "enabled": False, "detail": "disabled"},
+        )
+
+    def fake_run(command: list[str], *, timeout: float | None = None) -> subprocess.CompletedProcess[str]:
+        """Return healthy synthetic NTP probes for transaction-status coverage.
+
+        Args:
+            command: Command and arguments supplied to the mocked process runner.
+            timeout: Maximum duration supplied to the mocked process runner.
+        """
+        if command[1:3] == ["-c", "rv"]:
+            output = "leap_none, sync_ntp\n"
+        elif command[1:3] == ["-c", "ntsinfo"]:
+            output = "NTS status available\n"
+        else:
+            output = "*192.0.2.1 .GPS. 1 u 10 64 377 1.0 0.0 0.0\n"
+        return subprocess.CompletedProcess(command, 0, output, "")
+
+    monkeypatch.setattr(helper, "_run", fake_run)
+    transaction_path = helper._ntpd_transaction_path()
+    if journal_state == "prepared":
+        helper._ntpd_write_transaction({"schema": 1, "phase": "prepared", "owner": {"pid": 1}})
+    elif journal_state == "malformed":
+        transaction_path.write_text("{malformed", encoding="utf-8")
+    elif journal_state == "verified_match":
+        helper._ntpd_write_transaction(
+            {
+                "schema": 1,
+                "phase": "verified",
+                "config_sha256": hashlib.sha256(config.read_bytes()).hexdigest(),
+            }
+        )
+    elif journal_state == "verified_mismatch":
+        helper._ntpd_write_transaction(
+            {"schema": 1, "phase": "verified", "config_sha256": "0" * 64}
+        )
+
+    assert helper._ntpd_status() == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["mode"] == expected_mode
+    assert payload["transaction"] == {
+        "phase": expected_phase,
+        "pending": expected_health is None,
+    }
+    assert payload["synchronization"]["healthy"] is expected_health
+    if expected_health is None:
+        assert payload["synchronization"]["state"] == "unavailable"
+        assert payload["selected_controller"] == {
+            "name": None,
+            "active": None,
+            "enabled": None,
+            "detail": payload["synchronization"]["detail"],
+        }
+        assert "verified configuration" in payload["synchronization"]["detail"]
+    elif mode in {"ntp_client", "ntp_server"}:
+        assert payload["synchronization"]["state"] == "synchronized"
+        assert payload["selected_controller"]["name"] == "ntpd"
+    else:
+        assert payload["synchronization"]["state"] == "synchronized"
+        assert payload["selected_controller"]["name"] == "vmware_tools"
+
+
+@pytest.mark.parametrize(
     ("scenario", "expected_health"),
     [
         ("vmware-conflict", False),

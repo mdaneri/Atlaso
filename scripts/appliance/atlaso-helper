@@ -8379,6 +8379,30 @@ def _ntpd_status() -> int:
             "healthy": None,
             "detail": "Apply a managed time-source configuration to report synchronization health.",
         }
+    # Read authority after probes: a candidate may become observable while an
+    # Apply is still prepared, but only the verified checkpoint commits it.
+    transaction_phase = "absent"
+    transaction_pending = False
+    try:
+        transaction = _ntpd_read_transaction()
+        if transaction is not None:
+            transaction_phase = str(transaction["phase"])
+            transaction_pending = transaction_phase == "prepared"
+            if transaction_phase == "verified":
+                transaction_pending = (
+                    not NTP_CONFIG_PATH.is_file()
+                    or hashlib.sha256(NTP_CONFIG_PATH.read_bytes()).hexdigest() != transaction.get("config_sha256")
+                )
+    except (OSError, ValueError, RuntimeError):
+        transaction_phase = "invalid"
+        transaction_pending = True
+    payload["transaction"] = {"phase": transaction_phase, "pending": transaction_pending}
+    if transaction_pending:
+        mode = "unverified"
+        detail = "Clock Apply has not committed a verified configuration. Complete Apply or recovery before relying on this clock source."
+        payload["synchronization"] = {"state": "unavailable", "healthy": None, "detail": detail}
+        selected_controller = {"name": None, "active": None, "enabled": None, "detail": detail}
+        daemon_conflicts = all_sources
     payload["mode"] = mode
     payload["selected_controller"] = selected_controller
     payload["daemon_conflicts"] = daemon_conflicts

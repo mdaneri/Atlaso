@@ -63,7 +63,10 @@ The selection autosaves as desired state. Global Appliance Apply performs the ho
 the page reports the effective mode, NTP synchronization health, and detected local daemon states separately from the
 saved choice. Before changing applied configuration, Atlaso durably records the prior configuration. If Apply is
 interrupted before controller verification, startup and service guards restore it; a verified checkpoint retains the
-new controller after a power loss. NTS private material stays in its managed location until verification.
+new controller after a power loss. While a transaction remains prepared, status marks the mode as unverified and
+withholds synchronization health even if the candidate clock has synchronized. An invalid checkpoint or a verified
+checkpoint that differs from the current configuration also leaves status unverified until recovery.
+NTS private material stays in its managed location until verification.
 Before an NTS transition, Atlaso records the prior configuration and stops NTPsec before capturing its final key
 material, so cookie rotation cannot leave an incomplete rollback snapshot. A capture failure restores the prior
 controller without changing that material. If an NTS transition fails, rollback stops the candidate controller and
