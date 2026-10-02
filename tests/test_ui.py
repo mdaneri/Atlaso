@@ -5583,12 +5583,17 @@ def test_settings_archive_preflight_rejects_invalid_collection_row_and_required_
     enabled_nts_without_ca = deepcopy(archive)
     enabled_nts_without_ca["data"]["ntp_settings"][0].update(
         {
+            "enabled": True,
+            "listen_interface": "eth2",
+            "listen_address": "192.168.50.1",
             "nts_server_enabled": True,
             "nts_server_cert_path": "/etc/atlaso/ntp/nts-chain.pem",
             "nts_server_key_path": "/etc/atlaso/ntp/nts-key.pem",
         }
     )
     enabled_nts_without_ca["data"]["ca_settings"][0]["enabled"] = False
+    dormant_nts_without_ca = deepcopy(enabled_nts_without_ca)
+    dormant_nts_without_ca["data"]["ntp_settings"][0]["enabled"] = False
     invalid_dns_domain = deepcopy(archive)
     invalid_dns_domain["data"]["dns_settings"][0]["domain"] = "bad domain"
     invalid_route_destination = deepcopy(archive)
@@ -6649,6 +6654,8 @@ def test_settings_archive_preflight_rejects_invalid_collection_row_and_required_
     archive_summary(disabled_missing_routing_target)
     archive_summary(disabled_missing_dhcp_target)
     archive_summary(disabled_missing_service_target)
+    # Dormant NTS server intent does not require CA material until NTP is enabled.
+    archive_summary(dormant_nts_without_ca)
     archive_summary(unbound_client_ldap_mapping)
 
 
@@ -14530,17 +14537,25 @@ def test_depot_submission_includes_only_relevant_local_user_dependency(
 
 
 @pytest.mark.parametrize(
-    ("nts_server_enabled", "ca_changed", "ldap_changes_pending", "expected_units"),
+    (
+        "ntp_enabled",
+        "nts_server_enabled",
+        "ca_changed",
+        "ldap_changes_pending",
+        "expected_units",
+    ),
     [
-        (True, True, False, ["ca", "ntpd"]),
-        (True, False, False, ["ca", "ntpd"]),
-        (False, True, False, ["ntpd"]),
-        (True, True, True, ["ca", "dnsmasq", "firewall", "ldap", "ntpd"]),
+        (True, True, True, False, ["ca", "ntpd"]),
+        (True, True, False, False, ["ca", "ntpd"]),
+        (True, False, True, False, ["ntpd"]),
+        (False, True, True, False, ["ntpd"]),
+        (True, True, True, True, ["ca", "dnsmasq", "firewall", "ldap", "ntpd"]),
     ],
 )
 def test_nts_submission_includes_ca_material_dependency(
     client,
     monkeypatch,
+    ntp_enabled,
     nts_server_enabled,
     ca_changed,
     ldap_changes_pending,
@@ -14551,6 +14566,7 @@ def test_nts_submission_includes_ca_material_dependency(
     Args:
         client: Client used to invoke the external or application interface.
         monkeypatch: Pytest fixture used to replace dependencies.
+        ntp_enabled: Whether the NTP service is enabled.
         nts_server_enabled: Nts server enabled supplied by the caller.
         ca_changed: Ca changed supplied by the caller.
         ldap_changes_pending: Ldap changes pending supplied by the caller.
@@ -14603,7 +14619,12 @@ def test_nts_submission_includes_ca_material_dependency(
             "ntpd",
             "NTP / NTS",
             changed=True,
-            context={"ntp_settings": SimpleNamespace(nts_server_enabled=nts_server_enabled)},
+            context={
+                "ntp_settings": SimpleNamespace(
+                    enabled=ntp_enabled,
+                    nts_server_enabled=nts_server_enabled,
+                )
+            },
         ),
     ]
     started_jobs = []
