@@ -4509,6 +4509,9 @@ underlying interface roles or generated topology. <strong>Automatic</strong> fol
 forwarding, while Access networks need an explicit allow. <strong>Allow</strong> requests forwarding, and <strong>Deny</strong> blocks it. If an
 allow and deny cover the same directed pair and family, deny wins. Choose IPv4, IPv6, or both families; a rule for one
 family does not affect the other. The opposite direction is evaluated independently.</p>
+<p>Generated Firewall names for route-role permissions and management isolation use exact, case-sensitive interface
+identities and direction. Punctuation or case differences between interfaces remain distinct, and regenerating the
+same topology retains the same names. These rules continue to cover each shared IPv4 and IPv6 network family.</p>
 <p>Saved permission changes are desired state. Review pending and applied state in the global Appliance Apply view, then
 submit both <strong>Routing &amp; WAN</strong> (<code>wan</code>) and <strong>Firewall</strong> together. With Routing disabled, permissions remain saved but
 are suspended. To roll an override back, edit its policy to <strong>Automatic</strong> or remove the override; generated defaults
