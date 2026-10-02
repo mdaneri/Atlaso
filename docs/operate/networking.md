@@ -224,6 +224,10 @@ forwarding, while Access networks need an explicit allow. **Allow** requests for
 allow and deny cover the same directed pair and family, deny wins. Choose IPv4, IPv6, or both families; a rule for one
 family does not affect the other. The opposite direction is evaluated independently.
 
+Generated Firewall names for route-role permissions and management isolation use exact, case-sensitive interface
+identities and direction. Punctuation or case differences between interfaces remain distinct, and regenerating the
+same topology retains the same names. These rules continue to cover each shared IPv4 and IPv6 network family.
+
 Saved permission changes are desired state. Review pending and applied state in the global Appliance Apply view, then
 submit both **Routing & WAN** (`wan`) and **Firewall** together. With Routing disabled, permissions remain saved but
 are suspended. To roll an override back, edit its policy to **Automatic** or remove the override; generated defaults
