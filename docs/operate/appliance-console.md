@@ -151,7 +151,8 @@ apply or reconcile those edits first.
 
 After observation succeeds, Atlaso refreshes HTTPS with the completed Network task even when first boot is complete.
 Bound recovery preserves desired state and bypasses first-boot seeding and inventory reconciliation even when
-first-boot evidence is incomplete. It preserves
+first-boot evidence is incomplete. Bound recovery validates the applied site without requiring its first-boot marker.
+It preserves
 the applied management protocol and listener ports while refreshing certificates. Bootstrap restart has
 a bounded inner deadline; a timeout requests service cancellation. Recovery removes or replaces a task binding only
 after systemd proves that no bootstrap job is queued or running. A still-active or ambiguous binding is preserved.
@@ -209,7 +210,7 @@ untouched. Its hostname and terminal SANs come from applied Settings, so pending
 recovery leaf. Publication uses the certificate/key paths captured in applied Settings, keeping nginx on the refreshed
 leaf even when its filenames use a prior hostname. Missing applied identity or paths stops recovery.
 A missing or changed applied CA root requires
-ordinary CA Apply before recovery. Successful publication
+ordinary CA Apply before recovery. After nginx reload, stable readiness and exact served-leaf proof, successful publication
 records only the refreshed leaf in the CA baseline, preserving unrelated pending CA intent; a failed publication
 does not advance that baseline. First-boot publication records its exact captured CA baseline.
 

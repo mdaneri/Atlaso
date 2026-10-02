@@ -26082,40 +26082,49 @@ def _console_nginx_main_config_activates_atlaso(config: str) -> bool:
     )
 
 
-def _console_first_boot_https_contract_is_complete() -> bool:
-    """Return whether durable bootstrap evidence matches applied nginx state."""
+def _console_first_boot_https_contract_is_complete(*, require_marker: bool = True) -> bool:
+    """Validate the applied site, optionally requiring ordinary first-boot evidence.
+
+    Args:
+        require_marker: Ordinary bootstrap requires its marker; bound recovery validates the applied site.
+    """
+    paths = [(NGINX_MAIN_CONFIG_PATH, 1048576), (NGINX_CONF_INCLUDE_PATH, 4096),
+             (NGINX_MANAGEMENT_SITE_PATH, 262144)]
+    if require_marker:
+        paths.append((FIRST_BOOT_HTTPS_MARKER_PATH, 256))
     try:
-        marker_stat = FIRST_BOOT_HTTPS_MARKER_PATH.lstat()
-        main_config_stat = NGINX_MAIN_CONFIG_PATH.lstat()
-        include_stat = NGINX_CONF_INCLUDE_PATH.lstat()
-        management_stat = NGINX_MANAGEMENT_SITE_PATH.lstat()
-        if (
-            FIRST_BOOT_HTTPS_MARKER_PATH.is_symlink()
-            or NGINX_MAIN_CONFIG_PATH.is_symlink()
-            or NGINX_CONF_INCLUDE_PATH.is_symlink()
-            or NGINX_MANAGEMENT_SITE_PATH.is_symlink()
-            or not FIRST_BOOT_HTTPS_MARKER_PATH.is_file()
-            or not NGINX_MAIN_CONFIG_PATH.is_file()
-            or not NGINX_CONF_INCLUDE_PATH.is_file()
-            or not NGINX_MANAGEMENT_SITE_PATH.is_file()
-            or not 0 < marker_stat.st_size <= 256
-            or not 0 < main_config_stat.st_size <= 1048576
-            or not 0 < include_stat.st_size <= 4096
-            or not 0 < management_stat.st_size <= 262144
-        ):
-            return False
-        marker = FIRST_BOOT_HTTPS_MARKER_PATH.read_text(encoding="utf-8")
+        for path, maximum in paths:
+            metadata = path.lstat()
+            if path.is_symlink() or not stat.S_ISREG(metadata.st_mode) or not 0 < metadata.st_size <= maximum:
+                return False
         main_config = NGINX_MAIN_CONFIG_PATH.read_text(encoding="utf-8")
         include = NGINX_CONF_INCLUDE_PATH.read_text(encoding="utf-8")
         management = NGINX_MANAGEMENT_SITE_PATH.read_text(encoding="utf-8")
+        if require_marker and FIRST_BOOT_HTTPS_MARKER_PATH.read_text(encoding="utf-8") != FIRST_BOOT_HTTPS_MARKER_TEXT:
+            return False
     except (OSError, UnicodeError):
         return False
-    return (
-        marker == FIRST_BOOT_HTTPS_MARKER_TEXT
-        and _console_nginx_main_config_activates_atlaso(main_config)
-        and include == FIRST_BOOT_HTTPS_INCLUDE_TEXT
-        and _console_management_config_contract_is_complete(management)
-    )
+    return (_console_nginx_main_config_activates_atlaso(main_config)
+            and include == FIRST_BOOT_HTTPS_INCLUDE_TEXT
+            and _console_management_config_contract_is_complete(management))
+
+
+def _console_management_leaf_is_active() -> bool:
+    """Prove the loopback nginx worker serves the exact published leaf before acknowledgement."""
+    try:
+        config = NGINX_MANAGEMENT_SITE_PATH.read_text(encoding="utf-8")
+        certificate = re.search(r"(?m)^\s*ssl_certificate\s+([^;]+);", config)
+        listener = re.search(r"(?m)^\s*listen\s+(?:127\.0\.0\.1:)?(\d+)\s+ssl\b", config)
+        if certificate is None or listener is None:
+            return False
+        installed = Path(certificate.group(1).strip()).read_text(encoding="utf-8")
+        leaf = re.search(r"-----BEGIN CERTIFICATE-----.*?-----END CERTIFICATE-----", installed, re.S)
+        if leaf is None:
+            return False
+        served = ssl.get_server_certificate(("127.0.0.1", int(listener.group(1))), timeout=3)
+        return ssl.PEM_cert_to_DER_cert(served) == ssl.PEM_cert_to_DER_cert(leaf.group(0))
+    except (OSError, ValueError, UnicodeError):
+        return False
 
 
 CONSOLE_BOOTSTRAP_BINDING_DIRECTORY = Path("/run/atlaso-console-recovery")
@@ -26234,8 +26243,8 @@ def _recover_console_management_plane(timeout_seconds: int = 60, *, network_job_
                 )
                 _console_restart_bootstrap()
             bootstrap_retried = True
-            if not _console_first_boot_https_contract_is_complete():
-                raise ValueError("first-boot HTTPS bootstrap returned without a complete durable contract")
+            if not _console_first_boot_https_contract_is_complete(require_marker=network_job_id is None):
+                raise ValueError("HTTPS bootstrap returned without a complete applied management site")
 
         nginx = shutil.which("nginx")
         if nginx is None:
@@ -26270,6 +26279,9 @@ def _recover_console_management_plane(timeout_seconds: int = 60, *, network_job_
                 statuses[label] == expected
                 for label, _url, _insecure, expected in readiness_checks
             )
+            if ready and network_job_id is not None and management_https_enabled:
+                ready = _console_management_leaf_is_active()
+                statuses["published management leaf"] = "active" if ready else "not active"
             if ready:
                 consecutive_successes += 1
                 if consecutive_successes >= 5:
@@ -26291,6 +26303,10 @@ def _recover_console_management_plane(timeout_seconds: int = 60, *, network_job_
             "checking management service state",
             ["systemctl", "is-active", *MANAGEMENT_PLANE_UNITS],
         )
+        if network_job_id is not None and management_https_enabled:
+            _console_recovery_command("acknowledging ready management certificate publication",
+                                      ["/opt/atlaso/.venv/bin/python", "/opt/atlaso/bin/atlaso-bootstrap-https",
+                                       "--acknowledge-console-publication", network_job_id])
     except ValueError as exc:
         print(f"Management plane recovery failed: {exc}", file=sys.stderr)
         return 1

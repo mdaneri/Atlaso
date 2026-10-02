@@ -8,6 +8,7 @@ import os
 import re
 import shlex
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
@@ -55,6 +56,7 @@ from atlaso.app.ui import (
     update_appliance_apply_baselines,
 )
 
+CONSOLE_PUBLICATION_DIRECTORY = Path("/run/atlaso-console-recovery")
 ENV_PATH = Path("/var/lib/atlaso/apply/ca/first-boot-management.env")
 MARKER_PATH = Path("/var/lib/atlaso/first-boot-https.applied")
 HELPER_PATH = Path("/opt/atlaso/bin/atlaso-helper")
@@ -649,6 +651,71 @@ def record_ca_publication_baseline(db, public_payload: str, summary: list[str], 
     update_appliance_apply_baselines(db, [unit], {"ca"})
 
 
+def console_publication_path(network_job_id: str) -> Path:
+    """Validate the root-private receipt directory and completed task filename.
+
+    Args:
+        network_job_id: Exact completed Network task identifier.
+    """
+    if not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", network_job_id):
+        raise ValueError("Invalid completed Network task binding")
+    directory = CONSOLE_PUBLICATION_DIRECTORY
+    metadata = directory.lstat()
+    if (directory.is_symlink() or not stat.S_ISDIR(metadata.st_mode) or (hasattr(os, "getuid") and (metadata.st_uid != 0 or metadata.st_mode & 0o077))):
+        raise ValueError("Console publication directory must be private and root-owned")
+    return directory / (network_job_id + ".publication.json")
+
+
+def acknowledge_console_publication(network_job_id: str) -> int:
+    """Acknowledge captured publication only after the helper proves management readiness.
+
+    Args:
+        network_job_id: Exact completed Network task identifying the pending public receipt.
+    """
+    try:
+        path = console_publication_path(network_job_id)
+        descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+        with os.fdopen(descriptor, "r", encoding="utf-8") as stream:
+            metadata = os.fstat(stream.fileno())
+            if (not stat.S_ISREG(metadata.st_mode) or metadata.st_nlink != 1
+                    or metadata.st_size > 2097152
+                    or (hasattr(os, "getuid") and (metadata.st_uid != 0 or metadata.st_mode & 0o077))):
+                raise ValueError("Console publication receipt is unsafe")
+            receipt = json.load(stream)
+        if receipt["network_job_id"] != network_job_id:
+            raise ValueError("Console publication receipt binding changed")
+        with SessionLocal() as db:
+            acquire_network_objects_write_lock(db)
+            baselines = load_appliance_apply_baselines(db)
+            applied_settings = json.loads(str((baselines.get("appliance_settings") or {}).get("config_preview") or "{}"))
+            if baselines.get("ca") != receipt["ca_baseline"] or applied_settings != receipt["settings_snapshot"]:
+                raise ValueError("Applied CA or Settings changed before publication acknowledgement")
+            job = db.get(Job, network_job_id)
+            payload = json.loads(job.result or "{}") if job is not None else {}
+            units = [unit for unit in payload.get("captured_units", []) if unit.get("unit_id") == "network"]
+            current_network = render_network_config(interfaces=list(db.scalars(select(PhysicalInterface))),
+                                                    vlans=list(db.scalars(select(VlanInterface))))
+            if (job is None or job.status != JobStatus.SUCCEEDED.value or len(units) != 1
+                    or not network_management_paths(str(units[0].get("config_preview") or ""))
+                    or network_management_paths(str(units[0]["config_preview"])) != network_management_paths(current_network)):
+                raise ValueError("Management paths changed before publication acknowledgement")
+            settings = db.scalar(select(CaSettings))
+            certificates = db.scalars(select(CaCertificate).where(CaCertificate.managed_owner == "appliance:https")).all()
+            current = render_ca_apply_payload(settings, certificates, include_private_keys=False)
+            if current != receipt["public_payload"]:
+                raise ValueError("Published management certificate changed before acknowledgement")
+            current_identity = path.lstat()
+            if path.is_symlink() or (current_identity.st_dev, current_identity.st_ino) != (metadata.st_dev, metadata.st_ino):
+                raise ValueError("Console publication receipt changed before acknowledgement")
+            record_ca_publication_baseline(db, receipt["public_payload"], [], management_only=True)
+            db.commit()
+        # Retain the public receipt as evidence; never remove a concurrently replaced publication.
+        return 0
+    except (OSError, ValueError, KeyError, TypeError, SQLAlchemyError):
+        print("Console publication acknowledgement failed; preserve the pending receipt and CA baseline.")
+        return 2
+
+
 def refresh_completed_management_certificate(network_job_id: str) -> int:
     """Publish only the management leaf and record it under the admitted writer lock.
 
@@ -684,6 +751,11 @@ def refresh_completed_management_certificate(network_job_id: str) -> int:
         if not recovery_root_matches_baseline(db):
             print("Applied CA root baseline is unavailable or changed; apply CA intent before console recovery.")
             return 2
+        try:
+            console_publication_path(network_job_id)
+        except (OSError, ValueError):
+            print("Private publication receipt storage is unavailable; certificate recovery was not started.")
+            return 2
         errors = ensure_recovery_ca_state(db, network_job_id, commit=False, management_snapshot=applied_settings)
         if errors:
             for error in errors:
@@ -707,7 +779,10 @@ def refresh_completed_management_certificate(network_job_id: str) -> int:
         result = run([nginx, "-t"]).returncode
         if result != 0:
             return result
-        record_ca_publication_baseline(db, public_payload, [], management_only=True)
+        # Publication is durable, but the active worker is not proven until the outer helper reloads it.
+        receipt = {"network_job_id": network_job_id, "public_payload": public_payload,
+                   "ca_baseline": load_appliance_apply_baselines(db).get("ca"), "settings_snapshot": applied_settings}
+        write_text_atomic(console_publication_path(network_job_id), json.dumps(receipt, sort_keys=True), mode=0o600)
         db.commit()
         return 0
 
@@ -912,6 +987,8 @@ if __name__ == "__main__":
             # Never disclose database connection details or decrypted material.
             verified = False
         raise SystemExit(0 if verified else 2)
+    if len(sys.argv) == 3 and sys.argv[1] == "--acknowledge-console-publication":
+        raise SystemExit(acknowledge_console_publication(sys.argv[2]))
     if sys.argv[1:]:
         raise SystemExit(2)
     raise SystemExit(main())

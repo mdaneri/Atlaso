@@ -2233,6 +2233,7 @@ def test_console_management_plane_recovery_retries_bootstrap_and_verifies_readin
         lambda name: f"/usr/bin/{name}" if name in {"curl", "nginx"} else None,
     )
     monkeypatch.setattr(helper.time, "sleep", lambda _seconds: None)
+    monkeypatch.setattr(helper, "_console_management_leaf_is_active", lambda: True)
     commands: list[list[str]] = []
     monkeypatch.setattr(helper, "CONSOLE_BOOTSTRAP_BINDING_DIRECTORY", tmp_path / "binding")
     monkeypatch.setattr(helper, "fcntl", None)
@@ -2269,7 +2270,8 @@ def test_console_management_plane_recovery_retries_bootstrap_and_verifies_readin
                 ),
                 encoding="utf-8",
             )
-            marker.write_text(helper.FIRST_BOOT_HTTPS_MARKER_TEXT, encoding="utf-8")
+            if network_job_id is None:
+                marker.write_text(helper.FIRST_BOOT_HTTPS_MARKER_TEXT, encoding="utf-8")
         if command and command[0] == "/usr/bin/curl":
             status = "308" if command[-1] == "http://127.0.0.1/" else "200"
             return subprocess.CompletedProcess(command, 0, status, "")
@@ -2295,6 +2297,10 @@ def test_console_management_plane_recovery_retries_bootstrap_and_verifies_readin
     assert ["systemctl", "enable", "nginx.service", "atlaso.service"] in commands
     assert ["systemctl", "reload", "nginx.service"] in commands
     assert ["systemctl", "is-active", "nginx.service", "atlaso.service"] in commands
+    acknowledgements = [command for command in commands if "--acknowledge-console-publication" in command]
+    assert bool(acknowledgements) is (network_job_id is not None)
+    if network_job_id is not None:
+        assert marker.read_text() == ""
 
 
 def test_console_management_plane_recovery_verifies_http_only_mode(monkeypatch, tmp_path, capsys):
@@ -2830,6 +2836,7 @@ def test_completed_bootstrap_refreshes_bound_network_without_first_boot_reconcil
     loader.exec_module(bootstrap)
     monkeypatch.setattr(bootstrap, "first_boot_https_artifacts_are_complete", lambda: True)
     monkeypatch.setattr(bootstrap, "DEVELOPMENT_ROOT_CA_STAGING_PATH", tmp_path / "absent")
+    monkeypatch.setattr(bootstrap, "console_publication_path", lambda job: tmp_path / "publication.json")
     monkeypatch.setattr(bootstrap, "import_staged_development_root_ca", lambda *_args: False)
 
     def reject_first_boot(*_args, **_kwargs):
@@ -2887,6 +2894,8 @@ def test_bound_bootstrap_preserves_applied_front_door(client, monkeypatch, tmp_p
     monkeypatch.setattr(bootstrap, "NGINX_MANAGEMENT_PATH", config)
     monkeypatch.setattr(bootstrap, "first_boot_https_artifacts_are_complete", lambda: True)
     monkeypatch.setattr(bootstrap, "CA_STAGED_CONFIG_PATH", str(tmp_path / "ca.json"))
+    receipt = tmp_path / "publication.json"
+    monkeypatch.setattr(bootstrap, "console_publication_path", lambda job: receipt)
     calls = []
     monkeypatch.setattr(bootstrap, "recovery_root_matches_baseline", lambda db: True)
     monkeypatch.setattr(bootstrap, "load_appliance_apply_baselines", lambda db: {"appliance_settings": {"config_preview": json.dumps({"fqdn": "applied.example.test", "management_https_enabled": True, "web_terminal_enabled": False, "web_terminal_addresses": [], "management_https_cert_path": "/etc/atlaso/https/certs/applied.crt", "management_https_key_path": "/etc/atlaso/https/certs/applied.key"})}})
@@ -2985,10 +2994,11 @@ def test_console_recovery_cli_dispatches_completed_task_id(monkeypatch):
     assert calls == [("recover-management-plane", ["job_0123456789ab"])]
 
 
+@pytest.mark.parametrize("ready", [True, False])
 @pytest.mark.parametrize("artifacts_complete", [True, False])
 @pytest.mark.parametrize("pending", ["service", "certificate", "root", "root_key", "settings", "missing_settings", "missing_paths"])
 @pytest.mark.parametrize("apply_result", [0, 1])
-def test_completed_recovery_publishes_only_management_and_records_exact_baseline(client, monkeypatch, tmp_path, pending, apply_result, artifacts_complete):
+def test_completed_recovery_publishes_only_management_and_records_exact_baseline(client, monkeypatch, tmp_path, pending, apply_result, artifacts_complete, ready):
     """Keep unrelated intent pending and acknowledge the management leaf only after success.
 
     Args:
@@ -2998,6 +3008,7 @@ def test_completed_recovery_publishes_only_management_and_records_exact_baseline
         pending: Unapplied service hostname, certificate row, or trust-root path edit.
         apply_result: Successful publication or simulated helper failure.
         artifacts_complete: Intact or missing first-boot evidence must use the same recovery path.
+        ready: Outer reload/readiness success permits acknowledgement; failure leaves the CA baseline pending.
     """
     from sqlalchemy import select
 
@@ -3076,6 +3087,9 @@ def test_completed_recovery_publishes_only_management_and_records_exact_baseline
                                     result=json.dumps({"captured_units": [{"unit_id": "network", "config_preview": preview}]})))
         db.commit()
         expected_leaf = {column.name: getattr(ldap_leaf, column.name) for column in CaCertificate.__table__.columns}
+    publication_directory = tmp_path / "publication"
+    publication_directory.mkdir(mode=0o700)
+    monkeypatch.setattr(bootstrap, "CONSOLE_PUBLICATION_DIRECTORY", publication_directory)
     stage = tmp_path / "ca.json"
     nginx_config = tmp_path / "nginx.conf"
     nginx_config.write_text("ssl_certificate /etc/atlaso/https/certs/nginx-previous-hostname.crt;\n"
@@ -3144,6 +3158,16 @@ def test_completed_recovery_publishes_only_management_and_records_exact_baseline
             assert load_appliance_apply_baselines(db)["ca"] == before
         return
     assert result == apply_result
+    with SessionLocal() as db:
+        assert load_appliance_apply_baselines(db)["ca"] == before
+    if not apply_result and not ready and pending == "service":
+        # A writer admitted after publication must also block late acknowledgement.
+        with SessionLocal() as db:
+            appliance_console._management_interface(db).ip_cidr = "192.0.2.75/24"
+            db.commit()
+        assert bootstrap.acknowledge_console_publication("job_scoped_ca") == 2
+    if not apply_result and ready:
+        assert bootstrap.acknowledge_console_publication("job_scoped_ca") == 0
     assert [leaf["managed_owner"] for leaf in captured[0]["certificates"]] == ["appliance:https"]
     management_leaf = captured[0]["certificates"][0]
     assert management_leaf["cert_path"] == "/etc/atlaso/https/certs/nginx-previous-hostname.crt"
@@ -3162,8 +3186,11 @@ def test_completed_recovery_publishes_only_management_and_records_exact_baseline
         assert {column.name: getattr(ldap_leaf, column.name) for column in CaCertificate.__table__.columns} == expected_leaf
         assert db.scalar(select(LdapSettings)).hostname == ("ldap.pending.example.test" if pending == "service" else "ldap.applied.example.test")
         after = load_appliance_apply_baselines(db)["ca"]
-        if apply_result:
+        if apply_result or not ready:
             assert after == before
+            if not apply_result:
+                assert (publication_directory / "job_scoped_ca.publication.json").exists()
+                return
             old_management = next(row for row in json.loads(before["config_preview"])["certificates"] if row["managed_owner"] == "appliance:https")
             assert db.scalar(select(CaCertificate).where(CaCertificate.managed_owner == "appliance:https")).fingerprint == old_management["fingerprint"]
         else:
@@ -3219,3 +3246,66 @@ def test_completed_http_only_recovery_does_not_require_or_publish_ca(client, mon
     monkeypatch.setattr(bootstrap, "write_nginx_management_config", forbidden)
     monkeypatch.setattr(bootstrap, "run", lambda command: subprocess.CompletedProcess(command, nginx_result, "", ""))
     assert bootstrap.main("job_http_only") == nginx_result
+
+
+@pytest.mark.parametrize("served", [b"published leaf", b"old worker leaf"])
+def test_console_management_leaf_proof_rejects_old_worker(monkeypatch, tmp_path, served):
+    """Compare the worker leaf against the installed publication without trusting HTTP status alone.
+
+    Args:
+        monkeypatch: Replace the bounded loopback TLS transport.
+        tmp_path: Synthetic public certificate and applied site paths.
+        served: Current published identity or the stale pre-reload worker identity.
+    """
+    helper = load_helper_module()
+    certificate = tmp_path / "leaf.pem"
+    certificate.write_text(helper.ssl.DER_cert_to_PEM_cert(b"published leaf"))
+    site = tmp_path / "management.conf"
+    site.write_text(f"listen 127.0.0.1:8443 ssl;\nssl_certificate {certificate};\n")
+    monkeypatch.setattr(helper, "NGINX_MANAGEMENT_SITE_PATH", site)
+    calls = []
+    monkeypatch.setattr(helper.ssl, "get_server_certificate",
+                        lambda address, *, timeout: calls.append((address, timeout)) or helper.ssl.DER_cert_to_PEM_cert(served))
+    assert helper._console_management_leaf_is_active() is (served == b"published leaf")
+    assert calls == [(("127.0.0.1", 8443), 3)]
+
+
+@pytest.mark.parametrize("failure", [None, "reload", "readiness"])
+def test_console_acknowledges_publication_only_after_outer_recovery(monkeypatch, tmp_path, failure):
+    """A successful bootstrap cannot acknowledge CA when outer reload or readiness fails.
+
+    Args:
+        monkeypatch: Replace privileged service commands and loopback checks.
+        tmp_path: Task-local serialized bootstrap binding directory.
+        failure: Outer service-reload failure, readiness timeout, or successful recovery.
+    """
+    helper = load_helper_module()
+    monkeypatch.setattr(helper, "CONSOLE_BOOTSTRAP_BINDING_DIRECTORY", tmp_path / "binding")
+    monkeypatch.setattr(helper, "fcntl", None)
+    monkeypatch.setattr(helper, "_console_first_boot_https_contract_is_complete", lambda **kwargs: True)
+    monkeypatch.setattr(helper, "_console_bootstrap_is_idle", lambda: True)
+    monkeypatch.setattr(helper, "_console_management_leaf_is_active", lambda: True)
+    monkeypatch.setattr(helper, "_console_management_readiness_checks", lambda: (True, (("app", "https://127.0.0.1/", True, "200"),)))
+    monkeypatch.setattr(helper, "_console_management_http_status", lambda *args, **kwargs: "200")
+    monkeypatch.setattr(helper.shutil, "which", lambda name: "/usr/bin/" + name)
+    monkeypatch.setattr(helper.time, "sleep", lambda seconds: None)
+    commands = []
+
+    def command_result(command, **kwargs):
+        """Record the real recovery ordering at the host-command boundary.
+
+        Args:
+            command: Service or publication acknowledgement invocation.
+            **kwargs: Bounded service timeout options.
+        """
+        commands.append(command)
+        code = 1 if failure == "reload" and command[:2] == ["systemctl", "reload"] else 0
+        return subprocess.CompletedProcess(command, code, "active", "")
+
+    monkeypatch.setattr(helper, "_run", command_result)
+    assert helper._recover_console_management_plane(timeout_seconds=0 if failure == "readiness" else 1,
+                                                   network_job_id="job_outer_ready") == (1 if failure else 0)
+    acknowledgements = [command for command in commands if "--acknowledge-console-publication" in command]
+    assert bool(acknowledgements) is (failure is None)
+    if acknowledgements:
+        assert commands.index(["systemctl", "is-active", *helper.MANAGEMENT_PLANE_UNITS]) < commands.index(acknowledgements[0])
