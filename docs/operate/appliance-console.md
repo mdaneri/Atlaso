@@ -203,7 +203,10 @@ Certificate bootstrap is bound to the completed Network task and checks its mana
 writer lock through issuance. Certificate projection reads saved service settings without initializing optional rows
 or reconciling service defaults, so incidental commits cannot release that lock.
 Pending address, VLAN, or administrative-state changes stop recovery before certificate
-mutation.
+mutation. Completed recovery publishes only the management leaf; it leaves other certificates and revocation files
+untouched. A missing or changed applied CA root requires ordinary CA Apply before recovery. Successful publication
+records only the refreshed leaf in the CA baseline, preserving unrelated pending CA intent; a failed publication
+does not advance that baseline. First-boot publication records its exact captured CA baseline.
 
 Before Appliance Settings is submitted, the console rechecks the completed Network management paths under the shared
 network-object writer lock held through Settings capture. An address edit made during HTTPS recovery stops submission

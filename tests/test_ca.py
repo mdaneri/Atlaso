@@ -824,3 +824,16 @@ def test_guarded_certificate_issuance_keeps_writer_transaction_and_saved_depot_s
         if missing_optional:
             assert db.scalar(select(KmsSettings)) is None
         db.rollback()
+
+
+def test_ca_apply_preview_is_stable_after_sqlite_expiry_reload():
+    """UTC-aware issuance dates and SQLite's naive UTC dates share one applied snapshot."""
+    from datetime import datetime, timezone
+
+    instant = datetime(2030, 4, 5, 6, 7, 8, tzinfo=timezone.utc)
+    ca = CaSettings(enabled=True, storage_path="/etc/atlaso/ca", publish_crl=False, root_expires_at=instant)
+    leaf = CaCertificate(common_name="management.example.test", enabled=True, status="issued",
+                         certificate_pem="synthetic public certificate", expires_at=instant)
+    issued = render_ca_apply_payload(ca, [leaf], include_private_keys=False)
+    ca.root_expires_at = leaf.expires_at = instant.replace(tzinfo=None)
+    assert render_ca_apply_payload(ca, [leaf], include_private_keys=False) == issued

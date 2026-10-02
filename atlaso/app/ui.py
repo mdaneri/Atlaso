@@ -1347,12 +1347,15 @@ def remove_ntp_nts_certificate_rows(db: Session) -> int:
     return len(certificates)
 
 
-def managed_ca_certificate_specs(db: Session, *, reconcile: bool = True) -> list[ManagedCertificateSpec]:
+def managed_ca_certificate_specs(
+    db: Session, *, reconcile: bool = True, managed_owners: set[str] | None = None,
+) -> list[ManagedCertificateSpec]:
     """Return managed ca certificate specs.
 
     Args:
         db: Active database session.
         reconcile: Whether service getters may initialize or reconcile desired state.
+        managed_owners: Optional owner selection; management-only projection skips other services.
     """
     specs: list[ManagedCertificateSpec] = []
     appliance = get_appliance_settings_row(db) if reconcile else db.scalar(select(ApplianceSettings))
@@ -1379,6 +1382,9 @@ def managed_ca_certificate_specs(db: Session, *, reconcile: bool = True) -> list
             chain_path=appliance_chain,
         )
     )
+
+    if managed_owners == {"appliance:https"}:
+        return specs
 
     oidc_settings = ensure_oidc_provider_settings(db) if reconcile else db.scalar(select(OidcProviderSettings))
     if oidc_settings is not None and oidc_settings.enabled:
@@ -1535,12 +1541,13 @@ def ca_managed_certificate_paths(db: Session, owner: str) -> tuple[str, str, str
     return certificate.cert_path or "", certificate.key_path or "", certificate.chain_path or ""
 
 
-def ensure_ca_state(db: Session, *, commit: bool = True) -> list[str]:
+def ensure_ca_state(db: Session, *, commit: bool = True, managed_owners: set[str] | None = None) -> list[str]:
     """Ensure ca state.
 
     Args:
         db: Active database session.
         commit: Whether to commit reconciled CA state before returning.
+        managed_owners: Optional managed certificate owners admitted for scoped issuance.
 
     Returns:
         The ensure ca state result.
@@ -1557,12 +1564,17 @@ def ensure_ca_state(db: Session, *, commit: bool = True) -> list[str]:
             settings.portal_hostname = normalized_portal_hostname
             changed = True
         changed = ensure_root_ca_material(settings) or changed
-        changed = ensure_managed_certificate_rows(db, settings=settings, profiles=profiles, specs=managed_ca_certificate_specs(db, reconcile=commit)) or changed
+        specs = managed_ca_certificate_specs(db, reconcile=commit, managed_owners=managed_owners)
+        if managed_owners is not None:
+            specs = [spec for spec in specs if spec.owner in managed_owners]
+        changed = ensure_managed_certificate_rows(db, settings=settings, profiles=profiles, specs=specs) or changed
         certificates = (
             db.execute(select(CaCertificate).options(selectinload(CaCertificate.profile)).order_by(CaCertificate.common_name))
             .scalars()
             .all()
         )
+        if managed_owners is not None:
+            certificates = [certificate for certificate in certificates if certificate.managed_owner in managed_owners]
         changed = ensure_ca_issued_state(db, settings=settings, profiles=profiles, certificates=certificates) or changed
         if changed:
             if commit:

@@ -2774,14 +2774,16 @@ def test_console_bootstrap_binds_certificate_issuance_to_completed_network(clien
         ownership["transaction"] = db.get_transaction()
         events.append("lock")
 
-    def issue(db, *, commit):
+    def issue(db, *, commit, managed_owners):
         """Assert issuance occurs without releasing Network writer admission.
 
         Args:
             db: Admitted bootstrap transaction.
             commit: Whether issuance may release the guarded transaction.
+            managed_owners: Optional management-only issuance selection.
         """
         assert commit is False
+        assert managed_owners == ({"appliance:https"} if bound_job else None)
         assert db.get_transaction() is ownership["transaction"]
         events.append("issue")
         return []
@@ -2838,16 +2840,18 @@ def test_completed_bootstrap_refreshes_bound_network_without_first_boot_reconcil
         monkeypatch.setattr(bootstrap, name, reject_first_boot)
     called = []
 
-    def guarded_issuance(db, job_id):
+    def guarded_issuance(db, job_id, *, commit):
         """Stop at the guarded issuance boundary before any filesystem mutation.
 
         Args:
             db: Existing appliance transaction.
             job_id: Completed task binding reaching the guard.
+            commit: Whether guarded issuance may release its transaction.
         """
         called.append(job_id)
         return ["intentional test stop before certificate publication"]
 
+    monkeypatch.setattr(bootstrap, "recovery_root_matches_baseline", lambda db: True)
     monkeypatch.setattr(bootstrap, "ensure_recovery_ca_state", guarded_issuance)
     assert bootstrap.main("job_completed_network") == 2
     assert called == ["job_completed_network"]
@@ -2877,8 +2881,10 @@ def test_bound_bootstrap_preserves_applied_front_door(client, monkeypatch, tmp_p
     monkeypatch.setattr(bootstrap, "first_boot_https_artifacts_are_complete", lambda: True)
     monkeypatch.setattr(bootstrap, "CA_STAGED_CONFIG_PATH", str(tmp_path / "ca.json"))
     calls = []
-    monkeypatch.setattr(bootstrap, "ensure_recovery_ca_state", lambda db, job: calls.append(job) or [])
-    monkeypatch.setattr(bootstrap, "render_ca_apply_payload", lambda *_args, **_kwargs: "{}")
+    monkeypatch.setattr(bootstrap, "recovery_root_matches_baseline", lambda db: True)
+    monkeypatch.setattr(bootstrap, "record_ca_publication_baseline", lambda *args, **kwargs: None)
+    monkeypatch.setattr(bootstrap, "ensure_recovery_ca_state", lambda db, job, **kwargs: calls.append(job) or [])
+    monkeypatch.setattr(bootstrap, "render_ca_apply_payload", lambda *_args, **_kwargs: '{"root": {}, "certificates": []}')
     monkeypatch.setattr(bootstrap, "apply_ca_files", lambda: 0)
     monkeypatch.setattr(bootstrap.shutil, "which", lambda name: "/usr/bin/" + name)
     monkeypatch.setattr(bootstrap, "run", lambda command: subprocess.CompletedProcess(command, 0, "", ""))
@@ -2969,3 +2975,164 @@ def test_console_recovery_cli_dispatches_completed_task_id(monkeypatch):
     monkeypatch.setattr(helper, "_handle_console", lambda action, args: calls.append((action, args)) or 0)
     assert helper.main(["atlaso-helper", "console", "recover-management-plane", "job_0123456789ab", "--real"]) == 0
     assert calls == [("recover-management-plane", ["job_0123456789ab"])]
+
+
+@pytest.mark.parametrize("pending", ["service", "certificate", "root", "root_key"])
+@pytest.mark.parametrize("apply_result", [0, 1])
+def test_completed_recovery_publishes_only_management_and_records_exact_baseline(client, monkeypatch, tmp_path, pending, apply_result):
+    """Keep unrelated intent pending and acknowledge the management leaf only after success.
+
+    Args:
+        client: Initialized real database fixture.
+        monkeypatch: Replace privileged file publication and nginx validation.
+        tmp_path: Isolated synthetic certificate staging.
+        pending: Unapplied service hostname, certificate row, or trust-root path edit.
+        apply_result: Successful publication or simulated helper failure.
+    """
+    from sqlalchemy import select
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import CaCertificate, CaProfile, CaSettings, LdapSettings
+    from atlaso.app.services.ca import render_ca_apply_payload
+    from atlaso.app.services.networking import render_network_config
+    from atlaso.app.ui import (
+        ensure_ca_state,
+        load_appliance_apply_baselines,
+        make_appliance_apply_unit,
+    )
+
+    loader = importlib.machinery.SourceFileLoader("atlaso_scoped_ca_recovery", "scripts/appliance/atlaso-bootstrap-https")
+    spec = importlib.util.spec_from_loader(loader.name, loader)
+    bootstrap = importlib.util.module_from_spec(spec)
+    loader.exec_module(bootstrap)
+    with SessionLocal() as db:
+        ca = db.scalar(select(CaSettings))
+        ca.enabled = True
+        ldap = db.scalar(select(LdapSettings))
+        ldap.enabled = True
+        ldap.ldaps_enabled = True
+        ldap.hostname = "ldap.applied.example.test"
+        assert ensure_ca_state(db) == []
+        certificates = db.scalars(select(CaCertificate).order_by(CaCertificate.common_name)).all()
+        public = render_ca_apply_payload(ca, certificates, include_private_keys=False)
+        summary = ["service enabled", f"{len(db.scalars(select(CaProfile)).all())} profiles", f"{len(certificates)} certificate requests"]
+        bootstrap.record_ca_publication_baseline(db, public, summary, management_only=False)
+        db.commit()
+        before = load_appliance_apply_baselines(db)["ca"]
+        ldap_leaf = db.scalar(select(CaCertificate).where(CaCertificate.managed_owner == "ldap:ldaps"))
+        old_leaf = {column.name: getattr(ldap_leaf, column.name) for column in CaCertificate.__table__.columns}
+        if pending == "service":
+            ldap.hostname = "ldap.pending.example.test"
+        elif pending == "certificate":
+            ldap_leaf.common_name = "certificate.pending.example.test"
+        elif pending == "root":
+            ca.storage_path = "/etc/atlaso/ca-pending"
+        else:
+            ca.root_private_key_encrypted = db.scalar(select(CaCertificate).where(CaCertificate.managed_owner == "appliance:https")).private_key_encrypted
+        target = appliance_console._management_interface(db)
+        target.ipv4_method = "static"
+        target.ip_cidr = "192.0.2.74/24"
+        preview = render_network_config(interfaces=list(db.scalars(select(appliance_console.PhysicalInterface))),
+                                        vlans=list(db.scalars(select(appliance_console.VlanInterface))))
+        db.add(appliance_console.Job(id="job_scoped_ca", type="appliance-apply", status="succeeded", created_by="console:root",
+                                    result=json.dumps({"captured_units": [{"unit_id": "network", "config_preview": preview}]})))
+        db.commit()
+        expected_leaf = {column.name: getattr(ldap_leaf, column.name) for column in CaCertificate.__table__.columns}
+    stage = tmp_path / "ca.json"
+    captured = []
+    ownership = {}
+    issue = bootstrap.ensure_recovery_ca_state
+
+    def admitted_issuance(db, job_id, *, commit):
+        """Retain the real writer transaction identity for the publication assertion.
+
+        Args:
+            db: Admitted writer transaction.
+            job_id: Completed Network task.
+            commit: Guarded publication must keep the transaction open.
+        """
+        result = issue(db, job_id, commit=commit)
+        ownership["db"] = db
+        ownership["transaction"] = db.get_transaction()
+        return result
+
+    monkeypatch.setattr(bootstrap, "ensure_recovery_ca_state", admitted_issuance)
+    monkeypatch.setattr(bootstrap, "CA_STAGED_CONFIG_PATH", str(stage))
+
+    def publish():
+        """Capture the actual private helper payload without exposing synthetic keys."""
+        assert ownership["db"].get_transaction() is ownership["transaction"]
+        assert ownership["transaction"].is_active
+        captured.append(json.loads(stage.read_text(encoding="utf-8")))
+        stage.unlink()
+        return apply_result
+
+    monkeypatch.setattr(bootstrap, "apply_ca_files", publish)
+    monkeypatch.setattr(bootstrap.shutil, "which", lambda name: "/usr/bin/" + name)
+    monkeypatch.setattr(bootstrap, "run", lambda command: subprocess.CompletedProcess(command, 0, "", ""))
+    result = bootstrap.refresh_completed_management_certificate("job_scoped_ca")
+    if pending in {"root", "root_key"}:
+        assert result == 2 and captured == [] and not stage.exists()
+        with SessionLocal() as db:
+            assert load_appliance_apply_baselines(db)["ca"] == before
+        return
+    assert result == apply_result
+    assert [leaf["managed_owner"] for leaf in captured[0]["certificates"]] == ["appliance:https"]
+    assert captured[0]["root"]["crl_path"] == captured[0]["root"]["crl_pem"] == ""
+    with SessionLocal() as db:
+        ldap_leaf = db.scalar(select(CaCertificate).where(CaCertificate.managed_owner == "ldap:ldaps"))
+        assert {column.name: getattr(ldap_leaf, column.name) for column in CaCertificate.__table__.columns} == expected_leaf
+        assert db.scalar(select(LdapSettings)).hostname == ("ldap.pending.example.test" if pending == "service" else "ldap.applied.example.test")
+        after = load_appliance_apply_baselines(db)["ca"]
+        if apply_result:
+            assert after == before
+            old_management = next(row for row in json.loads(before["config_preview"])["certificates"] if row["managed_owner"] == "appliance:https")
+            assert db.scalar(select(CaCertificate).where(CaCertificate.managed_owner == "appliance:https")).fingerprint == old_management["fingerprint"]
+        else:
+            applied = json.loads(after["config_preview"])
+            assert next(row for row in applied["certificates"] if row["managed_owner"] == "ldap:ldaps")["common_name"] == old_leaf["common_name"]
+            current = render_ca_apply_payload(db.scalar(select(CaSettings)), db.scalars(select(CaCertificate).order_by(CaCertificate.common_name)).all(), include_private_keys=False)
+            current_unit = make_appliance_apply_unit(unit_id="ca", label="Certificate Authority", page_url="/certificate-authority",
+                                                    context={}, summary=summary, validation_errors=[], config_path=str(stage),
+                                                    config_preview=current, baseline=after)
+            assert (current_unit["snapshot_hash"] == after["snapshot_hash"]) is (pending == "service")
+            assert after["snapshot_hash"] != before["snapshot_hash"]
+
+
+def test_completed_http_only_recovery_does_not_require_or_publish_ca(client, monkeypatch):
+    """An applied HTTP-only front door remains usable with CA disabled.
+
+    Args:
+        client: Initialized database fixture.
+        monkeypatch: Replace native nginx validation and forbid certificate work.
+    """
+    from sqlalchemy import select
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import ApplianceSettings, CaSettings
+    from atlaso.app.ui import save_appliance_apply_baselines
+
+    loader = importlib.machinery.SourceFileLoader("atlaso_http_only_recovery", "scripts/appliance/atlaso-bootstrap-https")
+    spec = importlib.util.spec_from_loader(loader.name, loader)
+    bootstrap = importlib.util.module_from_spec(spec)
+    loader.exec_module(bootstrap)
+    with SessionLocal() as db:
+        db.scalar(select(ApplianceSettings)).management_https_enabled = False
+        db.scalar(select(CaSettings)).enabled = False
+        save_appliance_apply_baselines(db, {"appliance_settings": {"config_preview": json.dumps({"management_https_enabled": False})}})
+        db.commit()
+
+    def forbidden(*args, **kwargs):
+        """Reject certificate work for this explicitly applied HTTP-only mode.
+
+        Args:
+            *args: Unexpected publication arguments.
+            **kwargs: Unexpected publication options.
+        """
+        pytest.fail("HTTP-only recovery attempted certificate publication")
+
+    for name in ("recovery_root_matches_baseline", "ensure_recovery_ca_state", "apply_ca_files", "record_ca_publication_baseline"):
+        monkeypatch.setattr(bootstrap, name, forbidden)
+    monkeypatch.setattr(bootstrap.shutil, "which", lambda name: "/usr/bin/" + name)
+    monkeypatch.setattr(bootstrap, "run", lambda command: subprocess.CompletedProcess(command, 0, "", ""))
+    assert bootstrap.refresh_completed_management_certificate("job_http_only") == 0

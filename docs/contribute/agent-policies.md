@@ -1086,6 +1086,10 @@ preserved with their affected subsystem below. Keep new requirements at their to
   Compare management paths under the shared writer lock
   and retain that transaction through certificate issuance. Guarded certificate projection reads saved service rows
   without getter reconciliation or optional-row initialization that could commit the writer transaction.
+  Bound issuance and publication select only the appliance management leaf, leaving unrelated TLS-service certificates
+  and CRL files untouched. Completed recovery requires the applied root identity/paths and holds writer admission
+  through publication and its exact partial CA baseline commit. Preserve other baseline leaves and pending CA intent;
+  helper/validation failure never acknowledges publication. Ordinary first boot records its captured full CA baseline.
   Ordinary bootstrap with a Network baseline rejects pending
   management-path edits too. Bound recovery must refresh HTTPS even after first boot is complete, without seeding or
   reconciling desired state. Retry unfinished first-boot HTTPS before applying Appliance Settings, validate nginx before

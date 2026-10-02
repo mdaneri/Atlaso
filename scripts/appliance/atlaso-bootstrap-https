@@ -11,6 +11,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+from datetime import datetime
 from pathlib import Path
 
 from cryptography import x509
@@ -23,6 +24,7 @@ from atlaso.app.database import SessionLocal, init_db
 from atlaso.app.models import (
     ApplianceSettings,
     CaCertificate,
+    CaProfile,
     CaSettings,
     Job,
     JobStatus,
@@ -33,8 +35,10 @@ from atlaso.app.seed import seed_initial_data
 from atlaso.app.services.ca import (
     CA_STAGED_CONFIG_PATH,
     _load_root,
+    ensure_aware,
     import_root_ca_material,
     render_ca_apply_payload,
+    validate_ca_private_key_material,
 )
 from atlaso.app.services.network_objects import acquire_network_objects_write_lock
 from atlaso.app.services.networking import (
@@ -45,7 +49,10 @@ from atlaso.app.ui import (
     ca_managed_certificate_paths,
     ensure_ca_state,
     load_appliance_apply_baselines,
+    make_appliance_apply_unit,
     network_management_paths,
+    redact_config_preview,
+    update_appliance_apply_baselines,
 )
 
 ENV_PATH = Path("/var/lib/atlaso/apply/ca/first-boot-management.env")
@@ -549,12 +556,13 @@ def fix_state_permissions() -> None:
             path.chmod(0o750 if path.is_dir() else 0o600)
 
 
-def ensure_recovery_ca_state(db, network_job_id: str | None) -> list[str]:
+def ensure_recovery_ca_state(db, network_job_id: str | None, *, commit: bool = True) -> list[str]:
     """Serialize certificate issuance against the completed Network management paths.
 
     Args:
         db: Bootstrap database transaction containing initialized CA settings.
         network_job_id: Exact completed console Network task, or ordinary bootstrap.
+        commit: Whether to release the writer transaction after issuance.
     """
     acquire_network_objects_write_lock(db)
     transaction = db.get_transaction()
@@ -574,40 +582,118 @@ def ensure_recovery_ca_state(db, network_job_id: str | None) -> list[str]:
         )
         if not network_management_paths(preview) or network_management_paths(preview) != network_management_paths(current):
             return ["Management paths changed after Network apply; pending edits prevent certificate recovery."]
-    errors = ensure_ca_state(db, commit=False)
+    errors = ensure_ca_state(
+        db, commit=False, managed_owners={"appliance:https"} if network_job_id is not None else None,
+    )
     if db.get_transaction() is not transaction:
         return ["Certificate recovery lost its Network writer lock; retry the console correction."]
-    if not errors:
+    if not errors and commit:
         db.commit()
     return errors
 
 
-def refresh_completed_management_certificate(network_job_id: str) -> int:
-    """Refresh managed certificates without changing the applied front-door configuration.
+def recovery_root_matches_baseline(db) -> bool:
+    """Refuse pending trust-root or root-path changes before completed recovery.
 
     Args:
-        network_job_id: Completed console Network task protecting issuance.
+        db: Admitted writer transaction before management issuance.
+    """
+    baseline = load_appliance_apply_baselines(db).get("ca")
+    try:
+        previous = json.loads(str((baseline or {}).get("config_preview") or ""))
+        settings = db.scalar(select(CaSettings))
+        if settings is None or validate_ca_private_key_material(settings, []):
+            return False
+        current = json.loads(redact_config_preview(render_ca_apply_payload(settings, [], include_private_keys=False)))
+        ignored = {"crl_path", "crl_pem", "expires_at"}
+        return bool(current["enabled"] and previous["enabled"] and
+                    {key: value for key, value in current["root"].items() if key not in ignored} ==
+                    {key: value for key, value in previous["root"].items() if key not in ignored})
+    except (KeyError, TypeError, ValueError):
+        return False
+
+
+def record_ca_publication_baseline(db, public_payload: str, summary: list[str], *, management_only: bool) -> None:
+    """Acknowledge the exact publication while retaining unrelated pending CA intent.
+
+    Args:
+        db: Writer transaction protecting the successful publication record.
+        public_payload: Redacted immutable payload captured before helper apply.
+        summary: Captured CA counts and enabled state for ordinary first boot.
+        management_only: Advance only the management leaf and written root files.
+    """
+    baseline = load_appliance_apply_baselines(db).get("ca")
+    payload = json.loads(public_payload)
+    if management_only and baseline:
+        previous = json.loads(str(baseline["config_preview"]))
+        leaves = [row for row in previous["certificates"] if row.get("managed_owner") != "appliance:https"]
+        previous["certificates"] = sorted(leaves + payload["certificates"], key=lambda row: row["common_name"])
+        for key, value in payload["root"].items():
+            if key not in {"crl_path", "crl_pem"}:
+                previous["root"][key] = value
+        payload = previous
+        summary = baseline["summary"]
+    # SQLite reloads UTC timestamps without tzinfo; preserve identical instants in the stable preview.
+    for row in [payload["root"], *payload["certificates"]]:
+        if row.get("expires_at"):
+            row["expires_at"] = ensure_aware(datetime.fromisoformat(row["expires_at"])).isoformat()
+    unit = make_appliance_apply_unit(
+        unit_id="ca", label="Certificate Authority", page_url="/certificate-authority", context={},
+        summary=summary, validation_errors=[], config_path=CA_STAGED_CONFIG_PATH,
+        config_preview=json.dumps(payload, indent=2, sort_keys=True) + "\n", baseline=baseline,
+    )
+    update_appliance_apply_baselines(db, [unit], {"ca"})
+
+
+def refresh_completed_management_certificate(network_job_id: str) -> int:
+    """Publish only the management leaf and record it under the admitted writer lock.
+
+    Args:
+        network_job_id: Completed console Network task protecting issuance/publication.
     """
     with SessionLocal() as db:
-        errors = ensure_recovery_ca_state(db, network_job_id)
+        acquire_network_objects_write_lock(db)
+        settings_baseline = load_appliance_apply_baselines(db).get("appliance_settings")
+        try:
+            applied_settings = json.loads(str((settings_baseline or {}).get("config_preview") or "{}"))
+        except (TypeError, ValueError):
+            applied_settings = {}
+        appliance = db.scalar(select(ApplianceSettings))
+        if applied_settings.get("management_https_enabled") is False and appliance is not None and not appliance.management_https_enabled:
+            nginx = shutil.which("nginx")
+            if nginx is None:
+                print("nginx is unavailable; completed HTTP management configuration cannot be validated")
+                return 2
+            return run([nginx, "-t"]).returncode
+        if not recovery_root_matches_baseline(db):
+            print("Applied CA root baseline is unavailable or changed; apply CA intent before console recovery.")
+            return 2
+        errors = ensure_recovery_ca_state(db, network_job_id, commit=False)
         if errors:
             for error in errors:
                 print(error)
             return 2
         ca_settings = db.execute(select(CaSettings)).scalar_one()
-        certificates = db.execute(select(CaCertificate).order_by(CaCertificate.common_name)).scalars().all()
-        write_secret_text_atomic(
-            Path(CA_STAGED_CONFIG_PATH),
-            render_ca_apply_payload(ca_settings, certificates, include_private_keys=True),
-        )
-    result = apply_ca_files()
-    if result != 0:
-        return result
-    nginx = shutil.which("nginx")
-    if nginx is None:
-        print("nginx is unavailable; completed management configuration cannot be validated")
-        return 2
-    return run([nginx, "-t"]).returncode
+        certificates = db.scalars(select(CaCertificate).where(CaCertificate.managed_owner == "appliance:https")).all()
+        public_payload = render_ca_apply_payload(ca_settings, certificates, include_private_keys=False)
+        private_payload = json.loads(render_ca_apply_payload(ca_settings, certificates, include_private_keys=True))
+        # Recovery does not publish revocations or remove the existing CRL.
+        private_payload["root"]["crl_path"] = ""
+        private_payload["root"]["crl_pem"] = ""
+        write_secret_text_atomic(Path(CA_STAGED_CONFIG_PATH), json.dumps(private_payload, indent=2, sort_keys=True))
+        result = apply_ca_files()
+        if result != 0:
+            return result
+        nginx = shutil.which("nginx")
+        if nginx is None:
+            print("nginx is unavailable; completed management configuration cannot be validated")
+            return 2
+        result = run([nginx, "-t"]).returncode
+        if result != 0:
+            return result
+        record_ca_publication_baseline(db, public_payload, [], management_only=True)
+        db.commit()
+        return 0
 
 
 def main(network_job_id: str | None = None) -> int:
@@ -709,11 +795,24 @@ def main(network_job_id: str | None = None) -> int:
             return 2
 
         ca_settings = db.execute(select(CaSettings)).scalar_one()
-        certificates = db.execute(select(CaCertificate).order_by(CaCertificate.common_name)).scalars().all()
+        certificate_query = select(CaCertificate).order_by(CaCertificate.common_name)
+        if network_job_id is not None:
+            certificate_query = certificate_query.where(CaCertificate.managed_owner == "appliance:https")
+        certificates = db.scalars(certificate_query).all()
+        applied_public_payload = render_ca_apply_payload(ca_settings, certificates, include_private_keys=False)
+        applied_summary = [
+            "service enabled" if ca_settings.enabled else "service disabled",
+            f"{len(db.scalars(select(CaProfile)).all())} profiles",
+            f"{len(db.scalars(select(CaCertificate)).all())} certificate requests",
+        ]
+        private_payload = json.loads(render_ca_apply_payload(ca_settings, certificates, include_private_keys=True))
+        if network_job_id is not None:
+            private_payload["root"]["crl_path"] = ""
+            private_payload["root"]["crl_pem"] = ""
         config_path = Path(CA_STAGED_CONFIG_PATH)
         write_secret_text_atomic(
             config_path,
-            render_ca_apply_payload(ca_settings, certificates, include_private_keys=True),
+            json.dumps(private_payload, indent=2, sort_keys=True),
         )
 
         cert_path, key_path, _chain_path = ca_managed_certificate_paths(db, "appliance:https")
@@ -764,6 +863,10 @@ def main(network_job_id: str | None = None) -> int:
     if validation.returncode != 0:
         return validation.returncode
 
+    with SessionLocal() as db:
+        acquire_network_objects_write_lock(db)
+        record_ca_publication_baseline(db, applied_public_payload, applied_summary, management_only=network_job_id is not None)
+        db.commit()
     fix_state_permissions()
     if development_root_fingerprint:
         try:
