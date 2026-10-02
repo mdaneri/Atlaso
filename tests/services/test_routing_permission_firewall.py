@@ -113,7 +113,12 @@ def test_operator_forward_drop_priority_precedes_routing_accepts(policy):
     generated = managed_routing_firewall_rules(interfaces, vlans, [permission])
     config = render_nftables_config(settings(), [drop], generated, replace_atlaso_service_rules=True)
     forward = config.split("chain forward {", 1)[1].split("chain output {", 1)[0]
-    assert forward.index('comment "Operator restriction"') < forward.index('comment "route-a-to-b"')
+    route_admission = next(
+        item for item in generated
+        if item.interface_name == "a" and item.routing_destination_interface == "b"
+        and item.routing_policy_phase == "automatic" and item.action == "accept"
+    )
+    assert forward.index('comment "Operator restriction"') < forward.index(f'comment "{route_admission.name}"')
     if policy == "allow":
         assert forward.index('comment "Operator restriction"') < forward.index('comment "routing-11-allow-path"')
 
@@ -134,7 +139,12 @@ def test_automatic_revert_and_dual_stack_are_exact(policy, expected):
     assert ('comment "routing-10-override"' in config) is expected
     assert 'ip saddr 10.0.0.0/24 ip daddr 10.0.1.0/24' in config
     assert 'ip6 saddr 2001:db8:a::/64 ip6 daddr 2001:db8:b::/64' in config
-    assert 'comment "route-a-to-b"' in config
+    route_admission = next(
+        item for item in generated
+        if item.interface_name == "a" and item.routing_destination_interface == "b"
+        and item.routing_policy_phase == "automatic" and item.action == "accept"
+    )
+    assert f'comment "{route_admission.name}"' in config
 
 
 def test_suspension_keeps_management_isolation_and_disabled_firewall_rejects_deny():
@@ -229,6 +239,109 @@ def test_access_default_deny_names_are_stable_and_unique_for_exact_directed_targ
     assert names_by_identity[("a", "b-to-c", 4)] != names_by_identity[("a-to-b", "c", 4)]
     assert names_by_identity[("lab-a", "lab.a", 4)] != names_by_identity[("lab-a", "lab.a", 6)]
     assert validate_firewall_state(settings(), [], generated) == []
+
+
+@pytest.mark.parametrize("network_type", ["physical", "vlan"])
+def test_route_and_management_isolation_names_are_collision_free(network_type):
+    """Route and isolation names distinguish colliding physical and VLAN endpoints."""
+    route_names = ["lab-a", "lab.a", "Lab-a", "LAB-A", "a", "a-to-b", "b", "b-to-c", "c"]
+    if network_type == "physical":
+        interfaces = [PhysicalInterface(
+            name="MGMT.A", role="management", mode="access",
+            ip_cidr="192.0.2.1/24", ipv6_cidr="2001:db8:ffff::1/64",
+        )] + [
+            PhysicalInterface(
+                name=name, role="route", mode="access",
+                ip_cidr=f"10.{index}.0.1/24", ipv6_cidr=f"2001:db8:{index}::1/64",
+            )
+            for index, name in enumerate(route_names, start=1)
+        ]
+        vlans = []
+    else:
+        interfaces = [PhysicalInterface(name="trunk", role="unused", mode="trunk")]
+        vlans = [VlanInterface(
+            name="MGMT.A", parent_interface="trunk", vlan_id=100, enabled=True,
+            role="management", ip_cidr="192.0.2.1/24", ipv6_cidr="2001:db8:ffff::1/64",
+        )] + [
+            VlanInterface(
+                name=name, parent_interface="trunk", vlan_id=index, enabled=True,
+                role="route", ip_cidr=f"10.{index}.0.1/24", ipv6_cidr=f"2001:db8:{index}::1/64",
+            )
+            for index, name in enumerate(route_names, start=1)
+        ]
+
+    generated = managed_routing_firewall_rules(interfaces, vlans)
+    repeated = managed_routing_firewall_rules(interfaces, vlans)
+    reordered = managed_routing_firewall_rules(list(reversed(interfaces)), list(reversed(vlans)))
+
+    def names_by_semantics(rules):
+        names = {}
+        for rule in rules:
+            identity = (
+                rule.interface_name,
+                rule.routing_destination_interface,
+                tuple(rule.source.splitlines()),
+                tuple(rule.destination.splitlines()),
+                rule.routing_policy_phase,
+                rule.action,
+            )
+            assert identity not in names
+            names[identity] = rule.name
+        return names
+
+    names = names_by_semantics(generated)
+    assert [rule.name for rule in generated] == [rule.name for rule in repeated]
+    assert names == names_by_semantics(reordered)
+    assert len(names) == len(set(name.lower() for name in names.values()))
+    assert all(len(name) <= 120 for name in names.values())
+    assert validate_firewall_state(settings(), [], generated) == []
+
+    def route_rule(source, destination):
+        return next(
+            rule for rule in generated
+            if rule.interface_name == source
+            and rule.routing_destination_interface == destination
+            and rule.routing_policy_phase == "automatic"
+            and rule.action == "accept"
+        )
+
+    route_slug_collision_a = route_rule("lab-a", "c")
+    route_slug_collision_b = route_rule("lab.a", "c")
+    pair_boundary_a = route_rule("a", "b-to-c")
+    pair_boundary_b = route_rule("a-to-b", "c")
+    assert route_slug_collision_a.name != route_slug_collision_b.name
+    assert pair_boundary_a.name != pair_boundary_b.name
+
+    rendered = render_nftables_config(settings(), [], generated, replace_atlaso_service_rules=True)
+    for rule in (pair_boundary_a, pair_boundary_b):
+        for family, family_name in ((4, "ip"), (6, "ip6")):
+            source_network = next(
+                network for network in rule.source.splitlines() if ip_network(network).version == family
+            )
+            destination_network = next(
+                network for network in rule.destination.splitlines() if ip_network(network).version == family
+            )
+            assert (
+                f'oifname "{rule.routing_destination_interface}" iifname "{rule.interface_name}" '
+                f'{family_name} saddr {source_network} {family_name} daddr {destination_network} '
+                f'accept comment "{rule.name}"'
+            ) in rendered
+
+    suspended = managed_routing_firewall_rules(interfaces, vlans, routing_enabled=False)
+    assert suspended and all(rule.routing_policy_phase == "isolation" for rule in suspended)
+    assert {rule.name for rule in suspended} == {
+        rule.name for rule in generated if rule.routing_policy_phase == "isolation"
+    }
+    assert validate_firewall_state(settings(), [], suspended) == []
+    suspended_config = render_nftables_config(settings(), [], suspended, replace_atlaso_service_rules=True)
+    isolation = next(
+        rule for rule in suspended
+        if rule.interface_name == "lab-a" and rule.action == "drop"
+        and "192.0.2.0/24" in rule.destination
+    )
+    assert f'iifname "lab-a" ip saddr 10.1.0.0/24 ip daddr 192.0.2.0/24 drop comment "{isolation.name}"' in suspended_config
+    assert f'iifname "lab-a" ip6 saddr 2001:db8:1::/64 ip6 daddr 2001:db8:ffff::/64 drop comment "{isolation.name}"' in suspended_config
+    assert not any(rule.routing_policy_phase == "automatic" for rule in suspended)
 
 
 @pytest.mark.parametrize("enabled", [False, True])
