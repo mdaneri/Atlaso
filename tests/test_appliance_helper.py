@@ -19887,6 +19887,271 @@ def test_ntpd_apply_wait_failure_restores_nts_server_assets_before_rollback(
         assert "Restored previous applied ntp_server clock mode" in error
 
 
+@pytest.mark.parametrize("previous_kind", ["absent", "unmanaged", "ntp_client"])
+def test_ntpd_first_nts_server_apply_failure_restores_captured_roots_before_prior_start(
+    monkeypatch, tmp_path, capsys, previous_kind
+):
+    """First NTS server Apply captures fixed roots before mutation and exactly rolls them back."""
+    helper = load_helper_module()
+    applied = tmp_path / "etc" / "ntp.conf"
+    staged = tmp_path / "apply" / "ntpd" / "atlaso-ntp.conf"
+    cookie_dir = tmp_path / "var" / "lib" / "ntp" / "nts-keys"
+    cert_dir = tmp_path / "etc" / "atlaso" / "ntp" / "certs"
+    candidate_input = tmp_path / "candidate-input"
+    candidate_cert = candidate_input / "server.crt"
+    candidate_key = candidate_input / "server.key"
+    staged.parent.mkdir(parents=True)
+    candidate_input.mkdir(parents=True)
+    candidate_cert.write_bytes(b"candidate certificate input")
+    candidate_key.write_bytes(b"candidate private key input")
+    if previous_kind == "unmanaged":
+        applied.parent.mkdir(parents=True, exist_ok=True)
+        applied.write_bytes(b"vendor clock config\nserver vendor.example\n")
+    elif previous_kind == "ntp_client":
+        applied.parent.mkdir(parents=True, exist_ok=True)
+        previous_config = ntpd_config_text(
+            enabled=False,
+            server="time.cloudflare.com",
+            listen_address="",
+            allow_clients="192.0.2.0/24",
+        ).replace(
+            "# Atlaso NTP enabled: false\n",
+            "# Atlaso NTP enabled: false\n# Atlaso time mode: ntp_client\n",
+        )
+        applied.write_text(previous_config, encoding="utf-8")
+    previous_bytes = applied.read_bytes() if applied.exists() else None
+    staged_config = ntpd_config_text(
+        enabled=True,
+        server="time.cloudflare.com",
+        listen_address="192.0.2.10",
+        allow_clients="any",
+        nts_server_cert_path=str(candidate_cert),
+        nts_server_key_path=str(candidate_key),
+    ).replace(
+        "# Atlaso NTP enabled: true\n",
+        "# Atlaso NTP enabled: true\n# Atlaso time mode: ntp_server\n",
+    ).replace("nts cookie /var/lib/ntp/nts-keys", f"nts cookie {cookie_dir}")
+    staged.write_text(staged_config, encoding="utf-8")
+    monkeypatch.setattr(helper, "NTP_APPLY_DIR", staged.parent)
+    monkeypatch.setattr(helper, "NTP_CONFIG_PATH", applied)
+    monkeypatch.setattr(helper, "NTP_NTS_COOKIE_PATH", cookie_dir)
+    monkeypatch.setattr(helper, "NTP_CERT_DIR", cert_dir)
+    monkeypatch.setattr(helper.shutil.rmtree, "avoids_symlink_attacks", True, raising=False)
+    monkeypatch.setattr(helper, "_ntpd_supports_nts", lambda: True)
+    monkeypatch.setattr(helper, "_ntpd_runtime_identity_errors", lambda: [])
+    monkeypatch.setattr(helper, "_ntpd_config_errors", lambda *_args: [])
+    monkeypatch.setattr(helper, "_ntpd_install_guards", lambda: None)
+    monkeypatch.setattr(helper, "_ntpd_client_packet_guard", lambda _mode: None)
+    monkeypatch.setattr(helper, "_install_ntpd_config", lambda _path: None)
+    monkeypatch.setattr(helper, "_ntpd_set_vmware_timesync", lambda _enabled: None)
+    monkeypatch.setattr(helper, "_grant_ntpd_nts_server_key_read", lambda _path: None)
+
+    captured_manifest: list[dict[str, object]] = []
+    prepared_journal_bytes: list[bytes] = []
+    begin_calls = 0
+    begin_transaction = helper._ntpd_begin_transaction
+
+    def begin_with_capture(snapshot: dict[str, object], **kwargs) -> None:
+        nonlocal begin_calls
+        assert snapshot.get("nts_material") is not None
+        if begin_calls == 0:
+            captured_manifest.extend(snapshot["nts_material"])
+            assert not cookie_dir.exists() and not cert_dir.exists()
+        begin_transaction(snapshot, **kwargs)
+        journal = helper._ntpd_read_transaction()
+        assert journal is not None
+        assert journal["phase"] == "prepared"
+        assert journal["nts_restore_pending"] is True
+        if begin_calls == 0:
+            prepared_journal_bytes.append(helper._ntpd_transaction_path().read_bytes())
+        begin_calls += 1
+
+    monkeypatch.setattr(helper, "_ntpd_begin_transaction", begin_with_capture)
+    original_manifest = None
+    snapshot_material = helper._ntpd_snapshot_nts_server_material
+
+    def record_original_manifest():
+        nonlocal original_manifest
+        current_manifest = snapshot_material()
+        if original_manifest is None:
+            original_manifest = current_manifest
+        else:
+            assert current_manifest == original_manifest
+        return original_manifest
+
+    monkeypatch.setattr(helper, "_ntpd_snapshot_nts_server_material", record_original_manifest)
+    operations: list[str] = []
+    candidate_wait_failed = False
+
+    def stop_service(unit: str, **_kwargs) -> None:
+        operations.append(f"stop:{unit}")
+
+    monkeypatch.setattr(helper, "_ntpd_stop_service", stop_service)
+    start_count = 0
+
+    def start_service(unit: str, **_kwargs) -> None:
+        nonlocal start_count
+        start_count += 1
+        if candidate_wait_failed and previous_kind == "ntp_client" and unit == "ntpd.service":
+            assert applied.read_bytes() == previous_bytes
+            assert helper._ntpd_snapshot_nts_server_material() == original_manifest
+            journal = helper._ntpd_read_transaction()
+            assert journal is not None and journal["nts_restore_pending"] is False
+            operations.append("prior-client-start")
+        else:
+            operations.append(f"start:{unit}")
+
+    monkeypatch.setattr(helper, "_ntpd_start_service", start_service)
+    wait_count = 0
+
+    def fail_candidate_after_material_creation() -> None:
+        nonlocal wait_count, candidate_wait_failed
+        wait_count += 1
+        if wait_count == 1:
+            candidate_wait_failed = True
+            candidate_cookie = cookie_dir / "candidate" / "nested" / "cookie.key"
+            candidate_cookie.parent.mkdir(parents=True)
+            candidate_cookie.write_bytes(b"candidate generated cookie secret")
+            candidate_server_key = cert_dir / "candidate" / "nested" / "server.key"
+            candidate_server_key.parent.mkdir(parents=True)
+            candidate_server_key.write_bytes(b"candidate generated server key secret")
+            operations.append("candidate-wait-failed")
+            raise RuntimeError("candidate NTS server sync failed")
+
+    monkeypatch.setattr(helper, "_ntpd_wait_synchronized", fail_candidate_after_material_creation)
+    restore_material = helper._ntpd_restore_nts_server_material
+
+    def restore_and_record(entries: object) -> None:
+        failure_index = operations.index("candidate-wait-failed")
+        assert "stop:ntpd.service" in operations[failure_index + 1 :]
+        restore_material(entries)
+        operations.append("exact-roots-restored")
+
+    monkeypatch.setattr(helper, "_ntpd_restore_nts_server_material", restore_and_record)
+
+    assert helper._handle_ntpd("apply", [str(staged)]) == 1
+
+    assert original_manifest is not None
+    assert captured_manifest == original_manifest
+    assert all(entry["exists"] is False for entry in original_manifest)
+    assert helper._ntpd_snapshot_nts_server_material() == original_manifest
+    assert not (cookie_dir / "candidate").exists()
+    assert not (cert_dir / "candidate").exists()
+    if previous_bytes is None:
+        assert not applied.exists()
+    else:
+        assert applied.read_bytes() == previous_bytes
+    assert helper._ntpd_read_transaction() is None
+    assert wait_count == (2 if previous_kind == "ntp_client" else 1)
+    if previous_kind == "ntp_client":
+        assert operations.index("exact-roots-restored") < operations.index("prior-client-start")
+    else:
+        assert "prior-client-start" not in operations
+        assert start_count == 1
+    assert prepared_journal_bytes
+    assert b"candidate private key input" not in prepared_journal_bytes[0]
+    assert b"candidate generated cookie secret" not in prepared_journal_bytes[0]
+    error = capsys.readouterr().err
+    if previous_kind == "ntp_client":
+        assert "Restored previous applied ntp_client clock mode" in error
+    else:
+        assert "no managed clock mode was active" in error
+
+
+def test_ntpd_interrupted_first_nts_server_apply_retains_nonsecret_rollback_barrier(
+    monkeypatch, tmp_path
+):
+    """A killed first NTS candidate leaves a durable barrier without serializing key material."""
+    helper = load_helper_module()
+    applied = tmp_path / "etc" / "ntp.conf"
+    staged = tmp_path / "apply" / "ntpd" / "atlaso-ntp.conf"
+    cookie_dir = tmp_path / "var" / "lib" / "ntp" / "nts-keys"
+    cert_dir = tmp_path / "etc" / "atlaso" / "ntp" / "certs"
+    candidate_input = tmp_path / "candidate-input"
+    candidate_cert = candidate_input / "server.crt"
+    candidate_key = candidate_input / "server.key"
+    staged.parent.mkdir(parents=True)
+    candidate_input.mkdir(parents=True)
+    candidate_cert.write_bytes(b"synthetic cert")
+    candidate_key.write_bytes(b"unique candidate private key sentinel")
+    staged_config = ntpd_config_text(
+        enabled=True,
+        server="time.cloudflare.com",
+        listen_address="192.0.2.10",
+        allow_clients="any",
+        nts_server_cert_path=str(candidate_cert),
+        nts_server_key_path=str(candidate_key),
+    ).replace(
+        "# Atlaso NTP enabled: true\n",
+        "# Atlaso NTP enabled: true\n# Atlaso time mode: ntp_server\n",
+    ).replace("nts cookie /var/lib/ntp/nts-keys", f"nts cookie {cookie_dir}")
+    staged.write_text(staged_config, encoding="utf-8")
+    monkeypatch.setattr(helper, "NTP_APPLY_DIR", staged.parent)
+    monkeypatch.setattr(helper, "NTP_CONFIG_PATH", applied)
+    monkeypatch.setattr(helper, "NTP_NTS_COOKIE_PATH", cookie_dir)
+    monkeypatch.setattr(helper, "NTP_CERT_DIR", cert_dir)
+    monkeypatch.setattr(helper, "_ntpd_supports_nts", lambda: True)
+    monkeypatch.setattr(helper, "_ntpd_runtime_identity_errors", lambda: [])
+    monkeypatch.setattr(helper, "_ntpd_config_errors", lambda *_args: [])
+    monkeypatch.setattr(helper, "_ntpd_install_guards", lambda: None)
+    monkeypatch.setattr(helper, "_ntpd_client_packet_guard", lambda _mode: None)
+    monkeypatch.setattr(helper, "_install_ntpd_config", lambda _path: None)
+    monkeypatch.setattr(helper, "_ntpd_set_vmware_timesync", lambda _enabled: None)
+    monkeypatch.setattr(helper, "_grant_ntpd_nts_server_key_read", lambda _path: None)
+    monkeypatch.setattr(helper, "_ntpd_stop_service", lambda _unit, **_kwargs: None)
+    monkeypatch.setattr(helper, "_ntpd_start_service", lambda _unit, **_kwargs: None)
+
+    transaction_created_before_candidate = False
+    begin_transaction = helper._ntpd_begin_transaction
+
+    def inspect_pre_mutation_barrier(snapshot: dict[str, object], **kwargs) -> None:
+        nonlocal transaction_created_before_candidate
+        assert snapshot.get("nts_material") is not None
+        begin_transaction(snapshot, **kwargs)
+        transaction = helper._ntpd_read_transaction()
+        assert transaction is not None
+        assert transaction["phase"] == "prepared"
+        assert transaction["nts_restore_pending"] is True
+        assert not applied.exists()
+        transaction_created_before_candidate = True
+
+    monkeypatch.setattr(helper, "_ntpd_begin_transaction", inspect_pre_mutation_barrier)
+
+    def simulate_process_death() -> None:
+        assert transaction_created_before_candidate
+        candidate_cookie = cookie_dir / "candidate" / "cookie.key"
+        candidate_cookie.parent.mkdir(parents=True)
+        candidate_cookie.write_bytes(b"volatile candidate cookie")
+        raise SystemExit("simulated helper death after candidate mutation")
+
+    monkeypatch.setattr(helper, "_ntpd_wait_synchronized", simulate_process_death)
+
+    with pytest.raises(SystemExit, match="simulated helper death"):
+        helper._handle_ntpd("apply", [str(staged)])
+
+    transaction = helper._ntpd_read_transaction()
+    assert transaction is not None and transaction["phase"] == "prepared"
+    assert transaction["nts_restore_pending"] is True
+    journal_bytes = helper._ntpd_transaction_path().read_bytes()
+    assert b"unique candidate private key sentinel" not in journal_bytes
+    assert b"volatile candidate cookie" not in journal_bytes
+    candidate_applied = applied.read_bytes()
+    candidate_material = (cookie_dir / "candidate" / "cookie.key").read_bytes()
+    stops: list[str] = []
+    monkeypatch.setattr(helper, "_release_transaction_owner_alive", lambda _owner: False)
+    monkeypatch.setattr(helper, "_ntpd_stop_service", lambda unit, **_kwargs: stops.append(unit))
+    monkeypatch.setattr(helper, "_ntpd_client_packet_guard", lambda _mode: None)
+    monkeypatch.setattr(helper, "_ntpd_set_vmware_timesync", lambda _enabled: None)
+
+    with pytest.raises(RuntimeError, match="Interrupted NTS rollback lacks in-memory exact material proof"):
+        helper._ntpd_recover_interrupted_apply()
+
+    assert stops == ["ntpd.service", "chronyd.service", "systemd-timesyncd.service"]
+    assert helper._ntpd_read_transaction() == transaction
+    assert applied.read_bytes() == candidate_applied
+    assert (cookie_dir / "candidate" / "cookie.key").read_bytes() == candidate_material
+
+
 def test_ntpd_apply_partial_nts_cleanup_failure_keeps_verified_candidate_after_recovery(
     monkeypatch, tmp_path, capsys
 ):

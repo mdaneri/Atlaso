@@ -8536,6 +8536,15 @@ def _handle_ntpd(action: str, args: list[str]) -> int:
     try:
         _ntpd_recover_interrupted_apply()
         previous_config = _ntpd_snapshot_applied_config()
+        if (
+            mode == "ntp_server"
+            and _ntpd_nts_server_enabled(config_path)
+            and previous_config.get("nts_material") is None
+        ):
+            # The candidate may create or rotate either fixed NTS root. Capture
+            # their exact prior state before the durable recovery barrier and
+            # before any candidate config or controller mutation.
+            previous_config["nts_material"] = _ntpd_snapshot_nts_server_material()
         if mode != "disabled":
             _ntpd_begin_transaction(previous_config)
     except (OSError, RuntimeError, ValueError, subprocess.TimeoutExpired) as exc:
