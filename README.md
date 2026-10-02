@@ -11,6 +11,10 @@ DNS listeners serve managed zones and configured upstream forwarding together. A
 resolution with DNS activation; DHCP scopes may advertise routed DNS/NTP service endpoints. See the
 [DNS](docs/services/dns.md) and [DHCP](docs/services/dhcp.md) guides.
 
+[Appliance time synchronization](docs/services/ntp.md#appliance-clock-source) uses one clock authority: VMware Tools,
+NTP client, or the managed NTP/NTS server. Server mode takes precedence over the remembered client choice. Appliance
+Apply and startup enforce mutual exclusion; health requires actual synchronization, not merely listening sockets.
+
 ## What Atlaso brings together
 
 - **Infrastructure** — deploy and operate a Photon OS appliance across supported virtualization platforms.

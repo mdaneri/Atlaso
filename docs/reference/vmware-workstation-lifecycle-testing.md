@@ -821,6 +821,21 @@ The harness disables VMware Tools guest time synchronization before applying NTP
 controllers do not compete. Before the client NTS and ordinary NTP probes, it waits up to ten minutes
 for the appliance NTP server to clear its unsynchronized leap alarm; an active listener alone is not
 accepted as ready.
+
+For focused appliance clock-source acceptance, use `-TimeSourceOnly`. This creates one owned appliance clone with
+management and site adapters attached before first boot, without client-image preparation, VCF Backup, ESXi, or
+restore scenarios. Use an existing host-reachable site VMnet and an independently verified unused `-SiteCidr` so
+the Windows harness can check a real server reply. The scenario exercises authenticated global Apply for NTP client,
+VMware Tools, and NTP server; preserves the VMware preference while server mode overrides it; and verifies controller
+exclusivity, observed synchronization, client request refusal, server replies, conflict recovery, and persistence after
+reboot and VMware Tools restart. Ownership, source admission, credential isolation, and cleanup gates remain required.
+Site probes bind the verified host VMnet address and check its selected route and guest neighbor MAC; this supports
+multihomed Windows hosts without changing host routes or adapter settings. Server-mode probes also capture ingress
+and prove refusal on the unselected management destination before and after reboot. Post-reboot status allows up to
+120 seconds for HTTPS bootstrap and then 240 seconds of read-only login GET retries, covering the bounded startup
+clock reconciliation and application initialization. It submits credentials once after the login form is ready;
+non-retryable HTTP failures still fail immediately.
+
 The web-terminal check likewise probes the site route and management-path isolation from Site Client A,
 while exercising the authenticated page and ticket flow through the reachable management listener.
 

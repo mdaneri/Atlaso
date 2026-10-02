@@ -1482,14 +1482,34 @@ preserved with their affected subsystem below. Keep new requirements at their to
   desired state uses the structured upstream grid with NTS-enabled `time.cloudflare.com` and `nts.netnod.se` rows,
   including descriptions. Per-upstream NTS client mode renders `nts` on source lines; NTS server mode renders
   `nts enable`, the CA-managed certificate chain and key, and persistent cookie storage under `/var/lib/ntp/nts-keys`.
-  The renderer ignores every interface before explicitly listening on selected addresses, uses restrictive client rules
-  that still permit time service, and maps minimum sources to `tos minsane`. Firewall apply owns TCP/4460 NTS-KE access
+  Server rendering opens routed NTP transport interfaces for upstream synchronization and records selected service
+  listener addresses. A subsystem-owned nftables guard permits loopback diagnostics and upstream mode-4 replies,
+  permits UDP/123 service requests only at selected destinations, and drops other UDP/123 traffic before ordinary
+  firewall rules. Preserve this guard across firewall replacement and require it for server health. The renderer uses
+  restrictive client rules that still permit time service and maps minimum sources to `tos minsane`. Firewall apply owns
+  TCP/4460 NTS-KE access
   in addition to UDP/123. The helper requires Photon `ntpsec`, installs `/etc/ntp.conf`, grants the NTS key `root:ntp`
   mode `0640`, disables competing daemons, enables/restarts `ntpd.service`, and exposes bounded source health through
   `ntpq -pn`, `ntpq -c rv`, and `ntpq -c ntsinfo`. When NTS server mode is disabled, NTP apply removes the managed
   server certificate/key and cookie directory without clearing authenticated client sources. The one-time
   `ntp_nts_restoration_v1` reconciliation re-enables and normalizes only canonical Cloudflare and Netnod default rows,
   records a value-free system audit, leaves custom sources unchanged, and never enables NTS server mode.
+- Appliance time synchronization has exactly one controller: VMware Tools periodic synchronization, NTP client, or
+  managed NTP/NTS server. Enabling the server supersedes but preserves the selected client source. Apply and startup
+  stop and verify competing daemons before enabling the selected controller; boot and VMware Tools restart guards
+  retain the applied mode. Missing, replaced, or legacy configuration without proven ownership stops known controllers
+  and requires Apply; never adopt vendor configuration. Guards must refuse an unproven ntpd start without synchronously
+  stopping their own service job. Failed transitions must preserve the prior authoritative configuration and report recovery
+  failures. Record prior config custody and stop and verify NTPsec before capturing NTS rollback material; a failed
+  capture must recover the prior controller without changing its material. Keep lifecycle hooks deferred across the
+  capture-to-candidate journal handoff until verification, allowing NTPsec startup only after the owning Apply authorizes
+  the exact ready candidate configuration. NTS rollback must stop and verify candidate
+  controllers before restoring private material, restore the exact prior fixed-root contents and absence, and refuse
+  prior-controller restart if restoration cannot be verified.
+  Client mode blocks network time requests while accepting upstream replies, including across managed
+  Firewall replacements. Health requires observed synchronization and verified absence of competing controllers;
+  desired state, applied mode, service activity, and clock synchronization are separate diagnostics. See
+  [Appliance clock source](../services/ntp.md#appliance-clock-source).
 - NTPsec NTS controls must reflect the installed `ntpd` feature set. Detect capability through the allowlisted
   `atlaso-helper ntpd capabilities` path; when NTS is unavailable, disable the server switch and upstream NTS editors,
   normalize saved NTS state off, reject NTS enable attempts, and keep ordinary NTP behavior available. A temporarily

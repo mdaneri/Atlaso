@@ -2,6 +2,7 @@
 
 import json
 
+import pytest
 from sqlalchemy import select
 
 from atlaso.app import ui
@@ -9,6 +10,23 @@ from atlaso.app.adapters.system import AdapterResult
 from atlaso.app.database import SessionLocal
 from atlaso.app.models import AuditEvent, NtpSettings
 from tests.routers.ui.helpers import login
+
+
+def _mock_ntpd_capabilities(monkeypatch, payload: dict[str, object]) -> None:
+    """Provide a deterministic helper capability result for an NTP test.
+
+    Args:
+        monkeypatch: The pytest monkeypatch fixture.
+        payload: Capability fields reported by the helper.
+    """
+    monkeypatch.setattr(
+        "atlaso.app.ui.SystemAdapter.read_ntpd_capabilities",
+        lambda _self: AdapterResult(
+            command=["atlaso-helper", "ntpd", "capabilities"],
+            dry_run=False,
+            stdout=json.dumps(payload),
+        ),
+    )
 
 
 def test_ntp_router_owns_exact_transport_set() -> None:
@@ -136,6 +154,8 @@ def test_ntp_settings_autosave_preserves_desired_state_and_audit(
     payload = response.json()
     assert payload["status"] == "saved"
     assert payload["enabled"] is True
+    assert payload["time_source"] == "ntp_client"
+    assert payload["time_mode"] == "ntp_server"
     assert payload["upstream_sources"][0]["use_nts"] is True
     assert "server time.cloudflare.com iburst nts" in payload["config_preview"]
     with SessionLocal() as db:
@@ -144,6 +164,295 @@ def test_ntp_settings_autosave_preserves_desired_state_and_audit(
         assert db.execute(
             select(AuditEvent).where(AuditEvent.action == "update_ntp_settings")
         ).scalar_one().actor == "admin"
+
+
+def test_ntp_settings_preserves_client_choice_while_server_mode_is_enabled(
+    client, monkeypatch
+) -> None:
+    """Keep the remembered client source while the server owns the clock.
+
+    Args:
+        client: The application test client.
+        monkeypatch: The pytest monkeypatch fixture.
+    """
+    _mock_ntpd_capabilities(monkeypatch, {"nts": True, "vmware_tools": True})
+    login(client)
+    page = client.get("/ui/management/ntp")
+    csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+
+    selected = client.post(
+        "/ui/management/ntp/settings",
+        data={"time_source": "vmware_tools", "csrf": csrf},
+        headers={"X-Atlaso-Autosave": "1"},
+    )
+    assert selected.status_code == 200
+    assert selected.json()["time_source"] == "vmware_tools"
+    assert selected.json()["time_mode"] == "vmware_tools"
+
+    enabled = client.post(
+        "/ui/management/ntp/settings",
+        data={"enabled": "on", "csrf": csrf},
+        headers={"X-Atlaso-Autosave": "1"},
+    )
+    assert enabled.status_code == 200
+    assert enabled.json()["time_source"] == "vmware_tools"
+    assert enabled.json()["time_mode"] == "ntp_server"
+
+
+def test_ntp_settings_rejects_unknown_time_source_without_saving(client) -> None:
+    """Reject unsupported clock source values at the UI transport boundary.
+
+    Args:
+        client: The application test client.
+    """
+    login(client)
+    page = client.get("/ui/management/ntp")
+    csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    response = client.post(
+        "/ui/management/ntp/settings",
+        data={"time_source": "ntp_client,vmware_tools", "csrf": csrf},
+        headers={"X-Atlaso-Autosave": "1"},
+    )
+
+    assert response.status_code == 422
+    assert "Time source must be ntp_client or vmware_tools" in response.json()[
+        "detail"
+    ]
+    with SessionLocal() as db:
+        settings = db.execute(select(NtpSettings)).scalar_one()
+        assert settings.time_source == "ntp_client"
+
+
+@pytest.mark.parametrize(
+    ("capabilities", "unavailable_text", "option_label"),
+    [
+        ({"nts": True}, "could not be verified", "availability unknown"),
+        ({"nts": True, "vmware_tools": False}, "unavailable", "unavailable"),
+    ],
+)
+def test_ntp_settings_rejects_vmware_without_positive_capability(
+    client, monkeypatch, capabilities, unavailable_text, option_label
+) -> None:
+    """Reject VMware Tools selections without positive helper evidence.
+
+    Args:
+        client: The application test client.
+        monkeypatch: The pytest monkeypatch fixture.
+        capabilities: Helper capability result under test.
+        unavailable_text: Expected user-actionable status detail.
+        option_label: Expected rendered option availability label.
+    """
+    _mock_ntpd_capabilities(monkeypatch, capabilities)
+    login(client)
+    page = client.get("/ui/management/ntp")
+    csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    assert (
+        f'<option value="vmware_tools" disabled>VMware Tools ({option_label})</option>'
+        in page.text
+    )
+
+    response = client.post(
+        "/ui/management/ntp/settings",
+        data={"time_source": "vmware_tools", "csrf": csrf},
+        headers={"X-Atlaso-Autosave": "1"},
+    )
+
+    assert response.status_code == 422
+    assert unavailable_text in response.json()["detail"]
+    with SessionLocal() as db:
+        settings = db.execute(select(NtpSettings)).scalar_one()
+        assert settings.time_source == "ntp_client"
+        assert db.execute(
+            select(AuditEvent).where(AuditEvent.action == "update_ntp_settings")
+        ).scalar_one_or_none() is None
+
+
+def test_ntp_settings_accepts_vmware_only_when_capability_is_true(
+    client, monkeypatch
+) -> None:
+    """Allow VMware Tools only when the helper positively reports support.
+
+    Args:
+        client: The application test client.
+        monkeypatch: The pytest monkeypatch fixture.
+    """
+    _mock_ntpd_capabilities(monkeypatch, {"nts": True, "vmware_tools": True})
+    login(client)
+    page = client.get("/ui/management/ntp")
+    csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    assert '<option value="vmware_tools">VMware Tools</option>' in page.text
+
+    response = client.post(
+        "/ui/management/ntp/settings",
+        data={"time_source": "vmware_tools", "csrf": csrf},
+        headers={"X-Atlaso-Autosave": "1"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["time_source"] == "vmware_tools"
+    assert response.json()["time_mode"] == "vmware_tools"
+
+
+def test_ntp_context_normalizes_saved_vmware_mode_when_unavailable(
+    client, monkeypatch
+) -> None:
+    """Reset a restored VMware Tools preference when support is known absent.
+
+    Args:
+        client: The application test client.
+        monkeypatch: The pytest monkeypatch fixture.
+    """
+    login(client)
+    client.get("/ui/management/ntp")
+    with SessionLocal() as db:
+        settings = db.execute(select(NtpSettings)).scalar_one()
+        settings.time_source = "vmware_tools"
+        db.commit()
+
+    _mock_ntpd_capabilities(monkeypatch, {"nts": True, "vmware_tools": False})
+    response = client.get("/ui/management/ntp")
+
+    assert response.status_code == 200
+    assert 'value="ntp_client" selected' in response.text
+    assert "Any saved VMware Tools choice was normalized to NTP client." in response.text
+    with SessionLocal() as db:
+        settings = db.execute(select(NtpSettings)).scalar_one()
+        assert settings.time_source == "ntp_client"
+        assert db.execute(
+            select(AuditEvent).where(
+                AuditEvent.action == "normalize_unavailable_ntp_time_source"
+            )
+        ).scalar_one_or_none() is not None
+
+
+def test_ntp_context_preserves_unavailable_vmware_choice_in_server_mode(
+    client, monkeypatch
+) -> None:
+    """Keep a remembered VMware preference while the NTP server owns the clock.
+
+    Args:
+        client: The application test client.
+        monkeypatch: The pytest monkeypatch fixture.
+    """
+    login(client)
+    with SessionLocal() as db:
+        settings = db.execute(select(NtpSettings)).scalar_one()
+        settings.enabled = True
+        settings.time_source = "vmware_tools"
+        db.commit()
+
+    _mock_ntpd_capabilities(monkeypatch, {"nts": True, "vmware_tools": False})
+    page = client.get("/ui/management/ntp")
+
+    assert page.status_code == 200
+    assert '<option value="vmware_tools" selected disabled>' in page.text
+    assert 'name="time_source" value="vmware_tools" data-time-source-preserved' in page.text
+    with SessionLocal() as db:
+        settings = db.execute(select(NtpSettings)).scalar_one()
+        assert settings.enabled is True
+        assert settings.time_source == "vmware_tools"
+        assert db.execute(
+            select(AuditEvent).where(
+                AuditEvent.action == "normalize_unavailable_ntp_time_source"
+            )
+        ).scalar_one_or_none() is None
+
+    csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    response = client.post(
+        "/ui/management/ntp/settings",
+        data={"enabled": "on", "csrf": csrf},
+        headers={"X-Atlaso-Autosave": "1"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["time_source"] == "vmware_tools"
+    assert response.json()["time_mode"] == "ntp_server"
+
+
+def test_ntp_settings_preserves_unknown_vmware_preference_under_server_mode(
+    client, monkeypatch
+) -> None:
+    """Keep a remembered source when managed NTP server mode overrides it.
+
+    Args:
+        client: The application test client.
+        monkeypatch: The pytest monkeypatch fixture.
+    """
+    _mock_ntpd_capabilities(monkeypatch, {"nts": True, "vmware_tools": True})
+    login(client)
+    page = client.get("/ui/management/ntp")
+    csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    selected = client.post(
+        "/ui/management/ntp/settings",
+        data={"time_source": "vmware_tools", "csrf": csrf},
+        headers={"X-Atlaso-Autosave": "1"},
+    )
+    assert selected.status_code == 200
+
+    _mock_ntpd_capabilities(monkeypatch, {"nts": True})
+    enabled = client.post(
+        "/ui/management/ntp/settings",
+        data={"enabled": "on", "csrf": csrf},
+        headers={"X-Atlaso-Autosave": "1"},
+    )
+
+    assert enabled.status_code == 200
+    assert enabled.json()["time_mode"] == "ntp_server"
+    assert enabled.json()["time_source"] == "vmware_tools"
+
+
+def test_ntp_page_renders_clock_choice_and_effective_helper_diagnostic(
+    client, monkeypatch
+) -> None:
+    """Show saved choice and effective host clock status from helper fields.
+
+    Args:
+        client: The application test client.
+        monkeypatch: The pytest monkeypatch fixture.
+    """
+    monkeypatch.setattr(
+        "atlaso.app.ui.SystemAdapter.read_ntpd_status",
+        lambda _self: AdapterResult(
+            command=["atlaso-helper", "ntpd", "status"],
+            dry_run=False,
+            stdout=json.dumps(
+                {
+                    "mode": "ntp_client",
+                    "selected_controller": {
+                        "name": "ntpd",
+                        "active": True,
+                        "detail": "NTPsec is active.",
+                    },
+                    "daemon_conflicts": {
+                        "chronyd": {"active": False, "detail": "inactive"},
+                        "systemd_timesyncd": {
+                            "active": False,
+                            "detail": "inactive",
+                        },
+                        "vmware_tools": {"active": False, "detail": "disabled"},
+                    },
+                    "synchronization": {
+                        "state": "synchronized",
+                        "healthy": True,
+                        "detail": "Selected peer 192.0.2.10.",
+                    },
+                }
+            ),
+        ),
+    )
+    login(client)
+
+    response = client.get("/ui/management/ntp")
+
+    assert response.status_code == 200
+    assert '<select name="time_source"' in response.text
+    assert "NTP client" in response.text
+    assert "Desired mode" in response.text
+    assert "Effective mode" in response.text
+    assert "Selected controller" in response.text
+    assert "NTPsec is active." in response.text
+    assert "Selected peer 192.0.2.10." in response.text
+    assert 'data-clock-health="healthy"' in response.text
 
 
 def test_ntp_settings_rejects_duplicate_normalized_sources(

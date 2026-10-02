@@ -521,6 +521,7 @@ def test_postgresql_startup_adds_address_checks_under_schema_lock(monkeypatch):
 
     calls = []
     columns = {table: [{"name": "id"}] for table in ("physical_interfaces", "vlan_interfaces", "routing_rules")}
+    columns["ntp_settings"] = [{"name": "id"}, {"name": "time_source"}]
     columns["jobs"] = [{"name": name} for name in (
         "id", "cancel_requested_at", "cancel_requested_by", "cancel_completed_at", "cancel_outcome",
     )]

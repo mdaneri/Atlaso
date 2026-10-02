@@ -587,7 +587,26 @@ class SystemAdapter:
         Returns:
             The apply ntpd config result.
         """
-        return self._helper_result("ntpd", "apply", config_path, dry_run_message="dry-run: NTPsec apply command recorded")
+        return self._helper_result(
+            "ntpd",
+            "apply",
+            config_path,
+            dry_run_message="dry-run: NTPsec apply command recorded",
+            # Allow the 60-second transition, a 60-second rollback, helper
+            # commands/guards, and journal recovery/retirement overhead.
+            timeout_seconds=360,
+        )
+
+    def reconcile_ntpd_time(self) -> AdapterResult:
+        """Reconcile the applied clock source during appliance startup."""
+        return self._helper_result(
+            "ntpd",
+            "reconcile",
+            dry_run_message='{"ntpd":"dry-run reconcile","managed":false,"mode":"unmanaged"}',
+            # Startup can require one full 60-second clock transition plus
+            # controller guards and recovery overhead.
+            timeout_seconds=180,
+        )
 
     def validate_ntpd_config(self, config_path: str) -> AdapterResult:
         """Validate ntpd config.
@@ -608,14 +627,18 @@ class SystemAdapter:
                 ["atlaso-helper", "ntpd", "status"],
                 json.dumps(
                     {
-                        "peers": {"returncode": 0, "stdout": "remote refid st t when poll reach delay offset jitter\n", "stderr": ""},
-                        "variables": {"returncode": 0, "stdout": "status=0615 leap_none, sync_ntp\n", "stderr": ""},
-                        "nts": {"returncode": 0, "stdout": "NTS client status unavailable in dry-run\n", "stderr": ""},
+                        "mode": "unavailable",
+                        "selected_controller": {"name": None, "active": None, "enabled": None, "detail": "Host status is unavailable in dry-run."},
+                        "daemon_conflicts": {},
+                        "synchronization": {"state": "unavailable", "healthy": None, "detail": "Host synchronization health is unavailable in dry-run."},
+                        "peers": {"returncode": 124, "stdout": "", "stderr": "Host status is unavailable in dry-run."},
+                        "variables": {"returncode": 124, "stdout": "", "stderr": "Host status is unavailable in dry-run."},
+                        "nts": {"returncode": 124, "stdout": "", "stderr": "Host status is unavailable in dry-run."},
                     },
                     sort_keys=True,
                 ),
             )
-        return self._helper_result("ntpd", "status", dry_run_message="dry-run: NTPsec status command recorded", use_sudo=False, timeout_seconds=5)
+        return self._helper_result("ntpd", "status", dry_run_message="dry-run: NTPsec status command recorded", timeout_seconds=12)
 
     def read_ntpd_logs(self) -> AdapterResult:
         """Return ntpd logs."""

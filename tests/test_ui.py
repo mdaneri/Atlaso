@@ -3638,18 +3638,32 @@ def test_ntp_validation_rejects_enabled_service_without_bind_or_upstreams(client
     assert "At least one NTP upstream server is required." in payload["validation_errors"]
 
 
-def test_ntp_validation_allows_disabled_service_without_upstreams(client):
-    """Verify that ntp validation allows disabled service without upstreams.
+def test_ntp_validation_allows_vmware_time_source_without_upstreams(
+    client, monkeypatch
+):
+    """Verify that VMware Tools mode needs no NTP upstreams.
 
     Args:
         client: HTTP test client used to exercise the Atlaso application.
+        monkeypatch: The pytest monkeypatch fixture.
     """
+    from atlaso.app.adapters.system import AdapterResult
+
+    monkeypatch.setattr(
+        "atlaso.app.ui.SystemAdapter.read_ntpd_capabilities",
+        lambda _self: AdapterResult(
+            command=["atlaso-helper", "ntpd", "capabilities"],
+            dry_run=False,
+            stdout=json.dumps({"nts": True, "vmware_tools": True}),
+        ),
+    )
     login(client)
     page = client.get("/ntp")
     csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
     response = client.post(
         "/ntp/settings",
         data={
+            "time_source": "vmware_tools",
             "hostname": "ntp.atlaso.internal",
             "listen_interfaces_present": "1",
             "listen_addresses_present": "1",
@@ -5569,12 +5583,17 @@ def test_settings_archive_preflight_rejects_invalid_collection_row_and_required_
     enabled_nts_without_ca = deepcopy(archive)
     enabled_nts_without_ca["data"]["ntp_settings"][0].update(
         {
+            "enabled": True,
+            "listen_interface": "eth2",
+            "listen_address": "192.168.50.1",
             "nts_server_enabled": True,
             "nts_server_cert_path": "/etc/atlaso/ntp/nts-chain.pem",
             "nts_server_key_path": "/etc/atlaso/ntp/nts-key.pem",
         }
     )
     enabled_nts_without_ca["data"]["ca_settings"][0]["enabled"] = False
+    dormant_nts_without_ca = deepcopy(enabled_nts_without_ca)
+    dormant_nts_without_ca["data"]["ntp_settings"][0]["enabled"] = False
     invalid_dns_domain = deepcopy(archive)
     invalid_dns_domain["data"]["dns_settings"][0]["domain"] = "bad domain"
     invalid_route_destination = deepcopy(archive)
@@ -6635,6 +6654,8 @@ def test_settings_archive_preflight_rejects_invalid_collection_row_and_required_
     archive_summary(disabled_missing_routing_target)
     archive_summary(disabled_missing_dhcp_target)
     archive_summary(disabled_missing_service_target)
+    # Dormant NTS server intent does not require CA material until NTP is enabled.
+    archive_summary(dormant_nts_without_ca)
     archive_summary(unbound_client_ldap_mapping)
 
 
@@ -14516,17 +14537,25 @@ def test_depot_submission_includes_only_relevant_local_user_dependency(
 
 
 @pytest.mark.parametrize(
-    ("nts_server_enabled", "ca_changed", "ldap_changes_pending", "expected_units"),
+    (
+        "ntp_enabled",
+        "nts_server_enabled",
+        "ca_changed",
+        "ldap_changes_pending",
+        "expected_units",
+    ),
     [
-        (True, True, False, ["ca", "ntpd"]),
-        (True, False, False, ["ca", "ntpd"]),
-        (False, True, False, ["ntpd"]),
-        (True, True, True, ["ca", "dnsmasq", "firewall", "ldap", "ntpd"]),
+        (True, True, True, False, ["ca", "ntpd"]),
+        (True, True, False, False, ["ca", "ntpd"]),
+        (True, False, True, False, ["ntpd"]),
+        (False, True, True, False, ["ntpd"]),
+        (True, True, True, True, ["ca", "dnsmasq", "firewall", "ldap", "ntpd"]),
     ],
 )
 def test_nts_submission_includes_ca_material_dependency(
     client,
     monkeypatch,
+    ntp_enabled,
     nts_server_enabled,
     ca_changed,
     ldap_changes_pending,
@@ -14537,6 +14566,7 @@ def test_nts_submission_includes_ca_material_dependency(
     Args:
         client: Client used to invoke the external or application interface.
         monkeypatch: Pytest fixture used to replace dependencies.
+        ntp_enabled: Whether the NTP service is enabled.
         nts_server_enabled: Nts server enabled supplied by the caller.
         ca_changed: Ca changed supplied by the caller.
         ldap_changes_pending: Ldap changes pending supplied by the caller.
@@ -14589,7 +14619,12 @@ def test_nts_submission_includes_ca_material_dependency(
             "ntpd",
             "NTP / NTS",
             changed=True,
-            context={"ntp_settings": SimpleNamespace(nts_server_enabled=nts_server_enabled)},
+            context={
+                "ntp_settings": SimpleNamespace(
+                    enabled=ntp_enabled,
+                    nts_server_enabled=nts_server_enabled,
+                )
+            },
         ),
     ]
     started_jobs = []
@@ -16086,6 +16121,18 @@ def test_appliance_startup_initializes_factory_apply_baseline(monkeypatch, tmp_p
         assert review.json()["initial_apply_required"] is True
         assert len(review.json()["units"]) == 17
         assert all(unit["selected"] is unit["valid"] for unit in review.json()["units"])
+        with database.SessionLocal() as db:
+            initial_baseline = db.execute(
+                select(Setting).where(Setting.key == "appliance_apply.baselines.v1")
+            ).scalar_one()
+            assert "ntpd" not in json.loads(initial_baseline.value)
+            baseline_event = db.execute(
+                select(AuditEvent).where(
+                    AuditEvent.action == "initialize_factory_appliance_apply_baseline"
+                )
+            ).scalar_one()
+            assert "16 factory desired-state units baselined" in baseline_event.detail
+            assert "1 unit(s) omitted pending initial Apply" in baseline_event.detail
         esxi_pxe_unit = next(
             unit for unit in review.json()["units"] if unit["id"] == "esxi_pxe"
         )
@@ -16127,6 +16174,14 @@ def test_appliance_startup_initializes_factory_apply_baseline(monkeypatch, tmp_p
         baseline = db.execute(select(Setting).where(Setting.key == "appliance_apply.baselines.v1")).scalar_one()
         assert '"local_users"' in baseline.value
         assert '"vcf_private_registry"' in baseline.value
+        applied_ntpd_baseline = json.loads(baseline.value)["ntpd"]
+        from atlaso.app.ui import initialize_factory_appliance_apply_baseline
+
+        assert initialize_factory_appliance_apply_baseline(db) is False
+        preserved_baseline = db.execute(
+            select(Setting).where(Setting.key == "appliance_apply.baselines.v1")
+        ).scalar_one()
+        assert json.loads(preserved_baseline.value)["ntpd"] == applied_ntpd_baseline
         admin = db.execute(select(User).where(User.username == "admin")).scalar_one()
         assert admin.os_sync_status == "applied"
         assert admin.os_password_applied_at is not None

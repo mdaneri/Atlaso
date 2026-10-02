@@ -109,6 +109,29 @@ def refresh_startup_host_inventory(db: Session, *, environment: str) -> None:
         sync_host_physical_interfaces(db)
 
 
+def reconcile_startup_time_source(*, environment: str) -> None:
+    """Reconcile the applied clock source without activating pending settings.
+
+    Args:
+        environment: Runtime environment; only appliances own host time services.
+    """
+    if environment != "appliance":
+        return
+    from atlaso.app.adapters.system import SystemAdapter
+
+    adapter = SystemAdapter()
+    if adapter.dry_run:
+        return
+    result = adapter.reconcile_ntpd_time()
+    if result.returncode != 0:
+        # Keep management available so an operator can inspect source health and
+        # submit a corrective global Apply. The helper fails closed on conflicts.
+        REQUEST_LOGGER.warning(
+            "Appliance time-source reconciliation needs attention; inspect NTP source health "
+            "and submit appliance changes (helper exit %s).", result.returncode,
+        )
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Manage application startup and shutdown.
@@ -153,6 +176,7 @@ async def lifespan(app: FastAPI):
         if appliance_mode:
             ensure_ca_state(db)
         initialize_factory_appliance_apply_baseline(db)
+        reconcile_startup_time_source(environment=settings.environment)
         validate_enabled_provider_at_startup(db)
     monitor_sampler = start_monitor_sampler()
     try:
