@@ -2895,7 +2895,10 @@ def test_vmware_raw_vmx_workflows_inject_complete_first_boot_ovf_environment_bef
     assert "DevelopmentAdminSshPublicKey" not in lifecycle
     assert "DevelopmentRootCaCertificatePem" not in lifecycle
     assert "test_vm_development_root_ca_private_key" not in lifecycle
-    assert "-NormalTestVm" not in lifecycle
+    normal_test_vm_switches = [
+        line.strip() for line in lifecycle.splitlines() if "-NormalTestVm" in line
+    ]
+    assert normal_test_vm_switches == ["-NormalTestVm:$TimeSourceOnly"]
     assert lifecycle.index("Set-AtlasoWorkstationOvfEnvironment -VmxPath $applianceVmx") < lifecycle.index(
         "Start-WorkstationVm -Path $vmx"
     )
