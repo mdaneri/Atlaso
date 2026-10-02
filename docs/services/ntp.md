@@ -64,8 +64,9 @@ the page reports the effective mode, NTP synchronization health, and detected lo
 saved choice. Before changing applied configuration, Atlaso durably records the prior configuration. If Apply is
 interrupted before controller verification, startup and service guards restore it; a verified checkpoint retains the
 new controller after a power loss. NTS private material stays in its managed location until verification.
-Legacy configurations require Apply before startup can establish their clock authority; startup stops uncertain
-legacy controllers until then. If old NTS material cleanup fails after controller verification, Atlaso retains the
+Missing, replaced, and legacy configurations require Apply before startup can establish their clock authority;
+startup and service guards stop uncertain controllers until then without adopting vendor configuration.
+If old NTS material cleanup fails after controller verification, Atlaso retains the
 verified new mode and leaves Apply pending for a cleanup retry. NTP synchronization verification allows up to 60 seconds,
 including recovery after a clock step when switching from VMware Tools.
 Apply also allows a full synchronization wait during rollback. Recovery evidence remains available for a later retry

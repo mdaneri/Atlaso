@@ -7270,7 +7270,6 @@ def _ntpd_install_guards() -> None:
             "After=vmtoolsd.service",
             "After=atlaso-firewall.service",
             "Before=ntpd.service",
-            "ConditionPathExists=/etc/ntp.conf",
             "[Service]",
             "Type=oneshot",
             "ExecStart=/opt/atlaso/bin/atlaso-helper ntpd guard boot --real",
@@ -7698,11 +7697,20 @@ def _ntpd_reconcile_applied() -> dict[str, object]:
     """Reconcile only Atlaso-owned applied config; never import vendor config."""
     _ntpd_recover_interrupted_apply()
     if not NTP_CONFIG_PATH.is_file() or not _ntpd_config_managed(NTP_CONFIG_PATH):
+        stop_errors = _ntpd_fail_closed_stop()
+        if stop_errors:
+            raise RuntimeError(
+                "Unable to fail closed without Atlaso-owned clock config: "
+                + "; ".join(stop_errors)
+            )
         return {
             "ntpd": "reconcile required",
             "managed": False,
             "mode": "unmanaged",
-            "detail": "Apply time-source settings to select and enforce a clock controller.",
+            "detail": (
+                "No Atlaso-owned clock config is available; known controllers were stopped. "
+                "Apply time-source settings to select and enforce a clock controller."
+            ),
         }
     mode = _ntpd_applied_time_mode(NTP_CONFIG_PATH)
     if mode in {"disabled", "unmanaged"}:
@@ -7730,17 +7738,85 @@ def _ntpd_guard(phase: str) -> int:
     except (OSError, RuntimeError, ValueError) as exc:
         print(f"Clock Apply recovery failed: {exc}", file=sys.stderr)
         return 1
+    transaction = _ntpd_read_transaction()
+    live_apply = transaction is not None and _release_transaction_owner_alive(
+        transaction.get("owner")
+    )
+
+    def refuse_unproven_ntpd_start(detail: str) -> int:
+        errors = []
+        try:
+            # This hook executes inside ntpd.service; disable its boot intent
+            # and refuse this start instead of synchronously stopping itself.
+            _ntpd_run_checked(
+                ["systemctl", "disable", "ntpd.service"],
+                "Disable ntpd without proven Atlaso clock ownership",
+            )
+            if _ntpd_service_state("ntpd.service").get("enabled") is not False:
+                errors.append("ntpd.service disable could not be verified")
+        except (OSError, RuntimeError, ValueError, subprocess.TimeoutExpired) as exc:
+            errors.append(f"ntpd.service: {exc}")
+        for unit in ("chronyd.service", "systemd-timesyncd.service"):
+            try:
+                _ntpd_stop_service(unit)
+            except (OSError, RuntimeError, ValueError, subprocess.TimeoutExpired) as exc:
+                errors.append(f"{unit}: {exc}")
+        try:
+            _ntpd_client_packet_guard("disabled")
+        except (OSError, RuntimeError, ValueError, subprocess.TimeoutExpired) as exc:
+            errors.append(f"client packet policy: {exc}")
+        try:
+            _ntpd_set_vmware_timesync(False)
+        except (OSError, RuntimeError, ValueError, subprocess.TimeoutExpired) as exc:
+            errors.append(f"VMware Tools time sync: {exc}")
+        suffix = f" Cleanup errors: {'; '.join(errors)}." if errors else ""
+        print(f"{detail}; ntpd start refused fail-closed.{suffix}", file=sys.stderr)
+        return 1
+
     if not NTP_CONFIG_PATH.is_file() or not _ntpd_config_managed(NTP_CONFIG_PATH):
-        # Vendor configuration is never imported or started automatically.
+        if live_apply:
+            # A first Apply may not have installed its managed candidate yet.
+            # Leave that owned transition alone; never stop its possible candidate.
+            if phase == "pre-ntpd":
+                print("Clock Apply is active but no managed candidate is ready; refusing ntpd start.", file=sys.stderr)
+                return 1
+            return 0
         if phase == "pre-ntpd":
-            print("No Atlaso-owned time config is applied; run appliance Apply before starting ntpd.", file=sys.stderr)
+            return refuse_unproven_ntpd_start(
+                "No Atlaso-owned clock config is applied"
+            )
+        stop_errors = _ntpd_fail_closed_stop()
+        if stop_errors:
+            print(
+                "No Atlaso-owned clock config is applied; fail-closed stop failed: "
+                + "; ".join(stop_errors),
+                file=sys.stderr,
+            )
             return 1
+        print(
+            "No Atlaso-owned clock config is applied; known clock controllers were stopped.",
+            file=sys.stderr,
+        )
         return 0
     try:
         mode = _ntpd_applied_time_mode(NTP_CONFIG_PATH)
-        if mode == "unmanaged":
+        if mode in {"disabled", "unmanaged"}:
+            if live_apply:
+                if phase == "pre-ntpd":
+                    print("Clock Apply is active but its candidate mode is not yet provable; refusing ntpd start.", file=sys.stderr)
+                    return 1
+                return 0
             if phase == "pre-ntpd":
-                raise RuntimeError("Legacy clock config does not prove applied authority; run appliance Apply before starting ntpd.")
+                return refuse_unproven_ntpd_start(
+                    "Legacy clock config does not prove applied authority"
+                )
+            stop_errors = _ntpd_fail_closed_stop()
+            if stop_errors:
+                raise RuntimeError(
+                    "Unable to fail closed for an unproven applied clock mode: "
+                    + "; ".join(stop_errors)
+                )
+            print("Legacy clock config does not prove applied authority; known clock controllers were stopped.", file=sys.stderr)
             return 0
         if phase == "pre-vmtoolsd":
             _ntpd_stop_service("ntpd.service", disable=mode == "vmware_tools")

@@ -2230,6 +2230,7 @@ def ntp_context(db: Session, *, include_runtime_health: bool = False, reconcile:
         reconcile
         and vmware_tools_capability_known
         and not vmware_tools_available
+        and not settings.enabled
         and settings.time_source == "vmware_tools"
     ):
         settings.time_source = "ntp_client"

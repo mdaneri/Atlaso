@@ -19210,6 +19210,9 @@ def test_ntpd_guard_install_upgrades_existing_firewall_unit_without_reapplying_i
 
     helper._ntpd_install_guards()
 
+    guard_service = (tmp_path / "atlaso-time-sync-guard.service").read_text(encoding="utf-8")
+    assert "ExecStart=/opt/atlaso/bin/atlaso-helper ntpd guard boot --real" in guard_service
+    assert "ConditionPathExists=/etc/ntp.conf" not in guard_service
     assert "ExecStart=/opt/atlaso/bin/atlaso-helper firewall replay --real" in firewall_service.read_text(
         encoding="utf-8"
     )
@@ -20068,7 +20071,7 @@ def test_ntpd_rollback_material_rejects_unbounded_or_shared_files(monkeypatch, t
 
 
 def test_ntpd_reconcile_leaves_unmanaged_or_legacy_disabled_config_untouched(monkeypatch, tmp_path):
-    """Startup reconciliation reports Apply required instead of importing vendor or legacy state."""
+    """Startup reconciliation stops clocks without importing vendor or legacy state."""
     helper = load_helper_module()
     config = tmp_path / "ntp.conf"
     monkeypatch.setattr(helper, "NTP_CONFIG_PATH", config)
@@ -20082,7 +20085,14 @@ def test_ntpd_reconcile_leaves_unmanaged_or_legacy_disabled_config_untouched(mon
     monkeypatch.setattr(helper, "_ntpd_set_vmware_timesync", lambda enabled: mutations.append(("vmware", enabled)))
 
     assert helper._ntpd_reconcile_applied()["managed"] is False
-    assert mutations == []
+    assert mutations == [
+        ("stop", "ntpd.service", {}),
+        ("stop", "chronyd.service", {}),
+        ("stop", "systemd-timesyncd.service", {}),
+        ("packet-guard", "disabled"),
+        ("vmware", False),
+    ]
+    mutations.clear()
     config.write_text("# Atlaso NTP enabled: false\n", encoding="utf-8")
     assert helper._ntpd_reconcile_applied()["mode"] == "unmanaged"
     assert mutations == [
@@ -20092,6 +20102,139 @@ def test_ntpd_reconcile_leaves_unmanaged_or_legacy_disabled_config_untouched(mon
         ("packet-guard", "disabled"),
         ("vmware", False),
     ]
+
+
+@pytest.mark.parametrize("config_kind", ["missing", "vendor", "replaced_after_vmware"])
+def test_ntpd_reconcile_fails_closed_when_applied_config_is_missing_or_unowned(
+    monkeypatch, tmp_path, config_kind
+):
+    """Unknown applied state cannot leave an earlier VMware or NTP controller running."""
+    helper = load_helper_module()
+    config = tmp_path / "ntp.conf"
+    vendor_bytes = b"# vendor-owned clock config\nserver vendor.example iburst\n"
+    if config_kind == "vendor":
+        config.write_bytes(vendor_bytes)
+    elif config_kind == "replaced_after_vmware":
+        # The out-of-band replacement no longer carries Atlaso's mode marker,
+        # so no prior mode may be inferred or activated from it.
+        applied_vmware = ntpd_config_text(enabled=False).replace(
+            "# Atlaso NTP enabled: false\n",
+            "# Atlaso NTP enabled: false\n# Atlaso time mode: vmware_tools\n",
+        )
+        config.write_text(applied_vmware, encoding="utf-8")
+        config.write_bytes(vendor_bytes)
+    monkeypatch.setattr(helper, "NTP_CONFIG_PATH", config)
+    monkeypatch.setattr(helper, "_ntpd_set_vmware_timesync", lambda enabled: actions.append(("vmware", enabled)))
+    actions: list[tuple[object, ...]] = []
+    monkeypatch.setattr(helper, "_ntpd_stop_service", lambda unit, **kwargs: actions.append(("stop", unit, kwargs)))
+    monkeypatch.setattr(helper, "_ntpd_client_packet_guard", lambda mode: actions.append(("guard", mode)))
+    monkeypatch.setattr(
+        helper,
+        "_ntpd_transition",
+        lambda *_args, **_kwargs: pytest.fail("unowned clock config was imported or started"),
+    )
+    monkeypatch.setattr(
+        helper,
+        "_ntpd_install_guards",
+        lambda: pytest.fail("unowned clock config installed active guards"),
+    )
+
+    result = helper._ntpd_reconcile_applied()
+
+    assert result["managed"] is False
+    assert result["ntpd"] == "reconcile required"
+    assert actions == [
+        ("stop", "ntpd.service", {}),
+        ("stop", "chronyd.service", {}),
+        ("stop", "systemd-timesyncd.service", {}),
+        ("guard", "disabled"),
+        ("vmware", False),
+    ]
+    if config_kind == "missing":
+        assert not config.exists()
+    else:
+        assert config.read_bytes() == vendor_bytes
+
+
+@pytest.mark.parametrize("config_kind", ["missing", "vendor", "replaced_after_vmware"])
+@pytest.mark.parametrize("phase", ["boot", "pre-vmtoolsd", "post-vmtoolsd"])
+def test_ntpd_service_guards_fail_closed_without_owned_config(
+    monkeypatch, tmp_path, config_kind, phase, capsys
+):
+    """Boot and VMware service hooks stop unproven controllers and preserve vendor config."""
+    helper = load_helper_module()
+    config = tmp_path / "ntp.conf"
+    vendor_bytes = b"# vendor-owned clock config\nserver vendor.example iburst\n"
+    if config_kind != "missing":
+        config.write_bytes(vendor_bytes)
+    monkeypatch.setattr(helper, "NTP_CONFIG_PATH", config)
+    actions: list[tuple[object, ...]] = []
+    monkeypatch.setattr(helper, "_ntpd_stop_service", lambda unit, **kwargs: actions.append(("stop", unit, kwargs)))
+    monkeypatch.setattr(helper, "_ntpd_client_packet_guard", lambda mode: actions.append(("guard", mode)))
+    monkeypatch.setattr(helper, "_ntpd_set_vmware_timesync", lambda enabled: actions.append(("vmware", enabled)))
+
+    assert helper._ntpd_guard(phase) == 0
+    assert actions == [
+        ("stop", "ntpd.service", {}),
+        ("stop", "chronyd.service", {}),
+        ("stop", "systemd-timesyncd.service", {}),
+        ("guard", "disabled"),
+        ("vmware", False),
+    ]
+    assert "known clock controllers were stopped" in capsys.readouterr().err
+    if config_kind == "missing":
+        assert not config.exists()
+    else:
+        assert config.read_bytes() == vendor_bytes
+
+
+def test_ntpd_missing_config_reconcile_refuses_success_when_fail_closed_stop_fails(monkeypatch, tmp_path):
+    """Missing applied state cannot report safe reconciliation when a known daemon remains active."""
+    helper = load_helper_module()
+    monkeypatch.setattr(helper, "NTP_CONFIG_PATH", tmp_path / "missing-ntp.conf")
+    stop_attempts: list[str] = []
+
+    def stop_service(unit: str, **_kwargs) -> None:
+        stop_attempts.append(unit)
+        if unit == "chronyd.service":
+            raise RuntimeError("chronyd could not be stopped")
+
+    monkeypatch.setattr(helper, "_ntpd_stop_service", stop_service)
+    monkeypatch.setattr(helper, "_ntpd_client_packet_guard", lambda _mode: None)
+    monkeypatch.setattr(helper, "_ntpd_set_vmware_timesync", lambda _enabled: None)
+
+    with pytest.raises(RuntimeError, match="Unable to fail closed without Atlaso-owned clock config"):
+        helper._ntpd_reconcile_applied()
+
+    assert stop_attempts == ["ntpd.service", "chronyd.service", "systemd-timesyncd.service"]
+
+
+def test_ntpd_prestart_without_owned_config_disables_self_without_synchronous_stop(
+    monkeypatch, tmp_path, capsys
+):
+    """The ntpd pre-start hook refuses an unowned start without stopping its own unit job."""
+    helper = load_helper_module()
+    monkeypatch.setattr(helper, "NTP_CONFIG_PATH", tmp_path / "missing-ntp.conf")
+    actions: list[tuple[object, ...]] = []
+    monkeypatch.setattr(helper, "_ntpd_run_checked", lambda command, _action: actions.append(("run", command)))
+    monkeypatch.setattr(
+        helper,
+        "_ntpd_service_state",
+        lambda _unit: {"enabled": False},
+    )
+    monkeypatch.setattr(helper, "_ntpd_stop_service", lambda unit, **kwargs: actions.append(("stop", unit, kwargs)))
+    monkeypatch.setattr(helper, "_ntpd_client_packet_guard", lambda mode: actions.append(("guard", mode)))
+    monkeypatch.setattr(helper, "_ntpd_set_vmware_timesync", lambda enabled: actions.append(("vmware", enabled)))
+
+    assert helper._ntpd_guard("pre-ntpd") == 1
+    assert actions == [
+        ("run", ["systemctl", "disable", "ntpd.service"]),
+        ("stop", "chronyd.service", {}),
+        ("stop", "systemd-timesyncd.service", {}),
+        ("guard", "disabled"),
+        ("vmware", False),
+    ]
+    assert "ntpd start refused fail-closed" in capsys.readouterr().err
 
 
 @pytest.mark.parametrize(
@@ -20111,6 +20254,8 @@ def test_ntpd_stale_legacy_enabled_config_never_selects_a_clock_controller(
     monkeypatch.setattr(helper, "_ntpd_install_guards", lambda: pytest.fail("legacy config installed active guards"))
     monkeypatch.setattr(helper, "_ntpd_transition", lambda *_args, **_kwargs: pytest.fail("legacy server was activated"))
     mutations: list[tuple[object, ...]] = []
+    monkeypatch.setattr(helper, "_ntpd_run_checked", lambda command, _action: mutations.append(("run", command)))
+    monkeypatch.setattr(helper, "_ntpd_service_state", lambda _unit: {"enabled": False})
     monkeypatch.setattr(
         helper, "_ntpd_stop_service", lambda unit, **kwargs: mutations.append(("stop", unit, kwargs))
     )
@@ -20131,9 +20276,23 @@ def test_ntpd_stale_legacy_enabled_config_never_selects_a_clock_controller(
     mutations.clear()
     assert helper._ntpd_guard(phase) == expected_return
     assert config.read_bytes() == original
-    assert mutations == []
     if phase == "pre-ntpd":
-        assert "does not prove applied authority" in capsys.readouterr().err
+        assert mutations == [
+            ("run", ["systemctl", "disable", "ntpd.service"]),
+            ("stop", "chronyd.service", {}),
+            ("stop", "systemd-timesyncd.service", {}),
+            ("packet-guard", "disabled"),
+            ("vmware", False),
+        ]
+        assert "ntpd start refused fail-closed" in capsys.readouterr().err
+    else:
+        assert mutations == [
+            ("stop", "ntpd.service", {}),
+            ("stop", "chronyd.service", {}),
+            ("stop", "systemd-timesyncd.service", {}),
+            ("packet-guard", "disabled"),
+            ("vmware", False),
+        ]
 
 
 def test_ntpd_legacy_reconcile_refuses_success_when_controller_stop_fails(monkeypatch, tmp_path):
@@ -20227,20 +20386,30 @@ def test_ntpd_failed_apply_preserves_legacy_nts_assets_without_reactivating_lega
     assert "no managed clock mode was active" in capsys.readouterr().err
 
 
-def test_ntpd_prestart_guard_rejects_disabled_legacy_config_without_mutation(monkeypatch, tmp_path):
-    """A legacy disabled config cannot accidentally start ntpd from its pre-start hook."""
+def test_ntpd_prestart_guard_rejects_disabled_legacy_config_without_self_stop(monkeypatch, tmp_path):
+    """A legacy disabled config disables ntpd boot intent without stopping its own start job."""
     helper = load_helper_module()
     config = tmp_path / "ntp.conf"
     config.write_text("# Atlaso NTP enabled: false\n", encoding="utf-8")
     monkeypatch.setattr(helper, "NTP_CONFIG_PATH", config)
     monkeypatch.setattr(helper, "_ntpd_config_managed", lambda _path: True)
-    mutations: list[str] = []
-    monkeypatch.setattr(helper, "_ntpd_stop_service", lambda *_args, **_kwargs: mutations.append("stop"))
-    monkeypatch.setattr(helper, "_ntpd_client_packet_guard", lambda *_args: mutations.append("guard"))
-    monkeypatch.setattr(helper, "_ntpd_set_vmware_timesync", lambda *_args: mutations.append("vmware"))
+    mutations: list[tuple[object, ...]] = []
+    monkeypatch.setattr(helper, "_ntpd_run_checked", lambda command, _action: mutations.append(("run", command)))
+    monkeypatch.setattr(helper, "_ntpd_service_state", lambda _unit: {"enabled": False})
+    monkeypatch.setattr(
+        helper, "_ntpd_stop_service", lambda unit, **kwargs: mutations.append(("stop", unit, kwargs))
+    )
+    monkeypatch.setattr(helper, "_ntpd_client_packet_guard", lambda mode: mutations.append(("guard", mode)))
+    monkeypatch.setattr(helper, "_ntpd_set_vmware_timesync", lambda enabled: mutations.append(("vmware", enabled)))
 
     assert helper._ntpd_guard("pre-ntpd") == 1
-    assert mutations == []
+    assert mutations == [
+        ("run", ["systemctl", "disable", "ntpd.service"]),
+        ("stop", "chronyd.service", {}),
+        ("stop", "systemd-timesyncd.service", {}),
+        ("guard", "disabled"),
+        ("vmware", False),
+    ]
 
 
 def test_ntpd_main_dispatches_guard_phase_and_emits_single_status_document(monkeypatch, capsys):
@@ -21031,13 +21200,16 @@ def test_ntpd_interrupted_first_vmware_apply_stops_candidate_before_clearing_jou
     assert not applied.exists()
     assert not helper._ntpd_transaction_path().exists()
     assert all(not active for active in candidate_controllers.values())
-    assert operations == [
+    fail_closed_operations = [
         ("stop", "ntpd.service"),
         ("stop", "chronyd.service"),
         ("stop", "systemd-timesyncd.service"),
         ("guard", "disabled"),
         ("vmware", False),
     ]
+    # Recovery stops the interrupted candidate before retiring the journal;
+    # the ordinary boot guard then repeats the idempotent check for absence.
+    assert operations == fail_closed_operations * 2
 
 
 def test_ntpd_interrupted_initial_apply_retains_candidate_and_journal_when_stop_fails(
