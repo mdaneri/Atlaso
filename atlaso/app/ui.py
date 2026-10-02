@@ -1349,6 +1349,7 @@ def remove_ntp_nts_certificate_rows(db: Session) -> int:
 
 def managed_ca_certificate_specs(
     db: Session, *, reconcile: bool = True, managed_owners: set[str] | None = None,
+    management_snapshot: dict[str, Any] | None = None,
 ) -> list[ManagedCertificateSpec]:
     """Return managed ca certificate specs.
 
@@ -1356,24 +1357,30 @@ def managed_ca_certificate_specs(
         db: Active database session.
         reconcile: Whether service getters may initialize or reconcile desired state.
         managed_owners: Optional owner selection; management-only projection skips other services.
+        management_snapshot: Applied Settings inputs for recovery certificate identity.
     """
     specs: list[ManagedCertificateSpec] = []
-    appliance = get_appliance_settings_row(db) if reconcile else db.scalar(select(ApplianceSettings))
-    if appliance is None:
-        raise ValueError("Appliance Settings are unavailable for certificate projection.")
-    interfaces = db.execute(select(PhysicalInterface).order_by(PhysicalInterface.name)).scalars().all()
-    vlans = db.execute(select(VlanInterface).order_by(VlanInterface.parent_interface, VlanInterface.vlan_id)).scalars().all()
-    management, observed_dhcp_dns_servers = management_dhcp_dns_context(interfaces)
-    terminal_options = web_terminal_interface_options(interfaces, vlans)
-    terminal_ips = web_terminal_addresses(normalized_web_terminal_interfaces(appliance, management), terminal_options) if appliance.web_terminal_enabled else []
+    if management_snapshot is not None:
+        appliance_fqdn = management_snapshot["fqdn"]
+        terminal_ips = list(management_snapshot["web_terminal_addresses"]) if management_snapshot["web_terminal_enabled"] else []
+    else:
+        appliance = get_appliance_settings_row(db) if reconcile else db.scalar(select(ApplianceSettings))
+        if appliance is None:
+            raise ValueError("Appliance Settings are unavailable for certificate projection.")
+        interfaces = db.execute(select(PhysicalInterface).order_by(PhysicalInterface.name)).scalars().all()
+        vlans = db.execute(select(VlanInterface).order_by(VlanInterface.parent_interface, VlanInterface.vlan_id)).scalars().all()
+        management, observed_dhcp_dns_servers = management_dhcp_dns_context(interfaces)
+        terminal_options = web_terminal_interface_options(interfaces, vlans)
+        terminal_ips = web_terminal_addresses(normalized_web_terminal_interfaces(appliance, management), terminal_options) if appliance.web_terminal_enabled else []
+        appliance_fqdn = appliance.fqdn
     appliance_ips = management_ui_addresses(db)
     appliance_ips.extend(address for address in terminal_ips if address not in appliance_ips)
-    appliance_cert, appliance_key, appliance_chain = ca_service_cert_paths("https", appliance.fqdn)
+    appliance_cert, appliance_key, appliance_chain = ca_service_cert_paths("https", appliance_fqdn)
     specs.append(
         ManagedCertificateSpec(
             owner="appliance:https",
-            common_name=appliance.fqdn,
-            dns_names=[appliance.fqdn],
+            common_name=appliance_fqdn,
+            dns_names=[appliance_fqdn],
             ip_addresses=appliance_ips,
             profile_name=CA_SERVER_PROFILE_NAME,
             description="Managed Atlaso appliance HTTPS certificate.",
@@ -1541,13 +1548,17 @@ def ca_managed_certificate_paths(db: Session, owner: str) -> tuple[str, str, str
     return certificate.cert_path or "", certificate.key_path or "", certificate.chain_path or ""
 
 
-def ensure_ca_state(db: Session, *, commit: bool = True, managed_owners: set[str] | None = None) -> list[str]:
+def ensure_ca_state(
+    db: Session, *, commit: bool = True, managed_owners: set[str] | None = None,
+    management_snapshot: dict[str, Any] | None = None,
+) -> list[str]:
     """Ensure ca state.
 
     Args:
         db: Active database session.
         commit: Whether to commit reconciled CA state before returning.
         managed_owners: Optional managed certificate owners admitted for scoped issuance.
+        management_snapshot: Applied Settings inputs for the management leaf.
 
     Returns:
         The ensure ca state result.
@@ -1564,7 +1575,7 @@ def ensure_ca_state(db: Session, *, commit: bool = True, managed_owners: set[str
             settings.portal_hostname = normalized_portal_hostname
             changed = True
         changed = ensure_root_ca_material(settings) or changed
-        specs = managed_ca_certificate_specs(db, reconcile=commit, managed_owners=managed_owners)
+        specs = managed_ca_certificate_specs(db, reconcile=commit, managed_owners=managed_owners, management_snapshot=management_snapshot)
         if managed_owners is not None:
             specs = [spec for spec in specs if spec.owner in managed_owners]
         changed = ensure_managed_certificate_rows(db, settings=settings, profiles=profiles, specs=specs) or changed

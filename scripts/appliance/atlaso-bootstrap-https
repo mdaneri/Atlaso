@@ -556,13 +556,16 @@ def fix_state_permissions() -> None:
             path.chmod(0o750 if path.is_dir() else 0o600)
 
 
-def ensure_recovery_ca_state(db, network_job_id: str | None, *, commit: bool = True) -> list[str]:
+def ensure_recovery_ca_state(
+    db, network_job_id: str | None, *, commit: bool = True, management_snapshot: dict | None = None,
+) -> list[str]:
     """Serialize certificate issuance against the completed Network management paths.
 
     Args:
         db: Bootstrap database transaction containing initialized CA settings.
         network_job_id: Exact completed console Network task, or ordinary bootstrap.
         commit: Whether to release the writer transaction after issuance.
+        management_snapshot: Applied Settings identity captured for completed recovery.
     """
     acquire_network_objects_write_lock(db)
     transaction = db.get_transaction()
@@ -582,8 +585,9 @@ def ensure_recovery_ca_state(db, network_job_id: str | None, *, commit: bool = T
         )
         if not network_management_paths(preview) or network_management_paths(preview) != network_management_paths(current):
             return ["Management paths changed after Network apply; pending edits prevent certificate recovery."]
+    projection = {"management_snapshot": management_snapshot} if management_snapshot is not None else {}
     errors = ensure_ca_state(
-        db, commit=False, managed_owners={"appliance:https"} if network_job_id is not None else None,
+        db, commit=False, managed_owners={"appliance:https"} if network_job_id is not None else None, **projection,
     )
     if db.get_transaction() is not transaction:
         return ["Certificate recovery lost its Network writer lock; retry the console correction."]
@@ -658,17 +662,27 @@ def refresh_completed_management_certificate(network_job_id: str) -> int:
             applied_settings = json.loads(str((settings_baseline or {}).get("config_preview") or "{}"))
         except (TypeError, ValueError):
             applied_settings = {}
-        appliance = db.scalar(select(ApplianceSettings))
-        if applied_settings.get("management_https_enabled") is False and appliance is not None and not appliance.management_https_enabled:
+        if not isinstance(applied_settings, dict):
+            applied_settings = {}
+        if applied_settings.get("management_https_enabled") is False:
             nginx = shutil.which("nginx")
             if nginx is None:
                 print("nginx is unavailable; completed HTTP management configuration cannot be validated")
                 return 2
             return run([nginx, "-t"]).returncode
+        if (
+            not isinstance(applied_settings.get("fqdn"), str) or not applied_settings["fqdn"]
+            or not isinstance(applied_settings.get("web_terminal_enabled"), bool)
+            or not isinstance(applied_settings.get("web_terminal_addresses"), list)
+            or not all(isinstance(address, str) for address in applied_settings["web_terminal_addresses"])
+            or applied_settings.get("management_https_enabled") is not True
+        ):
+            print("Applied Appliance Settings identity is unavailable; apply Settings before certificate recovery.")
+            return 2
         if not recovery_root_matches_baseline(db):
             print("Applied CA root baseline is unavailable or changed; apply CA intent before console recovery.")
             return 2
-        errors = ensure_recovery_ca_state(db, network_job_id, commit=False)
+        errors = ensure_recovery_ca_state(db, network_job_id, commit=False, management_snapshot=applied_settings)
         if errors:
             for error in errors:
                 print(error)

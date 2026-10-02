@@ -2840,18 +2840,20 @@ def test_completed_bootstrap_refreshes_bound_network_without_first_boot_reconcil
         monkeypatch.setattr(bootstrap, name, reject_first_boot)
     called = []
 
-    def guarded_issuance(db, job_id, *, commit):
+    def guarded_issuance(db, job_id, *, commit, management_snapshot):
         """Stop at the guarded issuance boundary before any filesystem mutation.
 
         Args:
             db: Existing appliance transaction.
             job_id: Completed task binding reaching the guard.
             commit: Whether guarded issuance may release its transaction.
+            management_snapshot: Frozen applied Settings identity.
         """
         called.append(job_id)
         return ["intentional test stop before certificate publication"]
 
     monkeypatch.setattr(bootstrap, "recovery_root_matches_baseline", lambda db: True)
+    monkeypatch.setattr(bootstrap, "load_appliance_apply_baselines", lambda db: {"appliance_settings": {"config_preview": json.dumps({"fqdn": "applied.example.test", "management_https_enabled": True, "web_terminal_enabled": False, "web_terminal_addresses": []})}})
     monkeypatch.setattr(bootstrap, "ensure_recovery_ca_state", guarded_issuance)
     assert bootstrap.main("job_completed_network") == 2
     assert called == ["job_completed_network"]
@@ -2882,6 +2884,7 @@ def test_bound_bootstrap_preserves_applied_front_door(client, monkeypatch, tmp_p
     monkeypatch.setattr(bootstrap, "CA_STAGED_CONFIG_PATH", str(tmp_path / "ca.json"))
     calls = []
     monkeypatch.setattr(bootstrap, "recovery_root_matches_baseline", lambda db: True)
+    monkeypatch.setattr(bootstrap, "load_appliance_apply_baselines", lambda db: {"appliance_settings": {"config_preview": json.dumps({"fqdn": "applied.example.test", "management_https_enabled": True, "web_terminal_enabled": False, "web_terminal_addresses": []})}})
     monkeypatch.setattr(bootstrap, "record_ca_publication_baseline", lambda *args, **kwargs: None)
     monkeypatch.setattr(bootstrap, "ensure_recovery_ca_state", lambda db, job, **kwargs: calls.append(job) or [])
     monkeypatch.setattr(bootstrap, "render_ca_apply_payload", lambda *_args, **_kwargs: '{"root": {}, "certificates": []}')
@@ -2977,7 +2980,7 @@ def test_console_recovery_cli_dispatches_completed_task_id(monkeypatch):
     assert calls == [("recover-management-plane", ["job_0123456789ab"])]
 
 
-@pytest.mark.parametrize("pending", ["service", "certificate", "root", "root_key"])
+@pytest.mark.parametrize("pending", ["service", "certificate", "root", "root_key", "settings", "missing_settings"])
 @pytest.mark.parametrize("apply_result", [0, 1])
 def test_completed_recovery_publishes_only_management_and_records_exact_baseline(client, monkeypatch, tmp_path, pending, apply_result):
     """Keep unrelated intent pending and acknowledge the management leaf only after success.
@@ -2992,13 +2995,20 @@ def test_completed_recovery_publishes_only_management_and_records_exact_baseline
     from sqlalchemy import select
 
     from atlaso.app.database import SessionLocal
-    from atlaso.app.models import CaCertificate, CaProfile, CaSettings, LdapSettings
+    from atlaso.app.models import (
+        ApplianceSettings,
+        CaCertificate,
+        CaProfile,
+        CaSettings,
+        LdapSettings,
+    )
     from atlaso.app.services.ca import render_ca_apply_payload
     from atlaso.app.services.networking import render_network_config
     from atlaso.app.ui import (
         ensure_ca_state,
         load_appliance_apply_baselines,
         make_appliance_apply_unit,
+        save_appliance_apply_baselines,
     )
 
     loader = importlib.machinery.SourceFileLoader("atlaso_scoped_ca_recovery", "scripts/appliance/atlaso-bootstrap-https")
@@ -3006,6 +3016,9 @@ def test_completed_recovery_publishes_only_management_and_records_exact_baseline
     bootstrap = importlib.util.module_from_spec(spec)
     loader.exec_module(bootstrap)
     with SessionLocal() as db:
+        appliance = db.scalar(select(ApplianceSettings))
+        appliance.fqdn = "management.applied.example.test"
+        appliance.web_terminal_enabled = False
         ca = db.scalar(select(CaSettings))
         ca.enabled = True
         ldap = db.scalar(select(LdapSettings))
@@ -3019,6 +3032,14 @@ def test_completed_recovery_publishes_only_management_and_records_exact_baseline
         bootstrap.record_ca_publication_baseline(db, public, summary, management_only=False)
         db.commit()
         before = load_appliance_apply_baselines(db)["ca"]
+        baselines = load_appliance_apply_baselines(db)
+        baselines["appliance_settings"] = {"config_preview": json.dumps({
+            "fqdn": appliance.fqdn, "management_https_enabled": True,
+            "web_terminal_enabled": True, "web_terminal_addresses": ["198.51.100.44"],
+        })}
+        if pending == "missing_settings":
+            del baselines["appliance_settings"]
+        save_appliance_apply_baselines(db, baselines)
         ldap_leaf = db.scalar(select(CaCertificate).where(CaCertificate.managed_owner == "ldap:ldaps"))
         old_leaf = {column.name: getattr(ldap_leaf, column.name) for column in CaCertificate.__table__.columns}
         if pending == "service":
@@ -3027,7 +3048,11 @@ def test_completed_recovery_publishes_only_management_and_records_exact_baseline
             ldap_leaf.common_name = "certificate.pending.example.test"
         elif pending == "root":
             ca.storage_path = "/etc/atlaso/ca-pending"
-        else:
+        elif pending == "settings":
+            appliance.fqdn = "management.pending.example.test"
+            appliance.web_terminal_enabled = True
+            appliance.web_terminal_interfaces_json = '["pending-interface"]'
+        elif pending == "root_key":
             ca.root_private_key_encrypted = db.scalar(select(CaCertificate).where(CaCertificate.managed_owner == "appliance:https")).private_key_encrypted
         target = appliance_console._management_interface(db)
         target.ipv4_method = "static"
@@ -3043,15 +3068,20 @@ def test_completed_recovery_publishes_only_management_and_records_exact_baseline
     ownership = {}
     issue = bootstrap.ensure_recovery_ca_state
 
-    def admitted_issuance(db, job_id, *, commit):
+    def admitted_issuance(db, job_id, *, commit, management_snapshot):
         """Retain the real writer transaction identity for the publication assertion.
 
         Args:
             db: Admitted writer transaction.
             job_id: Completed Network task.
             commit: Guarded publication must keep the transaction open.
+            management_snapshot: Frozen applied hostname and terminal addresses.
         """
-        result = issue(db, job_id, commit=commit)
+        if pending == "settings":
+            # Simulate another Settings save after admission; issuance must never reread it.
+            db.scalar(select(ApplianceSettings)).fqdn = "management.concurrent.example.test"
+            db.flush()
+        result = issue(db, job_id, commit=commit, management_snapshot=management_snapshot)
         ownership["db"] = db
         ownership["transaction"] = db.get_transaction()
         return result
@@ -3071,13 +3101,21 @@ def test_completed_recovery_publishes_only_management_and_records_exact_baseline
     monkeypatch.setattr(bootstrap.shutil, "which", lambda name: "/usr/bin/" + name)
     monkeypatch.setattr(bootstrap, "run", lambda command: subprocess.CompletedProcess(command, 0, "", ""))
     result = bootstrap.refresh_completed_management_certificate("job_scoped_ca")
-    if pending in {"root", "root_key"}:
+    if pending in {"root", "root_key", "missing_settings"}:
         assert result == 2 and captured == [] and not stage.exists()
         with SessionLocal() as db:
             assert load_appliance_apply_baselines(db)["ca"] == before
         return
     assert result == apply_result
     assert [leaf["managed_owner"] for leaf in captured[0]["certificates"]] == ["appliance:https"]
+    management_leaf = captured[0]["certificates"][0]
+    assert management_leaf["common_name"] == "management.applied.example.test"
+    from cryptography import x509
+
+    leaf_certificate = x509.load_pem_x509_certificate(management_leaf["certificate_pem"].encode())
+    sans = leaf_certificate.extensions.get_extension_for_class(x509.SubjectAlternativeName).value
+    assert "198.51.100.44" in [str(address) for address in sans.get_values_for_type(x509.IPAddress)]
+    assert sans.get_values_for_type(x509.DNSName) == ["management.applied.example.test"]
     assert captured[0]["root"]["crl_path"] == captured[0]["root"]["crl_pem"] == ""
     with SessionLocal() as db:
         ldap_leaf = db.scalar(select(CaCertificate).where(CaCertificate.managed_owner == "ldap:ldaps"))
@@ -3095,7 +3133,7 @@ def test_completed_recovery_publishes_only_management_and_records_exact_baseline
             current_unit = make_appliance_apply_unit(unit_id="ca", label="Certificate Authority", page_url="/certificate-authority",
                                                     context={}, summary=summary, validation_errors=[], config_path=str(stage),
                                                     config_preview=current, baseline=after)
-            assert (current_unit["snapshot_hash"] == after["snapshot_hash"]) is (pending == "service")
+            assert (current_unit["snapshot_hash"] == after["snapshot_hash"]) is (pending in {"service", "settings"})
             assert after["snapshot_hash"] != before["snapshot_hash"]
 
 
