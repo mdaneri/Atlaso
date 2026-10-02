@@ -205,6 +205,67 @@ test("NTP health requires synchronization health and leaves dry runs neutral", (
   assert.equal(health.state, "warn");
 });
 
+test("VMware Tools health ignores NTP probe errors but requires reported synchronization health", () => {
+  const failedNtpProbes = {
+    peers: { returncode: 1, stderr: "ntpq is unavailable" },
+    variables: { returncode: 1, stderr: "ntpq is unavailable" },
+    nts: { returncode: 1, stderr: "ntpq is unavailable" },
+  };
+  const payload = {
+    ok: true,
+    status: {
+      mode: "vmware_tools",
+      selected_controller: {
+        name: "vmware_tools",
+        active: true,
+        detail: "VMware Tools time synchronization is enabled.",
+      },
+      daemon_conflicts: {},
+      synchronization: {
+        state: "synchronized",
+        healthy: true,
+        detail: "VMware Tools time synchronization is healthy.",
+      },
+      ...failedNtpProbes,
+    },
+  };
+
+  let health = context.classifyNTPsecSourceHealth(true, payload);
+  assert.equal(health.text, "healthy");
+  assert.equal(health.state, "good");
+
+  payload.status.synchronization.healthy = false;
+  payload.status.synchronization.state = "unsynchronized";
+  health = context.classifyNTPsecSourceHealth(true, payload);
+  assert.equal(health.text, "needs attention");
+  assert.equal(health.state, "warn");
+  payload.status.synchronization.healthy = null;
+  payload.status.synchronization.state = "unavailable";
+  health = context.classifyNTPsecSourceHealth(true, payload);
+  assert.equal(health.text, "needs attention");
+  assert.equal(health.state, "warn");
+  payload.status.synchronization.healthy = false;
+  payload.status.synchronization.state = "unsynchronized";
+  payload.status.daemon_conflicts.chronyd = { active: true, detail: "chronyd is active" };
+  health = context.classifyNTPsecSourceHealth(true, payload);
+  assert.equal(health.text, "needs attention");
+});
+
+test("NTP client and server modes still treat failed NTP probes as unhealthy", () => {
+  for (const mode of ["ntp_client", "ntp_server"]) {
+    const health = context.classifyNTPsecSourceHealth(true, {
+      ok: true,
+      status: {
+        mode,
+        peers: { returncode: 1, stderr: "ntpq probe failed" },
+        synchronization: { state: "synchronized", healthy: true },
+      },
+    });
+    assert.equal(health.text, "needs attention");
+    assert.equal(health.state, "warn");
+  }
+});
+
 test("NTP health details include effective mode, controller, conflicts, and sync state", () => {
   const rendered = context.formatNTPsecSourceHealthPayload({
     ok: true,

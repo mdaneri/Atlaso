@@ -7599,9 +7599,10 @@ function classifyNTPsecSourceHealth(responseOk, payload = {}) {
     return { text: "dry-run", state: "muted" };
   }
   const statusPayload = payload.status && typeof payload.status === "object" ? payload.status : {};
-  const failedSection = ["peers", "variables", "nts"].some(
-    (name) => Number(statusPayload[name]?.returncode ?? 0) !== 0,
-  );
+  const failedSection = statusPayload.mode !== "vmware_tools"
+    && ["peers", "variables", "nts"].some(
+      (name) => Number(statusPayload[name]?.returncode ?? 0) !== 0,
+    );
   if (
     !responseOk
     || !payload.ok
