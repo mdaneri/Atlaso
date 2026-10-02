@@ -1080,6 +1080,9 @@ preserved with their affected subsystem below. Keep new requirements at their to
   paths under the shared network-object writer lock atomically with Settings capture, including edits during HTTPS recovery.
   Bind console HTTPS bootstrap to the completed Network task through a private, serialized runtime EnvironmentFile
   consumed by the original systemd unit; retain its data-disk dependency, ordering, and service serialization gates.
+  Bound restart before the console's outer timeout; cancel a timed-out job and prove systemd idle before removing or
+  replacing its runtime binding. Preserve active or ambiguous bindings. Completed bootstrap refreshes certificates
+  without replacing the applied management protocol or listener ports.
   Compare management paths under the shared writer lock
   and retain that transaction through certificate issuance. Ordinary bootstrap with a Network baseline rejects pending
   management-path edits too. Bound recovery must refresh HTTPS even after first boot is complete, without seeding or

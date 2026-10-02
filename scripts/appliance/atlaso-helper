@@ -24411,6 +24411,33 @@ def _console_first_boot_https_contract_is_complete() -> bool:
 CONSOLE_BOOTSTRAP_BINDING_DIRECTORY = Path("/run/atlaso-console-recovery")
 
 
+def _console_bootstrap_is_idle() -> bool:
+    """Prove the original oneshot has no queued or running job before unbinding."""
+    try:
+        result = _run(["systemctl", "show", FIRST_BOOT_HTTPS_UNIT, "-p", "ActiveState", "-p", "SubState", "-p", "Job"], timeout=5)
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    state = dict(line.split("=", 1) for line in result.stdout.splitlines() if "=" in line)
+    return bool(result.returncode == 0 and state.get("Job") in {"", "0"}
+                and (state.get("ActiveState"), state.get("SubState")) in {
+                    ("inactive", "dead"), ("failed", "failed"), ("active", "exited"),
+                })
+
+
+def _console_restart_bootstrap() -> None:
+    """Bound the original systemd restart before the outer console helper timeout."""
+    try:
+        result = _run(["systemctl", "restart", FIRST_BOOT_HTTPS_UNIT], timeout=40)
+    except subprocess.TimeoutExpired as exc:
+        _run(["systemctl", "stop", "--no-block", FIRST_BOOT_HTTPS_UNIT], timeout=5)
+        deadline = time.monotonic() + 10
+        while not _console_bootstrap_is_idle() and time.monotonic() < deadline:
+            time.sleep(0.2)
+        raise ValueError("HTTPS bootstrap timed out; its stop was requested. Retry after the service is idle.") from exc
+    if result.returncode != 0:
+        raise ValueError("retrying first-boot HTTPS bootstrap failed: " + (result.stderr or result.stdout).strip())
+
+
 @contextmanager
 def _console_bootstrap_binding(network_job_id: str | None):
     """Bind one serialized bootstrap service invocation without changing its unit gates.
@@ -24442,7 +24469,21 @@ def _console_bootstrap_binding(network_job_id: str | None):
         identity = None
         try:
             if binding.exists() or binding.is_symlink():
-                raise ValueError("A previous console bootstrap binding remains; reconcile it before retrying")
+                metadata = binding.lstat()
+                if (not stat.S_ISREG(metadata.st_mode) or metadata.st_nlink != 1
+                        or (fcntl is not None and (metadata.st_uid != 0 or metadata.st_mode & 0o077))
+                        or not _console_bootstrap_is_idle()):
+                    raise ValueError("A previous console bootstrap binding remains; reconcile it before retrying")
+                descriptor = os.open(binding, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+                with os.fdopen(descriptor, "r", encoding="utf-8") as previous:
+                    pinned = os.fstat(previous.fileno())
+                    content = previous.read(4097)
+                current = binding.lstat()
+                if ((metadata.st_dev, metadata.st_ino) != (pinned.st_dev, pinned.st_ino)
+                        or (current.st_dev, current.st_ino) != (pinned.st_dev, pinned.st_ino)
+                        or not re.fullmatch(r"ATLASO_CONSOLE_NETWORK_JOB_ID=[A-Za-z0-9_-]{1,128}\n", content)):
+                    raise ValueError("Previous console bootstrap binding changed or is invalid; preserve it")
+                binding.unlink()
             if network_job_id:
                 descriptor = os.open(binding, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o600)
                 created = True
@@ -24455,6 +24496,8 @@ def _console_bootstrap_binding(network_job_id: str | None):
             yield
         finally:
             if created:
+                if not _console_bootstrap_is_idle():
+                    raise ValueError("Console bootstrap is still active; preserve its binding until the service is idle")
                 metadata = binding.lstat()
                 if binding.is_symlink() or (metadata.st_dev, metadata.st_ino) != identity:
                     raise ValueError("Console bootstrap binding changed; preserve it for reconciliation")
@@ -24479,10 +24522,7 @@ def _recover_console_management_plane(timeout_seconds: int = 60, *, network_job_
                     "resetting the first-boot HTTPS bootstrap failure",
                     ["systemctl", "reset-failed", FIRST_BOOT_HTTPS_UNIT],
                 )
-                _console_recovery_command(
-                    "retrying first-boot HTTPS bootstrap",
-                    ["systemctl", "restart", FIRST_BOOT_HTTPS_UNIT],
-                )
+                _console_restart_bootstrap()
             bootstrap_retried = True
             if not _console_first_boot_https_contract_is_complete():
                 raise ValueError("first-boot HTTPS bootstrap returned without a complete durable contract")

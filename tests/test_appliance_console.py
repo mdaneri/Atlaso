@@ -2233,13 +2233,16 @@ def test_console_management_plane_recovery_retries_bootstrap_and_verifies_readin
     monkeypatch.setattr(helper, "fcntl", None)
     bootstrap_command = ["systemctl", "restart", helper.FIRST_BOOT_HTTPS_UNIT]
 
-    def fake_run(command: list[str]) -> subprocess.CompletedProcess[str]:
+    def fake_run(command: list[str], *, timeout=None) -> subprocess.CompletedProcess[str]:
         """Return deterministic recovery command results.
 
         Args:
             command: Command and arguments to execute.
+            timeout: Bounded systemd command deadline.
         """
         commands.append(command)
+        if command[:2] == ["systemctl", "show"]:
+            return subprocess.CompletedProcess(command, 0, "ActiveState=active\nSubState=exited\nJob=0\n", "")
         if command == bootstrap_command:
             binding = helper.CONSOLE_BOOTSTRAP_BINDING_DIRECTORY / "network.env"
             if network_job_id:
@@ -2850,6 +2853,74 @@ def test_completed_bootstrap_refreshes_bound_network_without_first_boot_reconcil
     assert called == ["job_completed_network"]
 
 
+@pytest.mark.parametrize("site", ["listen 8080 default_server;\nproxy_pass http://127.0.0.1:8000;\n",
+                                  "listen 8443 ssl default_server;\nproxy_pass http://127.0.0.1:8000;\n"])
+def test_bound_bootstrap_preserves_applied_front_door(client, monkeypatch, tmp_path, site):
+    """Refresh certificates twice without rewriting the saved protocol or listener ports.
+
+    Args:
+        client: Initialized application database fixture.
+        monkeypatch: Redirect certificate staging and native validation.
+        tmp_path: Isolated management configuration and certificate staging.
+        site: Applied HTTP-only or custom HTTPS-port configuration.
+    """
+    import importlib.machinery
+    import importlib.util
+
+    loader = importlib.machinery.SourceFileLoader("atlaso_preserved_front_door", "scripts/appliance/atlaso-bootstrap-https")
+    spec = importlib.util.spec_from_loader(loader.name, loader)
+    bootstrap = importlib.util.module_from_spec(spec)
+    loader.exec_module(bootstrap)
+    config = tmp_path / "management.conf"
+    config.write_text(site)
+    monkeypatch.setattr(bootstrap, "NGINX_MANAGEMENT_PATH", config)
+    monkeypatch.setattr(bootstrap, "first_boot_https_artifacts_are_complete", lambda: True)
+    monkeypatch.setattr(bootstrap, "CA_STAGED_CONFIG_PATH", str(tmp_path / "ca.json"))
+    calls = []
+    monkeypatch.setattr(bootstrap, "ensure_recovery_ca_state", lambda db, job: calls.append(job) or [])
+    monkeypatch.setattr(bootstrap, "render_ca_apply_payload", lambda *_args, **_kwargs: "{}")
+    monkeypatch.setattr(bootstrap, "apply_ca_files", lambda: 0)
+    monkeypatch.setattr(bootstrap.shutil, "which", lambda name: "/usr/bin/" + name)
+    monkeypatch.setattr(bootstrap, "run", lambda command: subprocess.CompletedProcess(command, 0, "", ""))
+    for _ in range(2):
+        assert bootstrap.main("job_completed_network") == 0
+        assert config.read_text() == site
+    assert calls == ["job_completed_network", "job_completed_network"]
+
+
+def test_console_bootstrap_timeout_stops_service_before_removing_binding(tmp_path, monkeypatch):
+    """Clean a timed-out restart only after systemd proves the service job idle.
+
+    Args:
+        tmp_path: Isolated root-private runtime binding directory.
+        monkeypatch: Simulate a stalled restart and completed cancellation.
+    """
+    helper = load_helper_module()
+    monkeypatch.setattr(helper, "CONSOLE_BOOTSTRAP_BINDING_DIRECTORY", tmp_path / "binding")
+    monkeypatch.setattr(helper, "fcntl", None)
+    commands = []
+
+    def run(command, *, timeout):
+        """Stall restart and report the systemd stop as completed.
+
+        Args:
+            command: Systemd command under test.
+            timeout: Required inner deadline below the outer console timeout.
+        """
+        commands.append(command)
+        assert timeout <= 40
+        if command[1] == "restart":
+            raise subprocess.TimeoutExpired(command, timeout)
+        return subprocess.CompletedProcess(command, 0, "ActiveState=inactive\nSubState=dead\nJob=0\n", "")
+
+    monkeypatch.setattr(helper, "_run", run)
+    with pytest.raises(ValueError, match="bootstrap timed out"):
+        with helper._console_bootstrap_binding("job_completed"):
+            helper._console_restart_bootstrap()
+    assert ["systemctl", "stop", "--no-block", helper.FIRST_BOOT_HTTPS_UNIT] in commands
+    assert not (helper.CONSOLE_BOOTSTRAP_BINDING_DIRECTORY / "network.env").exists()
+
+
 def test_console_bootstrap_binding_cleans_failure_and_preserves_stale_state(tmp_path, monkeypatch):
     """Release only this invocation's binding and refuse an existing one.
 
@@ -2861,6 +2932,7 @@ def test_console_bootstrap_binding_cleans_failure_and_preserves_stale_state(tmp_
     directory = tmp_path / "binding"
     monkeypatch.setattr(helper, "CONSOLE_BOOTSTRAP_BINDING_DIRECTORY", directory)
     monkeypatch.setattr(helper, "fcntl", None)
+    monkeypatch.setattr(helper, "_console_bootstrap_is_idle", lambda: True)
     binding = directory / "network.env"
     with pytest.raises(RuntimeError, match="service dependency failed"):
         with helper._console_bootstrap_binding("job_completed"):
@@ -2874,7 +2946,12 @@ def test_console_bootstrap_binding_cleans_failure_and_preserves_stale_state(tmp_
             replacement.replace(binding)
     assert binding.read_text() == "ATLASO_CONSOLE_NETWORK_JOB_ID=replacement_job\n"
     binding.write_text("ATLASO_CONSOLE_NETWORK_JOB_ID=previous_job\n")
+    monkeypatch.setattr(helper, "_console_bootstrap_is_idle", lambda: False)
     with pytest.raises(ValueError, match="previous console bootstrap binding remains"):
         with helper._console_bootstrap_binding("job_completed"):
             pytest.fail("Stale binding was admitted")
     assert binding.read_text() == "ATLASO_CONSOLE_NETWORK_JOB_ID=previous_job\n"
+    monkeypatch.setattr(helper, "_console_bootstrap_is_idle", lambda: True)
+    with helper._console_bootstrap_binding("job_retry"):
+        assert binding.read_text() == "ATLASO_CONSOLE_NETWORK_JOB_ID=job_retry\n"
+    assert not binding.exists()

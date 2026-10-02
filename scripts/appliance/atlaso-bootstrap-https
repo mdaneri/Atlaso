@@ -582,6 +582,34 @@ def ensure_recovery_ca_state(db, network_job_id: str | None) -> list[str]:
     return errors
 
 
+def refresh_completed_management_certificate(network_job_id: str) -> int:
+    """Refresh managed certificates without changing the applied front-door configuration.
+
+    Args:
+        network_job_id: Completed console Network task protecting issuance.
+    """
+    with SessionLocal() as db:
+        errors = ensure_recovery_ca_state(db, network_job_id)
+        if errors:
+            for error in errors:
+                print(error)
+            return 2
+        ca_settings = db.execute(select(CaSettings)).scalar_one()
+        certificates = db.execute(select(CaCertificate).order_by(CaCertificate.common_name)).scalars().all()
+        write_secret_text_atomic(
+            Path(CA_STAGED_CONFIG_PATH),
+            render_ca_apply_payload(ca_settings, certificates, include_private_keys=True),
+        )
+    result = apply_ca_files()
+    if result != 0:
+        return result
+    nginx = shutil.which("nginx")
+    if nginx is None:
+        print("nginx is unavailable; completed management configuration cannot be validated")
+        return 2
+    return run([nginx, "-t"]).returncode
+
+
 def main(network_job_id: str | None = None) -> int:
     """Run the command-line entry point.
 
@@ -592,7 +620,9 @@ def main(network_job_id: str | None = None) -> int:
     if network_job_id is not None and not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", network_job_id):
         print("Invalid completed Network task binding; certificate recovery was not started.")
         return 2
-    if network_job_id is None and first_boot_https_artifacts_are_complete():
+    if first_boot_https_artifacts_are_complete():
+        if network_job_id is not None:
+            return refresh_completed_management_certificate(network_job_id)
         if not first_boot_https_contract_is_complete():
             ensure_nginx_main_config_includes_atlaso()
         if not first_boot_https_contract_is_complete():
