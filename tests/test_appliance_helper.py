@@ -19738,7 +19738,14 @@ def test_ntpd_wait_synchronized_accepts_sync_after_thirty_seconds(monkeypatch):
     assert elapsed[0] < 60
 
 
-def test_ntpd_apply_wait_failure_restores_nts_server_assets_before_rollback(monkeypatch, tmp_path, capsys):
+@pytest.mark.parametrize(
+    "rollback_fault",
+    ["none", "candidate_stop", "unsafe_tree"],
+    ids=["restores-exact-prior-tree", "stop-error-retains-journal", "unsafe-tree-retains-journal"],
+)
+def test_ntpd_apply_wait_failure_restores_nts_server_assets_before_rollback(
+    monkeypatch, tmp_path, capsys, rollback_fault
+):
     """A client that fails synchronization cannot delete the prior server's NTS material."""
     helper = load_helper_module()
     applied = tmp_path / "etc" / "ntp.conf"
@@ -19747,12 +19754,16 @@ def test_ntpd_apply_wait_failure_restores_nts_server_assets_before_rollback(monk
     cert_path = cert_dir / "server.crt"
     key_path = cert_dir / "server.key"
     cookie_dir = tmp_path / "var" / "lib" / "ntp" / "nts-keys"
+    prior_cookie_path = cookie_dir / "prior" / "nested" / "cookie.key"
     staged.parent.mkdir(parents=True)
     cert_dir.mkdir(parents=True)
-    cookie_dir.mkdir(parents=True)
+    prior_cookie_path.parent.mkdir(parents=True)
     cert_path.write_text("certificate", encoding="utf-8")
     key_path.write_text("private key", encoding="utf-8")
-    (cookie_dir / "cookie.key").write_text("cookie", encoding="utf-8")
+    prior_cookie_path.write_text("prior cookie", encoding="utf-8")
+    os.chmod(cert_dir, 0o750)
+    os.chmod(cookie_dir, 0o700)
+    os.chmod(prior_cookie_path.parent, 0o710)
     previous = ntpd_config_text(
         enabled=True,
         server="time.cloudflare.com",
@@ -19774,33 +19785,106 @@ def test_ntpd_apply_wait_failure_restores_nts_server_assets_before_rollback(monk
     monkeypatch.setattr(helper, "NTP_CONFIG_PATH", applied)
     monkeypatch.setattr(helper, "NTP_NTS_COOKIE_PATH", cookie_dir)
     monkeypatch.setattr(helper, "NTP_CERT_DIR", cert_dir)
+    # Photon/Linux exposes rmtree's fd-based symlink protection; this test
+    # runs on Windows, where that platform capability is not reported.
+    monkeypatch.setattr(helper.shutil.rmtree, "avoids_symlink_attacks", True, raising=False)
+    prior_material = helper._ntpd_snapshot_nts_server_material()
     monkeypatch.setattr(helper, "_ntpd_supports_nts", lambda: True)
     monkeypatch.setattr(helper, "_ntpd_runtime_identity_errors", lambda: [])
     monkeypatch.setattr(helper, "_ntpd_install_guards", lambda: None)
     monkeypatch.setattr(helper, "_ntpd_client_packet_guard", lambda _mode: None)
     monkeypatch.setattr(helper, "_install_ntpd_config", lambda _path: None)
-    monkeypatch.setattr(helper, "_ntpd_stop_service", lambda _unit: None)
+    operations: list[str] = []
+    candidate_wait_failed = False
+
+    def stop_service(unit: str, **_kwargs) -> None:
+        operations.append(f"stop:{unit}")
+        if candidate_wait_failed and rollback_fault == "candidate_stop" and unit == "ntpd.service":
+            raise RuntimeError("candidate ntpd could not be stopped")
+
+    monkeypatch.setattr(helper, "_ntpd_stop_service", stop_service)
     monkeypatch.setattr(helper, "_ntpd_set_vmware_timesync", lambda _enabled: None)
-    monkeypatch.setattr(helper, "_ntpd_start_service", lambda _unit, restart=False: None)
     monkeypatch.setattr(helper, "_grant_ntpd_nts_server_key_read", lambda _path: None)
+    start_count = 0
+
+    def start_service(unit: str, **_kwargs) -> None:
+        nonlocal start_count
+        start_count += 1
+        if candidate_wait_failed and unit == "ntpd.service":
+            # This is the old NTS server restart. It must happen after exact
+            # restoration, including removed candidate-only descendants.
+            assert helper._ntpd_snapshot_nts_server_material() == prior_material
+            operations.append("prior-controller-start")
+        else:
+            operations.append(f"start:{unit}")
+
+    monkeypatch.setattr(helper, "_ntpd_start_service", start_service)
     wait_count = 0
 
     def wait_for_sync() -> None:
-        nonlocal wait_count
+        nonlocal wait_count, candidate_wait_failed
         wait_count += 1
         if wait_count == 1:
+            candidate_wait_failed = True
+            # Simulate ntpd rotating prior assets and creating candidate-only
+            # nested material before its synchronization check fails.
+            cert_path.write_bytes(b"candidate rotated certificate")
+            prior_cookie_path.unlink()
+            candidate_nested = cookie_dir / "candidate" / "nested"
+            candidate_nested.mkdir(parents=True)
+            (candidate_nested / "generated.key").write_bytes(b"candidate-only key")
+            (cert_dir / "candidate.crt").write_bytes(b"candidate-only certificate")
+            if rollback_fault == "unsafe_tree":
+                os.link(cert_path, cert_dir / "candidate-hardlink.crt")
             raise RuntimeError("test candidate sync timeout")
 
     monkeypatch.setattr(helper, "_ntpd_wait_synchronized", wait_for_sync)
 
+    restore_material = helper._ntpd_restore_nts_server_material
+
+    def restore_and_record(entries: object) -> None:
+        if candidate_wait_failed:
+            assert "stop:ntpd.service" in operations
+        restore_material(entries)
+        if candidate_wait_failed:
+            operations.append("exact-material-restored")
+
+    monkeypatch.setattr(helper, "_ntpd_restore_nts_server_material", restore_and_record)
+
     assert helper._handle_ntpd("apply", [str(staged)]) == 1
-    assert wait_count == 2
-    assert applied.read_text(encoding="utf-8") == previous
-    assert helper._ntpd_time_mode(applied) == "ntp_server"
-    assert cert_path.read_text(encoding="utf-8") == "certificate"
-    assert key_path.read_text(encoding="utf-8") == "private key"
-    assert (cookie_dir / "cookie.key").read_text(encoding="utf-8") == "cookie"
-    assert "Restored previous applied ntp_server clock mode" in capsys.readouterr().err
+    error = capsys.readouterr().err
+    if rollback_fault == "candidate_stop":
+        assert wait_count == 1
+        assert helper._ntpd_time_mode(applied) == "ntp_client"
+        assert operations.count("prior-controller-start") == 0
+        assert helper._ntpd_read_transaction()["phase"] == "prepared"
+        assert cert_path.read_bytes() == b"candidate rotated certificate"
+        assert (cookie_dir / "candidate" / "nested" / "generated.key").read_bytes() == b"candidate-only key"
+        assert "Candidate clock controllers could not be verified stopped" in error
+    elif rollback_fault == "unsafe_tree":
+        assert wait_count == 1
+        assert helper._ntpd_time_mode(applied) == "ntp_server"
+        assert operations.count("prior-controller-start") == 0
+        assert helper._ntpd_read_transaction()["phase"] == "prepared"
+        assert cert_path.read_bytes() == b"candidate rotated certificate"
+        assert (cert_dir / "candidate-hardlink.crt").exists()
+        assert "Previous applied config restore failed" in error
+    else:
+        assert wait_count == 2
+        assert applied.read_text(encoding="utf-8") == previous
+        assert helper._ntpd_time_mode(applied) == "ntp_server"
+        assert cert_path.read_text(encoding="utf-8") == "certificate"
+        assert key_path.read_text(encoding="utf-8") == "private key"
+        assert prior_cookie_path.read_text(encoding="utf-8") == "prior cookie"
+        assert not (cookie_dir / "candidate").exists()
+        assert not (cert_dir / "candidate.crt").exists()
+        assert helper._ntpd_snapshot_nts_server_material() == prior_material
+        assert operations.index("exact-material-restored") < operations.index("prior-controller-start")
+        if os.name == "posix":
+            assert stat.S_IMODE(cert_dir.stat().st_mode) == 0o750
+            assert stat.S_IMODE(cookie_dir.stat().st_mode) == 0o700
+            assert stat.S_IMODE(prior_cookie_path.parent.stat().st_mode) == 0o710
+        assert "Restored previous applied ntp_server clock mode" in error
 
 
 def test_ntpd_apply_partial_nts_cleanup_failure_keeps_verified_candidate_after_recovery(
@@ -20068,6 +20152,31 @@ def test_ntpd_rollback_material_rejects_unbounded_or_shared_files(monkeypatch, t
     with pytest.raises(RuntimeError, match="bounded|unsupported"):
         helper._ntpd_snapshot_nts_server_material()
     assert cert_dir.is_dir()
+
+
+def test_ntpd_rollback_material_removes_root_created_after_absent_snapshot(monkeypatch, tmp_path):
+    """Exact rollback removes a fixed NTS root that did not exist before Apply."""
+    helper = load_helper_module()
+    cookie_dir = tmp_path / "var" / "lib" / "ntp" / "nts-keys"
+    cert_dir = tmp_path / "etc" / "atlaso" / "ntp" / "certs"
+    cert_dir.mkdir(parents=True)
+    (cert_dir / "prior.crt").write_bytes(b"prior certificate")
+    monkeypatch.setattr(helper, "NTP_NTS_COOKIE_PATH", cookie_dir)
+    monkeypatch.setattr(helper, "NTP_CERT_DIR", cert_dir)
+    monkeypatch.setattr(helper.shutil.rmtree, "avoids_symlink_attacks", True, raising=False)
+
+    snapshot = helper._ntpd_snapshot_nts_server_material()
+    cookie_record = next(entry for entry in snapshot if entry["path"] == cookie_dir)
+    assert cookie_record["exists"] is False
+
+    candidate_cookie = cookie_dir / "generated" / "nested" / "cookie.key"
+    candidate_cookie.parent.mkdir(parents=True)
+    candidate_cookie.write_bytes(b"candidate cookie")
+
+    helper._ntpd_restore_nts_server_material(snapshot)
+
+    assert not cookie_dir.exists()
+    assert helper._ntpd_snapshot_nts_server_material() == snapshot
 
 
 def test_ntpd_reconcile_leaves_unmanaged_or_legacy_disabled_config_untouched(monkeypatch, tmp_path):
@@ -20357,6 +20466,7 @@ def test_ntpd_failed_apply_preserves_legacy_nts_assets_without_reactivating_lega
     monkeypatch.setattr(helper, "NTP_APPLY_DIR", staged.parent)
     monkeypatch.setattr(helper, "NTP_NTS_COOKIE_PATH", cookie_dir)
     monkeypatch.setattr(helper, "NTP_CERT_DIR", cert_dir)
+    monkeypatch.setattr(helper.shutil.rmtree, "avoids_symlink_attacks", True, raising=False)
     monkeypatch.setattr(helper, "_ntpd_supports_nts", lambda: True)
     monkeypatch.setattr(helper, "_ntpd_runtime_identity_errors", lambda: [])
     monkeypatch.setattr(helper, "_ntpd_config_errors", lambda *_args: [])

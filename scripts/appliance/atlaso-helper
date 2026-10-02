@@ -7366,9 +7366,37 @@ def _ntpd_snapshot_nts_server_material() -> list[dict[str, object]]:
     """Retain bounded rollback material in memory, never a plaintext backup tree."""
     entries: list[dict[str, object]] = []
     total_bytes = 0
-    for root in (NTP_NTS_COOKIE_PATH, NTP_CERT_DIR):
-        if not root.exists() and not root.is_symlink():
+    roots = (NTP_NTS_COOKIE_PATH, NTP_CERT_DIR)
+    if any(not root.is_absolute() for root in roots):
+        raise RuntimeError("NTS rollback roots must be absolute paths.")
+    if any(root == Path(root.anchor) for root in roots):
+        raise RuntimeError("NTS rollback root cannot be a filesystem anchor.")
+    if roots[0] == roots[1] or roots[0] in roots[1].parents or roots[1] in roots[0].parents:
+        raise RuntimeError("NTS rollback roots overlap; refusing ambiguous custody.")
+    for root in roots:
+        if root != Path(os.path.normpath(str(root))):
+            raise RuntimeError("NTS rollback root is not normalized.")
+        current = Path(root.anchor)
+        missing_ancestor = False
+        for component in root.parts[1:-1]:
+            current = current / component
+            try:
+                ancestor_info = current.lstat()
+            except FileNotFoundError:
+                missing_ancestor = True
+                break
+            if not stat.S_ISDIR(ancestor_info.st_mode):
+                raise RuntimeError("NTS rollback root has an unsafe ancestor.")
+        try:
+            root.lstat()
+        except FileNotFoundError:
+            entries.append({
+                "path": root, "exists": False, "directory": None,
+                "file_mode": None, "uid": None, "gid": None, "data": None,
+            })
             continue
+        if missing_ancestor:
+            raise RuntimeError("NTS rollback root exists beneath a missing ancestor.")
         pending = [root]
         while pending:
             path = pending.pop()
@@ -7376,11 +7404,12 @@ def _ntpd_snapshot_nts_server_material() -> list[dict[str, object]]:
             if len(entries) >= 128:
                 raise RuntimeError("NTS rollback material exceeds the bounded entry limit.")
             entry: dict[str, object] = {
-                "path": path, "file_mode": stat.S_IMODE(info.st_mode),
+                "path": path, "exists": True,
+                "file_mode": stat.S_IMODE(info.st_mode),
                 "uid": info.st_uid, "gid": info.st_gid,
             }
             if stat.S_ISDIR(info.st_mode):
-                entry["directory"] = True
+                entry.update({"directory": True, "data": None})
                 children: list[Path] = []
                 for child in path.iterdir():
                     children.append(child)
@@ -7402,37 +7431,183 @@ def _ntpd_snapshot_nts_server_material() -> list[dict[str, object]]:
                 if len(data) != info.st_size:
                     raise RuntimeError("NTS rollback material changed during capture.")
                 total_bytes += len(data)
-                entry.update({"directory": False, "exists": True, "data": data, "link_target": None})
+                entry.update({"directory": False, "data": data})
             else:
                 raise RuntimeError("NTS rollback material contains an unsupported link or file type.")
             entries.append(entry)
+    _ntpd_validate_nts_material_manifest(entries)
     return entries
+
+
+def _ntpd_validate_nts_material_manifest(entries: object) -> list[dict[str, object]]:
+    """Validate bounded in-memory NTS custody before any restore mutation."""
+    if not isinstance(entries, list) or len(entries) > 128:
+        raise RuntimeError("NTS rollback material has an invalid entry list.")
+    roots = (NTP_NTS_COOKIE_PATH, NTP_CERT_DIR)
+    if any(not root.is_absolute() or root != Path(os.path.normpath(str(root))) for root in roots):
+        raise RuntimeError("NTS rollback roots are not normalized absolute paths.")
+    if any(root == Path(root.anchor) for root in roots):
+        raise RuntimeError("NTS rollback root cannot be a filesystem anchor.")
+    if roots[0] == roots[1] or roots[0] in roots[1].parents or roots[1] in roots[0].parents:
+        raise RuntimeError("NTS rollback roots overlap; refusing ambiguous custody.")
+    required = {"path", "exists", "directory", "file_mode", "uid", "gid", "data"}
+    by_path: dict[Path, dict[str, object]] = {}
+    total_bytes = 0
+    for entry in entries:
+        if not isinstance(entry, dict) or set(entry) != required:
+            raise RuntimeError("NTS rollback material entry schema is invalid.")
+        path = entry["path"]
+        if not isinstance(path, Path) or not path.is_absolute() or path != Path(os.path.normpath(str(path))):
+            raise RuntimeError("NTS rollback material has an invalid path.")
+        if path in by_path:
+            raise RuntimeError("NTS rollback material contains a duplicate path.")
+        matching_roots = [root for root in roots if path == root or path.is_relative_to(root)]
+        if len(matching_roots) != 1:
+            raise RuntimeError("NTS rollback material escapes its fixed roots.")
+        if type(entry["exists"]) is not bool:
+            raise RuntimeError("NTS rollback material existence marker is invalid.")
+        if not entry["exists"]:
+            if path not in roots or any(entry[key] is not None for key in ("directory", "file_mode", "uid", "gid", "data")):
+                raise RuntimeError("NTS rollback absent-root marker is invalid.")
+        else:
+            if type(entry["directory"]) is not bool:
+                raise RuntimeError("NTS rollback material node type is invalid.")
+            for key in ("file_mode", "uid", "gid"):
+                value = entry[key]
+                maximum = 0o7777 if key == "file_mode" else 2**32 - 1
+                if type(value) is not int or value < 0 or value > maximum:
+                    raise RuntimeError("NTS rollback material metadata is invalid.")
+            data = entry["data"]
+            if entry["directory"]:
+                if data is not None:
+                    raise RuntimeError("NTS rollback directory contains file data.")
+            else:
+                if not isinstance(data, bytes) or len(data) > 1024 * 1024:
+                    raise RuntimeError("NTS rollback file data is invalid or oversized.")
+                total_bytes += len(data)
+                if total_bytes > 4 * 1024 * 1024:
+                    raise RuntimeError("NTS rollback material exceeds the bounded byte limit.")
+        by_path[path] = entry
+    if not all(root in by_path for root in roots):
+        raise RuntimeError("NTS rollback material is missing a fixed-root record.")
+    for path, entry in by_path.items():
+        if path in roots or not entry["exists"]:
+            continue
+        parent = path.parent
+        parent_entry = by_path.get(parent)
+        if parent_entry is None or parent_entry["exists"] is not True or parent_entry["directory"] is not True:
+            raise RuntimeError("NTS rollback material has a missing or non-directory parent.")
+    return [by_path[path] for path in sorted(by_path, key=lambda item: (len(item.parts), str(item)))]
 
 
 def _ntpd_restore_nts_server_material(entries: object) -> None:
     """Restore captured server files and permissions before reactivating its controller."""
-    if not isinstance(entries, list):
+    if entries is None:
         return
+    manifest = _ntpd_validate_nts_material_manifest(entries)
+    roots = (NTP_NTS_COOKIE_PATH, NTP_CERT_DIR)
+    live: list[dict[str, object]] = []
+    total_live_bytes = 0
+    for root in roots:
+        current = Path(root.anchor)
+        missing_ancestor = False
+        for component in root.parts[1:-1]:
+            current = current / component
+            try:
+                ancestor_info = current.lstat()
+            except FileNotFoundError:
+                missing_ancestor = True
+                break
+            if not stat.S_ISDIR(ancestor_info.st_mode):
+                raise RuntimeError("NTS rollback destination has an unsafe ancestor.")
+        try:
+            root.lstat()
+        except FileNotFoundError:
+            expected_root = next(entry for entry in manifest if entry["path"] == root)
+            if expected_root["exists"] and missing_ancestor:
+                raise RuntimeError("NTS rollback prior root has a missing ancestor.") from None
+            live.append({
+                "path": root, "exists": False, "directory": None,
+                "file_mode": None, "uid": None, "gid": None, "data": None,
+            })
+            continue
+        if missing_ancestor:
+            raise RuntimeError("NTS rollback destination exists beneath a missing ancestor.")
+        pending = [root]
+        while pending:
+            path = pending.pop()
+            info = path.lstat()
+            if stat.S_ISDIR(info.st_mode):
+                live.append({
+                    "path": path, "exists": True, "directory": True,
+                    "file_mode": stat.S_IMODE(info.st_mode), "uid": info.st_uid,
+                    "gid": info.st_gid, "data": None,
+                })
+                children: list[Path] = []
+                for child in path.iterdir():
+                    children.append(child)
+                    if len(live) + len(pending) + len(children) > 128:
+                        raise RuntimeError("NTS rollback destination exceeds the bounded entry limit.")
+                pending.extend(sorted(children, reverse=True))
+            elif stat.S_ISREG(info.st_mode) and info.st_nlink == 1:
+                if info.st_size > 1024 * 1024:
+                    raise RuntimeError("NTS rollback destination file exceeds the safety limit.")
+                total_live_bytes += info.st_size
+                if total_live_bytes > 4 * 1024 * 1024:
+                    raise RuntimeError("NTS rollback destination exceeds the bounded byte limit.")
+                live.append({
+                    "path": path, "exists": True, "directory": False,
+                    "file_mode": stat.S_IMODE(info.st_mode), "uid": info.st_uid,
+                    "gid": info.st_gid, "data": None,
+                })
+            else:
+                raise RuntimeError("NTS rollback destination contains an unsafe link or file type.")
+            if len(live) > 128:
+                raise RuntimeError("NTS rollback destination exceeds the bounded entry limit.")
+    live_paths = {entry["path"] for entry in live if entry["exists"]}
+    directory_roots = {
+        entry["path"] for entry in live
+        if entry["path"] in roots and entry["exists"] and entry["directory"]
+    }
+    if directory_roots and not getattr(shutil.rmtree, "avoids_symlink_attacks", False):
+        raise RuntimeError("Safe NTS rollback tree removal is unavailable.")
+    # All roots and descendants are checked before the first deletion.
+    for root in roots:
+        if root not in live_paths:
+            continue
+        info = root.lstat()
+        if stat.S_ISDIR(info.st_mode):
+            shutil.rmtree(root)
+        elif stat.S_ISREG(info.st_mode) and info.st_nlink == 1:
+            root.unlink()
+        else:
+            raise RuntimeError("NTS rollback root changed after destination validation.")
+        if root.exists() or root.is_symlink():
+            raise RuntimeError("NTS rollback destination remained after cleanup.")
+
     directories: list[dict[str, object]] = []
-    for entry in entries:
+    for entry in manifest:
+        if not entry["exists"]:
+            continue
         path = entry["path"]
-        if not isinstance(path, Path):
-            raise RuntimeError("NTS rollback material has an invalid path.")
-        if path.is_symlink():
-            raise RuntimeError("NTS rollback destination became a symbolic link.")
         if entry["directory"]:
-            path.mkdir(mode=0o700, exist_ok=True)
+            path.mkdir(mode=0o700)
             directories.append(entry)
         else:
-            if path.exists() and not path.is_file():
-                raise RuntimeError("NTS rollback destination is no longer a regular file.")
-            _ntpd_restore_applied_config(entry, path=path)
-    # Keep newly recreated parents private while their files are restored.
+            file_snapshot = dict(entry)
+            file_snapshot["link_target"] = None
+            _ntpd_restore_applied_config(file_snapshot, path=path)
+    # Set directory ownership and modes after children have been created.
     for entry in reversed(directories):
         path = entry["path"]
         os.chmod(path, entry["file_mode"])
         if os.name == "posix":
             os.chown(path, entry["uid"], entry["gid"])
+    restored = _ntpd_snapshot_nts_server_material()
+    expected_by_path = {entry["path"]: entry for entry in manifest}
+    restored_by_path = {entry["path"]: entry for entry in restored}
+    if expected_by_path != restored_by_path:
+        raise RuntimeError("NTS rollback material did not exactly match its captured snapshot.")
 
 
 def _ntpd_transaction_path() -> Path:
@@ -7469,6 +7644,8 @@ def _ntpd_read_transaction() -> dict[str, object] | None:
     payload = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(payload, dict) or payload.get("schema") != 1 or payload.get("phase") not in {"prepared", "verified"}:
         raise RuntimeError("Clock Apply recovery checkpoint is invalid; preserve it for recovery.")
+    if "nts_restore_pending" in payload and type(payload["nts_restore_pending"]) is not bool:
+        raise RuntimeError("Clock Apply NTS recovery marker is invalid; preserve it for recovery.")
     return payload
 
 
@@ -7481,15 +7658,30 @@ def _ntpd_clear_transaction() -> None:
     _fsync_directory(NTP_CONFIG_PATH.parent)
 
 
-def _ntpd_begin_transaction(snapshot: dict[str, object]) -> None:
+def _ntpd_begin_transaction(
+    snapshot: dict[str, object], *, nts_restore_pending: bool = False
+) -> None:
     """Persist config custody without serializing any NTS private material."""
+    existing = _ntpd_read_transaction()
     previous = {key: snapshot[key] for key in ("exists", "managed", "mode", "data", "link_target", "file_mode", "uid", "gid")}
     data = previous.get("data")
     if isinstance(data, bytes):
         if len(data) > 1024 * 1024:
             raise RuntimeError("Previous clock configuration exceeds the recovery limit.")
         previous["data"] = base64.b64encode(data).decode("ascii")
-    _ntpd_write_transaction({"schema": 1, "phase": "prepared", "owner": _release_transaction_owner(), "previous": previous})
+    payload = {
+        "schema": 1,
+        "phase": "prepared",
+        "owner": _release_transaction_owner(),
+        "previous": previous,
+    }
+    if (
+        nts_restore_pending
+        or snapshot.get("nts_material") is not None
+        or (existing is not None and existing.get("nts_restore_pending") is True)
+    ):
+        payload["nts_restore_pending"] = True
+    _ntpd_write_transaction(payload)
 
 
 def _ntpd_checkpoint_verified() -> None:
@@ -7518,6 +7710,17 @@ def _ntpd_recover_interrupted_apply(*, allow_active: bool = False) -> None:
             raise RuntimeError("Verified clock checkpoint does not match the applied configuration.")
         _ntpd_clear_transaction()
         return
+    if payload.get("nts_restore_pending") is True:
+        stop_errors = _ntpd_fail_closed_stop()
+        if stop_errors:
+            raise RuntimeError(
+                "Interrupted NTS rollback remains unsafe; clock controllers could not be stopped: "
+                + "; ".join(stop_errors)
+            )
+        raise RuntimeError(
+            "Interrupted NTS rollback lacks in-memory exact material proof; preserve the recovery checkpoint "
+            "for exact NTS material recovery before retrying Apply."
+        )
     previous = payload.get("previous")
     required = {"exists", "managed", "mode", "data", "link_target", "file_mode", "uid", "gid"}
     if not isinstance(previous, dict) or set(previous) != required or type(previous["exists"]) is not bool:
@@ -7659,11 +7862,32 @@ def _ntpd_fail_closed_stop() -> list[str]:
 def _ntpd_rollback_failed_apply(snapshot: dict[str, object]) -> str:
     """Restore previous applied intent and controller after a failed apply."""
     snapshot["restored"] = False
+    if snapshot.get("nts_material") is not None:
+        try:
+            # Persist the nonsecret recovery barrier before stopping a candidate
+            # or touching NTS bytes. A killed helper must never config-only recover.
+            _ntpd_begin_transaction(snapshot, nts_restore_pending=True)
+        except (OSError, RuntimeError, ValueError) as marker_error:
+            stop_errors = _ntpd_fail_closed_stop()
+            suffix = f" Fail-closed stop errors: {'; '.join(stop_errors)}." if stop_errors else ""
+            return f"Could not record NTS rollback recovery barrier: {marker_error}.{suffix}"
+        stop_errors = _ntpd_fail_closed_stop()
+        if stop_errors:
+            return (
+                "Candidate clock controllers could not be verified stopped; prior config and NTS material "
+                "were retained. Fail-closed stop errors: " + "; ".join(stop_errors)
+            )
     try:
         if _ntpd_read_transaction() is not None:
             _ntpd_begin_transaction(snapshot)
         _ntpd_restore_applied_config(snapshot)
         _ntpd_restore_nts_server_material(snapshot.get("nts_material"))
+        if snapshot.get("nts_material") is not None:
+            payload = _ntpd_read_transaction()
+            if payload is None:
+                raise RuntimeError("NTS rollback recovery checkpoint disappeared before exact restore proof.")
+            payload["nts_restore_pending"] = False
+            _ntpd_write_transaction(payload)
     except (OSError, RuntimeError, ValueError) as restore_error:
         stop_errors = _ntpd_fail_closed_stop()
         suffix = f" Fail-closed stop errors: {'; '.join(stop_errors)}." if stop_errors else ""

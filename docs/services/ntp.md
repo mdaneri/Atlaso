@@ -64,6 +64,9 @@ the page reports the effective mode, NTP synchronization health, and detected lo
 saved choice. Before changing applied configuration, Atlaso durably records the prior configuration. If Apply is
 interrupted before controller verification, startup and service guards restore it; a verified checkpoint retains the
 new controller after a power loss. NTS private material stays in its managed location until verification.
+If an NTS transition fails, rollback stops the candidate controller and restores the prior material exactly,
+including removing files created only by the candidate. Incomplete restoration prevents the prior controller from
+restarting and leaves recovery pending.
 Missing, replaced, and legacy configurations require Apply before startup can establish their clock authority;
 startup and service guards stop uncertain controllers until then without adopting vendor configuration.
 If old NTS material cleanup fails after controller verification, Atlaso retains the
