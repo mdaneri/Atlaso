@@ -628,8 +628,16 @@ def issue_certificate(settings: CaSettings, profiles: list[CaProfile], certifica
     else:
         private_key = _private_key(profile.key_algorithm, profile.key_size)
         public_key = private_key.public_key()
+        subject_common_name = certificate.common_name
+        # Managed service identity remains in the SAN when the bounded CN cannot hold the FQDN.
+        if (
+            certificate.managed_owner
+            and len(subject_common_name.encode("utf-8")) > 64
+            and any(name.casefold() == subject_common_name.casefold() for name in dns_names)
+        ):
+            subject_common_name = "Atlaso managed service"
         subject = _subject(
-            common_name=certificate.common_name,
+            common_name=subject_common_name,
             organization=settings.organization or "Atlaso",
             organizational_unit=settings.organizational_unit,
             country=settings.country,
