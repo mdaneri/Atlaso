@@ -95,8 +95,9 @@ preserved with their affected subsystem below. Keep new requirements at their to
 - Label the global submit action around the user's intent, such as `Submit appliance changes`, and explain that the task
   validates and applies selected desired state through Atlaso adapters.
 - Fresh Photon appliance startup may initialize the factory desired-state baseline automatically when no baseline,
-  appliance-apply job, or non-auth operator audit event exists. This is comparison metadata only and must not run helper
-  commands or mutate host services.
+  appliance-apply job, or non-auth operator audit event exists. A sole first-boot CA publication baseline also permits
+  initialization of the remaining units before operator activity; preserve that executed CA snapshot exactly.
+  This is comparison metadata only and must not run helper commands or mutate host services.
 - Keep dry-run boundaries visible. In development, applying should record command intent through adapters instead of
   mutating host services directly.
 - Appliance Settings owns appliance FQDN, OS hostname, appliance resolver mode/servers, management UI HTTPS preference,

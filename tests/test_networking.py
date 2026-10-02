@@ -638,19 +638,25 @@ def test_startup_host_inventory_refreshes_appliance_seed_without_apply_job(monke
     get_settings.cache_clear()
 
 
-def test_appliance_seed_preserves_ovf_gateways_in_network_preview_and_baseline(monkeypatch, tmp_path):
+@pytest.mark.parametrize("published_ca", [False, True])
+def test_appliance_seed_preserves_ovf_gateways_in_network_preview_and_baseline(monkeypatch, tmp_path, published_ca):
     """Verify that appliance seed retains OVF gateways through initial Network state.
 
     Args:
         monkeypatch: Pytest fixture used to replace dependencies for the test.
         tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+        published_ca: Whether first-boot HTTPS already recorded its executed CA snapshot.
     """
     from sqlalchemy import select
 
     import atlaso.app.database as database
     from atlaso.app.config import get_settings
     from atlaso.app.seed import seed_initial_data
-    from atlaso.app.ui import initialize_factory_appliance_apply_baseline
+    from atlaso.app.ui import (
+        appliance_apply_units,
+        initialize_factory_appliance_apply_baseline,
+        update_appliance_apply_baselines,
+    )
 
     db_path = tmp_path / "atlaso-ovf-seed.db"
     monkeypatch.setenv("ATLASO_DATABASE_URL", f"sqlite:///{db_path}")
@@ -682,9 +688,17 @@ def test_appliance_seed_preserves_ovf_gateways_in_network_preview_and_baseline(m
         preview = render_network_config(interfaces=[interface], vlans=[])
         assert "  gateway=192.168.49.1" in preview
         assert "  ipv6_gateway=fe80::1" in preview
+        if published_ca:
+            ca_unit = next(unit for unit in appliance_apply_units(db) if unit["id"] == "ca")
+            ca_unit["summary"] = ["Executed first-boot CA publication"]
+            update_appliance_apply_baselines(db, [ca_unit], {"ca"})
+            db.commit()
+            published = json.loads(db.scalar(select(Setting).where(Setting.key == "appliance_apply.baselines.v1")).value)["ca"]
         assert initialize_factory_appliance_apply_baseline(db) is True
         baseline = db.execute(select(Setting).where(Setting.key == "appliance_apply.baselines.v1")).scalar_one()
         applied_network = json.loads(baseline.value)["network"]["config_preview"]
+        if published_ca:
+            assert json.loads(baseline.value)["ca"] == published
         assert "  gateway=192.168.49.1" in applied_network
         assert "  ipv6_gateway=fe80::1" in applied_network
 

@@ -16191,12 +16191,14 @@ def test_appliance_startup_initializes_factory_apply_baseline(monkeypatch, tmp_p
     get_settings.cache_clear()
 
 
-def test_factory_apply_baseline_skips_after_operator_activity(monkeypatch, tmp_path):
+@pytest.mark.parametrize("published_ca", [False, True])
+def test_factory_apply_baseline_skips_after_operator_activity(monkeypatch, tmp_path, published_ca):
     """Verify that factory apply baseline skips after operator activity.
 
     Args:
         monkeypatch: Pytest fixture used to replace dependencies for the test.
         tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+        published_ca: Whether first-boot HTTPS already recorded its executed CA snapshot.
     """
     from sqlalchemy import select
 
@@ -16205,7 +16207,11 @@ def test_factory_apply_baseline_skips_after_operator_activity(monkeypatch, tmp_p
     from atlaso.app.config import get_settings
     from atlaso.app.models import Setting
     from atlaso.app.seed import seed_initial_data
-    from atlaso.app.ui import initialize_factory_appliance_apply_baseline
+    from atlaso.app.ui import (
+        appliance_apply_units,
+        initialize_factory_appliance_apply_baseline,
+        update_appliance_apply_baselines,
+    )
 
     db_path = tmp_path / "atlaso-appliance-edited.db"
     monkeypatch.setenv("ATLASO_DATABASE_URL", f"sqlite:///{db_path}")
@@ -16223,9 +16229,17 @@ def test_factory_apply_baseline_skips_after_operator_activity(monkeypatch, tmp_p
 
     with database.SessionLocal() as db:
         seed_initial_data(db, include_examples=False)
+        if published_ca:
+            ca_unit = next(unit for unit in appliance_apply_units(db) if unit["id"] == "ca")
+            update_appliance_apply_baselines(db, [ca_unit], {"ca"})
+            db.commit()
         record_audit(db, actor="admin", action="update_appliance_settings", resource_type="settings")
         assert initialize_factory_appliance_apply_baseline(db) is False
-        assert db.execute(select(Setting).where(Setting.key == "appliance_apply.baselines.v1")).scalar_one_or_none() is None
+        baseline = db.scalar(select(Setting).where(Setting.key == "appliance_apply.baselines.v1"))
+        if published_ca:
+            assert set(json.loads(baseline.value)) == {"ca"}
+        else:
+            assert baseline is None
 
     get_settings.cache_clear()
 

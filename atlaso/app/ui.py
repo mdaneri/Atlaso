@@ -15221,20 +15221,39 @@ def initialize_factory_appliance_apply_baseline(db: Session) -> bool:
     settings = get_settings()
     if settings.environment != "appliance":
         return False
-    if setting_value(db, APPLIANCE_APPLY_BASELINES_KEY):
-        return False
+    raw_baselines = setting_value(db, APPLIANCE_APPLY_BASELINES_KEY)
+    published_ca = False
+    if raw_baselines:
+        # First-boot HTTPS publishes CA before application startup. Preserve that
+        # executed snapshot while initializing the remaining factory metadata.
+        try:
+            existing = json.loads(raw_baselines)
+        except json.JSONDecodeError:
+            return False
+        if (
+            not isinstance(existing, dict)
+            or set(existing) != {"ca"}
+            or not isinstance(existing["ca"], dict)
+            or not isinstance(existing["ca"].get("config_preview"), str)
+            or not existing["ca"]["config_preview"]
+        ):
+            return False
+        published_ca = True
     if _has_operator_appliance_activity(db):
         return False
 
     _mark_provisioned_bootstrap_admin_applied(db)
     units = appliance_apply_units(db)
-    selected_ids = {unit["id"] for unit in units if unit["id"] != "ntpd"}
+    omitted_ids = {"ntpd", "ca"} if published_ca else {"ntpd"}
+    selected_ids = {unit["id"] for unit in units if unit["id"] not in omitted_ids}
     update_appliance_apply_baselines(db, units, selected_ids)
     db.commit()
-    omitted = len(units) - len(selected_ids)
+    omitted = sum(unit["id"] == "ntpd" for unit in units)
     detail = f"{len(selected_ids)} factory desired-state units baselined without host mutation"
     if omitted:
         detail += f"; {omitted} unit(s) omitted pending initial Apply"
+    if published_ca:
+        detail += "; executed first-boot CA baseline preserved"
     record_audit(
         db,
         actor="system",
