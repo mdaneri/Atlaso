@@ -2193,7 +2193,8 @@ def test_console_service_restore_keeps_snapshot_when_restoration_is_incomplete(m
 
 
 @pytest.mark.parametrize("network_job_id", [None, "job_completed_network"])
-def test_console_management_plane_recovery_retries_bootstrap_and_verifies_readiness(monkeypatch, tmp_path, capsys, network_job_id):
+@pytest.mark.parametrize("already_complete", [False, True])
+def test_console_management_plane_recovery_retries_bootstrap_and_verifies_readiness(monkeypatch, tmp_path, capsys, network_job_id, already_complete):
     """Verify that the helper repairs bootstrap and proves stable loopback readiness.
 
     Args:
@@ -2201,6 +2202,7 @@ def test_console_management_plane_recovery_retries_bootstrap_and_verifies_readin
         tmp_path: Temporary directory provided by pytest for isolated filesystem state.
         capsys: Pytest fixture used to capture standard output and standard error.
         network_job_id: Exact completed Network binding, or ordinary recovery.
+        already_complete: First boot completed before the management address changed.
     """
     helper = load_helper_module()
     marker = tmp_path / "first-boot-https.applied"
@@ -2267,13 +2269,19 @@ def test_console_management_plane_recovery_retries_bootstrap_and_verifies_readin
 
     monkeypatch.setattr(helper, "_run", fake_run)
 
+    if already_complete:
+        with helper._console_bootstrap_binding(network_job_id):
+            fake_run(bootstrap_command)
+        commands.clear()
+
     assert helper._handle_console("recover-management-plane", [network_job_id] if network_job_id else []) == 0
     output = capsys.readouterr().out
     assert '"management_plane": "ready"' in output
-    assert '"bootstrap_retried": true' in output
+    retried = not already_complete or network_job_id is not None
+    assert f'"bootstrap_retried": {str(retried).lower()}' in output
     assert '"management_https_enabled": true' in output
-    assert ["systemctl", "reset-failed", helper.FIRST_BOOT_HTTPS_UNIT] in commands
-    assert bootstrap_command in commands
+    assert (["systemctl", "reset-failed", helper.FIRST_BOOT_HTTPS_UNIT] in commands) is retried
+    assert (bootstrap_command in commands) is retried
     assert not (helper.CONSOLE_BOOTSTRAP_BINDING_DIRECTORY / "network.env").exists()
     assert ["/usr/bin/nginx", "-t"] in commands
     assert ["systemctl", "enable", "nginx.service", "atlaso.service"] in commands
@@ -2793,6 +2801,53 @@ def test_console_bootstrap_binds_certificate_issuance_to_completed_network(clien
         errors = bootstrap.ensure_recovery_ca_state(db, "job_certificate_binding" if bound_job else None)
     assert bool(errors) is (edit != "unchanged")
     assert events == (["lock", "issue", "commit"] if edit == "unchanged" else ["lock"])
+
+
+def test_completed_bootstrap_refreshes_bound_network_without_first_boot_reconciliation(client, monkeypatch, tmp_path):
+    """A completed appliance must reach guarded issuance without resetting pending intent.
+
+    Args:
+        client: Initialized application database fixture.
+        monkeypatch: Replace first-boot and certificate filesystem operations.
+        tmp_path: Isolate the absent signer staging path.
+    """
+    import importlib.machinery
+    import importlib.util
+
+    loader = importlib.machinery.SourceFileLoader("atlaso_completed_bound_bootstrap", "scripts/appliance/atlaso-bootstrap-https")
+    spec = importlib.util.spec_from_loader(loader.name, loader)
+    bootstrap = importlib.util.module_from_spec(spec)
+    loader.exec_module(bootstrap)
+    monkeypatch.setattr(bootstrap, "first_boot_https_artifacts_are_complete", lambda: True)
+    monkeypatch.setattr(bootstrap, "DEVELOPMENT_ROOT_CA_STAGING_PATH", tmp_path / "absent")
+    monkeypatch.setattr(bootstrap, "import_staged_development_root_ca", lambda *_args: False)
+
+    def reject_first_boot(*_args, **_kwargs):
+        """Prevent initialization from overwriting the completed Network state.
+
+        Args:
+            *_args: Unused dependency arguments.
+            **_kwargs: Unused dependency keywords.
+        """
+        raise AssertionError("bound recovery performed first-boot reconciliation")
+
+    for name in ("init_db", "seed_initial_data", "sync_host_physical_interfaces"):
+        monkeypatch.setattr(bootstrap, name, reject_first_boot)
+    called = []
+
+    def guarded_issuance(db, job_id):
+        """Stop at the guarded issuance boundary before any filesystem mutation.
+
+        Args:
+            db: Existing appliance transaction.
+            job_id: Completed task binding reaching the guard.
+        """
+        called.append(job_id)
+        return ["intentional test stop before certificate publication"]
+
+    monkeypatch.setattr(bootstrap, "ensure_recovery_ca_state", guarded_issuance)
+    assert bootstrap.main("job_completed_network") == 2
+    assert called == ["job_completed_network"]
 
 
 def test_console_bootstrap_binding_cleans_failure_and_preserves_stale_state(tmp_path, monkeypatch):

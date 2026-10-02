@@ -1082,7 +1082,8 @@ preserved with their affected subsystem below. Keep new requirements at their to
   consumed by the original systemd unit; retain its data-disk dependency, ordering, and service serialization gates.
   Compare management paths under the shared writer lock
   and retain that transaction through certificate issuance. Ordinary bootstrap with a Network baseline rejects pending
-  management-path edits too. Retry unfinished first-boot HTTPS before applying Appliance Settings, validate nginx before
+  management-path edits too. Bound recovery must refresh HTTPS even after first boot is complete, without seeding or
+  reconciling desired state. Retry unfinished first-boot HTTPS before applying Appliance Settings, validate nginx before
   reload, ensure nginx and
   Atlaso are enabled/running, and require stable loopback readiness matching the applied HTTP-only or HTTPS management
   mode before the console reports success. Keep this recovery idempotent and preserve an actionable failing-layer

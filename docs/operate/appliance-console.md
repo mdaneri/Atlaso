@@ -149,7 +149,8 @@ indefinitely. Tentative or duplicate-address-detection-failed addresses cannot p
 If newer address edits are pending, Atlaso records the applied observation but stops dependent recovery and Settings;
 apply or reconcile those edits first.
 
-After observation succeeds, Atlaso retries first-boot HTTPS only when its completion marker is absent, validates nginx
+After observation succeeds, Atlaso refreshes HTTPS with the completed Network task even when first boot is complete.
+Bound recovery preserves desired state and bypasses first-boot seeding and inventory reconciliation. Atlaso validates nginx
 before any reload, and ensures nginx and Atlaso are enabled and running. After the second task applies Appliance
 Settings, the console requires five stable local checks: application `/openapi.json` on port 8000 plus the applied
 nginx management mode. HTTPS mode requires the HTTP redirect and HTTPS `/openapi.json`; HTTP-only mode requires

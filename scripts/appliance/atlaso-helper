@@ -24473,7 +24473,7 @@ def _recover_console_management_plane(timeout_seconds: int = 60, *, network_job_
     bootstrap_retried = False
     atlaso_restarted = False
     try:
-        if not _console_first_boot_https_contract_is_complete():
+        if network_job_id is not None or not _console_first_boot_https_contract_is_complete():
             with _console_bootstrap_binding(network_job_id):
                 _console_recovery_command(
                     "resetting the first-boot HTTPS bootstrap failure",

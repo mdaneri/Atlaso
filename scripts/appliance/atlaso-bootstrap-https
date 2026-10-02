@@ -592,7 +592,7 @@ def main(network_job_id: str | None = None) -> int:
     if network_job_id is not None and not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", network_job_id):
         print("Invalid completed Network task binding; certificate recovery was not started.")
         return 2
-    if first_boot_https_artifacts_are_complete():
+    if network_job_id is None and first_boot_https_artifacts_are_complete():
         if not first_boot_https_contract_is_complete():
             ensure_nginx_main_config_includes_atlaso()
         if not first_boot_https_contract_is_complete():
@@ -623,15 +623,18 @@ def main(network_job_id: str | None = None) -> int:
         publish_first_boot_stage("https-development-root-proof-complete")
         return 0
 
-    init_db()
+    if network_job_id is None:
+        init_db()
     development_root_fingerprint = ""
     with SessionLocal() as db:
-        seed_initial_data(db, include_examples=False, appliance_mode=True)
-        sync_host_physical_interfaces(db)
+        if network_job_id is None:
+            seed_initial_data(db, include_examples=False, appliance_mode=True)
+            sync_host_physical_interfaces(db)
         appliance_settings = db.execute(select(ApplianceSettings)).scalar_one()
         ca_settings = db.execute(select(CaSettings)).scalar_one()
-        appliance_settings.management_https_enabled = True
-        ca_settings.enabled = True
+        if network_job_id is None:
+            appliance_settings.management_https_enabled = True
+            ca_settings.enabled = True
         managed_certificates = (
             db.execute(select(CaCertificate).where(CaCertificate.managed_owner != ""))
             .scalars()
