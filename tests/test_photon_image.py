@@ -1181,6 +1181,18 @@ def test_photon_provisioning_installs_default_nginx_management_proxy():
     assert "pair through public PyPI" in root_docs
 
 
+def test_provisioning_firewall_replays_through_installed_guard_aware_helper():
+    """First boot must not bypass the atomic client-only NTP ingress guard."""
+    script = Path("image/common/scripts/provision-atlaso.sh").read_text(encoding="utf-8")
+    unit = script.split("cat >/etc/systemd/system/atlaso-firewall.service <<'EOF'", 1)[1].split("\nEOF", 1)[0]
+    assert "ExecStart=/opt/atlaso/bin/atlaso-helper firewall replay --real" in unit
+    assert "RequiresMountsFor=/opt/atlaso" in unit
+    assert "ExecStart=/usr/sbin/nft" not in unit
+    assert script.index('"$ATLASO_HOME/bin/atlaso-helper"') < script.index(
+        "cat >/etc/systemd/system/atlaso-firewall.service"
+    )
+
+
 @pytest.mark.parametrize(
     ("address", "method", "source", "expected_source"),
     [
@@ -2885,7 +2897,10 @@ def test_vmware_raw_vmx_workflows_inject_complete_first_boot_ovf_environment_bef
     assert "DevelopmentAdminSshPublicKey" not in lifecycle
     assert "DevelopmentRootCaCertificatePem" not in lifecycle
     assert "test_vm_development_root_ca_private_key" not in lifecycle
-    assert "-NormalTestVm" not in lifecycle
+    normal_test_vm_switches = [
+        line.strip() for line in lifecycle.splitlines() if "-NormalTestVm" in line
+    ]
+    assert normal_test_vm_switches == ["-NormalTestVm:$TimeSourceOnly"]
     assert lifecycle.index("Set-AtlasoWorkstationOvfEnvironment -VmxPath $applianceVmx") < lifecycle.index(
         "Start-WorkstationVm -Path $vmx"
     )
@@ -3329,17 +3344,19 @@ def test_lifecycle_vmware_script_supports_routing_wan_only_and_esxi_pxe_install(
 
     assert "[switch]$RoutingWanOnly" in wrapper
     assert "[switch]$OidcOnly" in wrapper
+    assert "[switch]$TimeSourceOnly" in wrapper
     assert "[switch]$FullEsxiPxeInstall" in wrapper
     assert "[string]$PxeInstallerIsoPath = ''" in wrapper
-    assert "$effectiveSkipBackupRestoreTest = [bool]($SkipBackupRestoreTest -or $RoutingWanOnly -or $OidcOnly -or $CertificateOnly -or $RoutingOverlapOnly)" in wrapper
+    assert "$effectiveSkipBackupRestoreTest = [bool]($SkipBackupRestoreTest -or $RoutingWanOnly -or $OidcOnly -or $TimeSourceOnly -or $CertificateOnly -or $RoutingOverlapOnly)" in wrapper
     assert "if ($OidcOnly) { $arguments += '-OidcOnly' }" in wrapper
+    assert "if ($TimeSourceOnly) { $arguments += '-TimeSourceOnly' }" in wrapper
     assert "if ($RoutingWanOnly) { $arguments += '-RoutingWanOnly' }" in wrapper
     assert "if ($FullEsxiPxeInstall) { $arguments += '-FullEsxiPxeInstall' }" in wrapper
     assert "if ($PxeInstallerIsoPath) { $arguments += @('-PxeInstallerIsoPath', $PxeInstallerIsoPath) }" in wrapper
-    assert "-OidcOnly, -RoutingWanOnly, -CertificateOnly, -RoutingOverlapOnly, and -FullEsxiPxeInstall are mutually exclusive." in wrapper
+    assert "-OidcOnly, -TimeSourceOnly, -RoutingWanOnly, -CertificateOnly, -RoutingOverlapOnly, and -FullEsxiPxeInstall are mutually exclusive." in wrapper
     assert "[SecureString]$EsxiPassword" in wrapper
     assert "Read-Host -Prompt 'ESXi root password for lifecycle probing' -AsSecureString" in wrapper
-    assert "if (-not ($OidcOnly -or $RoutingWanOnly -or $CertificateOnly -or $RoutingOverlapOnly) -and $null -eq $VcfBackupPassword)" in wrapper
+    assert "if (-not ($OidcOnly -or $TimeSourceOnly -or $RoutingWanOnly -or $CertificateOnly -or $RoutingOverlapOnly) -and $null -eq $VcfBackupPassword)" in wrapper
     assert wrapper.index("$secretBundlePath = ''\ntry {") < wrapper.index("Export-Clixml")
     assert wrapper.index("Export-Clixml") < wrapper.index("Remove-Item -LiteralPath $secretBundlePath -Force")
     assert "Remove-Item -LiteralPath $secretBundlePath -Force -ErrorAction Stop" in wrapper
@@ -3363,6 +3380,8 @@ def test_lifecycle_vmware_script_supports_routing_wan_only_and_esxi_pxe_install(
     assert "& $curl.Source -k -f -sS $Url" in runner
     assert "ServerCertificateValidationCallback = { $true }" in runner
     assert "$applianceHostKey = Get-PlinkHostKey -HostName $ApplianceIPAddress" in runner
+    assert "if ($TimeSourceOnly) {\n        $applianceHostKey = (Get-AtlasoWorkstationSshHostKey" in runner
+    assert "-NormalTestVm:$TimeSourceOnly" in runner
     assert "'--appliance-ssh-hostkey', $applianceHostKey" in runner
     assert "'--client-a-hostkey', $clientAHostKey" in runner
     assert "function Sync-ApplianceHelperScript" in runner
@@ -3376,6 +3395,12 @@ def test_lifecycle_vmware_script_supports_routing_wan_only_and_esxi_pxe_install(
     assert "systemctl restart atlaso.service" in runner
     assert "$applianceWheel = Sync-ApplianceApplicationWheel -ApplianceVmx $applianceVmx" in runner
     assert "Save-ApplianceDeploymentIdentity -ApplianceVmx $applianceVmx -Wheel $applianceWheel" in runner
+    assert "time_source_only      = [bool]$TimeSourceOnly" in runner
+    assert "time_source_interfaces = if ($TimeSourceOnly) { @('eth0: management', \"eth1: $SiteANetwork ($SiteCidr)\") } else { @() }" in runner
+    assert "if ($TimeSourceOnly) {\n        $basePythonArgs += '--time-source-only'\n        $basePythonArgs += @('--time-source-site-network', $SiteANetwork)\n    }" in runner
+    assert "$seedArtifactsRetired = [bool]($OidcOnly -or $TimeSourceOnly" in runner
+    assert "if (-not ($OidcOnly -or $TimeSourceOnly -or $CertificateOnly)) {" in runner
+    assert "if ($OidcOnly -or $TimeSourceOnly -or $CertificateOnly) {" in runner
     assert "wheel_sha256 = $applianceWheel.Sha256.ToLowerInvariant()" in runner
     assert "Get-FileHash -LiteralPath $applianceWheelPath" not in runner
     assert "function Register-WorkstationVm" in runner
@@ -3405,6 +3430,29 @@ def test_lifecycle_vmware_script_supports_routing_wan_only_and_esxi_pxe_install(
     assert "firmware = \"efi\"" in runner
     assert "uefi.secureBoot.enabled = \"FALSE\"" in runner
     assert "vhv.enable = \"FALSE\"" in runner
+
+
+def test_lifecycle_time_source_only_uses_two_appliance_interfaces_without_client_bootstrap():
+    """Keep focused clock-source acceptance independent of client VM fixtures."""
+    wrapper = Path("scripts/windows/vmware/invoke-lifecycle-test.ps1").read_text(encoding="utf-8")
+    runner = Path("scripts/windows/vmware/run-lifecycle-test.ps1").read_text(encoding="utf-8")
+
+    assert "[switch]$TimeSourceOnly" in wrapper
+    assert "if ($TimeSourceOnly) { $arguments += '-TimeSourceOnly' }" in wrapper
+    assert "if (-not $SkipClientPrepare -and -not ($TimeSourceOnly -or $CertificateOnly) -and -not $PlanOnly)" in wrapper
+    assert "if (-not $usesLanSegments -and -not ($CertificateOnly -or $TimeSourceOnly))" in wrapper
+    assert "[switch]$TimeSourceOnly" in runner
+    assert "time_source_only      = [bool]$TimeSourceOnly" in runner
+    assert "time_source_required_vms = if ($TimeSourceOnly) { @('appliance') } else { @() }" in runner
+    assert "client_vmdk           = $planClientVmdk" in runner
+    assert "$planClientVmdk = if ($TimeSourceOnly) { '' }" in runner
+    assert "interface = 'eth0'; network = $ManagementNetwork" in runner
+    assert "interface = 'eth1'; network = $SiteANetwork; ip_cidr = $SiteCidr" in runner
+    assert "-NormalTestVm:$TimeSourceOnly" in runner
+    assert "if ($TimeSourceOnly) {\n        $applianceHostKey = (Get-AtlasoWorkstationSshHostKey" in runner
+    assert "if ($TimeSourceOnly) {\n        $basePythonArgs += '--time-source-only'\n        $basePythonArgs += @('--time-source-site-network', $SiteANetwork)\n    }" in runner
+    assert "$seedArtifactsRetired = [bool]($OidcOnly -or $TimeSourceOnly" in runner
+    assert "if (-not ($OidcOnly -or $TimeSourceOnly -or $CertificateOnly)) {" in runner
     assert "& $vdiskManager -c -s 32GB -a pvscsi -t 0 $diskTarget" in runner
     assert 'virtualHW.version = "22"' in runner
     assert 'pciBridge0.present = "TRUE"' in runner

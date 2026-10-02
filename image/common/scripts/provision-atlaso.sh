@@ -986,12 +986,13 @@ cat >/etc/systemd/system/atlaso-firewall.service <<'EOF'
 [Unit]
 Description=Atlaso nftables firewall
 DefaultDependencies=no
+RequiresMountsFor=/opt/atlaso
 Before=network-pre.target
 Wants=network-pre.target
 
 [Service]
 Type=oneshot
-ExecStart=/usr/sbin/nft -f /etc/atlaso/nftables.d/atlaso.nft
+ExecStart=/opt/atlaso/bin/atlaso-helper firewall replay --real
 RemainAfterExit=yes
 
 [Install]

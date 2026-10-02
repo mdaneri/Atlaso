@@ -280,6 +280,10 @@ def test_settings_archive_round_trips_enabled_nts_and_drops_disabled_server_cert
         disabled_archive["data"]["ntp_settings"][0]["nts_server_key_path"] = ""
         disabled_sources = json.loads(disabled_archive["data"]["ntp_settings"][0]["upstream_sources_json"])
         disabled_sources[0]["enabled"] = False
+        disabled_sources.append({
+            "id": "plain-ntp", "source": "time.example.test", "enabled": True,
+            "use_nts": False, "description": "Clock source while NTS intent is dormant",
+        })
         disabled_archive["data"]["ntp_settings"][0]["upstream_sources_json"] = dump_ntp_upstream_sources(disabled_sources)
         disabled_archive["data"]["ntp_settings"][0]["upstream_servers"] = ""
         counts = restore_settings_archive(db, disabled_archive)

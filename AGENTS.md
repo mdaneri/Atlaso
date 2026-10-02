@@ -2,7 +2,7 @@
 
 ## Mandatory Agent Startup Gate
 
-Read this file and [CONTRIBUTING.md](CONTRIBUTING.md) before implementation planning or repository/external mutation.
+Read this file and [CONTRIBUTING.md](CONTRIBUTING.md) before planning or mutation.
 Load each applicable route below before planning or performing its operation; other links are conditional.
 
 In the first progress update, confirm policies read, classify the work as `bug`, `enhancement`, `documentation`, or
@@ -29,6 +29,7 @@ before the affected operation for maintainer direction.
   suspected sensitive vulnerabilities require the security route before any public issue or finding.
 - Run focused local tests and applicable repository/documentation/static checks. Canonical CI owns ordinary full
   Python-suite coverage; private remediation defines its own local-validation exception.
+- Enforce [appliance time-source safety](docs/services/ntp.md).
 - Follow CONTRIBUTING for issue/type, documentation, synchronized next patch, and ready-PR requirements. Read the PR
   workflow before delivery, including default merge authority and explicit holds. Automation must never use or request
   a ruleset or administrative bypass. Auto-merge requires explicit selection.
@@ -63,7 +64,7 @@ sections as needed. Resolve unknown applicability before mutation rather than tr
 
 [Routing](docs/operate/networking.md).
 
-For tty1 recovery, load the subsystem contract for applied-address observation and atomic Settings capture.
+For tty1, load subsystem applied-address observation and atomic Settings capture.
 
 ## Review and delegation
 

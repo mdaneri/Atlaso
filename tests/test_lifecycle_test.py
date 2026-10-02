@@ -44,6 +44,134 @@ def load_network_boot_lifecycle_module():
     return module
 
 
+@pytest.mark.parametrize("other", ["--oidc-only", "--routing-wan-only", "--restored-state-run", "--export-settings-backup", "--signed-release-repository-url"])
+def test_time_source_lifecycle_rejects_unrelated_mutation_modes(other):
+    """A focused clock run must not accidentally launch another scenario.
+
+    Args:
+        other: Unrelated lifecycle option that must be refused in a time-source run.
+    """
+    lifecycle = load_lifecycle_module()
+    extra = ["fixture"] if other in {"--export-settings-backup", "--signed-release-repository-url"} else []
+    with pytest.raises(SystemExit):
+        lifecycle.parse_args(["--time-source-only", other, *extra])
+
+
+def test_time_source_lifecycle_plan_has_only_owned_clock_fixture():
+    """The plan describes the two-interface appliance without client services."""
+    lifecycle = load_lifecycle_module()
+    args = lifecycle.parse_args(["--time-source-only", "--site-cidr", "192.168.87.11/24"])
+    plan = lifecycle.lifecycle_plan(args)
+    assert plan["interfaces"] == {"site": {"name": "eth1", "ip_cidr": "192.168.87.11/24", "mode": "access"}}
+    assert plan["apply_units"] == ["network", "firewall", "ntpd"]
+    assert plan["client_checks_enabled"] is False
+
+
+def load_time_source_guest_module():
+    """Load the bounded guest acceptance actions without running their entry point."""
+    path = Path(__file__).resolve().parents[1] / "scripts" / "interop" / "time_source_guest.py"
+    spec = importlib.util.spec_from_file_location("time_source_guest_test", path)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_time_source_server_acceptance_preserves_remembered_vmware_choice(monkeypatch):
+    """Server activation must exercise the saved source rather than overwrite it.
+
+    Args:
+        monkeypatch: Replace host operations with controlled test observations.
+    """
+    guest = load_time_source_guest_module()
+    values = {"time_source": ["vmware_tools"], "upstream_sources_json": ['[{"enabled":true,"source":"time.cloudflare.com"}]'], "listen_interfaces": ["eth1"]}
+    parser = argparse.Namespace(form_action="/ntp/settings", interfaces=["eth1"])
+    submitted = []
+    monkeypatch.setattr(guest, "ntp_page", lambda opener: (parser, values, "csrf"))
+    monkeypatch.setattr(guest, "post_form", lambda opener, path, fields, **kwargs: (submitted.extend(fields) or (200, "", {}, b'{"valid":true}')))
+    monkeypatch.setattr(guest, "apply_unit", lambda *args: "job")
+    monkeypatch.setattr(guest, "wait_status", lambda *args: {"mode": "ntp_server", "healthy": True})
+    observed = guest.apply_mode(object(), "ntp_server", "eth1", "healthy")
+    assert ("time_source", "vmware_tools") in submitted
+    assert ("enabled", "on") in submitted
+    assert observed["remembered_time_source"] == "vmware_tools"
+
+
+@pytest.mark.parametrize("mutation,expected_attempts", [(False, 3), (True, 1)])
+def test_time_source_guest_retries_only_read_only_observations(monkeypatch, mutation, expected_attempts):
+    """A listener restart may repeat GET, but never replay a credential-bearing POST.
+
+    Args:
+        monkeypatch: Replace host operations with controlled test observations.
+        mutation: Whether the HTTP request changes state and must not be retried.
+        expected_attempts: Expected number of transport attempts for the request.
+    """
+    guest = load_time_source_guest_module()
+    calls = []
+    def fail_request(*args, **kwargs):
+        """Exercise fail request.
+
+        Args:
+            *args: Additional positional inputs retained by the fixture adapter.
+            **kwargs: Additional keyword options retained by the fixture adapter.
+        """
+        calls.append(True)
+        raise OSError("secret must never reach result")
+    opener = argparse.Namespace(open=fail_request)
+    guest.BASE = "https://192.0.2.10/ui/management"
+    monkeypatch.setattr(guest.time, "sleep", lambda seconds: None)
+    with pytest.raises(guest.SafeFailure) as error:
+        guest.request(opener, "/login", data=b"password=private" if mutation else None)
+    assert len(calls) == expected_attempts
+    assert "secret" not in error.value.reason
+
+
+def test_time_source_main_uses_pinned_acceptance_without_legacy_http_client(monkeypatch, tmp_path):
+    """The focused dispatch must consume stdin credentials through its own transport.
+
+    Args:
+        monkeypatch: Replace host operations with controlled test observations.
+        tmp_path: Isolated filesystem fixture for applied configuration and evidence.
+    """
+    lifecycle = load_lifecycle_module()
+    args = lifecycle.parse_args(["--time-source-only", "--secret-stdin", "--result-dir", str(tmp_path)])
+    envelope = {"password": "test-web", "appliance_ssh_password": "test-ssh", "ssh_password": "test-client"}
+    class FakeLoader:
+        def create_module(self, spec):
+            """Exercise create module.
+
+            Args:
+                spec: Module import specification supplied to the fixture loader.
+            """
+            return None
+        def exec_module(self, module):
+            """Exercise exec module.
+
+            Args:
+                module: Fixture module receiving the synthetic acceptance entry point.
+            """
+            def accept(options):
+                """Exercise accept.
+
+                Args:
+                    options: Parsed lifecycle options including stdin-supplied test credentials.
+                """
+                assert options.password == envelope["password"]
+                assert options.appliance_ssh_password == envelope["appliance_ssh_password"]
+                return {"status": "passed", "scenario": "time-source-native-acceptance"}
+            module.run_time_source_acceptance = accept
+    spec = importlib.util.spec_from_loader("fake_time_source", FakeLoader())
+    monkeypatch.setattr(lifecycle, "parse_args", lambda: args)
+    monkeypatch.setattr(lifecycle.sys, "stdin", io.StringIO(json.dumps(envelope)))
+    monkeypatch.setattr(lifecycle.importlib.util, "spec_from_file_location", lambda *args: spec)
+    monkeypatch.setattr(lifecycle, "HttpClient", lambda *args: pytest.fail("legacy HTTP client must not be instantiated"))
+    assert lifecycle.main() == 0
+    result = json.loads((tmp_path / "result.json").read_text(encoding="utf-8"))
+    assert result["status"] == "passed"
+    assert result["steps"][0]["name"] == "time-source-acceptance"
+    assert all(value not in json.dumps(result) for value in envelope.values())
+
+
 def test_configure_signed_release_source_uses_wizard_edit_data():
     """Update the source identified by the current edit button, not a removed inline form."""
     lifecycle = load_lifecycle_module()
@@ -318,7 +446,7 @@ def test_load_lifecycle_secrets_rejects_unexpected_schema():
         lifecycle.load_lifecycle_secrets(args, io.StringIO(json.dumps(secret_values)))
 
 
-@pytest.mark.parametrize("focused_option", ["--oidc-only", "--routing-wan-only"])
+@pytest.mark.parametrize("focused_option", ["--oidc-only", "--routing-wan-only", "--time-source-only"])
 def test_load_lifecycle_secrets_allows_focused_runs_without_vcf_backup_password(focused_option):
     """Verify focused modes omit the unrelated VCF Backup credential.
 

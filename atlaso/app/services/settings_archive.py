@@ -2530,7 +2530,7 @@ def _validate_archive_relationships(data: dict[str, list[dict[str, Any]]]) -> No
             raise ValueError(
                 f"The settings archive NTP settings are invalid: {ntp_errors[0]}"
             )
-        if row.get("nts_server_enabled", False):
+        if row.get("enabled", False) and row.get("nts_server_enabled", False):
             nts_certificate = next(
                 (
                     certificate

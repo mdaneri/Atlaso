@@ -34,6 +34,8 @@ Parsed VMware network inventory script from the admitted source commit.
 Optional VMware vmrun executable path.
 .PARAMETER BridgedInterfaceAlias
 Optional host interface used for a bridged vmnet0.
+.PARAMETER BindSiteSource
+Verify an explicit matching host site address used by the focused clock-source UDP probes.
 #>
 function Assert-AtlasoOidcSiteNetwork {
     param(
@@ -42,7 +44,8 @@ function Assert-AtlasoOidcSiteNetwork {
         [string]$PrepareNetworksPath = '',
         [scriptblock]$PrepareNetworksScript = $null,
         [string]$VmrunPath = '',
-        [string]$BridgedInterfaceAlias = ''
+        [string]$BridgedInterfaceAlias = '',
+        [switch]$BindSiteSource
     )
 
     $networkArgs = @{
@@ -102,16 +105,19 @@ function Assert-AtlasoOidcSiteNetwork {
     }).Count -gt 0) {
         throw "OIDC Site A address $SiteCidr is already assigned to the host adapter for $SiteANetwork ($hostAlias)."
     }
-    $reachable = $hostAdapter -and $hostAdapter.Status -eq 'Up' -and @($hostAddresses | Where-Object {
+    $matchingHostAddresses = @($hostAddresses | Where-Object {
         $hostIp = ConvertTo-AtlasoIpv4Integer -Address ([System.Net.IPAddress]::Parse($_.IPAddress))
         $_.PrefixLength -eq $prefix -and ($hostIp -band $networkMask) -eq ($siteIp -band $networkMask)
-    }).Count -gt 0
+    })
+    $reachable = $hostAdapter -and $hostAdapter.Status -eq 'Up' -and $matchingHostAddresses.Count -gt 0
     if (-not $reachable) {
         throw "OIDC Site A address $SiteCidr is not reachable from an active host adapter for $SiteANetwork ($hostAlias)."
     }
     # Find-NetRoute emits a local address first and its selected route second.
     # Check property presence because strict mode rejects reading it on the address.
-    $selectedRoute = @(Find-NetRoute -RemoteIPAddress $siteAddress.IPAddressToString -ErrorAction SilentlyContinue |
+    $routeArgs = @{ RemoteIPAddress = $siteAddress.IPAddressToString; ErrorAction = 'SilentlyContinue' }
+    if ($BindSiteSource) { $routeArgs['LocalIPAddress'] = $matchingHostAddresses[0].IPAddress }
+    $selectedRoute = @(Find-NetRoute @routeArgs |
         Where-Object { $_.PSObject.Properties['DestinationPrefix'] }) | Select-Object -First 1
     if (-not $selectedRoute -or $selectedRoute.InterfaceIndex -ne $hostAdapter.InterfaceIndex) {
         throw "OIDC Site A address $SiteCidr does not route through the selected host adapter for $SiteANetwork ($hostAlias)."

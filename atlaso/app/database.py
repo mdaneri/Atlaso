@@ -81,6 +81,7 @@ def _create_database_schema(bind: Engine) -> None:
                 _reconcile_nat_ingress_column(connection)
                 _reconcile_routing_permission_columns(connection)
                 _reconcile_interface_address_check_columns(connection)
+                _reconcile_ntp_time_source_column(connection)
             except Exception:
                 connection.rollback()
                 raise
@@ -97,6 +98,7 @@ def _create_database_schema(bind: Engine) -> None:
             _reconcile_nat_ingress_column(connection)
             _reconcile_routing_permission_columns(connection)
             _reconcile_interface_address_check_columns(connection)
+            _reconcile_ntp_time_source_column(connection)
         return
     with bind.begin() as connection:
         Base.metadata.create_all(bind=connection)
@@ -104,6 +106,25 @@ def _create_database_schema(bind: Engine) -> None:
         _reconcile_nat_ingress_column(connection)
         _reconcile_routing_permission_columns(connection)
         _reconcile_interface_address_check_columns(connection)
+        _reconcile_ntp_time_source_column(connection)
+
+
+def _reconcile_ntp_time_source_column(connection: Connection) -> None:
+    """Add the persisted NTP client/server source choice to legacy databases.
+
+    Args:
+        connection: Serialized startup schema transaction.
+    """
+    columns = {column["name"] for column in inspect(connection).get_columns("ntp_settings")}
+    if "time_source" in columns:
+        return
+    idempotent_column_clause = "IF NOT EXISTS " if connection.dialect.name == "postgresql" else ""
+    connection.execute(
+        text(
+            "ALTER TABLE ntp_settings ADD COLUMN "
+            f"{idempotent_column_clause}time_source VARCHAR(32) NOT NULL DEFAULT 'ntp_client'"
+        )
+    )
 
 
 def _reconcile_routing_permission_columns(connection: Connection) -> None:

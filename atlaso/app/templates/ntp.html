@@ -86,6 +86,16 @@
       <form id="ntp-settings-form" class="form-stack" action="{{ management_ui_root }}/ntp/settings" method="post" data-autosave-form data-ntp-settings data-autosave-status-id="ntp-settings-autosave-status">
         <input type="hidden" name="csrf" value="{{ csrf_token }}">
         <label class="switch-field"><span class="field-label"><span>NTP service enabled</span><button class="help-icon" type="button" data-help="Controls the standard NTPsec NTP service on UDP 123. This does not enable NTS. The host service changes only after global appliance apply.">i</button></span><input class="switch-input" type="checkbox" name="enabled" {{ "checked" if ntp_settings.enabled else "" }}><span class="switch-track" aria-hidden="true"></span></label>
+        <label class="compact-service-field" data-time-source-setting>
+          <span class="field-label"><span>Appliance time source</span><button class="help-icon" type="button" data-help="Choose exactly one clock source. VMware Tools periodic guest synchronization and NTP client clock discipline must not run together. The managed NTP/NTS server takes ownership while NTP service is enabled.">i</button></span>
+          <select name="time_source" data-time-source-select aria-describedby="ntp-time-source-help"{% if ntp_settings.enabled %} disabled{% endif %}>
+            <option value="ntp_client"{% if ntp_settings_json.time_source == "ntp_client" %} selected{% endif %}>NTP client</option>
+            <option value="vmware_tools"{% if ntp_settings_json.time_source == "vmware_tools" %} selected{% endif %}{% if not ntp_vmware_tools_available %} disabled{% endif %}>{% if ntp_vmware_tools_available %}VMware Tools{% elif ntp_vmware_tools_capability_known %}VMware Tools (unavailable){% else %}VMware Tools (availability unknown){% endif %}</option>
+          </select>
+          <input type="hidden" name="time_source" value="{{ ntp_settings_json.time_source }}" data-time-source-preserved{% if not ntp_settings.enabled %} disabled{% endif %}>
+          <small id="ntp-time-source-help" class="muted" data-time-source-client-help{% if ntp_settings.enabled %} hidden{% endif %}>{% if not ntp_vmware_tools_available and ntp_vmware_tools_capability_known %}VMware Tools time synchronization is unavailable on this appliance. Any saved VMware Tools choice was normalized to NTP client.{% elif not ntp_vmware_tools_available %}VMware Tools availability could not be verified. Its option remains disabled until Atlaso positively confirms support.{% else %}Choose one appliance clock source. Changing this saves desired state; host changes take effect through global Appliance Apply.{% endif %}</small>
+          <small class="muted" data-time-source-server-reason{% if not ntp_settings.enabled %} hidden{% endif %}>Managed NTP/NTS server mode owns the appliance clock while the NTP service is enabled. Your saved client choice is retained.</small>
+        </label>
         {% if not ntp_nts_supported %}
           <div class="runtime-source-list" data-ntp-nts-unavailable>
             {% if ntp_nts_capability_known %}
@@ -165,6 +175,65 @@
     </div>
 
     {% include "partials/appliance_apply_status.html" %}
+
+    {% set clock_mode_labels = {"ntp_client": "NTP client", "ntp_server": "NTP/NTS server", "vmware_tools": "VMware Tools"} %}
+    {% set clock_controller_labels = {"ntpd": "NTPsec", "vmware_tools": "VMware Tools time sync"} %}
+    {% set clock_daemon_labels = {"ntpd": "NTPsec", "chronyd": "chronyd", "systemd_timesyncd": "systemd-timesyncd", "vmware_tools": "VMware Tools time sync"} %}
+    {% set clock_synchronization = ntp_clock_status.get("synchronization", {}) %}
+    {% set clock_controller = ntp_clock_status.get("selected_controller", {}) %}
+    {% set clock_conflicts = ntp_clock_status.get("daemon_conflicts", {}) %}
+    <div class="panel" data-ntp-clock-health>
+      <div class="panel-head">
+        <h2>Appliance clock</h2>
+        {% if clock_synchronization.get("healthy") is sameas true %}
+          <span class="status-pill good" data-clock-health="healthy">synchronized</span>
+        {% elif clock_synchronization.get("healthy") is sameas false %}
+          <span class="status-pill warn" data-clock-health="unhealthy">needs attention</span>
+        {% else %}
+          <span class="status-pill muted" data-clock-health="unavailable">status unavailable</span>
+        {% endif %}
+      </div>
+      <div class="settings-list">
+        <div><span>Desired mode</span><strong data-clock-desired-mode>{{ clock_mode_labels.get(ntp_settings_json.time_mode, "Unknown") }}</strong></div>
+        <div><span>Effective mode</span><strong>{{ clock_mode_labels.get(ntp_clock_status.get("mode"), "Not reported") }}</strong></div>
+        <div>
+          <span>Selected controller</span>
+          <strong>{{ clock_controller_labels.get(clock_controller.get("name"), "Not reported") }} · {% if clock_controller.get("active") is sameas true %}active{% elif clock_controller.get("active") is sameas false %}inactive{% else %}activity unknown{% endif %} · {% if clock_controller.get("enabled") is sameas true %}enabled{% elif clock_controller.get("enabled") is sameas false %}disabled{% else %}enablement unknown{% endif %}</strong>
+        </div>
+        <div><span>NTP synchronization</span><strong>{{ clock_synchronization.get("state", "Not reported")|replace("_", " ") }}</strong></div>
+      </div>
+      {% if clock_controller.get("detail") %}
+        <p class="muted" data-clock-controller-detail>{{ clock_controller.detail }}</p>
+      {% endif %}
+      {% if clock_synchronization.get("detail") %}
+        <p class="muted" data-clock-health-detail>{{ clock_synchronization.detail }}</p>
+      {% elif ntp_ntpq_status_error %}
+        <p class="muted" data-clock-health-detail>{{ ntp_ntpq_status_error }}</p>
+      {% endif %}
+      {% if ntp_ntpq_status_dry_run %}<p class="muted">Host status is from a dry run.</p>{% endif %}
+      {% if clock_conflicts %}
+        <div class="settings-list" data-clock-daemon-conflicts>
+          {% for daemon, daemon_status in clock_conflicts.items() %}
+            {% set label = clock_daemon_labels.get(daemon, daemon) %}
+            <div>
+              <span>{{ label }}</span>
+              <strong>
+                {% if daemon_status.get("enabled") is sameas true %}enabled{% elif daemon_status.get("enabled") is sameas false %}disabled{% else %}enablement unknown{% endif %}
+                · {% if daemon_status.get("active") is sameas true %}active{% elif daemon_status.get("active") is sameas false %}inactive{% else %}activity unknown{% endif %}
+                {% if daemon_status.get("active") is sameas true or daemon_status.get("enabled") is sameas true %}
+                  <span class="status-pill warn">conflict</span>
+                {% elif daemon_status.get("active") is sameas false and daemon_status.get("enabled") is sameas false %}
+                  <span class="status-pill good">clear</span>
+                {% else %}
+                  <span class="status-pill muted">unknown</span>
+                {% endif %}
+              </strong>
+              {% if daemon_status.get("detail") %}<small>{{ daemon_status.detail }}</small>{% endif %}
+            </div>
+          {% endfor %}
+        </div>
+      {% endif %}
+    </div>
 
     <div class="panel">
       <div class="panel-head">

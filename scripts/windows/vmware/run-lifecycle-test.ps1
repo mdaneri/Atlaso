@@ -15,7 +15,7 @@ Human run identifier for ownership records; defaults to the canonical lab name. 
 .PARAMETER ApplianceVmxPath
 Path to the appliance source VMX.
 .PARAMETER ClientVmdkPath
-Path to the base client VMDK used by generated clients.
+Path to the base client VMDK used by generated clients; not required by TimeSourceOnly.
 .PARAMETER VmrunPath
 Optional explicit vmrun.exe path.
 .PARAMETER ManagementNetwork
@@ -58,6 +58,8 @@ Permit dry-run apply mode for the Python lifecycle harness.
 Skip backup/restore validation pass.
 .PARAMETER OidcOnly
 Run only OIDC scenario path.
+.PARAMETER TimeSourceOnly
+Run only NTP clock-source Apply and host/client UDP acceptance on a two-interface appliance.
 .PARAMETER CertificateOnly
 Prepare only a retained appliance for the certificate handoff acceptance scenario.
 .PARAMETER CertificateDhcpPeer
@@ -99,8 +101,7 @@ param(
     [string]$OwnershipTaskId = '',
     [Parameter(Mandatory = $true)]
     [string]$ApplianceVmxPath,
-    [Parameter(Mandatory = $true)]
-    [string]$ClientVmdkPath,
+    [string]$ClientVmdkPath = '',
     [string]$VmrunPath = '',
     [string]$ManagementNetwork = 'VMnet8',
     [string]$SiteANetwork = 'VMnet2',
@@ -122,6 +123,7 @@ param(
     [switch]$AllowDryRunApply,
     [switch]$SkipBackupRestoreTest,
     [switch]$OidcOnly,
+    [switch]$TimeSourceOnly,
     [switch]$CertificateOnly,
     [switch]$CertificateDhcpPeer,
     [string]$CertificatePeerCidr = '192.168.77.1/24',
@@ -147,11 +149,14 @@ if ($RoutingOverlapOnly -and -not $PlanOnly) {
 }
 
 $repoRoot = Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..\..')
-if ($OidcOnly -and $SiteANetwork.StartsWith('lan:', [StringComparison]::OrdinalIgnoreCase)) {
-    throw '-OidcOnly requires a host-reachable SiteANetwork; VMware LAN segments cannot carry the host-side verified OIDC probe.'
+if (-not $TimeSourceOnly -and -not $ClientVmdkPath) {
+    $ClientVmdkPath = Join-Path $repoRoot 'image\vmware-workstation\clients\alpine-cloud\atlaso-tiny-linux-client.vmdk'
 }
-if ($OidcOnly -and $SiteInterface -ne 'eth1') {
-    throw '-OidcOnly requires SiteInterface eth1 because its Site A vmnet is attached to the appliance second adapter.'
+if (($OidcOnly -or $TimeSourceOnly) -and $SiteANetwork.StartsWith('lan:', [StringComparison]::OrdinalIgnoreCase)) {
+    throw '-OidcOnly and -TimeSourceOnly require a host-reachable SiteANetwork; VMware LAN segments cannot carry the host-side verified probe.'
+}
+if (($OidcOnly -or $TimeSourceOnly) -and $SiteInterface -ne 'eth1') {
+    throw '-OidcOnly and -TimeSourceOnly require SiteInterface eth1 because Site A is attached to the appliance second adapter.'
 }
 if ($CertificateDhcpPeer) {
     if ($PullRequestNumber -ne 871 -or -not $CertificateOnly -or -not $SiteANetwork.StartsWith('lan:', [StringComparison]::OrdinalIgnoreCase) -or
@@ -165,8 +170,8 @@ if ($CertificateDhcpPeer) {
         throw 'Certificate DHCP peer requires an existing SSH-agent Ed25519 public key.'
     }
 }
-if ($SignedReleaseRepositoryUrl -and ($OidcOnly -or $RoutingWanOnly -or $CertificateOnly)) {
-    throw '-SignedReleaseRepositoryUrl requires the full lifecycle; it cannot be combined with -OidcOnly, -RoutingWanOnly, or -CertificateOnly.'
+if ($SignedReleaseRepositoryUrl -and ($OidcOnly -or $TimeSourceOnly -or $RoutingWanOnly -or $CertificateOnly)) {
+    throw '-SignedReleaseRepositoryUrl requires the full lifecycle; it cannot be combined with -OidcOnly, -TimeSourceOnly, -RoutingWanOnly, or -CertificateOnly.'
 }
 if ($SignedReleaseRepositoryUrl) {
     [Uri]$fixtureUri = $null
@@ -853,7 +858,7 @@ if (-not $PlanOnly) {
     Assert-LifecycleRunnerSource -RepositoryRoot $repoRoot -Commit $sourceCommit `
         -ParsedScript $MyInvocation.MyCommand.ScriptBlock.Ast.Extent.Text
 }
-if ($OidcOnly) {
+if ($OidcOnly -or $TimeSourceOnly) {
     if ($PlanOnly) {
         Import-Module (Join-Path $PSScriptRoot 'Atlaso.OidcSiteNetwork.psm1') -Force
     } else {
@@ -867,6 +872,7 @@ if ($OidcOnly) {
         SiteCidr = $SiteCidr
         VmrunPath = $VmrunPath
         BridgedInterfaceAlias = $BridgedInterfaceAlias
+        BindSiteSource = [bool]$TimeSourceOnly
     }
     if ($PlanOnly) {
         $siteNetworkArgs['PrepareNetworksPath'] = Join-Path $PSScriptRoot 'prepare-networks.ps1'
@@ -996,7 +1002,7 @@ if (-not $PlanOnly) {
             throw "Lifecycle secret bundle property is missing or invalid: $propertyName"
         }
     }
-    $focusedRun = $OidcOnly -or $RoutingWanOnly -or $CertificateOnly -or $RoutingOverlapOnly
+    $focusedRun = $OidcOnly -or $TimeSourceOnly -or $RoutingWanOnly -or $CertificateOnly -or $RoutingOverlapOnly
     if (-not $focusedRun -and $secretBundle.VcfBackupPassword -isnot [SecureString]) {
         throw 'Lifecycle secret bundle property is missing or invalid: VcfBackupPassword'
     }
@@ -1030,6 +1036,9 @@ if ($RoutingWanOnly -or $RoutingOverlapOnly) {
     $SkipBackupRestoreTest = $true
 }
 if ($OidcOnly) {
+    $SkipBackupRestoreTest = $true
+}
+if ($TimeSourceOnly) {
     $SkipBackupRestoreTest = $true
 }
 if ($CertificateOnly) {
@@ -2763,8 +2772,8 @@ function Add-LifecycleResultStep {
 }
 
 $resolvedVmrun = Resolve-VmrunPath
-if (@(@($OidcOnly, $RoutingWanOnly, $CertificateOnly, $RoutingOverlapOnly, $FullEsxiPxeInstall) | Where-Object { $_ }).Count -gt 1) {
-    throw "-OidcOnly, -RoutingWanOnly, -CertificateOnly, -RoutingOverlapOnly, and -FullEsxiPxeInstall are mutually exclusive."
+if (@(@($OidcOnly, $TimeSourceOnly, $RoutingWanOnly, $CertificateOnly, $RoutingOverlapOnly, $FullEsxiPxeInstall) | Where-Object { $_ }).Count -gt 1) {
+    throw "-OidcOnly, -TimeSourceOnly, -RoutingWanOnly, -CertificateOnly, -RoutingOverlapOnly, and -FullEsxiPxeInstall are mutually exclusive."
 }
 if ($RoutingOverlapOnly -and -not $PlanOnly -and (-not $externalOwnershipEnabled -or $ApplianceSshUser -cne 'root' -or
     $ApplianceIPAddress -or $ApplianceUrl -or $AllowDryRunApply -or $ManagementNetwork -notmatch '^VMnet\d+$')) {
@@ -2786,7 +2795,7 @@ $esxiName = "$LabName-ESXiPXE"
 $esxiMacAddress = if ($FullEsxiPxeInstall) { New-StaticVmwareMac } else { '' }
 $certificateAppliancePeerMac = if ($CertificateDhcpPeer) { New-StaticVmwareMac } else { '' }
 $planApplianceVmx = if (Test-Path -LiteralPath $ApplianceVmxPath) { (Resolve-Path -LiteralPath $ApplianceVmxPath).Path } else { $ApplianceVmxPath }
-$planClientVmdk = if (Test-Path -LiteralPath $ClientVmdkPath) { (Resolve-Path -LiteralPath $ClientVmdkPath).Path } else { $ClientVmdkPath }
+$planClientVmdk = if ($TimeSourceOnly) { '' } elseif ($ClientVmdkPath -and (Test-Path -LiteralPath $ClientVmdkPath)) { (Resolve-Path -LiteralPath $ClientVmdkPath).Path } else { $ClientVmdkPath }
 
 $lanSegmentOwner = @{
     task_id = $lifecycleTaskId
@@ -2803,14 +2812,23 @@ $plan = [ordered]@{
     collision_suffix      = $vmIdentity.CollisionSuffix
     appliance_vmx         = $planApplianceVmx
     client_vmdk           = $planClientVmdk
+    time_source_required_vms = if ($TimeSourceOnly) { @('appliance') } else { @() }
     result_root           = $resultRoot
     lifecycle_appliance_vmx = (Join-Path $vmRoot "$applianceName\$applianceName.vmx")
     management_network    = $ManagementNetwork
     bridged_interface_alias = $BridgedInterfaceAlias
     site_a_network        = $SiteANetwork
-    trunk_network         = $TrunkNetwork
-    site_b_network        = $SiteBNetwork
+    trunk_network         = if ($TimeSourceOnly) { '' } else { $TrunkNetwork }
+    site_b_network        = if ($TimeSourceOnly) { '' } else { $SiteBNetwork }
+    appliance_networks    = if ($TimeSourceOnly) {
+        @(
+            [ordered]@{ interface = 'eth0'; network = $ManagementNetwork },
+            [ordered]@{ interface = 'eth1'; network = $SiteANetwork; ip_cidr = $SiteCidr }
+        )
+    } else { @() }
     oidc_only             = [bool]$OidcOnly
+    time_source_only      = [bool]$TimeSourceOnly
+    time_source_interfaces = if ($TimeSourceOnly) { @('eth0: management', "eth1: $SiteANetwork ($SiteCidr)") } else { @() }
     certificate_only      = [bool]$CertificateOnly
     certificate_dhcp_peer = [bool]$CertificateDhcpPeer
     certificate_peer_cidr = if ($CertificateDhcpPeer) { $CertificatePeerCidr } else { '' }
@@ -2853,7 +2871,8 @@ $firstBootOvfEnvironment = New-AtlasoWorkstationOvfEnvironment `
     -Fqdn (New-AtlasoWorkstationFqdn -Name $applianceName) `
     -AdminPassword $adminPasswordSecure `
     -RootPassword $rootPasswordSecure `
-    -RootSshEnabled:($ApplianceSshUser -eq 'root')
+    -RootSshEnabled:($ApplianceSshUser -eq 'root') `
+    -NormalTestVm:$TimeSourceOnly
 
 New-Item -ItemType Directory -Path $vmRoot -ErrorAction Stop | Out-Null
 $runtimeConsumerPins.Add([Atlaso.SnapshotDirectoryPinV2]::Open($vmRoot))
@@ -3204,7 +3223,7 @@ $certificatePeerPublicKeyPin = $null
 $certificatePeerPublicKey = ''
 $certificatePeerPublicKeySnapshot = Join-Path $resultRoot 'certificate-peer-authorized-key.pub'
 $certificatePeerKnownHostsPath = Join-Path $resultRoot 'certificate-peer-known-hosts'
-$seedArtifactsRetired = [bool]($OidcOnly -or ($CertificateOnly -and -not $CertificateDhcpPeer))
+$seedArtifactsRetired = [bool]($OidcOnly -or $TimeSourceOnly -or ($CertificateOnly -and -not $CertificateDhcpPeer))
 $scenarioFailure = $null
 $overlapDescriptor = $null
 $overlapTrust = ''
@@ -3238,7 +3257,7 @@ try {
             throw 'Certificate peer public-key snapshot changed before pinning.'
         }
     }
-    if (-not ($OidcOnly -or $CertificateOnly)) {
+    if (-not ($OidcOnly -or $TimeSourceOnly -or $CertificateOnly)) {
         $clientASeedIso = Join-Path $seedRoot "$clientAName-seed.iso"
         $clientBSeedIso = Join-Path $seedRoot "$clientBName-seed.iso"
         New-CloudInitSeedIso -Path $clientASeedIso -HostName ($clientAName.ToLowerInvariant())
@@ -3295,7 +3314,7 @@ with WindowsFiles().opened(Path(sys.argv[1]), directory=True) as (_, identity, _
                 -Name $applianceName `
                 -PreparedDirectoryIdentity $preparedApplianceDirectoryIdentity
         }
-    if ($OidcOnly -or $CertificateOnly) {
+    if ($OidcOnly -or $TimeSourceOnly -or $CertificateOnly) {
         Set-VmxNetworkAdapter -Path $applianceVmx -Index 0 -Vmnet $ManagementNetwork
     }
     else {
@@ -3309,10 +3328,10 @@ with WindowsFiles().opened(Path(sys.argv[1]), directory=True) as (_, identity, _
         Set-VmxNetworkAdapter -Path $applianceVmx -Index 0 -Vmnet $ManagementNetwork -StaticMac $certificateAppliancePeerMac
     }
     Set-AtlasoWorkstationOvfEnvironment -VmxPath $applianceVmx -OvfEnvironment $firstBootOvfEnvironment
-    if ($OidcOnly) {
+    if ($OidcOnly -or $TimeSourceOnly) {
         Set-VmxNetworkAdapter -Path $applianceVmx -Index 1 -Vmnet $SiteANetwork
     }
-    if (-not ($OidcOnly -or $CertificateOnly)) {
+    if (-not ($OidcOnly -or $TimeSourceOnly -or $CertificateOnly)) {
         Set-VmxNetworkAdapter -Path $applianceVmx -Index 1 -Vmnet $SiteANetwork -PciSlotNumber 192
         if (-not $RoutingOverlapOnly) {
             Set-VmxNetworkAdapter -Path $applianceVmx -Index 2 -Vmnet $TrunkNetwork -PciSlotNumber 224
@@ -3445,7 +3464,7 @@ with WindowsFiles().opened(Path(sys.argv[1]), directory=True) as (_, identity, _
 
     $vmxsToStart = @($applianceVmx)
     if ($CertificateDhcpPeer) { $vmxsToStart += $certificatePeerVmx }
-    if (-not ($OidcOnly -or $CertificateOnly)) {
+    if (-not ($OidcOnly -or $TimeSourceOnly -or $CertificateOnly)) {
         $vmxsToStart += @($clientAVmx, $clientBVmx)
     }
     foreach ($vmx in $vmxsToStart) {
@@ -3534,12 +3553,16 @@ with WindowsFiles().opened(Path(sys.argv[1]), directory=True) as (_, identity, _
         })
         Write-Host "Certificate clone evidence: $($certificateRuntime.Path)"
     } else {
-    $applianceHostKey = Get-PlinkHostKey -HostName $ApplianceIPAddress -UserName $ApplianceSshUser -Password $applianceSshPasswordSecure
+    if ($TimeSourceOnly) {
+        $applianceHostKey = (Get-AtlasoWorkstationSshHostKey -VmxPath $applianceVmx -VmrunPath $resolvedVmrun -TimeoutSeconds 300).Fingerprint
+    } else {
+        $applianceHostKey = Get-PlinkHostKey -HostName $ApplianceIPAddress -UserName $ApplianceSshUser -Password $applianceSshPasswordSecure
+    }
     $clientAHost = ''
     $clientBHost = ''
     $clientAHostKey = ''
     $clientBHostKey = ''
-    if (-not ($OidcOnly -or $CertificateOnly)) {
+    if (-not ($OidcOnly -or $TimeSourceOnly -or $CertificateOnly)) {
         $clientAHost = Wait-GuestIPv4 -Path $clientAVmx -GuestUser $ClientSshUser -GuestPassword $sshPasswordSecure -Name $clientAName
         $clientBHost = Wait-GuestIPv4 -Path $clientBVmx -GuestUser $ClientSshUser -GuestPassword $sshPasswordSecure -Name $clientBName
         if (-not $clientAHost -or -not $clientBHost) {
@@ -3585,6 +3608,10 @@ with WindowsFiles().opened(Path(sys.argv[1]), directory=True) as (_, identity, _
     if ($clientBHostKey) { $basePythonArgs += @('--client-b-hostkey', $clientBHostKey) }
     if ($AllowDryRunApply) { $basePythonArgs += '--allow-dry-run' }
     if ($OidcOnly) { $basePythonArgs += '--oidc-only' }
+    if ($TimeSourceOnly) {
+        $basePythonArgs += '--time-source-only'
+        $basePythonArgs += @('--time-source-site-network', $SiteANetwork)
+    }
     if ($RoutingWanOnly) { $basePythonArgs += '--routing-wan-only' }
 
     $initialResultRoot = if ($SkipBackupRestoreTest) { $resultRoot } else { Join-Path $resultRoot 'initial' }
@@ -3745,7 +3772,7 @@ with WindowsFiles().opened(Path(sys.argv[1]), directory=True) as (_, identity, _
         })
         Write-Host "Certificate private handoff evidence: $($rewiredRuntime.Path)"
     }
-    if (-not ($OidcOnly -or $CertificateOnly)) {
+    if (-not ($OidcOnly -or $TimeSourceOnly -or $CertificateOnly)) {
         # Successful lifecycle client access proves cloud-init consumed both
         # seeds. Leave retained labs running only after verified deletion.
         Remove-ClientSeedArtifacts `

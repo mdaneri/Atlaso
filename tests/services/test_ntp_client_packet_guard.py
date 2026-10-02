@@ -1,0 +1,328 @@
+"""Client-only NTP ingress isolation remains independent of firewall settings."""
+
+import copy
+import json
+import subprocess
+
+import pytest
+
+from tests.test_appliance_helper import load_helper_module
+
+
+def test_client_guard_blocks_requests_but_permits_upstream_responses(monkeypatch):
+    """Exercise test client guard blocks requests but permits upstream responses.
+
+    Args:
+        monkeypatch: Replace host operations with controlled test observations.
+    """
+    helper = load_helper_module()
+    monkeypatch.setattr(helper.shutil, "which", lambda _name: "/usr/sbin/nft")
+    calls = []
+
+    def run(command, input_text, *, timeout):
+        """Exercise run.
+
+        Args:
+            command: Native command submitted by the helper.
+            input_text: Rendered nftables transaction submitted on standard input.
+            timeout: Bounded command deadline requested by the caller.
+        """
+        calls.append((command, input_text, timeout))
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    monkeypatch.setattr(helper, "_run_with_input", run)
+    helper._ntpd_client_packet_guard("ntp_client")
+    command, rules, timeout = calls[0]
+    assert command == ["/usr/sbin/nft", "-f", "-"]
+    assert timeout == 5
+    assert rules.index('iifname "lo" return') < rules.index("udp dport 123 @th,64,8")
+    assert "@th,64,8 & 0x07 == 0x04 return" in rules
+    assert rules.index("upstream replies") < rules.index("udp dport 123 drop")
+    assert "ct state" not in rules
+    assert "flush ruleset" not in rules
+    assert "delete table inet atlaso_time_sync" in rules
+
+
+@pytest.mark.parametrize("mode", ["vmware_tools", "disabled"])
+def test_other_modes_release_only_time_client_guard(monkeypatch, mode):
+    """Exercise test other modes release only time client guard.
+
+    Args:
+        monkeypatch: Replace host operations with controlled test observations.
+        mode: Selected appliance clock mode under test.
+    """
+    helper = load_helper_module()
+    monkeypatch.setattr(helper.shutil, "which", lambda _name: "/usr/sbin/nft")
+    calls = []
+
+    def run(command, input_text, *, timeout):
+        """Exercise run.
+
+        Args:
+            command: Native command submitted by the helper.
+            input_text: Rendered nftables transaction submitted on standard input.
+            timeout: Bounded command deadline requested by the caller.
+        """
+        calls.append(input_text)
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    monkeypatch.setattr(helper, "_run_with_input", run)
+    helper._ntpd_client_packet_guard(mode)
+    assert calls == ["add table inet atlaso_time_sync\ndelete table inet atlaso_time_sync\n"]
+
+
+def _write_applied_server_config(path):
+    """Exercise  write applied server config.
+
+    Args:
+        path: Applied configuration path in the isolated fixture.
+    """
+    path.write_text(
+        "\n".join(
+            [
+                "# Managed by Atlaso. Local changes may be overwritten.",
+                "# Atlaso time mode: ntp_server",
+                "# Atlaso NTP enabled: true",
+                "interface listen all",
+                "interface ignore wildcard",
+                "interface listen 192.0.2.15",
+                "interface listen 2001:db8::15",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+
+def test_server_packet_guard_allows_only_selected_ipv4_and_ipv6_destinations(
+    monkeypatch, tmp_path
+):
+    """Exercise test server packet guard allows only selected ipv4 and ipv6 destinations.
+
+    Args:
+        monkeypatch: Replace host operations with controlled test observations.
+        tmp_path: Isolated filesystem fixture for applied configuration and evidence.
+    """
+    helper = load_helper_module()
+    monkeypatch.setattr(helper.shutil, "which", lambda _name: "/usr/sbin/nft")
+    config = tmp_path / "ntp.conf"
+    _write_applied_server_config(config)
+    monkeypatch.setattr(helper, "NTP_CONFIG_PATH", config)
+    calls = []
+
+    def run(command, input_text, *, timeout):
+        """Exercise run.
+
+        Args:
+            command: Native command submitted by the helper.
+            input_text: Rendered nftables transaction submitted on standard input.
+            timeout: Bounded command deadline requested by the caller.
+        """
+        calls.append((command, input_text, timeout))
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    monkeypatch.setattr(helper, "_run_with_input", run)
+    helper._ntpd_client_packet_guard("ntp_server")
+
+    command, rules, timeout = calls[0]
+    assert command == ["/usr/sbin/nft", "-f", "-"]
+    assert timeout == 5
+    assert 'ip daddr 192.0.2.15 udp dport 123 return comment "Atlaso time-sync selected listener"' in rules
+    assert 'ip6 daddr 2001:db8::15 udp dport 123 return comment "Atlaso time-sync selected listener"' in rules
+    assert rules.index("upstream replies") < rules.index("selected listener")
+    assert rules.index("selected listener") < rules.index("udp dport 123 drop")
+    assert rules.count("selected listener") == 2
+
+
+@pytest.mark.parametrize("failure", ["absent", "rejected", "timeout"])
+def test_unproven_packet_guard_blocks_clock_activation(monkeypatch, failure):
+    """Exercise test unproven packet guard blocks clock activation.
+
+    Args:
+        monkeypatch: Replace host operations with controlled test observations.
+        failure: Packet-guard publication failure injected into the native command.
+    """
+    helper = load_helper_module()
+    monkeypatch.setattr(helper.shutil, "which", lambda _name: None if failure == "absent" else "/usr/sbin/nft")
+
+    def run(command, input_text, *, timeout):
+        """Exercise run.
+
+        Args:
+            command: Native command submitted by the helper.
+            input_text: Rendered nftables transaction submitted on standard input.
+            timeout: Bounded command deadline requested by the caller.
+        """
+        if failure == "timeout":
+            raise subprocess.TimeoutExpired(command, timeout)
+        return subprocess.CompletedProcess(command, 1, "", "unsupported rule")
+
+    monkeypatch.setattr(helper, "_run_with_input", run)
+    with pytest.raises(RuntimeError):
+        helper._ntpd_client_packet_guard("ntp_client")
+
+
+@pytest.mark.parametrize("drift", [None, "early_accept", "wrong_mode", "wrong_priority", "absent"])
+def test_client_guard_health_checks_effective_rules(monkeypatch, drift):
+    """Exercise test client guard health checks effective rules.
+
+    Args:
+        monkeypatch: Replace host operations with controlled test observations.
+        drift: Effective packet-policy mismatch injected into the observation.
+    """
+    helper = load_helper_module()
+    monkeypatch.setattr(helper.shutil, "which", lambda _name: "/usr/sbin/nft")
+    port = {"match": {"op": "==", "left": {"payload": {"protocol": "udp", "field": "dport"}}, "right": 123}}
+    chain = {"name": "input", "hook": "input", "type": "filter", "prio": -200, "policy": "accept"}
+    rules = [
+        {"chain": "input", "expr": [{"match": {"op": "==", "left": {"meta": {"key": "iifname"}}, "right": "lo"}}, {"return": None}]},
+        {"chain": "input", "expr": [port, {"match": {"op": "==", "left": {"&": [{"payload": {"base": "th", "offset": 64, "len": 8}}, 7]}, "right": 4}}, {"return": None}]},
+        {"chain": "input", "expr": [port, {"drop": None}]},
+    ]
+    rules = copy.deepcopy(rules)
+    if drift == "early_accept":
+        rules.insert(0, {"chain": "input", "expr": [{"accept": None}]})
+    elif drift == "wrong_mode":
+        rules[1]["expr"][1]["match"]["right"] = 3
+    elif drift == "wrong_priority":
+        chain["prio"] = 10
+    document = {"nftables": [{"chain": chain}, *[{"rule": rule} for rule in rules]]}
+    monkeypatch.setattr(helper, "_run", lambda command, **_kwargs: subprocess.CompletedProcess(
+        command, 1 if drift == "absent" else 0, json.dumps(document), "",
+    ))
+    status = helper._ntpd_client_packet_guard_status()
+    assert status["active"] is (drift is None)
+
+
+def test_client_guard_health_accepts_nft_normalized_mode_bits(monkeypatch):
+    """The live nft rule renders the NTP mode as the exact @th bit range.
+
+    Args:
+        monkeypatch: Replace host operations with controlled test observations.
+    """
+    helper = load_helper_module()
+    monkeypatch.setattr(helper.shutil, "which", lambda _name: "/usr/sbin/nft")
+    port = {"match": {"op": "==", "left": {"payload": {"protocol": "udp", "field": "dport"}}, "right": 123}}
+    document = {
+        "nftables": [
+            {"metainfo": {"version": "1.1.6", "release_name": "Commodore Bullmoose #7", "json_schema_version": 1}},
+            {"table": {"family": "inet", "name": "atlaso_time_sync", "handle": 14}},
+            {"chain": {"family": "inet", "table": "atlaso_time_sync", "name": "input", "handle": 1, "type": "filter", "hook": "input", "prio": -200, "policy": "accept"}},
+            {"rule": {"family": "inet", "table": "atlaso_time_sync", "chain": "input", "handle": 2, "comment": "Atlaso time-sync local diagnostics", "expr": [
+                {"match": {"op": "==", "left": {"meta": {"key": "iifname"}}, "right": "lo"}}, {"return": None},
+            ]}},
+            {"rule": {"family": "inet", "table": "atlaso_time_sync", "chain": "input", "handle": 3, "comment": "Atlaso time-sync upstream replies", "expr": [
+                port, {"match": {"op": "==", "left": {"payload": {"base": "th", "offset": 69, "len": 3}}, "right": 4}}, {"return": None},
+            ]}},
+            {"rule": {"family": "inet", "table": "atlaso_time_sync", "chain": "input", "handle": 4, "comment": "Atlaso time-sync client-only", "expr": [port, {"drop": None}]}},
+        ]
+    }
+    monkeypatch.setattr(helper, "_run", lambda command, **_kwargs: subprocess.CompletedProcess(
+        command, 0, json.dumps(document), "",
+    ))
+
+    status = helper._ntpd_client_packet_guard_status()
+
+    assert status["active"] is True
+
+
+@pytest.mark.parametrize("drift", ["wrong_offset", "wrong_length", "early_return", "wrong_order"])
+def test_client_guard_rejects_malformed_normalized_mode_rules(monkeypatch, drift):
+    """Exercise test client guard rejects malformed normalized mode rules.
+
+    Args:
+        monkeypatch: Replace host operations with controlled test observations.
+        drift: Effective packet-policy mismatch injected into the observation.
+    """
+    helper = load_helper_module()
+    monkeypatch.setattr(helper.shutil, "which", lambda _name: "/usr/sbin/nft")
+    port = {"match": {"op": "==", "left": {"payload": {"protocol": "udp", "field": "dport"}}, "right": 123}}
+    chain = {"name": "input", "hook": "input", "type": "filter", "prio": -200, "policy": "accept"}
+    rules = [
+        {"chain": "input", "expr": [{"match": {"op": "==", "left": {"meta": {"key": "iifname"}}, "right": "lo"}}, {"return": None}]},
+        {"chain": "input", "expr": [port, {"match": {"op": "==", "left": {"payload": {"base": "th", "offset": 69, "len": 3}}, "right": 4}}, {"return": None}]},
+        {"chain": "input", "expr": [port, {"drop": None}]},
+    ]
+    if drift == "wrong_offset":
+        rules[1]["expr"][1]["match"]["left"]["payload"]["offset"] = 68
+    elif drift == "wrong_length":
+        rules[1]["expr"][1]["match"]["left"]["payload"]["len"] = 8
+    elif drift == "early_return":
+        rules.insert(0, {"chain": "input", "expr": [{"return": None}]})
+    elif drift == "wrong_order":
+        rules[1], rules[2] = rules[2], rules[1]
+    document = {"nftables": [{"chain": chain}, *[{"rule": rule} for rule in rules]]}
+    monkeypatch.setattr(helper, "_run", lambda command, **_kwargs: subprocess.CompletedProcess(
+        command, 0, json.dumps(document), "",
+    ))
+
+    status = helper._ntpd_client_packet_guard_status()
+
+    assert status["active"] is False
+
+
+@pytest.mark.parametrize("mode", ["ntp_client", "ntp_server", "vmware_tools"])
+def test_firewall_replace_preserves_applied_time_sync_guard(monkeypatch, tmp_path, mode):
+    """Exercise test firewall replace preserves applied time sync guard.
+
+    Args:
+        monkeypatch: Replace host operations with controlled test observations.
+        tmp_path: Isolated filesystem fixture for applied configuration and evidence.
+        mode: Selected appliance clock mode under test.
+    """
+    helper = load_helper_module()
+    applied = tmp_path / "ntp.conf"
+    if mode == "ntp_server":
+        _write_applied_server_config(applied)
+    else:
+        applied.write_text(
+            f"# Managed by Atlaso. Local changes may be overwritten.\n# Atlaso time mode: {mode}\n# Atlaso NTP enabled: false\n",
+            encoding="utf-8",
+        )
+    monkeypatch.setattr(helper, "NTP_CONFIG_PATH", applied)
+    program = "flush ruleset\ntable inet atlaso {}\n"
+    guarded = helper._ntpd_preserve_client_packet_guard(program)
+    assert ("table inet atlaso_time_sync" in guarded) is (mode in {"ntp_client", "ntp_server"})
+    if mode == "ntp_server":
+        assert "ip daddr 192.0.2.15 udp dport 123 return" in guarded
+        assert "ip6 daddr 2001:db8::15 udp dport 123 return" in guarded
+    assert guarded.startswith(program)
+    # A table-scoped NAT update must neither replace nor weaken the guard.
+    nat = "flush table ip atlaso_nat\n"
+    assert helper._ntpd_preserve_client_packet_guard(nat) == nat
+
+
+def test_nft_file_and_stdin_paths_publish_guard_in_same_transaction(monkeypatch, tmp_path):
+    """Exercise test nft file and stdin paths publish guard in same transaction.
+
+    Args:
+        monkeypatch: Replace host operations with controlled test observations.
+        tmp_path: Isolated filesystem fixture for applied configuration and evidence.
+    """
+    helper = load_helper_module()
+    applied = tmp_path / "ntp.conf"
+    applied.write_text("# Atlaso NTP enabled: false\n# Atlaso time mode: ntp_client\n", encoding="utf-8")
+    monkeypatch.setattr(helper, "NTP_CONFIG_PATH", applied)
+    firewall = tmp_path / "firewall.nft"
+    firewall.write_text("flush ruleset\n", encoding="utf-8")
+    calls = []
+
+    def run(command, **kwargs):
+        """Exercise run.
+
+        Args:
+            command: Native command submitted by the helper.
+            **kwargs: Additional keyword options retained by the fixture adapter.
+        """
+        calls.append((command, kwargs))
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    monkeypatch.setattr(helper.subprocess, "run", run)
+    helper._run(["nft", "-f", str(firewall)])
+    helper._run_with_input(["/usr/sbin/nft", "-f", "-"], "flush ruleset\n")
+    assert len(calls) == 2
+    for command, kwargs in calls:
+        assert command[-1] == "-"
+        assert "flush ruleset\n" in kwargs["input"]
+        assert "udp dport 123 drop" in kwargs["input"]
+    assert firewall.read_text(encoding="utf-8") == "flush ruleset\n"
