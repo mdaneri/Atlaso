@@ -170,6 +170,7 @@ def mutate_physical_interface_desired_state(
     """
     try:
         acquire_network_objects_write_lock(db)
+        db.refresh(interface)
         update_result = update_physical_interface_desired_state(
             db,
             interface,

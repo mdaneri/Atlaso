@@ -540,7 +540,7 @@ def managed_routing_firewall_rules(
                 continue
             rules.append(
                 _routing_firewall_rule(
-                    name=f"isolate-{_slug(lab['name'])}-to-{_slug(management['name'])}",
+                    name=_routing_generated_name("isolate", lab["name"], management["name"]),
                     action="drop",
                     source_interface=lab["name"],
                     source_networks=lab["networks"],
@@ -551,7 +551,7 @@ def managed_routing_firewall_rules(
             )
             rules.append(
                 _routing_firewall_rule(
-                    name=f"isolate-{_slug(management['name'])}-to-{_slug(lab['name'])}",
+                    name=_routing_generated_name("isolate", management["name"], lab["name"]),
                     action="drop",
                     source_interface=management["name"],
                     source_networks=management["networks"],
@@ -571,7 +571,7 @@ def managed_routing_firewall_rules(
                 continue
             rules.append(
                 _routing_firewall_rule(
-                    name=f"route-{_slug(source['name'])}-to-{_slug(destination['name'])}",
+                    name=_routing_generated_name("route", source["name"], destination["name"]),
                     destination_interface=destination["name"],
                     policy_phase="automatic",
                     action="accept",
@@ -1408,6 +1408,20 @@ def _slug(value: str) -> str:
     return slug or "dhcp-scope"
 
 
+def _routing_generated_name(prefix: str, source_name: str, destination_name: str, family: int = 0) -> str:
+    """Return a bounded stable name using exact directed interface identities.
+
+    Args:
+        prefix: Generated policy kind, keeping isolation and routing names distinct.
+        source_name: Exact ingress interface identity.
+        destination_name: Exact egress interface identity.
+        family: IP version, or zero for a rule covering both address families.
+    """
+    identity = json.dumps([source_name, destination_name, family], ensure_ascii=False, separators=(",", ":"))
+    digest = hashlib.sha256(identity.encode("utf-8")).hexdigest()
+    return f"{prefix}-{digest}"
+
+
 def _routing_default_deny_name(source_name: str, destination_name: str, family: int) -> str:
     """Return a stable bounded name for one directed automatic Access denial.
 
@@ -1416,9 +1430,7 @@ def _routing_default_deny_name(source_name: str, destination_name: str, family: 
         destination_name: Exact egress interface identity.
         family: IP version governed by this rule.
     """
-    identity = json.dumps([source_name, destination_name, family], ensure_ascii=False, separators=(",", ":"))
-    digest = hashlib.sha256(identity.encode("utf-8")).hexdigest()
-    return f"routing-default-deny-ipv{family}-{digest}"
+    return _routing_generated_name(f"routing-default-deny-ipv{family}", source_name, destination_name, family)
 
 
 def _ordered_unique(values: list[str]) -> list[str]:

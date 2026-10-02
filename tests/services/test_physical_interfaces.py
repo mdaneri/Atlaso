@@ -672,3 +672,61 @@ def test_physical_interface_writer_waits_for_settings_capture_lock(client, monke
     assert admitted.is_set()
     with SessionLocal() as db:
         assert _physical_interface(db).mtu == 1450
+
+
+def test_physical_interface_mutation_refreshes_after_inventory_writer(client, monkeypatch):
+    """A completed inventory writer cannot leave transport-cached interface identity stale.
+
+    Args:
+        client: Application fixture providing an isolated seeded database.
+        monkeypatch: Interleave the committed inventory state before service lock admission.
+    """
+    from atlaso.app.services import physical_interfaces as service
+    from atlaso.app.services.network_objects import acquire_network_objects_write_lock
+
+    with SessionLocal() as setup:
+        interface = _physical_interface(setup)
+        interface.role = "access"
+        interface.mode = "access"
+        interface.admin_state = "up"
+        interface.ip_cidr = "192.168.50.1/24"
+        dns = setup.scalar(select(DnsSettings))
+        dns.enabled = True
+        dns.listen_interface = interface.name
+        dns.listen_address = "192.168.50.1"
+        setup.commit()
+        interface_id = interface.id
+
+    with SessionLocal() as transport:
+        cached = transport.get(PhysicalInterface, interface_id)
+        old_name = cached.name
+
+        def admit_after_inventory(db):
+            """Commit renamed inventory and its retargeted dependent before admission.
+
+            Args:
+                db: Transport session whose cached object must be refreshed after admission.
+            """
+            with SessionLocal() as inventory:
+                acquire_network_objects_write_lock(inventory)
+                current = inventory.get(PhysicalInterface, interface_id)
+                current.name = "eth-renamed"
+                current.host_ip_cidr = "192.168.50.2/24"
+                inventory.scalar(select(DnsSettings)).listen_interface = current.name
+                inventory.commit()
+            assert cached.name == old_name
+            acquire_network_objects_write_lock(db)
+
+        monkeypatch.setattr(service, "acquire_network_objects_write_lock", admit_after_inventory)
+        result = mutate_physical_interface_desired_state(
+            transport, cached, PhysicalInterfaceMutation(ip_cidr="192.168.60.1/24"),
+            audit=_mutation_audit("test_post_inventory_refresh"),
+        )
+        assert result.interface.name == "eth-renamed"
+        assert result.interface.host_ip_cidr == "192.168.50.2/24"
+
+    with SessionLocal() as verify:
+        dns = verify.scalar(select(DnsSettings))
+        assert dns.listen_interface == "eth-renamed"
+        assert dns.listen_address == "192.168.60.1"
+        assert verify.get(PhysicalInterface, interface_id).ip_cidr == "192.168.60.1/24"

@@ -1833,7 +1833,8 @@ preserved with their affected subsystem below. Keep new requirements at their to
   desired previews and old/candidate/final handoff rules. Never infer root SSH enablement from firewall admission, and
   never open TCP/22 merely because an unflagged access network exists.
 - Physical-interface desired-state updates from the API and UI use one atomic domain service. Its writers acquire
-  the shared network-object transaction lock before mutation so console Settings capture cannot race address saves.
+  the shared network-object transaction lock before mutation and refresh the transport-cached interface after admission
+  so inventory renames and console Settings capture cannot race address saves.
   VLAN create/edit/enable/disable/delete, missing-interface removal, and host-inventory reconciliation use the same
   lock before their database reads and writes; flagged VLANs and parent removal can change management paths.
   Capture the previous
