@@ -1094,7 +1094,8 @@ preserved with their affected subsystem below. Keep new requirements at their to
   Bound issuance and publication select only the appliance management leaf, leaving unrelated TLS-service certificates
   and CRL files untouched. Completed recovery requires the applied root identity/paths and holds writer admission
   through publication, capturing a root-private public receipt without advancing its CA baseline. After reload, stable
-  readiness and exact served-leaf proof, acknowledge that receipt under writer admission, rechecking completed paths,
+  readiness and served DER fingerprint matching the task receipt, acknowledge that same receipt digest under writer
+  admission, rechecking completed paths,
   applied Settings, CA baseline and published leaf. Preserve other baseline leaves and pending CA intent; outer recovery
   failure never acknowledges publication. A completed Network binding selects this scoped path
   regardless of first-boot marker completeness; validate its applied nginx site without requiring the first-boot marker.

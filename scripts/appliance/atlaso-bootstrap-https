@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -666,22 +667,26 @@ def console_publication_path(network_job_id: str) -> Path:
     return directory / (network_job_id + ".publication.json")
 
 
-def acknowledge_console_publication(network_job_id: str) -> int:
+def acknowledge_console_publication(network_job_id: str, receipt_sha256: str) -> int:
     """Acknowledge captured publication only after the helper proves management readiness.
 
     Args:
         network_job_id: Exact completed Network task identifying the pending public receipt.
+        receipt_sha256: Immutable receipt digest captured by the helper before served-leaf verification.
     """
     try:
         path = console_publication_path(network_job_id)
         descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
-        with os.fdopen(descriptor, "r", encoding="utf-8") as stream:
+        with os.fdopen(descriptor, "rb") as stream:
             metadata = os.fstat(stream.fileno())
             if (not stat.S_ISREG(metadata.st_mode) or metadata.st_nlink != 1
                     or metadata.st_size > 2097152
                     or (hasattr(os, "getuid") and (metadata.st_uid != 0 or metadata.st_mode & 0o077))):
                 raise ValueError("Console publication receipt is unsafe")
-            receipt = json.load(stream)
+            raw = stream.read(2097153)
+            if not re.fullmatch(r"[0-9a-f]{64}", receipt_sha256) or hashlib.sha256(raw).hexdigest() != receipt_sha256:
+                raise ValueError("Verified console publication receipt changed")
+            receipt = json.loads(raw)
         if receipt["network_job_id"] != network_job_id:
             raise ValueError("Console publication receipt binding changed")
         with SessionLocal() as db:
@@ -711,7 +716,7 @@ def acknowledge_console_publication(network_job_id: str) -> int:
             db.commit()
         # Retain the public receipt as evidence; never remove a concurrently replaced publication.
         return 0
-    except (OSError, ValueError, KeyError, TypeError, SQLAlchemyError):
+    except (OSError, UnicodeError, ValueError, KeyError, TypeError, SQLAlchemyError):
         print("Console publication acknowledgement failed; preserve the pending receipt and CA baseline.")
         return 2
 
@@ -987,8 +992,8 @@ if __name__ == "__main__":
             # Never disclose database connection details or decrypted material.
             verified = False
         raise SystemExit(0 if verified else 2)
-    if len(sys.argv) == 3 and sys.argv[1] == "--acknowledge-console-publication":
-        raise SystemExit(acknowledge_console_publication(sys.argv[2]))
+    if len(sys.argv) == 4 and sys.argv[1] == "--acknowledge-console-publication":
+        raise SystemExit(acknowledge_console_publication(sys.argv[2], sys.argv[3]))
     if sys.argv[1:]:
         raise SystemExit(2)
     raise SystemExit(main())

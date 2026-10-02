@@ -26109,20 +26109,57 @@ def _console_first_boot_https_contract_is_complete(*, require_marker: bool = Tru
             and _console_management_config_contract_is_complete(management))
 
 
-def _console_management_leaf_is_active() -> bool:
-    """Prove the loopback nginx worker serves the exact published leaf before acknowledgement."""
+def _console_publication_fingerprint(network_job_id: str) -> tuple[str, str]:
+    """Capture the task-bound published leaf and immutable receipt digest before readiness.
+
+    Args:
+        network_job_id: Completed Network task selecting the root-private publication receipt.
+    """
+    if not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", network_job_id):
+        raise ValueError("Invalid completed Network publication binding")
+    directory = CONSOLE_BOOTSTRAP_BINDING_DIRECTORY
+    metadata = directory.lstat()
+    if (directory.is_symlink() or not stat.S_ISDIR(metadata.st_mode)
+            or (fcntl is not None and (metadata.st_uid != 0 or metadata.st_mode & 0o077))):
+        raise ValueError("Console publication directory is unsafe")
+    path = directory / (network_job_id + ".publication.json")
+    descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+    with os.fdopen(descriptor, "rb") as stream:
+        metadata = os.fstat(stream.fileno())
+        if (not stat.S_ISREG(metadata.st_mode) or metadata.st_nlink != 1 or metadata.st_size > 2097152
+                or (fcntl is not None and (metadata.st_uid != 0 or metadata.st_mode & 0o077))):
+            raise ValueError("Console publication receipt is unsafe")
+        raw = stream.read(2097153)
+    current = path.lstat()
+    if path.is_symlink() or (current.st_dev, current.st_ino) != (metadata.st_dev, metadata.st_ino) or len(raw) > 2097152:
+        raise ValueError("Console publication receipt changed")
+    try:
+        receipt = json.loads(raw)
+        payload = json.loads(receipt["public_payload"])
+        leaves = [row for row in payload["certificates"] if row.get("managed_owner") == "appliance:https"]
+        if receipt["network_job_id"] != network_job_id or len(leaves) != 1:
+            raise ValueError("Console publication receipt binding is incomplete")
+        fingerprint = leaves[0]["fingerprint"]
+        if not isinstance(fingerprint, str) or not re.fullmatch(r"[0-9a-f]{64}", fingerprint):
+            raise ValueError("Console publication fingerprint is unavailable")
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ValueError("Console publication receipt is invalid") from exc
+    return fingerprint, hashlib.sha256(raw).hexdigest()
+
+
+def _console_management_leaf_is_active(expected_fingerprint: str) -> bool:
+    """Compare the worker leaf with the captured recovery publication, independent of nginx paths.
+
+    Args:
+        expected_fingerprint: SHA-256 DER fingerprint from the immutable task-bound publication receipt.
+    """
     try:
         config = NGINX_MANAGEMENT_SITE_PATH.read_text(encoding="utf-8")
-        certificate = re.search(r"(?m)^\s*ssl_certificate\s+([^;]+);", config)
         listener = re.search(r"(?m)^\s*listen\s+(?:127\.0\.0\.1:)?(\d+)\s+ssl\b", config)
-        if certificate is None or listener is None:
-            return False
-        installed = Path(certificate.group(1).strip()).read_text(encoding="utf-8")
-        leaf = re.search(r"-----BEGIN CERTIFICATE-----.*?-----END CERTIFICATE-----", installed, re.S)
-        if leaf is None:
+        if listener is None:
             return False
         served = ssl.get_server_certificate(("127.0.0.1", int(listener.group(1))), timeout=3)
-        return ssl.PEM_cert_to_DER_cert(served) == ssl.PEM_cert_to_DER_cert(leaf.group(0))
+        return hashlib.sha256(ssl.PEM_cert_to_DER_cert(served)).hexdigest() == expected_fingerprint
     except (OSError, ValueError, UnicodeError):
         return False
 
@@ -26266,6 +26303,7 @@ def _recover_console_management_plane(timeout_seconds: int = 60, *, network_job_
             ["systemctl", nginx_action, "nginx.service"],
         )
         management_https_enabled, readiness_checks = _console_management_readiness_checks()
+        publication = _console_publication_fingerprint(network_job_id) if network_job_id is not None and management_https_enabled else None
 
         deadline = time.monotonic() + timeout_seconds
         consecutive_successes = 0
@@ -26280,7 +26318,7 @@ def _recover_console_management_plane(timeout_seconds: int = 60, *, network_job_
                 for label, _url, _insecure, expected in readiness_checks
             )
             if ready and network_job_id is not None and management_https_enabled:
-                ready = _console_management_leaf_is_active()
+                ready = _console_management_leaf_is_active(publication[0])
                 statuses["published management leaf"] = "active" if ready else "not active"
             if ready:
                 consecutive_successes += 1
@@ -26306,8 +26344,8 @@ def _recover_console_management_plane(timeout_seconds: int = 60, *, network_job_
         if network_job_id is not None and management_https_enabled:
             _console_recovery_command("acknowledging ready management certificate publication",
                                       ["/opt/atlaso/.venv/bin/python", "/opt/atlaso/bin/atlaso-bootstrap-https",
-                                       "--acknowledge-console-publication", network_job_id])
-    except ValueError as exc:
+                                       "--acknowledge-console-publication", network_job_id, publication[1]])
+    except (OSError, UnicodeError, ValueError) as exc:
         print(f"Management plane recovery failed: {exc}", file=sys.stderr)
         return 1
 

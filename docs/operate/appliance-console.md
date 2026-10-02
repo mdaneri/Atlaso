@@ -210,7 +210,8 @@ untouched. Its hostname and terminal SANs come from applied Settings, so pending
 recovery leaf. Publication uses the certificate/key paths captured in applied Settings, keeping nginx on the refreshed
 leaf even when its filenames use a prior hostname. Missing applied identity or paths stops recovery.
 A missing or changed applied CA root requires
-ordinary CA Apply before recovery. After nginx reload, stable readiness and exact served-leaf proof, successful publication
+ordinary CA Apply before recovery. After nginx reload, stable readiness and served-leaf proof against the task-bound
+publication receipt, successful publication
 records only the refreshed leaf in the CA baseline, preserving unrelated pending CA intent; a failed publication
 does not advance that baseline. First-boot publication records its exact captured CA baseline.
 

@@ -2233,7 +2233,8 @@ def test_console_management_plane_recovery_retries_bootstrap_and_verifies_readin
         lambda name: f"/usr/bin/{name}" if name in {"curl", "nginx"} else None,
     )
     monkeypatch.setattr(helper.time, "sleep", lambda _seconds: None)
-    monkeypatch.setattr(helper, "_console_management_leaf_is_active", lambda: True)
+    monkeypatch.setattr(helper, "_console_management_leaf_is_active", lambda expected: True)
+    monkeypatch.setattr(helper, "_console_publication_fingerprint", lambda job: ("a" * 64, "b" * 64))
     commands: list[list[str]] = []
     monkeypatch.setattr(helper, "CONSOLE_BOOTSTRAP_BINDING_DIRECTORY", tmp_path / "binding")
     monkeypatch.setattr(helper, "fcntl", None)
@@ -3165,9 +3166,15 @@ def test_completed_recovery_publishes_only_management_and_records_exact_baseline
         with SessionLocal() as db:
             appliance_console._management_interface(db).ip_cidr = "192.0.2.75/24"
             db.commit()
-        assert bootstrap.acknowledge_console_publication("job_scoped_ca") == 2
+        assert bootstrap.acknowledge_console_publication("job_scoped_ca", bootstrap.hashlib.sha256((publication_directory / "job_scoped_ca.publication.json").read_bytes()).hexdigest()) == 2
+    if not apply_result and not ready and pending == "certificate":
+        receipt_path = publication_directory / "job_scoped_ca.publication.json"
+        verified_digest = bootstrap.hashlib.sha256(receipt_path.read_bytes()).hexdigest()
+        # Equivalent JSON at a replaced receipt must not reuse the earlier served-leaf proof.
+        receipt_path.write_bytes(receipt_path.read_bytes() + b"\n")
+        assert bootstrap.acknowledge_console_publication("job_scoped_ca", verified_digest) == 2
     if not apply_result and ready:
-        assert bootstrap.acknowledge_console_publication("job_scoped_ca") == 0
+        assert bootstrap.acknowledge_console_publication("job_scoped_ca", bootstrap.hashlib.sha256((publication_directory / "job_scoped_ca.publication.json").read_bytes()).hexdigest()) == 0
     assert [leaf["managed_owner"] for leaf in captured[0]["certificates"]] == ["appliance:https"]
     management_leaf = captured[0]["certificates"][0]
     assert management_leaf["cert_path"] == "/etc/atlaso/https/certs/nginx-previous-hostname.crt"
@@ -3248,25 +3255,39 @@ def test_completed_http_only_recovery_does_not_require_or_publish_ca(client, mon
     assert bootstrap.main("job_http_only") == nginx_result
 
 
-@pytest.mark.parametrize("served", [b"published leaf", b"old worker leaf"])
-def test_console_management_leaf_proof_rejects_old_worker(monkeypatch, tmp_path, served):
-    """Compare the worker leaf against the installed publication without trusting HTTP status alone.
+@pytest.mark.parametrize("installed", [b"published leaf", b"other valid nginx leaf"])
+@pytest.mark.parametrize("served", [b"published leaf", b"other valid nginx leaf"])
+def test_console_management_leaf_proof_rejects_old_worker(monkeypatch, tmp_path, served, installed):
+    """Reject a valid nginx leaf at a different path unless it matches the task publication.
 
     Args:
         monkeypatch: Replace the bounded loopback TLS transport.
         tmp_path: Synthetic public certificate and applied site paths.
-        served: Current published identity or the stale pre-reload worker identity.
+        served: Current published identity or a different valid nginx worker identity.
+        installed: The leaf currently present at the nginx path, independent of the captured publication.
     """
     helper = load_helper_module()
     certificate = tmp_path / "leaf.pem"
-    certificate.write_text(helper.ssl.DER_cert_to_PEM_cert(b"published leaf"))
+    certificate.write_text(helper.ssl.DER_cert_to_PEM_cert(installed))
+    directory = tmp_path / "publication"
+    directory.mkdir(mode=0o700)
+    receipt = {"network_job_id": "job_proven_leaf", "public_payload": json.dumps({"certificates": [
+        {"managed_owner": "appliance:https", "fingerprint": helper.hashlib.sha256(b"published leaf").hexdigest()}]})}
+    raw = json.dumps(receipt).encode()
+    path = directory / "job_proven_leaf.publication.json"
+    path.write_bytes(raw)
+    path.chmod(0o600)
+    monkeypatch.setattr(helper, "CONSOLE_BOOTSTRAP_BINDING_DIRECTORY", directory)
+    monkeypatch.setattr(helper, "fcntl", None)
     site = tmp_path / "management.conf"
     site.write_text(f"listen 127.0.0.1:8443 ssl;\nssl_certificate {certificate};\n")
     monkeypatch.setattr(helper, "NGINX_MANAGEMENT_SITE_PATH", site)
     calls = []
     monkeypatch.setattr(helper.ssl, "get_server_certificate",
                         lambda address, *, timeout: calls.append((address, timeout)) or helper.ssl.DER_cert_to_PEM_cert(served))
-    assert helper._console_management_leaf_is_active() is (served == b"published leaf")
+    fingerprint, digest = helper._console_publication_fingerprint("job_proven_leaf")
+    assert digest == helper.hashlib.sha256(raw).hexdigest()
+    assert helper._console_management_leaf_is_active(fingerprint) is (served == b"published leaf")
     assert calls == [(("127.0.0.1", 8443), 3)]
 
 
@@ -3284,7 +3305,8 @@ def test_console_acknowledges_publication_only_after_outer_recovery(monkeypatch,
     monkeypatch.setattr(helper, "fcntl", None)
     monkeypatch.setattr(helper, "_console_first_boot_https_contract_is_complete", lambda **kwargs: True)
     monkeypatch.setattr(helper, "_console_bootstrap_is_idle", lambda: True)
-    monkeypatch.setattr(helper, "_console_management_leaf_is_active", lambda: True)
+    monkeypatch.setattr(helper, "_console_management_leaf_is_active", lambda expected: True)
+    monkeypatch.setattr(helper, "_console_publication_fingerprint", lambda job: ("a" * 64, "b" * 64))
     monkeypatch.setattr(helper, "_console_management_readiness_checks", lambda: (True, (("app", "https://127.0.0.1/", True, "200"),)))
     monkeypatch.setattr(helper, "_console_management_http_status", lambda *args, **kwargs: "200")
     monkeypatch.setattr(helper.shutil, "which", lambda name: "/usr/bin/" + name)
