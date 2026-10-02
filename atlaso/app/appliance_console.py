@@ -1292,7 +1292,8 @@ def _refresh_management_addresses(
             observed = matches[0] if len(matches) == 1 else None
             required = []
             if interface is not None and observed is not None:
-                required.append((4, observed.host_ip_cidr, expected[1] if expected[0] != "dhcp" else None))
+                observed_ipv4 = observed.host_dhcp_ip_cidr if expected[0] == "dhcp" else observed.host_ip_cidr
+                required.append((4, observed_ipv4, expected[1] if expected[0] != "dhcp" else None))
                 if expected[2]:
                     required.append((6, observed.host_ipv6_cidr, expected[3]))
             verified = bool(
@@ -1317,7 +1318,7 @@ def _refresh_management_addresses(
                 # reconcile unrelated desired state. Publish only the verified target.
                 acquire_network_objects_write_lock(db)
                 db.refresh(interface)
-                interface.host_ip_cidr = observed.host_ip_cidr
+                interface.host_ip_cidr = observed_ipv4
                 interface.host_ipv6_cidr = observed.host_ipv6_cidr
                 pending = (interface.ipv4_method, interface.ip_cidr, interface.ipv6_enabled, interface.ipv6_cidr) != expected
                 if expected_paths is not None:

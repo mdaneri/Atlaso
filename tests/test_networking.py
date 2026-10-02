@@ -1194,3 +1194,26 @@ def test_parse_linux_ip_interfaces_rejects_unusable_address_states(state, family
     row["addr_info"].append({"family": family, "local": good_address, "prefixlen": prefix,
                              "scope": "global", "valid_life_time": 300})
     assert getattr(parse_linux_ip_interfaces(json.dumps([row]))[0], field) == f"{good_address}/{prefix}"
+
+
+@pytest.mark.parametrize("source", [{"dynamic": True}, {"flags": ["dynamic"]}])
+def test_native_dhcp_observation_skips_lingering_static_and_expired_lease(source):
+    """Retain a usable DHCP candidate independently of the first static address.
+
+    Args:
+        source: Supported native dynamic-source representation.
+    """
+    addresses = [
+        {"family": "inet", "local": "192.0.2.1", "prefixlen": 24, "scope": "global"},
+        {"family": "inet", "local": "192.0.2.2", "prefixlen": 24, "scope": "global",
+         "valid_life_time": 0, **source},
+    ]
+    row = {"ifname": "eth0", "link_type": "ether", "address": "00:15:5d:aa:bb:01", "addr_info": addresses}
+    observed = parse_linux_ip_interfaces(json.dumps([row]))[0]
+    assert observed.host_ip_cidr == "192.0.2.1/24"
+    assert observed.host_dhcp_ip_cidr is None
+    addresses.append({"family": "inet", "local": "192.0.2.3", "prefixlen": 24, "scope": "global",
+                      "valid_life_time": 300, **source})
+    observed = parse_linux_ip_interfaces(json.dumps([row]))[0]
+    assert observed.host_ip_cidr == "192.0.2.1/24"
+    assert observed.host_dhcp_ip_cidr == "192.0.2.3/24"

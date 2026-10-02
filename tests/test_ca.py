@@ -68,6 +68,178 @@ def development_root_material():
     )
 
 
+def test_managed_certificate_uses_bounded_cn_and_preserves_full_dns_identity():
+    """Issue managed DNS names through 253 bytes and verify SAN hostname matching only."""
+    from cryptography import x509
+    from cryptography.x509.oid import NameOID
+    from cryptography.x509.verification import PolicyBuilder, Store, VerificationError
+
+    names = [
+        ".".join(("a" * 61, "xy")),
+        ".".join(("a" * 62, "xy")),
+        ".".join(("a" * 63, "xy")),
+        ".".join(("a" * 63, "b" * 63, "c" * 63, "d" * 61)),
+    ]
+    assert [len(name.encode("utf-8")) for name in names] == [64, 65, 66, 253]
+
+    settings = CaSettings(
+        enabled=True,
+        root_common_name="Atlaso Test Root",
+        organization="Atlaso",
+        key_algorithm="RSA",
+        key_size=2048,
+        digest_algorithm="sha256",
+        root_valid_days=3650,
+        storage_path="/etc/atlaso/ca",
+    )
+    assert ensure_root_ca_material(settings) is True
+    root = x509.load_pem_x509_certificate(settings.root_certificate_pem.encode("ascii"))
+    profile = CaProfile(
+        id=901,
+        name="Service TLS",
+        certificate_type="server",
+        validity_days=30,
+        key_algorithm="RSA",
+        key_size=2048,
+        key_usage="digitalSignature,keyEncipherment",
+        extended_key_usage="serverAuth",
+        enabled=True,
+    )
+
+    issued = []
+    for name in names:
+        record = CaCertificate(
+            common_name=name,
+            subject_alt_names=name,
+            ip_addresses="192.0.2.1",
+            profile_id=profile.id,
+            managed_owner="appliance:https",
+            status="planned",
+            enabled=True,
+        )
+        assert issue_certificate(settings, [profile], record) is True
+        certificate = x509.load_pem_x509_certificate(record.certificate_pem.encode("ascii"))
+        expected_common_name = name if len(name.encode("utf-8")) <= 64 else "Atlaso managed service"
+        assert certificate.subject.get_attributes_for_oid(NameOID.COMMON_NAME)[0].value == expected_common_name
+        assert record.common_name == name
+        assert certificate.extensions.get_extension_for_class(
+            x509.SubjectAlternativeName
+        ).value.get_values_for_type(x509.DNSName) == [name]
+        assert [
+            str(address)
+            for address in certificate.extensions.get_extension_for_class(
+                x509.SubjectAlternativeName
+            ).value.get_values_for_type(x509.IPAddress)
+        ] == ["192.0.2.1"]
+        issued.append(certificate)
+
+    verifier = PolicyBuilder().store(Store([root])).build_server_verifier(x509.DNSName(names[-1]))
+    assert verifier.verify(issued[-1], [])
+    with pytest.raises(VerificationError):
+        PolicyBuilder().store(Store([root])).build_server_verifier(
+            x509.DNSName("mismatch.example.test")
+        ).verify(issued[-1], [])
+
+
+def test_long_common_name_fallback_requires_managed_certificate_and_matching_san():
+    """Keep manual issuance unchanged and require the SAN to retain full identity."""
+    settings = CaSettings(
+        enabled=True,
+        root_common_name="Atlaso Test Root",
+        organization="Atlaso",
+        key_algorithm="RSA",
+        key_size=2048,
+        digest_algorithm="sha256",
+        root_valid_days=3650,
+        storage_path="/etc/atlaso/ca",
+    )
+    assert ensure_root_ca_material(settings) is True
+    profile = CaProfile(
+        id=902,
+        name="Service TLS",
+        certificate_type="server",
+        validity_days=30,
+        key_algorithm="RSA",
+        key_size=2048,
+        key_usage="digitalSignature,keyEncipherment",
+        extended_key_usage="serverAuth",
+        enabled=True,
+    )
+    long_name = ".".join(("a" * 62, "xy"))
+
+    manual = CaCertificate(
+        common_name=long_name,
+        subject_alt_names=long_name,
+        profile_id=profile.id,
+        status="planned",
+        enabled=True,
+    )
+    with pytest.raises(ValueError, match="length"):
+        issue_certificate(settings, [profile], manual)
+
+    managed_without_matching_san = CaCertificate(
+        common_name=long_name,
+        subject_alt_names="other.example.test",
+        profile_id=profile.id,
+        managed_owner="appliance:https",
+        status="planned",
+        enabled=True,
+    )
+    with pytest.raises(ValueError, match="length"):
+        issue_certificate(settings, [profile], managed_without_matching_san)
+
+
+def test_csr_subject_is_preserved_when_request_common_name_is_long():
+    """Keep CSR-owned subjects intact when the request row has a long DNS name."""
+    from cryptography import x509
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.asymmetric import rsa
+    from cryptography.x509.oid import NameOID
+
+    settings = CaSettings(
+        enabled=True,
+        root_common_name="Atlaso Test Root",
+        organization="Atlaso",
+        key_algorithm="RSA",
+        key_size=2048,
+        digest_algorithm="sha256",
+        root_valid_days=3650,
+        storage_path="/etc/atlaso/ca",
+    )
+    assert ensure_root_ca_material(settings) is True
+    profile = CaProfile(
+        id=903,
+        name="Service TLS",
+        certificate_type="server",
+        validity_days=30,
+        key_algorithm="RSA",
+        key_size=2048,
+        key_usage="digitalSignature,keyEncipherment",
+        extended_key_usage="serverAuth",
+        enabled=True,
+    )
+    name = ".".join(("a" * 62, "xy"))
+    csr_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    csr = (
+        x509.CertificateSigningRequestBuilder()
+        .subject_name(x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "CSR supplied subject")]))
+        .sign(csr_key, hashes.SHA256())
+    )
+    record = CaCertificate(
+        common_name=name,
+        subject_alt_names=name,
+        profile_id=profile.id,
+        csr_text=csr.public_bytes(serialization.Encoding.PEM).decode("ascii"),
+        status="planned",
+        enabled=True,
+    )
+
+    assert issue_certificate(settings, [profile], record) is True
+    issued = x509.load_pem_x509_certificate(record.certificate_pem.encode("ascii"))
+    assert issued.subject.get_attributes_for_oid(NameOID.COMMON_NAME)[0].value == "CSR supplied subject"
+    assert record.private_key_encrypted is None
+
+
 def test_checked_in_vmware_development_root_ca_contract():
     """Verify the repository contains only the required public development root."""
     from datetime import datetime, timezone

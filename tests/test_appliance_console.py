@@ -1580,7 +1580,8 @@ def test_console_management_refreshes_changed_dhcp_lease_before_recovery_and_set
     monkeypatch.setattr(appliance_console, "discover_host_physical_interfaces", lambda **kwargs: [
         networking.HostPhysicalInterface(
             name="eth0", mac_address="00:50:56:12:34:56", driver=None, speed=None,
-            host_ip_cidr="192.168.167.174/24", host_mtu=1500, host_admin_state="up", oper_state="up",
+            host_ip_cidr="192.168.167.172/24", host_dhcp_ip_cidr="192.168.167.174/24",
+            host_mtu=1500, host_admin_state="up", oper_state="up",
         ),
     ])
     captures = []
@@ -1697,11 +1698,15 @@ def test_console_management_waits_for_both_dynamic_families(client, monkeypatch)
         db.commit()
     observation = HostPhysicalInterface(
         name=name, mac_address=mac, driver=None, speed=None, host_ip_cidr="192.168.167.174/24",
-        host_mtu=1500, host_admin_state="up", oper_state="up",
+        host_dhcp_ip_cidr="192.168.167.174/24", host_mtu=1500, host_admin_state="up", oper_state="up",
     )
     from dataclasses import replace
 
-    observations = iter([observation, replace(observation, host_ipv6_cidr="2001:db8::174/64")])
+    observations = iter([
+        replace(observation, host_dhcp_ip_cidr=None, host_ipv6_cidr="2001:db8::174/64"),
+        observation,
+        replace(observation, host_ipv6_cidr="2001:db8::174/64"),
+    ])
     monkeypatch.setattr(appliance_console, "discover_host_physical_interfaces", lambda **kwargs: [next(observations)])
     monkeypatch.setattr(appliance_console.time, "sleep", lambda seconds: None)
     appliance_console._refresh_management_addresses(interface_id)

@@ -56,6 +56,7 @@ class HostPhysicalInterface:
         host_admin_state: Host admin state maintained by this hostphysicalinterface.
         oper_state: Oper state maintained by this hostphysicalinterface.
         host_ipv6_cidr: Host ipv6 cidr maintained by this hostphysicalinterface.
+        host_dhcp_ip_cidr: Usable IPv4 address explicitly marked dynamic by native inventory.
     """
     name: str
     mac_address: str
@@ -66,6 +67,7 @@ class HostPhysicalInterface:
     host_admin_state: str
     oper_state: str
     host_ipv6_cidr: str | None = None
+    host_dhcp_ip_cidr: str | None = None
 
 
 def normalize_interface_mode(mode: str | None) -> str:
@@ -253,12 +255,13 @@ def _interface_speed(sysfs_interface: Path) -> str | None:
     return f"{speed} Mbps"
 
 
-def _host_ip_cidr(row: dict, family: str) -> str | None:
+def _host_ip_cidr(row: dict, family: str, *, dynamic_only: bool = False) -> str | None:
     """Return host ip cidr.
 
     Args:
         row: Persistent database row affected by the operation.
         family: Family consumed by host IP CIDR.
+        dynamic_only: Require native dynamic source evidence for DHCP observation.
     """
     candidates = row.get("addr_info") or []
     for address in candidates:
@@ -267,6 +270,8 @@ def _host_ip_cidr(row: dict, family: str) -> str | None:
         if address.get("scope") in {"host", "link"}:
             continue
         flags = address.get("flags") or []
+        if dynamic_only and not (address.get("dynamic") is True or "dynamic" in flags):
+            continue
         if any(address.get(flag) or flag in flags for flag in ("tentative", "dadfailed")):
             continue
         if address.get("valid_life_time") == 0:
@@ -315,6 +320,7 @@ def parse_linux_ip_interfaces(payload: str, *, sysfs_base: Path = Path("/sys/cla
                 driver=_interface_driver(sysfs_interface),
                 speed=_interface_speed(sysfs_interface),
                 host_ip_cidr=_host_ip_cidr(row, "inet"),
+                host_dhcp_ip_cidr=_host_ip_cidr(row, "inet", dynamic_only=True),
                 host_ipv6_cidr=_host_ip_cidr(row, "inet6"),
                 host_mtu=int(row["mtu"]) if row.get("mtu") is not None else None,
                 host_admin_state="up" if "UP" in flags else "down",

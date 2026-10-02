@@ -1072,7 +1072,7 @@ preserved with their affected subsystem below. Keep new requirements at their to
 - A successful tty1 management-network correction must explicitly apply Network and Firewall from the corrected state,
   verify fresh usable addresses on an administratively and operationally up link against the completed task's Network
   snapshot before recovery, reject tentative/DAD-failed and zero-valid-lifetime addresses, and bound native acquisition
-  to 30 seconds.
+  to 30 seconds. DHCP observation requires native dynamic-source evidence and excludes lingering static addresses.
   Publish only verified target observations without reconciling inventory or changing desired state. Preserve newer
   edits as pending and stop dependent recovery when they drift. Hold the shared network-object writer lock from the
   final observation refresh through the pending-state decision and commit. Compare every completed Network management
