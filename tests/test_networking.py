@@ -292,6 +292,7 @@ def test_sync_host_inventory_cleans_removed_nic_bindings_and_retargets_survivors
                 driver="hv_netvsc",
                 speed="10000 Mbps",
                 host_ip_cidr="192.168.20.1/24",
+                host_dhcp_ip_cidr="192.168.20.1/24",
                 host_mtu=1500,
                 host_admin_state="up",
                 oper_state="up",
@@ -1217,3 +1218,33 @@ def test_native_dhcp_observation_skips_lingering_static_and_expired_lease(source
     observed = parse_linux_ip_interfaces(json.dumps([row]))[0]
     assert observed.host_ip_cidr == "192.0.2.1/24"
     assert observed.host_dhcp_ip_cidr == "192.0.2.3/24"
+
+
+@pytest.mark.parametrize("method,lease,expected", [
+    ("dhcp", "192.0.2.3/24", "192.0.2.3/24"),
+    ("dhcp", None, None),
+    ("static", "192.0.2.3/24", "192.0.2.1/24"),
+])
+def test_inventory_reconciliation_preserves_native_dhcp_source(method, lease, expected):
+    """Startup synchronization cannot replace a DHCP observation with lingering static state.
+
+    Args:
+        method: Desired IPv4 acquisition mode.
+        lease: Native dynamic candidate, absent while DHCP is unacquired.
+        expected: Address that may be persisted for certificate and Settings consumers.
+    """
+    interface = PhysicalInterface(
+        name="eth0", mac_address="00:15:5d:aa:bb:01", ipv4_method=method,
+        ip_cidr=None if method == "dhcp" else "192.0.2.1/24", host_ip_cidr=lease,
+        role="management", mode="access", admin_state="up", desired_state_source="console",
+    )
+    host = HostPhysicalInterface(
+        name=interface.name, mac_address=interface.mac_address, driver=None, speed=None,
+        host_ip_cidr="192.0.2.1/24", host_dhcp_ip_cidr=lease, host_mtu=1500,
+        host_admin_state="up", oper_state="up",
+    )
+    reconcile_host_physical_interfaces([interface], [host])
+    assert interface.host_ip_cidr == expected
+    assert interface.ipv4_method == method
+    assert interface.ip_cidr == (None if method == "dhcp" else "192.0.2.1/24")
+    assert interface.desired_state_source == "console"

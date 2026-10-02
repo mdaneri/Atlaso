@@ -1008,7 +1008,9 @@ def reconcile_host_physical_interfaces(
         by_mac[host_mac] = interface
         interface.driver = host.driver
         interface.speed = host.speed
-        interface.host_ip_cidr = host.host_ip_cidr
+        interface.host_ip_cidr = (
+            host.host_dhcp_ip_cidr if normalize_ipv4_method(interface.ipv4_method) == "dhcp" else host.host_ip_cidr
+        )
         interface.host_ipv6_cidr = host.host_ipv6_cidr
         interface.host_mtu = host.host_mtu
         interface.host_admin_state = host.host_admin_state
