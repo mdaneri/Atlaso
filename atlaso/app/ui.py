@@ -1357,7 +1357,7 @@ def managed_ca_certificate_specs(
         db: Active database session.
         reconcile: Whether service getters may initialize or reconcile desired state.
         managed_owners: Optional owner selection; management-only projection skips other services.
-        management_snapshot: Applied Settings inputs for recovery certificate identity.
+        management_snapshot: Applied Settings identity and active nginx publication paths.
     """
     specs: list[ManagedCertificateSpec] = []
     if management_snapshot is not None:
@@ -1375,7 +1375,12 @@ def managed_ca_certificate_specs(
         appliance_fqdn = appliance.fqdn
     appliance_ips = management_ui_addresses(db)
     appliance_ips.extend(address for address in terminal_ips if address not in appliance_ips)
-    appliance_cert, appliance_key, appliance_chain = ca_service_cert_paths("https", appliance_fqdn)
+    if management_snapshot is not None:
+        appliance_cert = management_snapshot["management_https_cert_path"]
+        appliance_key = management_snapshot["management_https_key_path"]
+        appliance_chain = f"{PurePosixPath(appliance_cert).with_suffix('')}-chain.pem"
+    else:
+        appliance_cert, appliance_key, appliance_chain = ca_service_cert_paths("https", appliance_fqdn)
     specs.append(
         ManagedCertificateSpec(
             owner="appliance:https",

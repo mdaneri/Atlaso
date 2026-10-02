@@ -2853,7 +2853,7 @@ def test_completed_bootstrap_refreshes_bound_network_without_first_boot_reconcil
         return ["intentional test stop before certificate publication"]
 
     monkeypatch.setattr(bootstrap, "recovery_root_matches_baseline", lambda db: True)
-    monkeypatch.setattr(bootstrap, "load_appliance_apply_baselines", lambda db: {"appliance_settings": {"config_preview": json.dumps({"fqdn": "applied.example.test", "management_https_enabled": True, "web_terminal_enabled": False, "web_terminal_addresses": []})}})
+    monkeypatch.setattr(bootstrap, "load_appliance_apply_baselines", lambda db: {"appliance_settings": {"config_preview": json.dumps({"fqdn": "applied.example.test", "management_https_enabled": True, "web_terminal_enabled": False, "web_terminal_addresses": [], "management_https_cert_path": "/etc/atlaso/https/certs/applied.crt", "management_https_key_path": "/etc/atlaso/https/certs/applied.key"})}})
     monkeypatch.setattr(bootstrap, "ensure_recovery_ca_state", guarded_issuance)
     assert bootstrap.main("job_completed_network") == 2
     assert called == ["job_completed_network"]
@@ -2884,7 +2884,7 @@ def test_bound_bootstrap_preserves_applied_front_door(client, monkeypatch, tmp_p
     monkeypatch.setattr(bootstrap, "CA_STAGED_CONFIG_PATH", str(tmp_path / "ca.json"))
     calls = []
     monkeypatch.setattr(bootstrap, "recovery_root_matches_baseline", lambda db: True)
-    monkeypatch.setattr(bootstrap, "load_appliance_apply_baselines", lambda db: {"appliance_settings": {"config_preview": json.dumps({"fqdn": "applied.example.test", "management_https_enabled": True, "web_terminal_enabled": False, "web_terminal_addresses": []})}})
+    monkeypatch.setattr(bootstrap, "load_appliance_apply_baselines", lambda db: {"appliance_settings": {"config_preview": json.dumps({"fqdn": "applied.example.test", "management_https_enabled": True, "web_terminal_enabled": False, "web_terminal_addresses": [], "management_https_cert_path": "/etc/atlaso/https/certs/applied.crt", "management_https_key_path": "/etc/atlaso/https/certs/applied.key"})}})
     monkeypatch.setattr(bootstrap, "record_ca_publication_baseline", lambda *args, **kwargs: None)
     monkeypatch.setattr(bootstrap, "ensure_recovery_ca_state", lambda db, job, **kwargs: calls.append(job) or [])
     monkeypatch.setattr(bootstrap, "render_ca_apply_payload", lambda *_args, **_kwargs: '{"root": {}, "certificates": []}')
@@ -2980,7 +2980,7 @@ def test_console_recovery_cli_dispatches_completed_task_id(monkeypatch):
     assert calls == [("recover-management-plane", ["job_0123456789ab"])]
 
 
-@pytest.mark.parametrize("pending", ["service", "certificate", "root", "root_key", "settings", "missing_settings"])
+@pytest.mark.parametrize("pending", ["service", "certificate", "root", "root_key", "settings", "missing_settings", "missing_paths"])
 @pytest.mark.parametrize("apply_result", [0, 1])
 def test_completed_recovery_publishes_only_management_and_records_exact_baseline(client, monkeypatch, tmp_path, pending, apply_result):
     """Keep unrelated intent pending and acknowledge the management leaf only after success.
@@ -3036,9 +3036,15 @@ def test_completed_recovery_publishes_only_management_and_records_exact_baseline
         baselines["appliance_settings"] = {"config_preview": json.dumps({
             "fqdn": appliance.fqdn, "management_https_enabled": True,
             "web_terminal_enabled": True, "web_terminal_addresses": ["198.51.100.44"],
+            "management_https_cert_path": "/etc/atlaso/https/certs/nginx-previous-hostname.crt",
+            "management_https_key_path": "/etc/atlaso/https/certs/nginx-previous-hostname.key",
         })}
         if pending == "missing_settings":
             del baselines["appliance_settings"]
+        elif pending == "missing_paths":
+            applied_settings = json.loads(baselines["appliance_settings"]["config_preview"])
+            del applied_settings["management_https_key_path"]
+            baselines["appliance_settings"]["config_preview"] = json.dumps(applied_settings)
         save_appliance_apply_baselines(db, baselines)
         ldap_leaf = db.scalar(select(CaCertificate).where(CaCertificate.managed_owner == "ldap:ldaps"))
         old_leaf = {column.name: getattr(ldap_leaf, column.name) for column in CaCertificate.__table__.columns}
@@ -3064,6 +3070,9 @@ def test_completed_recovery_publishes_only_management_and_records_exact_baseline
         db.commit()
         expected_leaf = {column.name: getattr(ldap_leaf, column.name) for column in CaCertificate.__table__.columns}
     stage = tmp_path / "ca.json"
+    nginx_config = tmp_path / "nginx.conf"
+    nginx_config.write_text("ssl_certificate /etc/atlaso/https/certs/nginx-previous-hostname.crt;\n"
+                            "ssl_certificate_key /etc/atlaso/https/certs/nginx-previous-hostname.key;\n")
     captured = []
     ownership = {}
     issue = bootstrap.ensure_recovery_ca_state
@@ -3093,15 +3102,33 @@ def test_completed_recovery_publishes_only_management_and_records_exact_baseline
         """Capture the actual private helper payload without exposing synthetic keys."""
         assert ownership["db"].get_transaction() is ownership["transaction"]
         assert ownership["transaction"].is_active
-        captured.append(json.loads(stage.read_text(encoding="utf-8")))
+        payload = json.loads(stage.read_text(encoding="utf-8"))
+        leaf = payload["certificates"][0]
+        assert "ssl_certificate " + leaf["cert_path"] + ";" in nginx_config.read_text()
+        assert "ssl_certificate_key " + leaf["key_path"] + ";" in nginx_config.read_text()
+        (tmp_path / "nginx-active-certificate.pem").write_text(leaf["certificate_pem"])
+        captured.append(payload)
         stage.unlink()
         return apply_result
 
     monkeypatch.setattr(bootstrap, "apply_ca_files", publish)
     monkeypatch.setattr(bootstrap.shutil, "which", lambda name: "/usr/bin/" + name)
-    monkeypatch.setattr(bootstrap, "run", lambda command: subprocess.CompletedProcess(command, 0, "", ""))
+    def validate_active_nginx(command):
+        """Check the certificate at the preserved nginx destination, not just syntax.
+
+        Args:
+            command: Native nginx validation invocation replaced at the fixture boundary.
+        """
+        from cryptography import x509
+
+        leaf = x509.load_pem_x509_certificate((tmp_path / "nginx-active-certificate.pem").read_bytes())
+        sans = leaf.extensions.get_extension_for_class(x509.SubjectAlternativeName).value
+        assert sans.get_values_for_type(x509.DNSName) == ["management.applied.example.test"]
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    monkeypatch.setattr(bootstrap, "run", validate_active_nginx)
     result = bootstrap.refresh_completed_management_certificate("job_scoped_ca")
-    if pending in {"root", "root_key", "missing_settings"}:
+    if pending in {"root", "root_key", "missing_settings", "missing_paths"}:
         assert result == 2 and captured == [] and not stage.exists()
         with SessionLocal() as db:
             assert load_appliance_apply_baselines(db)["ca"] == before
@@ -3109,6 +3136,9 @@ def test_completed_recovery_publishes_only_management_and_records_exact_baseline
     assert result == apply_result
     assert [leaf["managed_owner"] for leaf in captured[0]["certificates"]] == ["appliance:https"]
     management_leaf = captured[0]["certificates"][0]
+    assert management_leaf["cert_path"] == "/etc/atlaso/https/certs/nginx-previous-hostname.crt"
+    assert management_leaf["key_path"] == "/etc/atlaso/https/certs/nginx-previous-hostname.key"
+    assert management_leaf["chain_path"] == "/etc/atlaso/https/certs/nginx-previous-hostname-chain.pem"
     assert management_leaf["common_name"] == "management.applied.example.test"
     from cryptography import x509
 

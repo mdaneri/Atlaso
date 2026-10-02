@@ -1087,7 +1087,8 @@ preserved with their affected subsystem below. Keep new requirements at their to
   and retain that transaction through certificate issuance. Guarded certificate projection reads saved service rows
   without getter reconciliation or optional-row initialization that could commit the writer transaction.
   Completed recovery freezes the applied Settings hostname and terminal SANs before issuance; desired Settings saves
-  cannot alter that leaf. Missing applied identity stops publication.
+  cannot alter that leaf. Publish to the certificate/key destinations captured by applied nginx Settings, even when
+  their filenames differ from the applied hostname. Missing applied identity or destinations stops publication.
   Bound issuance and publication select only the appliance management leaf, leaving unrelated TLS-service certificates
   and CRL files untouched. Completed recovery requires the applied root identity/paths and holds writer admission
   through publication and its exact partial CA baseline commit. Preserve other baseline leaves and pending CA intent;

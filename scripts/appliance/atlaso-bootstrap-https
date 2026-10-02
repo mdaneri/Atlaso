@@ -675,6 +675,8 @@ def refresh_completed_management_certificate(network_job_id: str) -> int:
             or not isinstance(applied_settings.get("web_terminal_enabled"), bool)
             or not isinstance(applied_settings.get("web_terminal_addresses"), list)
             or not all(isinstance(address, str) for address in applied_settings["web_terminal_addresses"])
+            or not all(isinstance(applied_settings.get(field), str) and applied_settings[field].startswith("/etc/atlaso/https/certs/")
+                       for field in ("management_https_cert_path", "management_https_key_path"))
             or applied_settings.get("management_https_enabled") is not True
         ):
             print("Applied Appliance Settings identity is unavailable; apply Settings before certificate recovery.")

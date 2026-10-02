@@ -205,7 +205,9 @@ or reconciling service defaults, so incidental commits cannot release that lock.
 Pending address, VLAN, or administrative-state changes stop recovery before certificate
 mutation. Completed recovery publishes only the management leaf; it leaves other certificates and revocation files
 untouched. Its hostname and terminal SANs come from applied Settings, so pending Settings edits cannot change the
-recovery leaf. Missing applied Settings identity stops recovery. A missing or changed applied CA root requires
+recovery leaf. Publication uses the certificate/key paths captured in applied Settings, keeping nginx on the refreshed
+leaf even when its filenames use a prior hostname. Missing applied identity or paths stops recovery.
+A missing or changed applied CA root requires
 ordinary CA Apply before recovery. Successful publication
 records only the refreshed leaf in the CA baseline, preserving unrelated pending CA intent; a failed publication
 does not advance that baseline. First-boot publication records its exact captured CA baseline.
