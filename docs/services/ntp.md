@@ -68,7 +68,9 @@ withholds synchronization health even if the candidate clock has synchronized. A
 checkpoint that differs from the current configuration also leaves status unverified until recovery.
 NTS private material stays in its managed location until verification.
 Before an NTS transition, Atlaso records the prior configuration and stops NTPsec before capturing its final key
-material, so cookie rotation cannot leave an incomplete rollback snapshot. A capture failure restores the prior
+material, so cookie rotation cannot leave an incomplete rollback snapshot. Boot and Tools hooks remain deferred
+through candidate verification; NTPsec startup requires Apply authorization of the exact installed candidate after
+its configuration, listener guard and key permissions are ready. A capture failure restores the prior
 controller without changing that material. If an NTS transition fails, rollback stops the candidate controller and
 restores the prior material exactly, including removing files created only by the candidate. Incomplete restoration
 prevents the prior controller from

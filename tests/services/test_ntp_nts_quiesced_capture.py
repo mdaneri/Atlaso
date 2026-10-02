@@ -67,6 +67,24 @@ def test_apply_captures_final_cookie_rotation_only_after_stop(
     running = [True]
     order = []
     real_capture = helper._ntpd_snapshot_nts_server_material
+    begin_transaction = helper._ntpd_begin_transaction
+    handoff_hook_checked = False
+
+    def begin_with_handoff_check(snapshot, **kwargs):
+        """Run an external Tools hook at the prepared restore-custody handoff.
+
+        Args:
+            snapshot: Prior config and captured material supplied to the journal writer.
+            **kwargs: Pending markers supplied to the journal writer.
+        """
+        nonlocal handoff_hook_checked
+        begin_transaction(snapshot, **kwargs)
+        if kwargs.get("nts_restore_pending") and not handoff_hook_checked:
+            before_hook = real_capture()
+            assert helper._ntpd_guard("post-vmtoolsd") == 0
+            assert real_capture() == before_hook
+            handoff_hook_checked = True
+            order.append("handoff-hook-deferred")
 
     def stop(unit, **_kwargs):
         """Simulate final daemon rotation before reporting verified inactivity.
@@ -114,9 +132,15 @@ def test_apply_captures_final_cookie_rotation_only_after_stop(
 
     monkeypatch.setattr(helper, "_ntpd_stop_service", stop)
     monkeypatch.setattr(helper, "_ntpd_snapshot_nts_server_material", capture)
+    monkeypatch.setattr(helper, "_ntpd_begin_transaction", begin_with_handoff_check)
     monkeypatch.setattr(helper, "_ntpd_transition", transition)
+    # Linux proves this through /proc; the platform-neutral fixture marks the
+    # synthetic owner live so the lifecycle hook exercises the handoff branch.
+    monkeypatch.setattr(helper, "_release_transaction_owner_alive", lambda _owner: True)
     assert helper._handle_ntpd("apply", [str(candidate)]) == 1
-    assert order[:2] == ["stop", "capture"] and order[-1] == "prior-restart"
+    assert order[:3] == ["stop", "capture", "handoff-hook-deferred"]
+    assert order[-1] == "prior-restart"
+    assert handoff_hook_checked
     assert helper._ntpd_read_transaction() is None and running[0] is True
 
 
@@ -224,3 +248,216 @@ def test_live_capture_hooks_cannot_restart_or_mutate_controllers(monkeypatch, tm
                       "_ntpd_client_packet_guard", "_ntpd_set_vmware_timesync"):
         monkeypatch.setattr(helper, operation, lambda *_args, **_kwargs: pytest.fail("hook mutated capture interval"))
     assert helper._ntpd_guard(phase) == (1 if phase == "pre-ntpd" else 0)
+
+
+@pytest.mark.parametrize("mode", ["ntp_client", "ntp_server", "vmware_tools"])
+@pytest.mark.parametrize("phase", ["pre-ntpd", "pre-vmtoolsd", "post-vmtoolsd", "boot"])
+def test_restore_pending_hooks_defer_until_candidate_start_is_authorized(
+    monkeypatch, tmp_path, mode, phase
+):
+    """No lifecycle hook may select either controller during the candidate handoff.
+
+    Args:
+        monkeypatch: Replace host mutations and preserve the live Apply owner.
+        tmp_path: Isolated managed configuration, journal and synthetic cookie fixture.
+        mode: Candidate clock source recorded in the installed config.
+        phase: Service lifecycle boundary executing before start authorization.
+    """
+    helper, config, candidate, _cookies, _prior_mode = _prepare_apply(
+        monkeypatch, tmp_path, candidate_mode=mode
+    )
+    config.write_bytes(candidate.read_bytes())
+    helper._ntpd_begin_transaction(helper._ntpd_snapshot_applied_config(), nts_restore_pending=True)
+    monkeypatch.setattr(helper, "_release_transaction_owner_alive", lambda _owner: True)
+    for operation in (
+        "_ntpd_stop_service",
+        "_ntpd_start_service",
+        "_ntpd_run_checked",
+        "_ntpd_client_packet_guard",
+        "_ntpd_set_vmware_timesync",
+    ):
+        monkeypatch.setattr(
+            helper,
+            operation,
+            lambda *_args, **_kwargs: pytest.fail("lifecycle hook mutated pending NTS custody"),
+        )
+
+    assert helper._ntpd_guard(phase) == (1 if phase == "pre-ntpd" else 0)
+
+
+@pytest.mark.parametrize("phase", ["boot", "pre-vmtoolsd", "post-vmtoolsd"])
+def test_authorized_restore_pending_still_defers_external_lifecycle_hooks(
+    monkeypatch, tmp_path, phase
+):
+    """External lifecycle hooks remain deferred even after Apply authorizes ntpd.
+
+    Args:
+        monkeypatch: Replace host mutations and preserve the live Apply owner.
+        tmp_path: Isolated candidate config and recovery journal fixture.
+        phase: External lifecycle boundary that must not alter the handoff.
+    """
+    helper, config, candidate, _cookies, _prior_mode = _prepare_apply(monkeypatch, tmp_path)
+    config.write_bytes(candidate.read_bytes())
+    helper._ntpd_begin_transaction(helper._ntpd_snapshot_applied_config(), nts_restore_pending=True)
+    transaction = helper._ntpd_read_transaction()
+    assert transaction is not None
+    transaction["nts_start_authorized_sha256"] = helper.hashlib.sha256(config.read_bytes()).hexdigest()
+    helper._ntpd_write_transaction(transaction)
+    monkeypatch.setattr(helper, "_release_transaction_owner_alive", lambda _owner: True)
+    for operation in (
+        "_ntpd_stop_service",
+        "_ntpd_start_service",
+        "_ntpd_run_checked",
+        "_ntpd_client_packet_guard",
+        "_ntpd_set_vmware_timesync",
+    ):
+        monkeypatch.setattr(
+            helper,
+            operation,
+            lambda *_args, **_kwargs: pytest.fail("external hook mutated authorized Apply"),
+        )
+
+    assert helper._ntpd_guard(phase) == 0
+
+
+@pytest.mark.parametrize("mode", ["ntp_client", "ntp_server"])
+def test_authorized_candidate_ntpd_prestart_accepts_matching_config_hash(monkeypatch, tmp_path, mode):
+    """The owning Apply may pass pre-start only for its exact installed config.
+
+    Args:
+        monkeypatch: Replace native service operations for the lifecycle guard.
+        tmp_path: Isolated staged and applied clock config fixture.
+        mode: NTP controller mode authorized by the active Apply.
+    """
+    helper, config, candidate, _cookies, _prior_mode = _prepare_apply(
+        monkeypatch, tmp_path, candidate_mode=mode
+    )
+    config.write_bytes(candidate.read_bytes())
+    helper._ntpd_begin_transaction(helper._ntpd_snapshot_applied_config(), nts_restore_pending=True)
+    transaction = helper._ntpd_read_transaction()
+    assert transaction is not None
+    transaction["nts_start_authorized_sha256"] = helper.hashlib.sha256(config.read_bytes()).hexdigest()
+    helper._ntpd_write_transaction(transaction)
+    monkeypatch.setattr(helper, "_release_transaction_owner_alive", lambda _owner: True)
+    operations = []
+    monkeypatch.setattr(helper, "_ntpd_stop_service", lambda unit, **_kwargs: operations.append(("stop", unit)))
+    monkeypatch.setattr(helper, "_ntpd_client_packet_guard", lambda selected: operations.append(("guard", selected)))
+    monkeypatch.setattr(helper, "_ntpd_set_vmware_timesync", lambda enabled: operations.append(("vmware", enabled)))
+    monkeypatch.setattr(helper, "_ntpd_run_checked", lambda command, _action: operations.append(("run", command)))
+
+    assert helper._ntpd_guard("pre-ntpd") == 0
+    assert ("guard", mode) in operations
+    assert ("vmware", False) in operations
+
+
+def test_candidate_start_persists_exact_hash_before_systemctl_start(monkeypatch, tmp_path):
+    """The NTP helper records authorization durably before issuing systemctl start.
+
+    Args:
+        monkeypatch: Replace systemd calls and report the selected service active.
+        tmp_path: Isolated applied config and prepared transaction fixture.
+    """
+    helper, config, candidate, _cookies, _prior_mode = _prepare_apply(monkeypatch, tmp_path)
+    config.write_bytes(candidate.read_bytes())
+    helper._ntpd_begin_transaction(helper._ntpd_snapshot_applied_config(), nts_restore_pending=True)
+    expected_hash = helper.hashlib.sha256(config.read_bytes()).hexdigest()
+    operations = []
+
+    def record_checked(command, _action):
+        """Record the journal hash visible before each systemd operation.
+
+        Args:
+            command: Systemd command issued by the helper.
+            _action: Human-readable operation description supplied by the helper.
+        """
+        transaction = helper._ntpd_read_transaction()
+        operations.append((command, transaction.get("nts_start_authorized_sha256")))
+
+    monkeypatch.setattr(helper, "_ntpd_run_checked", record_checked)
+    monkeypatch.setattr(helper, "_ntpd_service_state", lambda _unit: {"active": True, "enabled": True})
+
+    helper._ntpd_start_service("ntpd.service")
+
+    assert operations == [
+        (["systemctl", "enable", "ntpd.service"], expected_hash),
+        (["systemctl", "start", "ntpd.service"], expected_hash),
+    ]
+
+
+def test_candidate_prestart_refuses_changed_config_hash(monkeypatch, tmp_path):
+    """A changed applied candidate cannot reuse a prior start authorization.
+
+    Args:
+        monkeypatch: Preserve a live Apply owner and forbid controller mutations.
+        tmp_path: Isolated staged/applied configs and authorization journal fixture.
+    """
+    helper, config, candidate, _cookies, _prior_mode = _prepare_apply(monkeypatch, tmp_path)
+    config.write_bytes(candidate.read_bytes())
+    helper._ntpd_begin_transaction(helper._ntpd_snapshot_applied_config(), nts_restore_pending=True)
+    transaction = helper._ntpd_read_transaction()
+    assert transaction is not None
+    transaction["nts_start_authorized_sha256"] = "0" * 64
+    helper._ntpd_write_transaction(transaction)
+    config.write_bytes(config.read_bytes() + b"# changed after authorization\n")
+    monkeypatch.setattr(helper, "_release_transaction_owner_alive", lambda _owner: True)
+    monkeypatch.setattr(
+        helper,
+        "_ntpd_stop_service",
+        lambda *_args, **_kwargs: pytest.fail("unauthorized pre-start must not alter services"),
+    )
+
+    assert helper._ntpd_guard("pre-ntpd") == 1
+
+
+@pytest.mark.parametrize("invalid_hash", ["not-a-digest", "A" * 64])
+def test_malformed_start_authorization_fails_closed(monkeypatch, tmp_path, invalid_hash, capsys):
+    """Malformed journal authorization cannot pass the NTPsec start guard.
+
+    Args:
+        monkeypatch: Preserve a live Apply owner and forbid service mutations.
+        tmp_path: Isolated applied config and recovery journal fixture.
+        invalid_hash: Malformed digest representation stored in the journal.
+        capsys: Pytest fixture for capturing the fail-closed diagnostic.
+    """
+    helper, config, candidate, _cookies, _prior_mode = _prepare_apply(monkeypatch, tmp_path)
+    config.write_bytes(candidate.read_bytes())
+    helper._ntpd_begin_transaction(helper._ntpd_snapshot_applied_config(), nts_restore_pending=True)
+    transaction = helper._ntpd_read_transaction()
+    assert transaction is not None
+    transaction["nts_start_authorized_sha256"] = invalid_hash
+    helper._ntpd_write_transaction(transaction)
+    monkeypatch.setattr(helper, "_release_transaction_owner_alive", lambda _owner: True)
+    monkeypatch.setattr(
+        helper,
+        "_ntpd_stop_service",
+        lambda *_args, **_kwargs: pytest.fail("malformed authorization must not mutate services"),
+    )
+
+    assert helper._ntpd_guard("pre-ntpd") == 1
+    assert "NTS start authorization is invalid" in capsys.readouterr().err
+
+
+def test_rollback_journal_rewrite_clears_candidate_start_authorization(monkeypatch, tmp_path):
+    """Rollback custody cannot retain a hash authorizing the failed candidate.
+
+    Args:
+        monkeypatch: Replace fixed appliance paths with isolated test paths.
+        tmp_path: Isolated applied config and prepared journal fixture.
+    """
+    helper, config, candidate, _cookies, _prior_mode = _prepare_apply(monkeypatch, tmp_path)
+    config.write_bytes(candidate.read_bytes())
+    snapshot = helper._ntpd_snapshot_applied_config()
+    snapshot["nts_material"] = []
+    helper._ntpd_begin_transaction(snapshot, nts_restore_pending=True)
+    transaction = helper._ntpd_read_transaction()
+    assert transaction is not None
+    transaction["nts_start_authorized_sha256"] = helper.hashlib.sha256(config.read_bytes()).hexdigest()
+    helper._ntpd_write_transaction(transaction)
+
+    # The next prepared checkpoint is the one used before failed-candidate stop.
+    helper._ntpd_begin_transaction(snapshot, nts_restore_pending=True)
+
+    rewritten = helper._ntpd_read_transaction()
+    assert rewritten is not None
+    assert rewritten["nts_restore_pending"] is True
+    assert "nts_start_authorized_sha256" not in rewritten

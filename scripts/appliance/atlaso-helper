@@ -7199,6 +7199,18 @@ def _ntpd_start_service(unit: str, *, restart: bool = False) -> None:
         unit: Systemd unit to start.
         restart: Restart instead of start when true.
     """
+    if unit == "ntpd.service":
+        transaction = _ntpd_read_transaction()
+        if (
+            transaction is not None
+            and transaction.get("phase") == "prepared"
+            and transaction.get("nts_restore_pending") is True
+            and transaction.get("owner") == _release_transaction_owner()
+        ):
+            # Transition has installed the selected config, packet guard and
+            # key permissions. Only this exact candidate may now pass ExecStartPre.
+            transaction["nts_start_authorized_sha256"] = hashlib.sha256(NTP_CONFIG_PATH.read_bytes()).hexdigest()
+            _ntpd_write_transaction(transaction)
     _ntpd_run_checked(["systemctl", "enable", unit], f"Enable {unit}")
     operation = "restart" if restart else "start"
     _ntpd_run_checked(["systemctl", operation, unit], f"{operation.title()} {unit}")
@@ -7717,6 +7729,11 @@ def _ntpd_read_transaction() -> dict[str, object] | None:
         raise RuntimeError("Clock Apply NTS recovery marker is invalid; preserve it for recovery.")
     if "nts_capture_pending" in payload and type(payload["nts_capture_pending"]) is not bool:
         raise RuntimeError("Clock Apply NTS capture marker is invalid; preserve it for recovery.")
+    if "nts_start_authorized_sha256" in payload and (
+        not isinstance(payload["nts_start_authorized_sha256"], str)
+        or re.fullmatch(r"[0-9a-f]{64}", payload["nts_start_authorized_sha256"]) is None
+    ):
+        raise RuntimeError("Clock Apply NTS start authorization is invalid; preserve it for recovery.")
     return payload
 
 
@@ -8062,16 +8079,29 @@ def _ntpd_guard(phase: str) -> int:
     live_apply = transaction is not None and _release_transaction_owner_alive(
         transaction.get("owner")
     )
-    if live_apply and transaction.get("nts_capture_pending") is True:
-        if phase == "pre-ntpd":
+    if live_apply and transaction.get("phase") == "prepared" and (
+        transaction.get("nts_capture_pending") is True
+        or transaction.get("nts_restore_pending") is True
+    ):
+        if phase != "pre-ntpd":
+            # Lifecycle hooks cannot restart the prior controller between
+            # capture and candidate verification, including the journal handoff.
+            return 0
+        try:
+            authorized = (
+                transaction.get("nts_capture_pending") is not True
+                and NTP_CONFIG_PATH.is_file()
+                and hashlib.sha256(NTP_CONFIG_PATH.read_bytes()).hexdigest()
+                == transaction.get("nts_start_authorized_sha256")
+            )
+        except OSError:
+            authorized = False
+        if not authorized:
             print(
-                "NTS custody is being captured; refusing ntpd start until the snapshot is complete.",
+                "NTS custody is pending; refusing ntpd start until Apply authorizes the installed candidate.",
                 file=sys.stderr,
             )
             return 1
-        # A vmtoolsd restart hook must not queue ntpd or alter selected clock
-        # state while the previous NTS tree is being captured.
-        return 0
 
     def refuse_unproven_ntpd_start(detail: str) -> int:
         """Refuse this service start without synchronously stopping its own job.
