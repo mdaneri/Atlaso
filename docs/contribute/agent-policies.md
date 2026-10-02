@@ -1084,7 +1084,9 @@ preserved with their affected subsystem below. Keep new requirements at their to
   replacing its runtime binding. Preserve active or ambiguous bindings. Completed bootstrap refreshes certificates
   without replacing the applied management protocol or listener ports.
   Compare management paths under the shared writer lock
-  and retain that transaction through certificate issuance. Ordinary bootstrap with a Network baseline rejects pending
+  and retain that transaction through certificate issuance. Guarded certificate projection reads saved service rows
+  without getter reconciliation or optional-row initialization that could commit the writer transaction.
+  Ordinary bootstrap with a Network baseline rejects pending
   management-path edits too. Bound recovery must refresh HTTPS even after first boot is complete, without seeding or
   reconciling desired state. Retry unfinished first-boot HTTPS before applying Appliance Settings, validate nginx before
   reload, ensure nginx and

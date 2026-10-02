@@ -2955,3 +2955,17 @@ def test_console_bootstrap_binding_cleans_failure_and_preserves_stale_state(tmp_
     with helper._console_bootstrap_binding("job_retry"):
         assert binding.read_text() == "ATLASO_CONSOLE_NETWORK_JOB_ID=job_retry\n"
     assert not binding.exists()
+
+
+def test_console_recovery_cli_dispatches_completed_task_id(monkeypatch):
+    """Exercise the CLI parser with the production console's non-path task argument.
+
+    Args:
+        monkeypatch: Replace privileged execution after argument admission.
+    """
+    helper = load_helper_module()
+    calls = []
+    monkeypatch.setattr(helper, "_should_run_real_action_with_systemd", lambda action: False)
+    monkeypatch.setattr(helper, "_handle_console", lambda action, args: calls.append((action, args)) or 0)
+    assert helper.main(["atlaso-helper", "console", "recover-management-plane", "job_0123456789ab", "--real"]) == 0
+    assert calls == [("recover-management-plane", ["job_0123456789ab"])]

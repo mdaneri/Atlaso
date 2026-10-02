@@ -1094,7 +1094,8 @@ def test_photon_provisioning_installs_default_nginx_management_proxy():
     assert "ConditionPathExists" not in bootstrap_unit
     assert '"$ATLASO_HOME/.venv/bin/python" "$ATLASO_HOME/bin/atlaso-bootstrap-https"' not in script
     assert "sync_host_physical_interfaces(db)" in bootstrap
-    assert bootstrap.index("sync_host_physical_interfaces(db)") < bootstrap.index("errors = ensure_recovery_ca_state(db, network_job_id)")
+    first_boot_main = bootstrap[bootstrap.index("def main(network_job_id:"):]
+    assert first_boot_main.index("sync_host_physical_interfaces(db)") < first_boot_main.index("errors = ensure_recovery_ca_state(db, network_job_id)")
     assert "first-boot-development-root-ca.json" in bootstrap
     assert "first-boot-development-root-ca-imported" in bootstrap
     assert "guestinfo.atlaso.test_vm_development_root_ca_imported" in bootstrap
@@ -1108,7 +1109,7 @@ def test_photon_provisioning_installs_default_nginx_management_proxy():
     assert failure_scrub < bootstrap.index("return 2", failure_scrub)
     committed_import = bootstrap.index("db.commit()", bootstrap.index("def main("))
     staged_removal = bootstrap.index("remove_staged_development_root_ca()", committed_import)
-    assert committed_import < staged_removal < bootstrap.index("errors = ensure_recovery_ca_state(db, network_job_id)")
+    assert committed_import < staged_removal < bootstrap.index("errors = ensure_recovery_ca_state(db, network_job_id)", bootstrap.index("def main("))
     proof_write = bootstrap.index("write_development_root_ca_import_proof(development_root_fingerprint)")
     proof_publish = bootstrap.index("publish_development_root_ca_import_proof()", proof_write)
     marker_write = bootstrap.index("write_text_atomic(MARKER_PATH, COMPLETION_MARKER_TEXT")

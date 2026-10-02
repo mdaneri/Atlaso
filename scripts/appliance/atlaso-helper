@@ -232,6 +232,7 @@ NO_PATH_ACTIONS = {
     ("appliance-update", "quiesce-action"),
 }
 NON_PATH_ARGUMENT_ACTIONS = {
+    ("console", "recover-management-plane"),
     ("network", "recover"),
     ("network", "acknowledge"),
     ("nat", "validate-publishing"),

@@ -135,4 +135,5 @@ context and do not describe current appliance behavior.
 The [appliance console](docs/operate/appliance-console.md) verifies fresh usable management addresses on an up link
 against the completed Network task before HTTPS recovery and Appliance Settings. New address edits remain pending;
 a shared writer lock protects certificate issuance from pending management-path edits and the final Settings capture.
+Guarded issuance reads saved service settings without incidental reconciliation commits.
 Recovery refreshes HTTPS after completed first boot without resetting desired state or the applied protocol and ports.

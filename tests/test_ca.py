@@ -786,3 +786,41 @@ def test_managed_ca_specs_include_portal_https_certificate(client):
     assert ntp_nts.ip_addresses == ["192.168.87.33"]
     assert ntp_nts.cert_path == "/etc/atlaso/ntp/certs/ntp.atlaso.internal.crt"
     assert ntp_nts.key_path == "/etc/atlaso/ntp/certs/ntp.atlaso.internal.key"
+
+
+@pytest.mark.parametrize("missing_optional", [False, True])
+def test_guarded_certificate_issuance_keeps_writer_transaction_and_saved_depot_state(client, missing_optional):
+    """Issue real certificates without committing incidental service reconciliation.
+
+    Args:
+        client: Initialized database fixture.
+        missing_optional: Remove an optional service row before guarded issuance.
+    """
+    from sqlalchemy import delete, select
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import KmsSettings, User, VcfOfflineDepotSettings
+    from atlaso.app.services.network_objects import acquire_network_objects_write_lock
+    from atlaso.app.ui import VCF_DEPOT_DEFAULT_USERNAME, ensure_ca_state
+
+    with SessionLocal() as db:
+        db.scalar(select(CaSettings)).enabled = True
+        depot = db.scalar(select(VcfOfflineDepotSettings))
+        if depot is None:
+            depot = VcfOfflineDepotSettings()
+            db.add(depot)
+        depot.http_user_id = None
+        if db.scalar(select(User).where(User.username == VCF_DEPOT_DEFAULT_USERNAME)) is None:
+            db.add(User(username=VCF_DEPOT_DEFAULT_USERNAME))
+        if missing_optional:
+            db.execute(delete(KmsSettings))
+        db.commit()
+        acquire_network_objects_write_lock(db)
+        transaction = db.get_transaction()
+        assert ensure_ca_state(db, commit=False) == []
+        assert db.get_transaction() is transaction
+        assert depot.http_user_id is None
+        assert db.scalar(select(CaCertificate).where(CaCertificate.managed_owner == "appliance:https")).status == "issued"
+        if missing_optional:
+            assert db.scalar(select(KmsSettings)) is None
+        db.rollback()

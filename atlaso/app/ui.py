@@ -1347,14 +1347,17 @@ def remove_ntp_nts_certificate_rows(db: Session) -> int:
     return len(certificates)
 
 
-def managed_ca_certificate_specs(db: Session) -> list[ManagedCertificateSpec]:
+def managed_ca_certificate_specs(db: Session, *, reconcile: bool = True) -> list[ManagedCertificateSpec]:
     """Return managed ca certificate specs.
 
     Args:
         db: Active database session.
+        reconcile: Whether service getters may initialize or reconcile desired state.
     """
     specs: list[ManagedCertificateSpec] = []
-    appliance = get_appliance_settings_row(db)
+    appliance = get_appliance_settings_row(db) if reconcile else db.scalar(select(ApplianceSettings))
+    if appliance is None:
+        raise ValueError("Appliance Settings are unavailable for certificate projection.")
     interfaces = db.execute(select(PhysicalInterface).order_by(PhysicalInterface.name)).scalars().all()
     vlans = db.execute(select(VlanInterface).order_by(VlanInterface.parent_interface, VlanInterface.vlan_id)).scalars().all()
     management, observed_dhcp_dns_servers = management_dhcp_dns_context(interfaces)
@@ -1377,8 +1380,8 @@ def managed_ca_certificate_specs(db: Session) -> list[ManagedCertificateSpec]:
         )
     )
 
-    oidc_settings = ensure_oidc_provider_settings(db)
-    if oidc_settings.enabled:
+    oidc_settings = ensure_oidc_provider_settings(db) if reconcile else db.scalar(select(OidcProviderSettings))
+    if oidc_settings is not None and oidc_settings.enabled:
         oidc_hostname = normalize_dns_hostname(
             oidc_settings.hostname or OIDC_DEFAULT_HOSTNAME
         )
@@ -1399,8 +1402,8 @@ def managed_ca_certificate_specs(db: Session) -> list[ManagedCertificateSpec]:
             )
         )
 
-    ca_settings = get_ca_settings_row(db)
-    if ca_settings.enabled:
+    ca_settings = get_ca_settings_row(db) if reconcile else db.scalar(select(CaSettings))
+    if ca_settings is not None and ca_settings.enabled:
         ca_portal_hostname = normalize_dns_hostname(ca_settings.portal_hostname or CA_DEFAULT_PORTAL_HOSTNAME)
         cert_path, key_path, chain_path = ca_service_cert_paths("ca-portal", ca_portal_hostname)
         specs.append(
@@ -1417,8 +1420,8 @@ def managed_ca_certificate_specs(db: Session) -> list[ManagedCertificateSpec]:
             )
         )
 
-    kms_settings = get_kms_settings_row(db)
-    if kms_settings.enabled:
+    kms_settings = get_kms_settings_row(db) if reconcile else db.scalar(select(KmsSettings))
+    if kms_settings is not None and kms_settings.enabled:
         cert_path, key_path, chain_path = ca_service_cert_paths("kmip", kms_settings.server_certificate or kms_settings.hostname)
         specs.append(
             ManagedCertificateSpec(
@@ -1433,8 +1436,8 @@ def managed_ca_certificate_specs(db: Session) -> list[ManagedCertificateSpec]:
                 chain_path=chain_path,
             )
         )
-    ldap_settings = get_ldap_settings_row(db)
-    if ldap_settings.enabled and ldap_settings.ldaps_enabled:
+    ldap_settings = get_ldap_settings_row(db) if reconcile else db.scalar(select(LdapSettings))
+    if ldap_settings is not None and ldap_settings.enabled and ldap_settings.ldaps_enabled:
         _ldap_interfaces, ldap_certificate_addresses = resolve_ldap_bind_targets(
             db,
             split_interfaces(ldap_settings.listen_interface),
@@ -1455,8 +1458,8 @@ def managed_ca_certificate_specs(db: Session) -> list[ManagedCertificateSpec]:
             )
         )
 
-    ntp_settings = get_ntp_settings_row(db)
-    if ntp_settings.nts_server_enabled:
+    ntp_settings = get_ntp_settings_row(db) if reconcile else db.scalar(select(NtpSettings))
+    if ntp_settings is not None and ntp_settings.nts_server_enabled:
         cert_path, key_path, chain_path = ntp_nts_certificate_paths(ntp_settings)
         specs.append(
             ManagedCertificateSpec(
@@ -1472,8 +1475,8 @@ def managed_ca_certificate_specs(db: Session) -> list[ManagedCertificateSpec]:
             )
         )
 
-    depot_settings = get_vcf_offline_depot_settings_row(db)
-    if depot_settings.enabled:
+    depot_settings = get_vcf_offline_depot_settings_row(db) if reconcile else db.scalar(select(VcfOfflineDepotSettings))
+    if depot_settings is not None and depot_settings.enabled:
         cert_path, key_path, chain_path = ca_service_cert_paths("vcf-offline-depot", depot_settings.server_certificate or depot_settings.hostname)
         specs.append(
             ManagedCertificateSpec(
@@ -1489,8 +1492,8 @@ def managed_ca_certificate_specs(db: Session) -> list[ManagedCertificateSpec]:
             )
         )
 
-    registry_settings = get_vcf_private_registry_settings_row(db)
-    if registry_settings.enabled:
+    registry_settings = get_vcf_private_registry_settings_row(db) if reconcile else db.scalar(select(VcfPrivateRegistrySettings))
+    if registry_settings is not None and registry_settings.enabled:
         cert_path, key_path, chain_path = ca_service_cert_paths("harbor", registry_settings.server_certificate or registry_settings.hostname)
         specs.append(
             ManagedCertificateSpec(
@@ -1542,7 +1545,9 @@ def ensure_ca_state(db: Session, *, commit: bool = True) -> list[str]:
     Returns:
         The ensure ca state result.
     """
-    settings = get_ca_settings_row(db)
+    settings = get_ca_settings_row(db) if commit else db.scalar(select(CaSettings))
+    if settings is None:
+        return ["CA Settings are unavailable for guarded certificate recovery."]
     errors: list[str] = []
     try:
         changed = ensure_default_ca_profiles(db)
@@ -1552,7 +1557,7 @@ def ensure_ca_state(db: Session, *, commit: bool = True) -> list[str]:
             settings.portal_hostname = normalized_portal_hostname
             changed = True
         changed = ensure_root_ca_material(settings) or changed
-        changed = ensure_managed_certificate_rows(db, settings=settings, profiles=profiles, specs=managed_ca_certificate_specs(db)) or changed
+        changed = ensure_managed_certificate_rows(db, settings=settings, profiles=profiles, specs=managed_ca_certificate_specs(db, reconcile=commit)) or changed
         certificates = (
             db.execute(select(CaCertificate).options(selectinload(CaCertificate.profile)).order_by(CaCertificate.common_name))
             .scalars()

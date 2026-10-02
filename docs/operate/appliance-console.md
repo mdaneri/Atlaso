@@ -200,7 +200,9 @@ For systemd ownership, redraw behavior, GRUB branding, service-isolation boundar
 [local console technical reference](../reference/appliance-console-technical.md).
 
 Certificate bootstrap is bound to the completed Network task and checks its management paths while holding the shared
-writer lock through issuance. Pending address, VLAN, or administrative-state changes stop recovery before certificate
+writer lock through issuance. Certificate projection reads saved service settings without initializing optional rows
+or reconciling service defaults, so incidental commits cannot release that lock.
+Pending address, VLAN, or administrative-state changes stop recovery before certificate
 mutation.
 
 Before Appliance Settings is submitted, the console rechecks the completed Network management paths under the shared
