@@ -38,6 +38,12 @@ WAIT_STATUS_LOGIN_READY_TIMEOUT_SECONDS = 240
 
 class SafeFailure(Exception):
     def __init__(self, stage, reason):
+        """Store the sanitized stage and reason for a guest action failure.
+
+        Args:
+            stage: Bounded action stage associated with a sanitized guest failure.
+            reason: Expected safe failure detail or rejection reason for this case.
+        """
         self.stage, self.reason = stage, reason
 
 
@@ -51,6 +57,12 @@ class FormParser(HTMLParser):
         self.option = None
 
     def handle_starttag(self, tag, attrs):
+        """Parse successful form controls and begin reading select options from an opening tag.
+
+        Args:
+            tag: HTML tag name currently being parsed.
+            attrs: Attribute pairs parsed from the current HTML tag.
+        """
         a = {k: (v or "") for k, v in attrs}
         if tag == "form" and a.get("id") == "ntp-settings-form":
             self.in_form, self.form_action = True, a.get("action") or self.form_action
@@ -87,6 +99,11 @@ class FormParser(HTMLParser):
         self.fields.append((a["name"], a.get("value", "")))
 
     def handle_endtag(self, tag):
+        """Finalize selected values and text for the closing form-control tag.
+
+        Args:
+            tag: HTML tag name currently being parsed.
+        """
         if tag == "option" and self.option is not None and self.select is not None:
             option = self.option
             value = option["value"]
@@ -118,6 +135,11 @@ class FormParser(HTMLParser):
             self.in_form = False
 
     def handle_data(self, data):
+        """Collect text inside an active textarea or select option.
+
+        Args:
+            data: Payload bytes or text delivered through the current parser or channel callback.
+        """
         if self.text_name:
             self.text_parts.append(data)
         if self.option is not None:
@@ -130,6 +152,12 @@ class TokenParser(HTMLParser):
         self.token = ""
 
     def handle_starttag(self, tag, attrs):
+        """Extract the CSRF token from the supplied login-form tag.
+
+        Args:
+            tag: HTML tag name currently being parsed.
+            attrs: Attribute pairs parsed from the current HTML tag.
+        """
         a = dict(attrs)
         if tag == "input" and a.get("name") == "csrf":
             self.token = a.get("value") or ""
@@ -141,6 +169,12 @@ class InterfaceParser(HTMLParser):
         self.rows = []
 
     def handle_starttag(self, tag, attrs):
+        """Read serialized interface inventory from the supplied opening tag.
+
+        Args:
+            tag: HTML tag name currently being parsed.
+            attrs: Attribute pairs parsed from the current HTML tag.
+        """
         if tag != "div":
             return
         a = dict(attrs)
@@ -153,10 +187,26 @@ class InterfaceParser(HTMLParser):
 
 
 def reply(ok, **kwargs):
+    """Emit one compact JSON result record for the guest action.
+
+    Args:
+        ok: Whether the guest action completed successfully.
+        **kwargs: Additional result fields included in the JSON response.
+    """
     print(json.dumps({"ok": ok, **kwargs}, separators=(",", ":")), flush=True)
 
 
 def request(opener, path, *, data=None, headers=None, timeout=20, follow=True):
+    """Send a bounded management request and return its response components.
+
+    Args:
+        opener: Authenticated HTTP opener used for management UI requests.
+        path: Management endpoint path or owned filesystem root used by this operation.
+        data: Payload bytes or text delivered through the current parser or channel callback.
+        headers: Optional HTTP headers attached to the management request.
+        timeout: Bounded timeout in seconds for the request, probe, or channel operation.
+        follow: Whether a safe read-only request may follow redirects.
+    """
     origin = BASE.split("/ui/management", 1)[0]
     target = (
         origin + path
@@ -190,7 +240,13 @@ def request(opener, path, *, data=None, headers=None, timeout=20, follow=True):
 
 
 def initialize_tls_context(host, *, timeout_seconds=15):
-    """Trust the guest's served public leaf after bounded listener recovery."""
+    """Trust the guest's served public leaf after bounded listener recovery.
+
+    Args:
+        host: Appliance hostname or address associated with the pinned operation.
+        timeout_seconds: Maximum duration allowed for HTTPS listener recovery.
+
+    """
     deadline = time.monotonic() + timeout_seconds
     while True:
         remaining = deadline - time.monotonic()
@@ -214,7 +270,13 @@ def initialize_tls_context(host, *, timeout_seconds=15):
 
 
 def wait_for_login_form(opener, *, timeout):
-    """Wait for a readable login form using safe, repeatable GET requests only."""
+    """Wait for a readable login form using safe, repeatable GET requests only.
+
+    Args:
+        opener: Authenticated HTTP opener used for management UI requests.
+        timeout: Bounded timeout in seconds for the request, probe, or channel operation.
+
+    """
     deadline = time.monotonic() + timeout
     target = BASE.rstrip("/") + "/login"
     while True:
@@ -256,6 +318,12 @@ def wait_for_login_form(opener, *, timeout):
 
 
 def login(password, *, readiness_timeout=0):
+    """Authenticate to the management UI and return its cookie-preserving opener.
+
+    Args:
+        password: Administrator password passed only through the authenticated channel.
+        readiness_timeout: Maximum wait for the login form before posting credentials.
+    """
     opener = build_opener(
         HTTPCookieProcessor(http.cookiejar.CookieJar()),
         __import__("urllib.request", fromlist=["HTTPSHandler"]).HTTPSHandler(
@@ -286,6 +354,11 @@ def login(password, *, readiness_timeout=0):
 
 
 def ntp_page(opener):
+    """Read and parse the current NTP settings form and CSRF token.
+
+    Args:
+        opener: Authenticated HTTP opener used for management UI requests.
+    """
     _, _, _, body = request(opener, "/ntp")
     parser = FormParser()
     parser.feed(body.decode("utf-8", "replace"))
@@ -301,6 +374,14 @@ def ntp_page(opener):
 
 
 def post_form(opener, path, fields, *, accept_json=False):
+    """Submit the supplied NTP settings fields to the management UI.
+
+    Args:
+        opener: Authenticated HTTP opener used for management UI requests.
+        path: Management endpoint path or owned filesystem root used by this operation.
+        fields: Successful NTP form fields submitted to the management UI.
+        accept_json: Whether the form submission requests an autosaved JSON response.
+    """
     headers = {"Content-Type": "application/x-www-form-urlencoded"}
     if accept_json:
         headers.update({"Accept": "application/json", "X-Atlaso-Autosave": "1"})
@@ -310,6 +391,11 @@ def post_form(opener, path, fields, *, accept_json=False):
 
 
 def status(opener):
+    """Read the effective clock-controller and synchronization status.
+
+    Args:
+        opener: Authenticated HTTP opener used for management UI requests.
+    """
     _, _, _, body = request(opener, "/ntp/source-health")
     payload = json.loads(body)
     raw = payload.get("status") if isinstance(payload, dict) else {}
@@ -361,6 +447,13 @@ def status(opener):
 
 
 def assert_clock(clock, expected_mode=None, expected_health="any"):
+    """Validate observed mode, controller, conflicts, and normalized health.
+
+    Args:
+        clock: Observed clock-status mapping returned by the host or guest.
+        expected_mode: Expected effective clock mode after the requested transition.
+        expected_health: Expected normalized clock-health value for the selected mode.
+    """
     if expected_mode and clock.get("mode") != expected_mode:
         raise SafeFailure(
             "clock-assertion", "Observed clock mode did not match the requested mode."
@@ -403,6 +496,14 @@ def assert_clock(clock, expected_mode=None, expected_health="any"):
 
 
 def wait_status(opener, mode, health="healthy", timeout=90):
+    """Poll clock status until the requested mode and health are observed.
+
+    Args:
+        opener: Authenticated HTTP opener used for management UI requests.
+        mode: Requested effective appliance clock mode.
+        health: Expected clock-health state to observe before the deadline.
+        timeout: Bounded timeout in seconds for the request, probe, or channel operation.
+    """
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         observed = status(opener)
@@ -418,6 +519,13 @@ def wait_status(opener, mode, health="healthy", timeout=90):
 
 
 def apply_unit(opener, unit_id, csrf):
+    """Apply one selected appliance unit and wait for its task to finish.
+
+    Args:
+        opener: Authenticated HTTP opener used for management UI requests.
+        unit_id: Appliance Apply unit identifier submitted to the management UI.
+        csrf: CSRF token extracted from the management form.
+    """
     _, _, _, review_body = request(opener, "/appliance-apply/review")
     review = json.loads(review_body)
     unit = next(
@@ -478,6 +586,14 @@ def apply_unit(opener, unit_id, csrf):
 
 
 def apply_mode(opener, mode, server_interface=None, expected_health="any"):
+    """Save and apply the requested clock mode through the management UI.
+
+    Args:
+        opener: Authenticated HTTP opener used for management UI requests.
+        mode: Requested effective appliance clock mode.
+        server_interface: Optional eligible interface selected for NTP server mode.
+        expected_health: Expected normalized clock-health value for the selected mode.
+    """
     if mode not in MODES:
         raise SafeFailure("arguments", "Unsupported mode.")
     parser, values, csrf = ntp_page(opener)
@@ -589,6 +705,13 @@ def apply_mode(opener, mode, server_interface=None, expected_health="any"):
 
 
 def prepare_server_interface(opener, interface_name, fixture_cidr):
+    """Prepare one eligible guest interface for isolated server-mode validation.
+
+    Args:
+        opener: Authenticated HTTP opener used for management UI requests.
+        interface_name: Name of the selected appliance interface.
+        fixture_cidr: Expected IPv4 CIDR assigned to the selected guest interface.
+    """
     if not interface_name:
         raise SafeFailure(
             "network-fixture", "An explicit test interface name is required."
@@ -752,6 +875,12 @@ def prepare_server_interface(opener, interface_name, fixture_cidr):
 
 
 def server_udp_probe(opener, address_text):
+    """Validate the host-provided NTP server probe result.
+
+    Args:
+        opener: Authenticated HTTP opener used for management UI requests.
+        address_text: Address text supplied by the guest action for the UDP probe.
+    """
     try:
         address = ipaddress.ip_address(address_text)
     except ValueError, TypeError:
@@ -830,6 +959,11 @@ def server_udp_probe(opener, address_text):
 
 
 def run_action(payload):
+    """Dispatch one validated time-source action in the guest.
+
+    Args:
+        payload: Validated JSON object describing the requested guest action.
+    """
     action = payload.get("action")
     if action == "deployment_identity":
         with open("/opt/atlaso/bin/atlaso-helper", "rb") as stream:

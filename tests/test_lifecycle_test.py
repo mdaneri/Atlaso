@@ -46,7 +46,11 @@ def load_network_boot_lifecycle_module():
 
 @pytest.mark.parametrize("other", ["--oidc-only", "--routing-wan-only", "--restored-state-run", "--export-settings-backup", "--signed-release-repository-url"])
 def test_time_source_lifecycle_rejects_unrelated_mutation_modes(other):
-    """A focused clock run must not accidentally launch another scenario."""
+    """A focused clock run must not accidentally launch another scenario.
+
+    Args:
+        other: Unrelated lifecycle option that must be refused in a time-source run.
+    """
     lifecycle = load_lifecycle_module()
     extra = ["fixture"] if other in {"--export-settings-backup", "--signed-release-repository-url"} else []
     with pytest.raises(SystemExit):
@@ -74,7 +78,11 @@ def load_time_source_guest_module():
 
 
 def test_time_source_server_acceptance_preserves_remembered_vmware_choice(monkeypatch):
-    """Server activation must exercise the saved source rather than overwrite it."""
+    """Server activation must exercise the saved source rather than overwrite it.
+
+    Args:
+        monkeypatch: Replace host operations with controlled test observations.
+    """
     guest = load_time_source_guest_module()
     values = {"time_source": ["vmware_tools"], "upstream_sources_json": ['[{"enabled":true,"source":"time.cloudflare.com"}]'], "listen_interfaces": ["eth1"]}
     parser = argparse.Namespace(form_action="/ntp/settings", interfaces=["eth1"])
@@ -91,10 +99,22 @@ def test_time_source_server_acceptance_preserves_remembered_vmware_choice(monkey
 
 @pytest.mark.parametrize("mutation,expected_attempts", [(False, 3), (True, 1)])
 def test_time_source_guest_retries_only_read_only_observations(monkeypatch, mutation, expected_attempts):
-    """A listener restart may repeat GET, but never replay a credential-bearing POST."""
+    """A listener restart may repeat GET, but never replay a credential-bearing POST.
+
+    Args:
+        monkeypatch: Replace host operations with controlled test observations.
+        mutation: Whether the HTTP request changes state and must not be retried.
+        expected_attempts: Expected number of transport attempts for the request.
+    """
     guest = load_time_source_guest_module()
     calls = []
     def fail_request(*args, **kwargs):
+        """Exercise fail request.
+
+        Args:
+            *args: Additional positional inputs retained by the fixture adapter.
+            **kwargs: Additional keyword options retained by the fixture adapter.
+        """
         calls.append(True)
         raise OSError("secret must never reach result")
     opener = argparse.Namespace(open=fail_request)
@@ -107,15 +127,35 @@ def test_time_source_guest_retries_only_read_only_observations(monkeypatch, muta
 
 
 def test_time_source_main_uses_pinned_acceptance_without_legacy_http_client(monkeypatch, tmp_path):
-    """The focused dispatch must consume stdin credentials through its own transport."""
+    """The focused dispatch must consume stdin credentials through its own transport.
+
+    Args:
+        monkeypatch: Replace host operations with controlled test observations.
+        tmp_path: Isolated filesystem fixture for applied configuration and evidence.
+    """
     lifecycle = load_lifecycle_module()
     args = lifecycle.parse_args(["--time-source-only", "--secret-stdin", "--result-dir", str(tmp_path)])
     envelope = {"password": "test-web", "appliance_ssh_password": "test-ssh", "ssh_password": "test-client"}
     class FakeLoader:
         def create_module(self, spec):
+            """Exercise create module.
+
+            Args:
+                spec: Module import specification supplied to the fixture loader.
+            """
             return None
         def exec_module(self, module):
+            """Exercise exec module.
+
+            Args:
+                module: Fixture module receiving the synthetic acceptance entry point.
+            """
             def accept(options):
+                """Exercise accept.
+
+                Args:
+                    options: Parsed lifecycle options including stdin-supplied test credentials.
+                """
                 assert options.password == envelope["password"]
                 assert options.appliance_ssh_password == envelope["appliance_ssh_password"]
                 return {"status": "passed", "scenario": "time-source-native-acceptance"}

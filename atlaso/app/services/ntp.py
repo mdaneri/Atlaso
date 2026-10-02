@@ -318,6 +318,9 @@ def ntp_time_mode(settings: NtpSettings) -> str:
 
     Enabled NTP server mode takes precedence while preserving the separately
     selected source for when server mode is disabled.
+
+    Args:
+        settings: Persisted server enablement and remembered appliance clock source.
     """
     if settings.enabled:
         return NTP_TIME_MODE_NTP_SERVER

@@ -53,10 +53,20 @@ class TimeSourceAcceptanceError(RuntimeError):
 
 
 def _fail(message: str) -> None:
+    """Raise a fixed public error without exposing transport diagnostics.
+
+    Args:
+        message: Fixed, sanitized failure detail reported to the caller.
+    """
     raise TimeSourceAcceptanceError(message)
 
 
 def _fingerprint(key: paramiko.PKey) -> str:
+    """Return the SHA-256 fingerprint of the supplied SSH public key.
+
+    Args:
+        key: SSH public key presented for pinned host-key verification.
+    """
     return "SHA256:" + base64.b64encode(hashlib.sha256(key.asbytes()).digest()).decode("ascii").rstrip("=")
 
 
@@ -64,12 +74,25 @@ class PinnedEd25519HostKeyPolicy(paramiko.MissingHostKeyPolicy):
     """Accept one exact Ed25519 host-key fingerprint for one address."""
 
     def __init__(self, host: str, fingerprint: str) -> None:
+        """Pin the expected appliance address and SSH host-key fingerprint.
+
+        Args:
+            host: Exact appliance address accepted by this host-key policy.
+            fingerprint: Pinned SHA-256 fingerprint for the appliance SSH host key.
+        """
         self.host = host
         self.fingerprint = fingerprint
         if not fingerprint.startswith("SHA256:") or len(fingerprint) != 50:
             _fail("The appliance SSH host-key fingerprint is missing or invalid.")
 
     def missing_host_key(self, client: paramiko.SSHClient, hostname: str, key: paramiko.PKey) -> None:
+        """Accept only the exact pinned Ed25519 appliance host key.
+
+        Args:
+            client: Paramiko SSH client whose host-key store receives the verified key.
+            hostname: Hostname whose presented SSH key is being checked.
+            key: SSH public key presented for pinned host-key verification.
+        """
         if hostname != self.host or key.get_name() != "ssh-ed25519" or _fingerprint(key) != self.fingerprint:
             raise paramiko.SSHException("Pinned appliance host-key verification failed.")
         client.get_host_keys().add(self.host, key.get_name(), key)
@@ -95,7 +118,15 @@ def validate_ntp_server_response(
     expected_address: str,
     expected_transmit: bytes,
 ) -> dict[str, Any]:
-    """Validate a server response's endpoint, mode, clock state and timestamps."""
+    """Validate a server response's endpoint, mode, clock state and timestamps.
+
+    Args:
+        packet: NTP packet bytes received or sent by the probe.
+        peer: Address and UDP port observed on the NTP response socket.
+        expected_address: Expected IPv4 address of the NTP server response peer.
+        expected_transmit: Unique eight-byte transmit timestamp sent in the NTP request.
+
+    """
     try:
         expected = str(ipaddress.IPv4Address(expected_address))
         peer_address = str(ipaddress.IPv4Address(peer[0]))
@@ -126,6 +157,11 @@ def validate_ntp_server_response(
 
 
 def _site_settings(args: Any) -> tuple[str, str, str, ipaddress.IPv4Interface]:
+    """Validate the selected site interface, network, and probe target.
+
+    Args:
+        args: Parsed acceptance options or fixture arguments used by this operation.
+    """
     try:
         interface = str(args.site_interface)
         fixture = ipaddress.IPv4Interface(str(args.site_cidr))
@@ -149,6 +185,11 @@ def _site_settings(args: Any) -> tuple[str, str, str, ipaddress.IPv4Interface]:
 
 
 def _identity(args: Any) -> tuple[str, str, str, str, str, str]:
+    """Validate and return the pinned appliance and web identities.
+
+    Args:
+        args: Parsed acceptance options or fixture arguments used by this operation.
+    """
     host = str(getattr(args, "appliance_ssh_host", ""))
     username = str(getattr(args, "appliance_ssh_user", ""))
     ssh_password = str(getattr(args, "appliance_ssh_password", ""))
@@ -176,6 +217,11 @@ def _identity(args: Any) -> tuple[str, str, str, str, str, str]:
 
 
 def re_full_username(value: str) -> bool:
+    """Check whether a username uses only the accepted characters.
+
+    Args:
+        value: Input string checked by the current validation helper.
+    """
     return bool(value) and len(value) <= 64 and value.replace("_", "a").replace("-", "a").isalnum()
 
 
@@ -194,6 +240,14 @@ class _PinnedGuest:
     """Run the checked-in guest program over one fingerprint-pinned SSH session."""
 
     def __init__(self, host: str, username: str, password: str, fingerprint: str) -> None:
+        """Initialize pinned SSH transport and guest action state.
+
+        Args:
+            host: Appliance address for the pinned SSH connection.
+            username: SSH account name used to authenticate to the appliance.
+            password: SSH account password used only through the authenticated channel.
+            fingerprint: Pinned SHA-256 fingerprint for the appliance SSH host key.
+        """
         self.host = host
         self.username = username
         self.password = password
@@ -204,6 +258,11 @@ class _PinnedGuest:
         self.remote_path = "/tmp/atlaso-time-source-" + secrets.token_hex(16) + ".py"
 
     def connect(self, *, timeout: float = 10) -> None:
+        """Establish the pinned SSH connection within the supplied timeout.
+
+        Args:
+            timeout: Bounded timeout in seconds for the request, probe, or channel operation.
+        """
         client = paramiko.SSHClient()
         client.set_missing_host_key_policy(self.policy)
         try:
@@ -302,6 +361,16 @@ class _PinnedGuest:
         on_capture_ready: Callable[[], None] | None = None,
         **parameters: Any,
     ) -> dict[str, Any]:
+        """Run one bounded guest action over the pinned SSH channel.
+
+        Args:
+            action: Time-source operation name dispatched to the isolated guest.
+            management_host: Appliance management address used for the authenticated probe.
+            web_username: Management UI username sent through the guest action payload.
+            web_password: Management UI password sent through the guest action stdin payload.
+            on_capture_ready: Callback invoked after guest packet capture confirms readiness.
+            **parameters: Action-specific values forwarded to the isolated guest script.
+        """
         if self.client is None or action not in _ACTION_TIMEOUTS:
             _fail("Guest action is unavailable or unsupported.")
         payload: dict[str, Any] = {
@@ -385,6 +454,11 @@ class _PinnedGuest:
                 channel.close()
 
     def wait_for_disconnect(self, timeout: float = 90) -> None:
+        """Wait for the appliance SSH channel to close after reboot.
+
+        Args:
+            timeout: Bounded timeout in seconds for the request, probe, or channel operation.
+        """
         if self.client is None:
             _fail("Pinned SSH transport is unavailable during reboot verification.")
         transport = self.client.get_transport()
@@ -409,6 +483,11 @@ class _PinnedGuest:
 
 
 def _host_source_address(destination: str) -> str:
+    """Resolve a usable local IPv4 source address for the destination.
+
+    Args:
+        destination: IPv4 destination used to determine the host-side route source.
+    """
     try:
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as probe:
             probe.connect((destination, 123))
@@ -427,6 +506,14 @@ def _probe_client_refusal(
     username: str,
     password: str,
 ) -> dict[str, Any]:
+    """Verify guest ingress and the absence of a client-mode NTP reply.
+
+    Args:
+        guest: Guest action client or parsed guest module under test.
+        management_host: Appliance management address used for the authenticated probe.
+        username: Management UI username supplied to the guest probe.
+        password: Administrator password passed only through the authenticated channel.
+    """
     source_address = _host_source_address(management_host)
     packet, _transmit = build_ntp_request()
     try:
@@ -477,6 +564,13 @@ def _probe_server(
     network: ipaddress.IPv4Interface,
     source_address: str | None = None,
 ) -> dict[str, Any]:
+    """Query and validate the NTP server using the selected site-network source.
+
+    Args:
+        address: IPv4 address used as the NTP peer or fixture target.
+        network: Selected IPv4 site network used to constrain the host probe.
+        source_address: Verified local IPv4 address bound to the host-side server probe.
+    """
     if source_address is None:
         source_address = _host_source_address(address)
     try:
@@ -503,6 +597,14 @@ def _windows_fixture_neighbor(
     site_network: str,
     expected_mac: str,
 ) -> dict[str, str]:
+    """Prove the Windows host route and neighbor MAC for the VMnet fixture.
+
+    Args:
+        address: IPv4 address used as the NTP peer or fixture target.
+        network: Selected IPv4 site network used to constrain the host probe.
+        site_network: VMware host-only network name used by the site fixture.
+        expected_mac: Expected hardware address of the site-network guest fixture.
+    """
     if os.name != "nt":
         _fail("Host-side fixture ownership verification requires Windows VMware networking.")
     script = r'''
@@ -633,6 +735,16 @@ class _AcceptanceRunner:
         server_probe: Callable[..., dict[str, Any]] = _probe_server,
         fixture_neighbor: Callable[..., dict[str, str]] = _windows_fixture_neighbor,
     ) -> None:
+        """Initialize dependencies for the ordered time-source acceptance scenario.
+
+        Args:
+            args: Validated appliance and site-network options for the scenario.
+            guest: Pinned guest client used to run time-source actions.
+            progress: Callback that reports acceptance-step progress to the caller.
+            client_probe: Callback that verifies client-mode UDP refusal and guest ingress.
+            server_probe: Callback that verifies a positive NTP server response from the site network.
+            fixture_neighbor: Callback that proves the host route and neighbor identity for the fixture.
+        """
         self.args = args
         self.guest = guest
         self.progress = progress
@@ -645,6 +757,12 @@ class _AcceptanceRunner:
         self.fixture_source_address: str | None = None
 
     def _action(self, action: str, **parameters: Any) -> dict[str, Any]:
+        """Invoke a guest operation with the runner’s authenticated identity.
+
+        Args:
+            action: Time-source operation name dispatched to the isolated guest.
+            **parameters: Action-specific values forwarded to the isolated guest script.
+        """
         return self.guest.invoke(
             action,
             management_host=self.host,
@@ -654,6 +772,12 @@ class _AcceptanceRunner:
         )
 
     def _step(self, name: str, operation: Callable[[], dict[str, Any]]) -> dict[str, Any]:
+        """Execute one named acceptance operation and record its evidence.
+
+        Args:
+            name: Name of the parsed field, daemon, step, or filesystem entry.
+            operation: Callable operation executed as one acceptance step.
+        """
         self.progress(f"[time-source] {name}")
         try:
             evidence = operation()
@@ -667,6 +791,11 @@ class _AcceptanceRunner:
         return evidence
 
     def _apply(self, mode: str) -> dict[str, Any]:
+        """Apply a clock mode and verify the resulting guest state.
+
+        Args:
+            mode: Requested effective appliance clock mode.
+        """
         evidence = self._action("apply", mode=mode, server_interface=self.interface, expected_health="healthy")
         if evidence.get("applied_mode") != mode or evidence.get("task_status") != "succeeded":
             _fail("Global Appliance Apply did not establish the requested clock mode.")
@@ -678,6 +807,11 @@ class _AcceptanceRunner:
         return {"mode": mode, "healthy": True, "remembered_time_source": evidence.get("remembered_time_source")}
 
     def _wait_status(self, mode: str) -> dict[str, Any]:
+        """Wait until the requested clock mode is healthy.
+
+        Args:
+            mode: Requested effective appliance clock mode.
+        """
         evidence = self._action("wait_status", assert_mode=mode, expected_health="healthy")
         clock = evidence.get("clock")
         if not isinstance(clock, dict) or clock.get("mode") != mode or clock.get("healthy") is not True:
@@ -707,6 +841,11 @@ class _AcceptanceRunner:
         return ownership
 
     def _reboot(self, expected_mode: str) -> dict[str, Any]:
+        """Verify a bounded reboot and recovery in the expected mode.
+
+        Args:
+            expected_mode: Expected effective clock mode after the requested transition.
+        """
         old = self._action("boot_id").get("boot_id")
         if not isinstance(old, str) or not old:
             _fail("The pre-reboot guest boot identity is unavailable.")
@@ -859,6 +998,11 @@ class _AcceptanceRunner:
 
 
 def _valid_mac(value: str) -> bool:
+    """Validate the canonical six-octet hexadecimal MAC address format.
+
+    Args:
+        value: Input string checked by the current validation helper.
+    """
     parts = value.split(":")
     return len(parts) == 6 and all(len(part) == 2 and all(char in "0123456789abcdef" for char in part) for part in parts)
 
@@ -870,6 +1014,10 @@ def run_time_source_acceptance(args: Any) -> dict[str, Any]:
     validated secret-stdin envelope. Passwords are sent only on the SSH
     authentication API or the SSH channel's stdin, never in command arguments
     or evidence.
+
+    Args:
+        args: Parsed acceptance options or fixture arguments used by this operation.
+
     """
     host, ssh_user, ssh_password, _web_user, _web_password, fingerprint = _identity(args)
     _site_settings(args)

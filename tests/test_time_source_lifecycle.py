@@ -19,6 +19,11 @@ from scripts.interop import time_source_acceptance as acceptance
 
 
 def _server_reply(transmit: bytes) -> bytes:
+    """Build a minimal synchronized NTP reply using the supplied transmit timestamp.
+
+    Args:
+        transmit: Eight-byte transmit timestamp placed in the NTP response packet.
+    """
     packet = bytearray(48)
     packet[0] = (4 << 3) | 4
     packet[1] = 2
@@ -92,7 +97,15 @@ def test_ntp_server_response_requires_matching_mode_health_endpoint_and_timestam
 def test_ntp_server_response_rejects_invalid_or_unowned_reply(
     packet_change, peer, expected_address, expected_transmit
 ):
-    """Reject malformed, unsynchronized, mismatched, or unexpected replies."""
+    """Reject malformed, unsynchronized, mismatched, or unexpected replies.
+
+    Args:
+        packet_change: Mutation applied to a valid reply to create one invalid-packet case.
+        peer: Address and UDP port observed on the NTP response socket.
+        expected_address: Expected IPv4 address of the NTP server response peer.
+        expected_transmit: Unique eight-byte transmit timestamp sent in the NTP request.
+
+    """
     with pytest.raises(acceptance.TimeSourceAcceptanceError):
         acceptance.validate_ntp_server_response(
             packet_change(_server_reply(b"12345678")), peer, expected_address, expected_transmit
@@ -100,24 +113,50 @@ def test_ntp_server_response_rejects_invalid_or_unowned_reply(
 
 
 def test_client_probe_requires_capture_ready_and_proves_no_ntp_response(monkeypatch):
-    """Send the exact UDP query only after guest capture is ready and reject replies."""
+    """Send the exact UDP query only after guest capture is ready and reject replies.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace dependencies at the test boundary.
+
+    """
     calls: list[tuple[str, object]] = []
 
     class FakeSocket:
         def bind(self, address):
+            """Record the local address selected for the UDP probe.
+
+            Args:
+                address: IPv4 address used as the NTP peer or fixture target.
+            """
             calls.append(("bind", address))
 
         def getsockname(self):
             return "192.168.87.1", 40123
 
         def settimeout(self, timeout):
+            """Accept the bounded socket or channel timeout requested by production code.
+
+            Args:
+                timeout: Bounded timeout in seconds for the request, probe, or channel operation.
+            """
             calls.append(("timeout", timeout))
 
         def sendto(self, packet, address):
+            """Record the packet and destination sent by the UDP probe.
+
+            Args:
+                packet: NTP packet bytes received or sent by the probe.
+                address: IPv4 address used as the NTP peer or fixture target.
+            """
             calls.append(("send", address))
             assert len(packet) == 48
 
         def recvfrom(self, _size):
+            """Return the mocked UDP response or the configured timeout.
+
+            Args:
+                _size: Maximum byte count requested by the mocked socket reader.
+            """
             raise acceptance.socket.timeout
 
         def close(self):
@@ -125,6 +164,12 @@ def test_client_probe_requires_capture_ready_and_proves_no_ntp_response(monkeypa
 
     class FakeGuest:
         def invoke(self, action, **kwargs):
+            """Record and emulate one guest action in the acceptance scenario.
+
+            Args:
+                action: Time-source operation name dispatched to the isolated guest.
+                **kwargs: Additional result fields included in the JSON response.
+            """
             assert action == "client_capture"
             assert kwargs["peer_ip"] == "192.168.87.1"
             assert kwargs["peer_port"] == 40123
@@ -144,7 +189,12 @@ def test_client_probe_requires_capture_ready_and_proves_no_ntp_response(monkeypa
 
 
 def test_server_probe_binds_to_verified_vmnet_source_instead_of_default_route(monkeypatch):
-    """Use the verified site NIC explicitly when Wi-Fi owns the default route."""
+    """Use the verified site NIC explicitly when Wi-Fi owns the default route.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace dependencies at the test boundary.
+
+    """
     calls = []
 
     class FakeSocket:
@@ -152,19 +202,45 @@ def test_server_probe_binds_to_verified_vmnet_source_instead_of_default_route(mo
             return self
 
         def __exit__(self, *_args):
+            """Close the mocked response context without suppressing exceptions.
+
+            Args:
+                *_args: Unused positional arguments accepted by the response context-manager protocol.
+            """
             pass
 
         def bind(self, address):
+            """Record the local address selected for the UDP probe.
+
+            Args:
+                address: IPv4 address used as the NTP peer or fixture target.
+            """
             calls.append(("bind", address))
 
         def settimeout(self, timeout):
+            """Accept the bounded socket or channel timeout requested by production code.
+
+            Args:
+                timeout: Bounded timeout in seconds for the request, probe, or channel operation.
+            """
             calls.append(("timeout", timeout))
 
         def sendto(self, packet, address):
+            """Record the packet and destination sent by the UDP probe.
+
+            Args:
+                packet: NTP packet bytes received or sent by the probe.
+                address: IPv4 address used as the NTP peer or fixture target.
+            """
             calls.append(("send", address))
             self.transmit = packet[40:48]
 
         def recvfrom(self, _size):
+            """Return the mocked UDP response or the configured timeout.
+
+            Args:
+                _size: Maximum byte count requested by the mocked socket reader.
+            """
             return _server_reply(self.transmit), ("192.168.87.11", 123)
 
     monkeypatch.setattr(acceptance.socket, "socket", lambda *_args, **_kwargs: FakeSocket())
@@ -189,10 +265,23 @@ def test_server_probe_binds_to_verified_vmnet_source_instead_of_default_route(mo
 def test_windows_fixture_neighbor_binds_route_to_vmnet_and_rejects_wifi_route(
     monkeypatch, route_interface_index, expected_success
 ):
-    """Select the matching VMnet source and fail if route resolution leaves it for Wi-Fi."""
+    """Select the matching VMnet source and fail if route resolution leaves it for Wi-Fi.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace dependencies at the test boundary.
+        route_interface_index: Interface index selected by the mocked Windows route result.
+        expected_success: Whether the mocked route should satisfy fixture ownership checks.
+
+    """
     captured = {}
 
     def fake_run(command, **kwargs):
+        """Return a mocked Windows route and neighbor observation.
+
+        Args:
+            command: Command argument vector passed to the subprocess boundary.
+            **kwargs: Additional result fields included in the JSON response.
+        """
         assert command[:3] == ["powershell.exe", "-NoProfile", "-NonInteractive"]
         captured["script"] = command[-1]
         captured["request"] = json.loads(kwargs["input"])
@@ -245,23 +334,50 @@ def test_windows_fixture_neighbor_binds_route_to_vmnet_and_rejects_wifi_route(
 def test_guest_channel_keeps_password_out_of_command_and_preserves_json_stdin(
     monkeypatch, sudo_status, expected_prefix
 ):
-    """Use stdin for the fallback sudo password and avoid a stray line under NOPASSWD."""
+    """Use stdin for the fallback sudo password and avoid a stray line under NOPASSWD.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace dependencies at the test boundary.
+        sudo_status: Exit status used to select the mocked passwordless-sudo behavior.
+        expected_prefix: Expected command prefix selected for the sudo policy case.
+
+    """
     channels = []
 
     class FakeChannel:
         def __init__(self, status):
+            """Initialize the containing test double state.
+
+            Args:
+                status: Mocked HTTP status code returned by the response object.
+            """
             self.status = status
             self.command = ""
             self.input = bytearray()
             self.closed = False
 
         def settimeout(self, _timeout):
+            """Accept the bounded socket or channel timeout requested by production code.
+
+            Args:
+                _timeout: Socket timeout accepted by the fake channel but intentionally unused.
+            """
             pass
 
         def exec_command(self, command):
+            """Record the command sent over the mocked SSH channel.
+
+            Args:
+                command: Command argument vector passed to the subprocess boundary.
+            """
             self.command = command
 
         def sendall(self, data):
+            """Record bytes written to the mocked SSH channel.
+
+            Args:
+                data: Payload bytes or text delivered through the current parser or channel callback.
+            """
             self.input.extend(data)
 
         def shutdown_write(self):
@@ -271,6 +387,11 @@ def test_guest_channel_keeps_password_out_of_command_and_preserves_json_stdin(
             return self.command.endswith("guest.py") and not getattr(self, "sent", False)
 
         def recv(self, _size):
+            """Return the next bounded chunk from the mocked SSH channel.
+
+            Args:
+                _size: Maximum byte count requested by the mocked socket reader.
+            """
             self.sent = True
             return b'{"ok":true,"status":"ready"}\n'
 
@@ -291,6 +412,11 @@ def test_guest_channel_keeps_password_out_of_command_and_preserves_json_stdin(
             return True
 
         def open_session(self, timeout=0):
+            """Create a mocked SSH channel for the requested session.
+
+            Args:
+                timeout: Bounded timeout in seconds for the request, probe, or channel operation.
+            """
             del timeout
             channel = FakeChannel(sudo_status if not channels else 0)
             channels.append(channel)
@@ -342,6 +468,12 @@ class FakeGuest:
     """Record scenario actions and emulate verified reboot boundaries."""
 
     def __init__(self, expected_hash: str, expected_version: str) -> None:
+        """Initialize the containing test double state.
+
+        Args:
+            expected_hash: Expected SHA-256 digest of the admitted helper source.
+            expected_version: Expected application version installed on the admitted guest.
+        """
         self.expected_hash = expected_hash
         self.expected_version = expected_version
         self.actions: list[str] = []
@@ -349,6 +481,12 @@ class FakeGuest:
         self.boot_count = 0
 
     def invoke(self, action: str, **parameters):
+        """Record and emulate one guest action in the acceptance scenario.
+
+        Args:
+            action: Time-source operation name dispatched to the isolated guest.
+            **parameters: Action-specific values forwarded to the isolated guest script.
+        """
         self.actions.append(action)
         self.events.append(action)
         if action == "deployment_identity":
@@ -399,7 +537,12 @@ class FakeGuest:
 
 
 def test_scenario_runs_all_modes_conflict_reboot_and_server_probe_in_order(monkeypatch):
-    """Keep the complete mode-transition acceptance scenario ordered and bounded."""
+    """Keep the complete mode-transition acceptance scenario ordered and bounded.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace dependencies at the test boundary.
+
+    """
     helper_path = Path(acceptance.__file__).resolve().parents[1] / "appliance" / "atlaso-helper"
     helper_hash = hashlib.sha256(helper_path.read_bytes()).hexdigest()
     project = json.loads(json.dumps({"version": "0.9.384"}))

@@ -6563,7 +6563,11 @@ def _ntpd_config_enabled(path: Path) -> bool:
 
 
 def _ntpd_config_managed(path: Path) -> bool:
-    """Return whether the config carries an Atlaso time ownership marker."""
+    """Return whether the config carries an Atlaso time ownership marker.
+
+    Args:
+        path: Configuration file to inspect.
+    """
     if not path.is_file():
         return False
     for line in path.read_text(encoding="utf-8").splitlines():
@@ -6574,7 +6578,11 @@ def _ntpd_config_managed(path: Path) -> bool:
 
 
 def _ntpd_time_mode(path: Path) -> str:
-    """Resolve the effective host clock mode from an applied or staged config."""
+    """Resolve the effective host clock mode from an applied or staged config.
+
+    Args:
+        path: Applied or staged configuration file to inspect.
+    """
     selected: str | None = None
     marker_count = 0
     for line in path.read_text(encoding="utf-8").splitlines():
@@ -6595,7 +6603,11 @@ def _ntpd_time_mode(path: Path) -> str:
 
 
 def _ntpd_applied_time_mode(path: Path) -> str:
-    """Do not infer applied authority from a potentially stale legacy enable marker."""
+    """Do not infer applied authority from a potentially stale legacy enable marker.
+
+    Args:
+        path: Applied configuration file to inspect.
+    """
     if not any(line.strip().lower().startswith(NTP_TIME_MODE_PREFIX.lower()) for line in path.read_text(encoding="utf-8").splitlines()):
         return "unmanaged"
     return _ntpd_time_mode(path)
@@ -6740,7 +6752,11 @@ def _ntpd_client_packet_guard(mode: str) -> None:
 
 
 def _ntpd_client_packet_guard_status(mode: str = "ntp_client") -> dict[str, object]:
-    """Verify exact applied NTP ingress rules, including destination and order."""
+    """Verify exact applied NTP ingress rules, including destination and order.
+
+    Args:
+        mode: Selected Atlaso NTP mode whose packet guard is checked.
+    """
     nft = shutil.which("nft")
     if nft is None:
         return {"active": None, "detail": "nft is unavailable; client-only ingress cannot be verified."}
@@ -6806,6 +6822,7 @@ def _ntpd_config_errors(path: Path, mode: str | None = None) -> list[str]:
 
     Args:
         path: Filesystem path read, validated, or updated by the operation.
+        mode: Expected Atlaso mode, inferred from the file when omitted.
     """
     errors: list[str] = []
     servers: list[str] = []
@@ -7119,7 +7136,13 @@ def _grant_ntpd_nts_server_key_read(config_path: Path) -> Path | None:
 
 
 def _ntpd_run_checked(command: list[str], description: str, *, timeout: float = 5) -> subprocess.CompletedProcess[str]:
-    """Run one bounded host time-control command and preserve actionable errors."""
+    """Run one bounded host time-control command and preserve actionable errors.
+
+    Args:
+        command: Argument vector to execute without a shell.
+        description: Safe operation label used in diagnostics.
+        timeout: Maximum command duration in seconds.
+    """
     try:
         result = _run(command, timeout=timeout)
     except (OSError, subprocess.TimeoutExpired) as exc:
@@ -7130,7 +7153,12 @@ def _ntpd_run_checked(command: list[str], description: str, *, timeout: float = 
 
 
 def _ntpd_set_vmware_timesync(enabled: bool, *, require_active: bool = True) -> None:
-    """Set and verify VMware Tools periodic time synchronization."""
+    """Set and verify VMware Tools periodic time synchronization.
+
+    Args:
+        enabled: Whether periodic VMware time synchronization should be enabled.
+        require_active: Whether vmtoolsd must already be active for verification.
+    """
     toolbox = shutil.which("vmware-toolbox-cmd")
     if toolbox is None:
         tools_service = _ntpd_service_state("vmtoolsd.service")
@@ -7147,7 +7175,12 @@ def _ntpd_set_vmware_timesync(enabled: bool, *, require_active: bool = True) -> 
 
 
 def _ntpd_stop_service(unit: str, *, disable: bool = True) -> None:
-    """Disable one competing service and verify it is inactive."""
+    """Disable one competing service and verify it is inactive.
+
+    Args:
+        unit: Systemd unit to stop.
+        disable: Also disable the unit's startup intent when true.
+    """
     try:
         command = ["systemctl", "disable", "--now", unit] if disable else ["systemctl", "stop", unit]
         _run(command, timeout=5)
@@ -7160,7 +7193,12 @@ def _ntpd_stop_service(unit: str, *, disable: bool = True) -> None:
 
 
 def _ntpd_start_service(unit: str, *, restart: bool = False) -> None:
-    """Enable and start one selected system clock service."""
+    """Enable and start one selected system clock service.
+
+    Args:
+        unit: Systemd unit to start.
+        restart: Restart instead of start when true.
+    """
     _ntpd_run_checked(["systemctl", "enable", unit], f"Enable {unit}")
     operation = "restart" if restart else "start"
     _ntpd_run_checked(["systemctl", operation, unit], f"{operation.title()} {unit}")
@@ -7170,7 +7208,11 @@ def _ntpd_start_service(unit: str, *, restart: bool = False) -> None:
 
 
 def _ntpd_wait_synchronized(timeout_seconds: float = 60) -> None:
-    """Require NTPsec's own synchronized leap and system state after apply."""
+    """Require NTPsec's own synchronized leap and system state after apply.
+
+    Args:
+        timeout_seconds: Maximum time to wait for NTPsec synchronization.
+    """
     ntpq = shutil.which("ntpq")
     if ntpq is None:
         raise RuntimeError("ntpq is unavailable; ntpd is active but synchronization could not be verified.")
@@ -7229,7 +7271,11 @@ def _ntpd_vmware_clock_state() -> dict[str, object]:
 
 
 def _ntpd_wait_vmware_synchronized(timeout_seconds: float = 60) -> None:
-    """Require advancing host-time observations before committing VMware authority."""
+    """Require advancing host-time observations before committing VMware authority.
+
+    Args:
+        timeout_seconds: Maximum time to wait for advancing host-time observations.
+    """
     deadline = time.monotonic() + timeout_seconds
     previous_host_time: float | None = None
     while time.monotonic() < deadline:
@@ -7248,7 +7294,12 @@ def _ntpd_wait_vmware_synchronized(timeout_seconds: float = 60) -> None:
 
 
 def _ntpd_write_managed_file(path: Path, contents: str) -> None:
-    """Write one root-owned managed systemd file with an atomic replacement."""
+    """Write one root-owned managed systemd file with an atomic replacement.
+
+    Args:
+        path: Destination path for the managed file.
+        contents: Complete file contents to install.
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_name(f".{path.name}.atlaso-tmp")
     temporary.write_text(contents, encoding="utf-8")
@@ -7318,7 +7369,13 @@ def _ntpd_retire_nts_material() -> None:
 
 
 def _ntpd_transition(mode: str, config_path: Path | None = None, *, restart: bool = True) -> None:
-    """Move between clock sources without running two synchronizers together."""
+    """Move between clock sources without running two synchronizers together.
+
+    Args:
+        mode: Effective appliance clock controller to activate.
+        config_path: Staged NTP configuration, or the already applied configuration.
+        restart: Whether NTPsec must restart instead of starting idempotently.
+    """
     if mode not in NTP_ALLOWED_MODES and mode != "disabled":
         raise ValueError("Unsupported appliance time mode.")
     if mode == "disabled":
@@ -7440,7 +7497,11 @@ def _ntpd_snapshot_nts_server_material() -> list[dict[str, object]]:
 
 
 def _ntpd_validate_nts_material_manifest(entries: object) -> list[dict[str, object]]:
-    """Validate bounded in-memory NTS custody before any restore mutation."""
+    """Validate bounded in-memory NTS custody before any restore mutation.
+
+    Args:
+        entries: Captured fixed-root manifest including prior contents and absence.
+    """
     if not isinstance(entries, list) or len(entries) > 128:
         raise RuntimeError("NTS rollback material has an invalid entry list.")
     roots = (NTP_NTS_COOKIE_PATH, NTP_CERT_DIR)
@@ -7501,7 +7562,11 @@ def _ntpd_validate_nts_material_manifest(entries: object) -> list[dict[str, obje
 
 
 def _ntpd_restore_nts_server_material(entries: object) -> None:
-    """Restore captured server files and permissions before reactivating its controller."""
+    """Restore captured server files and permissions before reactivating its controller.
+
+    Args:
+        entries: Prior fixed-root manifest, or no material for config-only recovery.
+    """
     if entries is None:
         return
     manifest = _ntpd_validate_nts_material_manifest(entries)
@@ -7616,7 +7681,11 @@ def _ntpd_transaction_path() -> Path:
 
 
 def _ntpd_write_transaction(payload: dict[str, object]) -> None:
-    """Publish a root-only checkpoint durably before the corresponding mutation."""
+    """Publish a root-only checkpoint durably before the corresponding mutation.
+
+    Args:
+        payload: Nonsecret prior-config custody and controller recovery markers.
+    """
     path = _ntpd_transaction_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     descriptor, temporary = tempfile.mkstemp(prefix=".atlaso-ntpd-journal-", dir=path.parent)
@@ -7646,6 +7715,8 @@ def _ntpd_read_transaction() -> dict[str, object] | None:
         raise RuntimeError("Clock Apply recovery checkpoint is invalid; preserve it for recovery.")
     if "nts_restore_pending" in payload and type(payload["nts_restore_pending"]) is not bool:
         raise RuntimeError("Clock Apply NTS recovery marker is invalid; preserve it for recovery.")
+    if "nts_capture_pending" in payload and type(payload["nts_capture_pending"]) is not bool:
+        raise RuntimeError("Clock Apply NTS capture marker is invalid; preserve it for recovery.")
     return payload
 
 
@@ -7659,9 +7730,17 @@ def _ntpd_clear_transaction() -> None:
 
 
 def _ntpd_begin_transaction(
-    snapshot: dict[str, object], *, nts_restore_pending: bool = False
+    snapshot: dict[str, object], *,
+    nts_restore_pending: bool = False,
+    nts_capture_pending: bool = False,
 ) -> None:
-    """Persist config custody without serializing any NTS private material."""
+    """Persist config custody without serializing any NTS private material.
+
+    Args:
+        snapshot: Prior applied config and optional in-memory NTS custody.
+        nts_restore_pending: Whether exact NTS restoration remains unproven.
+        nts_capture_pending: Whether NTS custody is being captured after ntpd stops.
+    """
     existing = _ntpd_read_transaction()
     previous = {key: snapshot[key] for key in ("exists", "managed", "mode", "data", "link_target", "file_mode", "uid", "gid")}
     data = previous.get("data")
@@ -7681,6 +7760,8 @@ def _ntpd_begin_transaction(
         or (existing is not None and existing.get("nts_restore_pending") is True)
     ):
         payload["nts_restore_pending"] = True
+    if nts_capture_pending:
+        payload["nts_capture_pending"] = True
     _ntpd_write_transaction(payload)
 
 
@@ -7697,7 +7778,11 @@ def _ntpd_checkpoint_verified() -> None:
 
 
 def _ntpd_recover_interrupted_apply(*, allow_active: bool = False) -> None:
-    """Recover killed helpers and prior boots before guards select authority."""
+    """Recover killed helpers and prior boots before guards select authority.
+
+    Args:
+        allow_active: Let lifecycle hooks defer recovery to a live Apply owner.
+    """
     payload = _ntpd_read_transaction()
     if payload is None:
         return
@@ -7775,13 +7860,16 @@ def _ntpd_snapshot_applied_config() -> dict[str, object]:
         raise RuntimeError("Applied ntpd config is not a regular file or symlink; refusing transition without rollback evidence.")
     if snapshot["managed"]:
         snapshot["mode"] = _ntpd_applied_time_mode(path)
-        if _ntpd_config_enabled(path) and _ntpd_nts_server_enabled(path):
-            snapshot["nts_material"] = _ntpd_snapshot_nts_server_material()
     return snapshot
 
 
 def _ntpd_restore_applied_config(snapshot: dict[str, object], *, path: Path | None = None) -> None:
-    """Atomically restore the prior applied config bytes, symlink, or absence."""
+    """Atomically restore the prior applied config bytes, symlink, or absence.
+
+    Args:
+        snapshot: Prior configuration contents, type, metadata and existence.
+        path: Explicit restoration destination, or the managed NTP configuration.
+    """
     if path is None:
         path = NTP_CONFIG_PATH
     if not snapshot["exists"]:
@@ -7860,7 +7948,11 @@ def _ntpd_fail_closed_stop() -> list[str]:
 
 
 def _ntpd_rollback_failed_apply(snapshot: dict[str, object]) -> str:
-    """Restore previous applied intent and controller after a failed apply."""
+    """Restore previous applied intent and controller after a failed apply.
+
+    Args:
+        snapshot: Prior configuration and optional volatile NTS material custody.
+    """
     snapshot["restored"] = False
     if snapshot.get("nts_material") is not None:
         try:
@@ -7953,7 +8045,11 @@ def _ntpd_reconcile_applied() -> dict[str, object]:
 
 
 def _ntpd_guard(phase: str) -> int:
-    """Enforce selected clock ownership at boot and service restart boundaries."""
+    """Enforce selected clock ownership at boot and service restart boundaries.
+
+    Args:
+        phase: Boot, VMware Tools or NTPsec lifecycle boundary being guarded.
+    """
     if phase not in {"boot", "pre-vmtoolsd", "post-vmtoolsd", "pre-ntpd"}:
         print("ntpd guard requires boot, pre-vmtoolsd, post-vmtoolsd, or pre-ntpd", file=sys.stderr)
         return 2
@@ -7966,8 +8062,23 @@ def _ntpd_guard(phase: str) -> int:
     live_apply = transaction is not None and _release_transaction_owner_alive(
         transaction.get("owner")
     )
+    if live_apply and transaction.get("nts_capture_pending") is True:
+        if phase == "pre-ntpd":
+            print(
+                "NTS custody is being captured; refusing ntpd start until the snapshot is complete.",
+                file=sys.stderr,
+            )
+            return 1
+        # A vmtoolsd restart hook must not queue ntpd or alter selected clock
+        # state while the previous NTS tree is being captured.
+        return 0
 
     def refuse_unproven_ntpd_start(detail: str) -> int:
+        """Refuse this service start without synchronously stopping its own job.
+
+        Args:
+            detail: Missing ownership evidence explaining the refusal.
+        """
         errors = []
         try:
             # This hook executes inside ntpd.service; disable its boot intent
@@ -8276,7 +8387,11 @@ def _ntpd_status() -> int:
 
 
 def _ntpd_service_state(unit: str) -> dict[str, object]:
-    """Read one bounded systemd service state."""
+    """Read one bounded systemd service state.
+
+    Args:
+        unit: Allowlisted clock-controller systemd unit being observed.
+    """
     systemctl = shutil.which("systemctl")
     if systemctl is None:
         return {"active": None, "enabled": None, "detail": "systemctl command not found"}
@@ -8344,7 +8459,12 @@ def _ntpd_vmware_timesync_state() -> dict[str, object]:
         setting_detail = "VMware Tools service is inactive; periodic-sync setting is unavailable"
 
     def combine(setting: bool | None, service_state: object) -> bool | None:
-        """Return three-state conjunction without promoting unknown to true."""
+        """Return three-state conjunction without promoting unknown to true.
+
+        Args:
+            setting: Observed VMware periodic synchronization flag.
+            service_state: Observed Tools activity or persistent enablement.
+        """
         if setting is False or service_state is False:
             return False
         if setting is True and service_state is True:
@@ -8536,21 +8656,31 @@ def _handle_ntpd(action: str, args: list[str]) -> int:
     try:
         _ntpd_recover_interrupted_apply()
         previous_config = _ntpd_snapshot_applied_config()
-        if (
-            mode == "ntp_server"
-            and _ntpd_nts_server_enabled(config_path)
-            and previous_config.get("nts_material") is None
-        ):
-            # The candidate may create or rotate either fixed NTS root. Capture
-            # their exact prior state before the durable recovery barrier and
-            # before any candidate config or controller mutation.
-            previous_config["nts_material"] = _ntpd_snapshot_nts_server_material()
-        if mode != "disabled":
-            _ntpd_begin_transaction(previous_config)
+        prior_nts_server = (
+            previous_config.get("managed") is True
+            and NTP_CONFIG_PATH.is_file()
+            and _ntpd_config_enabled(NTP_CONFIG_PATH)
+            and _ntpd_nts_server_enabled(NTP_CONFIG_PATH)
+        )
+        candidate_nts_server = (
+            mode == "ntp_server" and _ntpd_nts_server_enabled(config_path)
+        )
+        custody_required = prior_nts_server or candidate_nts_server
+        if mode != "disabled" or custody_required:
+            _ntpd_begin_transaction(
+                previous_config, nts_capture_pending=custody_required
+            )
     except (OSError, RuntimeError, ValueError, subprocess.TimeoutExpired) as exc:
         print(f"Unable to capture previous applied clock configuration: {exc}", file=sys.stderr)
         return 1
     try:
+        if custody_required:
+            # Preserve config-only crash recovery until the current controller
+            # is verified stopped. NTS files are captured only after ntpd can no
+            # longer rotate them, then the durable barrier precedes candidates.
+            _ntpd_stop_service("ntpd.service")
+            previous_config["nts_material"] = _ntpd_snapshot_nts_server_material()
+            _ntpd_begin_transaction(previous_config, nts_restore_pending=True)
         if mode != "disabled":
             _ntpd_write_managed_file(NTP_CONFIG_PATH, config_path.read_text(encoding="utf-8"))
             _ntpd_install_guards()
@@ -8576,7 +8706,7 @@ def _handle_ntpd(action: str, args: list[str]) -> int:
                 rollback_detail += " Recovery checkpoint retirement failed; retry recovery."
         print(f"ntpd clock-source transition failed: {exc}. {rollback_detail}", file=sys.stderr)
         return 1
-    if mode != "disabled":
+    if mode != "disabled" or custody_required:
         _ntpd_clear_transaction()
     print(
         json.dumps(

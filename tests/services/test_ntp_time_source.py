@@ -20,6 +20,11 @@ from atlaso.app.services.ntp import (
 
 
 def _settings(**overrides: object) -> NtpSettings:
+    """Exercise  settings.
+
+    Args:
+        **overrides: NTP desired-state fields overridden for this case.
+    """
     values: dict[str, object] = {
         "id": 1,
         "enabled": False,
@@ -128,7 +133,11 @@ def test_vmware_tools_mode_omits_ntp_sources_and_service_listeners() -> None:
 
 
 def test_settings_archive_round_trips_time_source_and_defaults_legacy_archives(client) -> None:
-    """Archives preserve an explicit choice and supply the legacy client default."""
+    """Archives preserve an explicit choice and supply the legacy client default.
+
+    Args:
+        client: Application client backed by isolated desired-state settings.
+    """
     from sqlalchemy import select
 
     from atlaso.app.database import SessionLocal
@@ -156,7 +165,11 @@ def test_settings_archive_round_trips_time_source_and_defaults_legacy_archives(c
 
 
 def test_settings_archive_rejects_unknown_time_source(client) -> None:
-    """Portable restore rejects a source mode outside the supported choices."""
+    """Portable restore rejects a source mode outside the supported choices.
+
+    Args:
+        client: Application client backed by isolated desired-state settings.
+    """
     from sqlalchemy import select
 
     from atlaso.app.database import SessionLocal
@@ -176,7 +189,11 @@ def test_settings_archive_rejects_unknown_time_source(client) -> None:
 
 
 def test_factory_seed_defaults_time_source_to_ntp_client(client) -> None:
-    """Fresh factory desired state selects NTP client mode by default."""
+    """Fresh factory desired state selects NTP client mode by default.
+
+    Args:
+        client: Application client backed by isolated desired-state settings.
+    """
     from sqlalchemy import select
 
     from atlaso.app.database import SessionLocal
@@ -188,7 +205,11 @@ def test_factory_seed_defaults_time_source_to_ntp_client(client) -> None:
 
 
 def test_archive_restores_inactive_nts_server_preference_without_ca(client) -> None:
-    """Remembered server options cannot make a VMware client archive require CA."""
+    """Remembered server options cannot make a VMware client archive require CA.
+
+    Args:
+        client: Application client backed by isolated desired-state settings.
+    """
     from sqlalchemy import select
 
     from atlaso.app.database import SessionLocal
@@ -211,7 +232,13 @@ def test_archive_restores_inactive_nts_server_preference_without_ca(client) -> N
 
 @pytest.mark.parametrize("mode", ["ntp_client", "vmware_tools", "ntp_server"])
 def test_rendered_mode_passes_privileged_helper_validation(mode, tmp_path, monkeypatch) -> None:
-    """Exercise the renderer and host validator together for each supported mode."""
+    """Exercise the renderer and host validator together for each supported mode.
+
+    Args:
+        mode: Selected appliance clock mode under test.
+        tmp_path: Isolated filesystem fixture for applied configuration and evidence.
+        monkeypatch: Replace host operations with controlled test observations.
+    """
     from tests.test_appliance_helper import load_helper_module
 
     helper = load_helper_module()

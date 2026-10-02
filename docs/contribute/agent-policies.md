@@ -1500,8 +1500,10 @@ preserved with their affected subsystem below. Keep new requirements at their to
   retain the applied mode. Missing, replaced, or legacy configuration without proven ownership stops known controllers
   and requires Apply; never adopt vendor configuration. Guards must refuse an unproven ntpd start without synchronously
   stopping their own service job. Failed transitions must preserve the prior authoritative configuration and report recovery
-  failures. NTS rollback must stop and verify candidate controllers before restoring private material, restore the
-  exact prior fixed-root contents and absence, and refuse prior-controller restart if restoration cannot be verified.
+  failures. Record prior config custody and stop and verify NTPsec before capturing NTS rollback material; a failed
+  capture must recover the prior controller without changing its material. NTS rollback must stop and verify candidate
+  controllers before restoring private material, restore the exact prior fixed-root contents and absence, and refuse
+  prior-controller restart if restoration cannot be verified.
   Client mode blocks network time requests while accepting upstream replies, including across managed
   Firewall replacements. Health requires observed synchronization and verified absence of competing controllers;
   desired state, applied mode, service activity, and clock synchronization are separate diagnostics. See

@@ -8,6 +8,12 @@ from tests.test_appliance_helper import load_helper_module
 
 
 def _configure_roots(monkeypatch, tmp_path):
+    """Configure isolated NTS material paths for the helper restore test.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace dependencies at the test boundary.
+        tmp_path: Per-test temporary filesystem root for the NTS material snapshot.
+    """
     helper = load_helper_module()
     # The helper is deployed only on Photon/Linux. Unit tests on Windows mark
     # the real stdlib remover as the safe primitive exercised by these cases.
@@ -28,6 +34,12 @@ def _configure_roots(monkeypatch, tmp_path):
 def test_restore_removes_candidate_descendants_and_restores_rotated_bytes_and_modes(
     monkeypatch, tmp_path
 ):
+    """Verify restore removes candidate descendants and restores rotated bytes and modes.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace dependencies at the test boundary.
+        tmp_path: Per-test temporary filesystem root for the NTS material snapshot.
+    """
     helper, cookie_path, cert_dir = _configure_roots(monkeypatch, tmp_path)
     cookie_path.mkdir()
     (cookie_path / "nested").mkdir()
@@ -50,6 +62,13 @@ def test_restore_removes_candidate_descendants_and_restores_rotated_bytes_and_mo
     original_rmtree = helper.shutil.rmtree
 
     def recording_rmtree(path, *args, **kwargs):
+        """Record the requested tree removal before delegating to the original remover.
+
+        Args:
+            path: Management endpoint path or owned filesystem root used by this operation.
+            *args: Additional positional options forwarded to the filesystem remover.
+            **kwargs: Additional result fields included in the JSON response.
+        """
         shutil_rmtree_calls.append(path)
         return original_rmtree(path, *args, **kwargs)
 
@@ -68,6 +87,12 @@ def test_restore_removes_candidate_descendants_and_restores_rotated_bytes_and_mo
 
 
 def test_restore_prior_file_root_over_candidate_directory(monkeypatch, tmp_path):
+    """Verify restore prior file root over candidate directory.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace dependencies at the test boundary.
+        tmp_path: Per-test temporary filesystem root for the NTS material snapshot.
+    """
     helper, cookie_path, cert_dir = _configure_roots(monkeypatch, tmp_path)
     cookie_path.write_bytes(b"previous cookie file")
     os.chmod(cookie_path, 0o600)
@@ -90,6 +115,12 @@ def test_restore_prior_file_root_over_candidate_directory(monkeypatch, tmp_path)
 
 
 def test_restore_candidate_material_for_roots_absent_in_snapshot(monkeypatch, tmp_path):
+    """Verify restore candidate material for roots absent in snapshot.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace dependencies at the test boundary.
+        tmp_path: Per-test temporary filesystem root for the NTS material snapshot.
+    """
     helper, cookie_path, cert_dir = _configure_roots(monkeypatch, tmp_path)
     snapshot = helper._ntpd_snapshot_nts_server_material()
     assert len(snapshot) == 2
@@ -107,6 +138,12 @@ def test_restore_candidate_material_for_roots_absent_in_snapshot(monkeypatch, tm
 
 
 def test_invalid_manifest_is_rejected_before_live_tree_changes(monkeypatch, tmp_path):
+    """Verify invalid manifest is rejected before live tree changes.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace dependencies at the test boundary.
+        tmp_path: Per-test temporary filesystem root for the NTS material snapshot.
+    """
     helper, cookie_path, cert_dir = _configure_roots(monkeypatch, tmp_path)
     cookie_path.mkdir()
     original = cookie_path / "candidate"
@@ -125,6 +162,13 @@ def test_invalid_manifest_is_rejected_before_live_tree_changes(monkeypatch, tmp_
 def test_unsafe_live_node_in_either_root_refuses_before_any_deletion(
     monkeypatch, tmp_path, unsafe_kind
 ):
+    """Verify unsafe live node in either root refuses before any deletion.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace dependencies at the test boundary.
+        tmp_path: Per-test temporary filesystem root for the NTS material snapshot.
+        unsafe_kind: Unsafe filesystem node type used by the refusal case.
+    """
     helper, cookie_path, cert_dir = _configure_roots(monkeypatch, tmp_path)
     cookie_path.mkdir()
     cookie_file = cookie_path / "candidate"
@@ -148,6 +192,12 @@ def test_unsafe_live_node_in_either_root_refuses_before_any_deletion(
 
 
 def test_cleanup_failure_does_not_partially_recreate_snapshot(monkeypatch, tmp_path):
+    """Verify cleanup failure does not partially recreate snapshot.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace dependencies at the test boundary.
+        tmp_path: Per-test temporary filesystem root for the NTS material snapshot.
+    """
     helper, cookie_path, cert_dir = _configure_roots(monkeypatch, tmp_path)
     cookie_path.mkdir()
     original = cookie_path / "candidate"
@@ -157,6 +207,11 @@ def test_cleanup_failure_does_not_partially_recreate_snapshot(monkeypatch, tmp_p
     (cert_dir / "candidate.key").write_bytes(b"candidate key")
 
     def fail_removal(_path):
+        """Simulate an inability to remove the candidate NTS tree.
+
+        Args:
+            _path: Filesystem path accepted by the mocked remover but intentionally unused.
+        """
         raise OSError("synthetic cleanup failure")
 
     fail_removal.avoids_symlink_attacks = True
@@ -171,6 +226,12 @@ def test_cleanup_failure_does_not_partially_recreate_snapshot(monkeypatch, tmp_p
 def test_directory_restore_requires_symlink_safe_rmtree_before_mutation(
     monkeypatch, tmp_path
 ):
+    """Verify directory restore requires symlink safe rmtree before mutation.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace dependencies at the test boundary.
+        tmp_path: Per-test temporary filesystem root for the NTS material snapshot.
+    """
     helper, cookie_path, cert_dir = _configure_roots(monkeypatch, tmp_path)
     cookie_path.mkdir()
     cookie_candidate = cookie_path / "candidate"
@@ -193,6 +254,12 @@ def test_directory_restore_requires_symlink_safe_rmtree_before_mutation(
 def test_absent_roots_restore_from_candidate_files_without_tree_remover(
     monkeypatch, tmp_path
 ):
+    """Verify absent roots restore from candidate files without tree remover.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace dependencies at the test boundary.
+        tmp_path: Per-test temporary filesystem root for the NTS material snapshot.
+    """
     helper, cookie_path, cert_dir = _configure_roots(monkeypatch, tmp_path)
     snapshot = helper._ntpd_snapshot_nts_server_material()
     cookie_path.write_bytes(b"candidate cookie")
@@ -210,6 +277,12 @@ def test_absent_roots_restore_from_candidate_files_without_tree_remover(
 def test_interrupted_nts_rollback_marker_stops_and_retains_recovery_state(
     monkeypatch, tmp_path
 ):
+    """Verify interrupted nts rollback marker stops and retains recovery state.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace dependencies at the test boundary.
+        tmp_path: Per-test temporary filesystem root for the NTS material snapshot.
+    """
     helper, cookie_path, cert_dir = _configure_roots(monkeypatch, tmp_path)
     cookie_path.mkdir()
     cookie_file = cookie_path / "prior-cookie"
@@ -265,6 +338,12 @@ def test_interrupted_nts_rollback_marker_stops_and_retains_recovery_state(
 
 
 def test_transaction_rewrite_preserves_nts_restore_barrier(monkeypatch, tmp_path):
+    """Verify transaction rewrite preserves nts restore barrier.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace dependencies at the test boundary.
+        tmp_path: Per-test temporary filesystem root for the NTS material snapshot.
+    """
     helper, _cookie_path, _cert_dir = _configure_roots(monkeypatch, tmp_path)
     config = tmp_path / "etc" / "ntp.conf"
     config.parent.mkdir(parents=True, exist_ok=True)

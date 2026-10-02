@@ -8,6 +8,12 @@ from tests.test_appliance_helper import load_helper_module
 def test_reconcile_stops_known_controllers_when_applied_config_is_missing(
     monkeypatch, tmp_path
 ):
+    """Exercise test reconcile stops known controllers when applied config is missing.
+
+    Args:
+        monkeypatch: Replace host operations with controlled test observations.
+        tmp_path: Isolated filesystem fixture for applied configuration and evidence.
+    """
     helper = load_helper_module()
     monkeypatch.setattr(helper, "NTP_CONFIG_PATH", tmp_path / "missing.conf")
     monkeypatch.setattr(helper, "_ntpd_recover_interrupted_apply", lambda: None)
@@ -25,6 +31,12 @@ def test_reconcile_stops_known_controllers_when_applied_config_is_missing(
 def test_reconcile_preserves_unowned_vendor_config_while_stopping_controllers(
     monkeypatch, tmp_path
 ):
+    """Exercise test reconcile preserves unowned vendor config while stopping controllers.
+
+    Args:
+        monkeypatch: Replace host operations with controlled test observations.
+        tmp_path: Isolated filesystem fixture for applied configuration and evidence.
+    """
     helper = load_helper_module()
     config = tmp_path / "ntp.conf"
     original = b"server vendor.example iburst\n"
@@ -43,6 +55,12 @@ def test_reconcile_preserves_unowned_vendor_config_while_stopping_controllers(
 
 
 def test_reconcile_reports_failed_fail_closed_cleanup(monkeypatch, tmp_path):
+    """Exercise test reconcile reports failed fail closed cleanup.
+
+    Args:
+        monkeypatch: Replace host operations with controlled test observations.
+        tmp_path: Isolated filesystem fixture for applied configuration and evidence.
+    """
     helper = load_helper_module()
     monkeypatch.setattr(helper, "NTP_CONFIG_PATH", tmp_path / "missing.conf")
     monkeypatch.setattr(helper, "_ntpd_recover_interrupted_apply", lambda: None)
@@ -55,6 +73,12 @@ def test_reconcile_reports_failed_fail_closed_cleanup(monkeypatch, tmp_path):
 
 
 def _prepare_missing_config_guard(monkeypatch, tmp_path):
+    """Exercise  prepare missing config guard.
+
+    Args:
+        monkeypatch: Replace host operations with controlled test observations.
+        tmp_path: Isolated filesystem fixture for applied configuration and evidence.
+    """
     helper = load_helper_module()
     monkeypatch.setattr(helper, "NTP_CONFIG_PATH", tmp_path / "missing.conf")
     monkeypatch.setattr(helper, "_ntpd_recover_interrupted_apply", lambda **_kwargs: None)
@@ -64,6 +88,12 @@ def _prepare_missing_config_guard(monkeypatch, tmp_path):
 
 
 def test_boot_guard_fails_closed_when_applied_config_is_missing(monkeypatch, tmp_path):
+    """Exercise test boot guard fails closed when applied config is missing.
+
+    Args:
+        monkeypatch: Replace host operations with controlled test observations.
+        tmp_path: Isolated filesystem fixture for applied configuration and evidence.
+    """
     helper = _prepare_missing_config_guard(monkeypatch, tmp_path)
     calls = []
     monkeypatch.setattr(helper, "_ntpd_fail_closed_stop", lambda: calls.append("stop") or [])
@@ -73,6 +103,12 @@ def test_boot_guard_fails_closed_when_applied_config_is_missing(monkeypatch, tmp
 
 
 def test_guard_preserves_a_proven_live_first_apply_candidate(monkeypatch, tmp_path):
+    """Exercise test guard preserves a proven live first apply candidate.
+
+    Args:
+        monkeypatch: Replace host operations with controlled test observations.
+        tmp_path: Isolated filesystem fixture for applied configuration and evidence.
+    """
     helper = _prepare_missing_config_guard(monkeypatch, tmp_path)
     monkeypatch.setattr(helper, "_ntpd_read_transaction", lambda: {"owner": "live-owner"})
     monkeypatch.setattr(helper, "_release_transaction_owner_alive", lambda _owner: True)
@@ -89,6 +125,12 @@ def test_guard_preserves_a_proven_live_first_apply_candidate(monkeypatch, tmp_pa
 
 
 def test_pre_ntpd_guard_disables_its_start_without_stopping_itself(monkeypatch, tmp_path):
+    """Exercise test pre ntpd guard disables its start without stopping itself.
+
+    Args:
+        monkeypatch: Replace host operations with controlled test observations.
+        tmp_path: Isolated filesystem fixture for applied configuration and evidence.
+    """
     helper = _prepare_missing_config_guard(monkeypatch, tmp_path)
     commands = []
     stopped = []
@@ -123,6 +165,12 @@ def test_pre_ntpd_guard_disables_its_start_without_stopping_itself(monkeypatch, 
 def test_legacy_pre_ntpd_guard_refuses_start_without_stopping_itself(
     monkeypatch, tmp_path
 ):
+    """Exercise test legacy pre ntpd guard refuses start without stopping itself.
+
+    Args:
+        monkeypatch: Replace host operations with controlled test observations.
+        tmp_path: Isolated filesystem fixture for applied configuration and evidence.
+    """
     helper = load_helper_module()
     config = tmp_path / "ntp.conf"
     config.write_text("server legacy.example iburst\n", encoding="utf-8")
@@ -162,6 +210,12 @@ def test_legacy_pre_ntpd_guard_refuses_start_without_stopping_itself(
 
 
 def test_installed_boot_guard_runs_without_ntp_conf(monkeypatch, tmp_path):
+    """Exercise test installed boot guard runs without ntp conf.
+
+    Args:
+        monkeypatch: Replace host operations with controlled test observations.
+        tmp_path: Isolated filesystem fixture for applied configuration and evidence.
+    """
     helper = load_helper_module()
     guard_unit = tmp_path / "atlaso-time-sync-guard.service"
     monkeypatch.setattr(helper, "NTP_GUARD_SERVICE_PATH", guard_unit)

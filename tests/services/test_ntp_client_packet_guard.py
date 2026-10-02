@@ -10,11 +10,23 @@ from tests.test_appliance_helper import load_helper_module
 
 
 def test_client_guard_blocks_requests_but_permits_upstream_responses(monkeypatch):
+    """Exercise test client guard blocks requests but permits upstream responses.
+
+    Args:
+        monkeypatch: Replace host operations with controlled test observations.
+    """
     helper = load_helper_module()
     monkeypatch.setattr(helper.shutil, "which", lambda _name: "/usr/sbin/nft")
     calls = []
 
     def run(command, input_text, *, timeout):
+        """Exercise run.
+
+        Args:
+            command: Native command submitted by the helper.
+            input_text: Rendered nftables transaction submitted on standard input.
+            timeout: Bounded command deadline requested by the caller.
+        """
         calls.append((command, input_text, timeout))
         return subprocess.CompletedProcess(command, 0, "", "")
 
@@ -33,11 +45,24 @@ def test_client_guard_blocks_requests_but_permits_upstream_responses(monkeypatch
 
 @pytest.mark.parametrize("mode", ["vmware_tools", "disabled"])
 def test_other_modes_release_only_time_client_guard(monkeypatch, mode):
+    """Exercise test other modes release only time client guard.
+
+    Args:
+        monkeypatch: Replace host operations with controlled test observations.
+        mode: Selected appliance clock mode under test.
+    """
     helper = load_helper_module()
     monkeypatch.setattr(helper.shutil, "which", lambda _name: "/usr/sbin/nft")
     calls = []
 
     def run(command, input_text, *, timeout):
+        """Exercise run.
+
+        Args:
+            command: Native command submitted by the helper.
+            input_text: Rendered nftables transaction submitted on standard input.
+            timeout: Bounded command deadline requested by the caller.
+        """
         calls.append(input_text)
         return subprocess.CompletedProcess(command, 0, "", "")
 
@@ -47,6 +72,11 @@ def test_other_modes_release_only_time_client_guard(monkeypatch, mode):
 
 
 def _write_applied_server_config(path):
+    """Exercise  write applied server config.
+
+    Args:
+        path: Applied configuration path in the isolated fixture.
+    """
     path.write_text(
         "\n".join(
             [
@@ -67,6 +97,12 @@ def _write_applied_server_config(path):
 def test_server_packet_guard_allows_only_selected_ipv4_and_ipv6_destinations(
     monkeypatch, tmp_path
 ):
+    """Exercise test server packet guard allows only selected ipv4 and ipv6 destinations.
+
+    Args:
+        monkeypatch: Replace host operations with controlled test observations.
+        tmp_path: Isolated filesystem fixture for applied configuration and evidence.
+    """
     helper = load_helper_module()
     monkeypatch.setattr(helper.shutil, "which", lambda _name: "/usr/sbin/nft")
     config = tmp_path / "ntp.conf"
@@ -75,6 +111,13 @@ def test_server_packet_guard_allows_only_selected_ipv4_and_ipv6_destinations(
     calls = []
 
     def run(command, input_text, *, timeout):
+        """Exercise run.
+
+        Args:
+            command: Native command submitted by the helper.
+            input_text: Rendered nftables transaction submitted on standard input.
+            timeout: Bounded command deadline requested by the caller.
+        """
         calls.append((command, input_text, timeout))
         return subprocess.CompletedProcess(command, 0, "", "")
 
@@ -93,10 +136,23 @@ def test_server_packet_guard_allows_only_selected_ipv4_and_ipv6_destinations(
 
 @pytest.mark.parametrize("failure", ["absent", "rejected", "timeout"])
 def test_unproven_packet_guard_blocks_clock_activation(monkeypatch, failure):
+    """Exercise test unproven packet guard blocks clock activation.
+
+    Args:
+        monkeypatch: Replace host operations with controlled test observations.
+        failure: Packet-guard publication failure injected into the native command.
+    """
     helper = load_helper_module()
     monkeypatch.setattr(helper.shutil, "which", lambda _name: None if failure == "absent" else "/usr/sbin/nft")
 
     def run(command, input_text, *, timeout):
+        """Exercise run.
+
+        Args:
+            command: Native command submitted by the helper.
+            input_text: Rendered nftables transaction submitted on standard input.
+            timeout: Bounded command deadline requested by the caller.
+        """
         if failure == "timeout":
             raise subprocess.TimeoutExpired(command, timeout)
         return subprocess.CompletedProcess(command, 1, "", "unsupported rule")
@@ -108,6 +164,12 @@ def test_unproven_packet_guard_blocks_clock_activation(monkeypatch, failure):
 
 @pytest.mark.parametrize("drift", [None, "early_accept", "wrong_mode", "wrong_priority", "absent"])
 def test_client_guard_health_checks_effective_rules(monkeypatch, drift):
+    """Exercise test client guard health checks effective rules.
+
+    Args:
+        monkeypatch: Replace host operations with controlled test observations.
+        drift: Effective packet-policy mismatch injected into the observation.
+    """
     helper = load_helper_module()
     monkeypatch.setattr(helper.shutil, "which", lambda _name: "/usr/sbin/nft")
     port = {"match": {"op": "==", "left": {"payload": {"protocol": "udp", "field": "dport"}}, "right": 123}}
@@ -133,7 +195,11 @@ def test_client_guard_health_checks_effective_rules(monkeypatch, drift):
 
 
 def test_client_guard_health_accepts_nft_normalized_mode_bits(monkeypatch):
-    """The live nft rule renders the NTP mode as the exact @th bit range."""
+    """The live nft rule renders the NTP mode as the exact @th bit range.
+
+    Args:
+        monkeypatch: Replace host operations with controlled test observations.
+    """
     helper = load_helper_module()
     monkeypatch.setattr(helper.shutil, "which", lambda _name: "/usr/sbin/nft")
     port = {"match": {"op": "==", "left": {"payload": {"protocol": "udp", "field": "dport"}}, "right": 123}}
@@ -162,6 +228,12 @@ def test_client_guard_health_accepts_nft_normalized_mode_bits(monkeypatch):
 
 @pytest.mark.parametrize("drift", ["wrong_offset", "wrong_length", "early_return", "wrong_order"])
 def test_client_guard_rejects_malformed_normalized_mode_rules(monkeypatch, drift):
+    """Exercise test client guard rejects malformed normalized mode rules.
+
+    Args:
+        monkeypatch: Replace host operations with controlled test observations.
+        drift: Effective packet-policy mismatch injected into the observation.
+    """
     helper = load_helper_module()
     monkeypatch.setattr(helper.shutil, "which", lambda _name: "/usr/sbin/nft")
     port = {"match": {"op": "==", "left": {"payload": {"protocol": "udp", "field": "dport"}}, "right": 123}}
@@ -191,6 +263,13 @@ def test_client_guard_rejects_malformed_normalized_mode_rules(monkeypatch, drift
 
 @pytest.mark.parametrize("mode", ["ntp_client", "ntp_server", "vmware_tools"])
 def test_firewall_replace_preserves_applied_time_sync_guard(monkeypatch, tmp_path, mode):
+    """Exercise test firewall replace preserves applied time sync guard.
+
+    Args:
+        monkeypatch: Replace host operations with controlled test observations.
+        tmp_path: Isolated filesystem fixture for applied configuration and evidence.
+        mode: Selected appliance clock mode under test.
+    """
     helper = load_helper_module()
     applied = tmp_path / "ntp.conf"
     if mode == "ntp_server":
@@ -214,6 +293,12 @@ def test_firewall_replace_preserves_applied_time_sync_guard(monkeypatch, tmp_pat
 
 
 def test_nft_file_and_stdin_paths_publish_guard_in_same_transaction(monkeypatch, tmp_path):
+    """Exercise test nft file and stdin paths publish guard in same transaction.
+
+    Args:
+        monkeypatch: Replace host operations with controlled test observations.
+        tmp_path: Isolated filesystem fixture for applied configuration and evidence.
+    """
     helper = load_helper_module()
     applied = tmp_path / "ntp.conf"
     applied.write_text("# Atlaso NTP enabled: false\n# Atlaso time mode: ntp_client\n", encoding="utf-8")
@@ -223,6 +308,12 @@ def test_nft_file_and_stdin_paths_publish_guard_in_same_transaction(monkeypatch,
     calls = []
 
     def run(command, **kwargs):
+        """Exercise run.
+
+        Args:
+            command: Native command submitted by the helper.
+            **kwargs: Additional keyword options retained by the fixture adapter.
+        """
         calls.append((command, kwargs))
         return subprocess.CompletedProcess(command, 0, "", "")
 

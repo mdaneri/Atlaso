@@ -29,7 +29,12 @@ def _load_guest_module():
 
 
 def test_fixture_identity_reads_all_family_inventory_for_mac_and_ipv4_proof(monkeypatch):
-    """The identity probe uses link inventory because IPv4-only output can omit MAC."""
+    """The identity probe uses link inventory because IPv4-only output can omit MAC.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace dependencies at the test boundary.
+
+    """
     guest = _load_guest_module()
     payload = {
         "action": "fixture_identity",
@@ -51,6 +56,12 @@ def test_fixture_identity_reads_all_family_inventory_for_mac_and_ipv4_proof(monk
     commands = []
 
     def check_output(command, *, timeout):
+        """Return the mocked guest interface inventory for the requested ip command.
+
+        Args:
+            command: Command argument vector passed to the subprocess boundary.
+            timeout: Bounded timeout in seconds for the request, probe, or channel operation.
+        """
         commands.append((command, timeout))
         if command == ["ip", "-j", "-4", "addr", "show"]:
             return json.dumps(ipv4_only_rows).encode()
@@ -110,11 +121,26 @@ def test_fixture_identity_reads_all_family_inventory_for_mac_and_ipv4_proof(monk
 def test_fixture_identity_rejects_mismatched_guest_network_identity(
     monkeypatch, interface_name, fixture_cidr, rows, reason
 ):
-    """A matching address, prefix, selected interface, and MAC are all required."""
+    """A matching address, prefix, selected interface, and MAC are all required.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace dependencies at the test boundary.
+        interface_name: Name of the selected appliance interface.
+        fixture_cidr: Expected IPv4 CIDR assigned to the selected guest interface.
+        rows: Guest link-inventory rows returned by the mocked address command.
+        reason: Expected safe failure detail or rejection reason for this case.
+
+    """
     guest = _load_guest_module()
     commands = []
 
     def check_output(command, *, timeout):
+        """Return the mocked guest interface inventory for the requested ip command.
+
+        Args:
+            command: Command argument vector passed to the subprocess boundary.
+            timeout: Bounded timeout in seconds for the request, probe, or channel operation.
+        """
         commands.append((command, timeout))
         assert command == ["ip", "-j", "addr", "show"]
         return json.dumps(rows).encode()
@@ -132,7 +158,12 @@ def test_fixture_identity_rejects_mismatched_guest_network_identity(
 
 
 def _enable_vmware_capability(monkeypatch) -> None:
-    """Render VMware Tools as a selectable saved source in the real NTP page."""
+    """Render VMware Tools as a selectable saved source in the real NTP page.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace dependencies at the test boundary.
+
+    """
     monkeypatch.setattr(
         "atlaso.app.ui.SystemAdapter.read_ntpd_capabilities",
         lambda _self: AdapterResult(
@@ -144,7 +175,13 @@ def _enable_vmware_capability(monkeypatch) -> None:
 
 
 def _save_vmware_choice(client, monkeypatch):
-    """Persist VMware Tools through the real autosave route before rendering."""
+    """Persist VMware Tools through the real autosave route before rendering.
+
+    Args:
+        client: Application test client used to exercise the management UI.
+        monkeypatch: Pytest fixture used to replace dependencies at the test boundary.
+
+    """
     _enable_vmware_capability(monkeypatch)
     login(client)
     page = client.get("/ui/management/ntp")
@@ -160,8 +197,21 @@ def _save_vmware_choice(client, monkeypatch):
 
 
 def _guest_page_from_rendered_response(guest, page):
-    """Make the guest parser consume the exact HTML returned by the app route."""
+    """Make the guest parser consume the exact HTML returned by the app route.
+
+    Args:
+        guest: Guest action client or parsed guest module under test.
+        page: Rendered management page response consumed by the guest form parser.
+
+    """
     def read_page(_opener, path, **_kwargs):
+        """Return the real rendered page through the guest request boundary.
+
+        Args:
+            _opener: HTTP opener accepted by the mocked page reader but intentionally unused.
+            path: Management endpoint path or owned filesystem root used by this operation.
+            **_kwargs: Unused keyword arguments accepted by the mocked request callback.
+        """
         assert path == "/ntp"
         return page.status_code, page.url, page.headers, page.content
 
@@ -185,7 +235,12 @@ def test_form_parser_reads_selected_option_and_omits_disabled_select_controls():
 
 
 def test_non_web_boot_id_action_does_not_open_https_listener(monkeypatch):
-    """A reboot check reads local guest state before nginx is ready."""
+    """A reboot check reads local guest state before nginx is ready.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace dependencies at the test boundary.
+
+    """
     guest = _load_guest_module()
     stdout = io.StringIO()
     payload = {"action": "boot_id", "host": "192.168.100.2", "username": "admin"}
@@ -224,7 +279,14 @@ def test_non_web_boot_id_action_does_not_open_https_listener(monkeypatch):
 def test_web_action_uses_action_specific_listener_recovery_budget(
     monkeypatch, action, expected_timeout
 ):
-    """Allow post-reboot status polling to wait for HTTPS bootstrap."""
+    """Allow post-reboot status polling to wait for HTTPS bootstrap.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace dependencies at the test boundary.
+        action: Time-source operation name dispatched to the isolated guest.
+        expected_timeout: Expected listener-recovery timeout for the selected action.
+
+    """
     guest = _load_guest_module()
     stdout = io.StringIO()
     payload = {"action": action, "host": "192.168.100.2", "username": "admin"}
@@ -251,7 +313,12 @@ def test_web_action_uses_action_specific_listener_recovery_budget(
 
 
 def test_web_tls_initialization_retries_listener_recovery_within_deadline(monkeypatch):
-    """Retry a transient closed listener, then trust the exact served leaf."""
+    """Retry a transient closed listener, then trust the exact served leaf.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace dependencies at the test boundary.
+
+    """
     guest = _load_guest_module()
     clock = [0.0]
     attempts = []
@@ -263,6 +330,12 @@ def test_web_tls_initialization_retries_listener_recovery_within_deadline(monkey
     context = FakeContext()
 
     def get_certificate(address, *, timeout):
+        """Return a served certificate after the configured listener retries.
+
+        Args:
+            address: IPv4 address used as the NTP peer or fixture target.
+            timeout: Bounded timeout in seconds for the request, probe, or channel operation.
+        """
         attempts.append((address, timeout))
         if len(attempts) < 3:
             raise ConnectionRefusedError("transient listener startup detail")
@@ -283,7 +356,12 @@ def test_web_tls_initialization_retries_listener_recovery_within_deadline(monkey
 
 
 def test_web_tls_initialization_fails_safely_when_listener_never_recovers(monkeypatch):
-    """Stop retrying at the deadline without exposing transport error details."""
+    """Stop retrying at the deadline without exposing transport error details.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace dependencies at the test boundary.
+
+    """
     guest = _load_guest_module()
     clock = [0.0]
     attempts = []
@@ -291,6 +369,12 @@ def test_web_tls_initialization_fails_safely_when_listener_never_recovers(monkey
     monkeypatch.setattr(guest.time, "sleep", lambda delay: clock.__setitem__(0, clock[0] + delay))
 
     def refuse(_address, *, timeout):
+        """Simulate a refused HTTPS listener connection.
+
+        Args:
+            _address: Address accepted by the mocked callback but intentionally unused.
+            timeout: Bounded timeout in seconds for the request, probe, or channel operation.
+        """
         attempts.append(timeout)
         raise ConnectionRefusedError("private socket detail")
 
@@ -306,7 +390,13 @@ def test_web_tls_initialization_fails_safely_when_listener_never_recovers(monkey
 
 @pytest.mark.parametrize("ready_delay", [1, 85], ids=["brief-gateway-error", "slow-appliance-startup"])
 def test_wait_status_login_retries_read_only_until_ready_then_posts_once(monkeypatch, ready_delay):
-    """Wait through a transient gateway error before the single credential POST."""
+    """Wait through a transient gateway error before the single credential POST.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace dependencies at the test boundary.
+        ready_delay: Simulated delay before the appliance login endpoint becomes ready.
+
+    """
     guest = _load_guest_module()
     guest.BASE = "https://192.168.100.2/ui/management"
     opens = []
@@ -315,6 +405,12 @@ def test_wait_status_login_retries_read_only_until_ready_then_posts_once(monkeyp
 
     class Response:
         def __init__(self, status, body=b""):
+            """Initialize the containing test double state.
+
+            Args:
+                status: Mocked HTTP status code returned by the response object.
+                body: Response body bytes returned by the mocked HTTP endpoint.
+            """
             self.status = status
             self.body = body
             self.url = "https://192.168.100.2/ui/management/login"
@@ -324,13 +420,29 @@ def test_wait_status_login_retries_read_only_until_ready_then_posts_once(monkeyp
             return self
 
         def __exit__(self, *_args):
+            """Close the mocked response context without suppressing exceptions.
+
+            Args:
+                *_args: Unused positional arguments accepted by the response context-manager protocol.
+            """
             return False
 
         def read(self, _limit):
+            """Return the mocked response bytes within the requested read limit.
+
+            Args:
+                _limit: Maximum byte count requested by the mocked response reader.
+            """
             return self.body
 
     class Opener:
         def open(self, request, *, timeout):
+            """Return the mocked response or raise the configured listener error.
+
+            Args:
+                request: HTTP request object supplied to the mocked opener.
+                timeout: Bounded timeout in seconds for the request, probe, or channel operation.
+            """
             opens.append((request.data, timeout))
             if request.data is not None:
                 posts.append(request.data)
@@ -356,7 +468,12 @@ def test_wait_status_login_retries_read_only_until_ready_then_posts_once(monkeyp
 
 
 def test_wait_status_login_readiness_deadline_never_posts_credentials(monkeypatch):
-    """Bound repeated transport failures to the readiness deadline."""
+    """Bound repeated transport failures to the readiness deadline.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace dependencies at the test boundary.
+
+    """
     guest = _load_guest_module()
     guest.BASE = "https://192.168.100.2/ui/management"
     clock = [0.0]
@@ -364,6 +481,12 @@ def test_wait_status_login_readiness_deadline_never_posts_credentials(monkeypatc
 
     class Opener:
         def open(self, request, *, timeout):
+            """Return the mocked response or raise the configured listener error.
+
+            Args:
+                request: HTTP request object supplied to the mocked opener.
+                timeout: Bounded timeout in seconds for the request, probe, or channel operation.
+            """
             requests.append((request.data, timeout))
             raise URLError("private transport detail")
 
@@ -384,13 +507,24 @@ def test_wait_status_login_readiness_deadline_never_posts_credentials(monkeypatc
 
 
 def test_wait_status_login_nonretryable_http_error_never_posts_credentials(monkeypatch):
-    """Fail closed on an authentication response rather than retrying or posting."""
+    """Fail closed on an authentication response rather than retrying or posting.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace dependencies at the test boundary.
+
+    """
     guest = _load_guest_module()
     guest.BASE = "https://192.168.100.2/ui/management"
     requests = []
 
     class Opener:
         def open(self, request, *, timeout):
+            """Return the mocked response or raise the configured listener error.
+
+            Args:
+                request: HTTP request object supplied to the mocked opener.
+                timeout: Bounded timeout in seconds for the request, probe, or channel operation.
+            """
             requests.append(request.data)
             raise HTTPError(request.full_url, 401, "unauthorized", None, io.BytesIO())
 
@@ -422,7 +556,13 @@ def test_wait_status_host_budget_covers_web_listener_and_clock_recovery():
 def test_rendered_ntp_page_keeps_source_when_select_is_enabled_and_hidden_copy_disabled(
     client, monkeypatch
 ):
-    """Read the selected source from real HTML when the hidden mirror is disabled."""
+    """Read the selected source from real HTML when the hidden mirror is disabled.
+
+    Args:
+        client: Application test client used to exercise the management UI.
+        monkeypatch: Pytest fixture used to replace dependencies at the test boundary.
+
+    """
     guest = _load_guest_module()
     _save_vmware_choice(client, monkeypatch)
     page = client.get("/ui/management/ntp")
@@ -439,7 +579,13 @@ def test_rendered_ntp_page_keeps_source_when_select_is_enabled_and_hidden_copy_d
 
 
 def test_server_apply_preserves_choice_from_rendered_select_html(client, monkeypatch):
-    """Post the prior VMware choice read from the real selected option to server mode."""
+    """Post the prior VMware choice read from the real selected option to server mode.
+
+    Args:
+        client: Application test client used to exercise the management UI.
+        monkeypatch: Pytest fixture used to replace dependencies at the test boundary.
+
+    """
     guest = _load_guest_module()
     csrf = _save_vmware_choice(client, monkeypatch)
     page = client.get("/ui/management/ntp")
@@ -461,6 +607,11 @@ def test_server_apply_preserves_choice_from_rendered_select_html(client, monkeyp
     original_ntp_page = guest.ntp_page
 
     def ntp_page_with_site_interface(opener):
+        """Expose the rendered form with one eligible site interface.
+
+        Args:
+            opener: Authenticated HTTP opener used for management UI requests.
+        """
         parser, values, token = original_ntp_page(opener)
         parser.interfaces = ["eth1"]
         return parser, values, token
@@ -488,7 +639,13 @@ def test_server_apply_preserves_choice_from_rendered_select_html(client, monkeyp
 def test_rendered_ntp_page_omits_disabled_select_but_keeps_enabled_hidden_choice(
     client, monkeypatch
 ):
-    """Disabled selects stay unsuccessful while their enabled mirror is submitted."""
+    """Disabled selects stay unsuccessful while their enabled mirror is submitted.
+
+    Args:
+        client: Application test client used to exercise the management UI.
+        monkeypatch: Pytest fixture used to replace dependencies at the test boundary.
+
+    """
     guest = _load_guest_module()
     csrf = _save_vmware_choice(client, monkeypatch)
     enabled = client.post(
@@ -510,7 +667,12 @@ def test_rendered_ntp_page_omits_disabled_select_but_keeps_enabled_hidden_choice
 
 @pytest.mark.parametrize("guard", [False, None])
 def test_native_server_assertion_rejects_unverified_listener_isolation(guard):
-    """Even synchronized NTP cannot pass native acceptance with unproven isolation."""
+    """Even synchronized NTP cannot pass native acceptance with unproven isolation.
+
+    Args:
+        guard: Observed packet-guard state used by the server isolation assertion.
+
+    """
     guest = _load_guest_module()
     clock = {
         "mode": "ntp_server", "healthy": True,
@@ -526,7 +688,14 @@ def test_native_server_assertion_rejects_unverified_listener_isolation(guard):
 
 @pytest.mark.parametrize("guard, expected", [({"active": True}, True), (None, None), ("invalid", None)])
 def test_native_status_preserves_server_isolation_proof(monkeypatch, guard, expected):
-    """Only structured helper proof can satisfy the server acceptance guard."""
+    """Only structured helper proof can satisfy the server acceptance guard.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace dependencies at the test boundary.
+        guard: Observed packet-guard state used by the server isolation assertion.
+        expected: Expected value used to validate the parsed status result.
+
+    """
     guest = _load_guest_module()
     payload = {"status": {"mode": "ntp_server", "server_packet_guard": guard}}
     monkeypatch.setattr(guest, "request", lambda *_args, **_kwargs: (200, {}, "", json.dumps(payload)))

@@ -8,6 +8,14 @@ from tests.test_appliance_helper import load_helper_module
 
 
 def _configure_state_probe(monkeypatch, *, returncode, stdout, service_state):
+    """Exercise  configure state probe.
+
+    Args:
+        monkeypatch: Replace host operations with controlled test observations.
+        returncode: Simulated VMware toolbox process exit status.
+        stdout: Simulated VMware toolbox time-sync output.
+        service_state: Observed vmtoolsd activity and persistent enablement.
+    """
     helper = load_helper_module()
     monkeypatch.setattr(
         helper.shutil, "which", lambda _command: "/usr/bin/vmware-toolbox-cmd"
@@ -26,6 +34,11 @@ def _configure_state_probe(monkeypatch, *, returncode, stdout, service_state):
 
 
 def test_disabled_periodic_sync_is_inactive_even_when_vmtoolsd_is_running(monkeypatch):
+    """Exercise test disabled periodic sync is inactive even when vmtoolsd is running.
+
+    Args:
+        monkeypatch: Replace host operations with controlled test observations.
+    """
     helper = _configure_state_probe(
         monkeypatch,
         returncode=69,
@@ -41,6 +54,11 @@ def test_disabled_periodic_sync_is_inactive_even_when_vmtoolsd_is_running(monkey
 
 
 def test_periodic_sync_active_but_tools_service_disabled_is_not_healthy(monkeypatch):
+    """Exercise test periodic sync active but tools service disabled is not healthy.
+
+    Args:
+        monkeypatch: Replace host operations with controlled test observations.
+    """
     helper = _configure_state_probe(
         monkeypatch,
         returncode=0,
@@ -56,6 +74,11 @@ def test_periodic_sync_active_but_tools_service_disabled_is_not_healthy(monkeypa
 
 
 def test_unknown_physical_service_state_never_claims_periodic_sync_active(monkeypatch):
+    """Exercise test unknown physical service state never claims periodic sync active.
+
+    Args:
+        monkeypatch: Replace host operations with controlled test observations.
+    """
     helper = _configure_state_probe(
         monkeypatch,
         returncode=0,
@@ -81,6 +104,14 @@ def test_unknown_physical_service_state_never_claims_periodic_sync_active(monkey
 def test_periodic_flag_is_exposed_as_tri_state(
     monkeypatch, returncode, stdout, expected
 ):
+    """Exercise test periodic flag is exposed as tri state.
+
+    Args:
+        monkeypatch: Replace host operations with controlled test observations.
+        returncode: Simulated VMware toolbox process exit status.
+        stdout: Simulated VMware toolbox time-sync output.
+        expected: Expected normalized result for the injected service observation.
+    """
     helper = _configure_state_probe(
         monkeypatch,
         returncode=returncode,
@@ -111,6 +142,14 @@ def test_periodic_flag_is_exposed_as_tri_state(
 def test_setter_verifies_raw_periodic_flag_and_effective_activation(
     monkeypatch, enabled, status, should_raise
 ):
+    """Exercise test setter verifies raw periodic flag and effective activation.
+
+    Args:
+        monkeypatch: Replace host operations with controlled test observations.
+        enabled: Requested VMware periodic synchronization setting.
+        status: Observed raw periodic flag and effective Tools service activity.
+        should_raise: Whether the supplied observation must fail setter verification.
+    """
     helper = load_helper_module()
     monkeypatch.setattr(
         helper.shutil, "which", lambda _command: "/usr/bin/vmware-toolbox-cmd"
@@ -135,7 +174,11 @@ def test_setter_verifies_raw_periodic_flag_and_effective_activation(
 
 
 def test_service_hook_can_set_periodic_flag_before_vmtoolsd_is_active(monkeypatch):
-    """Lifecycle hooks verify the raw setting while systemd changes vmtoolsd."""
+    """Lifecycle hooks verify the raw setting while systemd changes vmtoolsd.
+
+    Args:
+        monkeypatch: Replace host operations with controlled test observations.
+    """
     helper = load_helper_module()
     monkeypatch.setattr(
         helper.shutil, "which", lambda _command: "/usr/bin/vmware-toolbox-cmd"
@@ -157,7 +200,13 @@ def test_service_hook_can_set_periodic_flag_before_vmtoolsd_is_active(monkeypatc
 def test_post_vmtoolsd_hook_uses_transition_aware_verification(
     monkeypatch, tmp_path, mode
 ):
-    """Both hook branches verify the setting without requiring service activity."""
+    """Both hook branches verify the setting without requiring service activity.
+
+    Args:
+        monkeypatch: Replace host operations with controlled test observations.
+        tmp_path: Isolated filesystem fixture for applied configuration and evidence.
+        mode: Selected appliance clock mode under test.
+    """
     helper = load_helper_module()
     config = tmp_path / "ntp.conf"
     config.write_text(
@@ -175,6 +224,12 @@ def test_post_vmtoolsd_hook_uses_transition_aware_verification(
     setter_calls = []
 
     def set_timesync(enabled, *, require_active=True):
+        """Exercise set timesync.
+
+        Args:
+            enabled: Requested VMware periodic synchronization setting.
+            require_active: Whether the setter must verify vmtoolsd is running.
+        """
         setter_calls.append((enabled, require_active))
 
     monkeypatch.setattr(helper, "_ntpd_set_vmware_timesync", set_timesync)
@@ -184,6 +239,11 @@ def test_post_vmtoolsd_hook_uses_transition_aware_verification(
 
 
 def test_service_hook_still_rejects_unverified_periodic_flag(monkeypatch):
+    """Exercise test service hook still rejects unverified periodic flag.
+
+    Args:
+        monkeypatch: Replace host operations with controlled test observations.
+    """
     helper = load_helper_module()
     monkeypatch.setattr(helper.shutil, "which", lambda _command: "/usr/bin/vmware-toolbox-cmd")
     monkeypatch.setattr(helper, "_ntpd_run_checked", lambda *_args: None)
