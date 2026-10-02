@@ -243,7 +243,11 @@ def test_access_default_deny_names_are_stable_and_unique_for_exact_directed_targ
 
 @pytest.mark.parametrize("network_type", ["physical", "vlan"])
 def test_route_and_management_isolation_names_are_collision_free(network_type):
-    """Route and isolation names distinguish colliding physical and VLAN endpoints."""
+    """Route and isolation names distinguish colliding physical and VLAN endpoints.
+
+    Args:
+        network_type: Physical-interface or VLAN topology to exercise.
+    """
     route_names = ["lab-a", "lab.a", "Lab-a", "LAB-A", "a", "a-to-b", "b", "b-to-c", "c"]
     if network_type == "physical":
         interfaces = [PhysicalInterface(
@@ -275,6 +279,11 @@ def test_route_and_management_isolation_names_are_collision_free(network_type):
     reordered = managed_routing_firewall_rules(list(reversed(interfaces)), list(reversed(vlans)))
 
     def names_by_semantics(rules):
+        """Index generated names by their packet matches and policy.
+
+        Args:
+            rules: Generated Firewall rules to index.
+        """
         names = {}
         for rule in rules:
             identity = (
@@ -297,6 +306,12 @@ def test_route_and_management_isolation_names_are_collision_free(network_type):
     assert validate_firewall_state(settings(), [], generated) == []
 
     def route_rule(source, destination):
+        """Find one automatic directed route-role admission.
+
+        Args:
+            source: Exact ingress interface name.
+            destination: Exact egress interface name.
+        """
         return next(
             rule for rule in generated
             if rule.interface_name == source

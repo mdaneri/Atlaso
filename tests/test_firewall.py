@@ -28,7 +28,15 @@ from atlaso.app.services.firewall import (
 
 
 def routing_rule_for(rules, source, destination, phase, action):
-    """Find a generated routing rule by its behavior and directed endpoints."""
+    """Find a generated routing rule by its behavior and directed endpoints.
+
+    Args:
+        rules: Generated Firewall rules to search.
+        source: Exact ingress interface name.
+        destination: Egress interface name or isolation destination network.
+        phase: Routing policy phase to match.
+        action: Firewall action to match.
+    """
     return next(
         rule
         for rule in rules
