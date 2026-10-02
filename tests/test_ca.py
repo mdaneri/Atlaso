@@ -1009,3 +1009,8 @@ def test_ca_apply_preview_is_stable_after_sqlite_expiry_reload():
     issued = render_ca_apply_payload(ca, [leaf], include_private_keys=False)
     ca.root_expires_at = leaf.expires_at = instant.replace(tzinfo=None)
     assert render_ca_apply_payload(ca, [leaf], include_private_keys=False) == issued
+    # The pre-upgrade SQLite preview used naive UTC; its applied snapshot remains valid.
+    payload = json.loads(issued)
+    assert payload["root"]["expires_at"] == payload["certificates"][0]["expires_at"] == "2030-04-05T06:07:08"
+    leaf.common_name = "pending.example.test"
+    assert render_ca_apply_payload(ca, [leaf], include_private_keys=False) != issued

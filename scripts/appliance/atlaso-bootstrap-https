@@ -11,7 +11,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 from cryptography import x509
@@ -640,7 +640,7 @@ def record_ca_publication_baseline(db, public_payload: str, summary: list[str], 
     # SQLite reloads UTC timestamps without tzinfo; preserve identical instants in the stable preview.
     for row in [payload["root"], *payload["certificates"]]:
         if row.get("expires_at"):
-            row["expires_at"] = ensure_aware(datetime.fromisoformat(row["expires_at"])).isoformat()
+            row["expires_at"] = ensure_aware(datetime.fromisoformat(row["expires_at"])).astimezone(timezone.utc).replace(tzinfo=None).isoformat()
     unit = make_appliance_apply_unit(
         unit_id="ca", label="Certificate Authority", page_url="/certificate-authority", context={},
         summary=summary, validation_errors=[], config_path=CA_STAGED_CONFIG_PATH,
@@ -722,9 +722,11 @@ def main(network_job_id: str | None = None) -> int:
     if network_job_id is not None and not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", network_job_id):
         print("Invalid completed Network task binding; certificate recovery was not started.")
         return 2
+    # A completed task is always recovery, even when first-boot evidence is damaged.
+    # Never reseed or render a default front door over the applied Settings identity.
+    if network_job_id is not None:
+        return refresh_completed_management_certificate(network_job_id)
     if first_boot_https_artifacts_are_complete():
-        if network_job_id is not None:
-            return refresh_completed_management_certificate(network_job_id)
         if not first_boot_https_contract_is_complete():
             ensure_nginx_main_config_includes_atlaso()
         if not first_boot_https_contract_is_complete():

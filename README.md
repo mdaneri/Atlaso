@@ -143,4 +143,5 @@ Guarded issuance reads saved service settings without incidental reconciliation 
 management leaf using the applied Settings identity and active nginx certificate paths, and advances its CA baseline
 while preserving
 unrelated pending certificates.
-Recovery refreshes HTTPS after completed first boot without resetting desired state or the applied protocol and ports.
+Recovery refreshes HTTPS even with incomplete first-boot evidence without resetting desired state or the applied
+protocol and ports. CA comparison timestamps retain the legacy UTC format across upgrades.

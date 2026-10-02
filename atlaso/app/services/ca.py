@@ -973,7 +973,7 @@ def render_ca_apply_payload(settings: CaSettings, certificates: list[CaCertifica
             "crl_path": crl_path,
             "crl_pem": crl_pem if include_private_keys else ("[public CRL available]" if crl_pem else ""),
             "fingerprint": settings.root_fingerprint,
-            "expires_at": ensure_aware(settings.root_expires_at).isoformat() if settings.root_expires_at else "",
+            "expires_at": ensure_aware(settings.root_expires_at).astimezone(timezone.utc).replace(tzinfo=None).isoformat() if settings.root_expires_at else "",
         },
         "certificates": [],
     }
@@ -1004,7 +1004,7 @@ def render_ca_apply_payload(settings: CaSettings, certificates: list[CaCertifica
                 "key_path": key_path,
                 "chain_path": chain_path,
                 "fingerprint": certificate.fingerprint,
-                "expires_at": ensure_aware(certificate.expires_at).isoformat() if certificate.expires_at else "",
+                "expires_at": ensure_aware(certificate.expires_at).astimezone(timezone.utc).replace(tzinfo=None).isoformat() if certificate.expires_at else "",
             }
         )
     return json.dumps(payload, indent=2, sort_keys=True) + "\n"

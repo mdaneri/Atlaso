@@ -150,7 +150,8 @@ If newer address edits are pending, Atlaso records the applied observation but s
 apply or reconcile those edits first.
 
 After observation succeeds, Atlaso refreshes HTTPS with the completed Network task even when first boot is complete.
-Bound recovery preserves desired state and bypasses first-boot seeding and inventory reconciliation. It preserves
+Bound recovery preserves desired state and bypasses first-boot seeding and inventory reconciliation even when
+first-boot evidence is incomplete. It preserves
 the applied management protocol and listener ports while refreshing certificates. Bootstrap restart has
 a bounded inner deadline; a timeout requests service cancellation. Recovery removes or replaces a task binding only
 after systemd proves that no bootstrap job is queued or running. A still-active or ambiguous binding is preserved.

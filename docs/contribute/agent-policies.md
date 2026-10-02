@@ -1094,7 +1094,10 @@ preserved with their affected subsystem below. Keep new requirements at their to
   Bound issuance and publication select only the appliance management leaf, leaving unrelated TLS-service certificates
   and CRL files untouched. Completed recovery requires the applied root identity/paths and holds writer admission
   through publication and its exact partial CA baseline commit. Preserve other baseline leaves and pending CA intent;
-  helper/validation failure never acknowledges publication. Ordinary first boot records its captured full CA baseline.
+  helper/validation failure never acknowledges publication. A completed Network binding selects this scoped path
+  regardless of first-boot marker completeness; it never falls through to default first-boot rendering or early commit.
+  CA comparison timestamps use the legacy naive UTC representation, consistently before and after database reload.
+  Ordinary first boot records its captured full CA baseline.
   Ordinary bootstrap with a Network baseline rejects pending
   management-path edits too. Bound recovery must refresh HTTPS even after first boot is complete, without seeding or
   reconciling desired state. Retry unfinished first-boot HTTPS before applying Appliance Settings, validate nginx before

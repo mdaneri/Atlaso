@@ -2985,9 +2985,10 @@ def test_console_recovery_cli_dispatches_completed_task_id(monkeypatch):
     assert calls == [("recover-management-plane", ["job_0123456789ab"])]
 
 
+@pytest.mark.parametrize("artifacts_complete", [True, False])
 @pytest.mark.parametrize("pending", ["service", "certificate", "root", "root_key", "settings", "missing_settings", "missing_paths"])
 @pytest.mark.parametrize("apply_result", [0, 1])
-def test_completed_recovery_publishes_only_management_and_records_exact_baseline(client, monkeypatch, tmp_path, pending, apply_result):
+def test_completed_recovery_publishes_only_management_and_records_exact_baseline(client, monkeypatch, tmp_path, pending, apply_result, artifacts_complete):
     """Keep unrelated intent pending and acknowledge the management leaf only after success.
 
     Args:
@@ -2996,6 +2997,7 @@ def test_completed_recovery_publishes_only_management_and_records_exact_baseline
         tmp_path: Isolated synthetic certificate staging.
         pending: Unapplied service hostname, certificate row, or trust-root path edit.
         apply_result: Successful publication or simulated helper failure.
+        artifacts_complete: Intact or missing first-boot evidence must use the same recovery path.
     """
     from sqlalchemy import select
 
@@ -3132,7 +3134,10 @@ def test_completed_recovery_publishes_only_management_and_records_exact_baseline
         return subprocess.CompletedProcess(command, 0, "", "")
 
     monkeypatch.setattr(bootstrap, "run", validate_active_nginx)
-    result = bootstrap.refresh_completed_management_certificate("job_scoped_ca")
+    monkeypatch.setattr(bootstrap, "first_boot_https_artifacts_are_complete", lambda: artifacts_complete)
+    monkeypatch.setattr(bootstrap, "init_db", lambda: pytest.fail("Bound recovery must not reseed first boot"))
+    monkeypatch.setattr(bootstrap, "write_nginx_management_config", lambda **kwargs: pytest.fail("Bound recovery must preserve applied nginx settings"))
+    result = bootstrap.main("job_scoped_ca")
     if pending in {"root", "root_key", "missing_settings", "missing_paths"}:
         assert result == 2 and captured == [] and not stage.exists()
         with SessionLocal() as db:
@@ -3172,12 +3177,14 @@ def test_completed_recovery_publishes_only_management_and_records_exact_baseline
             assert after["snapshot_hash"] != before["snapshot_hash"]
 
 
-def test_completed_http_only_recovery_does_not_require_or_publish_ca(client, monkeypatch):
+@pytest.mark.parametrize("nginx_result", [0, 2])
+def test_completed_http_only_recovery_does_not_require_or_publish_ca(client, monkeypatch, nginx_result):
     """An applied HTTP-only front door remains usable with CA disabled.
 
     Args:
         client: Initialized database fixture.
         monkeypatch: Replace native nginx validation and forbid certificate work.
+        nginx_result: Valid applied site or missing/invalid site must not trigger first-boot rendering.
     """
     from sqlalchemy import select
 
@@ -3207,5 +3214,8 @@ def test_completed_http_only_recovery_does_not_require_or_publish_ca(client, mon
     for name in ("recovery_root_matches_baseline", "ensure_recovery_ca_state", "apply_ca_files", "record_ca_publication_baseline"):
         monkeypatch.setattr(bootstrap, name, forbidden)
     monkeypatch.setattr(bootstrap.shutil, "which", lambda name: "/usr/bin/" + name)
-    monkeypatch.setattr(bootstrap, "run", lambda command: subprocess.CompletedProcess(command, 0, "", ""))
-    assert bootstrap.refresh_completed_management_certificate("job_http_only") == 0
+    monkeypatch.setattr(bootstrap, "first_boot_https_artifacts_are_complete", lambda: False)
+    monkeypatch.setattr(bootstrap, "init_db", forbidden)
+    monkeypatch.setattr(bootstrap, "write_nginx_management_config", forbidden)
+    monkeypatch.setattr(bootstrap, "run", lambda command: subprocess.CompletedProcess(command, nginx_result, "", ""))
+    assert bootstrap.main("job_http_only") == nginx_result
