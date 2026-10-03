@@ -1,21 +1,40 @@
 """Exercise the CA reconciliation used by first-boot HTTPS for long FQDNs."""
 
+import importlib.machinery
+import importlib.util
+import json
+from pathlib import Path, PurePosixPath
+
+import pytest
 from cryptography import x509
 from cryptography.x509.oid import NameOID
 from sqlalchemy import select
 
 from atlaso.app.database import SessionLocal
 from atlaso.app.models import ApplianceSettings, CaCertificate, CaSettings
-from atlaso.app.ui import ca_managed_certificate_paths, ensure_ca_state
+from atlaso.app.security import Identity
+from atlaso.app.services.ca import render_ca_apply_payload
+from atlaso.app.ui import (
+    ca_managed_certificate_paths,
+    download_ca_certificate,
+    download_ca_certificate_chain,
+    download_ca_certificate_private_key,
+    ensure_ca_state,
+)
 
 
-def test_first_boot_ca_reconciliation_retains_long_appliance_identity(client):
+@pytest.mark.parametrize("fqdn", [
+    "atlaso-pr-900-time-source-guard-verified-appliance.atlaso.internal",
+    ".".join(("a" * 63, "b" * 63, "c" * 63, "d" * 61)),
+])
+def test_first_boot_ca_reconciliation_retains_long_appliance_identity(client, tmp_path, fqdn):
     """Issue, reconcile, and rotate the management leaf without shortening SANs.
 
     Args:
         client: Seeded application fixture with an isolated database.
+        tmp_path: Isolated local filesystem for public certificate write checks.
+        fqdn: Full DNS identity, including the maximum supported length.
     """
-    fqdn = "atlaso-pr-900-time-source-guard-verified-appliance.atlaso.internal"
     with SessionLocal() as db:
         appliance = db.execute(select(ApplianceSettings)).scalar_one()
         settings = db.execute(select(CaSettings)).scalar_one()
@@ -37,6 +56,32 @@ def test_first_boot_ca_reconciliation_retains_long_appliance_identity(client):
         assert leaf.private_key_encrypted.startswith("fernet:v1:")
         paths = ca_managed_certificate_paths(db, "appliance:https")
         assert all(paths)
+        assert all(len(PurePosixPath(path).name.encode("ascii")) <= 255 for path in paths)
+        payload = json.loads(render_ca_apply_payload(settings, [leaf], include_private_keys=False))
+        deployed = payload["certificates"][0]
+        assert tuple(deployed[field] for field in ("cert_path", "key_path", "chain_path")) == paths
+
+        identity = Identity(username="admin", role="admin", scopes=set())
+        for endpoint, path in zip(
+            (download_ca_certificate, download_ca_certificate_private_key, download_ca_certificate_chain),
+            paths, strict=True,
+        ):
+            response = endpoint(leaf.id, identity, db)
+            assert response.headers["Content-Disposition"] == (
+                f'attachment; filename="{PurePosixPath(path).name}"'
+            )
+
+        # Exercise the production deployment writer with public material only.
+        helper_path = Path(__file__).resolve().parents[1] / "scripts/appliance/atlaso-helper"
+        loader = importlib.machinery.SourceFileLoader("ca_filename_helper", str(helper_path))
+        spec = importlib.util.spec_from_loader(loader.name, loader)
+        assert spec is not None
+        helper = importlib.util.module_from_spec(spec)
+        loader.exec_module(helper)
+        for field, material in (("cert_path", "certificate_pem"), ("chain_path", "chain_pem")):
+            destination = tmp_path / PurePosixPath(deployed[field]).name
+            helper._write_secret_file(destination, deployed[material], 0o644)
+            assert destination.read_text(encoding="utf-8") == deployed[material]
         fingerprint = leaf.fingerprint
         root_fingerprint = settings.root_fingerprint
 
@@ -44,7 +89,7 @@ def test_first_boot_ca_reconciliation_retains_long_appliance_identity(client):
         assert leaf.fingerprint == fingerprint
         assert ca_managed_certificate_paths(db, "appliance:https") == paths
 
-        replacement = fqdn.replace("900", "901")
+        replacement = fqdn[:-1] + ("e" if fqdn[-1] != "e" else "f")
         appliance.fqdn = replacement
         db.commit()
         assert ensure_ca_state(db) == []
