@@ -28608,6 +28608,9 @@ def _load_management_handoff_manifest(path: Path) -> dict:
     payload["listener_address_moves"] = _validate_management_handoff_listener_moves(
         payload.get("listener_address_moves", []), Path(str(payload["network_config_path"])),
     )
+    payload["public_dynamic_bindings"] = _validate_management_handoff_public_bindings(
+        payload.get("public_dynamic_bindings", []), Path(str(payload["network_config_path"])),
+    )
     wan_value = str(payload.get("wan_config_path") or "")
     nat_value = str(payload.get("nat_config_path") or "")
     if nat_value:
@@ -28967,6 +28970,74 @@ def _validate_management_handoff_listener_moves(moves: object, network_path: Pat
             **({"interface": interface} if interface else {}),
         })
     return normalized
+
+
+def _validate_management_handoff_public_bindings(value: object, network_path: Path) -> list[dict[str, str]]:
+    if not isinstance(value, list) or len(value) > 256:
+        raise ValueError("Public Services dynamic bindings must be a bounded list")
+    physical, _vlans, _removed = _parse_network_config(network_path)
+    interfaces = {row["name"]: row for row in physical}
+    result = []
+    seen = set()
+    for binding in value:
+        if not isinstance(binding, dict):
+            raise ValueError("Public Services dynamic binding is invalid")
+        name = str(binding.get("interface") or "")
+        row = interfaces.get(name, {})
+        address = ip_address(str(binding.get("old_address") or ""))
+        dynamic = (row.get("ipv4_method") == "dhcp" if address.version == 4
+                   else row.get("ipv6_enabled") == "true" and not row.get("ipv6_cidr"))
+        if (row.get("admin_state") != "up" or not dynamic or address.is_loopback
+                or address.is_link_local or address.is_unspecified or address.is_multicast):
+            raise ValueError("Public Services binding requires an enabled dynamic Network family")
+        key = str(address)
+        if key in seen:
+            raise ValueError("Public Services dynamic address ownership is ambiguous")
+        seen.add(key)
+        result.append({"interface": name, "old_address": key})
+    return result
+
+
+def _project_management_handoff_public_bindings(content: str, bindings: list[dict[str, str]], observation: dict) -> tuple[str, list[dict[str, str]]]:
+    if not bindings:
+        return content, []
+    if observation.get("complete") is not True:
+        raise ValueError("Public Services address observation is incomplete")
+    links = {row.get("name"): row for row in observation.get("links", [])}
+    moves = []
+    replacements = {}
+    for binding in bindings:
+        link = links.get(binding["interface"], {})
+        if not link.get("configured") or not link.get("address_inventory_complete"):
+            raise ValueError("Public Services dynamic link is not completely observed")
+        old = ip_address(binding["old_address"])
+        assigned = set()
+        for record in link.get("addresses", []):
+            address = ip_address(record.get("address", ""))
+            if (address.version == old.version and record.get("state") == "assigned"
+                    and record.get("scope") == "global" and not address.is_loopback
+                    and not address.is_link_local and not address.is_unspecified and not address.is_multicast):
+                assigned.add(str(address))
+        if len(assigned) != 1:
+            raise ValueError("Public Services dynamic address is missing or ambiguous")
+        new = next(iter(assigned))
+        replacements[str(old)] = new
+        moves.append({**binding, "new_address": new})
+    counts = {address: 0 for address in replacements}
+    pattern = re.compile(r"(?m)^(?P<prefix>\s*listen\s+)(?P<host>\[[0-9A-Fa-f:.]+\]|[0-9.]+)(?P<port>:[0-9]{1,5})(?=\s|;)")
+
+    def replace(match: re.Match[str]) -> str:
+        host = str(ip_address(match.group("host").strip("[]")))
+        if host not in replacements:
+            return match.group(0)
+        counts[host] += 1
+        new = ip_address(replacements[host])
+        return match.group("prefix") + (f"[{new}]" if new.version == 6 else str(new)) + match.group("port")
+
+    projected = pattern.sub(replace, content)
+    if not all(counts.values()):
+        raise ValueError("Public Services submitted dynamic listener is missing")
+    return projected, moves
 
 
 def _management_handoff_listener_unit_state(unit: str) -> dict[str, object]:
@@ -32701,6 +32772,13 @@ def _apply_management_handoff(payload: dict) -> int:
             exclude_previous_holdovers=True,
             include_flagged_access=not public_services_owns_flagged,
         )
+        public_config_path = Path(str(payload["public_services_config_path"]))
+        original_public_config = public_config_path.read_text(encoding="utf-8") if payload.get("public_dynamic_bindings") else ""
+        candidate_public_config, public_address_moves = _project_management_handoff_public_bindings(
+            original_public_config, payload.get("public_dynamic_bindings", []), address_observation,
+        )
+        if payload.get("public_dynamic_bindings"):
+            _atomic_management_handoff_write(public_config_path, candidate_public_config)
         candidate_public_tls = (
             _management_handoff_candidate_public_tls_addresses(
                 Path(str(payload["public_services_config_path"])), candidate_public_port,
@@ -32747,7 +32825,7 @@ def _apply_management_handoff(payload: dict) -> int:
         )
         if management_https_result != 0:
             raise ValueError("candidate management nginx apply failed")
-        transitional_public_needed = bool(previous_public_tls or deferred_public_sockets)
+        transitional_public_needed = bool(previous_public_tls or deferred_public_sockets or payload.get("public_dynamic_bindings"))
         transitional_public_site = None
         if transitional_public_needed:
             public_site = Path(str(payload["public_services_config_path"])).read_text(encoding="utf-8")
@@ -32860,6 +32938,11 @@ def _apply_management_handoff(payload: dict) -> int:
             if _handle_firewall("apply", [str(transition_path)]) != 0:
                 raise ValueError("final nftables apply failed while retiring the previous path")
         failing_layer = "verified-listener publication"
+        final_public_config, public_address_moves = _project_management_handoff_public_bindings(
+            original_public_config, payload.get("public_dynamic_bindings", []), final_address_observation,
+        )
+        if payload.get("public_dynamic_bindings"):
+            _atomic_management_handoff_write(public_config_path, final_public_config)
         management_site_addresses = _management_handoff_addresses(
             Path(str(payload["network_config_path"])),
             address_observation=final_address_observation,
@@ -32961,6 +33044,7 @@ def _apply_management_handoff(payload: dict) -> int:
                 "candidate_readiness": candidate_readiness,
                 "final_readiness": final_readiness,
                 "listener_address_moves": effective_listener_moves,
+                "public_service_address_moves": public_address_moves,
                 "service_address_observation": (
                     _management_handoff_service_address_observation(final_address_observation)
                     if state.get("dnsmasq_included") else None

@@ -83,7 +83,8 @@ def test_service_dns_manifest_path_requires_staged_file_and_dns_rollback_snapsho
         helper._load_management_handoff_manifest(manifest)
 
 
-def test_service_dns_publication_follows_final_readiness_and_failure_rolls_back(monkeypatch, tmp_path, capsys):
+@pytest.mark.parametrize("public_dynamic", [False, True])
+def test_service_dns_publication_follows_final_readiness_and_failure_rolls_back(monkeypatch, tmp_path, capsys, public_dynamic):
     """Defer generated DNS until readiness and restore the captured handoff on failure."""
     helper = load_helper_module()
     events: list[str] = []
@@ -109,6 +110,7 @@ def test_service_dns_publication_follows_final_readiness_and_failure_rolls_back(
     service_dns = _staged_file(tmp_path / "dnsmasq", "service-dns.conf")
     candidate_firewall = _staged_file(tmp_path / "firewall", "candidate.nft", "table inet atlaso { chain input { } }\n")
     previous_firewall = _staged_file(runtime, "previous.nft", "prior firewall\n")
+    public_candidate = _staged_file(tmp_path / "public", "candidate.conf", "server {\n    listen 192.0.2.20:443 ssl;\n}\n")
     monkeypatch.setattr(helper, "FIREWALL_CONFIG_PATH", previous_firewall)
     monkeypatch.setattr(helper, "FIREWALL_APPLY_DIR", tmp_path / "firewall")
     monkeypatch.setattr(helper, "NAT_RUNTIME_CONFIG_PATH", tmp_path / "runtime" / "nat.conf")
@@ -160,7 +162,10 @@ def test_service_dns_publication_follows_final_readiness_and_failure_rolls_back(
     monkeypatch.setattr(helper, "_stage_candidate_ingress_guards", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(helper, "_retire_legacy_source_rules", lambda *_args: None)
     monkeypatch.setattr(helper, "_apply_management_candidate_network", lambda *_args: events.append("candidate-network") or prior_network.write_text("candidate network\n", encoding="utf-8"))
-    monkeypatch.setattr(helper, "_wait_network_addresses", lambda *_args, **_kwargs: {})
+    observation = {"complete": True, "links": [{"name": "eth9", "configured": True,
+                    "address_inventory_complete": True, "addresses": [
+                        {"address": "192.0.2.21", "state": "assigned", "scope": "global"}]}]}
+    monkeypatch.setattr(helper, "_wait_network_addresses", lambda *_args, **_kwargs: observation)
     monkeypatch.setattr(helper, "_management_handoff_resolve_pending_dhcp", lambda *_args: None)
     monkeypatch.setattr(helper, "_wait_management_handoff_routes", lambda *_args: None)
     monkeypatch.setattr(helper, "_apply_route_domain_ingress", lambda *_args, **_kwargs: None)
@@ -182,6 +187,16 @@ def test_service_dns_publication_follows_final_readiness_and_failure_rolls_back(
     monkeypatch.setattr(helper, "_configure_management_handoff_resolver", lambda _payload: events.append("resolver") or subprocess.CompletedProcess([], 0))
     monkeypatch.setattr(helper, "_configure_atlaso_management_https", lambda *_args, **_kwargs: (0, None))
     monkeypatch.setattr(helper, "_handle_public_services", lambda *_args, **_kwargs: 0)
+    monkeypatch.setattr(helper, "_management_nginx_config", lambda *_args, **_kwargs: "server {}\n")
+
+    def publish_final(_management, public):
+        """Verify final dynamic sockets before allowing native publication."""
+        assert "listen 192.0.2.21:443 ssl;" in public
+        assert "listen 192.0.2.20:443 ssl;" not in public
+        events.append("public-final-publication")
+        return 0
+
+    monkeypatch.setattr(helper, "_management_handoff_publish_final_sites", publish_final)
     monkeypatch.setattr(helper, "_nginx_test_command", lambda: subprocess.CompletedProcess([], 0))
     monkeypatch.setattr(helper, "_management_handoff_final_source_holds", lambda *_args: [])
     monkeypatch.setattr(helper, "_handle_network", lambda *_args, **_kwargs: 0)
@@ -206,7 +221,8 @@ def test_service_dns_publication_follows_final_readiness_and_failure_rolls_back(
         "network_config_path": "candidate-network",
         "firewall_config_path": str(candidate_firewall),
         "appliance_settings_config_path": "candidate-settings",
-        "public_services_config_path": "candidate-public",
+        "public_services_config_path": str(public_candidate),
+        "public_dynamic_bindings": [{"interface": "eth9", "old_address": "192.0.2.20"}] if public_dynamic else [],
         "dnsmasq_config_path": str(candidate_dns),
         "service_dns_config_path": str(service_dns),
     })
@@ -216,6 +232,8 @@ def test_service_dns_publication_follows_final_readiness_and_failure_rolls_back(
     assert events.index("candidate-dns-apply") < events.index("candidate-readiness")
     assert events.index("final-readiness") < events.index("listener-address-refresh")
     assert events.index("listener-address-refresh") < events.index("service-dns-publication")
+    if public_dynamic:
+        assert events.index("public-final-publication") < events.index("final-readiness")
     assert restored == [state]
     assert state["dnsmasq_included"] is True
     assert prior_network.read_text(encoding="utf-8") == "previous network\n"

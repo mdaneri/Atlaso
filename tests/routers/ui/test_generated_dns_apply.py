@@ -66,6 +66,28 @@ def test_listener_baseline_projection_preserves_pending_non_listener_fields(clie
     assert legacy_projected["snapshot_marker"] != changed_marker_unit["snapshot_marker"]
 
 
+def test_verified_public_dynamic_sockets_advance_only_submitted_baseline(client):
+    """A native address move updates sockets while preserving other submitted text.
+
+    Args:
+        client: Seeded application client.
+    """
+    from atlaso.app import ui
+
+    submitted = "server {\n    listen 192.0.2.20:443 ssl;\n    listen [2001:db8::20]:8080;\n    server_name applied.example.internal;\n}\n"
+    moves = [{"interface": "eth9", "old_address": "192.0.2.20", "new_address": "192.0.2.21"},
+             {"interface": "eth9", "old_address": "2001:db8::20", "new_address": "2001:db8::21"}]
+    projected = ui.projected_public_service_config(submitted, moves)
+    expected = submitted.replace("192.0.2.20", "192.0.2.21").replace("2001:db8::20", "2001:db8::21")
+    assert projected == expected
+    kwargs = dict(unit_id="public_services", label="Public Services", page_url="/public-services", context={},
+                  summary=[], validation_errors=[], config_path="/public/config")
+    applied = ui.make_appliance_apply_unit(config_preview=projected, baseline=None, **kwargs)
+    assert ui.make_appliance_apply_unit(config_preview=expected, baseline=applied, **kwargs)["changed"] is False
+    assert ui.make_appliance_apply_unit(config_preview=expected.replace("applied.example.internal", "pending.example.internal"),
+                                        baseline=applied, **kwargs)["changed"] is True
+
+
 def test_dynamic_binding_refresh_requires_complete_assigned_native_address(client, monkeypatch):
     """DHCP/SLAAC publication uses verified host readback rather than saved intent.
 

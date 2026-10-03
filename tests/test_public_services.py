@@ -148,6 +148,103 @@ def test_public_service_entries_scope_services_to_matching_address():
     assert "allow_unauthenticated_access" not in open_services_by_id["esxi_pxe"]
 
 
+def test_public_service_entries_render_effective_dhcp_and_slaac_addresses():
+    """Render public service listeners on the observed DHCP and SLAAC addresses."""
+    interface = PhysicalInterface(
+        name="eth2",
+        role="access",
+        mode="access",
+        admin_state="up",
+        oper_state="up",
+        ipv4_method="dhcp",
+        ip_cidr=None,
+        host_ip_cidr="192.0.2.20/24",
+        ipv6_enabled=True,
+        ipv6_cidr=None,
+        host_ipv6_cidr="2001:db8::20/64",
+    )
+    ca_settings = CaSettings(
+        enabled=True,
+        listen_interface="eth2",
+        listen_address="192.0.2.20\n2001:db8::20",
+        root_certificate_pem="root",
+    )
+    entries = public_service_entries(
+        interfaces=[interface],
+        vlans=[],
+        ca_settings=ca_settings,
+        esxi_pxe_boot=None,
+        vcf_depot_settings=VcfOfflineDepotSettings(enabled=False),
+        vcf_registry_settings=VcfPrivateRegistrySettings(enabled=False),
+    )
+
+    assert {(entry["interface"], entry["address"]) for entry in entries} == {
+        ("eth2", "192.0.2.20"),
+        ("eth2", "2001:db8::20"),
+    }
+    assert all([service["id"] for service in entry["services"]] == ["ca"] for entry in entries)
+    config = render_public_services_nginx_config(
+        entries,
+        ca_certificate_path="/ca.crt",
+        ca_key_path="/ca.key",
+    )
+    assert "listen 192.0.2.20:443 ssl;" in config
+    assert "listen [2001:db8::20]:443 ssl;" in config
+
+
+def test_public_service_entries_exclude_down_missing_and_disabled_ipv6_addresses():
+    """Exclude inactive physical links and IPv6 observations when IPv6 is disabled."""
+    interfaces = [
+        PhysicalInterface(
+            name="down0",
+            role="access",
+            mode="access",
+            admin_state="down",
+            oper_state="up",
+            ipv4_method="dhcp",
+            host_ip_cidr="192.0.2.30/24",
+            ipv6_enabled=True,
+            host_ipv6_cidr="2001:db8::30/64",
+        ),
+        PhysicalInterface(
+            name="missing0",
+            role="access",
+            mode="access",
+            admin_state="up",
+            oper_state="missing",
+            ipv4_method="dhcp",
+            host_ip_cidr="192.0.2.31/24",
+            ipv6_enabled=True,
+            host_ipv6_cidr="2001:db8::31/64",
+        ),
+        PhysicalInterface(
+            name="ipv4-only0",
+            role="access",
+            mode="access",
+            admin_state="up",
+            oper_state="up",
+            ipv4_method="dhcp",
+            host_ip_cidr="192.0.2.32/24",
+            ipv6_enabled=False,
+            ipv6_cidr="2001:db8::32/64",
+            host_ipv6_cidr="2001:db8::33/64",
+        ),
+    ]
+
+    entries = public_service_entries(
+        interfaces=interfaces,
+        vlans=[],
+        ca_settings=CaSettings(enabled=False),
+        esxi_pxe_boot=None,
+        vcf_depot_settings=VcfOfflineDepotSettings(enabled=False),
+        vcf_registry_settings=VcfPrivateRegistrySettings(enabled=False),
+    )
+
+    assert [(entry["interface"], entry["address"]) for entry in entries] == [
+        ("ipv4-only0", "192.0.2.32"),
+    ]
+
+
 def test_flagged_access_ip_front_door_proxies_management_namespace_with_management_certificate():
     """Verify that an exact access-IP server does not hide its enabled management UI."""
     config = render_public_services_nginx_config(

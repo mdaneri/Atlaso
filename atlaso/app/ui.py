@@ -15222,6 +15222,18 @@ def execute_management_handoff(
     )
     baselines = load_appliance_apply_baselines(db)
     previous_paths = list(network.get("previous_management_paths") or [])
+    network_rows = {row["name"]: row for row in network_interface_entries(network["raw_config_preview"])}
+    public_dynamic_bindings = []
+    for entry in public_services.get("context", {}).get("public_service_entries", []):
+        row = network_rows.get(entry["interface"], {})
+        address = ip_address(entry["address"])
+        dynamic = (row.get("ipv4_method") == "dhcp" if address.version == 4
+                   else row.get("ipv6_enabled") == "true" and not row.get("ipv6_cidr"))
+        socket = f"[{address}]" if address.version == 6 else str(address)
+        if row.get("admin_state") == "up" and dynamic and f"listen {socket}:" in public_services["raw_config_preview"]:
+            binding = {"interface": entry["interface"], "old_address": str(address)}
+            if binding not in public_dynamic_bindings:
+                public_dynamic_bindings.append(binding)
     previous_addresses: list[str] = []
     previous_interfaces: list[str] = []
     previous_parent_interfaces: list[str] = []
@@ -15312,6 +15324,7 @@ def execute_management_handoff(
                 "firewall_config_path": firewall_path,
                 "appliance_settings_config_path": settings_path,
                 "public_services_config_path": public_path,
+                "public_dynamic_bindings": public_dynamic_bindings,
                 "ca_config_path": ca_path,
                 "wan_config_path": wan_path,
                 "wan_rollback_config_path": wan_rollback_path,
@@ -15373,6 +15386,24 @@ def execute_management_handoff(
         ),
         {},
     )
+    if succeeded and public_dynamic_bindings and not adapter.dry_run:
+        try:
+            public_moves = evidence.get("public_service_address_moves", [])
+            if {(move["interface"], move["old_address"]) for move in public_moves} != {
+                (binding["interface"], binding["old_address"]) for binding in public_dynamic_bindings
+            }:
+                raise ValueError("Public Services dynamic listener evidence is incomplete.")
+            public_config = projected_public_service_config(public_services["raw_config_preview"], public_moves)
+            public_services.update(make_appliance_apply_unit(
+                unit_id="public_services", label=public_services["label"], page_url=public_services["page_url"],
+                context=public_services["context"], summary=public_services["summary"], validation_errors=[],
+                config_path=public_services["config_path"], config_preview=public_config,
+                baseline=baselines.get("public_services"),
+            ))
+        except (KeyError, TypeError, ValueError) as exc:
+            succeeded = False
+            recovery_result = adapter.recover_management_handoff()
+            evidence = {**evidence, "failing_layer": "Public Services dynamic listener readback", "error": str(exc)}
     if succeeded and dnsmasq is not None and not adapter.dry_run:
         from atlaso.app.services.service_dns_readback import verify_service_dns_records
 
@@ -15543,6 +15574,36 @@ def execute_management_handoff(
             }
         )
     return group_result, unit_results
+
+
+def projected_public_service_config(content: str, moves: list[dict[str, str]]) -> str:
+    """Project native verified dynamic addresses into the submitted nginx snapshot.
+
+    Args:
+        content: Submitted Public Services configuration.
+        moves: Native helper evidence identifying old and effective listener addresses.
+    """
+    replacements = {}
+    for move in moves:
+        old, new = ip_address(move["old_address"]), ip_address(move["new_address"])
+        if old.version != new.version or new.is_unspecified or new.is_loopback or new.is_multicast or new.is_link_local:
+            raise ValueError("Public Services dynamic listener evidence has an invalid address.")
+        replacements[str(old)] = str(new)
+    counts = {address: 0 for address in replacements}
+    pattern = re.compile(r"(?m)^(?P<prefix>\s*listen\s+)(?P<host>\[[0-9A-Fa-f:.]+\]|[0-9.]+)(?P<port>:[0-9]{1,5})(?=\s|;)")
+
+    def replace(match: re.Match[str]) -> str:
+        host = str(ip_address(match.group("host").strip("[]")))
+        if host not in replacements:
+            return match.group(0)
+        counts[host] += 1
+        new = ip_address(replacements[host])
+        return match.group("prefix") + (f"[{new}]" if new.version == 6 else str(new)) + match.group("port")
+
+    result = pattern.sub(replace, content)
+    if not all(counts.values()):
+        raise ValueError("Public Services dynamic listener evidence does not match the submitted sockets.")
+    return result
 
 
 def projected_handoff_listener_baselines(
