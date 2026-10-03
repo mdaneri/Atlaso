@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 from collections.abc import Iterable
@@ -139,7 +140,12 @@ def safe_certificate_name(value: str) -> str:
         value: Operator-provided certificate name to make safe for filesystem use.
     """
     safe = SAFE_NAME_PATTERN.sub("-", value.strip()).strip("-")
-    return safe or "certificate"
+    if not safe:
+        return "certificate"
+    if len(safe) > 245:
+        digest = hashlib.sha256(value.encode("utf-8")).hexdigest()
+        safe = f"{safe[:180]}-{digest}"
+    return safe
 
 
 def _hash_algorithm(name: str) -> hashes.HashAlgorithm:
