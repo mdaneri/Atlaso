@@ -159,7 +159,9 @@ after systemd proves that no bootstrap job is queued or running. A still-active 
 Atlaso validates nginx
 before any reload, and ensures nginx and Atlaso are enabled and running. After the second task applies Appliance
 Settings, the console requires five stable local checks: application `/openapi.json` on port 8000 plus the applied
-nginx management mode. HTTPS mode requires the HTTP redirect and HTTPS `/openapi.json`; HTTP-only mode requires
+nginx management mode. Bound HTTP-only recovery also rechecks the completed Network paths and required dynamic
+observations under writer admission before native site validation. HTTPS mode requires the HTTP redirect and HTTPS
+`/openapi.json`; HTTP-only mode requires
 HTTP `/openapi.json`.
 
 It never falls back to unvalidated host commands. A validation, bootstrap, firewall, nginx, service, or readiness

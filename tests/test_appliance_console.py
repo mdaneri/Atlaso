@@ -3345,13 +3345,15 @@ def test_completed_recovery_publishes_only_management_and_records_exact_baseline
 
 
 @pytest.mark.parametrize("nginx_result", [0, 2])
-def test_completed_http_only_recovery_does_not_require_or_publish_ca(client, monkeypatch, nginx_result):
+@pytest.mark.parametrize("edit", ["unchanged", "physical", "vlan", "missing_job", "failed_job", "missing_dynamic"])
+def test_completed_http_only_recovery_does_not_require_or_publish_ca(client, monkeypatch, nginx_result, edit):
     """An applied HTTP-only front door remains usable with CA disabled.
 
     Args:
         client: Initialized database fixture.
         monkeypatch: Replace native nginx validation and forbid certificate work.
         nginx_result: Valid applied site or missing/invalid site must not trigger first-boot rendering.
+        edit: Intervening physical/VLAN drift or unavailable completed Network evidence.
     """
     from sqlalchemy import select
 
@@ -3366,7 +3368,32 @@ def test_completed_http_only_recovery_does_not_require_or_publish_ca(client, mon
     with SessionLocal() as db:
         db.scalar(select(ApplianceSettings)).management_https_enabled = False
         db.scalar(select(CaSettings)).enabled = False
+        target = appliance_console._management_interface(db)
+        target.ipv4_method = "dhcp" if edit == "missing_dynamic" else "static"
+        target.ip_cidr = None if edit == "missing_dynamic" else "192.0.2.63/24"
+        target.host_ip_cidr = "192.0.2.63/24"
+        target.ipv6_enabled = False
+        db.flush()
+        preview = bootstrap.render_network_config(
+            interfaces=list(db.scalars(select(appliance_console.PhysicalInterface))),
+            vlans=list(db.scalars(select(appliance_console.VlanInterface))),
+        )
+        if edit != "missing_job":
+            db.add(appliance_console.Job(
+                id="job_http_only", type="appliance-apply", status="failed" if edit == "failed_job" else "succeeded",
+                created_by="console:root", result=json.dumps({"captured_units": [{"unit_id": "network", "config_preview": preview}]}),
+            ))
         save_appliance_apply_baselines(db, {"appliance_settings": {"config_preview": json.dumps({"management_https_enabled": False})}})
+        db.commit()
+        if edit == "physical":
+            target.ip_cidr = "192.0.2.64/24"
+        elif edit == "vlan":
+            db.add(appliance_console.VlanInterface(
+                name=f"{target.name}.534", parent_interface=target.name, vlan_id=534,
+                ip_cidr="198.51.100.1/24", enabled=True, access_management_ui_enabled=True,
+            ))
+        elif edit == "missing_dynamic":
+            target.host_ip_cidr = None
         db.commit()
 
     def forbidden(*args, **kwargs):
@@ -3384,8 +3411,29 @@ def test_completed_http_only_recovery_does_not_require_or_publish_ca(client, mon
     monkeypatch.setattr(bootstrap, "first_boot_https_artifacts_are_complete", lambda: False)
     monkeypatch.setattr(bootstrap, "init_db", forbidden)
     monkeypatch.setattr(bootstrap, "write_nginx_management_config", forbidden)
-    monkeypatch.setattr(bootstrap, "run", lambda command: subprocess.CompletedProcess(command, nginx_result, "", ""))
-    assert bootstrap.main("job_http_only") == nginx_result
+    admitted = {}
+    lock = bootstrap.acquire_network_objects_write_lock
+
+    def acquire(db):
+        """Retain the actual writer transaction through HTTP validation."""
+        lock(db)
+        admitted["db"] = db
+        admitted["transaction"] = db.get_transaction()
+
+    calls = []
+
+    def validate(command):
+        """Only the matching completed path may reach native validation under writer admission."""
+        assert admitted["db"].get_transaction() is admitted["transaction"]
+        assert edit == "unchanged"
+        calls.append(command)
+        return subprocess.CompletedProcess(command, nginx_result, "", "")
+
+    monkeypatch.setattr(bootstrap, "acquire_network_objects_write_lock", acquire)
+    monkeypatch.setattr(bootstrap, "run", validate)
+    assert bootstrap.main("job_http_only") == (nginx_result if edit == "unchanged" else 2)
+    assert len(calls) == (1 if edit == "unchanged" else 0)
+    assert not admitted["db"].in_transaction()
 
 
 @pytest.mark.parametrize("installed", [b"published leaf", b"other valid nginx leaf"])
