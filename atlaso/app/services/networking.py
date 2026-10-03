@@ -18,9 +18,13 @@ from atlaso.app.models import (
     DhcpScope,
     DhcpSettings,
     DnsSettings,
+    EsxNfsShare,
     FirewallRule,
     KmsSettings,
+    LdapSettings,
     NatRule,
+    NtpSettings,
+    OidcProviderSettings,
     PhysicalInterface,
     PortForward,
     Route,
@@ -774,6 +778,7 @@ def _retarget_interface_references(db: Session, renames: dict[str, str]) -> None
         (FirewallRule, "interface_name"),
         (DhcpSettings, "interface_name"),
         (DhcpScope, "interface_name"),
+        (EsxNfsShare, "interface_name"),
     ]
     for model, field_name in scalar_targets:
         for row in db.execute(select(model)).scalars().all():
@@ -793,6 +798,9 @@ def _retarget_interface_references(db: Session, renames: dict[str, str]) -> None
         (DnsSettings, "listen_interface"),
         (CaSettings, "listen_interface"),
         (KmsSettings, "listen_interface"),
+        (LdapSettings, "listen_interface"),
+        (NtpSettings, "listen_interface"),
+        (OidcProviderSettings, "listen_interface"),
         (VcfBackupSettings, "listen_interface"),
         (VcfPrivateRegistrySettings, "listen_interface"),
         (VcfOfflineDepotSettings, "listen_interface"),

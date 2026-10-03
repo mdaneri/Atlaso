@@ -1848,7 +1848,7 @@ def service_bind_options(db: Session) -> list[dict]:
     interfaces_by_name = {interface.name: interface for interface in physical_interfaces}
     options: list[dict[str, str]] = []
     for interface in physical_interfaces:
-        if interface.oper_state == "missing":
+        if interface.oper_state == "missing" or interface.admin_state != "up":
             continue
         mode = normalize_interface_mode(interface.mode)
         role = normalize_interface_role(interface.role)
@@ -7372,7 +7372,7 @@ def owned_service_dns_records(db: Session, config: str) -> list[dict[str, str]]:
             if len(selected) == 1:
                 service_interfaces[description] = selected[0]
     service_interfaces[ESXI_PXE_DNS_RECORD_DESCRIPTION] = primary_listen_interface(str(esxi_pxe_boot_settings(db).get("listen_interface") or ""))
-    explicit_ptrs = {row.hostname for row in db.scalars(select(DnsRecord).where(DnsRecord.record_type == "PTR"))}
+    explicit_ptrs = {row.hostname for row in db.scalars(select(DnsRecord).where(DnsRecord.record_type == "PTR", DnsRecord.enabled.is_(True)))}
     address_sources = {address: option["name"] for option in service_bind_options(db) for address in option["addresses"]}
     # The management plane is deliberately excluded from service bind choices.
     # Its generated FQDN still needs provenance, including the assigned DHCP
@@ -7440,7 +7440,10 @@ def network_generated_dns_unit(db: Session, units_by_id: dict[str, dict[str, Any
     network_unit = units_by_id.get("network")
     if not dns_unit or not network_unit or not baseline.get("dns_enabled"):
         return None
-    previous_network = {row["name"]: row for row in network_interface_entries(str(network_baseline.get("config_preview") or ""))}
+    raw_aliases = network_baseline.get("physical_interface_aliases")
+    aliases = {str(old): str(new) for old, new in raw_aliases.items()} if isinstance(raw_aliases, dict) else {}
+    previous_network = {aliases.get(row["name"], row["name"]): row
+                        for row in network_interface_entries(str(network_baseline.get("config_preview") or ""))}
     candidate_network = {row["name"]: row for row in network_interface_entries(str(network_unit.get("config_preview") or ""))}
     moved_addresses: set[str] = set()
     replacements: dict[str, str] = {}
@@ -7452,6 +7455,9 @@ def network_generated_dns_unit(db: Session, units_by_id: dict[str, dict[str, Any
                 if row.get(field):
                     replacements[address_from_cidr(old[field])] = address_from_cidr(row[field])
     previous_records = [dict(record) for record in baseline.get("service_dns_records") or []]
+    for record in previous_records:
+        source = record.get("source_interface", "")
+        record["source_interface"] = aliases.get(source, source)
     for record in previous_records:
         if record.get("source_interface") or record["description"] != APPLIANCE_DNS_RECORD_DESCRIPTION:
             continue
@@ -7504,7 +7510,7 @@ def network_generated_dns_unit(db: Session, units_by_id: dict[str, dict[str, Any
     projected = project_generated_dns(str(baseline.get("config_preview") or ""), desired_config, previous_records, desired_records)
     projected = project_listener_addresses(
         projected, replacements,
-        protected_ptr_owners={row.hostname for row in db.scalars(select(DnsRecord).where(DnsRecord.record_type == "PTR"))},
+        protected_ptr_owners={row.hostname for row in db.scalars(select(DnsRecord).where(DnsRecord.record_type == "PTR", DnsRecord.enabled.is_(True)))},
     )
     pending_dynamic = bool(network_unit.get("changed") and any(
         (candidate_network.get(row.get("source_interface", ""), {}).get("ipv4_method") == "dhcp"
@@ -11345,6 +11351,7 @@ def make_appliance_apply_unit(
         "raw_config_preview": raw_config_preview if raw_config_preview is not None else config_preview,
         "config_preview": redacted_preview,
         "snapshot_hash": current_hash,
+        "snapshot_marker": snapshot_marker,
         "changed": current_hash != baseline_hash or runtime_pending,
         "has_baseline": bool(baseline_hash),
         "last_applied_at": (baseline or {}).get("applied_at"),
@@ -15346,6 +15353,7 @@ def execute_management_handoff(
                 Path(ca_path).unlink(missing_ok=True)
     results: list[AdapterResult] = []
     recovery_result: AdapterResult | None = None
+    listener_baselines: dict[str, dict[str, Any]] = {}
     try:
         results = [adapter.validate_management_handoff(manifest_path)]
         if results[0].returncode == 0:
@@ -15408,7 +15416,7 @@ def execute_management_handoff(
                             address_moves[record["address"]] = targets[0]
                     effective_config = project_listener_addresses(
                         effective_config, address_moves,
-                        protected_ptr_owners={row.hostname for row in db.scalars(select(DnsRecord).where(DnsRecord.record_type == "PTR"))},
+                        protected_ptr_owners={row.hostname for row in db.scalars(select(DnsRecord).where(DnsRecord.record_type == "PTR", DnsRecord.enabled.is_(True)))},
                     )
                     if dynamic_paths:
                         path = stage_appliance_apply_config(DNSMASQ_STAGED_CONFIG_PATH, effective_config)
@@ -15428,6 +15436,9 @@ def execute_management_handoff(
                             baseline=baselines.get("dnsmasq"),
                         ))
                 verify_service_dns_records(owned_service_dns_records(db, dnsmasq["raw_config_preview"]))
+                listener_baselines = projected_handoff_listener_baselines(
+                    baselines, units_by_id, evidence.get("listener_address_moves", []),
+                )
             except (OSError, ValueError) as exc:
                 if dynamic_paths:
                     # The runner committed the running steps before handoff.
@@ -15503,6 +15514,7 @@ def execute_management_handoff(
             "management_handoff": "committed" if succeeded else "failed before bounded helper evidence"
         },
         "rollback_proven": rollback_proven,
+        "listener_baselines": listener_baselines if succeeded else {},
     }
     failure_layer = str(group_result["management_handoff"].get("failing_layer") or "")
     failure_error = str(group_result["management_handoff"].get("error") or "")
@@ -15533,6 +15545,74 @@ def execute_management_handoff(
     return group_result, unit_results
 
 
+def projected_handoff_listener_baselines(
+    baselines: dict[str, Any], units_by_id: dict[str, dict[str, Any]], moves: list[dict[str, str]],
+) -> dict[str, dict[str, Any]]:
+    """Advance only verified listener addresses in prior applied service snapshots.
+
+    Args:
+        baselines: Applied snapshots captured before executing the handoff.
+        units_by_id: Submitted units used to recover unchanged legacy hash markers.
+        moves: Effective listener moves returned by the successful native helper.
+    """
+    projected = {}
+    for service in {move["service"] for move in moves}:
+        if service not in {"ntpd", "ldap", "kms"} or service not in baselines:
+            raise ValueError("Applied listener baseline is unavailable for the verified move.")
+        baseline = dict(baselines[service])
+        content = str(baseline.get("config_preview") or "")
+        service_moves = [move for move in moves if move["service"] == service]
+        marker = baseline.get("snapshot_marker")
+        if "snapshot_marker" not in baseline:
+            candidate_marker = units_by_id.get(service, {}).get("snapshot_marker")
+            prior_hash = appliance_snapshot_hash({
+                "unit_id": service, "summary": baseline["summary"],
+                "config_path": baseline["config_path"], "config_preview": content,
+                "snapshot_marker": candidate_marker,
+            })
+            # Never absorb pending LDAP credentials into a listener-only baseline.
+            marker = candidate_marker if prior_hash == baseline.get("snapshot_hash") else {"legacy_marker_unavailable": True}
+        if service == "ntpd":
+            lines = content.splitlines()
+            for move in service_moves:
+                old, new = move["old_address"], move["new_address"]
+                if not any(line.split() == ["interface", "listen", old] for line in lines):
+                    raise ValueError("Applied NTP baseline listener address is missing.")
+                lines = [f"interface listen {new}" if line.split() == ["interface", "listen", old]
+                         else line for line in lines]
+                for index, line in enumerate(lines):
+                    if line.strip().lower().startswith("# atlaso ntp listen addresses:"):
+                        prefix, values = line.split(":", 1)
+                        lines[index] = prefix + ": " + ", ".join(new if value.strip() == old else value.strip()
+                                                               for value in values.split(","))
+            content = "\n".join(lines) + ("\n" if content.endswith("\n") else "")
+        else:
+            try:
+                payload = json.loads(content)
+                if service == "kms":
+                    addresses = payload["listen"]["addresses"]
+                else:
+                    addresses = split_addresses(payload["service"]["listen_address"])
+                if not isinstance(addresses, list) or not all(isinstance(address, str) for address in addresses):
+                    raise ValueError("Applied listener baseline address list is invalid.")
+            except (KeyError, TypeError, AttributeError) as exc:
+                raise ValueError("Applied listener baseline configuration is invalid.") from exc
+            for move in service_moves:
+                if addresses.count(move["old_address"]) != 1:
+                    raise ValueError("Applied listener baseline address is missing or ambiguous.")
+                addresses[addresses.index(move["old_address"])] = move["new_address"]
+            if service == "ldap":
+                payload["service"]["listen_address"] = "\n".join(addresses)
+            content = json.dumps(payload, indent=2, sort_keys=True) + ("\n" if content.endswith("\n") else "")
+        baseline.update(config_preview=content, snapshot_marker=marker, applied_at=utcnow().isoformat())
+        baseline["snapshot_hash"] = appliance_snapshot_hash({
+            "unit_id": service, "summary": baseline["summary"], "config_path": baseline["config_path"],
+            "config_preview": content, "snapshot_marker": marker,
+        })
+        projected[service] = baseline
+    return projected
+
+
 def update_appliance_apply_baselines(db: Session, units: list[dict[str, Any]], selected_ids: set[str]) -> None:
     """Update appliance apply baselines.
 
@@ -15548,6 +15628,7 @@ def update_appliance_apply_baselines(db: Session, units: list[dict[str, Any]], s
             continue
         baseline = {
             "snapshot_hash": unit["snapshot_hash"],
+            "snapshot_marker": unit.get("snapshot_marker"),
             "config_path": unit["config_path"],
             "config_preview": unit["config_preview"],
             "summary": unit["summary"],
@@ -17172,6 +17253,10 @@ def run_appliance_apply_job(job_id: str, *, force_real: bool = False) -> None:
                             applied,
                             applied_ids,
                         )
+                        if not group_result.get("dry_run") and group_result.get("listener_baselines"):
+                            updated_baselines = load_appliance_apply_baselines(db)
+                            updated_baselines.update(group_result["listener_baselines"])
+                            save_appliance_apply_baselines(db, updated_baselines)
                         pending_payload = _job_payload(job)
                         job.result = json.dumps(
                             {

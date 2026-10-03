@@ -27,6 +27,45 @@ def test_partial_dns_baseline_compares_served_records_and_keeps_manual_edits_pen
     assert ui.make_appliance_apply_unit(config_preview=ordered + "txt-record=manual.example.internal,pending\n", **kwargs)["changed"] is True
 
 
+@pytest.mark.parametrize("service", ["ntpd", "ldap", "kms"])
+def test_listener_baseline_projection_preserves_pending_non_listener_fields(client, service):
+    """Successful narrow rewrites advance applied addresses without applying edits.
+
+    Args:
+        client: Seeded application client.
+        service: Applied native listener service.
+    """
+    from atlaso.app import ui
+
+    old, new = "192.0.2.10", "192.0.2.11"
+    if service == "ntpd":
+        prior = f"# Atlaso NTP listen addresses: {old}\ninterface listen {old}\nserver applied.example.internal"
+        desired = prior.replace(old, new)
+        pending = desired.replace("applied.example.internal", "pending.example.internal")
+    elif service == "kms":
+        prior = json.dumps({"listen": {"addresses": [old], "port": 5696}, "policy": "applied"}, indent=2, sort_keys=True)
+        desired = prior.replace(old, new)
+        pending = desired.replace('"applied"', '"pending"')
+    else:
+        prior = json.dumps({"service": {"listen_address": old, "hostname": "applied"}, "organizations": []}, indent=2, sort_keys=True)
+        desired = prior.replace(old, new)
+        pending = desired.replace('"applied"', '"pending"')
+    kwargs = dict(unit_id=service, label=service, page_url="/service", context={}, summary=["applied"],
+                  validation_errors=[], config_path="/service/config", snapshot_marker={"credential": "applied"})
+    original = ui.make_appliance_apply_unit(config_preview=prior, baseline=None, **kwargs)
+    baseline = {key: original[key] for key in ("snapshot_hash", "snapshot_marker", "config_preview", "config_path", "summary")}
+    projected = ui.projected_handoff_listener_baselines({service: baseline}, {service: original},
+                                                       [{"service": service, "old_address": old, "new_address": new}])[service]
+    assert projected["config_preview"] == desired
+    assert ui.make_appliance_apply_unit(config_preview=desired, baseline=projected, **kwargs)["changed"] is False
+    assert ui.make_appliance_apply_unit(config_preview=pending, baseline=projected, **kwargs)["changed"] is True
+    legacy = {key: value for key, value in baseline.items() if key != "snapshot_marker"}
+    changed_marker_unit = {**original, "snapshot_marker": {"credential": "pending"}}
+    legacy_projected = ui.projected_handoff_listener_baselines({service: legacy}, {service: changed_marker_unit},
+                                                              [{"service": service, "old_address": old, "new_address": new}])[service]
+    assert legacy_projected["snapshot_marker"] != changed_marker_unit["snapshot_marker"]
+
+
 def test_dynamic_binding_refresh_requires_complete_assigned_native_address(client, monkeypatch):
     """DHCP/SLAAC publication uses verified host readback rather than saved intent.
 
