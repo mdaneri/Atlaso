@@ -7481,7 +7481,9 @@ def network_generated_dns_unit(db: Session, units_by_id: dict[str, dict[str, Any
     management_addresses = set(management_ui_addresses(db))
     for row in previous_records:
         source = row.get("source_interface", "")
-        if row["record_type"] in {"A", "AAAA"} and source in effective_options and row["address"] not in effective_options[source]:
+        if (row["record_type"] in {"A", "AAAA"} and source
+                and row["description"] != APPLIANCE_DNS_RECORD_DESCRIPTION
+                and row["address"] not in effective_options.get(source, set())):
             affected.add(row["description"])
         if (row["description"] == APPLIANCE_DNS_RECORD_DESCRIPTION
                 and row["record_type"] in {"A", "AAAA"} and source in candidate_network
@@ -10629,6 +10631,20 @@ def refresh_service_dns_effective_observations(
         assigned = {item["address"] for item in link.get("addresses", []) if item.get("state") == "assigned"}
         for family, attribute in dynamic_families:
             cidr = getattr(host, attribute)
+            if family == 6:
+                # Match the helper's native-order SLAAC listener selection. A
+                # later discovery may return the same globals in another order.
+                selected = next((item for item in link.get("addresses", [])
+                                 if item.get("state") == "assigned" and item.get("scope") == "global"
+                                 and ip_address(item["address"]).version == family
+                                 and not (ip_address(item["address"]).is_loopback
+                                          or ip_address(item["address"]).is_link_local
+                                          or ip_address(item["address"]).is_unspecified
+                                          or ip_address(item["address"]).is_multicast)), None)
+                if selected is not None:
+                    cidr = selected.get("cidr") or cidr
+                    if address_from_cidr(cidr) != selected["address"]:
+                        raise ValueError(f"Effective service DNS could not confirm the selected IPv6 CIDR on {name}.")
             address = address_from_cidr(cidr)
             if not address or ip_address(address).version != family or address not in assigned:
                 raise ValueError(f"Effective service DNS could not confirm IPv{family} on {name}.")

@@ -422,6 +422,31 @@ def test_listener_moves_rebind_narrow_configs_and_restore_files_and_units(monkey
     assert units == {unit: True for unit in units}
 
 
+@pytest.mark.parametrize("service", ["ntpd", "ldap", "kms"])
+def test_slaac_listener_moves_select_native_effective_address_with_multiple_globals(tmp_path, service):
+    helper = load_helper_module()
+    network = tmp_path / "candidate.conf"
+    network.write_text(
+        "[physical_interfaces]\ninterface=eth9\nadmin_state=up\n"
+        "ipv4_method=dhcp\nipv6_enabled=true\n",
+        encoding="utf-8",
+    )
+    move = {"service": service, "old_address": "2001:db8::10",
+            "new_address": "2001:db8::10", "interface": "eth9"}
+    payload = {"network_config_path": str(network), "listener_address_moves": [move]}
+    observation = {"complete": True, "links": [{
+        "name": "eth9", "configured": True, "address_inventory_complete": True,
+        "addresses": [
+            {"address": "2001:db8::30", "scope": "global", "state": "checking"},
+            {"address": "2001:db8:2::20", "scope": "global", "state": "assigned"},
+            {"address": "2001:db8::10", "scope": "global", "state": "assigned"},
+        ],
+    }]}
+    assert helper._resolve_management_handoff_listener_moves(payload, observation) == [
+        {**move, "new_address": "2001:db8:2::20"},
+    ]
+
+
 def test_ldap_listener_rewrite_brackets_ipv6_and_requires_exact_match():
     helper = load_helper_module()
     original = "ldaps://[2001:db8::10]:636/"

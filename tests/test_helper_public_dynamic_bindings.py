@@ -122,6 +122,55 @@ def test_public_binding_projection_rejects_ambiguous_or_unusable_family_addresse
         )
 
 
+@pytest.mark.parametrize(
+    ("observed", "selected"),
+    [
+        (
+            [
+                {"address": "2001:db8::20", "scope": "global", "state": "assigned", "source": "NDisc"},
+                {"address": "2001:db8::10", "scope": "global", "state": "assigned", "source": "NDisc"},
+                {"address": "2001:db8::30", "scope": "global", "state": "assigned", "source": "NDisc"},
+            ],
+            "2001:db8::20",
+        ),
+        (
+            [
+                {"address": "2001:db8::30", "scope": "global", "state": "assigned", "source": "NDisc"},
+                {"address": "2001:db8::40", "scope": "global", "state": "assigned", "source": "NDisc"},
+            ],
+            "2001:db8::30",
+        ),
+    ],
+    ids=["old-address-later-in-native-order", "old-address-disappeared"],
+)
+def test_public_binding_projection_uses_native_order_for_multiple_slaac_addresses(observed, selected):
+    """SLAAC projection matches networking's first assigned global address convention.
+
+    Multiple valid SLAAC addresses are expected when temporary/privacy addresses
+    coexist with stable addresses. The native observation order matches the
+    effective address selected by Network inventory and must remain decisive.
+
+    Args:
+        observed: Ordered native addresses reported for the candidate interface.
+        selected: Address expected to back the projected listener.
+    """
+    helper = load_helper_module()
+    observation = _dual_stack_observation()
+    observation["links"][0]["addresses"] = observed
+    content = "server {\n    listen [2001:db8::10]:8443 ssl;\n}\n"
+
+    rewritten, moves = helper._project_management_handoff_public_bindings(
+        content,
+        [{"interface": "eth9", "old_address": "2001:db8::10"}],
+        observation,
+    )
+
+    assert f"listen [{selected}]:8443 ssl;" in rewritten
+    assert moves == [{
+        "interface": "eth9", "old_address": "2001:db8::10", "new_address": selected,
+    }]
+
+
 def test_public_binding_projection_requires_old_listener_to_be_present():
     helper = load_helper_module()
     with pytest.raises(ValueError, match="listener is missing"):

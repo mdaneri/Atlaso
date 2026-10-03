@@ -127,6 +127,82 @@ def test_dynamic_binding_refresh_requires_complete_assigned_native_address(clien
             ui.refresh_service_dns_effective_observations(db, network["raw_config_preview"], evidence, source_interfaces={"eth9"})
 
 
+@pytest.mark.parametrize("include_cidr_metadata", [True, False], ids=["helper-cidr", "host-fallback"])
+def test_dynamic_ipv6_readback_selects_helper_cidr_before_generated_dns_refresh(
+    client, monkeypatch, include_cidr_metadata
+):
+    """Keep SLAAC DNS aliases aligned with the helper-selected address ordering.
+
+    Args:
+        client: Seeded application client.
+        monkeypatch: Replace host discovery with a different SLAAC observation order.
+        include_cidr_metadata: Whether helper address rows carry their assigned CIDRs.
+    """
+    from atlaso.app import ui
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import (
+        CaSettings,
+        DnsRecord,
+        NtpSettings,
+        VcfOfflineDepotSettings,
+    )
+    from atlaso.app.services.service_dns_defaults import (
+        CA_PORTAL_DNS_DESCRIPTION,
+        NTP_DNS_DESCRIPTION,
+        VCF_DEPOT_DNS_DESCRIPTION,
+    )
+
+    selected_address = "2001:db8::21"
+    later_address = "2001:db8::22"
+    with SessionLocal() as db:
+        _management, access = _prepare_service_address_baseline(db, ui)
+        access.ipv6_cidr = None
+        access.host_ipv6_cidr = f"{later_address}/64" if include_cidr_metadata else f"{selected_address}/64"
+        access.ipv6_enabled = True
+        db.flush()
+        network = next(unit for unit in ui.appliance_apply_units(db) if unit["id"] == "network")
+        host = SimpleNamespace(
+            name="eth9",
+            mac_address=access.mac_address,
+            host_ip_cidr=None,
+            host_ipv6_cidr=f"{later_address}/64" if include_cidr_metadata else f"{selected_address}/64",
+        )
+        monkeypatch.setattr(ui, "discover_host_physical_interfaces", lambda: [host])
+        addresses = [
+            {"address": selected_address, "state": "assigned", "scope": "global"},
+            {"address": later_address, "state": "assigned", "scope": "global"},
+        ]
+        if include_cidr_metadata:
+            addresses[0]["cidr"] = f"{selected_address}/64"
+            addresses[1]["cidr"] = f"{later_address}/64"
+        evidence = {"service_address_observation": {"complete": True, "links": [{
+            "name": "eth9",
+            "configured": True,
+            "address_inventory_complete": True,
+            "addresses": addresses,
+        }]}}
+
+        ui.refresh_service_dns_effective_observations(
+            db, network["raw_config_preview"], evidence, source_interfaces={"eth9"},
+        )
+        assert access.host_ipv6_cidr == f"{selected_address}/64"
+        ui.refresh_interface_service_dns_aliases(db, actor=None)
+        owned_aaaa = db.scalars(select(DnsRecord).where(
+            DnsRecord.description.in_({
+                CA_PORTAL_DNS_DESCRIPTION,
+                NTP_DNS_DESCRIPTION,
+                VCF_DEPOT_DNS_DESCRIPTION,
+            }),
+            DnsRecord.record_type == "AAAA",
+            DnsRecord.enabled.is_(True),
+        )).all()
+        assert {record.address for record in owned_aaaa} == {selected_address}
+        for model in (CaSettings, NtpSettings, VcfOfflineDepotSettings):
+            settings = db.scalar(select(model))
+            assert selected_address in settings.listen_address.splitlines()
+            assert later_address not in settings.listen_address.splitlines()
+
+
 def _prepare_service_address_baseline(db, ui):
     """Record applied Network and generated DNS state for an access interface.
 
@@ -335,6 +411,84 @@ def test_network_apply_captures_refreshed_service_dns_after_direct_ip_change(cli
         }
         assert desired_directives <= captured_directives
         assert not (previous_directives - desired_directives) & captured_directives
+
+
+def test_network_only_apply_cannot_omit_dns_when_static_service_interface_goes_down(client, monkeypatch):
+    """Require safe generated-DNS removal or explicit review when its static source goes down.
+
+    Args:
+        client: Isolated authenticated application client.
+        monkeypatch: Prevent background appliance apply execution.
+    """
+    from atlaso.app import ui
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import DnsRecord, Job
+    from atlaso.app.services.service_dns_defaults import CA_PORTAL_DNS_DESCRIPTION
+
+    login(client)
+    with SessionLocal() as db:
+        _management, access = _prepare_service_address_baseline(db, ui)
+        access.admin_state = "down"
+        db.add(DnsRecord(
+            hostname="operator-pending.example.internal",
+            record_type="TXT",
+            address="pending-note",
+            description="Operator",
+            enabled=True,
+        ))
+        db.commit()
+
+        units = {unit["id"]: unit for unit in ui.appliance_apply_units(db)}
+        projected = ui.network_generated_dns_unit(db, units)
+        assert projected is not None
+        assert access.ip_cidr == "192.0.2.10/24"
+        if projected["validation_errors"]:
+            assert any(
+                ("DNS" in error or "service" in error.lower())
+                and ("review" in error.lower() or "include" in error.lower())
+                for error in projected["validation_errors"]
+            )
+        else:
+            preview = projected["raw_config_preview"]
+            previous_ca_records = [
+                row for row in ui.load_appliance_apply_baselines(db)["dnsmasq"]["service_dns_records"]
+                if row["description"] == CA_PORTAL_DNS_DESCRIPTION
+            ]
+            assert previous_ca_records
+            for row in previous_ca_records:
+                directive = f"{'cname' if row['record_type'] == 'CNAME' else 'host-record'}={row['hostname']},{row['address']}"
+                assert directive not in preview
+            assert "host-record=operator-shared.example.internal,192.0.2.10" in preview
+            assert "host-record=operator-shared.example.internal,2001:db8::10" in preview
+            assert "txt-record=operator-pending.example.internal,pending-note" not in preview
+
+    page = client.get("/dashboard")
+    csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    monkeypatch.setattr(ui, "run_appliance_apply_job", lambda _job_id: None)
+    response = client.post(
+        "/appliance-apply",
+        data={"csrf": csrf, "selected_units": "network"},
+        headers={"Accept": "application/json"},
+    )
+    assert response.status_code in {202, 422}, response.text
+
+    with SessionLocal() as db:
+        assert db.scalar(select(DnsRecord).where(
+            DnsRecord.hostname == "operator-pending.example.internal",
+            DnsRecord.record_type == "TXT",
+            DnsRecord.address == "pending-note",
+        )) is not None
+        baseline_dns = ui.load_appliance_apply_baselines(db)["dnsmasq"]
+        assert "txt-record=operator-pending.example.internal,pending-note" not in baseline_dns["config_preview"]
+        if response.status_code == 202:
+            payload = json.loads(db.get(Job, response.json()["job_id"]).result)
+            assert payload["generated_dns_only"] is True
+            assert "dnsmasq" in payload["selected_units"]
+            captured_dns = next(row for row in payload["captured_units"] if row["unit_id"] == "dnsmasq")
+            assert "txt-record=operator-pending.example.internal,pending-note" not in captured_dns["config_preview"]
+        else:
+            assert "Resolve validation errors" in response.json()["detail"]
+            assert db.scalar(select(Job).where(Job.type == "appliance-apply")) is None
 
 
 def test_dhcp_to_static_management_move_projects_appliance_dns_with_legacy_inventory(client):

@@ -28998,6 +28998,30 @@ def _validate_management_handoff_public_bindings(value: object, network_path: Pa
     return result
 
 
+def _management_handoff_dynamic_listener_address(link: dict, family: int) -> str:
+    """Select a proven effective address in native host-discovery order.
+
+    SLAAC may assign several globals; Atlaso's host inventory selects the first
+    global address of a family. Preserve that ordering rather than requiring a
+    singleton IPv6 inventory. DHCPv4 still requires unambiguous address evidence.
+    """
+    assigned = []
+    for record in link.get("addresses", []):
+        try:
+            address = ip_address(record.get("address", ""))
+        except ValueError:
+            continue
+        if (address.version == family and record.get("state") == "assigned"
+                and record.get("scope") == "global" and not address.is_loopback
+                and not address.is_link_local and not address.is_unspecified and not address.is_multicast):
+            value = str(address)
+            if value not in assigned:
+                assigned.append(value)
+    if not assigned or family == 4 and len(assigned) != 1:
+        raise ValueError("candidate dynamic listener address is missing or ambiguous")
+    return assigned[0]
+
+
 def _project_management_handoff_public_bindings(content: str, bindings: list[dict[str, str]], observation: dict) -> tuple[str, list[dict[str, str]]]:
     if not bindings:
         return content, []
@@ -29011,16 +29035,7 @@ def _project_management_handoff_public_bindings(content: str, bindings: list[dic
         if not link.get("configured") or not link.get("address_inventory_complete"):
             raise ValueError("Public Services dynamic link is not completely observed")
         old = ip_address(binding["old_address"])
-        assigned = set()
-        for record in link.get("addresses", []):
-            address = ip_address(record.get("address", ""))
-            if (address.version == old.version and record.get("state") == "assigned"
-                    and record.get("scope") == "global" and not address.is_loopback
-                    and not address.is_link_local and not address.is_unspecified and not address.is_multicast):
-                assigned.add(str(address))
-        if len(assigned) != 1:
-            raise ValueError("Public Services dynamic address is missing or ambiguous")
-        new = next(iter(assigned))
+        new = _management_handoff_dynamic_listener_address(link, old.version)
         replacements[str(old)] = new
         moves.append({**binding, "new_address": new})
     counts = {address: 0 for address in replacements}
@@ -29102,10 +29117,7 @@ def _resolve_management_handoff_listener_moves(payload: dict, observation: dict)
                     and not address.is_link_local and not address.is_multicast and not address.is_unspecified):
                 assigned.append(str(address))
         if move.get("interface"):
-            assigned = list(dict.fromkeys(assigned))
-            if len(assigned) != 1:
-                raise ValueError(f"candidate dynamic listener address on {name} is missing or ambiguous")
-            address = assigned[0]
+            address = _management_handoff_dynamic_listener_address(link, family)
         else:
             address = move["new_address"]
             if assigned.count(address) != 1:
