@@ -10346,7 +10346,10 @@ def refresh_management_handoff_dynamic_observations(
     except ValueError as exc:
         raise RuntimeError("Management handoff returned an invalid candidate address.") from exc
     acquire_network_objects_write_lock(db)
-    discovered = {row.name: row for row in discover_host_physical_interfaces()}
+    try:
+        discovered = {row.name: row for row in discover_host_physical_interfaces(timeout=5.0, require_success=True)}
+    except (OSError, subprocess.TimeoutExpired, RuntimeError) as exc:
+        raise RuntimeError("Management handoff native address discovery failed before observation publication.") from exc
     for path in dynamic_paths:
         name = str(path.get("name") or "")
         observed = discovered.get(name)
@@ -17064,9 +17067,13 @@ def run_appliance_apply_job(job_id: str, *, force_real: bool = False) -> None:
                 )
                 job.progress_percent = min(99, int((index / total_steps) * 100))
                 job.result = json.dumps({**current_payload, "units": unit_results}, indent=2)
+                settings_baseline_recorded = False
                 if unit["id"] == "appliance_settings" and isinstance(management_status_transition, dict):
-                    # The helper's three-second restart timer is already running. Make the
-                    # confirmed transition and completed step durable before reconciliation.
+                    # The helper's restart timer is running. Persist the exact executed
+                    # baseline with the transition before releasing publication admission.
+                    if result["success"]:
+                        update_appliance_apply_baselines(db, [unit], {"appliance_settings"})
+                        settings_baseline_recorded = True
                     db.commit()
                 prune_network_boot_media = False
                 if result["success"]:
@@ -17140,7 +17147,8 @@ def run_appliance_apply_job(job_id: str, *, force_real: bool = False) -> None:
                     else:
                         if unit["id"] == "ca" and not result.get("dry_run"):
                             guard_ca_apply_publication(db, applied_unit)
-                        update_appliance_apply_baselines(db, [applied_unit], {unit["id"]})
+                        if not settings_baseline_recorded:
+                            update_appliance_apply_baselines(db, [applied_unit], {unit["id"]})
                         ca_reload_units.discard(unit["id"])
                         if deferred_ca_baseline is not None and not ca_reload_units:
                             if not result.get("dry_run"):
