@@ -7553,10 +7553,20 @@ def service_dns_identity_snapshot(db: Session) -> list[tuple[Any, ...]]:
     """
     rows = []
     for model in (DnsSettings, CaSettings, KmsSettings, LdapSettings, OidcProviderSettings, NtpSettings, VcfOfflineDepotSettings, VcfPrivateRegistrySettings):
-        for settings in db.scalars(select(model)):
+        for settings in db.scalars(select(model).order_by(model.id)):
             rows.append((model.__name__, settings.id, settings.enabled,
                          getattr(settings, "hostname", getattr(settings, "portal_hostname", "")),
                          settings.listen_interface, settings.listen_address))
+    for settings in db.scalars(select(ApplianceSettings).order_by(ApplianceSettings.id)):
+        rows.append(("ApplianceSettings", settings.id, settings.fqdn, settings.service_dns_target_naming))
+    for settings in db.scalars(select(EsxStorageSettings).order_by(EsxStorageSettings.id)):
+        rows.append(("EsxStorageSettings", settings.id, settings.enabled, settings.hostname))
+    for share in db.scalars(select(EsxNfsShare).order_by(EsxNfsShare.id)):
+        rows.append(("EsxNfsShare", share.id, share.enabled, share.interface_name, share.address_families, share.volume_id))
+    for volume in db.scalars(select(EsxStorageVolume).order_by(EsxStorageVolume.id)):
+        rows.append(("EsxStorageVolume", volume.id, volume.state))
+    pxe = esxi_pxe_boot_settings(db)
+    rows.append(("EsxiPxe", *(pxe.get(key) for key in ("enabled", "hostname", "listen_interface", "listen_address"))))
     return rows
 
 
@@ -15372,9 +15382,14 @@ def execute_management_handoff(
                     ensure_dns_for_appliance_settings(db, get_appliance_settings_row(db), previous_fqdn=get_appliance_settings_row(db).fqdn, actor=None)
                     dns_context = dnsmasq_context(db, reconcile=False, include_leases=False)
                     desired_config = dns_context["config_preview"]
+                    dynamic_sources = {path["name"] for path in dynamic_paths}
+                    dynamic_records = [record for record in submitted_dns_records
+                                       if record.get("source_interface") in dynamic_sources]
+                    dynamic_descriptions = {record["description"] for record in dynamic_records}
                     effective_config = project_generated_dns(
-                        dnsmasq["raw_config_preview"], desired_config, submitted_dns_records,
-                        owned_service_dns_records(db, desired_config),
+                        dnsmasq["raw_config_preview"], desired_config, dynamic_records,
+                        [record for record in owned_service_dns_records(db, desired_config)
+                         if record["description"] in dynamic_descriptions],
                     )
                     effective_options = {row["name"]: row["addresses"] for row in service_bind_options(db)}
                     address_moves = {}
@@ -15409,6 +15424,11 @@ def execute_management_handoff(
                         ))
                 verify_service_dns_records(owned_service_dns_records(db, dnsmasq["raw_config_preview"]))
             except (OSError, ValueError) as exc:
+                if dynamic_paths:
+                    # The runner committed the running steps before handoff.
+                    # Discard only this uncommitted observation/reconciliation
+                    # transaction before it records and commits the failure.
+                    db.rollback()
                 succeeded = False
                 results.append(AdapterResult(
                     command=["service-dns", "readback"], dry_run=False,

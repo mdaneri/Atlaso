@@ -451,18 +451,28 @@ def test_alias_refresh_is_idempotent_across_sessions_for_service_inventory(clien
         )).scalar_one().address == "192.0.2.99"
 
 
-def test_management_handoff_dns_readback_failure_triggers_proven_recovery(client, monkeypatch, tmp_path):
+@pytest.mark.parametrize("dynamic_failure", [None, "publication", "reload", "readback", "identity", "identity-storage", "identity-pxe"])
+def test_management_handoff_dns_readback_failure_triggers_proven_recovery(client, monkeypatch, tmp_path, dynamic_failure):
     """Treat failed generated-DNS readback as handoff failure and recover.
 
     Args:
         client: Isolated application client used to initialize the database.
         monkeypatch: Replace helper, staging, and DNS readback boundaries.
         tmp_path: Owned temporary location for mocked staged configuration paths.
+        dynamic_failure: Dynamic publication phase to fail, or static readback.
     """
     from atlaso.app import ui
     from atlaso.app.adapters.system import AdapterResult
     from atlaso.app.database import SessionLocal
-    from atlaso.app.models import DnsRecord
+    from atlaso.app.models import (
+        CaSettings,
+        DnsRecord,
+        DnsSettings,
+        EsxNfsShare,
+        EsxStorageVolume,
+        Job,
+        PhysicalInterface,
+    )
     from atlaso.app.services import service_dns_readback
     from atlaso.app.services.service_dns_defaults import CA_PORTAL_DNS_DESCRIPTION
 
@@ -488,10 +498,45 @@ def test_management_handoff_dns_readback_failure_triggers_proven_recovery(client
             Args:
                 manifest_path: Staged manifest passed to the helper.
             """
+            if (dynamic_failure or "").startswith("identity"):
+                with SessionLocal() as other:
+                    if dynamic_failure == "identity-storage":
+                        storage = ui.get_esx_storage_settings_row(other)
+                        storage.enabled = True
+                        storage.hostname = "concurrent-nfs.example.internal"
+                        volume = EsxStorageVolume(name="concurrent-volume", source_type="blank_disk", state="mounted",
+                                                  stable_device_id="/dev/disk/by-id/concurrent-test")
+                        other.add(volume)
+                        other.flush()
+                        other.add(EsxNfsShare(datastore_name="concurrent-share", volume_id=volume.id,
+                                              interface_name="dynamic0", address_families="ipv4", enabled=True))
+                    elif dynamic_failure == "identity-pxe":
+                        for key, value in (("esxi_pxe.boot.enabled", "true"), ("esxi_pxe.boot.hostname", "concurrent-pxe.example.internal"),
+                                           ("esxi_pxe.boot.listen_interface", "dynamic0"), ("esxi_pxe.boot.listen_address", "192.0.2.11")):
+                            ui.set_setting_value(other, key, value)
+                    else:
+                        ui.get_appliance_settings_row(other).fqdn = "concurrent.example.internal"
+                    other.flush()
+                    ui.refresh_interface_service_dns_aliases(other, actor=None)
+                    settings = ui.get_appliance_settings_row(other)
+                    ui.ensure_dns_for_appliance_settings(other, settings, previous_fqdn="atlaso.internal", actor=None)
+                    other.commit()
             return AdapterResult(
                 command=["atlaso-helper", "management-handoff", "apply", manifest_path],
                 dry_run=False, returncode=0,
             )
+
+        def validate_dnsmasq_config(self, _path):
+            assert not (dynamic_failure or "").startswith("identity"), "unreviewed identity must never reach DNS publication"
+            return AdapterResult(command=["dnsmasq", "validate"], dry_run=False, returncode=0)
+
+        def apply_dnsmasq_config(self, _path):
+            return AdapterResult(command=["dnsmasq", "apply"], dry_run=False,
+                                 returncode=1 if dynamic_failure == "publication" else 0)
+
+        def reload_dnsmasq(self):
+            return AdapterResult(command=["dnsmasq", "reload"], dry_run=False,
+                                 returncode=1 if dynamic_failure == "reload" else 0)
 
         def recover_management_handoff(self):
             """Prove the candidate was rolled back after readback failure."""
@@ -520,6 +565,7 @@ def test_management_handoff_dns_readback_failure_triggers_proven_recovery(client
     )
     unit_defaults = {
         "label": "Management handoff component",
+        "page_url": "/appliance-apply",
         "summary": ["Apply the management handoff component."],
         "validation_errors": [],
         "validation_warnings": [],
@@ -542,11 +588,32 @@ def test_management_handoff_dns_readback_failure_triggers_proven_recovery(client
 
     login(client)
     with SessionLocal() as db:
+        if dynamic_failure:
+            interface = PhysicalInterface(name="dynamic0", mac_address="02:00:00:00:00:88", role="access", mode="access",
+                                          admin_state="up", ipv4_method="dhcp", host_ip_cidr="192.0.2.11/24")
+            db.add(interface)
+            ca = db.scalar(select(CaSettings))
+            db.scalar(select(DnsSettings)).enabled = True
+            ca.enabled = True
+            ca.portal_hostname = "ca.custom.example.internal"
+            ca.listen_interface = "dynamic0"
+            ca.listen_address = "192.0.2.11"
+            units["network"]["raw_config_preview"] = "[physical_interfaces]\ninterface=dynamic0\nadmin_state=up\nipv4_method=dhcp\n"
+            monkeypatch.setattr(ui, "discover_host_physical_interfaces", lambda: [SimpleNamespace(
+                name="dynamic0", mac_address="02:00:00:00:00:88", host_ip_cidr="192.0.2.21/24", host_ipv6_cidr=None,
+            )])
+            monkeypatch.setattr(ui, "management_handoff_result_evidence", lambda _result: {
+                "service_address_observation": {"complete": True, "links": [{
+                    "name": "dynamic0", "configured": True, "address_inventory_complete": True,
+                    "addresses": [{"address": "192.0.2.21", "state": "assigned"}],
+                }]},
+                "rolled_back": _result.command[-1] == "recover",
+            })
         db.add(DnsRecord(
             hostname="ca.custom.example.internal", record_type="A", address="192.0.2.11",
             description=CA_PORTAL_DNS_DESCRIPTION, enabled=True,
         ))
-        db.flush()
+        db.commit()
         group, results = ui.execute_management_handoff(
             units,
             job_id="job_generated_dns_readback",
@@ -554,11 +621,28 @@ def test_management_handoff_dns_readback_failure_triggers_proven_recovery(client
             db=db,
             include_dnsmasq=True,
         )
+        db.add(Job(id="job_dynamic_dns_failure", type="appliance-apply", status="failed", created_by="admin", result=json.dumps(group)))
+        db.commit()
+    if dynamic_failure:
+        with SessionLocal() as db:
+            assert db.scalar(select(PhysicalInterface).where(PhysicalInterface.name == "dynamic0")).host_ip_cidr == "192.0.2.11/24"
+            assert db.scalar(select(CaSettings)).listen_address == "192.0.2.11"
+            owned = db.scalars(select(DnsRecord).where(DnsRecord.description == CA_PORTAL_DNS_DESCRIPTION,
+                                                      DnsRecord.record_type == "A")).all()
+            assert owned and {row.address for row in owned} == {"192.0.2.11"}
+            assert db.get(Job, "job_dynamic_dns_failure").status == "failed"
 
     assert group["success"] is False
     assert group["rollback_proven"] is True
     assert group["management_handoff"]["failing_layer"] == "generated service DNS readback"
-    assert group["management_handoff"]["error"] == "controlled DNS readback failure"
+    expected_error = {
+        "publication": "Effective dynamic service DNS publication failed.",
+        "reload": "Effective dynamic service DNS reload failed.",
+        "identity": "Service DNS identity changed during network readiness; resubmit the changes.",
+        "identity-storage": "Service DNS identity changed during network readiness; resubmit the changes.",
+        "identity-pxe": "Service DNS identity changed during network readiness; resubmit the changes.",
+    }.get(dynamic_failure, "controlled DNS readback failure")
+    assert group["management_handoff"]["error"] == expected_error
     assert group["management_handoff"]["rolled_back"] is True
     assert any(
         command["command"] == ["service-dns", "readback"] and command["returncode"] == 1
