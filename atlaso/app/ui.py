@@ -7533,6 +7533,7 @@ def network_generated_dns_unit(db: Session, units_by_id: dict[str, dict[str, Any
     projected_unit["applied_dns_authoritative"] = bool(baseline.get("dns_authoritative"))
     listener_services = {
         NTP_DNS_DESCRIPTION: "ntpd", LDAP_DNS_RECORD_DESCRIPTION: "ldap", KMS_DNS_RECORD_DESCRIPTION: "kms",
+        VCF_DEPOT_DNS_DESCRIPTION: "vcf_offline_depot",
     }
     moves = []
     for record in previous_records:
@@ -15509,6 +15510,34 @@ def execute_management_handoff(
                 listener_baselines = projected_handoff_listener_baselines(
                     baselines, units_by_id, evidence.get("listener_address_moves", []),
                 )
+                depot_moves = [move for move in evidence.get("listener_address_moves", [])
+                               if move["service"] == "vcf_offline_depot"]
+                if depot_moves and "vcf_offline_depot" in units_by_id:
+                    # A separately selected Depot step must execute its captured
+                    # pending edits on the verified address, not rebind the old one.
+                    depot = units_by_id["vcf_offline_depot"]
+                    captured_addresses = {
+                        move["old_address"]: move["new_address"]
+                        for move in dnsmasq.get("listener_address_moves", [])
+                        if move["service"] == "vcf_offline_depot"
+                    }
+                    captured_moves = [
+                        {**move, "old_address": captured_addresses.get(move["old_address"], move["old_address"])}
+                        for move in depot_moves
+                    ]
+                    depot["context"] = {
+                        **depot["context"],
+                        "vcf_depot_https_config_preview": projected_depot_listener_config(
+                            depot["context"]["vcf_depot_https_config_preview"], captured_moves,
+                        ),
+                    }
+                    for key in ("config_preview", "raw_config_preview"):
+                        depot[key] = projected_depot_listener_config(depot[key], captured_moves)
+                    depot["snapshot_hash"] = appliance_snapshot_hash({
+                        "unit_id": depot["id"], "summary": depot["summary"],
+                        "config_path": depot["config_path"], "config_preview": depot["config_preview"],
+                        "snapshot_marker": depot.get("snapshot_marker"),
+                    })
             except (OSError, ValueError) as exc:
                 if dynamic_paths:
                     # The runner committed the running steps before handoff.
@@ -15645,6 +15674,23 @@ def projected_public_service_config(content: str, moves: list[dict[str, str]]) -
     return result
 
 
+def projected_depot_listener_config(content: str, moves: list[dict[str, str]]) -> str:
+    """Move captured Depot nginx sockets without admitting other desired edits.
+
+    Args:
+        content: Applied or explicitly submitted Depot configuration snapshot.
+        moves: Verified native Depot listener address evidence.
+    """
+    content = projected_public_service_config(content, moves)
+    replacements = {move["old_address"]: move["new_address"] for move in moves}
+    lines = content.splitlines()
+    for index, line in enumerate(lines):
+        if line.startswith("# Listen addresses:"):
+            addresses = [value.strip() for value in line.split(":", 1)[1].split(",")]
+            lines[index] = "# Listen addresses: " + ", ".join(replacements.get(value, value) for value in addresses)
+    return "\n".join(lines) + ("\n" if content.endswith("\n") else "")
+
+
 def projected_handoff_listener_baselines(
     baselines: dict[str, Any], units_by_id: dict[str, dict[str, Any]], moves: list[dict[str, str]],
 ) -> dict[str, dict[str, Any]]:
@@ -15657,7 +15703,7 @@ def projected_handoff_listener_baselines(
     """
     projected = {}
     for service in {move["service"] for move in moves}:
-        if service not in {"ntpd", "ldap", "kms"} or service not in baselines:
+        if service not in {"ntpd", "ldap", "kms", "vcf_offline_depot"} or service not in baselines:
             raise ValueError("Applied listener baseline is unavailable for the verified move.")
         baseline = dict(baselines[service])
         content = str(baseline.get("config_preview") or "")
@@ -15672,7 +15718,9 @@ def projected_handoff_listener_baselines(
             })
             # Never absorb pending LDAP credentials into a listener-only baseline.
             marker = candidate_marker if prior_hash == baseline.get("snapshot_hash") else {"legacy_marker_unavailable": True}
-        if service == "ntpd":
+        if service == "vcf_offline_depot":
+            content = projected_depot_listener_config(content, service_moves)
+        elif service == "ntpd":
             lines = content.splitlines()
             for move in service_moves:
                 old, new = move["old_address"], move["new_address"]

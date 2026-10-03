@@ -25,7 +25,9 @@ This verified appliance view provides visual orientation before you begin.
 
 Atlaso-owned service records follow applied listener-address changes automatically. A Network apply includes the
 generated DNS dependency for enabled local DNS, proves the new listener is ready, publishes its A/AAAA targets and
-CNAME aliases, and checks DNS answers before completing. A failed handoff or DNS check restores the previous Network
+CNAME aliases, and checks DNS answers before completing. The separate VCF Depot nginx listener, including a custom port,
+also moves and passes socket readiness before DNS publication; unrelated pending Depot settings remain pending.
+A failed handoff or DNS check restores the previous Network
 and DNS state together. Manual records and unrelated pending DNS edits remain unchanged; custom service hostnames keep
 their identity while their owned address targets move.
 

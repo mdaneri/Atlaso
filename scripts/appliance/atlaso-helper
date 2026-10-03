@@ -28902,6 +28902,7 @@ _HANDOFF_LISTENER_SERVICES = {
     "ntpd": ("ntpd.service",),
     "ldap": ("slapd.service",),
     "kms": ("atlaso-kmip.service",),
+    "vcf_offline_depot": ("nginx.service",),
 }
 
 
@@ -29053,6 +29054,154 @@ def _project_management_handoff_public_bindings(content: str, bindings: list[dic
     if not all(counts.values()):
         raise ValueError("Public Services submitted dynamic listener is missing")
     return projected, moves
+
+
+def _management_handoff_depot_config_is_managed(content: str) -> bool:
+    """Recognize the fixed, generated VCF Offline Depot nginx site.
+
+    Args:
+        content: Applied site content read from the fixed Depot runtime path.
+
+    Returns:
+        Whether the file carries Atlaso's applied-site markers and address metadata.
+    """
+    lines = content.splitlines()
+    return (
+        bool(lines)
+        and lines[0].strip() == "# Managed by Atlaso. Local changes may be overwritten."
+        and "# Desired HTTPS endpoint for the VCF Offline Depot." in lines
+        and sum(line.strip().startswith("# Listen addresses:") for line in lines) == 1
+        and "VCF Offline Depot HTTPS endpoint is disabled" not in content
+        and bool(_nginx_directive(content, "listen"))
+        and bool(_nginx_directive(content, "server_name"))
+    )
+
+
+def _project_management_handoff_depot_listeners(
+    content: str, moves: list[dict[str, str]],
+) -> str:
+    """Project only the generated Depot listener IPs for a management handoff.
+
+    Args:
+        content: Original applied Depot site captured before the handoff.
+        moves: Resolved Depot old/new address pairs for one observation.
+
+    Returns:
+        The same applied site with its exact listener addresses projected.
+
+    Raises:
+        ValueError: If the applied file is not managed, a listener is missing or
+            ambiguous, or the candidate address conflicts with an existing bind.
+    """
+    if not _management_handoff_depot_config_is_managed(content):
+        raise ValueError("VCF Offline Depot listener move requires a managed applied nginx site")
+    if not moves:
+        return content
+    replacements: dict[str, str] = {}
+    for move in moves:
+        old = str(ip_address(move["old_address"]))
+        new = str(ip_address(move["new_address"]))
+        if old in replacements or new in replacements.values():
+            raise ValueError("VCF Offline Depot listener address mapping is ambiguous")
+        replacements[old] = new
+
+    existing_sockets = set()
+    for value in _nginx_directive(content, "listen"):
+        host, port = _listen_address_and_port(value)
+        existing_sockets.add((host, port))
+    for old, new in replacements.items():
+        if old != new and any((new, port) in existing_sockets
+                              for address, port in existing_sockets if address == old):
+            raise ValueError("VCF Offline Depot candidate address already has a listener on the same TCP port")
+
+    counts = {old: 0 for old in replacements}
+    listen_pattern = re.compile(r"(?m)^(?P<prefix>\s*listen\s+)(?P<args>[^;]+)(?P<end>;)")
+
+    def replace_listen(match: re.Match[str]) -> str:
+        args = match.group("args")
+        fields = args.split(None, 1)
+        if not fields:
+            raise ValueError("VCF Offline Depot applied listen directive is empty")
+        host, port = _listen_address_and_port(fields[0])
+        new = replacements.get(host)
+        if new is None:
+            return match.group(0)
+        counts[host] += 1
+        replacement_ip = ip_address(new)
+        rendered_host = f"[{replacement_ip}]" if replacement_ip.version == 6 else str(replacement_ip)
+        suffix = f" {fields[1]}" if len(fields) == 2 else ""
+        return f"{match.group('prefix')}{rendered_host}:{port}{suffix}{match.group('end')}"
+
+    projected = listen_pattern.sub(replace_listen, content)
+    if not all(counts.values()):
+        raise ValueError("VCF Offline Depot applied listener address is missing")
+
+    comment_pattern = re.compile(r"(?m)^(?P<prefix>\s*# Listen addresses:\s*)(?P<addresses>[^\r\n]*)(?P<ending>\r?)$")
+    comment_counts = {old: 0 for old in replacements}
+
+    def replace_comment(match: re.Match[str]) -> str:
+        values = match.group("addresses").split(",")
+        rendered = []
+        for value in values:
+            stripped = value.strip()
+            new = replacements.get(stripped)
+            if new is None:
+                if stripped in replacements.values() and stripped not in replacements:
+                    raise ValueError("VCF Offline Depot candidate address already appears in applied metadata")
+                rendered.append(value)
+                continue
+            comment_counts[stripped] += 1
+            left = value[:len(value) - len(value.lstrip())]
+            right = value[len(value.rstrip()):]
+            rendered.append(f"{left}{new}{right}")
+        return f"{match.group('prefix')}{','.join(rendered)}{match.group('ending')}"
+
+    projected = comment_pattern.sub(replace_comment, projected)
+    if not all(value == 1 for value in comment_counts.values()):
+        raise ValueError("VCF Offline Depot managed listen-address comment is missing or ambiguous")
+    return projected
+
+
+def _verify_management_handoff_depot_runtime(content: str, moves: list[dict[str, str]]) -> None:
+    """Probe every configured Depot TCP port on each resolved final address.
+
+    Args:
+        content: Final applied Depot nginx site currently loaded by nginx.
+        moves: Resolved old/new Depot address pairs, including unchanged pairs.
+
+    Raises:
+        ValueError: If nginx lacks a configured moved socket or any TCP probe
+            fails within the bounded verification window.
+    """
+    if not _management_handoff_depot_config_is_managed(content):
+        raise ValueError("VCF Offline Depot runtime proof requires a managed applied nginx site")
+    ports_by_address: dict[str, set[int]] = {}
+    for value in _nginx_directive(content, "listen"):
+        try:
+            address, port = _listen_address_and_port(value)
+        except ValueError as exc:
+            raise ValueError("VCF Offline Depot applied listener directive is invalid") from exc
+        ports_by_address.setdefault(address, set()).add(port)
+    expected: set[tuple[str, int]] = set()
+    for move in moves:
+        address = str(ip_address(move["new_address"]))
+        ports = ports_by_address.get(address, set())
+        if not ports:
+            raise ValueError("VCF Offline Depot final listener address has no configured TCP port")
+        expected.update((address, port) for port in ports)
+    deadline = time.monotonic() + 5
+    for address, port in sorted(expected):
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise ValueError("VCF Offline Depot listener socket checks exceeded their time bound")
+            try:
+                with socket.create_connection((address, port), timeout=min(0.5, remaining)):
+                    break
+            except OSError:
+                if time.monotonic() >= deadline:
+                    raise ValueError("VCF Offline Depot listener socket is not ready on a final address") from None
+                time.sleep(min(0.1, max(0, deadline - time.monotonic())))
 
 
 def _management_handoff_listener_unit_state(unit: str) -> dict[str, object]:
@@ -29270,6 +29419,11 @@ def _verify_management_handoff_listener_runtime(service: str, moves: list[dict[s
         if any(move["new_address"] not in listening for move in moves):
             raise ValueError("NTP server is not listening on every moved address")
         return
+    if service == "vcf_offline_depot":
+        _verify_management_handoff_depot_runtime(
+            VCF_DEPOT_SITE_PATH.read_text(encoding="utf-8"), moves,
+        )
+        return
     ports: dict[str, set[int]] = {}
     if service == "ldap":
         for path in (LDAP_SYSTEMD_DROPIN_PATH, LDAP_SYSCONFIG_PATH):
@@ -29321,7 +29475,7 @@ def _apply_management_handoff_listener_address_moves(payload: dict, state: dict,
     _write_management_handoff_state(state, "listener-address-moves")
     groups: dict[str, list[dict[str, str]]] = {}
     for move in effective:
-        if move["old_address"] != move["new_address"]:
+        if move["old_address"] != move["new_address"] and move["service"] != "vcf_offline_depot":
             groups.setdefault(move["service"], []).append(move)
     prior_states = state.get("listener_service_states", {})
     for service, moves in groups.items():
@@ -29334,7 +29488,8 @@ def _apply_management_handoff_listener_address_moves(payload: dict, state: dict,
         paths = (
             (NTP_CONFIG_PATH,) if service == "ntpd" else
             (LDAP_SYSTEMD_DROPIN_PATH, LDAP_SYSCONFIG_PATH) if service == "ldap" else
-            (KMS_CONFIG_PATH,)
+            (KMS_CONFIG_PATH,) if service == "kms" else
+            ()
         )
         contents = {path: path.read_text(encoding="utf-8") for path in paths}
         rewritten = {
@@ -29458,6 +29613,8 @@ def _management_handoff_runtime_paths(payload: dict) -> list[Path]:
             listener_paths.extend((LDAP_SYSTEMD_DROPIN_PATH, LDAP_SYSCONFIG_PATH))
         elif service == "kms":
             listener_paths.append(KMS_CONFIG_PATH)
+        elif service == "vcf_offline_depot":
+            listener_paths.append(VCF_DEPOT_SITE_PATH)
     for path in listener_paths:
         if path.is_symlink() or not path.is_file():
             raise ValueError("applied management handoff listener config is missing or unsafe")
@@ -32603,8 +32760,29 @@ def _apply_management_handoff(payload: dict) -> int:
             file=sys.stderr,
         )
         return 1
+    depot_moves = [
+        move for move in payload.get("listener_address_moves", [])
+        if move.get("service") == "vcf_offline_depot"
+    ]
+    original_depot_config = ""
     failing_layer = "snapshot"
     try:
+        if depot_moves:
+            failing_layer = "Depot listener prerequisite"
+            prior_nginx = state.get("listener_service_states", {}).get("vcf_offline_depot")
+            if not isinstance(prior_nginx, dict) or prior_nginx.get("active") is not True:
+                raise ValueError("applied VCF Offline Depot listener requires active nginx before address handoff")
+            if (VCF_DEPOT_SITE_PATH.is_symlink() or not VCF_DEPOT_SITE_PATH.is_file()
+                    or not stat.S_ISREG(VCF_DEPOT_SITE_PATH.stat().st_mode)
+                    or VCF_DEPOT_SITE_PATH.stat().st_nlink != 1):
+                raise ValueError("applied VCF Offline Depot nginx site is missing or unsafe")
+            original_depot_config = VCF_DEPOT_SITE_PATH.read_text(encoding="utf-8")
+            if not _management_handoff_depot_config_is_managed(original_depot_config):
+                raise ValueError("applied VCF Offline Depot listener is not Atlaso-managed")
+            # Prove the reviewed old listener IPs are in the fixed site before
+            # network mutation; projection will additionally require both the
+            # listen directive and generated address metadata to match.
+            _project_management_handoff_depot_listeners(original_depot_config, depot_moves)
         failing_layer = "address detection preflight"
         _network_detection_preflight(Path(str(payload["network_config_path"])))
         _route_domain_ingress_desired_rules(
@@ -32791,6 +32969,16 @@ def _apply_management_handoff(payload: dict) -> int:
         )
         if payload.get("public_dynamic_bindings"):
             _atomic_management_handoff_write(public_config_path, candidate_public_config)
+        initial_depot_moves = (
+            _resolve_management_handoff_listener_moves(
+                {**payload, "listener_address_moves": depot_moves}, address_observation,
+            ) if depot_moves else []
+        )
+        if initial_depot_moves:
+            initial_depot_config = _project_management_handoff_depot_listeners(
+                original_depot_config, initial_depot_moves,
+            )
+            _atomic_management_handoff_write(VCF_DEPOT_SITE_PATH, initial_depot_config)
         candidate_public_tls = (
             _management_handoff_candidate_public_tls_addresses(
                 Path(str(payload["public_services_config_path"])), candidate_public_port,
@@ -32955,6 +33143,16 @@ def _apply_management_handoff(payload: dict) -> int:
         )
         if payload.get("public_dynamic_bindings"):
             _atomic_management_handoff_write(public_config_path, final_public_config)
+        final_depot_moves = (
+            _resolve_management_handoff_listener_moves(
+                {**payload, "listener_address_moves": depot_moves}, final_address_observation,
+            ) if depot_moves else []
+        )
+        if final_depot_moves:
+            final_depot_config = _project_management_handoff_depot_listeners(
+                original_depot_config, final_depot_moves,
+            )
+            _atomic_management_handoff_write(VCF_DEPOT_SITE_PATH, final_depot_config)
         management_site_addresses = _management_handoff_addresses(
             Path(str(payload["network_config_path"])),
             address_observation=final_address_observation,
@@ -33005,6 +33203,11 @@ def _apply_management_handoff(payload: dict) -> int:
                 if candidate_ca is not None
             },
         )
+        if final_depot_moves:
+            failing_layer = "VCF Offline Depot listener readiness"
+            if not _management_handoff_listener_unit_state("nginx.service")["active"]:
+                raise ValueError("nginx is not active after final VCF Offline Depot listener publication")
+            _verify_management_handoff_depot_runtime(final_depot_config, final_depot_moves)
         failing_layer = "applied service listener address refresh"
         effective_listener_moves = _apply_management_handoff_listener_address_moves(
             payload, state, final_address_observation,

@@ -1084,3 +1084,136 @@ def test_slaac_address_drift_offers_network_review_and_captures_dns_after_reboot
         assert "host-record=ca-2001-db8-0-0-0-0-0-21.custom.example.internal,2001:db8::21" in preview
         assert "host-record=ca-2001-db8-0-0-0-0-0-10.custom.example.internal,2001:db8::10" not in preview
         assert 'txt-record=operator-pending.example.internal,"pending-note"' in preview
+
+
+@pytest.mark.parametrize("dynamic", [False, True], ids=["static", "slaac"])
+def test_depot_generated_dns_captures_custom_port_listener_move_without_pending_edits(client, dynamic):
+    """Protect the separate applied Depot nginx site while leaving other edits pending.
+
+    Args:
+        client: Isolated appliance client.
+        dynamic: Use native-observed SLAAC rather than a saved static IPv6 address.
+    """
+    from atlaso.app import ui
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import VcfOfflineDepotSettings
+
+    login(client)
+    with SessionLocal() as db:
+        _management, access = _prepare_service_address_baseline(db, ui)
+        depot = db.scalar(select(VcfOfflineDepotSettings))
+        depot.port = 9443
+        if dynamic:
+            access.ipv6_cidr = None
+            access.host_ipv6_cidr = "2001:db8::10/64"
+        db.flush()
+        prior_units = ui.appliance_apply_units(db)
+        ui.update_appliance_apply_baselines(db, prior_units, {unit["id"] for unit in prior_units})
+        prior = ui.load_appliance_apply_baselines(db)
+        # The operator's independently saved port edit is never an address-only move.
+        depot.port = 10443
+        if dynamic:
+            access.host_ipv6_cidr = "2001:db8::21/64"
+        else:
+            access.ipv6_cidr = "2001:db8::21/64"
+        db.flush()
+        units = {unit["id"]: unit for unit in ui.appliance_apply_units(db)}
+        generated = ui.network_generated_dns_unit(db, units)
+        moves = [move for move in generated["listener_address_moves"] if move["service"] == "vcf_offline_depot"]
+        ipv6_move = next(move for move in moves if move["old_address"] == "2001:db8::10")
+        assert ipv6_move["new_address"] == "2001:db8::21"
+        assert (ipv6_move.get("interface") == access.name) is dynamic
+        projected = ui.projected_handoff_listener_baselines(prior, units, moves)["vcf_offline_depot"]
+        assert "listen [2001:db8::21]:9443 ssl;" in projected["config_preview"]
+        assert "listen [2001:db8::10]:9443 ssl;" not in projected["config_preview"]
+        assert "10443" not in projected["config_preview"]
+        assert "# Listen addresses: 192.0.2.10, 2001:db8::21" in projected["config_preview"]
+        assert projected["snapshot_marker"] == prior["vcf_offline_depot"]["snapshot_marker"]
+        assert "listen [2001:db8::21]:10443 ssl;" in units["vcf_offline_depot"]["config_preview"]
+        unchanged_prefix = prior["vcf_offline_depot"]["config_preview"].split("# VCFDT", 1)[1]
+        assert projected["config_preview"].split("# VCFDT", 1)[1] == unchanged_prefix
+
+
+def test_verified_depot_moves_update_separately_selected_captured_config(client, monkeypatch, tmp_path):
+    """Keep approved Depot edits while preventing a later step from restoring an old bind.
+
+    Args:
+        client: Isolated appliance client.
+        monkeypatch: Substitute native execution, staging and DNS query boundaries.
+        tmp_path: Private pytest path for staged CA configuration.
+    """
+    from atlaso.app import ui
+    from atlaso.app.adapters.system import AdapterResult
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import VcfOfflineDepotSettings
+    from atlaso.app.services import service_dns_readback
+
+    login(client)
+    with SessionLocal() as db:
+        _management, access = _prepare_service_address_baseline(db, ui)
+        depot = db.scalar(select(VcfOfflineDepotSettings))
+        depot.port = 9443
+        access.ipv6_cidr = None
+        access.host_ipv6_cidr = "2001:db8::10/64"
+        db.flush()
+        prior = ui.appliance_apply_units(db)
+        ui.update_appliance_apply_baselines(db, prior, {unit["id"] for unit in prior})
+        access.ip_cidr = "192.0.2.11/24"
+        access.host_ipv6_cidr = "2001:db8::11/64"
+        depot.port = 10443
+        db.flush()
+        units = {unit["id"]: unit for unit in ui.appliance_apply_units(db)}
+        units["dnsmasq"] = ui.network_generated_dns_unit(db, units)
+        moves = units["dnsmasq"]["listener_address_moves"]
+        # Native proof can choose a later address than the captured candidate.
+        native_moves = [{**move, "new_address": move["new_address"].replace("::11", "::21")}
+                        for move in moves]
+
+        class Adapter:
+            dry_run = False
+
+            def validate_management_handoff(self, _path):
+                return AdapterResult(command=["validate"], dry_run=False, returncode=0)
+
+            def apply_management_handoff(self, _path):
+                return AdapterResult(command=["apply"], dry_run=False, returncode=0,
+                                     stdout=json.dumps({"management_handoff": "applied",
+                                                        "listener_address_moves": native_moves,
+                                                        "public_service_address_moves": [{
+                                                            "interface": access.name,
+                                                            "old_address": "2001:db8::11",
+                                                            "new_address": "2001:db8::21",
+                                                        }]}))
+
+            def validate_dnsmasq_config(self, _path):
+                return AdapterResult(command=["dnsmasq", "validate"], dry_run=False, returncode=0)
+
+            def apply_dnsmasq_config(self, _path):
+                return AdapterResult(command=["dnsmasq", "apply"], dry_run=False, returncode=0)
+
+            def reload_dnsmasq(self):
+                return AdapterResult(command=["dnsmasq", "reload"], dry_run=False, returncode=0)
+
+            def recover_management_handoff(self):
+                raise AssertionError("successful captured projection must not require recovery")
+
+        def effective_observation(_db, _config, _evidence, **_kwargs):
+            access.host_ipv6_cidr = "2001:db8::21/64"
+            db.flush()
+
+        monkeypatch.setattr(ui, "refresh_service_dns_effective_observations", effective_observation)
+        monkeypatch.setattr(ui, "CA_STAGED_CONFIG_PATH", str(tmp_path / "ca.json"))
+        monkeypatch.setattr(ui, "stage_appliance_apply_config", lambda target, _content: str(target))
+        monkeypatch.setattr(ui, "render_ca_apply_payload", lambda *_args, **_kwargs: "{}")
+        monkeypatch.setattr(service_dns_readback, "verify_service_dns_records", lambda _records: None)
+        group, _results = ui.execute_management_handoff(
+            units, job_id="job_depot853abc", adapter=Adapter(), db=db, include_dnsmasq=True,
+        )
+        assert group["success"] is True
+        captured = units["vcf_offline_depot"]
+        assert "listen [2001:db8::21]:10443 ssl;" in captured["config_preview"]
+        assert "listen [2001:db8::11]:10443 ssl;" not in captured["config_preview"]
+        assert "listen [2001:db8::21]:10443 ssl;" in captured["context"]["vcf_depot_https_config_preview"]
+        prior_projection = group["listener_baselines"]["vcf_offline_depot"]["config_preview"]
+        assert "listen [2001:db8::21]:9443 ssl;" in prior_projection
+        assert "10443" not in prior_projection

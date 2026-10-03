@@ -83,8 +83,8 @@ def test_service_dns_manifest_path_requires_staged_file_and_dns_rollback_snapsho
         helper._load_management_handoff_manifest(manifest)
 
 
-@pytest.mark.parametrize("public_dynamic", [False, True])
-def test_service_dns_publication_follows_final_readiness_and_failure_rolls_back(monkeypatch, tmp_path, capsys, public_dynamic):
+@pytest.mark.parametrize(("public_dynamic", "depot_dynamic"), [(False, False), (True, False), (False, True)])
+def test_service_dns_publication_follows_final_readiness_and_failure_rolls_back(monkeypatch, tmp_path, capsys, public_dynamic, depot_dynamic):
     """Defer generated DNS until readiness and restore the captured handoff on failure."""
     helper = load_helper_module()
     events: list[str] = []
@@ -111,6 +111,19 @@ def test_service_dns_publication_follows_final_readiness_and_failure_rolls_back(
     candidate_firewall = _staged_file(tmp_path / "firewall", "candidate.nft", "table inet atlaso { chain input { } }\n")
     previous_firewall = _staged_file(runtime, "previous.nft", "prior firewall\n")
     public_candidate = _staged_file(tmp_path / "public", "candidate.conf", "server {\n    listen 192.0.2.20:443 ssl;\n}\n")
+    depot_site = _staged_file(runtime, "vcf-offline-depot.conf", _managed_depot_site())
+    depot_backup = _staged_file(tmp_path / "backups", "depot.bin", depot_site.read_text(encoding="utf-8"))
+    if depot_dynamic:
+        depot_metadata = depot_site.stat()
+        state["snapshots"].append({
+            "path": str(depot_site), "backup": str(depot_backup), "existed": True,
+            "mode": depot_metadata.st_mode & 0o777, "uid": depot_metadata.st_uid, "gid": depot_metadata.st_gid,
+        })
+        state["listener_service_states"] = {
+            "vcf_offline_depot": {"active": True, "enabled": True, "enabled_state": "enabled"},
+        }
+        monkeypatch.setattr(helper, "VCF_DEPOT_SITE_PATH", depot_site)
+        monkeypatch.setattr(helper, "_management_handoff_listener_unit_state", lambda _unit: {"active": True, "enabled": True})
     monkeypatch.setattr(helper, "FIREWALL_CONFIG_PATH", previous_firewall)
     monkeypatch.setattr(helper, "FIREWALL_APPLY_DIR", tmp_path / "firewall")
     monkeypatch.setattr(helper, "NAT_RUNTIME_CONFIG_PATH", tmp_path / "runtime" / "nat.conf")
@@ -185,7 +198,35 @@ def test_service_dns_publication_follows_final_readiness_and_failure_rolls_back(
         "resolver_servers": ["192.0.2.53"],
     })
     monkeypatch.setattr(helper, "_configure_management_handoff_resolver", lambda _payload: events.append("resolver") or subprocess.CompletedProcess([], 0))
-    monkeypatch.setattr(helper, "_configure_atlaso_management_https", lambda *_args, **_kwargs: (0, None))
+    management_publications = 0
+
+    def configure_management(*_args, **_kwargs):
+        nonlocal management_publications
+        management_publications += 1
+        events.append(f"management-nginx-publication-{management_publications}")
+        return (0, None)
+
+    monkeypatch.setattr(helper, "_configure_atlaso_management_https", configure_management)
+    if depot_dynamic:
+        depot_projections = 0
+        original_project_depot = helper._project_management_handoff_depot_listeners
+
+        def project_depot(content, moves):
+            nonlocal depot_projections
+            depot_projections += 1
+            events.append(f"depot-projection-{depot_projections}")
+            return original_project_depot(content, moves)
+
+        depot_move = {
+            "service": "vcf_offline_depot", "old_address": "192.0.2.10",
+            "new_address": "198.51.100.10", "interface": "eth9",
+        }
+        monkeypatch.setattr(helper, "_resolve_management_handoff_listener_moves", lambda _payload, _observation: [depot_move])
+        monkeypatch.setattr(helper, "_project_management_handoff_depot_listeners", project_depot)
+        monkeypatch.setattr(
+            helper, "_verify_management_handoff_depot_runtime",
+            lambda _content, _moves: events.append("depot-runtime-readiness"),
+        )
     monkeypatch.setattr(helper, "_handle_public_services", lambda *_args, **_kwargs: 0)
     monkeypatch.setattr(helper, "_management_nginx_config", lambda *_args, **_kwargs: "server {}\n")
 
@@ -223,6 +264,10 @@ def test_service_dns_publication_follows_final_readiness_and_failure_rolls_back(
         "appliance_settings_config_path": "candidate-settings",
         "public_services_config_path": str(public_candidate),
         "public_dynamic_bindings": [{"interface": "eth9", "old_address": "192.0.2.20"}] if public_dynamic else [],
+        "listener_address_moves": [{
+            "service": "vcf_offline_depot", "old_address": "192.0.2.10",
+            "new_address": "198.51.100.10", "interface": "eth9",
+        }] if depot_dynamic else [],
         "dnsmasq_config_path": str(candidate_dns),
         "service_dns_config_path": str(service_dns),
     })
@@ -236,6 +281,12 @@ def test_service_dns_publication_follows_final_readiness_and_failure_rolls_back(
         assert events.index("public-final-publication") < events.index("final-readiness")
     assert restored == [state]
     assert state["dnsmasq_included"] is True
+    if depot_dynamic:
+        assert events.index("depot-projection-2") < events.index("management-nginx-publication-1")
+        assert events.index("depot-projection-3") < events.index("management-nginx-publication-2")
+        assert events.index("final-readiness") < events.index("depot-runtime-readiness")
+        assert events.index("depot-runtime-readiness") < events.index("service-dns-publication")
+        assert depot_site.read_text(encoding="utf-8") == _managed_depot_site()
     assert prior_network.read_text(encoding="utf-8") == "previous network\n"
     assert prior_dns.read_text(encoding="utf-8") == "previous DNS\n"
     failure = json.loads(capsys.readouterr().err.splitlines()[-1])
@@ -480,3 +531,109 @@ def test_listener_rollback_attempts_remaining_services_after_one_failure(monkeyp
     with pytest.raises(ValueError, match="ntpd"):
         helper._restore_management_handoff_listener_services(state, [])
     assert ["systemctl", "stop", "atlaso-kmip.service"] in calls
+
+
+def _managed_depot_site() -> str:
+    return (
+        "# Managed by Atlaso. Local changes may be overwritten.\n"
+        "# Desired HTTPS endpoint for the VCF Offline Depot.\n"
+        "# Listen addresses: 192.0.2.10, 2001:db8::10\n"
+        "# Atlaso VCF Offline Depot unauthenticated access: false\n"
+        "# Atlaso VCF Offline Depot user: depot-operator\n"
+        "server {\n"
+        "  listen 192.0.2.10:8443 ssl;\n"
+        "  listen [2001:db8::10]:9443 ssl http2;\n"
+        "  server_name depot.atlaso.internal;\n"
+        "  ssl_certificate /etc/atlaso/depot.pem;\n"
+        "  ssl_certificate_key /etc/atlaso/depot.key;\n"
+        "  auth_basic \"VCF Depot\";\n"
+        "  auth_basic_user_file /etc/atlaso/nginx/htpasswd/vcf-offline-depot.htpasswd;\n"
+        "}\n"
+    )
+
+
+def test_depot_listener_projection_changes_only_managed_addresses_and_preserves_ports():
+    helper = load_helper_module()
+    original = _managed_depot_site()
+    moves = [
+        {"service": "vcf_offline_depot", "old_address": "192.0.2.10", "new_address": "198.51.100.20"},
+        {"service": "vcf_offline_depot", "old_address": "2001:db8::10", "new_address": "2001:db8::20"},
+    ]
+
+    projected = helper._project_management_handoff_depot_listeners(original, moves)
+
+    expected = original.replace(
+        "# Listen addresses: 192.0.2.10, 2001:db8::10",
+        "# Listen addresses: 198.51.100.20, 2001:db8::20",
+    ).replace(
+        "listen 192.0.2.10:8443 ssl;", "listen 198.51.100.20:8443 ssl;",
+    ).replace(
+        "listen [2001:db8::10]:9443 ssl http2;", "listen [2001:db8::20]:9443 ssl http2;",
+    )
+    assert projected == expected
+    assert "auth_basic \"VCF Depot\";" in projected
+    assert "ssl_certificate_key /etc/atlaso/depot.key;" in projected
+
+
+def test_depot_listener_runtime_proof_checks_custom_ipv4_ipv6_ports_and_unchanged_moves(monkeypatch):
+    helper = load_helper_module()
+    calls = []
+
+    class Connected:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+    monkeypatch.setattr(
+        helper.socket, "create_connection",
+        lambda endpoint, **_kwargs: calls.append(endpoint) or Connected(),
+    )
+    content = helper._project_management_handoff_depot_listeners(
+        _managed_depot_site(), [
+            {"service": "vcf_offline_depot", "old_address": "192.0.2.10", "new_address": "192.0.2.10"},
+            {"service": "vcf_offline_depot", "old_address": "2001:db8::10", "new_address": "2001:db8::10"},
+        ],
+    )
+
+    helper._verify_management_handoff_depot_runtime(content, [
+        {"service": "vcf_offline_depot", "old_address": "192.0.2.10", "new_address": "192.0.2.10"},
+        {"service": "vcf_offline_depot", "old_address": "2001:db8::10", "new_address": "2001:db8::10"},
+    ])
+
+    assert calls == [("192.0.2.10", 8443), ("2001:db8::10", 9443)]
+
+
+def test_depot_listener_runtime_proof_fails_when_a_port_is_unreachable(monkeypatch):
+    helper = load_helper_module()
+    clock = iter((0.0, 1.0, 6.0))
+    attempts = []
+
+    def fail_connect(endpoint, **_kwargs):
+        attempts.append(endpoint)
+        raise OSError("connection refused")
+
+    monkeypatch.setattr(helper.socket, "create_connection", fail_connect)
+    monkeypatch.setattr(helper.time, "monotonic", lambda: next(clock))
+    monkeypatch.setattr(helper.time, "sleep", lambda _delay: None)
+
+    with pytest.raises(ValueError, match="socket is not ready"):
+        helper._verify_management_handoff_depot_runtime(_managed_depot_site(), [
+            {"service": "vcf_offline_depot", "old_address": "192.0.2.10", "new_address": "192.0.2.10"},
+        ])
+    assert attempts == [("192.0.2.10", 8443)]
+
+
+def test_depot_listener_site_is_part_of_handoff_rollback_snapshot(tmp_path, monkeypatch):
+    helper = load_helper_module()
+    site = _staged_file(tmp_path, "vcf-offline-depot.conf", _managed_depot_site())
+    monkeypatch.setattr(helper, "VCF_DEPOT_SITE_PATH", site)
+
+    paths = helper._management_handoff_runtime_paths({
+        "listener_address_moves": [{
+            "service": "vcf_offline_depot", "old_address": "192.0.2.10", "new_address": "198.51.100.20",
+        }],
+    })
+
+    assert paths.count(site) == 1
