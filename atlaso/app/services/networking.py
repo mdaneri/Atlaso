@@ -749,15 +749,18 @@ def _cleanup_missing_interface_references(db: Session, missing_renames: dict[str
     return details
 
 
-def _retarget_interface_references(db: Session, renames: dict[str, str]) -> None:
+def _retarget_interface_references(db: Session, renames: dict[str, str]) -> dict[str, str]:
     """Handle retarget interface references.
 
     Args:
         db: Active database session.
         renames: Renames supplied by the caller.
+
+    Returns:
+        Physical and derived VLAN name changes used to retarget applied bindings.
     """
     if not renames:
-        return
+        return {}
     expanded_renames = dict(renames)
     vlans = db.execute(select(VlanInterface).order_by(VlanInterface.parent_interface, VlanInterface.vlan_id)).scalars().all()
     for vlan in vlans:
@@ -814,6 +817,7 @@ def _retarget_interface_references(db: Session, renames: dict[str, str]) -> None
     esxi_listen_interface = db.execute(select(Setting).where(Setting.key == "esxi_pxe.boot.listen_interface")).scalar_one_or_none()
     if esxi_listen_interface is not None:
         esxi_listen_interface.value = _replace_interface_tokens(esxi_listen_interface.value, expanded_renames)
+    return expanded_renames
 
 
 def _record_applied_physical_interface_aliases(db: Session, renames: dict[str, str]) -> None:
@@ -1058,10 +1062,10 @@ def sync_host_physical_interfaces(db: Session) -> tuple[list[PhysicalInterface],
             missing_renames.setdefault(interface.name, interface.name)
     _cleanup_missing_interface_references(db, missing_renames)
     live_renames = {old: new for old, new in final_renames.items() if old not in missing_renames and new not in set(missing_renames.values())}
-    _retarget_interface_references(db, live_renames)
+    retargeted_aliases = _retarget_interface_references(db, live_renames)
     # Applied dynamic bindings must retain identity even through a missing inventory pass so a
     # later missing-name-to-live-name transition can chain back to the original applied name.
-    _record_applied_physical_interface_aliases(db, final_renames)
+    _record_applied_physical_interface_aliases(db, {**retargeted_aliases, **final_renames})
     if discovered:
         discovered_names = {interface.name for interface in discovered}
         seed_only_missing = [

@@ -12647,6 +12647,19 @@ def appliance_apply_context(db: Session) -> dict[str, Any]:
             ]
         else:
             review_units = [projected, *review_units]
+    if network_generated_dns_unit(db, unit_map) is not None:
+        # Readiness replays the protected group. Make consent to pending group
+        # edits visible before submission, rather than admitting unchecked edits.
+        required_ids = {
+            unit_id for unit_id in MANAGEMENT_HANDOFF_UNIT_IDS
+            if unit_id != "network" and unit_map.get(unit_id, {}).get("changed")
+        }
+        review_units = [
+            {**unit, "requires_network_selection": True,
+             "summary": [*unit["summary"], "Required with Network for the protected DNS listener handoff"]}
+            if unit["id"] in required_ids else unit
+            for unit in review_units
+        ]
     return {
         "apply_units": units,
         "changed_apply_units": changed_units,
@@ -18298,6 +18311,21 @@ def _submit_appliance_apply(
         or management_domain_migration
         or ("network" in selected_ids and network_generated_dns_unit(db, unit_map) is not None)
     )
+    if "network" in selected_ids and network_generated_dns_unit(db, unit_map) is not None:
+        unchecked_dependencies = [
+            unit["label"] for unit in units
+            if unit["id"] in MANAGEMENT_HANDOFF_UNIT_IDS and unit["changed"]
+            and unit["id"] not in requested_ids
+        ]
+        if unchecked_dependencies:
+            detail = (
+                "Select the pending protected handoff changes with Network: "
+                + ", ".join(unchecked_dependencies)
+                + ". Unchecked changes cannot be applied by the DNS readiness handoff."
+            )
+            return JSONResponse({"detail": detail}, status_code=422) if wants_json else Response(
+                detail, status_code=422, media_type="text/plain",
+            )
     if management_handoff and not routing_permission_pair_required:
         # Appliance Settings can start a handoff before an enforcement owner
         # is selected; pair any pending permission change before expansion.

@@ -84,6 +84,9 @@ Valid changed units are selected by default; invalid units are not. Unselected u
 
 When DHCP or SLAAC changes a service address without a saved Network edit, the review also offers **Network** with
 **DNS/DHCP**. Select both to verify the effective listeners before publishing the updated generated DNS records.
+Pending Certificate Authority, Firewall, Appliance Settings, and Public Services changes required by this protected
+handoff are selected and locked while Network is selected. Inspect their differences before proceeding; clear
+Network to leave those changes pending. Submission rejects omitted pending dependencies.
 
 !!! warning
     Review related units together when a feature crosses service boundaries; partial application can leave behavior unavailable.

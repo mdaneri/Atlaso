@@ -18817,12 +18817,20 @@ function applianceApplyReviewRow(unit) {
   if (unit.requires_dns_selection) {
     checkbox.dataset.requiresDnsSelection = "";
   }
+  if (unit.requires_network_selection) {
+    checkbox.dataset.requiresNetworkSelection = "";
+  }
   const labelText = document.createElement("span");
   const strong = document.createElement("strong");
   strong.textContent = unit.label || unit.id || "Component";
   const small = document.createElement("small");
   small.textContent = unit.config_path || "";
   labelText.append(strong, small);
+  if (unit.requires_network_selection) {
+    const dependency = document.createElement("small");
+    dependency.textContent = "Required while Network is selected";
+    labelText.append(dependency);
+  }
   label.append(checkbox, labelText);
 
   const actions = document.createElement("div");
@@ -18983,9 +18991,28 @@ function updateApplianceApplySelection() {
       delete wanCheckbox.dataset.forcedByNetwork;
     }
   }
+  const networkSelected = networkCheckbox instanceof HTMLInputElement && networkCheckbox.checked;
+  const networkDependentCheckboxes = Array.from(modal.querySelectorAll("[data-requires-network-selection]"));
+  networkDependentCheckboxes.forEach((checkbox) => {
+    if (!(checkbox instanceof HTMLInputElement)) return;
+    if (networkSelected && checkbox.dataset.valid !== "false" && checkbox.dataset.lockedByNetwork !== "true") {
+      checkbox.dataset.checkedBeforeNetwork = String(checkbox.checked);
+      checkbox.dataset.lockedByNetwork = "true";
+      checkbox.checked = true;
+      checkbox.disabled = true;
+    } else if (!networkSelected && checkbox.dataset.lockedByNetwork === "true") {
+      checkbox.checked = checkbox.dataset.checkedBeforeNetwork === "true";
+      checkbox.disabled = checkbox.dataset.valid === "false";
+      delete checkbox.dataset.checkedBeforeNetwork;
+      delete checkbox.dataset.lockedByNetwork;
+    }
+  });
   const invalidCombinedWan = Boolean(networkCheckbox?.checked && wanCheckbox?.checked
     && wanRow?.dataset.applyCandidateValid === "false");
   const invalidForcedNetwork = Boolean(forcedNetwork && networkCheckbox?.dataset.valid === "false");
+  const invalidNetworkDependency = Boolean(networkSelected
+    && networkDependentCheckboxes.some((checkbox) => checkbox instanceof HTMLInputElement
+      && checkbox.dataset.valid === "false"));
   if (wanRow instanceof HTMLElement) {
     wanRow.querySelector('[data-apply-candidate-errors]')?.classList.toggle("hidden", !invalidCombinedWan);
     const validity = wanRow.querySelector('[data-apply-validity]');
@@ -19004,14 +19031,15 @@ function updateApplianceApplySelection() {
     return Array.from(row.querySelectorAll("[data-esx-format-confirmation]")).some((input) => input instanceof HTMLInputElement && input.value !== input.dataset.expected);
   });
   if (selectionSummary instanceof HTMLElement) {
-    selectionSummary.textContent = invalidCombinedWan || invalidForcedNetwork
-      ? `${selected} components selected · review ${invalidForcedNetwork ? "Network" : "Routing & WAN"} validation`
+    selectionSummary.textContent = invalidCombinedWan || invalidForcedNetwork || invalidNetworkDependency
+      ? `${selected} components selected · review ${invalidForcedNetwork ? "Network" : invalidCombinedWan ? "Routing & WAN" : "dependent component"} validation`
       : (incompleteFormatConfirmations
         ? `${selected} component${selected === 1 ? "" : "s"} selected · complete disk format confirmation`
         : `${selected} component${selected === 1 ? "" : "s"} selected`);
   }
   if (submit instanceof HTMLButtonElement) {
-    submit.disabled = selected === 0 || incompleteFormatConfirmations || invalidCombinedWan || invalidForcedNetwork;
+    submit.disabled = selected === 0 || incompleteFormatConfirmations || invalidCombinedWan
+      || invalidForcedNetwork || invalidNetworkDependency;
   }
   if (connectionWarning instanceof HTMLElement) {
     const messages = new Set();
@@ -19272,9 +19300,14 @@ async function submitApplianceApplyForm(form) {
     elements.submit.textContent = "Creating task…";
   }
   try {
+    const body = new FormData(form);
+    const checkedDisabled = Array.from(elements.modal.querySelectorAll(
+      "[data-appliance-apply-review-checkbox]:checked:disabled",
+    ));
+    checkedDisabled.forEach((checkbox) => body.append(checkbox.name, checkbox.value));
     const response = await fetch(managementUiPath("/appliance-apply"), {
       method: "POST",
-      body: new FormData(form),
+      body,
       credentials: "same-origin",
       headers: { Accept: "application/json" },
     });

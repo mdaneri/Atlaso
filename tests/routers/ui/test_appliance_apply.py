@@ -1659,7 +1659,7 @@ def test_management_handoff_keeps_dns_shutdown_after_resolver_move(client):
 
     response = client.post(
         "/appliance-apply",
-        data={"csrf": csrf, "selected_units": ["network", "dnsmasq", "appliance_settings"]},
+        data={"csrf": csrf, "selected_units": ["network", "dnsmasq", "appliance_settings", "firewall"]},
         headers={"Accept": "application/json"},
     )
 
@@ -1703,7 +1703,7 @@ def test_management_handoff_leaves_unselected_dns_record_pending(client, monkeyp
 
     response = client.post(
         "/appliance-apply",
-        data={"csrf": csrf, "selected_units": "network"},
+        data={"csrf": csrf, "selected_units": ["network", "appliance_settings"]},
         headers={"Accept": "application/json"},
     )
 

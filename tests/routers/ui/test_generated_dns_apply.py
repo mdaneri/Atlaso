@@ -358,7 +358,7 @@ def test_network_apply_captures_refreshed_service_dns_after_direct_ip_change(cli
     monkeypatch.setattr(ui, "run_appliance_apply_job", lambda _job_id: None)
     response = client.post(
         "/appliance-apply",
-        data={"csrf": csrf, "selected_units": "network"},
+        data={"csrf": csrf, "selected_units": list(ui.MANAGEMENT_HANDOFF_UNIT_IDS)},
         headers={"Accept": "application/json"},
     )
     assert response.status_code == 202, response.text
@@ -487,7 +487,9 @@ def test_network_only_apply_cannot_omit_dns_when_static_service_interface_goes_d
             captured_dns = next(row for row in payload["captured_units"] if row["unit_id"] == "dnsmasq")
             assert "txt-record=operator-pending.example.internal,pending-note" not in captured_dns["config_preview"]
         else:
-            assert "Resolve validation errors" in response.json()["detail"]
+            assert any(message in response.json()["detail"] for message in (
+                "Resolve validation errors", "Unchecked changes cannot be applied",
+            ))
             assert db.scalar(select(Job).where(Job.type == "appliance-apply")) is None
 
 
@@ -920,12 +922,14 @@ def test_management_handoff_dns_readback_failure_triggers_proven_recovery(client
     assert all(row["success"] is False and row["rolled_back"] is True for row in results)
 
 
-def test_slaac_address_drift_offers_network_review_and_captures_dns_after_reboot(client, monkeypatch):
+@pytest.mark.parametrize("pending_dependency", [None, "ca", "firewall", "appliance_settings", "public_services"])
+def test_slaac_address_drift_offers_network_review_and_captures_dns_after_reboot(client, monkeypatch, pending_dependency):
     """Expose unchanged Network intent when SLAAC DNS needs a readiness handoff.
 
     Args:
         client: Authenticated application test client.
         monkeypatch: Host discovery and asynchronous job execution substitutions.
+        pending_dependency: Unrelated protected unit deliberately omitted from the first submission.
     """
     from atlaso.app import main, ui
     from atlaso.app.database import SessionLocal
@@ -1004,6 +1008,26 @@ def test_slaac_address_drift_offers_network_review_and_captures_dns_after_reboot
             for summary in offered_network["summary"]
         )
 
+    if pending_dependency:
+        render_units = ui.appliance_apply_units
+
+        def pending_units(*args, **kwargs):
+            # Model an independently saved edit without changing the DNS identity.
+            rendered = render_units(*args, **kwargs)
+            for unit in rendered:
+                if unit["id"] != pending_dependency:
+                    continue
+                unit["changed"] = True
+                unit["snapshot_hash"] = "pending-independent-edit"
+                for key in ("config_preview", "raw_config_preview"):
+                    if unit[key].lstrip().startswith("{"):
+                        unit[key] = json.dumps({**json.loads(unit[key]), "pending_review_note": "independent edit"})
+                    else:
+                        unit[key] += "\n# pending independent edit"
+            return rendered
+
+        monkeypatch.setattr(ui, "appliance_apply_units", pending_units)
+
     review_response = client.get("/appliance-apply/review")
     assert review_response.status_code == 200, review_response.text
     review = review_response.json()
@@ -1020,9 +1044,27 @@ def test_slaac_address_drift_offers_network_review_and_captures_dns_after_reboot
     page = client.get("/dashboard")
     csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
     monkeypatch.setattr(ui, "run_appliance_apply_job", lambda _job_id: None)
+    required_dependencies = [unit["id"] for unit in review["units"] if unit.get("requires_network_selection")]
+    if pending_dependency:
+        assert pending_dependency in required_dependencies
+        pending_review = next(unit for unit in review["units"] if unit["id"] == pending_dependency)
+        assert any("Required with Network" in summary for summary in pending_review["summary"])
+    if required_dependencies:
+        with SessionLocal() as db:
+            previous_baselines = ui.load_appliance_apply_baselines(db)
+        rejected = client.post(
+            "/appliance-apply",
+            data={"csrf": csrf, "selected_units": ["network", "dnsmasq"]},
+            headers={"Accept": "application/json"},
+        )
+        assert rejected.status_code == 422, rejected.text
+        assert "Unchecked changes cannot be applied" in rejected.json()["detail"]
+        with SessionLocal() as db:
+            assert ui.load_appliance_apply_baselines(db) == previous_baselines
+            assert db.scalar(select(Job).where(Job.status == JobStatus.PENDING.value)) is None
     response = client.post(
         "/appliance-apply",
-        data={"csrf": csrf, "selected_units": ["network", "dnsmasq"]},
+        data={"csrf": csrf, "selected_units": ["network", "dnsmasq", *required_dependencies]},
         headers={"Accept": "application/json"},
     )
     assert response.status_code == 202, response.text
