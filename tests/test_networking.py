@@ -1172,7 +1172,7 @@ def test_render_network_config_includes_dual_stack_physical_and_vlan_cidrs():
 
 @pytest.mark.parametrize("state", [
     {"tentative": True}, {"dadfailed": True}, {"flags": ["tentative"]}, {"flags": ["dadfailed"]},
-    {"valid_life_time": 0},
+    {"valid_life_time": 0}, {"preferred_life_time": 0}, {"deprecated": True}, {"flags": ["deprecated"]},
 ])
 @pytest.mark.parametrize("family,bad_address,good_address,prefix,field", [
     ("inet", "192.0.2.1", "192.0.2.2", 24, "host_ip_cidr"),
@@ -1299,3 +1299,37 @@ def test_inventory_reconciliation_preserves_native_automatic_ipv6_source(desired
     assert interface.host_ipv6_cidr == (expected if enabled else None)
     assert interface.ipv6_cidr == desired and interface.ipv6_enabled is enabled
     assert interface.desired_state_source == "console"
+
+
+@pytest.mark.parametrize("dynamic_flag", [True, False])
+@pytest.mark.parametrize("state", ["deprecated_boolean", "deprecated_flag", "preferred_expired"])
+@pytest.mark.parametrize("family,old,new,prefix,field", [
+    ("inet", "192.0.2.1", "192.0.2.2", 24, "host_dhcp_ip_cidr"),
+    ("inet6", "2001:db8::1", "2001:db8::2", 64, "host_dynamic_ipv6_cidr"),
+])
+def test_native_dynamic_observation_skips_deprecated_before_preferred(dynamic_flag, state, family, old, new, prefix, field):
+    """Renumbering must select the preferred lease rather than a still-valid old address.
+
+    Args:
+        dynamic_flag: Native dynamic flag versus boolean representation.
+        state: Supported deprecation or expired preferred-lifetime representation.
+        family: Address family supplied by native inventory.
+        old: Still-valid deprecated address listed first.
+        new: Preferred address acquired during renumbering.
+        prefix: Native prefix length.
+        field: Dynamic observation attribute consumed by management recovery.
+    """
+    source = {"flags": ["dynamic"]} if dynamic_flag else {"dynamic": True}
+    expired = {"family": family, "local": old, "prefixlen": prefix, "scope": "global",
+               "valid_life_time": 300, **source}
+    if state == "deprecated_boolean":
+        expired["deprecated"] = True
+    elif state == "deprecated_flag":
+        expired["flags"] = [*expired.get("flags", []), "deprecated"]
+    else:
+        expired["preferred_life_time"] = 0
+    row = {"ifname": "eth0", "link_type": "ether", "address": "00:15:5d:aa:bb:01", "addr_info": [expired]}
+    assert getattr(parse_linux_ip_interfaces(json.dumps([row]))[0], field) is None
+    row["addr_info"].append({"family": family, "local": new, "prefixlen": prefix, "scope": "global",
+                             "valid_life_time": 600, "preferred_life_time": 300, **source})
+    assert getattr(parse_linux_ip_interfaces(json.dumps([row]))[0], field) == f"{new}/{prefix}"

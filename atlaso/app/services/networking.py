@@ -274,9 +274,9 @@ def _host_ip_cidr(row: dict, family: str, *, dynamic_only: bool = False) -> str 
         flags = address.get("flags") or []
         if dynamic_only and not (address.get("dynamic") is True or "dynamic" in flags):
             continue
-        if any(address.get(flag) or flag in flags for flag in ("tentative", "dadfailed")):
+        if any(address.get(flag) or flag in flags for flag in ("tentative", "dadfailed", "deprecated")):
             continue
-        if address.get("valid_life_time") == 0:
+        if address.get("valid_life_time") == 0 or address.get("preferred_life_time") == 0:
             continue
         local = address.get("local")
         prefixlen = address.get("prefixlen")
