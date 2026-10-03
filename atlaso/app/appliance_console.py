@@ -1294,8 +1294,9 @@ def _refresh_management_addresses(
             if interface is not None and observed is not None:
                 observed_ipv4 = observed.host_dhcp_ip_cidr if expected[0] == "dhcp" else observed.host_ip_cidr
                 required.append((4, observed_ipv4, expected[1] if expected[0] != "dhcp" else None))
+                observed_ipv6 = observed.host_dynamic_ipv6_cidr if expected[2] and not expected[3] else observed.host_ipv6_cidr
                 if expected[2]:
-                    required.append((6, observed.host_ipv6_cidr, expected[3]))
+                    required.append((6, observed_ipv6, expected[3]))
             verified = bool(
                 observed is not None
                 and observed.host_admin_state == "up" and observed.oper_state == "up"
@@ -1319,7 +1320,7 @@ def _refresh_management_addresses(
                 acquire_network_objects_write_lock(db)
                 db.refresh(interface)
                 interface.host_ip_cidr = observed_ipv4
-                interface.host_ipv6_cidr = observed.host_ipv6_cidr
+                interface.host_ipv6_cidr = observed_ipv6
                 pending = (interface.ipv4_method, interface.ip_cidr, interface.ipv6_enabled, interface.ipv6_cidr) != expected
                 if expected_paths is not None:
                     current_preview = render_network_config(

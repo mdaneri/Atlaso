@@ -1703,9 +1703,10 @@ def test_console_management_waits_for_both_dynamic_families(client, monkeypatch)
     from dataclasses import replace
 
     observations = iter([
-        replace(observation, host_dhcp_ip_cidr=None, host_ipv6_cidr="2001:db8::174/64"),
+        replace(observation, host_dhcp_ip_cidr=None, host_ipv6_cidr="2001:db8::172/64", host_dynamic_ipv6_cidr="2001:db8::174/64"),
         observation,
-        replace(observation, host_ipv6_cidr="2001:db8::174/64"),
+        replace(observation, host_ipv6_cidr="2001:db8::172/64"),
+        replace(observation, host_ipv6_cidr="2001:db8::172/64", host_dynamic_ipv6_cidr="2001:db8::174/64"),
     ])
     monkeypatch.setattr(appliance_console, "discover_host_physical_interfaces", lambda **kwargs: [next(observations)])
     monkeypatch.setattr(appliance_console.time, "sleep", lambda seconds: None)

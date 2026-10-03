@@ -1248,3 +1248,52 @@ def test_inventory_reconciliation_preserves_native_dhcp_source(method, lease, ex
     assert interface.ipv4_method == method
     assert interface.ip_cidr == (None if method == "dhcp" else "192.0.2.1/24")
     assert interface.desired_state_source == "console"
+
+
+@pytest.mark.parametrize("source", [{"dynamic": True}, {"flags": ["dynamic"]}])
+def test_native_automatic_ipv6_observation_skips_lingering_static_and_expired_address(source):
+    """Retain a usable automatic IPv6 candidate independently of lingering static state.
+
+    Args:
+        source: Native boolean or flags evidence identifying dynamic acquisition.
+    """
+    addresses = [
+        {"family": "inet6", "local": "2001:db8::1", "prefixlen": 64, "scope": "global"},
+        {"family": "inet6", "local": "2001:db8::2", "prefixlen": 64, "scope": "global",
+         "valid_life_time": 0, **source},
+    ]
+    row = {"ifname": "eth0", "link_type": "ether", "address": "00:15:5d:aa:bb:01", "addr_info": addresses}
+    observed = parse_linux_ip_interfaces(json.dumps([row]))[0]
+    assert observed.host_ipv6_cidr == "2001:db8::1/64"
+    assert observed.host_dynamic_ipv6_cidr is None
+    addresses.append({"family": "inet6", "local": "2001:db8::3", "prefixlen": 64, "scope": "global",
+                      "valid_life_time": 300, **source})
+    observed = parse_linux_ip_interfaces(json.dumps([row]))[0]
+    assert observed.host_ipv6_cidr == "2001:db8::1/64"
+    assert observed.host_dynamic_ipv6_cidr == "2001:db8::3/64"
+
+
+@pytest.mark.parametrize("desired,candidate,expected", [
+    (None, "2001:db8::3/64", "2001:db8::3/64"),
+    (None, None, None),
+    ("2001:db8::1/64", "2001:db8::3/64", "2001:db8::1/64"),
+])
+def test_inventory_reconciliation_preserves_native_automatic_ipv6_source(desired, candidate, expected):
+    """Startup cannot replace an automatic observation with the old static address.
+
+    Args:
+        desired: Static IPv6 intent, or automatic acquisition.
+        candidate: Usable native dynamic IPv6 candidate, absent while unacquired.
+        expected: Address permitted for Settings and certificate consumers.
+    """
+    interface = PhysicalInterface(name="eth0", mac_address="00:15:5d:aa:bb:01", ipv4_method="static",
+                                  ipv6_enabled=True, ipv6_cidr=desired, host_ipv6_cidr="2001:db8::1/64",
+                                  role="management", mode="access", admin_state="up", desired_state_source="console")
+    host = HostPhysicalInterface(name=interface.name, mac_address=interface.mac_address, driver=None, speed=None,
+                                 host_ip_cidr=None, host_mtu=1500, host_ipv6_cidr="2001:db8::1/64",
+                                 host_dynamic_ipv6_cidr=candidate,
+                                 host_admin_state="up", oper_state="up")
+    reconcile_host_physical_interfaces([interface], [host])
+    assert interface.host_ipv6_cidr == expected
+    assert interface.ipv6_cidr == desired and interface.ipv6_enabled is True
+    assert interface.desired_state_source == "console"

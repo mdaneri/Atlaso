@@ -1072,7 +1072,8 @@ preserved with their affected subsystem below. Keep new requirements at their to
 - A successful tty1 management-network correction must explicitly apply Network and Firewall from the corrected state,
   verify fresh usable addresses on an administratively and operationally up link against the completed task's Network
   snapshot before recovery, reject tentative/DAD-failed and zero-valid-lifetime addresses, and bound native acquisition
-  to 30 seconds. DHCP observation and inventory reconciliation require native dynamic-source evidence and exclude
+  to 30 seconds. DHCPv4 and automatic IPv6 observation, inventory reconciliation, and helper-confirmed refresh require native
+  dynamic-source evidence and exclude
   lingering static addresses.
   Publish only verified target observations without reconciling inventory or changing desired state. Preserve newer
   edits as pending and stop dependent recovery when they drift. Hold the shared network-object writer lock from the

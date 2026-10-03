@@ -10354,7 +10354,7 @@ def refresh_management_handoff_dynamic_observations(
         if path.get("ipv4_method") == "dhcp":
             required.append(("IPv4", observed.host_dhcp_ip_cidr, "host_ip_cidr"))
         if path.get("ipv6_enabled", "").lower() == "true" and not path.get("ipv6_cidr"):
-            required.append(("IPv6", observed.host_ipv6_cidr, "host_ipv6_cidr"))
+            required.append(("IPv6", observed.host_dynamic_ipv6_cidr, "host_ipv6_cidr"))
         for family, cidr, attribute in required:
             address = address_from_cidr(cidr)
             if not address or address not in confirmed_addresses:

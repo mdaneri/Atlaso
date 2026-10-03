@@ -57,6 +57,7 @@ class HostPhysicalInterface:
         oper_state: Oper state maintained by this hostphysicalinterface.
         host_ipv6_cidr: Host ipv6 cidr maintained by this hostphysicalinterface.
         host_dhcp_ip_cidr: Usable IPv4 address explicitly marked dynamic by native inventory.
+        host_dynamic_ipv6_cidr: Usable IPv6 address explicitly marked dynamic by native inventory.
     """
     name: str
     mac_address: str
@@ -68,6 +69,7 @@ class HostPhysicalInterface:
     oper_state: str
     host_ipv6_cidr: str | None = None
     host_dhcp_ip_cidr: str | None = None
+    host_dynamic_ipv6_cidr: str | None = None
 
 
 def normalize_interface_mode(mode: str | None) -> str:
@@ -261,7 +263,7 @@ def _host_ip_cidr(row: dict, family: str, *, dynamic_only: bool = False) -> str 
     Args:
         row: Persistent database row affected by the operation.
         family: Family consumed by host IP CIDR.
-        dynamic_only: Require native dynamic source evidence for DHCP observation.
+        dynamic_only: Require native dynamic source evidence for DHCP or automatic IPv6 observation.
     """
     candidates = row.get("addr_info") or []
     for address in candidates:
@@ -322,6 +324,7 @@ def parse_linux_ip_interfaces(payload: str, *, sysfs_base: Path = Path("/sys/cla
                 host_ip_cidr=_host_ip_cidr(row, "inet"),
                 host_dhcp_ip_cidr=_host_ip_cidr(row, "inet", dynamic_only=True),
                 host_ipv6_cidr=_host_ip_cidr(row, "inet6"),
+                host_dynamic_ipv6_cidr=_host_ip_cidr(row, "inet6", dynamic_only=True),
                 host_mtu=int(row["mtu"]) if row.get("mtu") is not None else None,
                 host_admin_state="up" if "UP" in flags else "down",
                 oper_state=str(row.get("operstate") or "unknown").lower(),
@@ -1011,7 +1014,9 @@ def reconcile_host_physical_interfaces(
         interface.host_ip_cidr = (
             host.host_dhcp_ip_cidr if normalize_ipv4_method(interface.ipv4_method) == "dhcp" else host.host_ip_cidr
         )
-        interface.host_ipv6_cidr = host.host_ipv6_cidr
+        interface.host_ipv6_cidr = (
+            host.host_dynamic_ipv6_cidr if interface.ipv6_enabled and not interface.ipv6_cidr else host.host_ipv6_cidr
+        )
         interface.host_mtu = host.host_mtu
         interface.host_admin_state = host.host_admin_state
         interface.oper_state = host.oper_state
