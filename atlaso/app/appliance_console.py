@@ -1101,9 +1101,11 @@ def _submit_console_apply(required_ids: set[str]) -> str:
     """
     from atlaso.app.services.vcf_depot_downloads import acquire_vcf_depot_admission_gate
     from atlaso.app.ui import (
+        MANAGEMENT_HANDOFF_UNIT_IDS,
         active_appliance_apply_job,
         active_vcf_depot_execution_job,
         appliance_apply_units,
+        network_generated_dns_unit,
         ntp_owned_dns_is_only_pending_change,
         run_appliance_apply_job,
     )
@@ -1123,6 +1125,12 @@ def _submit_console_apply(required_ids: set[str]) -> str:
                 )
         units = appliance_apply_units(db)
         unit_map = {unit["id"]: unit for unit in units}
+        generated_dns = network_generated_dns_unit(db, unit_map) if "network" in selected_ids else None
+        generated_dns_only = generated_dns is not None and "dnsmasq" not in selected_ids
+        if generated_dns_only:
+            unit_map["dnsmasq"] = generated_dns
+            units = [unit_map[unit["id"]] for unit in units]
+            selected_ids.update({*MANAGEMENT_HANDOFF_UNIT_IDS, "dnsmasq"})
         if (
             unit_map.get("ntpd", {}).get("changed")
             and unit_map.get("dnsmasq", {}).get("changed")
@@ -1135,6 +1143,10 @@ def _submit_console_apply(required_ids: set[str]) -> str:
             ntp_index = next(index for index, unit in enumerate(units) if unit["id"] == "ntpd")
             units.insert(ntp_index + 1, dns_unit)
         selected, payload = _captured_apply_payload(units, selected_ids)
+        if generated_dns is not None:
+            payload["generated_dns_only"] = generated_dns_only
+            payload["management_handoff"] = True
+            payload["management_handoff_units"] = [*MANAGEMENT_HANDOFF_UNIT_IDS, "dnsmasq"]
         job_id = f"job_{uuid4().hex[:12]}"
         job = Job(
             id=job_id,
@@ -1244,6 +1256,7 @@ def configure_management(
     with SessionLocal() as db:
         acquire_network_objects_write_lock(db)
         interface = _management_interface(db)
+        old_ip_cidr, old_ipv6_cidr = interface.ip_cidr, interface.ipv6_cidr
         settings = db.scalar(select(ApplianceSettings).order_by(ApplianceSettings.id))
         if settings is None:
             raise ConsoleOperationError("Appliance Settings desired state is unavailable.")
@@ -1258,6 +1271,17 @@ def configure_management(
         interface.ipv6_gateway = ipv6_gateway_value or None
         interface.desired_state_source = "console"
         settings.external_dns_servers = join_servers(dns_servers)
+        from atlaso.app.services.interface_updates import (
+            refresh_interface_dependent_addresses,
+        )
+        from atlaso.app.ui import refresh_interface_service_dns_aliases
+
+        db.flush()
+        refresh_interface_dependent_addresses(
+            db, old_name=interface.name, new_name=interface.name,
+            old_ip_cidr=old_ip_cidr, old_ipv6_cidr=old_ipv6_cidr,
+            actor=None, dns_refresher=refresh_interface_service_dns_aliases,
+        )
         db.commit()
         record_audit(
             db,

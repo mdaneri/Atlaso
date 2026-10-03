@@ -107,6 +107,10 @@ def refresh_startup_host_inventory(db: Session, *, environment: str) -> None:
     """
     if environment == "appliance":
         sync_host_physical_interfaces(db)
+        from atlaso.app.ui import refresh_interface_service_dns_aliases
+
+        refresh_interface_service_dns_aliases(db, actor=None)
+        db.commit()
 
 
 def reconcile_startup_time_source(*, environment: str) -> None:

@@ -369,6 +369,7 @@ from atlaso.app.services.esxi_pxe import (
     ESXI_IPXE_HTTP_SCRIPT_PATH,
     ESXI_PXE_DEFAULT_HOSTNAME,
     ESXI_PXE_DNS_RECORD_DESCRIPTION,
+    ESXI_PXE_LISTEN_ADDRESS_KEY,
     ESXI_PXE_STAGED_CONFIG_PATH,
     custom_variable_definitions,
     default_host_to_dict,
@@ -1851,7 +1852,11 @@ def service_bind_options(db: Session) -> list[dict]:
             continue
         mode = normalize_interface_mode(interface.mode)
         role = normalize_interface_role(interface.role)
-        addresses = interface_addresses_from_cidrs(interface.ip_cidr, interface.ipv6_cidr)
+        ipv4_cidr = interface.host_ip_cidr if interface.ipv4_method == "dhcp" else interface.ip_cidr
+        ipv6_cidr = (interface.ipv6_cidr or interface.host_ipv6_cidr) if interface.ipv6_enabled else None
+        addresses = interface_addresses_from_cidrs(
+            ipv4_cidr, ipv6_cidr,
+        )
         if role in {"management", "unused"} or mode == "trunk" or not addresses:
             continue
         address_label = " / ".join(addresses)
@@ -1862,10 +1867,10 @@ def service_bind_options(db: Session) -> list[dict]:
                 "role": role,
                 "address": addresses[0],
                 "addresses": addresses,
-                "ipv4_address": address_from_cidr(interface.ip_cidr),
-                "ipv4_prefix": prefix_from_cidr(interface.ip_cidr),
-                "ipv6_address": address_from_cidr(interface.ipv6_cidr),
-                "ipv6_prefix": prefix_from_cidr(interface.ipv6_cidr),
+                "ipv4_address": address_from_cidr(ipv4_cidr),
+                "ipv4_prefix": prefix_from_cidr(ipv4_cidr),
+                "ipv6_address": address_from_cidr(ipv6_cidr),
+                "ipv6_prefix": prefix_from_cidr(ipv6_cidr),
             }
         )
     for vlan in vlan_interfaces:
@@ -2519,6 +2524,7 @@ def ensure_dns_for_appliance_settings(
     Returns:
         The ensure dns for appliance settings result.
     """
+    remember_applied_service_dns_records(db)
     dns_settings = get_dns_settings_row(db)
     ensure_dns_domain_for_appliance_settings(dns_settings, settings.fqdn)
     fqdn = normalize_fqdn(settings.fqdn)
@@ -6396,6 +6402,7 @@ def ensure_interface_dns_alias(
     Returns:
         The ensure interface dns alias result.
     """
+    remember_applied_service_dns_records(db)
     normalized_hostname = normalize_dns_hostname(hostname)
     if not enabled:
         return remove_interface_dns_alias(db, hostname=previous_hostname or normalized_hostname, description=description, actor=actor, audit_prefix=audit_prefix)
@@ -7054,7 +7061,23 @@ def refresh_interface_service_dns_aliases(db: Session, actor: str | None = None)
         actor: Optional audit actor. Atomic interface mutations pass ``None`` so nested audit commits
             cannot split the transaction.
     """
+    remember_applied_service_dns_records(db)
     changed: list[str] = []
+
+    # Console, restore, and observation refresh paths can update interface rows
+    # without running the desired-interface mutation service. Re-derive cached
+    # listener addresses before reconciling their owned records.
+    for model in (CaSettings, KmsSettings, NtpSettings, VcfOfflineDepotSettings, VcfPrivateRegistrySettings):
+        for settings in db.execute(select(model)).scalars():
+            normalize_service_bind_settings(db, settings)
+    for model in (LdapSettings, OidcProviderSettings):
+        for settings in db.execute(select(model)).scalars():
+            interfaces, addresses = resolve_ldap_bind_targets(
+                db, [], current_interface=settings.listen_interface,
+            )
+            settings.listen_interface = interfaces
+            settings.listen_address = addresses
+    db.flush()
 
     def mark(label: str, action: str | None) -> None:
         """Record an alias unit only when its reconciler changed state.
@@ -7139,6 +7162,13 @@ def refresh_interface_service_dns_aliases(db: Session, actor: str | None = None)
             ),
         )
     esxi_boot = esxi_pxe_boot_settings(db)
+    _interfaces, addresses = resolve_service_bind_targets(
+        db, [], [], current_interface=str(esxi_boot.get("listen_interface") or ""),
+        current_address=str(esxi_boot.get("listen_address") or ""), listen_addresses_present="1",
+    )
+    if addresses != esxi_boot.get("listen_address"):
+        set_setting_value(db, ESXI_PXE_LISTEN_ADDRESS_KEY, addresses)
+        esxi_boot["listen_address"] = addresses
     mark(
         "ESXi PXE",
         ensure_dns_for_esxi_pxe(
@@ -7227,6 +7257,7 @@ def ensure_dns_for_esx_storage(db: Session, actor: str | None, *, previous_hostn
     Returns:
         The ensure dns for esx storage result.
     """
+    remember_applied_service_dns_records(db)
     settings = get_esx_storage_settings_row(db)
     settings.hostname = normalize_dns_hostname(settings.hostname)
     volumes = db.execute(select(EsxStorageVolume).order_by(EsxStorageVolume.name)).scalars().all()
@@ -7311,6 +7342,196 @@ def reconcile_service_dns_aliases(db: Session, actor: str | None = None) -> list
         actor: Authenticated identity attributed to the audit record.
     """
     return refresh_interface_service_dns_aliases(db, actor=actor)
+
+
+def owned_service_dns_records(db: Session, config: str) -> list[dict[str, str]]:
+    """Capture exact owned records present in a rendered DNS snapshot.
+
+    Args:
+        db: Session used to prove record ownership.
+        config: DNS configuration whose ownership is being recorded.
+    """
+    descriptions = {
+        APPLIANCE_DNS_RECORD_DESCRIPTION, CA_PORTAL_DNS_DESCRIPTION,
+        ESX_STORAGE_DNS_DESCRIPTION, ESXI_PXE_DNS_RECORD_DESCRIPTION,
+        KMS_DNS_RECORD_DESCRIPTION, LDAP_DNS_RECORD_DESCRIPTION,
+        NTP_DNS_DESCRIPTION, OIDC_DNS_RECORD_DESCRIPTION,
+        VCF_DEPOT_DNS_DESCRIPTION, VCF_REGISTRY_DNS_DESCRIPTION,
+    }
+    directives = {line.removeprefix("# atlaso-authoritative-config: ") for line in config.splitlines()}
+    service_interfaces = {}
+    for model, description in (
+        (CaSettings, CA_PORTAL_DNS_DESCRIPTION), (KmsSettings, KMS_DNS_RECORD_DESCRIPTION),
+        (LdapSettings, LDAP_DNS_RECORD_DESCRIPTION), (OidcProviderSettings, OIDC_DNS_RECORD_DESCRIPTION),
+        (NtpSettings, NTP_DNS_DESCRIPTION), (VcfOfflineDepotSettings, VCF_DEPOT_DNS_DESCRIPTION),
+        (VcfPrivateRegistrySettings, VCF_REGISTRY_DNS_DESCRIPTION),
+    ):
+        settings = db.scalars(select(model)).first()
+        if settings is not None:
+            selected = split_interfaces(settings.listen_interface)
+            if len(selected) == 1:
+                service_interfaces[description] = selected[0]
+    service_interfaces[ESXI_PXE_DNS_RECORD_DESCRIPTION] = primary_listen_interface(str(esxi_pxe_boot_settings(db).get("listen_interface") or ""))
+    explicit_ptrs = {row.hostname for row in db.scalars(select(DnsRecord).where(DnsRecord.record_type == "PTR"))}
+    address_sources = {address: option["name"] for option in service_bind_options(db) for address in option["addresses"]}
+    result = []
+    for row in db.scalars(select(DnsRecord).where(DnsRecord.description.in_(descriptions))):
+        if not row.enabled or row.record_type not in {"A", "AAAA", "CNAME"}:
+            continue
+        directive = f"{'cname' if row.record_type == 'CNAME' else 'host-record'}={row.hostname},{row.address}"
+        if directive not in directives:
+            continue
+        generated_ptr = row.record_type in {"A", "AAAA"} and ip_address(row.address).reverse_pointer not in explicit_ptrs
+        result.append({
+            "hostname": row.hostname, "record_type": row.record_type,
+            "address": row.address, "description": row.description,
+            "generated_ptr": "true" if generated_ptr else "false",
+            "source_interface": service_interfaces.get(row.description, address_sources.get(row.address, "")),
+        })
+    captured = {(row["hostname"], row["record_type"], row["address"]) for row in result}
+    # A partial DNS publication can retain applied owned rows whose desired
+    # identity was edited separately. Preserve their applied provenance.
+    for row in (load_appliance_apply_baselines(db).get("dnsmasq") or {}).get("service_dns_records", []):
+        key = (row["hostname"], row["record_type"], row["address"])
+        directive = f"{'cname' if row['record_type'] == 'CNAME' else 'host-record'}={row['hostname']},{row['address']}"
+        if row.get("description") in descriptions and key not in captured and directive in directives:
+            result.append(row)
+    return result
+
+
+def remember_applied_service_dns_records(db: Session) -> None:
+    """Preserve legacy exact-marker ownership before desired aliases are replaced.
+
+    Args:
+        db: Caller-owned transaction; this function never commits.
+    """
+    baselines = load_appliance_apply_baselines(db)
+    baseline = baselines.get("dnsmasq")
+    if not baseline or "service_dns_records" in baseline:
+        return
+    baseline["service_dns_records"] = owned_service_dns_records(db, str(baseline.get("config_preview") or ""))
+    save_appliance_apply_baselines(db, baselines)
+
+
+def network_generated_dns_unit(db: Session, units_by_id: dict[str, dict[str, Any]]) -> dict[str, Any] | None:
+    """Project owned address changes over applied DNS while leaving operator edits pending.
+
+    Args:
+        db: Session used to read the exact applied ownership inventory.
+        units_by_id: Reconciled desired Apply units.
+    """
+    from atlaso.app.services.generated_dns_projection import (
+        project_generated_dns,
+        project_listener_addresses,
+    )
+
+    baselines = load_appliance_apply_baselines(db)
+    baseline = baselines.get("dnsmasq") or {}
+    network_baseline = baselines.get("network") or {}
+    dns_unit = units_by_id.get("dnsmasq")
+    network_unit = units_by_id.get("network")
+    if not dns_unit or not network_unit or not baseline.get("dns_enabled"):
+        return None
+    previous_network = {row["name"]: row for row in network_interface_entries(str(network_baseline.get("config_preview") or ""))}
+    candidate_network = {row["name"]: row for row in network_interface_entries(str(network_unit.get("config_preview") or ""))}
+    moved_addresses: set[str] = set()
+    replacements: dict[str, str] = {}
+    for row in network_interface_entries(str(network_unit.get("config_preview") or "")):
+        old = previous_network.get(row["name"], {})
+        for field in ("ip_cidr", "ipv6_cidr"):
+            if old.get(field) and old.get(field) != row.get(field):
+                moved_addresses.add(address_from_cidr(old[field]))
+                if row.get(field):
+                    replacements[address_from_cidr(old[field])] = address_from_cidr(row[field])
+    previous_records = list(baseline.get("service_dns_records") or [])
+    affected = {row["description"] for row in previous_records if row["record_type"] in {"A", "AAAA"} and row["address"] in moved_addresses}
+    effective_options = {row["name"]: set(row["addresses"]) for row in service_bind_options(db)}
+    for row in previous_records:
+        source = row.get("source_interface", "")
+        if row["record_type"] in {"A", "AAAA"} and source in effective_options and row["address"] not in effective_options[source]:
+            affected.add(row["description"])
+    if not affected:
+        return None
+    previous_records = [row for row in previous_records if row["description"] in affected]
+    desired_config = str(dns_unit.get("raw_config_preview") or "")
+    desired_records = [row for row in owned_service_dns_records(db, desired_config) if row["description"] in affected]
+    identity_errors = []
+    for description in tuple(affected):
+        identity_type = "A" if description == APPLIANCE_DNS_RECORD_DESCRIPTION else "CNAME"
+        old_names = {row["hostname"] for row in previous_records if row["description"] == description and row["record_type"] == identity_type}
+        new_names = {row["hostname"] for row in desired_records if row["description"] == description and row["record_type"] == identity_type}
+        if old_names != new_names:
+            identity_errors.append("Generated service DNS identity changed independently; include DNS in the reviewed Network Apply.")
+        old_sources = {row.get("source_interface", "") for row in previous_records
+                       if row["description"] == description and row["record_type"] in {"A", "AAAA"}}
+        new_sources = {row.get("source_interface", "") for row in desired_records
+                       if row["description"] == description and row["record_type"] in {"A", "AAAA"}}
+        if old_sources != new_sources:
+            identity_errors.append("Generated service binding changed independently; review its service and DNS units with Network.")
+    previous_records = [row for row in previous_records if row["description"] in affected]
+    desired_records = [row for row in desired_records if row["description"] in affected]
+    projected = project_generated_dns(str(baseline.get("config_preview") or ""), desired_config, previous_records, desired_records)
+    projected = project_listener_addresses(
+        projected, replacements,
+        protected_ptr_owners={row.hostname for row in db.scalars(select(DnsRecord).where(DnsRecord.record_type == "PTR"))},
+    )
+    pending_dynamic = bool(network_unit.get("changed") and any(
+        (candidate_network.get(row.get("source_interface", ""), {}).get("ipv4_method") == "dhcp"
+         or (candidate_network.get(row.get("source_interface", ""), {}).get("ipv6_enabled") == "true"
+             and not candidate_network.get(row.get("source_interface", ""), {}).get("ipv6_cidr")))
+        for row in previous_records
+    ))
+    if projected == baseline.get("config_preview") and not pending_dynamic:
+        return None
+    projected_unit = make_appliance_apply_unit(
+        unit_id="dnsmasq", label=dns_unit["label"], page_url=dns_unit["page_url"],
+        context=dns_unit["context"], summary=["Reconcile generated service DNS and applied listener bindings after Network readiness"],
+        validation_errors=identity_errors, config_path=dns_unit["config_path"], config_preview=projected,
+        baseline=baseline,
+    )
+    projected_unit["generated_dns_only"] = True
+    projected_unit["applied_dns_enabled"] = bool(baseline.get("dns_enabled"))
+    projected_unit["applied_dns_authoritative"] = bool(baseline.get("dns_authoritative"))
+    listener_services = {
+        NTP_DNS_DESCRIPTION: "ntpd", LDAP_DNS_RECORD_DESCRIPTION: "ldap", KMS_DNS_RECORD_DESCRIPTION: "kms",
+    }
+    moves = []
+    for record in previous_records:
+        service = listener_services.get(record["description"])
+        if service and record["record_type"] in {"A", "AAAA"}:
+            candidates = {row["address"] for row in desired_records
+                          if row["description"] == record["description"]
+                          and row["record_type"] == record["record_type"]
+                          and row.get("source_interface") == record.get("source_interface")}
+            target = replacements.get(record["address"])
+            if target is None and len(candidates) == 1:
+                target = next(iter(candidates))
+            candidate = candidate_network.get(record.get("source_interface", ""), {})
+            dynamic = bool(candidate.get("ipv4_method") == "dhcp" if record["record_type"] == "A"
+                           else candidate.get("ipv6_enabled") == "true" and not candidate.get("ipv6_cidr"))
+            if target and (target != record["address"] or dynamic):
+                move = {"service": service, "old_address": record["address"], "new_address": target}
+                if dynamic:
+                    move["interface"] = record["source_interface"]
+                if move not in moves:
+                    moves.append(move)
+    projected_unit["listener_address_moves"] = moves
+    return projected_unit
+
+
+def service_dns_identity_snapshot(db: Session) -> list[tuple[Any, ...]]:
+    """Capture service identity inputs to reject concurrent DNS publication changes.
+
+    Args:
+        db: Session used to read singleton listener identities.
+    """
+    rows = []
+    for model in (DnsSettings, CaSettings, KmsSettings, LdapSettings, OidcProviderSettings, NtpSettings, VcfOfflineDepotSettings, VcfPrivateRegistrySettings):
+        for settings in db.scalars(select(model)):
+            rows.append((model.__name__, settings.id, settings.enabled,
+                         getattr(settings, "hostname", getattr(settings, "portal_hostname", "")),
+                         settings.listen_interface, settings.listen_address))
+    return rows
 
 
 def available_dns_listen_addresses(
@@ -10323,6 +10544,47 @@ def refresh_management_handoff_dynamic_observations(
     db.flush()
 
 
+def refresh_service_dns_effective_observations(db: Session, network_preview: str, evidence: dict[str, Any]) -> None:
+    """Refresh dynamic service bindings only from helper-proven assigned addresses.
+
+    Args:
+        db: Caller-owned Apply transaction.
+        network_preview: Reviewed Network intent.
+        evidence: Successful protected helper readback.
+    """
+    observation = evidence.get("service_address_observation") or {}
+    if not observation.get("complete"):
+        raise ValueError("Effective service DNS requires complete native address readback.")
+    links = {row["name"]: row for row in observation.get("links", [])}
+    discovered = {row.name: row for row in discover_host_physical_interfaces()}
+    for row in network_interface_entries(network_preview):
+        if row.get("kind") != "physical":
+            continue
+        dynamic_families = []
+        if row.get("ipv4_method") == "dhcp":
+            dynamic_families.append((4, "host_ip_cidr"))
+        if row.get("ipv6_enabled") == "true" and not row.get("ipv6_cidr"):
+            dynamic_families.append((6, "host_ipv6_cidr"))
+        if not dynamic_families:
+            continue
+        name = row["name"]
+        link = links.get(name) or {}
+        host = discovered.get(name)
+        interface = db.scalar(select(PhysicalInterface).where(PhysicalInterface.name == name))
+        if (host is None or interface is None or not link.get("address_inventory_complete")
+                or not link.get("configured")
+                or str(host.mac_address or "").lower() != str(interface.mac_address or "").lower()):
+            raise ValueError(f"Effective service DNS could not observe {name}.")
+        assigned = {item["address"] for item in link.get("addresses", []) if item.get("state") == "assigned"}
+        for family, attribute in dynamic_families:
+            cidr = getattr(host, attribute)
+            address = address_from_cidr(cidr)
+            if not address or ip_address(address).version != family or address not in assigned:
+                raise ValueError(f"Effective service DNS could not confirm IPv{family} on {name}.")
+            setattr(interface, attribute, cidr)
+    db.flush()
+
+
 def baseline_management_handoff_dhcp_settings(
     db: Session,
     settings_unit: dict[str, Any],
@@ -10987,6 +11249,21 @@ def make_appliance_apply_unit(
     }
     current_hash = appliance_snapshot_hash(snapshot_payload)
     baseline_hash = str((baseline or {}).get("snapshot_hash") or "")
+    if unit_id == "dnsmasq":
+        from atlaso.app.services.generated_dns_projection import dns_comparison_preview
+
+        # Summary counts and generated record order do not change served DNS.
+        # Recompute legacy baselines too, so a narrow address publication does
+        # not invent pending DNS work after successful readback.
+        snapshot_payload["summary"] = []
+        snapshot_payload["config_preview"] = dns_comparison_preview(redacted_preview)
+        current_hash = appliance_snapshot_hash(snapshot_payload)
+        if baseline and "config_preview" in baseline:
+            baseline_hash = appliance_snapshot_hash({
+                **snapshot_payload,
+                "config_path": baseline.get("config_path", config_path),
+                "config_preview": dns_comparison_preview(str(baseline["config_preview"])),
+            })
     runtime_pending = False
     if protected_esxi:
         # A dry run can advance the display baseline, but recovery must remain
@@ -11510,6 +11787,9 @@ def appliance_apply_units(db: Session, *, reconcile: bool = True, applying_dns: 
     """
     from atlaso.app.services.network_boot import load_esxi_applied_runtime
 
+    if reconcile:
+        remember_applied_service_dns_records(db)
+        refresh_interface_service_dns_aliases(db, actor=None)
     baselines = load_appliance_apply_baselines(db)
     local_users = local_users_apply_context(db, baselines.get("local_users"))
     network = network_context(db)
@@ -11527,7 +11807,6 @@ def appliance_apply_units(db: Session, *, reconcile: bool = True, applying_dns: 
     # Apply units consume desired previews and validation, not detail-page tables.
     # Keep validation probes (including NTP capabilities and DHCP upstreams) live.
     ntp = ntp_context(db, reconcile=reconcile)
-    dnsmasq = dnsmasq_context(db, reconcile=reconcile, include_leases=False)
     esxi_pxe = esxi_pxe_context(db)
     esx_storage = esx_storage_context(db, reconcile=reconcile, include_disk_inventory=False)
     ca = ca_context(db, reconcile=reconcile)
@@ -11537,6 +11816,12 @@ def appliance_apply_units(db: Session, *, reconcile: bool = True, applying_dns: 
     vcf_depot = vcf_offline_depot_context(db, reconcile=reconcile)
     vcf_registry = vcf_private_registry_context(db, reconcile=reconcile)
     public_services = public_services_context(db, reconcile=reconcile)
+    if reconcile:
+        refresh_interface_service_dns_aliases(db, actor=None)
+        db.commit()
+    # Service contexts may refresh their address-derived aliases. Capture DNS
+    # only after those writes so one Apply uses one coherent desired snapshot.
+    dnsmasq = dnsmasq_context(db, reconcile=reconcile, include_leases=False)
 
     network_removed_vlans = removed_network_vlan_entries(
         network["network_config_preview"],
@@ -14870,6 +15155,11 @@ def execute_management_handoff(
     wan = units_by_id["wan"] if wan_required else None
     nat = units_by_id["nat"] if include_nat else None
     dnsmasq = units_by_id["dnsmasq"] if include_dnsmasq else None
+    dns_identity_snapshot = service_dns_identity_snapshot(db) if dnsmasq is not None else []
+    submitted_dns_records = owned_service_dns_records(db, dnsmasq["raw_config_preview"]) if dnsmasq is not None else []
+    dynamic_paths = [path for path in network_interface_entries(network["raw_config_preview"])
+                     if path.get("ipv4_method") == "dhcp" or (
+                         path.get("ipv6_enabled") == "true" and not path.get("ipv6_cidr"))]
     handoff_unit_ids = (
         *MANAGEMENT_HANDOFF_UNIT_IDS,
         *(("dnsmasq",) if include_dnsmasq else ()),
@@ -14919,12 +15209,24 @@ def execute_management_handoff(
         wan_rollback_path = ""
         nat_path = ""
         dnsmasq_path = ""
+        service_dns_path = ""
         if nat is not None:
             nat_path = stage_appliance_apply_config(NAT_CONFIG_PATH, nat["raw_config_preview"])
         if dnsmasq is not None:
+            from atlaso.app.services.generated_dns_projection import (
+                defer_dns_record_publication,
+            )
+
+            service_dns_path = "" if dynamic_paths else stage_appliance_apply_config(
+                str(Path(DNSMASQ_STAGED_CONFIG_PATH).with_name("atlaso-service-dns.conf")),
+                dnsmasq["raw_config_preview"],
+            )
             dnsmasq_path = stage_appliance_apply_config(
                 DNSMASQ_STAGED_CONFIG_PATH,
-                dnsmasq["raw_config_preview"],
+                defer_dns_record_publication(
+                    str((baselines.get("dnsmasq") or {}).get("config_preview") or ""),
+                    dnsmasq["raw_config_preview"],
+                ),
             )
         if wan is not None:
             wan_path = stage_appliance_apply_config(
@@ -14961,6 +15263,8 @@ def execute_management_handoff(
                 "wan_rollback_config_path": wan_rollback_path,
                 "nat_config_path": nat_path,
                 "dnsmasq_config_path": dnsmasq_path,
+                "service_dns_config_path": service_dns_path,
+                "listener_address_moves": (dnsmasq or {}).get("listener_address_moves", []),
                 "previous_management_interfaces": previous_interfaces,
                 "previous_management_parent_interfaces": previous_parent_interfaces,
                 "previous_management_addresses": list(dict.fromkeys(previous_addresses)),
@@ -15014,6 +15318,69 @@ def execute_management_handoff(
         ),
         {},
     )
+    if succeeded and dnsmasq is not None and not adapter.dry_run:
+        from atlaso.app.services.service_dns_readback import verify_service_dns_records
+
+        if dnsmasq.get("applied_dns_enabled", dnsmasq["context"]["dns_settings"].enabled):
+            try:
+                if dynamic_paths:
+                    from atlaso.app.services.generated_dns_projection import (
+                        project_generated_dns,
+                        project_listener_addresses,
+                    )
+
+                    db.expire_all()
+                    if service_dns_identity_snapshot(db) != dns_identity_snapshot:
+                        raise ValueError("Service DNS identity changed during network readiness; resubmit the changes.")
+                    refresh_service_dns_effective_observations(db, network["raw_config_preview"], evidence)
+                    refresh_interface_service_dns_aliases(db, actor=None)
+                    ensure_dns_for_appliance_settings(db, get_appliance_settings_row(db), previous_fqdn=get_appliance_settings_row(db).fqdn, actor=None)
+                    dns_context = dnsmasq_context(db, reconcile=False, include_leases=False)
+                    desired_config = dns_context["config_preview"]
+                    effective_config = project_generated_dns(
+                        dnsmasq["raw_config_preview"], desired_config, submitted_dns_records,
+                        owned_service_dns_records(db, desired_config),
+                    )
+                    effective_options = {row["name"]: row["addresses"] for row in service_bind_options(db)}
+                    address_moves = {}
+                    for record in submitted_dns_records:
+                        if record["record_type"] not in {"A", "AAAA"}:
+                            continue
+                        family = ip_address(record["address"]).version
+                        targets = [address for address in effective_options.get(record.get("source_interface", ""), [])
+                                   if ip_address(address).version == family]
+                        if len(targets) == 1:
+                            address_moves[record["address"]] = targets[0]
+                    effective_config = project_listener_addresses(
+                        effective_config, address_moves,
+                        protected_ptr_owners={row.hostname for row in db.scalars(select(DnsRecord).where(DnsRecord.record_type == "PTR"))},
+                    )
+                    if dynamic_paths:
+                        path = stage_appliance_apply_config(DNSMASQ_STAGED_CONFIG_PATH, effective_config)
+                        for operation in (adapter.validate_dnsmasq_config, adapter.apply_dnsmasq_config):
+                            result = operation(path)
+                            results.append(result)
+                            if result.returncode:
+                                raise ValueError("Effective dynamic service DNS publication failed.")
+                        result = adapter.reload_dnsmasq()
+                        results.append(result)
+                        if result.returncode:
+                            raise ValueError("Effective dynamic service DNS reload failed.")
+                        dnsmasq.update(make_appliance_apply_unit(
+                            unit_id="dnsmasq", label=dnsmasq["label"], page_url=dnsmasq["page_url"],
+                            context=dnsmasq["context"], summary=dnsmasq["summary"], validation_errors=[],
+                            config_path=dnsmasq["config_path"], config_preview=effective_config,
+                            baseline=baselines.get("dnsmasq"),
+                        ))
+                verify_service_dns_records(owned_service_dns_records(db, dnsmasq["raw_config_preview"]))
+            except (OSError, ValueError) as exc:
+                succeeded = False
+                results.append(AdapterResult(
+                    command=["service-dns", "readback"], dry_run=False,
+                    returncode=1, stderr=str(exc),
+                ))
+                recovery_result = adapter.recover_management_handoff()
+                evidence = {**evidence, "failing_layer": "generated service DNS readback", "error": str(exc)}
     recovery_evidence = (
         management_handoff_result_evidence(recovery_result)
         if recovery_result is not None
@@ -15133,8 +15500,9 @@ def update_appliance_apply_baselines(db: Session, units: list[dict[str, Any]], s
         if isinstance(runtime_config_preview, str):
             baseline["runtime_config_preview"] = runtime_config_preview
         if unit["id"] == "dnsmasq":
-            baseline["dns_enabled"] = bool(unit["context"]["dns_settings"].enabled)
-            baseline["dns_authoritative"] = bool(unit["context"]["dns_settings"].authoritative)
+            baseline["dns_enabled"] = unit.get("applied_dns_enabled", bool(unit["context"]["dns_settings"].enabled))
+            baseline["dns_authoritative"] = unit.get("applied_dns_authoritative", bool(unit["context"]["dns_settings"].authoritative))
+            baseline["service_dns_records"] = owned_service_dns_records(db, unit["config_preview"])
         baselines[unit["id"]] = baseline
     save_appliance_apply_baselines(db, baselines)
 
@@ -16525,6 +16893,13 @@ def run_appliance_apply_job(job_id: str, *, force_real: bool = False) -> None:
                 set(selected_order),
             )
             current_by_id = {unit["id"]: unit for unit in current_units}
+            generated_dns_unit = network_generated_dns_unit(db, current_by_id) if {"network", "dnsmasq"}.issubset(selected_order) else None
+            if job_result.get("generated_dns_only"):
+                if generated_dns_unit is None:
+                    raise ApplianceApplyJobError("Generated DNS dependency changed after task submission.")
+                current_by_id["dnsmasq"] = generated_dns_unit
+            elif generated_dns_unit is not None:
+                current_by_id["dnsmasq"]["listener_address_moves"] = generated_dns_unit.get("listener_address_moves", [])
             missing_ids = [unit_id for unit_id in selected_order if unit_id not in current_by_id]
             if missing_ids:
                 raise ApplianceApplyJobError(f"Selected appliance apply units are unavailable: {', '.join(missing_ids)}.")
@@ -17452,6 +17827,9 @@ def _submit_appliance_apply(
     unit_map = {unit["id"]: unit for unit in units}
     selected_ids = {unit_id for unit_id in selected_units if unit_id in APPLIANCE_APPLY_UNIT_IDS}
     requested_ids = set(selected_ids)
+    if "dnsmasq" in selected_ids and "network" not in selected_ids and network_generated_dns_unit(db, unit_map) is not None:
+        detail = "Select Network with DNS to publish generated records only after listener readiness."
+        return JSONResponse({"detail": detail}, status_code=422) if wants_json else Response(detail, status_code=422, media_type="text/plain")
     appliance_settings_selected = "appliance_settings" in selected_ids
     ntp_dns_dependency = bool(
         unit_map.get("ntpd", {}).get("changed")
@@ -17686,6 +18064,7 @@ def _submit_appliance_apply(
             and unit_map.get("network", {}).get("management_default_mirror_change")
         )
         or management_domain_migration
+        or ("network" in selected_ids and network_generated_dns_unit(db, unit_map) is not None)
     )
     if management_handoff and not routing_permission_pair_required:
         # Appliance Settings can start a handoff before an enforcement owner
@@ -17726,6 +18105,16 @@ def _submit_appliance_apply(
             and "wan" in unit_map
         ):
             selected_ids.add("wan")
+    generated_dns_unit = network_generated_dns_unit(db, unit_map) if "network" in selected_ids else None
+    generated_dns_only = bool(generated_dns_unit is not None and "dnsmasq" not in selected_ids)
+    if generated_dns_only:
+        unit_map["dnsmasq"] = generated_dns_unit
+        units = [unit_map[unit["id"]] for unit in units]
+        selected_ids.add("dnsmasq")
+        management_handoff = True
+        selected_ids.update(MANAGEMENT_HANDOFF_UNIT_IDS)
+    elif generated_dns_unit is not None:
+        unit_map["dnsmasq"]["listener_address_moves"] = generated_dns_unit.get("listener_address_moves", [])
     management_handoff_dnsmasq = bool(
         management_handoff
         # A pending DNS edit is not consent to apply it with a Network handoff.
@@ -17736,6 +18125,7 @@ def _submit_appliance_apply(
         selected_ids.add("dnsmasq")
     dns_resolver_activation = bool(
         "dnsmasq" in selected_ids
+        and not generated_dns_only
         and getattr(dns_settings_for_apply, "enabled", False)
         and not applied_resolver_uses_local_dns(
             apply_baselines.get("appliance_settings")
@@ -17750,6 +18140,7 @@ def _submit_appliance_apply(
         unit_map = {unit["id"]: unit for unit in units}
     local_dns_disable_requires_resolver = bool(
         "dnsmasq" in selected_ids
+        and not generated_dns_only
         and not getattr(dns_settings_for_apply, "enabled", False)
         and applied_local_dns_enabled(apply_baselines.get("dnsmasq"))
         and applied_resolver_uses_local_dns(apply_baselines.get("appliance_settings"))
@@ -17876,6 +18267,7 @@ def _submit_appliance_apply(
 
     job_result = {
         "selected_units": [unit["id"] for unit in selected_ordered_units],
+        "generated_dns_only": generated_dns_only,
         "dns_resolver_activation": dns_resolver_activation,
         "skipped_changed_units": skipped_changed_units,
         "captured_units": [
