@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ipaddress
 import struct
+from types import SimpleNamespace
 
 import pytest
 
@@ -409,3 +410,99 @@ def test_cname_family_query_is_nxdomain_only_when_terminal_target_is_unowned(mon
                 records, prior_records=[{"hostname": "alias.example.internal", "record_type": "CNAME",
                                         "address": "old-target.example.internal"}],
             )
+
+
+def test_nss_readback_checks_direct_and_cname_names_against_captured_addresses(monkeypatch):
+    outputs = {
+        "node.example.internal": "192.0.2.10 node.example.internal\n",
+        "dual.example.internal": "2001:db8::10 dual.example.internal\n",
+        "alias.example.internal": "192.0.2.10 node.example.internal alias.example.internal\n",
+    }
+    calls = []
+
+    def run(args, **kwargs):
+        calls.append((args, kwargs))
+        return SimpleNamespace(returncode=0, stdout=outputs[args[2]], stderr="")
+
+    monkeypatch.setattr(dns_readback.subprocess, "run", run)
+    dns_readback.verify_service_dns_nss([
+        {"hostname": "node.example.internal", "record_type": "A", "address": "192.0.2.10"},
+        {"hostname": "dual.example.internal", "record_type": "A", "address": "192.0.2.20"},
+        {"hostname": "dual.example.internal", "record_type": "AAAA", "address": "2001:db8::10"},
+        {"hostname": "alias.example.internal", "record_type": "CNAME", "address": "node.example.internal"},
+    ], timeout=1.5)
+
+    assert [call[0] for call in calls] == [
+        ["getent", "hosts", "alias.example.internal"],
+        ["getent", "hosts", "dual.example.internal"],
+        ["getent", "hosts", "node.example.internal"],
+    ]
+    assert all(call[1] == {"capture_output": True, "text": True, "timeout": 1.5, "check": False}
+               for call in calls)
+
+
+@pytest.mark.parametrize(
+    "result, message",
+    [
+        (SimpleNamespace(returncode=0, stdout="", stderr=""), "returned no addresses"),
+        (SimpleNamespace(returncode=2, stdout="192.0.2.10 node.example.internal", stderr="not found"), "did not resolve"),
+        (SimpleNamespace(returncode=0, stdout="192.0.2.99 node.example.internal\n", stderr=""), "unexpected address"),
+        (SimpleNamespace(returncode=0, stdout="not-an-ip node.example.internal\n", stderr=""), "malformed address"),
+        (SimpleNamespace(returncode=0, stdout="192.0.2.10\n", stderr=""), "malformed data"),
+    ],
+)
+def test_nss_readback_rejects_missing_stale_and_malformed_results(monkeypatch, result, message):
+    monkeypatch.setattr(dns_readback.subprocess, "run", lambda *_args, **_kwargs: result)
+    with pytest.raises(ValueError, match=message):
+        dns_readback.verify_service_dns_nss([
+            {"hostname": "node.example.internal", "record_type": "A", "address": "192.0.2.10"},
+        ])
+
+
+@pytest.mark.parametrize("failure, message", [("timeout", "timed out"), ("missing", "tool is unavailable")])
+def test_nss_readback_rejects_timeout_and_missing_getent(monkeypatch, failure, message):
+    def run(*_args, **_kwargs):
+        if failure == "timeout":
+            raise dns_readback.subprocess.TimeoutExpired(["getent"], 2.0)
+        raise FileNotFoundError("getent")
+
+    monkeypatch.setattr(dns_readback.subprocess, "run", run)
+    with pytest.raises(ValueError, match=message):
+        dns_readback.verify_service_dns_nss([
+            {"hostname": "node.example.internal", "record_type": "A", "address": "192.0.2.10"},
+        ])
+
+
+@pytest.mark.parametrize(
+    "records, message",
+    [
+        ([
+            {"hostname": "alias.example.internal", "record_type": "CNAME", "address": "one.example.internal"},
+            {"hostname": "alias.example.internal", "record_type": "CNAME", "address": "two.example.internal"},
+        ], "ambiguous or has an unowned target"),
+        ([
+            {"hostname": "alias.example.internal", "record_type": "CNAME", "address": "loop.example.internal"},
+            {"hostname": "loop.example.internal", "record_type": "CNAME", "address": "alias.example.internal"},
+        ], "cyclic"),
+        ([
+            {"hostname": "alias.example.internal", "record_type": "CNAME", "address": "external.example.net"},
+        ], "ambiguous or has an unowned target"),
+    ],
+)
+def test_nss_readback_fails_closed_for_ambiguous_or_uncaptured_cname_targets(monkeypatch, records, message):
+    def unexpected_run(*_args, **_kwargs):
+        pytest.fail("NSS must not be queried when the captured CNAME chain is untrusted.")
+
+    monkeypatch.setattr(dns_readback.subprocess, "run", unexpected_run)
+    with pytest.raises(ValueError, match=message):
+        dns_readback.verify_service_dns_nss(records)
+
+
+@pytest.mark.parametrize("timeout", [0, -1, True, float("inf"), "2"])
+def test_nss_readback_validates_bounded_timeout(monkeypatch, timeout):
+    monkeypatch.setattr(dns_readback.subprocess, "run", lambda *_args, **_kwargs: pytest.fail("unexpected NSS call"))
+    with pytest.raises(ValueError, match="timeout"):
+        dns_readback.verify_service_dns_nss(
+            [{"hostname": "node.example.internal", "record_type": "A", "address": "192.0.2.10"}],
+            timeout=timeout,
+        )

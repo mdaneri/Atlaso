@@ -29,7 +29,8 @@ CNAME aliases, and checks DNS answers before completing. The separate VCF Depot 
 also moves and passes socket readiness before DNS publication; unrelated pending Depot settings remain pending.
 Readback checks retired owned names as well as replacement records. Static handoffs verify the submitted records and
 retain that verified ownership even if service identities are edited during readiness checks. Authoritative DNS is queried
-through the captured client-facing listeners and its isolated backend, alongside recursive loopback.
+through the captured client-facing listeners and its isolated backend, alongside recursive loopback. Appliance-local
+resolution must also return a verified service address through `getent hosts`; stale NSS answers trigger rollback.
 A failed handoff or DNS check restores the previous Network
 and DNS state together. Manual records and unrelated pending DNS edits remain unchanged; custom service hostnames keep
 their identity while their owned address targets move.

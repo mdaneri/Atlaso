@@ -15665,9 +15665,13 @@ def verify_handoff_service_dns(
         config: Exact published DNS configuration, including embedded authoritative directives.
         authoritative: Whether this handoff applies authoritative DNS.
     """
-    from atlaso.app.services.service_dns_readback import verify_service_dns_records
+    from atlaso.app.services.service_dns_readback import (
+        verify_service_dns_nss,
+        verify_service_dns_records,
+    )
 
     verify_service_dns_records(records, prior_records=prior_records)
+    verify_service_dns_nss(records)
     if not authoritative:
         return
     listeners = {line.partition("=")[2] for line in config.splitlines()

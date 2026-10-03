@@ -7,6 +7,7 @@ import math
 import secrets
 import socket
 import struct
+import subprocess
 from collections import defaultdict
 
 _TYPE_CODES = {"A": 1, "CNAME": 5, "AAAA": 28}
@@ -373,3 +374,77 @@ def verify_service_dns_records(
         _verify_positive_answer(expected, hostname, record_type, answer)
     if previous:
         _verify_retired_records(previous, expected, nameserver, port, timeout, require_authoritative)
+
+
+def verify_service_dns_nss(records: list[dict[str, str]], timeout: float = 2.0) -> None:
+    """Verify generated names resolve through the appliance NSS host database.
+
+    Args:
+        records: Captured owned A, AAAA, and CNAME records already verified directly.
+        timeout: Maximum seconds allowed for each bounded ``getent`` invocation.
+
+    Raises:
+        ValueError: The captured ownership is ambiguous or NSS resolution is absent,
+            malformed, stale, unavailable, or timed out.
+    """
+    if (isinstance(timeout, bool) or not isinstance(timeout, (int, float))
+            or not math.isfinite(timeout) or not 0 < timeout <= 30):
+        raise ValueError("NSS timeout must be positive and within a bounded range.")
+    expected = _expected_records(records)
+    allowed_by_name: dict[str, set[str]] = {}
+    for hostname in sorted({owner for owner, _record_type in expected}):
+        owner_addresses = expected.get((hostname, "A"), set()) | expected.get((hostname, "AAAA"), set())
+        aliases = expected.get((hostname, "CNAME"), set())
+        if owner_addresses and aliases:
+            raise ValueError(f"Captured DNS name {hostname} has conflicting address and CNAME ownership.")
+        if owner_addresses:
+            allowed_by_name[hostname] = owner_addresses
+            continue
+        if not aliases:
+            raise ValueError(f"Captured DNS name {hostname} has no supported address ownership.")
+
+        visited = {hostname}
+        target = hostname
+        while True:
+            targets = expected.get((target, "CNAME"), set())
+            target_addresses = expected.get((target, "A"), set()) | expected.get((target, "AAAA"), set())
+            if target_addresses:
+                if targets:
+                    raise ValueError(f"Captured DNS CNAME target {target} has conflicting address ownership.")
+                allowed_by_name[hostname] = target_addresses
+                break
+            if len(targets) != 1:
+                raise ValueError(f"Captured DNS CNAME chain for {hostname} is ambiguous or has an unowned target.")
+            target = next(iter(targets))
+            if target in visited:
+                raise ValueError(f"Captured DNS CNAME chain for {hostname} is cyclic.")
+            visited.add(target)
+
+    for hostname, allowed in allowed_by_name.items():
+        try:
+            result = subprocess.run(
+                ["getent", "hosts", hostname.rstrip(".")],
+                capture_output=True, text=True, timeout=timeout, check=False,
+            )
+        except FileNotFoundError as exc:
+            raise ValueError("Appliance NSS lookup tool is unavailable.") from exc
+        except subprocess.TimeoutExpired as exc:
+            raise ValueError(f"Appliance NSS lookup for {hostname} timed out.") from exc
+        except OSError as exc:
+            raise ValueError(f"Appliance NSS lookup for {hostname} could not run.") from exc
+        if result.returncode != 0:
+            raise ValueError(f"Appliance NSS lookup for {hostname} did not resolve.")
+        lines = result.stdout.splitlines()
+        if not lines:
+            raise ValueError(f"Appliance NSS lookup for {hostname} returned no addresses.")
+        resolved: set[str] = set()
+        for line in lines:
+            fields = line.split()
+            if len(fields) < 2:
+                raise ValueError(f"Appliance NSS lookup for {hostname} returned malformed data.")
+            try:
+                resolved.add(str(ipaddress.ip_address(fields[0])))
+            except ValueError as exc:
+                raise ValueError(f"Appliance NSS lookup for {hostname} returned a malformed address.") from exc
+        if not resolved or not resolved <= allowed:
+            raise ValueError(f"Appliance NSS lookup for {hostname} returned an unexpected address.")

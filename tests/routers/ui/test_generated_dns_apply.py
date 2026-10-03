@@ -922,7 +922,7 @@ def test_management_handoff_dns_readback_failure_triggers_proven_recovery(client
     assert all(row["success"] is False and row["rolled_back"] is True for row in results)
 
 
-def _run_static_identity_race_handoff(client, monkeypatch, tmp_path, *, concurrent_identity_edit, missing_replacement):
+def _run_static_identity_race_handoff(client, monkeypatch, tmp_path, *, concurrent_identity_edit, missing_replacement, nss_failure=False):
     """Run a static DNS handoff while another session may change service identity.
 
     Args:
@@ -931,6 +931,7 @@ def _run_static_identity_race_handoff(client, monkeypatch, tmp_path, *, concurre
         tmp_path: Owned location for mocked staged configuration paths.
         concurrent_identity_edit: Commit a service hostname edit during helper apply.
         missing_replacement: Simulate a DNS answer that lacks the submitted owner.
+        nss_failure: Fail appliance-local resolution after direct DNS succeeds.
     """
     from atlaso.app import ui
     from atlaso.app.adapters.system import AdapterResult
@@ -979,7 +980,18 @@ def _run_static_identity_race_handoff(client, monkeypatch, tmp_path, *, concurre
         ):
             raise ValueError("DNS replacement answer is missing the submitted service owner.")
 
-    monkeypatch.setattr(ui, "verify_handoff_service_dns", verify)
+    if nss_failure:
+        from atlaso.app.services import service_dns_readback
+
+        monkeypatch.setattr(service_dns_readback, "verify_service_dns_records",
+                            lambda records, **_kwargs: observed.append([dict(record) for record in records]))
+
+        def fail_nss(_records):
+            raise ValueError("Controlled stale NSS service DNS answer.")
+
+        monkeypatch.setattr(service_dns_readback, "verify_service_dns_nss", fail_nss)
+    else:
+        monkeypatch.setattr(ui, "verify_handoff_service_dns", verify)
     login(client)
     with SessionLocal() as db:
         _management, access = _prepare_service_address_baseline(db, ui)
@@ -1040,6 +1052,21 @@ def test_static_handoff_missing_submitted_dns_replacement_recovers(client, monke
     assert group["management_handoff"]["failing_layer"] == "generated service DNS readback"
     assert group["management_handoff"]["error"] == "DNS replacement answer is missing the submitted service owner."
     assert group["management_handoff"]["rolled_back"] is True
+    assert "verified_service_dns_records" not in dnsmasq
+    assert all(row["success"] is False and row["rolled_back"] is True for row in results)
+
+
+def test_static_handoff_nss_failure_recovers_after_direct_dns_succeeds(client, monkeypatch, tmp_path):
+    """Recover when appliance-local resolution disagrees with successful direct DNS."""
+    submitted, observed, group, results, dnsmasq, _baseline, _live_records = _run_static_identity_race_handoff(
+        client, monkeypatch, tmp_path, concurrent_identity_edit=True, missing_replacement=True, nss_failure=True,
+    )
+
+    assert observed == [submitted]
+    assert group["success"] is False
+    assert group["rollback_proven"] is True
+    assert group["management_handoff"]["failing_layer"] == "generated service DNS readback"
+    assert group["management_handoff"]["error"] == "Controlled stale NSS service DNS answer."
     assert "verified_service_dns_records" not in dnsmasq
     assert all(row["success"] is False and row["rolled_back"] is True for row in results)
 
@@ -1330,6 +1357,7 @@ def test_verified_depot_moves_update_separately_selected_captured_config(client,
         readback_calls = []
         monkeypatch.setattr(service_dns_readback, "verify_service_dns_records",
                             lambda records, **kwargs: readback_calls.append((records, kwargs)))
+        monkeypatch.setattr(service_dns_readback, "verify_service_dns_nss", lambda _records: None)
         group, _results = ui.execute_management_handoff(
             units, job_id="job_depot853abc", adapter=Adapter(), db=db, include_dnsmasq=True,
         )
@@ -1373,12 +1401,15 @@ def test_handoff_readback_requires_captured_authoritative_and_recursive_paths(mo
             raise ValueError("controlled listener failure")
 
     monkeypatch.setattr(service_dns_readback, "verify_service_dns_records", verify)
+    nss_calls = []
+    monkeypatch.setattr(service_dns_readback, "verify_service_dns_nss", lambda records: nss_calls.append(records))
     if failed_listener:
         with pytest.raises(ValueError, match="controlled listener failure"):
             ui.verify_handoff_service_dns(desired, prior, config, authoritative=True)
     else:
         ui.verify_handoff_service_dns(desired, prior, config, authoritative=True)
         assert len(calls) == 3
+        assert nss_calls == [desired]
         assert calls[0] == (desired, {"prior_records": prior})
         assert calls[1] == (desired, {"nameserver": "192.0.2.21", "prior_records": prior,
                                      "require_authoritative": True})

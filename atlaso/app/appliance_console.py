@@ -1182,7 +1182,10 @@ def _submit_console_apply(
                 raise ConsoleOperationError(
                     f"VCFDT task {active_vcf_job.id} is already {active_vcf_job.status}."
                 )
-        units = appliance_apply_units(db, reconcile=expected_management_snapshots is None)
+        if expected_management_snapshots is None:
+            units = appliance_apply_units(db)
+        else:
+            units = appliance_apply_units(db, reconcile=False)
         unit_map = {unit["id"]: unit for unit in units}
         if expected_management_snapshots is not None:
             changed_during_recovery = [
