@@ -218,7 +218,8 @@ UTC expiry encodings without rewriting applied evidence or hiding real certifica
 applied default HTTP and HTTPS listener ports, including
 nonstandard ports. Ordinary CA Apply shares the publication writer lock and records only its executed payload; after
 listener reloads it reacquires admission and refuses a baseline commit if recovery or a desired edit superseded that
-payload. First-boot publication records its exact captured CA baseline.
+payload. Transient recovery loads the appliance environment and state working directory before acknowledgement,
+so it uses the appliance database. First-boot publication records its exact captured CA baseline.
 
 Before Appliance Settings is submitted, the console rechecks the completed Network management paths under the shared
 network-object writer lock held through Settings capture. An address edit made during HTTPS recovery stops submission

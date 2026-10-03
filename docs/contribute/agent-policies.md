@@ -1110,6 +1110,8 @@ preserved with their affected subsystem below. Keep new requirements at their to
   Ordinary CA Apply must share this writer admission through native publication. Baseline acknowledgement must reacquire
   admission after listener reloads and reject a superseded captured CA payload rather than baseline refreshed intent.
   Recovery readiness probes use the applied default listener ports, including preserved nonstandard HTTP/HTTPS ports.
+  Transient console recovery must load the appliance EnvironmentFile and state working directory so its receipt
+  acknowledgement opens the appliance database, independently of the caller's environment.
   Ordinary first boot records its captured full CA baseline.
   Ordinary bootstrap with a Network baseline rejects pending
   management-path edits too. Bound recovery must refresh HTTPS even after first boot is complete, without seeding or

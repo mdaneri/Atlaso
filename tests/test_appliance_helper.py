@@ -11718,6 +11718,38 @@ def test_real_mutating_helper_action_escapes_service_mount_namespace(monkeypatch
     assert commands[0][-4:] == ["dnsmasq", "apply", "--real", str(config_path)]
 
 
+@pytest.mark.parametrize("network_job_id", [None, "job_completed_network"])
+def test_console_recovery_transient_unit_loads_appliance_database_environment(monkeypatch, network_job_id):
+    """Transient recovery explicitly selects the appliance environment for receipt acknowledgement.
+
+    Args:
+        monkeypatch: Bounded systemd command capture.
+        network_job_id: Exact completed Network binding or ordinary recovery.
+    """
+    helper = load_helper_module()
+    commands = []
+    monkeypatch.setenv("ATLASO_HELPER_USE_SYSTEMD_RUN", "1")
+    monkeypatch.setenv("ATLASO_DATABASE_URL", "sqlite:///wrong-caller-database.db")
+    monkeypatch.delenv(helper.SYSTEMD_RUN_CHILD_ENV, raising=False)
+    monkeypatch.setattr(helper.shutil, "which", lambda command:
+                        "/usr/bin/systemd-run" if command == "systemd-run" else None)
+    monkeypatch.setattr(helper, "_run", lambda command: commands.append(command)
+                        or subprocess.CompletedProcess(command, 0, "", ""))
+    monkeypatch.setattr(helper, "_handle_console", lambda *_args:
+                        (_ for _ in ()).throw(AssertionError("Recovery must run in the transient unit")))
+    args = [network_job_id] if network_job_id else []
+    assert helper.main(["atlaso-helper", "console", "recover-management-plane", "--real", *args]) == 0
+    assert len(commands) == 1
+    command = commands[0]
+    assert f"--property=WorkingDirectory={helper.ATLASO_STATE_DIR}" in command
+    assert f"--property=EnvironmentFile={helper.ATLASO_ENV_PATH}" in command
+    assert helper.ATLASO_STATE_DIR.as_posix() == "/var/lib/atlaso"
+    assert helper.ATLASO_ENV_PATH.as_posix() == "/etc/atlaso/atlaso.env"
+    assert f"--setenv={helper.SYSTEMD_RUN_CHILD_ENV}=1" in command
+    assert not any("wrong-caller-database" in argument or "ATLASO_DATABASE_URL=" in argument for argument in command)
+    assert command[-(3 + len(args)):] == ["console", "recover-management-plane", "--real", *args]
+
+
 def test_account_commands_use_bounded_helper_action_units(monkeypatch):
     """Account mutations use the same reset-visible transient unit family.
 

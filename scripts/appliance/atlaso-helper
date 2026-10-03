@@ -934,6 +934,13 @@ def _run_real_action_with_systemd(group: str, action: str, args: list[str]) -> i
                 )
                 return 1
         command.append(f"--unit={unit.removesuffix('.service')}")
+    if group == "console" and action == "recover-management-plane":
+        # Transient system services do not inherit the appliance service environment.
+        # Acknowledgement must use the same database and state root as the worker.
+        command.extend([
+            f"--property=WorkingDirectory={ATLASO_STATE_DIR}",
+            f"--property=EnvironmentFile={ATLASO_ENV_PATH}",
+        ])
     if group in {"appliance-update", "appliance-settings"}:
         powershell_env = _privileged_powershell_environment()
         command.extend(
