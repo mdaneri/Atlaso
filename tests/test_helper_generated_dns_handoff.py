@@ -110,7 +110,10 @@ def test_service_dns_publication_follows_final_readiness_and_failure_rolls_back(
     service_dns = _staged_file(tmp_path / "dnsmasq", "service-dns.conf")
     candidate_firewall = _staged_file(tmp_path / "firewall", "candidate.nft", "table inet atlaso { chain input { } }\n")
     previous_firewall = _staged_file(runtime, "previous.nft", "prior firewall\n")
-    public_candidate = _staged_file(tmp_path / "public", "candidate.conf", "server {\n    listen 192.0.2.20:443 ssl;\n}\n")
+    public_candidate = _staged_file(
+        tmp_path / "public", "candidate.conf",
+        "# Managed by Atlaso. Local changes may be overwritten.\nserver {\n    listen 192.0.2.20:443 ssl;\n}\n",
+    )
     depot_site = _staged_file(runtime, "vcf-offline-depot.conf", _managed_depot_site())
     depot_backup = _staged_file(tmp_path / "backups", "depot.bin", depot_site.read_text(encoding="utf-8"))
     if depot_dynamic:
@@ -132,7 +135,7 @@ def test_service_dns_publication_follows_final_readiness_and_failure_rolls_back(
 
     def readiness(addresses, *_args, **_kwargs):
         nonlocal ready_calls
-        if addresses == ["198.51.100.10"]:
+        if addresses in (["192.0.2.21"], ["198.51.100.10"]):
             ready_calls += 1
             events.append("candidate-readiness" if ready_calls == 1 else "final-readiness")
         else:
@@ -175,28 +178,46 @@ def test_service_dns_publication_follows_final_readiness_and_failure_rolls_back(
     monkeypatch.setattr(helper, "_stage_candidate_ingress_guards", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(helper, "_retire_legacy_source_rules", lambda *_args: None)
     monkeypatch.setattr(helper, "_apply_management_candidate_network", lambda *_args: events.append("candidate-network") or prior_network.write_text("candidate network\n", encoding="utf-8"))
-    observation = {"complete": True, "links": [{"name": "eth9", "configured": True,
-                    "address_inventory_complete": True, "addresses": [
-                        {"address": "192.0.2.21", "state": "assigned", "scope": "global"}]}]}
-    monkeypatch.setattr(helper, "_wait_network_addresses", lambda *_args, **_kwargs: observation)
+    initial_observation = {"complete": True, "phase_address": "192.0.2.21", "links": [{
+        "name": "eth9", "configured": True, "address_inventory_complete": True,
+        "addresses": [{"address": "192.0.2.21", "state": "assigned", "scope": "global"}],
+    }]}
+    final_observation = {"complete": True, "phase_address": "198.51.100.10", "links": [{
+        "name": "eth9", "configured": True, "address_inventory_complete": True,
+        "addresses": [{"address": "198.51.100.10", "state": "assigned", "scope": "global"}],
+    }]}
+    observations = iter(
+        [initial_observation, initial_observation, final_observation] if public_dynamic
+        else [initial_observation, initial_observation, initial_observation]
+    )
+    monkeypatch.setattr(helper, "_wait_network_addresses", lambda *_args, **_kwargs: next(observations))
     monkeypatch.setattr(helper, "_management_handoff_resolve_pending_dhcp", lambda *_args: None)
     monkeypatch.setattr(helper, "_wait_management_handoff_routes", lambda *_args: None)
     monkeypatch.setattr(helper, "_apply_route_domain_ingress", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(helper, "_install_route_domain_intent", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(helper, "_reconcile_route_domains", lambda: None)
-    monkeypatch.setattr(helper, "_management_handoff_addresses", lambda *_args, **_kwargs: ["198.51.100.10"])
+    monkeypatch.setattr(
+        helper, "_management_handoff_addresses",
+        lambda *_args, **kwargs: [
+            kwargs["address_observation"]["phase_address"]
+            if public_dynamic and kwargs.get("address_observation") else "198.51.100.10"
+        ],
+    )
     monkeypatch.setattr(helper, "_management_handoff_candidate_ca", lambda *_args: None)
     monkeypatch.setattr(helper, "_management_handoff_upstream_readiness", lambda: {"stable_samples": 3})
-    monkeypatch.setattr(helper, "_management_handoff_candidate_public_tls_addresses", lambda *_args: set())
     monkeypatch.setattr(helper, "_management_handoff_protocol_holdover", lambda *_args: "")
     monkeypatch.setattr(helper, "_management_handoff_initial_listener_addresses", lambda addresses, *_args, **_kwargs: addresses)
     monkeypatch.setattr(helper, "_load_appliance_settings_config", lambda _path: {
-        "management_https_enabled": False,
+        "management_https_enabled": public_dynamic,
+        "management_https_port": 443,
+        "management_https_cert_path": str(tmp_path / "management.crt"),
+        "management_https_key_path": str(tmp_path / "management.key"),
         "management_public_http_port": 80,
         "management_interface": "eth1",
         "resolver_mode": "external",
         "resolver_servers": ["192.0.2.53"],
     })
+    monkeypatch.setattr(helper, "_ca_managed_path", lambda value, _label: Path(value))
     monkeypatch.setattr(helper, "_configure_management_handoff_resolver", lambda _payload: events.append("resolver") or subprocess.CompletedProcess([], 0))
     management_publications = 0
 
@@ -228,11 +249,20 @@ def test_service_dns_publication_follows_final_readiness_and_failure_rolls_back(
             lambda _content, _moves: events.append("depot-runtime-readiness"),
         )
     monkeypatch.setattr(helper, "_handle_public_services", lambda *_args, **_kwargs: 0)
-    monkeypatch.setattr(helper, "_management_nginx_config", lambda *_args, **_kwargs: "server {}\n")
+    final_management_tls_addresses: list[list[str]] = []
+
+    def render_management(_settings, *_args, **kwargs):
+        """Capture the final dedicated TLS listener set."""
+        https_addresses = kwargs.get("https_listen_addresses")
+        if https_addresses is not None:
+            final_management_tls_addresses.append(https_addresses)
+        return "server {}\n"
+
+    monkeypatch.setattr(helper, "_management_nginx_config", render_management)
 
     def publish_final(_management, public):
         """Verify final dynamic sockets before allowing native publication."""
-        assert "listen 192.0.2.21:443 ssl;" in public
+        assert "listen 198.51.100.10:443 ssl;" in public
         assert "listen 192.0.2.20:443 ssl;" not in public
         events.append("public-final-publication")
         return 0
@@ -279,6 +309,8 @@ def test_service_dns_publication_follows_final_readiness_and_failure_rolls_back(
     assert events.index("listener-address-refresh") < events.index("service-dns-publication")
     if public_dynamic:
         assert events.index("public-final-publication") < events.index("final-readiness")
+        assert final_management_tls_addresses
+        assert all("198.51.100.10" not in addresses for addresses in final_management_tls_addresses)
     assert restored == [state]
     assert state["dnsmasq_included"] is True
     if depot_dynamic:

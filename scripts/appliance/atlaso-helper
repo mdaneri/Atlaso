@@ -33143,6 +33143,10 @@ def _apply_management_handoff(payload: dict) -> int:
         )
         if payload.get("public_dynamic_bindings"):
             _atomic_management_handoff_write(public_config_path, final_public_config)
+        if public_services_owns_flagged:
+            candidate_public_tls = _management_handoff_candidate_public_tls_addresses(
+                public_config_path, candidate_public_port,
+            )
         final_depot_moves = (
             _resolve_management_handoff_listener_moves(
                 {**payload, "listener_address_moves": depot_moves}, final_address_observation,
