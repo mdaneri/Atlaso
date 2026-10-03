@@ -24,6 +24,13 @@ def load_helper_module():
 
 
 def _staged_file(directory: Path, name: str, text: str = "candidate\n") -> Path:
+    """Write and return a staged file beneath the supplied directory.
+
+    Args:
+        directory: Directory where the staged test file is created.
+        name: Filename for the staged configuration.
+        text: Text content written to the staged test file.
+    """
     directory.mkdir(parents=True, exist_ok=True)
     path = directory / name
     path.write_text(text, encoding="utf-8")
@@ -31,6 +38,11 @@ def _staged_file(directory: Path, name: str, text: str = "candidate\n") -> Path:
 
 
 def _manifest_payload(paths: dict[str, Path]) -> dict:
+    """Build a management-handoff manifest from its staged paths.
+
+    Args:
+        paths: Manifest path entries to serialize.
+    """
     return {
         "schema_version": 1,
         "job_id": "job_dns853abc",
@@ -46,6 +58,12 @@ def _manifest_payload(paths: dict[str, Path]) -> dict:
 
 
 def test_service_dns_manifest_path_requires_staged_file_and_dns_rollback_snapshot(monkeypatch, tmp_path):
+    """Verify service DNS publication requires a staged file and rollback snapshot.
+
+    Args:
+        monkeypatch: Pytest fixture for replacing dependencies with controlled test doubles.
+        tmp_path: Pytest fixture providing an isolated temporary filesystem root.
+    """
     helper = load_helper_module()
     roots = {name: tmp_path / name for name in ("network", "firewall", "settings", "public", "dnsmasq", "handoff")}
     monkeypatch.setattr(helper, "NETWORK_APPLY_DIR", roots["network"])
@@ -85,7 +103,15 @@ def test_service_dns_manifest_path_requires_staged_file_and_dns_rollback_snapsho
 
 @pytest.mark.parametrize(("public_dynamic", "depot_dynamic"), [(False, False), (True, False), (False, True)])
 def test_service_dns_publication_follows_final_readiness_and_failure_rolls_back(monkeypatch, tmp_path, capsys, public_dynamic, depot_dynamic):
-    """Defer generated DNS until readiness and restore the captured handoff on failure."""
+    """Defer generated DNS until readiness and restore the captured handoff on failure.
+
+    Args:
+        monkeypatch: Pytest fixture for replacing dependencies with controlled test doubles.
+        tmp_path: Pytest fixture providing an isolated temporary filesystem root.
+        capsys: Pytest fixture for capturing output written during the operation.
+        public_dynamic: Whether the public listener uses a dynamically assigned address.
+        depot_dynamic: Whether the depot listener uses a dynamically assigned address.
+    """
     helper = load_helper_module()
     events: list[str] = []
     runtime = tmp_path / "runtime"
@@ -134,6 +160,13 @@ def test_service_dns_publication_follows_final_readiness_and_failure_rolls_back(
     ready_calls = 0
 
     def readiness(addresses, *_args, **_kwargs):
+        """Return the configured readiness result for the handoff.
+
+        Args:
+            addresses: Effective addresses observed for the interface.
+            *_args: Positional arguments accepted by the wrapped operation.
+            **_kwargs: Keyword arguments accepted by the wrapped operation.
+        """
         nonlocal ready_calls
         if addresses in (["192.0.2.21"], ["198.51.100.10"]):
             ready_calls += 1
@@ -143,6 +176,12 @@ def test_service_dns_publication_follows_final_readiness_and_failure_rolls_back(
         return {"stable_samples": 3}
 
     def dnsmasq_apply(_action, args):
+        """Record or reject the dnsmasq action requested by the helper.
+
+        Args:
+            _action: DNS publication action requested by the code under test.
+            args: Positional arguments supplied to the wrapped operation.
+        """
         if args[0] == str(candidate_dns):
             events.append("candidate-dns-apply")
             prior_dns.write_text("candidate DNS\n", encoding="utf-8")
@@ -153,6 +192,11 @@ def test_service_dns_publication_follows_final_readiness_and_failure_rolls_back(
         return 1
 
     def restore_snapshot(restored_state):
+        """Record the handoff snapshot restored during recovery.
+
+        Args:
+            restored_state: Captured handoff state restored during rollback.
+        """
         restored.append(restored_state)
         for snapshot in restored_state["snapshots"]:
             helper._restore_management_handoff_snapshot(snapshot)
@@ -222,6 +266,12 @@ def test_service_dns_publication_follows_final_readiness_and_failure_rolls_back(
     management_publications = 0
 
     def configure_management(*_args, **_kwargs):
+        """Return the controlled management configuration result.
+
+        Args:
+            *_args: Positional arguments accepted by the wrapped operation.
+            **_kwargs: Keyword arguments accepted by the wrapped operation.
+        """
         nonlocal management_publications
         management_publications += 1
         events.append(f"management-nginx-publication-{management_publications}")
@@ -233,6 +283,12 @@ def test_service_dns_publication_follows_final_readiness_and_failure_rolls_back(
         original_project_depot = helper._project_management_handoff_depot_listeners
 
         def project_depot(content, moves):
+            """Project listener address moves into the depot configuration.
+
+            Args:
+                content: Candidate configuration text to inspect or rewrite.
+                moves: Validated listener address moves to apply.
+            """
             nonlocal depot_projections
             depot_projections += 1
             events.append(f"depot-projection-{depot_projections}")
@@ -252,7 +308,13 @@ def test_service_dns_publication_follows_final_readiness_and_failure_rolls_back(
     final_management_tls_addresses: list[list[str]] = []
 
     def render_management(_settings, *_args, **kwargs):
-        """Capture the final dedicated TLS listener set."""
+        """Capture the final dedicated TLS listener set.
+
+        Args:
+            _settings: Management settings passed to the renderer.
+            *_args: Positional arguments accepted by the wrapped operation.
+            **kwargs: Keyword arguments forwarded to the wrapped operation.
+        """
         https_addresses = kwargs.get("https_listen_addresses")
         if https_addresses is not None:
             final_management_tls_addresses.append(https_addresses)
@@ -261,7 +323,12 @@ def test_service_dns_publication_follows_final_readiness_and_failure_rolls_back(
     monkeypatch.setattr(helper, "_management_nginx_config", render_management)
 
     def publish_final(_management, public):
-        """Verify final dynamic sockets before allowing native publication."""
+        """Verify final dynamic sockets before allowing native publication.
+
+        Args:
+            _management: Final management listener configuration.
+            public: Final public listener state to publish.
+        """
         assert "listen 198.51.100.10:443 ssl;" in public
         assert "listen 192.0.2.20:443 ssl;" not in public
         events.append("public-final-publication")
@@ -328,6 +395,12 @@ def test_service_dns_publication_follows_final_readiness_and_failure_rolls_back(
 
 
 def test_listener_move_manifest_rejects_unbounded_or_unowned_mappings(monkeypatch, tmp_path):
+    """Verify listener-move manifests reject unbounded or unowned mappings.
+
+    Args:
+        monkeypatch: Pytest fixture for replacing dependencies with controlled test doubles.
+        tmp_path: Pytest fixture providing an isolated temporary filesystem root.
+    """
     helper = load_helper_module()
     roots = {name: tmp_path / name for name in ("network", "firewall", "settings", "public", "dnsmasq", "handoff")}
     for name, constant in (
@@ -371,6 +444,12 @@ def test_listener_move_manifest_rejects_unbounded_or_unowned_mappings(monkeypatc
 
 
 def test_listener_moves_rebind_narrow_configs_and_restore_files_and_units(monkeypatch, tmp_path):
+    """Verify listener moves rebind only selected configs and restore files and units on failure.
+
+    Args:
+        monkeypatch: Pytest fixture for replacing dependencies with controlled test doubles.
+        tmp_path: Pytest fixture providing an isolated temporary filesystem root.
+    """
     helper = load_helper_module()
     old, new = "192.0.2.10", "198.51.100.20"
     network = _staged_file(
@@ -419,6 +498,12 @@ def test_listener_moves_rebind_narrow_configs_and_restore_files_and_units(monkey
     enabled = {"ntpd.service": True, "slapd.service": False, "atlaso-kmip.service": True}
 
     def run(command, **_kwargs):
+        """Return the controlled result for the command under test.
+
+        Args:
+            command: Command argument list passed to the mocked process runner.
+            **_kwargs: Keyword arguments accepted by the wrapped operation.
+        """
         if command[0] == "ss":
             listener = next(
                 line.split()[2] for line in paths["ntpd"].read_text(encoding="utf-8").splitlines()
@@ -445,6 +530,11 @@ def test_listener_moves_rebind_narrow_configs_and_restore_files_and_units(monkey
             return self
 
         def __exit__(self, *_args):
+            """Close the mock socket after its context manager exits.
+
+            Args:
+                *_args: Positional arguments accepted by the wrapped operation.
+            """
             return False
 
     monkeypatch.setattr(helper, "_run", run)
@@ -507,6 +597,12 @@ def test_listener_moves_rebind_narrow_configs_and_restore_files_and_units(monkey
 
 @pytest.mark.parametrize("service", ["ntpd", "ldap", "kms"])
 def test_slaac_listener_moves_select_native_effective_address_with_multiple_globals(tmp_path, service):
+    """Verify SLAAC listener moves select the native effective address when several globals exist.
+
+    Args:
+        tmp_path: Pytest fixture providing an isolated temporary filesystem root.
+        service: Service whose listener behavior or configuration is under test.
+    """
     helper = load_helper_module()
     network = tmp_path / "candidate.conf"
     network.write_text(
@@ -550,6 +646,11 @@ def test_listener_rollback_attempts_remaining_services_after_one_failure(monkeyp
     calls = []
 
     def run(command):
+        """Return the controlled result for the command under test.
+
+        Args:
+            command: Command argument list passed to the mocked process runner.
+        """
         calls.append(command)
         return SimpleNamespace(returncode=1 if command[-1] == "ntpd.service" else 0)
 
@@ -608,6 +709,11 @@ def test_depot_listener_projection_changes_only_managed_addresses_and_preserves_
 
 
 def test_depot_listener_runtime_proof_checks_custom_ipv4_ipv6_ports_and_unchanged_moves(monkeypatch):
+    """Verify depot listener runtime proof checks configured IPv4 and IPv6 ports and unchanged moves.
+
+    Args:
+        monkeypatch: Pytest fixture for replacing dependencies with controlled test doubles.
+    """
     helper = load_helper_module()
     calls = []
 
@@ -616,6 +722,11 @@ def test_depot_listener_runtime_proof_checks_custom_ipv4_ipv6_ports_and_unchange
             return self
 
         def __exit__(self, *_args):
+            """Close the mock socket after its context manager exits.
+
+            Args:
+                *_args: Positional arguments accepted by the wrapped operation.
+            """
             return False
 
     monkeypatch.setattr(
@@ -638,11 +749,22 @@ def test_depot_listener_runtime_proof_checks_custom_ipv4_ipv6_ports_and_unchange
 
 
 def test_depot_listener_runtime_proof_fails_when_a_port_is_unreachable(monkeypatch):
+    """Verify depot listener runtime proof fails when a configured port is unreachable.
+
+    Args:
+        monkeypatch: Pytest fixture for replacing dependencies with controlled test doubles.
+    """
     helper = load_helper_module()
     clock = iter((0.0, 1.0, 6.0))
     attempts = []
 
     def fail_connect(endpoint, **_kwargs):
+        """Raise the configured connection failure for the endpoint probe.
+
+        Args:
+            endpoint: Socket endpoint being probed.
+            **_kwargs: Keyword arguments accepted by the wrapped operation.
+        """
         attempts.append(endpoint)
         raise OSError("connection refused")
 
@@ -658,6 +780,12 @@ def test_depot_listener_runtime_proof_fails_when_a_port_is_unreachable(monkeypat
 
 
 def test_depot_listener_site_is_part_of_handoff_rollback_snapshot(tmp_path, monkeypatch):
+    """Verify handoff rollback snapshots include the depot listener site.
+
+    Args:
+        tmp_path: Pytest fixture providing an isolated temporary filesystem root.
+        monkeypatch: Pytest fixture for replacing dependencies with controlled test doubles.
+    """
     helper = load_helper_module()
     site = _staged_file(tmp_path, "vcf-offline-depot.conf", _managed_depot_site())
     monkeypatch.setattr(helper, "VCF_DEPOT_SITE_PATH", site)

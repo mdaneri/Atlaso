@@ -15688,7 +15688,11 @@ def verify_handoff_service_dns(
         raise ValueError("Applied authoritative DNS listener evidence is incomplete.")
 
     def in_zone(record: dict[str, str]) -> bool:
-        """Return whether this record belongs to a captured authoritative zone."""
+        """Return whether this record belongs to a captured authoritative zone.
+
+        Args:
+            record: DNS record whose hostname is checked against the captured zones.
+        """
         name = record["hostname"].rstrip(".").lower()
         return any(name == zone or name.endswith("." + zone) for zone in zones)
 
@@ -15724,6 +15728,11 @@ def projected_public_service_config(content: str, moves: list[dict[str, str]]) -
     pattern = re.compile(r"(?m)^(?P<prefix>\s*listen\s+)(?P<host>\[[0-9A-Fa-f:.]+\]|[0-9.]+)(?P<port>:[0-9]{1,5})(?=\s|;)")
 
     def replace(match: re.Match[str]) -> str:
+        """Rewrite the matched listener address in the configuration text.
+
+        Args:
+            match: Regular-expression match for the listener directive being rewritten.
+        """
         host = str(ip_address(match.group("host").strip("[]")))
         if host not in replacements:
             return match.group(0)

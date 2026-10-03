@@ -176,6 +176,8 @@ def test_static_analysis_configuration_is_pinned_and_scoped() -> None:
             "atlaso/app/services/physical_interfaces.py",
             "atlaso/app/services/port_forwarding.py",
             "atlaso/app/services/service_dns_defaults.py",
+            "atlaso/app/services/generated_dns_projection.py",
+            "atlaso/app/services/service_dns_readback.py",
             "atlaso/app/services/service_registry.py",
             "atlaso/app/services/vcf_sddc_upload.py",
             "atlaso/app/services/chunk_uploads.py",

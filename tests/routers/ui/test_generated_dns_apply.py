@@ -320,8 +320,9 @@ def test_network_apply_captures_refreshed_service_dns_after_direct_ip_change(cli
     unrelated operator record added after the last DNS Apply.
 
     Args:
-        client: Isolated authenticated application client.
-        pending_dns_disable: Keep an unrelated DNS shutdown pending during Network Apply.
+        client: HTTP test client for the UI request.
+        monkeypatch: Pytest fixture for replacing dependencies with controlled test doubles.
+        pending_dns_disable: Whether generated DNS is pending disablement in the same network apply.
     """
     from atlaso.app import ui
     from atlaso.app.database import SessionLocal
@@ -560,7 +561,11 @@ def test_startup_preserves_legacy_dhcp_dns_provenance_after_offline_address_chan
         db.commit()
 
     def changed_inventory(db):
-        """Emulate host discovery replacing the persisted DHCP observation."""
+        """Emulate host discovery replacing the persisted DHCP observation.
+
+        Args:
+            db: Database session whose discovered interface state is updated.
+        """
         management = db.scalar(select(PhysicalInterface).where(PhysicalInterface.name == management_name))
         management.host_ip_cidr = "198.51.100.11/24"
         db.flush()
@@ -756,7 +761,7 @@ def test_management_handoff_dns_readback_failure_triggers_proven_recovery(client
             """Return successful helper validation.
 
             Args:
-                manifest_path: Staged manifest passed to the helper.
+                manifest_path: Path to the staged management-handoff manifest.
             """
             return AdapterResult(
                 command=["atlaso-helper", "management-handoff", "validate", manifest_path],
@@ -767,7 +772,7 @@ def test_management_handoff_dns_readback_failure_triggers_proven_recovery(client
             """Return successful candidate activation.
 
             Args:
-                manifest_path: Staged manifest passed to the helper.
+                manifest_path: Path to the staged management-handoff manifest.
             """
             if (dynamic_failure or "").startswith("identity"):
                 with SessionLocal() as other:
@@ -798,10 +803,20 @@ def test_management_handoff_dns_readback_failure_triggers_proven_recovery(client
             )
 
         def validate_dnsmasq_config(self, _path):
+            """Validate the candidate dnsmasq configuration path.
+
+            Args:
+                _path: Candidate configuration path supplied to the validation or apply callback.
+            """
             assert not (dynamic_failure or "").startswith("identity"), "unreviewed identity must never reach DNS publication"
             return AdapterResult(command=["dnsmasq", "validate"], dry_run=False, returncode=0)
 
         def apply_dnsmasq_config(self, _path):
+            """Apply the candidate dnsmasq configuration path.
+
+            Args:
+                _path: Candidate configuration path supplied to the validation or apply callback.
+            """
             return AdapterResult(command=["dnsmasq", "apply"], dry_run=False,
                                  returncode=1 if dynamic_failure == "publication" else 0)
 
@@ -945,9 +960,19 @@ def _run_static_identity_race_handoff(client, monkeypatch, tmp_path, *, concurre
         dry_run = False
 
         def validate_management_handoff(self, manifest_path):
+            """Validate the staged management-handoff manifest.
+
+            Args:
+                manifest_path: Path to the staged management-handoff manifest.
+            """
             return AdapterResult(command=["atlaso-helper", "validate", manifest_path], dry_run=False, returncode=0)
 
         def apply_management_handoff(self, manifest_path):
+            """Apply the staged management-handoff manifest.
+
+            Args:
+                manifest_path: Path to the staged management-handoff manifest.
+            """
             if concurrent_identity_edit:
                 with SessionLocal() as other:
                     settings = other.scalar(select(CaSettings))
@@ -969,6 +994,14 @@ def _run_static_identity_race_handoff(client, monkeypatch, tmp_path, *, concurre
     observed = []
 
     def verify(records, prior_records, config, *, authoritative):
+        """Verify the DNS records returned by the controlled readback.
+
+        Args:
+            records: Desired DNS records used for the readback check.
+            prior_records: Previously owned DNS records whose removal must be verified.
+            config: Candidate DNS or management configuration used for validation.
+            authoritative: Whether the mocked DNS answer is authoritative.
+        """
         observed.append([dict(record) for record in records])
         assert prior_records
         assert config
@@ -987,6 +1020,11 @@ def _run_static_identity_race_handoff(client, monkeypatch, tmp_path, *, concurre
                             lambda records, **_kwargs: observed.append([dict(record) for record in records]))
 
         def fail_nss(_records):
+            """Raise the configured local name-service lookup failure.
+
+            Args:
+                _records: DNS records supplied to the mocked resolver.
+            """
             raise ValueError("Controlled stale NSS service DNS answer.")
 
         monkeypatch.setattr(service_dns_readback, "verify_service_dns_nss", fail_nss)
@@ -1028,7 +1066,13 @@ def _run_static_identity_race_handoff(client, monkeypatch, tmp_path, *, concurre
 
 
 def test_static_handoff_keeps_submitted_dns_ownership_across_concurrent_identity_edit(client, monkeypatch, tmp_path):
-    """Verify and baseline the exact submitted DNS records despite a later DB edit."""
+    """Verify and baseline the exact submitted DNS records despite a later DB edit.
+
+    Args:
+        client: HTTP test client for the UI request.
+        monkeypatch: Pytest fixture for replacing dependencies with controlled test doubles.
+        tmp_path: Pytest fixture providing an isolated temporary filesystem root.
+    """
     submitted, observed, group, _results, dnsmasq, baseline, live_records = _run_static_identity_race_handoff(
         client, monkeypatch, tmp_path, concurrent_identity_edit=True, missing_replacement=False,
     )
@@ -1041,7 +1085,13 @@ def test_static_handoff_keeps_submitted_dns_ownership_across_concurrent_identity
 
 
 def test_static_handoff_missing_submitted_dns_replacement_recovers(client, monkeypatch, tmp_path):
-    """Reject missing static DNS readback and recover the prior handoff state."""
+    """Reject missing static DNS readback and recover the prior handoff state.
+
+    Args:
+        client: HTTP test client for the UI request.
+        monkeypatch: Pytest fixture for replacing dependencies with controlled test doubles.
+        tmp_path: Pytest fixture providing an isolated temporary filesystem root.
+    """
     submitted, observed, group, results, dnsmasq, _baseline, _live_records = _run_static_identity_race_handoff(
         client, monkeypatch, tmp_path, concurrent_identity_edit=True, missing_replacement=True,
     )
@@ -1057,7 +1107,13 @@ def test_static_handoff_missing_submitted_dns_replacement_recovers(client, monke
 
 
 def test_static_handoff_nss_failure_recovers_after_direct_dns_succeeds(client, monkeypatch, tmp_path):
-    """Recover when appliance-local resolution disagrees with successful direct DNS."""
+    """Recover when appliance-local resolution disagrees with successful direct DNS.
+
+    Args:
+        client: HTTP test client for the UI request.
+        monkeypatch: Pytest fixture for replacing dependencies with controlled test doubles.
+        tmp_path: Pytest fixture providing an isolated temporary filesystem root.
+    """
     submitted, observed, group, results, dnsmasq, _baseline, _live_records = _run_static_identity_race_handoff(
         client, monkeypatch, tmp_path, concurrent_identity_edit=True, missing_replacement=True, nss_failure=True,
     )
@@ -1162,6 +1218,12 @@ def test_slaac_address_drift_offers_network_review_and_captures_dns_after_reboot
 
         def pending_units(*args, **kwargs):
             # Model an independently saved edit without changing the DNS identity.
+            """Return the pending units selected for appliance apply.
+
+            Args:
+                *args: Positional arguments forwarded to the wrapped operation.
+                **kwargs: Keyword arguments forwarded to the wrapped operation.
+            """
             rendered = render_units(*args, **kwargs)
             for unit in rendered:
                 if unit["id"] != pending_dependency:
@@ -1322,9 +1384,19 @@ def test_verified_depot_moves_update_separately_selected_captured_config(client,
             dry_run = False
 
             def validate_management_handoff(self, _path):
+                """Validate the staged management-handoff manifest.
+
+                Args:
+                    _path: Candidate configuration path supplied to the validation or apply callback.
+                """
                 return AdapterResult(command=["validate"], dry_run=False, returncode=0)
 
             def apply_management_handoff(self, _path):
+                """Apply the staged management-handoff manifest.
+
+                Args:
+                    _path: Candidate configuration path supplied to the validation or apply callback.
+                """
                 return AdapterResult(command=["apply"], dry_run=False, returncode=0,
                                      stdout=json.dumps({"management_handoff": "applied",
                                                         "listener_address_moves": native_moves,
@@ -1335,9 +1407,19 @@ def test_verified_depot_moves_update_separately_selected_captured_config(client,
                                                         }]}))
 
             def validate_dnsmasq_config(self, _path):
+                """Validate the candidate dnsmasq configuration path.
+
+                Args:
+                    _path: Candidate configuration path supplied to the validation or apply callback.
+                """
                 return AdapterResult(command=["dnsmasq", "validate"], dry_run=False, returncode=0)
 
             def apply_dnsmasq_config(self, _path):
+                """Apply the candidate dnsmasq configuration path.
+
+                Args:
+                    _path: Candidate configuration path supplied to the validation or apply callback.
+                """
                 return AdapterResult(command=["dnsmasq", "apply"], dry_run=False, returncode=0)
 
             def reload_dnsmasq(self):
@@ -1347,6 +1429,14 @@ def test_verified_depot_moves_update_separately_selected_captured_config(client,
                 raise AssertionError("successful captured projection must not require recovery")
 
         def effective_observation(_db, _config, _evidence, **_kwargs):
+            """Return the controlled effective-address observation.
+
+            Args:
+                _db: Database session passed to the address-observation function.
+                _config: Configuration passed to the address-observation function.
+                _evidence: Captured evidence passed to the address-observation function.
+                **_kwargs: Keyword arguments accepted by the wrapped operation.
+            """
             access.host_ipv6_cidr = "2001:db8::21/64"
             db.flush()
 
@@ -1395,6 +1485,12 @@ def test_handoff_readback_requires_captured_authoritative_and_recursive_paths(mo
     calls = []
 
     def verify(records, **kwargs):
+        """Verify the DNS records returned by the controlled readback.
+
+        Args:
+            records: Desired DNS records used for the readback check.
+            **kwargs: Keyword arguments forwarded to the wrapped operation.
+        """
         calls.append((records, kwargs))
         if (failed_listener and (kwargs.get("nameserver") == failed_listener
                 or (failed_listener == "authoritative" and kwargs.get("port") == 5353))):

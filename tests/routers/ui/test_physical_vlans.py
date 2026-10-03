@@ -72,18 +72,36 @@ def test_access_management_address_edit_matches_console_desired_state(
         interface.ipv6_cidr = "fd00:167::219/64" if ipv6_cidr else None
         db.commit()
 
-    console_units = []
+    console_calls = []
     monkeypatch.setattr(appliance_console, "_management_interface", lambda db: db.get(PhysicalInterface, interface_id))
     monkeypatch.setattr(appliance_console, "_ensure_no_active_apply", lambda: None)
     monkeypatch.setattr(appliance_console, "_recover_management_plane", lambda stage: None)
-    monkeypatch.setattr(appliance_console, "_submit_console_apply", lambda units: console_units.append(units) or "test-console-job")
+    monkeypatch.setattr(
+        appliance_console,
+        "_submit_console_apply",
+        lambda units, **kwargs: console_calls.append((units, kwargs)) or "test-console-job",
+    )
     appliance_console.configure_management(
         "static", "192.168.168.30/24", "", "static" if ipv6_cidr else "disabled", ipv6_cidr, "", "192.168.168.2",
     )
     with SessionLocal() as db:
         interface = db.get(PhysicalInterface, interface_id)
         assert tuple(getattr(interface, field) for field in fields) == browser_intent
-    assert console_units == [{"network", "firewall"}, {"appliance_settings"}]
+    assert [units for units, _kwargs in console_calls] == [
+        {"network", "firewall"},
+        {"appliance_settings"},
+    ]
+    network_snapshots = console_calls[0][1]["expected_management_snapshots"]
+    settings_snapshots = console_calls[1][1]["expected_management_snapshots"]
+    assert set(network_snapshots) == {
+        "network",
+        "firewall",
+        "appliance_settings",
+        "ca",
+        "public_services",
+    }
+    assert all(isinstance(value, str) and value for value in network_snapshots.values())
+    assert settings_snapshots == {"appliance_settings": network_snapshots["appliance_settings"]}
 
 
 def test_forget_missing_physical_interface_deletes_only_stale_rows(client):

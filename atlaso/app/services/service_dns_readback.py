@@ -14,6 +14,11 @@ _TYPE_CODES = {"A": 1, "CNAME": 5, "AAAA": 28}
 
 
 def _name(value: str) -> str:
+    """Validate and normalize a DNS name for query construction.
+
+    Args:
+        value: DNS name text supplied for validation and normalization.
+    """
     if not isinstance(value, str) or not value:
         raise ValueError("DNS record name must be a non-empty string.")
     labels = value.rstrip(".").split(".")
@@ -29,10 +34,21 @@ def _name(value: str) -> str:
 
 
 def _wire_name(name: str) -> bytes:
+    """Encode a DNS name in wire format.
+
+    Args:
+        name: DNS name to encode in wire format.
+    """
     return b"".join(bytes((len(label),)) + label.encode("ascii") for label in name.rstrip(".").split(".")) + b"\0"
 
 
 def _read_name(packet: bytes, offset: int) -> tuple[str, int]:
+    """Read and normalize a DNS name from a DNS packet.
+
+    Args:
+        packet: DNS packet being parsed.
+        offset: Byte offset at which the encoded DNS name begins.
+    """
     labels: list[str] = []
     cursor = offset
     end = offset
@@ -84,6 +100,16 @@ def _parse_response(
     allow_nxdomain: bool = False,
     require_authoritative: bool = False,
 ) -> tuple[dict[tuple[str, int], set[str]], int]:
+    """Parse and validate a DNS response for the requested question.
+
+    Args:
+        packet: DNS packet being parsed.
+        identifier: Transaction identifier expected in the DNS response.
+        qname: Normalized question name expected in the response.
+        qtype: DNS record type requested by the query.
+        allow_nxdomain: Whether authoritative NXDOMAIN may prove that a previously owned record was removed.
+        require_authoritative: Whether the response must carry the authoritative-answer flag.
+    """
     if len(packet) < 12:
         raise ValueError("DNS response header is truncated.")
     response_id, flags, questions, answers, authorities, additional = struct.unpack_from("!HHHHHH", packet)
@@ -139,6 +165,11 @@ def _parse_response(
 
 
 def _expected_records(records: list[dict[str, str]]) -> dict[tuple[str, str], set[str]]:
+    """Normalize desired DNS records for comparison.
+
+    Args:
+        records: Desired DNS records used for the readback check.
+    """
     if not isinstance(records, list) or any(not isinstance(record, dict) for record in records):
         raise ValueError("DNS records must be a list of record objects.")
     expected: dict[tuple[str, str], set[str]] = defaultdict(set)
@@ -173,6 +204,17 @@ def _query(
     allow_nxdomain: bool = False,
     require_authoritative: bool = False,
 ) -> tuple[dict[tuple[str, int], set[str]], int]:
+    """Send one DNS query and parse its validated response.
+
+    Args:
+        nameserver: IP address of the DNS server to query.
+        port: UDP port of the DNS server.
+        timeout: Per-query timeout in seconds.
+        hostname: Hostname whose DNS records are being verified.
+        record_type: DNS record type being checked.
+        allow_nxdomain: Whether authoritative NXDOMAIN may prove that a previously owned record was removed.
+        require_authoritative: Whether the response must carry the authoritative-answer flag.
+    """
     identifier = int.from_bytes(secrets.token_bytes(2), "big")
     qtype = _TYPE_CODES[record_type]
     query = struct.pack("!HHHHHH", identifier, 0x0100, 1, 0, 0, 0) + _wire_name(hostname) + struct.pack("!HH", qtype, 1)
@@ -207,6 +249,14 @@ def _verify_positive_answer(
     record_type: str,
     answer: dict[tuple[str, int], set[str]],
 ) -> None:
+    """Verify that positive DNS answers match the desired records.
+
+    Args:
+        expected: Normalized desired DNS data keyed by owner and record type.
+        hostname: Hostname whose DNS records are being verified.
+        record_type: DNS record type being checked.
+        answer: Parsed DNS answer records keyed by owner and record type.
+    """
     qtype = _TYPE_CODES[record_type]
     values = expected[(hostname, record_type)]
     owner = hostname
@@ -244,6 +294,16 @@ def _verify_retired_cname_families(
     timeout: float,
     require_authoritative: bool,
 ) -> None:
+    """Verify that retired CNAME owners no longer resolve to stale addresses.
+
+    Args:
+        hostname: Hostname whose DNS records are being verified.
+        expected: Normalized desired DNS data keyed by owner and record type.
+        nameserver: IP address of the DNS server to query.
+        port: UDP port of the DNS server.
+        timeout: Per-query timeout in seconds.
+        require_authoritative: Whether the response must carry the authoritative-answer flag.
+    """
     for record_type in ("A", "AAAA"):
         answer, rcode = _query(
             nameserver, port, timeout, hostname, record_type,
@@ -294,6 +354,16 @@ def _verify_retired_records(
     timeout: float,
     require_authoritative: bool,
 ) -> None:
+    """Verify that prior owned DNS records have been retired.
+
+    Args:
+        previous: Previously owned DNS records that must be retired.
+        expected: Normalized desired DNS data keyed by owner and record type.
+        nameserver: IP address of the DNS server to query.
+        port: UDP port of the DNS server.
+        timeout: Per-query timeout in seconds.
+        require_authoritative: Whether the response must carry the authoritative-answer flag.
+    """
     for hostname, record_type in previous:
         if (hostname, record_type) not in expected:
             answer, rcode = _query(
@@ -357,7 +427,16 @@ def verify_service_dns_records(
     prior_records: list[dict[str, str]] | None = None,
     require_authoritative: bool = False,
 ) -> None:
-    """Verify desired service records and prove prior owned records were retired."""
+    """Verify desired service records and prove prior owned records were retired.
+
+    Args:
+        records: Desired DNS records used for the readback check.
+        nameserver: IP address of the DNS server to query.
+        port: UDP port of the DNS server.
+        timeout: Per-query timeout in seconds.
+        prior_records: Previously owned DNS records whose removal must be verified.
+        require_authoritative: Whether the response must carry the authoritative-answer flag.
+    """
     if (isinstance(port, bool) or not isinstance(port, int) or not 1 <= port <= 65535
             or isinstance(timeout, bool) or not isinstance(timeout, (int, float))
             or not math.isfinite(timeout) or not 0 < timeout <= 30):

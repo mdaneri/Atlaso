@@ -28907,7 +28907,12 @@ _HANDOFF_LISTENER_SERVICES = {
 
 
 def _validate_management_handoff_listener_moves(moves: object, network_path: Path) -> list[dict[str, str]]:
-    """Validate bounded address-only listener moves against candidate Network intent."""
+    """Validate bounded address-only listener moves against candidate Network intent.
+
+    Args:
+        moves: Validated listener address moves to apply.
+        network_path: Path to the candidate Network configuration.
+    """
     if not isinstance(moves, list) or len(moves) > 32:
         raise ValueError("management handoff listener_address_moves must be a bounded list")
     physical, vlans, _removed = _parse_network_config(network_path)
@@ -28974,6 +28979,12 @@ def _validate_management_handoff_listener_moves(moves: object, network_path: Pat
 
 
 def _validate_management_handoff_public_bindings(value: object, network_path: Path) -> list[dict[str, str]]:
+    """Validate public listener bindings against candidate Network intent.
+
+    Args:
+        value: Public listener bindings to validate against candidate Network intent.
+        network_path: Path to the candidate Network configuration.
+    """
     if not isinstance(value, list) or len(value) > 256:
         raise ValueError("Public Services dynamic bindings must be a bounded list")
     physical, _vlans, _removed = _parse_network_config(network_path)
@@ -29005,6 +29016,10 @@ def _management_handoff_dynamic_listener_address(link: dict, family: int) -> str
     SLAAC may assign several globals; Atlaso's host inventory selects the first
     global address of a family. Preserve that ordering rather than requiring a
     singleton IPv6 inventory. DHCPv4 still requires unambiguous address evidence.
+
+    Args:
+        link: Observed interface link data used to select its dynamic address.
+        family: IP address version to select: 4 for IPv4 or 6 for IPv6.
     """
     assigned = []
     for record in link.get("addresses", []):
@@ -29024,6 +29039,13 @@ def _management_handoff_dynamic_listener_address(link: dict, family: int) -> str
 
 
 def _project_management_handoff_public_bindings(content: str, bindings: list[dict[str, str]], observation: dict) -> tuple[str, list[dict[str, str]]]:
+    """Project proven dynamic addresses into public listener configuration.
+
+    Args:
+        content: Candidate configuration text to inspect or rewrite.
+        bindings: Public listener bindings to project into configuration text.
+        observation: Observed network or service state used to prove address ownership.
+    """
     if not bindings:
         return content, []
     if observation.get("complete") is not True:
@@ -29043,6 +29065,11 @@ def _project_management_handoff_public_bindings(content: str, bindings: list[dic
     pattern = re.compile(r"(?m)^(?P<prefix>\s*listen\s+)(?P<host>\[[0-9A-Fa-f:.]+\]|[0-9.]+)(?P<port>:[0-9]{1,5})(?=\s|;)")
 
     def replace(match: re.Match[str]) -> str:
+        """Rewrite the matched listener address in the configuration text.
+
+        Args:
+            match: Regular-expression match for the listener directive being rewritten.
+        """
         host = str(ip_address(match.group("host").strip("[]")))
         if host not in replacements:
             return match.group(0)
@@ -29118,6 +29145,11 @@ def _project_management_handoff_depot_listeners(
     listen_pattern = re.compile(r"(?m)^(?P<prefix>\s*listen\s+)(?P<args>[^;]+)(?P<end>;)")
 
     def replace_listen(match: re.Match[str]) -> str:
+        """Rewrite the matched listen directive with the proven address.
+
+        Args:
+            match: Regular-expression match for the listener directive being rewritten.
+        """
         args = match.group("args")
         fields = args.split(None, 1)
         if not fields:
@@ -29140,6 +29172,11 @@ def _project_management_handoff_depot_listeners(
     comment_counts = {old: 0 for old in replacements}
 
     def replace_comment(match: re.Match[str]) -> str:
+        """Rewrite the matched commented listener directive.
+
+        Args:
+            match: Regular-expression match for the listener directive being rewritten.
+        """
         values = match.group("addresses").split(",")
         rendered = []
         for value in values:
@@ -29205,6 +29242,11 @@ def _verify_management_handoff_depot_runtime(content: str, moves: list[dict[str,
 
 
 def _management_handoff_listener_unit_state(unit: str) -> dict[str, object]:
+    """Read the active state of a management listener unit.
+
+    Args:
+        unit: Systemd unit whose state is being read.
+    """
     if unit not in {value[0] for value in _HANDOFF_LISTENER_SERVICES.values()}:
         raise ValueError("management handoff listener unit is unsupported")
     active = _run(["systemctl", "is-active", unit], timeout=2)
@@ -29226,6 +29268,12 @@ def _management_handoff_listener_unit_state(unit: str) -> dict[str, object]:
 
 
 def _resolve_management_handoff_listener_moves(payload: dict, observation: dict) -> list[dict[str, str]]:
+    """Resolve listener moves from the manifest and observed interface state.
+
+    Args:
+        payload: Validated handoff manifest describing listener moves.
+        observation: Observed network or service state used to prove address ownership.
+    """
     moves = payload.get("listener_address_moves", [])
     if not moves:
         return []
@@ -29281,6 +29329,12 @@ def _resolve_management_handoff_listener_moves(payload: dict, observation: dict)
 
 
 def _atomic_management_handoff_write(path: Path, content: str) -> None:
+    """Atomically write the staged management-handoff configuration.
+
+    Args:
+        path: Destination path for the staged configuration write.
+        content: Candidate configuration text to inspect or rewrite.
+    """
     if path.is_symlink() or not path.is_file():
         raise ValueError(f"applied listener config is missing or unsafe: {path.name}")
     metadata = path.stat()
@@ -29299,6 +29353,13 @@ def _atomic_management_handoff_write(path: Path, content: str) -> None:
 
 
 def _rewrite_ldap_listener_text(content: str, old_address: str, new_address: str) -> str:
+    """Rewrite exact LDAP listener addresses in configuration text.
+
+    Args:
+        content: Candidate configuration text to inspect or rewrite.
+        old_address: Listener address being replaced in the configuration.
+        new_address: Proven address to write into the listener configuration.
+    """
     old = str(ip_address(old_address))
     new_ip = ip_address(new_address)
     host = f"[{new_ip}]" if new_ip.version == 6 else str(new_ip)
@@ -29306,6 +29367,11 @@ def _rewrite_ldap_listener_text(content: str, old_address: str, new_address: str
     count = 0
 
     def replace(match: re.Match[str]) -> str:
+        """Rewrite the matched listener address in the configuration text.
+
+        Args:
+            match: Regular-expression match for the listener directive being rewritten.
+        """
         nonlocal count
         value = match.group("host").strip("[]")
         try:
@@ -29324,6 +29390,13 @@ def _rewrite_ldap_listener_text(content: str, old_address: str, new_address: str
 
 
 def _management_handoff_rewrite_listener_config(service: str, content: str, moves: list[dict[str, str]]) -> str:
+    """Rewrite the selected service listener configuration for the handoff.
+
+    Args:
+        service: Management listener service identifier, such as ntpd, ldap, or kms.
+        content: Candidate configuration text to inspect or rewrite.
+        moves: Validated listener address moves to apply.
+    """
     if service == "ntpd":
         if not NTP_CONFIG_PATH.is_file() or not _ntpd_config_managed(NTP_CONFIG_PATH):
             raise ValueError("NTP listener move requires a managed applied NTP configuration")
@@ -29373,6 +29446,11 @@ def _management_handoff_rewrite_listener_config(service: str, content: str, move
 
 
 def _management_handoff_service_address_observation(observation: dict) -> dict:
+    """Read the effective address evidence for management services.
+
+    Args:
+        observation: Observed network or service state used to prove address ownership.
+    """
     return {
         "observed_at": str(observation.get("observed_at") or "")[:64],
         "complete": observation.get("complete") is True,
@@ -29402,6 +29480,12 @@ def _management_handoff_service_address_observation(observation: dict) -> dict:
 
 
 def _verify_management_handoff_listener_runtime(service: str, moves: list[dict[str, str]]) -> None:
+    """Verify moved listeners are reachable at their proven addresses.
+
+    Args:
+        service: Management listener service identifier whose sockets are being verified.
+        moves: Validated listener address moves to apply.
+    """
     if service == "ntpd":
         result = _run(["ss", "-H", "-lun"], timeout=2)
         if result.returncode != 0 or len(result.stdout) > 65536:
@@ -29470,6 +29554,13 @@ def _verify_management_handoff_listener_runtime(service: str, moves: list[dict[s
 
 
 def _apply_management_handoff_listener_address_moves(payload: dict, state: dict, observation: dict) -> list[dict[str, str]]:
+    """Apply proven management listener address moves.
+
+    Args:
+        payload: Validated handoff manifest describing listener moves.
+        state: Captured listener-handoff state used for apply or recovery.
+        observation: Observed network or service state used to prove address ownership.
+    """
     effective = _resolve_management_handoff_listener_moves(payload, observation)
     state["listener_address_moves"] = effective
     _write_management_handoff_state(state, "listener-address-moves")
@@ -29522,6 +29613,12 @@ def _apply_management_handoff_listener_address_moves(payload: dict, state: dict,
 
 
 def _restore_management_handoff_listener_services(state: dict, commands: list[dict[str, object]]) -> None:
+    """Restore listener services after a failed management handoff.
+
+    Args:
+        state: Captured listener-handoff state used for apply or recovery.
+        commands: List that records each service command issued during rollback.
+    """
     prior_states = state.get("listener_service_states", {})
     if not isinstance(prior_states, dict):
         raise ValueError("listener service rollback state is invalid")

@@ -11,6 +11,14 @@ from tests.test_helper_generated_dns_handoff import load_helper_module
 
 def _network_file(tmp_path: Path, *, ipv4_method: str = "dhcp", ipv6_enabled: bool = True,
                   ipv6_cidr: str = "") -> Path:
+    """Write candidate Network settings and return their path.
+
+    Args:
+        tmp_path: Pytest fixture providing an isolated temporary filesystem root.
+        ipv4_method: IPv4 configuration mode written to the candidate Network file.
+        ipv6_enabled: Whether IPv6 is enabled in the candidate Network configuration.
+        ipv6_cidr: Static IPv6 CIDR written to the candidate Network configuration.
+    """
     path = tmp_path / "candidate.conf"
     path.write_text(
         "[physical_interfaces]\n"
@@ -92,6 +100,12 @@ def test_public_binding_projection_is_noop_without_bindings():
     ],
 )
 def test_public_binding_projection_rejects_untrusted_observation(observation, error):
+    """Verify public binding projection rejects untrusted address observations.
+
+    Args:
+        observation: Observed network or service state used to prove address ownership.
+        error: Expected validation error for the supplied observation or binding.
+    """
     helper = load_helper_module()
     with pytest.raises(ValueError, match=error):
         helper._project_management_handoff_public_bindings(
@@ -192,6 +206,14 @@ def test_public_binding_projection_requires_old_listener_to_be_present():
     ],
 )
 def test_public_binding_validator_requires_dynamic_candidate_family(tmp_path, network_kwargs, binding, error):
+    """Verify public binding validation requires a dynamic address for each candidate family.
+
+    Args:
+        tmp_path: Pytest fixture providing an isolated temporary filesystem root.
+        network_kwargs: Network settings used to build the candidate configuration.
+        binding: Public listener binding to validate against candidate Network intent.
+        error: Expected validation error for the supplied observation or binding.
+    """
     helper = load_helper_module()
     network = _network_file(tmp_path, **network_kwargs)
     with pytest.raises(ValueError, match=error):
@@ -199,6 +221,11 @@ def test_public_binding_validator_requires_dynamic_candidate_family(tmp_path, ne
 
 
 def test_public_binding_validator_accepts_ipv4_dhcp_and_ipv6_slaac(tmp_path):
+    """Verify public binding validation accepts DHCPv4 and SLAAC IPv6 candidates.
+
+    Args:
+        tmp_path: Pytest fixture providing an isolated temporary filesystem root.
+    """
     helper = load_helper_module()
     network = _network_file(tmp_path)
     bindings = [

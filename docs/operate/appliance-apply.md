@@ -35,8 +35,7 @@ You need:
 - validation errors resolved for every unit you intend to submit; and
 - no other Appliance Apply task pending or running.
 
-If a change can interrupt management access, use the local appliance console or VMware console as a recovery path
-before submitting it.
+Before submitting a change that can interrupt management access, prepare the local appliance or VMware console.
 
 ## Understand the workflow
 
@@ -82,11 +81,9 @@ also validate listener conflicts. See [Traffic Publishing](traffic-publishing.md
 
 Valid changed units are selected by default; invalid units are not. Unselected units remain pending after submission.
 
-When DHCP or SLAAC changes a service address without a saved Network edit, the review also offers **Network** with
-**DNS/DHCP**. Select both to verify the effective listeners before publishing the updated generated DNS records.
-Pending Certificate Authority, Firewall, Appliance Settings, and Public Services changes required by this protected
-handoff are selected and locked while Network is selected. Inspect their differences before proceeding; clear
-Network to leave those changes pending. Submission rejects omitted pending dependencies.
+When DHCP or SLAAC changes a service address, select **Network** and **DNS/DHCP** to verify listeners before publishing
+generated DNS. Required pending Certificate Authority, Firewall, Appliance Settings, and Public Services changes are
+selected and locked with Network. Inspect diffs; clear Network to defer them. Omitted dependencies block submission.
 
 !!! warning
     Review related units together when a feature crosses service boundaries; partial application can leave behavior unavailable.
@@ -179,8 +176,7 @@ claiming a rollback. A failed task whose helper acknowledgement or rollback is n
 until startup or immediate exception recovery reconciles that state, even when an older task payload lacks the newer
 pending marker. Review the task before resubmitting.
 
-If a selected unit changed after submission but before execution, Atlaso fails closed and asks for a new review. This
-prevents a queued task from applying state that the administrator did not inspect.
+If a selected unit changes before execution, Atlaso rejects the task and asks for a new review.
 
 ## Safety boundaries
 
