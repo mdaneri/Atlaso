@@ -1715,6 +1715,9 @@ def test_console_completed_snapshot_clears_disabled_lingering_ipv6(client, monke
         assert db.get(PhysicalInterface, interface_id).host_ipv6_cidr is None
         assert "2001:db8::172" not in management_ui_addresses(db)
         assert "2001:db8::173" not in management_ui_addresses(db)
+        # A stale row from a pre-upgrade inventory sync is also excluded at projection.
+        db.get(PhysicalInterface, interface_id).host_ipv6_cidr = "2001:db8::172/64"
+        assert "2001:db8::172" not in management_ui_addresses(db)
 
 
 def test_console_management_waits_for_both_dynamic_families(client, monkeypatch):
@@ -3069,7 +3072,7 @@ def test_console_recovery_cli_dispatches_completed_task_id(monkeypatch):
 
 @pytest.mark.parametrize("ready", [True, False])
 @pytest.mark.parametrize("artifacts_complete", [True, False])
-@pytest.mark.parametrize("pending", ["service", "certificate", "root", "root_key", "settings", "missing_settings", "missing_paths"])
+@pytest.mark.parametrize("pending", ["service", "certificate", "root", "root_key", "settings", "missing_settings", "missing_paths", "profile_policy", "subject_policy", "legacy_policy"])
 @pytest.mark.parametrize("apply_result", [0, 1])
 def test_completed_recovery_publishes_only_management_and_records_exact_baseline(client, monkeypatch, tmp_path, pending, apply_result, artifacts_complete, ready):
     """Keep unrelated intent pending and acknowledge the management leaf only after success.
@@ -3118,7 +3121,7 @@ def test_completed_recovery_publishes_only_management_and_records_exact_baseline
         ldap.hostname = "ldap.applied.example.test"
         assert ensure_ca_state(db) == []
         certificates = db.scalars(select(CaCertificate).order_by(CaCertificate.common_name)).all()
-        public = render_ca_apply_payload(ca, certificates, include_private_keys=False)
+        public = render_ca_apply_payload(ca, certificates, include_private_keys=False, profiles=db.scalars(select(CaProfile)).all())
         summary = ["service enabled", f"{len(db.scalars(select(CaProfile)).all())} profiles", f"{len(certificates)} certificate requests"]
         bootstrap.record_ca_publication_baseline(db, public, summary, management_only=False)
         db.commit()
@@ -3144,6 +3147,16 @@ def test_completed_recovery_publishes_only_management_and_records_exact_baseline
             ldap.hostname = "ldap.pending.example.test"
         elif pending == "certificate":
             ldap_leaf.common_name = "certificate.pending.example.test"
+        elif pending == "profile_policy":
+            db.scalar(select(CaProfile).where(CaProfile.name == "VCF service TLS")).validity_days = 7
+        elif pending == "subject_policy":
+            ca.organization = "Pending organization"
+        elif pending == "legacy_policy":
+            legacy = json.loads(before["config_preview"])
+            del legacy["issuance_policy"]
+            baselines["ca"]["config_preview"] = json.dumps(legacy)
+            save_appliance_apply_baselines(db, baselines)
+            before = load_appliance_apply_baselines(db)["ca"]
         elif pending == "root":
             ca.storage_path = "/etc/atlaso/ca-pending"
         elif pending == "settings":
@@ -3239,7 +3252,7 @@ def test_completed_recovery_publishes_only_management_and_records_exact_baseline
     if "staging" in ownership:
         assert not ownership["staging"].exists()
         assert not ownership["staging"].parent.exists()
-    if pending in {"root", "root_key", "missing_settings", "missing_paths"}:
+    if pending in {"root", "root_key", "missing_settings", "missing_paths", "profile_policy", "subject_policy", "legacy_policy"}:
         assert result == 2 and captured == [] and not stage.exists()
         with SessionLocal() as db:
             assert load_appliance_apply_baselines(db)["ca"] == before
@@ -3307,7 +3320,7 @@ def test_completed_recovery_publishes_only_management_and_records_exact_baseline
         else:
             applied = json.loads(after["config_preview"])
             assert next(row for row in applied["certificates"] if row["managed_owner"] == "ldap:ldaps")["common_name"] == old_leaf["common_name"]
-            current = render_ca_apply_payload(db.scalar(select(CaSettings)), db.scalars(select(CaCertificate).order_by(CaCertificate.common_name)).all(), include_private_keys=False)
+            current = render_ca_apply_payload(db.scalar(select(CaSettings)), db.scalars(select(CaCertificate).order_by(CaCertificate.common_name)).all(), include_private_keys=False, profiles=db.scalars(select(CaProfile)).all())
             current_unit = make_appliance_apply_unit(unit_id="ca", label="Certificate Authority", page_url="/certificate-authority",
                                                     context={}, summary=summary, validation_errors=[], config_path=str(stage),
                                                     config_preview=current, baseline=after)

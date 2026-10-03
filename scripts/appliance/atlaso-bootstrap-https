@@ -615,9 +615,10 @@ def recovery_root_matches_baseline(db) -> bool:
         settings = db.scalar(select(CaSettings))
         if settings is None or validate_ca_private_key_material(settings, []):
             return False
-        current = json.loads(redact_config_preview(render_ca_apply_payload(settings, [], include_private_keys=False)))
+        current = json.loads(redact_config_preview(render_ca_apply_payload(settings, [], include_private_keys=False, profiles=db.scalars(select(CaProfile)).all())))
         ignored = {"crl_path", "crl_pem", "expires_at"}
         return bool(current["enabled"] and previous["enabled"] and
+                    current["issuance_policy"] == previous["issuance_policy"] and
                     {key: value for key, value in current["root"].items() if key not in ignored} ==
                     {key: value for key, value in previous["root"].items() if key not in ignored})
     except (KeyError, TypeError, ValueError):
@@ -710,7 +711,7 @@ def acknowledge_console_publication(network_job_id: str, receipt_sha256: str) ->
                 raise ValueError("Management paths changed before publication acknowledgement")
             settings = db.scalar(select(CaSettings))
             certificates = db.scalars(select(CaCertificate).where(CaCertificate.managed_owner == "appliance:https")).all()
-            current = render_ca_apply_payload(settings, certificates, include_private_keys=False)
+            current = render_ca_apply_payload(settings, certificates, include_private_keys=False, profiles=db.scalars(select(CaProfile)).all())
             if current != receipt["public_payload"]:
                 raise ValueError("Published management certificate changed before acknowledgement")
             current_identity = path.lstat()
@@ -783,8 +784,8 @@ def refresh_completed_management_certificate(network_job_id: str) -> int:
             return 2
         ca_settings = db.execute(select(CaSettings)).scalar_one()
         certificates = db.scalars(select(CaCertificate).where(CaCertificate.managed_owner == "appliance:https")).all()
-        public_payload = render_ca_apply_payload(ca_settings, certificates, include_private_keys=False)
-        private_payload = json.loads(render_ca_apply_payload(ca_settings, certificates, include_private_keys=True))
+        public_payload = render_ca_apply_payload(ca_settings, certificates, include_private_keys=False, profiles=db.scalars(select(CaProfile)).all())
+        private_payload = json.loads(render_ca_apply_payload(ca_settings, certificates, include_private_keys=True, profiles=db.scalars(select(CaProfile)).all()))
         # Recovery does not publish revocations or remove the existing CRL.
         private_payload["root"]["crl_path"] = ""
         private_payload["root"]["crl_pem"] = ""
@@ -917,13 +918,13 @@ def main(network_job_id: str | None = None) -> int:
         if network_job_id is not None:
             certificate_query = certificate_query.where(CaCertificate.managed_owner == "appliance:https")
         certificates = db.scalars(certificate_query).all()
-        applied_public_payload = render_ca_apply_payload(ca_settings, certificates, include_private_keys=False)
+        applied_public_payload = render_ca_apply_payload(ca_settings, certificates, include_private_keys=False, profiles=db.scalars(select(CaProfile)).all())
         applied_summary = [
             "service enabled" if ca_settings.enabled else "service disabled",
             f"{len(db.scalars(select(CaProfile)).all())} profiles",
             f"{len(db.scalars(select(CaCertificate)).all())} certificate requests",
         ]
-        private_payload = json.loads(render_ca_apply_payload(ca_settings, certificates, include_private_keys=True))
+        private_payload = json.loads(render_ca_apply_payload(ca_settings, certificates, include_private_keys=True, profiles=db.scalars(select(CaProfile)).all()))
         if network_job_id is not None:
             private_payload["root"]["crl_path"] = ""
             private_payload["root"]["crl_pem"] = ""

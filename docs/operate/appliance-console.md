@@ -220,6 +220,11 @@ nonstandard ports. Ordinary CA Apply shares the publication writer lock and reco
 listener reloads it reacquires admission and refuses a baseline commit if recovery or a desired edit superseded that
 payload. Transient recovery loads the appliance environment and state working directory before acknowledgement,
 so it uses the appliance database. First-boot publication records its exact captured CA baseline.
+Recovery also requires the applied CA issuance policy: subject and digest settings and every profile's
+key, validity, and usage constraints must still match the captured CA snapshot. Pending policy edits stop
+recovery before issuance. Older snapshots without this policy evidence require an explicit CA Apply first;
+recovery never infers or rewrites their provenance. Disabled IPv6 is cleared during inventory reconciliation
+and excluded from management certificate addresses even when a stale observation remains.
 
 Before Appliance Settings is submitted, the console rechecks the completed Network management paths under the shared
 network-object writer lock held through Settings capture. An address edit made during HTTPS recovery stops submission

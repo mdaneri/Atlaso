@@ -1015,7 +1015,8 @@ def reconcile_host_physical_interfaces(
             host.host_dhcp_ip_cidr if normalize_ipv4_method(interface.ipv4_method) == "dhcp" else host.host_ip_cidr
         )
         interface.host_ipv6_cidr = (
-            host.host_dynamic_ipv6_cidr if interface.ipv6_enabled and not interface.ipv6_cidr else host.host_ipv6_cidr
+            (host.host_dynamic_ipv6_cidr if not interface.ipv6_cidr else host.host_ipv6_cidr)
+            if interface.ipv6_enabled else None
         )
         interface.host_mtu = host.host_mtu
         interface.host_admin_state = host.host_admin_state

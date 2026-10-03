@@ -2471,7 +2471,7 @@ def management_ui_addresses(db: Session) -> list[str]:
         )
         if interface.oper_state == "missing" or not enabled:
             continue
-        for cidr in (interface.ip_cidr or interface.host_ip_cidr, interface.ipv6_cidr or interface.host_ipv6_cidr):
+        for cidr in (interface.ip_cidr or interface.host_ip_cidr, (interface.ipv6_cidr or interface.host_ipv6_cidr) if interface.ipv6_enabled else None):
             address = interface_address(cidr)
             if address and address not in addresses:
                 addresses.append(address)
@@ -4669,7 +4669,7 @@ def ca_context(db: Session, *, reconcile: bool = True) -> dict:
         .all()
     )
     config_preview = render_ca_config(settings=settings, profiles=profiles, certificates=certificates)
-    apply_payload = render_ca_apply_payload(settings, certificates, include_private_keys=False)
+    apply_payload = render_ca_apply_payload(settings, certificates, include_private_keys=False, profiles=profiles)
     validation_errors = [*state_errors, *validate_ca_state(settings=settings, profiles=profiles, certificates=certificates)]
     selected_interfaces = split_interfaces(settings.listen_interface)
     invalid_interfaces = [interface for interface in selected_interfaces if interface not in available_names]
@@ -14568,7 +14568,7 @@ def guard_ca_apply_publication(db: Session, unit: dict[str, Any]) -> None:
     db.expire_all()
     settings = db.scalar(select(CaSettings))
     certificates = db.scalars(select(CaCertificate).order_by(CaCertificate.common_name)).all()
-    current = render_ca_apply_payload(settings, certificates, include_private_keys=False) if settings else None
+    current = render_ca_apply_payload(settings, certificates, include_private_keys=False, profiles=db.scalars(select(CaProfile)).all()) if settings else None
     if current is None or ca_apply_comparison_preview(redact_config_preview(current)) != ca_apply_comparison_preview(unit["config_preview"]):
         raise ApplianceApplyJobError("CA publication changed; preserve its pending baseline and submit again.")
 
@@ -14744,7 +14744,7 @@ def execute_appliance_apply_unit(
             guard_ca_apply_publication(db, unit)
         results = run_secret_config_steps(
             CA_STAGED_CONFIG_PATH,
-            render_ca_apply_payload(context["ca_settings"], context["ca_certificates"], include_private_keys=True),
+            render_ca_apply_payload(context["ca_settings"], context["ca_certificates"], include_private_keys=True, profiles=context["ca_profiles"]),
             lambda config_path: [
                 lambda: adapter.validate_ca_config(config_path),
                 lambda: adapter.apply_ca_config(config_path),
@@ -15038,7 +15038,7 @@ def execute_management_handoff(
                 render_ca_apply_payload(
                     ca_context_value["ca_settings"],
                     ca_context_value["ca_certificates"],
-                    include_private_keys=True,
+                    include_private_keys=True, profiles=ca_context_value["ca_profiles"],
                 ),
             )
             manifest = {

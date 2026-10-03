@@ -20024,7 +20024,7 @@ def test_ca_guard_accepts_the_real_redacted_public_snapshot(client):
     with SessionLocal() as db:
         settings = db.scalar(select(CaSettings))
         certificates = db.scalars(select(CaCertificate).order_by(CaCertificate.common_name)).all()
-        preview = ui.redact_config_preview(ui.render_ca_apply_payload(settings, certificates, include_private_keys=False))
+        preview = ui.redact_config_preview(ui.render_ca_apply_payload(settings, certificates, include_private_keys=False, profiles=db.scalars(select(ui.CaProfile)).all()))
         unit = {"id": "ca", "config_preview": preview}
         ui.guard_ca_apply_publication(db, unit)
         assert db.in_transaction()

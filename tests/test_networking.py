@@ -1273,27 +1273,29 @@ def test_native_automatic_ipv6_observation_skips_lingering_static_and_expired_ad
     assert observed.host_dynamic_ipv6_cidr == "2001:db8::3/64"
 
 
+@pytest.mark.parametrize("enabled", [True, False])
 @pytest.mark.parametrize("desired,candidate,expected", [
     (None, "2001:db8::3/64", "2001:db8::3/64"),
     (None, None, None),
     ("2001:db8::1/64", "2001:db8::3/64", "2001:db8::1/64"),
 ])
-def test_inventory_reconciliation_preserves_native_automatic_ipv6_source(desired, candidate, expected):
+def test_inventory_reconciliation_preserves_native_automatic_ipv6_source(desired, candidate, expected, enabled):
     """Startup cannot replace an automatic observation with the old static address.
 
     Args:
+        enabled: Whether IPv6 observation is permitted.
         desired: Static IPv6 intent, or automatic acquisition.
         candidate: Usable native dynamic IPv6 candidate, absent while unacquired.
         expected: Address permitted for Settings and certificate consumers.
     """
     interface = PhysicalInterface(name="eth0", mac_address="00:15:5d:aa:bb:01", ipv4_method="static",
-                                  ipv6_enabled=True, ipv6_cidr=desired, host_ipv6_cidr="2001:db8::1/64",
+                                  ipv6_enabled=enabled, ipv6_cidr=desired, host_ipv6_cidr="2001:db8::1/64",
                                   role="management", mode="access", admin_state="up", desired_state_source="console")
     host = HostPhysicalInterface(name=interface.name, mac_address=interface.mac_address, driver=None, speed=None,
                                  host_ip_cidr=None, host_mtu=1500, host_ipv6_cidr="2001:db8::1/64",
                                  host_dynamic_ipv6_cidr=candidate,
                                  host_admin_state="up", oper_state="up")
     reconcile_host_physical_interfaces([interface], [host])
-    assert interface.host_ipv6_cidr == expected
-    assert interface.ipv6_cidr == desired and interface.ipv6_enabled is True
+    assert interface.host_ipv6_cidr == (expected if enabled else None)
+    assert interface.ipv6_cidr == desired and interface.ipv6_enabled is enabled
     assert interface.desired_state_source == "console"
