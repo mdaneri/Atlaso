@@ -771,6 +771,53 @@ def acknowledge_console_publication(network_job_id: str, receipt_sha256: str) ->
         return 2
 
 
+def completed_network_binding_is_current(db, network_job_id: str) -> bool:
+    """Validate completed management paths and dynamic observations under writer admission.
+
+    Args:
+        db: Admitted recovery transaction.
+        network_job_id: Exact completed console Network task.
+    """
+    job = db.get(Job, network_job_id)
+    try:
+        payload = json.loads(job.result or "{}") if job is not None else {}
+        units = [unit for unit in payload.get("captured_units", []) if unit.get("unit_id") == "network"]
+        preview = str(units[0].get("config_preview") or "") if len(units) == 1 else ""
+    except (TypeError, ValueError, AttributeError):
+        return False
+    current = render_network_config(
+        interfaces=list(db.scalars(select(PhysicalInterface))), vlans=list(db.scalars(select(VlanInterface))),
+    )
+    return bool(job is not None and job.status == JobStatus.SUCCEEDED.value
+                and network_management_paths(preview)
+                and network_management_paths(preview) == network_management_paths(current)
+                and recovery_dynamic_addresses_available(db, preview))
+
+
+def verify_console_http_recovery(network_job_id: str, http_port: int) -> int:
+    """Recheck HTTP-only recovery after outer readiness without certificate mutation.
+
+    Args:
+        network_job_id: Exact completed console Network task.
+        http_port: Applied HTTP listener used by the stable readiness samples.
+    """
+    if not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", network_job_id) or not 1 <= http_port <= 65535:
+        return 2
+    try:
+        with SessionLocal() as db:
+            acquire_network_objects_write_lock(db)
+            baseline = load_appliance_apply_baselines(db).get("appliance_settings")
+            applied = json.loads(str((baseline or {}).get("config_preview") or "{}"))
+            if (not isinstance(applied, dict) or applied.get("management_https_enabled") is not False
+                    or isinstance(applied.get("management_public_http_port", 80), bool)
+                    or applied.get("management_public_http_port", 80) != http_port
+                    or not completed_network_binding_is_current(db, network_job_id)):
+                return 2
+    except (OSError, ValueError, TypeError, SQLAlchemyError):
+        return 2
+    return 0
+
+
 def refresh_completed_management_certificate(network_job_id: str) -> int:
     """Publish only the management leaf and record it under the admitted writer lock.
 
@@ -787,20 +834,7 @@ def refresh_completed_management_certificate(network_job_id: str) -> int:
         if not isinstance(applied_settings, dict):
             applied_settings = {}
         if applied_settings.get("management_https_enabled") is False:
-            job = db.get(Job, network_job_id)
-            try:
-                payload = json.loads(job.result or "{}") if job is not None else {}
-                units = [unit for unit in payload.get("captured_units", []) if unit.get("unit_id") == "network"]
-                preview = str(units[0].get("config_preview") or "") if len(units) == 1 else ""
-            except (TypeError, ValueError, AttributeError):
-                preview = ""
-            current = render_network_config(
-                interfaces=list(db.scalars(select(PhysicalInterface))), vlans=list(db.scalars(select(VlanInterface))),
-            )
-            if (job is None or job.status != JobStatus.SUCCEEDED.value
-                    or not network_management_paths(preview)
-                    or network_management_paths(preview) != network_management_paths(current)
-                    or not recovery_dynamic_addresses_available(db, preview)):
+            if not completed_network_binding_is_current(db, network_job_id):
                 print("Completed Network binding is unavailable or changed; HTTP management recovery was not accepted.")
                 return 2
             nginx = shutil.which("nginx")
@@ -1065,6 +1099,12 @@ if __name__ == "__main__":
         raise SystemExit(0 if verified else 2)
     if len(sys.argv) == 4 and sys.argv[1] == "--acknowledge-console-publication":
         raise SystemExit(acknowledge_console_publication(sys.argv[2], sys.argv[3]))
+    if len(sys.argv) == 4 and sys.argv[1] == "--verify-console-http":
+        try:
+            result = verify_console_http_recovery(sys.argv[2], int(sys.argv[3]))
+        except ValueError:
+            result = 2
+        raise SystemExit(result)
     if sys.argv[1:]:
         raise SystemExit(2)
     raise SystemExit(main())

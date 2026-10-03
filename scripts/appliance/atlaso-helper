@@ -26444,6 +26444,12 @@ def _recover_console_management_plane_bound(timeout_seconds: int = 60, *, networ
             _console_recovery_command("acknowledging ready management certificate publication",
                                       ["/opt/atlaso/.venv/bin/python", "/opt/atlaso/bin/atlaso-bootstrap-https",
                                        "--acknowledge-console-publication", network_job_id, publication[1]])
+        elif network_job_id is not None:
+            http_url = next(url for label, url, _insecure, _expected in readiness_checks if label == "nginx HTTP readiness")
+            http_port = urlparse(http_url).port or 80
+            _console_recovery_command("rechecking ready HTTP management Network binding",
+                                      ["/opt/atlaso/.venv/bin/python", "/opt/atlaso/bin/atlaso-bootstrap-https",
+                                       "--verify-console-http", network_job_id, str(http_port)])
     except (OSError, UnicodeError, ValueError, subprocess.TimeoutExpired) as exc:
         print(f"Management plane recovery failed: {exc}", file=sys.stderr)
         return 1

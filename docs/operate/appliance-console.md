@@ -160,7 +160,8 @@ Atlaso validates nginx
 before any reload, and ensures nginx and Atlaso are enabled and running. After the second task applies Appliance
 Settings, the console requires five stable local checks: application `/openapi.json` on port 8000 plus the applied
 nginx management mode. Bound HTTP-only recovery also rechecks the completed Network paths and required dynamic
-observations under writer admission before native site validation. Settings publication records its executed baseline
+observations under writer admission before native site validation. After stable HTTP readiness, it repeats admitted
+Network and applied HTTP-mode/port checks before reporting success. Settings publication records its executed baseline
 with the confirmed restart transition before releasing admission. CA subject/settings and profile creation, edit and
 deletion share recovery admission, so issuance policy cannot change during an admitted recovery. Post-handoff native
 discovery has a five-second

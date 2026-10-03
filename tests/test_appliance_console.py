@@ -2377,13 +2377,19 @@ def test_console_management_plane_recovery_retries_bootstrap_and_verifies_readin
             assert clock[0] < helper.CONSOLE_RECOVERY_OPERATION_SECONDS < helper.CONSOLE_RECOVERY_RUNTIME_SECONDS
 
 
-def test_console_management_plane_recovery_verifies_http_only_mode(monkeypatch, tmp_path, capsys):
+@pytest.mark.parametrize("network_job_id", [None, "job_http_ready"])
+@pytest.mark.parametrize("final_result", [0, 2])
+@pytest.mark.parametrize("http_port", [80, 8080])
+def test_console_management_plane_recovery_verifies_http_only_mode(monkeypatch, tmp_path, capsys, network_job_id, final_result, http_port):
     """Verify that recovery accepts the applied HTTP-only management contract.
 
     Args:
         monkeypatch: Pytest fixture used to replace dependencies for the test.
         tmp_path: Temporary directory provided by pytest for isolated filesystem state.
         capsys: Pytest fixture used to capture standard output and standard error.
+        network_job_id: Completed task binding or ordinary recovery.
+        final_result: Post-readiness admitted binding accepts or refuses later drift.
+        http_port: Preserved applied HTTP listener port.
     """
     helper = load_helper_module()
     monkeypatch.setattr(helper, "CONSOLE_BOOTSTRAP_BINDING_DIRECTORY", tmp_path / "binding")
@@ -2399,7 +2405,7 @@ def test_console_management_plane_recovery_verifies_http_only_mode(monkeypatch, 
     include.write_text(helper.FIRST_BOOT_HTTPS_INCLUDE_TEXT, encoding="utf-8")
     management_config = tmp_path / "management.conf"
     management_config.write_text(
-        "listen 80 default_server;\nproxy_pass http://127.0.0.1:8000;\n",
+        f"listen {http_port} default_server;\nproxy_pass http://127.0.0.1:8000;\n",
         encoding="utf-8",
     )
     monkeypatch.setattr(helper, "FIRST_BOOT_HTTPS_MARKER_PATH", marker)
@@ -2420,19 +2426,30 @@ def test_console_management_plane_recovery_verifies_http_only_mode(monkeypatch, 
         Args:
             command: Command and arguments to execute.
         """
+        if "--verify-console-http" in command:
+            assert len([row for row in commands if row[0] == "/usr/bin/curl"]) == 10
+            assert command[-2:] == [network_job_id, str(http_port)]
+            return subprocess.CompletedProcess(command, final_result, "", "")
         commands.append(command)
+        if command[:2] == ["systemctl", "show"]:
+            return subprocess.CompletedProcess(command, 0, "ActiveState=active\nSubState=exited\nJob=0\n", "")
         if command and command[0] == "/usr/bin/curl":
             return subprocess.CompletedProcess(command, 0, "200", "")
         return subprocess.CompletedProcess(command, 0, "active\n", "")
 
     monkeypatch.setattr(helper, "_run", fake_run)
 
-    assert helper._handle_console("recover-management-plane", []) == 0
+    outcome = helper._recover_console_management_plane(network_job_id=network_job_id)
+    assert outcome == (1 if network_job_id and final_result else 0)
     output = capsys.readouterr().out
+    if outcome:
+        assert '"management_plane": "ready"' not in output
+        return
     assert '"management_https_enabled": false' in output
     assert '"nginx HTTP readiness": "200"' in output
     curl_urls = [command[-1] for command in commands if command and command[0] == "/usr/bin/curl"]
-    assert "http://127.0.0.1/openapi.json" in curl_urls
+    origin = "http://127.0.0.1" + (f":{http_port}" if http_port != 80 else "")
+    assert origin + "/openapi.json" in curl_urls
     assert all(not url.startswith("https://") for url in curl_urls)
 
 
@@ -3728,3 +3745,54 @@ def test_bound_issuance_refuses_cleared_dynamic_observation(client, monkeypatch,
     with SessionLocal() as db:
         errors = bootstrap.ensure_recovery_ca_state(db, "job_missing_dynamic", commit=False)
         assert errors and "dynamic management observation is unavailable" in errors[0]
+
+
+@pytest.mark.parametrize("edit", ["unchanged", "physical", "vlan", "dynamic", "mode", "port"])
+def test_http_final_recheck_refuses_drift_after_bootstrap(client, monkeypatch, edit):
+    """HTTP readiness cannot certify Network or applied-mode drift after initial bootstrap validation.
+
+    Args:
+        client: Initialized appliance database.
+        monkeypatch: Replace nginx validation and forbid CA mutation.
+        edit: Change committed during the outer readiness samples.
+    """
+    from sqlalchemy import select
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.ui import save_appliance_apply_baselines
+
+    loader = importlib.machinery.SourceFileLoader("atlaso_http_final_recheck", "scripts/appliance/atlaso-bootstrap-https")
+    spec = importlib.util.spec_from_loader(loader.name, loader)
+    bootstrap = importlib.util.module_from_spec(spec)
+    loader.exec_module(bootstrap)
+    applied = {"management_https_enabled": False, "management_public_http_port": 8080}
+    with SessionLocal() as db:
+        target = appliance_console._management_interface(db)
+        target.ipv4_method = "dhcp"
+        target.ip_cidr = None
+        target.host_ip_cidr = "192.0.2.63/24"
+        target.ipv6_enabled = False
+        db.flush()
+        preview = bootstrap.render_network_config(interfaces=list(db.scalars(select(appliance_console.PhysicalInterface))),
+                                                 vlans=list(db.scalars(select(appliance_console.VlanInterface))))
+        db.add(appliance_console.Job(id="job_http_final", type="appliance-apply", status="succeeded", created_by="console:root",
+                                    result=json.dumps({"captured_units": [{"unit_id": "network", "config_preview": preview}]})))
+        save_appliance_apply_baselines(db, {"appliance_settings": {"config_preview": json.dumps(applied)}})
+        db.commit()
+    monkeypatch.setattr(bootstrap.shutil, "which", lambda name: "/usr/bin/" + name)
+    monkeypatch.setattr(bootstrap, "run", lambda cmd: subprocess.CompletedProcess(cmd, 0, "", ""))
+    assert bootstrap.main("job_http_final") == 0
+    with SessionLocal() as db:
+        target = appliance_console._management_interface(db)
+        if edit == "physical":
+            target.admin_state = "down"
+        elif edit == "vlan":
+            db.add(appliance_console.VlanInterface(name=f"{target.name}.534", parent_interface=target.name, vlan_id=534,
+                                                  ip_cidr="198.51.100.1/24", enabled=True, access_management_ui_enabled=True))
+        elif edit == "dynamic":
+            target.host_ip_cidr = None
+        elif edit in {"mode", "port"}:
+            applied["management_https_enabled" if edit == "mode" else "management_public_http_port"] = True if edit == "mode" else 80
+            save_appliance_apply_baselines(db, {"appliance_settings": {"config_preview": json.dumps(applied)}})
+        db.commit()
+    assert bootstrap.verify_console_http_recovery("job_http_final", 8080) == (0 if edit == "unchanged" else 2)
