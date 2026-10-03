@@ -1422,7 +1422,9 @@ def configure_management(
     network_job_id = _submit_console_apply({"network", "firewall"})
     _refresh_management_addresses(interface_id, network_job_id=network_job_id)
     _recover_management_plane("Network and Firewall were applied", network_job_id=network_job_id)
+    _refresh_management_addresses(interface_id, network_job_id=network_job_id)
     settings_job_id = _submit_console_apply({"appliance_settings"}, network_job_id=network_job_id)
+    _refresh_management_addresses(interface_id, network_job_id=network_job_id)
     _recover_management_plane("Appliance Settings were applied", network_job_id=network_job_id)
     with SessionLocal() as db:
         record_audit(

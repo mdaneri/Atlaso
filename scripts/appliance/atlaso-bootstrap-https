@@ -15,6 +15,7 @@ import subprocess
 import sys
 import tempfile
 from datetime import datetime, timezone
+from ipaddress import ip_interface
 from pathlib import Path
 
 from cryptography import x509
@@ -563,6 +564,35 @@ def fix_state_permissions() -> None:
             path.chmod(0o750 if path.is_dir() else 0o600)
 
 
+def recovery_dynamic_addresses_available(db, preview: str) -> bool:
+    """Require every applied dynamic management family before issuance or acknowledgement.
+
+    Args:
+        db: Admitted writer transaction containing native observations.
+        preview: Completed Network snapshot defining all management listeners.
+    """
+    for path in network_management_paths(preview):
+        if path["kind"] != "physical":
+            continue
+        interface = db.scalar(select(PhysicalInterface).where(PhysicalInterface.name == path["name"]))
+        if interface is None:
+            return False
+        required = []
+        if path.get("ipv4_method") == "dhcp":
+            required.append((4, interface.host_ip_cidr))
+        if path.get("ipv6_enabled", "false").lower() == "true" and not path.get("ipv6_cidr"):
+            required.append((6, interface.host_ipv6_cidr))
+        for family, cidr in required:
+            try:
+                address = ip_interface(cidr or "")
+            except ValueError:
+                return False
+            if (address.version != family or address.ip.is_unspecified or address.ip.is_loopback
+                    or address.ip.is_link_local or address.ip.is_multicast):
+                return False
+    return True
+
+
 def ensure_recovery_ca_state(
     db, network_job_id: str | None, *, commit: bool = True, management_snapshot: dict | None = None,
 ) -> list[str]:
@@ -592,6 +622,8 @@ def ensure_recovery_ca_state(
         )
         if not network_management_paths(preview) or network_management_paths(preview) != network_management_paths(current):
             return ["Management paths changed after Network apply; pending edits prevent certificate recovery."]
+    if network_job_id is not None and not recovery_dynamic_addresses_available(db, preview):
+        return ["Applied dynamic management observation is unavailable; certificate recovery was not started."]
     projection = {"management_snapshot": management_snapshot} if management_snapshot is not None else {}
     errors = ensure_ca_state(
         db, commit=False, managed_owners={"appliance:https"} if network_job_id is not None else None, **projection,
@@ -711,6 +743,8 @@ def acknowledge_console_publication(network_job_id: str, receipt_sha256: str) ->
                 raise ValueError("Management paths changed before publication acknowledgement")
             settings = db.scalar(select(CaSettings))
             certificates = db.scalars(select(CaCertificate).where(CaCertificate.managed_owner == "appliance:https")).all()
+            if not recovery_dynamic_addresses_available(db, str(units[0].get("config_preview") or "")):
+                return 2
             current = render_ca_apply_payload(settings, certificates, include_private_keys=False, profiles=db.scalars(select(CaProfile)).all())
             if current != receipt["public_payload"]:
                 raise ValueError("Published management certificate changed before acknowledgement")

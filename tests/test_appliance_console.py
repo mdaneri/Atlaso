@@ -3077,7 +3077,7 @@ def test_console_recovery_cli_dispatches_completed_task_id(monkeypatch):
 
 @pytest.mark.parametrize("ready", [True, False])
 @pytest.mark.parametrize("artifacts_complete", [True, False])
-@pytest.mark.parametrize("pending", ["service", "certificate", "root", "root_key", "settings", "missing_settings", "missing_paths", "profile_policy", "subject_policy", "legacy_policy"])
+@pytest.mark.parametrize("pending", ["service", "certificate", "root", "root_key", "settings", "missing_settings", "missing_paths", "profile_policy", "subject_policy", "legacy_policy", "missing_dynamic_ack"])
 @pytest.mark.parametrize("apply_result", [0, 1])
 def test_completed_recovery_publishes_only_management_and_records_exact_baseline(client, monkeypatch, tmp_path, pending, apply_result, artifacts_complete, ready):
     """Keep unrelated intent pending and acknowledge the management leaf only after success.
@@ -3173,6 +3173,8 @@ def test_completed_recovery_publishes_only_management_and_records_exact_baseline
         target = appliance_console._management_interface(db)
         target.ipv4_method = "static"
         target.ip_cidr = "192.0.2.74/24"
+        if pending == "missing_dynamic_ack":
+            target.ipv4_method, target.ip_cidr, target.host_ip_cidr = "dhcp", None, "192.0.2.74/24"
         preview = render_network_config(interfaces=list(db.scalars(select(appliance_console.PhysicalInterface))),
                                         vlans=list(db.scalars(select(appliance_console.VlanInterface))))
         db.add(appliance_console.Job(id="job_scoped_ca", type="appliance-apply", status="succeeded", created_by="console:root",
@@ -3277,6 +3279,15 @@ def test_completed_recovery_publishes_only_management_and_records_exact_baseline
         # Equivalent JSON at a replaced receipt must not reuse the earlier served-leaf proof.
         receipt_path.write_bytes(receipt_path.read_bytes() + b"\n")
         assert bootstrap.acknowledge_console_publication("job_scoped_ca", verified_digest) == 2
+    if not apply_result and ready and pending == "missing_dynamic_ack":
+        with SessionLocal() as db:
+            appliance_console._management_interface(db).host_ip_cidr = None
+            db.commit()
+        digest = bootstrap.hashlib.sha256((publication_directory / "job_scoped_ca.publication.json").read_bytes()).hexdigest()
+        assert bootstrap.acknowledge_console_publication("job_scoped_ca", digest) == 2
+        with SessionLocal() as db:
+            assert load_appliance_apply_baselines(db)["ca"] == before
+        return
     if not apply_result and ready:
         digest = bootstrap.hashlib.sha256((publication_directory / "job_scoped_ca.publication.json").read_bytes()).hexdigest()
         monkeypatch.setattr(bootstrap.ssl, "get_server_certificate", lambda address, *, timeout:
@@ -3565,3 +3576,107 @@ def test_console_observes_all_applied_physical_management_listeners(client, monk
             assert listener.ip_cidr is None and listener.ipv6_cidr is None
         elif state == "late_edit":
             assert listener.ip_cidr == "192.168.167.177/24"
+
+
+@pytest.mark.parametrize("missing", [True, False])
+def test_console_reobserves_after_service_start_and_settings_apply(client, monkeypatch, missing):
+    """Each service start can clear inventory, so both later dependent stages reacquire it.
+
+    Args:
+        client: Initialized appliance database.
+        monkeypatch: Exercise real observation around simulated service startup and Apply.
+        missing: A missing successor lease must stop before Settings and second recovery.
+    """
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.services.networking import HostPhysicalInterface
+
+    with SessionLocal() as db:
+        target = appliance_console._management_interface(db)
+        identity, name, mac = target.id, target.name, target.mac_address
+    captures, probes = [], []
+    refresh = appliance_console._refresh_management_addresses
+
+    def observe(interface_id, **kwargs):
+        """Retain production observation with a bounded zero-wait test budget."""
+        return refresh(interface_id, timeout=0, **kwargs)
+
+    def discover(**kwargs):
+        """Acquire a different usable lease after each simulated service restart."""
+        suffix = 174 + len(probes)
+        probes.append(suffix)
+        unavailable = missing and len(probes) > 1
+        return [HostPhysicalInterface(name=name, mac_address=mac, driver=None, speed=None,
+            host_ip_cidr="192.168.167.170/24", host_dhcp_ip_cidr=None if unavailable else f"192.168.167.{suffix}/24",
+            host_ipv6_cidr="2001:db8::170/64", host_dynamic_ipv6_cidr=None if unavailable else f"2001:db8::{suffix}/64",
+            host_mtu=1500, host_admin_state="up", oper_state="up")]
+
+    def capture(stage, **kwargs):
+        """Model service startup clearing dynamic inventory after its initial publication."""
+        with SessionLocal() as db:
+            target = db.get(appliance_console.PhysicalInterface, identity)
+            captures.append((stage, target.host_ip_cidr, target.host_ipv6_cidr))
+            if stage != "Appliance Settings were applied":
+                target.host_ip_cidr = target.host_ipv6_cidr = None
+                db.commit()
+
+    def submit(units, **kwargs):
+        """Capture the real completed Network snapshot and simulated Settings restart."""
+        if units == {"appliance_settings"}:
+            capture("settings")
+            return "job_settings_started"
+        with SessionLocal() as db:
+            preview = appliance_console.render_network_config(
+                interfaces=list(db.query(appliance_console.PhysicalInterface)),
+                vlans=list(db.query(appliance_console.VlanInterface)))
+            db.add(appliance_console.Job(id="job_started", type="appliance-apply", status="succeeded",
+                created_by="console:root", result=json.dumps({"captured_units": [{"unit_id": "network", "config_preview": preview}]})))
+            db.commit()
+        return "job_started"
+
+    monkeypatch.setattr(appliance_console, "_refresh_management_addresses", observe)
+    monkeypatch.setattr(appliance_console, "discover_host_physical_interfaces", discover)
+    monkeypatch.setattr(appliance_console, "_submit_console_apply", submit)
+    monkeypatch.setattr(appliance_console, "_recover_management_plane", capture)
+    if missing:
+        with pytest.raises(ConsoleOperationError, match="fresh management address observation"):
+            appliance_console.configure_management("dhcp", "", "", "automatic", "", "", "192.0.2.53")
+        assert [entry[0] for entry in captures] == ["Network and Firewall were applied"]
+    else:
+        appliance_console.configure_management("dhcp", "", "", "automatic", "", "", "192.0.2.53")
+        assert captures == [
+            ("Network and Firewall were applied", "192.168.167.174/24", "2001:db8::174/64"),
+            ("settings", "192.168.167.175/24", "2001:db8::175/64"),
+            ("Appliance Settings were applied", "192.168.167.176/24", "2001:db8::176/64"),
+        ]
+
+
+@pytest.mark.parametrize("family", [4, 6])
+def test_bound_issuance_refuses_cleared_dynamic_observation(client, monkeypatch, family):
+    """Inventory clearing after console observation cannot issue an incomplete leaf.
+
+    Args:
+        client: Initialized appliance database.
+        monkeypatch: Detect any forbidden issuance after missing observation.
+        family: Requested dynamic address family cleared before writer admission.
+    """
+    from atlaso.app.database import SessionLocal
+
+    loader = importlib.machinery.SourceFileLoader("atlaso_missing_dynamic_bootstrap", "scripts/appliance/atlaso-bootstrap-https")
+    spec = importlib.util.spec_from_loader(loader.name, loader)
+    bootstrap = importlib.util.module_from_spec(spec)
+    loader.exec_module(bootstrap)
+    with SessionLocal() as db:
+        target = appliance_console._management_interface(db)
+        target.ipv4_method, target.ip_cidr = "dhcp", None
+        target.ipv6_enabled, target.ipv6_cidr = True, None
+        target.host_ip_cidr = None if family == 4 else "192.0.2.174/24"
+        target.host_ipv6_cidr = None if family == 6 else "2001:db8::174/64"
+        preview = appliance_console.render_network_config(
+            interfaces=list(db.query(appliance_console.PhysicalInterface)), vlans=list(db.query(appliance_console.VlanInterface)))
+        db.add(appliance_console.Job(id="job_missing_dynamic", type="appliance-apply", status="succeeded",
+            created_by="console:root", result=json.dumps({"captured_units": [{"unit_id": "network", "config_preview": preview}]})))
+        db.commit()
+    monkeypatch.setattr(bootstrap, "ensure_ca_state", lambda *args, **kwargs: pytest.fail("Missing dynamic observation must prevent issuance"))
+    with SessionLocal() as db:
+        errors = bootstrap.ensure_recovery_ca_state(db, "job_missing_dynamic", commit=False)
+        assert errors and "dynamic management observation is unavailable" in errors[0]

@@ -232,6 +232,9 @@ observes every applied physical management path together, proving each name/MAC 
 before publishing observations and starting certificate recovery. A missing listener or lease blocks recovery.
 Startup/UI inventory, console observation, and helper-confirmed lease refresh acquire the shared writer
 before native discovery. A delayed inventory reader cannot publish a pre-admission lease over a newer console observation.
+Because service startup can clear a temporarily missing lease, the console repeats complete observation before
+Settings capture and again before its second recovery. Scoped issuance and receipt acknowledgement refuse
+a missing requested dynamic family rather than issuing or accepting a leaf without that address.
 
 Before Appliance Settings is submitted, the console rechecks the completed Network management paths under the shared
 network-object writer lock held through Settings capture. An address edit made during HTTPS recovery stops submission
