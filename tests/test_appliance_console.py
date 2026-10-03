@@ -2905,7 +2905,7 @@ def test_bound_bootstrap_preserves_applied_front_door(client, monkeypatch, tmp_p
     monkeypatch.setattr(bootstrap, "record_ca_publication_baseline", lambda *args, **kwargs: None)
     monkeypatch.setattr(bootstrap, "ensure_recovery_ca_state", lambda db, job, **kwargs: calls.append(job) or [])
     monkeypatch.setattr(bootstrap, "render_ca_apply_payload", lambda *_args, **_kwargs: '{"root": {}, "certificates": []}')
-    monkeypatch.setattr(bootstrap, "apply_ca_files", lambda: 0)
+    monkeypatch.setattr(bootstrap, "apply_ca_files", lambda *args: 0)
     monkeypatch.setattr(bootstrap.shutil, "which", lambda name: "/usr/bin/" + name)
     monkeypatch.setattr(bootstrap, "run", lambda command: subprocess.CompletedProcess(command, 0, "", ""))
     for _ in range(2):
@@ -3122,17 +3122,27 @@ def test_completed_recovery_publishes_only_management_and_records_exact_baseline
     monkeypatch.setattr(bootstrap, "ensure_recovery_ca_state", admitted_issuance)
     monkeypatch.setattr(bootstrap, "CA_STAGED_CONFIG_PATH", str(stage))
 
-    def publish():
-        """Capture the actual private helper payload without exposing synthetic keys."""
+    def publish(owned_path):
+        """Interleave ordinary CA staging with the worker-owned publication payload.
+
+        Args:
+            owned_path: Private recovery staging artifact passed to the native helper.
+        """
         assert ownership["db"].get_transaction() is ownership["transaction"]
         assert ownership["transaction"].is_active
-        payload = json.loads(stage.read_text(encoding="utf-8"))
+        ownership["staging"] = owned_path
+        assert owned_path != stage
+        if bootstrap.os.name == "posix":
+            assert owned_path.parent.stat().st_mode & 0o077 == 0
+        # Ordinary CA Apply can replace and then remove its fixed path during recovery.
+        stage.write_text("ordinary CA Apply payload")
+        stage.unlink()
+        payload = json.loads(owned_path.read_text(encoding="utf-8"))
         leaf = payload["certificates"][0]
         assert "ssl_certificate " + leaf["cert_path"] + ";" in nginx_config.read_text()
         assert "ssl_certificate_key " + leaf["key_path"] + ";" in nginx_config.read_text()
         (tmp_path / "nginx-active-certificate.pem").write_text(leaf["certificate_pem"])
         captured.append(payload)
-        stage.unlink()
         return apply_result
 
     monkeypatch.setattr(bootstrap, "apply_ca_files", publish)
@@ -3155,6 +3165,9 @@ def test_completed_recovery_publishes_only_management_and_records_exact_baseline
     monkeypatch.setattr(bootstrap, "init_db", lambda: pytest.fail("Bound recovery must not reseed first boot"))
     monkeypatch.setattr(bootstrap, "write_nginx_management_config", lambda **kwargs: pytest.fail("Bound recovery must preserve applied nginx settings"))
     result = bootstrap.main("job_scoped_ca")
+    if "staging" in ownership:
+        assert not ownership["staging"].exists()
+        assert not ownership["staging"].parent.exists()
     if pending in {"root", "root_key", "missing_settings", "missing_paths"}:
         assert result == 2 and captured == [] and not stage.exists()
         with SessionLocal() as db:
@@ -3333,3 +3346,38 @@ def test_console_acknowledges_publication_only_after_outer_recovery(monkeypatch,
     assert bool(acknowledgements) is (failure is None)
     if acknowledgements:
         assert commands.index(["systemctl", "is-active", *helper.MANAGEMENT_PLANE_UNITS]) < commands.index(acknowledgements[0])
+
+
+def test_recovery_ca_helper_reads_owned_artifact_during_ordinary_staging(tmp_path, monkeypatch):
+    """Both helper stages retain recovery ownership while ordinary CA staging changes.
+
+    Args:
+        tmp_path: Isolated nonsecret publication artifacts.
+        monkeypatch: Replace native helper execution with observed file consumption.
+    """
+    loader = importlib.machinery.SourceFileLoader("atlaso_owned_ca_helper", "scripts/appliance/atlaso-bootstrap-https")
+    spec = importlib.util.spec_from_loader(loader.name, loader)
+    bootstrap = importlib.util.module_from_spec(spec)
+    loader.exec_module(bootstrap)
+    ordinary = tmp_path / "atlaso-ca.json"
+    owned = tmp_path / "recovery-ca.json"
+    owned.write_text('{"certificates": ["management-only"]}')
+    monkeypatch.setattr(bootstrap, "CA_STAGED_CONFIG_PATH", str(ordinary))
+    actions = []
+
+    def interleaved_helper(command):
+        """Consume the submitted path after an ordinary writer replaces its fixed artifact.
+
+        Args:
+            command: Native CA helper dispatch.
+        """
+        ordinary.write_text('{"certificates": ["unrelated"], "crl": "ordinary"}')
+        assert Path(command[3]) == owned
+        assert json.loads(Path(command[3]).read_text()) == {"certificates": ["management-only"]}
+        actions.append(command[2])
+        ordinary.unlink()
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    monkeypatch.setattr(bootstrap, "run", interleaved_helper)
+    assert bootstrap.apply_ca_files(owned) == 0
+    assert actions == ["validate", "apply"]

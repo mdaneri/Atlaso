@@ -520,12 +520,15 @@ server {{
     ensure_nginx_main_config_includes_atlaso()
 
 
-def apply_ca_files() -> int:
-    """Perform apply CA files.
+def apply_ca_files(config_path: Path | None = None) -> int:
+    """Publish a caller-owned CA staging artifact.
 
+    Args:
+        config_path: Private recovery artifact, or the ordinary bootstrap staging path.
     """
+    staged_path = config_path if config_path is not None else Path(CA_STAGED_CONFIG_PATH)
     for action in ("validate", "apply"):
-        result = run([str(HELPER_PATH), "ca", action, str(CA_STAGED_CONFIG_PATH), "--real"])
+        result = run([str(HELPER_PATH), "ca", action, str(staged_path), "--real"])
         if result.stdout:
             print(result.stdout, end="")
         if result.stderr:
@@ -773,8 +776,13 @@ def refresh_completed_management_certificate(network_job_id: str) -> int:
         # Recovery does not publish revocations or remove the existing CRL.
         private_payload["root"]["crl_path"] = ""
         private_payload["root"]["crl_pem"] = ""
-        write_secret_text_atomic(Path(CA_STAGED_CONFIG_PATH), json.dumps(private_payload, indent=2, sort_keys=True))
-        result = apply_ca_files()
+        staging_parent = Path(CA_STAGED_CONFIG_PATH).parent
+        staging_parent.mkdir(parents=True, exist_ok=True)
+        # A global CA Apply must never replace or remove this worker's private payload.
+        with tempfile.TemporaryDirectory(prefix="console-recovery-", dir=staging_parent) as owned_directory:
+            owned_path = Path(owned_directory) / "ca.json"
+            write_secret_text_atomic(owned_path, json.dumps(private_payload, indent=2, sort_keys=True))
+            result = apply_ca_files(owned_path)
         if result != 0:
             return result
         nginx = shutil.which("nginx")

@@ -1083,6 +1083,8 @@ preserved with their affected subsystem below. Keep new requirements at their to
   path, including dedicated administrative state and effective eligibility, before starting certificate recovery.
   Recheck the completed Network management
   paths under the shared network-object writer lock atomically with Settings capture, including edits during HTTPS recovery.
+  Stage scoped recovery CA payloads in an independently owned private artifact so ordinary CA Apply cannot replace
+  or remove them; remove recovery secret staging after its helper completes.
   Bind console HTTPS bootstrap to the completed Network task through a private, serialized runtime EnvironmentFile
   consumed by the original systemd unit; retain its data-disk dependency, ordering, and service serialization gates.
   Bound restart before the console's outer timeout; cancel a timed-out job and prove systemd idle before removing or

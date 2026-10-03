@@ -1114,7 +1114,7 @@ def test_photon_provisioning_installs_default_nginx_management_proxy():
     proof_publish = bootstrap.index("publish_development_root_ca_import_proof()", proof_write)
     marker_write = bootstrap.index("write_text_atomic(MARKER_PATH, COMPLETION_MARKER_TEXT")
     assert bootstrap.index("fix_state_permissions()") < proof_write < proof_publish < marker_write
-    assert 'str(HELPER_PATH), "ca", action, str(CA_STAGED_CONFIG_PATH), "--real"' in bootstrap
+    assert 'str(HELPER_PATH), "ca", action, str(staged_path), "--real"' in bootstrap
     assert 'for db_file in state_path.glob("atlaso.db*")' in bootstrap
     assert 'shutil.chown(db_file, user="atlaso", group="atlaso")' in bootstrap
     assert 'for path in [ca_apply_path, *ca_apply_path.rglob("*")]' in bootstrap
