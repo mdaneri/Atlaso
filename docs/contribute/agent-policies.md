@@ -1069,6 +1069,8 @@ preserved with their affected subsystem below. Keep new requirements at their to
   OVF export requires an explicit proven source VMX; exported product identity, deployed-appliance names, and immutable
   release asset names remain canonical and never inherit a transient pull-request number.
 - Validate live appliance readiness through `/openapi.json`, not VMware Tools IP discovery or service color alone.
+- The tty1 console service enables privileged systemd helper execution, matching the worker and preserving its
+  root-private PowerShell environment for Appliance Settings.
 - A successful tty1 management-network correction must explicitly apply Network and Firewall from the corrected state,
   verify fresh usable addresses on an administratively and operationally up link against the completed task's Network
   snapshot before recovery, reject tentative/DAD-failed and zero-valid-lifetime addresses, and bound native acquisition

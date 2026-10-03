@@ -2071,6 +2071,7 @@ def test_console_systemd_unit_replaces_only_tty1():
     unit = Path("image/common/systemd/atlaso-console.service").read_text(encoding="utf-8")
     provision = Path("image/common/scripts/provision-atlaso.sh").read_text(encoding="utf-8")
     manager = Path("image/common/systemd/atlaso-console-manager.conf").read_text(encoding="utf-8")
+    assert "Environment=ATLASO_HELPER_USE_SYSTEMD_RUN=1" in unit
     assert "TTYPath=/dev/tty1" in unit
     assert "Conflicts=getty@tty1.service" in unit
     assert "After=local-fs.target systemd-vconsole-setup.service" in unit
