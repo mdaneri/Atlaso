@@ -185,6 +185,8 @@ SYSTEMD_RUN_CHILD_ENV = "ATLASO_HELPER_SYSTEMD_RUN_CHILD"
 SYSTEMD_RUN_ACTION_UNIT_PREFIX = "atlaso-helper-action"
 UPDATE_CHECK_TIMEOUT_SECONDS = 300
 UPDATE_CHECK_STOP_SECONDS = 30
+CONSOLE_RECOVERY_RUNTIME_SECONDS = 90
+CONSOLE_RECOVERY_STOP_SECONDS = 5
 UPDATE_RELEASE_NOTES_URL_MAX_LENGTH = 2048
 NO_PATH_ACTIONS = {
     ("firewall", "replay"),
@@ -934,12 +936,17 @@ def _run_real_action_with_systemd(group: str, action: str, args: list[str]) -> i
                 )
                 return 1
         command.append(f"--unit={unit.removesuffix('.service')}")
-    if group == "console" and action == "recover-management-plane":
+    bounded_recovery = group == "console" and action == "recover-management-plane"
+    if bounded_recovery:
         # Transient system services do not inherit the appliance service environment.
         # Acknowledgement must use the same database and state root as the worker.
         command.extend([
             f"--property=WorkingDirectory={ATLASO_STATE_DIR}",
             f"--property=EnvironmentFile={ATLASO_ENV_PATH}",
+            f"--property=RuntimeMaxSec={CONSOLE_RECOVERY_RUNTIME_SECONDS}",
+            f"--property=TimeoutStopSec={CONSOLE_RECOVERY_STOP_SECONDS}",
+            "--property=KillMode=control-group",
+            "--property=SendSIGKILL=yes",
         ])
     if group in {"appliance-update", "appliance-settings"}:
         powershell_env = _privileged_powershell_environment()
@@ -971,6 +978,16 @@ def _run_real_action_with_systemd(group: str, action: str, args: list[str]) -> i
             return 75
         if result.returncode != 0:
             print("Appliance Update check failed or exceeded its five-minute deadline; its helper has stopped.", file=sys.stderr)
+    elif bounded_recovery:
+        try:
+            result = _run(command, timeout=CONSOLE_RECOVERY_RUNTIME_SECONDS + CONSOLE_RECOVERY_STOP_SECONDS + 5)
+        except subprocess.TimeoutExpired:
+            result = subprocess.CompletedProcess(command, 124, "", "Console recovery exceeded its deadline.\n")
+        try:
+            _quiesce_console_recovery_unit(f"{unit_name}.service")
+        except (ValueError, OSError, subprocess.TimeoutExpired):
+            print("Console recovery unit cleanup could not be verified; reconcile before retrying.", file=sys.stderr)
+            return 75
     else:
         result = _run(command)
     print(result.stdout, end="")
@@ -26283,7 +26300,42 @@ def _console_bootstrap_binding(network_job_id: str | None):
                 fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
 
 
+def _quiesce_console_recovery_unit(unit_name: str) -> None:
+    """Stop and verify this caller's unique transient recovery within the console budget.
+
+    Args:
+        unit_name: Exact collision-resistant unit created by this invocation.
+    """
+    active = {"active", "activating", "deactivating", "reloading"}
+    known = active | {"inactive", "failed", "unknown"}
+    initial = _run(["systemctl", "is-active", unit_name], timeout=2).stdout.strip()
+    if initial not in known:
+        raise ValueError("Console recovery unit state could not be verified")
+    if initial in active:
+        stopped = _run(["systemctl", "stop", unit_name], timeout=CONSOLE_RECOVERY_STOP_SECONDS + 2)
+        if stopped.returncode != 0:
+            raise ValueError("Console recovery unit could not be stopped")
+    final = _run(["systemctl", "is-active", unit_name], timeout=2).stdout.strip()
+    if final not in {"inactive", "failed", "unknown"}:
+        raise ValueError("Console recovery unit did not stop")
+
+
 def _recover_console_management_plane(timeout_seconds: int = 60, *, network_job_id: str | None = None) -> int:
+    """Serialize recovery through readiness and acknowledgement, including orphaned callers.
+
+    Args:
+        timeout_seconds: Maximum readiness wait after service recovery.
+        network_job_id: Completed Network task binding bootstrap certificate mutation.
+    """
+    try:
+        with _console_bootstrap_binding(network_job_id):
+            return _recover_console_management_plane_bound(timeout_seconds, network_job_id=network_job_id)
+    except (OSError, UnicodeError, ValueError) as exc:
+        print(f"Management plane recovery failed: {exc}", file=sys.stderr)
+        return 1
+
+
+def _recover_console_management_plane_bound(timeout_seconds: int = 60, *, network_job_id: str | None = None) -> int:
     """Recover and verify the complete local management plane.
 
     Args:
@@ -26294,12 +26346,11 @@ def _recover_console_management_plane(timeout_seconds: int = 60, *, network_job_
     atlaso_restarted = False
     try:
         if network_job_id is not None or not _console_first_boot_https_contract_is_complete():
-            with _console_bootstrap_binding(network_job_id):
-                _console_recovery_command(
-                    "resetting the first-boot HTTPS bootstrap failure",
-                    ["systemctl", "reset-failed", FIRST_BOOT_HTTPS_UNIT],
-                )
-                _console_restart_bootstrap()
+            _console_recovery_command(
+                "resetting the first-boot HTTPS bootstrap failure",
+                ["systemctl", "reset-failed", FIRST_BOOT_HTTPS_UNIT],
+            )
+            _console_restart_bootstrap()
             bootstrap_retried = True
             if not _console_first_boot_https_contract_is_complete(require_marker=network_job_id is None):
                 raise ValueError("HTTPS bootstrap returned without a complete applied management site")

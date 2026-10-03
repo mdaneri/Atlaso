@@ -11733,10 +11733,11 @@ def test_console_recovery_transient_unit_loads_appliance_database_environment(mo
     monkeypatch.delenv(helper.SYSTEMD_RUN_CHILD_ENV, raising=False)
     monkeypatch.setattr(helper.shutil, "which", lambda command:
                         "/usr/bin/systemd-run" if command == "systemd-run" else None)
-    monkeypatch.setattr(helper, "_run", lambda command: commands.append(command)
+    monkeypatch.setattr(helper, "_run", lambda command, **_kwargs: commands.append(command)
                         or subprocess.CompletedProcess(command, 0, "", ""))
     monkeypatch.setattr(helper, "_handle_console", lambda *_args:
                         (_ for _ in ()).throw(AssertionError("Recovery must run in the transient unit")))
+    monkeypatch.setattr(helper, "_quiesce_console_recovery_unit", lambda _unit: None)
     args = [network_job_id] if network_job_id else []
     assert helper.main(["atlaso-helper", "console", "recover-management-plane", "--real", *args]) == 0
     assert len(commands) == 1
@@ -11748,6 +11749,47 @@ def test_console_recovery_transient_unit_loads_appliance_database_environment(mo
     assert f"--setenv={helper.SYSTEMD_RUN_CHILD_ENV}=1" in command
     assert not any("wrong-caller-database" in argument or "ATLASO_DATABASE_URL=" in argument for argument in command)
     assert command[-(3 + len(args)):] == ["console", "recover-management-plane", "--real", *args]
+
+
+@pytest.mark.parametrize("survives_stop", [False, True])
+def test_console_recovery_timeout_stops_only_owned_unit(monkeypatch, survives_stop):
+    """A timed-out waiter cannot leave privileged recovery running or report success.
+
+    Args:
+        monkeypatch: Replace bounded systemd commands.
+        survives_stop: Simulate failed final quiescence verification.
+    """
+    helper = load_helper_module()
+    unit = "atlaso-helper-action-" + "a" * 32
+    monkeypatch.setattr(helper, "_systemd_run_action_unit_name", lambda: unit)
+    commands = []
+    probes = iter(["active", "active" if survives_stop else "inactive"])
+
+    def run(command, *, timeout=None):
+        """Simulate a lost waiter and an independently surviving PID1 service.
+
+        Args:
+            command: Exact native command.
+            timeout: Bounded wait budget.
+        """
+        commands.append((command, timeout))
+        if "--wait" in command:
+            assert timeout == 100
+            assert "--property=RuntimeMaxSec=90" in command
+            assert "--property=TimeoutStopSec=5" in command
+            assert "--property=KillMode=control-group" in command
+            assert "--property=SendSIGKILL=yes" in command
+            raise subprocess.TimeoutExpired(command, timeout)
+        assert command[-1] == unit + ".service"
+        if command[1] == "is-active":
+            return subprocess.CompletedProcess(command, 3, next(probes) + "\n", "")
+        assert command[:2] == ["systemctl", "stop"]
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    monkeypatch.setattr(helper, "_run", run)
+    assert helper._run_real_action_with_systemd("console", "recover-management-plane", ["job_completed"]) == (75 if survives_stop else 124)
+    assert [timeout for _command, timeout in commands] == [100, 2, 7, 2]
+
 
 
 def test_account_commands_use_bounded_helper_action_units(monkeypatch):

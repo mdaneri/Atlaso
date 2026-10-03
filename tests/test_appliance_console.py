@@ -2253,6 +2253,10 @@ def test_console_management_plane_recovery_retries_bootstrap_and_verifies_readin
             timeout: Bounded systemd command deadline.
         """
         commands.append(command)
+        if "--acknowledge-console-publication" in command:
+            # The same serialized binding must survive beyond bootstrap through acknowledgement.
+            binding = helper.CONSOLE_BOOTSTRAP_BINDING_DIRECTORY / "network.env"
+            assert binding.read_text(encoding="utf-8") == f"ATLASO_CONSOLE_NETWORK_JOB_ID={network_job_id}\n"
         if command[:2] == ["systemctl", "show"]:
             return subprocess.CompletedProcess(command, 0, "ActiveState=active\nSubState=exited\nJob=0\n", "")
         if command == bootstrap_command:
@@ -2326,6 +2330,8 @@ def test_console_management_plane_recovery_verifies_http_only_mode(monkeypatch, 
         capsys: Pytest fixture used to capture standard output and standard error.
     """
     helper = load_helper_module()
+    monkeypatch.setattr(helper, "CONSOLE_BOOTSTRAP_BINDING_DIRECTORY", tmp_path / "binding")
+    monkeypatch.setattr(helper, "fcntl", None)
     marker = tmp_path / "first-boot-https.applied"
     main_config = tmp_path / "nginx.conf"
     main_config.write_text(
