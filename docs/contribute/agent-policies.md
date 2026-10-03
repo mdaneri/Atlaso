@@ -1105,7 +1105,8 @@ preserved with their affected subsystem below. Keep new requirements at their to
   failure never acknowledges publication. A completed Network binding selects this scoped path
   regardless of first-boot marker completeness; validate its applied nginx site without requiring the first-boot marker.
   It never falls through to default first-boot rendering.
-  CA comparison timestamps use the legacy naive UTC representation, consistently before and after database reload.
+  CA baseline comparison accepts equivalent legacy naive and timezone-aware UTC expiry encodings, without rewriting
+  stored snapshots or hiding actual expiry/certificate changes.
   Ordinary CA Apply must share this writer admission through native publication. Baseline acknowledgement must reacquire
   admission after listener reloads and reject a superseded captured CA payload rather than baseline refreshed intent.
   Recovery readiness probes use the applied default listener ports, including preserved nonstandard HTTP/HTTPS ports.

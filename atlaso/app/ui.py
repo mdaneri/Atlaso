@@ -281,6 +281,7 @@ from atlaso.app.services.ca import (
     CA_SERVER_PROFILE_NAME,
     CA_STAGED_CONFIG_PATH,
     ManagedCertificateSpec,
+    ca_apply_comparison_preview,
     ca_certificate_to_dict,
     ca_profile_to_dict,
     ca_service_state,
@@ -10045,6 +10046,9 @@ def config_diff_for_unit(unit_id: str, current_preview: str, baseline: dict[str,
     if not baseline or not baseline.get("config_preview"):
         return ""
     previous_preview = str(baseline.get("config_preview") or "")
+    if unit_id == "ca":
+        previous_preview = ca_apply_comparison_preview(previous_preview)
+        current_preview = ca_apply_comparison_preview(current_preview)
     if previous_preview == current_preview:
         return ""
     return "\n".join(
@@ -11027,8 +11031,24 @@ def make_appliance_apply_unit(
         "config_preview": esxi_apply_comparison_preview(redacted_preview) if protected_esxi else redacted_preview,
         "snapshot_marker": snapshot_marker,
     }
+    if unit_id == "ca":
+        snapshot_payload["config_preview"] = ca_apply_comparison_preview(redacted_preview)
     current_hash = appliance_snapshot_hash(snapshot_payload)
     baseline_hash = str((baseline or {}).get("snapshot_hash") or "")
+    if unit_id == "ca" and baseline_hash:
+        previous_payload = {
+            "unit_id": unit_id,
+            "summary": (baseline or {}).get("summary"),
+            "config_path": (baseline or {}).get("config_path"),
+            "config_preview": str((baseline or {}).get("config_preview") or ""),
+            "snapshot_marker": None,
+        }
+        # Honor a legacy hash only when the stored snapshot proves its original binding.
+        # Compare equivalent expiry encodings without rewriting the durable baseline.
+        original_hash = appliance_snapshot_hash(previous_payload)
+        previous_payload["config_preview"] = ca_apply_comparison_preview(previous_payload["config_preview"])
+        comparison_hash = appliance_snapshot_hash(previous_payload)
+        baseline_hash = comparison_hash if baseline_hash in {original_hash, comparison_hash} else ""
     runtime_pending = False
     if protected_esxi:
         # A dry run can advance the display baseline, but recovery must remain
@@ -14549,7 +14569,7 @@ def guard_ca_apply_publication(db: Session, unit: dict[str, Any]) -> None:
     settings = db.scalar(select(CaSettings))
     certificates = db.scalars(select(CaCertificate).order_by(CaCertificate.common_name)).all()
     current = render_ca_apply_payload(settings, certificates, include_private_keys=False) if settings else None
-    if current != unit["config_preview"]:
+    if current is None or ca_apply_comparison_preview(redact_config_preview(current)) != ca_apply_comparison_preview(unit["config_preview"]):
         raise ApplianceApplyJobError("CA publication changed; preserve its pending baseline and submit again.")
 
 

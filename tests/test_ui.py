@@ -20007,3 +20007,25 @@ def test_ca_baseline_guard_refuses_intervening_recovery_after_listener_reload(cl
         with pytest.raises(ui.ApplianceApplyJobError, match="publication changed"):
             ui.guard_ca_apply_publication(db, executed)
         assert ui.load_appliance_apply_baselines(db).get("ca") == prior
+
+
+def test_ca_guard_accepts_the_real_redacted_public_snapshot(client):
+    """Publication admission compares the same nonsecret snapshot the Apply unit captured.
+
+    Args:
+        client: Isolated appliance database startup.
+    """
+    from sqlalchemy import select
+
+    import atlaso.app.ui as ui
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import CaCertificate, CaSettings
+
+    with SessionLocal() as db:
+        settings = db.scalar(select(CaSettings))
+        certificates = db.scalars(select(CaCertificate).order_by(CaCertificate.common_name)).all()
+        preview = ui.redact_config_preview(ui.render_ca_apply_payload(settings, certificates, include_private_keys=False))
+        unit = {"id": "ca", "config_preview": preview}
+        ui.guard_ca_apply_publication(db, unit)
+        assert db.in_transaction()
+        db.rollback()

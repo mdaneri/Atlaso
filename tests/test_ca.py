@@ -1014,3 +1014,64 @@ def test_ca_apply_preview_is_stable_after_sqlite_expiry_reload():
     assert payload["root"]["expires_at"] == payload["certificates"][0]["expires_at"] == "2030-04-05T06:07:08"
     leaf.common_name = "pending.example.test"
     assert render_ca_apply_payload(ca, [leaf], include_private_keys=False) != issued
+
+
+@pytest.mark.parametrize("offset", ["", "+00:00", "-07:00"])
+def test_ca_baseline_comparison_preserves_legacy_database_expiry_encoding(offset):
+    """Equivalent persisted expiry dates do not trigger CA Apply after an upgrade.
+
+    Args:
+        offset: Legacy SQLite, PostgreSQL UTC, or equivalent non-UTC timestamp encoding.
+    """
+    from datetime import datetime, timedelta, timezone
+
+    from atlaso.app.ui import (
+        appliance_snapshot_hash,
+        make_appliance_apply_unit,
+        redact_config_preview,
+    )
+
+    instant = datetime(2030, 4, 5, 6, 7, 8, tzinfo=timezone.utc)
+    ca = CaSettings(enabled=True, storage_path="/etc/atlaso/ca", publish_crl=False, root_expires_at=instant)
+    leaf = CaCertificate(common_name="management.example.test", enabled=True, status="issued",
+                         certificate_pem="synthetic public certificate", fingerprint="original", expires_at=instant)
+    current = render_ca_apply_payload(ca, [leaf], include_private_keys=False)
+    legacy = json.loads(redact_config_preview(current))
+    expiry = "2030-04-05T06:07:08" + offset
+    if offset == "-07:00":
+        expiry = "2030-04-04T23:07:08-07:00"
+    legacy["root"]["expires_at"] = legacy["certificates"][0]["expires_at"] = expiry
+    previous = json.dumps(legacy, indent=2, sort_keys=True) + "\n"
+    snapshot = {"unit_id": "ca", "summary": ["CA"], "config_path": "/ca.json",
+                "config_preview": previous, "snapshot_marker": None}
+    baseline = {"summary": ["CA"], "config_path": "/ca.json", "config_preview": previous,
+                "snapshot_hash": appliance_snapshot_hash(snapshot)}
+    original = dict(baseline)
+
+    def unit(preview):
+        """Construct the real pending-state comparison without publishing files.
+
+        Args:
+            preview: Current captured CA intent.
+        """
+        return make_appliance_apply_unit(unit_id="ca", label="CA", page_url="/ca", context={},
+                                         summary=["CA"], validation_errors=[], config_path="/ca.json",
+                                         config_preview=preview, baseline=baseline)
+
+    unchanged = unit(current)
+    assert unchanged["changed"] is False
+    assert unchanged["config_diff"] == ""
+    assert baseline == original
+    ca.root_expires_at = instant + timedelta(seconds=1)
+    assert unit(render_ca_apply_payload(ca, [leaf], include_private_keys=False))["changed"] is True
+    ca.root_expires_at = instant
+    leaf.expires_at = instant + timedelta(seconds=1)
+    assert unit(render_ca_apply_payload(ca, [leaf], include_private_keys=False))["changed"] is True
+    leaf.expires_at = instant
+    leaf.fingerprint = "pending"
+    assert unit(render_ca_apply_payload(ca, [leaf], include_private_keys=False))["changed"] is True
+    snapshot["summary"] = baseline["summary"] = ["different intent"]
+    baseline["snapshot_hash"] = appliance_snapshot_hash(snapshot)
+    assert unit(current)["changed"] is True
+    baseline["snapshot_hash"] = "invalid-binding"
+    assert unit(current)["changed"] is True

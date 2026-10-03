@@ -942,6 +942,29 @@ def render_ca_config(
     return json.dumps(payload, indent=2, sort_keys=True) + "\n"
 
 
+def ca_apply_comparison_preview(preview: str) -> str:
+    """Compare legacy SQLite and PostgreSQL UTC expiry encodings without changing stored evidence.
+
+    Args:
+        preview: Public CA apply payload used for a captured or persisted comparison.
+
+    Returns:
+        Canonical comparison text, or unchanged text for an invalid legacy payload.
+    """
+    try:
+        payload = json.loads(preview)
+        rows = [payload["root"], *payload["certificates"]]
+        for row in rows:
+            expiry = row.get("expires_at")
+            if expiry:
+                row["expires_at"] = ensure_aware(datetime.fromisoformat(expiry)).astimezone(
+                    timezone.utc,
+                ).replace(tzinfo=None).isoformat()
+        return json.dumps(payload, indent=2, sort_keys=True) + "\n"
+    except (KeyError, TypeError, ValueError, AttributeError):
+        return preview
+
+
 def render_ca_apply_payload(settings: CaSettings, certificates: list[CaCertificate], *, include_private_keys: bool) -> str:
     """Render ca apply payload.
 

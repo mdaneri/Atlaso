@@ -145,4 +145,5 @@ only after reload, stable readiness and proof that nginx serves the task receipt
 Readiness uses the applied listener ports. Ordinary CA publication shares the writer lock and rechecks its executed
 payload before baseline acknowledgement. Unrelated certificates remain pending.
 Recovery refreshes HTTPS even with incomplete first-boot evidence without resetting desired state or the applied
-protocol and ports. CA comparison timestamps retain the legacy UTC format across upgrades.
+protocol and ports. CA comparison accepts equivalent legacy SQLite and PostgreSQL UTC expiry encodings without
+rewriting stored snapshots.
