@@ -508,8 +508,10 @@ current carrier. Pinned SSH reads independently inspect every non-loopback guest
 their IPv4/IPv6 addresses, and bridge membership. Active management/client links must have native carrier; additional
 network namespaces or competing candidate-address claims refuse. Client controllers recheck their original forwarding
 guard and DHCP-server state. Fresh host and guest checks precede static and DHCP Apply and baseline restoration.
-A failed focused phase retains the fixture for reconciliation before seed or VM cleanup; ownership loss also blocks
+A nonretryable focused phase failure retains the fixture before seed or VM cleanup; ownership loss also blocks
 a competing restoration Apply.
+Transient HTTPS readiness failures may retry only after a fresh host check succeeds; ownership or trust refusals
+remain failures. Noncandidate peer server addresses may intentionally overlap on the admitted isolated segments.
 
 These observations assume the reserved host and admitted guests cooperate; serial reads are not an atomic switch-port
 inventory and cannot detect every change followed by a revert. Receipts explicitly report that limit and do not claim

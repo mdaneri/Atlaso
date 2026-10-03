@@ -197,6 +197,58 @@ def test_validates_candidate_claims_only_on_appliance_management_mac() -> None:
     }
 
 
+def test_allows_shared_non_candidate_addresses_on_isolated_private_nics() -> None:
+    """Allow intended peer-gateway addresses repeated across isolated client NICs."""
+    client_a = "00:50:56:aa:bb:0a"
+    client_b = "00:50:56:aa:bb:0b"
+    guests = {
+        "appliance": [_guest_interface(MAC_APPLIANCE, ("192.0.2.10", 24), ("fd74:1::10", 64))],
+        "client-a": [_guest_interface(client_a, ("192.0.2.1", 24), ("fd74:1::1", 64))],
+        "client-b": [_guest_interface(client_b, ("192.0.2.1", 24), ("fd74:1::1", 64))],
+    }
+
+    evidence = contract.validate_guest_addresses(
+        {"appliance": [MAC_APPLIANCE], "client-a": [client_a], "client-b": [client_b]},
+        guests,
+        ["192.0.2.10", "fd74:1::10"],
+    )
+
+    assert evidence["candidate_claims"] == {
+        "192.0.2.10": {"role": "appliance", "mac": MAC_APPLIANCE},
+        "fd74:1::10": {"role": "appliance", "mac": MAC_APPLIANCE},
+    }
+
+
+@pytest.mark.parametrize("conflict", ["duplicate-candidate", "foreign-interface"])
+def test_rejects_candidate_claim_on_duplicate_or_foreign_interface(conflict: str) -> None:
+    """Refuse a candidate address claimed by multiple or unauthorized interfaces.
+
+    Args:
+        conflict: Candidate claim shape to inject into the enrolled interfaces.
+    """
+    client_a = "00:50:56:aa:bb:0a"
+    client_b = "00:50:56:aa:bb:0b"
+    appliance_macs = [MAC_APPLIANCE, "00:50:56:aa:bb:03"]
+    guests = {
+        "appliance": [_guest_interface(MAC_APPLIANCE, ("192.0.2.10", 24)),
+                      _guest_interface(appliance_macs[1])],
+        "client-a": [_guest_interface(client_a)],
+        "client-b": [_guest_interface(client_b)],
+    }
+    if conflict == "duplicate-candidate":
+        guests["client-a"][0]["addresses"].append({"local": "192.0.2.10", "prefixlen": 24})
+        guests["client-b"][0]["addresses"].append({"local": "192.0.2.10", "prefixlen": 24})
+    else:
+        guests["appliance"][1]["addresses"].append({"local": "192.0.2.10", "prefixlen": 24})
+
+    with pytest.raises(contract.Refusal):
+        contract.validate_guest_addresses(
+            {"appliance": appliance_macs, "client-a": [client_a], "client-b": [client_b]},
+            guests,
+            ["192.0.2.10"],
+        )
+
+
 @pytest.mark.parametrize(
     ("change", "reason"),
     [

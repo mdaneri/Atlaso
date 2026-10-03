@@ -89,13 +89,17 @@ def test_private_dispatch_preserves_unknown_apply_and_avoids_legacy_client():
     assert runner.index("python -I -B -c 'import paramiko, cryptography, pycdlib'") < runner.index('$preflightRootCreated')
 
 
-@pytest.mark.parametrize(('focused', 'exit_code', 'preserve'),
-                         [(True, 2, True), (True, 0, False), (False, 2, False), (False, 3, True)])
-def test_focused_provider_refusal_preserves_fixture(focused, exit_code, preserve):
-    """A refused focused phase blocks cleanup even without an uncertain Apply.
+@pytest.mark.parametrize(('focused', 'phase', 'exit_code', 'preserve'), [
+    (True, 'probe', 0, False), (True, 'probe', 2, True), (True, 'probe', 3, True),
+    (True, 'probe', 4, False), (True, 'scenario', 4, True), (True, 'stop', 4, True),
+    (False, 'stop', 2, False), (False, 'stop', 3, True),
+])
+def test_private_phase_exit_preserves_fixture_by_phase_and_outcome(focused, phase, exit_code, preserve):
+    """Apply retryable status 4 only to a focused readiness probe.
 
     Args:
         focused: Whether the dedicated-host contract was selected.
+        phase: Private lifecycle phase sent to the Python runner.
         exit_code: Actual Python phase outcome supplied at the subprocess boundary.
         preserve: Expected recovery disposition.
     """
@@ -107,11 +111,28 @@ def test_focused_provider_refusal_preserves_fixture(focused, exit_code, preserve
         "$sourceCommit='commit'; $PullRequestNumber=1; $ClientSshUser='root'; $AdminUsername='admin'; "
         "$resolvedVmrun='vmrun'; $runtimeConsumerPins=@(); "
         f"function Invoke-LifecyclePython {{ return {exit_code} }}; "
-        "try { Invoke-RoutingOverlapPhase -Phase stop -Descriptor @{Path='descriptor';Sha256='digest'} } catch {}; "
+        f"try {{ Invoke-RoutingOverlapPhase -Phase {phase} -Descriptor @{{Path='descriptor';Sha256='digest'}} }} catch {{}}; "
         "ConvertTo-Json -InputObject @{preserve=[bool]$overlapRecoveryUncertain} -Compress")
     result = subprocess.run(['pwsh', '-NoProfile', '-Command', command], capture_output=True,
                             text=True, timeout=60, check=True)
     assert json.loads(result.stdout)['preserve'] is preserve
+
+
+def test_retryable_probe_then_success_keeps_recovery_flag_clear():
+    """A later successful readiness probe leaves the fixture recovery flag clear."""
+    helpers = ROOT / 'scripts/windows/vmware'
+    command = ("$ErrorActionPreference='Stop'; "
+        f". {ps_literal(helpers / 'Atlaso.RoutingOverlap.ps1')}; "
+        "$SameAddressHandoffOnly=$true; $overlapRecoveryUncertain=$false; $script:probeCodes=@(4,0); "
+        "$runtimeSourceRoot='source'; $resultRoot='result'; $lifecycleTaskId='task'; "
+        "$sourceCommit='commit'; $PullRequestNumber=1; $ClientSshUser='root'; $AdminUsername='admin'; "
+        "$resolvedVmrun='vmrun'; $runtimeConsumerPins=@(); "
+        "function Invoke-LifecyclePython { $value=$script:probeCodes[0]; $script:probeCodes=@($script:probeCodes | Select-Object -Skip 1); return $value }; "
+        "foreach ($attempt in 1..2) { try { Invoke-RoutingOverlapPhase -Phase probe -Descriptor @{Path='descriptor';Sha256='digest'} } catch {} }; "
+        "ConvertTo-Json -InputObject @{preserve=[bool]$overlapRecoveryUncertain; remaining=$script:probeCodes.Count} -Compress")
+    result = subprocess.run(['pwsh', '-NoProfile', '-Command', command], capture_output=True,
+                            text=True, timeout=60, check=True)
+    assert json.loads(result.stdout) == {'preserve': False, 'remaining': 0}
 
 
 def test_distinct_root_credential_reaches_only_appliance_stdin():

@@ -524,9 +524,12 @@ def validate_guest_addresses(
                     _refuse("guest_address_record_invalid")
                 address = str(parsed.ip)
                 identity = (role, mac)
-                if address in seen_addresses:
-                    _refuse("guest_address_duplicate")
-                seen_addresses[address] = identity
+                # Admitted peers deliberately reuse server addresses on separate
+                # private segments. Only candidate claims require global uniqueness.
+                if address in candidates:
+                    if address in seen_addresses:
+                        _refuse("guest_address_duplicate")
+                    seen_addresses[address] = identity
         if set(role_macs) != set(normalized_expected[role]) or len(role_macs) != len(normalized_expected[role]):
             _refuse("guest_interface_set_mismatch")
 

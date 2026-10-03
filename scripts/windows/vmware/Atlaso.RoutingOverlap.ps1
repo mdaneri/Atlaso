@@ -281,7 +281,8 @@ function Invoke-RoutingOverlapPhase {
     }
     $exitCode = Invoke-LifecyclePython -Arguments $arguments -SourcePins $runtimeConsumerPins `
         -AdminPassword $adminPasswordSecure -SshPassword $sshPasswordSecure -RootPassword $rootPasswordSecure
-    if ($exitCode -eq 3 -or ($SameAddressHandoffOnly -and $exitCode -ne 0)) {
+    $retryableProbe = $Phase -eq 'probe' -and $exitCode -eq 4
+    if ($exitCode -eq 3 -or ($SameAddressHandoffOnly -and $exitCode -ne 0 -and -not $retryableProbe)) {
         $script:overlapRecoveryUncertain = $true
     }
     if ($exitCode -ne 0) { throw "Private lifecycle phase '$Phase' failed; retain its original ownership evidence." }

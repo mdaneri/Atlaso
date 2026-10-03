@@ -5,15 +5,19 @@ import copy
 import hashlib
 import io
 import json
+import ssl
 
+import paramiko
 import pytest
 
 from scripts.interop import routing_overlap_runner as overlap_runner
+from scripts.interop.dedicated_host_contract import Refusal
 from scripts.interop.routing_overlap import OverlapPrerequisiteError
 from scripts.interop.routing_overlap_runner import (
     ControllerFailure,
     FixtureSession,
     bounded_json_command,
+    probe_readiness,
     run_client_phase,
     scenario_failure_result,
 )
@@ -429,3 +433,122 @@ def test_failed_host_admission_does_not_read_credentials(tmp_path, monkeypatch):
     with pytest.raises(OverlapPrerequisiteError, match='host proof unavailable'):
         overlap_runner.main()
     assert events == ['host-admission']
+
+
+class ReadinessGateway:
+    """Record the authenticated readiness request and return or raise its outcome."""
+
+    def __init__(self, events, *, status=200, failure=None):
+        """Retain one synthetic HTTP result for the probe helper.
+
+        Args:
+            events: Ordered call log shared with the host guard.
+            status: HTTP response status to return.
+            failure: Optional transport exception to raise from the request.
+        """
+        self.events = events
+        self.status = status
+        self.failure = failure
+
+    def request(self, method, path, *, timeout):
+        """Record the fixed API request and expose the configured outcome.
+
+        Args:
+            method: HTTP method requested by the probe helper.
+            path: Origin-relative readiness resource.
+            timeout: Bounded request timeout.
+        """
+        self.events.append(('request', method, path, timeout))
+        if self.failure is not None:
+            raise self.failure
+        return self.status, b'', {}
+
+
+class ReadinessGuard:
+    """Record a fresh ownership observation after a readiness request."""
+
+    def __init__(self, events, failure=None):
+        """Retain the probe event log and optional host refusal.
+
+        Args:
+            events: Ordered call log shared with the gateway.
+            failure: Optional refusal raised from the fresh host check.
+        """
+        self.events = events
+        self.failure = failure
+
+    def check(self):
+        """Record a host bracket check and optionally refuse lost ownership."""
+        self.events.append(('host-check',))
+        if self.failure is not None:
+            raise self.failure
+
+
+def test_readiness_probe_returns_zero_after_authenticated_http_success():
+    """Return success only after both HTTPS readiness and host ownership checks."""
+    events = []
+
+    assert probe_readiness(ReadinessGateway(events), ReadinessGuard(events)) == 0
+    assert events == [('request', 'GET', '/openapi.json', 20), ('host-check',)]
+
+
+@pytest.mark.parametrize('status', [404, 503])
+def test_readiness_probe_retries_http_refusal_only_after_host_check(status):
+    """Classify non-200 HTTP responses as retryable after proving host stability.
+
+    Args:
+        status: Non-success HTTP response supplied by the private gateway.
+    """
+    events = []
+
+    assert probe_readiness(ReadinessGateway(events, status=status), ReadinessGuard(events)) == 4
+    assert events == [('request', 'GET', '/openapi.json', 20), ('host-check',)]
+
+
+@pytest.mark.parametrize('failure', [
+    ConnectionError('connection refused'),
+    TimeoutError('request timed out'),
+    paramiko.ChannelException(2, 'channel unavailable'),
+    ssl.SSLEOFError('peer closed early'),
+])
+def test_readiness_probe_retries_transport_failures_only_after_host_check(failure):
+    """Treat only the enumerated transport failures as retryable service readiness.
+
+    Args:
+        failure: Retryable transport exception raised by the gateway request.
+    """
+    events = []
+
+    assert probe_readiness(ReadinessGateway(events, failure=failure), ReadinessGuard(events)) == 4
+    assert events == [('request', 'GET', '/openapi.json', 20), ('host-check',)]
+
+
+def test_readiness_probe_propagates_lost_host_ownership():
+    """Do not turn a failed host bracket into a retryable readiness outcome."""
+    events = []
+    refusal = Refusal('host_snapshot_changed')
+
+    with pytest.raises(Refusal) as caught:
+        probe_readiness(ReadinessGateway(events, status=503), ReadinessGuard(events, refusal))
+
+    assert caught.value is refusal
+    assert events == [('request', 'GET', '/openapi.json', 20), ('host-check',)]
+
+
+@pytest.mark.parametrize('failure', [
+    ssl.SSLCertVerificationError('certificate identity failed'),
+    paramiko.BadHostKeyException('fixture-client', None, None),
+])
+def test_readiness_probe_propagates_certificate_and_identity_failures(failure):
+    """Keep CA validation and SSH identity failures outside retry classification.
+
+    Args:
+        failure: Certificate or pinned SSH identity exception from the gateway.
+    """
+    events = []
+
+    with pytest.raises(type(failure)) as caught:
+        probe_readiness(ReadinessGateway(events, failure=failure), ReadinessGuard(events))
+
+    assert caught.value is failure
+    assert events == [('request', 'GET', '/openapi.json', 20)]

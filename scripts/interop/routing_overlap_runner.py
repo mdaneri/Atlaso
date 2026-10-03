@@ -10,6 +10,7 @@ import json
 import os
 import re
 import shlex
+import ssl
 import sys
 import time
 import types
@@ -324,10 +325,10 @@ def run_admitted_phase(args: argparse.Namespace, descriptor: dict[str, Any], hos
             try:
                 gateway.connect(args.client_user, secrets["ssh_password"])
                 if args.action == "probe":
-                    status, _, _ = gateway.request("GET", "/openapi.json", timeout=20)
-                    if status != 200:
-                        raise ValueError("private HTTPS service is not ready")
-                    evidence = {"schema": 1, "phase": "probe", "status": status, "topology_sha256": fixture.digest}
+                    outcome = probe_readiness(gateway, host_guard)
+                    if outcome:
+                        return outcome
+                    evidence = {"schema": 1, "phase": "probe", "status": 200, "topology_sha256": fixture.digest}
                 else:
                     from scripts.interop.routing_overlap import OverlapPrerequisiteError
                     from scripts.interop.routing_overlap_scenario import run_scenario
@@ -353,6 +354,24 @@ def run_admitted_phase(args: argparse.Namespace, descriptor: dict[str, Any], hos
         return 0
     finally:
         fixture.close()
+
+
+def probe_readiness(gateway: PinnedFixtureGateway, host_guard: DedicatedHostProof | None) -> int:
+    """Distinguish transient service readiness from unverified host ownership.
+
+    Args:
+        gateway: Already authenticated gateway with pinned HTTPS trust.
+        host_guard: Focused mode's admitted host identity and topology bracket.
+    """
+    try:
+        status, _, _ = gateway.request("GET", "/openapi.json", timeout=20)
+    except (ConnectionError, TimeoutError, paramiko.ChannelException, ssl.SSLEOFError):
+        status = 0
+    # Authentication, certificate, malformed trust, and ownership failures are
+    # not service-readiness retries. Host loss propagates to the refusal path.
+    if host_guard:
+        host_guard.check()
+    return 0 if status == 200 else 4
 
 
 GUEST_INVENTORY = '''import json, os, subprocess

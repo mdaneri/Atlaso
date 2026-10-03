@@ -2654,7 +2654,10 @@ function Sync-ApplianceApplicationWheel {
         $deadline = (Get-Date).AddMinutes(3)
         do {
             $ready = if ($RoutingOverlapOnly) {
-                try { Invoke-RoutingOverlapPhase -Phase probe -Descriptor $overlapDescriptor -Trust $overlapTrust; $true } catch { $false }
+                try { Invoke-RoutingOverlapPhase -Phase probe -Descriptor $overlapDescriptor -Trust $overlapTrust; $true } catch {
+                    if ($overlapRecoveryUncertain) { throw }
+                    $false
+                }
             } else { Test-ApplianceOpenApi -Url "$ApplianceUrl/openapi.json" }
             if ($ready) {
                 # Return the digest established while both the source snapshot
