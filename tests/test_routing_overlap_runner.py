@@ -2,10 +2,13 @@
 
 import base64
 import copy
+import hashlib
+import io
 import json
 
 import pytest
 
+from scripts.interop import routing_overlap_runner as overlap_runner
 from scripts.interop.routing_overlap import OverlapPrerequisiteError
 from scripts.interop.routing_overlap_runner import (
     ControllerFailure,
@@ -280,3 +283,114 @@ def test_controller_refusal_exposes_only_digest():
     assert hashlib.sha256(private.encode()).hexdigest()[:16] in str(failure.value)
     assert private not in str(failure.value)
     assert channel.closed
+
+
+def _focused_runner_args(tmp_path, monkeypatch):
+    """Create a task-local public descriptor and bind canonical runner arguments.
+
+    Args:
+        tmp_path: Pytest-owned disposable directory under the configured test root.
+        monkeypatch: Isolated command-line replacement.
+    """
+    lab = tmp_path / 'lab'
+    lab.mkdir()
+    paths = {role: str((lab / f'{role}.vmx').resolve()) for role in ('appliance', 'client-a', 'client-b')}
+    descriptor = {
+        'vmx_paths': paths,
+        'provider_nics': [
+            {'role': role, 'adapter': 0, 'network_type': 'pvn', 'network_id': 'segment-id',
+             'mac': f'00:50:56:00:00:{index:02x}'}
+            for index, role in enumerate(paths, 16)
+        ],
+    }
+    raw = json.dumps(descriptor).encode()
+    descriptor_path = tmp_path / 'descriptor.json'
+    descriptor_path.write_bytes(raw)
+    args = [
+        'routing-overlap-runner', '--action', 'bootstrap', '--descriptor', str(descriptor_path),
+        '--descriptor-sha256', hashlib.sha256(raw).hexdigest(), '--output', str(tmp_path / 'result.json'),
+        '--task-id', 'task', '--source-commit', 'a' * 40, '--pr', '837', '--lab-root', str(lab.resolve()),
+        '--client-user', 'root', '--admin-user', 'admin', '--same-address-only',
+        '--vmrun', str(tmp_path / 'vmrun.exe'), '--powershell', str(tmp_path / 'pwsh.exe'),
+    ]
+    monkeypatch.setattr(overlap_runner.sys, 'argv', args)
+    return descriptor
+
+
+def test_same_address_runner_admits_host_before_reading_credentials(tmp_path, monkeypatch):
+    """Host proof is acquired before the real client phase reads its stdin envelope.
+
+    Args:
+        tmp_path: Task-owned public descriptor directory.
+        monkeypatch: Replace only provider, stdin, and client work boundaries.
+    """
+    descriptor = _focused_runner_args(tmp_path, monkeypatch)
+    events = []
+
+    class HostGuard:
+        def __init__(self, expected, _vmrun, _powershell):
+            assert set(expected) == set(descriptor['vmx_paths'].values())
+            events.append('host-guard-created')
+
+        def __enter__(self):
+            events.append('host-admitted')
+            return self
+
+        def __exit__(self, *_args):
+            events.append('host-released')
+
+    class TrackingStdin(io.StringIO):
+        def readline(self, *args):
+            events.append('credential-read')
+            return super().readline(*args)
+
+    class Fixture:
+        digest = 'descriptor-digest'
+
+        def __init__(self, _descriptor, _owner, _user, _password):
+            events.append('fixture-created')
+
+        def close(self):
+            events.append('fixture-closed')
+
+    monkeypatch.setattr(overlap_runner, 'DedicatedHostProof', HostGuard)
+    monkeypatch.setattr(overlap_runner, 'FixtureSession', Fixture)
+    monkeypatch.setattr(overlap_runner, 'run_client_phase', lambda _fixture, _action: {'client-a': {}})
+    monkeypatch.setattr(overlap_runner, 'write_evidence', lambda *_args: None)
+    monkeypatch.setattr(overlap_runner.sys, 'stdin', TrackingStdin('{"ssh_password":"synthetic"}\n'))
+
+    assert overlap_runner.main() == 0
+    assert events.index('host-admitted') < events.index('credential-read')
+    assert events[-1] == 'host-released'
+    assert 'fixture-closed' in events
+
+
+def test_failed_host_admission_does_not_read_credentials(tmp_path, monkeypatch):
+    """A refused host preflight stops before credential stdin is consumed.
+
+    Args:
+        tmp_path: Task-owned public descriptor directory.
+        monkeypatch: Replace provider and credential read boundaries.
+    """
+    _focused_runner_args(tmp_path, monkeypatch)
+    events = []
+
+    class RefusingHostGuard:
+        def __init__(self, *_args):
+            pass
+
+        def __enter__(self):
+            events.append('host-admission')
+            raise OverlapPrerequisiteError('host proof unavailable')
+
+    class TrackingStdin(io.StringIO):
+        def readline(self, *args):
+            events.append('credential-read')
+            return super().readline(*args)
+
+    monkeypatch.setattr(overlap_runner, 'DedicatedHostProof', RefusingHostGuard)
+    monkeypatch.setattr(overlap_runner.sys, 'stdin', TrackingStdin('{"ssh_password":"synthetic"}\n'))
+
+    with pytest.raises(OverlapPrerequisiteError, match='host proof unavailable'):
+        overlap_runner.main()
+    assert events == ['host-admission']

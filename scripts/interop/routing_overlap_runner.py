@@ -9,6 +9,7 @@ import ipaddress
 import json
 import os
 import re
+import shlex
 import sys
 import time
 import types
@@ -26,6 +27,8 @@ if __package__ in {None, ""}:
         module.__path__ = [str(directory)]
         sys.modules[package] = module
 
+from scripts.interop.dedicated_host_contract import Refusal, validate_guest_addresses
+from scripts.interop.dedicated_host_proof import DedicatedHostProof
 from scripts.interop.routing_overlap import FixtureOwner, admit_topology
 from scripts.interop.routing_overlap_transport import (
     FixtureHttpClient,
@@ -259,13 +262,49 @@ def main() -> int:
     parser.add_argument("--client-user", required=True)
     parser.add_argument("--admin-user", required=True)
     parser.add_argument("--trust", type=Path)
+    parser.add_argument("--same-address-only", action="store_true")
+    parser.add_argument("--vmrun", type=Path)
+    parser.add_argument("--powershell", type=Path)
     args = parser.parse_args()
     raw = args.descriptor.read_bytes()
     if len(raw) > 1048576 or hashlib.sha256(raw).hexdigest() != args.descriptor_sha256:
         raise ValueError("fixture descriptor digest mismatch")
+    descriptor = json.loads(raw)
+    host_guard = None
+    if args.same_address_only:
+        if args.vmrun is None or args.powershell is None:
+            raise ValueError("dedicated host provider paths are required")
+        paths = descriptor.get("vmx_paths", {})
+        if set(paths) != {"appliance", "client-a", "client-b"}:
+            raise ValueError("dedicated host requires original fixture VMX paths")
+        expected = {}
+        for role, path in paths.items():
+            vmx = Path(path)
+            if not vmx.is_absolute() or not vmx.is_relative_to(Path(args.lab_root)):
+                raise ValueError("dedicated host VMX is outside the original lab")
+            expected[path] = [{"index": row["adapter"], "connection_type": row["network_type"],
+                               "network_id": row["network_id"], "mac": row["mac"]}
+                              for row in descriptor["provider_nics"] if row["role"] == role]
+        host_guard = DedicatedHostProof(expected, args.vmrun, args.powershell)
+        host_guard.__enter__()
+    try:
+        return run_admitted_phase(args, descriptor, host_guard)
+    finally:
+        if host_guard:
+            host_guard.__exit__()
+
+
+def run_admitted_phase(args: argparse.Namespace, descriptor: dict[str, Any], host_guard: DedicatedHostProof | None) -> int:
+    """Read credentials only after the focused host preflight succeeds.
+
+    Args:
+        args: Canonical wrapper's independently bound phase arguments.
+        descriptor: Digest-checked original public fixture descriptor.
+        host_guard: Admitted read pins and host observation for the focused mode.
+    """
     secrets = json.loads(sys.stdin.readline(65537))
     owner = FixtureOwner(args.task_id, "mdaneri/Atlaso", args.source_commit, args.pr, args.lab_root)
-    fixture = FixtureSession(json.loads(raw), owner, args.client_user, secrets["ssh_password"])
+    fixture = FixtureSession(descriptor, owner, args.client_user, secrets["ssh_password"])
     try:
         if args.action in {"bootstrap", "stop"}:
             states = run_client_phase(fixture, args.action)
@@ -293,10 +332,17 @@ def main() -> int:
                     from scripts.interop.routing_overlap import OverlapPrerequisiteError
                     from scripts.interop.routing_overlap_scenario import run_scenario
                     try:
+                        def connect() -> paramiko.SSHClient:
+                            """Open the original pinned appliance with the bounded root identity."""
+                            return gateway.connect_appliance("root", secrets["appliance_ssh_password"])
+                        options = {}
+                        if args.same_address_only:
+                            options = {"same_address_only": True,
+                                       "ownership_check": lambda: dedicated_guest_proof(fixture, connect, host_guard)}
                         evidence = run_scenario(client=FixtureHttpClient(gateway),
-                            connect_appliance=lambda: gateway.connect_appliance("root", secrets["appliance_ssh_password"]),
+                            connect_appliance=connect,
                             topology=fixture.topology, server_action=lambda action: fixture.action("client-a", action),
-                            username=args.admin_user, password=secrets["password"])
+                            username=args.admin_user, password=secrets["password"], **options)
                     except OverlapPrerequisiteError as failure:
                         result, exit_code = scenario_failure_result(failure, fixture.digest)
                         write_evidence(args.output, result)
@@ -307,6 +353,63 @@ def main() -> int:
         return 0
     finally:
         fixture.close()
+
+
+GUEST_INVENTORY = '''import json, os, subprocess
+from pathlib import Path
+base = os.readlink('/proc/1/ns/net')
+for entry in Path('/proc').iterdir():
+    if entry.name.isdecimal():
+        try:
+            current = os.readlink(entry / 'ns/net')
+        except FileNotFoundError:
+            continue
+        if current != base:
+            raise RuntimeError('additional network namespace')
+if Path('/var/run/netns').exists() and list(Path('/var/run/netns').iterdir()):
+    raise RuntimeError('named network namespace')
+read = subprocess.run(['ip', '-j', '-d', 'address', 'show'], capture_output=True, check=True, timeout=10)
+if len(read.stdout) > 262144:
+    raise RuntimeError('inventory exceeds bound')
+rows = json.loads(read.stdout)
+links = [{'mac': row.get('address'), 'link_type': row.get('link_type'), 'flags': row.get('flags'), 'master': row.get('master'),
+          'linkinfo': row.get('linkinfo'), 'addresses': row.get('addr_info', [])}
+         for row in rows if row.get('ifname') != 'lo']
+print(json.dumps({'schema': 1, 'ok': True, 'links': links}))
+'''
+
+
+def dedicated_guest_proof(fixture: FixtureSession, connect: Any, host_guard: DedicatedHostProof | None) -> dict[str, Any]:
+    """Bracket authenticated whole-guest address inventories with host proof.
+
+    Args:
+        fixture: Original admitted topology and pinned client transports.
+        connect: Pinned root appliance SSH factory.
+        host_guard: Still-held original provider and VMX pins.
+    """
+    from scripts.interop.routing_overlap_scenario import ApplyOutcomeUnknown, _observe
+
+    try:
+        if host_guard is None:
+            raise Refusal("dedicated_host_not_admitted")
+        before = host_guard.check()
+        guests = {"appliance": _observe(connect, GUEST_INVENTORY)["links"]}
+        for role in ("client-a", "client-b"):
+            # The controller rechecks its owned forward-drop guard, live processes,
+            # exact private addresses and lease before any address ownership claim.
+            fixture.action(role, "status")
+            peer = fixture.clients[role]
+            command = "sudo -n python3 -I -c " + shlex.quote(GUEST_INVENTORY)
+            guests[role] = bounded_json_command(peer, command, {})["links"]
+        macs = {role: [link.mac for link in sorted(fixture.topology.links, key=lambda link: link.adapter)
+                       if link.role == role] for role in guests}
+        guest = validate_guest_addresses(macs, guests, ["192.0.2.10"])
+        host_guard.check()
+        return {"host": before, "guest": guest,
+                "reservation": "maintainer-selected-cooperative-dedicated-host"}
+    except (ValueError, OSError, KeyError, TypeError, RuntimeError, paramiko.SSHException):
+        # Losing topology authority prohibits a competing restore/Apply as well.
+        raise ApplyOutcomeUnknown("dedicated host or guest ownership became unverified; preserve the fixture") from None
 
 
 if __name__ == "__main__":

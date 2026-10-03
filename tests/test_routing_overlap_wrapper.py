@@ -89,6 +89,31 @@ def test_private_dispatch_preserves_unknown_apply_and_avoids_legacy_client():
     assert runner.index("python -I -B -c 'import paramiko, cryptography, pycdlib'") < runner.index('$preflightRootCreated')
 
 
+@pytest.mark.parametrize(('focused', 'exit_code', 'preserve'),
+                         [(True, 2, True), (True, 0, False), (False, 2, False), (False, 3, True)])
+def test_focused_provider_refusal_preserves_fixture(focused, exit_code, preserve):
+    """A refused focused phase blocks cleanup even without an uncertain Apply.
+
+    Args:
+        focused: Whether the dedicated-host contract was selected.
+        exit_code: Actual Python phase outcome supplied at the subprocess boundary.
+        preserve: Expected recovery disposition.
+    """
+    helpers = ROOT / 'scripts/windows/vmware'
+    command = ("$ErrorActionPreference='Stop'; "
+        f". {ps_literal(helpers / 'Atlaso.RoutingOverlap.ps1')}; "
+        f"$SameAddressHandoffOnly=${str(focused).lower()}; $overlapRecoveryUncertain=$false; "
+        "$runtimeSourceRoot='source'; $resultRoot='result'; $lifecycleTaskId='task'; "
+        "$sourceCommit='commit'; $PullRequestNumber=1; $ClientSshUser='root'; $AdminUsername='admin'; "
+        "$resolvedVmrun='vmrun'; $runtimeConsumerPins=@(); "
+        f"function Invoke-LifecyclePython {{ return {exit_code} }}; "
+        "try { Invoke-RoutingOverlapPhase -Phase stop -Descriptor @{Path='descriptor';Sha256='digest'} } catch {}; "
+        "ConvertTo-Json -InputObject @{preserve=[bool]$overlapRecoveryUncertain} -Compress")
+    result = subprocess.run(['pwsh', '-NoProfile', '-Command', command], capture_output=True,
+                            text=True, timeout=60, check=True)
+    assert json.loads(result.stdout)['preserve'] is preserve
+
+
 def test_distinct_root_credential_reaches_only_appliance_stdin():
     """Keep administrator, root and client identities separate in the real producer."""
     runner = ROOT / 'scripts/windows/vmware/run-lifecycle-test.ps1'

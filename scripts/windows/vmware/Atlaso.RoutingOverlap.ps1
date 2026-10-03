@@ -248,6 +248,7 @@ function New-RoutingOverlapDescriptor {
     }
     $descriptor = @{ schema = 1; segments = $segments; receipt_bytes = $receipts; provider_nics = $provider
         guest_links = $links; peers = $peers; control_network = $ControlNetwork; control_prefixes = $controlPrefixes
+        vmx_paths = $VmxPaths
         appliance_ssh_public_key = $Guests.appliance.Inventory.ssh_public_key }
     $path = Join-Path $resultRoot 'routing-overlap-topology.json'
     if (Test-Path -LiteralPath $path) { throw 'Private topology evidence already exists.' }
@@ -275,8 +276,13 @@ function Invoke-RoutingOverlapPhase {
         '--source-commit', $sourceCommit, '--pr', "$PullRequestNumber", '--lab-root', $resultRoot,
         '--client-user', $ClientSshUser, '--admin-user', $AdminUsername)
     if ($Trust) { $arguments += @('--trust', $Trust) }
+    if ($SameAddressHandoffOnly) {
+        $arguments += @('--same-address-only', '--vmrun', $resolvedVmrun, '--powershell', (Get-Command pwsh -ErrorAction Stop).Source)
+    }
     $exitCode = Invoke-LifecyclePython -Arguments $arguments -SourcePins $runtimeConsumerPins `
         -AdminPassword $adminPasswordSecure -SshPassword $sshPasswordSecure -RootPassword $rootPasswordSecure
-    if ($exitCode -eq 3) { $script:overlapRecoveryUncertain = $true }
+    if ($exitCode -eq 3 -or ($SameAddressHandoffOnly -and $exitCode -ne 0)) {
+        $script:overlapRecoveryUncertain = $true
+    }
     if ($exitCode -ne 0) { throw "Private lifecycle phase '$Phase' failed; retain its original ownership evidence." }
 }

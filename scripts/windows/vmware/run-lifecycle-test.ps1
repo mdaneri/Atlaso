@@ -74,6 +74,8 @@ Existing Ed25519 public key whose private half is loaded in the local SSH agent.
 Run only WAN routing scenario.
 .PARAMETER RoutingOverlapOnly
 Run isolated DHCP and SLAAC overlap acceptance using two task-owned LAN segments.
+.PARAMETER SameAddressHandoffOnly
+Require a cooperatively reserved dedicated host and run only the same-address IPv4 handoff within RoutingOverlapOnly.
 .PARAMETER FullEsxiPxeInstall
 Include ESXi PXE install scenario.
 .PARAMETER PxeInstallerIsoPath
@@ -131,6 +133,7 @@ param(
     [string]$CertificatePeerPublicKeyPath = '',
     [switch]$RoutingWanOnly,
     [switch]$RoutingOverlapOnly,
+    [switch]$SameAddressHandoffOnly,
     [switch]$FullEsxiPxeInstall,
     [string]$PxeInstallerIsoPath = '',
     [string]$PxeClientIPAddress = '',
@@ -141,6 +144,13 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+if ($SameAddressHandoffOnly -and -not $RoutingOverlapOnly) {
+    throw '-SameAddressHandoffOnly requires -RoutingOverlapOnly.'
+}
+if ($SameAddressHandoffOnly -and -not $PlanOnly -and
+    @(Get-CimInstance Win32_Process -Filter "Name LIKE 'vmware-vmx%'").Count -ne 0) {
+    throw 'Dedicated-host acceptance requires no running VMware VMs before resource creation.'
+}
 if ($RoutingOverlapOnly -and -not $PlanOnly) {
     & python -I -B -c 'import paramiko, cryptography, pycdlib' 2>$null
     if ($LASTEXITCODE -ne 0) {
@@ -2836,6 +2846,7 @@ $plan = [ordered]@{
     certificate_appliance_peer_mac = $certificateAppliancePeerMac
     routing_wan_only      = [bool]$RoutingWanOnly
     routing_overlap_only  = [bool]$RoutingOverlapOnly
+    same_address_handoff_only = [bool]$SameAddressHandoffOnly
     full_esxi_pxe_install = [bool]$FullEsxiPxeInstall
     signed_release_update_check = [bool]$SignedReleaseRepositoryUrl
     signed_release_fixture_operations = if ($SignedReleaseRepositoryUrl) {
@@ -3797,6 +3808,11 @@ if ($overlapStarted -and $null -ne $overlapDescriptor -and -not $diagnosticTermi
             $scenarioFailure = $_
         }
     }
+}
+
+# A focused stop preflight can lose ownership after the earlier recovery gate.
+if ($overlapRecoveryUncertain) {
+    throw "Dedicated-host ownership or recovery is unverified. Preserve the running lab and original evidence at '$resultRoot' before seed or VM cleanup."
 }
 
 # A failed boot still owns its copied disk; release admission handles before

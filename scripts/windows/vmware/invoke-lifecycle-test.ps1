@@ -66,6 +66,8 @@ IPv4 CIDR used by the simulated WAN scenario.
 Run the focused WAN routing scenario.
 .PARAMETER RoutingOverlapOnly
 Run isolated DHCP and SLAAC same-prefix acceptance on task-owned private LAN segments.
+.PARAMETER SameAddressHandoffOnly
+Require a cooperatively reserved dedicated host and run only the same-address IPv4 handoff within RoutingOverlapOnly.
 .PARAMETER OidcOnly
 Run only the OIDC lifecycle scenario.
 .PARAMETER TimeSourceOnly
@@ -229,6 +231,9 @@ param(
     [Parameter(ParameterSetName = 'Run')]
     [Parameter(ParameterSetName = 'Plan')]
     [switch]$RoutingOverlapOnly,
+    [Parameter(ParameterSetName = 'Run')]
+    [Parameter(ParameterSetName = 'Plan')]
+    [switch]$SameAddressHandoffOnly,
 
     [Parameter(ParameterSetName = 'Run')]
     [Parameter(ParameterSetName = 'Plan')]
@@ -289,6 +294,17 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+if ($SameAddressHandoffOnly -and -not $RoutingOverlapOnly) {
+    throw '-SameAddressHandoffOnly requires -RoutingOverlapOnly.'
+}
+if ($SameAddressHandoffOnly -and -not $PlanOnly) {
+    # Admission precedes credential prompts, source selection and resource creation.
+    # This mode never stops or adopts another task's running virtual machine.
+    $hostVmProcesses = @(Get-CimInstance Win32_Process -Filter "Name LIKE 'vmware-vmx%'")
+    if ($hostVmProcesses.Count -ne 0) {
+        throw 'Dedicated-host acceptance requires no running VMware VMs before creation. Preserve existing VMs and reserve a suitable host.'
+    }
+}
 
 $repoRoot = Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..\..')
 $applianceIpWasPassed = $PSBoundParameters.ContainsKey('ApplianceIPAddress')
@@ -597,6 +613,7 @@ if ($CertificateDhcpPeer) {
 }
 if ($RoutingWanOnly) { $arguments += '-RoutingWanOnly' }
 if ($RoutingOverlapOnly) { $arguments += '-RoutingOverlapOnly' }
+if ($SameAddressHandoffOnly) { $arguments += '-SameAddressHandoffOnly' }
 if ($OwnershipRoot) { $arguments += @('-OwnershipRoot', $OwnershipRoot) }
 if ($OwnershipTaskId) { $arguments += @('-OwnershipTaskId', $OwnershipTaskId) }
 if ($FullEsxiPxeInstall) { $arguments += '-FullEsxiPxeInstall' }
