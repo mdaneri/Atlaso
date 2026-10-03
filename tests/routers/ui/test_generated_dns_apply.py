@@ -918,3 +918,127 @@ def test_management_handoff_dns_readback_failure_triggers_proven_recovery(client
         for command in group["commands"]
     )
     assert all(row["success"] is False and row["rolled_back"] is True for row in results)
+
+
+def test_slaac_address_drift_offers_network_review_and_captures_dns_after_reboot(client, monkeypatch):
+    """Expose unchanged Network intent when SLAAC DNS needs a readiness handoff.
+
+    Args:
+        client: Authenticated application test client.
+        monkeypatch: Host discovery and asynchronous job execution substitutions.
+    """
+    from atlaso.app import main, ui
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import DnsRecord, Job, JobStatus, PhysicalInterface
+    from atlaso.app.services.networking import HostPhysicalInterface
+
+    login(client)
+    with SessionLocal() as db:
+        _management, access = _prepare_service_address_baseline(db, ui)
+        address_pattern_record = db.scalar(select(DnsRecord).where(
+            DnsRecord.hostname == "ca-192-0-2-10.custom.example.internal",
+            DnsRecord.description == "Operator",
+        ))
+        if address_pattern_record is not None:
+            db.delete(address_pattern_record)
+        access.host_ip_cidr = "192.0.2.10/24"
+        access.ipv6_cidr = None
+        access.host_ipv6_cidr = "2001:db8::10/64"
+        access.ipv6_enabled = True
+        interfaces = db.scalars(select(PhysicalInterface).order_by(PhysicalInterface.name)).all()
+        for interface in interfaces:
+            # Model previously reviewed intent so startup discovery updates only observations.
+            interface.desired_state_source = "user"
+        db.flush()
+        units = ui.appliance_apply_units(db)
+        ui.update_appliance_apply_baselines(db, units, {unit["id"] for unit in units})
+        baselines = ui.load_appliance_apply_baselines(db)
+        baselines["appliance_settings"]["config_preview"] = json.dumps(
+            {"resolver_mode": "local_dns", "resolver_servers": ["127.0.0.1"]}
+        )
+        ui.save_appliance_apply_baselines(db, baselines)
+        db.add(Job(
+            id="prior-successful-appliance-apply",
+            type="appliance-apply",
+            status=JobStatus.SUCCEEDED.value,
+            created_by="admin",
+            result="{}",
+        ))
+        # This operator edit remains pending until DNS is explicitly selected.
+        db.add(DnsRecord(
+            hostname="operator-pending.example.internal", record_type="TXT", address="pending-note",
+            description="Operator", enabled=True,
+        ))
+        db.commit()
+
+    discovery = []
+    for interface in interfaces:
+        is_access = interface.name == "eth9"
+        discovery.append(HostPhysicalInterface(
+            name=interface.name,
+            mac_address=interface.mac_address or "",
+            driver=None,
+            speed=None,
+            host_ip_cidr=interface.ip_cidr or interface.host_ip_cidr,
+            host_mtu=interface.mtu,
+            host_admin_state=interface.admin_state,
+            oper_state="up" if interface.admin_state == "up" else "down",
+            host_ipv6_cidr=(
+                "2001:db8::21/64" if is_access else interface.ipv6_cidr or interface.host_ipv6_cidr
+            ),
+        ))
+    monkeypatch.setattr("atlaso.app.services.networking.discover_host_physical_interfaces", lambda: discovery)
+    with SessionLocal() as db:
+        main.refresh_startup_host_inventory(db, environment="appliance")
+        context = ui.appliance_apply_context(db)
+        network = next(unit for unit in context["apply_units"] if unit["id"] == "network")
+        assert network["changed"] is False, network["config_diff"]
+        desired_dns = next(unit for unit in context["apply_units"] if unit["id"] == "dnsmasq")
+        assert "2001:db8::21" in desired_dns["raw_config_preview"]
+        assert "network" not in {unit["id"] for unit in context["changed_apply_units"]}
+        assert context["changed_apply_unit_count"] == len(context["changed_apply_units"])
+        offered_network = next(unit for unit in context["review_apply_units"] if unit["id"] == "network")
+        assert offered_network["valid"] is True, offered_network["validation_errors"]
+        assert any(
+            "dns" in summary.lower() and "listener" in summary.lower()
+            for summary in offered_network["summary"]
+        )
+
+    review_response = client.get("/appliance-apply/review")
+    assert review_response.status_code == 200, review_response.text
+    review = review_response.json()
+    network_review = next(unit for unit in review["units"] if unit["id"] == "network")
+    dns_review = next(unit for unit in review["units"] if unit["id"] == "dnsmasq")
+    assert network_review["valid"] is True
+    assert network_review["selected"] is True
+    assert any(
+        "dns" in summary.lower() and "listener" in summary.lower()
+        for summary in network_review["summary"]
+    )
+    assert dns_review["valid"] is True
+
+    page = client.get("/dashboard")
+    csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    monkeypatch.setattr(ui, "run_appliance_apply_job", lambda _job_id: None)
+    response = client.post(
+        "/appliance-apply",
+        data={"csrf": csrf, "selected_units": ["network", "dnsmasq"]},
+        headers={"Accept": "application/json"},
+    )
+    assert response.status_code == 202, response.text
+
+    with SessionLocal() as db:
+        job = db.get(Job, response.json()["job_id"])
+        assert job is not None
+        payload = json.loads(job.result or "{}")
+        assert payload["management_handoff"] is True
+        assert payload["generated_dns_only"] is False
+        assert payload["dns_resolver_activation"] is False
+        assert {"network", "dnsmasq", *ui.MANAGEMENT_HANDOFF_UNIT_IDS} <= set(payload["selected_units"])
+        dns_capture = next(unit for unit in payload["captured_units"] if unit["unit_id"] == "dnsmasq")
+        preview = dns_capture["config_preview"]
+        assert "cname=ca.custom.example.internal," in preview
+        assert "host-record=ca-192-0-2-10.custom.example.internal,192.0.2.10" in preview
+        assert "host-record=ca-2001-db8-0-0-0-0-0-21.custom.example.internal,2001:db8::21" in preview
+        assert "host-record=ca-2001-db8-0-0-0-0-0-10.custom.example.internal,2001:db8::10" not in preview
+        assert 'txt-record=operator-pending.example.internal,"pending-note"' in preview

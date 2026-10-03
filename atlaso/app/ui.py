@@ -12615,6 +12615,16 @@ def appliance_apply_context(db: Session) -> dict[str, Any]:
     unit_map = {unit["id"]: unit for unit in units}
     dns_unit = unit_map.get("dnsmasq", {})
     settings_unit = unit_map.get("appliance_settings", {})
+    network_unit = unit_map.get("network", {})
+    if (not initial_apply_required and dns_unit.get("changed")
+            and not network_unit.get("changed") and "network" not in submitted_ids
+            and "dnsmasq" not in submitted_ids and network_generated_dns_unit(db, unit_map) is not None):
+        # Dynamic address drift does not alter saved Network intent, but DNS
+        # publication still needs its explicitly reviewed readiness handoff.
+        review_units = [{
+            **network_unit,
+            "summary": [*network_unit["summary"], "Select with DNS to verify effective listener addresses before publication"],
+        }, *review_units]
     dns_settings = dns_unit.get("context", {}).get("dns_settings")
     if (
         (initial_apply_required or dns_unit.get("changed"))

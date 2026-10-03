@@ -82,6 +82,9 @@ also validate listener conflicts. See [Traffic Publishing](traffic-publishing.md
 
 Valid changed units are selected by default; invalid units are not. Unselected units remain pending after submission.
 
+When DHCP or SLAAC changes a service address without a saved Network edit, the review also offers **Network** with
+**DNS/DHCP**. Select both to verify the effective listeners before publishing the updated generated DNS records.
+
 !!! warning
     Review related units together when a feature crosses service boundaries; partial application can leave behavior unavailable.
 
