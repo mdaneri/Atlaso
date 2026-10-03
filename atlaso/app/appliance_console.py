@@ -1090,12 +1090,69 @@ def _ensure_no_active_apply() -> None:
             raise ConsoleOperationError(f"Appliance apply task {active.id} is already {active.status}.")
 
 
-def _submit_console_apply(required_ids: set[str]) -> str:
+def _ensure_no_pending_management_dependencies(db: Any) -> None:
+    """Keep console recovery from silently applying unrelated protected edits.
+
+    The console's management recovery submits Network and Firewall directly.
+    A generated service-DNS refresh can expand that task to every protected
+    handoff unit, so reject already-pending dependencies before changing the
+    console's own desired state. Network is excluded because it is the explicit
+    operation; dependencies created by this management change are captured
+    normally after the preflight.
+
+    Args:
+        db: Caller-owned transaction under the network-object write lock.
+
+    Raises:
+        ConsoleOperationError: If protected units other than Network already
+            contain unapplied desired-state changes.
+    """
+    from atlaso.app.ui import MANAGEMENT_HANDOFF_UNIT_IDS, appliance_apply_units
+
+    dependency_ids = set(MANAGEMENT_HANDOFF_UNIT_IDS) - {"network"}
+    units = appliance_apply_units(db, reconcile=False)
+    pending = [
+        unit["label"] for unit in units
+        if unit["id"] in dependency_ids and unit["changed"] and unit["has_baseline"]
+    ]
+    if pending:
+        raise ConsoleOperationError(
+            "Console management recovery is blocked by pending protected changes: "
+            f"{', '.join(pending)}. Resolve them through Appliance Apply before retrying."
+        )
+
+
+def _management_handoff_snapshot_hashes(db: Any) -> dict[str, str]:
+    """Capture the intended protected unit snapshots after console-owned edits.
+
+    Args:
+        db: Current transaction containing the console's desired-state changes.
+
+    Returns:
+        Snapshot hashes used to detect edits between the console update and
+        Appliance Apply capture.
+    """
+    from atlaso.app.ui import MANAGEMENT_HANDOFF_UNIT_IDS, appliance_apply_units
+
+    return {
+        unit["id"]: str(unit["snapshot_hash"])
+        for unit in appliance_apply_units(db, reconcile=False)
+        if unit["id"] in MANAGEMENT_HANDOFF_UNIT_IDS
+    }
+
+
+def _submit_console_apply(
+    required_ids: set[str], *, expected_management_snapshots: dict[str, str] | None = None,
+) -> str:
     # Imported lazily so read-only status remains available even if the web stack has a startup issue.
     """Return submit console apply.
 
     Args:
         required_ids: Stable identifiers of the associated required resources.
+        expected_management_snapshots: Optional protected-unit hashes captured
+            after console-owned changes, used to reject concurrent edits before
+            creating an apply task.
+
     Raises:
         ConsoleOperationError: If the operation encounters an invalid state.
     """
@@ -1111,6 +1168,8 @@ def _submit_console_apply(required_ids: set[str]) -> str:
     )
 
     with SessionLocal() as db:
+        if expected_management_snapshots is not None:
+            acquire_network_objects_write_lock(db)
         selected_ids = set(required_ids)
         if "vcf_offline_depot" in selected_ids:
             acquire_vcf_depot_admission_gate(db)
@@ -1123,8 +1182,19 @@ def _submit_console_apply(required_ids: set[str]) -> str:
                 raise ConsoleOperationError(
                     f"VCFDT task {active_vcf_job.id} is already {active_vcf_job.status}."
                 )
-        units = appliance_apply_units(db)
+        units = appliance_apply_units(db, reconcile=expected_management_snapshots is None)
         unit_map = {unit["id"]: unit for unit in units}
+        if expected_management_snapshots is not None:
+            changed_during_recovery = [
+                unit_map[unit_id]["label"] if unit_id in unit_map else unit_id
+                for unit_id, expected_hash in expected_management_snapshots.items()
+                if unit_id not in unit_map or unit_map[unit_id]["snapshot_hash"] != expected_hash
+            ]
+            if changed_during_recovery:
+                raise ConsoleOperationError(
+                    "Protected desired state changed before console management recovery was captured: "
+                    f"{', '.join(changed_during_recovery)}. Review it in Appliance Apply and retry."
+                )
         generated_dns = network_generated_dns_unit(db, unit_map) if "network" in selected_ids else None
         generated_dns_only = generated_dns is not None and "dnsmasq" not in selected_ids
         if generated_dns_only:
@@ -1253,8 +1323,10 @@ def configure_management(
     mode, ipv6_cidr_value, ipv6_gateway_value = validate_ipv6_management_values(ipv6_mode, ipv6_cidr, ipv6_gateway)
     dns_servers = validate_dns_servers(raw_dns_servers)
     _ensure_no_active_apply()
+    expected_management_snapshots: dict[str, str]
     with SessionLocal() as db:
         acquire_network_objects_write_lock(db)
+        _ensure_no_pending_management_dependencies(db)
         interface = _management_interface(db)
         old_ip_cidr, old_ipv6_cidr = interface.ip_cidr, interface.ipv6_cidr
         settings = db.scalar(select(ApplianceSettings).order_by(ApplianceSettings.id))
@@ -1282,6 +1354,7 @@ def configure_management(
             old_ip_cidr=old_ip_cidr, old_ipv6_cidr=old_ipv6_cidr,
             actor=None, dns_refresher=refresh_interface_service_dns_aliases,
         )
+        expected_management_snapshots = _management_handoff_snapshot_hashes(db)
         db.commit()
         record_audit(
             db,
@@ -1291,9 +1364,16 @@ def configure_management(
             resource_id=interface.name,
             detail=f"ipv4_method={method}; ipv6_mode={mode}; dns_servers={len(dns_servers)}",
         )
-    network_job_id = _submit_console_apply({"network", "firewall"})
+    network_job_id = _submit_console_apply(
+        {"network", "firewall"}, expected_management_snapshots=expected_management_snapshots,
+    )
     _recover_management_plane("Network and Firewall were applied")
-    settings_job_id = _submit_console_apply({"appliance_settings"})
+    settings_job_id = _submit_console_apply(
+        {"appliance_settings"},
+        expected_management_snapshots={
+            "appliance_settings": expected_management_snapshots["appliance_settings"],
+        },
+    )
     _recover_management_plane("Appliance Settings were applied")
     with SessionLocal() as db:
         record_audit(

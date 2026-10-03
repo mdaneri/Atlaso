@@ -15261,6 +15261,8 @@ def execute_management_handoff(
         *(("nat",) if include_nat else ()),
     )
     baselines = load_appliance_apply_baselines(db)
+    prior_dns_records = (owned_service_dns_records(db, str(baselines.get("dnsmasq", {}).get("config_preview") or ""))
+                         if dnsmasq is not None else [])
     previous_paths = list(network.get("previous_management_paths") or [])
     network_rows = {row["name"]: row for row in network_interface_entries(network["raw_config_preview"])}
     public_dynamic_bindings = []
@@ -15445,8 +15447,6 @@ def execute_management_handoff(
             recovery_result = adapter.recover_management_handoff()
             evidence = {**evidence, "failing_layer": "Public Services dynamic listener readback", "error": str(exc)}
     if succeeded and dnsmasq is not None and not adapter.dry_run:
-        from atlaso.app.services.service_dns_readback import verify_service_dns_records
-
         if dnsmasq.get("applied_dns_enabled", dnsmasq["context"]["dns_settings"].enabled):
             try:
                 if dynamic_paths:
@@ -15506,7 +15506,12 @@ def execute_management_handoff(
                             config_path=dnsmasq["config_path"], config_preview=effective_config,
                             baseline=baselines.get("dnsmasq"),
                         ))
-                verify_service_dns_records(owned_service_dns_records(db, dnsmasq["raw_config_preview"]))
+                verify_handoff_service_dns(
+                    owned_service_dns_records(db, dnsmasq["raw_config_preview"]), prior_dns_records,
+                    dnsmasq["raw_config_preview"],
+                    authoritative=dnsmasq.get("applied_dns_authoritative",
+                                              bool(getattr(dnsmasq["context"]["dns_settings"], "authoritative", False))),
+                )
                 listener_baselines = projected_handoff_listener_baselines(
                     baselines, units_by_id, evidence.get("listener_address_moves", []),
                 )
@@ -15642,6 +15647,55 @@ def execute_management_handoff(
             }
         )
     return group_result, unit_results
+
+
+def verify_handoff_service_dns(
+    records: list[dict[str, str]], prior_records: list[dict[str, str]], config: str, *, authoritative: bool,
+) -> None:
+    """Prove publication and retirement on captured recursive and authoritative listeners.
+
+    Args:
+        records: Owned records present in the verified candidate.
+        prior_records: Captured applied ownership before desired reconciliation.
+        config: Exact published DNS configuration, including embedded authoritative directives.
+        authoritative: Whether this handoff applies authoritative DNS.
+    """
+    from atlaso.app.services.service_dns_readback import verify_service_dns_records
+
+    verify_service_dns_records(records, prior_records=prior_records)
+    if not authoritative:
+        return
+    listeners = {line.partition("=")[2] for line in config.splitlines()
+                 if line.startswith("listen-address=")}
+    if not listeners:
+        raise ValueError("Applied authoritative DNS has no captured client listener.")
+    prefix = "# atlaso-authoritative-config: "
+    directives = [line.removeprefix(prefix) for line in config.splitlines() if line.startswith(prefix)]
+    ports = [line.partition("=")[2] for line in directives if line.startswith("port=")]
+    addresses = {line.partition("=")[2] for line in directives if line.startswith("listen-address=")}
+    zones = {line.partition("=")[2].split(",", 1)[0].rstrip(".").lower()
+             for line in directives if line.startswith("auth-zone=")}
+    if len(ports) != 1 or not ports[0].isdigit() or not addresses or not zones:
+        raise ValueError("Applied authoritative DNS listener evidence is incomplete.")
+
+    def in_zone(record: dict[str, str]) -> bool:
+        """Return whether this record belongs to a captured authoritative zone."""
+        name = record["hostname"].rstrip(".").lower()
+        return any(name == zone or name.endswith("." + zone) for zone in zones)
+
+    authoritative_records = [record for record in records if in_zone(record)]
+    authoritative_prior = [record for record in prior_records if in_zone(record)]
+    recursive_records = [record for record in records if not in_zone(record)]
+    recursive_prior = [record for record in prior_records if not in_zone(record)]
+    for address in sorted(listeners - {"127.0.0.1"}):
+        verify_service_dns_records(authoritative_records, nameserver=address, prior_records=authoritative_prior,
+                                   require_authoritative=True)
+        if recursive_records or recursive_prior:
+            verify_service_dns_records(recursive_records, nameserver=address, prior_records=recursive_prior)
+    for address in sorted(addresses):
+        verify_service_dns_records(authoritative_records, nameserver=address,
+                                   port=int(ports[0]), prior_records=authoritative_prior,
+                                   require_authoritative=True)
 
 
 def projected_public_service_config(content: str, moves: list[dict[str, str]]) -> str:

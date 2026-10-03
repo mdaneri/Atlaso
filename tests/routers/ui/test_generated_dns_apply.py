@@ -832,7 +832,7 @@ def test_management_handoff_dns_readback_failure_triggers_proven_recovery(client
     monkeypatch.setattr(
         service_dns_readback,
         "verify_service_dns_records",
-        lambda _records: (_ for _ in ()).throw(ValueError("controlled DNS readback failure")),
+        lambda _records, **_kwargs: (_ for _ in ()).throw(ValueError("controlled DNS readback failure")),
     )
     unit_defaults = {
         "label": "Management handoff component",
@@ -1205,11 +1205,16 @@ def test_verified_depot_moves_update_separately_selected_captured_config(client,
         monkeypatch.setattr(ui, "CA_STAGED_CONFIG_PATH", str(tmp_path / "ca.json"))
         monkeypatch.setattr(ui, "stage_appliance_apply_config", lambda target, _content: str(target))
         monkeypatch.setattr(ui, "render_ca_apply_payload", lambda *_args, **_kwargs: "{}")
-        monkeypatch.setattr(service_dns_readback, "verify_service_dns_records", lambda _records: None)
+        readback_calls = []
+        monkeypatch.setattr(service_dns_readback, "verify_service_dns_records",
+                            lambda records, **kwargs: readback_calls.append((records, kwargs)))
         group, _results = ui.execute_management_handoff(
             units, job_id="job_depot853abc", adapter=Adapter(), db=db, include_dnsmasq=True,
         )
         assert group["success"] is True
+        assert any(record["address"] == "2001:db8::10"
+                   for record in readback_calls[0][1]["prior_records"])
+        assert any(record["address"] == "2001:db8::21" for record in readback_calls[0][0])
         captured = units["vcf_offline_depot"]
         assert "listen [2001:db8::21]:10443 ssl;" in captured["config_preview"]
         assert "listen [2001:db8::11]:10443 ssl;" not in captured["config_preview"]
@@ -1217,3 +1222,57 @@ def test_verified_depot_moves_update_separately_selected_captured_config(client,
         prior_projection = group["listener_baselines"]["vcf_offline_depot"]["config_preview"]
         assert "listen [2001:db8::21]:9443 ssl;" in prior_projection
         assert "10443" not in prior_projection
+
+
+@pytest.mark.parametrize("failed_listener", [None, "192.0.2.21", "authoritative"],
+                         ids=["all-paths", "client-unavailable", "backend-unavailable"])
+def test_handoff_readback_requires_captured_authoritative_and_recursive_paths(monkeypatch, failed_listener):
+    """Query applied endpoints, retaining retired expectations on every DNS path.
+
+    Args:
+        monkeypatch: Replace direct UDP queries with endpoint evidence.
+        failed_listener: Inject failure on one protected endpoint.
+    """
+    from atlaso.app import ui
+    from atlaso.app.services import service_dns_readback
+
+    prior = [{"hostname": "retired.example.internal", "record_type": "AAAA", "address": "2001:db8::10"}]
+    desired = [{"hostname": "ca.example.internal", "record_type": "A", "address": "192.0.2.21"}]
+    config = ("listen-address=192.0.2.21\nlisten-address=127.0.0.1\n"
+              "# atlaso-authoritative-config: port=5353\n"
+              "# atlaso-authoritative-config: listen-address=127.0.0.1\n"
+              "# atlaso-authoritative-config: auth-zone=example.internal,192.0.2.0/24\n")
+    calls = []
+
+    def verify(records, **kwargs):
+        calls.append((records, kwargs))
+        if (failed_listener and (kwargs.get("nameserver") == failed_listener
+                or (failed_listener == "authoritative" and kwargs.get("port") == 5353))):
+            raise ValueError("controlled listener failure")
+
+    monkeypatch.setattr(service_dns_readback, "verify_service_dns_records", verify)
+    if failed_listener:
+        with pytest.raises(ValueError, match="controlled listener failure"):
+            ui.verify_handoff_service_dns(desired, prior, config, authoritative=True)
+    else:
+        ui.verify_handoff_service_dns(desired, prior, config, authoritative=True)
+        assert len(calls) == 3
+        assert calls[0] == (desired, {"prior_records": prior})
+        assert calls[1] == (desired, {"nameserver": "192.0.2.21", "prior_records": prior,
+                                     "require_authoritative": True})
+        assert calls[2] == (desired, {"nameserver": "127.0.0.1", "port": 5353,
+                                     "prior_records": prior, "require_authoritative": True})
+
+
+def test_handoff_readback_rejects_missing_authoritative_evidence(monkeypatch):
+    """Never substitute pending DNS settings for absent captured authoritative bindings.
+
+    Args:
+        monkeypatch: Replace UDP query execution.
+    """
+    from atlaso.app import ui
+    from atlaso.app.services import service_dns_readback
+
+    monkeypatch.setattr(service_dns_readback, "verify_service_dns_records", lambda *_args, **_kwargs: None)
+    with pytest.raises(ValueError, match="listener evidence is incomplete"):
+        ui.verify_handoff_service_dns([], [], "listen-address=127.0.0.1\n", authoritative=True)
