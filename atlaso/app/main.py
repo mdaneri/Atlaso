@@ -56,6 +56,7 @@ from atlaso.app.ui import (
     recover_interrupted_appliance_apply_jobs,
     recover_interrupted_vcf_depot_software_id_jobs,
     recover_interrupted_vcf_helper_jobs,
+    remember_applied_service_dns_records,
     require_management_ui_request,
 )
 from atlaso.app.ui import router as ui_router
@@ -106,6 +107,9 @@ def refresh_startup_host_inventory(db: Session, *, environment: str) -> None:
         environment: Environment supplied by the caller.
     """
     if environment == "appliance":
+        # Legacy baselines need the persisted pre-reboot address to prove
+        # ownership before host discovery replaces that observation.
+        remember_applied_service_dns_records(db)
         sync_host_physical_interfaces(db)
         from atlaso.app.ui import refresh_interface_service_dns_aliases
 

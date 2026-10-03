@@ -315,6 +315,60 @@ def test_dhcp_to_static_management_move_projects_appliance_dns_with_legacy_inven
         assert f"host-record={fqdn},198.51.100.11" in projected["raw_config_preview"]
 
 
+def test_startup_preserves_legacy_dhcp_dns_provenance_after_offline_address_change(client, monkeypatch):
+    """A legacy applied DHCP record remains part of Network-only publication.
+
+    Args:
+        client: Seeded application client.
+        monkeypatch: Replace host discovery with a changed assigned address.
+    """
+    from atlaso.app import main, ui
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import PhysicalInterface
+
+    login(client)
+    with SessionLocal() as db:
+        management, _access = _prepare_service_address_baseline(db, ui)
+        management.ipv4_method = "dhcp"
+        management.host_ip_cidr = management.ip_cidr
+        management.ip_cidr = None
+        db.flush()
+        units = ui.appliance_apply_units(db)
+        ui.update_appliance_apply_baselines(db, units, {unit["id"] for unit in units})
+        baselines = ui.load_appliance_apply_baselines(db)
+        baselines["dnsmasq"].pop("service_dns_records")
+        prior_config = baselines["dnsmasq"]["config_preview"]
+        ui.save_appliance_apply_baselines(db, baselines)
+        management_name = management.name
+        db.commit()
+
+    def changed_inventory(db):
+        """Emulate host discovery replacing the persisted DHCP observation."""
+        management = db.scalar(select(PhysicalInterface).where(PhysicalInterface.name == management_name))
+        management.host_ip_cidr = "198.51.100.11/24"
+        db.flush()
+
+    monkeypatch.setattr(main, "sync_host_physical_interfaces", changed_inventory)
+    with SessionLocal() as db:
+        main.refresh_startup_host_inventory(db, environment="appliance")
+
+    with SessionLocal() as db:
+        baseline = ui.load_appliance_apply_baselines(db)["dnsmasq"]
+        assert baseline["config_preview"] == prior_config
+        applied_record = next(row for row in baseline["service_dns_records"]
+                              if row["description"] == ui.APPLIANCE_DNS_RECORD_DESCRIPTION
+                              and row["address"] == "198.51.100.10")
+        assert applied_record["source_interface"] == management_name
+        units = {unit["id"]: unit for unit in ui.appliance_apply_units(db)}
+        projected = ui.network_generated_dns_unit(db, units)
+        assert projected is not None
+        assert projected["generated_dns_only"] is True
+        assert projected["validation_errors"] == []
+        fqdn = ui.get_appliance_settings_row(db).fqdn
+        assert f"host-record={fqdn},198.51.100.10" not in projected["raw_config_preview"]
+        assert f"host-record={fqdn},198.51.100.11" in projected["raw_config_preview"]
+
+
 def test_alias_refresh_is_idempotent_across_sessions_for_service_inventory(client):
     """Refresh generated names after one address move, then survive a fresh session.
 

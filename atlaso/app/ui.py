@@ -7472,9 +7472,14 @@ def network_generated_dns_unit(db: Session, units_by_id: dict[str, dict[str, Any
                 replacements[record["address"]] = target
     affected = {row["description"] for row in previous_records if row["record_type"] in {"A", "AAAA"} and row["address"] in moved_addresses}
     effective_options = {row["name"]: set(row["addresses"]) for row in service_bind_options(db)}
+    management_addresses = set(management_ui_addresses(db))
     for row in previous_records:
         source = row.get("source_interface", "")
         if row["record_type"] in {"A", "AAAA"} and source in effective_options and row["address"] not in effective_options[source]:
+            affected.add(row["description"])
+        if (row["description"] == APPLIANCE_DNS_RECORD_DESCRIPTION
+                and row["record_type"] in {"A", "AAAA"} and source in candidate_network
+                and row["address"] not in management_addresses):
             affected.add(row["description"])
     if not affected:
         return None
