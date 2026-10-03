@@ -7374,6 +7374,14 @@ def owned_service_dns_records(db: Session, config: str) -> list[dict[str, str]]:
     service_interfaces[ESXI_PXE_DNS_RECORD_DESCRIPTION] = primary_listen_interface(str(esxi_pxe_boot_settings(db).get("listen_interface") or ""))
     explicit_ptrs = {row.hostname for row in db.scalars(select(DnsRecord).where(DnsRecord.record_type == "PTR"))}
     address_sources = {address: option["name"] for option in service_bind_options(db) for address in option["addresses"]}
+    # The management plane is deliberately excluded from service bind choices.
+    # Its generated FQDN still needs provenance, including the assigned DHCP
+    # address retained in observations while a static candidate is reviewed.
+    for interface in db.scalars(select(PhysicalInterface)):
+        for cidr in (interface.ip_cidr, interface.ipv6_cidr, interface.host_ip_cidr, interface.host_ipv6_cidr):
+            address = address_from_cidr(cidr)
+            if address:
+                address_sources.setdefault(address, interface.name)
     result = []
     for row in db.scalars(select(DnsRecord).where(DnsRecord.description.in_(descriptions))):
         if not row.enabled or row.record_type not in {"A", "AAAA", "CNAME"}:
@@ -7443,7 +7451,25 @@ def network_generated_dns_unit(db: Session, units_by_id: dict[str, dict[str, Any
                 moved_addresses.add(address_from_cidr(old[field]))
                 if row.get(field):
                     replacements[address_from_cidr(old[field])] = address_from_cidr(row[field])
-    previous_records = list(baseline.get("service_dns_records") or [])
+    previous_records = [dict(record) for record in baseline.get("service_dns_records") or []]
+    for record in previous_records:
+        if record.get("source_interface") or record["description"] != APPLIANCE_DNS_RECORD_DESCRIPTION:
+            continue
+        # Upgrade inventories written before management-source attribution.
+        sources = {interface.name for interface in db.scalars(select(PhysicalInterface))
+                   if record["address"] in {address_from_cidr(interface.host_ip_cidr), address_from_cidr(interface.host_ipv6_cidr)}}
+        if len(sources) == 1:
+            record["source_interface"] = next(iter(sources))
+    # Applied DHCP rows have no desired ip_cidr. Recover the old address only
+    # from the owned inventory and bind it to this reviewed candidate interface.
+    for record in previous_records:
+        candidate = candidate_network.get(record.get("source_interface", ""), {})
+        field = "ip_cidr" if record["record_type"] == "A" else "ipv6_cidr"
+        if record["record_type"] in {"A", "AAAA"} and candidate.get(field):
+            target = address_from_cidr(candidate[field])
+            if target != record["address"]:
+                moved_addresses.add(record["address"])
+                replacements[record["address"]] = target
     affected = {row["description"] for row in previous_records if row["record_type"] in {"A", "AAAA"} and row["address"] in moved_addresses}
     effective_options = {row["name"]: set(row["addresses"]) for row in service_bind_options(db)}
     for row in previous_records:
@@ -10544,13 +10570,16 @@ def refresh_management_handoff_dynamic_observations(
     db.flush()
 
 
-def refresh_service_dns_effective_observations(db: Session, network_preview: str, evidence: dict[str, Any]) -> None:
+def refresh_service_dns_effective_observations(
+    db: Session, network_preview: str, evidence: dict[str, Any], *, source_interfaces: set[str] | None = None,
+) -> None:
     """Refresh dynamic service bindings only from helper-proven assigned addresses.
 
     Args:
         db: Caller-owned Apply transaction.
         network_preview: Reviewed Network intent.
         evidence: Successful protected helper readback.
+        source_interfaces: Affected listener sources; other dynamic links remain untouched.
     """
     observation = evidence.get("service_address_observation") or {}
     if not observation.get("complete"):
@@ -10558,7 +10587,8 @@ def refresh_service_dns_effective_observations(db: Session, network_preview: str
     links = {row["name"]: row for row in observation.get("links", [])}
     discovered = {row.name: row for row in discover_host_physical_interfaces()}
     for row in network_interface_entries(network_preview):
-        if row.get("kind") != "physical":
+        if (row.get("kind") != "physical" or row.get("admin_state") == "down"
+                or source_interfaces is not None and row["name"] not in source_interfaces):
             continue
         dynamic_families = []
         if row.get("ipv4_method") == "dhcp":
@@ -15157,9 +15187,11 @@ def execute_management_handoff(
     dnsmasq = units_by_id["dnsmasq"] if include_dnsmasq else None
     dns_identity_snapshot = service_dns_identity_snapshot(db) if dnsmasq is not None else []
     submitted_dns_records = owned_service_dns_records(db, dnsmasq["raw_config_preview"]) if dnsmasq is not None else []
+    dns_sources = {record.get("source_interface", "") for record in submitted_dns_records}
     dynamic_paths = [path for path in network_interface_entries(network["raw_config_preview"])
-                     if path.get("ipv4_method") == "dhcp" or (
-                         path.get("ipv6_enabled") == "true" and not path.get("ipv6_cidr"))]
+                     if path.get("admin_state") != "down" and path["name"] in dns_sources
+                     and (path.get("ipv4_method") == "dhcp" or (
+                         path.get("ipv6_enabled") == "true" and not path.get("ipv6_cidr")))]
     handoff_unit_ids = (
         *MANAGEMENT_HANDOFF_UNIT_IDS,
         *(("dnsmasq",) if include_dnsmasq else ()),
@@ -15332,7 +15364,10 @@ def execute_management_handoff(
                     db.expire_all()
                     if service_dns_identity_snapshot(db) != dns_identity_snapshot:
                         raise ValueError("Service DNS identity changed during network readiness; resubmit the changes.")
-                    refresh_service_dns_effective_observations(db, network["raw_config_preview"], evidence)
+                    refresh_service_dns_effective_observations(
+                        db, network["raw_config_preview"], evidence,
+                        source_interfaces={path["name"] for path in dynamic_paths},
+                    )
                     refresh_interface_service_dns_aliases(db, actor=None)
                     ensure_dns_for_appliance_settings(db, get_appliance_settings_row(db), previous_fqdn=get_appliance_settings_row(db).fqdn, actor=None)
                     dns_context = dnsmasq_context(db, reconcile=False, include_leases=False)
@@ -18119,7 +18154,7 @@ def _submit_appliance_apply(
         management_handoff
         # A pending DNS edit is not consent to apply it with a Network handoff.
         and "dnsmasq" in selected_ids
-        and (getattr(dns_settings_for_apply, "enabled", False) or "dnsmasq" in requested_ids)
+        and (generated_dns_only or getattr(dns_settings_for_apply, "enabled", False) or "dnsmasq" in requested_ids)
     )
     if management_handoff_dnsmasq:
         selected_ids.add("dnsmasq")

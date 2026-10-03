@@ -3,6 +3,7 @@
 import json
 from types import SimpleNamespace
 
+import pytest
 from sqlalchemy import select
 
 from tests.routers.ui.helpers import login
@@ -33,14 +34,18 @@ def test_dynamic_binding_refresh_requires_complete_assigned_native_address(clien
         client: Seeded application client.
         monkeypatch: Native inventory adapter substitutions.
     """
-    import pytest
-
     from atlaso.app import ui
     from atlaso.app.database import SessionLocal
 
     login(client)
     with SessionLocal() as db:
         _management, access = _prepare_service_address_baseline(db, ui)
+        from atlaso.app.models import PhysicalInterface
+
+        db.add(PhysicalInterface(name="inactive-dhcp", role="unused", mode="access", admin_state="down",
+                                 ipv4_method="dhcp", ipv6_enabled=True, mac_address="02:00:00:00:00:99"))
+        db.add(PhysicalInterface(name="unrelated-dhcp", role="unused", mode="access", admin_state="up",
+                                 ipv4_method="dhcp", ipv6_enabled=True, mac_address="02:00:00:00:00:98"))
         access.ipv4_method = "dhcp"
         access.ip_cidr = None
         access.ipv6_cidr = None
@@ -53,12 +58,12 @@ def test_dynamic_binding_refresh_requires_complete_assigned_native_address(clien
                 "addresses": [{"address": "192.0.2.21", "state": "assigned"},
                               {"address": "2001:db8::21", "state": "assigned"}]}
         evidence = {"service_address_observation": {"complete": True, "links": [link]}}
-        ui.refresh_service_dns_effective_observations(db, network["raw_config_preview"], evidence)
+        ui.refresh_service_dns_effective_observations(db, network["raw_config_preview"], evidence, source_interfaces={"eth9"})
         assert access.host_ip_cidr == "192.0.2.21/24"
         assert access.host_ipv6_cidr == "2001:db8::21/64"
         host.host_ip_cidr = "192.0.2.99/24"
         with pytest.raises(ValueError, match="confirm IPv4"):
-            ui.refresh_service_dns_effective_observations(db, network["raw_config_preview"], evidence)
+            ui.refresh_service_dns_effective_observations(db, network["raw_config_preview"], evidence, source_interfaces={"eth9"})
 
 
 def _prepare_service_address_baseline(db, ui):
@@ -169,7 +174,8 @@ def _prepare_service_address_baseline(db, ui):
     return management, access
 
 
-def test_network_apply_captures_refreshed_service_dns_after_direct_ip_change(client, monkeypatch):
+@pytest.mark.parametrize("pending_dns_disable", [False, True])
+def test_network_apply_captures_refreshed_service_dns_after_direct_ip_change(client, monkeypatch, pending_dns_disable):
     """Capture CA, Depot, and NTP dual-stack aliases after direct interface edits.
 
     The same Network POST must project only applied generated DNS ownership through
@@ -178,12 +184,14 @@ def test_network_apply_captures_refreshed_service_dns_after_direct_ip_change(cli
 
     Args:
         client: Isolated authenticated application client.
+        pending_dns_disable: Keep an unrelated DNS shutdown pending during Network Apply.
     """
     from atlaso.app import ui
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import (
         CaSettings,
         DnsRecord,
+        DnsSettings,
         Job,
         NtpSettings,
         VcfOfflineDepotSettings,
@@ -197,6 +205,8 @@ def test_network_apply_captures_refreshed_service_dns_after_direct_ip_change(cli
     login(client)
     with SessionLocal() as db:
         management, access = _prepare_service_address_baseline(db, ui)
+        if pending_dns_disable:
+            db.scalar(select(DnsSettings)).enabled = False
         management.ip_cidr = "198.51.100.11/24"
         access.ip_cidr = "192.0.2.11/24"
         access.ipv6_cidr = "2001:db8::11/64"
@@ -264,6 +274,45 @@ def test_network_apply_captures_refreshed_service_dns_after_direct_ip_change(cli
         }
         assert desired_directives <= captured_directives
         assert not (previous_directives - desired_directives) & captured_directives
+
+
+def test_dhcp_to_static_management_move_projects_appliance_dns_with_legacy_inventory(client):
+    """Applied DHCP addresses remain identifiable without a desired Network CIDR.
+
+    Args:
+        client: Seeded application client.
+    """
+    from atlaso.app import ui
+    from atlaso.app.database import SessionLocal
+
+    login(client)
+    with SessionLocal() as db:
+        management, _access = _prepare_service_address_baseline(db, ui)
+        management.ipv4_method = "dhcp"
+        management.host_ip_cidr = management.ip_cidr
+        management.ip_cidr = None
+        db.flush()
+        units = ui.appliance_apply_units(db)
+        ui.update_appliance_apply_baselines(db, units, {unit["id"] for unit in units})
+        baselines = ui.load_appliance_apply_baselines(db)
+        applied_record = next(row for row in baselines["dnsmasq"]["service_dns_records"]
+                              if row["description"] == ui.APPLIANCE_DNS_RECORD_DESCRIPTION and row["address"] == "198.51.100.10")
+        assert applied_record["source_interface"] == management.name
+        for row in baselines["dnsmasq"]["service_dns_records"]:
+            if row["description"] == ui.APPLIANCE_DNS_RECORD_DESCRIPTION:
+                row["source_interface"] = ""
+        ui.save_appliance_apply_baselines(db, baselines)
+        management.ipv4_method = "static"
+        management.ip_cidr = "198.51.100.11/24"
+        db.flush()
+        units = {unit["id"]: unit for unit in ui.appliance_apply_units(db)}
+        projected = ui.network_generated_dns_unit(db, units)
+        assert projected is not None
+        assert projected["validation_errors"] == []
+        assert "198.51.100.11" in projected["raw_config_preview"]
+        fqdn = ui.get_appliance_settings_row(db).fqdn
+        assert f"host-record={fqdn},198.51.100.10" not in projected["raw_config_preview"]
+        assert f"host-record={fqdn},198.51.100.11" in projected["raw_config_preview"]
 
 
 def test_alias_refresh_is_idempotent_across_sessions_for_service_inventory(client):
@@ -485,9 +534,10 @@ def test_management_handoff_dns_readback_failure_triggers_proven_recovery(client
     }
     units["network"]["previous_management_paths"] = []
     units["network"]["removed_vlan_interfaces"] = []
+    units["network"]["raw_config_preview"] = "[physical_interfaces]\ninterface=inactive\nadmin_state=down\nipv4_method=dhcp\nipv6_enabled=true\n"
     units["ca"]["context"] = {"ca_settings": object(), "ca_certificates": []}
     units["dnsmasq"]["raw_config_preview"] = "host-record=ca.custom.example.internal,192.0.2.11\n"
-    units["dnsmasq"]["context"] = {"dns_settings": SimpleNamespace(enabled=True)}
+    units["dnsmasq"]["context"] = {"dns_settings": SimpleNamespace(enabled=False)}
     units["dnsmasq"]["applied_dns_enabled"] = True
 
     login(client)
