@@ -47,6 +47,12 @@ def _snapshot() -> dict[str, object]:
 
 
 def _guest_interface(mac: str, *addresses: tuple[str, int]) -> dict[str, object]:
+    """Build one synthetic Ethernet interface with native address records.
+
+    Args:
+        mac: Interface MAC address.
+        *addresses: Address and prefix-length pairs to attach to the interface.
+    """
     return {
         "mac": mac,
         "link_type": "ether",
@@ -112,6 +118,12 @@ def test_validates_complete_dedicated_host_snapshot_without_exclusivity_claim() 
     ],
 )
 def test_refuses_invalid_or_changed_host_inventory(change: object, reason: str) -> None:
+    """Reject malformed process, VMX, or adapter observations.
+
+    Args:
+        change: Mutation callback that corrupts a snapshot field.
+        reason: Expected fixed refusal category.
+    """
     snapshot = _snapshot()
     change(snapshot)  # type: ignore[operator]  # Each parameter is a test mutation callback.
 
@@ -203,6 +215,12 @@ def test_validates_candidate_claims_only_on_appliance_management_mac() -> None:
     ],
 )
 def test_refuses_guest_address_or_topology_conflict(change: object, reason: str) -> None:
+    """Reject malformed or conflicting enrolled guest-interface observations.
+
+    Args:
+        change: Mutation callback that corrupts a guest inventory field.
+        reason: Expected fixed refusal category.
+    """
     guests = _guests()
     change(guests)  # type: ignore[operator]  # Each parameter is a test mutation callback.
 

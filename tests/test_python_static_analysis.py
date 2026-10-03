@@ -137,6 +137,8 @@ def test_static_analysis_configuration_is_pinned_and_scoped() -> None:
         "warn_unused_configs": True,
         "follow_imports": "silent",
         "files": [
+            "scripts/interop/dedicated_host_contract.py",
+            "scripts/interop/dedicated_host_proof.py",
             "atlaso/app/services/routing_permissions.py",
             "atlaso/app/routers/api_v1/routing_permissions.py",
             "atlaso/app/routing_permission_schemas.py",

@@ -329,6 +329,13 @@ def test_same_address_runner_admits_host_before_reading_credentials(tmp_path, mo
 
     class HostGuard:
         def __init__(self, expected, _vmrun, _powershell):
+            """Retain the public enrollment at the admission boundary.
+
+            Args:
+                expected: Original fixture VMX and adapter allowlist.
+                _vmrun: Synthetic provider path.
+                _powershell: Synthetic census executable path.
+            """
             assert set(expected) == set(descriptor['vmx_paths'].values())
             events.append('host-guard-created')
 
@@ -337,10 +344,20 @@ def test_same_address_runner_admits_host_before_reading_credentials(tmp_path, mo
             return self
 
         def __exit__(self, *_args):
+            """Record release of the admitted host pins.
+
+            Args:
+                *_args: Context manager exception information.
+            """
             events.append('host-released')
 
     class TrackingStdin(io.StringIO):
         def readline(self, *args):
+            """Record when the credential envelope is consumed.
+
+            Args:
+                *args: Optional stream read limit.
+            """
             events.append('credential-read')
             return super().readline(*args)
 
@@ -348,6 +365,14 @@ def test_same_address_runner_admits_host_before_reading_credentials(tmp_path, mo
         digest = 'descriptor-digest'
 
         def __init__(self, _descriptor, _owner, _user, _password):
+            """Record fixture creation after credential admission.
+
+            Args:
+                _descriptor: Public fixture descriptor.
+                _owner: Original task ownership.
+                _user: Synthetic client identity.
+                _password: Synthetic in-memory credential.
+            """
             events.append('fixture-created')
 
         def close(self):
@@ -377,6 +402,11 @@ def test_failed_host_admission_does_not_read_credentials(tmp_path, monkeypatch):
 
     class RefusingHostGuard:
         def __init__(self, *_args):
+            """Accept enrollment without admitting it.
+
+            Args:
+                *_args: Original enrollment and executable paths.
+            """
             pass
 
         def __enter__(self):
@@ -385,6 +415,11 @@ def test_failed_host_admission_does_not_read_credentials(tmp_path, monkeypatch):
 
     class TrackingStdin(io.StringIO):
         def readline(self, *args):
+            """Record an unsafe credential read after refusal.
+
+            Args:
+                *args: Optional stream read limit.
+            """
             events.append('credential-read')
             return super().readline(*args)
 

@@ -82,14 +82,17 @@ def windows_arguments(command_line: str) -> list[str]:
     Args:
         command_line: Native process command line, never published.
     """
+    loader = getattr(ctypes, "WinDLL", None)
+    if loader is None:
+        raise Refusal("host_process_identity_unavailable")
     count = ctypes.c_int()
-    shell = ctypes.WinDLL("shell32", use_last_error=True)
+    shell = loader("shell32", use_last_error=True)
     shell.CommandLineToArgvW.argtypes = [ctypes.c_wchar_p, ctypes.POINTER(ctypes.c_int)]
     shell.CommandLineToArgvW.restype = ctypes.POINTER(ctypes.c_wchar_p)
     pointer = shell.CommandLineToArgvW(command_line, ctypes.byref(count))
     if not pointer:
         raise Refusal("host_process_identity_unavailable")
-    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel = loader("kernel32", use_last_error=True)
     kernel.LocalFree.argtypes = [ctypes.c_void_p]
     kernel.LocalFree.restype = ctypes.c_void_p
     try:
@@ -160,8 +163,8 @@ def collect_snapshot(expected: dict[str, list[dict[str, Any]]], vmrun: Path, pow
     adapters: dict[str, list[dict[str, Any]]] = {}
     for vmx, enrolled in expected.items():
         text = Path(vmx).read_text(encoding="utf-8")
-        keys = re.findall(r"^\s*ethernet([0-9]+)\.", text, re.MULTILINE)
-        if any(int(index) >= 10 for index in keys):
+        keys = re.findall(r"^\s*ethernet([0-9]+)\.", text, re.MULTILINE | re.IGNORECASE)
+        if any(int(index) >= 10 or str(int(index)) != index for index in keys):
             raise Refusal("adapter_limit_unsupported")
         rows: list[dict[str, Any]] = []
         for index in range(10):
@@ -170,10 +173,16 @@ def collect_snapshot(expected: dict[str, list[dict[str, Any]]], vmrun: Path, pow
             if present not in {"", "TRUE", "FALSE"}:
                 raise Refusal("runtime_adapter_presence_invalid")
             if present != "TRUE":
-                # Only a slot absent from both pinned persistent configuration and
-                # successful runtime read may be absent in this cooperative contract.
-                if str(index) in keys or any(row["index"] == index for row in enrolled):
+                if any(row["index"] == index for row in enrolled):
                     raise Refusal("runtime_expected_adapter_unavailable")
+                # Canonical appliance clones retain disabled adapter configuration.
+                # Such a slot needs an explicit FALSE from both pinned VMX and runtime;
+                # missing/duplicate saved presence or a blank runtime is ambiguous.
+                if str(index) in keys:
+                    saved = re.findall(rf'^\s*ethernet{index}\.present\s*=\s*"([^"\r\n]*)"\s*$',
+                                       text, re.MULTILINE | re.IGNORECASE)
+                    if present != "FALSE" or len(saved) != 1 or saved[0].upper() != "FALSE":
+                        raise Refusal("runtime_expected_adapter_unavailable")
                 rows.append({"index": index, "present": False, "start_connected": False,
                              "connection_type": None, "network_id": None, "mac": None})
                 continue
@@ -230,5 +239,9 @@ class DedicatedHostProof:
         return current
 
     def __exit__(self, *_exc: object) -> None:
-        """Release read pins; no process, VM, guest, or configuration is removed."""
+        """Release read pins; no process, VM, guest, or configuration is removed.
+
+        Args:
+            *_exc: Context manager exception information, never published.
+        """
         self.stack.close()

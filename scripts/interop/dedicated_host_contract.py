@@ -25,16 +25,33 @@ class Refusal(ValueError):
 
 
 def _refuse(reason: str) -> NoReturn:
+    """Raise a fixed non-sensitive refusal.
+
+    Args:
+        reason: Public refusal category, never caller-provided secret data.
+    """
     raise Refusal(reason)
 
 
 def _object(value: object, reason: str) -> dict[str, object]:
+    """Require a string-keyed mapping.
+
+    Args:
+        value: Untrusted value to validate as an object.
+        reason: Fixed refusal category for a malformed object.
+    """
     if not isinstance(value, dict) or any(not isinstance(key, str) for key in value):
         _refuse(reason)
     return cast(dict[str, object], value)
 
 
 def _absolute_windows_path(value: object, reason: str) -> str:
+    """Normalize a non-UNC absolute Windows path lexically.
+
+    Args:
+        value: Untrusted path value.
+        reason: Fixed refusal category for an invalid path.
+    """
     if not isinstance(value, str) or not value or any(ord(char) < 32 for char in value):
         _refuse(reason)
     raw = value.replace("/", "\\")
@@ -50,6 +67,12 @@ def _absolute_windows_path(value: object, reason: str) -> str:
 
 
 def _absolute_vmx_path(value: object, reason: str) -> str:
+    """Require an absolute Windows path with a VMX suffix.
+
+    Args:
+        value: Untrusted VMX path value.
+        reason: Fixed refusal category for an invalid path.
+    """
     path = _absolute_windows_path(value, reason)
     if PureWindowsPath(path).suffix.casefold() != ".vmx":
         _refuse(reason)
@@ -57,11 +80,23 @@ def _absolute_vmx_path(value: object, reason: str) -> str:
 
 
 def _path_key(value: object, reason: str) -> tuple[str, str]:
+    """Return a case-insensitive key and canonical Windows VMX path.
+
+    Args:
+        value: Untrusted VMX path value.
+        reason: Fixed refusal category for an invalid path.
+    """
     path = _absolute_vmx_path(value, reason)
     return path.casefold(), path
 
 
 def _mac(value: object, reason: str) -> str:
+    """Validate and normalize a unicast Ethernet MAC address.
+
+    Args:
+        value: Untrusted MAC address value.
+        reason: Fixed refusal category for an invalid address.
+    """
     if not isinstance(value, str) or not _MAC_PATTERN.fullmatch(value):
         _refuse(reason)
     normalized = value.replace("-", ":").lower()
@@ -72,6 +107,11 @@ def _mac(value: object, reason: str) -> str:
 
 
 def _creation_time(value: object) -> str:
+    """Normalize a bounded process creation-time identity.
+
+    Args:
+        value: Untrusted process creation-time value.
+    """
     if isinstance(value, bool) or not isinstance(value, (str, int)):
         _refuse("process_identity_invalid")
     result = str(value)
@@ -81,24 +121,47 @@ def _creation_time(value: object) -> str:
 
 
 def _index(value: object, reason: str) -> int:
+    """Validate an adapter index within the supported range.
+
+    Args:
+        value: Untrusted adapter index.
+        reason: Fixed refusal category for an invalid index.
+    """
     if isinstance(value, bool) or not isinstance(value, int) or not 0 <= value < MAX_ADAPTERS:
         _refuse(reason)
     return value
 
 
 def _connection_type(value: object, reason: str) -> str:
+    """Require a supported VMware network connection type.
+
+    Args:
+        value: Untrusted connection type.
+        reason: Fixed refusal category for an unsupported type.
+    """
     if not isinstance(value, str) or value.casefold() not in _ALLOWED_CONNECTION_TYPES:
         _refuse(reason)
     return value.casefold()
 
 
 def _network_id(value: object, reason: str) -> str:
+    """Require a bounded nonempty VMware network identifier.
+
+    Args:
+        value: Untrusted provider network identifier.
+        reason: Fixed refusal category for an invalid identifier.
+    """
     if not isinstance(value, str) or not value or len(value) > 256 or any(ord(char) < 32 for char in value):
         _refuse(reason)
     return value
 
 
 def _normalize_expected(expected: dict[str, list[dict[str, object]]]) -> tuple[dict[str, list[dict[str, object]]], dict[str, str]]:
+    """Validate and canonicalize the independent enrollment allowlist.
+
+    Args:
+        expected: VMX paths mapped to their exact enrolled adapter rows.
+    """
     if not isinstance(expected, dict) or not expected:
         _refuse("expected_allowlist_invalid")
     normalized: dict[str, list[dict[str, object]]] = {}
@@ -130,6 +193,11 @@ def _normalize_expected(expected: dict[str, list[dict[str, object]]]) -> tuple[d
 
 
 def _normalize_snapshot(snapshot: dict[str, object]) -> JsonObject:
+    """Validate and canonicalize one raw host snapshot.
+
+    Args:
+        snapshot: Process, running-VM, and adapter inventories from the collector.
+    """
     root = _object(snapshot, "snapshot_invalid")
     if not {"processes", "running_vm_paths", "adapters"}.issubset(root):
         _refuse("snapshot_incomplete")
@@ -232,6 +300,10 @@ def _normalize_snapshot(snapshot: dict[str, object]) -> JsonObject:
 def validate_snapshot(expected: dict[str, list[dict[str, object]]], snapshot: dict[str, object]) -> dict[str, object]:
     """Validate a complete host snapshot against an independently enrolled allowlist.
 
+    Args:
+        expected: VMX paths mapped to their exact enrolled adapter rows.
+        snapshot: Complete process, running-VM, and runtime adapter observation.
+
     Paths are compared case-insensitively using Windows lexical path rules.
     The collector remains responsible for filesystem/reparse checks and for
     obtaining each row. The returned evidence means only that the supplied
@@ -285,6 +357,11 @@ def validate_snapshot(expected: dict[str, list[dict[str, object]]], snapshot: di
 
 
 def _normalize_evidence(evidence: dict[str, object]) -> JsonObject:
+    """Validate canonical evidence before using it in a stability comparison.
+
+    Args:
+        evidence: Previously returned dedicated-host contract evidence.
+    """
     root = _object(evidence, "evidence_invalid")
     if (root.get("contract") != CONTRACT or
             root.get("claim") != "validated-observation-only" or
@@ -324,13 +401,23 @@ def _normalize_evidence(evidence: dict[str, object]) -> JsonObject:
 
 
 def _normalize_observation(value: dict[str, object]) -> JsonObject:
+    """Normalize raw host data or previously validated contract evidence.
+
+    Args:
+        value: Raw snapshot or canonical observation evidence.
+    """
     if isinstance(value, dict) and "contract" in value:
         return _normalize_evidence(value)
     return _normalize_snapshot(value)
 
 
 def assert_unchanged(before: dict[str, object], after: dict[str, object]) -> None:
-    """Refuse a bracket when process, VM, or adapter observations changed."""
+    """Refuse a bracket when process, VM, or adapter observations changed.
+
+    Args:
+        before: First raw snapshot or canonical evidence value.
+        after: Second raw snapshot or canonical evidence value.
+    """
     if _normalize_observation(before) != _normalize_observation(after):
         _refuse("host_snapshot_changed")
 
@@ -342,6 +429,12 @@ def validate_guest_addresses(
     appliance_role: str = "appliance",
 ) -> dict[str, object]:
     """Check every enrolled guest interface for candidate IPv4/IPv6 claims.
+
+    Args:
+        expected_macs: Exact ordered interface MAC allowlist for every guest role.
+        guests: Complete per-role non-loopback interface and address observations.
+        candidate_addresses: IPv4/IPv6 addresses checked for conflicting claims.
+        appliance_role: Role whose first enrolled MAC is the management interface.
 
     ``guests`` must contain every non-loopback interface from each pinned
     guest's authoritative link and address readback. This checks address

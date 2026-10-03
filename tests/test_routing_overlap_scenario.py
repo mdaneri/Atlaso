@@ -921,6 +921,13 @@ def test_same_address_only_skips_ipv6_and_restores_original_baseline(monkeypatch
                         lambda *_args: pytest.fail("same-address-only must not prepare IPv6"))
 
     def same_address(current, *_args, **_kwargs):
+        """Change desired state at the same-address phase boundary.
+
+        Args:
+            current: Synthetic authenticated appliance client.
+            *_args: Original phase dependencies and baseline settings.
+            **_kwargs: Optional phase controls.
+        """
         events.append("same-address")
         current.rows["eth0"].update(ipv4_method="dhcp", ip_cidr=None, gateway=None)
         current.external_dns_servers = ["192.0.2.1"]
@@ -973,6 +980,13 @@ def test_same_address_ownership_loss_prevents_baseline_restoration(monkeypatch, 
     monkeypatch.setattr(scenario, "_setup", lambda _client: {"clean": {"pending_count": 0}})
 
     def same_address(current, *_args, **_kwargs):
+        """Leave changed state for the restoration ownership test.
+
+        Args:
+            current: Synthetic authenticated appliance client.
+            *_args: Original phase dependencies and baseline settings.
+            **_kwargs: Optional phase controls.
+        """
         current.rows["eth0"].update(ipv4_method="dhcp", ip_cidr=None, gateway=None)
         return {"lease": "proved"}
 
