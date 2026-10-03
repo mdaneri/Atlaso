@@ -15506,12 +15506,17 @@ def execute_management_handoff(
                             config_path=dnsmasq["config_path"], config_preview=effective_config,
                             baseline=baselines.get("dnsmasq"),
                         ))
+                verified_dns_records = (
+                    owned_service_dns_records(db, dnsmasq["raw_config_preview"])
+                    if dynamic_paths else submitted_dns_records
+                )
                 verify_handoff_service_dns(
-                    owned_service_dns_records(db, dnsmasq["raw_config_preview"]), prior_dns_records,
+                    verified_dns_records, prior_dns_records,
                     dnsmasq["raw_config_preview"],
                     authoritative=dnsmasq.get("applied_dns_authoritative",
                                               bool(getattr(dnsmasq["context"]["dns_settings"], "authoritative", False))),
                 )
+                dnsmasq["verified_service_dns_records"] = [dict(record) for record in verified_dns_records]
                 listener_baselines = projected_handoff_listener_baselines(
                     baselines, units_by_id, evidence.get("listener_address_moves", []),
                 )
@@ -15845,7 +15850,11 @@ def update_appliance_apply_baselines(db: Session, units: list[dict[str, Any]], s
         if unit["id"] == "dnsmasq":
             baseline["dns_enabled"] = unit.get("applied_dns_enabled", bool(unit["context"]["dns_settings"].enabled))
             baseline["dns_authoritative"] = unit.get("applied_dns_authoritative", bool(unit["context"]["dns_settings"].authoritative))
-            baseline["service_dns_records"] = owned_service_dns_records(db, unit["config_preview"])
+            baseline["service_dns_records"] = (
+                [dict(record) for record in unit["verified_service_dns_records"]]
+                if "verified_service_dns_records" in unit
+                else owned_service_dns_records(db, unit["config_preview"])
+            )
         baselines[unit["id"]] = baseline
     save_appliance_apply_baselines(db, baselines)
 

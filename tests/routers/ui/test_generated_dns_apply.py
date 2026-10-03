@@ -922,6 +922,128 @@ def test_management_handoff_dns_readback_failure_triggers_proven_recovery(client
     assert all(row["success"] is False and row["rolled_back"] is True for row in results)
 
 
+def _run_static_identity_race_handoff(client, monkeypatch, tmp_path, *, concurrent_identity_edit, missing_replacement):
+    """Run a static DNS handoff while another session may change service identity.
+
+    Args:
+        client: Isolated application client used to initialize the database.
+        monkeypatch: Replace helper staging and DNS readback boundaries.
+        tmp_path: Owned location for mocked staged configuration paths.
+        concurrent_identity_edit: Commit a service hostname edit during helper apply.
+        missing_replacement: Simulate a DNS answer that lacks the submitted owner.
+    """
+    from atlaso.app import ui
+    from atlaso.app.adapters.system import AdapterResult
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import CaSettings
+    from atlaso.app.services.service_dns_defaults import CA_PORTAL_DNS_DESCRIPTION
+
+    class StaticHandoffAdapter:
+        """Apply the captured static handoff and report rollback when readback fails."""
+
+        dry_run = False
+
+        def validate_management_handoff(self, manifest_path):
+            return AdapterResult(command=["atlaso-helper", "validate", manifest_path], dry_run=False, returncode=0)
+
+        def apply_management_handoff(self, manifest_path):
+            if concurrent_identity_edit:
+                with SessionLocal() as other:
+                    settings = other.scalar(select(CaSettings))
+                    settings.portal_hostname = "ca.concurrent.example.internal"
+                    ui.refresh_interface_service_dns_aliases(other, actor=None)
+                    other.commit()
+            return AdapterResult(command=["atlaso-helper", "apply", manifest_path], dry_run=False, returncode=0)
+
+        def recover_management_handoff(self):
+            return AdapterResult(
+                command=["atlaso-helper", "recover"], dry_run=False, returncode=0,
+                stdout=json.dumps({"management_handoff": "rolled back", "rolled_back": True}),
+            )
+
+    monkeypatch.setattr(ui, "CA_STAGED_CONFIG_PATH", str(tmp_path / "ca.json"))
+    monkeypatch.setattr(ui, "MANAGEMENT_HANDOFF_STAGED_MANIFEST_PATH", str(tmp_path / "handoff.json"))
+    monkeypatch.setattr(ui, "stage_appliance_apply_config", lambda target, _content: str(target))
+    monkeypatch.setattr(ui, "render_ca_apply_payload", lambda *_args, **_kwargs: "{}")
+    observed = []
+
+    def verify(records, prior_records, config, *, authoritative):
+        observed.append([dict(record) for record in records])
+        assert prior_records
+        assert config
+        assert authoritative is True
+        if missing_replacement and any(
+            record["hostname"] == "ca.custom.example.internal"
+            and record["description"] == CA_PORTAL_DNS_DESCRIPTION
+            for record in records
+        ):
+            raise ValueError("DNS replacement answer is missing the submitted service owner.")
+
+    monkeypatch.setattr(ui, "verify_handoff_service_dns", verify)
+    login(client)
+    with SessionLocal() as db:
+        _management, access = _prepare_service_address_baseline(db, ui)
+        access.ip_cidr = "192.0.2.21/24"
+        ca = db.scalar(select(CaSettings))
+        ca.listen_address = "192.0.2.21\n2001:db8::10"
+        ui.refresh_interface_service_dns_aliases(db, actor=None)
+        db.commit()
+        units_by_id = {unit["id"]: unit for unit in ui.appliance_apply_units(db)}
+        submitted = ui.owned_service_dns_records(db, units_by_id["dnsmasq"]["raw_config_preview"])
+        assert any(
+            record["description"] == CA_PORTAL_DNS_DESCRIPTION and record["address"] == "192.0.2.21"
+            for record in submitted
+        ), [
+            (record["hostname"], record["record_type"], record["address"])
+            for record in submitted if record["description"] == CA_PORTAL_DNS_DESCRIPTION
+        ]
+
+        group, results = ui.execute_management_handoff(
+            units_by_id,
+            job_id="job_static_dns_identity_race",
+            adapter=StaticHandoffAdapter(),
+            db=db,
+            include_dnsmasq=True,
+        )
+        if not missing_replacement:
+            db.expire_all()
+            ui.update_appliance_apply_baselines(db, list(units_by_id.values()), {"dnsmasq"})
+            baseline = ui.load_appliance_apply_baselines(db)["dnsmasq"]
+            live_config = ui.dnsmasq_context(db, reconcile=False, include_leases=False)["config_preview"]
+            live_records = ui.owned_service_dns_records(db, live_config)
+            return submitted, observed, group, results, units_by_id["dnsmasq"], baseline, live_records
+        return submitted, observed, group, results, units_by_id["dnsmasq"], {}, []
+
+
+def test_static_handoff_keeps_submitted_dns_ownership_across_concurrent_identity_edit(client, monkeypatch, tmp_path):
+    """Verify and baseline the exact submitted DNS records despite a later DB edit."""
+    submitted, observed, group, _results, dnsmasq, baseline, live_records = _run_static_identity_race_handoff(
+        client, monkeypatch, tmp_path, concurrent_identity_edit=True, missing_replacement=False,
+    )
+
+    assert group["success"] is True
+    assert observed == [submitted]
+    assert dnsmasq["verified_service_dns_records"] == submitted
+    assert baseline["service_dns_records"] == submitted
+    assert any(record["hostname"] == "ca.concurrent.example.internal" for record in live_records)
+
+
+def test_static_handoff_missing_submitted_dns_replacement_recovers(client, monkeypatch, tmp_path):
+    """Reject missing static DNS readback and recover the prior handoff state."""
+    submitted, observed, group, results, dnsmasq, _baseline, _live_records = _run_static_identity_race_handoff(
+        client, monkeypatch, tmp_path, concurrent_identity_edit=True, missing_replacement=True,
+    )
+
+    assert observed == [submitted]
+    assert group["success"] is False
+    assert group["rollback_proven"] is True
+    assert group["management_handoff"]["failing_layer"] == "generated service DNS readback"
+    assert group["management_handoff"]["error"] == "DNS replacement answer is missing the submitted service owner."
+    assert group["management_handoff"]["rolled_back"] is True
+    assert "verified_service_dns_records" not in dnsmasq
+    assert all(row["success"] is False and row["rolled_back"] is True for row in results)
+
+
 @pytest.mark.parametrize("pending_dependency", [None, "ca", "firewall", "appliance_settings", "public_services"])
 def test_slaac_address_drift_offers_network_review_and_captures_dns_after_reboot(client, monkeypatch, pending_dependency):
     """Expose unchanged Network intent when SLAAC DNS needs a readiness handoff.
