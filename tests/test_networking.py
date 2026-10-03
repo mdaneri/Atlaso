@@ -283,7 +283,7 @@ def test_sync_host_inventory_cleans_removed_nic_bindings_and_retargets_survivors
     database.SessionLocal.configure(bind=database.engine)
     database.init_db()
 
-    def fake_discover():
+    def fake_discover(**kwargs):
         """Return fake discover."""
         return [
             HostPhysicalInterface(
@@ -448,7 +448,7 @@ def test_sync_host_inventory_cleans_removed_nic_bindings_and_retargets_survivors
 
         monkeypatch.setattr(
             "atlaso.app.services.networking.discover_host_physical_interfaces",
-            lambda: [
+            lambda **kwargs: [
                 fake_discover()[0],
                 HostPhysicalInterface(
                     name="eth3",
@@ -509,7 +509,7 @@ def test_sync_host_inventory_commits_two_nic_name_swap(monkeypatch, tmp_path):
     mac_a = "00:15:5d:01:1d:14"
     mac_b = "00:15:5d:01:1d:15"
 
-    def fake_discover():
+    def fake_discover(**kwargs):
         """Return fake discover."""
         return [
             HostPhysicalInterface(
@@ -608,7 +608,7 @@ def test_startup_host_inventory_refreshes_appliance_seed_without_apply_job(monke
     database.SessionLocal.configure(bind=database.engine)
     database.init_db()
 
-    def fake_discover():
+    def fake_discover(**kwargs):
         """Return fake discover."""
         return [
             HostPhysicalInterface(
@@ -1375,7 +1375,7 @@ def test_inventory_discovery_waits_for_console_writer(tmp_path, monkeypatch, fam
         attempted.set()
         lock(db)
 
-    def discover():
+    def discover(**kwargs):
         """Sample native state only after the earlier console transaction finishes."""
         probed.set()
         return [native]
@@ -1414,4 +1414,57 @@ def test_inventory_discovery_waits_for_console_writer(tmp_path, monkeypatch, fam
         assert interface.host_ipv6_cidr == (None if family == 4 else native.host_dynamic_ipv6_cidr)
         assert interface.ipv6_enabled is (family == 6)
         assert interface.ip_cidr is None and interface.ipv6_cidr is None
+    engine.dispose()
+
+
+@pytest.mark.parametrize("failure", ["timeout", "os_error", "exit_code"])
+def test_inventory_discovery_failure_releases_writer_without_reconciliation(tmp_path, monkeypatch, failure):
+    """Failed native discovery preserves inventory and releases admission for another writer.
+
+    Args:
+        tmp_path: Isolated database beneath the validation root.
+        monkeypatch: Supply a failed native discovery subprocess.
+        failure: Native timeout, launch failure, or unsuccessful exit.
+    """
+    import subprocess
+
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import Session
+
+    from atlaso.app.database import Base
+    from atlaso.app.services import network_objects, networking
+
+    engine = create_engine(f"sqlite:///{tmp_path / 'inventory-timeout.db'}", connect_args={"timeout": 0.2})
+    Base.metadata.create_all(engine)
+    with Session(engine) as db:
+        row = PhysicalInterface(name="eth0", mac_address="00:15:5d:aa:bb:20", role="management", mode="access",
+                                ipv4_method="dhcp", host_ip_cidr="192.0.2.10/24", inventory_source="host",
+                                desired_state_source="console", oper_state="up")
+        db.add(row)
+        db.commit()
+        identity = row.id
+
+    def failed_probe(args, **kwargs):
+        """Assert the finite discovery budget and simulate failure."""
+        assert args == ["ip", "-j", "address", "show"]
+        assert kwargs["timeout"] == 5.0
+        if failure == "timeout":
+            raise subprocess.TimeoutExpired(args, kwargs["timeout"])
+        if failure == "os_error":
+            raise OSError("native command unavailable")
+        return subprocess.CompletedProcess(args, 1, stdout="", stderr="")
+
+    monkeypatch.setattr(networking.subprocess, "run", failed_probe)
+    expected = {"timeout": subprocess.TimeoutExpired, "os_error": OSError, "exit_code": RuntimeError}[failure]
+    with Session(engine) as refresh:
+        with pytest.raises(expected):
+            networking.sync_host_physical_interfaces(refresh)
+        assert not refresh.in_transaction()
+        # Keep the failed caller open: the second writer must still enter immediately.
+        with Session(engine) as next_writer:
+            network_objects.acquire_network_objects_write_lock(next_writer)
+            row = next_writer.get(PhysicalInterface, identity)
+            assert (row.name, row.host_ip_cidr, row.oper_state) == ("eth0", "192.0.2.10/24", "up")
+            assert row.inventory_source == "host" and row.desired_state_source == "console"
+            next_writer.commit()
     engine.dispose()

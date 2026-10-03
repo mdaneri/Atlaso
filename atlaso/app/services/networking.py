@@ -333,11 +333,12 @@ def parse_linux_ip_interfaces(payload: str, *, sysfs_base: Path = Path("/sys/cla
     return interfaces
 
 
-def discover_host_physical_interfaces(*, timeout: float | None = None) -> list[HostPhysicalInterface]:
+def discover_host_physical_interfaces(*, timeout: float | None = None, require_success: bool = False) -> list[HostPhysicalInterface]:
     """Read host physical-interface observations without changing desired state.
 
     Args:
         timeout: Optional subprocess deadline in seconds for bounded observation callers.
+        require_success: Raise on failed discovery instead of returning an empty observation.
     """
     try:
         completed = subprocess.run(
@@ -348,8 +349,12 @@ def discover_host_physical_interfaces(*, timeout: float | None = None) -> list[H
             timeout=timeout,
         )
     except (OSError, subprocess.TimeoutExpired):
+        if require_success:
+            raise
         return []
     if completed.returncode != 0:
+        if require_success:
+            raise RuntimeError("Native interface discovery failed")
         return []
     return parse_linux_ip_interfaces(completed.stdout)
 
@@ -1065,7 +1070,11 @@ def sync_host_physical_interfaces(db: Session) -> tuple[list[PhysicalInterface],
     from atlaso.app.services.network_objects import acquire_network_objects_write_lock
 
     acquire_network_objects_write_lock(db)
-    discovered = discover_host_physical_interfaces()
+    try:
+        discovered = discover_host_physical_interfaces(timeout=5.0, require_success=True)
+    except (OSError, subprocess.TimeoutExpired, RuntimeError):
+        db.rollback()
+        raise
     interfaces = db.execute(
         select(PhysicalInterface).order_by(PhysicalInterface.name).execution_options(populate_existing=True)
     ).scalars().all()
