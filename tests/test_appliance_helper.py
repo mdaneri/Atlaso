@@ -11774,9 +11774,9 @@ def test_console_recovery_timeout_stops_only_owned_unit(monkeypatch, survives_st
         """
         commands.append((command, timeout))
         if "--wait" in command:
-            assert timeout == 100
-            assert "--property=RuntimeMaxSec=90" in command
-            assert "--property=TimeoutStopSec=5" in command
+            assert timeout == 111
+            assert "--property=RuntimeMaxSec=108" in command
+            assert "--property=TimeoutStopSec=2" in command
             assert "--property=KillMode=control-group" in command
             assert "--property=SendSIGKILL=yes" in command
             raise subprocess.TimeoutExpired(command, timeout)
@@ -11788,8 +11788,32 @@ def test_console_recovery_timeout_stops_only_owned_unit(monkeypatch, survives_st
 
     monkeypatch.setattr(helper, "_run", run)
     assert helper._run_real_action_with_systemd("console", "recover-management-plane", ["job_completed"]) == (75 if survives_stop else 124)
-    assert [timeout for _command, timeout in commands] == [100, 2, 7, 2]
+    assert [timeout for _command, timeout in commands] == [111, 1, 4, 1]
 
+
+
+def test_console_recovery_shared_deadline_blocks_late_acknowledgement(monkeypatch):
+    """Bootstrap time reduces the remaining operation budget and expired work cannot acknowledge.
+
+    Args:
+        monkeypatch: Control the operation clock and privileged command boundary.
+    """
+    helper = load_helper_module()
+    clock = [35.0]
+    monkeypatch.setattr(helper.time, "monotonic", lambda: clock[0])
+    token = helper._CONSOLE_RECOVERY_DEADLINE.set(100.0)
+    calls = []
+    monkeypatch.setattr(helper, "_run", lambda command, *, timeout:
+                        calls.append((command, timeout)) or subprocess.CompletedProcess(command, 0, "", ""))
+    try:
+        helper._console_recovery_command("readiness", ["probe"])
+        assert calls == [(["probe"], 65.0)]
+        clock[0] = 100.0
+        with pytest.raises(ValueError, match="complete operation budget"):
+            helper._console_recovery_command("acknowledgement", ["acknowledge"])
+        assert len(calls) == 1
+    finally:
+        helper._CONSOLE_RECOVERY_DEADLINE.reset(token)
 
 
 def test_account_commands_use_bounded_helper_action_units(monkeypatch):

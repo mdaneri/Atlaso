@@ -31,6 +31,7 @@ import time
 import uuid
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager, nullcontext
+from contextvars import ContextVar
 from datetime import datetime, timezone
 from ipaddress import (
     IPv4Address,
@@ -185,8 +186,10 @@ SYSTEMD_RUN_CHILD_ENV = "ATLASO_HELPER_SYSTEMD_RUN_CHILD"
 SYSTEMD_RUN_ACTION_UNIT_PREFIX = "atlaso-helper-action"
 UPDATE_CHECK_TIMEOUT_SECONDS = 300
 UPDATE_CHECK_STOP_SECONDS = 30
-CONSOLE_RECOVERY_RUNTIME_SECONDS = 90
-CONSOLE_RECOVERY_STOP_SECONDS = 5
+CONSOLE_RECOVERY_OPERATION_SECONDS = 100
+CONSOLE_RECOVERY_RUNTIME_SECONDS = 108
+CONSOLE_RECOVERY_STOP_SECONDS = 2
+_CONSOLE_RECOVERY_DEADLINE: ContextVar[float | None] = ContextVar("console_recovery_deadline", default=None)
 UPDATE_RELEASE_NOTES_URL_MAX_LENGTH = 2048
 NO_PATH_ACTIONS = {
     ("firewall", "replay"),
@@ -980,7 +983,7 @@ def _run_real_action_with_systemd(group: str, action: str, args: list[str]) -> i
             print("Appliance Update check failed or exceeded its five-minute deadline; its helper has stopped.", file=sys.stderr)
     elif bounded_recovery:
         try:
-            result = _run(command, timeout=CONSOLE_RECOVERY_RUNTIME_SECONDS + CONSOLE_RECOVERY_STOP_SECONDS + 5)
+            result = _run(command, timeout=CONSOLE_RECOVERY_RUNTIME_SECONDS + CONSOLE_RECOVERY_STOP_SECONDS + 1)
         except subprocess.TimeoutExpired:
             result = subprocess.CompletedProcess(command, 124, "", "Console recovery exceeded its deadline.\n")
         try:
@@ -25986,6 +25989,21 @@ def _restore_console_managed_services() -> int:
     return 1 if failures else 0
 
 
+def _console_recovery_remaining(maximum: float | None = None) -> float | None:
+    """Bound a recovery stage by its shared operation deadline.
+
+    Args:
+        maximum: Optional stage-specific maximum duration.
+    """
+    deadline = _CONSOLE_RECOVERY_DEADLINE.get()
+    if deadline is None:
+        return maximum
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        raise ValueError("Management recovery exhausted its complete operation budget")
+    return min(remaining, maximum) if maximum is not None else remaining
+
+
 def _console_recovery_command(label: str, command: list[str]) -> subprocess.CompletedProcess[str]:
     """Run one required management-plane recovery command.
 
@@ -25996,7 +26014,11 @@ def _console_recovery_command(label: str, command: list[str]) -> subprocess.Comp
     Raises:
         ValueError: If the command does not succeed.
     """
-    result = _run(command)
+    try:
+        remaining = _console_recovery_remaining()
+        result = _run(command, **({"timeout": remaining} if remaining is not None else {}))
+    except subprocess.TimeoutExpired as exc:
+        raise ValueError(f"{label} exceeded the complete recovery budget") from exc
     if result.returncode != 0:
         detail = (result.stderr or result.stdout or f"exit code {result.returncode}").strip()
         raise ValueError(f"{label} failed: {detail}")
@@ -26031,7 +26053,8 @@ def _console_management_http_status(
         command.extend(["--cacert", str(ca_certificate)])
     elif insecure:
         command.append("--insecure")
-    result = _run([*command, url])
+    remaining = _console_recovery_remaining()
+    result = _run([*command, url], **({"timeout": remaining} if remaining is not None else {}))
     return result.stdout.strip() if result.returncode == 0 else "000"
 
 
@@ -26196,7 +26219,7 @@ def _console_management_leaf_is_active(expected_fingerprint: str) -> bool:
         listener = re.search(r"(?m)^\s*listen\s+(?:127\.0\.0\.1:)?(\d+)\s+ssl\b", config)
         if listener is None:
             return False
-        served = ssl.get_server_certificate(("127.0.0.1", int(listener.group(1))), timeout=3)
+        served = ssl.get_server_certificate(("127.0.0.1", int(listener.group(1))), timeout=_console_recovery_remaining(3))
         return hashlib.sha256(ssl.PEM_cert_to_DER_cert(served)).hexdigest() == expected_fingerprint
     except (OSError, ValueError, UnicodeError):
         return False
@@ -26221,7 +26244,7 @@ def _console_bootstrap_is_idle() -> bool:
 def _console_restart_bootstrap() -> None:
     """Bound the original systemd restart before the outer console helper timeout."""
     try:
-        result = _run(["systemctl", "restart", FIRST_BOOT_HTTPS_UNIT], timeout=40)
+        result = _run(["systemctl", "restart", FIRST_BOOT_HTTPS_UNIT], timeout=_console_recovery_remaining(40))
     except subprocess.TimeoutExpired as exc:
         _run(["systemctl", "stop", "--no-block", FIRST_BOOT_HTTPS_UNIT], timeout=5)
         deadline = time.monotonic() + 10
@@ -26308,14 +26331,14 @@ def _quiesce_console_recovery_unit(unit_name: str) -> None:
     """
     active = {"active", "activating", "deactivating", "reloading"}
     known = active | {"inactive", "failed", "unknown"}
-    initial = _run(["systemctl", "is-active", unit_name], timeout=2).stdout.strip()
+    initial = _run(["systemctl", "is-active", unit_name], timeout=1).stdout.strip()
     if initial not in known:
         raise ValueError("Console recovery unit state could not be verified")
     if initial in active:
         stopped = _run(["systemctl", "stop", unit_name], timeout=CONSOLE_RECOVERY_STOP_SECONDS + 2)
         if stopped.returncode != 0:
             raise ValueError("Console recovery unit could not be stopped")
-    final = _run(["systemctl", "is-active", unit_name], timeout=2).stdout.strip()
+    final = _run(["systemctl", "is-active", unit_name], timeout=1).stdout.strip()
     if final not in {"inactive", "failed", "unknown"}:
         raise ValueError("Console recovery unit did not stop")
 
@@ -26327,12 +26350,15 @@ def _recover_console_management_plane(timeout_seconds: int = 60, *, network_job_
         timeout_seconds: Maximum readiness wait after service recovery.
         network_job_id: Completed Network task binding bootstrap certificate mutation.
     """
+    token = _CONSOLE_RECOVERY_DEADLINE.set(time.monotonic() + CONSOLE_RECOVERY_OPERATION_SECONDS)
     try:
         with _console_bootstrap_binding(network_job_id):
             return _recover_console_management_plane_bound(timeout_seconds, network_job_id=network_job_id)
     except (OSError, UnicodeError, ValueError) as exc:
         print(f"Management plane recovery failed: {exc}", file=sys.stderr)
         return 1
+    finally:
+        _CONSOLE_RECOVERY_DEADLINE.reset(token)
 
 
 def _recover_console_management_plane_bound(timeout_seconds: int = 60, *, network_job_id: str | None = None) -> int:
@@ -26368,7 +26394,7 @@ def _recover_console_management_plane_bound(timeout_seconds: int = 60, *, networ
             ["systemctl", "enable", *MANAGEMENT_PLANE_UNITS],
         )
         _console_recovery_command("starting Atlaso", ["systemctl", "start", "atlaso.service"])
-        nginx_active = _run(["systemctl", "is-active", "nginx.service"])
+        nginx_active = _run(["systemctl", "is-active", "nginx.service"], timeout=_console_recovery_remaining())
         nginx_action = "reload" if nginx_active.returncode == 0 else "start"
         _console_recovery_command(
             f"{nginx_action}ing nginx",
@@ -26377,7 +26403,8 @@ def _recover_console_management_plane_bound(timeout_seconds: int = 60, *, networ
         management_https_enabled, readiness_checks = _console_management_readiness_checks()
         publication = _console_publication_fingerprint(network_job_id) if network_job_id is not None and management_https_enabled else None
 
-        deadline = time.monotonic() + timeout_seconds
+        deadline = min(time.monotonic() + timeout_seconds,
+                       (_CONSOLE_RECOVERY_DEADLINE.get() or float("inf")) - 5)
         consecutive_successes = 0
         statuses: dict[str, str] = {}
         while time.monotonic() < deadline:
@@ -26417,7 +26444,7 @@ def _recover_console_management_plane_bound(timeout_seconds: int = 60, *, networ
             _console_recovery_command("acknowledging ready management certificate publication",
                                       ["/opt/atlaso/.venv/bin/python", "/opt/atlaso/bin/atlaso-bootstrap-https",
                                        "--acknowledge-console-publication", network_job_id, publication[1]])
-    except (OSError, UnicodeError, ValueError) as exc:
+    except (OSError, UnicodeError, ValueError, subprocess.TimeoutExpired) as exc:
         print(f"Management plane recovery failed: {exc}", file=sys.stderr)
         return 1
 

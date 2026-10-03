@@ -1677,6 +1677,46 @@ def test_console_management_observation_rejects_unverified_addresses(
         appliance_console._refresh_management_addresses(interface_id, timeout=0)
 
 
+def test_console_completed_snapshot_clears_disabled_lingering_ipv6(client, monkeypatch):
+    """Disabled IPv6 cannot enter certificate addresses after completed Network observation.
+
+    Args:
+        client: Initialized appliance database.
+        monkeypatch: Replace native discovery with a lingering disabled-family address.
+    """
+    from sqlalchemy import select
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Job, JobStatus, PhysicalInterface, VlanInterface
+    from atlaso.app.services.networking import HostPhysicalInterface
+    from atlaso.app.ui import management_ui_addresses
+
+    with SessionLocal() as db:
+        interface = appliance_console._management_interface(db)
+        interface.ipv4_method = "dhcp"
+        interface.ip_cidr = None
+        interface.ipv6_enabled = False
+        interface.ipv6_cidr = None
+        interface.host_ipv6_cidr = "2001:db8::172/64"
+        interface_id, name, mac = interface.id, interface.name, interface.mac_address
+        db.flush()
+        preview = appliance_console.render_network_config(
+            interfaces=list(db.scalars(select(PhysicalInterface))), vlans=list(db.scalars(select(VlanInterface))))
+        db.add(Job(id="job_disabled_ipv6", type="appliance-apply", status=JobStatus.SUCCEEDED.value, created_by="local_appliance_console",
+                   result=json.dumps({"captured_units": [{"unit_id": "network", "config_preview": preview}]})))
+        db.commit()
+    observation = HostPhysicalInterface(name=name, mac_address=mac, driver=None, speed=None,
+        host_ip_cidr="192.168.167.174/24", host_dhcp_ip_cidr="192.168.167.174/24",
+        host_ipv6_cidr="2001:db8::172/64", host_dynamic_ipv6_cidr="2001:db8::173/64",
+        host_mtu=1500, host_admin_state="up", oper_state="up")
+    monkeypatch.setattr(appliance_console, "discover_host_physical_interfaces", lambda **kwargs: [observation])
+    appliance_console._refresh_management_addresses(interface_id, network_job_id="job_disabled_ipv6", timeout=0)
+    with SessionLocal() as db:
+        assert db.get(PhysicalInterface, interface_id).host_ipv6_cidr is None
+        assert "2001:db8::172" not in management_ui_addresses(db)
+        assert "2001:db8::173" not in management_ui_addresses(db)
+
+
 def test_console_management_waits_for_both_dynamic_families(client, monkeypatch):
     """A later complete observation can finish acquisition without inventing desired addresses.
 
@@ -2202,7 +2242,8 @@ def test_console_service_restore_keeps_snapshot_when_restoration_is_incomplete(m
 @pytest.mark.parametrize("network_job_id", [None, "job_completed_network"])
 @pytest.mark.parametrize("already_complete", [False, True])
 @pytest.mark.parametrize("http_port,https_port", [(80, 443), (8080, 8443)])
-def test_console_management_plane_recovery_retries_bootstrap_and_verifies_readiness(monkeypatch, tmp_path, capsys, network_job_id, already_complete, http_port, https_port):
+@pytest.mark.parametrize("slow_recovery", [False, True])
+def test_console_management_plane_recovery_retries_bootstrap_and_verifies_readiness(monkeypatch, tmp_path, capsys, network_job_id, already_complete, http_port, https_port, slow_recovery):
     """Verify that the helper repairs bootstrap and proves stable loopback readiness.
 
     Args:
@@ -2213,8 +2254,12 @@ def test_console_management_plane_recovery_retries_bootstrap_and_verifies_readin
         already_complete: First boot completed before the management address changed.
         http_port: Preserved applied HTTP port.
         https_port: Preserved applied HTTPS port.
+        slow_recovery: Bootstrap and readiness together exceed the previous service cap.
     """
     helper = load_helper_module()
+    clock = [0.0]
+    if slow_recovery:
+        monkeypatch.setattr(helper.time, "monotonic", lambda: clock[0])
     marker = tmp_path / "first-boot-https.applied"
     main_config = tmp_path / "nginx.conf"
     main_config.write_text(
@@ -2260,6 +2305,8 @@ def test_console_management_plane_recovery_retries_bootstrap_and_verifies_readin
         if command[:2] == ["systemctl", "show"]:
             return subprocess.CompletedProcess(command, 0, "ActiveState=active\nSubState=exited\nJob=0\n", "")
         if command == bootstrap_command:
+            if slow_recovery:
+                clock[0] += 35
             binding = helper.CONSOLE_BOOTSTRAP_BINDING_DIRECTORY / "network.env"
             if network_job_id:
                 assert binding.read_text() == f"ATLASO_CONSOLE_NETWORK_JOB_ID={network_job_id}\n"
@@ -2292,6 +2339,8 @@ def test_console_management_plane_recovery_retries_bootstrap_and_verifies_readin
                 "http://127.0.0.1:8000/openapi.json": "200",
             }
             assert command[-1] in expected
+            if slow_recovery and command[-1] == "http://127.0.0.1:8000/openapi.json":
+                clock[0] += 12
             return subprocess.CompletedProcess(command, 0, expected[command[-1]], "")
         return subprocess.CompletedProcess(command, 0, "active\n", "")
 
@@ -2301,6 +2350,7 @@ def test_console_management_plane_recovery_retries_bootstrap_and_verifies_readin
         with helper._console_bootstrap_binding(network_job_id):
             fake_run(bootstrap_command)
         commands.clear()
+        clock[0] = 0.0
 
     assert helper._handle_console("recover-management-plane", [network_job_id] if network_job_id else []) == 0
     output = capsys.readouterr().out
@@ -2319,6 +2369,9 @@ def test_console_management_plane_recovery_retries_bootstrap_and_verifies_readin
     assert bool(acknowledgements) is (network_job_id is not None)
     if network_job_id is not None:
         assert marker.read_text() == ""
+        if slow_recovery:
+            assert clock[0] == 95
+            assert clock[0] < helper.CONSOLE_RECOVERY_OPERATION_SECONDS < helper.CONSOLE_RECOVERY_RUNTIME_SECONDS
 
 
 def test_console_management_plane_recovery_verifies_http_only_mode(monkeypatch, tmp_path, capsys):
@@ -2358,7 +2411,7 @@ def test_console_management_plane_recovery_verifies_http_only_mode(monkeypatch, 
     monkeypatch.setattr(helper.time, "sleep", lambda _seconds: None)
     commands: list[list[str]] = []
 
-    def fake_run(command: list[str]) -> subprocess.CompletedProcess[str]:
+    def fake_run(command: list[str], **_options) -> subprocess.CompletedProcess[str]:
         """Return successful HTTP-only recovery results.
 
         Args:
@@ -2412,7 +2465,7 @@ def test_console_management_plane_recovery_stops_after_nginx_validation_failure(
     monkeypatch.setattr(helper.shutil, "which", lambda name: f"/usr/bin/{name}")
     commands: list[list[str]] = []
 
-    def fake_run(command: list[str]) -> subprocess.CompletedProcess[str]:
+    def fake_run(command: list[str], **_options) -> subprocess.CompletedProcess[str]:
         """Fail nginx validation and record all attempted commands.
 
         Args:

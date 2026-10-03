@@ -1294,7 +1294,7 @@ def _refresh_management_addresses(
             if interface is not None and observed is not None:
                 observed_ipv4 = observed.host_dhcp_ip_cidr if expected[0] == "dhcp" else observed.host_ip_cidr
                 required.append((4, observed_ipv4, expected[1] if expected[0] != "dhcp" else None))
-                observed_ipv6 = observed.host_dynamic_ipv6_cidr if expected[2] and not expected[3] else observed.host_ipv6_cidr
+                observed_ipv6 = (observed.host_dynamic_ipv6_cidr if not expected[3] else observed.host_ipv6_cidr) if expected[2] else None
                 if expected[2]:
                     required.append((6, observed_ipv6, expected[3]))
             verified = bool(
