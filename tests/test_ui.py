@@ -20087,3 +20087,93 @@ def test_native_settings_publication_waits_for_console_acknowledgement(client, m
             release_publication.set()
         assert future.result(timeout=5)
     assert published.is_set()
+
+
+@pytest.mark.parametrize("operation", ["settings", "create", "edit", "delete"])
+def test_ca_policy_writers_wait_for_bound_recovery(client, monkeypatch, operation):
+    """CA subject and profile writers cannot change policy inside admitted recovery.
+
+    Args:
+        client: Initialized isolated appliance database.
+        monkeypatch: Observe actual transport writer admission.
+        operation: CA settings or profile creation, edit, or deletion.
+    """
+    import inspect
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Event
+
+    from fastapi.params import Form
+    from sqlalchemy import select
+    from starlette.requests import Request
+
+    from atlaso.app import ui
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import CaProfile, CaSettings
+    from atlaso.app.routers.ui import certificate_trust
+    from atlaso.app.security import Identity
+
+    with SessionLocal() as db:
+        profile = CaProfile(name="recovery-policy-lock", certificate_type="server", validity_days=825,
+                            key_algorithm="RSA", key_size=2048, key_usage="digitalSignature,keyEncipherment",
+                            extended_key_usage="serverAuth", san_required=True, enabled=True)
+        db.add(profile)
+        db.commit()
+        profile_id = profile.id
+        original_organization = db.scalar(select(CaSettings)).organization
+    endpoint = {
+        "settings": ui.update_ca_settings_from_ui, "create": ui.create_ca_profile_from_ui,
+        "edit": ui.edit_ca_profile_from_ui, "delete": ui.delete_ca_profile_from_ui,
+    }[operation]
+    attempted, admitted = Event(), Event()
+    lock = certificate_trust.acquire_network_objects_write_lock
+
+    def acquire(db):
+        """Signal the blocked policy writer before entering real admission."""
+        attempted.set()
+        lock(db)
+        admitted.set()
+
+    def mutate():
+        """Invoke the actual authenticated transport body with its own database session."""
+        kwargs = {}
+        for name, parameter in inspect.signature(endpoint).parameters.items():
+            default = parameter.default
+            if isinstance(default, Form):
+                kwargs[name] = default.default_factory() if default.default_factory else default.default
+        kwargs.update(request=Request({"type": "http", "headers": [], "session": {"csrf_token": "policy-lock"}}),
+                      csrf="policy-lock", identity=Identity(username="admin", role="admin", scopes=set()))
+        if operation == "settings":
+            kwargs.update(root_common_name="Applied test root", organization="Later operator subject")
+        elif operation in {"create", "edit"}:
+            kwargs.update(name="later-policy" if operation == "create" else "recovery-policy-lock", validity_days=1234,
+                          enabled="on", san_required="on")
+        if operation in {"edit", "delete"}:
+            kwargs["profile_id"] = profile_id
+        with SessionLocal() as db:
+            # Exercise a transport identity-map row loaded before admission as well.
+            db.get(CaProfile, profile_id)
+            return endpoint(db=db, **kwargs)
+
+    monkeypatch.setattr(certificate_trust, "acquire_network_objects_write_lock", acquire)
+    with SessionLocal() as recovery, ThreadPoolExecutor(max_workers=1) as executor:
+        lock(recovery)
+        future = executor.submit(mutate)
+        try:
+            assert attempted.wait(3) and not admitted.wait(0.1)
+            assert recovery.get(CaProfile, profile_id).validity_days == 825
+            assert recovery.scalar(select(CaSettings)).organization == original_organization
+            # Policy stays fixed throughout issuance and acknowledgement until this transaction ends.
+            recovery.commit()
+        finally:
+            recovery.rollback()
+        assert future.result(timeout=5).status_code in {200, 303}
+    assert admitted.is_set()
+    with SessionLocal() as db:
+        if operation == "settings":
+            assert db.scalar(select(CaSettings)).organization == "Later operator subject"
+        elif operation == "delete":
+            assert db.get(CaProfile, profile_id) is None
+        elif operation == "create":
+            assert db.scalar(select(CaProfile).where(CaProfile.name == "later-policy")).validity_days == 1234
+        else:
+            assert db.get(CaProfile, profile_id).validity_days == 1234
