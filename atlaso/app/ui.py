@@ -14648,6 +14648,12 @@ def execute_appliance_apply_unit(
             ],
         )
     elif unit_id == "appliance_settings":
+        if not adapter.dry_run:
+            if db is None:
+                raise ApplianceApplyJobError("Native Settings publication requires an active database transaction.")
+            # Retain admission through native nginx publication and the executed
+            # Settings baseline commit; console acknowledgement shares this writer.
+            acquire_network_objects_write_lock(db)
         settings = context["appliance_settings"]
         config_path = settings.config_path
         if not adapter.dry_run:

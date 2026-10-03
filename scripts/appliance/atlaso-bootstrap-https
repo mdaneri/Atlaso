@@ -9,6 +9,7 @@ import os
 import re
 import shlex
 import shutil
+import ssl
 import stat
 import subprocess
 import sys
@@ -715,6 +716,17 @@ def acknowledge_console_publication(network_job_id: str, receipt_sha256: str) ->
             current_identity = path.lstat()
             if path.is_symlink() or (current_identity.st_dev, current_identity.st_ino) != (metadata.st_dev, metadata.st_ino):
                 raise ValueError("Console publication receipt changed before acknowledgement")
+            leaves = json.loads(receipt["public_payload"]).get("certificates", [])
+            if len(leaves) != 1 or leaves[0].get("managed_owner") != "appliance:https":
+                raise ValueError("Publication does not identify exactly one management leaf")
+            port = applied_settings.get("management_public_https_port", 443)
+            if isinstance(port, bool) or not isinstance(port, int) or not 1 <= port <= 65535:
+                raise ValueError("Applied HTTPS listener port is invalid")
+            # Repeat the served-leaf proof inside the writer shared with Settings
+            # publication, immediately before acknowledging the captured baseline.
+            served = ssl.get_server_certificate(("127.0.0.1", port), timeout=3)
+            if hashlib.sha256(ssl.PEM_cert_to_DER_cert(served)).hexdigest() != leaves[0].get("fingerprint"):
+                raise ValueError("Served management leaf changed before acknowledgement")
             record_ca_publication_baseline(db, receipt["public_payload"], [], management_only=True)
             db.commit()
         # Retain the public receipt as evidence; never remove a concurrently replaced publication.

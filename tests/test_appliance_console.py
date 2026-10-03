@@ -3126,6 +3126,7 @@ def test_completed_recovery_publishes_only_management_and_records_exact_baseline
         baselines = load_appliance_apply_baselines(db)
         baselines["appliance_settings"] = {"config_preview": json.dumps({
             "fqdn": appliance.fqdn, "management_https_enabled": True,
+            "management_public_https_port": 8443 if pending == "settings" else 443,
             "web_terminal_enabled": True, "web_terminal_addresses": ["198.51.100.44"],
             "management_https_cert_path": "/etc/atlaso/https/certs/nginx-previous-hostname.crt",
             "management_https_key_path": "/etc/atlaso/https/certs/nginx-previous-hostname.key",
@@ -3259,7 +3260,25 @@ def test_completed_recovery_publishes_only_management_and_records_exact_baseline
         receipt_path.write_bytes(receipt_path.read_bytes() + b"\n")
         assert bootstrap.acknowledge_console_publication("job_scoped_ca", verified_digest) == 2
     if not apply_result and ready:
-        assert bootstrap.acknowledge_console_publication("job_scoped_ca", bootstrap.hashlib.sha256((publication_directory / "job_scoped_ca.publication.json").read_bytes()).hexdigest()) == 0
+        digest = bootstrap.hashlib.sha256((publication_directory / "job_scoped_ca.publication.json").read_bytes()).hexdigest()
+        monkeypatch.setattr(bootstrap.ssl, "get_server_certificate", lambda address, *, timeout:
+                            bootstrap.ssl.DER_cert_to_PEM_cert(b"different served leaf"))
+        assert bootstrap.acknowledge_console_publication("job_scoped_ca", digest) == 2
+        with SessionLocal() as db:
+            assert load_appliance_apply_baselines(db)["ca"] == before
+        def served_leaf(address, *, timeout):
+            """Return the published leaf only at the captured applied listener.
+
+            Args:
+                address: Loopback address and applied HTTPS port.
+                timeout: Bounded TLS handshake deadline.
+            """
+            assert address == ("127.0.0.1", 8443 if pending == "settings" else 443)
+            assert timeout == 3
+            return captured[0]["certificates"][0]["certificate_pem"]
+
+        monkeypatch.setattr(bootstrap.ssl, "get_server_certificate", served_leaf)
+        assert bootstrap.acknowledge_console_publication("job_scoped_ca", digest) == 0
     assert [leaf["managed_owner"] for leaf in captured[0]["certificates"]] == ["appliance:https"]
     management_leaf = captured[0]["certificates"][0]
     assert management_leaf["cert_path"] == "/etc/atlaso/https/certs/nginx-previous-hostname.crt"

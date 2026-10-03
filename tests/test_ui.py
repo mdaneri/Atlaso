@@ -20029,3 +20029,61 @@ def test_ca_guard_accepts_the_real_redacted_public_snapshot(client):
         ui.guard_ca_apply_publication(db, unit)
         assert db.in_transaction()
         db.rollback()
+
+
+def test_native_settings_publication_waits_for_console_acknowledgement(client, monkeypatch, tmp_path):
+    """Settings cannot publish nginx while console proof and baseline acknowledgement own the writer.
+
+    Args:
+        client: Initialized appliance database.
+        monkeypatch: Replace the native adapter boundary.
+        tmp_path: Owned nonsecret Settings staging path.
+    """
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Event
+    from types import SimpleNamespace
+
+    import atlaso.app.ui as ui
+    from atlaso.app.adapters.system import AdapterResult
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.services.network_objects import acquire_network_objects_write_lock
+
+    path = str(tmp_path / "settings.json")
+    unit = {"id": "appliance_settings", "label": "Settings", "config_preview": "{}",
+            "raw_config_preview": "{}", "config_diff": "", "summary": [],
+            "validation_errors": [], "validation_warnings": [], "config_path": path,
+            "context": {"appliance_settings": SimpleNamespace(config_path=path)}}
+    monkeypatch.setattr(ui, "APPLIANCE_SETTINGS_STAGED_CONFIG_PATH", path)
+    entered, published, release_publication = Event(), Event(), Event()
+
+    def apply(config_path):
+        """Keep native publication open until acknowledgement contention has been checked.
+
+        Args:
+            config_path: Exact staged Settings input.
+        """
+        published.set()
+        assert release_publication.wait(5)
+        return AdapterResult(command=["settings", config_path], dry_run=False, returncode=0)
+
+    def ordinary():
+        """Retain Settings admission through its native apply and baseline commit."""
+        with SessionLocal() as db:
+            entered.set()
+            result = ui.execute_appliance_apply_unit(unit, db=db,
+                adapter=SimpleNamespace(dry_run=False, validate_appliance_settings_config=apply,
+                                        apply_appliance_settings_config=apply))
+            db.commit()
+            return result["success"]
+
+    with SessionLocal() as recovery, ThreadPoolExecutor(max_workers=1) as executor:
+        acquire_network_objects_write_lock(recovery)
+        future = executor.submit(ordinary)
+        try:
+            assert entered.wait(2)
+            assert not published.wait(0.15)
+        finally:
+            recovery.commit()
+            release_publication.set()
+        assert future.result(timeout=5)
+    assert published.is_set()
