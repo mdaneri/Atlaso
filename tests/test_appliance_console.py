@@ -2731,7 +2731,12 @@ def test_console_observation_serializes_pending_decision(client, monkeypatch):
         return commit(db)
 
     monkeypatch.setattr(appliance_console, "acquire_network_objects_write_lock", acquire)
-    monkeypatch.setattr(appliance_console, "discover_host_physical_interfaces", lambda **kwargs: [observed])
+    def discover(**kwargs):
+        """Require native observation inside the admitted writer transaction."""
+        assert observation["db"].get_transaction() is observation["transaction"]
+        return [observed]
+
+    monkeypatch.setattr(appliance_console, "discover_host_physical_interfaces", discover)
     monkeypatch.setattr(Session, "refresh", locked_refresh)
     monkeypatch.setattr(Session, "commit", locked_commit)
     with pytest.raises(ConsoleOperationError, match="newer address edits remain pending"):

@@ -1333,3 +1333,85 @@ def test_native_dynamic_observation_skips_deprecated_before_preferred(dynamic_fl
     row["addr_info"].append({"family": family, "local": new, "prefixlen": prefix, "scope": "global",
                              "valid_life_time": 600, "preferred_life_time": 300, **source})
     assert getattr(parse_linux_ip_interfaces(json.dumps([row]))[0], field) == f"{new}/{prefix}"
+
+
+@pytest.mark.parametrize("family", [4, 6])
+def test_inventory_discovery_waits_for_console_writer(tmp_path, monkeypatch, family):
+    """Inventory cannot sample an old lease while a console writer publishes its successor.
+
+    Args:
+        tmp_path: Task-owned isolated two-session database.
+        monkeypatch: Observe admission and supply native lease changes.
+        family: DHCP or SLAAC observation changed by the admitted console writer.
+    """
+    from concurrent.futures import ThreadPoolExecutor
+    from dataclasses import replace
+    from threading import Event
+
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import Session
+
+    from atlaso.app.database import Base
+    from atlaso.app.services import network_objects, networking
+
+    engine = create_engine(f"sqlite:///{tmp_path / 'inventory-admission.db'}", connect_args={"timeout": 5})
+    Base.metadata.create_all(engine)
+    with Session(engine) as db:
+        interface = PhysicalInterface(name="eth0", mac_address="00:15:5d:aa:bb:20", role="management", mode="access",
+                                      ipv4_method="dhcp", ipv6_enabled=True, ipv6_cidr=None,
+                                      inventory_source="host", desired_state_source="console")
+        db.add(interface)
+        db.commit()
+        identity = interface.id
+    native = HostPhysicalInterface(name="eth0", mac_address="00:15:5d:aa:bb:20", driver=None, speed=None,
+                                   host_ip_cidr="192.0.2.1/24", host_dhcp_ip_cidr="192.0.2.1/24",
+                                   host_ipv6_cidr="2001:db8::1/64", host_dynamic_ipv6_cidr="2001:db8::1/64",
+                                   host_mtu=1500, host_admin_state="up", oper_state="up")
+    attempted, probed = Event(), Event()
+    lock = network_objects.acquire_network_objects_write_lock
+
+    def admitted(db):
+        """Signal the inventory writer before its blocking admission."""
+        attempted.set()
+        lock(db)
+
+    def discover():
+        """Sample native state only after the earlier console transaction finishes."""
+        probed.set()
+        return [native]
+
+    def synchronize():
+        """Run the actual inventory writer in its independent transaction."""
+        with Session(engine) as db:
+            db.get(PhysicalInterface, identity)  # Transport cache predates writer admission.
+            networking.sync_host_physical_interfaces(db)
+
+    monkeypatch.setattr(network_objects, "acquire_network_objects_write_lock", admitted)
+    monkeypatch.setattr(networking, "discover_host_physical_interfaces", discover)
+    with Session(engine) as console, ThreadPoolExecutor(max_workers=1) as executor:
+        lock(console)
+        future = executor.submit(synchronize)
+        try:
+            assert attempted.wait(3)
+            assert not probed.wait(0.1)
+            interface = console.get(PhysicalInterface, identity)
+            if family == 4:
+                native = replace(native, host_dhcp_ip_cidr="192.0.2.2/24")
+                interface.host_ip_cidr = native.host_dhcp_ip_cidr
+                interface.ipv6_enabled = False
+                interface.host_ipv6_cidr = None
+            else:
+                native = replace(native, host_dynamic_ipv6_cidr="2001:db8::2/64")
+                interface.host_ipv6_cidr = native.host_dynamic_ipv6_cidr
+            console.commit()
+        finally:
+            console.rollback()
+        future.result(timeout=5)
+    assert probed.is_set()
+    with Session(engine) as db:
+        interface = db.get(PhysicalInterface, identity)
+        assert interface.host_ip_cidr == native.host_dhcp_ip_cidr
+        assert interface.host_ipv6_cidr == (None if family == 4 else native.host_dynamic_ipv6_cidr)
+        assert interface.ipv6_enabled is (family == 6)
+        assert interface.ip_cidr is None and interface.ipv6_cidr is None
+    engine.dispose()

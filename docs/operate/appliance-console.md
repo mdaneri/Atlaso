@@ -230,6 +230,8 @@ the new preferred dynamic address rather than a still-valid old lease.
 The completed Network snapshot can include newly enabled flagged-access management listeners. The console
 observes every applied physical management path together, proving each name/MAC and requested address family
 before publishing observations and starting certificate recovery. A missing listener or lease blocks recovery.
+Startup/UI inventory, console observation, and helper-confirmed lease refresh acquire the shared writer
+before native discovery. A delayed inventory reader cannot publish a pre-admission lease over a newer console observation.
 
 Before Appliance Settings is submitted, the console rechecks the completed Network management paths under the shared
 network-object writer lock held through Settings capture. An address edit made during HTTPS recovery stops submission

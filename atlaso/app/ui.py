@@ -10345,6 +10345,7 @@ def refresh_management_handoff_dynamic_observations(
         }
     except ValueError as exc:
         raise RuntimeError("Management handoff returned an invalid candidate address.") from exc
+    acquire_network_objects_write_lock(db)
     discovered = {row.name: row for row in discover_host_physical_interfaces()}
     for path in dynamic_paths:
         name = str(path.get("name") or "")

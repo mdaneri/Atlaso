@@ -1293,6 +1293,8 @@ def _refresh_management_addresses(
     deadline = time.monotonic() + timeout
     while True:
         with SessionLocal() as db:
+            acquire_network_objects_write_lock(db)
+            db.expire_all()
             discovered = discover_host_physical_interfaces(timeout=max(0, deadline - time.monotonic()))
             verified_rows = []
             for identity, name, mac, applied in targets:
@@ -1329,8 +1331,6 @@ def _refresh_management_addresses(
                 verified_rows.append((identity, name, mac, applied, observed_ipv4, observed_ipv6))
             if len(verified_rows) == len(targets):
                 # Publish the complete applied observation together, never reconcile unrelated intent.
-                acquire_network_objects_write_lock(db)
-                db.expire_all()
                 pending = False
                 for identity, name, mac, applied, observed_ipv4, observed_ipv6 in verified_rows:
                     interface = db.get(PhysicalInterface, identity)

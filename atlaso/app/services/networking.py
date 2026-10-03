@@ -1064,9 +1064,11 @@ def sync_host_physical_interfaces(db: Session) -> tuple[list[PhysicalInterface],
     """
     from atlaso.app.services.network_objects import acquire_network_objects_write_lock
 
-    discovered = discover_host_physical_interfaces()
     acquire_network_objects_write_lock(db)
-    interfaces = db.execute(select(PhysicalInterface).order_by(PhysicalInterface.name)).scalars().all()
+    discovered = discover_host_physical_interfaces()
+    interfaces = db.execute(
+        select(PhysicalInterface).order_by(PhysicalInterface.name).execution_options(populate_existing=True)
+    ).scalars().all()
     renames: dict[str, str] = {}
     reconciled = reconcile_host_physical_interfaces(interfaces, discovered, renames=renames)
     name_changes = _physical_interface_name_changes(reconciled)
