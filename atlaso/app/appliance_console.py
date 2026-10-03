@@ -1278,50 +1278,67 @@ def _refresh_management_addresses(
                 row.get("ipv4_method", "static"), row.get("ip_cidr") or None,
                 row.get("ipv6_enabled", "false").lower() == "true", row.get("ipv6_cidr") or None,
             )
+        targets = [(target.id, target.name, target.mac_address or "", expected)]
+        if expected_paths is not None:
+            for path in expected_paths:
+                if path["kind"] != "physical" or path["name"] == target.name:
+                    continue
+                interface = db.scalar(select(PhysicalInterface).where(PhysicalInterface.name == path["name"]))
+                if interface is None:
+                    raise ConsoleOperationError("An applied management interface is unavailable.")
+                targets.append((interface.id, interface.name, interface.mac_address or "", (
+                    path.get("ipv4_method", "static"), path.get("ip_cidr") or None,
+                    path.get("ipv6_enabled", "false").lower() == "true", path.get("ipv6_cidr") or None,
+                )))
     deadline = time.monotonic() + timeout
     while True:
         with SessionLocal() as db:
-            interface = db.get(PhysicalInterface, interface_id)
             discovered = discover_host_physical_interfaces(timeout=max(0, deadline - time.monotonic()))
-            matches = [
-                row for row in discovered
-                if interface is not None and row.name == interface.name
-                and row.mac_address.lower() == (interface.mac_address or "").lower()
-                and row.mac_address
-            ]
-            observed = matches[0] if len(matches) == 1 else None
-            required = []
-            if interface is not None and observed is not None:
-                observed_ipv4 = observed.host_dhcp_ip_cidr if expected[0] == "dhcp" else observed.host_ip_cidr
-                required.append((4, observed_ipv4, expected[1] if expected[0] != "dhcp" else None))
-                observed_ipv6 = (observed.host_dynamic_ipv6_cidr if not expected[3] else observed.host_ipv6_cidr) if expected[2] else None
-                if expected[2]:
-                    required.append((6, observed_ipv6, expected[3]))
-            verified = bool(
-                observed is not None
-                and observed.host_admin_state == "up" and observed.oper_state == "up"
-            )
-            for family, observed_cidr, desired in required:
-                try:
-                    address = ip_interface(observed_cidr or "")
-                    expected_address = ip_interface(desired) if desired else None
-                except ValueError:
-                    verified = False
-                    continue
-                if (
-                    address.version != family or address.ip.is_unspecified
-                    or address.ip.is_loopback or address.ip.is_link_local or address.ip.is_multicast
-                    or (expected_address is not None and address != expected_address)
-                ):
-                    verified = False
-            if verified and interface is not None and observed is not None:
-                # Polling must never interpret unavailable discovery as removal or
-                # reconcile unrelated desired state. Publish only the verified target.
+            verified_rows = []
+            for identity, name, mac, applied in targets:
+                matches = [row for row in discovered if row.name == name and mac
+                           and row.mac_address.lower() == mac.lower()]
+                observed = matches[0] if len(matches) == 1 else None
+                if observed is None or observed.host_admin_state != "up" or observed.oper_state != "up":
+                    break
+                observed_ipv4 = observed.host_dhcp_ip_cidr if applied[0] == "dhcp" else observed.host_ip_cidr
+                if identity != interface_id and applied[0] != "dhcp" and not applied[1]:
+                    observed_ipv4 = None
+                observed_ipv6 = (observed.host_dynamic_ipv6_cidr if not applied[3] else observed.host_ipv6_cidr) if applied[2] else None
+                required = []
+                if identity == interface_id or applied[0] == "dhcp" or applied[1]:
+                    required.append((4, observed_ipv4, applied[1] if applied[0] != "dhcp" else None))
+                if applied[2]:
+                    required.append((6, observed_ipv6, applied[3]))
+                verified = bool(required)
+                for family, observed_cidr, desired in required:
+                    try:
+                        address = ip_interface(observed_cidr or "")
+                        expected_address = ip_interface(desired) if desired else None
+                    except ValueError:
+                        verified = False
+                        continue
+                    if (
+                        address.version != family or address.ip.is_unspecified
+                        or address.ip.is_loopback or address.ip.is_link_local or address.ip.is_multicast
+                        or (expected_address is not None and address != expected_address)
+                    ):
+                        verified = False
+                if not verified:
+                    break
+                verified_rows.append((identity, name, mac, applied, observed_ipv4, observed_ipv6))
+            if len(verified_rows) == len(targets):
+                # Publish the complete applied observation together, never reconcile unrelated intent.
                 acquire_network_objects_write_lock(db)
-                db.refresh(interface)
-                interface.host_ip_cidr = observed_ipv4
-                interface.host_ipv6_cidr = observed_ipv6
-                pending = (interface.ipv4_method, interface.ip_cidr, interface.ipv6_enabled, interface.ipv6_cidr) != expected
+                db.expire_all()
+                pending = False
+                for identity, name, mac, applied, observed_ipv4, observed_ipv6 in verified_rows:
+                    interface = db.get(PhysicalInterface, identity)
+                    if interface is None or interface.name != name or (interface.mac_address or "").lower() != mac.lower():
+                        raise ConsoleOperationError("An applied management interface identity changed; recovery was not started.")
+                    interface.host_ip_cidr = observed_ipv4
+                    interface.host_ipv6_cidr = observed_ipv6
+                    pending = pending or (interface.ipv4_method, interface.ip_cidr, interface.ipv6_enabled, interface.ipv6_cidr) != applied
                 if expected_paths is not None:
                     current_preview = render_network_config(
                         interfaces=list(db.scalars(select(PhysicalInterface))),

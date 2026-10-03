@@ -227,6 +227,9 @@ recovery never infers or rewrites their provenance. Disabled IPv6 is cleared dur
 and excluded from management certificate addresses even when a stale observation remains.
 Native observation also skips deprecated addresses and expired preferred lifetimes, so renumbering selects
 the new preferred dynamic address rather than a still-valid old lease.
+The completed Network snapshot can include newly enabled flagged-access management listeners. The console
+observes every applied physical management path together, proving each name/MAC and requested address family
+before publishing observations and starting certificate recovery. A missing listener or lease blocks recovery.
 
 Before Appliance Settings is submitted, the console rechecks the completed Network management paths under the shared
 network-object writer lock held through Settings capture. An address edit made during HTTPS recovery stops submission

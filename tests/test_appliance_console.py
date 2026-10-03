@@ -3483,3 +3483,80 @@ def test_recovery_ca_helper_reads_owned_artifact_during_ordinary_staging(tmp_pat
     monkeypatch.setattr(bootstrap, "run", interleaved_helper)
     assert bootstrap.apply_ca_files(owned) == 0
     assert actions == ["validate", "apply"]
+
+
+@pytest.mark.parametrize("state", ["ready", "ipv6_only", "missing_ipv4", "missing_ipv6", "wrong_mac", "missing_listener", "late_edit"])
+def test_console_observes_all_applied_physical_management_listeners(client, monkeypatch, state):
+    """A newly enabled flagged-access listener must acquire every family before recovery.
+
+    Args:
+        client: Initialized appliance database fixture.
+        monkeypatch: Replace native discovery with two source-qualified observations.
+        state: Ready, unavailable-family, identity-failure, or later desired-edit case.
+    """
+    from dataclasses import replace
+
+    from sqlalchemy import select
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Job, JobStatus, PhysicalInterface, VlanInterface
+    from atlaso.app.services.networking import HostPhysicalInterface
+    from atlaso.app.ui import management_ui_addresses
+
+    with SessionLocal() as db:
+        target = appliance_console._management_interface(db)
+        target.ipv4_method = "dhcp"
+        target.ip_cidr = None
+        target.ipv6_enabled = False
+        target.host_ip_cidr = "192.168.167.170/24"
+        listener = PhysicalInterface(name="pr899-access", mac_address="00:15:5d:aa:bb:19", role="access", mode="access",
+                                     admin_state="up", oper_state="up", access_management_ui_enabled=True,
+                                     ipv4_method="dhcp", ip_cidr=None, ipv6_enabled=True, ipv6_cidr=None,
+                                     host_ip_cidr="192.168.167.171/24", host_ipv6_cidr="2001:db8::171/64",
+                                     desired_state_source="user")
+        if state == "ipv6_only":
+            listener.ipv4_method = "static"
+        db.add(listener)
+        db.flush()
+        target_id, listener_id = target.id, listener.id
+        preview = appliance_console.render_network_config(
+            interfaces=list(db.scalars(select(PhysicalInterface))), vlans=list(db.scalars(select(VlanInterface))))
+        db.add(Job(id="job_all_dynamic_paths", type="appliance-apply", status=JobStatus.SUCCEEDED.value,
+                   created_by="local_appliance_console",
+                   result=json.dumps({"captured_units": [{"unit_id": "network", "config_preview": preview}]})))
+        observations = [
+            HostPhysicalInterface(name=target.name, mac_address=target.mac_address, driver=None, speed=None,
+                                  host_ip_cidr="192.168.167.170/24", host_dhcp_ip_cidr="192.168.167.174/24",
+                                  host_mtu=1500, host_admin_state="up", oper_state="up"),
+            HostPhysicalInterface(name=listener.name, mac_address=listener.mac_address, driver=None, speed=None,
+                                  host_ip_cidr="192.168.167.171/24", host_dhcp_ip_cidr=None if state == "missing_ipv4" else "192.168.167.176/24",
+                                  host_ipv6_cidr="2001:db8::171/64", host_dynamic_ipv6_cidr=None if state == "missing_ipv6" else "2001:db8::176/64",
+                                  host_mtu=1500, host_admin_state="up", oper_state="up"),
+        ]
+        if state == "wrong_mac":
+            observations[1] = replace(observations[1], mac_address="00:15:5d:aa:bb:99")
+        elif state == "missing_listener":
+            observations.pop()
+        elif state == "late_edit":
+            listener.ipv4_method = "static"
+            listener.ip_cidr = "192.168.167.177/24"
+        db.commit()
+    monkeypatch.setattr(appliance_console, "discover_host_physical_interfaces", lambda **kwargs: observations)
+    if state in {"ready", "ipv6_only"}:
+        appliance_console._refresh_management_addresses(target_id, network_job_id="job_all_dynamic_paths", timeout=0)
+    else:
+        with pytest.raises(ConsoleOperationError, match="newer address edits" if state == "late_edit" else "fresh management address observation"):
+            appliance_console._refresh_management_addresses(target_id, network_job_id="job_all_dynamic_paths", timeout=0)
+    with SessionLocal() as db:
+        target, listener = db.get(PhysicalInterface, target_id), db.get(PhysicalInterface, listener_id)
+        published = state in {"ready", "ipv6_only", "late_edit"}
+        assert target.host_ip_cidr == ("192.168.167.174/24" if published else "192.168.167.170/24")
+        assert listener.host_ip_cidr == (None if state == "ipv6_only" else "192.168.167.176/24" if published else "192.168.167.171/24")
+        assert listener.host_ipv6_cidr == ("2001:db8::176/64" if published else "2001:db8::171/64")
+        assert listener.desired_state_source == "user"
+        if state in {"ready", "ipv6_only"}:
+            assert {"192.168.167.174", "2001:db8::176"} <= set(management_ui_addresses(db))
+            assert ("192.168.167.176" in management_ui_addresses(db)) is (state == "ready")
+            assert listener.ip_cidr is None and listener.ipv6_cidr is None
+        elif state == "late_edit":
+            assert listener.ip_cidr == "192.168.167.177/24"
