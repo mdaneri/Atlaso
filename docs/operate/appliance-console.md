@@ -213,7 +213,10 @@ A missing or changed applied CA root requires
 ordinary CA Apply before recovery. After nginx reload, stable readiness and served-leaf proof against the task-bound
 publication receipt, successful publication
 records only the refreshed leaf in the CA baseline, preserving unrelated pending CA intent; a failed publication
-does not advance that baseline. First-boot publication records its exact captured CA baseline.
+does not advance that baseline. Readiness probes use the applied default HTTP and HTTPS listener ports, including
+nonstandard ports. Ordinary CA Apply shares the publication writer lock and records only its executed payload; after
+listener reloads it reacquires admission and refuses a baseline commit if recovery or a desired edit superseded that
+payload. First-boot publication records its exact captured CA baseline.
 
 Before Appliance Settings is submitted, the console rechecks the completed Network management paths under the shared
 network-object writer lock held through Settings capture. An address edit made during HTTPS recovery stops submission

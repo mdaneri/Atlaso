@@ -2896,12 +2896,15 @@ def test_management_handoff_scopes_old_http_before_new_address_activation(monkey
     assert "listen [::]:80 default_server;" not in installed[0]
 
 
-def test_management_readiness_accepts_committed_scoped_loopback(monkeypatch, tmp_path):
+@pytest.mark.parametrize("http_port,https_port", [(80, 443), (8080, 8443)])
+def test_management_readiness_accepts_committed_scoped_loopback(monkeypatch, tmp_path, http_port, https_port):
     """Console and update readiness retain their loopback path after handoff.
 
     Args:
         monkeypatch: Isolated management site replacement.
         tmp_path: Disposable management site and certificate location.
+        http_port: Applied default HTTP listener port.
+        https_port: Applied default HTTPS listener port.
     """
     helper = load_helper_module()
     certificate = tmp_path / "site.crt"
@@ -2910,9 +2913,9 @@ def test_management_readiness_accepts_committed_scoped_loopback(monkeypatch, tmp
     key.write_text("test", encoding="utf-8")
     site = tmp_path / "management.conf"
     site.write_text(
-        "server {\n  listen 192.0.2.10:443 ssl default_server;\n"
-        "  listen 127.0.0.1:443 ssl default_server;\n"
-        "  listen 127.0.0.1:80 default_server;\n"
+        f"server {{\n  listen 192.0.2.10:{https_port} ssl default_server;\n"
+        f"  listen 127.0.0.1:{https_port} ssl default_server;\n"
+        f"  listen 127.0.0.1:{http_port} default_server;\n"
         f"  ssl_certificate {certificate};\n  ssl_certificate_key {key};\n"
         "  proxy_pass http://127.0.0.1:8000;\n}\n",
         encoding="utf-8",
@@ -2922,7 +2925,10 @@ def test_management_readiness_accepts_committed_scoped_loopback(monkeypatch, tmp
     assert helper._console_management_config_contract_is_complete(site.read_text(encoding="utf-8"))
     https_enabled, checks = helper._console_management_readiness_checks()
     assert https_enabled is True
-    assert ("nginx HTTPS readiness", "https://127.0.0.1/openapi.json", True, "200") in checks
+    suffix = f":{https_port}" if https_port != 443 else ""
+    assert ("nginx HTTPS readiness", f"https://127.0.0.1{suffix}/openapi.json", True, "200") in checks
+    suffix = f":{http_port}" if http_port != 80 else ""
+    assert ("nginx HTTP redirect", f"http://127.0.0.1{suffix}/", False, "308") in checks
 
 
 def test_management_handoff_refuses_uncanonical_old_tls_site(monkeypatch, tmp_path):

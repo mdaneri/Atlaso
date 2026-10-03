@@ -2201,7 +2201,8 @@ def test_console_service_restore_keeps_snapshot_when_restoration_is_incomplete(m
 
 @pytest.mark.parametrize("network_job_id", [None, "job_completed_network"])
 @pytest.mark.parametrize("already_complete", [False, True])
-def test_console_management_plane_recovery_retries_bootstrap_and_verifies_readiness(monkeypatch, tmp_path, capsys, network_job_id, already_complete):
+@pytest.mark.parametrize("http_port,https_port", [(80, 443), (8080, 8443)])
+def test_console_management_plane_recovery_retries_bootstrap_and_verifies_readiness(monkeypatch, tmp_path, capsys, network_job_id, already_complete, http_port, https_port):
     """Verify that the helper repairs bootstrap and proves stable loopback readiness.
 
     Args:
@@ -2210,6 +2211,8 @@ def test_console_management_plane_recovery_retries_bootstrap_and_verifies_readin
         capsys: Pytest fixture used to capture standard output and standard error.
         network_job_id: Exact completed Network binding, or ordinary recovery.
         already_complete: First boot completed before the management address changed.
+        http_port: Preserved applied HTTP port.
+        https_port: Preserved applied HTTPS port.
     """
     helper = load_helper_module()
     marker = tmp_path / "first-boot-https.applied"
@@ -2264,7 +2267,8 @@ def test_console_management_plane_recovery_retries_bootstrap_and_verifies_readin
             management_config.write_text(
                 "\n".join(
                     [
-                        "listen 443 ssl default_server;",
+                        f"listen {https_port} ssl default_server;",
+                        f"listen {http_port} default_server;",
                         f"ssl_certificate {certificate};",
                         f"ssl_certificate_key {key};",
                         "proxy_pass http://127.0.0.1:8000;",
@@ -2276,8 +2280,15 @@ def test_console_management_plane_recovery_retries_bootstrap_and_verifies_readin
             if network_job_id is None:
                 marker.write_text(helper.FIRST_BOOT_HTTPS_MARKER_TEXT, encoding="utf-8")
         if command and command[0] == "/usr/bin/curl":
-            status = "308" if command[-1] == "http://127.0.0.1/" else "200"
-            return subprocess.CompletedProcess(command, 0, status, "")
+            http_suffix = f":{http_port}" if http_port != 80 else ""
+            https_suffix = f":{https_port}" if https_port != 443 else ""
+            expected = {
+                f"http://127.0.0.1{http_suffix}/": "308",
+                f"https://127.0.0.1{https_suffix}/openapi.json": "200",
+                "http://127.0.0.1:8000/openapi.json": "200",
+            }
+            assert command[-1] in expected
+            return subprocess.CompletedProcess(command, 0, expected[command[-1]], "")
         return subprocess.CompletedProcess(command, 0, "active\n", "")
 
     monkeypatch.setattr(helper, "_run", fake_run)

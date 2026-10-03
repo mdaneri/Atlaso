@@ -14533,6 +14533,26 @@ def execute_traffic_publishing_pair(
     } for unit in units]
 
 
+def guard_ca_apply_publication(db: Session, unit: dict[str, Any]) -> None:
+    """Serialize native CA publication and acknowledge only the executed public intent.
+
+    Args:
+        db: Active transaction retained by the caller through publication or baseline commit.
+        unit: Captured CA unit whose public payload must still match persisted intent.
+
+    Raises:
+        ApplianceApplyJobError: If another publication or desired edit superseded this unit.
+    """
+    acquire_network_objects_write_lock(db)
+    db.flush()
+    db.expire_all()
+    settings = db.scalar(select(CaSettings))
+    certificates = db.scalars(select(CaCertificate).order_by(CaCertificate.common_name)).all()
+    current = render_ca_apply_payload(settings, certificates, include_private_keys=False) if settings else None
+    if current != unit["config_preview"]:
+        raise ApplianceApplyJobError("CA publication changed; preserve its pending baseline and submit again.")
+
+
 def execute_appliance_apply_unit(
     unit: dict[str, Any],
     *,
@@ -14692,6 +14712,10 @@ def execute_appliance_apply_unit(
             ]
         )
     elif unit_id == "ca":
+        if not adapter.dry_run:
+            if db is None:
+                raise ApplianceApplyJobError("Native CA publication requires an active database transaction.")
+            guard_ca_apply_publication(db, unit)
         results = run_secret_config_steps(
             CA_STAGED_CONFIG_PATH,
             render_ca_apply_payload(context["ca_settings"], context["ca_certificates"], include_private_keys=True),
@@ -17054,7 +17078,7 @@ def run_appliance_apply_job(job_id: str, *, force_real: bool = False) -> None:
                     db.expire_all()
                     refreshed_units = appliance_apply_units(db, reconcile=False)
                     applied_unit = next((candidate for candidate in refreshed_units if candidate["id"] == unit["id"]), unit)
-                    if unit["id"] in {"network", "dnsmasq", "appliance_settings"}:
+                    if unit["id"] in {"network", "dnsmasq", "appliance_settings", "ca"}:
                         # Commit exactly the executed intent, including when desired
                         # state changed while native address readiness was running.
                         applied_unit = unit
@@ -17087,9 +17111,13 @@ def run_appliance_apply_job(job_id: str, *, force_real: bool = False) -> None:
                         # task can then discover and replay those listeners.
                         deferred_ca_baseline = applied_unit
                     else:
+                        if unit["id"] == "ca" and not result.get("dry_run"):
+                            guard_ca_apply_publication(db, applied_unit)
                         update_appliance_apply_baselines(db, [applied_unit], {unit["id"]})
                         ca_reload_units.discard(unit["id"])
                         if deferred_ca_baseline is not None and not ca_reload_units:
+                            if not result.get("dry_run"):
+                                guard_ca_apply_publication(db, deferred_ca_baseline)
                             update_appliance_apply_baselines(db, [deferred_ca_baseline], {"ca"})
                             deferred_ca_baseline = None
                 else:

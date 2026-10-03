@@ -1106,6 +1106,9 @@ preserved with their affected subsystem below. Keep new requirements at their to
   regardless of first-boot marker completeness; validate its applied nginx site without requiring the first-boot marker.
   It never falls through to default first-boot rendering.
   CA comparison timestamps use the legacy naive UTC representation, consistently before and after database reload.
+  Ordinary CA Apply must share this writer admission through native publication. Baseline acknowledgement must reacquire
+  admission after listener reloads and reject a superseded captured CA payload rather than baseline refreshed intent.
+  Recovery readiness probes use the applied default listener ports, including preserved nonstandard HTTP/HTTPS ports.
   Ordinary first boot records its captured full CA baseline.
   Ordinary bootstrap with a Network baseline rejects pending
   management-path edits too. Bound recovery must refresh HTTPS even after first boot is complete, without seeding or

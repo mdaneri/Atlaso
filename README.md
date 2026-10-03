@@ -142,6 +142,7 @@ a shared writer lock protects certificate issuance from pending management-path 
 Guarded issuance reads saved service settings without incidental reconciliation commits. Recovery publishes only the
 management leaf using the applied Settings identity and active nginx certificate paths, and acknowledges its CA baseline
 only after reload, stable readiness and proof that nginx serves the task receipt's published leaf.
-Unrelated certificates remain pending.
+Readiness uses the applied listener ports. Ordinary CA publication shares the writer lock and rechecks its executed
+payload before baseline acknowledgement. Unrelated certificates remain pending.
 Recovery refreshes HTTPS even with incomplete first-boot evidence without resetting desired state or the applied
 protocol and ports. CA comparison timestamps retain the legacy UTC format across upgrades.

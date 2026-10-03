@@ -2608,7 +2608,8 @@ def test_secret_staging_is_mode_0600_and_removed_after_adapter_failures(monkeypa
                 "config_diff": "",
             }
 
-            result = ui.execute_appliance_apply_unit(unit, adapter=adapter)
+            monkeypatch.setattr(ui, "guard_ca_apply_publication", lambda _db, _unit: None)
+            result = ui.execute_appliance_apply_unit(unit, adapter=adapter, db=object())
 
             assert result["success"] is False
             assert calls == (["validate"] if failure_phase == "validate" else ["validate", "apply"])
@@ -17539,6 +17540,7 @@ def test_ca_baseline_waits_for_rotated_leaf_listener_reload(client, monkeypatch,
         }
 
     monkeypatch.setattr(ui, "appliance_apply_units", lambda _db, **_kwargs: units)
+    monkeypatch.setattr(ui, "render_ca_apply_payload", lambda *_args, **_kwargs: new_preview)
     monkeypatch.setattr(ui, "execute_appliance_apply_unit", execute)
     monkeypatch.setattr(ui, "persist_vcf_depot_metadata_from_apply", lambda _db, _results: None)
     monkeypatch.setattr(ui, "log_appliance_apply_failures", lambda _job_id, _results: None)
@@ -19915,3 +19917,93 @@ def test_recover_interrupted_vcf_helper_jobs_discards_transient_work(client):
         db.refresh(job)
         assert job.status == "failed"
         assert "Transient credentials were discarded" in job.error
+
+
+@pytest.mark.parametrize("superseded", [False, True])
+def test_native_ca_publication_waits_for_recovery_and_rejects_stale_payload(client, monkeypatch, tmp_path, superseded):
+    """Ordinary CA publication waits for recovery and refuses superseded captured input.
+
+    Args:
+        client: Isolated appliance database startup.
+        monkeypatch: Bounded native adapter and payload replacements.
+        tmp_path: Owned nonsecret staging location.
+        superseded: Whether recovery changed CA intent while admission was blocked.
+    """
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Event
+    from types import SimpleNamespace
+
+    import atlaso.app.ui as ui
+    from atlaso.app.adapters.system import AdapterResult
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.services.network_objects import acquire_network_objects_write_lock
+
+    unit = {
+        "id": "ca", "label": "CA", "config_preview": "original", "config_diff": "",
+        "raw_config_preview": "original", "summary": [], "validation_errors": [],
+        "validation_warnings": [], "config_path": str(tmp_path / "ca.json"),
+        "context": {"ca_settings": None, "ca_certificates": []},
+    }
+    current = dict(unit)
+    monkeypatch.setattr(ui, "appliance_apply_units", lambda _db, **_kwargs: [current])
+    monkeypatch.setattr(ui, "render_ca_apply_payload", lambda *_args, **kwargs:
+                        "{}" if kwargs.get("include_private_keys") else current["config_preview"])
+    monkeypatch.setattr(ui, "CA_STAGED_CONFIG_PATH", str(tmp_path / "ca.json"))
+    entered = Event()
+    published = Event()
+
+    def apply(path):
+        """Observe publication after writer admission.
+
+        Args:
+            path: Task-owned staged CA input.
+        """
+        published.set()
+        return AdapterResult(command=["ca", path], dry_run=False, returncode=0)
+
+    def ordinary():
+        """Execute ordinary CA apply in a separate transaction."""
+        with SessionLocal() as db:
+            entered.set()
+            try:
+                result = ui.execute_appliance_apply_unit(
+                    unit, db=db,
+                    adapter=SimpleNamespace(dry_run=False, validate_ca_config=apply, apply_ca_config=apply),
+                )
+                db.commit()
+                return result["success"]
+            except ui.ApplianceApplyJobError:
+                db.rollback()
+                return False
+
+    with SessionLocal() as recovery, ThreadPoolExecutor(max_workers=1) as executor:
+        acquire_network_objects_write_lock(recovery)
+        future = executor.submit(ordinary)
+        try:
+            assert entered.wait(2)
+            assert not published.wait(0.15)
+            if superseded:
+                current["config_preview"] = "recovered-leaf"
+        finally:
+            recovery.commit()
+        assert future.result(timeout=5) is (not superseded)
+    assert published.is_set() is (not superseded)
+
+
+def test_ca_baseline_guard_refuses_intervening_recovery_after_listener_reload(client, monkeypatch):
+    """A reload gap cannot acknowledge a superseded ordinary CA publication.
+
+    Args:
+        client: Isolated appliance database startup.
+        monkeypatch: Current CA public preview replacement.
+    """
+    import atlaso.app.ui as ui
+    from atlaso.app.database import SessionLocal
+
+    executed = {"id": "ca", "config_preview": "ordinary-leaf"}
+    monkeypatch.setattr(ui, "render_ca_apply_payload", lambda *_args, **_kwargs: "recovered-leaf")
+    with SessionLocal() as db:
+        prior = ui.load_appliance_apply_baselines(db).get("ca")
+        with pytest.raises(ui.ApplianceApplyJobError, match="publication changed"):
+            ui.guard_ca_apply_publication(db, executed)
+        assert ui.load_appliance_apply_baselines(db).get("ca") == prior

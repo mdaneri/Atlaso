@@ -26026,16 +26026,30 @@ def _console_management_readiness_checks() -> tuple[bool, tuple[tuple[str, str, 
         raise ValueError(f"reading the applied nginx management configuration failed: {exc}") from exc
     if not _console_management_config_contract_is_complete(management_config):
         raise ValueError("the applied nginx management configuration is incomplete")
-    https_enabled = bool(re.search(
-        r"(?m)^\s*listen\s+(?:\d+|127\.0\.0\.1:\d+)\s+ssl(?:\s+default_server)?;",
-        management_config,
-    ))
-    nginx_checks = (
-        ("nginx HTTP redirect", "http://127.0.0.1/", False, "308"),
-        ("nginx HTTPS readiness", "https://127.0.0.1/openapi.json", True, "200"),
-    ) if https_enabled else (
-        ("nginx HTTP readiness", "http://127.0.0.1/openapi.json", False, "200"),
-    )
+    ports: dict[bool, set[int]] = {False: set(), True: set()}
+    for listener in re.finditer(
+        r"(?m)^\s*listen\s+(?:127\.0\.0\.1:)?(\d+)\s+([^;]*);", management_config,
+    ):
+        options = listener.group(2).split()
+        if "default_server" in options:
+            port = int(listener.group(1))
+            if not 1 <= port <= 65535:
+                raise ValueError("the applied management listener port is invalid")
+            ports["ssl" in options].add(port)
+    if (len(ports[False]) > 1 or len(ports[True]) > 1
+            or not (ports[False] or ports[True])):
+        raise ValueError("the applied management loopback listener ports are ambiguous or unavailable")
+    http_port = next(iter(ports[False]), 80)
+    http_origin = "http://127.0.0.1" + (f":{http_port}" if http_port != 80 else "")
+    https_enabled = bool(ports[True])
+    if https_enabled:
+        https_port = next(iter(ports[True]))
+        https_origin = "https://127.0.0.1" + (f":{https_port}" if https_port != 443 else "")
+        nginx_checks = (
+            (("nginx HTTP redirect", http_origin + "/", False, "308"),) if ports[False] else ()
+        ) + (("nginx HTTPS readiness", https_origin + "/openapi.json", True, "200"),)
+    else:
+        nginx_checks = (("nginx HTTP readiness", http_origin + "/openapi.json", False, "200"),)
     return https_enabled, (*MANAGEMENT_APPLICATION_READINESS_CHECK, *nginx_checks)
 
 
