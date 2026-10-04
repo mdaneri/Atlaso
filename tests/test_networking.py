@@ -284,7 +284,11 @@ def test_sync_host_inventory_cleans_removed_nic_bindings_and_retargets_survivors
     database.init_db()
 
     def fake_discover(**kwargs):
-        """Return fake discover."""
+        """Return fake discover.
+
+        Args:
+            **kwargs: Additional options supplied by the production caller.
+        """
         return [
             HostPhysicalInterface(
                 name="eth1",
@@ -510,7 +514,11 @@ def test_sync_host_inventory_commits_two_nic_name_swap(monkeypatch, tmp_path):
     mac_b = "00:15:5d:01:1d:15"
 
     def fake_discover(**kwargs):
-        """Return fake discover."""
+        """Return fake discover.
+
+        Args:
+            **kwargs: Additional options supplied by the production caller.
+        """
         return [
             HostPhysicalInterface(
                 name="eth1",
@@ -609,7 +617,11 @@ def test_startup_host_inventory_refreshes_appliance_seed_without_apply_job(monke
     database.init_db()
 
     def fake_discover(**kwargs):
-        """Return fake discover."""
+        """Return fake discover.
+
+        Args:
+            **kwargs: Additional options supplied by the production caller.
+        """
         return [
             HostPhysicalInterface(
                 name="ens192",
@@ -1427,12 +1439,20 @@ def test_inventory_discovery_waits_for_console_writer(tmp_path, monkeypatch, fam
     lock = network_objects.acquire_network_objects_write_lock
 
     def admitted(db):
-        """Signal the inventory writer before its blocking admission."""
+        """Signal the inventory writer before its blocking admission.
+
+        Args:
+            db: Database session participating in the admitted transaction.
+        """
         attempted.set()
         lock(db)
 
     def discover(**kwargs):
-        """Sample native state only after the earlier console transaction finishes."""
+        """Sample native state only after the earlier console transaction finishes.
+
+        Args:
+            **kwargs: Additional options supplied by the production caller.
+        """
         probed.set()
         return [native]
 
@@ -1501,7 +1521,12 @@ def test_inventory_discovery_failure_releases_writer_without_reconciliation(tmp_
         identity = row.id
 
     def failed_probe(args, **kwargs):
-        """Assert the finite discovery budget and simulate failure."""
+        """Assert the finite discovery budget and simulate failure.
+
+        Args:
+            args: Positional arguments supplied by the production caller.
+            **kwargs: Additional options supplied by the production caller.
+        """
         assert args == ["ip", "-j", "address", "show"]
         assert kwargs["timeout"] == 5.0
         if failure == "timeout":

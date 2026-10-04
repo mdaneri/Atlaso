@@ -2780,7 +2780,7 @@ def test_vmware_ovf_export_and_image_plumbing_are_present():
     assert "atlaso-bootstrap-https" in provision_script
     assert "atlaso-bootstrap-https.service" in provision_script
     assert 'for action in ("validate", "apply")' in bootstrap_script
-    assert 'str(HELPER_PATH), "ca", action, str(CA_STAGED_CONFIG_PATH), "--real"' in bootstrap_script
+    assert 'str(HELPER_PATH), "ca", action, str(staged_path), "--real"' in bootstrap_script
     assert "systemctl enable atlaso-vmware-ovf-customize.service" in provision_script
     assert "systemctl enable atlaso-bootstrap-https.service" in provision_script
     prepare_unit = Path("image/vmware-workstation/systemd/atlaso-vmware-ovf-prepare.service").read_text(encoding="utf-8")

@@ -27,6 +27,118 @@ from atlaso.app.appliance_console import (
 HELPER_PATH = Path(__file__).resolve().parents[1] / "scripts" / "appliance" / "atlaso-helper"
 
 
+def synthetic_root_owned_publication(monkeypatch, directory):
+    """Model root ownership only inside a synthetic private receipt filesystem.
+
+    Args:
+        monkeypatch: Restore filesystem metadata interception after the test.
+        directory: Isolated publication directory whose real modes and identity remain checked.
+    """
+    import os
+
+    original_lstat = Path.lstat
+    original_fstat = os.fstat
+
+    def fstat(descriptor):
+        """Model ownership only for descriptors bound to original receipt file identities.
+
+        Args:
+            descriptor: Open descriptor whose identity and permission bits remain authoritative.
+        """
+        metadata = original_fstat(descriptor)
+        for path in directory.iterdir():
+            candidate = original_lstat(path)
+            if (metadata.st_dev, metadata.st_ino) == (candidate.st_dev, candidate.st_ino):
+                fields = list(metadata)
+                fields[4] = 0
+                return os.stat_result(fields)
+        return metadata
+
+    def lstat(path, *args, **kwargs):
+        """Retain real metadata except the synthetic publication owner's UID.
+
+        Args:
+            path: Path being inspected.
+            *args: Positional arguments forwarded to the real filesystem call.
+            **kwargs: Keyword arguments forwarded to the real filesystem call.
+        """
+        metadata = original_lstat(path, *args, **kwargs)
+        if path == directory or directory in path.parents:
+            fields = list(metadata)
+            fields[4] = 0
+            return os.stat_result(fields)
+        return metadata
+
+    monkeypatch.setattr(Path, "lstat", lstat)
+    monkeypatch.setattr(os, "fstat", fstat)
+
+
+@pytest.mark.parametrize("mode", [0o700, 0o750])
+def test_synthetic_publication_ownership_preserves_private_mode_guard(monkeypatch, tmp_path, mode):
+    """Exercise the POSIX owner guard on every host without suppressing permission checks.
+
+    Args:
+        monkeypatch: Model only synthetic filesystem metadata and POSIX availability.
+        tmp_path: Isolated receipt directory and unrelated metadata control.
+        mode: Private mode or a group-readable directory that must remain refused.
+    """
+    import os
+    import stat
+
+    loader = importlib.machinery.SourceFileLoader("atlaso_receipt_owner_guard", "scripts/appliance/atlaso-bootstrap-https")
+    spec = importlib.util.spec_from_loader(loader.name, loader)
+    bootstrap = importlib.util.module_from_spec(spec)
+    loader.exec_module(bootstrap)
+    directory = tmp_path / "publication"
+    directory.mkdir()
+    original_lstat = Path.lstat
+
+    def metadata(path, *args, **kwargs):
+        """Model an unprivileged test directory with its supplied permission bits.
+
+        Args:
+            path: Filesystem path whose metadata is requested.
+            *args: Positional filesystem options.
+            **kwargs: Keyword filesystem options.
+        """
+        result = original_lstat(path, *args, **kwargs)
+        if path == directory:
+            fields = list(result)
+            fields[0] = stat.S_IFDIR | mode
+            fields[4] = 1001
+            return os.stat_result(fields)
+        return result
+
+    monkeypatch.setattr(Path, "lstat", metadata)
+    monkeypatch.setattr(bootstrap.os, "getuid", lambda: 1001, raising=False)
+    monkeypatch.setattr(bootstrap, "CONSOLE_PUBLICATION_DIRECTORY", directory)
+    before = directory.lstat()
+    outside = tmp_path.lstat()
+    with pytest.raises(ValueError, match="private and root-owned"):
+        bootstrap.console_publication_path("job_owner_guard")
+    synthetic_root_owned_publication(monkeypatch, directory)
+    after = directory.lstat()
+    assert after.st_uid == 0
+    assert (after.st_mode, after.st_dev, after.st_ino) == (before.st_mode, before.st_dev, before.st_ino)
+    assert tmp_path.lstat() == outside
+    receipt = directory / "receipt.json"
+    receipt.write_text("{}", encoding="utf-8")
+    with receipt.open("rb") as stream:
+        owned = os.fstat(stream.fileno())
+        real = original_lstat(receipt)
+        assert owned.st_uid == 0
+        assert (owned.st_mode, owned.st_dev, owned.st_ino) == (real.st_mode, real.st_dev, real.st_ino)
+    unrelated = tmp_path / "unrelated.json"
+    unrelated.write_text("{}", encoding="utf-8")
+    with unrelated.open("rb") as stream:
+        assert os.fstat(stream.fileno()).st_uid == original_lstat(unrelated).st_uid
+    if mode == 0o700:
+        assert bootstrap.console_publication_path("job_owner_guard") == directory / "job_owner_guard.publication.json"
+    else:
+        with pytest.raises(ValueError, match="private and root-owned"):
+            bootstrap.console_publication_path("job_owner_guard")
+
+
 def load_helper_module():
     """Return helper module."""
     loader = importlib.machinery.SourceFileLoader("atlaso_helper_console", str(HELPER_PATH))
@@ -2445,6 +2557,7 @@ def test_console_management_plane_recovery_verifies_http_only_mode(monkeypatch, 
         """Return successful HTTP-only recovery results.
 
         Args:
+            **_options: Additional subprocess options unused by this test double.
             command: Command and arguments to execute.
         """
         if "--verify-console-http" in command:
@@ -2510,6 +2623,7 @@ def test_console_management_plane_recovery_stops_after_nginx_validation_failure(
         """Fail nginx validation and record all attempted commands.
 
         Args:
+            **_options: Additional subprocess options unused by this test double.
             command: Command and arguments to execute.
         """
         commands.append(command)
@@ -2779,7 +2893,11 @@ def test_console_observation_serializes_pending_decision(client, monkeypatch):
 
     monkeypatch.setattr(appliance_console, "acquire_network_objects_write_lock", acquire)
     def discover(**kwargs):
-        """Require native observation inside the admitted writer transaction."""
+        """Require native observation inside the admitted writer transaction.
+
+        Args:
+            **kwargs: Additional options supplied by the production caller.
+        """
         assert observation["db"].get_transaction() is observation["transaction"]
         return [observed]
 
@@ -3243,6 +3361,7 @@ def test_completed_recovery_publishes_only_management_and_records_exact_baseline
         expected_leaf = {column.name: getattr(ldap_leaf, column.name) for column in CaCertificate.__table__.columns}
     publication_directory = tmp_path / "publication"
     publication_directory.mkdir(mode=0o700)
+    synthetic_root_owned_publication(monkeypatch, publication_directory)
     monkeypatch.setattr(bootstrap, "CONSOLE_PUBLICATION_DIRECTORY", publication_directory)
     stage = tmp_path / "ca.json"
     nginx_config = tmp_path / "nginx.conf"
@@ -3357,7 +3476,12 @@ def test_completed_recovery_publishes_only_management_and_records_exact_baseline
         native_rows = [{"ifname": "pr899-https-trunk", "ifindex": 15, "address": "00:15:5d:aa:bb:41",
                         "link_type": "ether", "flags": ["UP"], "operstate": "UP"}]
         def native_run(command, **kwargs):
-            """Expose only native VLAN withdrawal while original publication and applied paths stay unchanged."""
+            """Expose only native VLAN withdrawal while original publication and applied paths stay unchanged.
+
+            Args:
+                command: Native command whose execution is modeled.
+                **kwargs: Additional options supplied by the production caller.
+            """
             assert command == ["ip", "-d", "-j", "address", "show"] and kwargs["timeout"] <= 5
             return subprocess.CompletedProcess(command, 0, json.dumps(native_rows), "")
 
@@ -3386,7 +3510,12 @@ def test_completed_recovery_publishes_only_management_and_records_exact_baseline
                                      host_admin_state="up", oper_state="up", host_dhcp_ip_cidr="192.0.2.74/24",
                                      host_dynamic_ipv6_cidrs=("2001:db8::74/64", "2001:db8:1::74/64"))
         def discover(*, timeout, require_success):
-            """Attest the native probe's deadline and strict result requirement."""
+            """Attest the native probe's deadline and strict result requirement.
+
+            Args:
+                timeout: Bounded native discovery timeout supplied by the caller.
+                require_success: Require native discovery to succeed before observation publication.
+            """
             assert timeout == 5 and require_success is True
             return [host]
 
@@ -3406,7 +3535,11 @@ def test_completed_recovery_publishes_only_management_and_records_exact_baseline
             with SessionLocal() as db:
                 assert load_appliance_apply_baselines(db)["ca"] == before
         def timed_out(**kwargs):
-            """Model native discovery exceeding its bounded budget."""
+            """Model native discovery exceeding its bounded budget.
+
+            Args:
+                **kwargs: Additional options supplied by the production caller.
+            """
             raise subprocess.TimeoutExpired("ip", 5)
 
         monkeypatch.setattr(bootstrap, "discover_host_physical_interfaces", timed_out)
@@ -3477,6 +3610,7 @@ def test_completed_http_only_recovery_does_not_require_or_publish_ca(client, mon
     """An applied HTTP-only front door remains usable with CA disabled.
 
     Args:
+        tmp_path: Isolated temporary directory for synthetic publication receipts.
         client: Initialized database fixture.
         monkeypatch: Replace native nginx validation and forbid certificate work.
         nginx_result: Valid applied site or missing/invalid site must not trigger first-boot rendering.
@@ -3494,6 +3628,7 @@ def test_completed_http_only_recovery_does_not_require_or_publish_ca(client, mon
     loader.exec_module(bootstrap)
     publication = tmp_path / "http-publication"
     publication.mkdir(mode=0o700)
+    synthetic_root_owned_publication(monkeypatch, publication)
     monkeypatch.setattr(bootstrap, "CONSOLE_PUBLICATION_DIRECTORY", publication)
     with SessionLocal() as db:
         db.scalar(select(ApplianceSettings)).management_https_enabled = False
@@ -3545,7 +3680,11 @@ def test_completed_http_only_recovery_does_not_require_or_publish_ca(client, mon
     lock = bootstrap.acquire_network_objects_write_lock
 
     def acquire(db):
-        """Retain the actual writer transaction through HTTP validation."""
+        """Retain the actual writer transaction through HTTP validation.
+
+        Args:
+            db: Database session participating in the admitted transaction.
+        """
         lock(db)
         admitted["db"] = db
         admitted["transaction"] = db.get_transaction()
@@ -3553,7 +3692,11 @@ def test_completed_http_only_recovery_does_not_require_or_publish_ca(client, mon
     calls = []
 
     def validate(command):
-        """Only the matching completed path may reach native validation under writer admission."""
+        """Only the matching completed path may reach native validation under writer admission.
+
+        Args:
+            command: Native command whose execution is modeled.
+        """
         assert admitted["db"].get_transaction() is admitted["transaction"]
         assert edit == "unchanged"
         calls.append(command)
@@ -3775,11 +3918,20 @@ def test_console_reobserves_after_service_start_and_settings_apply(client, monke
     refresh = appliance_console._refresh_management_addresses
 
     def observe(interface_id, **kwargs):
-        """Retain production observation with a bounded zero-wait test budget."""
+        """Retain production observation with a bounded zero-wait test budget.
+
+        Args:
+            interface_id: Physical interface selected for admitted observation.
+            **kwargs: Additional options supplied by the production caller.
+        """
         return refresh(interface_id, timeout=0, **kwargs)
 
     def discover(**kwargs):
-        """Acquire a different usable lease after each simulated service restart."""
+        """Acquire a different usable lease after each simulated service restart.
+
+        Args:
+            **kwargs: Additional options supplied by the production caller.
+        """
         suffix = 174 + len(probes)
         probes.append(suffix)
         unavailable = missing and len(probes) > 1
@@ -3789,7 +3941,12 @@ def test_console_reobserves_after_service_start_and_settings_apply(client, monke
             host_mtu=1500, host_admin_state="up", oper_state="up")]
 
     def capture(stage, **kwargs):
-        """Model service startup clearing dynamic inventory after its initial publication."""
+        """Model service startup clearing dynamic inventory after its initial publication.
+
+        Args:
+            stage: Console stage requesting an atomic observation snapshot.
+            **kwargs: Additional options supplied by the production caller.
+        """
         with SessionLocal() as db:
             target = db.get(appliance_console.PhysicalInterface, identity)
             captures.append((stage, target.host_ip_cidr, target.host_ipv6_cidr))
@@ -3798,7 +3955,12 @@ def test_console_reobserves_after_service_start_and_settings_apply(client, monke
                 db.commit()
 
     def submit(units, **kwargs):
-        """Capture the real completed Network snapshot and simulated Settings restart."""
+        """Capture the real completed Network snapshot and simulated Settings restart.
+
+        Args:
+            units: Captured appliance units supplied by the caller.
+            **kwargs: Additional options supplied by the production caller.
+        """
         if units == {"appliance_settings"}:
             capture("settings")
             return "job_settings_started"
@@ -3865,6 +4027,7 @@ def test_http_final_recheck_refuses_drift_after_bootstrap(client, monkeypatch, t
     """HTTP readiness cannot certify Network or applied-mode drift after initial bootstrap validation.
 
     Args:
+        tmp_path: Isolated temporary directory for synthetic publication receipts.
         client: Initialized appliance database.
         monkeypatch: Replace nginx validation and forbid CA mutation.
         edit: Change committed during the outer readiness samples.
@@ -3880,6 +4043,7 @@ def test_http_final_recheck_refuses_drift_after_bootstrap(client, monkeypatch, t
     loader.exec_module(bootstrap)
     publication = tmp_path / "http-publication"
     publication.mkdir(mode=0o700)
+    synthetic_root_owned_publication(monkeypatch, publication)
     monkeypatch.setattr(bootstrap, "CONSOLE_PUBLICATION_DIRECTORY", publication)
     applied = {"management_https_enabled": False, "management_public_http_port": 8080}
     with SessionLocal() as db:
@@ -3913,7 +4077,12 @@ def test_http_final_recheck_refuses_drift_after_bootstrap(client, monkeypatch, t
     from atlaso.app.services.networking import HostPhysicalInterface
 
     def discover(*, timeout, require_success):
-        """Model kernel-only drift during final readiness without changing persisted observations."""
+        """Model kernel-only drift during final readiness without changing persisted observations.
+
+        Args:
+            timeout: Bounded native discovery timeout supplied by the caller.
+            require_success: Require native discovery to succeed before observation publication.
+        """
         assert 0 <= timeout <= 5 and require_success is True
         if edit == "timeout":
             raise subprocess.TimeoutExpired("ip", 5)
@@ -3928,7 +4097,12 @@ def test_http_final_recheck_refuses_drift_after_bootstrap(client, monkeypatch, t
         from atlaso.app.services import networking
 
         def native_vlan_run(command, **kwargs):
-            """Withdraw only the native VLAN after initial HTTP capture while DB state stays applied."""
+            """Withdraw only the native VLAN after initial HTTP capture while DB state stays applied.
+
+            Args:
+                command: Native command whose execution is modeled.
+                **kwargs: Additional options supplied by the production caller.
+            """
             assert command == ["ip", "-d", "-j", "address", "show"] and kwargs["timeout"] <= 5
             rows = [{"ifname": "pr899-http-trunk", "ifindex": 14, "address": "00:15:5d:aa:bb:40",
                      "link_type": "ether", "flags": ["UP"], "operstate": "UP"}]
@@ -4006,7 +4180,11 @@ def test_console_refuses_ineligible_completed_vlan_with_working_physical_listene
         db.commit()
     calls = []
     def discover(**kwargs):
-        """Record whether an ineligible snapshot reaches native observation."""
+        """Record whether an ineligible snapshot reaches native observation.
+
+        Args:
+            **kwargs: Additional options supplied by the production caller.
+        """
         calls.append(kwargs)
         return [host]
 
@@ -4044,7 +4222,12 @@ def test_console_refuses_ineligible_completed_vlan_with_working_physical_listene
         native_rows.append(native_vlan.copy())
     native_calls = []
     def native_run(command, **kwargs):
-        """Supply real iproute2 VLAN and parent evidence or its bounded failure."""
+        """Supply real iproute2 VLAN and parent evidence or its bounded failure.
+
+        Args:
+            command: Native command whose execution is modeled.
+            **kwargs: Additional options supplied by the production caller.
+        """
         if command == ["ip", "-j", "-4", "route", "show", "default"]:
             return subprocess.CompletedProcess(command, 0, "[]", "")
         assert command == ["ip", "-d", "-j", "address", "show"]
@@ -4107,14 +4290,24 @@ def test_console_recovery_reserves_complete_final_attestation(monkeypatch, https
     native_status = helper._console_management_http_status
 
     def status(*args, **kwargs):
-        """Consume the final readiness sample up to its separate deadline."""
+        """Consume the final readiness sample up to its separate deadline.
+
+        Args:
+            *args: Positional arguments supplied by the production caller.
+            **kwargs: Additional options supplied by the production caller.
+        """
         if clock[0] in {87, 97}:
             assert helper._console_recovery_remaining() == 1
             return native_status(*args, **kwargs)
         return "200"
 
     def run(command, *, timeout):
-        """Exercise all final permitted durations at the actual outer command boundary."""
+        """Exercise all final permitted durations at the actual outer command boundary.
+
+        Args:
+            command: Native command whose execution is modeled.
+            timeout: Bounded native discovery timeout supplied by the caller.
+        """
         calls.append((command, timeout))
         if command[0] == "/usr/bin/curl":
             assert timeout == 1

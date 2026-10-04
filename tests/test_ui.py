@@ -2543,7 +2543,7 @@ def test_secret_staging_is_mode_0600_and_removed_after_adapter_failures(monkeypa
             "CA_STAGED_CONFIG_PATH",
             "validate_ca_config",
             "apply_ca_config",
-            {"ca_settings": object(), "ca_certificates": []},
+            {"ca_settings": object(), "ca_certificates": [], "ca_profiles": []},
         ),
         (
             "ldap",
@@ -20021,18 +20021,34 @@ def test_committing_ca_reconciliation_waits_and_refreshes_recovered_leaf(client,
     observed = []
 
     def acquire(db):
-        """Expose the actual writer wait before any reconciliation work."""
+        """Expose the actual writer wait before any reconciliation work.
+
+        Args:
+            db: Database session participating in the admitted transaction.
+        """
         attempted.set()
         lock(db)
 
     def specs(db, *, reconcile=True, **_kwargs):
-        """Exercise optional initialization's intermediate commit."""
+        """Exercise optional initialization's intermediate commit.
+
+        Args:
+            db: Database session participating in the admitted transaction.
+            reconcile: Whether the caller requests certificate reconciliation.
+            **_kwargs: Additional production options unused by this test double.
+        """
         if reconcile and initialization_commits:
             db.commit()
         return []
 
     def issue(db, *, certificates, **_kwargs):
-        """Inspect the certificate selected after writer admission."""
+        """Inspect the certificate selected after writer admission.
+
+        Args:
+            db: Database session participating in the admitted transaction.
+            certificates: Captured certificate rows supplied for issuance.
+            **_kwargs: Additional production options unused by this test double.
+        """
         assert db.in_transaction()
         observed.append(next(row.fingerprint for row in certificates if row.id == certificate_id))
         issued.set()
@@ -20263,7 +20279,11 @@ def test_ca_policy_writers_wait_for_bound_recovery(client, monkeypatch, operatio
     lock = certificate_trust.acquire_network_objects_write_lock
 
     def acquire(db):
-        """Signal the blocked policy writer before entering real admission."""
+        """Signal the blocked policy writer before entering real admission.
+
+        Args:
+            db: Database session participating in the admitted transaction.
+        """
         attempted.set()
         lock(db)
         admitted.set()
@@ -20422,12 +20442,22 @@ def test_settings_ca_reconciliation_waits_for_recovery_outer_commit(client, monk
     observed = []
 
     def acquire(db):
-        """Expose admission at the transport boundary before its state reads."""
+        """Expose admission at the transport boundary before its state reads.
+
+        Args:
+            db: Database session participating in the admitted transaction.
+        """
         attempted.set()
         lock(db)
 
     def issue(db, *, certificates, **_kwargs):
-        """Inspect fresh material while the original caller transaction stays admitted."""
+        """Inspect fresh material while the original caller transaction stays admitted.
+
+        Args:
+            db: Database session participating in the admitted transaction.
+            certificates: Captured certificate rows supplied for issuance.
+            **_kwargs: Additional production options unused by this test double.
+        """
         observed.append(next(row.fingerprint for row in certificates if row.id == leaf_id))
         assert db.get(ApplianceSettings, desired_id).root_ssh_enabled
         issued.set()
@@ -20509,19 +20539,32 @@ def test_native_management_handoff_retains_writer_through_baseline_commit(client
     units["ca"]["context"] = {"ca_settings": object(), "ca_certificates": [], "ca_profiles": []}
 
     def acquire(db):
-        """Expose the publication wait before any staging."""
+        """Expose the publication wait before any staging.
+
+        Args:
+            db: Database session participating in the admitted transaction.
+        """
         attempted.set()
         lock(db)
 
     def stage(target, content):
-        """Retain only nonsecret test payloads under the validation root."""
+        """Retain only nonsecret test payloads under the validation root.
+
+        Args:
+            target: Private staging path supplied by the caller.
+            content: Captured serialized configuration to stage.
+        """
         staged.set()
         path = tmp_path / (str(target).replace("/", "_").replace("\\", "_").replace(":", "_"))
         path.write_text(content, encoding="utf-8")
         return str(path)
 
     def apply(path):
-        """Represent the native publication boundary."""
+        """Represent the native publication boundary.
+
+        Args:
+            path: Private configuration path passed to the adapter.
+        """
         published.set()
         return AdapterResult(command=["handoff", path], dry_run=False, returncode=0)
 
@@ -20587,7 +20630,11 @@ def test_baseline_merge_waits_and_refreshes_cached_unrelated_units(client, monke
     from atlaso.app.models import Setting
 
     def unit(key):
-        """Build an immutable executed baseline input."""
+        """Build an immutable executed baseline input.
+
+        Args:
+            key: Unit identifier used to build an executed baseline fixture.
+        """
         return {"id": key, "snapshot_hash": "executed-" + key, "config_path": key + ".json",
                 "config_preview": "{}", "summary": [],
                 "context": {"dns_settings": SimpleNamespace(enabled=True, authoritative=True)}}
@@ -20600,7 +20647,11 @@ def test_baseline_merge_waits_and_refreshes_cached_unrelated_units(client, monke
     second_unit = "dnsmasq" if first_unit == "ca" else "ca"
 
     def acquire(db):
-        """Signal admission before the blocked row merge."""
+        """Signal admission before the blocked row merge.
+
+        Args:
+            db: Database session participating in the admitted transaction.
+        """
         attempted.set()
         lock(db)
 

@@ -499,7 +499,11 @@ def test_physical_interface_refresh_imports_host_inventory_without_apply_job(cli
     login(client)
 
     def fake_discover(**kwargs):
-        """Return fake discover."""
+        """Return fake discover.
+
+        Args:
+            **kwargs: Additional options supplied by the production caller.
+        """
         return [
             HostPhysicalInterface(
                 name="ens192",

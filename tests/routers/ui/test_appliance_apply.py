@@ -753,6 +753,8 @@ interface=eth1
             "admin_state": "up",
             "mode": "access",
             "parent_mode": "",
+            "parent_mac": "",
+            "vlan_id": "",
             "management_eligible": "true",
             "check_duplicate_ip_addresses": "false",
             "role": "management",
@@ -774,6 +776,8 @@ interface=eth1
             "admin_state": "up",
             "mode": "access",
             "parent_mode": "",
+            "parent_mac": "",
+            "vlan_id": "",
             "management_eligible": "true",
             "check_duplicate_ip_addresses": "false",
             "role": "access",
@@ -2726,7 +2730,13 @@ def test_appliance_apply_job_persists_helper_confirmed_transition(client, monkey
             db.rollback()
 
     def execute(_unit, *, db, **kwargs):
-        """Simulate native Settings publication under the real shared writer."""
+        """Simulate native Settings publication under the real shared writer.
+
+        Args:
+            _unit: Captured appliance unit supplied by the runner.
+            db: Database session participating in the admitted transaction.
+            **kwargs: Additional options supplied by the production caller.
+        """
         ui.acquire_network_objects_write_lock(db)
         publication_transaction["value"] = db.get_transaction()
         futures.append(executor.submit(acknowledge))
@@ -2736,7 +2746,13 @@ def test_appliance_apply_job_persists_helper_confirmed_transition(client, monkey
                 "commands": [], "management_status_transition": transition}
 
     def baseline(db, units, selected_ids):
-        """The runner retains publication admission through exactly one baseline write."""
+        """The runner retains publication admission through exactly one baseline write.
+
+        Args:
+            db: Database session participating in the admitted transaction.
+            units: Captured appliance units supplied by the caller.
+            selected_ids: Identifiers of the executed units whose baselines are committed.
+        """
         assert db.get_transaction() is publication_transaction["value"]
         assert not admitted.is_set()
         baseline_updates.append(selected_ids)
@@ -4351,7 +4367,12 @@ def test_management_handoff_discovery_failure_preserves_observations(client, mon
         db.commit()
 
     def fail(args, **kwargs):
-        """The actual discovery subprocess must have a finite deadline."""
+        """The actual discovery subprocess must have a finite deadline.
+
+        Args:
+            args: Positional arguments supplied by the production caller.
+            **kwargs: Additional options supplied by the production caller.
+        """
         assert args == ["ip", "-j", "address", "show"]
         assert kwargs["timeout"] == 5.0
         if failure == "timeout":
