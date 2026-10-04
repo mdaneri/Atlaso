@@ -7594,6 +7594,92 @@ def network_dynamic_public_bindings(units_by_id: dict[str, dict[str, Any]]) -> l
     return public_dynamic_bindings
 
 
+def applied_service_listener_bindings(service: str, content: str) -> tuple[list[str], list[str]]:
+    """Read public interface and address ownership from an applied service preview.
+
+    Args:
+        service: Protected native listener service identifier.
+        content: Applied or captured rendered configuration, possibly redacted.
+    """
+    if service == "ntpd":
+        if "# Atlaso NTP enabled: true" not in content.splitlines():
+            return [], []
+        interfaces = next((split_interfaces(line.partition(":")[2]) for line in content.splitlines()
+                           if line.startswith("# Atlaso NTP listen interfaces:")), [])
+        addresses = [line.split()[2] for line in content.splitlines()
+                     if len(line.split()) == 3 and line.split()[:2] == ["interface", "listen"]]
+    elif service == "vcf_offline_depot":
+        interfaces = next((split_interfaces(line.partition(":")[2]) for line in content.splitlines()
+                           if line.startswith("# Listen interfaces:")), [])
+        addresses = [match.group(1).strip("[]") for match in re.finditer(
+            r"\blisten\s+(\[[0-9a-fA-F:.]+\]|[0-9.]+):[0-9]+", content,
+        )]
+    else:
+        service_content = content.partition('"service":')[2] if service == "ldap" else content
+        enabled = re.search(r'"enabled"\s*:\s*(true|false)\b', service_content)
+        if enabled is None or enabled.group(1) != "true":
+            return [], []
+        if service == "ldap":
+            fields = {}
+            for key in ("listen_interface", "listen_address"):
+                match = re.search(r'"' + key + r'"\s*:\s*("(?:\\.|[^"\\])*")', content)
+                fields[key] = json.loads(match.group(1)) if match else ""
+            interfaces = split_interfaces(fields["listen_interface"])
+            addresses = split_addresses(fields["listen_address"])
+        else:
+            interfaces = []
+            match = re.search(r'"addresses"\s*:\s*(\[[^\]]*\])', content)
+            addresses = json.loads(match.group(1)) if match else []
+    return interfaces, list(dict.fromkeys(addresses))
+
+
+def applied_service_listener_sources(baselines: dict[str, Any], service: str) -> dict[str, str]:
+    """Resolve captured listener sources without consulting current desired bindings.
+
+    Args:
+        baselines: Successful applied snapshots and retained physical NIC aliases.
+        service: Native listener whose exact applied address owners are needed.
+    """
+    baseline = baselines.get(service) or {}
+    interfaces, addresses = applied_service_listener_bindings(service, str(baseline.get("config_preview") or ""))
+    stored_interfaces = split_interfaces(str(baseline.get("applied_listener_interface") or ""))
+    if stored_interfaces:
+        interfaces = stored_interfaces
+    network = baselines.get("network") or {}
+    raw_aliases = network.get("physical_interface_aliases")
+    aliases = {str(old): str(new) for old, new in raw_aliases.items()} if isinstance(raw_aliases, dict) else {}
+    stored_sources = baseline.get("applied_listener_sources")
+    stored_sources = stored_sources if isinstance(stored_sources, dict) else {}
+    description = {"ntpd": NTP_DNS_DESCRIPTION, "ldap": LDAP_DNS_RECORD_DESCRIPTION,
+                   "kms": KMS_DNS_RECORD_DESCRIPTION, "vcf_offline_depot": VCF_DEPOT_DNS_DESCRIPTION}[service]
+    previous_rows = network_interface_entries(str(network.get("config_preview") or ""))
+    sources = {}
+    for value in addresses:
+        try:
+            address = str(ip_address(value))
+        except ValueError:
+            continue
+        source = str(stored_sources.get(address) or "")
+        if not source and len(interfaces) == 1:
+            source = interfaces[0]
+        if not source:
+            recovered = {str(record.get("source_interface") or "")
+                         for record in (baselines.get("dnsmasq") or {}).get("service_dns_records", [])
+                         if record.get("description") == description and record.get("record_type") in {"A", "AAAA"}
+                         and record.get("address") == address and record.get("source_interface")}
+            for row in previous_rows:
+                if interfaces and row["name"] not in interfaces and aliases.get(row["name"], row["name"]) not in interfaces:
+                    continue
+                for field in ("ip_cidr", "ipv6_cidr"):
+                    if address_from_cidr(row.get(field)) == address:
+                        recovered.add(row["name"])
+            resolved = {aliases.get(name, name) for name in recovered}
+            source = next(iter(resolved)) if len(resolved) == 1 else ""
+        if source:
+            sources[address] = aliases.get(source, source)
+    return sources
+
+
 def network_dynamic_service_listener_moves(db: Session, units_by_id: dict[str, dict[str, Any]]) -> list[dict[str, str]]:
     """Capture applied dynamic service listeners independently of DNS ownership.
 
@@ -7606,130 +7692,34 @@ def network_dynamic_service_listener_moves(db: Session, units_by_id: dict[str, d
         return []
     rows = network_interface_entries(str(network.get("raw_config_preview") or network.get("config_preview") or ""))
     baselines = load_appliance_apply_baselines(db)
-    network_baseline = baselines.get("network") or {}
-    raw_aliases = network_baseline.get("physical_interface_aliases")
-    aliases = {str(old): str(new) for old, new in raw_aliases.items()} if isinstance(raw_aliases, dict) else {}
-    previous_rows = network_interface_entries(str(network_baseline.get("config_preview") or ""))
-    previous_static_sources: dict[str, str] = {}
-    for row in previous_rows:
-        for field in ("ip_cidr", "ipv6_cidr"):
-            value = row.get(field, "")
-            if value:
-                try:
-                    previous_static_sources[str(ip_interface(value).ip)] = aliases.get(row["name"], row["name"])
-                except ValueError:
-                    continue
-    prior_dns_sources: dict[str, set[str]] = {}
-    for record in (baselines.get("dnsmasq") or {}).get("service_dns_records", []):
-        if record.get("description") == KMS_DNS_RECORD_DESCRIPTION and record.get("record_type") in {"A", "AAAA"}:
-            source = str(record.get("source_interface") or "")
-            if source:
-                prior_dns_sources.setdefault(str(record.get("address") or ""), set()).add(aliases.get(source, source))
-    address_sources = {option["name"]: option["addresses"] for option in service_bind_options(db)}
     moves = []
     for service in ("ntpd", "ldap", "kms", "vcf_offline_depot"):
-        content = str(baselines.get(service, {}).get("config_preview") or "")
-        interfaces: list[str] = []
-        addresses: list[str] = []
-        if service == "ntpd":
-            if "# Atlaso NTP enabled: true" not in content.splitlines():
-                continue
-            interfaces = next((split_interfaces(line.partition(":")[2]) for line in content.splitlines()
-                               if line.startswith("# Atlaso NTP listen interfaces:")), [])
-            addresses = [line.split()[2] for line in content.splitlines()
-                         if len(line.split()) == 3 and line.split()[:2] == ["interface", "listen"]]
-        elif service == "vcf_offline_depot":
-            interfaces = next((split_interfaces(line.partition(":")[2]) for line in content.splitlines()
-                               if line.startswith("# Listen interfaces:")), [])
-            addresses = [match.group(1).strip("[]") for match in re.finditer(
-                r"\blisten\s+(\[[0-9a-fA-F:.]+\]|[0-9.]+):[0-9]+", content,
-            )]
-        elif content:
-            # Applied comparison previews may contain non-JSON redaction markers;
-            # parse only the public binding fields, preserving all other text.
-            service_content = content.partition('"service":')[2] if service == "ldap" else content
-            enabled = re.search(r'"enabled"\s*:\s*(true|false)\b', service_content)
-            if enabled is None or enabled.group(1) != "true":
-                continue
-            if service == "ldap":
-                fields = {}
-                for key in ("listen_interface", "listen_address"):
-                    match = re.search(r'"' + key + r'"\s*:\s*("(?:\\.|[^"\\])*")', content)
-                    fields[key] = json.loads(match.group(1)) if match else ""
-                interfaces = split_interfaces(fields["listen_interface"])
-                addresses = split_addresses(fields["listen_address"])
-            else:
-                match = re.search(r'"addresses"\s*:\s*(\[[^\]]*\])', content)
-                addresses = json.loads(match.group(1)) if match else []
-        if interfaces and not any(row["name"] in interfaces for row in rows):
-            # Legacy applied names can precede MAC-based startup retargeting.
-            interfaces = []
-        for value in dict.fromkeys(addresses):
-            try:
-                address = str(ip_address(value))
-            except ValueError:
-                continue
-            value_interfaces = interfaces
-            if service == "kms":
-                kms_baseline = baselines.get("kms") or {}
-                applied_sources = kms_baseline.get("applied_listener_sources")
-                source = str(applied_sources.get(address) or "") if isinstance(applied_sources, dict) else ""
-                if not source:
-                    single_applied_interface = split_interfaces(str(kms_baseline.get("applied_listener_interface") or ""))
-                    source = single_applied_interface[0] if len(single_applied_interface) == 1 else ""
-                if not source:
-                    recovered = set(prior_dns_sources.get(address, set()))
-                    if address in previous_static_sources:
-                        recovered.add(previous_static_sources[address])
-                    source = next(iter(recovered)) if len(recovered) == 1 else ""
-                value_interfaces = [aliases.get(source, source)] if source else []
-                if not value_interfaces:
-                    # A legacy dynamic KMS address has no trustworthy interface
-                    # identity. The caller reports this as a validation failure.
-                    continue
-            matches = [row for row in rows if row.get("admin_state") == "up"
-                       and (row["name"] in value_interfaces if value_interfaces else True)
-                       and (service == "kms" or len(value_interfaces) == 1
-                            or address in address_sources.get(row["name"], []))
+        for address, source in applied_service_listener_sources(baselines, service).items():
+            matches = [row for row in rows if row.get("admin_state") == "up" and row["name"] == source
                        and (row.get("ipv4_method") == "dhcp" if ip_address(address).version == 4
                             else row.get("ipv6_enabled") == "true" and not row.get("ipv6_cidr"))]
             if len(matches) == 1:
-                moves.append({"service": service, "interface": matches[0]["name"],
+                moves.append({"service": service, "interface": source,
                               "old_address": address, "new_address": address})
     return moves
 
 
-def network_legacy_kms_listener_source_errors(
-    db: Session, units_by_id: dict[str, dict[str, Any]],
-) -> list[str]:
-    """Require explicit KMS Apply when legacy dynamic listener source is unprovable.
+def network_legacy_listener_source_errors(db: Session, units_by_id: dict[str, dict[str, Any]]) -> list[str]:
+    """Require explicit service Apply when legacy dynamic ownership is unprovable.
 
     Args:
-        db: Session containing applied KMS and Network baselines.
+        db: Session containing applied service and Network baselines.
         units_by_id: Candidate Apply units keyed by identifier.
     """
     network = units_by_id.get("network", {})
     if not network.get("changed"):
         return []
     baselines = load_appliance_apply_baselines(db)
-    kms_content = str((baselines.get("kms") or {}).get("config_preview") or "")
-    if not kms_content:
-        return []
-    enabled = re.search(r'"enabled"\s*:\s*true\b', kms_content)
-    addresses_match = re.search(r'"addresses"\s*:\s*(\[[^\]]*\])', kms_content)
-    if enabled is None or addresses_match is None:
-        return []
-    try:
-        addresses = [str(ip_address(value)) for value in json.loads(addresses_match.group(1))]
-    except (TypeError, ValueError):
-        return []
-    if not addresses:
-        return []
     previous_rows = network_interface_entries(str((baselines.get("network") or {}).get("config_preview") or ""))
     candidate_rows = network_interface_entries(str(network.get("raw_config_preview") or network.get("config_preview") or ""))
 
     def is_dynamic(row: dict[str, str], version: int) -> bool:
-        """Return whether a prior or candidate row can serve the address family.
+        """Return whether a parsed interface has an active dynamic address family.
 
         Args:
             row: Parsed applied or candidate Network interface.
@@ -7740,48 +7730,23 @@ def network_legacy_kms_listener_source_errors(
             else row.get("ipv6_enabled") == "true" and not row.get("ipv6_cidr")
         )
 
-    for address in addresses:
-        version = ip_address(address).version
-        prior_network = baselines.get("network") or {}
-        raw_aliases = prior_network.get("physical_interface_aliases")
-        aliases = {str(old): str(new) for old, new in raw_aliases.items()} if isinstance(raw_aliases, dict) else {}
-        proven_sources = {
-            aliases.get(str(record.get("source_interface") or ""), str(record.get("source_interface") or ""))
-            for record in (baselines.get("dnsmasq") or {}).get("service_dns_records", [])
-            if record.get("description") == KMS_DNS_RECORD_DESCRIPTION
-            and record.get("record_type") in {"A", "AAAA"}
-            and str(record.get("address") or "") == address
-            and record.get("source_interface")
-        }
-        applied_sources = (baselines.get("kms") or {}).get("applied_listener_sources")
-        if isinstance(applied_sources, dict) and applied_sources.get(address):
-            proven_sources.add(aliases.get(str(applied_sources[address]), str(applied_sources[address])))
-        applied_interface = split_interfaces(str((baselines.get("kms") or {}).get("applied_listener_interface") or ""))
-        if len(applied_interface) == 1:
-            proven_sources.add(aliases.get(applied_interface[0], applied_interface[0]))
-        if not proven_sources:
-            for row in previous_rows:
-                for field in ("ip_cidr", "ipv6_cidr"):
-                    value = row.get(field, "")
-                    try:
-                        if value and str(ip_interface(value).ip) == address:
-                            proven_sources.add(aliases.get(row["name"], row["name"]))
-                    except ValueError:
-                        continue
-        if proven_sources:
-            continue
-        prior_dynamic = any(is_dynamic(row, version) for row in previous_rows)
-        candidate_dynamic = any(is_dynamic(row, version) for row in candidate_rows)
-        if prior_dynamic and candidate_dynamic:
-            resolved = any(
-                move["service"] == "kms" and move["old_address"] == address
-                for move in network_dynamic_service_listener_moves(db, units_by_id)
-            )
-            if not resolved:
-                return [
-                    "The applied KMS listener source cannot be proven from this legacy baseline. Apply vSphere Key Providers first, then review Network again."
-                ]
-    return []
+    errors = []
+    for service, label, page in (("ntpd", "NTP", "NTP"), ("ldap", "LDAP", "Managed LDAP"),
+                                 ("kms", "KMS", "vSphere Key Providers"), ("vcf_offline_depot", "VCF Depot", "VCF Offline Depot")):
+        _, addresses = applied_service_listener_bindings(service, str((baselines.get(service) or {}).get("config_preview") or ""))
+        sources = applied_service_listener_sources(baselines, service)
+        for value in addresses:
+            try:
+                address = str(ip_address(value))
+            except ValueError:
+                continue
+            if address in sources:
+                continue
+            version = ip_address(address).version
+            if any(is_dynamic(row, version) for row in previous_rows) and any(is_dynamic(row, version) for row in candidate_rows):
+                errors.append(f"The applied {label} listener source cannot be proven from this legacy baseline. Apply {page} first, then review Network again.")
+                break
+    return errors
 
 
 def network_listener_handoff_required(db: Session, units_by_id: dict[str, dict[str, Any]]) -> bool:
@@ -12631,27 +12596,23 @@ def appliance_apply_units(db: Session, *, reconcile: bool = True, applying_dns: 
             baselines.get(unit["id"]),
         )
     unit_map = {unit["id"]: unit for unit in units}
-    legacy_kms_source_errors = network_legacy_kms_listener_source_errors(db, unit_map)
-    if legacy_kms_source_errors:
-        network_unit["validation_errors"].extend(legacy_kms_source_errors)
+    legacy_source_errors = network_legacy_listener_source_errors(db, unit_map)
+    if legacy_source_errors:
+        network_unit["validation_errors"].extend(legacy_source_errors)
         network_unit["valid"] = False
-    kms_unit = unit_map.get("kms")
-    if kms_unit is not None:
-        # Capture listener ownership with the rendered KMS Apply unit; do not
-        # recover it from a later desired-model read during handoff execution.
-        selected_interfaces = list(kms["selected_kms_interfaces"])
-        option_addresses = {row["name"]: set(row["addresses"]) for row in service_bind_options(db)}
-        try:
-            rendered_addresses = json.loads(kms["kms_config_preview"]).get("listen", {}).get("addresses", [])
-        except (AttributeError, TypeError, ValueError):
-            rendered_addresses = []
-        kms_unit["applied_listener_sources"] = {
+    option_addresses = {row["name"]: set(row["addresses"]) for row in service_bind_options(db)}
+    for service in ("ntpd", "ldap", "kms", "vcf_offline_depot"):
+        listener_unit = unit_map[service]
+        selected_interfaces, rendered_addresses = applied_service_listener_bindings(service, listener_unit["config_preview"])
+        if service == "kms":
+            selected_interfaces = list(kms["selected_kms_interfaces"])
+        listener_unit["applied_listener_sources"] = {
             str(address): matching[0]
             for address in rendered_addresses if isinstance(address, str)
             for matching in [[name for name in selected_interfaces if address in option_addresses.get(name, set())]]
             if len(matching) == 1
         }
-        kms_unit["applied_listener_interface"] = selected_interfaces[0] if len(selected_interfaces) == 1 else ""
+        listener_unit["applied_listener_interface"] = selected_interfaces[0] if len(selected_interfaces) == 1 else ""
     if _appliance_apply_nat_requires_routing(unit_map):
         network_unit = unit_map.get("network", {})
         wan_unit = unit_map.get("wan", {})
@@ -16104,8 +16065,8 @@ def projected_handoff_listener_baselines(
                     raise ValueError("Applied listener baseline address is missing or ambiguous.")
                 addresses[addresses.index(move["old_address"])] = move["new_address"]
             content = json.dumps(payload, indent=2, sort_keys=True) + ("\n" if content.endswith("\n") else "")
-        if service == "kms":
-            sources = dict(baseline.get("applied_listener_sources") or {})
+        if service in {"ntpd", "ldap", "kms", "vcf_offline_depot"}:
+            sources = applied_service_listener_sources(baselines, service)
             for move in service_moves:
                 old_source = sources.get(move["old_address"])
                 source = str(move.get("interface") or old_source or "")
@@ -16148,7 +16109,7 @@ def update_appliance_apply_baselines(db: Session, units: list[dict[str, Any]], s
             "summary": unit["summary"],
             "applied_at": applied_at,
         }
-        if unit["id"] == "kms":
+        if unit["id"] in {"ntpd", "ldap", "kms", "vcf_offline_depot"}:
             baseline["applied_listener_interface"] = str(unit.get("applied_listener_interface") or "")
             baseline["applied_listener_sources"] = dict(unit.get("applied_listener_sources") or {})
         permission_fingerprint = unit.get("context", {}).get("routing_permission_fingerprint")
@@ -17591,13 +17552,13 @@ def run_appliance_apply_job(job_id: str, *, force_real: bool = False) -> None:
                 if (
                     str(captured_by_id.get(unit["id"], {}).get("snapshot_hash") or "") != str(unit["snapshot_hash"])
                     or (
-                        unit["id"] == "kms"
+                        unit["id"] in {"ntpd", "ldap", "kms", "vcf_offline_depot"}
                         and "applied_listener_interface" in captured_by_id.get(unit["id"], {})
                         and str(captured_by_id[unit["id"]].get("applied_listener_interface") or "")
                         != str(unit.get("applied_listener_interface") or "")
                     )
                     or (
-                        unit["id"] == "kms"
+                        unit["id"] in {"ntpd", "ldap", "kms", "vcf_offline_depot"}
                         and "applied_listener_sources" in captured_by_id.get(unit["id"], {})
                         and captured_by_id[unit["id"]].get("applied_listener_sources")
                         != unit.get("applied_listener_sources")
@@ -18977,9 +18938,9 @@ def _submit_appliance_apply(
                 "config_preview": unit["config_preview"],
                 "config_diff": unit["config_diff"],
                 **({"applied_listener_interface": unit.get("applied_listener_interface", "")}
-                   if unit["id"] == "kms" else {}),
+                   if unit["id"] in {"ntpd", "ldap", "kms", "vcf_offline_depot"} else {}),
                 **({"applied_listener_sources": dict(unit.get("applied_listener_sources") or {})}
-                   if unit["id"] == "kms" else {}),
+                   if unit["id"] in {"ntpd", "ldap", "kms", "vcf_offline_depot"} else {}),
             }
             for unit in selected_ordered_units
         ],

@@ -486,3 +486,77 @@ def test_kms_applied_source_map_keeps_multiple_interface_bindings(client):
             "service": "kms", "interface": access.name,
             "old_address": "2001:db8::10", "new_address": "2001:db8::10",
         }]
+
+
+@pytest.mark.parametrize("service", ["ntpd", "ldap", "vcf_offline_depot"])
+def test_dynamic_listener_sources_survive_renewal_alias_and_pending_interface(client, service):
+    """Use captured per-address source ownership after renewals and pending edits.
+
+    Args:
+        client: Isolated authenticated application client.
+        service: Listener service whose applied source is renewed.
+    """
+    from atlaso.app import ui
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import (
+        LdapSettings,
+        NtpSettings,
+        PhysicalInterface,
+        VcfOfflineDepotSettings,
+    )
+
+    login(client)
+    with SessionLocal() as db:
+        access, _units = _prepare_service_baselines(
+            db, ui, {service}, dns_enabled=False, dynamic_ipv4=False, dynamic_ipv6=True,
+        )
+        secondary = PhysicalInterface(
+            name="eth10", mac_address="02:00:00:00:00:20", role="access", mode="access",
+            admin_state="up", oper_state="up", ipv4_method="static", ip_cidr="203.0.113.10/24",
+            ipv6_enabled=True, ipv6_cidr="2001:db8:2::10/64",
+        )
+        db.add(secondary)
+        db.flush()
+        options = {row["name"]: row["addresses"] for row in ui.service_bind_options(db)}
+        selected = [access.name, secondary.name]
+        addresses = list(dict.fromkeys([*options[access.name], *options[secondary.name]]))
+        settings = db.scalar(select({
+            "ntpd": NtpSettings, "ldap": LdapSettings, "vcf_offline_depot": VcfOfflineDepotSettings,
+        }[service]))
+        settings.listen_interface = "\n".join(selected)
+        settings.listen_address = "\n".join(addresses)
+        db.flush()
+
+        applied_units = {unit["id"]: unit for unit in ui.appliance_apply_units(db)}
+        ui.update_appliance_apply_baselines(db, [applied_units[service]], {service})
+        baselines = ui.load_appliance_apply_baselines(db)
+        sources = baselines[service]["applied_listener_sources"]
+        assert sources["2001:db8::10"] == access.name
+        assert sources["203.0.113.10"] == secondary.name
+        assert sources["2001:db8:2::10"] == secondary.name
+
+        # Startup renamed the source, then discovered a fresh SLAAC address.
+        # A pending service interface edit must not take ownership of the move.
+        baselines[service]["applied_listener_sources"]["2001:db8::10"] = "renamed-access"
+        baselines["network"]["physical_interface_aliases"] = {"renamed-access": access.name}
+        ui.save_appliance_apply_baselines(db, baselines)
+        access.host_ipv6_cidr = "2001:db8::21/64"
+        settings.listen_interface = secondary.name
+        db.flush()
+        candidate = {unit["id"]: unit for unit in ui.appliance_apply_units(db)}
+
+        moves = [move for move in ui.network_dynamic_service_listener_moves(db, candidate)
+                 if move["service"] == service]
+        assert moves == [{
+            "service": service, "interface": access.name,
+            "old_address": "2001:db8::10", "new_address": "2001:db8::10",
+        }]
+        projected = ui.projected_handoff_listener_baselines(
+            {service: baselines[service]}, candidate,
+            [{**moves[0], "new_address": "2001:db8::21"}],
+        )[service]
+        assert "2001:db8::21" in projected["config_preview"]
+        assert "203.0.113.10" in projected["config_preview"]
+        assert "2001:db8:2::10" in projected["config_preview"]
+        assert projected["applied_listener_sources"]["2001:db8::21"] == access.name
+        assert projected["applied_listener_sources"]["203.0.113.10"] == secondary.name
