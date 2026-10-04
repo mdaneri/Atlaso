@@ -19990,13 +19990,14 @@ def test_native_ca_publication_waits_for_recovery_and_rejects_stale_payload(clie
     assert published.is_set() is (not superseded)
 
 
-@pytest.mark.parametrize("initialization_commits", [False, True])
-def test_committing_ca_reconciliation_waits_and_refreshes_recovered_leaf(client, monkeypatch, initialization_commits):
+@pytest.mark.parametrize("commit,initialization_commits", [(True, False), (True, True), (False, False)])
+def test_committing_ca_reconciliation_waits_and_refreshes_recovered_leaf(client, monkeypatch, commit, initialization_commits):
     """Read-triggered issuance waits for recovery and refreshes its cached certificate.
 
     Args:
         client: Initialized isolated appliance database.
         monkeypatch: Observe issuance without creating certificate material.
+        commit: Whether reconciliation commits or retains the caller transaction.
         initialization_commits: Whether optional service initialization releases admission.
     """
     from concurrent.futures import ThreadPoolExecutor
@@ -20042,7 +20043,14 @@ def test_committing_ca_reconciliation_waits_and_refreshes_recovered_leaf(client,
         with SessionLocal() as db:
             cached = db.get(CaCertificate, certificate_id)
             loaded.set()
-            result = ui.ensure_ca_state(db)
+            transaction = db.get_transaction()
+            desired = ui.get_appliance_settings_row(db)
+            desired.root_ssh_enabled = True
+            result = ui.ensure_ca_state(db, commit=commit)
+            if not commit:
+                assert db.get_transaction() is transaction
+                assert desired.root_ssh_enabled
+                db.commit()
             assert cached.fingerprint == "recovery-published-leaf"
             db.rollback()
             return result
@@ -20369,3 +20377,107 @@ interface=eth0
         networking.sync_host_physical_interfaces(db)
         assert interface.host_ipv6_cidrs == [] and interface.host_ipv6_cidr is None
         assert applied_management_bindings(db) == []
+
+
+@pytest.mark.parametrize("transport", ["api", "ui"])
+def test_settings_ca_reconciliation_waits_for_recovery_outer_commit(client, monkeypatch, transport):
+    """Settings transports retain recovered CA material and staged edits through outer commit.
+
+    Args:
+        client: Initialized isolated appliance database.
+        monkeypatch: Observe actual writer admission and reconciliation.
+        transport: API or browser Settings save.
+    """
+    import inspect
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Event
+
+    from fastapi.params import Form
+    from sqlalchemy import select
+    from starlette.requests import Request
+
+    from atlaso.app import ui
+    from atlaso.app.api import v1
+    from atlaso.app.config import get_settings
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import ApplianceSettings, CaCertificate, CaSettings
+    from atlaso.app.routers.api_v1 import settings as api_settings
+    from atlaso.app.routers.ui import settings_backup
+    from atlaso.app.schemas import SettingsUpdate
+    from atlaso.app.security import Identity
+
+    with SessionLocal() as db:
+        desired = ui.get_appliance_settings_row(db)
+        desired.management_https_enabled = True
+        ca = db.scalar(select(CaSettings))
+        ca.enabled = True
+        leaf = db.scalar(select(CaCertificate).where(CaCertificate.managed_owner == "appliance:https"))
+        if leaf is None:
+            leaf = CaCertificate(common_name=desired.fqdn, managed_owner="appliance:https")
+            db.add(leaf)
+        db.commit()
+        desired_id, leaf_id, fqdn = desired.id, leaf.id, desired.fqdn
+    attempted, issued = Event(), Event()
+    lock = ui.acquire_network_objects_write_lock
+    observed = []
+
+    def acquire(db):
+        """Expose admission at the transport boundary before its state reads."""
+        attempted.set()
+        lock(db)
+
+    def issue(db, *, certificates, **_kwargs):
+        """Inspect fresh material while the original caller transaction stays admitted."""
+        observed.append(next(row.fingerprint for row in certificates if row.id == leaf_id))
+        assert db.get(ApplianceSettings, desired_id).root_ssh_enabled
+        issued.set()
+        return False
+
+    monkeypatch.setattr(api_settings if transport == "api" else settings_backup,
+                        "acquire_network_objects_write_lock", acquire)
+    monkeypatch.setattr(ui, "managed_ca_certificate_specs", lambda *_args, **_kwargs: [])
+    monkeypatch.setattr(ui, "ensure_root_ca_material", lambda _settings: False)
+    monkeypatch.setattr(ui, "ensure_managed_certificate_rows", lambda *_args, **_kwargs: False)
+    monkeypatch.setattr(ui, "ensure_ca_issued_state", issue)
+    monkeypatch.setattr(ui, "validate_appliance_settings", lambda *_args, **_kwargs: ([], []))
+
+    def save_settings():
+        """Run the real authenticated transport body in a separate cached session."""
+        identity = Identity(username="admin", role="admin", scopes={"admin:all"})
+        with SessionLocal() as db:
+            cached = db.get(CaCertificate, leaf_id)
+            db.get(ApplianceSettings, desired_id)
+            if transport == "api":
+                result = v1.update_app_settings(
+                    payload=SettingsUpdate(management_https_enabled=True, root_ssh_enabled=True),
+                    identity=identity, db=db, settings=get_settings())
+            else:
+                endpoint = ui.update_settings_from_ui
+                kwargs = {}
+                for name, parameter in inspect.signature(endpoint).parameters.items():
+                    default = parameter.default
+                    if isinstance(default, Form):
+                        kwargs[name] = default.default_factory() if default.default_factory else default.default
+                kwargs.update(request=Request({"type": "http", "headers": [],
+                                               "session": {"csrf_token": "settings-lock"}}),
+                              csrf="settings-lock", identity=identity, fqdn=fqdn,
+                              management_https_enabled=True, root_ssh_enabled=True)
+                result = endpoint(db=db, **kwargs)
+                assert result.status_code == 303
+            assert cached.fingerprint == "recovery-published-leaf"
+            return result
+
+    with SessionLocal() as recovery, ThreadPoolExecutor(max_workers=1) as executor:
+        lock(recovery)
+        future = executor.submit(save_settings)
+        try:
+            assert attempted.wait(3) and not issued.wait(0.1)
+            recovery.get(CaCertificate, leaf_id).fingerprint = "recovery-published-leaf"
+            recovery.commit()
+        finally:
+            recovery.rollback()
+        future.result(timeout=5)
+    assert observed == ["recovery-published-leaf"]
+    with SessionLocal() as db:
+        assert db.get(ApplianceSettings, desired_id).root_ssh_enabled
+        assert db.get(CaCertificate, leaf_id).fingerprint == "recovery-published-leaf"

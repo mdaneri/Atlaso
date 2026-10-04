@@ -136,14 +136,4 @@ status checks alongside that heartbeat. See [Contributing](CONTRIBUTING.md) for 
 The documentation describes the latest supported Atlaso release. Pages marked **Roadmap** or **Historical** provide
 context and do not describe current appliance behavior.
 
-The [appliance console](docs/operate/appliance-console.md) verifies fresh usable management addresses on an up link
-against the completed Network task before HTTPS recovery and Appliance Settings. New address edits remain pending;
-a shared writer lock protects certificate issuance from pending management-path edits and the final Settings capture.
-Guarded issuance reads saved service settings without incidental reconciliation commits. Recovery publishes only the
-management leaf using the applied Settings identity and active nginx certificate paths, and acknowledges its CA baseline
-only after reload, stable readiness and proof that nginx serves the task receipt's published leaf.
-Readiness uses the applied listener ports. Ordinary CA publication shares the writer lock and rechecks its executed
-payload before baseline acknowledgement. Unrelated certificates remain pending.
-Recovery refreshes HTTPS even with incomplete first-boot evidence without resetting desired state or the applied
-protocol and ports. CA comparison accepts equivalent legacy SQLite and PostgreSQL UTC expiry encodings without
-rewriting stored snapshots.
+For local appliance recovery, see the [appliance console guide](docs/operate/appliance-console.md).

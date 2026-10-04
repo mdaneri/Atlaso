@@ -1564,7 +1564,7 @@ def ensure_ca_state(
 
     Args:
         db: Active database session.
-        commit: Whether to commit reconciled CA state before returning.
+        commit: Whether to commit reconciled CA state before returning; all mutation requires writer admission.
         managed_owners: Optional managed certificate owners admitted for scoped issuance.
         management_snapshot: Applied Settings inputs for the management leaf.
 
@@ -1573,18 +1573,22 @@ def ensure_ca_state(
     """
     errors: list[str] = []
     try:
+        acquire_network_objects_write_lock(db)
         if commit:
-            acquire_network_objects_write_lock(db)
             get_ca_settings_row(db)
             # Optional service initialization may commit. Complete it before CA material
             # mutation, then reacquire admission and project fresh non-reconciling state.
             managed_ca_certificate_specs(db, managed_owners=managed_owners, management_snapshot=management_snapshot)
             acquire_network_objects_write_lock(db)
-        settings = db.scalar(select(CaSettings).execution_options(populate_existing=commit))
+        # Preserve caller-staged changes inside admission before refreshing cached CA
+        # rows. commit=False retains this transaction through the caller's commit.
+        db.flush()
+        settings = db.scalar(select(CaSettings).execution_options(populate_existing=True))
         if settings is None:
             return ["CA Settings are unavailable for guarded certificate recovery."]
         changed = ensure_default_ca_profiles(db)
-        profiles = db.execute(select(CaProfile).order_by(CaProfile.name).execution_options(populate_existing=commit)).scalars().all()
+        profiles = db.execute(select(CaProfile).order_by(CaProfile.name).execution_options(populate_existing=True)).scalars().all()
+        db.scalars(select(CaCertificate).options(selectinload(CaCertificate.profile)).execution_options(populate_existing=True)).all()
         normalized_portal_hostname = normalize_dns_hostname(settings.portal_hostname or CA_DEFAULT_PORTAL_HOSTNAME)
         if normalized_portal_hostname != settings.portal_hostname:
             settings.portal_hostname = normalized_portal_hostname
@@ -1595,7 +1599,7 @@ def ensure_ca_state(
             specs = [spec for spec in specs if spec.owner in managed_owners]
         changed = ensure_managed_certificate_rows(db, settings=settings, profiles=profiles, specs=specs) or changed
         certificates = (
-            db.execute(select(CaCertificate).options(selectinload(CaCertificate.profile)).order_by(CaCertificate.common_name).execution_options(populate_existing=commit))
+            db.execute(select(CaCertificate).options(selectinload(CaCertificate.profile)).order_by(CaCertificate.common_name).execution_options(populate_existing=True))
             .scalars()
             .all()
         )
