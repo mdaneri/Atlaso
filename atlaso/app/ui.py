@@ -7594,6 +7594,44 @@ def network_dynamic_public_bindings(units_by_id: dict[str, dict[str, Any]]) -> l
     return public_dynamic_bindings
 
 
+def network_applied_dynamic_public_listener_required(db: Session, units_by_id: dict[str, dict[str, Any]]) -> bool:
+    """Protect applied public sockets even when pending edits remove desired sockets.
+
+    Args:
+        db: Session holding applied Public Services and Network baselines.
+        units_by_id: Candidate Apply units used for dependency admission.
+    """
+    if not units_by_id.get("network", {}).get("changed"):
+        return False
+    baselines = load_appliance_apply_baselines(db)
+    content = str((baselines.get("public_services") or {}).get("config_preview") or "")
+    addresses = {str(ip_address(match.group(1).strip("[]"))) for match in re.finditer(
+        r"(?m)^\s*listen\s+(\[[0-9A-Fa-f:.]+\]|[0-9.]+):[0-9]{1,5}(?=\s|;)", content,
+    )}
+    previous = network_interface_entries(str((baselines.get("network") or {}).get("config_preview") or ""))
+    candidate = {row["name"]: row for row in network_interface_entries(
+        str(units_by_id["network"].get("raw_config_preview") or units_by_id["network"].get("config_preview") or "")
+    )}
+    aliases = (baselines.get("network") or {}).get("physical_interface_aliases", {})
+    for address in addresses:
+        version = ip_address(address).version
+        # A literal static baseline identifies its own source. Legacy dynamic
+        # previews omit observed CIDRs, so ambiguous sources remain protected.
+        static_sources = {row["name"] for row in previous for field in ("ip_cidr", "ipv6_cidr")
+                          if row.get(field) and str(ip_interface(row[field]).ip) == address}
+        for row in previous:
+            if static_sources and row["name"] not in static_sources:
+                continue
+            dynamic = (row.get("ipv4_method") == "dhcp" if version == 4
+                       else row.get("ipv6_enabled") == "true" and not row.get("ipv6_cidr"))
+            current = candidate.get(aliases.get(row["name"], row["name"]), {})
+            candidate_dynamic = (current.get("ipv4_method") == "dhcp" if version == 4
+                                 else current.get("ipv6_enabled") == "true" and not current.get("ipv6_cidr"))
+            if dynamic and current.get("admin_state") == "up" and candidate_dynamic:
+                return True
+    return False
+
+
 def applied_service_listener_bindings(service: str, content: str) -> tuple[list[str], list[str]]:
     """Read public interface and address ownership from an applied service preview.
 
@@ -7758,6 +7796,7 @@ def network_listener_handoff_required(db: Session, units_by_id: dict[str, dict[s
     """
     return bool(
         network_generated_dns_unit(db, units_by_id) is not None
+        or network_applied_dynamic_public_listener_required(db, units_by_id)
         or (units_by_id.get("network", {}).get("changed") and network_dynamic_public_bindings(units_by_id))
         or network_dynamic_service_listener_moves(db, units_by_id)
     )

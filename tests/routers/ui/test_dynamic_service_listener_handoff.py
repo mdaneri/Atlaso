@@ -560,3 +560,123 @@ def test_dynamic_listener_sources_survive_renewal_alias_and_pending_interface(cl
         assert "2001:db8:2::10" in projected["config_preview"]
         assert projected["applied_listener_sources"]["2001:db8::21"] == access.name
         assert projected["applied_listener_sources"]["203.0.113.10"] == secondary.name
+
+
+@pytest.mark.parametrize("desired_change", ["disable_ca", "remove_source_binding"])
+def test_applied_dynamic_public_listener_still_requires_network_review(
+    client, monkeypatch, desired_change,
+):
+    """Protect an applied dynamic Public Services socket after desired removal.
+
+    Args:
+        client: Authenticated application test client.
+        monkeypatch: Replace protected unit rendering and background execution.
+        desired_change: Disable CA or move its binding off the applied interface.
+    """
+    from atlaso.app import ui
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import CaSettings, Job, JobStatus, PhysicalInterface
+    from tests.routers.ui.test_dynamic_public_handoff_admission import (
+        _mark_pending_protected_units,
+        _prepare_dynamic_public_baseline,
+    )
+
+    login(client)
+    with SessionLocal() as db:
+        access = _prepare_dynamic_public_baseline(db, ui, dns_enabled=False, access_dynamic=True)
+        access.mtu = 1400
+        ca = db.scalar(select(CaSettings))
+        if desired_change == "disable_ca":
+            ca.enabled = False
+        else:
+            secondary = PhysicalInterface(
+                name="eth10", mac_address="02:00:00:00:00:20", role="access", mode="access",
+                admin_state="up", oper_state="up", ipv4_method="static", ip_cidr="203.0.113.10/24",
+            )
+            db.add(secondary)
+            db.flush()
+            ca.listen_interface = secondary.name
+            ca.listen_address = "203.0.113.10"
+        db.commit()
+
+        with SessionLocal() as read_db:
+            applied_public = ui.load_appliance_apply_baselines(read_db)["public_services"]["config_preview"]
+            units = {unit["id"]: unit for unit in ui.appliance_apply_units(read_db)}
+            dns_baseline = ui.load_appliance_apply_baselines(read_db)["dnsmasq"]
+            assert dns_baseline["dns_enabled"] is False
+            assert ui.network_generated_dns_unit(read_db, units) is None
+            assert "listen [2001:db8::10]:443" in applied_public
+            assert "listen [2001:db8::10]:443" not in units["public_services"]["raw_config_preview"]
+            assert units["network"]["changed"] is True
+            assert ui.network_dynamic_public_bindings(units) == []
+            assert ui.network_listener_handoff_required(read_db, units) is True
+
+    _mark_pending_protected_units(monkeypatch, ui)
+    review_response = client.get("/appliance-apply/review")
+    assert review_response.status_code == 200, review_response.text
+    review = review_response.json()
+    reviewed = {unit["id"]: unit for unit in review["units"]}
+    assert reviewed["network"]["valid"] is True
+    assert {"ca", "public_services"} <= {
+        unit_id for unit_id, unit in reviewed.items() if unit.get("requires_network_selection")
+    }
+    required = {
+        unit_id for unit_id, unit in reviewed.items() if unit.get("requires_network_selection")
+    }
+
+    page = client.get("/dashboard")
+    csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    monkeypatch.setattr(ui, "run_appliance_apply_job", lambda _job_id: None)
+    rejected = client.post(
+        "/appliance-apply", data={"csrf": csrf, "selected_units": ["network"]},
+        headers={"Accept": "application/json"},
+    )
+    assert rejected.status_code == 422, rejected.text
+    assert "Unchecked changes cannot be applied" in rejected.json()["detail"]
+    with SessionLocal() as db:
+        assert db.scalar(select(Job).where(Job.status == JobStatus.PENDING.value)) is None
+
+    submitted = client.post(
+        "/appliance-apply",
+        data={"csrf": csrf, "selected_units": ["network", *sorted(required)]},
+        headers={"Accept": "application/json"},
+    )
+    assert submitted.status_code == 202, submitted.text
+    with SessionLocal() as db:
+        payload = json.loads(db.get(Job, submitted.json()["job_id"]).result or "{}")
+        assert payload["management_handoff"] is True
+        assert set(ui.MANAGEMENT_HANDOFF_UNIT_IDS) <= set(payload["selected_units"])
+        assert "dnsmasq" not in payload["selected_units"]
+        captured = {unit["unit_id"] for unit in payload["captured_units"]}
+        assert set(ui.MANAGEMENT_HANDOFF_UNIT_IDS) <= captured
+        assert "dnsmasq" not in captured
+
+
+def test_removed_applied_static_public_listener_does_not_force_dynamic_handoff(client):
+    """Do not add the dynamic listener handoff for an applied static socket.
+
+    Args:
+        client: Authenticated application test client.
+    """
+    from atlaso.app import ui
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import CaSettings
+    from tests.routers.ui.test_dynamic_public_handoff_admission import (
+        _prepare_dynamic_public_baseline,
+    )
+
+    login(client)
+    with SessionLocal() as db:
+        _access = _prepare_dynamic_public_baseline(
+            db, ui, dns_enabled=False, access_dynamic=False,
+        )
+        db.scalar(select(CaSettings)).enabled = False
+        _access.mtu = 1400
+        db.flush()
+        units = {unit["id"]: unit for unit in ui.appliance_apply_units(db)}
+
+        assert units["network"]["changed"] is True
+        assert "listen [2001:db8::10]:443" not in units["public_services"]["raw_config_preview"]
+        assert ui.network_dynamic_public_bindings(units) == []
+        assert ui.network_applied_dynamic_public_listener_required(db, units) is False
+        assert ui.network_listener_handoff_required(db, units) is False
