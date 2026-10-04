@@ -176,7 +176,9 @@ bundles Network with Firewall, Certificate Authority, Appliance Settings, and Pu
 stays active while the candidate network, policy routes, firewall, certificate/nginx configuration, Atlaso loopback
 upstream, and host-facing `/openapi.json` complete bounded readiness checks. Only then does Atlaso retire the old path.
 During automatic IPv6 prefix renumbering, native observation retains every preferred dynamic address. Management
-Settings and certificate SANs include both active prefixes until an address becomes deprecated or expires. The
+Settings and certificate SANs include both active prefixes until an address becomes deprecated or expires.
+Applied browser and Web Terminal bindings use the last-applied IPv6 mode; saving a pending disable or static
+address does not replace the automatic addresses still served by the applied listener. The
 automatic set has deterministic numeric address ordering, so kernel enumeration changes do not trigger reissuance.
 The physical-interface API preserves `host_ipv6_cidr` as the first observation and returns the complete set in
 `host_ipv6_cidrs`; disabled or static IPv6 does not retain automatic observations.

@@ -146,6 +146,9 @@ Check the interface and DHCP/IPv6 acquisition, then retry the console correction
 Before acknowledging HTTPS recovery, Atlaso reobserves dynamic addresses on the exact interface and MAC.
 The complete DHCP/SLAAC address set must match the original publication receipt and the served leaf SANs.
 A changed lease, withdrawn prefix, unavailable link, or discovery timeout leaves the CA baseline pending.
+HTTP-only recovery also retains its original dynamic address scope before readiness and reobserves it
+under writer admission before reporting success. A later inventory refresh cannot redefine that captured scope;
+changed DHCP leases or SLAAC prefixes require another recovery attempt. HTTP recovery does not publish CA state.
 The interface must be administratively and operationally up; a retained address on a disconnected link cannot pass.
 Each discovery attempt uses the remaining acquisition timeout, so a stalled command cannot leave the console waiting
 indefinitely. Tentative or duplicate-address-detection-failed addresses cannot pass.

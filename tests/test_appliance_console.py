@@ -3429,7 +3429,7 @@ def test_completed_recovery_publishes_only_management_and_records_exact_baseline
 
 @pytest.mark.parametrize("nginx_result", [0, 2])
 @pytest.mark.parametrize("edit", ["unchanged", "physical", "vlan", "missing_job", "failed_job", "missing_dynamic"])
-def test_completed_http_only_recovery_does_not_require_or_publish_ca(client, monkeypatch, nginx_result, edit):
+def test_completed_http_only_recovery_does_not_require_or_publish_ca(client, monkeypatch, tmp_path, nginx_result, edit):
     """An applied HTTP-only front door remains usable with CA disabled.
 
     Args:
@@ -3448,6 +3448,9 @@ def test_completed_http_only_recovery_does_not_require_or_publish_ca(client, mon
     spec = importlib.util.spec_from_loader(loader.name, loader)
     bootstrap = importlib.util.module_from_spec(spec)
     loader.exec_module(bootstrap)
+    publication = tmp_path / "http-publication"
+    publication.mkdir(mode=0o700)
+    monkeypatch.setattr(bootstrap, "CONSOLE_PUBLICATION_DIRECTORY", publication)
     with SessionLocal() as db:
         db.scalar(select(ApplianceSettings)).management_https_enabled = False
         db.scalar(select(CaSettings)).enabled = False
@@ -3813,8 +3816,8 @@ def test_bound_issuance_refuses_cleared_dynamic_observation(client, monkeypatch,
         assert errors and "dynamic management observation is unavailable" in errors[0]
 
 
-@pytest.mark.parametrize("edit", ["unchanged", "physical", "vlan", "dynamic", "mode", "port"])
-def test_http_final_recheck_refuses_drift_after_bootstrap(client, monkeypatch, edit):
+@pytest.mark.parametrize("edit", ["unchanged", "physical", "vlan", "dynamic", "mode", "port", "native_dhcp", "native_slaac", "refreshed_dhcp", "timeout"])
+def test_http_final_recheck_refuses_drift_after_bootstrap(client, monkeypatch, tmp_path, edit):
     """HTTP readiness cannot certify Network or applied-mode drift after initial bootstrap validation.
 
     Args:
@@ -3831,13 +3834,20 @@ def test_http_final_recheck_refuses_drift_after_bootstrap(client, monkeypatch, e
     spec = importlib.util.spec_from_loader(loader.name, loader)
     bootstrap = importlib.util.module_from_spec(spec)
     loader.exec_module(bootstrap)
+    publication = tmp_path / "http-publication"
+    publication.mkdir(mode=0o700)
+    monkeypatch.setattr(bootstrap, "CONSOLE_PUBLICATION_DIRECTORY", publication)
     applied = {"management_https_enabled": False, "management_public_http_port": 8080}
     with SessionLocal() as db:
         target = appliance_console._management_interface(db)
         target.ipv4_method = "dhcp"
         target.ip_cidr = None
         target.host_ip_cidr = "192.0.2.63/24"
-        target.ipv6_enabled = False
+        target.ipv6_enabled = edit == "native_slaac"
+        target.ipv6_cidr = None
+        target.host_ipv6_cidr = "2001:db8::63/64"
+        target.host_ipv6_cidrs = ["2001:db8::63/64", "2001:db8:1::63/64"] if target.ipv6_enabled else []
+        native_identity = (target.name, target.mac_address)
         db.flush()
         preview = bootstrap.render_network_config(interfaces=list(db.scalars(select(appliance_console.PhysicalInterface))),
                                                  vlans=list(db.scalars(select(appliance_console.VlanInterface))))
@@ -3848,6 +3858,21 @@ def test_http_final_recheck_refuses_drift_after_bootstrap(client, monkeypatch, e
     monkeypatch.setattr(bootstrap.shutil, "which", lambda name: "/usr/bin/" + name)
     monkeypatch.setattr(bootstrap, "run", lambda cmd: subprocess.CompletedProcess(cmd, 0, "", ""))
     assert bootstrap.main("job_http_final") == 0
+    original_receipt = (publication / "job_http_final.publication.json").read_bytes()
+    from atlaso.app.services.networking import HostPhysicalInterface
+
+    def discover(*, timeout, require_success):
+        """Model kernel-only drift during final readiness without changing persisted observations."""
+        assert timeout == 5 and require_success is True
+        if edit == "timeout":
+            raise subprocess.TimeoutExpired("ip", 5)
+        return [HostPhysicalInterface(name=native_identity[0], mac_address=native_identity[1], driver=None,
+                                      speed=None, host_ip_cidr="192.0.2.63/24", host_mtu=1500,
+                                      host_admin_state="up", oper_state="up",
+                                      host_dhcp_ip_cidr="192.0.2.64/24" if edit in {"native_dhcp", "refreshed_dhcp"} else "192.0.2.63/24",
+                                      host_dynamic_ipv6_cidrs=("2001:db8:1::63/64",))]
+
+    monkeypatch.setattr(bootstrap, "discover_host_physical_interfaces", discover)
     with SessionLocal() as db:
         target = appliance_console._management_interface(db)
         if edit == "physical":
@@ -3857,8 +3882,11 @@ def test_http_final_recheck_refuses_drift_after_bootstrap(client, monkeypatch, e
                                                   ip_cidr="198.51.100.1/24", enabled=True, access_management_ui_enabled=True))
         elif edit == "dynamic":
             target.host_ip_cidr = None
+        elif edit == "refreshed_dhcp":
+            target.host_ip_cidr = "192.0.2.64/24"
         elif edit in {"mode", "port"}:
             applied["management_https_enabled" if edit == "mode" else "management_public_http_port"] = True if edit == "mode" else 80
             save_appliance_apply_baselines(db, {"appliance_settings": {"config_preview": json.dumps(applied)}})
         db.commit()
     assert bootstrap.verify_console_http_recovery("job_http_final", 8080) == (0 if edit == "unchanged" else 2)
+    assert (publication / "job_http_final.publication.json").read_bytes() == original_receipt

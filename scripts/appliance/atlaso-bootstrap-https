@@ -873,7 +873,25 @@ def verify_console_http_recovery(network_job_id: str, http_port: int) -> int:
                     or applied.get("management_public_http_port", 80) != http_port
                     or not completed_network_binding_is_current(db, network_job_id)):
                 return 2
-    except (OSError, ValueError, TypeError, SQLAlchemyError):
+            path = console_publication_path(network_job_id)
+            descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+            with os.fdopen(descriptor, "rb") as stream:
+                metadata = os.fstat(stream.fileno())
+                if (not stat.S_ISREG(metadata.st_mode) or metadata.st_nlink != 1 or metadata.st_size > 2097152
+                        or (hasattr(os, "getuid") and (metadata.st_uid != 0 or metadata.st_mode & 0o077))):
+                    return 2
+                receipt = json.loads(stream.read(2097153))
+            job = db.get(Job, network_job_id)
+            units = json.loads(job.result)["captured_units"]
+            preview = next(unit["config_preview"] for unit in units if unit["unit_id"] == "network")
+            if (receipt["network_job_id"] != network_job_id or receipt["http_settings_snapshot"] != applied
+                    or recovery_dynamic_address_binding(db, preview, native=True) != receipt["dynamic_address_binding"]):
+                return 2
+            current = path.lstat()
+            if path.is_symlink() or (current.st_dev, current.st_ino) != (metadata.st_dev, metadata.st_ino):
+                return 2
+    except (OSError, UnicodeError, ValueError, TypeError, KeyError, SQLAlchemyError,
+            RuntimeError, subprocess.TimeoutExpired):
         return 2
     return 0
 
@@ -901,7 +919,21 @@ def refresh_completed_management_certificate(network_job_id: str) -> int:
             if nginx is None:
                 print("nginx is unavailable; completed HTTP management configuration cannot be validated")
                 return 2
-            return run([nginx, "-t"]).returncode
+            result = run([nginx, "-t"]).returncode
+            if result != 0:
+                return result
+            # Retain the original HTTP address scope before outer readiness. A
+            # later inventory refresh must not redefine what this recovery served.
+            try:
+                dynamic_binding = recovery_dynamic_address_binding(db, render_network_config(
+                    interfaces=list(db.scalars(select(PhysicalInterface))), vlans=list(db.scalars(select(VlanInterface))),
+                ))
+                receipt = {"network_job_id": network_job_id, "http_settings_snapshot": applied_settings,
+                           "dynamic_address_binding": dynamic_binding}
+                write_text_atomic(console_publication_path(network_job_id), json.dumps(receipt, sort_keys=True), mode=0o600)
+            except (OSError, ValueError):
+                return 2
+            return 0
         if (
             not isinstance(applied_settings.get("fqdn"), str) or not applied_settings["fqdn"]
             or not isinstance(applied_settings.get("web_terminal_enabled"), bool)

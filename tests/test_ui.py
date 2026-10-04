@@ -20304,3 +20304,42 @@ def test_ca_policy_writers_wait_for_bound_recovery(client, monkeypatch, operatio
             assert db.scalar(select(CaProfile).where(CaProfile.name == "later-policy")).validity_days == 1234
         else:
             assert db.get(CaProfile, profile_id).validity_days == 1234
+
+
+@pytest.mark.parametrize("pending", ["disabled", "static"])
+def test_applied_automatic_ipv6_binding_ignores_pending_family_edits(client, pending):
+    """Keep active prefix-overlap listeners classified until Network Apply changes their mode.
+
+    Args:
+        client: Initialized appliance database and application.
+        pending: Unapplied IPv6 disable or static-address intent.
+    """
+    from sqlalchemy import select
+
+    from atlaso.app import ui
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import PhysicalInterface
+    from atlaso.app.services.management_bindings import applied_management_bindings
+
+    with SessionLocal() as db:
+        interface = db.scalar(select(PhysicalInterface).where(PhysicalInterface.name == "eth0"))
+        interface.role = "management"
+        interface.oper_state = "up"
+        interface.ipv6_enabled = pending != "disabled"
+        interface.ipv6_cidr = "2001:db8:9::7/64" if pending == "static" else None
+        interface.host_ipv6_cidr = "2001:db8::7/64"
+        interface.host_ipv6_cidrs = ["2001:db8::7/64", "2001:db8:1::7/64"]
+        ui.save_appliance_apply_baselines(db, {"network": {"config_preview": """[physical_interfaces]
+interface=eth0
+  role=management
+  mode=access
+  admin_state=up
+  ipv4_method=static
+  ipv6_enabled=true
+"""}})
+        db.commit()
+        assert {row["address"] for row in applied_management_bindings(db)} == {"2001:db8::7", "2001:db8:1::7"}
+        for address in ("2001:db8::7", "2001:db8:1::7"):
+            assert ui.request_host_interface_binding(address, db)["management_ui"] is True
+        pending_binding = ui.request_host_interface_binding("2001:db8:9::7", db)
+        assert pending_binding is None or pending_binding["management_ui"] is False
