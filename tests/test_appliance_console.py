@@ -3242,7 +3242,7 @@ def test_console_recovery_cli_dispatches_completed_task_id(monkeypatch):
 
 @pytest.mark.parametrize("ready", [True, False])
 @pytest.mark.parametrize("artifacts_complete", [True, False])
-@pytest.mark.parametrize("pending", ["service", "certificate", "root", "root_key", "settings", "missing_settings", "missing_paths", "profile_policy", "subject_policy", "legacy_policy", "missing_dynamic_ack", "native_dhcp_ack", "native_slaac_ack", "native_vlan_ack"])
+@pytest.mark.parametrize("pending", ["service", "certificate", "root", "root_key", "settings", "missing_settings", "missing_paths", "profile_policy", "subject_policy", "legacy_policy", "missing_dynamic_ack", "native_dhcp_ack", "native_slaac_ack", "native_static_ack", "native_vlan_ack"])
 @pytest.mark.parametrize("apply_result", [0, 1])
 def test_completed_recovery_publishes_only_management_and_records_exact_baseline(client, monkeypatch, tmp_path, pending, apply_result, artifacts_complete, ready):
     """Keep unrelated intent pending and acknowledge the management leaf only after success.
@@ -3340,6 +3340,9 @@ def test_completed_recovery_publishes_only_management_and_records_exact_baseline
         target.ip_cidr = "192.0.2.74/24"
         if pending in {"missing_dynamic_ack", "native_dhcp_ack"}:
             target.ipv4_method, target.ip_cidr, target.host_ip_cidr = "dhcp", None, "192.0.2.74/24"
+        if pending == "native_static_ack":
+            target.ipv6_enabled = True
+            target.ipv6_cidr = "2001:db8::74/64"
         if pending == "native_slaac_ack":
             target.ipv6_enabled = True
             target.ipv6_cidr = None
@@ -3359,6 +3362,12 @@ def test_completed_recovery_publishes_only_management_and_records_exact_baseline
                                     result=json.dumps({"captured_units": [{"unit_id": "network", "config_preview": preview}]})))
         db.commit()
         expected_leaf = {column.name: getattr(ldap_leaf, column.name) for column in CaCertificate.__table__.columns}
+    from atlaso.app.services.networking import HostPhysicalInterface
+
+    native_host = HostPhysicalInterface(name=native_identity[0], mac_address=native_identity[1], driver=None,
+                                        speed=None, host_ip_cidr="192.0.2.74/24", host_mtu=1500,
+                                        host_admin_state="up", oper_state="up")
+    monkeypatch.setattr(bootstrap, "discover_host_physical_interfaces", lambda **kwargs: [native_host])
     publication_directory = tmp_path / "publication"
     publication_directory.mkdir(mode=0o700)
     synthetic_root_owned_publication(monkeypatch, publication_directory)
@@ -3497,7 +3506,7 @@ def test_completed_recovery_publishes_only_management_and_records_exact_baseline
                             "addr_info": [{"family": "inet", "local": "198.51.100.41", "prefixlen": 24, "scope": "global"}]})
         assert bootstrap.acknowledge_console_publication("job_scoped_ca", digest) == 0
         return
-    if not apply_result and ready and pending in {"native_dhcp_ack", "native_slaac_ack"}:
+    if not apply_result and ready and pending in {"native_dhcp_ack", "native_slaac_ack", "native_static_ack"}:
         from dataclasses import replace
 
         from atlaso.app.services.networking import HostPhysicalInterface
@@ -3508,7 +3517,9 @@ def test_completed_recovery_publishes_only_management_and_records_exact_baseline
         host = HostPhysicalInterface(name=native_identity[0], mac_address=native_identity[1], driver=None,
                                      speed=None, host_ip_cidr="192.0.2.74/24", host_mtu=1500,
                                      host_admin_state="up", oper_state="up", host_dhcp_ip_cidr="192.0.2.74/24",
-                                     host_dynamic_ipv6_cidrs=("2001:db8::74/64", "2001:db8:1::74/64"))
+                                     host_dynamic_ipv6_cidrs=("2001:db8::74/64", "2001:db8:1::74/64"),
+                                     host_ip_cidrs=("192.0.2.73/24", "192.0.2.74/24"),
+                                     host_ipv6_cidrs=("2001:db8::73/64", "2001:db8::74/64"))
         def discover(*, timeout, require_success):
             """Attest the native probe's deadline and strict result requirement.
 
@@ -3527,6 +3538,9 @@ def test_completed_recovery_publishes_only_management_and_records_exact_baseline
                    else replace(host, host_dynamic_ipv6_cidrs=("2001:db8:1::74/64",)))
         unavailable = (replace(good, host_dhcp_ip_cidr=None) if pending == "native_dhcp_ack"
                        else replace(good, host_dynamic_ipv6_cidrs=()))
+        if pending == "native_static_ack":
+            changed = replace(good, host_ipv6_cidrs=("2001:db8::73/64",))
+            unavailable = replace(good, host_ip_cidrs=("192.0.2.73/24",))
         for candidate in (changed, unavailable, replace(good, oper_state="down"),
                           replace(good, mac_address="00:00:00:00:00:99")):
             host = candidate
@@ -4022,7 +4036,7 @@ def test_bound_issuance_refuses_cleared_dynamic_observation(client, monkeypatch,
         assert errors and "dynamic management observation is unavailable" in errors[0]
 
 
-@pytest.mark.parametrize("edit", ["unchanged", "physical", "vlan", "dynamic", "mode", "port", "native_dhcp", "native_slaac", "refreshed_dhcp", "timeout", "native_vlan", "native_vlan_unchanged"])
+@pytest.mark.parametrize("edit", ["unchanged", "physical", "vlan", "dynamic", "mode", "port", "native_dhcp", "native_slaac", "refreshed_dhcp", "timeout", "native_vlan", "native_vlan_unchanged", "static_unchanged", "static_ipv4", "static_ipv6", "static_carrier", "static_mac", "static_timeout"])
 def test_http_final_recheck_refuses_drift_after_bootstrap(client, monkeypatch, tmp_path, edit):
     """HTTP readiness cannot certify Network or applied-mode drift after initial bootstrap validation.
 
@@ -4051,8 +4065,13 @@ def test_http_final_recheck_refuses_drift_after_bootstrap(client, monkeypatch, t
         target.ipv4_method = "dhcp"
         target.ip_cidr = None
         target.host_ip_cidr = "192.0.2.63/24"
-        target.ipv6_enabled = edit == "native_slaac"
+        if edit.startswith("static_"):
+            target.ipv4_method = "static"
+            target.ip_cidr = "192.0.2.63/24"
+        target.ipv6_enabled = edit == "native_slaac" or edit.startswith("static_")
         target.ipv6_cidr = None
+        if edit.startswith("static_"):
+            target.ipv6_cidr = "2001:db8::63/64"
         target.host_ipv6_cidr = "2001:db8::63/64"
         target.host_ipv6_cidrs = ["2001:db8::63/64", "2001:db8:1::63/64"] if target.ipv6_enabled else []
         native_identity = (target.name, target.mac_address)
@@ -4084,11 +4103,13 @@ def test_http_final_recheck_refuses_drift_after_bootstrap(client, monkeypatch, t
             require_success: Require native discovery to succeed before observation publication.
         """
         assert 0 <= timeout <= 5 and require_success is True
-        if edit == "timeout":
+        if edit in {"timeout", "static_timeout"}:
             raise subprocess.TimeoutExpired("ip", 5)
-        return [HostPhysicalInterface(name=native_identity[0], mac_address=native_identity[1], driver=None,
+        return [HostPhysicalInterface(name=native_identity[0], mac_address="00:00:00:00:00:99" if edit == "static_mac" else native_identity[1], driver=None,
                                       speed=None, host_ip_cidr="192.0.2.63/24", host_mtu=1500,
-                                      host_admin_state="up", oper_state="up",
+                                      host_admin_state="up", oper_state="down" if edit == "static_carrier" else "up",
+                                      host_ip_cidrs=("192.0.2.62/24",) if edit == "static_ipv4" else ("192.0.2.62/24", "192.0.2.63/24"),
+                                      host_ipv6_cidrs=("2001:db8::62/64",) if edit == "static_ipv6" else ("2001:db8::62/64", "2001:db8::63/64"),
                                       host_dhcp_ip_cidr="192.0.2.64/24" if edit in {"native_dhcp", "refreshed_dhcp"} else "192.0.2.63/24",
                                       host_dynamic_ipv6_cidrs=("2001:db8:1::63/64",))]
 
@@ -4128,7 +4149,7 @@ def test_http_final_recheck_refuses_drift_after_bootstrap(client, monkeypatch, t
             applied["management_https_enabled" if edit == "mode" else "management_public_http_port"] = True if edit == "mode" else 80
             save_appliance_apply_baselines(db, {"appliance_settings": {"config_preview": json.dumps(applied)}})
         db.commit()
-    assert bootstrap.verify_console_http_recovery("job_http_final", 8080) == (0 if edit in {"unchanged", "native_vlan_unchanged"} else 2)
+    assert bootstrap.verify_console_http_recovery("job_http_final", 8080) == (0 if edit in {"unchanged", "native_vlan_unchanged", "static_unchanged"} else 2)
     assert (publication / "job_http_final.publication.json").read_bytes() == original_receipt
 
 
@@ -4258,7 +4279,9 @@ def test_console_refuses_ineligible_completed_vlan_with_working_physical_listene
         assert db.get(appliance_console.PhysicalInterface, identity).host_ip_cidr == ("192.0.2.63/24" if case == "ready" else "192.0.2.62/24")
         if parent_state == "ready":
             if case == "ready":
-                assert bootstrap.recovery_dynamic_address_binding(db, preview, native=True) == {}
+                monkeypatch.setattr(bootstrap, "discover_host_physical_interfaces", discover)
+                binding = bootstrap.recovery_dynamic_address_binding(db, preview, native=True)
+                assert binding[host.name] == {"mac": host.mac_address.lower(), "addresses": {"4": ["192.0.2.63"]}}
             else:
                 with pytest.raises(ValueError, match="Native management VLAN"):
                     bootstrap.recovery_dynamic_address_binding(db, preview, native=True)
@@ -4375,3 +4398,57 @@ def test_bound_recovery_refuses_revoked_management_leaf_before_issuance(client, 
         assert load_appliance_apply_baselines(db) == prior
         assert db.get(CaCertificate, identity).status == "revoked"
         db.rollback()
+
+
+@pytest.mark.parametrize("invalid", [None, "missing", "prefix", "deprecated", "tentative", "expired"])
+def test_console_static_observation_matches_complete_native_candidates(client, monkeypatch, tmp_path, invalid):
+    """Static corrections select their exact usable CIDRs behind lingering old addresses.
+
+    Args:
+        client: Initialized appliance database.
+        monkeypatch: Replace native observation while preserving the production parser.
+        tmp_path: Private nonexistent sysfs fixture root.
+        invalid: Missing, mismatched or unusable desired static address.
+    """
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.services.networking import parse_linux_ip_interfaces
+
+    with SessionLocal() as db:
+        target = appliance_console._management_interface(db)
+        target.ipv4_method, target.ip_cidr = "static", "192.0.2.63/24"
+        target.ipv6_enabled, target.ipv6_cidr = True, "2001:db8::63/64"
+        target.host_ip_cidr, target.host_ipv6_cidr = "192.0.2.62/24", "2001:db8::62/64"
+        identity, name, mac = target.id, target.name, target.mac_address
+        db.commit()
+    addresses = [
+        {"family": "inet", "local": "192.0.2.62", "prefixlen": 24, "scope": "global"},
+        {"family": "inet6", "local": "2001:db8::62", "prefixlen": 64, "scope": "global", "dynamic": True},
+        {"family": "inet", "local": "192.0.2.63", "prefixlen": 24, "scope": "global"},
+        {"family": "inet6", "local": "2001:db8::63", "prefixlen": 64, "scope": "global"},
+    ]
+    if invalid == "missing":
+        addresses.pop()
+    elif invalid == "prefix":
+        addresses[-1]["prefixlen"] = 128
+    elif invalid in {"deprecated", "tentative"}:
+        addresses[-1][invalid] = True
+    elif invalid == "expired":
+        addresses[-1]["preferred_life_time"] = 0
+    native = parse_linux_ip_interfaces(json.dumps([{
+        "ifname": name, "address": mac, "link_type": "ether", "flags": ["UP"],
+        "operstate": "UP", "addr_info": addresses,
+    }]), sysfs_base=tmp_path / "sysfs")
+    assert native[0].host_ip_cidr == "192.0.2.62/24"
+    assert native[0].host_ipv6_cidr == "2001:db8::62/64"
+    monkeypatch.setattr(appliance_console, "discover_host_physical_interfaces", lambda **kwargs: native)
+    if invalid:
+        with pytest.raises(ConsoleOperationError, match="fresh management address observation"):
+            appliance_console._refresh_management_addresses(identity, timeout=0)
+    else:
+        appliance_console._refresh_management_addresses(identity, timeout=0)
+    with SessionLocal() as db:
+        target = db.get(appliance_console.PhysicalInterface, identity)
+        assert target.host_ip_cidr == ("192.0.2.62/24" if invalid else "192.0.2.63/24")
+        assert target.host_ipv6_cidr == ("2001:db8::62/64" if invalid else "2001:db8::63/64")
+        assert target.ipv4_method == "static" and target.ip_cidr == "192.0.2.63/24"
+        assert target.ipv6_cidr == "2001:db8::63/64"

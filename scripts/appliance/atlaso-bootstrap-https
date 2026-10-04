@@ -49,6 +49,7 @@ from atlaso.app.services.network_objects import acquire_network_objects_write_lo
 from atlaso.app.services.networking import (
     discover_host_physical_interfaces,
     native_automatic_ipv6_cidrs,
+    native_static_ip_cidr,
     physical_ipv6_cidrs,
     render_network_config,
     sync_host_physical_interfaces,
@@ -601,49 +602,56 @@ def recovery_dynamic_addresses_available(db, preview: str) -> bool:
 
 
 def recovery_dynamic_address_binding(db, preview: str, *, native: bool = False) -> dict:
-    """Capture or attest each dynamic listener's addresses under writer admission.
+    """Capture or attest every physical listener under writer admission.
 
     Args:
         db: Admitted publication transaction.
         preview: Completed Network snapshot.
         native: Rediscover bounded native state rather than read issuance observations.
     """
+    # Retain the receipt field/function names; new receipts bind static paths too.
+    # Older incomplete receipts fail comparison rather than acquire new provenance.
     deadline = time.monotonic() + 5
     management_paths = network_management_paths(preview)
     if native and not verify_native_management_vlans(management_paths, timeout=5):
         raise ValueError("Native management VLAN listener is unavailable")
-    paths = [path for path in management_paths if path["kind"] == "physical"
-             and (path.get("ipv4_method") == "dhcp"
-                  or (path.get("ipv6_enabled", "false").lower() == "true" and not path.get("ipv6_cidr")))]
+    paths = [path for path in management_paths if path["kind"] == "physical"]
     remaining = max(0, deadline - time.monotonic()) if any(path["kind"] == "vlan" for path in management_paths) else 5
     hosts = discover_host_physical_interfaces(timeout=remaining, require_success=True) if native and paths else []
     binding = {}
     for path in paths:
         interface = db.scalar(select(PhysicalInterface).where(PhysicalInterface.name == path["name"]))
         if interface is None or not interface.mac_address:
-            raise ValueError("Dynamic listener identity is unavailable")
+            raise ValueError("Physical listener identity is unavailable")
         mac = interface.mac_address.lower()
         host = None
         if native:
             matches = [row for row in hosts if row.name == path["name"] and row.mac_address.lower() == mac]
             if len(matches) != 1 or matches[0].host_admin_state != "up" or matches[0].oper_state != "up":
-                raise ValueError("Native dynamic listener identity is unavailable")
+                raise ValueError("Native physical listener identity is unavailable")
             host = matches[0]
         families = {}
         if path.get("ipv4_method") == "dhcp":
             families[4] = [host.host_dhcp_ip_cidr if host else interface.host_ip_cidr]
-        if path.get("ipv6_enabled", "false").lower() == "true" and not path.get("ipv6_cidr"):
-            families[6] = list(native_automatic_ipv6_cidrs(host) if host else physical_ipv6_cidrs(interface))
+        elif path.get("ip_cidr"):
+            families[4] = [native_static_ip_cidr(host, path["ip_cidr"]) if host else path["ip_cidr"]]
+        if path.get("ipv6_enabled", "false").lower() == "true":
+            if path.get("ipv6_cidr"):
+                families[6] = [native_static_ip_cidr(host, path["ipv6_cidr"]) if host else path["ipv6_cidr"]]
+            else:
+                families[6] = list(native_automatic_ipv6_cidrs(host) if host else physical_ipv6_cidrs(interface))
+        if not families:
+            raise ValueError("Physical listener has no applied address family")
         addresses = {}
         for family, cidrs in families.items():
             if not cidrs:
-                raise ValueError("Native dynamic family is unavailable")
+                raise ValueError("Native management family is unavailable")
             values = set()
             for cidr in cidrs:
                 address = ip_interface(cidr or "")
                 if (address.version != family or address.ip.is_unspecified or address.ip.is_loopback
                         or address.ip.is_link_local or address.ip.is_multicast):
-                    raise ValueError("Native dynamic address is unusable")
+                    raise ValueError("Native management address is unusable")
                 values.add(str(address.ip))
             addresses[str(family)] = sorted(values)
         binding[path["name"]] = {"mac": mac, "addresses": addresses}
@@ -818,17 +826,17 @@ def acknowledge_console_publication(network_job_id: str, receipt_sha256: str) ->
             leaves = json.loads(receipt["public_payload"]).get("certificates", [])
             if len(leaves) != 1 or leaves[0].get("managed_owner") != "appliance:https":
                 raise ValueError("Publication does not identify exactly one management leaf")
-            # Kernel leases can change without any database writer. Attest fresh
-            # state against issuance evidence, never retrofit the captured receipt.
+            # Kernel addresses and carrier can change without a database writer.
+            # Attest every physical listener against the original issuance receipt.
             dynamic = recovery_dynamic_address_binding(db, str(units[0]["config_preview"]), native=True)
             if dynamic != receipt["dynamic_address_binding"]:
-                raise ValueError("Native dynamic addresses changed after publication")
+                raise ValueError("Native physical listener binding changed after publication")
             leaf = x509.load_pem_x509_certificate(leaves[0]["certificate_pem"].encode("ascii"))
             sans = leaf.extensions.get_extension_for_class(x509.SubjectAlternativeName).value
             leaf_addresses = {str(address) for address in sans.get_values_for_type(x509.IPAddress)}
             if any(address not in leaf_addresses for item in dynamic.values()
                    for values in item["addresses"].values() for address in values):
-                raise ValueError("Native dynamic addresses are absent from the captured leaf")
+                raise ValueError("Native physical listener addresses are absent from the captured leaf")
             port = applied_settings.get("management_public_https_port", 443)
             if isinstance(port, bool) or not isinstance(port, int) or not 1 <= port <= 65535:
                 raise ValueError("Applied HTTPS listener port is invalid")

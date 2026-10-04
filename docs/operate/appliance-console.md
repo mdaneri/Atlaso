@@ -266,3 +266,8 @@ a missing requested dynamic family rather than issuing or accepting a leaf witho
 Before Appliance Settings is submitted, the console rechecks the completed Network management paths under the shared
 network-object writer lock held through Settings capture. An address edit made during HTTPS recovery stops submission
 and remains pending; it cannot enter Settings as though Network had already applied it.
+
+Static corrections match the exact applied CIDR against every usable native address, including secondary IPv4
+addresses and static IPv6 behind a lingering SLAAC prefix. Final HTTP and HTTPS acceptance repeats native identity,
+carrier and required-address proof for every physical management listener within the shared five-second budget.
+A withdrawn static address or changed MAC blocks acceptance and preserves the original receipt and CA baseline.

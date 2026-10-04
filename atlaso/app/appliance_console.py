@@ -90,6 +90,7 @@ from atlaso.app.services.network_objects import (  # noqa: E402 - appliance envi
 from atlaso.app.services.networking import (  # noqa: E402 - appliance environment must load before configured imports.
     discover_host_physical_interfaces,
     native_automatic_ipv6_cidrs,
+    native_static_ip_cidr,
     render_network_config,
     verify_native_management_vlans,
 )
@@ -1311,10 +1312,11 @@ def _refresh_management_addresses(
                 observed = matches[0] if len(matches) == 1 else None
                 if observed is None or observed.host_admin_state != "up" or observed.oper_state != "up":
                     break
-                observed_ipv4 = observed.host_dhcp_ip_cidr if applied[0] == "dhcp" else observed.host_ip_cidr
+                observed_ipv4 = observed.host_dhcp_ip_cidr if applied[0] == "dhcp" else (
+                    native_static_ip_cidr(observed, applied[1]) if applied[1] else observed.host_ip_cidr)
                 if identity != interface_id and applied[0] != "dhcp" and not applied[1]:
                     observed_ipv4 = None
-                observed_ipv6 = (observed.host_dynamic_ipv6_cidr if not applied[3] else observed.host_ipv6_cidr) if applied[2] else None
+                observed_ipv6 = (observed.host_dynamic_ipv6_cidr if not applied[3] else native_static_ip_cidr(observed, applied[3])) if applied[2] else None
                 observed_ipv6_cidrs = native_automatic_ipv6_cidrs(observed) if applied[2] and not applied[3] else ()
                 if observed_ipv6_cidrs:
                     observed_ipv6 = observed_ipv6_cidrs[0]

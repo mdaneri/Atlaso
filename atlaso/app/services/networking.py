@@ -59,6 +59,8 @@ class HostPhysicalInterface:
         host_dhcp_ip_cidr: Usable IPv4 address explicitly marked dynamic by native inventory.
         host_dynamic_ipv6_cidr: Usable IPv6 address explicitly marked dynamic by native inventory.
         host_dynamic_ipv6_cidrs: Every preferred automatic IPv6 candidate from native inventory.
+        host_ip_cidrs: Every usable native IPv4 candidate, including secondary addresses.
+        host_ipv6_cidrs: Every usable native IPv6 candidate, including static addresses.
     """
     name: str
     mac_address: str
@@ -72,6 +74,8 @@ class HostPhysicalInterface:
     host_dhcp_ip_cidr: str | None = None
     host_dynamic_ipv6_cidr: str | None = None
     host_dynamic_ipv6_cidrs: tuple[str, ...] = ()
+    host_ip_cidrs: tuple[str, ...] = ()
+    host_ipv6_cidrs: tuple[str, ...] = ()
 
 
 def normalize_interface_mode(mode: str | None) -> str:
@@ -321,6 +325,31 @@ def native_automatic_ipv6_cidrs(host: HostPhysicalInterface) -> tuple[str, ...]:
     return host.host_dynamic_ipv6_cidrs or ((host.host_dynamic_ipv6_cidr,) if host.host_dynamic_ipv6_cidr else ())
 
 
+def native_static_ip_cidr(host: HostPhysicalInterface, desired: str) -> str | None:
+    """Match an applied static CIDR against every usable native candidate.
+
+    Args:
+        host: Native inventory observation with legacy scalar compatibility.
+        desired: Exact applied static address and prefix.
+    """
+    try:
+        expected = ip_interface(desired)
+    except ValueError:
+        return None
+    if (expected.ip.is_unspecified or expected.ip.is_loopback
+            or expected.ip.is_link_local or expected.ip.is_multicast):
+        return None
+    candidates = (host.host_ip_cidrs or (host.host_ip_cidr,)) if expected.version == 4 else (
+        host.host_ipv6_cidrs or (host.host_ipv6_cidr,))
+    for cidr in candidates:
+        try:
+            if ip_interface(cidr or "") == expected:
+                return str(expected)
+        except ValueError:
+            continue
+    return None
+
+
 def physical_ipv6_cidrs(interface: PhysicalInterface) -> tuple[str, ...]:
     """Project enabled static intent or every observed automatic IPv6 address.
 
@@ -375,6 +404,8 @@ def parse_linux_ip_interfaces(payload: str, *, sysfs_base: Path = Path("/sys/cla
                 host_ipv6_cidr=_host_ip_cidr(row, "inet6"),
                 host_dynamic_ipv6_cidr=_host_ip_cidr(row, "inet6", dynamic_only=True),
                 host_dynamic_ipv6_cidrs=_host_ip_cidrs(row, "inet6", dynamic_only=True),
+                host_ip_cidrs=_host_ip_cidrs(row, "inet"),
+                host_ipv6_cidrs=_host_ip_cidrs(row, "inet6"),
                 host_mtu=int(row["mtu"]) if row.get("mtu") is not None else None,
                 host_admin_state="up" if "UP" in flags else "down",
                 oper_state=str(row.get("operstate") or "unknown").lower(),
