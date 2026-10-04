@@ -502,6 +502,8 @@ The mode keeps management IPv6 disabled and runs only the IPv4 static-to-DHCP ha
 It records the live server lease immediately before DHCP activation and requires the installed helper's independent
 current client-lease proof, exact native interface/address identity, source routing rules, successful global Apply,
 and ordinary baseline restoration. It does not claim SLAAC, lease-expiry, overlap, negative-DAD, or reboot acceptance.
+Retained management listeners still require certificate IP SAN coverage. The helper feeds the public certificate
+to OpenSSL's default stdin; Photon OpenSSL treats an explicit `-in -` as a literal filename.
 
 This opt-in mode uses the `fixture-stable-observation-v1` contract. Other VMware VMs may run on the host;
 no exclusive-host reservation or complete Windows process census is required. The provider inventory must contain
