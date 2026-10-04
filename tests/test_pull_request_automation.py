@@ -64,7 +64,7 @@ def test_python_ci_installs_pinned_markdown_dependencies_before_pytest() -> None
 
     assert "          node-version: '22'" in python_job
     assert "          cache: npm" in python_job
-    assert "    timeout-minutes: 45" in python_job
+    assert "    timeout-minutes: 90" in python_job
     assert setup_node < npm_install < pytest
 
 
