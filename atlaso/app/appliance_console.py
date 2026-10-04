@@ -1144,6 +1144,8 @@ def _submit_console_apply(required_ids: set[str], *, network_job_id: str | None 
                 completed is None or completed.status != JobStatus.SUCCEEDED.value
                 or len(submitted) != 1 or len(current) != 1
                 or not network_management_paths(str(submitted[0].get("config_preview") or ""))
+                or any(path.get("management_eligible") != "true" for path in
+                       network_management_paths(str(submitted[0].get("config_preview") or "")))
                 or network_management_paths(str(submitted[0].get("config_preview") or ""))
                 != network_management_paths(str(current[0].get("config_preview") or ""))
             ):
@@ -1274,6 +1276,10 @@ def _refresh_management_addresses(
             if job is None or job.status != JobStatus.SUCCEEDED.value or len(matches) != 1:
                 raise ConsoleOperationError("The completed task's management Network snapshot is unavailable.")
             expected_paths = network_management_paths(str(units[0].get("config_preview") or ""))
+            if not expected_paths or any(path.get("management_eligible") != "true" for path in expected_paths):
+                raise ConsoleOperationError(
+                    "An applied management path is ineligible. Certificate recovery and Appliance Settings were not started."
+                )
             row = matches[0]
             expected = (
                 row.get("ipv4_method", "static"), row.get("ip_cidr") or None,

@@ -3890,3 +3890,65 @@ def test_http_final_recheck_refuses_drift_after_bootstrap(client, monkeypatch, t
         db.commit()
     assert bootstrap.verify_console_http_recovery("job_http_final", 8080) == (0 if edit == "unchanged" else 2)
     assert (publication / "job_http_final.publication.json").read_bytes() == original_receipt
+
+
+@pytest.mark.parametrize("parent_state", ["ready", "down", "access", "missing"])
+def test_console_refuses_ineligible_completed_vlan_with_working_physical_listener(client, monkeypatch, parent_state):
+    """A working dedicated listener cannot mask an ineligible completed management VLAN.
+
+    Args:
+        client: Initialized appliance database.
+        monkeypatch: Supply only the proven dedicated native observation.
+        parent_state: Eligible trunk or unavailable administrative/mode/identity state.
+    """
+    from sqlalchemy import select
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.services.networking import HostPhysicalInterface
+
+    loader = importlib.machinery.SourceFileLoader("atlaso_vlan_eligibility", "scripts/appliance/atlaso-bootstrap-https")
+    spec = importlib.util.spec_from_loader(loader.name, loader)
+    bootstrap = importlib.util.module_from_spec(spec)
+    loader.exec_module(bootstrap)
+    with SessionLocal() as db:
+        target = appliance_console._management_interface(db)
+        target.ipv4_method = "static"
+        target.ip_cidr = "192.0.2.63/24"
+        target.ipv6_enabled = False
+        target.host_ip_cidr = "192.0.2.62/24"
+        identity = target.id
+        host = HostPhysicalInterface(name=target.name, mac_address=target.mac_address, driver=None, speed=None,
+                                     host_ip_cidr=target.ip_cidr, host_mtu=1500, host_admin_state="up", oper_state="up")
+        if parent_state != "missing":
+            db.add(appliance_console.PhysicalInterface(name="pr899-trunk", mac_address="00:15:5d:aa:bb:32",
+                                                      role="access", mode="access" if parent_state == "access" else "trunk",
+                                                      admin_state="down" if parent_state == "down" else "up", oper_state="up"))
+        db.add(appliance_console.VlanInterface(name="pr899-trunk.532", parent_interface="pr899-trunk", vlan_id=532,
+                                              role="access", ip_cidr="198.51.100.32/24", enabled=True,
+                                              access_management_ui_enabled=True))
+        db.flush()
+        preview = appliance_console.render_network_config(interfaces=list(db.scalars(select(appliance_console.PhysicalInterface))),
+                                                          vlans=list(db.scalars(select(appliance_console.VlanInterface))))
+        db.add(appliance_console.Job(id="job_vlan_eligibility", type="appliance-apply", status="succeeded",
+                                    created_by="console:root", result=json.dumps({"captured_units": [{"unit_id": "network", "config_preview": preview}]})))
+        db.commit()
+    calls = []
+    def discover(**kwargs):
+        """Record whether an ineligible snapshot reaches native observation."""
+        calls.append(kwargs)
+        return [host]
+
+    monkeypatch.setattr(appliance_console, "discover_host_physical_interfaces", discover)
+    if parent_state == "ready":
+        appliance_console._refresh_management_addresses(identity, network_job_id="job_vlan_eligibility", timeout=0)
+        assert len(calls) == 1
+    else:
+        with pytest.raises(ConsoleOperationError, match="path is ineligible"):
+            appliance_console._refresh_management_addresses(identity, network_job_id="job_vlan_eligibility", timeout=0)
+        assert calls == []
+        with pytest.raises(ConsoleOperationError, match="Appliance Settings were not submitted"):
+            appliance_console._submit_console_apply({"appliance_settings"}, network_job_id="job_vlan_eligibility")
+    with SessionLocal() as db:
+        assert bootstrap.completed_network_binding_is_current(db, "job_vlan_eligibility") is (parent_state == "ready")
+        assert bootstrap.recovery_dynamic_addresses_available(db, preview) is (parent_state == "ready")
+        assert db.get(appliance_console.PhysicalInterface, identity).host_ip_cidr == ("192.0.2.63/24" if parent_state == "ready" else "192.0.2.62/24")

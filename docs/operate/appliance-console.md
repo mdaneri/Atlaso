@@ -150,6 +150,8 @@ HTTP-only recovery also retains its original dynamic address scope before readin
 under writer admission before reporting success. A later inventory refresh cannot redefine that captured scope;
 changed DHCP leases or SLAAC prefixes require another recovery attempt. HTTP recovery does not publish CA state.
 The interface must be administratively and operationally up; a retained address on a disconnected link cannot pass.
+Every enabled management path in the completed snapshot must be eligible. A management VLAN with a missing,
+down, or non-trunk parent stops recovery and Settings capture even when another physical listener works.
 Each discovery attempt uses the remaining acquisition timeout, so a stalled command cannot leave the console waiting
 indefinitely. Tentative or duplicate-address-detection-failed addresses cannot pass.
 If newer address edits are pending, Atlaso records the applied observation but stops dependent recovery and Settings;

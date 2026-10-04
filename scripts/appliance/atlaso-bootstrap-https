@@ -575,6 +575,8 @@ def recovery_dynamic_addresses_available(db, preview: str) -> bool:
         preview: Completed Network snapshot defining all management listeners.
     """
     for path in network_management_paths(preview):
+        if path.get("management_eligible") != "true":
+            return False
         if path["kind"] != "physical":
             continue
         interface = db.scalar(select(PhysicalInterface).where(PhysicalInterface.name == path["name"]))
