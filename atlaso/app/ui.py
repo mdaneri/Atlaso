@@ -3665,16 +3665,18 @@ def recover_interrupted_vcf_helper_jobs(db: Session) -> int:
     return len(jobs)
 
 
-def vcf_registry_ca_bundle_context(db: Session) -> dict[str, object]:
+def vcf_registry_ca_bundle_context(db: Session, *, reconcile: bool = True) -> dict[str, object]:
     """Return vcf registry ca bundle context.
 
     Args:
         db: Active database session.
+        reconcile: Whether ordinary service rendering may reconcile CA desired state.
     """
-    ca_settings = get_ca_settings_row(db)
+    ca_settings = get_ca_settings_row(db) if reconcile else db.scalar(select(CaSettings))
     uploaded_bundle = uploaded_vcf_registry_ca_bundle(db)
-    if ca_settings.enabled:
-        ensure_ca_state(db)
+    if ca_settings is not None and ca_settings.enabled:
+        if reconcile:
+            ensure_ca_state(db)
         path = f"{ca_settings.storage_path.rstrip('/')}/ca-bundle.pem"
         return {
             "source": "local-ca",
@@ -3705,7 +3707,7 @@ def vcf_private_registry_context(db: Session, *, reconcile: bool = True) -> dict
         db.refresh(settings)
     bundles = db.execute(select(VcfRegistryBundle).order_by(VcfRegistryBundle.name)).scalars().all()
     available_interfaces = service_bind_options(db)
-    ca_bundle_context = vcf_registry_ca_bundle_context(db)
+    ca_bundle_context = vcf_registry_ca_bundle_context(db, reconcile=reconcile)
     if reconcile:
         settings.ca_bundle_path = str(ca_bundle_context["path"])
     validation_errors, validation_warnings = validate_vcf_registry_state(

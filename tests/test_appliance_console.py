@@ -27,6 +27,56 @@ from atlaso.app.appliance_console import (
 HELPER_PATH = Path(__file__).resolve().parents[1] / "scripts" / "appliance" / "atlaso-helper"
 
 
+@pytest.mark.parametrize("scope", ["registry", "all_units"])
+def test_readonly_registry_capture_preserves_pending_ca_and_writer(client, monkeypatch, scope):
+    """Capture cannot issue a staged management leaf or release the original writer.
+
+    Args:
+        client: Initialized appliance database.
+        monkeypatch: Replace commit with a fail-closed capture assertion.
+        scope: Registry context alone or the complete console Apply-unit projection.
+    """
+    from sqlalchemy import select
+
+    from atlaso.app import ui
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import ApplianceSettings, CaCertificate, CaSettings
+    from atlaso.app.services.network_objects import acquire_network_objects_write_lock
+
+    with SessionLocal() as db:
+        interface = appliance_console._management_interface(db)
+        interface.ipv4_method, interface.ip_cidr = "static", "192.0.2.70/24"
+        appliance = db.scalar(select(ApplianceSettings))
+        appliance.management_https_enabled, appliance.fqdn = True, "capture.example.test"
+        db.scalar(select(CaSettings)).enabled = True
+        db.commit()
+        assert ui.ensure_ca_state(db) == []
+        leaf = db.scalar(select(CaCertificate).where(CaCertificate.managed_owner == "appliance:https"))
+        assert leaf is not None and leaf.status == "issued"
+        original = (leaf.serial_number, leaf.fingerprint, leaf.ip_addresses)
+        acquire_network_objects_write_lock(db)
+        transaction = db.get_transaction()
+        interface.ip_cidr = "192.0.2.71/24"
+        db.flush()
+
+        def refuse_commit():
+            """Keep the staged correction under its original capture transaction."""
+            pytest.fail("Read-only Apply capture committed CA reconciliation")
+
+        monkeypatch.setattr(db, "commit", refuse_commit)
+        if scope == "registry":
+            ui.vcf_private_registry_context(db, reconcile=False)
+        else:
+            ui.appliance_apply_units(db, reconcile=False)
+        assert db.get_transaction() is transaction
+        assert (leaf.serial_number, leaf.fingerprint, leaf.ip_addresses) == original
+        db.rollback()
+    with SessionLocal() as db:
+        assert appliance_console._management_interface(db).ip_cidr == "192.0.2.70/24"
+        leaf = db.scalar(select(CaCertificate).where(CaCertificate.managed_owner == "appliance:https"))
+        assert (leaf.serial_number, leaf.fingerprint, leaf.ip_addresses) == original
+
+
 def synthetic_root_owned_publication(monkeypatch, directory):
     """Model root ownership only inside a synthetic private receipt filesystem.
 
