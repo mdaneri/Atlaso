@@ -188,12 +188,15 @@ def write_evidence(path: Path, value: dict[str, Any]) -> None:
         os.fsync(stream.fileno())
 
 
-def scenario_failure_result(failure: Exception, digest: str) -> tuple[dict[str, Any], int]:
+def scenario_failure_result(
+    failure: Exception, digest: str, *, same_address_only: bool = False,
+) -> tuple[dict[str, Any], int]:
     """Keep the private fixture when Apply or restoration lacks safe completion.
 
     Args:
         failure: Classified scenario prerequisite or restoration failure.
         digest: Proven topology digest for the result receipt.
+        same_address_only: Focused failures always retain the enrolled fixture.
     """
     from scripts.interop.routing_overlap_scenario import (
         ApplyOutcomeUnknown,
@@ -202,7 +205,7 @@ def scenario_failure_result(failure: Exception, digest: str) -> tuple[dict[str, 
 
     unknown = isinstance(failure, ApplyOutcomeUnknown)
     restoration_incomplete = isinstance(failure, RestorationIncomplete)
-    preserve = unknown or restoration_incomplete
+    preserve = same_address_only or unknown or restoration_incomplete
     return ({"schema": 1, "phase": "scenario", "ok": False,
              "apply_outcome_unknown": unknown, "restoration_incomplete": restoration_incomplete,
              "preserve_fixture": preserve, "error": str(failure), "topology_sha256": digest},
@@ -350,7 +353,9 @@ def run_admitted_phase(args: argparse.Namespace, descriptor: dict[str, Any], hos
                             topology=fixture.topology, server_action=lambda action: fixture.action("client-a", action),
                             username=args.admin_user, password=secrets["password"], **options)
                     except OverlapPrerequisiteError as failure:
-                        result, exit_code = scenario_failure_result(failure, fixture.digest)
+                        result, exit_code = scenario_failure_result(
+                            failure, fixture.digest, same_address_only=args.same_address_only,
+                        )
                         write_evidence(args.output, result)
                         return exit_code
             finally:

@@ -2878,11 +2878,13 @@ try {
     $planWriter.Write([Text.UTF8Encoding]::new($false).GetBytes($planJson)); $planWriter.Flush($true)
 } finally { $planWriter.Dispose() }
 
+# Focused root identity belongs to VMware guest operations; its SSH observer
+# authenticates the administrator and uses private su without enabling root SSH.
 $firstBootOvfEnvironment = New-AtlasoWorkstationOvfEnvironment `
     -Fqdn (New-AtlasoWorkstationFqdn -Name $applianceName) `
     -AdminPassword $adminPasswordSecure `
     -RootPassword $rootPasswordSecure `
-    -RootSshEnabled:($ApplianceSshUser -eq 'root') `
+    -RootSshEnabled:($ApplianceSshUser -eq 'root' -and -not $SameAddressHandoffOnly) `
     -NormalTestVm:$TimeSourceOnly
 
 New-Item -ItemType Directory -Path $vmRoot -ErrorAction Stop | Out-Null

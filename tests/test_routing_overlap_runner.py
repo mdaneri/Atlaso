@@ -92,8 +92,9 @@ def test_session_admission_is_side_effect_free(descriptor):
     (ApplyOutcomeUnknown("accepted task unresolved"), 3, True, False),
     (RestorationIncomplete("baseline Apply failed"), 3, False, True),
 ])
+@pytest.mark.parametrize("focused", [False, True])
 def test_scenario_exit_preserves_fixture_until_restoration_is_proven(
-    failure, exit_code, unknown, incomplete,
+    failure, exit_code, unknown, incomplete, focused,
 ):
     """A definite restoration failure must bypass client stop and VM cleanup.
 
@@ -102,12 +103,13 @@ def test_scenario_exit_preserves_fixture_until_restoration_is_proven(
         exit_code: Expected fixture-preservation exit status.
         unknown: Whether completion of the mutation is uncertain.
         incomplete: Whether restoration remains incomplete.
+        focused: Whether every nonretryable scenario failure requires preservation.
     """
-    result, actual_exit = scenario_failure_result(failure, "a" * 64)
-    assert actual_exit == exit_code
+    result, actual_exit = scenario_failure_result(failure, "a" * 64, same_address_only=focused)
+    assert actual_exit == (3 if focused else exit_code)
     assert result["apply_outcome_unknown"] is unknown
     assert result["restoration_incomplete"] is incomplete
-    assert result["preserve_fixture"] is (exit_code == 3)
+    assert result["preserve_fixture"] is (focused or exit_code == 3)
 
 
 def test_bootstrap_rolls_back_only_client_with_validated_start_receipt():

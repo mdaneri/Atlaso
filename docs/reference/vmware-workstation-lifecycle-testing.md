@@ -492,7 +492,8 @@ identities, `-SkipClientPrepare`, and `-ApplianceSshUser root` required by the p
 The root identity is used for VMware guest operations. Native appliance observations authenticate the configured
 administrator over the separately pinned SSH connection, then use a bounded private `su` exchange with the distinct
 root credential. The exchange checks terminal echo before sending that credential over encrypted stdin and requires
-effective root identity before executing the read-only observation. Root SSH remains disabled; the fixture does not
+effective root identity before executing the read-only observation. Focused first boot keeps root SSH disabled even
+when the VMware guest-operations identity is root; the fixture does not
 change SSH policy or install a passwordless-sudo rule.
 Before initial baseline Apply, the isolated fresh clone selects the positively available VMware Tools clock source
 through the supported NTP form, preserving other NTP settings and keeping server mode disabled. Global Apply must
@@ -514,7 +515,8 @@ current carrier. Pinned SSH reads independently inspect every non-loopback guest
 their IPv4/IPv6 addresses, and bridge membership. Active management/client links must have native carrier; additional
 network namespaces or competing candidate-address claims refuse. Client controllers recheck their original forwarding
 guard and DHCP-server state. Fresh fixture and guest checks precede static and DHCP Apply and baseline restoration.
-A nonretryable focused phase failure retains the fixture before seed or VM cleanup; ownership loss also blocks
+A nonretryable focused phase failure retains the fixture before seed or VM cleanup. Focused scenario failure receipts
+record `preserve_fixture: true` and return preservation exit status 3; ownership loss also blocks
 a competing restoration Apply.
 Transient HTTPS readiness failures may retry only after a fresh fixture check succeeds; ownership or trust refusals
 remain failures. Noncandidate peer server addresses may intentionally overlap on the admitted isolated segments.

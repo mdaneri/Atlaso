@@ -159,6 +159,32 @@ def test_distinct_root_credential_reaches_only_appliance_stdin():
     assert "'root', '-gp', $ApplianceGuestPassword" not in content
 
 
+@pytest.mark.parametrize('focused', [False, True])
+@pytest.mark.parametrize('ssh_user', ['root', 'admin'])
+def test_focused_first_boot_keeps_root_ssh_disabled(focused, ssh_user):
+    """Execute the actual first-boot call and separate guest operations from SSH.
+
+    Args:
+        focused: Whether same-address acceptance is selected.
+        ssh_user: Guest-operations identity supplied to the lifecycle runner.
+    """
+    runner = ROOT / 'scripts/windows/vmware/run-lifecycle-test.ps1'
+    command = ("$ErrorActionPreference='Stop'; $tokens=$null; $errors=$null; "
+        f"$ast=[Management.Automation.Language.Parser]::ParseFile({ps_literal(runner)},[ref]$tokens,[ref]$errors); "
+        "$call=$ast.Find({param($node) $node -is [Management.Automation.Language.AssignmentStatementAst] "
+        "-and $node.Left.Extent.Text -eq '$firstBootOvfEnvironment'},$true); "
+        "if ($null -eq $call) { throw 'First-boot call missing' }; "
+        "function New-AtlasoWorkstationFqdn { param($Name); 'fixture.invalid' }; "
+        "function New-AtlasoWorkstationOvfEnvironment { param($Fqdn,$AdminPassword,$RootPassword,"
+        "[switch]$RootSshEnabled,[switch]$NormalTestVm); $RootSshEnabled.IsPresent }; "
+        f"$SameAddressHandoffOnly=${str(focused).lower()}; $ApplianceSshUser='{ssh_user}'; "
+        "$applianceName='fixture'; $adminPasswordSecure=$null; $rootPasswordSecure=$null; $TimeSourceOnly=$false; "
+        ". ([scriptblock]::Create($call.Extent.Text)); $firstBootOvfEnvironment | ConvertTo-Json -Compress")
+    result = subprocess.run(['pwsh', '-NoProfile', '-Command', command], capture_output=True,
+                            text=True, timeout=60, check=True)
+    assert json.loads(result.stdout) is (ssh_user == 'root' and not focused)
+
+
 def test_legacy_bundle_without_root_field_remains_valid_under_strict_mode():
     """Preserve optional legacy input while private mode refuses missing root."""
     runner = ROOT / 'scripts/windows/vmware/run-lifecycle-test.ps1'
