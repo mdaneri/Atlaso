@@ -133,6 +133,7 @@ def build_router(dependencies: ApplianceApplyUiDependencies) -> ApplianceApplyUi
                 "has_baseline": unit["has_baseline"],
                 "selected": unit["valid"],
                 "requires_dns_selection": unit.get("requires_dns_selection", False),
+                "requires_network_selection": bool(unit.get("requires_network_selection", False)),
                 "format_volumes": [
                     {
                         "id": volume["id"],

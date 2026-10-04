@@ -3790,6 +3790,13 @@ def _handle_dnsmasq(action: str, args: list[str]) -> int:
                     print(daemon_reload.stderr, end="", file=sys.stderr)
                     if daemon_reload.returncode != 0:
                         return daemon_reload.returncode
+                # Application-side effective-address refresh may publish DNS
+                # after the protected helper has observed a DHCP/SLAAC lease.
+                # Make that publication durable before its DB baseline commit.
+                for path in (DNSMASQ_CONFIG_PATH, DNSMASQ_AUTHORITATIVE_CONFIG_PATH):
+                    if path.is_file():
+                        _fsync_file(path)
+                _fsync_directory(DNSMASQ_CONFIG_DIR)
                 commit_mirrors()
                 commit_runtime()
             return 0
@@ -28593,6 +28600,17 @@ def _load_management_handoff_manifest(path: Path) -> dict:
         payload["dnsmasq_config_path"] = str(
             _validate_dnsmasq_config_path(dnsmasq_value)
         )
+    service_dns_value = str(payload.get("service_dns_config_path") or "")
+    if service_dns_value:
+        if not dnsmasq_value:
+            raise ValueError("deferred service DNS requires the DNS/DHCP rollback snapshot")
+        payload["service_dns_config_path"] = str(_validate_dnsmasq_config_path(service_dns_value))
+    payload["listener_address_moves"] = _validate_management_handoff_listener_moves(
+        payload.get("listener_address_moves", []), Path(str(payload["network_config_path"])),
+    )
+    payload["public_dynamic_bindings"] = _validate_management_handoff_public_bindings(
+        payload.get("public_dynamic_bindings", []), Path(str(payload["network_config_path"])),
+    )
     wan_value = str(payload.get("wan_config_path") or "")
     nat_value = str(payload.get("nat_config_path") or "")
     if nat_value:
@@ -28766,8 +28784,9 @@ def _management_handoff_validation_errors(payload: dict) -> list[str]:
     )
     if staged_ca_path is not None:
         errors.extend(f"certificate: {error}" for error in _ca_payload_errors(staged_ca_path))
-    dnsmasq_path = str(payload.get("dnsmasq_config_path") or "")
-    if dnsmasq_path:
+    for dnsmasq_path in (str(payload.get("dnsmasq_config_path") or ""), str(payload.get("service_dns_config_path") or "")):
+        if not dnsmasq_path:
+            continue
         dnssec_ready, dnssec_error = _prepare_dnsmasq_dnssec(Path(dnsmasq_path))
         if not dnssec_ready:
             errors.append(f"DNS/DHCP: {dnssec_error}")
@@ -28879,6 +28898,772 @@ def _authoritative_lease_mirror_paths() -> list[Path]:
     return paths
 
 
+_HANDOFF_LISTENER_SERVICES = {
+    "ntpd": ("ntpd.service",),
+    "ldap": ("slapd.service",),
+    "kms": ("atlaso-kmip.service",),
+    "vcf_offline_depot": ("nginx.service",),
+}
+
+
+def _validate_management_handoff_listener_moves(moves: object, network_path: Path) -> list[dict[str, str]]:
+    """Validate bounded address-only listener moves against candidate Network intent.
+
+    Args:
+        moves: Validated listener address moves to apply.
+        network_path: Path to the candidate Network configuration.
+    """
+    if not isinstance(moves, list) or len(moves) > 32:
+        raise ValueError("management handoff listener_address_moves must be a bounded list")
+    physical, vlans, _removed = _parse_network_config(network_path)
+    interfaces = {row.get("name", ""): row for row in [*physical, *vlans]}
+    normalized: list[dict[str, str]] = []
+    old_keys: set[tuple[str, str]] = set()
+    new_keys: set[tuple[str, str]] = set()
+    for item in moves:
+        if not isinstance(item, dict) or set(item) - {"service", "old_address", "new_address", "interface"}:
+            raise ValueError("management handoff listener move has unsupported fields")
+        service = item.get("service")
+        if not isinstance(service, str) or service not in _HANDOFF_LISTENER_SERVICES:
+            raise ValueError("management handoff listener service is unsupported")
+        try:
+            old_address = str(ip_address(str(item.get("old_address") or "")))
+            new_address = str(ip_address(str(item.get("new_address") or "")))
+        except ValueError as exc:
+            raise ValueError("management handoff listener addresses must be valid IP addresses") from exc
+        if ip_address(old_address).version != ip_address(new_address).version:
+            raise ValueError("management handoff listener address families must match")
+        for address in (ip_address(old_address), ip_address(new_address)):
+            if address.is_loopback or address.is_link_local or address.is_multicast or address.is_unspecified:
+                raise ValueError("management handoff listener addresses must be usable interface addresses")
+        interface_value = item.get("interface", "")
+        if not isinstance(interface_value, str):
+            raise ValueError("management handoff listener interface is invalid")
+        interface = interface_value
+        if "interface" in item:
+            if not _valid_network_interface_name(interface) or interface not in interfaces:
+                raise ValueError("management handoff listener interface is not in candidate Network")
+            row = interfaces[interface]
+            dynamic = (
+                row.get("ipv4_method") == "dhcp"
+                if ip_address(old_address).version == 4
+                else row.get("ipv6_enabled", "").lower() == "true" and not row.get("ipv6_cidr")
+            )
+            if not dynamic:
+                raise ValueError("management handoff listener interface must use a dynamic address family")
+        elif old_address == new_address:
+            raise ValueError("unchanged listener address requires a dynamic candidate interface")
+        else:
+            static_matches = []
+            for name, row in interfaces.items():
+                candidate = row.get("ip_cidr", "") if ip_address(new_address).version == 4 else row.get("ipv6_cidr", "")
+                if not candidate:
+                    continue
+                try:
+                    if str(ip_interface(candidate).ip) == new_address:
+                        static_matches.append(name)
+                except ValueError:
+                    continue
+            if len(static_matches) != 1:
+                raise ValueError("management handoff static listener address must identify one candidate Network interface")
+        old_key, new_key = (service, old_address), (service, new_address)
+        if old_key in old_keys or new_key in new_keys:
+            raise ValueError("management handoff listener address mapping must be unique")
+        old_keys.add(old_key)
+        new_keys.add(new_key)
+        normalized.append({
+            "service": service, "old_address": old_address, "new_address": new_address,
+            **({"interface": interface} if interface else {}),
+        })
+    return normalized
+
+
+def _validate_management_handoff_public_bindings(value: object, network_path: Path) -> list[dict[str, str]]:
+    """Validate public listener bindings against candidate Network intent.
+
+    Args:
+        value: Public listener bindings to validate against candidate Network intent.
+        network_path: Path to the candidate Network configuration.
+    """
+    if not isinstance(value, list) or len(value) > 256:
+        raise ValueError("Public Services dynamic bindings must be a bounded list")
+    physical, _vlans, _removed = _parse_network_config(network_path)
+    interfaces = {row["name"]: row for row in physical}
+    result = []
+    seen = set()
+    for binding in value:
+        if not isinstance(binding, dict):
+            raise ValueError("Public Services dynamic binding is invalid")
+        name = str(binding.get("interface") or "")
+        row = interfaces.get(name, {})
+        address = ip_address(str(binding.get("old_address") or ""))
+        dynamic = (row.get("ipv4_method") == "dhcp" if address.version == 4
+                   else row.get("ipv6_enabled") == "true" and not row.get("ipv6_cidr"))
+        if (row.get("admin_state") != "up" or not dynamic or address.is_loopback
+                or address.is_link_local or address.is_unspecified or address.is_multicast):
+            raise ValueError("Public Services binding requires an enabled dynamic Network family")
+        key = str(address)
+        if key in seen:
+            raise ValueError("Public Services dynamic address ownership is ambiguous")
+        seen.add(key)
+        result.append({"interface": name, "old_address": key})
+    return result
+
+
+def _management_handoff_dynamic_listener_address(link: dict, family: int) -> str:
+    """Select a proven effective address in native host-discovery order.
+
+    SLAAC may assign several globals; Atlaso's host inventory selects the first
+    global address of a family. Preserve that ordering rather than requiring a
+    singleton IPv6 inventory. DHCPv4 still requires unambiguous address evidence.
+
+    Args:
+        link: Observed interface link data used to select its dynamic address.
+        family: IP address version to select: 4 for IPv4 or 6 for IPv6.
+    """
+    assigned = []
+    for record in link.get("addresses", []):
+        try:
+            address = ip_address(record.get("address", ""))
+        except ValueError:
+            continue
+        if (address.version == family and record.get("state") == "assigned"
+                and record.get("scope") == "global" and not address.is_loopback
+                and not address.is_link_local and not address.is_unspecified and not address.is_multicast):
+            value = str(address)
+            if value not in assigned:
+                assigned.append(value)
+    if not assigned or family == 4 and len(assigned) != 1:
+        raise ValueError("candidate dynamic listener address is missing or ambiguous")
+    return assigned[0]
+
+
+def _project_management_handoff_public_bindings(content: str, bindings: list[dict[str, str]], observation: dict) -> tuple[str, list[dict[str, str]]]:
+    """Project proven dynamic addresses into public listener configuration.
+
+    Args:
+        content: Candidate configuration text to inspect or rewrite.
+        bindings: Public listener bindings to project into configuration text.
+        observation: Observed network or service state used to prove address ownership.
+    """
+    if not bindings:
+        return content, []
+    if observation.get("complete") is not True:
+        raise ValueError("Public Services address observation is incomplete")
+    links = {row.get("name"): row for row in observation.get("links", [])}
+    moves = []
+    replacements = {}
+    for binding in bindings:
+        link = links.get(binding["interface"], {})
+        if not link.get("configured") or not link.get("address_inventory_complete"):
+            raise ValueError("Public Services dynamic link is not completely observed")
+        old = ip_address(binding["old_address"])
+        new = _management_handoff_dynamic_listener_address(link, old.version)
+        replacements[str(old)] = new
+        moves.append({**binding, "new_address": new})
+    counts = {address: 0 for address in replacements}
+    pattern = re.compile(r"(?m)^(?P<prefix>\s*listen\s+)(?P<host>\[[0-9A-Fa-f:.]+\]|[0-9.]+)(?P<port>:[0-9]{1,5})(?=\s|;)")
+
+    def replace(match: re.Match[str]) -> str:
+        """Rewrite the matched listener address in the configuration text.
+
+        Args:
+            match: Regular-expression match for the listener directive being rewritten.
+        """
+        host = str(ip_address(match.group("host").strip("[]")))
+        if host not in replacements:
+            return match.group(0)
+        counts[host] += 1
+        new = ip_address(replacements[host])
+        return match.group("prefix") + (f"[{new}]" if new.version == 6 else str(new)) + match.group("port")
+
+    projected = pattern.sub(replace, content)
+    if not all(counts.values()):
+        raise ValueError("Public Services submitted dynamic listener is missing")
+    return projected, moves
+
+
+def _management_handoff_depot_config_is_managed(content: str) -> bool:
+    """Recognize the fixed, generated VCF Offline Depot nginx site.
+
+    Args:
+        content: Applied site content read from the fixed Depot runtime path.
+
+    Returns:
+        Whether the file carries Atlaso's applied-site markers and address metadata.
+    """
+    lines = content.splitlines()
+    return (
+        bool(lines)
+        and lines[0].strip() == "# Managed by Atlaso. Local changes may be overwritten."
+        and "# Desired HTTPS endpoint for the VCF Offline Depot." in lines
+        and sum(line.strip().startswith("# Listen addresses:") for line in lines) == 1
+        and "VCF Offline Depot HTTPS endpoint is disabled" not in content
+        and bool(_nginx_directive(content, "listen"))
+        and bool(_nginx_directive(content, "server_name"))
+    )
+
+
+def _project_management_handoff_depot_listeners(
+    content: str, moves: list[dict[str, str]],
+) -> str:
+    """Project only the generated Depot listener IPs for a management handoff.
+
+    Args:
+        content: Original applied Depot site captured before the handoff.
+        moves: Resolved Depot old/new address pairs for one observation.
+
+    Returns:
+        The same applied site with its exact listener addresses projected.
+
+    Raises:
+        ValueError: If the applied file is not managed, a listener is missing or
+            ambiguous, or the candidate address conflicts with an existing bind.
+    """
+    if not _management_handoff_depot_config_is_managed(content):
+        raise ValueError("VCF Offline Depot listener move requires a managed applied nginx site")
+    if not moves:
+        return content
+    replacements: dict[str, str] = {}
+    for move in moves:
+        old = str(ip_address(move["old_address"]))
+        new = str(ip_address(move["new_address"]))
+        if old in replacements or new in replacements.values():
+            raise ValueError("VCF Offline Depot listener address mapping is ambiguous")
+        replacements[old] = new
+
+    existing_sockets = set()
+    for value in _nginx_directive(content, "listen"):
+        host, port = _listen_address_and_port(value)
+        existing_sockets.add((host, port))
+    for old, new in replacements.items():
+        if old != new and any((new, port) in existing_sockets
+                              for address, port in existing_sockets if address == old):
+            raise ValueError("VCF Offline Depot candidate address already has a listener on the same TCP port")
+
+    counts = {old: 0 for old in replacements}
+    listen_pattern = re.compile(r"(?m)^(?P<prefix>\s*listen\s+)(?P<args>[^;]+)(?P<end>;)")
+
+    def replace_listen(match: re.Match[str]) -> str:
+        """Rewrite the matched listen directive with the proven address.
+
+        Args:
+            match: Regular-expression match for the listener directive being rewritten.
+        """
+        args = match.group("args")
+        fields = args.split(None, 1)
+        if not fields:
+            raise ValueError("VCF Offline Depot applied listen directive is empty")
+        host, port = _listen_address_and_port(fields[0])
+        new = replacements.get(host)
+        if new is None:
+            return match.group(0)
+        counts[host] += 1
+        replacement_ip = ip_address(new)
+        rendered_host = f"[{replacement_ip}]" if replacement_ip.version == 6 else str(replacement_ip)
+        suffix = f" {fields[1]}" if len(fields) == 2 else ""
+        return f"{match.group('prefix')}{rendered_host}:{port}{suffix}{match.group('end')}"
+
+    projected = listen_pattern.sub(replace_listen, content)
+    if not all(counts.values()):
+        raise ValueError("VCF Offline Depot applied listener address is missing")
+
+    comment_pattern = re.compile(r"(?m)^(?P<prefix>\s*# Listen addresses:\s*)(?P<addresses>[^\r\n]*)(?P<ending>\r?)$")
+    comment_counts = {old: 0 for old in replacements}
+
+    def replace_comment(match: re.Match[str]) -> str:
+        """Rewrite the matched commented listener directive.
+
+        Args:
+            match: Regular-expression match for the listener directive being rewritten.
+        """
+        values = match.group("addresses").split(",")
+        rendered = []
+        for value in values:
+            stripped = value.strip()
+            new = replacements.get(stripped)
+            if new is None:
+                if stripped in replacements.values() and stripped not in replacements:
+                    raise ValueError("VCF Offline Depot candidate address already appears in applied metadata")
+                rendered.append(value)
+                continue
+            comment_counts[stripped] += 1
+            left = value[:len(value) - len(value.lstrip())]
+            right = value[len(value.rstrip()):]
+            rendered.append(f"{left}{new}{right}")
+        return f"{match.group('prefix')}{','.join(rendered)}{match.group('ending')}"
+
+    projected = comment_pattern.sub(replace_comment, projected)
+    if not all(value == 1 for value in comment_counts.values()):
+        raise ValueError("VCF Offline Depot managed listen-address comment is missing or ambiguous")
+    return projected
+
+
+def _verify_management_handoff_depot_runtime(content: str, moves: list[dict[str, str]]) -> None:
+    """Probe every configured Depot TCP port on each resolved final address.
+
+    Args:
+        content: Final applied Depot nginx site currently loaded by nginx.
+        moves: Resolved old/new Depot address pairs, including unchanged pairs.
+
+    Raises:
+        ValueError: If nginx lacks a configured moved socket or any TCP probe
+            fails within the bounded verification window.
+    """
+    if not _management_handoff_depot_config_is_managed(content):
+        raise ValueError("VCF Offline Depot runtime proof requires a managed applied nginx site")
+    ports_by_address: dict[str, set[int]] = {}
+    for value in _nginx_directive(content, "listen"):
+        try:
+            address, port = _listen_address_and_port(value)
+        except ValueError as exc:
+            raise ValueError("VCF Offline Depot applied listener directive is invalid") from exc
+        ports_by_address.setdefault(address, set()).add(port)
+    expected: set[tuple[str, int]] = set()
+    for move in moves:
+        address = str(ip_address(move["new_address"]))
+        ports = ports_by_address.get(address, set())
+        if not ports:
+            raise ValueError("VCF Offline Depot final listener address has no configured TCP port")
+        expected.update((address, port) for port in ports)
+    deadline = time.monotonic() + 5
+    for address, port in sorted(expected):
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise ValueError("VCF Offline Depot listener socket checks exceeded their time bound")
+            try:
+                with socket.create_connection((address, port), timeout=min(0.5, remaining)):
+                    break
+            except OSError:
+                if time.monotonic() >= deadline:
+                    raise ValueError("VCF Offline Depot listener socket is not ready on a final address") from None
+                time.sleep(min(0.1, max(0, deadline - time.monotonic())))
+
+
+def _management_handoff_listener_unit_state(unit: str) -> dict[str, object]:
+    """Read the active state of a management listener unit.
+
+    Args:
+        unit: Systemd unit whose state is being read.
+    """
+    if unit not in {value[0] for value in _HANDOFF_LISTENER_SERVICES.values()}:
+        raise ValueError("management handoff listener unit is unsupported")
+    active = _run(["systemctl", "is-active", unit], timeout=2)
+    enabled = _run(["systemctl", "is-enabled", unit], timeout=2)
+    active_text = active.stdout.strip().lower()
+    enabled_text = enabled.stdout.strip().lower()
+    if active_text not in {"active", "inactive", "failed"}:
+        raise ValueError(f"management handoff listener active state is indeterminate for {unit}")
+    if enabled_text not in {
+        "enabled", "enabled-runtime", "disabled", "disabled-runtime", "masked",
+        "static", "indirect", "generated", "transient", "alias", "linked", "linked-runtime",
+    }:
+        raise ValueError(f"management handoff listener enabled state is indeterminate for {unit}")
+    return {
+        "active": active_text == "active",
+        "enabled": enabled_text in {"enabled", "enabled-runtime", "linked", "linked-runtime"},
+        "enabled_state": enabled_text,
+    }
+
+
+def _resolve_management_handoff_listener_moves(payload: dict, observation: dict) -> list[dict[str, str]]:
+    """Resolve listener moves from the manifest and observed interface state.
+
+    Args:
+        payload: Validated handoff manifest describing listener moves.
+        observation: Observed network or service state used to prove address ownership.
+    """
+    moves = payload.get("listener_address_moves", [])
+    if not moves:
+        return []
+    if not observation.get("complete"):
+        raise ValueError("listener address observation is incomplete")
+    physical, vlans, _removed = _parse_network_config(Path(str(payload["network_config_path"])))
+    interfaces = {row.get("name", ""): row for row in [*physical, *vlans]}
+    links = {row.get("name", ""): row for row in observation.get("links", [])}
+    effective = []
+    for move in moves:
+        row = interfaces.get(move.get("interface", "")) if move.get("interface") else None
+        if row is not None:
+            names = [str(row.get("name") or "")]
+        else:
+            key = "ip_cidr" if ip_address(move["new_address"]).version == 4 else "ipv6_cidr"
+            names = []
+            for name, candidate in interfaces.items():
+                try:
+                    if candidate.get(key) and str(ip_interface(candidate[key]).ip) == move["new_address"]:
+                        names.append(name)
+                except ValueError:
+                    continue
+            if len(names) != 1:
+                raise ValueError("static listener address does not identify one candidate Network link")
+        name = names[0]
+        link = links.get(name, {})
+        if not link.get("configured") or not link.get("address_inventory_complete"):
+            raise ValueError(f"candidate listener link {name} is not completely observed")
+        family = ip_address(move["old_address"]).version
+        assigned = []
+        for record in link.get("addresses", []):
+            try:
+                address = ip_address(record.get("address", ""))
+            except ValueError:
+                continue
+            if (address.version == family and record.get("state") == "assigned"
+                    and record.get("scope") == "global" and not address.is_loopback
+                    and not address.is_link_local and not address.is_multicast and not address.is_unspecified):
+                assigned.append(str(address))
+        if move.get("interface"):
+            address = _management_handoff_dynamic_listener_address(link, family)
+        else:
+            address = move["new_address"]
+            if assigned.count(address) != 1:
+                raise ValueError(f"candidate static listener address on {name} is not assigned")
+        if ip_address(address).version != family:
+            raise ValueError("observed listener address family differs from the applied listener")
+        effective.append({
+            "service": move["service"], "old_address": move["old_address"],
+            "new_address": address, **({"interface": name} if move.get("interface") else {}),
+        })
+    return effective
+
+
+def _atomic_management_handoff_write(path: Path, content: str) -> None:
+    """Atomically write the staged management-handoff configuration.
+
+    Args:
+        path: Destination path for the staged configuration write.
+        content: Candidate configuration text to inspect or rewrite.
+    """
+    if path.is_symlink() or not path.is_file():
+        raise ValueError(f"applied listener config is missing or unsafe: {path.name}")
+    metadata = path.stat()
+    temporary = path.with_name(f".{path.name}.handoff-{uuid.uuid4().hex}")
+    try:
+        with temporary.open("xb") as stream:
+            stream.write(content.encode("utf-8"))
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.chmod(temporary, stat.S_IMODE(metadata.st_mode))
+        os.chown(temporary, metadata.st_uid, metadata.st_gid)
+        os.replace(temporary, path)
+        _fsync_directory(path.parent)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def _rewrite_ldap_listener_text(content: str, old_address: str, new_address: str) -> str:
+    """Rewrite exact LDAP listener addresses in configuration text.
+
+    Args:
+        content: Candidate configuration text to inspect or rewrite.
+        old_address: Listener address being replaced in the configuration.
+        new_address: Proven address to write into the listener configuration.
+    """
+    old = str(ip_address(old_address))
+    new_ip = ip_address(new_address)
+    host = f"[{new_ip}]" if new_ip.version == 6 else str(new_ip)
+    pattern = re.compile(r"(?P<prefix>ldaps?://)(?P<host>\[[0-9A-Fa-f:.]+\]|[0-9.]+)(?P<port>:[0-9]{1,5}/)")
+    count = 0
+
+    def replace(match: re.Match[str]) -> str:
+        """Rewrite the matched listener address in the configuration text.
+
+        Args:
+            match: Regular-expression match for the listener directive being rewritten.
+        """
+        nonlocal count
+        value = match.group("host").strip("[]")
+        try:
+            matches = str(ip_address(value)) == old
+        except ValueError:
+            matches = False
+        if not matches:
+            return match.group(0)
+        count += 1
+        return f"{match.group('prefix')}{host}{match.group('port')}"
+
+    rewritten = pattern.sub(replace, content)
+    if not count:
+        raise ValueError("applied LDAP listener does not contain the old address")
+    return rewritten
+
+
+def _management_handoff_rewrite_listener_config(service: str, content: str, moves: list[dict[str, str]]) -> str:
+    """Rewrite the selected service listener configuration for the handoff.
+
+    Args:
+        service: Management listener service identifier, such as ntpd, ldap, or kms.
+        content: Candidate configuration text to inspect or rewrite.
+        moves: Validated listener address moves to apply.
+    """
+    if service == "ntpd":
+        if not NTP_CONFIG_PATH.is_file() or not _ntpd_config_managed(NTP_CONFIG_PATH):
+            raise ValueError("NTP listener move requires a managed applied NTP configuration")
+        if _ntpd_applied_time_mode(NTP_CONFIG_PATH) != "ntp_server":
+            raise ValueError("NTP listener move requires the already applied NTP server mode")
+        lines = content.splitlines()
+        comment_indexes = [index for index, line in enumerate(lines)
+                           if line.strip().lower().startswith("# atlaso ntp listen addresses:")]
+        if len(comment_indexes) != 1:
+            raise ValueError("applied NTP listener address comment is missing or ambiguous")
+        values = [part.strip() for part in lines[comment_indexes[0]].split(":", 1)[1].split(",")]
+        for move in moves:
+            old, new = move["old_address"], move["new_address"]
+            indices = [index for index, line in enumerate(lines)
+                       if line.split() == ["interface", "listen", old]]
+            if not indices or values.count(old) != 1:
+                raise ValueError("applied NTP listener address is missing or ambiguous")
+            if new in values and new != old:
+                raise ValueError("candidate NTP listener address is already configured")
+            for index in indices:
+                lines[index] = f"interface listen {new}"
+            values[values.index(old)] = new
+        prefix = lines[comment_indexes[0]].split(":", 1)[0]
+        lines[comment_indexes[0]] = f"{prefix}: {', '.join(values)}"
+        return "\n".join(lines) + ("\n" if content.endswith("\n") else "")
+    if service == "ldap":
+        for move in moves:
+            content = _rewrite_ldap_listener_text(content, move["old_address"], move["new_address"])
+        return content
+    if service == "kms":
+        try:
+            config = json.loads(content)
+            addresses = config["listen"]["addresses"]
+        except (KeyError, TypeError, json.JSONDecodeError) as exc:
+            raise ValueError("applied KMS listener config is invalid") from exc
+        if not isinstance(addresses, list):
+            raise ValueError("applied KMS listener address list is invalid")
+        for move in moves:
+            old, new = move["old_address"], move["new_address"]
+            if addresses.count(old) != 1:
+                raise ValueError("applied KMS listener address is missing or ambiguous")
+            if new in addresses and new != old:
+                raise ValueError("candidate KMS listener address is already configured")
+            addresses[addresses.index(old)] = new
+        return json.dumps(config, indent=2, sort_keys=True) + "\n"
+    raise ValueError("management handoff listener service is unsupported")
+
+
+def _management_handoff_service_address_observation(observation: dict) -> dict:
+    """Read the effective address evidence for management services.
+
+    Args:
+        observation: Observed network or service state used to prove address ownership.
+    """
+    return {
+        "observed_at": str(observation.get("observed_at") or "")[:64],
+        "complete": observation.get("complete") is True,
+        "links": [
+            {
+                "name": str(link.get("name") or "")[:32],
+                "ifindex": link.get("ifindex") if isinstance(link.get("ifindex"), int) else None,
+                "kind": str(link.get("kind") or "")[:16],
+                "vlan_id": link.get("vlan_id") if isinstance(link.get("vlan_id"), int) else None,
+                "parent": str(link.get("parent") or "")[:32],
+                "mac": str(link.get("mac") or "")[:17],
+                "configured": link.get("configured") is True,
+                "address_inventory_complete": link.get("address_inventory_complete") is True,
+                "addresses": [
+                    {
+                        key: record.get(key)
+                        for key in ("address", "cidr", "scope", "source", "state", "dhcp4_lease")
+                    }
+                    for record in link.get("addresses", [])[:32]
+                    if isinstance(record, dict)
+                ],
+            }
+            for link in observation.get("links", [])[:256]
+            if isinstance(link, dict)
+        ],
+    }
+
+
+def _verify_management_handoff_listener_runtime(service: str, moves: list[dict[str, str]]) -> None:
+    """Verify moved listeners are reachable at their proven addresses.
+
+    Args:
+        service: Management listener service identifier whose sockets are being verified.
+        moves: Validated listener address moves to apply.
+    """
+    if service == "ntpd":
+        result = _run(["ss", "-H", "-lun"], timeout=2)
+        if result.returncode != 0 or len(result.stdout) > 65536:
+            raise ValueError("NTP listener socket inventory is unavailable")
+        listening = set()
+        for line in result.stdout.splitlines()[:512]:
+            fields = line.split()
+            if len(fields) < 4 or not fields[3].endswith(":123"):
+                continue
+            host = fields[3][:-4].strip("[]")
+            try:
+                listening.add(str(ip_address(host)))
+            except ValueError:
+                continue
+        if any(move["new_address"] not in listening for move in moves):
+            raise ValueError("NTP server is not listening on every moved address")
+        return
+    if service == "vcf_offline_depot":
+        _verify_management_handoff_depot_runtime(
+            VCF_DEPOT_SITE_PATH.read_text(encoding="utf-8"), moves,
+        )
+        return
+    ports: dict[str, set[int]] = {}
+    if service == "ldap":
+        for path in (LDAP_SYSTEMD_DROPIN_PATH, LDAP_SYSCONFIG_PATH):
+            content = path.read_text(encoding="utf-8")
+            for match in re.finditer(
+                r"ldaps?://(?P<host>\[[0-9A-Fa-f:.]+\]|[0-9.]+):(?P<port>[0-9]{1,5})/",
+                content,
+            ):
+                try:
+                    address = str(ip_address(match.group("host").strip("[]")))
+                    port = int(match.group("port"))
+                except ValueError:
+                    continue
+                ports.setdefault(address, set()).add(port)
+    else:
+        try:
+            config = json.loads(KMS_CONFIG_PATH.read_text(encoding="utf-8"))
+            raw_port = config["listen"]["port"]
+            if isinstance(raw_port, bool) or not isinstance(raw_port, int) or not 1 <= raw_port <= 65535:
+                raise ValueError("KMS listener port is invalid")
+            port = raw_port
+        except (OSError, KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
+            raise ValueError("KMS listener port is unavailable") from exc
+        ports = {move["new_address"]: {port} for move in moves}
+    deadline = time.monotonic() + 5
+    for move in moves:
+        expected_ports = ports.get(move["new_address"], set())
+        if not expected_ports:
+            raise ValueError(f"{service} listener port is missing for a moved address")
+        for port in expected_ports:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise ValueError(f"{service} listener socket checks exceeded their time bound")
+            while True:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise ValueError(f"{service} listener socket is not ready on a moved address")
+                try:
+                    with socket.create_connection((move["new_address"], port), timeout=min(0.5, remaining)):
+                        pass
+                    break
+                except OSError:
+                    time.sleep(min(0.1, max(0, deadline - time.monotonic())))
+
+
+def _apply_management_handoff_listener_address_moves(payload: dict, state: dict, observation: dict) -> list[dict[str, str]]:
+    """Apply proven management listener address moves.
+
+    Args:
+        payload: Validated handoff manifest describing listener moves.
+        state: Captured listener-handoff state used for apply or recovery.
+        observation: Observed network or service state used to prove address ownership.
+    """
+    effective = _resolve_management_handoff_listener_moves(payload, observation)
+    state["listener_address_moves"] = effective
+    _write_management_handoff_state(state, "listener-address-moves")
+    groups: dict[str, list[dict[str, str]]] = {}
+    for move in effective:
+        if move["old_address"] != move["new_address"] and move["service"] != "vcf_offline_depot":
+            groups.setdefault(move["service"], []).append(move)
+    prior_states = state.get("listener_service_states", {})
+    for service, moves in groups.items():
+        unit = _HANDOFF_LISTENER_SERVICES[service][0]
+        prior = prior_states.get(service)
+        if not isinstance(prior, dict) or not isinstance(prior.get("active"), bool):
+            raise ValueError(f"prior {service} service state is unavailable")
+        if not prior["active"]:
+            raise ValueError(f"applied {service} listener is not active; restore service readiness before moving its DNS")
+        paths = (
+            (NTP_CONFIG_PATH,) if service == "ntpd" else
+            (LDAP_SYSTEMD_DROPIN_PATH, LDAP_SYSCONFIG_PATH) if service == "ldap" else
+            (KMS_CONFIG_PATH,) if service == "kms" else
+            ()
+        )
+        contents = {path: path.read_text(encoding="utf-8") for path in paths}
+        rewritten = {
+            path: _management_handoff_rewrite_listener_config(service, content, moves)
+            for path, content in contents.items()
+        }
+        if prior["active"]:
+            result = _run(["systemctl", "stop", unit])
+            if result.returncode != 0 or _management_handoff_listener_unit_state(unit)["active"]:
+                raise ValueError(f"{service} listener could not be quiesced")
+        for path, content in rewritten.items():
+            _atomic_management_handoff_write(path, content)
+        if service == "ldap":
+            result = _run(["systemctl", "daemon-reload"])
+            if result.returncode != 0:
+                raise ValueError("LDAP systemd configuration reload failed")
+        if service == "ntpd" and _ntpd_guard("pre-ntpd") != 0:
+            raise ValueError("NTP time-source guard refused the applied listener")
+        if prior["active"]:
+            result = _run(["systemctl", "restart", unit])
+            if result.returncode != 0 or not _management_handoff_listener_unit_state(unit)["active"]:
+                raise ValueError(f"{service} listener restart could not be verified")
+        if service == "ntpd":
+            guard = _ntpd_client_packet_guard_status("ntp_server")
+            if guard.get("active") is not True:
+                raise ValueError("NTP server listener packet guard is not verified")
+        if prior["active"]:
+            _verify_management_handoff_listener_runtime(service, moves)
+    return effective
+
+
+def _restore_management_handoff_listener_services(state: dict, commands: list[dict[str, object]]) -> None:
+    """Restore listener services after a failed management handoff.
+
+    Args:
+        state: Captured listener-handoff state used for apply or recovery.
+        commands: List that records each service command issued during rollback.
+    """
+    prior_states = state.get("listener_service_states", {})
+    if not isinstance(prior_states, dict):
+        raise ValueError("listener service rollback state is invalid")
+    errors = []
+    for service, prior in prior_states.items():
+        try:
+            if service not in _HANDOFF_LISTENER_SERVICES or not isinstance(prior, dict):
+                raise ValueError("listener service rollback state is unsupported")
+            unit = _HANDOFF_LISTENER_SERVICES[service][0]
+            if service == "ldap" and _run(["systemctl", "daemon-reload"]).returncode != 0:
+                raise ValueError("LDAP rollback daemon-reload failed")
+            if service == "ntpd" and _ntpd_guard("pre-ntpd") != 0:
+                raise ValueError("NTP rollback time-source guard failed")
+            operation = "restart" if prior.get("active") is True else "stop"
+            result = _run(["systemctl", operation, unit])
+            commands.append({"stage": "listener rollback", "command": ["systemctl", operation, unit], "returncode": result.returncode})
+            if result.returncode != 0:
+                raise ValueError(f"{service} listener runtime rollback failed")
+            enabled = prior.get("enabled")
+            enabled_state = str(prior.get("enabled_state") or "")
+            if enabled is True or enabled is False and enabled_state in {"disabled", "disabled-runtime"}:
+                current = _management_handoff_listener_unit_state(unit)["enabled"]
+                if current != enabled:
+                    boot_operation = "enable" if enabled else "disable"
+                    boot = _run(["systemctl", boot_operation, unit])
+                    commands.append({"stage": "listener rollback", "command": ["systemctl", boot_operation, unit], "returncode": boot.returncode})
+                    if boot.returncode != 0:
+                        raise ValueError(f"{service} listener boot-policy rollback failed")
+            after = _management_handoff_listener_unit_state(unit)
+            if after["active"] is not prior.get("active") or after["enabled"] is not prior.get("enabled"):
+                raise ValueError(f"{service} prior runtime state could not be verified")
+            if prior.get("active") is True:
+                old_moves = [
+                    move for move in state.get("listener_address_moves", [])
+                    if isinstance(move, dict) and move.get("service") == service
+                ]
+                _verify_management_handoff_listener_runtime(service, [
+                    {**move, "new_address": move["old_address"]} for move in old_moves
+                ])
+        except (OSError, ValueError) as exc:
+            errors.append(f"{service}: {exc}")
+    if errors:
+        raise ValueError("; ".join(errors))
+
+
 def _management_handoff_runtime_paths(payload: dict) -> list[Path]:
     """Return runtime files that require exact rollback snapshots.
 
@@ -28916,6 +29701,21 @@ def _management_handoff_runtime_paths(payload: dict) -> list[Path]:
         *_management_handoff_certificate_paths(payload),
         *_management_handoff_previous_certificate_paths(),
     ]
+    listener_paths: list[Path] = []
+    for move in payload.get("listener_address_moves", []):
+        service = move["service"]
+        if service == "ntpd":
+            listener_paths.append(NTP_CONFIG_PATH)
+        elif service == "ldap":
+            listener_paths.extend((LDAP_SYSTEMD_DROPIN_PATH, LDAP_SYSCONFIG_PATH))
+        elif service == "kms":
+            listener_paths.append(KMS_CONFIG_PATH)
+        elif service == "vcf_offline_depot":
+            listener_paths.append(VCF_DEPOT_SITE_PATH)
+    for path in listener_paths:
+        if path.is_symlink() or not path.is_file():
+            raise ValueError("applied management handoff listener config is missing or unsafe")
+    paths.extend(listener_paths)
     unique: dict[str, Path] = {}
     for path in paths:
         unique[str(path)] = path
@@ -29764,6 +30564,13 @@ def _snapshot_management_handoff(payload: dict) -> dict:
         "candidate_vlan_interfaces": candidate_vlans,
         "candidate_link_states": candidate_link_states,
         "candidate_management_interface": candidate_management_interface,
+        "listener_service_states": {
+            service: _management_handoff_listener_unit_state(_HANDOFF_LISTENER_SERVICES[service][0])
+            for service in dict.fromkeys(
+                move["service"] for move in payload.get("listener_address_moves", [])
+            )
+        },
+        "listener_address_moves": [],
         "source_transition_guard": False,
         "resolver_apply_started": False,
         "previous_firewall_config_existed": previous_firewall_config_existed,
@@ -31445,7 +32252,14 @@ def _restore_management_handoff(state: dict) -> dict:
         route_sources_ready = len(errors) == before_sources
     if route_sources_ready:
         attempt("routing-domain restore", lambda: _restore_route_domains(state))
-    if state.get("dnsmasq_included"):
+    listener_restore_before = len(errors)
+    if route_sources_ready and state.get("listener_service_states"):
+        attempt(
+            "listener service restore",
+            lambda: _restore_management_handoff_listener_services(state, commands),
+        )
+    listener_restore_ready = len(errors) == listener_restore_before
+    if state.get("dnsmasq_included") and route_sources_ready and listener_restore_ready:
         def restore_dnsmasq() -> None:
             """Restore DNS after the previous listener addresses are active."""
             if state.get("previous_dnsmasq_authoritative_present"):
@@ -31511,6 +32325,8 @@ def _restore_management_handoff(state: dict) -> dict:
                 raise ValueError("DNS/DHCP boot-policy rollback failed")
 
         attempt("DNS/DHCP rollback", restore_dnsmasq)
+    elif state.get("dnsmasq_included"):
+        errors.append("DNS/DHCP rollback: previous listener network was not restored")
 
     attempt(
         "Routes & WAN rollback",
@@ -32041,8 +32857,29 @@ def _apply_management_handoff(payload: dict) -> int:
             file=sys.stderr,
         )
         return 1
+    depot_moves = [
+        move for move in payload.get("listener_address_moves", [])
+        if move.get("service") == "vcf_offline_depot"
+    ]
+    original_depot_config = ""
     failing_layer = "snapshot"
     try:
+        if depot_moves:
+            failing_layer = "Depot listener prerequisite"
+            prior_nginx = state.get("listener_service_states", {}).get("vcf_offline_depot")
+            if not isinstance(prior_nginx, dict) or prior_nginx.get("active") is not True:
+                raise ValueError("applied VCF Offline Depot listener requires active nginx before address handoff")
+            if (VCF_DEPOT_SITE_PATH.is_symlink() or not VCF_DEPOT_SITE_PATH.is_file()
+                    or not stat.S_ISREG(VCF_DEPOT_SITE_PATH.stat().st_mode)
+                    or VCF_DEPOT_SITE_PATH.stat().st_nlink != 1):
+                raise ValueError("applied VCF Offline Depot nginx site is missing or unsafe")
+            original_depot_config = VCF_DEPOT_SITE_PATH.read_text(encoding="utf-8")
+            if not _management_handoff_depot_config_is_managed(original_depot_config):
+                raise ValueError("applied VCF Offline Depot listener is not Atlaso-managed")
+            # Prove the reviewed old listener IPs are in the fixed site before
+            # network mutation; projection will additionally require both the
+            # listen directive and generated address metadata to match.
+            _project_management_handoff_depot_listeners(original_depot_config, depot_moves)
         failing_layer = "address detection preflight"
         _network_detection_preflight(Path(str(payload["network_config_path"])))
         _route_domain_ingress_desired_rules(
@@ -32222,6 +33059,23 @@ def _apply_management_handoff(payload: dict) -> int:
             exclude_previous_holdovers=True,
             include_flagged_access=not public_services_owns_flagged,
         )
+        public_config_path = Path(str(payload["public_services_config_path"]))
+        original_public_config = public_config_path.read_text(encoding="utf-8") if payload.get("public_dynamic_bindings") else ""
+        candidate_public_config, public_address_moves = _project_management_handoff_public_bindings(
+            original_public_config, payload.get("public_dynamic_bindings", []), address_observation,
+        )
+        if payload.get("public_dynamic_bindings"):
+            _atomic_management_handoff_write(public_config_path, candidate_public_config)
+        initial_depot_moves = (
+            _resolve_management_handoff_listener_moves(
+                {**payload, "listener_address_moves": depot_moves}, address_observation,
+            ) if depot_moves else []
+        )
+        if initial_depot_moves:
+            initial_depot_config = _project_management_handoff_depot_listeners(
+                original_depot_config, initial_depot_moves,
+            )
+            _atomic_management_handoff_write(VCF_DEPOT_SITE_PATH, initial_depot_config)
         candidate_public_tls = (
             _management_handoff_candidate_public_tls_addresses(
                 Path(str(payload["public_services_config_path"])), candidate_public_port,
@@ -32268,7 +33122,7 @@ def _apply_management_handoff(payload: dict) -> int:
         )
         if management_https_result != 0:
             raise ValueError("candidate management nginx apply failed")
-        transitional_public_needed = bool(previous_public_tls or deferred_public_sockets)
+        transitional_public_needed = bool(previous_public_tls or deferred_public_sockets or payload.get("public_dynamic_bindings"))
         transitional_public_site = None
         if transitional_public_needed:
             public_site = Path(str(payload["public_services_config_path"])).read_text(encoding="utf-8")
@@ -32381,6 +33235,25 @@ def _apply_management_handoff(payload: dict) -> int:
             if _handle_firewall("apply", [str(transition_path)]) != 0:
                 raise ValueError("final nftables apply failed while retiring the previous path")
         failing_layer = "verified-listener publication"
+        final_public_config, public_address_moves = _project_management_handoff_public_bindings(
+            original_public_config, payload.get("public_dynamic_bindings", []), final_address_observation,
+        )
+        if payload.get("public_dynamic_bindings"):
+            _atomic_management_handoff_write(public_config_path, final_public_config)
+        if public_services_owns_flagged:
+            candidate_public_tls = _management_handoff_candidate_public_tls_addresses(
+                public_config_path, candidate_public_port,
+            )
+        final_depot_moves = (
+            _resolve_management_handoff_listener_moves(
+                {**payload, "listener_address_moves": depot_moves}, final_address_observation,
+            ) if depot_moves else []
+        )
+        if final_depot_moves:
+            final_depot_config = _project_management_handoff_depot_listeners(
+                original_depot_config, final_depot_moves,
+            )
+            _atomic_management_handoff_write(VCF_DEPOT_SITE_PATH, final_depot_config)
         management_site_addresses = _management_handoff_addresses(
             Path(str(payload["network_config_path"])),
             address_observation=final_address_observation,
@@ -32431,6 +33304,20 @@ def _apply_management_handoff(payload: dict) -> int:
                 if candidate_ca is not None
             },
         )
+        if final_depot_moves:
+            failing_layer = "VCF Offline Depot listener readiness"
+            if not _management_handoff_listener_unit_state("nginx.service")["active"]:
+                raise ValueError("nginx is not active after final VCF Offline Depot listener publication")
+            _verify_management_handoff_depot_runtime(final_depot_config, final_depot_moves)
+        failing_layer = "applied service listener address refresh"
+        effective_listener_moves = _apply_management_handoff_listener_address_moves(
+            payload, state, final_address_observation,
+        )
+        service_dns_path = str(payload.get("service_dns_config_path") or "")
+        if service_dns_path:
+            failing_layer = "generated service DNS publication"
+            if _handle_dnsmasq("apply", [service_dns_path]) != 0:
+                raise ValueError("service DNS publication failed after candidate readiness")
         failing_layer = "candidate durability"
         _sync_management_handoff_candidate(state, payload)
         state["candidate_addresses"] = candidate_addresses
@@ -32472,6 +33359,16 @@ def _apply_management_handoff(payload: dict) -> int:
                 "old_path_readiness": old_readiness,
                 "candidate_readiness": candidate_readiness,
                 "final_readiness": final_readiness,
+                "listener_address_moves": effective_listener_moves,
+                "public_service_address_moves": public_address_moves,
+                "service_address_observation": (
+                    _management_handoff_service_address_observation(final_address_observation)
+                    if (
+                        state.get("dnsmasq_included")
+                        or payload.get("public_dynamic_bindings")
+                        or payload.get("listener_address_moves")
+                    ) else None
+                ),
                 "retired_previous_interfaces": state["previous_management_interfaces"],
             },
             sort_keys=True,

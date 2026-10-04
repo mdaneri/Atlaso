@@ -24,6 +24,7 @@ def test_dns_settings_derives_listen_addresses_from_selected_interface(client):
                 role="access",
                 mode="access",
                 ip_cidr="192.168.90.1/24",
+                ipv6_enabled=True,
                 ipv6_cidr="2001:db8:90::1/64",
                 admin_state="up",
                 oper_state="up",
@@ -554,6 +555,7 @@ def test_dhcp_zone_defaults_follow_vlan_dns_and_interface_ntp_bindings(client):
         eth2_interface = db.execute(
             select(PhysicalInterface).where(PhysicalInterface.name == "eth2")
         ).scalar_one()
+        eth2_interface.ipv6_enabled = True
         eth2_interface.ipv6_cidr = "fd00:50::1/64"
         dns_settings = db.execute(select(DnsSettings)).scalar_one()
         dns_settings.enabled = True

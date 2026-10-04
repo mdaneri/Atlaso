@@ -8,7 +8,8 @@ Atlaso is an all-in-one infrastructure appliance for virtualization proof-of-con
 brings infrastructure, storage, identity, networking, and lifecycle workflows into one operator-focused control plane.
 
 DNS listeners serve managed zones and configured upstream forwarding together. Appliance Apply coordinates host
-resolution with DNS activation; DHCP scopes may advertise routed DNS/NTP service endpoints. See the
+resolution with DNS activation and updates Atlaso-owned service records after listener-address readiness; DHCP scopes
+may advertise routed DNS/NTP service endpoints. See the
 [DNS](docs/services/dns.md) and [DHCP](docs/services/dhcp.md) guides.
 
 [Appliance time synchronization](docs/services/ntp.md#appliance-clock-source) uses one clock authority: VMware Tools,

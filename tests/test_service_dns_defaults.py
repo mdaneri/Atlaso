@@ -29,7 +29,7 @@ def test_ntp_and_nts_share_owned_dual_stack_dns_and_preserve_manual_records():
         seed_initial_data(db, include_examples=False, commit=False)
         interface = PhysicalInterface(
             name="eth9", mac_address="00:50:56:00:00:19", role="access", mode="access",
-            ip_cidr="192.0.2.10/24", ipv6_cidr="2001:db8::10/64",
+            ip_cidr="192.0.2.10/24", ipv6_enabled=True, ipv6_cidr="2001:db8::10/64",
             admin_state="up", oper_state="up",
         )
         db.add(interface)
@@ -83,7 +83,7 @@ def test_ntp_dns_migrates_address_named_targets_to_shared_dual_stack_target():
         seed_initial_data(db, include_examples=False, commit=False)
         db.add(PhysicalInterface(
             name="eth9", mac_address="00:50:56:00:00:19", role="access", mode="access",
-            ip_cidr="192.0.2.10/24", ipv6_cidr="2001:db8::10/64",
+            ip_cidr="192.0.2.10/24", ipv6_enabled=True, ipv6_cidr="2001:db8::10/64",
             admin_state="up", oper_state="up",
         ))
         settings = db.execute(select(NtpSettings)).scalar_one()
