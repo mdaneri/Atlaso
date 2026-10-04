@@ -15716,34 +15716,7 @@ def execute_management_handoff(
             listener_baselines = projected_handoff_listener_baselines(
                 baselines, units_by_id, verified_moves,
             )
-            depot_moves = [move for move in evidence.get("listener_address_moves", [])
-                           if move["service"] == "vcf_offline_depot"]
-            if depot_moves and "vcf_offline_depot" in units_by_id:
-                # A separately selected Depot step must execute its captured
-                # pending edits on the verified address, not rebind the old one.
-                depot = units_by_id["vcf_offline_depot"]
-                captured_addresses = {
-                    move["old_address"]: move["new_address"]
-                    for move in listener_moves
-                    if move["service"] == "vcf_offline_depot"
-                }
-                captured_moves = [
-                    {**move, "old_address": captured_addresses.get(move["old_address"], move["old_address"])}
-                    for move in depot_moves
-                ]
-                depot["context"] = {
-                    **depot["context"],
-                    "vcf_depot_https_config_preview": projected_depot_listener_config(
-                        depot["context"]["vcf_depot_https_config_preview"], captured_moves,
-                    ),
-                }
-                for key in ("config_preview", "raw_config_preview"):
-                    depot[key] = projected_depot_listener_config(depot[key], captured_moves)
-                depot["snapshot_hash"] = appliance_snapshot_hash({
-                    "unit_id": depot["id"], "summary": depot["summary"],
-                    "config_path": depot["config_path"], "config_preview": depot["config_preview"],
-                    "snapshot_marker": depot.get("snapshot_marker"),
-                })
+            project_selected_handoff_listener_units(units_by_id, listener_moves, verified_moves)
         except (OSError, ValueError) as exc:
             db.rollback()
             succeeded = False
@@ -16125,6 +16098,61 @@ def projected_handoff_listener_baselines(
         })
         projected[service] = baseline
     return projected
+
+
+def project_selected_handoff_listener_units(
+    units_by_id: dict[str, dict[str, Any]], submitted_moves: list[dict[str, str]], verified_moves: list[dict[str, str]],
+) -> None:
+    """Move captured service candidates onto verified listeners before later execution.
+
+    Args:
+        units_by_id: Exact submitted service units, retaining their approved pending edits.
+        submitted_moves: Listener targets captured before native address readiness.
+        verified_moves: Effective listener addresses proven by the native helper.
+    """
+    for service in {move["service"] for move in verified_moves}:
+        unit = units_by_id.get(service)
+        if unit is None:
+            continue
+        _, addresses = applied_service_listener_bindings(service, unit["config_preview"])
+        sources = unit.get("applied_listener_sources") or {}
+        captured_targets = {move["old_address"]: move["new_address"] for move in submitted_moves
+                            if move["service"] == service}
+        moves = []
+        for move in verified_moves:
+            if move["service"] != service:
+                continue
+            captured_address = captured_targets.get(move["old_address"], move["old_address"])
+            if move.get("interface"):
+                matching = [address for address in addresses
+                            if sources.get(address) == move["interface"]
+                            and ip_address(address).version == ip_address(move["old_address"]).version]
+                if len(matching) > 1:
+                    raise ValueError("Captured dynamic listener address is ambiguous.")
+                if not matching:
+                    # An explicitly selected removal or different source stays intact.
+                    continue
+                captured_address = matching[0]
+            elif captured_address not in addresses:
+                continue
+            moves.append({**move, "old_address": captured_address})
+        if not moves:
+            continue
+        captured_unit = dict(unit)
+        for key in ("config_preview", "raw_config_preview"):
+            candidate = {**captured_unit, "config_preview": captured_unit[key]}
+            projected = projected_handoff_listener_baselines({service: candidate}, units_by_id, moves)[service]
+            unit[key] = projected["config_preview"]
+            if key == "config_preview":
+                unit["applied_listener_sources"] = projected["applied_listener_sources"]
+                unit["applied_listener_interface"] = projected["applied_listener_interface"]
+        if service == "vcf_offline_depot":
+            unit["context"] = {**unit["context"], "vcf_depot_https_config_preview":
+                               projected_depot_listener_config(unit["context"]["vcf_depot_https_config_preview"], moves)}
+        unit["snapshot_hash"] = appliance_snapshot_hash({
+            "unit_id": unit["id"], "summary": unit["summary"], "config_path": unit["config_path"],
+            "config_preview": unit["config_preview"], "snapshot_marker": unit.get("snapshot_marker"),
+        })
 
 
 def update_appliance_apply_baselines(db: Session, units: list[dict[str, Any]], selected_ids: set[str]) -> None:

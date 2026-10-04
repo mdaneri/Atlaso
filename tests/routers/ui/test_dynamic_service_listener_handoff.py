@@ -236,6 +236,225 @@ def test_management_handoff_captures_and_persists_service_moves_without_dns(clie
         assert "2001:db8::21" in ui.load_appliance_apply_baselines(db)["ntpd"]["config_preview"]
 
 
+@pytest.mark.parametrize("service", ["ntpd", "ldap", "kms"])
+def test_verified_handoff_projects_selected_service_candidate_before_later_apply(
+    client, monkeypatch, tmp_path, service,
+):
+    """Keep selected service edits while projecting a startup-renewed listener.
+
+    Args:
+        client: Isolated authenticated application client.
+        monkeypatch: Substitute native discovery, staging, and helper execution.
+        tmp_path: Temporary root for fixed Apply staging paths.
+        service: Selected listener service whose DHCP/SLAAC address renewed.
+    """
+    from atlaso.app import ui
+    from atlaso.app.adapters.system import AdapterResult
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import KmsSettings, LdapSettings, NtpSettings
+
+    login(client)
+    with SessionLocal() as db:
+        access, _units = _prepare_service_baselines(
+            db, ui, {service}, dns_enabled=False, dynamic_ipv4=False, dynamic_ipv6=True,
+        )
+        baselines_before = ui.load_appliance_apply_baselines(db)
+        previous_service_config = baselines_before[service]["config_preview"]
+
+        # Startup has already refreshed the current interface observation and
+        # service candidate, while the applied snapshot still owns ::10.
+        access.host_ipv6_cidr = "2001:db8::11/64"
+        settings_by_service = {
+            "ntpd": db.scalar(select(NtpSettings)),
+            "ldap": db.scalar(select(LdapSettings)),
+            "kms": db.scalar(select(KmsSettings)),
+        }
+        settings = settings_by_service[service]
+        if service == "ntpd":
+            settings.upstream_servers = "pending.ntp.example"
+            settings.upstream_sources_json = json.dumps([{
+                "description": "Pending upstream", "enabled": True,
+                "id": "pending-upstream", "source": "pending.ntp.example", "use_nts": False,
+            }])
+            original_pending_value = "time.cloudflare.com"
+            pending_marker = "pending.ntp.example"
+        elif service == "ldap":
+            settings.port = 1637
+            original_pending_value = '"port": 636'
+            pending_marker = '"port": 1637'
+        else:
+            settings.port = 5697
+            original_pending_value = '"port": 5696'
+            pending_marker = '"port": 5697'
+        settings.listen_address = "192.0.2.10\n2001:db8::11"
+        db.flush()
+
+        units = {unit["id"]: unit for unit in ui.appliance_apply_units(db)}
+        units["public_services"]["context"]["public_service_entries"] = []
+        candidate_raw_before = units[service]["raw_config_preview"]
+        assert "2001:db8::11" in candidate_raw_before
+        assert pending_marker in candidate_raw_before
+        assert "2001:db8::10" in previous_service_config
+        assert original_pending_value in previous_service_config
+        staged: dict[str, str] = {}
+
+        def stage_config(target, content):
+            """Capture staged content and return its canonical target.
+
+            Args:
+                target: Fixed staging path selected by the Apply unit.
+                content: Candidate configuration or helper manifest.
+
+            Returns:
+                The unchanged fixed staging path.
+            """
+            staged[str(target)] = content
+            return str(target)
+
+        class Adapter:
+            """Return helper evidence for the observed final SLAAC address."""
+
+            dry_run = False
+
+            def validate_management_handoff(self, _path):
+                """Accept the staged management-handoff manifest.
+
+                Args:
+                    _path: Fixed manifest path validated by the helper adapter.
+                """
+                return AdapterResult(command=["validate"], dry_run=False, returncode=0)
+
+            def apply_management_handoff(self, path):
+                """Report the final address observed after Network activation.
+
+                Args:
+                    path: Fixed manifest path applied by the helper adapter.
+                """
+                manifest = json.loads(staged[str(path)])
+                submitted_moves = manifest["listener_address_moves"]
+                assert [move["service"] for move in submitted_moves] == [service]
+                observed_moves = [{**move, "new_address": "2001:db8::21"} for move in submitted_moves]
+                return AdapterResult(
+                    command=["apply"], dry_run=False, returncode=0,
+                    stdout=json.dumps({
+                        "management_handoff": "applied",
+                        "listener_address_moves": observed_moves,
+                        "service_address_observation": {
+                            "complete": True,
+                            "links": [{
+                                "name": access.name,
+                                "configured": True,
+                                "address_inventory_complete": True,
+                                "addresses": [{
+                                    "address": "2001:db8::21", "cidr": "2001:db8::21/64",
+                                    "scope": "global", "state": "assigned",
+                                }],
+                            }],
+                        },
+                    }),
+                )
+
+            def recover_management_handoff(self):
+                """Confirm successful test execution needs no rollback."""
+                return AdapterResult(command=["recover"], dry_run=False, returncode=0)
+
+            def __getattr__(self, name):
+                """Return successful service validation and apply callbacks.
+
+                Args:
+                    name: Adapter callback requested by the selected service unit.
+                """
+                return lambda *_args, **_kwargs: AdapterResult(
+                    command=[name], dry_run=False, returncode=0,
+                )
+
+        monkeypatch.setattr(ui, "CA_STAGED_CONFIG_PATH", str(tmp_path / "ca.json"))
+        monkeypatch.setattr(ui, "MANAGEMENT_HANDOFF_STAGED_MANIFEST_PATH", str(tmp_path / "handoff.json"))
+        monkeypatch.setattr(ui, "NTP_STAGED_CONFIG_PATH", str(tmp_path / "ntp.conf"))
+        monkeypatch.setattr(ui, "LDAP_STAGED_CONFIG_PATH", str(tmp_path / "ldap.json"))
+        monkeypatch.setattr(ui, "KMS_STAGED_CONFIG_PATH", str(tmp_path / "kms.json"))
+        monkeypatch.setattr(ui, "KMS_STAGED_CLIENT_TRUST_PATH", str(tmp_path / "kms-trust.pem"))
+        monkeypatch.setattr(ui, "stage_appliance_apply_config", stage_config)
+        monkeypatch.setattr(ui, "network_config_with_removed_vlans", lambda preview, _removed: preview)
+        monkeypatch.setattr(ui, "render_ca_apply_payload", lambda *_args, **_kwargs: "{}")
+        monkeypatch.setattr(
+            ui, "discover_host_physical_interfaces",
+            lambda: [SimpleNamespace(
+                name=access.name, mac_address=access.mac_address,
+                host_ipv6_cidr="2001:db8::21/64",
+            )],
+        )
+
+        group, _results = ui.execute_management_handoff(
+            units, job_id=f"job_selected_{service}_listener", adapter=Adapter(), db=db,
+            include_dnsmasq=False,
+        )
+
+        assert group["success"] is True, group["management_handoff"]
+        # The prior applied baseline advances only its listener and retains the
+        # original unrelated setting instead of absorbing the candidate edit.
+        projected_baseline = group["listener_baselines"][service]["config_preview"]
+        assert "2001:db8::21" in projected_baseline
+        assert "2001:db8::10" not in projected_baseline
+        assert original_pending_value in projected_baseline
+
+        captured = units[service]
+        assert "2001:db8::21" in captured["raw_config_preview"]
+        assert "2001:db8::11" not in captured["raw_config_preview"]
+        assert "2001:db8::21" in captured["config_preview"]
+        assert pending_marker in captured["raw_config_preview"]
+        assert captured["applied_listener_sources"]["2001:db8::21"] == access.name
+        assert captured["applied_listener_sources"]["192.0.2.10"] == access.name
+
+        staged_result = ui.execute_appliance_apply_unit(captured, adapter=Adapter(), db=db)
+        assert staged_result["success"] is True
+        staged_unit_configs = [
+            content for target, content in staged.items()
+            if target in {str(tmp_path / "ntp.conf"), str(tmp_path / "ldap.json"), str(tmp_path / "kms.json")}
+        ]
+        assert captured["raw_config_preview"] in staged_unit_configs
+
+
+def test_handoff_keeps_explicitly_rebound_service_candidate(client):
+    """Leave a separately selected interface edit intact during old-source moves.
+
+    Args:
+        client: Isolated authenticated application client.
+    """
+    from atlaso.app import ui
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import NtpSettings, PhysicalInterface
+
+    login(client)
+    with SessionLocal() as db:
+        access, _units = _prepare_service_baselines(
+            db, ui, {"ntpd"}, dns_enabled=False, dynamic_ipv4=False, dynamic_ipv6=True,
+        )
+        secondary = PhysicalInterface(
+            name="eth10", mac_address="02:00:00:00:00:20", role="access", mode="access",
+            admin_state="up", oper_state="up", ipv4_method="static", ip_cidr="203.0.113.10/24",
+        )
+        db.add(secondary)
+        ntp = db.scalar(select(NtpSettings))
+        ntp.listen_interface = secondary.name
+        ntp.listen_address = "203.0.113.10"
+        db.flush()
+        candidate = {unit["id"]: unit for unit in ui.appliance_apply_units(db)}
+        captured_before = candidate["ntpd"]["raw_config_preview"]
+        assert "2001:db8::10" not in captured_before
+        assert "203.0.113.10" in captured_before
+
+        submitted_move = {
+            "service": "ntpd", "interface": access.name,
+            "old_address": "2001:db8::10", "new_address": "2001:db8::10",
+        }
+        verified_move = {**submitted_move, "new_address": "2001:db8::21"}
+        ui.project_selected_handoff_listener_units(candidate, [submitted_move], [verified_move])
+
+        assert candidate["ntpd"]["raw_config_preview"] == captured_before
+        assert "203.0.113.10" in candidate["ntpd"]["raw_config_preview"]
+
+
 def test_public_only_dynamic_readback_persists_host_address_and_baseline(client, monkeypatch, tmp_path):
     """Persist a public-only SLAAC observation and projected socket baseline without DNS.
 
