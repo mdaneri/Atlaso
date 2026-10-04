@@ -35,8 +35,7 @@ You need:
 - validation errors resolved for every unit you intend to submit; and
 - no other Appliance Apply task pending or running.
 
-If a change can interrupt management access, use the local appliance console or VMware console as a recovery path
-before submitting it.
+Before submitting a change that can interrupt management access, prepare the local appliance or VMware console.
 
 ## Understand the workflow
 
@@ -81,6 +80,10 @@ also validate listener conflicts. See [Traffic Publishing](traffic-publishing.md
 5. Clear the checkbox for a valid unit that should remain pending for a later run.
 
 Valid changed units are selected by default; invalid units are not. Unselected units remain pending after submission.
+
+Select **Network** to verify DHCP/SLAAC listeners and **DNS/DHCP** to publish generated DNS, even after startup renewal.
+If applied listener ownership is unproven, apply the named service first. Inspect locked pending Certificate Authority,
+Firewall, Appliance Settings, and Public Services changes; clear Network to defer them. Omitted dependencies block submission.
 
 !!! warning
     Review related units together when a feature crosses service boundaries; partial application can leave behavior unavailable.
@@ -173,8 +176,7 @@ claiming a rollback. A failed task whose helper acknowledgement or rollback is n
 until startup or immediate exception recovery reconciles that state, even when an older task payload lacks the newer
 pending marker. Review the task before resubmitting.
 
-If a selected unit changed after submission but before execution, Atlaso fails closed and asks for a new review. This
-prevents a queued task from applying state that the administrator did not inspect.
+If a selected unit changes before execution, Atlaso rejects the task and asks for a new review.
 
 ## Safety boundaries
 
