@@ -10511,6 +10511,7 @@ def test_certificate_operator_uses_request_page_without_console_access(client):
         "serial_number",
         "revoked_at",
         "can_revoke",
+        "can_replace",
     }
     issued_request_row = next(row for row in request_rows if row["common_name"] == "issued.atlaso.internal")
     assert issued_request_row["can_revoke"] is True
@@ -20783,3 +20784,221 @@ def test_managed_leaf_revocation_serializes_and_refreshes_reconciliation(client,
                 assert (leaf.serial_number, leaf.fingerprint, leaf.ip_addresses) == original
             else:
                 assert leaf.serial_number != original[0] and leaf.ip_addresses == "192.0.2.11"
+
+
+@pytest.mark.parametrize("public", [False, True])
+def test_explicit_managed_replacement_retains_revoked_history_and_crl(client, public):
+    """Both authorized transports stage one successor and preserve original revoked evidence.
+
+    Args:
+        client: Isolated appliance HTTP transport and database.
+        public: Use the public request portal instead of management transport.
+    """
+    from cryptography import x509
+    from sqlalchemy import select
+
+    from atlaso.app import ui
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import (
+        AuditEvent,
+        CaCertificate,
+        PhysicalInterface,
+        Role,
+        User,
+    )
+    from atlaso.app.security import roles_to_json
+    from atlaso.app.services.ca import (
+        ca_certificate_can_delete,
+        ca_certificate_can_edit,
+        generate_crl_pem,
+        render_ca_apply_payload,
+    )
+
+    with SessionLocal() as db:
+        settings = ui.get_ca_settings_row(db)
+        settings.enabled = True
+        settings.portal_hostname = "ca.atlaso.internal"
+        settings.listen_interface, settings.listen_address = "eth2", "192.168.87.32"
+        access = db.scalar(select(PhysicalInterface).where(PhysicalInterface.name == "eth2"))
+        access.role, access.ip_cidr = "access", "192.168.87.32/24"
+        db.commit()
+        assert ui.ensure_ca_state(db) == []
+        leaf = db.scalar(select(CaCertificate).where(CaCertificate.managed_owner == "appliance:https"))
+        identity = leaf.id
+        ui._revoke_ca_certificate(db, certificate_id=identity, actor="operator", reason="key compromise")
+        user = db.scalar(select(User).where(User.username == "admin"))
+        user.role = Role.CERTIFICATE_OPERATOR.value
+        user.roles_json = roles_to_json([Role.CERTIFICATE_OPERATOR.value])
+        db.commit()
+    login(client)
+    headers = {"host": "ca.atlaso.internal"} if public else {}
+    page = client.get("/ui/public/ca/requests" if public else "/ca/requests", headers=headers)
+    assert page.status_code == 200
+    assert 'data-replace-url-template=' in page.text and 'data-confirm-label="Replace certificate"' in page.text
+    csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    url = ("/ui/public/ca/requests/certificates/" if public else "/ui/management/ca/certificates/") + str(identity) + "/replace"
+    with SessionLocal() as db:
+        before = {column.name: getattr(db.get(CaCertificate, identity), column.name) for column in CaCertificate.__table__.columns}
+        baseline = ui.load_appliance_apply_baselines(db)
+    invalid = client.post(url, headers=headers, data={"csrf": "invalid"}, follow_redirects=False)
+    assert invalid.status_code == 403
+    response = client.post(url, headers=headers, data={"csrf": csrf}, follow_redirects=False)
+    assert response.status_code == 303
+    with SessionLocal() as db:
+        history = db.get(CaCertificate, identity)
+        after = {column.name: getattr(history, column.name) for column in CaCertificate.__table__.columns}
+        assert {key: value for key, value in after.items() if key != "managed_owner"} == {key: value for key, value in before.items() if key != "managed_owner"}
+        assert history.managed_owner == f"retired-revoked:{identity}"
+        assert not ca_certificate_can_edit(history) and not ca_certificate_can_delete(history)
+        successor = db.scalar(select(CaCertificate).where(CaCertificate.managed_owner == "appliance:https"))
+        assert successor.id != identity and successor.status == "planned"
+        assert not successor.certificate_pem and not successor.serial_number and not successor.private_key_encrypted
+        assert ui.load_appliance_apply_baselines(db) == baseline
+        assert db.scalar(select(AuditEvent).where(AuditEvent.action == "replace_revoked_managed_certificate"))
+        assert ui.ensure_ca_state(db) == []
+        successor = db.get(CaCertificate, successor.id, populate_existing=True)
+        assert successor.status == "issued" and successor.serial_number != before["serial_number"]
+        assert successor.fingerprint != before["fingerprint"] and successor.private_key_encrypted != before["private_key_encrypted"]
+        settings = ui.get_ca_settings_row(db)
+        certificates = list(db.scalars(select(CaCertificate)))
+        crl = x509.load_pem_x509_crl(generate_crl_pem(settings, certificates).encode())
+        assert int(before["serial_number"], 16) in {entry.serial_number for entry in crl}
+        payload = json.loads(render_ca_apply_payload(settings, certificates, include_private_keys=False, profiles=db.scalars(select(ui.CaProfile)).all()))
+        assert len([leaf for leaf in payload["certificates"] if leaf["managed_owner"] == "appliance:https"]) == 1
+        assert all(leaf["fingerprint"] != before["fingerprint"] for leaf in payload["certificates"])
+        assert ui.load_appliance_apply_baselines(db) == baseline
+    # Repeated submission cannot create another successor or erase the history.
+    assert client.post(url, headers=headers, data={"csrf": csrf}, follow_redirects=False).status_code == 400
+
+
+def test_managed_replacement_waits_for_writer_and_refreshes_revoked_row(client, monkeypatch):
+    """Replacement waits for the revoker and checks fresh state after admission.
+
+    Args:
+        client: Initialized isolated appliance database.
+        monkeypatch: Observe the replacement's writer admission attempt.
+    """
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Event
+
+    from sqlalchemy import select
+
+    from atlaso.app import ui
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import CaCertificate
+    from atlaso.app.routers.ui import certificate_trust
+    from atlaso.app.services.network_objects import acquire_network_objects_write_lock
+
+    with SessionLocal() as db:
+        ui.get_ca_settings_row(db).enabled = True
+        db.commit()
+        assert ui.ensure_ca_state(db) == []
+        identity = db.scalar(select(CaCertificate.id).where(CaCertificate.managed_owner == "appliance:https"))
+    attempted, loaded = Event(), Event()
+    def acquire(db):
+        """Expose writer contention before stale certificate refresh.
+
+        Args:
+            db: Replacement transaction waiting for the revocation commit.
+        """
+        attempted.set()
+        acquire_network_objects_write_lock(db)
+    monkeypatch.setattr(certificate_trust, "acquire_network_objects_write_lock", acquire)
+    def replace_leaf():
+        """Cache the issued row, then wait for its revocation to become visible."""
+        with SessionLocal() as db:
+            assert db.get(CaCertificate, identity).status == "issued"
+            loaded.set()
+            return ui._replace_revoked_managed_certificate(db, certificate_id=identity, actor="replacement").id
+    with SessionLocal() as owner, ThreadPoolExecutor(max_workers=1) as pool:
+        acquire_network_objects_write_lock(owner)
+        future = pool.submit(replace_leaf)
+        assert loaded.wait(5) and attempted.wait(5) and not future.done()
+        old = owner.get(CaCertificate, identity)
+        old.status, old.revoked_at, old.revoked_by = "revoked", ui.utcnow(), "revoker"
+        owner.commit()
+        successor_id = future.result(timeout=10)
+    with SessionLocal() as db:
+        assert db.get(CaCertificate, identity).status == "revoked"
+        assert db.get(CaCertificate, successor_id).managed_owner == "appliance:https"
+        assert db.get(CaCertificate, successor_id).status == "planned"
+
+
+@pytest.mark.parametrize("unavailable", ["issued", "manual", "missing", "profile", "disabled", "inactive_owner"])
+def test_managed_replacement_refuses_ineligible_request_without_mutation(client, unavailable):
+    """Invalid lifecycle, identity or policy cannot detach the active service owner.
+
+    Args:
+        client: Initialized isolated appliance database.
+        unavailable: Certificate lifecycle or owning policy prerequisite to remove.
+    """
+    from fastapi import HTTPException
+    from sqlalchemy import select
+
+    from atlaso.app import ui
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import CaCertificate, CaProfile
+
+    with SessionLocal() as db:
+        settings = ui.get_ca_settings_row(db)
+        settings.enabled = True
+        db.commit()
+        assert ui.ensure_ca_state(db) == []
+        leaf = db.scalar(select(CaCertificate).where(CaCertificate.managed_owner == "appliance:https"))
+        identity = leaf.id
+        ui._revoke_ca_certificate(db, certificate_id=identity, actor="operator", reason="replacement guard")
+        leaf = db.get(CaCertificate, identity)
+        if unavailable == "issued":
+            leaf.status = "issued"
+        elif unavailable == "manual":
+            leaf.managed_owner = ""
+        elif unavailable == "profile":
+            db.get(CaProfile, leaf.profile_id).enabled = False
+        elif unavailable == "disabled":
+            settings.enabled = False
+        elif unavailable == "inactive_owner":
+            leaf.managed_owner = "service:no-longer-configured"
+        db.commit()
+        db.expire_all()
+        before = [{column.name: getattr(row, column.name) for column in CaCertificate.__table__.columns}
+                  for row in db.scalars(select(CaCertificate).order_by(CaCertificate.id))]
+        with pytest.raises(HTTPException) as error:
+            ui._replace_revoked_managed_certificate(db, certificate_id=999999 if unavailable == "missing" else identity, actor="operator")
+        assert error.value.status_code == (404 if unavailable == "missing" else 400)
+        after = [{column.name: getattr(row, column.name) for column in CaCertificate.__table__.columns}
+                 for row in db.scalars(select(CaCertificate).order_by(CaCertificate.id))]
+        assert after == before
+
+
+def test_managed_replacement_requires_certificate_workflow_permission(client):
+    """A signed-in viewer cannot replace a revoked managed leaf.
+
+    Args:
+        client: Initialized isolated appliance HTTP transport.
+    """
+    from sqlalchemy import select
+
+    from atlaso.app import ui
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import CaCertificate, Role, User
+    from atlaso.app.security import roles_to_json
+
+    with SessionLocal() as db:
+        ui.get_ca_settings_row(db).enabled = True
+        db.commit()
+        assert ui.ensure_ca_state(db) == []
+        identity = db.scalar(select(CaCertificate.id).where(CaCertificate.managed_owner == "appliance:https"))
+        ui._revoke_ca_certificate(db, certificate_id=identity, actor="operator", reason="permission guard")
+    login(client)
+    page = client.get("/ca/requests")
+    csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    with SessionLocal() as db:
+        user = db.scalar(select(User).where(User.username == "admin"))
+        user.role = Role.VIEWER.value
+        user.roles_json = roles_to_json([Role.VIEWER.value])
+        db.commit()
+    response = client.post(f"/ui/management/ca/certificates/{identity}/replace", data={"csrf": csrf}, follow_redirects=False)
+    assert response.status_code == 403
+    with SessionLocal() as db:
+        leaf = db.get(CaCertificate, identity)
+        assert leaf.managed_owner == "appliance:https" and leaf.status == "revoked"

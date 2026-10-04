@@ -5287,6 +5287,8 @@ def ca_request_to_dict(certificate: CaCertificate) -> dict[str, Any]:
         "serial_number": certificate.serial_number or "",
         "revoked_at": certificate.revoked_at.isoformat() if certificate.revoked_at else "",
         "can_revoke": certificate.status == "issued" and bool(certificate.serial_number),
+        "can_replace": certificate.status == "revoked" and bool(certificate.managed_owner)
+        and not certificate.managed_owner.startswith("retired-revoked:"),
     }
 
 
@@ -18444,6 +18446,7 @@ _certificate_trust_ui = build_certificate_trust_ui_routers(
         grid_error_response=grid_error_response,
         grid_request=grid_request,
         grid_saved_response=grid_saved_response,
+        managed_ca_certificate_specs=managed_ca_certificate_specs,
         kms_context=kms_context,
         normalize_dns_hostname=normalize_dns_hostname,
         primary_listen_address=primary_listen_address,
@@ -18477,6 +18480,7 @@ ca_request_portal_login = _certificate_trust_ui.endpoints["ca_request_portal_log
 ca_request_portal_logout = _certificate_trust_ui.endpoints["ca_request_portal_logout"]
 _stage_ca_certificate_request = _certificate_trust_ui.endpoints["_stage_ca_certificate_request"]
 _revoke_ca_certificate = _certificate_trust_ui.endpoints["_revoke_ca_certificate"]
+_replace_revoked_managed_certificate = _certificate_trust_ui.endpoints["_replace_revoked_managed_certificate"]
 submit_ca_request_from_portal = _certificate_trust_ui.endpoints["submit_ca_request_from_portal"]
 submit_ca_request_from_portal_alias = _certificate_trust_ui.endpoints["submit_ca_request_from_portal_alias"]
 revoke_ca_certificate_from_portal = _certificate_trust_ui.endpoints["revoke_ca_certificate_from_portal"]

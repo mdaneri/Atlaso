@@ -25,7 +25,7 @@
       <div class="panel-head">
         <div>
           <h2>Requests</h2>
-          <p class="muted">Submit certificate requests and revoke issued certificates without changing CA configuration.</p>
+          <p class="muted">Submit requests, revoke issued certificates, and replace revoked managed certificates.</p>
         </div>
       </div>
       <div
@@ -34,9 +34,10 @@
         data-rows='{{ ca_request_rows | tojson }}'
         data-csrf="{{ csrf_token }}"
         data-revoke-url-template="{{ public_ui_path('/ca/requests/certificates/__id__/revoke') }}"
+      data-replace-url-template="{{ public_ui_path('/ca/requests/certificates/__id__/replace') }}"
         data-fallback-id="ca-requests-fallback"
       ></div>
-      <p id="ca-requests-status" class="autosave-status" aria-live="polite">Certificate requests are read-only here; use the row menu to revoke an issued certificate.</p>
+      <p id="ca-requests-status" class="autosave-status" aria-live="polite">Certificate requests are read-only here; use the row menu to revoke or replace a certificate.</p>
       <table id="ca-requests-fallback" class="data-table compact">
         <thead>
           <tr><th>Common name</th><th>Profile</th><th>Status</th><th>Serial</th><th>Revoked</th><th>Actions</th></tr>
@@ -63,6 +64,14 @@
                     <input type="hidden" name="reason" value="operator requested">
                     <button class="button tiny danger" type="submit">Revoke</button>
                   </form>
+              {% elif certificate.status == "revoked" and certificate.managed_owner and not certificate.managed_owner.startswith("retired-revoked:") %}
+                <form action="{{ public_ui_path('/ca/requests/certificates/') }}{{ certificate.id }}/replace" method="post" data-confirm-modal
+                      data-confirm-title="Replace {{ certificate.common_name }}?"
+                      data-confirm-message="Create a new managed request and retain the revoked serial in CRL history. Appliance files change only after global CA apply."
+                      data-confirm-label="Replace certificate">
+                  <input type="hidden" name="csrf" value="{{ csrf_token }}">
+                  <button class="button tiny" type="submit">Replace</button>
+                </form>
                 {% endif %}
               </td>
             </tr>

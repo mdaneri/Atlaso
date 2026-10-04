@@ -27,6 +27,7 @@ from atlaso.app.database import get_db
 from atlaso.app.models import (
     CaCertificate,
     CaProfile,
+    CaSettings,
     VaultEntry,
     VsphereKeyProvider,
     VsphereTrustedVcenter,
@@ -48,6 +49,7 @@ from atlaso.app.services.ca import (
     ca_certificate_can_edit,
     ca_certificate_to_dict,
     ca_profile_to_dict,
+    ensure_managed_certificate_rows,
     ensure_root_ca_material,
     join_multiline,
     safe_certificate_name,
@@ -117,6 +119,7 @@ class CertificateTrustUiDependencies:
     grid_error_response: Endpoint
     grid_request: Endpoint
     grid_saved_response: Endpoint
+    managed_ca_certificate_specs: Endpoint
     kms_context: Endpoint
     normalize_dns_hostname: Endpoint
     primary_listen_address: Endpoint
@@ -160,6 +163,7 @@ def build_routers(
     grid_error_response = dependencies.grid_error_response
     grid_request = dependencies.grid_request
     grid_saved_response = dependencies.grid_saved_response
+    managed_ca_certificate_specs = dependencies.managed_ca_certificate_specs
     kms_context = dependencies.kms_context
     normalize_dns_hostname = dependencies.normalize_dns_hostname
     primary_listen_address = dependencies.primary_listen_address
@@ -816,6 +820,83 @@ def build_routers(
             resource_type="ca_certificate",
             resource_id=str(certificate.id),
         )
+        return RedirectResponse(public_ui_path("/ca/requests"), status_code=303)
+
+    def _replace_revoked_managed_certificate(db: Session, *, certificate_id: int, actor: str) -> CaCertificate:
+        """Stage a successor while retaining the revoked serial and protected history.
+
+        Args:
+            db: Request transaction admitted before any certificate or desired-policy read.
+            certificate_id: Revoked active service-owned certificate to replace.
+            actor: Authorized certificate operator recorded in the atomic audit.
+        """
+        acquire_network_objects_write_lock(db)
+        db.expire_all()
+        certificate = db.get(CaCertificate, certificate_id, populate_existing=True)
+        if certificate is None:
+            raise HTTPException(status_code=404, detail="Certificate request not found.")
+        owner = certificate.managed_owner
+        if (not owner or owner.startswith("retired-revoked:") or certificate.status != "revoked"
+                or not certificate.serial_number or not certificate.revoked_at or not certificate.certificate_pem):
+            raise HTTPException(status_code=400, detail="Only an active revoked managed certificate can be replaced.")
+        settings = db.scalar(select(CaSettings))
+        specs = [spec for spec in managed_ca_certificate_specs(db, reconcile=False) if spec.owner == owner]
+        profiles = list(db.scalars(select(CaProfile)))
+        if (settings is None or not settings.enabled or len(specs) != 1
+                or not any(profile.name == specs[0].profile_name and profile.enabled for profile in profiles)):
+            raise HTTPException(status_code=400, detail="Enable the owning service and its CA profile before replacement.")
+        # Retain all revoked material and protect it from edit/delete. Free only
+        # the active service owner; subsequent automatic reconciliation targets its successor.
+        certificate.managed_owner = f"retired-revoked:{certificate.id}"
+        db.flush()
+        ensure_managed_certificate_rows(db, settings=settings, profiles=profiles, specs=specs)
+        successor = db.scalar(select(CaCertificate).where(CaCertificate.managed_owner == owner))
+        if successor is None:
+            raise HTTPException(status_code=400, detail="The replacement request could not be staged.")
+        record_audit(db, actor=actor, action="replace_revoked_managed_certificate", resource_type="ca_certificate",
+                     resource_id=str(successor.id), detail=f"Replaced owner {owner}; retained revoked certificate {certificate.id} serial {certificate.serial_number}.")
+        return successor
+
+    @ca_router.post("/ca/certificates/{certificate_id}/replace", response_model=None)
+    def replace_revoked_managed_certificate_from_portal(
+        request: Request, certificate_id: int, csrf: str = Form(...),
+        identity: Identity = Depends(require_session_identity), db: Session = Depends(get_db),
+    ) -> RedirectResponse:
+        """Stage an explicit managed replacement without changing appliance files.
+
+        Args:
+            request: Incoming management browser request.
+            certificate_id: Revoked managed certificate selected by the operator.
+            csrf: Validated CSRF token authorizing the request.
+            identity: Authenticated certificate workflow identity.
+            db: Request transaction retaining writer admission through the audit commit.
+        """
+        require_certificate_workflow_identity(identity)
+        verify_csrf(request, csrf)
+        _replace_revoked_managed_certificate(db, certificate_id=certificate_id, actor=identity.username)
+        return RedirectResponse("/ca/requests", status_code=303)
+
+    @public_router.post("/ca/requests/certificates/{certificate_id}/replace", response_model=None)
+    def replace_revoked_managed_certificate_from_portal_alias(
+        request: Request, certificate_id: int, csrf: str = Form(...),
+        identity: Identity | None = Depends(get_session_identity), db: Session = Depends(get_db),
+    ) -> RedirectResponse | HTMLResponse:
+        """Stage a replacement through the authorized public certificate portal.
+
+        Args:
+            request: Incoming public browser request.
+            certificate_id: Revoked managed certificate selected by the operator.
+            csrf: Validated CSRF token authorizing the request.
+            identity: Optional authenticated certificate workflow identity.
+            db: Request transaction retaining writer admission through the audit commit.
+        """
+        if not public_ui_request_allowed(request, db, "/ca/requests"):
+            raise HTTPException(status_code=404, detail="CA public service is not available on this interface")
+        if identity is None:
+            return ca_request_portal_login_response(request, status_code=401)
+        require_certificate_workflow_identity(identity)
+        verify_csrf(request, csrf)
+        _replace_revoked_managed_certificate(db, certificate_id=certificate_id, actor=identity.username)
         return RedirectResponse(public_ui_path("/ca/requests"), status_code=303)
 
     @ca_router.post("/ca/certificates/{certificate_id}/revoke", response_model=None)
@@ -2846,6 +2927,7 @@ def build_routers(
             "ca_request_portal_logout": ca_request_portal_logout,
             "_stage_ca_certificate_request": _stage_ca_certificate_request,
             "_revoke_ca_certificate": _revoke_ca_certificate,
+            "_replace_revoked_managed_certificate": _replace_revoked_managed_certificate,
             "submit_ca_request_from_portal": submit_ca_request_from_portal,
             "submit_ca_request_from_portal_alias": submit_ca_request_from_portal_alias,
             "revoke_ca_certificate_from_portal": revoke_ca_certificate_from_portal,
