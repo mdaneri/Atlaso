@@ -801,7 +801,10 @@ def test_oidc_alias_refresh_uses_only_effective_ipv6_listener(client, ipv6_enabl
             assert "listen [2001:db8::10]:443 ssl;" not in public_config
 
 
-@pytest.mark.parametrize("dynamic_failure", [None, "publication", "reload", "readback", "identity", "identity-storage", "identity-pxe"])
+@pytest.mark.parametrize("dynamic_failure", [
+    None, "publication", "reload", "readback", "identity", "identity-storage", "identity-pxe",
+    "identity-dns-edit", "identity-dns-create",
+])
 def test_management_handoff_dns_readback_failure_triggers_proven_recovery(client, monkeypatch, tmp_path, dynamic_failure):
     """Treat failed generated-DNS readback as handoff failure and recover.
 
@@ -825,6 +828,7 @@ def test_management_handoff_dns_readback_failure_triggers_proven_recovery(client
     )
     from atlaso.app.services import service_dns_readback
     from atlaso.app.services.service_dns_defaults import CA_PORTAL_DNS_DESCRIPTION
+    dns_publication_attempts = []
 
     class SuccessfulApplyAdapter:
         """Apply the candidate, then report a bounded rollback on recovery."""
@@ -864,12 +868,27 @@ def test_management_handoff_dns_readback_failure_triggers_proven_recovery(client
                         for key, value in (("esxi_pxe.boot.enabled", "true"), ("esxi_pxe.boot.hostname", "concurrent-pxe.example.internal"),
                                            ("esxi_pxe.boot.listen_interface", "dynamic0"), ("esxi_pxe.boot.listen_address", "192.0.2.11")):
                             ui.set_setting_value(other, key, value)
+                    elif dynamic_failure == "identity-dns-edit":
+                        generated = other.scalar(select(DnsRecord).where(
+                            DnsRecord.hostname == "ca.custom.example.internal",
+                            DnsRecord.record_type == "A",
+                            DnsRecord.address == "192.0.2.11",
+                            DnsRecord.description == CA_PORTAL_DNS_DESCRIPTION,
+                        ))
+                        assert generated is not None
+                        generated.enabled = False
+                    elif dynamic_failure == "identity-dns-create":
+                        other.add(DnsRecord(
+                            hostname="ca.custom.example.internal", record_type="A",
+                            address="192.0.2.99", description="Operator conflict", enabled=True,
+                        ))
                     else:
                         ui.get_appliance_settings_row(other).fqdn = "concurrent.example.internal"
                     other.flush()
-                    ui.refresh_interface_service_dns_aliases(other, actor=None)
-                    settings = ui.get_appliance_settings_row(other)
-                    ui.ensure_dns_for_appliance_settings(other, settings, previous_fqdn="atlaso.internal", actor=None)
+                    if dynamic_failure not in {"identity-dns-edit", "identity-dns-create"}:
+                        ui.refresh_interface_service_dns_aliases(other, actor=None)
+                        settings = ui.get_appliance_settings_row(other)
+                        ui.ensure_dns_for_appliance_settings(other, settings, previous_fqdn="atlaso.internal", actor=None)
                     other.commit()
             return AdapterResult(
                 command=["atlaso-helper", "management-handoff", "apply", manifest_path],
@@ -882,6 +901,7 @@ def test_management_handoff_dns_readback_failure_triggers_proven_recovery(client
             Args:
                 _path: Candidate configuration path supplied to the validation or apply callback.
             """
+            dns_publication_attempts.append(_path)
             assert not (dynamic_failure or "").startswith("identity"), "unreviewed identity must never reach DNS publication"
             return AdapterResult(command=["dnsmasq", "validate"], dry_run=False, returncode=0)
 
@@ -990,6 +1010,22 @@ def test_management_handoff_dns_readback_failure_triggers_proven_recovery(client
             owned = db.scalars(select(DnsRecord).where(DnsRecord.description == CA_PORTAL_DNS_DESCRIPTION,
                                                       DnsRecord.record_type == "A")).all()
             assert owned and {row.address for row in owned} == {"192.0.2.11"}
+            if dynamic_failure == "identity-dns-edit":
+                generated = db.scalar(select(DnsRecord).where(
+                    DnsRecord.hostname == "ca.custom.example.internal",
+                    DnsRecord.record_type == "A",
+                    DnsRecord.address == "192.0.2.11",
+                    DnsRecord.description == CA_PORTAL_DNS_DESCRIPTION,
+                ))
+                assert generated is not None and generated.enabled is False
+            elif dynamic_failure == "identity-dns-create":
+                concurrent_conflict = db.scalar(select(DnsRecord).where(
+                    DnsRecord.hostname == "ca.custom.example.internal",
+                    DnsRecord.record_type == "A",
+                    DnsRecord.address == "192.0.2.99",
+                    DnsRecord.description == "Operator conflict",
+                ))
+                assert concurrent_conflict is not None and concurrent_conflict.enabled is True
             assert db.get(Job, "job_dynamic_dns_failure").status == "failed"
 
     assert group["success"] is False
@@ -1001,6 +1037,8 @@ def test_management_handoff_dns_readback_failure_triggers_proven_recovery(client
         "identity": "Service DNS identity changed during network readiness; resubmit the changes.",
         "identity-storage": "Service DNS identity changed during network readiness; resubmit the changes.",
         "identity-pxe": "Service DNS identity changed during network readiness; resubmit the changes.",
+        "identity-dns-edit": "Service DNS identity changed during network readiness; resubmit the changes.",
+        "identity-dns-create": "Service DNS identity changed during network readiness; resubmit the changes.",
     }.get(dynamic_failure, "controlled DNS readback failure")
     assert group["management_handoff"]["error"] == expected_error
     assert group["management_handoff"]["rolled_back"] is True
@@ -1009,6 +1047,9 @@ def test_management_handoff_dns_readback_failure_triggers_proven_recovery(client
         for command in group["commands"]
     )
     assert all(row["success"] is False and row["rolled_back"] is True for row in results)
+    if (dynamic_failure or "").startswith("identity"):
+        assert dns_publication_attempts == []
+        assert "verified_service_dns_records" not in units["dnsmasq"]
 
 
 def _run_static_identity_race_handoff(client, monkeypatch, tmp_path, *, concurrent_identity_edit, missing_replacement, nss_failure=False):

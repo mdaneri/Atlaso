@@ -7806,9 +7806,15 @@ def service_dns_identity_snapshot(db: Session) -> list[tuple[Any, ...]]:
     """Capture service identity inputs to reject concurrent DNS publication changes.
 
     Args:
-        db: Session used to read singleton listener identities.
+        db: Session used to read listener identities and editable DNS inventory.
     """
-    rows = []
+    # Reconciliation reads live DNS rows to decide ownership and conflicts.
+    # Capture their editable identity before native readiness so neither new
+    # conflicts nor edits can be consumed by the submitted publication.
+    rows = [("DnsRecord", *row) for row in db.execute(select(
+        DnsRecord.id, DnsRecord.hostname, DnsRecord.record_type, DnsRecord.address,
+        DnsRecord.record_data_json, DnsRecord.description, DnsRecord.enabled,
+    ).order_by(DnsRecord.id))]
     for model in (DnsSettings, CaSettings, KmsSettings, LdapSettings, OidcProviderSettings, NtpSettings, VcfOfflineDepotSettings, VcfPrivateRegistrySettings):
         for settings in db.scalars(select(model).order_by(model.id)):
             rows.append((model.__name__, settings.id, settings.enabled,
