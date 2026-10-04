@@ -2404,6 +2404,7 @@ def test_service_dns_target_naming_converts_owned_records_between_ip_and_interfa
                 role="access",
                 mode="access",
                 ip_cidr="192.168.90.1/24",
+                ipv6_enabled=True,
                 ipv6_cidr="2001:db8::1/64",
                 admin_state="up",
                 oper_state="up",
@@ -9816,6 +9817,7 @@ def test_public_ca_root_page_is_unauthenticated(client):
         eth2 = db.execute(select(PhysicalInterface).where(PhysicalInterface.name == "eth2")).scalar_one()
         eth2.role = "access"
         eth2.ip_cidr = "192.168.87.32/24"
+        eth2.ipv6_enabled = True
         eth2.ipv6_cidr = "fd00:87::32/64"
         db.commit()
 

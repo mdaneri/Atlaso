@@ -46,9 +46,14 @@ def public_service_interface_entries(interfaces: list[PhysicalInterface], vlans:
     """
     entries: list[dict[str, Any]] = []
     for interface in interfaces:
-        if interface.oper_state == "missing":
+        if (
+            interface.oper_state == "missing"
+            or interface.admin_state == "down"
+        ):
             continue
-        entries.extend(_entries_for_target(interface.name, interface.role, interface.ip_cidr, interface.ipv6_cidr))
+        ipv4_cidr = interface.host_ip_cidr if interface.ipv4_method == "dhcp" else interface.ip_cidr
+        ipv6_cidr = (interface.ipv6_cidr or interface.host_ipv6_cidr) if interface.ipv6_enabled else None
+        entries.extend(_entries_for_target(interface.name, interface.role, ipv4_cidr, ipv6_cidr))
     for vlan in vlans:
         if not vlan.enabled:
             continue
