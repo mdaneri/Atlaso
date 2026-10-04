@@ -1000,6 +1000,7 @@ def reconcile_host_physical_interfaces(
     discovered: list[HostPhysicalInterface],
     *,
     renames: dict[str, str] | None = None,
+    applied_ipv6_modes: dict[str, tuple[bool, str | None]] | None = None,
 ) -> list[PhysicalInterface]:
     """Return reconcile host physical interfaces.
 
@@ -1007,6 +1008,7 @@ def reconcile_host_physical_interfaces(
         interfaces: Interfaces consumed by reconcile host physical interfaces.
         discovered: Discovered consumed by reconcile host physical interfaces.
         renames: Renames consumed by reconcile host physical interfaces.
+        applied_ipv6_modes: Last-applied IPv6 controls keyed by stable physical MAC.
     """
     now = utcnow()
     by_name = {interface.name: interface for interface in interfaces}
@@ -1069,11 +1071,13 @@ def reconcile_host_physical_interfaces(
         interface.host_ip_cidr = (
             host.host_dhcp_ip_cidr if normalize_ipv4_method(interface.ipv4_method) == "dhcp" else host.host_ip_cidr
         )
-        interface.host_ipv6_cidr = (
-            (host.host_dynamic_ipv6_cidr if not interface.ipv6_cidr else host.host_ipv6_cidr)
-            if interface.ipv6_enabled else None
+        ipv6_enabled, ipv6_cidr = (applied_ipv6_modes or {}).get(
+            host_mac, (bool(interface.ipv6_enabled), interface.ipv6_cidr),
         )
-        interface.host_ipv6_cidrs = list(native_automatic_ipv6_cidrs(host)) if interface.ipv6_enabled and not interface.ipv6_cidr else []
+        interface.host_ipv6_cidr = (
+            (host.host_dynamic_ipv6_cidr if not ipv6_cidr else host.host_ipv6_cidr) if ipv6_enabled else None
+        )
+        interface.host_ipv6_cidrs = list(native_automatic_ipv6_cidrs(host)) if ipv6_enabled and not ipv6_cidr else []
         interface.host_mtu = host.host_mtu
         interface.host_admin_state = host.host_admin_state
         interface.oper_state = host.oper_state
@@ -1118,6 +1122,7 @@ def sync_host_physical_interfaces(db: Session) -> tuple[list[PhysicalInterface],
     Args:
         db: Active database session.
     """
+    from atlaso.app.services.management_bindings import applied_physical_ipv6_modes
     from atlaso.app.services.network_objects import acquire_network_objects_write_lock
 
     acquire_network_objects_write_lock(db)
@@ -1130,7 +1135,12 @@ def sync_host_physical_interfaces(db: Session) -> tuple[list[PhysicalInterface],
         select(PhysicalInterface).order_by(PhysicalInterface.name).execution_options(populate_existing=True)
     ).scalars().all()
     renames: dict[str, str] = {}
-    reconciled = reconcile_host_physical_interfaces(interfaces, discovered, renames=renames)
+    applied_modes = applied_physical_ipv6_modes(db)
+    ipv6_modes_by_mac = {_mac_key(interface.mac_address): applied_modes[interface.name]
+                         for interface in interfaces if interface.name in applied_modes}
+    reconciled = reconcile_host_physical_interfaces(
+        interfaces, discovered, renames=renames, applied_ipv6_modes=ipv6_modes_by_mac,
+    )
     name_changes = _physical_interface_name_changes(reconciled)
     final_renames = {old: new for _interface, old, new in name_changes}
     missing_renames = {old: new for old, new in final_renames.items() if new.startswith("missing_")}

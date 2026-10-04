@@ -20307,23 +20307,28 @@ def test_ca_policy_writers_wait_for_bound_recovery(client, monkeypatch, operatio
 
 
 @pytest.mark.parametrize("pending", ["disabled", "static"])
-def test_applied_automatic_ipv6_binding_ignores_pending_family_edits(client, pending):
+@pytest.mark.parametrize("rename", [False, True])
+def test_applied_automatic_ipv6_binding_ignores_pending_family_edits(client, monkeypatch, pending, rename):
     """Keep active prefix-overlap listeners classified until Network Apply changes their mode.
 
     Args:
         client: Initialized appliance database and application.
+        monkeypatch: Supply preferred native prefix-overlap inventory.
         pending: Unapplied IPv6 disable or static-address intent.
+        rename: Kernel interface rename retaining the applied physical MAC.
     """
     from sqlalchemy import select
 
     from atlaso.app import ui
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import PhysicalInterface
+    from atlaso.app.services import networking
     from atlaso.app.services.management_bindings import applied_management_bindings
 
     with SessionLocal() as db:
         interface = db.scalar(select(PhysicalInterface).where(PhysicalInterface.name == "eth0"))
         interface.role = "management"
+        interface.desired_state_source = "user"
         interface.oper_state = "up"
         interface.ipv6_enabled = pending != "disabled"
         interface.ipv6_cidr = "2001:db8:9::7/64" if pending == "static" else None
@@ -20338,8 +20343,29 @@ interface=eth0
   ipv6_enabled=true
 """}})
         db.commit()
+        observations = [networking.HostPhysicalInterface(
+            name="pr899-renamed" if rename and row.name == "eth0" else row.name, mac_address=row.mac_address, driver=None, speed=None,
+            host_ip_cidr=row.host_ip_cidr, host_mtu=1500, host_admin_state="up", oper_state="up",
+            host_ipv6_cidr="2001:db8::7/64" if row.name == "eth0" else None,
+            host_dynamic_ipv6_cidr="2001:db8::7/64" if row.name == "eth0" else None,
+            host_dynamic_ipv6_cidrs=("2001:db8::7/64", "2001:db8:1::7/64") if row.name == "eth0" else (),
+        ) for row in db.scalars(select(PhysicalInterface)).all()]
+        monkeypatch.setattr(networking, "discover_host_physical_interfaces", lambda **kwargs: observations)
+        networking.sync_host_physical_interfaces(db)
+        assert interface.host_ipv6_cidrs == ["2001:db8::7/64", "2001:db8:1::7/64"]
+        assert interface.ipv6_enabled is (pending != "disabled")
+        assert interface.ipv6_cidr == ("2001:db8:9::7/64" if pending == "static" else None)
         assert {row["address"] for row in applied_management_bindings(db)} == {"2001:db8::7", "2001:db8:1::7"}
         for address in ("2001:db8::7", "2001:db8:1::7"):
             assert ui.request_host_interface_binding(address, db)["management_ui"] is True
         pending_binding = ui.request_host_interface_binding("2001:db8:9::7", db)
         assert pending_binding is None or pending_binding["management_ui"] is False
+
+        # Applying the disabled mode then clears both observations on the next inventory pass.
+        baseline = ui.load_appliance_apply_baselines(db)
+        baseline["network"]["config_preview"] = baseline["network"]["config_preview"].replace("ipv6_enabled=true", "ipv6_enabled=false")
+        ui.save_appliance_apply_baselines(db, baseline)
+        db.commit()
+        networking.sync_host_physical_interfaces(db)
+        assert interface.host_ipv6_cidrs == [] and interface.host_ipv6_cidr is None
+        assert applied_management_bindings(db) == []
