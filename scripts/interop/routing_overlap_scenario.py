@@ -25,6 +25,7 @@ from scripts.interop.routing_overlap import (
     verify_source_rules,
 )
 from scripts.interop.routing_overlap_transport import FixtureHttpClient, TLSChannel
+from scripts.interop.time_source_guest import FormParser
 
 FIELDS = (
     "role", "mode", "ipv4_method", "ip_cidr", "gateway", "ipv6_enabled",
@@ -473,6 +474,74 @@ def _settle_dependent_dns(client: FixtureHttpClient) -> dict[str, Any]:
     raise AssertionError("bounded DNS setup loop did not terminate")
 
 
+class _PrivateClockForm(FormParser):
+    """Read the supported NTP form and its positively available Tools option."""
+
+    def __init__(self) -> None:
+        """Retain successful controls without changing unrelated time settings."""
+        super().__init__()
+        self.tools_options: list[bool] = []
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        """Observe capability before the shared parser consumes the option.
+
+        Args:
+            tag: Opening HTML tag.
+            attrs: Decoded attribute names and values.
+        """
+        attributes = dict(attrs)
+        if (tag == "option" and self.select is not None and self.select["name"] == "time_source"
+                and attributes.get("value") == "vmware_tools"):
+            self.tools_options.append("disabled" not in attributes)
+        super().handle_starttag(tag, attrs)
+
+
+def _prepare_private_clock(client: FixtureHttpClient) -> dict[str, Any]:
+    """Select supported Tools clock authority before the isolated clone's baseline Apply.
+
+    Args:
+        client: Authenticated pinned private fixture HTTPS client.
+    """
+    review = client.json_request("GET", "/ui/management/appliance-apply/review")
+    if review.get("initial_apply_required") is not True or review.get("active_task") is not None:
+        raise OverlapPrerequisiteError("private clock preparation requires a fresh idle baseline")
+
+    def read_form() -> _PrivateClockForm:
+        """Read successful controls from the canonical authenticated NTP page."""
+        status, body, _headers = client.request("GET", "/ui/management/ntp")
+        parser = _PrivateClockForm()
+        parser.feed(body)
+        if (status != 200 or parser.form_action != "/ui/management/ntp/settings"
+                or parser.tools_options != [True]):
+            raise OverlapPrerequisiteError("private fixture VMware Tools clock capability is unavailable")
+        return parser
+
+    original = read_form().fields
+    values = dict(original)
+    if ("enabled" in values or "nts_server_enabled" in values or not values.get("csrf")
+            or values.get("time_source") not in {"ntp_client", "vmware_tools"}):
+        raise OverlapPrerequisiteError("private clock preparation requires disabled NTP server mode")
+    if values["time_source"] != "vmware_tools":
+        fields = [(key, "vmware_tools" if key == "time_source" else value) for key, value in original]
+        try:
+            status, _body, _headers = client.request(
+                "POST", "/ui/management/ntp/settings", form=fields,
+                headers={"X-Atlaso-Autosave": "1"}, follow_redirects=False,
+            )
+        except Exception:  # noqa: BLE001 - never retry an uncertain desired-state save or expose its payload.
+            raise ApplyOutcomeUnknown("private clock save outcome unknown; preserve fixture") from None
+        if status != 200:
+            if not 400 <= status < 500:
+                raise ApplyOutcomeUnknown("private clock save response is ambiguous; preserve fixture")
+            raise OverlapPrerequisiteError("private fixture clock desired-state save was refused")
+    after = read_form().fields
+    expected = sorted((key, "vmware_tools" if key == "time_source" else value)
+                      for key, value in original if key != "csrf")
+    if sorted((key, value) for key, value in after if key != "csrf") != expected:
+        raise OverlapPrerequisiteError("private clock desired-state readback changed unrelated settings")
+    return {"desired_source": "vmware_tools", "applied_by": "initial-global-Apply"}
+
+
 def _setup(client: FixtureHttpClient) -> dict[str, Any]:
     """Establish the fresh owned clone's baseline through reviewed global Apply.
 
@@ -801,7 +870,11 @@ def _run_authenticated(
         if ownership_check is None:
             raise OverlapPrerequisiteError("same-address acceptance requires dedicated-host proof")
         ownership_check()
+        clock_preparation = _prepare_private_clock(client)
+        ownership_check()
     setup = _setup(client)
+    if same_address_only:
+        setup["private_clock_preparation"] = clock_preparation
     clean = setup.get("clean", setup.get("already_applied"))
     if not isinstance(clean, dict) or clean.get("pending_count") != 0:
         raise OverlapPrerequisiteError("scenario setup did not produce a clean applied baseline")

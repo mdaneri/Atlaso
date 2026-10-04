@@ -494,6 +494,9 @@ administrator over the separately pinned SSH connection, then use a bounded priv
 root credential. The exchange checks terminal echo before sending that credential over encrypted stdin and requires
 effective root identity before executing the read-only observation. Root SSH remains disabled; the fixture does not
 change SSH policy or install a passwordless-sudo rule.
+Before initial baseline Apply, the isolated fresh clone selects the positively available VMware Tools clock source
+through the supported NTP form, preserving other NTP settings and keeping server mode disabled. Global Apply must
+verify that clock authority and synchronization; the fixture cannot depend on external upstream NTP reachability.
 The mode keeps management IPv6 disabled and runs only the IPv4 static-to-DHCP handoff at `192.0.2.10`.
 It records the live server lease immediately before DHCP activation and requires the installed helper's independent
 current client-lease proof, exact native interface/address identity, source routing rules, successful global Apply,
