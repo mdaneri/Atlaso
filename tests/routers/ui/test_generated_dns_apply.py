@@ -1019,11 +1019,12 @@ def _run_static_identity_race_handoff(client, monkeypatch, tmp_path, *, concurre
         monkeypatch.setattr(service_dns_readback, "verify_service_dns_records",
                             lambda records, **_kwargs: observed.append([dict(record) for record in records]))
 
-        def fail_nss(_records):
+        def fail_nss(_records, **_kwargs):
             """Raise the configured local name-service lookup failure.
 
             Args:
                 _records: DNS records supplied to the mocked resolver.
+                **_kwargs: Captured prior ownership passed to the resolver.
             """
             raise ValueError("Controlled stale NSS service DNS answer.")
 
@@ -1447,7 +1448,7 @@ def test_verified_depot_moves_update_separately_selected_captured_config(client,
         readback_calls = []
         monkeypatch.setattr(service_dns_readback, "verify_service_dns_records",
                             lambda records, **kwargs: readback_calls.append((records, kwargs)))
-        monkeypatch.setattr(service_dns_readback, "verify_service_dns_nss", lambda _records: None)
+        monkeypatch.setattr(service_dns_readback, "verify_service_dns_nss", lambda _records, **_kwargs: None)
         group, _results = ui.execute_management_handoff(
             units, job_id="job_depot853abc", adapter=Adapter(), db=db, include_dnsmasq=True,
         )
@@ -1498,14 +1499,14 @@ def test_handoff_readback_requires_captured_authoritative_and_recursive_paths(mo
 
     monkeypatch.setattr(service_dns_readback, "verify_service_dns_records", verify)
     nss_calls = []
-    monkeypatch.setattr(service_dns_readback, "verify_service_dns_nss", lambda records: nss_calls.append(records))
+    monkeypatch.setattr(service_dns_readback, "verify_service_dns_nss", lambda records, **kwargs: nss_calls.append((records, kwargs)))
     if failed_listener:
         with pytest.raises(ValueError, match="controlled listener failure"):
             ui.verify_handoff_service_dns(desired, prior, config, authoritative=True)
     else:
         ui.verify_handoff_service_dns(desired, prior, config, authoritative=True)
         assert len(calls) == 3
-        assert nss_calls == [desired]
+        assert nss_calls == [(desired, {"prior_records": prior})]
         assert calls[0] == (desired, {"prior_records": prior})
         assert calls[1] == (desired, {"nameserver": "192.0.2.21", "prior_records": prior,
                                      "require_authoritative": True})

@@ -681,6 +681,125 @@ def test_nss_readback_checks_direct_and_cname_names_against_captured_addresses(m
                for call in calls)
 
 
+def test_nss_readback_accepts_absence_for_retired_owned_names(monkeypatch):
+    """Verify retired direct and alias names are queried and may be absent.
+
+    Args:
+        monkeypatch: Pytest fixture for replacing dependencies with controlled test doubles.
+    """
+    results = {
+        "current.example.internal": SimpleNamespace(
+            returncode=0, stdout="192.0.2.20 current.example.internal\n", stderr="",
+        ),
+        "retired.example.internal": SimpleNamespace(returncode=2, stdout="", stderr=""),
+        "old-alias.example.internal": SimpleNamespace(returncode=2, stdout="", stderr=""),
+    }
+    calls = []
+
+    def run(args, **kwargs):
+        """Return the controlled getent response.
+
+        Args:
+            args: Argument list passed to the mocked getent command.
+            **kwargs: Keyword arguments forwarded to the wrapped operation.
+        """
+        calls.append((args, kwargs))
+        return results[args[2]]
+
+    monkeypatch.setattr(dns_readback.subprocess, "run", run)
+    dns_readback.verify_service_dns_nss(
+        [{"hostname": "current.example.internal", "record_type": "A", "address": "192.0.2.20"}],
+        prior_records=[
+            {"hostname": "retired.example.internal", "record_type": "A", "address": "192.0.2.10"},
+            {"hostname": "old-alias.example.internal", "record_type": "CNAME", "address": "current.example.internal"},
+        ],
+    )
+    assert [call[0] for call in calls] == [
+        ["getent", "hosts", "current.example.internal"],
+        ["getent", "hosts", "old-alias.example.internal"],
+        ["getent", "hosts", "retired.example.internal"],
+    ]
+
+
+@pytest.mark.parametrize(
+    "prior_records",
+    [
+        [{"hostname": "retired.example.internal", "record_type": "A", "address": "192.0.2.10"}],
+        [{"hostname": "retired.example.internal", "record_type": "CNAME", "address": "old-target.example.internal"}],
+    ],
+    ids=["direct-name", "retired-alias"],
+)
+def test_nss_readback_rejects_retired_owned_names_that_still_resolve(monkeypatch, prior_records):
+    """Reject stale addresses returned for a previously owned retired name.
+
+    Args:
+        monkeypatch: Pytest fixture for replacing dependencies with controlled test doubles.
+        prior_records: Previously owned records whose owner has been retired.
+    """
+    monkeypatch.setattr(
+        dns_readback.subprocess,
+        "run",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            returncode=0, stdout="192.0.2.10 retired.example.internal\n", stderr="",
+        ),
+    )
+    with pytest.raises(ValueError, match="Retired appliance NSS name.*still resolves"):
+        dns_readback.verify_service_dns_nss([], prior_records=prior_records)
+
+
+@pytest.mark.parametrize(
+    "result",
+    [
+        SimpleNamespace(returncode=2, stdout="192.0.2.10 retired.example.internal\n", stderr=""),
+        SimpleNamespace(returncode=2, stdout="", stderr="lookup backend failure"),
+        SimpleNamespace(returncode=1, stdout="", stderr="lookup backend failure"),
+    ],
+)
+def test_nss_readback_does_not_treat_retired_lookup_errors_as_absence(monkeypatch, result):
+    """Only a clean getent not-found result proves an owner is absent.
+
+    Args:
+        monkeypatch: Pytest fixture for replacing dependencies with controlled test doubles.
+        result: Resolver result returned by the mocked command.
+    """
+    monkeypatch.setattr(dns_readback.subprocess, "run", lambda *_args, **_kwargs: result)
+    with pytest.raises(ValueError, match="could not verify retired-name absence"):
+        dns_readback.verify_service_dns_nss(
+            [],
+            prior_records=[{"hostname": "retired.example.internal", "record_type": "A", "address": "192.0.2.10"}],
+        )
+
+
+@pytest.mark.parametrize("stale", [False, True], ids=["replacement", "stale-replacement"])
+def test_nss_readback_checks_replaced_cname_alias_against_new_addresses(monkeypatch, stale):
+    """A formerly owned alias may resolve only to its captured replacement chain.
+
+    Args:
+        monkeypatch: Pytest fixture for replacing dependencies with controlled test doubles.
+        stale: Whether getent returns the retired alias address.
+    """
+    alias_address = "192.0.2.10" if stale else "192.0.2.20"
+    outputs = {
+        "alias.example.internal": SimpleNamespace(
+            returncode=0, stdout=f"{alias_address} alias.example.internal\n", stderr="",
+        ),
+        "target.example.internal": SimpleNamespace(
+            returncode=0, stdout="192.0.2.20 target.example.internal\n", stderr="",
+        ),
+    }
+    monkeypatch.setattr(dns_readback.subprocess, "run", lambda args, **_kwargs: outputs[args[2]])
+    records = [
+        {"hostname": "alias.example.internal", "record_type": "CNAME", "address": "target.example.internal"},
+        {"hostname": "target.example.internal", "record_type": "A", "address": "192.0.2.20"},
+    ]
+    prior = [{"hostname": "alias.example.internal", "record_type": "CNAME", "address": "old-target.example.internal"}]
+    if stale:
+        with pytest.raises(ValueError, match="unexpected address"):
+            dns_readback.verify_service_dns_nss(records, prior_records=prior)
+    else:
+        dns_readback.verify_service_dns_nss(records, prior_records=prior)
+
+
 @pytest.mark.parametrize(
     "result, message",
     [

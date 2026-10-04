@@ -7594,8 +7594,75 @@ def network_dynamic_public_bindings(units_by_id: dict[str, dict[str, Any]]) -> l
     return public_dynamic_bindings
 
 
+def network_dynamic_service_listener_moves(db: Session, units_by_id: dict[str, dict[str, Any]]) -> list[dict[str, str]]:
+    """Capture applied dynamic service listeners independently of DNS ownership.
+
+    Args:
+        db: Session containing applied service baselines and interface observations.
+        units_by_id: Reviewed Network intent and captured service units.
+    """
+    network = units_by_id.get("network", {})
+    if not network.get("changed"):
+        return []
+    rows = network_interface_entries(str(network.get("raw_config_preview") or network.get("config_preview") or ""))
+    baselines = load_appliance_apply_baselines(db)
+    address_sources = {option["name"]: option["addresses"] for option in service_bind_options(db)}
+    moves = []
+    for service in ("ntpd", "ldap", "kms", "vcf_offline_depot"):
+        content = str(baselines.get(service, {}).get("config_preview") or "")
+        interfaces: list[str] = []
+        addresses: list[str] = []
+        if service == "ntpd":
+            if "# Atlaso NTP enabled: true" not in content.splitlines():
+                continue
+            interfaces = next((split_interfaces(line.partition(":")[2]) for line in content.splitlines()
+                               if line.startswith("# Atlaso NTP listen interfaces:")), [])
+            addresses = [line.split()[2] for line in content.splitlines()
+                         if len(line.split()) == 3 and line.split()[:2] == ["interface", "listen"]]
+        elif service == "vcf_offline_depot":
+            interfaces = next((split_interfaces(line.partition(":")[2]) for line in content.splitlines()
+                               if line.startswith("# Listen interfaces:")), [])
+            addresses = [match.group(1).strip("[]") for match in re.finditer(
+                r"\blisten\s+(\[[0-9a-fA-F:.]+\]|[0-9.]+):[0-9]+", content,
+            )]
+        elif content:
+            # Applied comparison previews may contain non-JSON redaction markers;
+            # parse only the public binding fields, preserving all other text.
+            service_content = content.partition('"service":')[2] if service == "ldap" else content
+            enabled = re.search(r'"enabled"\s*:\s*(true|false)\b', service_content)
+            if enabled is None or enabled.group(1) != "true":
+                continue
+            if service == "ldap":
+                fields = {}
+                for key in ("listen_interface", "listen_address"):
+                    match = re.search(r'"' + key + r'"\s*:\s*("(?:\\.|[^"\\])*")', content)
+                    fields[key] = json.loads(match.group(1)) if match else ""
+                interfaces = split_interfaces(fields["listen_interface"])
+                addresses = split_addresses(fields["listen_address"])
+            else:
+                match = re.search(r'"addresses"\s*:\s*(\[[^\]]*\])', content)
+                addresses = json.loads(match.group(1)) if match else []
+        if interfaces and not any(row["name"] in interfaces for row in rows):
+            # Legacy applied names can precede MAC-based startup retargeting.
+            interfaces = []
+        for value in dict.fromkeys(addresses):
+            try:
+                address = str(ip_address(value))
+            except ValueError:
+                continue
+            matches = [row for row in rows if row.get("admin_state") == "up"
+                       and (row["name"] in interfaces if interfaces else True)
+                       and (len(interfaces) == 1 or address in address_sources.get(row["name"], []))
+                       and (row.get("ipv4_method") == "dhcp" if ip_address(address).version == 4
+                            else row.get("ipv6_enabled") == "true" and not row.get("ipv6_cidr"))]
+            if len(matches) == 1:
+                moves.append({"service": service, "interface": matches[0]["name"],
+                              "old_address": address, "new_address": address})
+    return moves
+
+
 def network_listener_handoff_required(db: Session, units_by_id: dict[str, dict[str, Any]]) -> bool:
-    """Require readiness for generated DNS or active dynamic Public Services.
+    """Require readiness for generated DNS or active dynamic service listeners.
 
     Args:
         db: Session holding the applied DNS ownership baseline.
@@ -7604,6 +7671,7 @@ def network_listener_handoff_required(db: Session, units_by_id: dict[str, dict[s
     return bool(
         network_generated_dns_unit(db, units_by_id) is not None
         or (units_by_id.get("network", {}).get("changed") and network_dynamic_public_bindings(units_by_id))
+        or network_dynamic_service_listener_moves(db, units_by_id)
     )
 
 
@@ -15313,6 +15381,13 @@ def execute_management_handoff(
                          if dnsmasq is not None else [])
     previous_paths = list(network.get("previous_management_paths") or [])
     public_dynamic_bindings = network_dynamic_public_bindings(units_by_id)
+    listener_moves = list((dnsmasq or {}).get("listener_address_moves", []))
+    for move in network_dynamic_service_listener_moves(db, units_by_id):
+        if not any((existing["service"], existing["old_address"]) == (move["service"], move["old_address"])
+                   for existing in listener_moves):
+            listener_moves.append(move)
+    dynamic_listener_sources = {binding["interface"] for binding in public_dynamic_bindings}
+    dynamic_listener_sources.update(move["interface"] for move in listener_moves if move.get("interface"))
     previous_addresses: list[str] = []
     previous_interfaces: list[str] = []
     previous_parent_interfaces: list[str] = []
@@ -15410,7 +15485,7 @@ def execute_management_handoff(
                 "nat_config_path": nat_path,
                 "dnsmasq_config_path": dnsmasq_path,
                 "service_dns_config_path": service_dns_path,
-                "listener_address_moves": (dnsmasq or {}).get("listener_address_moves", []),
+                "listener_address_moves": listener_moves,
                 "previous_management_interfaces": previous_interfaces,
                 "previous_management_parent_interfaces": previous_parent_interfaces,
                 "previous_management_addresses": list(dict.fromkeys(previous_addresses)),
@@ -15483,6 +15558,53 @@ def execute_management_handoff(
             succeeded = False
             recovery_result = adapter.recover_management_handoff()
             evidence = {**evidence, "failing_layer": "Public Services dynamic listener readback", "error": str(exc)}
+    if succeeded and (dynamic_listener_sources or listener_moves) and not adapter.dry_run:
+        try:
+            verified_moves = evidence.get("listener_address_moves", [])
+            if {(move["service"], move["old_address"]) for move in verified_moves} != {
+                (move["service"], move["old_address"]) for move in listener_moves
+            }:
+                raise ValueError("Dynamic service listener evidence is incomplete.")
+            if dynamic_listener_sources:
+                refresh_service_dns_effective_observations(
+                    db, network["raw_config_preview"], evidence, source_interfaces=dynamic_listener_sources,
+                )
+            listener_baselines = projected_handoff_listener_baselines(
+                baselines, units_by_id, verified_moves,
+            )
+            depot_moves = [move for move in evidence.get("listener_address_moves", [])
+                           if move["service"] == "vcf_offline_depot"]
+            if depot_moves and "vcf_offline_depot" in units_by_id:
+                # A separately selected Depot step must execute its captured
+                # pending edits on the verified address, not rebind the old one.
+                depot = units_by_id["vcf_offline_depot"]
+                captured_addresses = {
+                    move["old_address"]: move["new_address"]
+                    for move in listener_moves
+                    if move["service"] == "vcf_offline_depot"
+                }
+                captured_moves = [
+                    {**move, "old_address": captured_addresses.get(move["old_address"], move["old_address"])}
+                    for move in depot_moves
+                ]
+                depot["context"] = {
+                    **depot["context"],
+                    "vcf_depot_https_config_preview": projected_depot_listener_config(
+                        depot["context"]["vcf_depot_https_config_preview"], captured_moves,
+                    ),
+                }
+                for key in ("config_preview", "raw_config_preview"):
+                    depot[key] = projected_depot_listener_config(depot[key], captured_moves)
+                depot["snapshot_hash"] = appliance_snapshot_hash({
+                    "unit_id": depot["id"], "summary": depot["summary"],
+                    "config_path": depot["config_path"], "config_preview": depot["config_preview"],
+                    "snapshot_marker": depot.get("snapshot_marker"),
+                })
+        except (OSError, ValueError) as exc:
+            db.rollback()
+            succeeded = False
+            recovery_result = adapter.recover_management_handoff()
+            evidence = {**evidence, "failing_layer": "dynamic listener address readback", "error": str(exc)}
     if succeeded and dnsmasq is not None and not adapter.dry_run:
         if dnsmasq.get("applied_dns_enabled", dnsmasq["context"]["dns_settings"].enabled):
             try:
@@ -15557,36 +15679,8 @@ def execute_management_handoff(
                 listener_baselines = projected_handoff_listener_baselines(
                     baselines, units_by_id, evidence.get("listener_address_moves", []),
                 )
-                depot_moves = [move for move in evidence.get("listener_address_moves", [])
-                               if move["service"] == "vcf_offline_depot"]
-                if depot_moves and "vcf_offline_depot" in units_by_id:
-                    # A separately selected Depot step must execute its captured
-                    # pending edits on the verified address, not rebind the old one.
-                    depot = units_by_id["vcf_offline_depot"]
-                    captured_addresses = {
-                        move["old_address"]: move["new_address"]
-                        for move in dnsmasq.get("listener_address_moves", [])
-                        if move["service"] == "vcf_offline_depot"
-                    }
-                    captured_moves = [
-                        {**move, "old_address": captured_addresses.get(move["old_address"], move["old_address"])}
-                        for move in depot_moves
-                    ]
-                    depot["context"] = {
-                        **depot["context"],
-                        "vcf_depot_https_config_preview": projected_depot_listener_config(
-                            depot["context"]["vcf_depot_https_config_preview"], captured_moves,
-                        ),
-                    }
-                    for key in ("config_preview", "raw_config_preview"):
-                        depot[key] = projected_depot_listener_config(depot[key], captured_moves)
-                    depot["snapshot_hash"] = appliance_snapshot_hash({
-                        "unit_id": depot["id"], "summary": depot["summary"],
-                        "config_path": depot["config_path"], "config_preview": depot["config_preview"],
-                        "snapshot_marker": depot.get("snapshot_marker"),
-                    })
             except (OSError, ValueError) as exc:
-                if dynamic_paths:
+                if dynamic_paths or dynamic_listener_sources:
                     # The runner committed the running steps before handoff.
                     # Discard only this uncommitted observation/reconciliation
                     # transaction before it records and commits the failure.
@@ -15708,7 +15802,7 @@ def verify_handoff_service_dns(
     )
 
     verify_service_dns_records(records, prior_records=prior_records)
-    verify_service_dns_nss(records)
+    verify_service_dns_nss(records, prior_records=prior_records)
     if not authoritative:
         return
     listeners = {line.partition("=")[2] for line in config.splitlines()
@@ -15843,13 +15937,20 @@ def projected_handoff_listener_baselines(
                         lines[index] = prefix + ": " + ", ".join(new if value.strip() == old else value.strip()
                                                                for value in values.split(","))
             content = "\n".join(lines) + ("\n" if content.endswith("\n") else "")
+        elif service == "ldap":
+            match = re.search(r'("listen_address"\s*:\s*)("(?:\\.|[^"\\])*")', content)
+            if match is None:
+                raise ValueError("Applied LDAP baseline listener address is missing.")
+            addresses = split_addresses(json.loads(match.group(2)))
+            for move in service_moves:
+                if addresses.count(move["old_address"]) != 1:
+                    raise ValueError("Applied listener baseline address is missing or ambiguous.")
+                addresses[addresses.index(move["old_address"])] = move["new_address"]
+            content = content[:match.start(2)] + json.dumps("\n".join(addresses)) + content[match.end(2):]
         else:
             try:
                 payload = json.loads(content)
-                if service == "kms":
-                    addresses = payload["listen"]["addresses"]
-                else:
-                    addresses = split_addresses(payload["service"]["listen_address"])
+                addresses = payload["listen"]["addresses"]
                 if not isinstance(addresses, list) or not all(isinstance(address, str) for address in addresses):
                     raise ValueError("Applied listener baseline address list is invalid.")
             except (KeyError, TypeError, AttributeError) as exc:
@@ -15858,8 +15959,6 @@ def projected_handoff_listener_baselines(
                 if addresses.count(move["old_address"]) != 1:
                     raise ValueError("Applied listener baseline address is missing or ambiguous.")
                 addresses[addresses.index(move["old_address"])] = move["new_address"]
-            if service == "ldap":
-                payload["service"]["listen_address"] = "\n".join(addresses)
             content = json.dumps(payload, indent=2, sort_keys=True) + ("\n" if content.endswith("\n") else "")
         baseline.update(config_preview=content, snapshot_marker=marker, applied_at=utcnow().isoformat())
         baseline["snapshot_hash"] = appliance_snapshot_hash({

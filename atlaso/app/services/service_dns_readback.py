@@ -455,12 +455,63 @@ def verify_service_dns_records(
         _verify_retired_records(previous, expected, nameserver, port, timeout, require_authoritative)
 
 
-def verify_service_dns_nss(records: list[dict[str, str]], timeout: float = 2.0) -> None:
+def _nss_addresses(hostname: str, timeout: float, *, allow_missing: bool = False) -> set[str]:
+    """Return NSS host addresses, optionally accepting a proven missing name.
+
+    Args:
+        hostname: Normalized DNS name sent to ``getent``.
+        timeout: Maximum seconds allowed for the bounded lookup.
+        allow_missing: Accept only the ``getent`` not-found status with no output.
+
+    Raises:
+        ValueError: The lookup failed, returned malformed data, or could not run.
+    """
+    try:
+        result = subprocess.run(
+            ["getent", "hosts", hostname.rstrip(".")],
+            capture_output=True, text=True, timeout=timeout, check=False,
+        )
+    except FileNotFoundError as exc:
+        raise ValueError("Appliance NSS lookup tool is unavailable.") from exc
+    except subprocess.TimeoutExpired as exc:
+        raise ValueError(f"Appliance NSS lookup for {hostname} timed out.") from exc
+    except OSError as exc:
+        raise ValueError(f"Appliance NSS lookup for {hostname} could not run.") from exc
+
+    if result.returncode != 0:
+        if allow_missing and result.returncode == 2 and not result.stdout.strip() and not result.stderr.strip():
+            return set()
+        detail = "did not resolve" if not allow_missing else "could not verify retired-name absence"
+        raise ValueError(f"Appliance NSS lookup for {hostname} {detail}.")
+    lines = result.stdout.splitlines()
+    if not lines:
+        raise ValueError(f"Appliance NSS lookup for {hostname} returned no addresses.")
+    resolved: set[str] = set()
+    for line in lines:
+        fields = line.split()
+        if len(fields) < 2:
+            raise ValueError(f"Appliance NSS lookup for {hostname} returned malformed data.")
+        try:
+            resolved.add(str(ipaddress.ip_address(fields[0])))
+        except ValueError as exc:
+            raise ValueError(f"Appliance NSS lookup for {hostname} returned a malformed address.") from exc
+    if not resolved:
+        raise ValueError(f"Appliance NSS lookup for {hostname} returned no addresses.")
+    return resolved
+
+
+def verify_service_dns_nss(
+    records: list[dict[str, str]],
+    timeout: float = 2.0,
+    *,
+    prior_records: list[dict[str, str]] | None = None,
+) -> None:
     """Verify generated names resolve through the appliance NSS host database.
 
     Args:
         records: Captured owned A, AAAA, and CNAME records already verified directly.
         timeout: Maximum seconds allowed for each bounded ``getent`` invocation.
+        prior_records: Previously owned records whose retired names must no longer resolve.
 
     Raises:
         ValueError: The captured ownership is ambiguous or NSS resolution is absent,
@@ -470,6 +521,7 @@ def verify_service_dns_nss(records: list[dict[str, str]], timeout: float = 2.0) 
             or not math.isfinite(timeout) or not 0 < timeout <= 30):
         raise ValueError("NSS timeout must be positive and within a bounded range.")
     expected = _expected_records(records)
+    previous = _expected_records(prior_records or [])
     allowed_by_name: dict[str, set[str]] = {}
     for hostname in sorted({owner for owner, _record_type in expected}):
         owner_addresses = expected.get((hostname, "A"), set()) | expected.get((hostname, "AAAA"), set())
@@ -500,30 +552,11 @@ def verify_service_dns_nss(records: list[dict[str, str]], timeout: float = 2.0) 
             visited.add(target)
 
     for hostname, allowed in allowed_by_name.items():
-        try:
-            result = subprocess.run(
-                ["getent", "hosts", hostname.rstrip(".")],
-                capture_output=True, text=True, timeout=timeout, check=False,
-            )
-        except FileNotFoundError as exc:
-            raise ValueError("Appliance NSS lookup tool is unavailable.") from exc
-        except subprocess.TimeoutExpired as exc:
-            raise ValueError(f"Appliance NSS lookup for {hostname} timed out.") from exc
-        except OSError as exc:
-            raise ValueError(f"Appliance NSS lookup for {hostname} could not run.") from exc
-        if result.returncode != 0:
-            raise ValueError(f"Appliance NSS lookup for {hostname} did not resolve.")
-        lines = result.stdout.splitlines()
-        if not lines:
-            raise ValueError(f"Appliance NSS lookup for {hostname} returned no addresses.")
-        resolved: set[str] = set()
-        for line in lines:
-            fields = line.split()
-            if len(fields) < 2:
-                raise ValueError(f"Appliance NSS lookup for {hostname} returned malformed data.")
-            try:
-                resolved.add(str(ipaddress.ip_address(fields[0])))
-            except ValueError as exc:
-                raise ValueError(f"Appliance NSS lookup for {hostname} returned a malformed address.") from exc
-        if not resolved or not resolved <= allowed:
+        resolved = _nss_addresses(hostname, timeout)
+        if not resolved <= allowed:
             raise ValueError(f"Appliance NSS lookup for {hostname} returned an unexpected address.")
+
+    for hostname in sorted({owner for owner, _record_type in previous} - set(allowed_by_name)):
+        stale_addresses = _nss_addresses(hostname, timeout, allow_missing=True)
+        if stale_addresses:
+            raise ValueError(f"Retired appliance NSS name {hostname} still resolves to stale addresses.")

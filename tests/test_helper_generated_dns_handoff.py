@@ -101,8 +101,14 @@ def test_service_dns_manifest_path_requires_staged_file_and_dns_rollback_snapsho
         helper._load_management_handoff_manifest(manifest)
 
 
-@pytest.mark.parametrize(("public_dynamic", "depot_dynamic"), [(False, False), (True, False), (False, True)])
-def test_service_dns_publication_follows_final_readiness_and_failure_rolls_back(monkeypatch, tmp_path, capsys, public_dynamic, depot_dynamic):
+@pytest.mark.parametrize(
+    ("public_dynamic", "depot_dynamic", "dnsmasq_included"),
+    [(False, False, True), (True, False, True), (False, True, True), (True, False, False)],
+    ids=["dns-only-failure", "public-dns-failure", "depot-dns-failure", "public-only-slaac-success"],
+)
+def test_management_handoff_orders_publication_and_reports_final_observation(
+    monkeypatch, tmp_path, capsys, public_dynamic, depot_dynamic, dnsmasq_included,
+):
     """Defer generated DNS until readiness and restore the captured handoff on failure.
 
     Args:
@@ -111,6 +117,7 @@ def test_service_dns_publication_follows_final_readiness_and_failure_rolls_back(
         capsys: Pytest fixture for capturing output written during the operation.
         public_dynamic: Whether the public listener uses a dynamically assigned address.
         depot_dynamic: Whether the depot listener uses a dynamically assigned address.
+        dnsmasq_included: Whether the protected apply includes DNS/DHCP.
     """
     helper = load_helper_module()
     events: list[str] = []
@@ -126,19 +133,25 @@ def test_service_dns_publication_follows_final_readiness_and_failure_rolls_back(
         "previous_https_enabled": False,
         "previous_management_public_port": 80,
         "candidate_management_interface": "eth1",
-        "dnsmasq_included": True,
+        "dnsmasq_included": dnsmasq_included,
         "snapshots": [
             {"path": str(prior_network), "backup": str(network_backup), "existed": True, "mode": 0o600, "uid": 0, "gid": 0},
-            {"path": str(prior_dns), "backup": str(dns_backup), "existed": True, "mode": 0o600, "uid": 0, "gid": 0},
+            *([{"path": str(prior_dns), "backup": str(dns_backup), "existed": True, "mode": 0o600, "uid": 0, "gid": 0}]
+              if dnsmasq_included else []),
         ],
     }
     candidate_dns = _staged_file(tmp_path / "dnsmasq", "candidate.conf")
     service_dns = _staged_file(tmp_path / "dnsmasq", "service-dns.conf")
     candidate_firewall = _staged_file(tmp_path / "firewall", "candidate.nft", "table inet atlaso { chain input { } }\n")
     previous_firewall = _staged_file(runtime, "previous.nft", "prior firewall\n")
+    slaac_public = public_dynamic and not dnsmasq_included
+    old_public_address = "2001:db8::20" if slaac_public else "192.0.2.20"
+    candidate_observation_address = "2001:db8::21" if slaac_public else "192.0.2.21"
+    final_observation_address = "2001:db8::22" if slaac_public else "198.51.100.10"
+    public_socket = f"[{old_public_address}]:443" if slaac_public else f"{old_public_address}:443"
     public_candidate = _staged_file(
         tmp_path / "public", "candidate.conf",
-        "# Managed by Atlaso. Local changes may be overwritten.\nserver {\n    listen 192.0.2.20:443 ssl;\n}\n",
+        f"# Managed by Atlaso. Local changes may be overwritten.\nserver {{\n    listen {public_socket} ssl;\n}}\n",
     )
     depot_site = _staged_file(runtime, "vcf-offline-depot.conf", _managed_depot_site())
     depot_backup = _staged_file(tmp_path / "backups", "depot.bin", depot_site.read_text(encoding="utf-8"))
@@ -168,7 +181,7 @@ def test_service_dns_publication_follows_final_readiness_and_failure_rolls_back(
             **_kwargs: Keyword arguments accepted by the wrapped operation.
         """
         nonlocal ready_calls
-        if addresses in (["192.0.2.21"], ["198.51.100.10"]):
+        if addresses in ([candidate_observation_address], [final_observation_address]):
             ready_calls += 1
             events.append("candidate-readiness" if ready_calls == 1 else "final-readiness")
         else:
@@ -222,13 +235,21 @@ def test_service_dns_publication_follows_final_readiness_and_failure_rolls_back(
     monkeypatch.setattr(helper, "_stage_candidate_ingress_guards", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(helper, "_retire_legacy_source_rules", lambda *_args: None)
     monkeypatch.setattr(helper, "_apply_management_candidate_network", lambda *_args: events.append("candidate-network") or prior_network.write_text("candidate network\n", encoding="utf-8"))
-    initial_observation = {"complete": True, "phase_address": "192.0.2.21", "links": [{
+    initial_observation = {"complete": True, "phase_address": candidate_observation_address, "links": [{
         "name": "eth9", "configured": True, "address_inventory_complete": True,
-        "addresses": [{"address": "192.0.2.21", "state": "assigned", "scope": "global"}],
+        "addresses": [{
+            "address": candidate_observation_address,
+            "cidr": f"{candidate_observation_address}/64" if slaac_public else f"{candidate_observation_address}/24",
+            "state": "assigned", "scope": "global",
+        }],
     }]}
-    final_observation = {"complete": True, "phase_address": "198.51.100.10", "links": [{
+    final_observation = {"complete": True, "phase_address": final_observation_address, "links": [{
         "name": "eth9", "configured": True, "address_inventory_complete": True,
-        "addresses": [{"address": "198.51.100.10", "state": "assigned", "scope": "global"}],
+        "addresses": [{
+            "address": final_observation_address,
+            "cidr": f"{final_observation_address}/64" if slaac_public else f"{final_observation_address}/24",
+            "state": "assigned", "scope": "global",
+        }],
     }]}
     observations = iter(
         [initial_observation, initial_observation, final_observation] if public_dynamic
@@ -329,8 +350,10 @@ def test_service_dns_publication_follows_final_readiness_and_failure_rolls_back(
             _management: Final management listener configuration.
             public: Final public listener state to publish.
         """
-        assert "listen 198.51.100.10:443 ssl;" in public
-        assert "listen 192.0.2.20:443 ssl;" not in public
+        old_socket = f"[{old_public_address}]:443" if slaac_public else f"{old_public_address}:443"
+        final_socket = f"[{final_observation_address}]:443" if slaac_public else f"{final_observation_address}:443"
+        assert f"listen {final_socket} ssl;" in public
+        assert f"listen {old_socket} ssl;" not in public
         events.append("public-final-publication")
         return 0
 
@@ -344,6 +367,8 @@ def test_service_dns_publication_follows_final_readiness_and_failure_rolls_back(
     monkeypatch.setattr(helper, "_verify_management_handoff_migrated_defaults", lambda *_args: None)
     monkeypatch.setattr(helper, "_wait_and_retire_transition_routes", lambda *_args: None)
     monkeypatch.setattr(helper, "_handle_dnsmasq", dnsmasq_apply)
+    if not dnsmasq_included:
+        monkeypatch.setattr(helper, "_sync_management_handoff_candidate", lambda *_args: None)
     monkeypatch.setattr(
         helper, "_apply_management_handoff_listener_address_moves",
         lambda *_args: events.append("listener-address-refresh") or [],
@@ -360,37 +385,55 @@ def test_service_dns_publication_follows_final_readiness_and_failure_rolls_back(
         "firewall_config_path": str(candidate_firewall),
         "appliance_settings_config_path": "candidate-settings",
         "public_services_config_path": str(public_candidate),
-        "public_dynamic_bindings": [{"interface": "eth9", "old_address": "192.0.2.20"}] if public_dynamic else [],
+        "public_dynamic_bindings": [{"interface": "eth9", "old_address": old_public_address}] if public_dynamic else [],
         "listener_address_moves": [{
             "service": "vcf_offline_depot", "old_address": "192.0.2.10",
             "new_address": "198.51.100.10", "interface": "eth9",
         }] if depot_dynamic else [],
-        "dnsmasq_config_path": str(candidate_dns),
-        "service_dns_config_path": str(service_dns),
+        "dnsmasq_config_path": str(candidate_dns) if dnsmasq_included else "",
+        "service_dns_config_path": str(service_dns) if dnsmasq_included else "",
     })
 
-    assert result == 1
+    assert result == (1 if dnsmasq_included else 0)
     assert events.index("candidate-readiness") < events.index("final-readiness")
-    assert events.index("candidate-dns-apply") < events.index("candidate-readiness")
     assert events.index("final-readiness") < events.index("listener-address-refresh")
-    assert events.index("listener-address-refresh") < events.index("service-dns-publication")
+    if dnsmasq_included:
+        assert events.index("candidate-dns-apply") < events.index("candidate-readiness")
+        assert events.index("listener-address-refresh") < events.index("service-dns-publication")
+    else:
+        assert "candidate-dns-apply" not in events
+        assert "service-dns-publication" not in events
     if public_dynamic:
         assert events.index("public-final-publication") < events.index("final-readiness")
         assert final_management_tls_addresses
-        assert all("198.51.100.10" not in addresses for addresses in final_management_tls_addresses)
-    assert restored == [state]
-    assert state["dnsmasq_included"] is True
+        assert all(final_observation_address not in addresses for addresses in final_management_tls_addresses)
+    assert restored == ([state] if dnsmasq_included else [])
+    assert state["dnsmasq_included"] is dnsmasq_included
     if depot_dynamic:
         assert events.index("depot-projection-2") < events.index("management-nginx-publication-1")
         assert events.index("depot-projection-3") < events.index("management-nginx-publication-2")
         assert events.index("final-readiness") < events.index("depot-runtime-readiness")
         assert events.index("depot-runtime-readiness") < events.index("service-dns-publication")
         assert depot_site.read_text(encoding="utf-8") == _managed_depot_site()
-    assert prior_network.read_text(encoding="utf-8") == "previous network\n"
+    assert prior_network.read_text(encoding="utf-8") == ("previous network\n" if dnsmasq_included else "candidate network\n")
     assert prior_dns.read_text(encoding="utf-8") == "previous DNS\n"
-    failure = json.loads(capsys.readouterr().err.splitlines()[-1])
-    assert failure["management_handoff"] == "rolled back"
-    assert failure["failing_layer"] == "generated service DNS publication"
+    if dnsmasq_included:
+        failure = json.loads(capsys.readouterr().err.splitlines()[-1])
+        assert failure["management_handoff"] == "rolled back"
+        assert failure["failing_layer"] == "generated service DNS publication"
+        assert "service_address_observation" not in failure
+    else:
+        result_document = json.loads(capsys.readouterr().out.splitlines()[-1])
+        assert result_document["management_handoff"] == "awaiting application commit"
+        assert result_document["public_service_address_moves"] == [{
+            "interface": "eth9",
+            "old_address": old_public_address,
+            "new_address": final_observation_address,
+        }]
+        observation = result_document["service_address_observation"]
+        assert observation["complete"] is True
+        assert observation["links"][0]["addresses"][0]["address"] == final_observation_address
+        assert observation["links"][0]["addresses"][0]["cidr"] == f"{final_observation_address}/64"
 
 
 

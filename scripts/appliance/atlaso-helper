@@ -33363,7 +33363,11 @@ def _apply_management_handoff(payload: dict) -> int:
                 "public_service_address_moves": public_address_moves,
                 "service_address_observation": (
                     _management_handoff_service_address_observation(final_address_observation)
-                    if state.get("dnsmasq_included") else None
+                    if (
+                        state.get("dnsmasq_included")
+                        or payload.get("public_dynamic_bindings")
+                        or payload.get("listener_address_moves")
+                    ) else None
                 ),
                 "retired_previous_interfaces": state["previous_management_interfaces"],
             },
