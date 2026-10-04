@@ -1914,7 +1914,7 @@ def ldap_service_bind_options(db: Session) -> list[dict[str, Any]]:
         mode = normalize_interface_mode(interface.mode)
         role = normalize_interface_role(interface.role)
         ipv4_cidr = interface.host_ip_cidr if interface.ipv4_method == "dhcp" else interface.ip_cidr
-        ipv6_cidr = interface.ipv6_cidr or interface.host_ipv6_cidr
+        ipv6_cidr = (interface.ipv6_cidr or interface.host_ipv6_cidr) if interface.ipv6_enabled else None
         addresses = interface_addresses_from_cidrs(ipv4_cidr, ipv6_cidr)
         if interface.oper_state == "missing" or interface.admin_state == "down" or role in {"management", "unused"} or mode == "trunk" or not addresses:
             continue

@@ -727,6 +727,80 @@ def test_alias_refresh_is_idempotent_across_sessions_for_service_inventory(clien
         )).scalar_one().address == "192.0.2.99"
 
 
+@pytest.mark.parametrize("ipv6_enabled", [False, True], ids=["stale-disabled-ipv6", "enabled-slaac"])
+def test_oidc_alias_refresh_uses_only_effective_ipv6_listener(client, ipv6_enabled):
+    """Keep OIDC DNS and nginx listeners aligned with effective IPv6 state.
+
+    Args:
+        client: Isolated authenticated application client.
+        ipv6_enabled: Whether the access interface may publish its observed SLAAC address.
+    """
+    from atlaso.app import ui
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import (
+        CaSettings,
+        DnsRecord,
+        OidcProviderSettings,
+        VcfOfflineDepotSettings,
+        VcfPrivateRegistrySettings,
+    )
+
+    login(client)
+    with SessionLocal() as db:
+        _management, access = _prepare_service_address_baseline(db, ui)
+        access.ipv6_cidr = None
+        access.host_ipv6_cidr = "2001:db8::10/64"
+        access.ipv6_enabled = True
+        oidc = db.scalar(select(OidcProviderSettings))
+        oidc.enabled = True
+        oidc.hostname = "oidc.custom.example.internal"
+        oidc.listen_interface = access.name
+        oidc.listen_address = "192.0.2.10\n2001:db8::10"
+        ca = db.scalar(select(CaSettings))
+        depot = db.scalar(select(VcfOfflineDepotSettings))
+        registry = db.scalar(select(VcfPrivateRegistrySettings))
+        ca.enabled = False
+        depot.enabled = False
+        registry.enabled = False
+        db.flush()
+
+        # Establish an applied-looking dual-stack alias first, then leave its
+        # observed IPv6 address stale while turning the family off.
+        ui.refresh_interface_service_dns_aliases(db, actor=None)
+        db.flush()
+        assert db.scalar(select(DnsRecord).where(
+            DnsRecord.record_type == "AAAA",
+            DnsRecord.description == ui.OIDC_DNS_RECORD_DESCRIPTION,
+        )) is not None
+        access.ipv6_enabled = ipv6_enabled
+        db.flush()
+
+        ui.refresh_interface_service_dns_aliases(db, actor=None)
+        db.flush()
+
+        expected_addresses = ["192.0.2.10", *(["2001:db8::10"] if ipv6_enabled else [])]
+        assert oidc.listen_address.splitlines() == expected_addresses
+        option = next(row for row in ui.ldap_service_bind_options(db) if row["name"] == access.name)
+        assert option["addresses"] == expected_addresses
+        oidc_aaaa = db.scalars(select(DnsRecord).where(
+            DnsRecord.record_type == "AAAA",
+            DnsRecord.description == ui.OIDC_DNS_RECORD_DESCRIPTION,
+        )).all()
+        assert {row.address for row in oidc_aaaa} == ({"2001:db8::10"} if ipv6_enabled else set())
+        oidc_a = db.scalars(select(DnsRecord).where(
+            DnsRecord.record_type == "A",
+            DnsRecord.description == ui.OIDC_DNS_RECORD_DESCRIPTION,
+        )).all()
+        assert {row.address for row in oidc_a} == {"192.0.2.10"}
+
+        public_context = ui.public_services_context(db, reconcile=False)
+        public_config = public_context["public_service_config_preview"]
+        if ipv6_enabled:
+            assert "listen [2001:db8::10]:443 ssl;" in public_config
+        else:
+            assert "listen [2001:db8::10]:443 ssl;" not in public_config
+
+
 @pytest.mark.parametrize("dynamic_failure", [None, "publication", "reload", "readback", "identity", "identity-storage", "identity-pxe"])
 def test_management_handoff_dns_readback_failure_triggers_proven_recovery(client, monkeypatch, tmp_path, dynamic_failure):
     """Treat failed generated-DNS readback as handoff failure and recover.
