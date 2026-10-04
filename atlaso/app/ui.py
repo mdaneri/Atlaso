@@ -1569,24 +1569,31 @@ def ensure_ca_state(
     Returns:
         The ensure ca state result.
     """
-    settings = get_ca_settings_row(db) if commit else db.scalar(select(CaSettings))
-    if settings is None:
-        return ["CA Settings are unavailable for guarded certificate recovery."]
     errors: list[str] = []
     try:
+        if commit:
+            acquire_network_objects_write_lock(db)
+            get_ca_settings_row(db)
+            # Optional service initialization may commit. Complete it before CA material
+            # mutation, then reacquire admission and project fresh non-reconciling state.
+            managed_ca_certificate_specs(db, managed_owners=managed_owners, management_snapshot=management_snapshot)
+            acquire_network_objects_write_lock(db)
+        settings = db.scalar(select(CaSettings).execution_options(populate_existing=commit))
+        if settings is None:
+            return ["CA Settings are unavailable for guarded certificate recovery."]
         changed = ensure_default_ca_profiles(db)
-        profiles = db.execute(select(CaProfile).order_by(CaProfile.name)).scalars().all()
+        profiles = db.execute(select(CaProfile).order_by(CaProfile.name).execution_options(populate_existing=commit)).scalars().all()
         normalized_portal_hostname = normalize_dns_hostname(settings.portal_hostname or CA_DEFAULT_PORTAL_HOSTNAME)
         if normalized_portal_hostname != settings.portal_hostname:
             settings.portal_hostname = normalized_portal_hostname
             changed = True
         changed = ensure_root_ca_material(settings) or changed
-        specs = managed_ca_certificate_specs(db, reconcile=commit, managed_owners=managed_owners, management_snapshot=management_snapshot)
+        specs = managed_ca_certificate_specs(db, reconcile=False, managed_owners=managed_owners, management_snapshot=management_snapshot)
         if managed_owners is not None:
             specs = [spec for spec in specs if spec.owner in managed_owners]
         changed = ensure_managed_certificate_rows(db, settings=settings, profiles=profiles, specs=specs) or changed
         certificates = (
-            db.execute(select(CaCertificate).options(selectinload(CaCertificate.profile)).order_by(CaCertificate.common_name))
+            db.execute(select(CaCertificate).options(selectinload(CaCertificate.profile)).order_by(CaCertificate.common_name).execution_options(populate_existing=commit))
             .scalars()
             .all()
         )

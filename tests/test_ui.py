@@ -19942,7 +19942,7 @@ def test_native_ca_publication_waits_for_recovery_and_rejects_stale_payload(clie
         "id": "ca", "label": "CA", "config_preview": "original", "config_diff": "",
         "raw_config_preview": "original", "summary": [], "validation_errors": [],
         "validation_warnings": [], "config_path": str(tmp_path / "ca.json"),
-        "context": {"ca_settings": None, "ca_certificates": []},
+        "context": {"ca_settings": None, "ca_certificates": [], "ca_profiles": []},
     }
     current = dict(unit)
     monkeypatch.setattr(ui, "appliance_apply_units", lambda _db, **_kwargs: [current])
@@ -19988,6 +19988,82 @@ def test_native_ca_publication_waits_for_recovery_and_rejects_stale_payload(clie
             recovery.commit()
         assert future.result(timeout=5) is (not superseded)
     assert published.is_set() is (not superseded)
+
+
+@pytest.mark.parametrize("initialization_commits", [False, True])
+def test_committing_ca_reconciliation_waits_and_refreshes_recovered_leaf(client, monkeypatch, initialization_commits):
+    """Read-triggered issuance waits for recovery and refreshes its cached certificate.
+
+    Args:
+        client: Initialized isolated appliance database.
+        monkeypatch: Observe issuance without creating certificate material.
+        initialization_commits: Whether optional service initialization releases admission.
+    """
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Event
+
+    from sqlalchemy import select
+
+    import atlaso.app.ui as ui
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import CaCertificate
+
+    with SessionLocal() as db:
+        certificate = db.scalar(select(CaCertificate).where(CaCertificate.managed_owner == "appliance:https"))
+        if certificate is None:
+            certificate = CaCertificate(common_name="reconcile.example.test", managed_owner="appliance:https")
+            db.add(certificate)
+            db.commit()
+        certificate_id = certificate.id
+    loaded, attempted, issued = Event(), Event(), Event()
+    lock = ui.acquire_network_objects_write_lock
+    observed = []
+
+    def acquire(db):
+        """Expose the actual writer wait before any reconciliation work."""
+        attempted.set()
+        lock(db)
+
+    def specs(db, *, reconcile=True, **_kwargs):
+        """Exercise optional initialization's intermediate commit."""
+        if reconcile and initialization_commits:
+            db.commit()
+        return []
+
+    def issue(db, *, certificates, **_kwargs):
+        """Inspect the certificate selected after writer admission."""
+        assert db.in_transaction()
+        observed.append(next(row.fingerprint for row in certificates if row.id == certificate_id))
+        issued.set()
+        return False
+
+    def reconcile():
+        """Keep a transport-cached old leaf while waiting for recovery."""
+        with SessionLocal() as db:
+            cached = db.get(CaCertificate, certificate_id)
+            loaded.set()
+            result = ui.ensure_ca_state(db)
+            assert cached.fingerprint == "recovery-published-leaf"
+            db.rollback()
+            return result
+
+    monkeypatch.setattr(ui, "acquire_network_objects_write_lock", acquire)
+    monkeypatch.setattr(ui, "managed_ca_certificate_specs", specs)
+    monkeypatch.setattr(ui, "ensure_root_ca_material", lambda _settings: False)
+    monkeypatch.setattr(ui, "ensure_managed_certificate_rows", lambda *_args, **_kwargs: False)
+    monkeypatch.setattr(ui, "ensure_ca_issued_state", issue)
+    with SessionLocal() as recovery, ThreadPoolExecutor(max_workers=1) as executor:
+        lock(recovery)
+        future = executor.submit(reconcile)
+        try:
+            assert loaded.wait(3) and attempted.wait(3)
+            assert not issued.wait(0.1)
+            recovery.get(CaCertificate, certificate_id).fingerprint = "recovery-published-leaf"
+            recovery.commit()
+        finally:
+            recovery.rollback()
+        assert future.result(timeout=5) == []
+    assert observed == ["recovery-published-leaf"]
 
 
 def test_ca_baseline_guard_refuses_intervening_recovery_after_listener_reload(client, monkeypatch):

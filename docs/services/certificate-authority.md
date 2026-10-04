@@ -44,6 +44,9 @@ FQDN and certificate record retain their original identity, while service paths 
 Shorter names keep their existing subject Common Name. This also applies during first-boot HTTPS bootstrap and
 subsequent certificate renewal.
 
+CA page and certificate-download reconciliation waits for management recovery before updating certificate material.
+After admission it refreshes cached CA rows, preserving the certificate recovery just published.
+
 Certificate filenames use the sanitized identity when it fits within 245 ASCII bytes, leaving room for the longest
 `-chain.pem` suffix under the filesystem's 255-byte filename limit. Longer names keep a readable prefix followed by
 the full SHA-256 digest of the original identity. This bounds downloads and deployed service files without changing
