@@ -715,6 +715,9 @@ def ensure_managed_certificate_rows(
         if profile is None:
             continue
         certificate = existing_by_owner.get(spec.owner)
+        # Revocation is operator intent; automatic SAN/path reconciliation cannot undo it.
+        if certificate is not None and certificate.status == "revoked":
+            continue
         if certificate is None:
             certificate = CaCertificate(common_name=spec.common_name, managed_owner=spec.owner, enabled=True)
             db.add(certificate)

@@ -4332,3 +4332,46 @@ def test_console_recovery_reserves_complete_final_attestation(monkeypatch, https
                    for command, _timeout in calls) is bound
     finally:
         helper._CONSOLE_RECOVERY_DEADLINE.reset(token)
+
+
+def test_bound_recovery_refuses_revoked_management_leaf_before_issuance(client, monkeypatch):
+    """A committed managed revocation blocks scoped recovery without publication or baseline writes.
+
+    Args:
+        client: Initialized isolated appliance database.
+        monkeypatch: Forbid certificate reconciliation after revoked-row admission.
+    """
+    from sqlalchemy import select
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import CaCertificate
+    from atlaso.app.services.networking import render_network_config
+    from atlaso.app.ui import load_appliance_apply_baselines
+
+    loader = importlib.machinery.SourceFileLoader("atlaso_revoked_bound_recovery", "scripts/appliance/atlaso-bootstrap-https")
+    spec = importlib.util.spec_from_loader(loader.name, loader)
+    bootstrap = importlib.util.module_from_spec(spec)
+    loader.exec_module(bootstrap)
+    with SessionLocal() as db:
+        target = appliance_console._management_interface(db)
+        target.ipv4_method, target.ip_cidr, target.ipv6_enabled = "static", "192.0.2.10/24", False
+        target.admin_state, target.host_admin_state, target.oper_state = "up", "up", "up"
+        leaf = db.scalar(select(CaCertificate).where(CaCertificate.managed_owner == "appliance:https"))
+        if leaf is None:
+            leaf = CaCertificate(common_name="revoked.example.test", managed_owner="appliance:https")
+            db.add(leaf)
+        leaf.status, leaf.serial_number = "revoked", "revoked-management-serial"
+        preview = render_network_config(interfaces=list(db.scalars(select(appliance_console.PhysicalInterface))),
+                                        vlans=list(db.scalars(select(appliance_console.VlanInterface))))
+        db.add(appliance_console.Job(id="job_revoked_leaf", type="appliance-apply", status="succeeded",
+               created_by="console:root", result=json.dumps({"captured_units": [{"unit_id": "network", "config_preview": preview}]})))
+        db.commit()
+        identity = leaf.id
+        prior = load_appliance_apply_baselines(db)
+    monkeypatch.setattr(bootstrap, "ensure_ca_state", lambda *_args, **_kwargs: pytest.fail("Revocation reached issuance"))
+    with SessionLocal() as db:
+        errors = bootstrap.ensure_recovery_ca_state(db, "job_revoked_leaf", commit=False)
+        assert len(errors) == 1 and "certificate is revoked" in errors[0]
+        assert load_appliance_apply_baselines(db) == prior
+        assert db.get(CaCertificate, identity).status == "revoked"
+        db.rollback()

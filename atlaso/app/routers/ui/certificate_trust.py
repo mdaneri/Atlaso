@@ -669,7 +669,8 @@ def build_routers(
         Raises:
             HTTPException: If the request cannot be fulfilled.
         """
-        certificate = db.get(CaCertificate, certificate_id)
+        acquire_network_objects_write_lock(db)
+        certificate = db.get(CaCertificate, certificate_id, populate_existing=True)
         if not certificate:
             raise HTTPException(status_code=404, detail="CA certificate not found")
         if certificate.status != "issued" or not certificate.serial_number:

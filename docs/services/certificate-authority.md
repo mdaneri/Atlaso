@@ -73,6 +73,9 @@ The management and public request lists use the same read-only collection patter
 when an issued certificate can be revoked, open its row menu and select **Revoke certificate**. The shared confirmation
 states that revocation changes desired state and reaches appliance files only through the next global CA apply. The
 server-rendered list and revoke forms remain available when browser scripting is unavailable.
+Revocation takes the shared publication writer before reading the certificate and waits for any active management
+recovery to finish. Automatic SAN or path reconciliation preserves a revoked managed certificate. A revoked management
+leaf blocks console HTTPS recovery; recovery does not undo the revocation or publish its CRL.
 The request wizard presents the common name, profile, multiline description, DNS SANs, and IP SANs on separate rows so
 long names, operator notes, and multi-value SAN lists remain readable before review. Descriptions stay with request
 identity, while enablement has a

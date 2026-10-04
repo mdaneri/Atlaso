@@ -681,6 +681,13 @@ def ensure_recovery_ca_state(
             return ["Management paths changed after Network apply; pending edits prevent certificate recovery."]
     if network_job_id is not None and not recovery_dynamic_addresses_available(db, preview):
         return ["Applied dynamic management observation is unavailable; certificate recovery was not started."]
+    if network_job_id is not None:
+        management_leaf = db.scalar(
+            select(CaCertificate).where(CaCertificate.managed_owner == "appliance:https")
+            .execution_options(populate_existing=True)
+        )
+        if management_leaf is not None and management_leaf.status == "revoked":
+            return ["Management certificate is revoked; explicit CA operator action is required before recovery."]
     projection = {"management_snapshot": management_snapshot} if management_snapshot is not None else {}
     errors = ensure_ca_state(
         db, commit=False, managed_owners={"appliance:https"} if network_job_id is not None else None, **projection,

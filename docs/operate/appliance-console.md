@@ -234,6 +234,8 @@ mutation. Completed recovery publishes only the management leaf; it leaves other
 untouched. Its hostname and terminal SANs come from applied Settings, so pending Settings edits cannot change the
 recovery leaf. Publication uses the certificate/key paths captured in applied Settings, keeping nginx on the refreshed
 leaf even when its filenames use a prior hostname. Missing applied identity or paths stops recovery.
+A revoked management leaf also stops recovery before issuance. Revocation shares writer admission with recovery, and
+automatic certificate reconciliation preserves the operator's revoked state.
 A missing or changed applied CA root requires
 ordinary CA Apply before recovery. After nginx reload, stable readiness and served-leaf proof against the task-bound
 publication receipt, successful publication

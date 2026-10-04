@@ -20683,3 +20683,103 @@ def test_baseline_merge_waits_and_refreshes_cached_unrelated_units(client, monke
         assert baselines["network"]["snapshot_hash"] == "retained-network"
         assert baselines["ca"]["snapshot_hash"] == "executed-ca"
         assert baselines["dnsmasq"]["snapshot_hash"] == "executed-dnsmasq"
+
+
+@pytest.mark.parametrize("order", ["recovery", "revocation", "ineligible"])
+def test_managed_leaf_revocation_serializes_and_refreshes_reconciliation(client, monkeypatch, order):
+    """Preserve operator revocation in both writer orders and reject a stale issued row.
+
+    Args:
+        client: Initialized isolated appliance database.
+        monkeypatch: Observe shared writer admission at the competing operation.
+        order: Recovery publishes first, revocation commits first, or recovery invalidates issuance.
+    """
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Event
+
+    from fastapi import HTTPException
+    from sqlalchemy import select
+
+    from atlaso.app import ui
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import CaCertificate, PhysicalInterface
+    from atlaso.app.routers.ui import certificate_trust
+    from atlaso.app.services.network_objects import acquire_network_objects_write_lock
+
+    with SessionLocal() as db:
+        target = db.scalar(select(PhysicalInterface).where(PhysicalInterface.name == "eth0"))
+        target.role, target.mode, target.admin_state = "management", "access", "up"
+        target.ipv4_method, target.ip_cidr = "static", "192.0.2.10/24"
+        ui.get_ca_settings_row(db).enabled = True
+        db.commit()
+        assert ui.ensure_ca_state(db) == []
+        leaf = db.scalar(select(CaCertificate).where(CaCertificate.managed_owner == "appliance:https"))
+        assert leaf.status == "issued" and leaf.serial_number
+        identity = leaf.id
+        target_id = target.id
+        original = (leaf.serial_number, leaf.fingerprint, leaf.ip_addresses)
+    loaded, attempted, completed = Event(), Event(), Event()
+
+    def acquire(db):
+        """Expose admission before any refresh or revocation mutation.
+
+        Args:
+            db: Contending database session whose transaction is admitted.
+        """
+        attempted.set()
+        acquire_network_objects_write_lock(db)
+
+    def competing():
+        """Retain a cached issued leaf while waiting for the other writer's commit."""
+        with SessionLocal() as db:
+            cached = db.get(CaCertificate, identity)
+            assert cached.status == "issued"
+            loaded.set()
+            if order == "revocation":
+                assert ui.ensure_ca_state(db, managed_owners={"appliance:https"}) == []
+                db.commit()
+            elif order == "ineligible":
+                with pytest.raises(HTTPException) as refused:
+                    ui._revoke_ca_certificate(db, certificate_id=identity, actor="operator", reason="rotation")
+                assert refused.value.status_code == 400
+                db.rollback()
+                completed.set()
+                return
+            else:
+                ui._revoke_ca_certificate(db, certificate_id=identity, actor="operator", reason="rotation")
+            assert cached.status == "revoked"
+            completed.set()
+
+    module = ui if order == "revocation" else certificate_trust
+    monkeypatch.setattr(module, "acquire_network_objects_write_lock", acquire)
+    with SessionLocal() as first, ThreadPoolExecutor(max_workers=1) as executor:
+        acquire_network_objects_write_lock(first)
+        future = executor.submit(competing)
+        try:
+            assert loaded.wait(3) and attempted.wait(3)
+            assert not completed.wait(0.15)
+            first.get(PhysicalInterface, target_id).ip_cidr = "192.0.2.11/24"
+            if order == "revocation":
+                ui._revoke_ca_certificate(first, certificate_id=identity, actor="operator", reason="rotation")
+            elif order == "ineligible":
+                first.get(CaCertificate, identity).status = "planned"
+                first.get(CaCertificate, identity).serial_number = None
+                first.commit()
+            else:
+                assert ui.ensure_ca_state(first, commit=False, managed_owners={"appliance:https"}) == []
+                assert first.get(CaCertificate, identity).serial_number != original[0]
+                first.commit()
+        finally:
+            first.rollback()
+        future.result(timeout=5)
+    with SessionLocal() as db:
+        leaf = db.get(CaCertificate, identity)
+        if order == "ineligible":
+            assert leaf.status == "planned" and leaf.revoked_at is None
+        else:
+            assert leaf.status == "revoked" and leaf.revoked_by == "operator"
+            assert leaf.revocation_reason == "rotation" and leaf.revoked_at is not None
+            if order == "revocation":
+                assert (leaf.serial_number, leaf.fingerprint, leaf.ip_addresses) == original
+            else:
+                assert leaf.serial_number != original[0] and leaf.ip_addresses == "192.0.2.11"
