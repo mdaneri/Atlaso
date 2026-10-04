@@ -74,6 +74,40 @@ def test_provider_mapping_reads_actual_vmx_and_refuses_ambiguity(tmp_path, fault
             'network_type': 'custom', 'network_id': 'VMnet8'}
 
 
+def test_enrolled_vmx_pin_blocks_edits_and_replacement_until_stop(tmp_path):
+    """Retain the actual Windows read handle across independent phase readers.
+
+    Args:
+        tmp_path: Owned disposable VMX directory.
+    """
+    vmx = tmp_path / 'enrolled.vmx'
+    vmx.write_text('ethernet0.present = "TRUE"\nethernet0.connectionType = "custom"\n'
+                   'ethernet0.vnet = "VMnet8"\nethernet0.addressType = "static"\n'
+                   'ethernet0.address = "00:50:56:20:00:01"\nethernet0.startConnected = "TRUE"\n')
+    helpers = ROOT / 'scripts/windows/vmware'
+    command = ("$ErrorActionPreference='Stop'; "
+        f"Import-Module {ps_literal(helpers / 'Atlaso.WorkstationCleanup.psm1')} -Force; "
+        f". {ps_literal(helpers / 'Atlaso.RoutingOverlap.ps1')}; "
+        "$pins=[Collections.Generic.List[IDisposable]]::new(); "
+        f"$path={ps_literal(vmx)}; $null=Get-RoutingOverlapProviderNics -Vmx $path -Role client-a -RetainedPins $pins; "
+        "$editBlocked=$false; $replacementBlocked=$false; "
+        "try { [IO.File]::WriteAllText($path,'changed adapter') } catch { $editBlocked=$true }; "
+        "try { [IO.File]::Move($path,$path+'.replaced') } catch { $replacementBlocked=$true }; "
+        "$count=$pins.Count; foreach($pin in $pins){$pin.Dispose()}; "
+        "[IO.File]::WriteAllText($path,'owned retirement after stop'); "
+        "[pscustomobject]@{count=$count;edit_blocked=$editBlocked;replacement_blocked=$replacementBlocked;"
+        "released=([IO.File]::ReadAllText($path) -eq 'owned retirement after stop')}|ConvertTo-Json -Compress")
+    result = subprocess.run(['pwsh', '-NoProfile', '-Command', command], capture_output=True,
+                            text=True, timeout=60, check=True)
+    assert json.loads(result.stdout) == {'count': 1, 'edit_blocked': True,
+                                       'replacement_blocked': True, 'released': True}
+    runner = (helpers / 'run-lifecycle-test.ps1').read_text()
+    stop = runner.index('Invoke-RoutingOverlapPhase -Phase stop -Descriptor $overlapDescriptor')
+    release = runner.index('$routingOverlapVmxPins.Clear()', stop)
+    retire = runner.index('Remove-ClientSeedArtifacts `', release)
+    assert stop < release < retire
+
+
 def test_private_dispatch_preserves_unknown_apply_and_avoids_legacy_client():
     """Keep uncertain Apply ahead of all controller/VM cleanup and legacy auth."""
     runner = (ROOT / 'scripts/windows/vmware/run-lifecycle-test.ps1').read_text()
@@ -87,6 +121,52 @@ def test_private_dispatch_preserves_unknown_apply_and_avoids_legacy_client():
     helper = (ROOT / 'scripts/windows/vmware/Atlaso.RoutingOverlap.ps1').read_text()
     assert "$arguments = @('-B'," in helper
     assert runner.index("python -I -B -c 'import paramiko, cryptography, pycdlib'") < runner.index('$preflightRootCreated')
+
+
+@pytest.mark.parametrize(('focused', 'phase', 'exit_code', 'preserve'), [
+    (True, 'probe', 0, False), (True, 'probe', 2, True), (True, 'probe', 3, True),
+    (True, 'probe', 4, False), (True, 'scenario', 4, True), (True, 'stop', 4, True),
+    (False, 'stop', 2, False), (False, 'stop', 3, True),
+])
+def test_private_phase_exit_preserves_fixture_by_phase_and_outcome(focused, phase, exit_code, preserve):
+    """Apply retryable status 4 only to a focused readiness probe.
+
+    Args:
+        focused: Whether the same-address fixture contract was selected.
+        phase: Private lifecycle phase sent to the Python runner.
+        exit_code: Actual Python phase outcome supplied at the subprocess boundary.
+        preserve: Expected recovery disposition.
+    """
+    helpers = ROOT / 'scripts/windows/vmware'
+    command = ("$ErrorActionPreference='Stop'; "
+        f". {ps_literal(helpers / 'Atlaso.RoutingOverlap.ps1')}; "
+        f"$SameAddressHandoffOnly=${str(focused).lower()}; $overlapRecoveryUncertain=$false; "
+        "$runtimeSourceRoot='source'; $resultRoot='result'; $lifecycleTaskId='task'; "
+        "$sourceCommit='commit'; $PullRequestNumber=1; $ClientSshUser='root'; $AdminUsername='admin'; "
+        "$resolvedVmrun='vmrun'; $runtimeConsumerPins=@(); "
+        f"function Invoke-LifecyclePython {{ return {exit_code} }}; "
+        f"try {{ Invoke-RoutingOverlapPhase -Phase {phase} -Descriptor @{{Path='descriptor';Sha256='digest'}} }} catch {{}}; "
+        "ConvertTo-Json -InputObject @{preserve=[bool]$overlapRecoveryUncertain} -Compress")
+    result = subprocess.run(['pwsh', '-NoProfile', '-Command', command], capture_output=True,
+                            text=True, timeout=60, check=True)
+    assert json.loads(result.stdout)['preserve'] is preserve
+
+
+def test_retryable_probe_then_success_keeps_recovery_flag_clear():
+    """A later successful readiness probe leaves the fixture recovery flag clear."""
+    helpers = ROOT / 'scripts/windows/vmware'
+    command = ("$ErrorActionPreference='Stop'; "
+        f". {ps_literal(helpers / 'Atlaso.RoutingOverlap.ps1')}; "
+        "$SameAddressHandoffOnly=$true; $overlapRecoveryUncertain=$false; $script:probeCodes=@(4,0); "
+        "$runtimeSourceRoot='source'; $resultRoot='result'; $lifecycleTaskId='task'; "
+        "$sourceCommit='commit'; $PullRequestNumber=1; $ClientSshUser='root'; $AdminUsername='admin'; "
+        "$resolvedVmrun='vmrun'; $runtimeConsumerPins=@(); "
+        "function Invoke-LifecyclePython { $value=$script:probeCodes[0]; $script:probeCodes=@($script:probeCodes | Select-Object -Skip 1); return $value }; "
+        "foreach ($attempt in 1..2) { try { Invoke-RoutingOverlapPhase -Phase probe -Descriptor @{Path='descriptor';Sha256='digest'} } catch {} }; "
+        "ConvertTo-Json -InputObject @{preserve=[bool]$overlapRecoveryUncertain; remaining=$script:probeCodes.Count} -Compress")
+    result = subprocess.run(['pwsh', '-NoProfile', '-Command', command], capture_output=True,
+                            text=True, timeout=60, check=True)
+    assert json.loads(result.stdout) == {'preserve': False, 'remaining': 0}
 
 
 def test_distinct_root_credential_reaches_only_appliance_stdin():
@@ -111,6 +191,32 @@ def test_distinct_root_credential_reaches_only_appliance_stdin():
     assert '-RootPassword $rootPasswordSecure' in content
     assert "'root', '-gp', $RootGuestPassword" in content
     assert "'root', '-gp', $ApplianceGuestPassword" not in content
+
+
+@pytest.mark.parametrize('focused', [False, True])
+@pytest.mark.parametrize('ssh_user', ['root', 'admin'])
+def test_focused_first_boot_keeps_root_ssh_disabled(focused, ssh_user):
+    """Execute the actual first-boot call and separate guest operations from SSH.
+
+    Args:
+        focused: Whether same-address acceptance is selected.
+        ssh_user: Guest-operations identity supplied to the lifecycle runner.
+    """
+    runner = ROOT / 'scripts/windows/vmware/run-lifecycle-test.ps1'
+    command = ("$ErrorActionPreference='Stop'; $tokens=$null; $errors=$null; "
+        f"$ast=[Management.Automation.Language.Parser]::ParseFile({ps_literal(runner)},[ref]$tokens,[ref]$errors); "
+        "$call=$ast.Find({param($node) $node -is [Management.Automation.Language.AssignmentStatementAst] "
+        "-and $node.Left.Extent.Text -eq '$firstBootOvfEnvironment'},$true); "
+        "if ($null -eq $call) { throw 'First-boot call missing' }; "
+        "function New-AtlasoWorkstationFqdn { param($Name); 'fixture.invalid' }; "
+        "function New-AtlasoWorkstationOvfEnvironment { param($Fqdn,$AdminPassword,$RootPassword,"
+        "[switch]$RootSshEnabled,[switch]$NormalTestVm); $RootSshEnabled.IsPresent }; "
+        f"$SameAddressHandoffOnly=${str(focused).lower()}; $ApplianceSshUser='{ssh_user}'; "
+        "$applianceName='fixture'; $adminPasswordSecure=$null; $rootPasswordSecure=$null; $TimeSourceOnly=$false; "
+        ". ([scriptblock]::Create($call.Extent.Text)); $firstBootOvfEnvironment | ConvertTo-Json -Compress")
+    result = subprocess.run(['pwsh', '-NoProfile', '-Command', command], capture_output=True,
+                            text=True, timeout=60, check=True)
+    assert json.loads(result.stdout) is (ssh_user == 'root' and not focused)
 
 
 def test_legacy_bundle_without_root_field_remains_valid_under_strict_mode():

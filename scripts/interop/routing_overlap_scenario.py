@@ -25,6 +25,7 @@ from scripts.interop.routing_overlap import (
     verify_source_rules,
 )
 from scripts.interop.routing_overlap_transport import FixtureHttpClient, TLSChannel
+from scripts.interop.time_source_guest import FormParser
 
 FIELDS = (
     "role", "mode", "ipv4_method", "ip_cidr", "gateway", "ipv6_enabled",
@@ -473,6 +474,74 @@ def _settle_dependent_dns(client: FixtureHttpClient) -> dict[str, Any]:
     raise AssertionError("bounded DNS setup loop did not terminate")
 
 
+class _PrivateClockForm(FormParser):
+    """Read the supported NTP form and its positively available Tools option."""
+
+    def __init__(self) -> None:
+        """Retain successful controls without changing unrelated time settings."""
+        super().__init__()
+        self.tools_options: list[bool] = []
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        """Observe capability before the shared parser consumes the option.
+
+        Args:
+            tag: Opening HTML tag.
+            attrs: Decoded attribute names and values.
+        """
+        attributes = dict(attrs)
+        if (tag == "option" and self.select is not None and self.select["name"] == "time_source"
+                and attributes.get("value") == "vmware_tools"):
+            self.tools_options.append("disabled" not in attributes)
+        super().handle_starttag(tag, attrs)
+
+
+def _prepare_private_clock(client: FixtureHttpClient) -> dict[str, Any]:
+    """Select supported Tools clock authority before the isolated clone's baseline Apply.
+
+    Args:
+        client: Authenticated pinned private fixture HTTPS client.
+    """
+    review = client.json_request("GET", "/ui/management/appliance-apply/review")
+    if review.get("initial_apply_required") is not True or review.get("active_task") is not None:
+        raise OverlapPrerequisiteError("private clock preparation requires a fresh idle baseline")
+
+    def read_form() -> _PrivateClockForm:
+        """Read successful controls from the canonical authenticated NTP page."""
+        status, body, _headers = client.request("GET", "/ui/management/ntp")
+        parser = _PrivateClockForm()
+        parser.feed(body)
+        if (status != 200 or parser.form_action != "/ui/management/ntp/settings"
+                or parser.tools_options != [True]):
+            raise OverlapPrerequisiteError("private fixture VMware Tools clock capability is unavailable")
+        return parser
+
+    original = read_form().fields
+    values = dict(original)
+    if ("enabled" in values or "nts_server_enabled" in values or not values.get("csrf")
+            or values.get("time_source") not in {"ntp_client", "vmware_tools"}):
+        raise OverlapPrerequisiteError("private clock preparation requires disabled NTP server mode")
+    if values["time_source"] != "vmware_tools":
+        fields = [(key, "vmware_tools" if key == "time_source" else value) for key, value in original]
+        try:
+            status, _body, _headers = client.request(
+                "POST", "/ui/management/ntp/settings", form=fields,
+                headers={"X-Atlaso-Autosave": "1"}, follow_redirects=False,
+            )
+        except Exception:  # noqa: BLE001 - never retry an uncertain desired-state save or expose its payload.
+            raise ApplyOutcomeUnknown("private clock save outcome unknown; preserve fixture") from None
+        if status != 200:
+            if not 400 <= status < 500:
+                raise ApplyOutcomeUnknown("private clock save response is ambiguous; preserve fixture")
+            raise OverlapPrerequisiteError("private fixture clock desired-state save was refused")
+    after = read_form().fields
+    expected = sorted((key, "vmware_tools" if key == "time_source" else value)
+                      for key, value in original if key != "csrf")
+    if sorted((key, value) for key, value in after if key != "csrf") != expected:
+        raise OverlapPrerequisiteError("private clock desired-state readback changed unrelated settings")
+    return {"desired_source": "vmware_tools", "applied_by": "initial-global-Apply"}
+
+
 def _setup(client: FixtureHttpClient) -> dict[str, Any]:
     """Establish the fresh owned clone's baseline through reviewed global Apply.
 
@@ -667,6 +736,7 @@ def _same_address_lease(
     client: FixtureHttpClient, connect: Callable[[], paramiko.SSHClient],
     topology: AdmittedTopology, server_action: Callable[[str], dict[str, Any]],
     baseline_dns_servers: list[str],
+    ownership_check: Callable[[], dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Prove DHCP activation against a live lease for the same static address.
 
@@ -676,7 +746,9 @@ def _same_address_lease(
         topology: Independently admitted fixture identities.
         server_action: Admitted DHCP server status controller.
         baseline_dns_servers: Original external resolvers to restore before DHCP activation.
+        ownership_check: Fresh fixture and guest-conflict observation before each Apply.
     """
+    ownership = ownership_check() if ownership_check else None
     before = _lease(server_action("status"), topology)
     interface = topology.link("appliance", 0).interface
     path = f"/api/v1/interfaces/physical/{interface}"
@@ -687,6 +759,8 @@ def _same_address_lease(
     client.json_request("PATCH", path, json_body={
         "ipv4_method": "static", "ip_cidr": "192.0.2.10/24", "gateway": "192.0.2.1",
     })
+    if ownership_check:
+        ownership_check()
     static_apply = _apply(client, ["network", "firewall", "wan", "appliance_settings"], stage="same-address-static")
     static = _snapshot(connect)
     static_rows = [row for row in _addresses(static, interface) if row.get("local") == "192.0.2.10"]
@@ -698,13 +772,17 @@ def _same_address_lease(
     client.json_request("PATCH", path, json_body={"ipv4_method": "dhcp", "ip_cidr": None, "gateway": None})
     client.json_request("PATCH", "/api/v1/settings", json_body={"external_dns_servers": baseline_dns_servers})
     # Record the actual still-unexpired server lease immediately before activation.
+    if ownership_check:
+        ownership_check()
     activation_lease = _lease(server_action("status"), topology)
     dhcp_apply = _apply(client, ["network", "firewall", "wan", "appliance_settings"], stage="same-address-dhcp")
     acquired = _same_address_native(connect, topology)
+    final_ownership = ownership_check() if ownership_check else None
     desired = client.json_request("GET", path)
     if desired.get("ipv4_method") != "dhcp" or desired.get("ip_cidr"):
         raise OverlapPrerequisiteError("same-address activation did not retain desired DHCP")
     return {"original_lease": before, "static_phase_lease": retained,
+            "ownership_before": ownership, "ownership_after": final_ownership,
             "lease_before_activation": activation_lease,
             "static_apply": static_apply, "static_native": static,
             "dhcp_apply": dhcp_apply, "acquired_native": acquired,
@@ -715,6 +793,8 @@ def run_scenario(
     *, client: FixtureHttpClient, connect_appliance: Callable[[], paramiko.SSHClient],
     topology: AdmittedTopology, server_action: Callable[[str], dict[str, Any]],
     username: str, password: str,
+    same_address_only: bool = False,
+    ownership_check: Callable[[], dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Apply overlapping domains, prove native lease lifecycles, and restore desired state.
 
@@ -725,6 +805,8 @@ def run_scenario(
         server_action: Bound controller for the admitted private DHCP/RA server.
         username: Appliance administrator username, never included in evidence.
         password: In-memory administrator password, never included in evidence.
+        same_address_only: Exercise only the retained-static IPv4 lease handoff.
+        ownership_check: Live host and guest proof required by the focused mode.
     """
     status, body, _headers = client.request("GET", "/ui/management/login")
     if status != 200:
@@ -744,6 +826,11 @@ def run_scenario(
     client.diagnostic_secret = password
     recovery_required: ApplyOutcomeUnknown | RestorationIncomplete | None = None
     try:
+        if same_address_only:
+            if ownership_check is None:
+                raise OverlapPrerequisiteError("same-address acceptance requires dedicated-host proof")
+            return _run_authenticated(client, connect_appliance, topology, server_action,
+                                      same_address_only=True, ownership_check=ownership_check)
         return _run_authenticated(client, connect_appliance, topology, server_action)
     except (ApplyOutcomeUnknown, RestorationIncomplete) as failure:
         recovery_required = failure
@@ -765,6 +852,8 @@ def run_scenario(
 def _run_authenticated(
     client: FixtureHttpClient, connect_appliance: Callable[[], paramiko.SSHClient],
     topology: AdmittedTopology, server_action: Callable[[str], dict[str, Any]],
+    *, same_address_only: bool = False,
+    ownership_check: Callable[[], dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Run the scenario after authentication while preserving all baseline fields.
 
@@ -773,9 +862,19 @@ def _run_authenticated(
         connect_appliance: Fresh pinned root SSH factory.
         topology: Independently admitted fixture topology.
         server_action: Admitted private DHCP/RA server controller.
+        same_address_only: Skip the separate IPv6 and routing-overlap acceptance cases.
+        ownership_check: Required independent host and guest observations for the focused mode.
     """
     management, lab = (topology.link("appliance", index).interface for index in (0, 1))
+    if same_address_only:
+        if ownership_check is None:
+            raise OverlapPrerequisiteError("same-address acceptance requires dedicated-host proof")
+        ownership_check()
+        clock_preparation = _prepare_private_clock(client)
+        ownership_check()
     setup = _setup(client)
+    if same_address_only:
+        setup["private_clock_preparation"] = clock_preparation
     clean = setup.get("clean", setup.get("already_applied"))
     if not isinstance(clean, dict) or clean.get("pending_count") != 0:
         raise OverlapPrerequisiteError("scenario setup did not produce a clean applied baseline")
@@ -799,6 +898,14 @@ def _run_authenticated(
     restore_allowed = True
     stage = "candidate-network"
     try:
+        if same_address_only:
+            evidence["covered"] = ["retained-static-same-address-lease"]
+            evidence["not_covered"] = ["slaac", "expiry", "routing-overlap", "dad-conflict", "reboot"]
+            stage = "same-address-lease"
+            evidence["same_address_lease"] = _same_address_lease(
+                client, connect_appliance, topology, server_action, baseline_dns_servers, ownership_check,
+            )
+            return evidence
         stage = "management-ipv6-certificate-preparation"
         evidence["management_certificate_preparation"] = _prepare_management_certificate(
             client, connect_appliance, topology,
@@ -935,6 +1042,8 @@ def probe(args, management):
     finally:
         if restore_allowed:
             try:
+                if same_address_only and ownership_check:
+                    ownership_check()
                 evidence["restored"] = _restore(
                     client, connect_appliance, server_action, baseline, baseline_dns_servers,
                 )

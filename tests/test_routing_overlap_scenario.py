@@ -10,6 +10,7 @@ import subprocess
 import time
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
+from unittest.mock import Mock
 
 import pytest
 from cryptography import x509
@@ -752,6 +753,87 @@ def test_rejected_apply_reports_only_bounded_validation_identity(monkeypatch):
     assert "known_causes=['web-terminal-address']" in str(error.value)
 
 
+@pytest.mark.parametrize("available,server,active", [(True, False, False), (False, False, False),
+                                                    (True, True, False), (True, False, True)])
+def test_private_clock_preserves_form_and_refuses_unavailable_authority(available, server, active):
+    """Keep unrelated NTP desired state and require an available isolated clock source.
+
+    Args:
+        available: Whether Tools capability is positively available.
+        server: Whether NTP server mode is already enabled.
+        active: Whether another Apply task is active.
+    """
+    source = "ntp_client"
+    writes = []
+
+    class ClockClient:
+        """Serve the supported NTP form and capture autosave requests."""
+
+        def json_request(self, *_args):
+            """Expose the fresh fixture's public Apply state.
+
+            Args:
+                *_args: Read-only review request.
+            """
+            return {"initial_apply_required": True, "active_task": "busy" if active else None}
+
+        def request(self, method, path, **kwargs):
+            """Retain all successful controls across the clock-source save.
+
+            Args:
+                method: GET page or POST autosave.
+                path: Supported NTP page or form endpoint.
+                **kwargs: Form fields and autosave headers.
+            """
+            nonlocal source
+            if method == "POST":
+                writes.append(kwargs["form"])
+                source = dict(kwargs["form"])["time_source"]
+                return 200, "{}", {}
+            body = ('<form id="ntp-settings-form" action="/ui/management/ntp/settings">'
+                    '<input name="csrf" value="synthetic"><input name="hostname" value="fixture-clock">'
+                    '<input name="upstream_sources_json" value="[]">'
+                    '<select name="time_source">'
+                    f'<option value="ntp_client" {"selected" if source == "ntp_client" else ""}>NTP</option>'
+                    f'<option value="vmware_tools" {"selected" if source == "vmware_tools" else ""} '
+                    f'{"disabled" if not available else ""}>Tools</option></select>'
+                    f'{"<input name=enabled type=checkbox checked>" if server else ""}</form>')
+            return 200, body, {}
+
+    if available and not server and not active:
+        assert scenario._prepare_private_clock(ClockClient())["desired_source"] == "vmware_tools"
+        assert dict(writes[0]) == {"csrf": "synthetic", "hostname": "fixture-clock",
+                                   "upstream_sources_json": "[]", "time_source": "vmware_tools"}
+    else:
+        with pytest.raises(OverlapPrerequisiteError):
+            scenario._prepare_private_clock(ClockClient())
+        assert writes == []
+
+
+@pytest.mark.parametrize("fault", ["transport", "server", "readback"])
+def test_private_clock_save_never_retries_unknown_or_changed_state(fault):
+    """Preserve ambiguous saves and reject unrelated desired-state changes.
+
+    Args:
+        fault: Transport loss, ambiguous server reply, or changed form readback.
+    """
+    page = ('<form id="ntp-settings-form" action="/ui/management/ntp/settings">'
+            '<input name="csrf" value="synthetic"><input name="hostname" value="original">'
+            '<select name="time_source"><option value="ntp_client" selected>NTP</option>'
+            '<option value="vmware_tools">Tools</option></select></form>')
+    client = Mock()
+    client.json_request.return_value = {"initial_apply_required": True, "active_task": None}
+    saved = page.replace('value="ntp_client" selected', 'value="ntp_client"').replace(
+        'value="vmware_tools"', 'value="vmware_tools" selected').replace('value="original"', 'value="changed"')
+    reply = TimeoutError("synthetic-private-payload") if fault == "transport" else (500 if fault == "server" else 200, "{}", {})
+    client.request.side_effect = [(200, page, {}), reply, (200, saved, {})]
+    expected = scenario.ApplyOutcomeUnknown if fault != "readback" else OverlapPrerequisiteError
+    with pytest.raises(expected) as error:
+        scenario._prepare_private_clock(client)
+    assert "synthetic-private-payload" not in str(error.value)
+    assert sum(call.args[0] == "POST" for call in client.request.call_args_list) == 1
+
+
 def test_initial_setup_uses_reviewed_nonformatting_units(monkeypatch):
     """Initial setup uses the ordinary Apply then requires clean applied readback.
 
@@ -901,6 +983,116 @@ def test_same_address_requires_live_server_lease(monkeypatch, topology, native, 
     assert client.external_dns_servers == []
     assert [body["external_dns_servers"] for method, path, body in client.calls
             if method == "PATCH" and path == "/api/v1/settings"] == [["192.0.2.1"], []]
+
+
+@pytest.mark.parametrize("outcome", ["success", "ordinary-failure"])
+def test_same_address_only_skips_ipv6_and_restores_original_baseline(monkeypatch, topology, outcome):
+    """Focused mode skips IPv6 preparation and restores all captured fields either way.
+
+    Args:
+        monkeypatch: Replace only setup, candidate phase, and external observations.
+        topology: Independently admitted original fixture identities.
+        outcome: Successful handoff or an ordinary prerequisite failure.
+    """
+    client = FakeClient()
+    original = copy.deepcopy(client.rows)
+    original_dns = list(client.external_dns_servers)
+    events = []
+    monkeypatch.setattr(scenario, "_prepare_private_clock", lambda _client: {"desired_source": "vmware_tools"})
+    monkeypatch.setattr(scenario, "_setup", lambda _client: {"clean": {"pending_count": 0}})
+    monkeypatch.setattr(scenario, "_prepare_management_certificate",
+                        lambda *_args: pytest.fail("same-address-only must not prepare IPv6"))
+
+    def same_address(current, *_args, **_kwargs):
+        """Change desired state at the same-address phase boundary.
+
+        Args:
+            current: Synthetic authenticated appliance client.
+            *_args: Original phase dependencies and baseline settings.
+            **_kwargs: Optional phase controls.
+        """
+        events.append("same-address")
+        current.rows["eth0"].update(ipv4_method="dhcp", ip_cidr=None, gateway=None)
+        current.external_dns_servers = ["192.0.2.1"]
+        if outcome == "ordinary-failure":
+            raise OverlapPrerequisiteError("synthetic same-address refusal")
+        return {"lease": "proved"}
+
+    monkeypatch.setattr(scenario, "_same_address_lease", same_address)
+    monkeypatch.setattr(scenario, "_apply", lambda _client, units=None, **kwargs:
+                        events.append(("apply", kwargs["stage"])) or {"status": "succeeded"})
+    monkeypatch.setattr(scenario, "_snapshot", lambda _connect: {"links": [
+        {"ifname": "eth0", "addr_info": [{"local": "192.0.2.10", "scope": "global"}]},
+        {"ifname": "eth1", "addr_info": []},
+    ]})
+    monkeypatch.setattr(scenario, "_settle_dependent_dns", lambda _client: {"dns_settled": True})
+
+    if outcome == "ordinary-failure":
+        with pytest.raises(OverlapPrerequisiteError, match="same-address-lease: synthetic same-address refusal"):
+            scenario._run_authenticated(
+                client, lambda: None, topology, lambda _action: {}, same_address_only=True,
+                ownership_check=lambda: {"ownership": "stable"},
+            )
+    else:
+        evidence = scenario._run_authenticated(
+            client, lambda: None, topology, lambda _action: {}, same_address_only=True,
+            ownership_check=lambda: {"ownership": "stable"},
+        )
+        assert evidence["same_address_lease"] == {"lease": "proved"}
+
+    assert events[-1] == ("apply", "restoration")
+    assert client.rows == original
+    assert client.external_dns_servers == original_dns
+    assert not any(method == "PATCH" and body and
+                   (body.get("ipv6_enabled") is True or
+                    body.get("ipv6_cidr") == "fd74:1::250:56ff:fe00:10/64")
+                   for method, _path, body in client.calls)
+    assert len([event for event in events if event == "same-address"]) == 1
+
+
+def test_same_address_ownership_loss_prevents_baseline_restoration(monkeypatch, topology):
+    """Do not write baseline state after the dedicated-host ownership bracket is lost.
+
+    Args:
+        monkeypatch: Replace Apply and the ownership-loss boundary.
+        topology: Independently admitted original fixture identities.
+    """
+    client = FakeClient()
+    checks = 0
+    restorations = []
+    monkeypatch.setattr(scenario, "_prepare_private_clock", lambda _client: {"desired_source": "vmware_tools"})
+    monkeypatch.setattr(scenario, "_setup", lambda _client: {"clean": {"pending_count": 0}})
+
+    def same_address(current, *_args, **_kwargs):
+        """Leave changed state for the restoration ownership test.
+
+        Args:
+            current: Synthetic authenticated appliance client.
+            *_args: Original phase dependencies and baseline settings.
+            **_kwargs: Optional phase controls.
+        """
+        current.rows["eth0"].update(ipv4_method="dhcp", ip_cidr=None, gateway=None)
+        return {"lease": "proved"}
+
+    def ownership_check():
+        nonlocal checks
+        checks += 1
+        if checks == 3:
+            raise OverlapPrerequisiteError("dedicated-host ownership changed")
+        return {"ownership": "stable"}
+
+    monkeypatch.setattr(scenario, "_same_address_lease", same_address)
+    monkeypatch.setattr(scenario, "_restore", lambda *_args: restorations.append("restore"))
+
+    with pytest.raises(scenario.RestorationIncomplete, match="restoration: dedicated-host ownership changed"):
+        scenario._run_authenticated(
+            client, lambda: None, topology, lambda _action: {}, same_address_only=True,
+            ownership_check=ownership_check,
+        )
+
+    assert checks == 3
+    assert restorations == []
+    assert client.rows["eth0"]["ipv4_method"] == "dhcp"
 
 
 @pytest.fixture

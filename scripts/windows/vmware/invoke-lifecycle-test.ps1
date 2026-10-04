@@ -66,6 +66,8 @@ IPv4 CIDR used by the simulated WAN scenario.
 Run the focused WAN routing scenario.
 .PARAMETER RoutingOverlapOnly
 Run isolated DHCP and SLAAC same-prefix acceptance on task-owned private LAN segments.
+.PARAMETER SameAddressHandoffOnly
+Run only the same-address IPv4 handoff within RoutingOverlapOnly.
 .PARAMETER OidcOnly
 Run only the OIDC lifecycle scenario.
 .PARAMETER TimeSourceOnly
@@ -229,6 +231,9 @@ param(
     [Parameter(ParameterSetName = 'Run')]
     [Parameter(ParameterSetName = 'Plan')]
     [switch]$RoutingOverlapOnly,
+    [Parameter(ParameterSetName = 'Run')]
+    [Parameter(ParameterSetName = 'Plan')]
+    [switch]$SameAddressHandoffOnly,
 
     [Parameter(ParameterSetName = 'Run')]
     [Parameter(ParameterSetName = 'Plan')]
@@ -289,6 +294,10 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+if ($SameAddressHandoffOnly -and -not $RoutingOverlapOnly) {
+    throw '-SameAddressHandoffOnly requires -RoutingOverlapOnly.'
+}
+
 
 $repoRoot = Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..\..')
 $applianceIpWasPassed = $PSBoundParameters.ContainsKey('ApplianceIPAddress')
@@ -597,6 +606,7 @@ if ($CertificateDhcpPeer) {
 }
 if ($RoutingWanOnly) { $arguments += '-RoutingWanOnly' }
 if ($RoutingOverlapOnly) { $arguments += '-RoutingOverlapOnly' }
+if ($SameAddressHandoffOnly) { $arguments += '-SameAddressHandoffOnly' }
 if ($OwnershipRoot) { $arguments += @('-OwnershipRoot', $OwnershipRoot) }
 if ($OwnershipTaskId) { $arguments += @('-OwnershipTaskId', $OwnershipTaskId) }
 if ($FullEsxiPxeInstall) { $arguments += '-FullEsxiPxeInstall' }

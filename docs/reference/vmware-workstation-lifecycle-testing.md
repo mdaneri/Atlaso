@@ -484,6 +484,57 @@ inspector compares the uploaded wheel's payload with installed files and rejects
 checks wheel and helper hashes against the immutable build inputs. This proves the inspected on-disk runtime bytes,
 not continuous execution or transient publication behavior.
 
+### Same-address acceptance
+
+For #837, select `-RoutingOverlapOnly -SameAddressHandoffOnly` on the canonical
+`invoke-lifecycle-test.ps1` wrapper, with the prepared appliance/client source artifacts, protected root/admin
+identities, `-SkipClientPrepare`, and `-ApplianceSshUser root` required by the private fixture above.
+The root identity is used for VMware guest operations. Native appliance observations authenticate the configured
+administrator over the separately pinned SSH connection, then use a bounded private `su` exchange with the distinct
+root credential. The exchange checks terminal echo before sending that credential over encrypted stdin and requires
+effective root identity before executing the read-only observation. Focused first boot keeps root SSH disabled even
+when the VMware guest-operations identity is root; the fixture does not
+change SSH policy or install a passwordless-sudo rule.
+Before initial baseline Apply, the isolated fresh clone selects the positively available VMware Tools clock source
+through the supported NTP form, preserving other NTP settings and keeping server mode disabled. Global Apply must
+verify that clock authority and synchronization; the fixture cannot depend on external upstream NTP reachability.
+The mode keeps management IPv6 disabled and runs only the IPv4 static-to-DHCP handoff at `192.0.2.10`.
+It records the live server lease immediately before DHCP activation and requires the installed helper's independent
+current client-lease proof, exact native interface/address identity, source routing rules, successful global Apply,
+and ordinary baseline restoration. It does not claim SLAAC, lease-expiry, overlap, negative-DAD, or reboot acceptance.
+Retained management listeners still require certificate IP SAN coverage. The helper feeds the public certificate
+to OpenSSL's default stdin; Photon OpenSSL treats an explicit `-in -` as a literal filename.
+
+This opt-in mode uses the `fixture-stable-observation-v1` contract. Other VMware VMs may run on the host;
+no exclusive-host reservation or complete Windows process census is required. The provider inventory must contain
+every enrolled VMX path before and after configuration reads. Changes to unrelated VMs do not invalidate fixture
+admission. Preserve unrelated VMs and coordinate use of any shared source VM with its owner.
+
+The producer pins the provider executables and original VMX files. The focused wrapper retains saved VMX read pins
+continuously from descriptor creation through successful controller stop. These pins deny saved adapter edits and file
+replacement between phases;
+they are released before the owned seed retirement and reboot, or on bounded failure exit.
+Repeated runtime configuration reads must positively
+match every enrolled MAC and exact PVN/VMnet identifier across all ten adapter slots; blank required fields, extra
+adapters, or differing bracketed observations refuse admission. `startConnected` is configuration, not a claim about
+current carrier. Pinned SSH reads independently inspect every non-loopback guest interface, including down interfaces,
+their IPv4/IPv6 addresses, and bridge membership. Active management/client links must have native carrier; additional
+network namespaces or competing candidate-address claims refuse. Client controllers recheck their original forwarding
+guard and DHCP-server state. Fresh fixture and guest checks precede static and DHCP Apply and baseline restoration.
+A nonretryable focused phase failure retains the fixture before seed or VM cleanup. Focused scenario failure receipts
+record `preserve_fixture: true` and return preservation exit status 3; ownership loss also blocks
+a competing restoration Apply.
+Transient HTTPS readiness failures may retry only after a fresh fixture check succeeds; ownership or trust refusals
+remain failures. Noncandidate peer server addresses may intentionally overlap on the admitted isolated segments.
+
+These observations cover the enrolled fixture and its admitted guests. Serial reads are not an atomic switch-port
+inventory and cannot detect every change followed by a revert or prove the absence of an unrelated VM on the same
+segment. Receipts report those limits and do not claim host-wide or continuous exclusive membership. The existing
+producer for different-address certificate scenarios retains its stricter refusal; this mode does not admit those
+scenarios or relax their certificate-publication guard. Unit tests do not establish native same-address success.
+Keep #837 open until a PR-bound native run completes and its measured runtime, handoff, lease, and restoration
+evidence are reviewed.
+
 ## Appliance Update status and ordering acceptance
 
 For the 0.9.220 to 0.9.223 updater transition, use a brand-new normal test VM with a unique name and destination. Run

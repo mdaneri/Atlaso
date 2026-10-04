@@ -74,6 +74,8 @@ Existing Ed25519 public key whose private half is loaded in the local SSH agent.
 Run only WAN routing scenario.
 .PARAMETER RoutingOverlapOnly
 Run isolated DHCP and SLAAC overlap acceptance using two task-owned LAN segments.
+.PARAMETER SameAddressHandoffOnly
+Run only the same-address IPv4 handoff within RoutingOverlapOnly.
 .PARAMETER FullEsxiPxeInstall
 Include ESXi PXE install scenario.
 .PARAMETER PxeInstallerIsoPath
@@ -131,6 +133,7 @@ param(
     [string]$CertificatePeerPublicKeyPath = '',
     [switch]$RoutingWanOnly,
     [switch]$RoutingOverlapOnly,
+    [switch]$SameAddressHandoffOnly,
     [switch]$FullEsxiPxeInstall,
     [string]$PxeInstallerIsoPath = '',
     [string]$PxeClientIPAddress = '',
@@ -141,6 +144,10 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+if ($SameAddressHandoffOnly -and -not $RoutingOverlapOnly) {
+    throw '-SameAddressHandoffOnly requires -RoutingOverlapOnly.'
+}
+
 if ($RoutingOverlapOnly -and -not $PlanOnly) {
     & python -I -B -c 'import paramiko, cryptography, pycdlib' 2>$null
     if ($LASTEXITCODE -ne 0) {
@@ -906,6 +913,7 @@ if (Test-Path -LiteralPath $resultRoot) {
 $preflightRootCreated = $false
 $preflightGuard = $null
 $runtimeConsumerPins = [Collections.Generic.List[IDisposable]]::new()
+$routingOverlapVmxPins = [Collections.Generic.List[IDisposable]]::new()
 $originalOwnershipRecords = [Collections.Generic.List[object]]::new()
 $durableOwnershipRoot = ''
 $lifecycleTaskId = if ($env:CODEX_THREAD_ID) { $env:CODEX_THREAD_ID } elseif ($OwnershipTaskId) { $OwnershipTaskId } else { $LabName }
@@ -2644,7 +2652,10 @@ function Sync-ApplianceApplicationWheel {
         $deadline = (Get-Date).AddMinutes(3)
         do {
             $ready = if ($RoutingOverlapOnly) {
-                try { Invoke-RoutingOverlapPhase -Phase probe -Descriptor $overlapDescriptor -Trust $overlapTrust; $true } catch { $false }
+                try { Invoke-RoutingOverlapPhase -Phase probe -Descriptor $overlapDescriptor -Trust $overlapTrust; $true } catch {
+                    if ($overlapRecoveryUncertain) { throw }
+                    $false
+                }
             } else { Test-ApplianceOpenApi -Url "$ApplianceUrl/openapi.json" }
             if ($ready) {
                 # Return the digest established while both the source snapshot
@@ -2836,6 +2847,7 @@ $plan = [ordered]@{
     certificate_appliance_peer_mac = $certificateAppliancePeerMac
     routing_wan_only      = [bool]$RoutingWanOnly
     routing_overlap_only  = [bool]$RoutingOverlapOnly
+    same_address_handoff_only = [bool]$SameAddressHandoffOnly
     full_esxi_pxe_install = [bool]$FullEsxiPxeInstall
     signed_release_update_check = [bool]$SignedReleaseRepositoryUrl
     signed_release_fixture_operations = if ($SignedReleaseRepositoryUrl) {
@@ -2867,11 +2879,13 @@ try {
     $planWriter.Write([Text.UTF8Encoding]::new($false).GetBytes($planJson)); $planWriter.Flush($true)
 } finally { $planWriter.Dispose() }
 
+# Focused root identity belongs to VMware guest operations; its SSH observer
+# authenticates the administrator and uses private su without enabling root SSH.
 $firstBootOvfEnvironment = New-AtlasoWorkstationOvfEnvironment `
     -Fqdn (New-AtlasoWorkstationFqdn -Name $applianceName) `
     -AdminPassword $adminPasswordSecure `
     -RootPassword $rootPasswordSecure `
-    -RootSshEnabled:($ApplianceSshUser -eq 'root') `
+    -RootSshEnabled:($ApplianceSshUser -eq 'root' -and -not $SameAddressHandoffOnly) `
     -NormalTestVm:$TimeSourceOnly
 
 New-Item -ItemType Directory -Path $vmRoot -ErrorAction Stop | Out-Null
@@ -3532,6 +3546,10 @@ with WindowsFiles().opened(Path(sys.argv[1]), directory=True) as (_, identity, _
         Invoke-RoutingOverlapPhase -Phase scenario -Descriptor $overlapDescriptor -Trust $overlapTrust
         Invoke-RoutingOverlapPhase -Phase stop -Descriptor $overlapDescriptor
         $overlapStarted = $false
+        # Original saved VMX identities and adapter bytes stay pinned from
+        # enrollment through stop. Release only before owned seed retirement/reboot.
+        foreach ($pin in $routingOverlapVmxPins) { $pin.Dispose() }
+        $routingOverlapVmxPins.Clear()
     } elseif ($CertificateOnly) {
         $sourceHelperSha256 = (Get-FileHash -LiteralPath (Join-Path $runtimeSourceRoot 'scripts/appliance/atlaso-helper') -Algorithm SHA256).Hash.ToLowerInvariant()
         $installedHelperSha256 = Get-CertificateInstalledHelperSha256 -ApplianceVmx $applianceVmx
@@ -3799,6 +3817,11 @@ if ($overlapStarted -and $null -ne $overlapDescriptor -and -not $diagnosticTermi
     }
 }
 
+# A focused stop preflight can lose ownership after the earlier recovery gate.
+if ($overlapRecoveryUncertain) {
+    throw "Dedicated-host ownership or recovery is unverified. Preserve the running lab and original evidence at '$resultRoot' before seed or VM cleanup."
+}
+
 # A failed boot still owns its copied disk; release admission handles before
 # the documented seed and task-owned VM cleanup paths inspect that VM.
 if ($scenarioFailure) {
@@ -3874,6 +3897,7 @@ if ($cleanupFailure) {
     if ($certificateKnownHostsPin) { $certificateKnownHostsPin.Dispose() }
     if ($certificatePeerPublicKeyPin) { $certificatePeerPublicKeyPin.Dispose() }
     if ($certificateDiskSourcePin) { $certificateDiskSourcePin.Dispose() }
+    foreach ($pin in $routingOverlapVmxPins) { $pin.Dispose() }
     for ($pinIndex = $runtimeConsumerPins.Count - 1; $pinIndex -ge 0; $pinIndex--) { $runtimeConsumerPins[$pinIndex].Dispose() }
     if ($preflightGuard) { $preflightGuard.Dispose() }
 }
