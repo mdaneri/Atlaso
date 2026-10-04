@@ -677,7 +677,7 @@ def _same_address_lease(
         topology: Independently admitted fixture identities.
         server_action: Admitted DHCP server status controller.
         baseline_dns_servers: Original external resolvers to restore before DHCP activation.
-        ownership_check: Fresh dedicated-host and guest-conflict observation before each Apply.
+        ownership_check: Fresh fixture and guest-conflict observation before each Apply.
     """
     ownership = ownership_check() if ownership_check else None
     before = _lease(server_action("status"), topology)

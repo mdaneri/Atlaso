@@ -1,6 +1,11 @@
 """Verify pinned SSH and real TLS identity checks without external networking."""
 
+import base64
+import json
+import shutil
 import ssl
+import subprocess
+import sys
 from datetime import datetime, timedelta, timezone
 from email.message import Message
 from ipaddress import ip_address
@@ -17,6 +22,7 @@ from scripts.interop.routing_overlap_transport import (
     FixtureHttpClient,
     FixtureTransportError,
     PinnedFixtureGateway,
+    PinnedRootSuReadOnlyClient,
     TLSChannel,
     pinned_client,
 )
@@ -301,3 +307,260 @@ def test_http_api_failure_does_not_echo_secret_payload_or_target():
     with pytest.raises(FixtureTransportError) as error:
         FixtureHttpClient(gateway).json_request("POST", "/login?password=synthetic-secret")
     assert str(error.value) == "fixture API request failed with HTTP 401"
+
+
+class RootReadChannel:
+    """Emulate the bounded SSH channel around the remote su bridge."""
+
+    def __init__(self, initial, final, *, status=0, stays_open=False):
+        """Retain synthetic readiness and response bytes.
+
+        Args:
+            initial: Chunks returned before root-password readiness.
+            final: Chunks returned after the protected password input.
+            status: Remote command exit status.
+            stays_open: Keep the channel open to exercise its timeout.
+        """
+        self.chunks = list(initial)
+        self.final = list(final)
+        self.status = status
+        self.stays_open = stays_open
+        self.command = ""
+        self.stdin = bytearray()
+        self.read_output = bytearray()
+        self.ready_marker = b""
+        self.shutdown = False
+        self.closed = False
+
+    def settimeout(self, _timeout):
+        """Accept the finite channel polling timeout.
+
+        Args:
+            _timeout: Bounded synthetic channel timeout.
+        """
+
+    def exec_command(self, command):
+        """Retain the remote command for secret-exclusion assertions.
+
+        Args:
+            command: Fixed bridge command without credentials.
+        """
+        self.command = command
+        nonce = command.rsplit(" ", 1)[-1]
+        self.ready_marker = f"ATLASO_SU_READY:{nonce}\n".encode()
+        self.chunks = [chunk.replace(b"ATLASO_SU_READY:<nonce>\n", self.ready_marker)
+                       for chunk in self.chunks]
+
+    def sendall(self, data):
+        """Record protected stdin only after the bridge readiness marker.
+
+        Args:
+            data: Root credential bytes sent over the SSH channel.
+        """
+        assert self.ready_marker in self.read_output
+        self.stdin.extend(data)
+        self.chunks.extend(self.final)
+
+    def shutdown_write(self):
+        """Record end of the one-shot root credential input."""
+        self.shutdown = True
+
+    def recv_ready(self):
+        """Report queued synthetic SSH stdout."""
+        return bool(self.chunks)
+
+    def recv(self, _size):
+        """Return one queued stdout chunk.
+
+        Args:
+            _size: Maximum chunk requested by the bounded reader.
+        """
+        chunk = self.chunks.pop(0)
+        self.read_output.extend(chunk)
+        return chunk
+
+    def recv_stderr_ready(self):
+        """Report no remote diagnostic stream in these fixtures."""
+        return False
+
+    def recv_stderr(self, _size):
+        """Return no diagnostic bytes.
+
+        Args:
+            _size: Maximum requested diagnostic chunk.
+        """
+        return b""
+
+    def exit_status_ready(self):
+        """Report completion after all queued bytes have been consumed."""
+        return not self.stays_open and not self.chunks
+
+    def recv_exit_status(self):
+        """Return the configured synthetic exit status."""
+        return self.status
+
+    def close(self):
+        """Record channel cleanup."""
+        self.closed = True
+
+
+class RootReadTransport:
+    """Provide one authenticated synthetic SSH session."""
+
+    def __init__(self, channel):
+        """Retain the channel and its open-session timeout.
+
+        Args:
+            channel: Synthetic protected su exchange.
+        """
+        self.channel = channel
+        self.timeout = None
+
+    def is_authenticated(self):
+        """Report the fixture's pinned admin session as authenticated."""
+        return True
+
+    def open_session(self, *, timeout):
+        """Return the exchange channel under its configured deadline.
+
+        Args:
+            timeout: Maximum channel-open duration.
+        """
+        self.timeout = timeout
+        return self.channel
+
+
+def _root_observer(initial, final, *, status=0, stays_open=False):
+    """Create a synthetic root observer and its inspectable SSH channel.
+
+    Args:
+        initial: Output available before password exchange.
+        final: Output available after password exchange.
+        status: Remote command status.
+        stays_open: Whether the remote channel remains open indefinitely.
+    """
+    channel = RootReadChannel(initial, final, status=status, stays_open=stays_open)
+    transport = RootReadTransport(channel)
+    client = Mock()
+    client.get_transport.return_value = transport
+    return PinnedRootSuReadOnlyClient(client, "synthetic-root-secret"), channel
+
+
+def test_root_su_bridge_sends_distinct_secret_only_after_echo_safe_prompt():
+    """Require the remote bridge to disable and verify echo before readiness."""
+    source = __import__("scripts.interop.routing_overlap_transport", fromlist=["_ROOT_SU_BRIDGE"])._ROOT_SU_BRIDGE
+
+    assert source.index("settings[3] &= ~(termios.ECHO | termios.ECHONL)") < source.index("os.execve(su")
+    first_echo_check = source.index("if current & (termios.ECHO | termios.ECHONL):")
+    ready = source.index('print("ATLASO_SU_READY:"')
+    secret_read = source.index("chunk = os.read(sys.stdin.fileno()")
+    second_echo_check = source.index("current = termios.tcgetattr(terminal)[3]", secret_read)
+    secret_write = source.index("os.write(terminal, raw)")
+    assert first_echo_check < ready < secret_read < second_echo_check < secret_write
+    assert source.index("if uid != 0: raise SystemExit(125)") < source.index("exec(compile(base64.b64decode")
+
+
+def test_root_observer_releases_secret_only_after_remote_readiness():
+    """Keep the root secret off command arguments and wait for safe PTY readiness."""
+    result = b'{"schema":1,"ok":true,"euid":0,"result":{"links":[]}}\n'
+    observer, channel = _root_observer([b"ATLASO_SU_READY:<nonce>\n"], [result])
+    try:
+        encoded = base64.b64encode(b"print('{}')").decode("ascii")
+        command = f'python3 -c \'import base64;exec(base64.b64decode("{encoded}"))\''
+        _stdin, stdout, stderr = observer.exec_command(command)
+        assert json.loads(stdout.read()) == {"links": []}
+        assert stderr.read() == b""
+        assert stdout.channel.recv_exit_status() == 0
+        assert channel.stdin == b"synthetic-root-secret\n"
+        assert channel.shutdown and channel.closed
+        assert "synthetic-root-secret" not in channel.command
+    finally:
+        observer.close()
+
+
+def test_root_observer_uses_fresh_prompt_nonce_for_each_exchange():
+    """Bind each secret release to the current exchange's unpredictable marker."""
+    result = b'{"schema":1,"ok":true,"euid":0,"result":{"ok":true}}\n'
+    first, first_channel = _root_observer([b"ATLASO_SU_READY:<nonce>\n"], [result])
+    second, second_channel = _root_observer([b"ATLASO_SU_READY:<nonce>\n"], [result])
+    try:
+        first.read_program("print('{}')")
+        second.read_program("print('{}')")
+        first_nonce = first_channel.command.rsplit(" ", 1)[-1]
+        second_nonce = second_channel.command.rsplit(" ", 1)[-1]
+        assert len(first_nonce) == len(second_nonce) == 32
+        assert first_nonce != second_nonce
+    finally:
+        first.close()
+        second.close()
+
+
+def test_root_bridge_survives_powershell_login_shell(monkeypatch):
+    """Execute the SSH bootstrap through the appliance's PowerShell shell.
+
+    Args:
+        monkeypatch: Substitute a harmless bridge before invoking the real shell.
+    """
+    shell = shutil.which("pwsh")
+    if shell is None:
+        pytest.skip("PowerShell is unavailable on this test host")
+    marker = "single ' and double \" quotes; $value `backtick`"
+    bridge = f"import json,sys;print(json.dumps({{'marker':{marker!r},'args':sys.argv[1:]}}))"
+    monkeypatch.setattr("scripts.interop.routing_overlap_transport._ROOT_SU_BRIDGE", bridge)
+    response = b'{"schema":1,"ok":true,"euid":0,"result":{}}\n'
+    observer, channel = _root_observer([b"ATLASO_SU_READY:<nonce>\n"], [response])
+    try:
+        observer.read_program("print('{}')", timeout=5)
+        command = channel.command.replace("python3 ", f'& "{sys.executable}" ', 1)
+        completed = subprocess.run([shell, "-NoProfile", "-NonInteractive", "-Command", command],
+                                   capture_output=True, text=True, timeout=15, check=True)
+        result = json.loads(completed.stdout)
+        assert result["marker"] == marker
+        assert base64.b64decode(result["args"][0]).decode() == "print('{}')"
+        assert result["args"][1:] == ["5", channel.command.rsplit(" ", 1)[-1]]
+    finally:
+        observer.close()
+
+
+def test_root_observer_does_not_send_secret_when_echo_race_prevents_readiness():
+    """Do not send root credentials when the broker refuses its echo check."""
+    failure = b'{"schema":1,"ok":false,"error":"echo"}\n'
+    observer, channel = _root_observer([b"Password:", failure], [], status=1)
+    try:
+        with pytest.raises(FixtureTransportError):
+            observer.read_program("print('{}')")
+        assert channel.stdin == b""
+        assert "synthetic-root-secret" not in channel.command
+    finally:
+        observer.close()
+
+
+def test_root_observer_rejects_euid_mismatch_and_unbounded_output():
+    """Reject a non-root result and a response exceeding the fixed output budget."""
+    wrong_euid = b'{"schema":1,"ok":true,"euid":1000,"result":{}}\n'
+    observer, channel = _root_observer([b"ATLASO_SU_READY:<nonce>\n"], [wrong_euid])
+    with pytest.raises(FixtureTransportError, match="root identity"):
+        observer.read_program("print('{}')")
+    observer.close()
+    assert channel.closed
+
+    observer, channel = _root_observer([b"x" * (524288 + 1)], [])
+    with pytest.raises(FixtureTransportError, match="output bound"):
+        observer.read_program("print('{}')")
+    observer.close()
+    assert channel.closed
+
+
+def test_root_observer_enforces_whole_exchange_deadline(monkeypatch):
+    """Stop an authenticated read whose su readiness handshake never completes.
+
+    Args:
+        monkeypatch: Replace the monotonic clock with a bounded synthetic clock.
+    """
+    observer, channel = _root_observer([], [], stays_open=True)
+    ticks = iter([0.0, 0.0, 2.0])
+    monkeypatch.setattr("scripts.interop.routing_overlap_transport.time.monotonic", lambda: next(ticks))
+    with pytest.raises(FixtureTransportError, match="time bound"):
+        observer.read_program("print('{}')", timeout=1)
+    observer.close()
+    assert channel.closed

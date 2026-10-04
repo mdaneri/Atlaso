@@ -489,6 +489,11 @@ not continuous execution or transient publication behavior.
 For #837, select `-RoutingOverlapOnly -SameAddressHandoffOnly` on the canonical
 `invoke-lifecycle-test.ps1` wrapper, with the prepared appliance/client source artifacts, protected root/admin
 identities, `-SkipClientPrepare`, and `-ApplianceSshUser root` required by the private fixture above.
+The root identity is used for VMware guest operations. Native appliance observations authenticate the configured
+administrator over the separately pinned SSH connection, then use a bounded private `su` exchange with the distinct
+root credential. The exchange checks terminal echo before sending that credential over encrypted stdin and requires
+effective root identity before executing the read-only observation. Root SSH remains disabled; the fixture does not
+change SSH policy or install a passwordless-sudo rule.
 The mode keeps management IPv6 disabled and runs only the IPv4 static-to-DHCP handoff at `192.0.2.10`.
 It records the live server lease immediately before DHCP activation and requires the installed helper's independent
 current client-lease proof, exact native interface/address identity, source routing rules, successful global Apply,

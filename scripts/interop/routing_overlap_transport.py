@@ -14,6 +14,7 @@ import io
 import ipaddress
 import json
 import re
+import secrets
 import ssl
 import time
 import urllib.parse
@@ -296,6 +297,309 @@ class PinnedFixtureGateway:
         for channel in self.channels:
             channel.close()
         self.channels.clear()
+        self.client.close()
+
+
+_ROOT_SU_BRIDGE = r'''import base64, json, os, pty, re, select, signal, sys, termios, time
+def fail(reason):
+    print(json.dumps({"schema":1,"ok":False,"error":reason}), flush=True)
+    raise SystemExit(1)
+try:
+    program64, bound_text, nonce = sys.argv[1], sys.argv[2], sys.argv[3]
+    bound = int(bound_text)
+    if not 1 <= bound <= 300 or len(program64) > 87384 or not re.fullmatch(r"[0-9a-f]{32}", nonce):
+        fail("bounds")
+    source = base64.b64decode(program64, validate=True).decode("utf-8")
+except (ValueError, UnicodeDecodeError):
+    fail("request")
+password = ""
+output = bytearray()
+received = bytearray()
+raw = b""
+pid = -1
+terminal = -1
+sent = False
+reaped = False
+deadline = time.monotonic() + bound
+su = "/usr/bin/su" if os.path.isfile("/usr/bin/su") else "/bin/su"
+if not os.path.isfile(su):
+    fail("unavailable")
+root_source = ("import os,base64;uid=os.geteuid();\n"
+               "if uid != 0: raise SystemExit(125)\n"
+               "print('ATLASO_ROOT_EUID:'+str(uid),flush=True);"
+               "exec(compile(base64.b64decode('" + program64 + "'),'<fixture-read>','exec'))")
+root_command = "python3 -I -c " + __import__("shlex").quote(root_source)
+try:
+    pid, terminal = pty.fork()
+    if pid == 0:
+        try:
+            settings = termios.tcgetattr(0)
+            settings[3] &= ~(termios.ECHO | termios.ECHONL)
+            termios.tcsetattr(0, termios.TCSANOW, settings)
+            os.execve(su, [su, "-s", "/bin/sh", "-c", root_command, "root"],
+                      {"PATH":"/usr/sbin:/usr/bin:/sbin:/bin", "LC_ALL":"C"})
+        except BaseException:
+            os._exit(126)
+    while time.monotonic() < deadline:
+        if select.select([terminal], [], [], 0.05)[0]:
+            try:
+                data = os.read(terminal, 4096)
+            except OSError:
+                data = b""
+            if not data:
+                break
+            output.extend(data)
+            if len(output) > 524288:
+                fail("output-limit")
+            if not sent and bytes(output).rsplit(b"\n", 1)[-1].strip().lower() == b"password:":
+                current = termios.tcgetattr(terminal)[3]
+                if current & (termios.ECHO | termios.ECHONL):
+                    fail("echo")
+                print("ATLASO_SU_READY:" + nonce, flush=True)
+                while len(received) <= 1025 and time.monotonic() < deadline:
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0 or not select.select([sys.stdin], [], [], min(0.05, remaining))[0]:
+                        continue
+                    chunk = os.read(sys.stdin.fileno(), 1026 - len(received))
+                    if not chunk:
+                        break
+                    received.extend(chunk)
+                    if b"\n" in chunk:
+                        break
+                raw = bytes(received)
+                if not raw.endswith(b"\n") or len(raw) > 1025 or raw.count(b"\n") != 1:
+                    received.clear()
+                    raw = b""
+                    fail("authentication")
+                password = raw[:-1].decode("utf-8")
+                if not password or any(ord(char) < 32 or ord(char) == 127 for char in password):
+                    received.clear()
+                    raw = b""
+                    password = ""
+                    fail("authentication")
+                current = termios.tcgetattr(terminal)[3]
+                if current & (termios.ECHO | termios.ECHONL):
+                    password = ""
+                    raw = b""
+                    received.clear()
+                    fail("echo")
+                os.write(terminal, raw)
+                password = ""
+                raw = b""
+                received.clear()
+                sent = True
+                output.clear()
+        if not reaped:
+            ended, status = os.waitpid(pid, os.WNOHANG)
+            if ended:
+                reaped = True
+                exit_code = os.waitstatus_to_exitcode(status)
+                if not select.select([terminal], [], [], 0)[0]:
+                    break
+    else:
+        fail("timeout")
+    while not reaped and time.monotonic() < deadline:
+        ended, status = os.waitpid(pid, os.WNOHANG)
+        if ended:
+            exit_code = os.waitstatus_to_exitcode(status)
+            reaped = True
+            break
+        time.sleep(0.01)
+    if not reaped:
+        fail("timeout")
+    if exit_code != 0 or not sent:
+        fail("authentication" if not sent else "execution")
+    lines = [line.strip() for line in bytes(output).replace(b"\r", b"").split(b"\n") if line.strip()]
+    if not lines or lines[0] != b"ATLASO_ROOT_EUID:0" or len(lines) != 2:
+        fail("euid-or-result")
+    result = json.loads(lines[1])
+    if not isinstance(result, dict):
+        fail("result")
+    print(json.dumps({"schema":1,"ok":True,"euid":0,"result":result}), flush=True)
+except (OSError, ValueError, TypeError, UnicodeDecodeError, json.JSONDecodeError):
+    fail("execution")
+finally:
+    password = ""
+    output.clear()
+    received.clear()
+    raw = b""
+    if terminal >= 0:
+        os.close(terminal)
+    if pid > 0 and not reaped:
+        try:
+            os.kill(pid, signal.SIGKILL)
+        except (ProcessLookupError, PermissionError):
+            pass
+        try:
+            os.waitpid(pid, os.WNOHANG)
+        except ChildProcessError:
+            pass
+'''
+
+
+class _CompletedOutput(io.BytesIO):
+    """Present one completed root read through the SSHClient output interface."""
+
+    def __init__(self, content: bytes, exit_status: int) -> None:
+        """Retain sanitized command output and its synthetic exit status.
+
+        Args:
+            content: Validated JSON observation bytes.
+            exit_status: Zero for accepted evidence.
+        """
+        super().__init__(content)
+        self.channel = self
+        self._exit_status = exit_status
+
+    def recv_exit_status(self) -> int:
+        """Return the already completed bounded command's status."""
+        return self._exit_status
+
+
+class PinnedRootSuReadOnlyClient(paramiko.SSHClient):
+    """Run admitted read-only Python observations under root through pinned admin SSH."""
+
+    _COMMAND_PREFIX = "python3 -c 'import base64;exec(base64.b64decode(\""
+    _COMMAND_SUFFIX = "\"))'"
+    _READY_PREFIX = b"ATLASO_SU_READY:"
+    _MAX_OUTPUT = 524288
+    _MAX_STDERR = 65536
+
+    def __init__(self, client: paramiko.SSHClient, root_password: str) -> None:
+        """Bind an already authenticated pinned admin session and separate root secret.
+
+        Args:
+            client: SSH session authenticated as the configured non-root admin.
+            root_password: Separate root secret retained only for encrypted stdin.
+        """
+        if not root_password or len(root_password.encode()) > 1024 or any(
+            ord(char) < 32 or ord(char) == 127 for char in root_password
+        ):
+            client.close()
+            raise FixtureTransportError("root observation credential is invalid")
+        super().__init__()
+        self.client = client
+        self._root_password = root_password
+
+    def exec_command(
+        self, command: str, bufsize: int = -1, timeout: float | None = None, get_pty: bool = False,
+        environment: dict[str, str] | None = None,
+    ) -> tuple[Any, _CompletedOutput, _CompletedOutput]:
+        """Execute only the runner's encoded observation through the protected su bridge.
+
+        Args:
+            command: Canonical base64-wrapped Python observation command.
+            bufsize: Accepted for SSHClient interface compatibility.
+            timeout: Whole bounded remote observation deadline in seconds.
+            get_pty: Whether a PTY was requested; not allowed on the outer session.
+            environment: Environment overrides; not allowed on the pinned exchange.
+        """
+        _ = bufsize
+        timeout = 45 if timeout is None else timeout
+        if (not isinstance(command, str) or not command.startswith(self._COMMAND_PREFIX)
+                or not command.endswith(self._COMMAND_SUFFIX) or get_pty or environment):
+            raise FixtureTransportError("root observation command is not admitted")
+        encoded = command[len(self._COMMAND_PREFIX):-len(self._COMMAND_SUFFIX)]
+        try:
+            program = base64.b64decode(encoded, validate=True).decode("utf-8")
+        except (ValueError, UnicodeDecodeError):
+            raise FixtureTransportError("root observation command is invalid") from None
+        output = self._run_program(program, timeout)
+        return io.BytesIO(b""), _CompletedOutput(output, 0), _CompletedOutput(b"", 0)
+
+    def read_program(self, program: str, *, timeout: float = 45) -> dict[str, Any]:
+        """Return one validated root-euid result for a fixed in-memory script.
+
+        Args:
+            program: Fixed guest read-only Python observation source.
+            timeout: Whole bounded remote observation deadline in seconds.
+        """
+        output = self._run_program(program, timeout)
+        try:
+            value = json.loads(output)
+        except (ValueError, UnicodeDecodeError):
+            raise FixtureTransportError("root observation result is invalid") from None
+        if not isinstance(value, dict):
+            raise FixtureTransportError("root observation result is invalid")
+        return value
+
+    def _run_program(self, program: str, timeout: float) -> bytes:
+        """Exchange a root password only after the pinned remote PTY proves no echo.
+
+        Args:
+            program: Bounded read-only Python source.
+            timeout: Maximum whole operation duration.
+        """
+        if (isinstance(timeout, bool) or not isinstance(timeout, (int, float))
+                or not 0 < timeout <= 300):
+            raise FixtureTransportError("root observation time bound is invalid")
+        if not isinstance(program, str) or not program or len(program.encode()) > 65536:
+            raise FixtureTransportError("root observation source exceeds its bound")
+        program64 = base64.b64encode(program.encode()).decode("ascii")
+        nonce = secrets.token_hex(16)
+        ready = self._READY_PREFIX + nonce.encode("ascii") + b"\n"
+        bridge64 = base64.b64encode(_ROOT_SU_BRIDGE.encode()).decode("ascii")
+        bootstrap = f"import base64;exec(base64.b64decode('{bridge64}'))"
+        remote = f'python3 -I -c "{bootstrap}" {program64} {max(1, int(timeout))} {nonce}'
+        if len(remote) > 524288:
+            raise FixtureTransportError("root observation command exceeds its bound")
+        transport = self.client.get_transport()
+        if transport is None or not transport.is_authenticated():
+            raise FixtureTransportError("pinned admin SSH session is unavailable")
+        channel = None
+        stdout = bytearray()
+        stderr_size = 0
+        sent = False
+        deadline = time.monotonic() + timeout
+        try:
+            channel = transport.open_session(timeout=min(10, timeout))
+            channel.settimeout(1)
+            channel.exec_command(remote)
+            while time.monotonic() < deadline:
+                if channel.recv_ready():
+                    chunk = channel.recv(65536)
+                    stdout.extend(chunk)
+                    if len(stdout) > self._MAX_OUTPUT:
+                        raise FixtureTransportError("root observation exceeded its output bound")
+                    if not sent and ready in stdout:
+                        ready_at = stdout.index(ready)
+                        if ready_at != 0:
+                            raise FixtureTransportError("root su readiness exchange was ambiguous")
+                        channel.sendall(self._root_password.encode() + b"\n")
+                        channel.shutdown_write()
+                        del stdout[:len(ready)]
+                        sent = True
+                if channel.recv_stderr_ready():
+                    stderr_size += len(channel.recv_stderr(65536))
+                    if stderr_size > self._MAX_STDERR:
+                        raise FixtureTransportError("root observation exceeded its error bound")
+                if channel.exit_status_ready() and not channel.recv_ready() and not channel.recv_stderr_ready():
+                    break
+                time.sleep(0.01)
+            else:
+                raise FixtureTransportError("root observation exceeded its time bound")
+            if not sent or channel.recv_exit_status() != 0:
+                raise FixtureTransportError("root observation authentication or execution failed")
+            try:
+                envelope = json.loads(stdout)
+            except (ValueError, UnicodeDecodeError):
+                raise FixtureTransportError("root observation response is invalid") from None
+            if (not isinstance(envelope, dict) or type(envelope.get("schema")) is not int
+                    or envelope.get("schema") != 1 or envelope.get("ok") is not True
+                    or type(envelope.get("euid")) is not int or envelope.get("euid") != 0
+                    or not isinstance(envelope.get("result"), dict)):
+                raise FixtureTransportError("root observation did not prove root identity")
+            return json.dumps(envelope["result"], separators=(",", ":")).encode()
+        except (OSError, paramiko.SSHException) as exc:
+            raise FixtureTransportError("pinned root observation transport failed") from exc
+        finally:
+            stdout.clear()
+            if channel is not None:
+                channel.close()
+
+    def close(self) -> None:
+        """Clear the retained root secret and close the authenticated admin session."""
+        self._root_password = ""
         self.client.close()
 
 

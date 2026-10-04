@@ -6,6 +6,7 @@ import hashlib
 import io
 import json
 import ssl
+from unittest.mock import Mock
 
 import paramiko
 import pytest
@@ -17,6 +18,7 @@ from scripts.interop.routing_overlap_runner import (
     ControllerFailure,
     FixtureSession,
     bounded_json_command,
+    connect_root_observer,
     probe_readiness,
     run_client_phase,
     scenario_failure_result,
@@ -25,6 +27,7 @@ from scripts.interop.routing_overlap_scenario import (
     ApplyOutcomeUnknown,
     RestorationIncomplete,
 )
+from scripts.interop.routing_overlap_transport import FixtureTransportError
 from tests import test_routing_overlap_lifecycle
 
 
@@ -433,6 +436,32 @@ def test_failed_host_admission_does_not_read_credentials(tmp_path, monkeypatch):
     with pytest.raises(OverlapPrerequisiteError, match='host proof unavailable'):
         overlap_runner.main()
     assert events == ['host-admission']
+
+
+def test_root_observer_authenticates_admin_then_retains_separate_root_secret():
+    """Use the configured admin SSH identity and a separate protected su secret."""
+    gateway = Mock()
+    admin_client = Mock()
+    gateway.connect_appliance.return_value = admin_client
+
+    observer = connect_root_observer(
+        gateway, 'configured-admin', 'synthetic-admin-secret', 'synthetic-root-secret',
+    )
+
+    gateway.connect_appliance.assert_called_once_with('configured-admin', 'synthetic-admin-secret')
+    assert isinstance(observer, paramiko.SSHClient)
+    assert observer._root_password == 'synthetic-root-secret'
+    assert 'synthetic-root-secret' not in str(gateway.connect_appliance.call_args)
+    observer.close()
+    admin_client.close.assert_called_once()
+
+
+def test_root_observer_refuses_root_login_before_authentication():
+    """Preserve the non-root SSH boundary before consuming either identity."""
+    gateway = Mock()
+    with pytest.raises(FixtureTransportError, match="non-root admin"):
+        connect_root_observer(gateway, "root", "synthetic-admin", "synthetic-root")
+    gateway.connect_appliance.assert_not_called()
 
 
 class ReadinessGateway:

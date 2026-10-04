@@ -33,7 +33,9 @@ from scripts.interop.dedicated_host_proof import DedicatedHostProof
 from scripts.interop.routing_overlap import FixtureOwner, admit_topology
 from scripts.interop.routing_overlap_transport import (
     FixtureHttpClient,
+    FixtureTransportError,
     PinnedFixtureGateway,
+    PinnedRootSuReadOnlyClient,
     pinned_client,
 )
 
@@ -334,7 +336,10 @@ def run_admitted_phase(args: argparse.Namespace, descriptor: dict[str, Any], hos
                     from scripts.interop.routing_overlap_scenario import run_scenario
                     try:
                         def connect() -> paramiko.SSHClient:
-                            """Open the original pinned appliance with the bounded root identity."""
+                            """Use protected su for same-address reads; retain overlap streaming."""
+                            if args.same_address_only:
+                                return connect_root_observer(gateway, args.admin_user, secrets["password"],
+                                                             secrets["appliance_ssh_password"])
                             return gateway.connect_appliance("root", secrets["appliance_ssh_password"])
                         options = {}
                         if args.same_address_only:
@@ -374,6 +379,27 @@ def probe_readiness(gateway: PinnedFixtureGateway, host_guard: DedicatedHostProo
     return 0 if status == 200 else 4
 
 
+def connect_root_observer(
+    gateway: PinnedFixtureGateway, admin_user: str, admin_password: str, root_password: str,
+) -> PinnedRootSuReadOnlyClient:
+    """Authenticate the configured admin identity before a protected root read.
+
+    Args:
+        gateway: Appliance SSH endpoint with its provider-observed pinned host key.
+        admin_user: Configured non-root appliance SSH username.
+        admin_password: Admin SSH secret supplied through the existing stdin envelope.
+        root_password: Separate root secret supplied only after su verifies PTY echo is off.
+    """
+    if not admin_user or admin_user == "root":
+        raise FixtureTransportError("root observation requires a non-root admin identity")
+    client = gateway.connect_appliance(admin_user, admin_password)
+    try:
+        return PinnedRootSuReadOnlyClient(client, root_password)
+    except Exception:
+        client.close()
+        raise
+
+
 GUEST_INVENTORY = '''import json, os, subprocess
 from pathlib import Path
 base = os.readlink('/proc/1/ns/net')
@@ -406,20 +432,26 @@ def dedicated_guest_proof(fixture: FixtureSession, connect: Any, host_guard: Ded
         connect: Pinned root appliance SSH factory.
         host_guard: Still-held original provider and VMX pins.
     """
-    from scripts.interop.routing_overlap_scenario import ApplyOutcomeUnknown, _observe
+    from scripts.interop.routing_overlap_scenario import ApplyOutcomeUnknown
 
     try:
         if host_guard is None:
             raise Refusal("dedicated_host_not_admitted")
         before = host_guard.check()
-        guests = {"appliance": _observe(connect, GUEST_INVENTORY)["links"]}
+        observer = connect()
+        try:
+            appliance = observer.read_program(GUEST_INVENTORY)
+        finally:
+            observer.close()
+        if appliance.get("schema") != 1 or appliance.get("ok") is not True:
+            raise Refusal("guest_inventory_invalid")
+        guests = {"appliance": appliance["links"]}
         for role in ("client-a", "client-b"):
             # The controller rechecks its owned forward-drop guard, live processes,
             # exact private addresses and lease before any address ownership claim.
             fixture.action(role, "status")
             peer = fixture.clients[role]
-            command = "sudo -n python3 -I -c " + shlex.quote(GUEST_INVENTORY)
-            guests[role] = bounded_json_command(peer, command, {})["links"]
+            guests[role] = bounded_json_command(peer, "sudo -n python3 -I -c " + shlex.quote(GUEST_INVENTORY), {})["links"]
         macs = {role: [link.mac for link in sorted(fixture.topology.links, key=lambda link: link.adapter)
                        if link.role == role] for role in guests}
         guest = validate_guest_addresses(macs, guests, ["192.0.2.10"])
