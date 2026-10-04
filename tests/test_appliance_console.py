@@ -2598,15 +2598,26 @@ def test_console_observation_uses_applied_snapshot_with_pending_edits(client, mo
         monkeypatch: Replace native discovery with the applied static address.
         pending_cidr: New static address, or a newer DHCP selection.
     """
+    from sqlalchemy import select
+
     from atlaso.app.database import SessionLocal
-    from atlaso.app.services.networking import HostPhysicalInterface
+    from atlaso.app.services.networking import (
+        HostPhysicalInterface,
+        render_network_config,
+    )
 
     with SessionLocal() as db:
         target = appliance_console._management_interface(db)
-        target.ipv4_method = "static" if pending_cidr else "dhcp"
-        target.ip_cidr = pending_cidr
+        target.ipv4_method = "static"
+        target.ip_cidr = "192.168.167.173/24"
         target.ipv6_enabled = False
         target.ipv6_cidr = None
+        applied_preview = render_network_config(
+            interfaces=list(db.scalars(select(appliance_console.PhysicalInterface))),
+            vlans=list(db.scalars(select(appliance_console.VlanInterface))),
+        )
+        target.ipv4_method = "static" if pending_cidr else "dhcp"
+        target.ip_cidr = pending_cidr
         interface_id = target.id
         observed = HostPhysicalInterface(
             name=target.name, mac_address=target.mac_address, driver=None, speed=None,
@@ -2614,9 +2625,7 @@ def test_console_observation_uses_applied_snapshot_with_pending_edits(client, mo
         )
         db.add(appliance_console.Job(
             id="job_applied", type="appliance-apply", status="succeeded", created_by="console:root",
-            result=json.dumps({"captured_units": [{"unit_id": "network", "config_preview":
-                f"[physical_interfaces]\ninterface={target.name}\nipv4_method=static\n"
-                "ip_cidr=192.168.167.173/24\nipv6_enabled=false\n"}]}),
+            result=json.dumps({"captured_units": [{"unit_id": "network", "config_preview": applied_preview}]}),
         ))
         db.commit()
     monkeypatch.setattr(appliance_console, "discover_host_physical_interfaces", lambda **kwargs: [observed])
