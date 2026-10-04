@@ -274,15 +274,15 @@ def main() -> int:
     host_guard = None
     if args.same_address_only:
         if args.vmrun is None or args.powershell is None:
-            raise ValueError("dedicated host provider paths are required")
+            raise ValueError("fixture provider paths are required")
         paths = descriptor.get("vmx_paths", {})
         if set(paths) != {"appliance", "client-a", "client-b"}:
-            raise ValueError("dedicated host requires original fixture VMX paths")
+            raise ValueError("fixture requires original VMX paths")
         expected = {}
         for role, path in paths.items():
             vmx = Path(path)
             if not vmx.is_absolute() or not vmx.is_relative_to(Path(args.lab_root)):
-                raise ValueError("dedicated host VMX is outside the original lab")
+                raise ValueError("fixture VMX is outside the original lab")
             expected[path] = [{"index": row["adapter"], "connection_type": row["network_type"],
                                "network_id": row["network_id"], "mac": row["mac"]}
                               for row in descriptor["provider_nics"] if row["role"] == role]
@@ -296,12 +296,12 @@ def main() -> int:
 
 
 def run_admitted_phase(args: argparse.Namespace, descriptor: dict[str, Any], host_guard: DedicatedHostProof | None) -> int:
-    """Read credentials only after the focused host preflight succeeds.
+    """Read credentials only after the focused fixture preflight succeeds.
 
     Args:
         args: Canonical wrapper's independently bound phase arguments.
         descriptor: Digest-checked original public fixture descriptor.
-        host_guard: Admitted read pins and host observation for the focused mode.
+        host_guard: Admitted read pins and fixture observation for the focused mode.
     """
     secrets = json.loads(sys.stdin.readline(65537))
     owner = FixtureOwner(args.task_id, "mdaneri/Atlaso", args.source_commit, args.pr, args.lab_root)
@@ -399,7 +399,7 @@ print(json.dumps({'schema': 1, 'ok': True, 'links': links}))
 
 
 def dedicated_guest_proof(fixture: FixtureSession, connect: Any, host_guard: DedicatedHostProof | None) -> dict[str, Any]:
-    """Bracket authenticated whole-guest address inventories with host proof.
+    """Bracket authenticated whole-guest address inventories with fixture proof.
 
     Args:
         fixture: Original admitted topology and pinned client transports.
@@ -425,10 +425,10 @@ def dedicated_guest_proof(fixture: FixtureSession, connect: Any, host_guard: Ded
         guest = validate_guest_addresses(macs, guests, ["192.0.2.10"])
         host_guard.check()
         return {"host": before, "guest": guest,
-                "reservation": "maintainer-selected-cooperative-dedicated-host"}
+                "scope": "fixture-scoped-stable-observation"}
     except (ValueError, OSError, KeyError, TypeError, RuntimeError, paramiko.SSHException):
         # Losing topology authority prohibits a competing restore/Apply as well.
-        raise ApplyOutcomeUnknown("dedicated host or guest ownership became unverified; preserve the fixture") from None
+        raise ApplyOutcomeUnknown("fixture or guest ownership became unverified; preserve the fixture") from None
 
 
 if __name__ == "__main__":

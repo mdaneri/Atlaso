@@ -1,20 +1,18 @@
-"""Collect bounded Workstation observations for an explicitly reserved host.
+"""Collect bounded Workstation observations for explicitly enrolled VMXs.
 
-The cooperative host reservation excludes human and other controller activity.
-This is a bracketed observation contract, not an atomic switch-port inventory.
-Command lines stay inside the collector and never enter receipts or diagnostics.
+Provider inventory and runtime adapter reads are bracketed for the fixture.
+Unrelated host VMs are outside this evidence contract. Command output stays
+inside the collector and never enters receipts or diagnostics.
 """
 
 from __future__ import annotations
 
-import ctypes
-import json
 import os
 import re
 import subprocess
 import threading
 from contextlib import ExitStack
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from typing import Any
 
 from scripts.completed_task_files import FileRefusal, WindowsFiles
@@ -76,55 +74,6 @@ def bounded_command(arguments: list[str]) -> str:
         raise Refusal("host_provider_encoding_invalid") from None
 
 
-def windows_arguments(command_line: str) -> list[str]:
-    """Parse the operating system's VMX process command line in memory only.
-
-    Args:
-        command_line: Native process command line, never published.
-    """
-    loader = getattr(ctypes, "WinDLL", None)
-    if loader is None:
-        raise Refusal("host_process_identity_unavailable")
-    count = ctypes.c_int()
-    shell = loader("shell32", use_last_error=True)
-    shell.CommandLineToArgvW.argtypes = [ctypes.c_wchar_p, ctypes.POINTER(ctypes.c_int)]
-    shell.CommandLineToArgvW.restype = ctypes.POINTER(ctypes.c_wchar_p)
-    pointer = shell.CommandLineToArgvW(command_line, ctypes.byref(count))
-    if not pointer:
-        raise Refusal("host_process_identity_unavailable")
-    kernel = loader("kernel32", use_last_error=True)
-    kernel.LocalFree.argtypes = [ctypes.c_void_p]
-    kernel.LocalFree.restype = ctypes.c_void_p
-    try:
-        return [pointer[index] for index in range(count.value)]
-    finally:
-        kernel.LocalFree(pointer)
-
-
-def process_inventory(powershell: Path) -> list[dict[str, Any]]:
-    """Require readable identity for every host VMware VM process.
-
-    Args:
-        powershell: Pinned trusted PowerShell 7 executable.
-    """
-    script = "$ErrorActionPreference='Stop'; $p=Get-CimInstance Win32_Process -Filter \"Name LIKE 'vmware-vmx%'\"; ConvertTo-Json -InputObject @($p | Select-Object ProcessId,CreationDate,ExecutablePath,CommandLine) -Depth 3 -Compress"
-    # WMI's complete host census must succeed; an inaccessible process is not absence.
-    raw = json.loads(bounded_command([str(powershell), "-NoProfile", "-NonInteractive", "-Command", script]))
-    if not isinstance(raw, list) or len(raw) > 64:
-        raise Refusal("host_process_inventory_invalid")
-    rows = []
-    for row in raw:
-        if not isinstance(row, dict) or not row.get("CommandLine") or not row.get("ExecutablePath"):
-            raise Refusal("host_process_identity_unavailable")
-        arguments = windows_arguments(row["CommandLine"])
-        paths = [argument for argument in arguments[1:] if argument.lower().endswith(".vmx")]
-        if len(paths) != 1:
-            raise Refusal("host_process_vmx_ambiguous")
-        rows.append({"pid": row["ProcessId"], "creation_time": row["CreationDate"],
-                     "vmx_path": paths[0], "executable": row["ExecutablePath"]})
-    return sorted(rows, key=lambda row: row["pid"])
-
-
 def runtime_value(vmrun: Path, vmx: str, key: str) -> str:
     """Read a runtime configuration scalar, refusing ambiguous VMX quoting.
 
@@ -141,25 +90,41 @@ def runtime_value(vmrun: Path, vmx: str, key: str) -> str:
     return value
 
 
-def collect_snapshot(expected: dict[str, list[dict[str, Any]]], vmrun: Path, powershell: Path) -> dict[str, Any]:
-    """Bracket live runtime reads with complete identity-bound host inventories.
+def _running_fixture_paths(expected: dict[str, list[dict[str, Any]]], vmrun: Path) -> list[str]:
+    """Read provider inventory and return only enrolled running VMX paths.
 
     Args:
-        expected: Original fixture VMX paths and exact enrolled adapters.
+        expected: Independently enrolled VMX paths.
         vmrun: Pinned installed provider executable.
-        powershell: Pinned trusted host census executable.
     """
-    before = process_inventory(powershell)
+    expected_by_key = {
+        str(PureWindowsPath(vmx.replace("/", "\\"))).casefold(): vmx for vmx in expected
+    }
     inventory = bounded_command([str(vmrun), "-T", "ws", "list"]).splitlines()
     if not inventory or not re.fullmatch(r"Total running VMs: [0-9]+", inventory[0]):
         raise Refusal("running_vm_inventory_invalid")
     running = inventory[1:]
     if int(inventory[0].split(": ")[1]) != len(running):
         raise Refusal("running_vm_inventory_incomplete")
-    if len({path.casefold() for path in running}) != len(running) or {path.casefold() for path in running} != {path.casefold() for path in expected}:
-        raise Refusal("unexpected_running_vm")
-    if {str(row["vmx_path"]).casefold() for row in before} != {path.casefold() for path in expected}:
-        raise Refusal("unexpected_running_vm")
+    matched: dict[str, list[str]] = {key: [] for key in expected_by_key}
+    for raw_path in running:
+        key = str(PureWindowsPath(raw_path.replace("/", "\\"))).casefold()
+        if key in matched:
+            matched[key].append(raw_path)
+    if any(len(paths) != 1 for paths in matched.values()):
+        raise Refusal("enrolled_vm_not_running")
+    return [matched[key][0] for key in sorted(matched)]
+
+
+def collect_snapshot(expected: dict[str, list[dict[str, Any]]], vmrun: Path, powershell: Path) -> dict[str, Any]:
+    """Bracket runtime reads with provider inventories for enrolled VMXs.
+
+    Args:
+        expected: Original fixture VMX paths and exact enrolled adapters.
+        vmrun: Pinned installed provider executable.
+        powershell: Retained temporarily for caller compatibility; it is not invoked.
+    """
+    before = _running_fixture_paths(expected, vmrun)
     adapters: dict[str, list[dict[str, Any]]] = {}
     for vmx, enrolled in expected.items():
         text = Path(vmx).read_text(encoding="utf-8")
@@ -193,14 +158,14 @@ def collect_snapshot(expected: dict[str, list[dict[str, Any]]], vmrun: Path, pow
                          "mac": runtime_value(vmrun, vmx, prefix + "address"),
                          "start_connected": runtime_value(vmrun, vmx, prefix + "startConnected").upper() == "TRUE"})
         adapters[vmx] = rows
-    after = process_inventory(powershell)
-    if before != after:
-        raise Refusal("host_process_inventory_changed")
-    return validate_snapshot(expected, {"processes": before, "running_vm_paths": running, "adapters": adapters})
+    after = _running_fixture_paths(expected, vmrun)
+    if {path.casefold() for path in before} != {path.casefold() for path in after}:
+        raise Refusal("enrolled_vm_inventory_changed")
+    return validate_snapshot(expected, {"running_vm_paths": after, "adapters": adapters})
 
 
 class DedicatedHostProof:
-    """Keep provider and VMX files pinned across an explicitly reserved host run."""
+    """Keep the provider and enrolled VMX files pinned during a fixture run."""
 
     def __init__(self, expected: dict[str, list[dict[str, Any]]], vmrun: Path, powershell: Path):
         """Retain independent enrollment; no observation or mutation occurs yet.
@@ -208,19 +173,19 @@ class DedicatedHostProof:
         Args:
             expected: Original task-owned fixture VMX paths and adapters.
             vmrun: Explicit installed provider executable.
-            powershell: Explicit host census executable.
+            powershell: Retained temporarily for caller compatibility; it is not invoked.
         """
         self.expected, self.vmrun, self.powershell = expected, vmrun, powershell
         self.stack = ExitStack()
         self.baseline: dict[str, Any] | None = None
 
     def __enter__(self) -> DedicatedHostProof:
-        """Admit two matching host observations before guest credential use."""
+        """Admit matching fixture observations before guest credential use."""
         if os.name != "nt":
             raise Refusal("dedicated_host_requires_windows")
         try:
             files = WindowsFiles()
-            for path in (self.vmrun, self.powershell, *(Path(vmx) for vmx in self.expected)):
+            for path in (self.vmrun, *(Path(vmx) for vmx in self.expected)):
                 self.stack.enter_context(files.ancestors(path))
                 self.stack.enter_context(files.opened(path))
             self.baseline = collect_snapshot(self.expected, self.vmrun, self.powershell)

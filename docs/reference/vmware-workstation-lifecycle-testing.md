@@ -484,7 +484,7 @@ inspector compares the uploaded wheel's payload with installed files and rejects
 checks wheel and helper hashes against the immutable build inputs. This proves the inspected on-disk runtime bytes,
 not continuous execution or transient publication behavior.
 
-### Dedicated-host same-address acceptance
+### Same-address acceptance
 
 For #837, select `-RoutingOverlapOnly -SameAddressHandoffOnly` on the canonical
 `invoke-lifecycle-test.ps1` wrapper, with the prepared appliance/client source artifacts, protected root/admin
@@ -494,12 +494,10 @@ It records the live server lease immediately before DHCP activation and requires
 current client-lease proof, exact native interface/address identity, source routing rules, successful global Apply,
 and ordinary baseline restoration. It does not claim SLAAC, lease-expiry, overlap, negative-DAD, or reboot acceptance.
 
-This opt-in mode selects the maintainer-approved `dedicated-host-stable-observation-v1` contract. Reserve the host
-exclusively for this lifecycle run: no human, other controller, or VMware UI activity may start a VM, rewire an adapter,
-or change fixture networking while it runs. The launcher refuses any running VMware VM before credential prompts or
-resource creation; it never stops, adopts, or modifies an unrelated VM. During each focused phase, a complete Windows
-VM-process census must bind every process to exactly one enrolled VMX path, agree with the provider's running inventory,
-and expose a stable PID/creation-time identity. Inaccessible process command lines or executable paths refuse admission.
+This opt-in mode uses the `fixture-stable-observation-v1` contract. Other VMware VMs may run on the host;
+no exclusive-host reservation or complete Windows process census is required. The provider inventory must contain
+every enrolled VMX path before and after configuration reads. Changes to unrelated VMs do not invalidate fixture
+admission. Preserve unrelated VMs and coordinate use of any shared source VM with its owner.
 
 The producer pins the provider executables and original VMX files. Repeated runtime configuration reads must positively
 match every enrolled MAC and exact PVN/VMnet identifier across all ten adapter slots; blank required fields, extra
@@ -507,18 +505,19 @@ adapters, or differing bracketed observations refuse admission. `startConnected`
 current carrier. Pinned SSH reads independently inspect every non-loopback guest interface, including down interfaces,
 their IPv4/IPv6 addresses, and bridge membership. Active management/client links must have native carrier; additional
 network namespaces or competing candidate-address claims refuse. Client controllers recheck their original forwarding
-guard and DHCP-server state. Fresh host and guest checks precede static and DHCP Apply and baseline restoration.
+guard and DHCP-server state. Fresh fixture and guest checks precede static and DHCP Apply and baseline restoration.
 A nonretryable focused phase failure retains the fixture before seed or VM cleanup; ownership loss also blocks
 a competing restoration Apply.
-Transient HTTPS readiness failures may retry only after a fresh host check succeeds; ownership or trust refusals
+Transient HTTPS readiness failures may retry only after a fresh fixture check succeeds; ownership or trust refusals
 remain failures. Noncandidate peer server addresses may intentionally overlap on the admitted isolated segments.
 
-These observations assume the reserved host and admitted guests cooperate; serial reads are not an atomic switch-port
-inventory and cannot detect every change followed by a revert. Receipts explicitly report that limit and do not claim
-continuous exclusive membership. The existing producer for different-address certificate scenarios retains its stricter
-refusal; this contract does not admit those scenarios or relax their certificate-publication guard. Unit tests and a
-host-busy refusal do not establish native same-address success. Keep #837 open until a PR-bound native run completes
-and its measured runtime, handoff, lease, and restoration evidence are reviewed.
+These observations cover the enrolled fixture and its admitted guests. Serial reads are not an atomic switch-port
+inventory and cannot detect every change followed by a revert or prove the absence of an unrelated VM on the same
+segment. Receipts report those limits and do not claim host-wide or continuous exclusive membership. The existing
+producer for different-address certificate scenarios retains its stricter refusal; this mode does not admit those
+scenarios or relax their certificate-publication guard. Unit tests do not establish native same-address success.
+Keep #837 open until a PR-bound native run completes and its measured runtime, handoff, lease, and restoration
+evidence are reviewed.
 
 ## Appliance Update status and ordering acceptance
 

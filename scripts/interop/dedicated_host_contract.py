@@ -1,4 +1,4 @@
-"""Validate bounded, bracketed VMware dedicated-host observations.
+"""Validate bounded, bracketed VMware fixture observations.
 
 This module validates observations supplied by a native collector. It does not
 enumerate VMware state itself and never promotes a stable bracket into proof of
@@ -14,7 +14,7 @@ from typing import NoReturn, TypeAlias, cast
 
 JsonObject: TypeAlias = dict[str, object]
 
-CONTRACT = "dedicated-host-stable-observation-v1"
+CONTRACT = "fixture-stable-observation-v1"
 MAX_ADAPTERS = 10
 _MAC_PATTERN = re.compile(r"^(?:[0-9a-fA-F]{2}[:-]){5}[0-9a-fA-F]{2}$")
 _ALLOWED_CONNECTION_TYPES = {"pvn", "custom"}
@@ -106,20 +106,6 @@ def _mac(value: object, reason: str) -> str:
     return normalized
 
 
-def _creation_time(value: object) -> str:
-    """Normalize a bounded process creation-time identity.
-
-    Args:
-        value: Untrusted process creation-time value.
-    """
-    if isinstance(value, bool) or not isinstance(value, (str, int)):
-        _refuse("process_identity_invalid")
-    result = str(value)
-    if not result or len(result) > 128 or any(ord(char) < 32 for char in result):
-        _refuse("process_identity_invalid")
-    return result
-
-
 def _index(value: object, reason: str) -> int:
     """Validate an adapter index within the supported range.
 
@@ -193,47 +179,21 @@ def _normalize_expected(expected: dict[str, list[dict[str, object]]]) -> tuple[d
 
 
 def _normalize_snapshot(snapshot: dict[str, object]) -> JsonObject:
-    """Validate and canonicalize one raw host snapshot.
+    """Validate and canonicalize one provider and runtime observation.
 
     Args:
-        snapshot: Process, running-VM, and adapter inventories from the collector.
+        snapshot: Running-VM and adapter inventories from the collector.
     """
     root = _object(snapshot, "snapshot_invalid")
-    if not {"processes", "running_vm_paths", "adapters"}.issubset(root):
+    if not {"running_vm_paths", "adapters"}.issubset(root):
         _refuse("snapshot_incomplete")
 
-    raw_processes = root["processes"]
     raw_running = root["running_vm_paths"]
     raw_adapters = root["adapters"]
-    if not isinstance(raw_processes, list) or not isinstance(raw_running, list):
-        _refuse("process_inventory_invalid")
+    if not isinstance(raw_running, list):
+        _refuse("running_vm_inventory_invalid")
     if not isinstance(raw_adapters, dict):
         _refuse("adapter_inventory_invalid")
-
-    processes: list[JsonObject] = []
-    pids: set[int] = set()
-    process_paths: set[str] = set()
-    process_identities: set[tuple[int, str]] = set()
-    for raw_process in raw_processes:
-        process = _object(raw_process, "process_row_invalid")
-        if not {"pid", "creation_time", "vmx_path", "executable"}.issubset(process):
-            _refuse("process_row_incomplete")
-        pid = process["pid"]
-        if isinstance(pid, bool) or not isinstance(pid, int) or pid <= 0:
-            _refuse("process_identity_invalid")
-        creation_time = _creation_time(process["creation_time"])
-        process_key, vmx_path = _path_key(process["vmx_path"], "process_vmx_path_invalid")
-        executable = _absolute_windows_path(process["executable"], "process_executable_invalid")
-        if PureWindowsPath(executable).name.casefold() != "vmware-vmx.exe":
-            _refuse("process_executable_invalid")
-        identity = (pid, creation_time)
-        if pid in pids or process_key in process_paths or identity in process_identities:
-            _refuse("process_duplicate")
-        pids.add(pid)
-        process_paths.add(process_key)
-        process_identities.add(identity)
-        processes.append({"pid": pid, "creation_time": creation_time,
-                          "vmx_path": vmx_path, "executable": executable})
 
     running_paths: dict[str, str] = {}
     for raw_path in raw_running:
@@ -241,8 +201,6 @@ def _normalize_snapshot(snapshot: dict[str, object]) -> JsonObject:
         if key in running_paths:
             _refuse("running_vm_duplicate")
         running_paths[key] = path
-    if set(running_paths) != process_paths:
-        _refuse("process_inventory_disagrees")
 
     adapter_map: dict[str, list[JsonObject]] = {}
     adapter_paths: dict[str, str] = {}
@@ -288,36 +246,30 @@ def _normalize_snapshot(snapshot: dict[str, object]) -> JsonObject:
         adapter_map[key] = sorted(rows, key=lambda row: _index(row["index"], "adapter_index_invalid"))
         adapter_paths[key] = path
 
-    if set(adapter_map) != process_paths:
-        _refuse("adapter_inventory_disagrees")
     return {
-        "processes": sorted(processes, key=lambda row: cast(int, row["pid"])),
         "running_vm_paths": [running_paths[key] for key in sorted(running_paths)],
         "adapters": {adapter_paths[key]: adapter_map[key] for key in sorted(adapter_paths)},
     }
 
 
 def validate_snapshot(expected: dict[str, list[dict[str, object]]], snapshot: dict[str, object]) -> dict[str, object]:
-    """Validate a complete host snapshot against an independently enrolled allowlist.
+    """Validate fixture-scoped provider observations against enrolled adapters.
 
     Args:
         expected: VMX paths mapped to their exact enrolled adapter rows.
-        snapshot: Complete process, running-VM, and runtime adapter observation.
+        snapshot: Running-VM and runtime adapter observations for enrolled guests.
 
     Paths are compared case-insensitively using Windows lexical path rules.
     The collector remains responsible for filesystem/reparse checks and for
     obtaining each row. The returned evidence means only that the supplied
-    bracket was internally consistent and stable; it does not claim an atomic
-    snapshot or continuous exclusive LAN membership.
+    bracket contains the enrolled VMX paths and their exact observed adapters.
+    It makes no claim about unrelated host VMs or exclusive LAN membership.
     """
     expected_rows, expected_paths = _normalize_expected(expected)
     observed = _normalize_snapshot(snapshot)
-    process_rows = observed["processes"]
-    if not isinstance(process_rows, list):
-        _refuse("snapshot_invalid")
-    process_paths = {str(row["vmx_path"]).casefold() for row in process_rows}
-    if process_paths != set(expected_paths):
-        _refuse("unexpected_running_vm")
+    running_paths = {str(path).casefold() for path in cast(list[object], observed["running_vm_paths"])}
+    if not set(expected_paths).issubset(running_paths):
+        _refuse("enrolled_vm_not_running")
     raw_adapters = observed["adapters"]
     if not isinstance(raw_adapters, dict):
         _refuse("snapshot_invalid")
@@ -347,28 +299,26 @@ def validate_snapshot(expected: dict[str, list[dict[str, object]]], snapshot: di
 
     return {
         "contract": CONTRACT,
-        "claim": "validated-observation-only",
+        "claim": "enrolled-fixture-observations-only",
         "atomic_snapshot": False,
-        "exclusive_membership": False,
-        "processes": observed["processes"],
-        "running_vm_paths": observed["running_vm_paths"],
+        "running_vm_paths": [expected_paths[key] for key in sorted(expected_paths)],
         "adapters": canonical_adapters,
     }
 
 
 def _normalize_evidence(evidence: dict[str, object]) -> JsonObject:
-    """Validate canonical evidence before using it in a stability comparison.
+    """Validate canonical fixture evidence before a stability comparison.
 
     Args:
         evidence: Previously returned dedicated-host contract evidence.
     """
     root = _object(evidence, "evidence_invalid")
     if (root.get("contract") != CONTRACT or
-            root.get("claim") != "validated-observation-only" or
+            root.get("claim") != "enrolled-fixture-observations-only" or
             root.get("atomic_snapshot") is not False or
-            root.get("exclusive_membership") is not False):
+            "exclusive_membership" in root):
         _refuse("evidence_invalid")
-    if not {"processes", "running_vm_paths", "adapters"}.issubset(root):
+    if not {"running_vm_paths", "adapters"}.issubset(root):
         _refuse("evidence_incomplete")
     raw_adapters = root["adapters"]
     if not isinstance(raw_adapters, list):
@@ -381,14 +331,18 @@ def _normalize_evidence(evidence: dict[str, object]) -> JsonObject:
         path = _absolute_vmx_path(row.pop("vmx_path"), "evidence_adapter_path_invalid")
         adapter_map.setdefault(path, []).append(row)
     normalized = _normalize_snapshot({
-        "processes": root["processes"],
         "running_vm_paths": root["running_vm_paths"],
         "adapters": adapter_map,
     })
-    canonical_rows: list[JsonObject] = []
+    normalized_running = normalized["running_vm_paths"]
     normalized_adapters = normalized["adapters"]
-    if not isinstance(normalized_adapters, dict):
-        _refuse("evidence_adapter_inventory_invalid")
+    if not isinstance(normalized_running, list) or not isinstance(normalized_adapters, dict):
+        _refuse("evidence_invalid")
+    if {str(path).casefold() for path in normalized_running} != {
+        str(path).casefold() for path in normalized_adapters
+    }:
+        _refuse("evidence_incomplete")
+    canonical_rows: list[JsonObject] = []
     for path in sorted(normalized_adapters, key=str.casefold):
         rows = normalized_adapters[path]
         if not isinstance(rows, list):
@@ -396,6 +350,8 @@ def _normalize_evidence(evidence: dict[str, object]) -> JsonObject:
         for row in rows:
             canonical_rows.append({"vmx_path": path, **row})
     if root["adapters"] != canonical_rows:
+        _refuse("evidence_not_canonical")
+    if root["running_vm_paths"] != normalized_running:
         _refuse("evidence_not_canonical")
     return normalized
 
@@ -408,15 +364,26 @@ def _normalize_observation(value: dict[str, object]) -> JsonObject:
     """
     if isinstance(value, dict) and "contract" in value:
         return _normalize_evidence(value)
-    return _normalize_snapshot(value)
+    normalized = _normalize_snapshot(value)
+    running_paths = normalized["running_vm_paths"]
+    adapters = normalized["adapters"]
+    if not isinstance(running_paths, list) or not isinstance(adapters, dict):
+        _refuse("snapshot_invalid")
+    # Provider inventories can include unrelated VMs. Stability applies only
+    # to the enrolled VMXs whose adapters were collected in this observation.
+    enrolled_keys = {str(path).casefold() for path in adapters}
+    return {
+        "running_vm_paths": [path for path in running_paths if str(path).casefold() in enrolled_keys],
+        "adapters": adapters,
+    }
 
 
 def assert_unchanged(before: dict[str, object], after: dict[str, object]) -> None:
-    """Refuse a bracket when process, VM, or adapter observations changed.
+    """Refuse a bracket when enrolled VM or adapter observations changed.
 
     Args:
-        before: First raw snapshot or canonical evidence value.
-        after: Second raw snapshot or canonical evidence value.
+        before: First raw snapshot or canonical fixture evidence value.
+        after: Second raw snapshot or canonical fixture evidence value.
     """
     if _normalize_observation(before) != _normalize_observation(after):
         _refuse("host_snapshot_changed")

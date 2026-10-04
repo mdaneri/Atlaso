@@ -54,7 +54,7 @@ operations.
 ## Start here
 
 For native same-address static-to-DHCP management acceptance, use the
-[dedicated-host lifecycle mode](docs/reference/vmware-workstation-lifecycle-testing.md#dedicated-host-same-address-acceptance).
+[same-address lifecycle mode](docs/reference/vmware-workstation-lifecycle-testing.md#same-address-acceptance).
 
 - [Documentation](https://mdaneri.github.io/Atlaso/docs/) — browse the published Atlaso documentation.
 - [Getting started](docs/getting-started/index.md) — choose an appliance path and complete initial configuration.

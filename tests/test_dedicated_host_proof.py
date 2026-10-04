@@ -16,7 +16,6 @@ from scripts.interop.dedicated_host_contract import Refusal
 VMX = r"E:\lab\appliance.vmx"
 VMRUN = Path(r"C:\Program Files\VMware\vmrun.exe")
 POWERSHELL = Path(r"C:\Program Files\PowerShell\7\pwsh.exe")
-EXECUTABLE = r"C:\Program Files\VMware\vmware-vmx.exe"
 MAC = "00:50:56:aa:bb:01"
 
 
@@ -24,33 +23,30 @@ def _expected() -> dict[str, list[dict[str, Any]]]:
     return {VMX: [{"index": 0, "connection_type": "pvn", "network_id": "segment-id", "mac": MAC}]}
 
 
-def _process(pid: int = 101) -> dict[str, Any]:
-    """Build one synthetic VMX process identity.
-
-    Args:
-        pid: Process identifier to report in the inventory.
-    """
-    return {"pid": pid, "creation_time": "2026-10-03T10:00:00Z", "vmx_path": VMX,
-            "executable": EXECUTABLE}
-
-
-def _install_collector_mocks(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, str]]:
+def _install_collector_mocks(
+    monkeypatch: pytest.MonkeyPatch, running_inventories: list[list[str]] | None = None,
+) -> list[tuple[str, str]]:
     """Stub bounded host reads and record runtime adapter queries.
 
     Args:
         monkeypatch: Pytest fixture replacing collector boundaries.
+        running_inventories: Optional provider inventory rows for consecutive reads.
     """
     runtime_calls: list[tuple[str, str]] = []
-    monkeypatch.setattr(proof, "process_inventory", lambda _powershell: [_process()])
+    list_calls: list[None] = []
+    inventories = running_inventories or [[VMX], [VMX]]
 
     def bounded(arguments: list[str]) -> str:
-        """Return the exact synthetic running-VM inventory.
+        """Return a synthetic inventory for each bracket edge.
 
         Args:
             arguments: Provider executable and fixed command arguments.
         """
         if arguments[-1] == "list":
-            return "Total running VMs: 1\n" + VMX
+            index = len(list_calls)
+            list_calls.append(None)
+            paths = inventories[min(index, len(inventories) - 1)]
+            return f"Total running VMs: {len(paths)}\n" + "\n".join(paths)
         raise AssertionError("unexpected provider command")
 
     def runtime(_vmrun: Path, vmx: str, key: str) -> str:
@@ -125,59 +121,51 @@ def _install_child_mock(monkeypatch: pytest.MonkeyPatch, *, stdout: bytes = b"",
     monkeypatch.setattr(proof, "contained_child", contained)
 
 
-def test_collects_complete_runtime_snapshot_and_brackets_process_inventory(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Accept the full ten-slot inventory between matching process censuses.
+def test_collects_complete_runtime_snapshot_without_host_process_census(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Accept all slots using only bracketed enrolled provider observations.
 
     Args:
         monkeypatch: Pytest fixture replacing host provider reads.
     """
     runtime_calls = _install_collector_mocks(monkeypatch)
-    process_calls: list[Path] = []
-    monkeypatch.setattr(proof, "process_inventory", lambda path: (process_calls.append(path) or [_process()]))
 
     result = proof.collect_snapshot(_expected(), VMRUN, POWERSHELL)
 
-    assert result["claim"] == "validated-observation-only"
-    assert result["exclusive_membership"] is False
+    assert result["contract"] == "fixture-stable-observation-v1"
+    assert result["claim"] == "enrolled-fixture-observations-only"
+    assert "exclusive_membership" not in result
+    assert result["running_vm_paths"] == [VMX]
     assert len(result["adapters"]) == 10
     assert result["adapters"][0]["network_id"] == "segment-id"
-    assert len(process_calls) == 2
-    assert process_calls == [POWERSHELL, POWERSHELL]
     assert len(runtime_calls) == 10 + 4
 
 
-def test_missing_command_line_identity_stops_before_runtime_reads(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Refuse an unbound VM process before querying its runtime configuration.
+def test_unreadable_os_process_identity_is_not_a_collector_dependency(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Collect fixture evidence without querying host process command lines.
 
     Args:
-        monkeypatch: Pytest fixture replacing process and runtime inventories.
+        monkeypatch: Pytest fixture replacing provider and runtime boundaries.
     """
-    runtime_calls: list[str] = []
-    monkeypatch.setattr(proof, "process_inventory", lambda _path: (_ for _ in ()).throw(
-        Refusal("host_process_identity_unavailable")))
-    monkeypatch.setattr(proof, "bounded_command", lambda _args: "Total running VMs: 1\n" + VMX)
-    monkeypatch.setattr(proof, "runtime_value", lambda *_args: runtime_calls.append("read") or "TRUE")
-
-    with pytest.raises(Refusal, match="host_process_identity_unavailable"):
-        proof.collect_snapshot(_expected(), VMRUN, POWERSHELL)
-    assert runtime_calls == []
+    runtime_calls = _install_collector_mocks(monkeypatch)
+    assert not hasattr(proof, "process_inventory")
+    assert proof.collect_snapshot(_expected(), VMRUN, Path("unavailable-powershell.exe"))["adapters"]
+    assert runtime_calls
 
 
-def test_unexpected_vm_inventory_stops_before_runtime_reads(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Refuse un-enrolled running VMs before any adapter runtime reads.
+def test_unrelated_vm_inventory_changes_do_not_refuse_fixture_snapshot(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Ignore unrelated provider VM entries while bracketing enrolled VMXs.
 
     Args:
         monkeypatch: Pytest fixture replacing host provider reads.
     """
-    _install_collector_mocks(monkeypatch)
-    runtime_calls: list[str] = []
-    monkeypatch.setattr(proof, "process_inventory", lambda _path: [_process()])
-    monkeypatch.setattr(proof, "bounded_command", lambda _args: "Total running VMs: 2\n" + VMX + "\nE:\\lab\\other.vmx")
-    monkeypatch.setattr(proof, "runtime_value", lambda *_args: runtime_calls.append("read") or "TRUE")
+    runtime_calls = _install_collector_mocks(
+        monkeypatch, [[VMX, r"E:\lab\other-a.vmx"], [r"E:\lab\other-b.vmx", VMX]],
+    )
 
-    with pytest.raises(Refusal, match="unexpected_running_vm"):
-        proof.collect_snapshot(_expected(), VMRUN, POWERSHELL)
-    assert runtime_calls == []
+    result = proof.collect_snapshot(_expected(), VMRUN, POWERSHELL)
+
+    assert result["running_vm_paths"] == [VMX]
+    assert len(runtime_calls) == 14
 
 
 @pytest.mark.parametrize(
@@ -343,17 +331,46 @@ def test_disabled_saved_slot_rejects_blank_runtime_presence(monkeypatch: pytest.
         proof.collect_snapshot(_expected(), VMRUN, POWERSHELL)
 
 
-def test_pid_restart_during_runtime_reads_refuses_snapshot(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Detect a process restart between the two host identity censuses.
+def test_enrolled_vm_disappearing_between_provider_reads_refuses_snapshot(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Refuse an enrolled VMX that disappears during runtime collection.
 
     Args:
-        monkeypatch: Pytest fixture replacing process inventory reads.
+        monkeypatch: Pytest fixture replacing provider inventory reads.
+    """
+    _install_collector_mocks(monkeypatch, [[VMX], [r"E:\lab\unrelated.vmx"]])
+
+    with pytest.raises(Refusal, match="enrolled_vm_not_running"):
+        proof.collect_snapshot(_expected(), VMRUN, POWERSHELL)
+
+
+def test_runtime_configuration_change_away_from_enrollment_refuses(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Refuse a runtime adapter value that no longer matches enrollment.
+
+    Args:
+        monkeypatch: Pytest fixture replacing provider and runtime reads.
     """
     _install_collector_mocks(monkeypatch)
-    inventories = iter([[_process(101)], [_process(202)]])
-    monkeypatch.setattr(proof, "process_inventory", lambda _path: next(inventories))
+    proof.collect_snapshot(_expected(), VMRUN, POWERSHELL)
+    original_runtime = proof.runtime_value
 
-    with pytest.raises(Refusal, match="host_process_inventory_changed"):
+    def changed_runtime(vmrun: Path, vmx: str, key: str) -> str:
+        """Change the enrolled network identifier and preserve other values.
+
+        Args:
+            vmrun: Pinned provider executable passed to the original reader.
+            vmx: Enrolled VMX path passed to the original reader.
+            key: Runtime configuration key requested by the collector.
+        """
+        if key == "ethernet0.pvnID":
+            return "different-segment"
+        return original_runtime(vmrun, vmx, key)
+
+    monkeypatch.setattr(proof, "runtime_value", changed_runtime)
+    with pytest.raises(Refusal, match="expected_adapter_mismatch"):
         proof.collect_snapshot(_expected(), VMRUN, POWERSHELL)
 
 
@@ -464,5 +481,6 @@ def test_guard_failure_releases_every_entered_file_pin(monkeypatch: pytest.Monke
     with pytest.raises(Refusal, match="host_snapshot_changed"):
         guard.__enter__()
 
-    assert len(released) == 6
+    assert len(released) == 4
     assert guard.baseline is not None
+    assert all(str(POWERSHELL) not in entry for entry in released)

@@ -26,12 +26,6 @@ def _expected() -> dict[str, list[dict[str, object]]]:
 
 def _snapshot() -> dict[str, object]:
     expected = _expected()
-    processes = [
-        {"pid": 101, "creation_time": "2026-10-03T10:00:00.0000000Z",
-         "vmx_path": APPLIANCE, "executable": EXECUTABLE},
-        {"pid": 102, "creation_time": "2026-10-03T10:00:01.0000000Z",
-         "vmx_path": PEER, "executable": EXECUTABLE},
-    ]
     adapters: dict[str, list[dict[str, object]]] = {}
     for vmx_path, wanted_rows in expected.items():
         rows: list[dict[str, object]] = [
@@ -43,7 +37,7 @@ def _snapshot() -> dict[str, object]:
             index = int(wanted["index"])
             rows[index] = {**wanted, "present": True, "start_connected": True}
         adapters[vmx_path] = rows
-    return {"processes": processes, "running_vm_paths": [APPLIANCE, PEER], "adapters": adapters}
+    return {"running_vm_paths": [APPLIANCE, PEER, r"E:\lab\unrelated.vmx"], "adapters": adapters}
 
 
 def _guest_interface(mac: str, *addresses: tuple[str, int]) -> dict[str, object]:
@@ -73,30 +67,22 @@ def _guests() -> dict[str, list[dict[str, object]]]:
     }
 
 
-def test_validates_complete_dedicated_host_snapshot_without_exclusivity_claim() -> None:
+def test_validates_fixture_snapshot_without_host_wide_claims() -> None:
     evidence = contract.validate_snapshot(_expected(), _snapshot())
 
-    assert evidence["contract"] == "dedicated-host-stable-observation-v1"
-    assert evidence["claim"] == "validated-observation-only"
+    assert evidence["contract"] == "fixture-stable-observation-v1"
+    assert evidence["claim"] == "enrolled-fixture-observations-only"
     assert evidence["atomic_snapshot"] is False
-    assert evidence["exclusive_membership"] is False
-    assert len(evidence["processes"]) == 2
+    assert "exclusive_membership" not in evidence
+    assert "processes" not in evidence
+    assert evidence["running_vm_paths"] == [APPLIANCE, PEER]
     assert len(evidence["adapters"]) == 2 * contract.MAX_ADAPTERS
-    assert "exclusive" not in str(evidence["claim"])
 
 
 @pytest.mark.parametrize(
     ("change", "reason"),
     [
-        (lambda snap: snap["processes"][0].update(pid=0), "process_identity_invalid"),
-        (lambda snap: snap["processes"][0].update(pid=True), "process_identity_invalid"),
-        (lambda snap: snap["processes"][1].update(pid=101), "process_duplicate"),
-        (lambda snap: snap["processes"][1].update(vmx_path=APPLIANCE), "process_duplicate"),
-        (lambda snap: snap["processes"][1].update(vmx_path=r"E:\lab\unknown.vmx"),
-         "process_inventory_disagrees"),
-        (lambda snap: snap["running_vm_paths"].pop(), "process_inventory_disagrees"),
-        (lambda snap: snap["processes"][0].update(executable=r"C:\Windows\not-vmware.exe"),
-         "process_executable_invalid"),
+        (lambda snap: snap["running_vm_paths"].remove(APPLIANCE), "enrolled_vm_not_running"),
         (lambda snap: snap["adapters"][APPLIANCE].pop(), "adapter_inventory_incomplete"),
         (lambda snap: snap["adapters"][APPLIANCE][0].update(present=False, connection_type="",
                                                               network_id="", mac="", start_connected=False),
@@ -117,8 +103,8 @@ def test_validates_complete_dedicated_host_snapshot_without_exclusivity_claim() 
          "adapter_duplicate_index"),
     ],
 )
-def test_refuses_invalid_or_changed_host_inventory(change: object, reason: str) -> None:
-    """Reject malformed process, VMX, or adapter observations.
+def test_refuses_invalid_or_changed_fixture_inventory(change: object, reason: str) -> None:
+    """Reject malformed VMX or adapter observations.
 
     Args:
         change: Mutation callback that corrupts a snapshot field.
@@ -143,19 +129,23 @@ def test_rejects_extra_adapter_vm_even_when_expected_vm_inventory_matches() -> N
     extra_rows[1]["mac"] = "00:50:56:aa:bb:04"
     snapshot["adapters"][r"E:\lab\other.vmx"] = extra_rows
 
-    with pytest.raises(contract.Refusal, match="adapter_inventory_disagrees"):
+    with pytest.raises(contract.Refusal, match="unexpected_adapter_vm"):
         contract.validate_snapshot(_expected(), snapshot)
 
 
 def test_unchanged_bracket_ignores_order_but_refuses_identity_or_topology_drift() -> None:
     before = _snapshot()
     after = copy.deepcopy(before)
-    after["processes"].reverse()
     after["running_vm_paths"].reverse()
     after["adapters"][APPLIANCE].reverse()
     contract.assert_unchanged(before, after)
 
-    after["processes"][0]["creation_time"] = "different"
+    after = copy.deepcopy(before)
+    after["running_vm_paths"][-1] = r"E:\lab\different-unrelated.vmx"
+    contract.assert_unchanged(before, after)
+
+    after = copy.deepcopy(before)
+    after["running_vm_paths"].remove(APPLIANCE)
     with pytest.raises(contract.Refusal, match="host_snapshot_changed"):
         contract.assert_unchanged(before, after)
 
@@ -177,7 +167,7 @@ def test_unchanged_bracket_accepts_canonical_evidence_and_tracks_absent_slots() 
         contract.assert_unchanged(before, after)
 
 
-def test_canonical_evidence_rejects_weakened_claim_flags() -> None:
+def test_canonical_evidence_rejects_host_wide_exclusivity_claims() -> None:
     evidence = contract.validate_snapshot(_expected(), _snapshot())
     evidence["exclusive_membership"] = True
 

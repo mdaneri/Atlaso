@@ -98,7 +98,7 @@ def test_private_phase_exit_preserves_fixture_by_phase_and_outcome(focused, phas
     """Apply retryable status 4 only to a focused readiness probe.
 
     Args:
-        focused: Whether the dedicated-host contract was selected.
+        focused: Whether the same-address fixture contract was selected.
         phase: Private lifecycle phase sent to the Python runner.
         exit_code: Actual Python phase outcome supplied at the subprocess boundary.
         preserve: Expected recovery disposition.

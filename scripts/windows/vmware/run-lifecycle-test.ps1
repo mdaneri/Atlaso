@@ -75,7 +75,7 @@ Run only WAN routing scenario.
 .PARAMETER RoutingOverlapOnly
 Run isolated DHCP and SLAAC overlap acceptance using two task-owned LAN segments.
 .PARAMETER SameAddressHandoffOnly
-Require a cooperatively reserved dedicated host and run only the same-address IPv4 handoff within RoutingOverlapOnly.
+Run only the same-address IPv4 handoff within RoutingOverlapOnly.
 .PARAMETER FullEsxiPxeInstall
 Include ESXi PXE install scenario.
 .PARAMETER PxeInstallerIsoPath
@@ -147,10 +147,7 @@ $ErrorActionPreference = 'Stop'
 if ($SameAddressHandoffOnly -and -not $RoutingOverlapOnly) {
     throw '-SameAddressHandoffOnly requires -RoutingOverlapOnly.'
 }
-if ($SameAddressHandoffOnly -and -not $PlanOnly -and
-    @(Get-CimInstance Win32_Process -Filter "Name LIKE 'vmware-vmx%'").Count -ne 0) {
-    throw 'Dedicated-host acceptance requires no running VMware VMs before resource creation.'
-}
+
 if ($RoutingOverlapOnly -and -not $PlanOnly) {
     & python -I -B -c 'import paramiko, cryptography, pycdlib' 2>$null
     if ($LASTEXITCODE -ne 0) {
