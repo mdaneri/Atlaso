@@ -74,6 +74,40 @@ def test_provider_mapping_reads_actual_vmx_and_refuses_ambiguity(tmp_path, fault
             'network_type': 'custom', 'network_id': 'VMnet8'}
 
 
+def test_enrolled_vmx_pin_blocks_edits_and_replacement_until_stop(tmp_path):
+    """Retain the actual Windows read handle across independent phase readers.
+
+    Args:
+        tmp_path: Owned disposable VMX directory.
+    """
+    vmx = tmp_path / 'enrolled.vmx'
+    vmx.write_text('ethernet0.present = "TRUE"\nethernet0.connectionType = "custom"\n'
+                   'ethernet0.vnet = "VMnet8"\nethernet0.addressType = "static"\n'
+                   'ethernet0.address = "00:50:56:20:00:01"\nethernet0.startConnected = "TRUE"\n')
+    helpers = ROOT / 'scripts/windows/vmware'
+    command = ("$ErrorActionPreference='Stop'; "
+        f"Import-Module {ps_literal(helpers / 'Atlaso.WorkstationCleanup.psm1')} -Force; "
+        f". {ps_literal(helpers / 'Atlaso.RoutingOverlap.ps1')}; "
+        "$pins=[Collections.Generic.List[IDisposable]]::new(); "
+        f"$path={ps_literal(vmx)}; $null=Get-RoutingOverlapProviderNics -Vmx $path -Role client-a -RetainedPins $pins; "
+        "$editBlocked=$false; $replacementBlocked=$false; "
+        "try { [IO.File]::WriteAllText($path,'changed adapter') } catch { $editBlocked=$true }; "
+        "try { [IO.File]::Move($path,$path+'.replaced') } catch { $replacementBlocked=$true }; "
+        "$count=$pins.Count; foreach($pin in $pins){$pin.Dispose()}; "
+        "[IO.File]::WriteAllText($path,'owned retirement after stop'); "
+        "[pscustomobject]@{count=$count;edit_blocked=$editBlocked;replacement_blocked=$replacementBlocked;"
+        "released=([IO.File]::ReadAllText($path) -eq 'owned retirement after stop')}|ConvertTo-Json -Compress")
+    result = subprocess.run(['pwsh', '-NoProfile', '-Command', command], capture_output=True,
+                            text=True, timeout=60, check=True)
+    assert json.loads(result.stdout) == {'count': 1, 'edit_blocked': True,
+                                       'replacement_blocked': True, 'released': True}
+    runner = (helpers / 'run-lifecycle-test.ps1').read_text()
+    stop = runner.index('Invoke-RoutingOverlapPhase -Phase stop -Descriptor $overlapDescriptor')
+    release = runner.index('$routingOverlapVmxPins.Clear()', stop)
+    retire = runner.index('Remove-ClientSeedArtifacts `', release)
+    assert stop < release < retire
+
+
 def test_private_dispatch_preserves_unknown_apply_and_avoids_legacy_client():
     """Keep uncertain Apply ahead of all controller/VM cleanup and legacy auth."""
     runner = (ROOT / 'scripts/windows/vmware/run-lifecycle-test.ps1').read_text()

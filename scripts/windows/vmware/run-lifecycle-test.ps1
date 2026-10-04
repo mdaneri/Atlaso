@@ -913,6 +913,7 @@ if (Test-Path -LiteralPath $resultRoot) {
 $preflightRootCreated = $false
 $preflightGuard = $null
 $runtimeConsumerPins = [Collections.Generic.List[IDisposable]]::new()
+$routingOverlapVmxPins = [Collections.Generic.List[IDisposable]]::new()
 $originalOwnershipRecords = [Collections.Generic.List[object]]::new()
 $durableOwnershipRoot = ''
 $lifecycleTaskId = if ($env:CODEX_THREAD_ID) { $env:CODEX_THREAD_ID } elseif ($OwnershipTaskId) { $OwnershipTaskId } else { $LabName }
@@ -3545,6 +3546,10 @@ with WindowsFiles().opened(Path(sys.argv[1]), directory=True) as (_, identity, _
         Invoke-RoutingOverlapPhase -Phase scenario -Descriptor $overlapDescriptor -Trust $overlapTrust
         Invoke-RoutingOverlapPhase -Phase stop -Descriptor $overlapDescriptor
         $overlapStarted = $false
+        # Original saved VMX identities and adapter bytes stay pinned from
+        # enrollment through stop. Release only before owned seed retirement/reboot.
+        foreach ($pin in $routingOverlapVmxPins) { $pin.Dispose() }
+        $routingOverlapVmxPins.Clear()
     } elseif ($CertificateOnly) {
         $sourceHelperSha256 = (Get-FileHash -LiteralPath (Join-Path $runtimeSourceRoot 'scripts/appliance/atlaso-helper') -Algorithm SHA256).Hash.ToLowerInvariant()
         $installedHelperSha256 = Get-CertificateInstalledHelperSha256 -ApplianceVmx $applianceVmx
@@ -3892,6 +3897,7 @@ if ($cleanupFailure) {
     if ($certificateKnownHostsPin) { $certificateKnownHostsPin.Dispose() }
     if ($certificatePeerPublicKeyPin) { $certificatePeerPublicKeyPin.Dispose() }
     if ($certificateDiskSourcePin) { $certificateDiskSourcePin.Dispose() }
+    foreach ($pin in $routingOverlapVmxPins) { $pin.Dispose() }
     for ($pinIndex = $runtimeConsumerPins.Count - 1; $pinIndex -ge 0; $pinIndex--) { $runtimeConsumerPins[$pinIndex].Dispose() }
     if ($preflightGuard) { $preflightGuard.Dispose() }
 }

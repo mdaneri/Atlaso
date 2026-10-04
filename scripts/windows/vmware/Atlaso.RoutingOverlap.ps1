@@ -163,9 +163,11 @@ Read actual enabled provider NIC mappings without inferring them from the plan.
 Exact owned VMX path whose current adapter mapping is observed.
 .PARAMETER Role
 Canonical lifecycle role.
+.PARAMETER RetainedPins
+Optional owner retaining the original VMX read pin through all focused phases.
 #>
 function Get-RoutingOverlapProviderNics {
-    param([string]$Vmx, [string]$Role)
+    param([string]$Vmx, [string]$Role, [Collections.Generic.List[IDisposable]]$RetainedPins)
 
     $pin = [Atlaso.WorkstationFileIdentity]::PinOrdinaryReadFile($Vmx, $true)
     try {
@@ -189,8 +191,12 @@ function Get-RoutingOverlapProviderNics {
                     network_type = $kind; network_id = $network }
             }
         }
+        if ($null -ne $RetainedPins) {
+            $RetainedPins.Add($pin)
+            $pin = $null
+        }
         return $rows
-    } finally { $pin.Dispose() }
+    } finally { if ($pin) { $pin.Dispose() } }
 }
 
 <#
@@ -227,8 +233,10 @@ function New-RoutingOverlapDescriptor {
     $links = @()
     $peers = @{}
     $controlPrefixes = @()
+    $retainedVmxPins = $null
+    if ($SameAddressHandoffOnly) { $retainedVmxPins = $routingOverlapVmxPins }
     foreach ($role in @('appliance', 'client-a', 'client-b')) {
-        $native = @(Get-RoutingOverlapProviderNics -Vmx $VmxPaths[$role] -Role $role)
+        $native = @(Get-RoutingOverlapProviderNics -Vmx $VmxPaths[$role] -Role $role -RetainedPins $retainedVmxPins)
         $provider += $native
         $guest = $Guests[$role]
         foreach ($link in $guest.Inventory.links) {

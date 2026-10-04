@@ -510,7 +510,11 @@ no exclusive-host reservation or complete Windows process census is required. Th
 every enrolled VMX path before and after configuration reads. Changes to unrelated VMs do not invalidate fixture
 admission. Preserve unrelated VMs and coordinate use of any shared source VM with its owner.
 
-The producer pins the provider executables and original VMX files. Repeated runtime configuration reads must positively
+The producer pins the provider executables and original VMX files. The focused wrapper retains saved VMX read pins
+continuously from descriptor creation through successful controller stop. These pins deny saved adapter edits and file
+replacement between phases;
+they are released before the owned seed retirement and reboot, or on bounded failure exit.
+Repeated runtime configuration reads must positively
 match every enrolled MAC and exact PVN/VMnet identifier across all ten adapter slots; blank required fields, extra
 adapters, or differing bracketed observations refuse admission. `startConnected` is configuration, not a claim about
 current carrier. Pinned SSH reads independently inspect every non-loopback guest interface, including down interfaces,
