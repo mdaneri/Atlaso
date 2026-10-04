@@ -20565,3 +20565,70 @@ def test_native_management_handoff_retains_writer_through_baseline_commit(client
     with SessionLocal() as db:
         baselines = ui.load_appliance_apply_baselines(db)
         assert all(baselines[key]["snapshot_hash"] == "captured-handoff" for key in units)
+
+
+@pytest.mark.parametrize("first_unit", ["ca", "dnsmasq"])
+def test_baseline_merge_waits_and_refreshes_cached_unrelated_units(client, monkeypatch, first_unit):
+    """CA and ordinary DNS merges serialize and retain both executed baseline leaves.
+
+    Args:
+        client: Initialized isolated appliance database.
+        monkeypatch: Expose the shared writer wait.
+        first_unit: First admitted unit, reversing the recovery and ordinary writer order.
+    """
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Event
+    from types import SimpleNamespace
+
+    from sqlalchemy import select
+
+    from atlaso.app import ui
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Setting
+
+    def unit(key):
+        """Build an immutable executed baseline input."""
+        return {"id": key, "snapshot_hash": "executed-" + key, "config_path": key + ".json",
+                "config_preview": "{}", "summary": [],
+                "context": {"dns_settings": SimpleNamespace(enabled=True, authoritative=True)}}
+
+    with SessionLocal() as db:
+        ui.save_appliance_apply_baselines(db, {"network": {"snapshot_hash": "retained-network"}})
+        db.commit()
+    loaded, attempted, merged = Event(), Event(), Event()
+    lock = ui.acquire_network_objects_write_lock
+    second_unit = "dnsmasq" if first_unit == "ca" else "ca"
+
+    def acquire(db):
+        """Signal admission before the blocked row merge."""
+        attempted.set()
+        lock(db)
+
+    def ordinary():
+        """Keep an older transport-cached JSON row while waiting for admission."""
+        with SessionLocal() as db:
+            cached = db.scalar(select(Setting).where(Setting.key == ui.APPLIANCE_APPLY_BASELINES_KEY))
+            assert first_unit not in cached.value
+            loaded.set()
+            ui.update_appliance_apply_baselines(db, [unit(second_unit)], {second_unit})
+            merged.set()
+            db.commit()
+            assert first_unit in cached.value
+
+    monkeypatch.setattr(ui, "acquire_network_objects_write_lock", acquire)
+    with SessionLocal() as admitted, ThreadPoolExecutor(max_workers=1) as executor:
+        lock(admitted)
+        future = executor.submit(ordinary)
+        try:
+            assert loaded.wait(3) and attempted.wait(3) and not merged.wait(0.1)
+            ui.update_appliance_apply_baselines(admitted, [unit(first_unit)], {first_unit})
+            assert not merged.is_set()
+            admitted.commit()
+        finally:
+            admitted.rollback()
+        future.result(timeout=5)
+    with SessionLocal() as db:
+        baselines = ui.load_appliance_apply_baselines(db)
+        assert baselines["network"]["snapshot_hash"] == "retained-network"
+        assert baselines["ca"]["snapshot_hash"] == "executed-ca"
+        assert baselines["dnsmasq"]["snapshot_hash"] == "executed-dnsmasq"

@@ -9924,13 +9924,16 @@ def redact_config_preview(config_preview: str) -> str:
     return "\n".join(lines)
 
 
-def load_appliance_apply_baselines(db: Session) -> dict[str, dict[str, Any]]:
+def load_appliance_apply_baselines(db: Session, *, refresh: bool = False) -> dict[str, dict[str, Any]]:
     """Return appliance apply baselines.
 
     Args:
         db: Active database session.
+        refresh: Reload the baseline row after writer admission.
     """
-    raw_value = setting_value(db, APPLIANCE_APPLY_BASELINES_KEY)
+    row = db.scalar(select(Setting).where(Setting.key == APPLIANCE_APPLY_BASELINES_KEY)
+                    .execution_options(populate_existing=refresh))
+    raw_value = row.value if row is not None else ""
     if not raw_value:
         return {}
     try:
@@ -10035,6 +10038,7 @@ def save_appliance_apply_baselines(db: Session, baselines: dict[str, dict[str, A
         db: Active database session.
         baselines: Baselines supplied by the caller.
     """
+    acquire_network_objects_write_lock(db)
     set_setting_value(db, APPLIANCE_APPLY_BASELINES_KEY, json.dumps(baselines, indent=2, sort_keys=True))
 
 
@@ -15233,7 +15237,11 @@ def update_appliance_apply_baselines(db: Session, units: list[dict[str, Any]], s
         units: Units supplied by the caller.
         selected_ids: Selected ids supplied by the caller.
     """
-    baselines = load_appliance_apply_baselines(db)
+    # Every unit shares the single JSON baseline row, including unrelated Apply.
+    # Keep admission through the caller commit and reload any cached older value.
+    acquire_network_objects_write_lock(db)
+    db.flush()
+    baselines = load_appliance_apply_baselines(db, refresh=True)
     applied_at = utcnow().isoformat()
     for unit in units:
         if unit["id"] not in selected_ids:

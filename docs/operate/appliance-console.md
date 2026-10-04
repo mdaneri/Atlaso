@@ -180,8 +180,10 @@ deletion share recovery admission, so issuance policy cannot change during an ad
 CA reconciliation also takes admission when an Appliance Settings API or browser save commits its outer transaction.
 These saves read their Settings state after admission, and issuance refreshes cached CA material without releasing
 the caller's transaction or discarding its staged desired changes. Post-handoff native discovery has a five-second
-deadline; failure publishes no observations. Readiness probes reserve twelve seconds of the shared operation budget
-for final service-state, native address and TLS attestation. HTTPS mode requires the HTTP redirect and HTTPS
+deadline; failure publishes no observations. Bound readiness probes reserve twelve seconds of the shared operation budget
+for final service-state, native address and TLS attestation; unbound recovery reserves only its two-second service check.
+Every baseline merge shares writer admission and reloads the JSON baseline row, preserving concurrently applied units.
+HTTPS mode requires the HTTP redirect and HTTPS
 `/openapi.json`; HTTP-only mode requires
 HTTP `/openapi.json`.
 

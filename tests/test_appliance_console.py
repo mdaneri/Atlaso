@@ -2360,8 +2360,11 @@ def test_console_management_plane_recovery_retries_bootstrap_and_verifies_readin
                 "http://127.0.0.1:8000/openapi.json": "200",
             }
             assert command[-1] in expected
-            if slow_recovery and command[-1] == "http://127.0.0.1:8000/openapi.json":
-                clock[0] += 12
+            if slow_recovery:
+                # The real curl boundary cannot consume twelve seconds: each
+                # probe has --max-time=3 and a remaining-budget process timeout.
+                assert timeout is not None and timeout <= 3
+                clock[0] += timeout
             return subprocess.CompletedProcess(command, 0, expected[command[-1]], "")
         return subprocess.CompletedProcess(command, 0, "active\n", "")
 
@@ -2391,7 +2394,7 @@ def test_console_management_plane_recovery_retries_bootstrap_and_verifies_readin
     if network_job_id is not None:
         assert marker.read_text() == ""
         if slow_recovery:
-            assert clock[0] == 95
+            assert clock[0] == 80
             assert clock[0] < helper.CONSOLE_RECOVERY_OPERATION_SECONDS < helper.CONSOLE_RECOVERY_RUNTIME_SECONDS
 
 
@@ -4079,15 +4082,17 @@ def test_console_refuses_ineligible_completed_vlan_with_working_physical_listene
 
 
 @pytest.mark.parametrize("https", [False, True])
-def test_console_recovery_reserves_complete_final_attestation(monkeypatch, https):
+@pytest.mark.parametrize("bound", [False, True])
+def test_console_recovery_reserves_complete_final_attestation(monkeypatch, https, bound):
     """Late stable readiness retains service, native discovery and served-leaf worst cases.
 
     Args:
         monkeypatch: Replace privileged commands and control the shared clock.
         https: Whether final proof also includes the served TLS leaf.
+        bound: Whether native and served-leaf attestation are required.
     """
     helper = load_helper_module()
-    clock = [83.0]
+    clock = [83.0 if bound else 93.0]
     calls = []
     monkeypatch.setattr(helper.time, "monotonic", lambda: clock[0])
     monkeypatch.setattr(helper.time, "sleep", lambda seconds: clock.__setitem__(0, clock[0] + seconds))
@@ -4103,7 +4108,7 @@ def test_console_recovery_reserves_complete_final_attestation(monkeypatch, https
 
     def status(*args, **kwargs):
         """Consume the final readiness sample up to its separate deadline."""
-        if clock[0] == 87:
+        if clock[0] in {87, 97}:
             assert helper._console_recovery_remaining() == 1
             return native_status(*args, **kwargs)
         return "200"
@@ -4127,10 +4132,10 @@ def test_console_recovery_reserves_complete_final_attestation(monkeypatch, https
     monkeypatch.setattr(helper, "_run", run)
     token = helper._CONSOLE_RECOVERY_DEADLINE.set(100.0)
     try:
-        assert helper._recover_console_management_plane_bound(60, network_job_id="job_final_budget") == 0
-        assert clock[0] == (98 if https else 95)
+        assert helper._recover_console_management_plane_bound(60, network_job_id="job_final_budget" if bound else None) == 0
+        assert clock[0] == ((98 if https else 95) if bound else 100)
         assert helper._CONSOLE_RECOVERY_DEADLINE.get() == 100
         assert any("--acknowledge-console-publication" in command or "--verify-console-http" in command
-                   for command, _timeout in calls)
+                   for command, _timeout in calls) is bound
     finally:
         helper._CONSOLE_RECOVERY_DEADLINE.reset(token)

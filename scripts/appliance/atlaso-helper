@@ -26058,7 +26058,7 @@ def _console_management_http_status(
         command.extend(["--cacert", str(ca_certificate)])
     elif insecure:
         command.append("--insecure")
-    remaining = _console_recovery_remaining()
+    remaining = _console_recovery_remaining(3) if _CONSOLE_RECOVERY_DEADLINE.get() is not None else None
     result = _run([*command, url], **({"timeout": remaining} if remaining is not None else {}))
     return result.stdout.strip() if result.returncode == 0 else "000"
 
@@ -26408,13 +26408,16 @@ def _recover_console_management_plane_bound(timeout_seconds: int = 60, *, networ
         management_https_enabled, readiness_checks = _console_management_readiness_checks()
         publication = _console_publication_fingerprint(network_job_id) if network_job_id is not None and management_https_enabled else None
 
-        deadline = min(time.monotonic() + timeout_seconds,
-                       (_CONSOLE_RECOVERY_DEADLINE.get() or float("inf")) - CONSOLE_RECOVERY_FINAL_SECONDS)
+        # Unbound recovery only needs the final service check; bound recovery
+        # additionally needs native/served-leaf attestation.
+        final_seconds = CONSOLE_RECOVERY_FINAL_SECONDS if network_job_id is not None else 2
+        probe_deadline = (_CONSOLE_RECOVERY_DEADLINE.get() or float("inf")) - final_seconds
+        deadline = min(time.monotonic() + timeout_seconds, probe_deadline)
         consecutive_successes = 0
         statuses: dict[str, str] = {}
         # Cap every readiness probe to its subdeadline; a final iteration cannot
         # consume the native/TLS attestation reserve from the operation deadline.
-        readiness_token = _CONSOLE_RECOVERY_DEADLINE.set(deadline)
+        readiness_token = _CONSOLE_RECOVERY_DEADLINE.set(probe_deadline)
         try:
             while time.monotonic() < deadline:
                 statuses = {
