@@ -460,6 +460,7 @@ def test_sync_host_inventory_cleans_removed_nic_bindings_and_retargets_survivors
                     driver="hv_netvsc",
                     speed="10000 Mbps",
                     host_ip_cidr="192.168.30.1/24",
+                    host_dhcp_ip_cidr="192.168.30.1/24",
                     host_mtu=1500,
                     host_admin_state="up",
                     oper_state="up",

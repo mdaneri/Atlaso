@@ -164,6 +164,24 @@ def applied_management_bindings(db: Session) -> list[dict[str, str]] | None:
     return bindings
 
 
+def applied_physical_ipv4_modes(db: Session) -> dict[str, str]:
+    """Return applied IPv4 acquisition modes for admitted native inventory refresh.
+
+    Args:
+        db: Writer-admitted inventory transaction.
+    """
+    baseline = _network_baseline(db)
+    if baseline is None:
+        return {}
+    aliases = baseline.get("physical_interface_aliases")
+    aliases = aliases if isinstance(aliases, dict) else {}
+    return {
+        str(aliases.get(row.get("name", ""), row.get("name", ""))): row["ipv4_method"]
+        for row in _network_rows(str(baseline["config_preview"]))
+        if row.get("kind") == "physical" and "ipv4_method" in row
+    }
+
+
 def applied_physical_ipv6_modes(db: Session) -> dict[str, tuple[bool, str | None]]:
     """Return applied physical IPv6 controls for admitted native inventory refresh.
 

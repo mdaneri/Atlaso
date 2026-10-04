@@ -20335,6 +20335,68 @@ def test_ca_policy_writers_wait_for_bound_recovery(client, monkeypatch, operatio
             assert db.get(CaProfile, profile_id).validity_days == 1234
 
 
+@pytest.mark.parametrize("rename", [False, True])
+@pytest.mark.parametrize("applied,lease", [("dhcp", "192.0.2.77/24"), ("dhcp", None), ("static", "192.0.2.77/24")])
+def test_inventory_ipv4_observation_uses_applied_mode(client, monkeypatch, rename, applied, lease):
+    """Pending mode edits cannot redirect the active management listener during inventory.
+
+    Args:
+        client: Initialized appliance database and application.
+        monkeypatch: Supply native inventory with an old static address before the lease.
+        rename: Kernel rename preserving the applied physical MAC.
+        applied: Executed IPv4 acquisition mode captured before desired edits.
+        lease: Native dynamic lease, absent when DHCP has not acquired an address.
+    """
+    from sqlalchemy import select
+
+    from atlaso.app import ui
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import PhysicalInterface
+    from atlaso.app.services import networking
+    from atlaso.app.services.management_bindings import applied_management_bindings
+
+    with SessionLocal() as db:
+        interface = db.scalar(select(PhysicalInterface).where(PhysicalInterface.name == "eth0"))
+        interface.role = "management"
+        interface.mode = "access"
+        interface.admin_state = "up"
+        interface.oper_state = "up"
+        interface.desired_state_source = "user"
+        interface.ipv4_method = applied
+        interface.ip_cidr = "192.0.2.11/24" if applied == "static" else None
+        interface.ipv6_enabled = False
+        ui.save_appliance_apply_baselines(db, {"network": {
+            "config_preview": ui.network_context(db)["network_config_preview"],
+        }})
+        db.commit()
+        original_baseline = ui.load_appliance_apply_baselines(db)
+        interface.ipv4_method = "static" if applied == "dhcp" else "dhcp"
+        interface.ip_cidr = "192.0.2.99/24" if applied == "dhcp" else None
+        db.commit()
+        observations = [networking.HostPhysicalInterface(
+            name="pr899-ipv4-renamed" if rename and row.name == "eth0" else row.name,
+            mac_address=row.mac_address, driver=None, speed=None,
+            host_ip_cidr="192.0.2.11/24" if row.name == "eth0" else row.host_ip_cidr,
+            host_dhcp_ip_cidr=lease if row.name == "eth0" else None,
+            host_mtu=1500, host_admin_state="up", oper_state="up",
+        ) for row in db.scalars(select(PhysicalInterface)).all()]
+        monkeypatch.setattr(networking, "discover_host_physical_interfaces", lambda **kwargs: observations)
+        networking.sync_host_physical_interfaces(db)
+        expected = lease if applied == "dhcp" else "192.0.2.11/24"
+        assert interface.host_ip_cidr == expected
+        assert interface.ipv4_method == ("static" if applied == "dhcp" else "dhcp")
+        assert interface.ip_cidr == ("192.0.2.99/24" if applied == "dhcp" else None)
+        assert {row["address"] for row in applied_management_bindings(db)} == ({expected.split("/")[0]} if expected else set())
+        if expected:
+            assert ui.request_host_interface_binding(expected.split("/")[0], db)["management_ui"] is True
+        pending_binding = ui.request_host_interface_binding("192.0.2.99", db)
+        assert pending_binding is None or pending_binding["management_ui"] is False
+        current_baseline = ui.load_appliance_apply_baselines(db)
+        assert current_baseline["network"]["config_preview"] == original_baseline["network"]["config_preview"]
+        if rename:
+            assert interface.name == "pr899-ipv4-renamed"
+
+
 @pytest.mark.parametrize("pending", ["disabled", "static"])
 @pytest.mark.parametrize("rename", [False, True])
 def test_applied_automatic_ipv6_binding_ignores_pending_family_edits(client, monkeypatch, pending, rename):

@@ -259,6 +259,9 @@ observes every applied physical management path together, proving each name/MAC 
 before publishing observations and starting certificate recovery. A missing listener or lease blocks recovery.
 Startup/UI inventory, console observation, and helper-confirmed lease refresh acquire the shared writer
 before native discovery. A delayed inventory reader cannot publish a pre-admission lease over a newer console observation.
+Inventory selects IPv4 DHCP and automatic IPv6 observations from the last-applied acquisition mode,
+bound to the physical MAC across interface renames. Pending static or disabled-family edits remain desired state
+and cannot replace the active lease with a lingering static address before Network Apply.
 Because service startup can clear a temporarily missing lease, the console repeats complete observation before
 Settings capture and again before its second recovery. Scoped issuance and receipt acknowledgement refuse
 a missing requested dynamic family rather than issuing or accepting a leaf without that address.
