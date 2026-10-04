@@ -7718,15 +7718,18 @@ def applied_service_listener_sources(baselines: dict[str, Any], service: str) ->
     return sources
 
 
-def network_dynamic_service_listener_moves(db: Session, units_by_id: dict[str, dict[str, Any]]) -> list[dict[str, str]]:
+def network_dynamic_service_listener_moves(
+    db: Session, units_by_id: dict[str, dict[str, Any]], *, include_unchanged: bool = False,
+) -> list[dict[str, str]]:
     """Capture applied dynamic service listeners independently of DNS ownership.
 
     Args:
         db: Session containing applied service baselines and interface observations.
         units_by_id: Reviewed Network intent and captured service units.
+        include_unchanged: Capture all dynamic listeners when a handoff replays unchanged Network intent.
     """
     network = units_by_id.get("network", {})
-    if not network.get("changed"):
+    if not network.get("changed") and not include_unchanged:
         return []
     rows = network_interface_entries(str(network.get("raw_config_preview") or network.get("config_preview") or ""))
     baselines = load_appliance_apply_baselines(db)
@@ -7750,8 +7753,8 @@ def network_legacy_listener_source_errors(db: Session, units_by_id: dict[str, di
         units_by_id: Candidate Apply units keyed by identifier.
     """
     network = units_by_id.get("network", {})
-    if not network.get("changed"):
-        return []
+    # Unchanged intent may still be replayed by another protected handoff.
+    # Validate its legacy ownership whenever this Network unit is built.
     baselines = load_appliance_apply_baselines(db)
     previous_rows = network_interface_entries(str((baselines.get("network") or {}).get("config_preview") or ""))
     candidate_rows = network_interface_entries(str(network.get("raw_config_preview") or network.get("config_preview") or ""))
@@ -15537,7 +15540,7 @@ def execute_management_handoff(
     previous_paths = list(network.get("previous_management_paths") or [])
     public_dynamic_bindings = network_dynamic_public_bindings(units_by_id)
     listener_moves = list((dnsmasq or {}).get("listener_address_moves", []))
-    for move in network_dynamic_service_listener_moves(db, units_by_id):
+    for move in network_dynamic_service_listener_moves(db, units_by_id, include_unchanged=True):
         if not any((existing["service"], existing["old_address"]) == (move["service"], move["old_address"])
                    for existing in listener_moves):
             listener_moves.append(move)

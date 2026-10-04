@@ -114,13 +114,17 @@ def test_static_candidate_does_not_create_dynamic_service_listener_moves(client)
         assert ui.network_dynamic_service_listener_moves(db, units) == []
 
 
-def test_management_handoff_captures_and_persists_service_moves_without_dns(client, monkeypatch, tmp_path):
+@pytest.mark.parametrize("network_changed", [True, False], ids=["changed-network", "unchanged-network-replay"])
+def test_management_handoff_captures_and_persists_service_moves_without_dns(
+    client, monkeypatch, tmp_path, network_changed,
+):
     """Verify a no-DNS handoff carries listener moves and advances its applied baseline.
 
     Args:
         client: Isolated authenticated application client.
         monkeypatch: Substitute native discovery, staging, and helper execution.
         tmp_path: Temporary root for the staged handoff manifest.
+        network_changed: Whether Network has new intent or is replayed unchanged by the handoff.
     """
     from atlaso.app import ui
     from atlaso.app.adapters.system import AdapterResult
@@ -129,6 +133,10 @@ def test_management_handoff_captures_and_persists_service_moves_without_dns(clie
     login(client)
     with SessionLocal() as db:
         access, units = _prepare_service_baselines(db, ui, {"ntpd"}, dns_enabled=False, dynamic_ipv4=False)
+        if not network_changed:
+            ui.update_appliance_apply_baselines(db, [units["network"]], {"network"})
+            units = {unit["id"]: unit for unit in ui.appliance_apply_units(db, reconcile=False)}
+        assert units["network"]["changed"] is network_changed
         units["public_services"]["context"]["public_service_entries"] = []
         submitted_move = {
             "service": "ntpd",
@@ -899,3 +907,89 @@ def test_removed_applied_static_public_listener_does_not_force_dynamic_handoff(c
         assert ui.network_dynamic_public_bindings(units) == []
         assert ui.network_applied_dynamic_public_listener_required(db, units) is False
         assert ui.network_listener_handoff_required(db, units) is False
+
+
+def test_unchanged_network_replay_captures_all_dynamic_service_listeners(client):
+    """Capture all active DHCP/SLAAC listener sources on DNS-triggered Network replay.
+
+    Args:
+        client: Authenticated application client.
+    """
+    from atlaso.app import ui
+    from atlaso.app.database import SessionLocal
+
+    login(client)
+    services = {"ntpd", "ldap", "kms", "vcf_offline_depot"}
+    with SessionLocal() as db:
+        _access, units = _prepare_service_baselines(
+            db, ui, services, dns_enabled=False, dynamic_ipv4=False, dynamic_ipv6=True,
+        )
+        ui.update_appliance_apply_baselines(db, [units["network"]], {"network"})
+        units = {unit["id"]: unit for unit in ui.appliance_apply_units(db, reconcile=False)}
+
+        assert units["network"]["changed"] is False
+        assert ui.load_appliance_apply_baselines(db)["dnsmasq"]["service_dns_records"] == []
+        assert ui.network_dynamic_service_listener_moves(db, units) == []
+        replay_moves = ui.network_dynamic_service_listener_moves(db, units, include_unchanged=True)
+        assert {move["service"] for move in replay_moves} == services
+        assert all(move["old_address"] == "2001:db8::10" for move in replay_moves)
+        # Merely retaining an active dynamic listener does not create a review
+        # dependency. The DNS-drift trigger is what admits this unchanged replay.
+        assert ui.network_listener_handoff_required(db, units) is False
+
+
+def test_unchanged_network_legacy_source_error_blocks_dns_replay(client):
+    """Report missing legacy listener ownership when generated DNS requires replay.
+
+    Args:
+        client: Authenticated application client.
+    """
+    from atlaso.app import ui
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import CaSettings, DnsRecord
+
+    login(client)
+    with SessionLocal() as db:
+        access, units = _prepare_service_baselines(
+            db, ui, {"ntpd"}, dns_enabled=True, dynamic_ipv4=False, dynamic_ipv6=True,
+        )
+        ui.update_appliance_apply_baselines(db, [units["network"]], {"network"})
+        baselines = ui.load_appliance_apply_baselines(db)
+        legacy_ntp = baselines["ntpd"]
+        legacy_ntp.pop("applied_listener_interface", None)
+        legacy_ntp.pop("applied_listener_sources", None)
+        legacy_ntp["config_preview"] = "\n".join(
+            line.replace("2001:db8::10", "2001:db8::99")
+            for line in legacy_ntp["config_preview"].splitlines()
+            if not line.startswith("# Atlaso NTP listen interfaces:")
+        )
+        ui.save_appliance_apply_baselines(db, baselines)
+        units = {unit["id"]: unit for unit in ui.appliance_apply_units(db, reconcile=False)}
+        units["public_services"]["context"]["public_service_entries"] = []
+        assert units["network"]["changed"] is False
+        assert ui.network_listener_handoff_required(db, units) is False
+        assert len(ui.network_legacy_listener_source_errors(db, units)) == 1
+
+        db.execute(delete(DnsRecord).where(
+            DnsRecord.description == "Operator",
+            DnsRecord.hostname == "ca-192-0-2-10.custom.example.internal",
+        ))
+        ca = db.scalar(select(CaSettings))
+        access.host_ipv6_cidr = "2001:db8::10/64"
+        ca.listen_address = "192.0.2.10\n2001:db8::10"
+        ui.ensure_dns_for_ca_portal(db, ca, actor=None)
+        units = {unit["id"]: unit for unit in ui.appliance_apply_units(db, reconcile=False)}
+        ui.update_appliance_apply_baselines(db, [units["dnsmasq"]], {"dnsmasq"})
+
+        access.host_ipv6_cidr = "2001:db8::21/64"
+        ca.listen_address = "192.0.2.10\n2001:db8::21"
+        ui.ensure_dns_for_ca_portal(db, ca, actor=None)
+        units = {unit["id"]: unit for unit in ui.appliance_apply_units(db, reconcile=False)}
+        units["public_services"]["context"]["public_service_entries"] = []
+        units["dnsmasq"] = ui.network_generated_dns_unit(db, units)
+
+        assert units["dnsmasq"] is not None
+        assert ui.network_listener_handoff_required(db, units) is True
+        errors = ui.network_legacy_listener_source_errors(db, units)
+        assert len(errors) == 1
+        assert "Apply NTP first" in errors[0]
