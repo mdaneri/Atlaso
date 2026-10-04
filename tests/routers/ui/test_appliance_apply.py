@@ -1902,6 +1902,8 @@ def test_management_handoff_staging_failure_removes_private_ca_payload(
     """
     from atlaso.app import ui
 
+    monkeypatch.setattr(ui, "acquire_network_objects_write_lock", lambda _db: None)
+
     class UnusedAdapter:
         """Reject helper calls because staging must fail first."""
 
@@ -1977,6 +1979,8 @@ def test_management_handoff_timeout_stops_and_recovers_indeterminate_helper(monk
     """
     from atlaso.app import ui
     from atlaso.app.adapters.system import AdapterResult
+
+    monkeypatch.setattr(ui, "acquire_network_objects_write_lock", lambda _db: None)
 
     class TimeoutAdapter:
         """Return an indeterminate apply result followed by proven rollback."""
@@ -2204,7 +2208,7 @@ def test_management_handoff_preserves_newer_routing_desired_state(client, monkey
         )
 
         assert group["success"] is True
-        assert lock_events == ["routing-sync"]
+        assert lock_events == ["routing-sync", "routing-sync"]
         assert routing_service.enabled is False
         assert routing_service.running is True
         assert routing_service.health == "healthy"

@@ -20481,3 +20481,87 @@ def test_settings_ca_reconciliation_waits_for_recovery_outer_commit(client, monk
     with SessionLocal() as db:
         assert db.get(ApplianceSettings, desired_id).root_ssh_enabled
         assert db.get(CaCertificate, leaf_id).fingerprint == "recovery-published-leaf"
+
+
+def test_native_management_handoff_retains_writer_through_baseline_commit(client, monkeypatch, tmp_path):
+    """Bundled publication waits for recovery and excludes writers until its executed baselines commit.
+
+    Args:
+        client: Initialized isolated appliance database.
+        monkeypatch: Replace native staging and adapter operations.
+        tmp_path: Owned nonsecret handoff staging directory.
+    """
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Event
+    from types import SimpleNamespace
+
+    import atlaso.app.ui as ui
+    from atlaso.app.adapters.system import AdapterResult
+    from atlaso.app.database import SessionLocal
+
+    attempted, staged, published, returned, release_commit = (Event() for _ in range(5))
+    competitor_attempted, competitor_admitted = Event(), Event()
+    lock = ui.acquire_network_objects_write_lock
+    defaults = {"label": "Handoff", "summary": [], "validation_errors": [], "validation_warnings": [],
+                "config_path": "", "config_preview": "{}", "raw_config_preview": "{}", "config_diff": "",
+                "snapshot_hash": "captured-handoff"}
+    units = {key: {**defaults, "id": key} for key in ui.MANAGEMENT_HANDOFF_UNIT_IDS}
+    units["ca"]["context"] = {"ca_settings": object(), "ca_certificates": [], "ca_profiles": []}
+
+    def acquire(db):
+        """Expose the publication wait before any staging."""
+        attempted.set()
+        lock(db)
+
+    def stage(target, content):
+        """Retain only nonsecret test payloads under the validation root."""
+        staged.set()
+        path = tmp_path / (str(target).replace("/", "_").replace("\\", "_").replace(":", "_"))
+        path.write_text(content, encoding="utf-8")
+        return str(path)
+
+    def apply(path):
+        """Represent the native publication boundary."""
+        published.set()
+        return AdapterResult(command=["handoff", path], dry_run=False, returncode=0)
+
+    def ordinary():
+        """Retain original admission until the bundled application boundary."""
+        with SessionLocal() as db:
+            group, _results = ui.execute_management_handoff(units, job_id="job_serial_handoff", db=db,
+                adapter=SimpleNamespace(dry_run=False, validate_management_handoff=apply, apply_management_handoff=apply))
+            assert group["success"]
+            returned.set()
+            assert release_commit.wait(5)
+            ui.update_appliance_apply_baselines(db, list(units.values()), set(units))
+            db.commit()
+
+    def competitor():
+        """Attempt admission after native publication but before baseline commit."""
+        with SessionLocal() as db:
+            competitor_attempted.set()
+            lock(db)
+            competitor_admitted.set()
+            db.rollback()
+
+    monkeypatch.setattr(ui, "acquire_network_objects_write_lock", acquire)
+    monkeypatch.setattr(ui, "stage_appliance_apply_config", stage)
+    monkeypatch.setattr(ui, "render_ca_apply_payload", lambda *_args, **_kwargs: "{}")
+    with SessionLocal() as recovery, ThreadPoolExecutor(max_workers=2) as executor:
+        lock(recovery)
+        future = executor.submit(ordinary)
+        try:
+            assert attempted.wait(3) and not staged.wait(0.1) and not published.is_set()
+            recovery.commit()
+            assert returned.wait(3) and published.is_set()
+            waiting = executor.submit(competitor)
+            assert competitor_attempted.wait(3) and not competitor_admitted.wait(0.1)
+        finally:
+            recovery.rollback()
+            release_commit.set()
+        future.result(timeout=5)
+        waiting.result(timeout=5)
+    assert competitor_admitted.is_set()
+    with SessionLocal() as db:
+        baselines = ui.load_appliance_apply_baselines(db)
+        assert all(baselines[key]["snapshot_hash"] == "captured-handoff" for key in units)

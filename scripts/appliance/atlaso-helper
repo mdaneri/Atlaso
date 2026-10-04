@@ -187,6 +187,8 @@ SYSTEMD_RUN_ACTION_UNIT_PREFIX = "atlaso-helper-action"
 UPDATE_CHECK_TIMEOUT_SECONDS = 300
 UPDATE_CHECK_STOP_SECONDS = 30
 CONSOLE_RECOVERY_OPERATION_SECONDS = 100
+# Service state (2s), native attestation (5s), served DER (3s), and process overhead (2s).
+CONSOLE_RECOVERY_FINAL_SECONDS = 12
 CONSOLE_RECOVERY_RUNTIME_SECONDS = 108
 CONSOLE_RECOVERY_STOP_SECONDS = 2
 _CONSOLE_RECOVERY_DEADLINE: ContextVar[float | None] = ContextVar("console_recovery_deadline", default=None)
@@ -26004,18 +26006,21 @@ def _console_recovery_remaining(maximum: float | None = None) -> float | None:
     return min(remaining, maximum) if maximum is not None else remaining
 
 
-def _console_recovery_command(label: str, command: list[str]) -> subprocess.CompletedProcess[str]:
+def _console_recovery_command(
+    label: str, command: list[str], *, maximum_seconds: float | None = None,
+) -> subprocess.CompletedProcess[str]:
     """Run one required management-plane recovery command.
 
     Args:
         label: Human-readable recovery stage.
         command: Command and arguments to execute.
+        maximum_seconds: Optional stage limit within the shared operation deadline.
 
     Raises:
         ValueError: If the command does not succeed.
     """
     try:
-        remaining = _console_recovery_remaining()
+        remaining = _console_recovery_remaining(maximum_seconds)
         result = _run(command, **({"timeout": remaining} if remaining is not None else {}))
     except subprocess.TimeoutExpired as exc:
         raise ValueError(f"{label} exceeded the complete recovery budget") from exc
@@ -26404,41 +26409,48 @@ def _recover_console_management_plane_bound(timeout_seconds: int = 60, *, networ
         publication = _console_publication_fingerprint(network_job_id) if network_job_id is not None and management_https_enabled else None
 
         deadline = min(time.monotonic() + timeout_seconds,
-                       (_CONSOLE_RECOVERY_DEADLINE.get() or float("inf")) - 5)
+                       (_CONSOLE_RECOVERY_DEADLINE.get() or float("inf")) - CONSOLE_RECOVERY_FINAL_SECONDS)
         consecutive_successes = 0
         statuses: dict[str, str] = {}
-        while time.monotonic() < deadline:
-            statuses = {
-                label: _console_management_http_status(curl, url, insecure=insecure)
-                for label, url, insecure, _expected in readiness_checks
-            }
-            ready = all(
-                statuses[label] == expected
-                for label, _url, _insecure, expected in readiness_checks
-            )
-            if ready and network_job_id is not None and management_https_enabled:
-                ready = _console_management_leaf_is_active(publication[0])
-                statuses["published management leaf"] = "active" if ready else "not active"
-            if ready:
-                consecutive_successes += 1
-                if consecutive_successes >= 5:
-                    break
+        # Cap every readiness probe to its subdeadline; a final iteration cannot
+        # consume the native/TLS attestation reserve from the operation deadline.
+        readiness_token = _CONSOLE_RECOVERY_DEADLINE.set(deadline)
+        try:
+            while time.monotonic() < deadline:
+                statuses = {
+                    label: _console_management_http_status(curl, url, insecure=insecure)
+                    for label, url, insecure, _expected in readiness_checks
+                }
+                ready = all(
+                    statuses[label] == expected
+                    for label, _url, _insecure, expected in readiness_checks
+                )
+                if ready and network_job_id is not None and management_https_enabled:
+                    ready = _console_management_leaf_is_active(publication[0])
+                    statuses["published management leaf"] = "active" if ready else "not active"
+                if ready:
+                    consecutive_successes += 1
+                    if consecutive_successes >= 5:
+                        break
+                else:
+                    consecutive_successes = 0
+                    if statuses.get("Atlaso application loopback") != "200" and not atlaso_restarted:
+                        _console_recovery_command(
+                            "restarting an unready Atlaso service",
+                            ["systemctl", "restart", "atlaso.service"],
+                        )
+                        atlaso_restarted = True
+                time.sleep(1)
             else:
-                consecutive_successes = 0
-                if statuses.get("Atlaso application loopback") != "200" and not atlaso_restarted:
-                    _console_recovery_command(
-                        "restarting an unready Atlaso service",
-                        ["systemctl", "restart", "atlaso.service"],
-                    )
-                    atlaso_restarted = True
-            time.sleep(1)
-        else:
-            summary = ", ".join(f"{label}={status}" for label, status in statuses.items())
-            raise ValueError(f"management readiness did not stabilize within {timeout_seconds} seconds ({summary})")
+                summary = ", ".join(f"{label}={status}" for label, status in statuses.items())
+                raise ValueError(f"management readiness did not stabilize within {timeout_seconds} seconds ({summary})")
+        finally:
+            _CONSOLE_RECOVERY_DEADLINE.reset(readiness_token)
 
         _console_recovery_command(
             "checking management service state",
             ["systemctl", "is-active", *MANAGEMENT_PLANE_UNITS],
+            maximum_seconds=2,
         )
         if network_job_id is not None and management_https_enabled:
             _console_recovery_command("acknowledging ready management certificate publication",

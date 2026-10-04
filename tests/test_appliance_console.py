@@ -4076,3 +4076,61 @@ def test_console_refuses_ineligible_completed_vlan_with_working_physical_listene
             else:
                 with pytest.raises(ValueError, match="Native management VLAN"):
                     bootstrap.recovery_dynamic_address_binding(db, preview, native=True)
+
+
+@pytest.mark.parametrize("https", [False, True])
+def test_console_recovery_reserves_complete_final_attestation(monkeypatch, https):
+    """Late stable readiness retains service, native discovery and served-leaf worst cases.
+
+    Args:
+        monkeypatch: Replace privileged commands and control the shared clock.
+        https: Whether final proof also includes the served TLS leaf.
+    """
+    helper = load_helper_module()
+    clock = [83.0]
+    calls = []
+    monkeypatch.setattr(helper.time, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(helper.time, "sleep", lambda seconds: clock.__setitem__(0, clock[0] + seconds))
+    monkeypatch.setattr(helper.shutil, "which", lambda name: "/usr/bin/" + name)
+    monkeypatch.setattr(helper, "_console_first_boot_https_contract_is_complete", lambda **kwargs: True)
+    monkeypatch.setattr(helper, "_console_restart_bootstrap", lambda: None)
+    monkeypatch.setattr(helper, "_console_publication_fingerprint", lambda job: ("a" * 64, "b" * 64))
+    monkeypatch.setattr(helper, "_console_management_leaf_is_active", lambda fingerprint: True)
+    monkeypatch.setattr(helper, "_console_management_readiness_checks", lambda: (https,
+        (("nginx HTTP readiness", "http://127.0.0.1:8080/openapi.json", False, "200"),)))
+
+    native_status = helper._console_management_http_status
+
+    def status(*args, **kwargs):
+        """Consume the final readiness sample up to its separate deadline."""
+        if clock[0] == 87:
+            assert helper._console_recovery_remaining() == 1
+            return native_status(*args, **kwargs)
+        return "200"
+
+    def run(command, *, timeout):
+        """Exercise all final permitted durations at the actual outer command boundary."""
+        calls.append((command, timeout))
+        if command[0] == "/usr/bin/curl":
+            assert timeout == 1
+            clock[0] += 1
+            return subprocess.CompletedProcess(command, 0, "200", "")
+        if command == ["systemctl", "is-active", *helper.MANAGEMENT_PLANE_UNITS]:
+            assert timeout == 2
+            clock[0] += 2
+        if "--acknowledge-console-publication" in command or "--verify-console-http" in command:
+            assert timeout >= 10
+            clock[0] += 5 + (3 if https else 0)
+        return subprocess.CompletedProcess(command, 0, "active", "")
+
+    monkeypatch.setattr(helper, "_console_management_http_status", status)
+    monkeypatch.setattr(helper, "_run", run)
+    token = helper._CONSOLE_RECOVERY_DEADLINE.set(100.0)
+    try:
+        assert helper._recover_console_management_plane_bound(60, network_job_id="job_final_budget") == 0
+        assert clock[0] == (98 if https else 95)
+        assert helper._CONSOLE_RECOVERY_DEADLINE.get() == 100
+        assert any("--acknowledge-console-publication" in command or "--verify-console-http" in command
+                   for command, _timeout in calls)
+    finally:
+        helper._CONSOLE_RECOVERY_DEADLINE.reset(token)

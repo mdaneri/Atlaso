@@ -174,12 +174,14 @@ Settings, the console requires five stable local checks: application `/openapi.j
 nginx management mode. Bound HTTP-only recovery also rechecks the completed Network paths and required dynamic
 observations under writer admission before native site validation. After stable HTTP readiness, it repeats admitted
 Network and applied HTTP-mode/port checks before reporting success. Settings publication records its executed baseline
-with the confirmed restart transition before releasing admission. CA subject/settings and profile creation, edit and
+with the confirmed restart transition before releasing admission. Bundled management handoffs retain the same
+writer admission from staging through their executed baseline commit. CA subject/settings and profile creation, edit and
 deletion share recovery admission, so issuance policy cannot change during an admitted recovery.
 CA reconciliation also takes admission when an Appliance Settings API or browser save commits its outer transaction.
 These saves read their Settings state after admission, and issuance refreshes cached CA material without releasing
 the caller's transaction or discarding its staged desired changes. Post-handoff native discovery has a five-second
-deadline; failure publishes no observations. HTTPS mode requires the HTTP redirect and HTTPS
+deadline; failure publishes no observations. Readiness probes reserve twelve seconds of the shared operation budget
+for final service-state, native address and TLS attestation. HTTPS mode requires the HTTP redirect and HTTPS
 `/openapi.json`; HTTP-only mode requires
 HTTP `/openapi.json`.
 

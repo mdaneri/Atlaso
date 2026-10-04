@@ -14968,6 +14968,10 @@ def execute_management_handoff(
         The group result and one truthful result per bundled apply unit.
     """
     adapter = adapter or SystemAdapter()
+    if not adapter.dry_run:
+        # Admit before staging or native publication. The caller retains this
+        # transaction through the bundled executed-baseline commit.
+        acquire_network_objects_write_lock(db)
     network = units_by_id["network"]
     settings = units_by_id["appliance_settings"]
     firewall = units_by_id["firewall"]
