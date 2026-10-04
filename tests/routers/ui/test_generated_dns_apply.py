@@ -804,6 +804,7 @@ def test_oidc_alias_refresh_uses_only_effective_ipv6_listener(client, ipv6_enabl
 @pytest.mark.parametrize("dynamic_failure", [
     None, "publication", "reload", "readback", "identity", "identity-storage", "identity-pxe",
     "identity-dns-edit", "identity-dns-create",
+    "identity-dns-zone-toggle", "identity-dns-render-setting",
 ])
 def test_management_handoff_dns_readback_failure_triggers_proven_recovery(client, monkeypatch, tmp_path, dynamic_failure):
     """Treat failed generated-DNS readback as handoff failure and recover.
@@ -882,10 +883,23 @@ def test_management_handoff_dns_readback_failure_triggers_proven_recovery(client
                             hostname="ca.custom.example.internal", record_type="A",
                             address="192.0.2.99", description="Operator conflict", enabled=True,
                         ))
+                    elif dynamic_failure == "identity-dns-zone-toggle":
+                        dns_settings = other.scalar(select(DnsSettings))
+                        assert dns_settings.domain.splitlines() == [
+                            "atlaso.internal", "custom.example.internal",
+                        ]
+                        assert not dns_settings.disabled_domains
+                        dns_settings.domain = "atlaso.internal"
+                        dns_settings.disabled_domains = "custom.example.internal"
+                    elif dynamic_failure == "identity-dns-render-setting":
+                        other.scalar(select(DnsSettings)).cache_size = 4321
                     else:
                         ui.get_appliance_settings_row(other).fqdn = "concurrent.example.internal"
                     other.flush()
-                    if dynamic_failure not in {"identity-dns-edit", "identity-dns-create"}:
+                    if dynamic_failure not in {
+                        "identity-dns-edit", "identity-dns-create", "identity-dns-zone-toggle",
+                        "identity-dns-render-setting",
+                    }:
                         ui.refresh_interface_service_dns_aliases(other, actor=None)
                         settings = ui.get_appliance_settings_row(other)
                         ui.ensure_dns_for_appliance_settings(other, settings, previous_fqdn="atlaso.internal", actor=None)
@@ -973,7 +987,11 @@ def test_management_handoff_dns_readback_failure_triggers_proven_recovery(client
                                           admin_state="up", ipv4_method="dhcp", host_ip_cidr="192.0.2.11/24")
             db.add(interface)
             ca = db.scalar(select(CaSettings))
-            db.scalar(select(DnsSettings)).enabled = True
+            dns_settings = db.scalar(select(DnsSettings))
+            dns_settings.enabled = True
+            if dynamic_failure in {"identity-dns-zone-toggle", "identity-dns-render-setting"}:
+                dns_settings.domain = "atlaso.internal\ncustom.example.internal"
+                dns_settings.disabled_domains = ""
             ca.enabled = True
             ca.portal_hostname = "ca.custom.example.internal"
             ca.listen_interface = "dynamic0"
@@ -994,6 +1012,12 @@ def test_management_handoff_dns_readback_failure_triggers_proven_recovery(client
             description=CA_PORTAL_DNS_DESCRIPTION, enabled=True,
         ))
         db.commit()
+        dns_rows_before = sorted(
+            (row.id, row.hostname, row.record_type, row.address, row.record_data_json,
+             row.description, row.enabled)
+            for row in db.scalars(select(DnsRecord)).all()
+        )
+        dns_updated_at_before = db.scalar(select(DnsSettings)).updated_at
         group, results = ui.execute_management_handoff(
             units,
             job_id="job_generated_dns_readback",
@@ -1007,6 +1031,22 @@ def test_management_handoff_dns_readback_failure_triggers_proven_recovery(client
         with SessionLocal() as db:
             assert db.scalar(select(PhysicalInterface).where(PhysicalInterface.name == "dynamic0")).host_ip_cidr == "192.0.2.11/24"
             assert db.scalar(select(CaSettings)).listen_address == "192.0.2.11"
+            dns_settings = db.scalar(select(DnsSettings))
+            if dynamic_failure == "identity-dns-zone-toggle":
+                assert dns_settings.domain == "atlaso.internal"
+                assert dns_settings.disabled_domains == "custom.example.internal"
+            elif dynamic_failure == "identity-dns-render-setting":
+                assert dns_settings.domain == "atlaso.internal\ncustom.example.internal"
+                assert dns_settings.disabled_domains == ""
+                assert dns_settings.cache_size == 4321
+                assert dns_settings.updated_at == dns_updated_at_before
+            if dynamic_failure in {"identity-dns-zone-toggle", "identity-dns-render-setting"}:
+                dns_rows_after = sorted(
+                    (row.id, row.hostname, row.record_type, row.address, row.record_data_json,
+                     row.description, row.enabled)
+                    for row in db.scalars(select(DnsRecord)).all()
+                )
+                assert dns_rows_after == dns_rows_before
             owned = db.scalars(select(DnsRecord).where(DnsRecord.description == CA_PORTAL_DNS_DESCRIPTION,
                                                       DnsRecord.record_type == "A")).all()
             assert owned and {row.address for row in owned} == {"192.0.2.11"}
@@ -1039,6 +1079,8 @@ def test_management_handoff_dns_readback_failure_triggers_proven_recovery(client
         "identity-pxe": "Service DNS identity changed during network readiness; resubmit the changes.",
         "identity-dns-edit": "Service DNS identity changed during network readiness; resubmit the changes.",
         "identity-dns-create": "Service DNS identity changed during network readiness; resubmit the changes.",
+        "identity-dns-zone-toggle": "Service DNS identity changed during network readiness; resubmit the changes.",
+        "identity-dns-render-setting": "Service DNS identity changed during network readiness; resubmit the changes.",
     }.get(dynamic_failure, "controlled DNS readback failure")
     assert group["management_handoff"]["error"] == expected_error
     assert group["management_handoff"]["rolled_back"] is True

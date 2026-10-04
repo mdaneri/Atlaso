@@ -7815,7 +7815,12 @@ def service_dns_identity_snapshot(db: Session) -> list[tuple[Any, ...]]:
         DnsRecord.id, DnsRecord.hostname, DnsRecord.record_type, DnsRecord.address,
         DnsRecord.record_data_json, DnsRecord.description, DnsRecord.enabled,
     ).order_by(DnsRecord.id))]
-    for model in (DnsSettings, CaSettings, KmsSettings, LdapSettings, OidcProviderSettings, NtpSettings, VcfOfflineDepotSettings, VcfPrivateRegistrySettings):
+    # Zone membership and other renderer settings can change without editing
+    # records. Capture every persisted DNS setting before the readiness window.
+    rows.extend(("DnsSettings", *row) for row in db.execute(
+        select(*DnsSettings.__table__.columns).order_by(DnsSettings.id)
+    ))
+    for model in (CaSettings, KmsSettings, LdapSettings, OidcProviderSettings, NtpSettings, VcfOfflineDepotSettings, VcfPrivateRegistrySettings):
         for settings in db.scalars(select(model).order_by(model.id)):
             rows.append((model.__name__, settings.id, settings.enabled,
                          getattr(settings, "hostname", getattr(settings, "portal_hostname", "")),
