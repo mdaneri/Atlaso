@@ -125,8 +125,8 @@ authorization result between menus.
 4. Enter static addresses and gateways only when the corresponding mode is **Static**.
 5. Enter external DNS servers.
 6. Review the values and submit the change.
-7. Wait while Atlaso applies corrected Network and Firewall state, retries unfinished first-boot HTTPS, applies
-   Appliance Settings, and verifies local application plus nginx readiness.
+7. Wait while Atlaso applies corrected Network and Firewall state, observes the corrected addresses, retries unfinished
+   first-boot HTTPS, applies Appliance Settings, and verifies local application plus nginx readiness.
 8. Confirm that the console reports both appliance-apply task IDs and shows the expected management address and URL.
 9. Verify that `http://<management-address>/` redirects to HTTPS from another machine.
 10. Verify that `https://<management-address>/openapi.json` returns HTTP 200 from another machine.
@@ -137,10 +137,53 @@ link-local.
 
 The recovery action updates Atlaso desired state and submits two synchronous, scoped global appliance-apply tasks. The
 first always applies Network and Firewall so stale management-source restrictions cannot survive an address correction.
-Atlaso then retries first-boot HTTPS only when its completion marker is absent, validates nginx before any reload, and
-ensures nginx and Atlaso are enabled and running. After the second task applies Appliance Settings, the console requires
-five stable local checks: application `/openapi.json` on port 8000 plus the applied nginx management mode. HTTPS mode
-requires the HTTP redirect and HTTPS `/openapi.json`; HTTP-only mode requires HTTP `/openapi.json`.
+Atlaso reads host interface observations without reconciling inventory and waits up to 30 seconds for a usable
+observed IPv4 address and, when enabled, IPv6 address on the corrected interface. Static observations must match
+the address and prefix captured by the completed Network task;
+DHCP and automatic IPv6 observations remain separate from desired state. If inventory is unavailable or either
+requested family has not acquired a usable address, recovery and Appliance Settings stop with an observation error.
+Check the interface and DHCP/IPv6 acquisition, then retry the console correction.
+Before acknowledging HTTPS recovery, Atlaso reobserves dynamic addresses on the exact interface and MAC.
+The complete DHCP/SLAAC address set must match the original publication receipt and the served leaf SANs.
+A changed lease, withdrawn prefix, unavailable link, or discovery timeout leaves the CA baseline pending.
+HTTP-only recovery also retains its original dynamic address scope before readiness and reobserves it
+under writer admission before reporting success. A later inventory refresh cannot redefine that captured scope;
+changed DHCP leases or SLAAC prefixes require another recovery attempt. HTTP recovery does not publish CA state.
+The interface must be administratively and operationally up; a retained address on a disconnected link cannot pass.
+Every enabled management path in the completed snapshot must be eligible. A management VLAN with a missing,
+down, or non-trunk parent stops recovery and Settings capture even when another physical listener works.
+Native observation also proves each VLAN's tag, configured IPv4/IPv6 addresses and up state against the completed
+snapshot, including its parent's pinned MAC and native link identity. A missing or down VLAN or parent blocks all
+observation publication. Final HTTP and HTTPS acceptance repeats this proof under writer admission within its
+five-second native-discovery budget; a working physical listener cannot hide a failed VLAN path.
+Each discovery attempt uses the remaining acquisition timeout, so a stalled command cannot leave the console waiting
+indefinitely. Tentative or duplicate-address-detection-failed addresses cannot pass.
+If newer address edits are pending, Atlaso records the applied observation but stops dependent recovery and Settings;
+apply or reconcile those edits first.
+
+After observation succeeds, Atlaso refreshes HTTPS with the completed Network task even when first boot is complete.
+Bound recovery preserves desired state and bypasses first-boot seeding and inventory reconciliation even when
+first-boot evidence is incomplete. Bound recovery validates the applied site without requiring its first-boot marker.
+It preserves
+the applied management protocol and listener ports while refreshing certificates. Bootstrap restart has
+a bounded inner deadline; a timeout requests service cancellation. Recovery removes or replaces a task binding only
+after systemd proves that no bootstrap job is queued or running. A still-active or ambiguous binding is preserved.
+Atlaso validates nginx
+before any reload, and ensures nginx and Atlaso are enabled and running. After the second task applies Appliance
+Settings, the console requires five stable local checks: application `/openapi.json` on port 8000 plus the applied
+nginx management mode. Bound HTTP-only recovery also rechecks the completed Network paths and required dynamic
+observations under writer admission before native site validation. After stable HTTP readiness, it repeats admitted
+Network and applied HTTP-mode/port checks before reporting success. Settings publication records its executed baseline
+with the confirmed restart transition before releasing admission. Bundled management handoffs retain the same
+writer admission from staging through their executed baseline commit. CA subject/settings and profile creation, edit and
+deletion share recovery admission, so issuance policy cannot change during an admitted recovery.
+CA reconciliation also takes admission when an Appliance Settings API or browser save commits its outer transaction.
+These saves read their Settings state after admission, and issuance refreshes cached CA material without releasing
+the caller's transaction or discarding its staged desired changes. Post-handoff native discovery has a five-second
+deadline; failure publishes no observations. Readiness probes reserve twelve seconds of the shared operation budget
+for final service-state, native address and TLS attestation. HTTPS mode requires the HTTP redirect and HTTPS
+`/openapi.json`; HTTP-only mode requires
+HTTP `/openapi.json`.
 
 It never falls back to unvalidated host commands. A validation, bootstrap, firewall, nginx, service, or readiness
 failure names the failing layer on the console and leaves unapplied desired state pending for review in the web UI.
@@ -180,3 +223,42 @@ After any console change:
 
 For systemd ownership, redraw behavior, GRUB branding, service-isolation boundaries, and configuration paths, see the
 [local console technical reference](../reference/appliance-console-technical.md).
+
+Certificate bootstrap is bound to the completed Network task and checks its management paths while holding the shared
+writer lock through issuance. Certificate projection reads saved service settings without initializing optional rows
+or reconciling service defaults, so incidental commits cannot release that lock.
+Pending address, VLAN, or administrative-state changes stop recovery before certificate
+mutation. Completed recovery publishes only the management leaf; it leaves other certificates and revocation files
+untouched. Its hostname and terminal SANs come from applied Settings, so pending Settings edits cannot change the
+recovery leaf. Publication uses the certificate/key paths captured in applied Settings, keeping nginx on the refreshed
+leaf even when its filenames use a prior hostname. Missing applied identity or paths stops recovery.
+A missing or changed applied CA root requires
+ordinary CA Apply before recovery. After nginx reload, stable readiness and served-leaf proof against the task-bound
+publication receipt, successful publication
+records only the refreshed leaf in the CA baseline, preserving unrelated pending CA intent; a failed publication
+does not advance that baseline. Upgrade comparison accepts both legacy naive SQLite and timezone-aware PostgreSQL
+UTC expiry encodings without rewriting applied evidence or hiding real certificate changes. Readiness probes use the
+applied default HTTP and HTTPS listener ports, including
+nonstandard ports. Ordinary CA Apply shares the publication writer lock and records only its executed payload; after
+listener reloads it reacquires admission and refuses a baseline commit if recovery or a desired edit superseded that
+payload. Transient recovery loads the appliance environment and state working directory before acknowledgement,
+so it uses the appliance database. First-boot publication records its exact captured CA baseline.
+Recovery also requires the applied CA issuance policy: subject and digest settings and every profile's
+key, validity, and usage constraints must still match the captured CA snapshot. Pending policy edits stop
+recovery before issuance. Older snapshots without this policy evidence require an explicit CA Apply first;
+recovery never infers or rewrites their provenance. Disabled IPv6 is cleared during inventory reconciliation
+and excluded from management certificate addresses even when a stale observation remains.
+Native observation also skips deprecated addresses and expired preferred lifetimes, so renumbering selects
+the new preferred dynamic address rather than a still-valid old lease.
+The completed Network snapshot can include newly enabled flagged-access management listeners. The console
+observes every applied physical management path together, proving each name/MAC and requested address family
+before publishing observations and starting certificate recovery. A missing listener or lease blocks recovery.
+Startup/UI inventory, console observation, and helper-confirmed lease refresh acquire the shared writer
+before native discovery. A delayed inventory reader cannot publish a pre-admission lease over a newer console observation.
+Because service startup can clear a temporarily missing lease, the console repeats complete observation before
+Settings capture and again before its second recovery. Scoped issuance and receipt acknowledgement refuse
+a missing requested dynamic family rather than issuing or accepting a leaf without that address.
+
+Before Appliance Settings is submitted, the console rechecks the completed Network management paths under the shared
+network-object writer lock held through Settings capture. An address edit made during HTTPS recovery stops submission
+and remains pending; it cannot enter Settings as though Network had already applied it.

@@ -8,6 +8,7 @@ Before=nginx.service atlaso.service
 [Service]
 Type=oneshot
 EnvironmentFile=/etc/atlaso/atlaso.env
+EnvironmentFile=-/run/atlaso-console-recovery/network.env
 Environment=PYTHONDONTWRITEBYTECODE=1
 ExecStart=/opt/atlaso/.venv/bin/python /opt/atlaso/bin/atlaso-bootstrap-https
 RemainAfterExit=yes

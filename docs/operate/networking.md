@@ -86,7 +86,9 @@ in both domains is ambiguous and is rejected. Keep distinct appliance addresses 
 
 If an existing **Access** interface with **Management UI** enabled still shows **DHCP**, use the same **Convert DHCP lease
 to static** row action to recover editable static IPv4 desired state. Refresh host inventory first if no address is
-observed. The confirmation preserves the Access role, Management UI exposure, and IPv6 configuration. It copies only
+observed. Startup and UI inventory discovery use a five-second native command timeout while holding writer admission.
+A failed discovery releases admission without reconciling or changing saved inventory. The confirmation preserves the
+Access role, Management UI exposure, and IPv6 configuration. It copies only
 the observed IPv4 address and prefix; Access gateways remain owned by **Routes & WAN**. Review any required static
 routes before Apply to avoid losing off-subnet connectivity. Cancel leaves desired state unchanged. After conversion,
 edit **IPv4 CIDR** normally, or **IPv6 CIDR** when IPv6 is enabled, and review the protected management handoff through
@@ -173,6 +175,16 @@ When an Apply changes an effective management interface, address, gateway, or li
 bundles Network with Firewall, Certificate Authority, Appliance Settings, and Public Services. The old management path
 stays active while the candidate network, policy routes, firewall, certificate/nginx configuration, Atlaso loopback
 upstream, and host-facing `/openapi.json` complete bounded readiness checks. Only then does Atlaso retire the old path.
+During automatic IPv6 prefix renumbering, native observation retains every preferred dynamic address. Management
+Settings and certificate SANs include both active prefixes until an address becomes deprecated or expires.
+Applied browser and Web Terminal bindings use the last-applied IPv6 mode; saving a pending disable or static
+address does not replace the automatic addresses still served by the applied listener. Native inventory refresh also
+uses that applied mode, retaining every preferred automatic prefix across pending edits. Applying disabled mode
+clears those observations on the next refresh. The
+automatic set has deterministic numeric address ordering, so kernel enumeration changes do not trigger reissuance.
+The physical-interface API preserves `host_ipv6_cidr` as the first observation and returns the complete set in
+`host_ipv6_cidrs`; disabled or static IPv6 does not retain automatic observations.
+This runtime set is excluded from settings archives and must be acquired again from native inventory after restore.
 When the desired role conversion also staged a management-gateway default, **Routing & WAN** joins that same
 recoverable handoff. Its candidate and last-applied rollback configs are validated before mutation; failure restores
 the prior lab routes and the old management path together. Adding, editing, disabling, or removing a default on an

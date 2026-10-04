@@ -62,6 +62,7 @@ from atlaso.app.services.kms import (
     KMS_DEFAULT_CONFIG_PATH,
     KMS_DEFAULT_DATABASE_PATH,
 )
+from atlaso.app.services.network_objects import acquire_network_objects_write_lock
 from atlaso.app.services.vaults import list_vaults, vault_entry_uris
 from atlaso.app.services.vsphere_enrollment import (
     EnrollmentError,
@@ -1165,6 +1166,7 @@ def build_routers(
             The endpoint response.
         """
         verify_csrf(request, csrf)
+        acquire_network_objects_write_lock(db)
         settings = get_ca_settings_row(db)
         previous_portal_hostname = settings.portal_hostname
         selected_interfaces, selected_addresses = resolve_service_bind_targets(
@@ -1279,6 +1281,7 @@ def build_routers(
             The endpoint response.
         """
         verify_csrf(request, csrf)
+        acquire_network_objects_write_lock(db)
         profile = CaProfile(
             name=name.strip(),
             certificate_type=certificate_type.strip(),
@@ -1364,7 +1367,8 @@ def build_routers(
             HTTPException: If the request cannot be fulfilled.
         """
         verify_csrf(request, csrf)
-        profile = db.get(CaProfile, profile_id)
+        acquire_network_objects_write_lock(db)
+        profile = db.get(CaProfile, profile_id, populate_existing=True)
         if not profile:
             raise HTTPException(status_code=404, detail="CA profile not found")
         profile.name = name.strip()
@@ -1430,7 +1434,8 @@ def build_routers(
             HTTPException: If the request cannot be fulfilled.
         """
         verify_csrf(request, csrf)
-        profile = db.get(CaProfile, profile_id)
+        acquire_network_objects_write_lock(db)
+        profile = db.get(CaProfile, profile_id, populate_existing=True)
         if not profile:
             raise HTTPException(status_code=404, detail="CA profile not found")
         for certificate in (

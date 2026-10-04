@@ -283,7 +283,7 @@ def test_sync_host_inventory_cleans_removed_nic_bindings_and_retargets_survivors
     database.SessionLocal.configure(bind=database.engine)
     database.init_db()
 
-    def fake_discover():
+    def fake_discover(**kwargs):
         """Return fake discover."""
         return [
             HostPhysicalInterface(
@@ -292,6 +292,7 @@ def test_sync_host_inventory_cleans_removed_nic_bindings_and_retargets_survivors
                 driver="hv_netvsc",
                 speed="10000 Mbps",
                 host_ip_cidr="192.168.20.1/24",
+                host_dhcp_ip_cidr="192.168.20.1/24",
                 host_mtu=1500,
                 host_admin_state="up",
                 oper_state="up",
@@ -447,7 +448,7 @@ def test_sync_host_inventory_cleans_removed_nic_bindings_and_retargets_survivors
 
         monkeypatch.setattr(
             "atlaso.app.services.networking.discover_host_physical_interfaces",
-            lambda: [
+            lambda **kwargs: [
                 fake_discover()[0],
                 HostPhysicalInterface(
                     name="eth3",
@@ -508,7 +509,7 @@ def test_sync_host_inventory_commits_two_nic_name_swap(monkeypatch, tmp_path):
     mac_a = "00:15:5d:01:1d:14"
     mac_b = "00:15:5d:01:1d:15"
 
-    def fake_discover():
+    def fake_discover(**kwargs):
         """Return fake discover."""
         return [
             HostPhysicalInterface(
@@ -607,7 +608,7 @@ def test_startup_host_inventory_refreshes_appliance_seed_without_apply_job(monke
     database.SessionLocal.configure(bind=database.engine)
     database.init_db()
 
-    def fake_discover():
+    def fake_discover(**kwargs):
         """Return fake discover."""
         return [
             HostPhysicalInterface(
@@ -638,19 +639,25 @@ def test_startup_host_inventory_refreshes_appliance_seed_without_apply_job(monke
     get_settings.cache_clear()
 
 
-def test_appliance_seed_preserves_ovf_gateways_in_network_preview_and_baseline(monkeypatch, tmp_path):
+@pytest.mark.parametrize("published_ca", [False, True])
+def test_appliance_seed_preserves_ovf_gateways_in_network_preview_and_baseline(monkeypatch, tmp_path, published_ca):
     """Verify that appliance seed retains OVF gateways through initial Network state.
 
     Args:
         monkeypatch: Pytest fixture used to replace dependencies for the test.
         tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+        published_ca: Whether first-boot HTTPS already recorded its executed CA snapshot.
     """
     from sqlalchemy import select
 
     import atlaso.app.database as database
     from atlaso.app.config import get_settings
     from atlaso.app.seed import seed_initial_data
-    from atlaso.app.ui import initialize_factory_appliance_apply_baseline
+    from atlaso.app.ui import (
+        appliance_apply_units,
+        initialize_factory_appliance_apply_baseline,
+        update_appliance_apply_baselines,
+    )
 
     db_path = tmp_path / "atlaso-ovf-seed.db"
     monkeypatch.setenv("ATLASO_DATABASE_URL", f"sqlite:///{db_path}")
@@ -682,9 +689,17 @@ def test_appliance_seed_preserves_ovf_gateways_in_network_preview_and_baseline(m
         preview = render_network_config(interfaces=[interface], vlans=[])
         assert "  gateway=192.168.49.1" in preview
         assert "  ipv6_gateway=fe80::1" in preview
+        if published_ca:
+            ca_unit = next(unit for unit in appliance_apply_units(db) if unit["id"] == "ca")
+            ca_unit["summary"] = ["Executed first-boot CA publication"]
+            update_appliance_apply_baselines(db, [ca_unit], {"ca"})
+            db.commit()
+            published = json.loads(db.scalar(select(Setting).where(Setting.key == "appliance_apply.baselines.v1")).value)["ca"]
         assert initialize_factory_appliance_apply_baseline(db) is True
         baseline = db.execute(select(Setting).where(Setting.key == "appliance_apply.baselines.v1")).scalar_one()
         applied_network = json.loads(baseline.value)["network"]["config_preview"]
+        if published_ca:
+            assert json.loads(baseline.value)["ca"] == published
         assert "  gateway=192.168.49.1" in applied_network
         assert "  ipv6_gateway=fe80::1" in applied_network
 
@@ -1153,3 +1168,359 @@ def test_render_network_config_includes_dual_stack_physical_and_vlan_cidrs():
     assert "vlan=eth1.20" in config
     assert "  ip_cidr=192.168.20.1/24" in config
     assert "  ipv6_cidr=2001:db8:20::1/64" in config
+
+
+@pytest.mark.parametrize("state", [
+    {"tentative": True}, {"dadfailed": True}, {"flags": ["tentative"]}, {"flags": ["dadfailed"]},
+    {"valid_life_time": 0}, {"preferred_life_time": 0}, {"deprecated": True}, {"flags": ["deprecated"]},
+])
+@pytest.mark.parametrize("family,bad_address,good_address,prefix,field", [
+    ("inet", "192.0.2.1", "192.0.2.2", 24, "host_ip_cidr"),
+    ("inet6", "2001:db8::1", "2001:db8::2", 64, "host_ipv6_cidr"),
+])
+def test_parse_linux_ip_interfaces_rejects_unusable_address_states(state, family, bad_address, good_address, prefix, field):
+    """Skip unusable native addresses while retaining a later usable address.
+
+    Args:
+        state: Boolean, flags, or lifetime representation of unusable native state.
+        family: Native IPv4 or IPv6 family to parse.
+        bad_address: Unusable address placed first in native inventory.
+        good_address: Usable address placed after the rejected candidate.
+        prefix: Prefix length shared by the test addresses.
+        field: Parsed host address attribute for the family.
+    """
+    bad = {"family": family, "local": bad_address, "prefixlen": prefix, "scope": "global", **state}
+    row = {"ifname": "eth0", "link_type": "ether", "address": "00:15:5d:aa:bb:01", "addr_info": [bad]}
+    assert getattr(parse_linux_ip_interfaces(json.dumps([row]))[0], field) is None
+    row["addr_info"].append({"family": family, "local": good_address, "prefixlen": prefix,
+                             "scope": "global", "valid_life_time": 300})
+    assert getattr(parse_linux_ip_interfaces(json.dumps([row]))[0], field) == f"{good_address}/{prefix}"
+
+
+@pytest.mark.parametrize("source", [{"dynamic": True}, {"flags": ["dynamic"]}])
+def test_native_dhcp_observation_skips_lingering_static_and_expired_lease(source):
+    """Retain a usable DHCP candidate independently of the first static address.
+
+    Args:
+        source: Supported native dynamic-source representation.
+    """
+    addresses = [
+        {"family": "inet", "local": "192.0.2.1", "prefixlen": 24, "scope": "global"},
+        {"family": "inet", "local": "192.0.2.2", "prefixlen": 24, "scope": "global",
+         "valid_life_time": 0, **source},
+    ]
+    row = {"ifname": "eth0", "link_type": "ether", "address": "00:15:5d:aa:bb:01", "addr_info": addresses}
+    observed = parse_linux_ip_interfaces(json.dumps([row]))[0]
+    assert observed.host_ip_cidr == "192.0.2.1/24"
+    assert observed.host_dhcp_ip_cidr is None
+    addresses.append({"family": "inet", "local": "192.0.2.3", "prefixlen": 24, "scope": "global",
+                      "valid_life_time": 300, **source})
+    observed = parse_linux_ip_interfaces(json.dumps([row]))[0]
+    assert observed.host_ip_cidr == "192.0.2.1/24"
+    assert observed.host_dhcp_ip_cidr == "192.0.2.3/24"
+
+
+@pytest.mark.parametrize("method,lease,expected", [
+    ("dhcp", "192.0.2.3/24", "192.0.2.3/24"),
+    ("dhcp", None, None),
+    ("static", "192.0.2.3/24", "192.0.2.1/24"),
+])
+def test_inventory_reconciliation_preserves_native_dhcp_source(method, lease, expected):
+    """Startup synchronization cannot replace a DHCP observation with lingering static state.
+
+    Args:
+        method: Desired IPv4 acquisition mode.
+        lease: Native dynamic candidate, absent while DHCP is unacquired.
+        expected: Address that may be persisted for certificate and Settings consumers.
+    """
+    interface = PhysicalInterface(
+        name="eth0", mac_address="00:15:5d:aa:bb:01", ipv4_method=method,
+        ip_cidr=None if method == "dhcp" else "192.0.2.1/24", host_ip_cidr=lease,
+        role="management", mode="access", admin_state="up", desired_state_source="console",
+    )
+    host = HostPhysicalInterface(
+        name=interface.name, mac_address=interface.mac_address, driver=None, speed=None,
+        host_ip_cidr="192.0.2.1/24", host_dhcp_ip_cidr=lease, host_mtu=1500,
+        host_admin_state="up", oper_state="up",
+    )
+    reconcile_host_physical_interfaces([interface], [host])
+    assert interface.host_ip_cidr == expected
+    assert interface.ipv4_method == method
+    assert interface.ip_cidr == (None if method == "dhcp" else "192.0.2.1/24")
+    assert interface.desired_state_source == "console"
+
+
+@pytest.mark.parametrize("source", [{"dynamic": True}, {"flags": ["dynamic"]}])
+def test_native_automatic_ipv6_observation_skips_lingering_static_and_expired_address(source):
+    """Retain a usable automatic IPv6 candidate independently of lingering static state.
+
+    Args:
+        source: Native boolean or flags evidence identifying dynamic acquisition.
+    """
+    addresses = [
+        {"family": "inet6", "local": "2001:db8::1", "prefixlen": 64, "scope": "global"},
+        {"family": "inet6", "local": "2001:db8::2", "prefixlen": 64, "scope": "global",
+         "valid_life_time": 0, **source},
+    ]
+    row = {"ifname": "eth0", "link_type": "ether", "address": "00:15:5d:aa:bb:01", "addr_info": addresses}
+    observed = parse_linux_ip_interfaces(json.dumps([row]))[0]
+    assert observed.host_ipv6_cidr == "2001:db8::1/64"
+    assert observed.host_dynamic_ipv6_cidr is None
+    addresses.append({"family": "inet6", "local": "2001:db8::3", "prefixlen": 64, "scope": "global",
+                      "valid_life_time": 300, **source})
+    observed = parse_linux_ip_interfaces(json.dumps([row]))[0]
+    assert observed.host_ipv6_cidr == "2001:db8::1/64"
+    assert observed.host_dynamic_ipv6_cidr == "2001:db8::3/64"
+
+
+@pytest.mark.parametrize("enabled", [True, False])
+@pytest.mark.parametrize("source", [{"dynamic": True}, {"flags": ["dynamic"]}])
+def test_automatic_ipv6_renumbering_retains_every_preferred_address(enabled, source):
+    """Inventory preserves both preferred prefixes and drops a withdrawn prefix.
+
+    Args:
+        enabled: Whether IPv6 observation is permitted.
+        source: Native dynamic boolean or flags evidence.
+    """
+    from atlaso.app.services.networking import physical_ipv6_cidrs
+
+    addresses = [
+        {"family": "inet6", "local": value, "prefixlen": 64, "scope": "global", **source}
+        for value in ("2001:db8:1::10", "2001:db8:2::10")
+    ]
+    addresses.extend([
+        {"family": "inet6", "local": "2001:db8:3::10", "prefixlen": 64, "scope": "global", "deprecated": True, **source},
+        {"family": "inet6", "local": "2001:db8:4::10", "prefixlen": 64, "scope": "global", "preferred_life_time": 0, **source},
+        {"family": "inet6", "local": "2001:db8:5::10", "prefixlen": 64, "scope": "global"},
+    ])
+    row = {"ifname": "eth0", "link_type": "ether", "address": "00:15:5d:aa:bb:01", "addr_info": addresses}
+    interface = PhysicalInterface(name="eth0", mac_address=row["address"], ipv4_method="static", ipv6_enabled=enabled,
+                                  role="management", mode="access", admin_state="up", desired_state_source="console")
+    host = parse_linux_ip_interfaces(json.dumps([row]))[0]
+    expected = ("2001:db8:1::10/64", "2001:db8:2::10/64")
+    assert host.host_dynamic_ipv6_cidrs == expected
+    row["addr_info"] = list(reversed(addresses))
+    reordered = parse_linux_ip_interfaces(json.dumps([row]))[0]
+    assert reordered.host_dynamic_ipv6_cidrs == expected
+    assert reordered.host_dynamic_ipv6_cidr == host.host_dynamic_ipv6_cidr
+    row["addr_info"] = addresses
+    reconcile_host_physical_interfaces([interface], [host])
+    assert physical_ipv6_cidrs(interface) == (expected if enabled else ())
+    assert interface.ipv6_cidr is None
+    addresses[0]["preferred_life_time"] = 0
+    reconcile_host_physical_interfaces([interface], parse_linux_ip_interfaces(json.dumps([row])))
+    assert physical_ipv6_cidrs(interface) == ((expected[1],) if enabled else ())
+
+
+def test_automatic_ipv6_observation_schema_upgrade_is_additive_and_idempotent():
+    """Upgrade a legacy scalar observation without changing its stored address."""
+    from sqlalchemy import create_engine, text
+
+    from atlaso.app.database import _reconcile_interface_address_check_columns
+
+    engine = create_engine("sqlite://")
+    with engine.begin() as connection:
+        connection.execute(text("CREATE TABLE physical_interfaces (id INTEGER PRIMARY KEY, host_ipv6_cidr VARCHAR(64), check_duplicate_ip_addresses BOOLEAN)"))
+        connection.execute(text("CREATE TABLE vlan_interfaces (id INTEGER PRIMARY KEY, check_duplicate_ip_addresses BOOLEAN)"))
+        connection.execute(text("INSERT INTO physical_interfaces VALUES (1, '2001:db8::1/64', TRUE)"))
+        _reconcile_interface_address_check_columns(connection)
+        _reconcile_interface_address_check_columns(connection)
+        assert connection.execute(text("SELECT host_ipv6_cidr, host_ipv6_cidrs FROM physical_interfaces")).one() == ("2001:db8::1/64", "[]")
+    engine.dispose()
+
+
+@pytest.mark.parametrize("enabled", [True, False])
+@pytest.mark.parametrize("desired,candidate,expected", [
+    (None, "2001:db8::3/64", "2001:db8::3/64"),
+    (None, None, None),
+    ("2001:db8::1/64", "2001:db8::3/64", "2001:db8::1/64"),
+])
+def test_inventory_reconciliation_preserves_native_automatic_ipv6_source(desired, candidate, expected, enabled):
+    """Startup cannot replace an automatic observation with the old static address.
+
+    Args:
+        enabled: Whether IPv6 observation is permitted.
+        desired: Static IPv6 intent, or automatic acquisition.
+        candidate: Usable native dynamic IPv6 candidate, absent while unacquired.
+        expected: Address permitted for Settings and certificate consumers.
+    """
+    interface = PhysicalInterface(name="eth0", mac_address="00:15:5d:aa:bb:01", ipv4_method="static",
+                                  ipv6_enabled=enabled, ipv6_cidr=desired, host_ipv6_cidr="2001:db8::1/64",
+                                  role="management", mode="access", admin_state="up", desired_state_source="console")
+    host = HostPhysicalInterface(name=interface.name, mac_address=interface.mac_address, driver=None, speed=None,
+                                 host_ip_cidr=None, host_mtu=1500, host_ipv6_cidr="2001:db8::1/64",
+                                 host_dynamic_ipv6_cidr=candidate,
+                                 host_admin_state="up", oper_state="up")
+    reconcile_host_physical_interfaces([interface], [host])
+    assert interface.host_ipv6_cidr == (expected if enabled else None)
+    assert interface.ipv6_cidr == desired and interface.ipv6_enabled is enabled
+    assert interface.desired_state_source == "console"
+
+
+@pytest.mark.parametrize("dynamic_flag", [True, False])
+@pytest.mark.parametrize("state", ["deprecated_boolean", "deprecated_flag", "preferred_expired"])
+@pytest.mark.parametrize("family,old,new,prefix,field", [
+    ("inet", "192.0.2.1", "192.0.2.2", 24, "host_dhcp_ip_cidr"),
+    ("inet6", "2001:db8::1", "2001:db8::2", 64, "host_dynamic_ipv6_cidr"),
+])
+def test_native_dynamic_observation_skips_deprecated_before_preferred(dynamic_flag, state, family, old, new, prefix, field):
+    """Renumbering must select the preferred lease rather than a still-valid old address.
+
+    Args:
+        dynamic_flag: Native dynamic flag versus boolean representation.
+        state: Supported deprecation or expired preferred-lifetime representation.
+        family: Address family supplied by native inventory.
+        old: Still-valid deprecated address listed first.
+        new: Preferred address acquired during renumbering.
+        prefix: Native prefix length.
+        field: Dynamic observation attribute consumed by management recovery.
+    """
+    source = {"flags": ["dynamic"]} if dynamic_flag else {"dynamic": True}
+    expired = {"family": family, "local": old, "prefixlen": prefix, "scope": "global",
+               "valid_life_time": 300, **source}
+    if state == "deprecated_boolean":
+        expired["deprecated"] = True
+    elif state == "deprecated_flag":
+        expired["flags"] = [*expired.get("flags", []), "deprecated"]
+    else:
+        expired["preferred_life_time"] = 0
+    row = {"ifname": "eth0", "link_type": "ether", "address": "00:15:5d:aa:bb:01", "addr_info": [expired]}
+    assert getattr(parse_linux_ip_interfaces(json.dumps([row]))[0], field) is None
+    row["addr_info"].append({"family": family, "local": new, "prefixlen": prefix, "scope": "global",
+                             "valid_life_time": 600, "preferred_life_time": 300, **source})
+    assert getattr(parse_linux_ip_interfaces(json.dumps([row]))[0], field) == f"{new}/{prefix}"
+
+
+@pytest.mark.parametrize("family", [4, 6])
+def test_inventory_discovery_waits_for_console_writer(tmp_path, monkeypatch, family):
+    """Inventory cannot sample an old lease while a console writer publishes its successor.
+
+    Args:
+        tmp_path: Task-owned isolated two-session database.
+        monkeypatch: Observe admission and supply native lease changes.
+        family: DHCP or SLAAC observation changed by the admitted console writer.
+    """
+    from concurrent.futures import ThreadPoolExecutor
+    from dataclasses import replace
+    from threading import Event
+
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import Session
+
+    from atlaso.app.database import Base
+    from atlaso.app.services import network_objects, networking
+
+    engine = create_engine(f"sqlite:///{tmp_path / 'inventory-admission.db'}", connect_args={"timeout": 5})
+    Base.metadata.create_all(engine)
+    with Session(engine) as db:
+        interface = PhysicalInterface(name="eth0", mac_address="00:15:5d:aa:bb:20", role="management", mode="access",
+                                      ipv4_method="dhcp", ipv6_enabled=True, ipv6_cidr=None,
+                                      inventory_source="host", desired_state_source="console")
+        db.add(interface)
+        db.commit()
+        identity = interface.id
+    native = HostPhysicalInterface(name="eth0", mac_address="00:15:5d:aa:bb:20", driver=None, speed=None,
+                                   host_ip_cidr="192.0.2.1/24", host_dhcp_ip_cidr="192.0.2.1/24",
+                                   host_ipv6_cidr="2001:db8::1/64", host_dynamic_ipv6_cidr="2001:db8::1/64",
+                                   host_mtu=1500, host_admin_state="up", oper_state="up")
+    attempted, probed = Event(), Event()
+    lock = network_objects.acquire_network_objects_write_lock
+
+    def admitted(db):
+        """Signal the inventory writer before its blocking admission."""
+        attempted.set()
+        lock(db)
+
+    def discover(**kwargs):
+        """Sample native state only after the earlier console transaction finishes."""
+        probed.set()
+        return [native]
+
+    def synchronize():
+        """Run the actual inventory writer in its independent transaction."""
+        with Session(engine) as db:
+            db.get(PhysicalInterface, identity)  # Transport cache predates writer admission.
+            networking.sync_host_physical_interfaces(db)
+
+    monkeypatch.setattr(network_objects, "acquire_network_objects_write_lock", admitted)
+    monkeypatch.setattr(networking, "discover_host_physical_interfaces", discover)
+    with Session(engine) as console, ThreadPoolExecutor(max_workers=1) as executor:
+        lock(console)
+        future = executor.submit(synchronize)
+        try:
+            assert attempted.wait(3)
+            assert not probed.wait(0.1)
+            interface = console.get(PhysicalInterface, identity)
+            if family == 4:
+                native = replace(native, host_dhcp_ip_cidr="192.0.2.2/24")
+                interface.host_ip_cidr = native.host_dhcp_ip_cidr
+                interface.ipv6_enabled = False
+                interface.host_ipv6_cidr = None
+            else:
+                native = replace(native, host_dynamic_ipv6_cidr="2001:db8::2/64")
+                interface.host_ipv6_cidr = native.host_dynamic_ipv6_cidr
+            console.commit()
+        finally:
+            console.rollback()
+        future.result(timeout=5)
+    assert probed.is_set()
+    with Session(engine) as db:
+        interface = db.get(PhysicalInterface, identity)
+        assert interface.host_ip_cidr == native.host_dhcp_ip_cidr
+        assert interface.host_ipv6_cidr == (None if family == 4 else native.host_dynamic_ipv6_cidr)
+        assert interface.ipv6_enabled is (family == 6)
+        assert interface.ip_cidr is None and interface.ipv6_cidr is None
+    engine.dispose()
+
+
+@pytest.mark.parametrize("failure", ["timeout", "os_error", "exit_code"])
+def test_inventory_discovery_failure_releases_writer_without_reconciliation(tmp_path, monkeypatch, failure):
+    """Failed native discovery preserves inventory and releases admission for another writer.
+
+    Args:
+        tmp_path: Isolated database beneath the validation root.
+        monkeypatch: Supply a failed native discovery subprocess.
+        failure: Native timeout, launch failure, or unsuccessful exit.
+    """
+    import subprocess
+
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import Session
+
+    from atlaso.app.database import Base
+    from atlaso.app.services import network_objects, networking
+
+    engine = create_engine(f"sqlite:///{tmp_path / 'inventory-timeout.db'}", connect_args={"timeout": 0.2})
+    Base.metadata.create_all(engine)
+    with Session(engine) as db:
+        row = PhysicalInterface(name="eth0", mac_address="00:15:5d:aa:bb:20", role="management", mode="access",
+                                ipv4_method="dhcp", host_ip_cidr="192.0.2.10/24", inventory_source="host",
+                                desired_state_source="console", oper_state="up")
+        db.add(row)
+        db.commit()
+        identity = row.id
+
+    def failed_probe(args, **kwargs):
+        """Assert the finite discovery budget and simulate failure."""
+        assert args == ["ip", "-j", "address", "show"]
+        assert kwargs["timeout"] == 5.0
+        if failure == "timeout":
+            raise subprocess.TimeoutExpired(args, kwargs["timeout"])
+        if failure == "os_error":
+            raise OSError("native command unavailable")
+        return subprocess.CompletedProcess(args, 1, stdout="", stderr="")
+
+    monkeypatch.setattr(networking.subprocess, "run", failed_probe)
+    expected = {"timeout": subprocess.TimeoutExpired, "os_error": OSError, "exit_code": RuntimeError}[failure]
+    with Session(engine) as refresh:
+        with pytest.raises(expected):
+            networking.sync_host_physical_interfaces(refresh)
+        assert not refresh.in_transaction()
+        # Keep the failed caller open: the second writer must still enter immediately.
+        with Session(engine) as next_writer:
+            network_objects.acquire_network_objects_write_lock(next_writer)
+            row = next_writer.get(PhysicalInterface, identity)
+            assert (row.name, row.host_ip_cidr, row.oper_state) == ("eth0", "192.0.2.10/24", "up")
+            assert row.inventory_source == "host" and row.desired_state_source == "console"
+            next_writer.commit()
+    engine.dispose()

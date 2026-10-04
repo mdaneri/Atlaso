@@ -22,6 +22,7 @@ from atlaso.app.security import Identity, require_session_identity
 from atlaso.app.services.authentication_lifetimes import (
     authentication_lifetime_validation_error,
 )
+from atlaso.app.services.network_objects import acquire_network_objects_write_lock
 from atlaso.app.ui_routes import MANAGEMENT_UI_ROOT
 
 Endpoint = Callable[..., Any]
@@ -504,7 +505,10 @@ def build_router(dependencies: SettingsBackupUiDependencies) -> SettingsBackupUi
             The endpoint response.
         """
         verify_csrf(request, csrf)
+        acquire_network_objects_write_lock(db)
         settings = get_appliance_settings_row(db)
+        acquire_network_objects_write_lock(db)
+        db.refresh(settings)
         previous_fqdn = settings.fqdn
         previous_service_dns_target_naming = normalize_service_dns_target_naming(
             settings.service_dns_target_naming

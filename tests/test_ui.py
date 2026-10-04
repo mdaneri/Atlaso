@@ -2608,7 +2608,8 @@ def test_secret_staging_is_mode_0600_and_removed_after_adapter_failures(monkeypa
                 "config_diff": "",
             }
 
-            result = ui.execute_appliance_apply_unit(unit, adapter=adapter)
+            monkeypatch.setattr(ui, "guard_ca_apply_publication", lambda _db, _unit: None)
+            result = ui.execute_appliance_apply_unit(unit, adapter=adapter, db=object())
 
             assert result["success"] is False
             assert calls == (["validate"] if failure_phase == "validate" else ["validate", "apply"])
@@ -16191,12 +16192,14 @@ def test_appliance_startup_initializes_factory_apply_baseline(monkeypatch, tmp_p
     get_settings.cache_clear()
 
 
-def test_factory_apply_baseline_skips_after_operator_activity(monkeypatch, tmp_path):
+@pytest.mark.parametrize("published_ca", [False, True])
+def test_factory_apply_baseline_skips_after_operator_activity(monkeypatch, tmp_path, published_ca):
     """Verify that factory apply baseline skips after operator activity.
 
     Args:
         monkeypatch: Pytest fixture used to replace dependencies for the test.
         tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+        published_ca: Whether first-boot HTTPS already recorded its executed CA snapshot.
     """
     from sqlalchemy import select
 
@@ -16205,7 +16208,11 @@ def test_factory_apply_baseline_skips_after_operator_activity(monkeypatch, tmp_p
     from atlaso.app.config import get_settings
     from atlaso.app.models import Setting
     from atlaso.app.seed import seed_initial_data
-    from atlaso.app.ui import initialize_factory_appliance_apply_baseline
+    from atlaso.app.ui import (
+        appliance_apply_units,
+        initialize_factory_appliance_apply_baseline,
+        update_appliance_apply_baselines,
+    )
 
     db_path = tmp_path / "atlaso-appliance-edited.db"
     monkeypatch.setenv("ATLASO_DATABASE_URL", f"sqlite:///{db_path}")
@@ -16223,9 +16230,17 @@ def test_factory_apply_baseline_skips_after_operator_activity(monkeypatch, tmp_p
 
     with database.SessionLocal() as db:
         seed_initial_data(db, include_examples=False)
+        if published_ca:
+            ca_unit = next(unit for unit in appliance_apply_units(db) if unit["id"] == "ca")
+            update_appliance_apply_baselines(db, [ca_unit], {"ca"})
+            db.commit()
         record_audit(db, actor="admin", action="update_appliance_settings", resource_type="settings")
         assert initialize_factory_appliance_apply_baseline(db) is False
-        assert db.execute(select(Setting).where(Setting.key == "appliance_apply.baselines.v1")).scalar_one_or_none() is None
+        baseline = db.scalar(select(Setting).where(Setting.key == "appliance_apply.baselines.v1"))
+        if published_ca:
+            assert set(json.loads(baseline.value)) == {"ca"}
+        else:
+            assert baseline is None
 
     get_settings.cache_clear()
 
@@ -17525,6 +17540,7 @@ def test_ca_baseline_waits_for_rotated_leaf_listener_reload(client, monkeypatch,
         }
 
     monkeypatch.setattr(ui, "appliance_apply_units", lambda _db, **_kwargs: units)
+    monkeypatch.setattr(ui, "render_ca_apply_payload", lambda *_args, **_kwargs: new_preview)
     monkeypatch.setattr(ui, "execute_appliance_apply_unit", execute)
     monkeypatch.setattr(ui, "persist_vcf_depot_metadata_from_apply", lambda _db, _results: None)
     monkeypatch.setattr(ui, "log_appliance_apply_failures", lambda _job_id, _results: None)
@@ -19901,3 +19917,651 @@ def test_recover_interrupted_vcf_helper_jobs_discards_transient_work(client):
         db.refresh(job)
         assert job.status == "failed"
         assert "Transient credentials were discarded" in job.error
+
+
+@pytest.mark.parametrize("superseded", [False, True])
+def test_native_ca_publication_waits_for_recovery_and_rejects_stale_payload(client, monkeypatch, tmp_path, superseded):
+    """Ordinary CA publication waits for recovery and refuses superseded captured input.
+
+    Args:
+        client: Isolated appliance database startup.
+        monkeypatch: Bounded native adapter and payload replacements.
+        tmp_path: Owned nonsecret staging location.
+        superseded: Whether recovery changed CA intent while admission was blocked.
+    """
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Event
+    from types import SimpleNamespace
+
+    import atlaso.app.ui as ui
+    from atlaso.app.adapters.system import AdapterResult
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.services.network_objects import acquire_network_objects_write_lock
+
+    unit = {
+        "id": "ca", "label": "CA", "config_preview": "original", "config_diff": "",
+        "raw_config_preview": "original", "summary": [], "validation_errors": [],
+        "validation_warnings": [], "config_path": str(tmp_path / "ca.json"),
+        "context": {"ca_settings": None, "ca_certificates": [], "ca_profiles": []},
+    }
+    current = dict(unit)
+    monkeypatch.setattr(ui, "appliance_apply_units", lambda _db, **_kwargs: [current])
+    monkeypatch.setattr(ui, "render_ca_apply_payload", lambda *_args, **kwargs:
+                        "{}" if kwargs.get("include_private_keys") else current["config_preview"])
+    monkeypatch.setattr(ui, "CA_STAGED_CONFIG_PATH", str(tmp_path / "ca.json"))
+    entered = Event()
+    published = Event()
+
+    def apply(path):
+        """Observe publication after writer admission.
+
+        Args:
+            path: Task-owned staged CA input.
+        """
+        published.set()
+        return AdapterResult(command=["ca", path], dry_run=False, returncode=0)
+
+    def ordinary():
+        """Execute ordinary CA apply in a separate transaction."""
+        with SessionLocal() as db:
+            entered.set()
+            try:
+                result = ui.execute_appliance_apply_unit(
+                    unit, db=db,
+                    adapter=SimpleNamespace(dry_run=False, validate_ca_config=apply, apply_ca_config=apply),
+                )
+                db.commit()
+                return result["success"]
+            except ui.ApplianceApplyJobError:
+                db.rollback()
+                return False
+
+    with SessionLocal() as recovery, ThreadPoolExecutor(max_workers=1) as executor:
+        acquire_network_objects_write_lock(recovery)
+        future = executor.submit(ordinary)
+        try:
+            assert entered.wait(2)
+            assert not published.wait(0.15)
+            if superseded:
+                current["config_preview"] = "recovered-leaf"
+        finally:
+            recovery.commit()
+        assert future.result(timeout=5) is (not superseded)
+    assert published.is_set() is (not superseded)
+
+
+@pytest.mark.parametrize("commit,initialization_commits", [(True, False), (True, True), (False, False)])
+def test_committing_ca_reconciliation_waits_and_refreshes_recovered_leaf(client, monkeypatch, commit, initialization_commits):
+    """Read-triggered issuance waits for recovery and refreshes its cached certificate.
+
+    Args:
+        client: Initialized isolated appliance database.
+        monkeypatch: Observe issuance without creating certificate material.
+        commit: Whether reconciliation commits or retains the caller transaction.
+        initialization_commits: Whether optional service initialization releases admission.
+    """
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Event
+
+    from sqlalchemy import select
+
+    import atlaso.app.ui as ui
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import CaCertificate
+
+    with SessionLocal() as db:
+        certificate = db.scalar(select(CaCertificate).where(CaCertificate.managed_owner == "appliance:https"))
+        if certificate is None:
+            certificate = CaCertificate(common_name="reconcile.example.test", managed_owner="appliance:https")
+            db.add(certificate)
+            db.commit()
+        certificate_id = certificate.id
+    loaded, attempted, issued = Event(), Event(), Event()
+    lock = ui.acquire_network_objects_write_lock
+    observed = []
+
+    def acquire(db):
+        """Expose the actual writer wait before any reconciliation work."""
+        attempted.set()
+        lock(db)
+
+    def specs(db, *, reconcile=True, **_kwargs):
+        """Exercise optional initialization's intermediate commit."""
+        if reconcile and initialization_commits:
+            db.commit()
+        return []
+
+    def issue(db, *, certificates, **_kwargs):
+        """Inspect the certificate selected after writer admission."""
+        assert db.in_transaction()
+        observed.append(next(row.fingerprint for row in certificates if row.id == certificate_id))
+        issued.set()
+        return False
+
+    def reconcile():
+        """Keep a transport-cached old leaf while waiting for recovery."""
+        with SessionLocal() as db:
+            cached = db.get(CaCertificate, certificate_id)
+            loaded.set()
+            transaction = db.get_transaction()
+            desired = ui.get_appliance_settings_row(db)
+            desired.root_ssh_enabled = True
+            result = ui.ensure_ca_state(db, commit=commit)
+            if not commit:
+                assert db.get_transaction() is transaction
+                assert desired.root_ssh_enabled
+                db.commit()
+            assert cached.fingerprint == "recovery-published-leaf"
+            db.rollback()
+            return result
+
+    monkeypatch.setattr(ui, "acquire_network_objects_write_lock", acquire)
+    monkeypatch.setattr(ui, "managed_ca_certificate_specs", specs)
+    monkeypatch.setattr(ui, "ensure_root_ca_material", lambda _settings: False)
+    monkeypatch.setattr(ui, "ensure_managed_certificate_rows", lambda *_args, **_kwargs: False)
+    monkeypatch.setattr(ui, "ensure_ca_issued_state", issue)
+    with SessionLocal() as recovery, ThreadPoolExecutor(max_workers=1) as executor:
+        lock(recovery)
+        future = executor.submit(reconcile)
+        try:
+            assert loaded.wait(3) and attempted.wait(3)
+            assert not issued.wait(0.1)
+            recovery.get(CaCertificate, certificate_id).fingerprint = "recovery-published-leaf"
+            recovery.commit()
+        finally:
+            recovery.rollback()
+        assert future.result(timeout=5) == []
+    assert observed == ["recovery-published-leaf"]
+
+
+def test_automatic_ipv6_enumeration_order_preserves_issued_ca_snapshot(client):
+    """Reversing preferred native prefixes does not replan or reissue the management leaf.
+
+    Args:
+        client: Initialized isolated appliance database.
+    """
+    from sqlalchemy import select
+
+    import atlaso.app.ui as ui
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import (
+        CaCertificate,
+        CaProfile,
+        CaSettings,
+        PhysicalInterface,
+    )
+    from atlaso.app.services.networking import (
+        parse_linux_ip_interfaces,
+        reconcile_host_physical_interfaces,
+    )
+
+    with SessionLocal() as db:
+        interface = db.scalar(select(PhysicalInterface).where(PhysicalInterface.name == "eth0"))
+        interface.role, interface.mode, interface.admin_state = "management", "access", "up"
+        interface.ip_cidr, interface.ipv4_method = "192.0.2.10/24", "static"
+        interface.ipv6_enabled, interface.ipv6_cidr = True, None
+        interface.desired_state_source = "console"
+        addresses = [{"family": "inet6", "local": value, "prefixlen": 64, "scope": "global", "dynamic": True}
+                     for value in ("2001:db8:2::10", "2001:db8:1::10")]
+        row = {"ifname": interface.name, "link_type": "ether", "address": interface.mac_address,
+               "flags": ["UP"], "operstate": "UP", "addr_info": addresses}
+        reconcile_host_physical_interfaces([interface], parse_linux_ip_interfaces(json.dumps([row])))
+        ui.get_ca_settings_row(db).enabled = True
+        assert ui.ensure_ca_state(db) == []
+        leaf = db.scalar(select(CaCertificate).where(CaCertificate.managed_owner == "appliance:https"))
+        assert leaf.status == "issued"
+        assert {"2001:db8:1::10", "2001:db8:2::10"}.issubset(set(leaf.ip_addresses.splitlines()))
+        original = (leaf.fingerprint, leaf.certificate_pem, leaf.ip_addresses)
+        settings = db.scalar(select(CaSettings))
+        profiles = list(db.scalars(select(CaProfile)))
+        certificates = list(db.scalars(select(CaCertificate)))
+        public_snapshot = ui.render_ca_apply_payload(settings, certificates, include_private_keys=False, profiles=profiles)
+        row["addr_info"] = list(reversed(addresses))
+        reconcile_host_physical_interfaces([interface], parse_linux_ip_interfaces(json.dumps([row])))
+        assert ui.ensure_ca_state(db) == []
+        db.refresh(leaf)
+        assert leaf.status == "issued"
+        assert (leaf.fingerprint, leaf.certificate_pem, leaf.ip_addresses) == original
+        assert ui.render_ca_apply_payload(settings, certificates, include_private_keys=False, profiles=profiles) == public_snapshot
+
+
+def test_ca_baseline_guard_refuses_intervening_recovery_after_listener_reload(client, monkeypatch):
+    """A reload gap cannot acknowledge a superseded ordinary CA publication.
+
+    Args:
+        client: Isolated appliance database startup.
+        monkeypatch: Current CA public preview replacement.
+    """
+    import atlaso.app.ui as ui
+    from atlaso.app.database import SessionLocal
+
+    executed = {"id": "ca", "config_preview": "ordinary-leaf"}
+    monkeypatch.setattr(ui, "render_ca_apply_payload", lambda *_args, **_kwargs: "recovered-leaf")
+    with SessionLocal() as db:
+        prior = ui.load_appliance_apply_baselines(db).get("ca")
+        with pytest.raises(ui.ApplianceApplyJobError, match="publication changed"):
+            ui.guard_ca_apply_publication(db, executed)
+        assert ui.load_appliance_apply_baselines(db).get("ca") == prior
+
+
+def test_ca_guard_accepts_the_real_redacted_public_snapshot(client):
+    """Publication admission compares the same nonsecret snapshot the Apply unit captured.
+
+    Args:
+        client: Isolated appliance database startup.
+    """
+    from sqlalchemy import select
+
+    import atlaso.app.ui as ui
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import CaCertificate, CaSettings
+
+    with SessionLocal() as db:
+        settings = db.scalar(select(CaSettings))
+        certificates = db.scalars(select(CaCertificate).order_by(CaCertificate.common_name)).all()
+        preview = ui.redact_config_preview(ui.render_ca_apply_payload(settings, certificates, include_private_keys=False, profiles=db.scalars(select(ui.CaProfile)).all()))
+        unit = {"id": "ca", "config_preview": preview}
+        ui.guard_ca_apply_publication(db, unit)
+        assert db.in_transaction()
+        db.rollback()
+
+
+def test_native_settings_publication_waits_for_console_acknowledgement(client, monkeypatch, tmp_path):
+    """Settings cannot publish nginx while console proof and baseline acknowledgement own the writer.
+
+    Args:
+        client: Initialized appliance database.
+        monkeypatch: Replace the native adapter boundary.
+        tmp_path: Owned nonsecret Settings staging path.
+    """
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Event
+    from types import SimpleNamespace
+
+    import atlaso.app.ui as ui
+    from atlaso.app.adapters.system import AdapterResult
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.services.network_objects import acquire_network_objects_write_lock
+
+    path = str(tmp_path / "settings.json")
+    unit = {"id": "appliance_settings", "label": "Settings", "config_preview": "{}",
+            "raw_config_preview": "{}", "config_diff": "", "summary": [],
+            "validation_errors": [], "validation_warnings": [], "config_path": path,
+            "context": {"appliance_settings": SimpleNamespace(config_path=path)}}
+    monkeypatch.setattr(ui, "APPLIANCE_SETTINGS_STAGED_CONFIG_PATH", path)
+    entered, published, release_publication = Event(), Event(), Event()
+
+    def apply(config_path):
+        """Keep native publication open until acknowledgement contention has been checked.
+
+        Args:
+            config_path: Exact staged Settings input.
+        """
+        published.set()
+        assert release_publication.wait(5)
+        return AdapterResult(command=["settings", config_path], dry_run=False, returncode=0)
+
+    def ordinary():
+        """Retain Settings admission through its native apply and baseline commit."""
+        with SessionLocal() as db:
+            entered.set()
+            result = ui.execute_appliance_apply_unit(unit, db=db,
+                adapter=SimpleNamespace(dry_run=False, validate_appliance_settings_config=apply,
+                                        apply_appliance_settings_config=apply))
+            db.commit()
+            return result["success"]
+
+    with SessionLocal() as recovery, ThreadPoolExecutor(max_workers=1) as executor:
+        acquire_network_objects_write_lock(recovery)
+        future = executor.submit(ordinary)
+        try:
+            assert entered.wait(2)
+            assert not published.wait(0.15)
+        finally:
+            recovery.commit()
+            release_publication.set()
+        assert future.result(timeout=5)
+    assert published.is_set()
+
+
+@pytest.mark.parametrize("operation", ["settings", "create", "edit", "delete"])
+def test_ca_policy_writers_wait_for_bound_recovery(client, monkeypatch, operation):
+    """CA subject and profile writers cannot change policy inside admitted recovery.
+
+    Args:
+        client: Initialized isolated appliance database.
+        monkeypatch: Observe actual transport writer admission.
+        operation: CA settings or profile creation, edit, or deletion.
+    """
+    import inspect
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Event
+
+    from fastapi.params import Form
+    from sqlalchemy import select
+    from starlette.requests import Request
+
+    from atlaso.app import ui
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import CaProfile, CaSettings
+    from atlaso.app.routers.ui import certificate_trust
+    from atlaso.app.security import Identity
+
+    with SessionLocal() as db:
+        profile = CaProfile(name="recovery-policy-lock", certificate_type="server", validity_days=825,
+                            key_algorithm="RSA", key_size=2048, key_usage="digitalSignature,keyEncipherment",
+                            extended_key_usage="serverAuth", san_required=True, enabled=True)
+        db.add(profile)
+        db.commit()
+        profile_id = profile.id
+        original_organization = db.scalar(select(CaSettings)).organization
+    endpoint = {
+        "settings": ui.update_ca_settings_from_ui, "create": ui.create_ca_profile_from_ui,
+        "edit": ui.edit_ca_profile_from_ui, "delete": ui.delete_ca_profile_from_ui,
+    }[operation]
+    attempted, admitted = Event(), Event()
+    lock = certificate_trust.acquire_network_objects_write_lock
+
+    def acquire(db):
+        """Signal the blocked policy writer before entering real admission."""
+        attempted.set()
+        lock(db)
+        admitted.set()
+
+    def mutate():
+        """Invoke the actual authenticated transport body with its own database session."""
+        kwargs = {}
+        for name, parameter in inspect.signature(endpoint).parameters.items():
+            default = parameter.default
+            if isinstance(default, Form):
+                kwargs[name] = default.default_factory() if default.default_factory else default.default
+        kwargs.update(request=Request({"type": "http", "headers": [], "session": {"csrf_token": "policy-lock"}}),
+                      csrf="policy-lock", identity=Identity(username="admin", role="admin", scopes=set()))
+        if operation == "settings":
+            kwargs.update(root_common_name="Applied test root", organization="Later operator subject")
+        elif operation in {"create", "edit"}:
+            kwargs.update(name="later-policy" if operation == "create" else "recovery-policy-lock", validity_days=1234,
+                          enabled="on", san_required="on")
+        if operation in {"edit", "delete"}:
+            kwargs["profile_id"] = profile_id
+        with SessionLocal() as db:
+            # Exercise a transport identity-map row loaded before admission as well.
+            db.get(CaProfile, profile_id)
+            return endpoint(db=db, **kwargs)
+
+    monkeypatch.setattr(certificate_trust, "acquire_network_objects_write_lock", acquire)
+    with SessionLocal() as recovery, ThreadPoolExecutor(max_workers=1) as executor:
+        lock(recovery)
+        future = executor.submit(mutate)
+        try:
+            assert attempted.wait(3) and not admitted.wait(0.1)
+            assert recovery.get(CaProfile, profile_id).validity_days == 825
+            assert recovery.scalar(select(CaSettings)).organization == original_organization
+            # Policy stays fixed throughout issuance and acknowledgement until this transaction ends.
+            recovery.commit()
+        finally:
+            recovery.rollback()
+        assert future.result(timeout=5).status_code in {200, 303}
+    assert admitted.is_set()
+    with SessionLocal() as db:
+        if operation == "settings":
+            assert db.scalar(select(CaSettings)).organization == "Later operator subject"
+        elif operation == "delete":
+            assert db.get(CaProfile, profile_id) is None
+        elif operation == "create":
+            assert db.scalar(select(CaProfile).where(CaProfile.name == "later-policy")).validity_days == 1234
+        else:
+            assert db.get(CaProfile, profile_id).validity_days == 1234
+
+
+@pytest.mark.parametrize("pending", ["disabled", "static"])
+@pytest.mark.parametrize("rename", [False, True])
+def test_applied_automatic_ipv6_binding_ignores_pending_family_edits(client, monkeypatch, pending, rename):
+    """Keep active prefix-overlap listeners classified until Network Apply changes their mode.
+
+    Args:
+        client: Initialized appliance database and application.
+        monkeypatch: Supply preferred native prefix-overlap inventory.
+        pending: Unapplied IPv6 disable or static-address intent.
+        rename: Kernel interface rename retaining the applied physical MAC.
+    """
+    from sqlalchemy import select
+
+    from atlaso.app import ui
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import PhysicalInterface
+    from atlaso.app.services import networking
+    from atlaso.app.services.management_bindings import applied_management_bindings
+
+    with SessionLocal() as db:
+        interface = db.scalar(select(PhysicalInterface).where(PhysicalInterface.name == "eth0"))
+        interface.role = "management"
+        interface.desired_state_source = "user"
+        interface.oper_state = "up"
+        interface.ipv6_enabled = pending != "disabled"
+        interface.ipv6_cidr = "2001:db8:9::7/64" if pending == "static" else None
+        interface.host_ipv6_cidr = "2001:db8::7/64"
+        interface.host_ipv6_cidrs = ["2001:db8::7/64", "2001:db8:1::7/64"]
+        ui.save_appliance_apply_baselines(db, {"network": {"config_preview": """[physical_interfaces]
+interface=eth0
+  role=management
+  mode=access
+  admin_state=up
+  ipv4_method=static
+  ipv6_enabled=true
+"""}})
+        db.commit()
+        observations = [networking.HostPhysicalInterface(
+            name="pr899-renamed" if rename and row.name == "eth0" else row.name, mac_address=row.mac_address, driver=None, speed=None,
+            host_ip_cidr=row.host_ip_cidr, host_mtu=1500, host_admin_state="up", oper_state="up",
+            host_ipv6_cidr="2001:db8::7/64" if row.name == "eth0" else None,
+            host_dynamic_ipv6_cidr="2001:db8::7/64" if row.name == "eth0" else None,
+            host_dynamic_ipv6_cidrs=("2001:db8::7/64", "2001:db8:1::7/64") if row.name == "eth0" else (),
+        ) for row in db.scalars(select(PhysicalInterface)).all()]
+        monkeypatch.setattr(networking, "discover_host_physical_interfaces", lambda **kwargs: observations)
+        networking.sync_host_physical_interfaces(db)
+        assert interface.host_ipv6_cidrs == ["2001:db8::7/64", "2001:db8:1::7/64"]
+        assert interface.ipv6_enabled is (pending != "disabled")
+        assert interface.ipv6_cidr == ("2001:db8:9::7/64" if pending == "static" else None)
+        assert {row["address"] for row in applied_management_bindings(db)} == {"2001:db8::7", "2001:db8:1::7"}
+        for address in ("2001:db8::7", "2001:db8:1::7"):
+            assert ui.request_host_interface_binding(address, db)["management_ui"] is True
+        pending_binding = ui.request_host_interface_binding("2001:db8:9::7", db)
+        assert pending_binding is None or pending_binding["management_ui"] is False
+
+        # Applying the disabled mode then clears both observations on the next inventory pass.
+        baseline = ui.load_appliance_apply_baselines(db)
+        baseline["network"]["config_preview"] = baseline["network"]["config_preview"].replace("ipv6_enabled=true", "ipv6_enabled=false")
+        ui.save_appliance_apply_baselines(db, baseline)
+        db.commit()
+        networking.sync_host_physical_interfaces(db)
+        assert interface.host_ipv6_cidrs == [] and interface.host_ipv6_cidr is None
+        assert applied_management_bindings(db) == []
+
+
+@pytest.mark.parametrize("transport", ["api", "ui"])
+def test_settings_ca_reconciliation_waits_for_recovery_outer_commit(client, monkeypatch, transport):
+    """Settings transports retain recovered CA material and staged edits through outer commit.
+
+    Args:
+        client: Initialized isolated appliance database.
+        monkeypatch: Observe actual writer admission and reconciliation.
+        transport: API or browser Settings save.
+    """
+    import inspect
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Event
+
+    from fastapi.params import Form
+    from sqlalchemy import select
+    from starlette.requests import Request
+
+    from atlaso.app import ui
+    from atlaso.app.api import v1
+    from atlaso.app.config import get_settings
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import ApplianceSettings, CaCertificate, CaSettings
+    from atlaso.app.routers.api_v1 import settings as api_settings
+    from atlaso.app.routers.ui import settings_backup
+    from atlaso.app.schemas import SettingsUpdate
+    from atlaso.app.security import Identity
+
+    with SessionLocal() as db:
+        desired = ui.get_appliance_settings_row(db)
+        desired.management_https_enabled = True
+        ca = db.scalar(select(CaSettings))
+        ca.enabled = True
+        leaf = db.scalar(select(CaCertificate).where(CaCertificate.managed_owner == "appliance:https"))
+        if leaf is None:
+            leaf = CaCertificate(common_name=desired.fqdn, managed_owner="appliance:https")
+            db.add(leaf)
+        db.commit()
+        desired_id, leaf_id, fqdn = desired.id, leaf.id, desired.fqdn
+    attempted, issued = Event(), Event()
+    lock = ui.acquire_network_objects_write_lock
+    observed = []
+
+    def acquire(db):
+        """Expose admission at the transport boundary before its state reads."""
+        attempted.set()
+        lock(db)
+
+    def issue(db, *, certificates, **_kwargs):
+        """Inspect fresh material while the original caller transaction stays admitted."""
+        observed.append(next(row.fingerprint for row in certificates if row.id == leaf_id))
+        assert db.get(ApplianceSettings, desired_id).root_ssh_enabled
+        issued.set()
+        return False
+
+    monkeypatch.setattr(api_settings if transport == "api" else settings_backup,
+                        "acquire_network_objects_write_lock", acquire)
+    monkeypatch.setattr(ui, "managed_ca_certificate_specs", lambda *_args, **_kwargs: [])
+    monkeypatch.setattr(ui, "ensure_root_ca_material", lambda _settings: False)
+    monkeypatch.setattr(ui, "ensure_managed_certificate_rows", lambda *_args, **_kwargs: False)
+    monkeypatch.setattr(ui, "ensure_ca_issued_state", issue)
+    monkeypatch.setattr(ui, "validate_appliance_settings", lambda *_args, **_kwargs: ([], []))
+
+    def save_settings():
+        """Run the real authenticated transport body in a separate cached session."""
+        identity = Identity(username="admin", role="admin", scopes={"admin:all"})
+        with SessionLocal() as db:
+            cached = db.get(CaCertificate, leaf_id)
+            db.get(ApplianceSettings, desired_id)
+            if transport == "api":
+                result = v1.update_app_settings(
+                    payload=SettingsUpdate(management_https_enabled=True, root_ssh_enabled=True),
+                    identity=identity, db=db, settings=get_settings())
+            else:
+                endpoint = ui.update_settings_from_ui
+                kwargs = {}
+                for name, parameter in inspect.signature(endpoint).parameters.items():
+                    default = parameter.default
+                    if isinstance(default, Form):
+                        kwargs[name] = default.default_factory() if default.default_factory else default.default
+                kwargs.update(request=Request({"type": "http", "headers": [],
+                                               "session": {"csrf_token": "settings-lock"}}),
+                              csrf="settings-lock", identity=identity, fqdn=fqdn,
+                              management_https_enabled=True, root_ssh_enabled=True)
+                result = endpoint(db=db, **kwargs)
+                assert result.status_code == 303
+            assert cached.fingerprint == "recovery-published-leaf"
+            return result
+
+    with SessionLocal() as recovery, ThreadPoolExecutor(max_workers=1) as executor:
+        lock(recovery)
+        future = executor.submit(save_settings)
+        try:
+            assert attempted.wait(3) and not issued.wait(0.1)
+            recovery.get(CaCertificate, leaf_id).fingerprint = "recovery-published-leaf"
+            recovery.commit()
+        finally:
+            recovery.rollback()
+        future.result(timeout=5)
+    assert observed == ["recovery-published-leaf"]
+    with SessionLocal() as db:
+        assert db.get(ApplianceSettings, desired_id).root_ssh_enabled
+        assert db.get(CaCertificate, leaf_id).fingerprint == "recovery-published-leaf"
+
+
+def test_native_management_handoff_retains_writer_through_baseline_commit(client, monkeypatch, tmp_path):
+    """Bundled publication waits for recovery and excludes writers until its executed baselines commit.
+
+    Args:
+        client: Initialized isolated appliance database.
+        monkeypatch: Replace native staging and adapter operations.
+        tmp_path: Owned nonsecret handoff staging directory.
+    """
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Event
+    from types import SimpleNamespace
+
+    import atlaso.app.ui as ui
+    from atlaso.app.adapters.system import AdapterResult
+    from atlaso.app.database import SessionLocal
+
+    attempted, staged, published, returned, release_commit = (Event() for _ in range(5))
+    competitor_attempted, competitor_admitted = Event(), Event()
+    lock = ui.acquire_network_objects_write_lock
+    defaults = {"label": "Handoff", "summary": [], "validation_errors": [], "validation_warnings": [],
+                "config_path": "", "config_preview": "{}", "raw_config_preview": "{}", "config_diff": "",
+                "snapshot_hash": "captured-handoff"}
+    units = {key: {**defaults, "id": key} for key in ui.MANAGEMENT_HANDOFF_UNIT_IDS}
+    units["ca"]["context"] = {"ca_settings": object(), "ca_certificates": [], "ca_profiles": []}
+
+    def acquire(db):
+        """Expose the publication wait before any staging."""
+        attempted.set()
+        lock(db)
+
+    def stage(target, content):
+        """Retain only nonsecret test payloads under the validation root."""
+        staged.set()
+        path = tmp_path / (str(target).replace("/", "_").replace("\\", "_").replace(":", "_"))
+        path.write_text(content, encoding="utf-8")
+        return str(path)
+
+    def apply(path):
+        """Represent the native publication boundary."""
+        published.set()
+        return AdapterResult(command=["handoff", path], dry_run=False, returncode=0)
+
+    def ordinary():
+        """Retain original admission until the bundled application boundary."""
+        with SessionLocal() as db:
+            group, _results = ui.execute_management_handoff(units, job_id="job_serial_handoff", db=db,
+                adapter=SimpleNamespace(dry_run=False, validate_management_handoff=apply, apply_management_handoff=apply))
+            assert group["success"]
+            returned.set()
+            assert release_commit.wait(5)
+            ui.update_appliance_apply_baselines(db, list(units.values()), set(units))
+            db.commit()
+
+    def competitor():
+        """Attempt admission after native publication but before baseline commit."""
+        with SessionLocal() as db:
+            competitor_attempted.set()
+            lock(db)
+            competitor_admitted.set()
+            db.rollback()
+
+    monkeypatch.setattr(ui, "acquire_network_objects_write_lock", acquire)
+    monkeypatch.setattr(ui, "stage_appliance_apply_config", stage)
+    monkeypatch.setattr(ui, "render_ca_apply_payload", lambda *_args, **_kwargs: "{}")
+    with SessionLocal() as recovery, ThreadPoolExecutor(max_workers=2) as executor:
+        lock(recovery)
+        future = executor.submit(ordinary)
+        try:
+            assert attempted.wait(3) and not staged.wait(0.1) and not published.is_set()
+            recovery.commit()
+            assert returned.wait(3) and published.is_set()
+            waiting = executor.submit(competitor)
+            assert competitor_attempted.wait(3) and not competitor_admitted.wait(0.1)
+        finally:
+            recovery.rollback()
+            release_commit.set()
+        future.result(timeout=5)
+        waiting.result(timeout=5)
+    assert competitor_admitted.is_set()
+    with SessionLocal() as db:
+        baselines = ui.load_appliance_apply_baselines(db)
+        assert all(baselines[key]["snapshot_hash"] == "captured-handoff" for key in units)

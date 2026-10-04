@@ -56,6 +56,9 @@ class HostPhysicalInterface:
         host_admin_state: Host admin state maintained by this hostphysicalinterface.
         oper_state: Oper state maintained by this hostphysicalinterface.
         host_ipv6_cidr: Host ipv6 cidr maintained by this hostphysicalinterface.
+        host_dhcp_ip_cidr: Usable IPv4 address explicitly marked dynamic by native inventory.
+        host_dynamic_ipv6_cidr: Usable IPv6 address explicitly marked dynamic by native inventory.
+        host_dynamic_ipv6_cidrs: Every preferred automatic IPv6 candidate from native inventory.
     """
     name: str
     mac_address: str
@@ -66,6 +69,9 @@ class HostPhysicalInterface:
     host_admin_state: str
     oper_state: str
     host_ipv6_cidr: str | None = None
+    host_dhcp_ip_cidr: str | None = None
+    host_dynamic_ipv6_cidr: str | None = None
+    host_dynamic_ipv6_cidrs: tuple[str, ...] = ()
 
 
 def normalize_interface_mode(mode: str | None) -> str:
@@ -150,6 +156,7 @@ def physical_interface_to_dict(
         "speed": interface.speed or "",
         "host_ip_cidr": interface.host_ip_cidr or "",
         "host_ipv6_cidr": interface.host_ipv6_cidr or "",
+        "host_ipv6_cidrs": list(interface.host_ipv6_cidrs or []),
         "host_ipv4_gateway": observed_ipv4_gateway,
         "host_mtu": interface.host_mtu,
         "host_admin_state": interface.host_admin_state or "",
@@ -253,24 +260,78 @@ def _interface_speed(sysfs_interface: Path) -> str | None:
     return f"{speed} Mbps"
 
 
-def _host_ip_cidr(row: dict, family: str) -> str | None:
-    """Return host ip cidr.
+def _host_ip_cidrs(row: dict, family: str, *, dynamic_only: bool = False) -> tuple[str, ...]:
+    """Return all preferred native address candidates.
 
     Args:
         row: Persistent database row affected by the operation.
         family: Family consumed by host IP CIDR.
+        dynamic_only: Require native dynamic source evidence for DHCP or automatic IPv6 observation.
     """
+    result: list[str] = []
     candidates = row.get("addr_info") or []
     for address in candidates:
         if address.get("family") != family:
             continue
         if address.get("scope") in {"host", "link"}:
             continue
+        flags = address.get("flags") or []
+        if dynamic_only and not (address.get("dynamic") is True or "dynamic" in flags):
+            continue
+        if any(address.get(flag) or flag in flags for flag in ("tentative", "dadfailed", "deprecated")):
+            continue
+        if address.get("valid_life_time") == 0 or address.get("preferred_life_time") == 0:
+            continue
         local = address.get("local")
         prefixlen = address.get("prefixlen")
         if local and prefixlen is not None:
-            return f"{local}/{prefixlen}"
-    return None
+            try:
+                candidate = ip_interface(f"{local}/{prefixlen}")
+            except ValueError:
+                continue
+            if candidate.version != (4 if family == "inet" else 6):
+                continue
+            if candidate.ip.is_link_local or candidate.ip.is_loopback or candidate.ip.is_multicast or candidate.ip.is_unspecified:
+                continue
+            cidr = str(candidate)
+            if cidr not in result:
+                result.append(cidr)
+    if family == "inet6" and dynamic_only:
+        result.sort(key=lambda cidr: (int(ip_interface(cidr).ip), ip_interface(cidr).network.prefixlen))
+    return tuple(result)
+
+
+def _host_ip_cidr(row: dict, family: str, *, dynamic_only: bool = False) -> str | None:
+    """Return the first preferred native candidate for legacy scalar observations.
+
+    Args:
+        row: Native interface inventory row.
+        family: Native address family name.
+        dynamic_only: Require native dynamic source evidence.
+    """
+    return next(iter(_host_ip_cidrs(row, family, dynamic_only=dynamic_only)), None)
+
+
+def native_automatic_ipv6_cidrs(host: HostPhysicalInterface) -> tuple[str, ...]:
+    """Return the complete automatic observation with scalar compatibility.
+
+    Args:
+        host: Native inventory observation.
+    """
+    return host.host_dynamic_ipv6_cidrs or ((host.host_dynamic_ipv6_cidr,) if host.host_dynamic_ipv6_cidr else ())
+
+
+def physical_ipv6_cidrs(interface: PhysicalInterface) -> tuple[str, ...]:
+    """Project enabled static intent or every observed automatic IPv6 address.
+
+    Args:
+        interface: Physical interface containing desired and observed state.
+    """
+    if not interface.ipv6_enabled:
+        return ()
+    if interface.ipv6_cidr:
+        return (interface.ipv6_cidr,)
+    return tuple(interface.host_ipv6_cidrs or ()) or ((interface.host_ipv6_cidr,) if interface.host_ipv6_cidr else ())
 
 
 def parse_linux_ip_interfaces(payload: str, *, sysfs_base: Path = Path("/sys/class/net")) -> list[HostPhysicalInterface]:
@@ -310,7 +371,10 @@ def parse_linux_ip_interfaces(payload: str, *, sysfs_base: Path = Path("/sys/cla
                 driver=_interface_driver(sysfs_interface),
                 speed=_interface_speed(sysfs_interface),
                 host_ip_cidr=_host_ip_cidr(row, "inet"),
+                host_dhcp_ip_cidr=_host_ip_cidr(row, "inet", dynamic_only=True),
                 host_ipv6_cidr=_host_ip_cidr(row, "inet6"),
+                host_dynamic_ipv6_cidr=_host_ip_cidr(row, "inet6", dynamic_only=True),
+                host_dynamic_ipv6_cidrs=_host_ip_cidrs(row, "inet6", dynamic_only=True),
                 host_mtu=int(row["mtu"]) if row.get("mtu") is not None else None,
                 host_admin_state="up" if "UP" in flags else "down",
                 oper_state=str(row.get("operstate") or "unknown").lower(),
@@ -319,20 +383,80 @@ def parse_linux_ip_interfaces(payload: str, *, sysfs_base: Path = Path("/sys/cla
     return interfaces
 
 
-def discover_host_physical_interfaces() -> list[HostPhysicalInterface]:
-    """Return discover host physical interfaces."""
+def discover_host_physical_interfaces(*, timeout: float | None = None, require_success: bool = False) -> list[HostPhysicalInterface]:
+    """Read host physical-interface observations without changing desired state.
+
+    Args:
+        timeout: Optional subprocess deadline in seconds for bounded observation callers.
+        require_success: Raise on failed discovery instead of returning an empty observation.
+    """
     try:
         completed = subprocess.run(
             ["ip", "-j", "address", "show"],
             check=False,
             capture_output=True,
             text=True,
+            timeout=timeout,
         )
-    except OSError:
+    except (OSError, subprocess.TimeoutExpired):
+        if require_success:
+            raise
         return []
     if completed.returncode != 0:
+        if require_success:
+            raise RuntimeError("Native interface discovery failed")
         return []
     return parse_linux_ip_interfaces(completed.stdout)
+
+
+def verify_native_management_vlans(paths: list[dict[str, str]], *, timeout: float) -> bool:
+    """Prove completed VLAN listeners and their pinned parents from native state.
+
+    Args:
+        paths: Management paths from the completed Network snapshot.
+        timeout: Remaining admitted native-observation deadline in seconds.
+
+    Returns:
+        Whether every VLAN has its exact parent, tag, up links and usable addresses.
+    """
+    vlans = [path for path in paths if path.get("kind") == "vlan"]
+    if not vlans:
+        return True
+    try:
+        result = subprocess.run(["ip", "-d", "-j", "address", "show"], check=False,
+                                capture_output=True, text=True, timeout=max(0, timeout))
+        rows = json.loads(result.stdout)
+        if result.returncode != 0 or not isinstance(rows, list) or any(not isinstance(row, dict) for row in rows):
+            return False
+        for path in vlans:
+            parents = [row for row in rows if row.get("ifname") == path.get("parent")]
+            listeners = [row for row in rows if row.get("ifname") == path.get("name")]
+            if len(parents) != 1 or len(listeners) != 1 or not path.get("parent_mac"):
+                return False
+            parent, listener = parents[0], listeners[0]
+            if parent.get("link_type") != "ether" or (parent.get("linkinfo") or {}).get("info_kind") == "vlan":
+                return False
+            if str(parent.get("address", "")).lower() != path["parent_mac"].lower():
+                return False
+            if any("UP" not in row.get("flags", []) or str(row.get("operstate", "")).lower() != "up"
+                   for row in (parent, listener)):
+                return False
+            linkinfo = listener.get("linkinfo") or {}
+            if (linkinfo.get("info_kind") != "vlan"
+                    or int((linkinfo.get("info_data") or {}).get("id", -1)) != int(path.get("vlan_id", "-2"))):
+                return False
+            if (not isinstance(parent.get("ifindex"), int)
+                    or listener.get("link_index") != parent["ifindex"]):
+                return False
+            required = [("inet", path.get("ip_cidr")), ("inet6", path.get("ipv6_cidr"))]
+            if not any(cidr for _, cidr in required):
+                return False
+            for family, cidr in required:
+                if cidr and ip_interface(cidr) not in {ip_interface(value) for value in _host_ip_cidrs(listener, family)}:
+                    return False
+        return True
+    except (OSError, subprocess.TimeoutExpired, ValueError, TypeError, AttributeError):
+        return False
 
 
 def parse_linux_ipv4_default_routes(payload: str) -> dict[str, str]:
@@ -926,6 +1050,7 @@ def reconcile_host_physical_interfaces(
     discovered: list[HostPhysicalInterface],
     *,
     renames: dict[str, str] | None = None,
+    applied_ipv6_modes: dict[str, tuple[bool, str | None]] | None = None,
 ) -> list[PhysicalInterface]:
     """Return reconcile host physical interfaces.
 
@@ -933,6 +1058,7 @@ def reconcile_host_physical_interfaces(
         interfaces: Interfaces consumed by reconcile host physical interfaces.
         discovered: Discovered consumed by reconcile host physical interfaces.
         renames: Renames consumed by reconcile host physical interfaces.
+        applied_ipv6_modes: Last-applied IPv6 controls keyed by stable physical MAC.
     """
     now = utcnow()
     by_name = {interface.name: interface for interface in interfaces}
@@ -992,8 +1118,16 @@ def reconcile_host_physical_interfaces(
         by_mac[host_mac] = interface
         interface.driver = host.driver
         interface.speed = host.speed
-        interface.host_ip_cidr = host.host_ip_cidr
-        interface.host_ipv6_cidr = host.host_ipv6_cidr
+        interface.host_ip_cidr = (
+            host.host_dhcp_ip_cidr if normalize_ipv4_method(interface.ipv4_method) == "dhcp" else host.host_ip_cidr
+        )
+        ipv6_enabled, ipv6_cidr = (applied_ipv6_modes or {}).get(
+            host_mac, (bool(interface.ipv6_enabled), interface.ipv6_cidr),
+        )
+        interface.host_ipv6_cidr = (
+            (host.host_dynamic_ipv6_cidr if not ipv6_cidr else host.host_ipv6_cidr) if ipv6_enabled else None
+        )
+        interface.host_ipv6_cidrs = list(native_automatic_ipv6_cidrs(host)) if ipv6_enabled and not ipv6_cidr else []
         interface.host_mtu = host.host_mtu
         interface.host_admin_state = host.host_admin_state
         interface.oper_state = host.oper_state
@@ -1038,10 +1172,25 @@ def sync_host_physical_interfaces(db: Session) -> tuple[list[PhysicalInterface],
     Args:
         db: Active database session.
     """
-    discovered = discover_host_physical_interfaces()
-    interfaces = db.execute(select(PhysicalInterface).order_by(PhysicalInterface.name)).scalars().all()
+    from atlaso.app.services.management_bindings import applied_physical_ipv6_modes
+    from atlaso.app.services.network_objects import acquire_network_objects_write_lock
+
+    acquire_network_objects_write_lock(db)
+    try:
+        discovered = discover_host_physical_interfaces(timeout=5.0, require_success=True)
+    except (OSError, subprocess.TimeoutExpired, RuntimeError):
+        db.rollback()
+        raise
+    interfaces = db.execute(
+        select(PhysicalInterface).order_by(PhysicalInterface.name).execution_options(populate_existing=True)
+    ).scalars().all()
     renames: dict[str, str] = {}
-    reconciled = reconcile_host_physical_interfaces(interfaces, discovered, renames=renames)
+    applied_modes = applied_physical_ipv6_modes(db)
+    ipv6_modes_by_mac = {_mac_key(interface.mac_address): applied_modes[interface.name]
+                         for interface in interfaces if interface.name in applied_modes}
+    reconciled = reconcile_host_physical_interfaces(
+        interfaces, discovered, renames=renames, applied_ipv6_modes=ipv6_modes_by_mac,
+    )
     name_changes = _physical_interface_name_changes(reconciled)
     final_renames = {old: new for _interface, old, new in name_changes}
     missing_renames = {old: new for old, new in final_renames.items() if new.startswith("missing_")}

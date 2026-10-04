@@ -215,6 +215,7 @@ class PhysicalInterface(Base):
         speed: Persisted speed for the physicalinterface resource.
         host_ip_cidr: Persisted host ip cidr for the physicalinterface resource.
         host_ipv6_cidr: Persisted host ipv6 cidr for the physicalinterface resource.
+        host_ipv6_cidrs: All preferred automatic IPv6 observations during prefix renumbering.
         host_mtu: Persisted host mtu for the physicalinterface resource.
         host_admin_state: Persisted host admin state for the physicalinterface resource.
         ip_cidr: Persisted ip cidr for the physicalinterface resource.
@@ -245,6 +246,7 @@ class PhysicalInterface(Base):
     speed: Mapped[str | None] = mapped_column(String(50), nullable=True)
     host_ip_cidr: Mapped[str | None] = mapped_column(String(64), nullable=True)
     host_ipv6_cidr: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    host_ipv6_cidrs: Mapped[list[str]] = mapped_column(JSON, default=list)
     host_mtu: Mapped[int | None] = mapped_column(Integer, nullable=True)
     host_admin_state: Mapped[str | None] = mapped_column(String(20), nullable=True)
     ip_cidr: Mapped[str | None] = mapped_column(String(64), nullable=True)

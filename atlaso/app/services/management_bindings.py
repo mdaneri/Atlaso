@@ -74,7 +74,7 @@ def _network_baseline(db: Session) -> dict[str, object] | None:
         db: Active database session used to load the baseline setting.
     """
     setting = db.execute(
-        select(Setting).where(Setting.key == APPLIANCE_APPLY_BASELINES_KEY)
+        select(Setting).where(Setting.key == APPLIANCE_APPLY_BASELINES_KEY).execution_options(populate_existing=True)
     ).scalar_one_or_none()
     if setting is None or not setting.value:
         return None
@@ -145,7 +145,9 @@ def applied_management_bindings(db: Session) -> list[dict[str, str]] | None:
                     row.get("ipv6_enabled", "false").lower() == "true"
                     and not row.get("ipv6_cidr")
                 ):
-                    cidrs.append(observed.host_ipv6_cidr)
+                    # Applied automatic mode owns this projection. Pending disable
+                    # or static edits cannot replace the still-applied observations.
+                    cidrs.extend(observed.host_ipv6_cidrs or [observed.host_ipv6_cidr])
         for cidr in cidrs:
             address = _address_from_cidr(cidr)
             if not address or address in seen:
@@ -160,6 +162,25 @@ def applied_management_bindings(db: Session) -> list[dict[str, str]] | None:
                 }
             )
     return bindings
+
+
+def applied_physical_ipv6_modes(db: Session) -> dict[str, tuple[bool, str | None]]:
+    """Return applied physical IPv6 controls for admitted native inventory refresh.
+
+    Args:
+        db: Writer-admitted inventory transaction.
+    """
+    baseline = _network_baseline(db)
+    if baseline is None:
+        return {}
+    aliases = baseline.get("physical_interface_aliases")
+    aliases = aliases if isinstance(aliases, dict) else {}
+    return {
+        str(aliases.get(row.get("name", ""), row.get("name", ""))):
+        (row["ipv6_enabled"].lower() == "true", row.get("ipv6_cidr") or None)
+        for row in _network_rows(str(baseline["config_preview"]))
+        if row.get("kind") == "physical" and "ipv6_enabled" in row
+    }
 
 
 def _has_usable_address(*values: str | None) -> bool:

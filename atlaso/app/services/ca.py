@@ -942,12 +942,36 @@ def render_ca_config(
     return json.dumps(payload, indent=2, sort_keys=True) + "\n"
 
 
-def render_ca_apply_payload(settings: CaSettings, certificates: list[CaCertificate], *, include_private_keys: bool) -> str:
+def ca_apply_comparison_preview(preview: str) -> str:
+    """Compare legacy SQLite and PostgreSQL UTC expiry encodings without changing stored evidence.
+
+    Args:
+        preview: Public CA apply payload used for a captured or persisted comparison.
+
+    Returns:
+        Canonical comparison text, or unchanged text for an invalid legacy payload.
+    """
+    try:
+        payload = json.loads(preview)
+        rows = [payload["root"], *payload["certificates"]]
+        for row in rows:
+            expiry = row.get("expires_at")
+            if expiry:
+                row["expires_at"] = ensure_aware(datetime.fromisoformat(expiry)).astimezone(
+                    timezone.utc,
+                ).replace(tzinfo=None).isoformat()
+        return json.dumps(payload, indent=2, sort_keys=True) + "\n"
+    except (KeyError, TypeError, ValueError, AttributeError):
+        return preview
+
+
+def render_ca_apply_payload(settings: CaSettings, certificates: list[CaCertificate], *, include_private_keys: bool, profiles: Iterable[CaProfile] = ()) -> str:
     """Render ca apply payload.
 
     Args:
         settings: Saved CA settings represented in the reviewed apply payload.
         certificates: Certificate records represented in the reviewed apply payload.
+        profiles: All saved issuance profiles bound to the reviewed CA policy.
         include_private_keys: Whether the constrained helper payload may contain private-key
             material required for deployment.
 
@@ -960,7 +984,16 @@ def render_ca_apply_payload(settings: CaSettings, certificates: list[CaCertifica
     bundle_path = str(PurePosixPath(settings.storage_path) / "ca-bundle.pem")
     crl_path = str(PurePosixPath(settings.storage_path) / "atlaso-ca.crl")
     crl_pem = generate_crl_pem(settings, certificates) if settings.publish_crl else ""
+    issuance_policy = {
+        "subject": {name: getattr(settings, name) for name in
+                    ("organization", "organizational_unit", "country", "state", "locality", "digest_algorithm")},
+        "profiles": [{name: getattr(profile, name) for name in
+                      ("id", "name", "certificate_type", "validity_days", "key_algorithm", "key_size",
+                       "key_usage", "extended_key_usage", "san_required", "enabled")}
+                     for profile in sorted(profiles, key=lambda item: item.name)],
+    }
     payload = {
+        "issuance_policy": issuance_policy,
         "enabled": settings.enabled,
         "portal_hostname": settings.portal_hostname,
         "storage_path": settings.storage_path,
@@ -979,7 +1012,7 @@ def render_ca_apply_payload(settings: CaSettings, certificates: list[CaCertifica
             "crl_path": crl_path,
             "crl_pem": crl_pem if include_private_keys else ("[public CRL available]" if crl_pem else ""),
             "fingerprint": settings.root_fingerprint,
-            "expires_at": settings.root_expires_at.isoformat() if settings.root_expires_at else "",
+            "expires_at": ensure_aware(settings.root_expires_at).astimezone(timezone.utc).replace(tzinfo=None).isoformat() if settings.root_expires_at else "",
         },
         "certificates": [],
     }
@@ -1010,7 +1043,7 @@ def render_ca_apply_payload(settings: CaSettings, certificates: list[CaCertifica
                 "key_path": key_path,
                 "chain_path": chain_path,
                 "fingerprint": certificate.fingerprint,
-                "expires_at": certificate.expires_at.isoformat() if certificate.expires_at else "",
+                "expires_at": ensure_aware(certificate.expires_at).astimezone(timezone.utc).replace(tzinfo=None).isoformat() if certificate.expires_at else "",
             }
         )
     return json.dumps(payload, indent=2, sort_keys=True) + "\n"

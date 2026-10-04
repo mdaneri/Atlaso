@@ -73,6 +73,7 @@ from atlaso.app.models import (  # noqa: E402 - appliance environment must load 
     JobStep,
     PhysicalInterface,
     Setting,
+    VlanInterface,
     utcnow,
 )
 from atlaso.app.services.dnsmasq import (  # noqa: E402 - appliance environment must load before configured imports.
@@ -85,6 +86,12 @@ from atlaso.app.services.firewall import (  # noqa: E402 - appliance environment
 )
 from atlaso.app.services.network_objects import (  # noqa: E402 - appliance environment must load before configured imports.
     acquire_network_objects_write_lock,
+)
+from atlaso.app.services.networking import (  # noqa: E402 - appliance environment must load before configured imports.
+    discover_host_physical_interfaces,
+    native_automatic_ipv6_cidrs,
+    render_network_config,
+    verify_native_management_vlans,
 )
 
 HELPER_PATH = Path("/opt/atlaso/bin/atlaso-helper")
@@ -1090,12 +1097,13 @@ def _ensure_no_active_apply() -> None:
             raise ConsoleOperationError(f"Appliance apply task {active.id} is already {active.status}.")
 
 
-def _submit_console_apply(required_ids: set[str]) -> str:
+def _submit_console_apply(required_ids: set[str], *, network_job_id: str | None = None) -> str:
     # Imported lazily so read-only status remains available even if the web stack has a startup issue.
     """Return submit console apply.
 
     Args:
         required_ids: Stable identifiers of the associated required resources.
+        network_job_id: Completed Network task to atomically recheck before dependent capture.
     Raises:
         ConsoleOperationError: If the operation encounters an invalid state.
     """
@@ -1104,11 +1112,15 @@ def _submit_console_apply(required_ids: set[str]) -> str:
         active_appliance_apply_job,
         active_vcf_depot_execution_job,
         appliance_apply_units,
+        network_management_paths,
         ntp_owned_dns_is_only_pending_change,
         run_appliance_apply_job,
     )
 
     with SessionLocal() as db:
+        if network_job_id is not None:
+            acquire_network_objects_write_lock(db)
+        capture_transaction = db.get_transaction()
         selected_ids = set(required_ids)
         if "vcf_offline_depot" in selected_ids:
             acquire_vcf_depot_admission_gate(db)
@@ -1121,7 +1133,27 @@ def _submit_console_apply(required_ids: set[str]) -> str:
                 raise ConsoleOperationError(
                     f"VCFDT task {active_vcf_job.id} is already {active_vcf_job.status}."
                 )
-        units = appliance_apply_units(db)
+        units = appliance_apply_units(db, reconcile=False) if network_job_id is not None else appliance_apply_units(db)
+        if network_job_id is not None:
+            if db.get_transaction() is not capture_transaction:
+                raise ConsoleOperationError("Settings capture lost its Network writer lock; retry the console correction.")
+            completed = db.get(Job, network_job_id)
+            completed_payload = json.loads(completed.result or "{}") if completed is not None else {}
+            submitted = [unit for unit in completed_payload.get("captured_units", []) if unit.get("unit_id") == "network"]
+            current = [unit for unit in units if unit.get("id") == "network"]
+            if (
+                completed is None or completed.status != JobStatus.SUCCEEDED.value
+                or len(submitted) != 1 or len(current) != 1
+                or not network_management_paths(str(submitted[0].get("config_preview") or ""))
+                or any(path.get("management_eligible") != "true" for path in
+                       network_management_paths(str(submitted[0].get("config_preview") or "")))
+                or network_management_paths(str(submitted[0].get("config_preview") or ""))
+                != network_management_paths(str(current[0].get("config_preview") or ""))
+            ):
+                raise ConsoleOperationError(
+                    "Management Network changed during recovery. Appliance Settings were not submitted; "
+                    "newer edits remain pending. Apply or reconcile those edits first."
+                )
         unit_map = {unit["id"]: unit for unit in units}
         if (
             unit_map.get("ntpd", {}).get("changed")
@@ -1188,18 +1220,19 @@ def _submit_console_apply(required_ids: set[str]) -> str:
     return job_id
 
 
-def _recover_management_plane(stage: str) -> None:
+def _recover_management_plane(stage: str, *, network_job_id: str | None = None) -> None:
     """Retry first-boot HTTPS and verify local management readiness.
 
     Args:
         stage: Operator-facing description of the completed correction phase.
+        network_job_id: Completed Network task binding certificate recovery.
 
     Raises:
         ConsoleOperationError: If the constrained recovery helper does not restore readiness.
     """
     try:
         result = _run(
-            [str(HELPER_PATH), "console", "recover-management-plane", "--real"],
+            [str(HELPER_PATH), "console", "recover-management-plane", *([network_job_id] if network_job_id else []), "--real"],
             timeout=120,
         )
     except (OSError, subprocess.TimeoutExpired) as exc:
@@ -1209,6 +1242,138 @@ def _recover_management_plane(stage: str) -> None:
     if result.returncode != 0:
         detail = (result.stderr or "the recovery helper returned no failure detail").strip()
         raise ConsoleOperationError(f"{stage}, but management-plane recovery failed: {detail}")
+
+
+def _refresh_management_addresses(
+    interface_id: int, *, network_job_id: str | None = None, timeout: float = 30,
+) -> None:
+    """Observe the corrected link before recovery captures certificates and Settings.
+
+    Args:
+        interface_id: Stable identity of the physical interface edited by the console.
+        network_job_id: Completed task containing the exact submitted Network snapshot.
+        timeout: Maximum seconds to wait for every requested address family.
+
+    Raises:
+        ConsoleOperationError: If fresh host inventory cannot confirm the corrected addresses.
+    """
+    expected_paths = None
+    with SessionLocal() as db:
+        target = db.get(PhysicalInterface, interface_id)
+        if target is None:
+            raise ConsoleOperationError("The applied management interface is unavailable.")
+        expected = (target.ipv4_method, target.ip_cidr, target.ipv6_enabled, target.ipv6_cidr)
+        if network_job_id is not None:
+            from atlaso.app.ui import (
+                network_interface_entries,
+                network_management_paths,
+            )
+
+            job = db.get(Job, network_job_id)
+            payload = json.loads(job.result or "{}") if job is not None else {}
+            units = [unit for unit in payload.get("captured_units", []) if unit.get("unit_id") == "network"]
+            rows = network_interface_entries(str(units[0].get("config_preview") or "")) if len(units) == 1 else []
+            matches = [row for row in rows if row.get("kind") == "physical" and row.get("name") == target.name]
+            if job is None or job.status != JobStatus.SUCCEEDED.value or len(matches) != 1:
+                raise ConsoleOperationError("The completed task's management Network snapshot is unavailable.")
+            expected_paths = network_management_paths(str(units[0].get("config_preview") or ""))
+            if not expected_paths or any(path.get("management_eligible") != "true" for path in expected_paths):
+                raise ConsoleOperationError(
+                    "An applied management path is ineligible. Certificate recovery and Appliance Settings were not started."
+                )
+            row = matches[0]
+            expected = (
+                row.get("ipv4_method", "static"), row.get("ip_cidr") or None,
+                row.get("ipv6_enabled", "false").lower() == "true", row.get("ipv6_cidr") or None,
+            )
+        targets = [(target.id, target.name, target.mac_address or "", expected)]
+        if expected_paths is not None:
+            for path in expected_paths:
+                if path["kind"] != "physical" or path["name"] == target.name:
+                    continue
+                interface = db.scalar(select(PhysicalInterface).where(PhysicalInterface.name == path["name"]))
+                if interface is None:
+                    raise ConsoleOperationError("An applied management interface is unavailable.")
+                targets.append((interface.id, interface.name, interface.mac_address or "", (
+                    path.get("ipv4_method", "static"), path.get("ip_cidr") or None,
+                    path.get("ipv6_enabled", "false").lower() == "true", path.get("ipv6_cidr") or None,
+                )))
+    deadline = time.monotonic() + timeout
+    while True:
+        with SessionLocal() as db:
+            acquire_network_objects_write_lock(db)
+            db.expire_all()
+            discovered = discover_host_physical_interfaces(timeout=max(0, deadline - time.monotonic()))
+            verified_rows = []
+            for identity, name, mac, applied in targets:
+                matches = [row for row in discovered if row.name == name and mac
+                           and row.mac_address.lower() == mac.lower()]
+                observed = matches[0] if len(matches) == 1 else None
+                if observed is None or observed.host_admin_state != "up" or observed.oper_state != "up":
+                    break
+                observed_ipv4 = observed.host_dhcp_ip_cidr if applied[0] == "dhcp" else observed.host_ip_cidr
+                if identity != interface_id and applied[0] != "dhcp" and not applied[1]:
+                    observed_ipv4 = None
+                observed_ipv6 = (observed.host_dynamic_ipv6_cidr if not applied[3] else observed.host_ipv6_cidr) if applied[2] else None
+                observed_ipv6_cidrs = native_automatic_ipv6_cidrs(observed) if applied[2] and not applied[3] else ()
+                if observed_ipv6_cidrs:
+                    observed_ipv6 = observed_ipv6_cidrs[0]
+                required = []
+                if identity == interface_id or applied[0] == "dhcp" or applied[1]:
+                    required.append((4, observed_ipv4, applied[1] if applied[0] != "dhcp" else None))
+                if applied[2]:
+                    required.extend((6, cidr, applied[3]) for cidr in (observed_ipv6_cidrs or (observed_ipv6,)))
+                verified = bool(required)
+                for family, observed_cidr, desired in required:
+                    try:
+                        address = ip_interface(observed_cidr or "")
+                        expected_address = ip_interface(desired) if desired else None
+                    except ValueError:
+                        verified = False
+                        continue
+                    if (
+                        address.version != family or address.ip.is_unspecified
+                        or address.ip.is_loopback or address.ip.is_link_local or address.ip.is_multicast
+                        or (expected_address is not None and address != expected_address)
+                    ):
+                        verified = False
+                if not verified:
+                    break
+                verified_rows.append((identity, name, mac, applied, observed_ipv4, observed_ipv6, observed_ipv6_cidrs))
+            if len(verified_rows) == len(targets) and verify_native_management_vlans(
+                expected_paths or [], timeout=max(0, deadline - time.monotonic()),
+            ):
+                # Publish the complete applied observation together, never reconcile unrelated intent.
+                pending = False
+                for identity, name, mac, applied, observed_ipv4, observed_ipv6, observed_ipv6_cidrs in verified_rows:
+                    interface = db.get(PhysicalInterface, identity)
+                    if interface is None or interface.name != name or (interface.mac_address or "").lower() != mac.lower():
+                        raise ConsoleOperationError("An applied management interface identity changed; recovery was not started.")
+                    interface.host_ip_cidr = observed_ipv4
+                    interface.host_ipv6_cidr = observed_ipv6
+                    interface.host_ipv6_cidrs = list(observed_ipv6_cidrs)
+                    pending = pending or (interface.ipv4_method, interface.ip_cidr, interface.ipv6_enabled, interface.ipv6_cidr) != applied
+                if expected_paths is not None:
+                    current_preview = render_network_config(
+                        interfaces=list(db.scalars(select(PhysicalInterface))),
+                        vlans=list(db.scalars(select(VlanInterface))),
+                    )
+                    pending = pending or not expected_paths or expected_paths != network_management_paths(current_preview)
+                db.commit()
+                if pending:
+                    raise ConsoleOperationError(
+                        "The applied management addresses were observed, but newer address edits remain pending. "
+                        "Certificate recovery and Appliance Settings were not started; apply or reconcile those edits first."
+                    )
+                return
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise ConsoleOperationError(
+                "Network and Firewall were applied, but fresh management address observation "
+                "could not confirm every requested family. Certificate recovery and Appliance "
+                "Settings were not started; check the interface and DHCP/IPv6 acquisition, then retry."
+            )
+        time.sleep(min(1, remaining))
 
 
 def configure_management(
@@ -1244,6 +1409,7 @@ def configure_management(
     with SessionLocal() as db:
         acquire_network_objects_write_lock(db)
         interface = _management_interface(db)
+        interface_id = interface.id
         settings = db.scalar(select(ApplianceSettings).order_by(ApplianceSettings.id))
         if settings is None:
             raise ConsoleOperationError("Appliance Settings desired state is unavailable.")
@@ -1268,9 +1434,12 @@ def configure_management(
             detail=f"ipv4_method={method}; ipv6_mode={mode}; dns_servers={len(dns_servers)}",
         )
     network_job_id = _submit_console_apply({"network", "firewall"})
-    _recover_management_plane("Network and Firewall were applied")
-    settings_job_id = _submit_console_apply({"appliance_settings"})
-    _recover_management_plane("Appliance Settings were applied")
+    _refresh_management_addresses(interface_id, network_job_id=network_job_id)
+    _recover_management_plane("Network and Firewall were applied", network_job_id=network_job_id)
+    _refresh_management_addresses(interface_id, network_job_id=network_job_id)
+    settings_job_id = _submit_console_apply({"appliance_settings"}, network_job_id=network_job_id)
+    _refresh_management_addresses(interface_id, network_job_id=network_job_id)
+    _recover_management_plane("Appliance Settings were applied", network_job_id=network_job_id)
     with SessionLocal() as db:
         record_audit(
             db,

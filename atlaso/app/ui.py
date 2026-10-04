@@ -281,6 +281,7 @@ from atlaso.app.services.ca import (
     CA_SERVER_PROFILE_NAME,
     CA_STAGED_CONFIG_PATH,
     ManagedCertificateSpec,
+    ca_apply_comparison_preview,
     ca_certificate_to_dict,
     ca_profile_to_dict,
     ca_service_state,
@@ -470,9 +471,11 @@ from atlaso.app.services.networking import (
     discover_host_ipv4_default_gateways,
     discover_host_physical_interfaces,
     is_canonical_network_role,
+    native_automatic_ipv6_cidrs,
     normalize_interface_mode,
     normalize_interface_role,
     physical_interface_to_dict,
+    physical_ipv6_cidrs,
     render_network_config,
     trunk_parent_option,
     validate_network_state,
@@ -1347,27 +1350,45 @@ def remove_ntp_nts_certificate_rows(db: Session) -> int:
     return len(certificates)
 
 
-def managed_ca_certificate_specs(db: Session) -> list[ManagedCertificateSpec]:
+def managed_ca_certificate_specs(
+    db: Session, *, reconcile: bool = True, managed_owners: set[str] | None = None,
+    management_snapshot: dict[str, Any] | None = None,
+) -> list[ManagedCertificateSpec]:
     """Return managed ca certificate specs.
 
     Args:
         db: Active database session.
+        reconcile: Whether service getters may initialize or reconcile desired state.
+        managed_owners: Optional owner selection; management-only projection skips other services.
+        management_snapshot: Applied Settings identity and active nginx publication paths.
     """
     specs: list[ManagedCertificateSpec] = []
-    appliance = get_appliance_settings_row(db)
-    interfaces = db.execute(select(PhysicalInterface).order_by(PhysicalInterface.name)).scalars().all()
-    vlans = db.execute(select(VlanInterface).order_by(VlanInterface.parent_interface, VlanInterface.vlan_id)).scalars().all()
-    management, observed_dhcp_dns_servers = management_dhcp_dns_context(interfaces)
-    terminal_options = web_terminal_interface_options(interfaces, vlans)
-    terminal_ips = web_terminal_addresses(normalized_web_terminal_interfaces(appliance, management), terminal_options) if appliance.web_terminal_enabled else []
+    if management_snapshot is not None:
+        appliance_fqdn = management_snapshot["fqdn"]
+        terminal_ips = list(management_snapshot["web_terminal_addresses"]) if management_snapshot["web_terminal_enabled"] else []
+    else:
+        appliance = get_appliance_settings_row(db) if reconcile else db.scalar(select(ApplianceSettings))
+        if appliance is None:
+            raise ValueError("Appliance Settings are unavailable for certificate projection.")
+        interfaces = db.execute(select(PhysicalInterface).order_by(PhysicalInterface.name)).scalars().all()
+        vlans = db.execute(select(VlanInterface).order_by(VlanInterface.parent_interface, VlanInterface.vlan_id)).scalars().all()
+        management, observed_dhcp_dns_servers = management_dhcp_dns_context(interfaces)
+        terminal_options = web_terminal_interface_options(interfaces, vlans)
+        terminal_ips = web_terminal_addresses(normalized_web_terminal_interfaces(appliance, management), terminal_options) if appliance.web_terminal_enabled else []
+        appliance_fqdn = appliance.fqdn
     appliance_ips = management_ui_addresses(db)
     appliance_ips.extend(address for address in terminal_ips if address not in appliance_ips)
-    appliance_cert, appliance_key, appliance_chain = ca_service_cert_paths("https", appliance.fqdn)
+    if management_snapshot is not None:
+        appliance_cert = management_snapshot["management_https_cert_path"]
+        appliance_key = management_snapshot["management_https_key_path"]
+        appliance_chain = f"{PurePosixPath(appliance_cert).with_suffix('')}-chain.pem"
+    else:
+        appliance_cert, appliance_key, appliance_chain = ca_service_cert_paths("https", appliance_fqdn)
     specs.append(
         ManagedCertificateSpec(
             owner="appliance:https",
-            common_name=appliance.fqdn,
-            dns_names=[appliance.fqdn],
+            common_name=appliance_fqdn,
+            dns_names=[appliance_fqdn],
             ip_addresses=appliance_ips,
             profile_name=CA_SERVER_PROFILE_NAME,
             description="Managed Atlaso appliance HTTPS certificate.",
@@ -1377,8 +1398,11 @@ def managed_ca_certificate_specs(db: Session) -> list[ManagedCertificateSpec]:
         )
     )
 
-    oidc_settings = ensure_oidc_provider_settings(db)
-    if oidc_settings.enabled:
+    if managed_owners == {"appliance:https"}:
+        return specs
+
+    oidc_settings = ensure_oidc_provider_settings(db) if reconcile else db.scalar(select(OidcProviderSettings))
+    if oidc_settings is not None and oidc_settings.enabled:
         oidc_hostname = normalize_dns_hostname(
             oidc_settings.hostname or OIDC_DEFAULT_HOSTNAME
         )
@@ -1399,8 +1423,8 @@ def managed_ca_certificate_specs(db: Session) -> list[ManagedCertificateSpec]:
             )
         )
 
-    ca_settings = get_ca_settings_row(db)
-    if ca_settings.enabled:
+    ca_settings = get_ca_settings_row(db) if reconcile else db.scalar(select(CaSettings))
+    if ca_settings is not None and ca_settings.enabled:
         ca_portal_hostname = normalize_dns_hostname(ca_settings.portal_hostname or CA_DEFAULT_PORTAL_HOSTNAME)
         cert_path, key_path, chain_path = ca_service_cert_paths("ca-portal", ca_portal_hostname)
         specs.append(
@@ -1417,8 +1441,8 @@ def managed_ca_certificate_specs(db: Session) -> list[ManagedCertificateSpec]:
             )
         )
 
-    kms_settings = get_kms_settings_row(db)
-    if kms_settings.enabled:
+    kms_settings = get_kms_settings_row(db) if reconcile else db.scalar(select(KmsSettings))
+    if kms_settings is not None and kms_settings.enabled:
         cert_path, key_path, chain_path = ca_service_cert_paths("kmip", kms_settings.server_certificate or kms_settings.hostname)
         specs.append(
             ManagedCertificateSpec(
@@ -1433,8 +1457,8 @@ def managed_ca_certificate_specs(db: Session) -> list[ManagedCertificateSpec]:
                 chain_path=chain_path,
             )
         )
-    ldap_settings = get_ldap_settings_row(db)
-    if ldap_settings.enabled and ldap_settings.ldaps_enabled:
+    ldap_settings = get_ldap_settings_row(db) if reconcile else db.scalar(select(LdapSettings))
+    if ldap_settings is not None and ldap_settings.enabled and ldap_settings.ldaps_enabled:
         _ldap_interfaces, ldap_certificate_addresses = resolve_ldap_bind_targets(
             db,
             split_interfaces(ldap_settings.listen_interface),
@@ -1455,8 +1479,8 @@ def managed_ca_certificate_specs(db: Session) -> list[ManagedCertificateSpec]:
             )
         )
 
-    ntp_settings = get_ntp_settings_row(db)
-    if ntp_settings.nts_server_enabled:
+    ntp_settings = get_ntp_settings_row(db) if reconcile else db.scalar(select(NtpSettings))
+    if ntp_settings is not None and ntp_settings.nts_server_enabled:
         cert_path, key_path, chain_path = ntp_nts_certificate_paths(ntp_settings)
         specs.append(
             ManagedCertificateSpec(
@@ -1472,8 +1496,8 @@ def managed_ca_certificate_specs(db: Session) -> list[ManagedCertificateSpec]:
             )
         )
 
-    depot_settings = get_vcf_offline_depot_settings_row(db)
-    if depot_settings.enabled:
+    depot_settings = get_vcf_offline_depot_settings_row(db) if reconcile else db.scalar(select(VcfOfflineDepotSettings))
+    if depot_settings is not None and depot_settings.enabled:
         cert_path, key_path, chain_path = ca_service_cert_paths("vcf-offline-depot", depot_settings.server_certificate or depot_settings.hostname)
         specs.append(
             ManagedCertificateSpec(
@@ -1489,8 +1513,8 @@ def managed_ca_certificate_specs(db: Session) -> list[ManagedCertificateSpec]:
             )
         )
 
-    registry_settings = get_vcf_private_registry_settings_row(db)
-    if registry_settings.enabled:
+    registry_settings = get_vcf_private_registry_settings_row(db) if reconcile else db.scalar(select(VcfPrivateRegistrySettings))
+    if registry_settings is not None and registry_settings.enabled:
         cert_path, key_path, chain_path = ca_service_cert_paths("harbor", registry_settings.server_certificate or registry_settings.hostname)
         specs.append(
             ManagedCertificateSpec(
@@ -1532,32 +1556,55 @@ def ca_managed_certificate_paths(db: Session, owner: str) -> tuple[str, str, str
     return certificate.cert_path or "", certificate.key_path or "", certificate.chain_path or ""
 
 
-def ensure_ca_state(db: Session, *, commit: bool = True) -> list[str]:
+def ensure_ca_state(
+    db: Session, *, commit: bool = True, managed_owners: set[str] | None = None,
+    management_snapshot: dict[str, Any] | None = None,
+) -> list[str]:
     """Ensure ca state.
 
     Args:
         db: Active database session.
-        commit: Whether to commit reconciled CA state before returning.
+        commit: Whether to commit reconciled CA state before returning; all mutation requires writer admission.
+        managed_owners: Optional managed certificate owners admitted for scoped issuance.
+        management_snapshot: Applied Settings inputs for the management leaf.
 
     Returns:
         The ensure ca state result.
     """
-    settings = get_ca_settings_row(db)
     errors: list[str] = []
     try:
+        acquire_network_objects_write_lock(db)
+        if commit:
+            get_ca_settings_row(db)
+            # Optional service initialization may commit. Complete it before CA material
+            # mutation, then reacquire admission and project fresh non-reconciling state.
+            managed_ca_certificate_specs(db, managed_owners=managed_owners, management_snapshot=management_snapshot)
+            acquire_network_objects_write_lock(db)
+        # Preserve caller-staged changes inside admission before refreshing cached CA
+        # rows. commit=False retains this transaction through the caller's commit.
+        db.flush()
+        settings = db.scalar(select(CaSettings).execution_options(populate_existing=True))
+        if settings is None:
+            return ["CA Settings are unavailable for guarded certificate recovery."]
         changed = ensure_default_ca_profiles(db)
-        profiles = db.execute(select(CaProfile).order_by(CaProfile.name)).scalars().all()
+        profiles = db.execute(select(CaProfile).order_by(CaProfile.name).execution_options(populate_existing=True)).scalars().all()
+        db.scalars(select(CaCertificate).options(selectinload(CaCertificate.profile)).execution_options(populate_existing=True)).all()
         normalized_portal_hostname = normalize_dns_hostname(settings.portal_hostname or CA_DEFAULT_PORTAL_HOSTNAME)
         if normalized_portal_hostname != settings.portal_hostname:
             settings.portal_hostname = normalized_portal_hostname
             changed = True
         changed = ensure_root_ca_material(settings) or changed
-        changed = ensure_managed_certificate_rows(db, settings=settings, profiles=profiles, specs=managed_ca_certificate_specs(db)) or changed
+        specs = managed_ca_certificate_specs(db, reconcile=False, managed_owners=managed_owners, management_snapshot=management_snapshot)
+        if managed_owners is not None:
+            specs = [spec for spec in specs if spec.owner in managed_owners]
+        changed = ensure_managed_certificate_rows(db, settings=settings, profiles=profiles, specs=specs) or changed
         certificates = (
-            db.execute(select(CaCertificate).options(selectinload(CaCertificate.profile)).order_by(CaCertificate.common_name))
+            db.execute(select(CaCertificate).options(selectinload(CaCertificate.profile)).order_by(CaCertificate.common_name).execution_options(populate_existing=True))
             .scalars()
             .all()
         )
+        if managed_owners is not None:
+            certificates = [certificate for certificate in certificates if certificate.managed_owner in managed_owners]
         changed = ensure_ca_issued_state(db, settings=settings, profiles=profiles, certificates=certificates) or changed
         if changed:
             if commit:
@@ -2437,7 +2484,7 @@ def management_ui_addresses(db: Session) -> list[str]:
         )
         if interface.oper_state == "missing" or not enabled:
             continue
-        for cidr in (interface.ip_cidr or interface.host_ip_cidr, interface.ipv6_cidr or interface.host_ipv6_cidr):
+        for cidr in (interface.ip_cidr or interface.host_ip_cidr, *physical_ipv6_cidrs(interface)):
             address = interface_address(cidr)
             if address and address not in addresses:
                 addresses.append(address)
@@ -4635,7 +4682,7 @@ def ca_context(db: Session, *, reconcile: bool = True) -> dict:
         .all()
     )
     config_preview = render_ca_config(settings=settings, profiles=profiles, certificates=certificates)
-    apply_payload = render_ca_apply_payload(settings, certificates, include_private_keys=False)
+    apply_payload = render_ca_apply_payload(settings, certificates, include_private_keys=False, profiles=profiles)
     validation_errors = [*state_errors, *validate_ca_state(settings=settings, profiles=profiles, certificates=certificates)]
     selected_interfaces = split_interfaces(settings.listen_interface)
     invalid_interfaces = [interface for interface in selected_interfaces if interface not in available_names]
@@ -5044,7 +5091,7 @@ def request_host_interface_binding(request_host: str, db: Session) -> dict[str, 
     for interface in physical_interfaces:
         if interface.oper_state == "missing":
             continue
-        for cidr in (interface.host_ip_cidr, interface.host_ipv6_cidr):
+        for cidr in (interface.host_ip_cidr, *(interface.host_ipv6_cidrs or [interface.host_ipv6_cidr])):
             address = interface_address(cidr)
             if address:
                 entries.append(
@@ -10012,6 +10059,9 @@ def config_diff_for_unit(unit_id: str, current_preview: str, baseline: dict[str,
     if not baseline or not baseline.get("config_preview"):
         return ""
     previous_preview = str(baseline.get("config_preview") or "")
+    if unit_id == "ca":
+        previous_preview = ca_apply_comparison_preview(previous_preview)
+        current_preview = ca_apply_comparison_preview(current_preview)
     if previous_preview == current_preview:
         return ""
     return "\n".join(
@@ -10215,6 +10265,7 @@ def network_management_paths(config_preview: str) -> list[dict[str, str]]:
         for row in rows
         if row.get("kind") == "physical"
     }
+    physical_modes = {row.get("name", ""): row.get("mode", "") for row in rows if row.get("kind") == "physical"}
     for row in rows:
         dedicated = row.get("kind") == "physical" and row.get("role") == "management"
         flagged_physical = (
@@ -10237,7 +10288,17 @@ def network_management_paths(config_preview: str) -> list[dict[str, str]]:
                 "kind": row.get("kind", ""),
                 "name": row.get("name", ""),
                 "parent": row.get("parent", ""),
+                "parent_mac": row.get("parent_mac", ""),
+                "vlan_id": row.get("vlan_id", ""),
                 "parent_admin_state": physical_admin_states.get(row.get("parent", ""), ""),
+                "admin_state": row.get("admin_state", ""),
+                "mode": row.get("mode", ""),
+                "parent_mode": physical_modes.get(row.get("parent", ""), ""),
+                "management_eligible": "true" if (
+                    physical_admin_states.get(row.get("parent", "")) == "up"
+                    and physical_modes.get(row.get("parent", "")) == "trunk"
+                    if row.get("kind") == "vlan" else row.get("admin_state") == "up" and row.get("mode") == "access"
+                ) else "false",
                 "check_duplicate_ip_addresses": row.get("check_duplicate_ip_addresses", "false"),
                 "role": row.get("role", ""),
                 "mtu": row.get("mtu", ""),
@@ -10299,7 +10360,11 @@ def refresh_management_handoff_dynamic_observations(
         }
     except ValueError as exc:
         raise RuntimeError("Management handoff returned an invalid candidate address.") from exc
-    discovered = {row.name: row for row in discover_host_physical_interfaces()}
+    acquire_network_objects_write_lock(db)
+    try:
+        discovered = {row.name: row for row in discover_host_physical_interfaces(timeout=5.0, require_success=True)}
+    except (OSError, subprocess.TimeoutExpired, RuntimeError) as exc:
+        raise RuntimeError("Management handoff native address discovery failed before observation publication.") from exc
     for path in dynamic_paths:
         name = str(path.get("name") or "")
         observed = discovered.get(name)
@@ -10310,16 +10375,20 @@ def refresh_management_handoff_dynamic_observations(
             )
         required = []
         if path.get("ipv4_method") == "dhcp":
-            required.append(("IPv4", observed.host_ip_cidr, "host_ip_cidr"))
+            required.append(("IPv4", observed.host_dhcp_ip_cidr, "host_ip_cidr"))
         if path.get("ipv6_enabled", "").lower() == "true" and not path.get("ipv6_cidr"):
-            required.append(("IPv6", observed.host_ipv6_cidr, "host_ipv6_cidr"))
+            required.extend(("IPv6", cidr, "host_ipv6_cidr") for cidr in (native_automatic_ipv6_cidrs(observed) or (None,)))
         for family, cidr, attribute in required:
             address = address_from_cidr(cidr)
             if not address or address not in confirmed_addresses:
                 raise RuntimeError(
                     f"Management handoff could not confirm the observed dynamic {family} address for {name}."
                 )
-            setattr(interface, attribute, cidr)
+            if attribute != "host_ipv6_cidr":
+                setattr(interface, attribute, cidr)
+        if path.get("ipv6_enabled", "").lower() == "true" and not path.get("ipv6_cidr"):
+            interface.host_ipv6_cidrs = list(native_automatic_ipv6_cidrs(observed))
+            interface.host_ipv6_cidr = interface.host_ipv6_cidrs[0]
     db.flush()
 
 
@@ -10985,8 +11054,24 @@ def make_appliance_apply_unit(
         "config_preview": esxi_apply_comparison_preview(redacted_preview) if protected_esxi else redacted_preview,
         "snapshot_marker": snapshot_marker,
     }
+    if unit_id == "ca":
+        snapshot_payload["config_preview"] = ca_apply_comparison_preview(redacted_preview)
     current_hash = appliance_snapshot_hash(snapshot_payload)
     baseline_hash = str((baseline or {}).get("snapshot_hash") or "")
+    if unit_id == "ca" and baseline_hash:
+        previous_payload = {
+            "unit_id": unit_id,
+            "summary": (baseline or {}).get("summary"),
+            "config_path": (baseline or {}).get("config_path"),
+            "config_preview": str((baseline or {}).get("config_preview") or ""),
+            "snapshot_marker": None,
+        }
+        # Honor a legacy hash only when the stored snapshot proves its original binding.
+        # Compare equivalent expiry encodings without rewriting the durable baseline.
+        original_hash = appliance_snapshot_hash(previous_payload)
+        previous_payload["config_preview"] = ca_apply_comparison_preview(previous_payload["config_preview"])
+        comparison_hash = appliance_snapshot_hash(previous_payload)
+        baseline_hash = comparison_hash if baseline_hash in {original_hash, comparison_hash} else ""
     runtime_pending = False
     if protected_esxi:
         # A dry run can advance the display baseline, but recovery must remain
@@ -14491,6 +14576,26 @@ def execute_traffic_publishing_pair(
     } for unit in units]
 
 
+def guard_ca_apply_publication(db: Session, unit: dict[str, Any]) -> None:
+    """Serialize native CA publication and acknowledge only the executed public intent.
+
+    Args:
+        db: Active transaction retained by the caller through publication or baseline commit.
+        unit: Captured CA unit whose public payload must still match persisted intent.
+
+    Raises:
+        ApplianceApplyJobError: If another publication or desired edit superseded this unit.
+    """
+    acquire_network_objects_write_lock(db)
+    db.flush()
+    db.expire_all()
+    settings = db.scalar(select(CaSettings))
+    certificates = db.scalars(select(CaCertificate).order_by(CaCertificate.common_name)).all()
+    current = render_ca_apply_payload(settings, certificates, include_private_keys=False, profiles=db.scalars(select(CaProfile)).all()) if settings else None
+    if current is None or ca_apply_comparison_preview(redact_config_preview(current)) != ca_apply_comparison_preview(unit["config_preview"]):
+        raise ApplianceApplyJobError("CA publication changed; preserve its pending baseline and submit again.")
+
+
 def execute_appliance_apply_unit(
     unit: dict[str, Any],
     *,
@@ -14566,6 +14671,12 @@ def execute_appliance_apply_unit(
             ],
         )
     elif unit_id == "appliance_settings":
+        if not adapter.dry_run:
+            if db is None:
+                raise ApplianceApplyJobError("Native Settings publication requires an active database transaction.")
+            # Retain admission through native nginx publication and the executed
+            # Settings baseline commit; console acknowledgement shares this writer.
+            acquire_network_objects_write_lock(db)
         settings = context["appliance_settings"]
         config_path = settings.config_path
         if not adapter.dry_run:
@@ -14650,9 +14761,13 @@ def execute_appliance_apply_unit(
             ]
         )
     elif unit_id == "ca":
+        if not adapter.dry_run:
+            if db is None:
+                raise ApplianceApplyJobError("Native CA publication requires an active database transaction.")
+            guard_ca_apply_publication(db, unit)
         results = run_secret_config_steps(
             CA_STAGED_CONFIG_PATH,
-            render_ca_apply_payload(context["ca_settings"], context["ca_certificates"], include_private_keys=True),
+            render_ca_apply_payload(context["ca_settings"], context["ca_certificates"], include_private_keys=True, profiles=context["ca_profiles"]),
             lambda config_path: [
                 lambda: adapter.validate_ca_config(config_path),
                 lambda: adapter.apply_ca_config(config_path),
@@ -14853,6 +14968,10 @@ def execute_management_handoff(
         The group result and one truthful result per bundled apply unit.
     """
     adapter = adapter or SystemAdapter()
+    if not adapter.dry_run:
+        # Admit before staging or native publication. The caller retains this
+        # transaction through the bundled executed-baseline commit.
+        acquire_network_objects_write_lock(db)
     network = units_by_id["network"]
     settings = units_by_id["appliance_settings"]
     firewall = units_by_id["firewall"]
@@ -14946,7 +15065,7 @@ def execute_management_handoff(
                 render_ca_apply_payload(
                     ca_context_value["ca_settings"],
                     ca_context_value["ca_certificates"],
-                    include_private_keys=True,
+                    include_private_keys=True, profiles=ca_context_value["ca_profiles"],
                 ),
             )
             manifest = {
@@ -15179,20 +15298,39 @@ def initialize_factory_appliance_apply_baseline(db: Session) -> bool:
     settings = get_settings()
     if settings.environment != "appliance":
         return False
-    if setting_value(db, APPLIANCE_APPLY_BASELINES_KEY):
-        return False
+    raw_baselines = setting_value(db, APPLIANCE_APPLY_BASELINES_KEY)
+    published_ca = False
+    if raw_baselines:
+        # First-boot HTTPS publishes CA before application startup. Preserve that
+        # executed snapshot while initializing the remaining factory metadata.
+        try:
+            existing = json.loads(raw_baselines)
+        except json.JSONDecodeError:
+            return False
+        if (
+            not isinstance(existing, dict)
+            or set(existing) != {"ca"}
+            or not isinstance(existing["ca"], dict)
+            or not isinstance(existing["ca"].get("config_preview"), str)
+            or not existing["ca"]["config_preview"]
+        ):
+            return False
+        published_ca = True
     if _has_operator_appliance_activity(db):
         return False
 
     _mark_provisioned_bootstrap_admin_applied(db)
     units = appliance_apply_units(db)
-    selected_ids = {unit["id"] for unit in units if unit["id"] != "ntpd"}
+    omitted_ids = {"ntpd", "ca"} if published_ca else {"ntpd"}
+    selected_ids = {unit["id"] for unit in units if unit["id"] not in omitted_ids}
     update_appliance_apply_baselines(db, units, selected_ids)
     db.commit()
-    omitted = len(units) - len(selected_ids)
+    omitted = sum(unit["id"] == "ntpd" for unit in units)
     detail = f"{len(selected_ids)} factory desired-state units baselined without host mutation"
     if omitted:
         detail += f"; {omitted} unit(s) omitted pending initial Apply"
+    if published_ca:
+        detail += "; executed first-boot CA baseline preserved"
     record_audit(
         db,
         actor="system",
@@ -16952,9 +17090,13 @@ def run_appliance_apply_job(job_id: str, *, force_real: bool = False) -> None:
                 )
                 job.progress_percent = min(99, int((index / total_steps) * 100))
                 job.result = json.dumps({**current_payload, "units": unit_results}, indent=2)
+                settings_baseline_recorded = False
                 if unit["id"] == "appliance_settings" and isinstance(management_status_transition, dict):
-                    # The helper's three-second restart timer is already running. Make the
-                    # confirmed transition and completed step durable before reconciliation.
+                    # The helper's restart timer is running. Persist the exact executed
+                    # baseline with the transition before releasing publication admission.
+                    if result["success"]:
+                        update_appliance_apply_baselines(db, [unit], {"appliance_settings"})
+                        settings_baseline_recorded = True
                     db.commit()
                 prune_network_boot_media = False
                 if result["success"]:
@@ -16993,7 +17135,7 @@ def run_appliance_apply_job(job_id: str, *, force_real: bool = False) -> None:
                     db.expire_all()
                     refreshed_units = appliance_apply_units(db, reconcile=False)
                     applied_unit = next((candidate for candidate in refreshed_units if candidate["id"] == unit["id"]), unit)
-                    if unit["id"] in {"network", "dnsmasq", "appliance_settings"}:
+                    if unit["id"] in {"network", "dnsmasq", "appliance_settings", "ca"}:
                         # Commit exactly the executed intent, including when desired
                         # state changed while native address readiness was running.
                         applied_unit = unit
@@ -17026,9 +17168,14 @@ def run_appliance_apply_job(job_id: str, *, force_real: bool = False) -> None:
                         # task can then discover and replay those listeners.
                         deferred_ca_baseline = applied_unit
                     else:
-                        update_appliance_apply_baselines(db, [applied_unit], {unit["id"]})
+                        if unit["id"] == "ca" and not result.get("dry_run"):
+                            guard_ca_apply_publication(db, applied_unit)
+                        if not settings_baseline_recorded:
+                            update_appliance_apply_baselines(db, [applied_unit], {unit["id"]})
                         ca_reload_units.discard(unit["id"])
                         if deferred_ca_baseline is not None and not ca_reload_units:
+                            if not result.get("dry_run"):
+                                guard_ca_apply_publication(db, deferred_ca_baseline)
                             update_appliance_apply_baselines(db, [deferred_ca_baseline], {"ca"})
                             deferred_ca_baseline = None
                 else:

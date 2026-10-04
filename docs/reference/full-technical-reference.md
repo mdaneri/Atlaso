@@ -507,7 +507,7 @@ pull-request runs use separate concurrency groups, preventing a delayed diagnost
 publisher. This bridge is required because GitHub does not associate an ordinary `workflow_dispatch` check suite with
 the pull request even when it runs on the same commit.
 
-The Python test job has a bounded 45-minute runtime budget and installs the exact npm dependency tree from
+The Python test job has a bounded 90-minute runtime budget and installs the exact npm dependency tree from
 `package-lock.json` before running pytest. The budget accommodates the canonical suite's normal growth while still
 terminating a stalled run. Repository policy tests invoke the shared Markdown rendering helper, so their `markdown-it`
 runtime must be available inside the isolated Python job rather than depending on setup performed by the separate

@@ -958,3 +958,120 @@ def test_managed_ca_specs_include_portal_https_certificate(client):
     assert ntp_nts.ip_addresses == ["192.168.87.33"]
     assert ntp_nts.cert_path == "/etc/atlaso/ntp/certs/ntp.atlaso.internal.crt"
     assert ntp_nts.key_path == "/etc/atlaso/ntp/certs/ntp.atlaso.internal.key"
+
+
+@pytest.mark.parametrize("missing_optional", [False, True])
+def test_guarded_certificate_issuance_keeps_writer_transaction_and_saved_depot_state(client, missing_optional):
+    """Issue real certificates without committing incidental service reconciliation.
+
+    Args:
+        client: Initialized database fixture.
+        missing_optional: Remove an optional service row before guarded issuance.
+    """
+    from sqlalchemy import delete, select
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import KmsSettings, User, VcfOfflineDepotSettings
+    from atlaso.app.services.network_objects import acquire_network_objects_write_lock
+    from atlaso.app.ui import VCF_DEPOT_DEFAULT_USERNAME, ensure_ca_state
+
+    with SessionLocal() as db:
+        db.scalar(select(CaSettings)).enabled = True
+        depot = db.scalar(select(VcfOfflineDepotSettings))
+        if depot is None:
+            depot = VcfOfflineDepotSettings()
+            db.add(depot)
+        depot.http_user_id = None
+        if db.scalar(select(User).where(User.username == VCF_DEPOT_DEFAULT_USERNAME)) is None:
+            db.add(User(username=VCF_DEPOT_DEFAULT_USERNAME))
+        if missing_optional:
+            db.execute(delete(KmsSettings))
+        db.commit()
+        acquire_network_objects_write_lock(db)
+        transaction = db.get_transaction()
+        assert ensure_ca_state(db, commit=False) == []
+        assert db.get_transaction() is transaction
+        assert depot.http_user_id is None
+        assert db.scalar(select(CaCertificate).where(CaCertificate.managed_owner == "appliance:https")).status == "issued"
+        if missing_optional:
+            assert db.scalar(select(KmsSettings)) is None
+        db.rollback()
+
+
+def test_ca_apply_preview_is_stable_after_sqlite_expiry_reload():
+    """UTC-aware issuance dates and SQLite's naive UTC dates share one applied snapshot."""
+    from datetime import datetime, timezone
+
+    instant = datetime(2030, 4, 5, 6, 7, 8, tzinfo=timezone.utc)
+    ca = CaSettings(enabled=True, storage_path="/etc/atlaso/ca", publish_crl=False, root_expires_at=instant)
+    leaf = CaCertificate(common_name="management.example.test", enabled=True, status="issued",
+                         certificate_pem="synthetic public certificate", expires_at=instant)
+    issued = render_ca_apply_payload(ca, [leaf], include_private_keys=False)
+    ca.root_expires_at = leaf.expires_at = instant.replace(tzinfo=None)
+    assert render_ca_apply_payload(ca, [leaf], include_private_keys=False) == issued
+    # The pre-upgrade SQLite preview used naive UTC; its applied snapshot remains valid.
+    payload = json.loads(issued)
+    assert payload["root"]["expires_at"] == payload["certificates"][0]["expires_at"] == "2030-04-05T06:07:08"
+    leaf.common_name = "pending.example.test"
+    assert render_ca_apply_payload(ca, [leaf], include_private_keys=False) != issued
+
+
+@pytest.mark.parametrize("offset", ["", "+00:00", "-07:00"])
+def test_ca_baseline_comparison_preserves_legacy_database_expiry_encoding(offset):
+    """Equivalent persisted expiry dates do not trigger CA Apply after an upgrade.
+
+    Args:
+        offset: Legacy SQLite, PostgreSQL UTC, or equivalent non-UTC timestamp encoding.
+    """
+    from datetime import datetime, timedelta, timezone
+
+    from atlaso.app.ui import (
+        appliance_snapshot_hash,
+        make_appliance_apply_unit,
+        redact_config_preview,
+    )
+
+    instant = datetime(2030, 4, 5, 6, 7, 8, tzinfo=timezone.utc)
+    ca = CaSettings(enabled=True, storage_path="/etc/atlaso/ca", publish_crl=False, root_expires_at=instant)
+    leaf = CaCertificate(common_name="management.example.test", enabled=True, status="issued",
+                         certificate_pem="synthetic public certificate", fingerprint="original", expires_at=instant)
+    current = render_ca_apply_payload(ca, [leaf], include_private_keys=False)
+    legacy = json.loads(redact_config_preview(current))
+    expiry = "2030-04-05T06:07:08" + offset
+    if offset == "-07:00":
+        expiry = "2030-04-04T23:07:08-07:00"
+    legacy["root"]["expires_at"] = legacy["certificates"][0]["expires_at"] = expiry
+    previous = json.dumps(legacy, indent=2, sort_keys=True) + "\n"
+    snapshot = {"unit_id": "ca", "summary": ["CA"], "config_path": "/ca.json",
+                "config_preview": previous, "snapshot_marker": None}
+    baseline = {"summary": ["CA"], "config_path": "/ca.json", "config_preview": previous,
+                "snapshot_hash": appliance_snapshot_hash(snapshot)}
+    original = dict(baseline)
+
+    def unit(preview):
+        """Construct the real pending-state comparison without publishing files.
+
+        Args:
+            preview: Current captured CA intent.
+        """
+        return make_appliance_apply_unit(unit_id="ca", label="CA", page_url="/ca", context={},
+                                         summary=["CA"], validation_errors=[], config_path="/ca.json",
+                                         config_preview=preview, baseline=baseline)
+
+    unchanged = unit(current)
+    assert unchanged["changed"] is False
+    assert unchanged["config_diff"] == ""
+    assert baseline == original
+    ca.root_expires_at = instant + timedelta(seconds=1)
+    assert unit(render_ca_apply_payload(ca, [leaf], include_private_keys=False))["changed"] is True
+    ca.root_expires_at = instant
+    leaf.expires_at = instant + timedelta(seconds=1)
+    assert unit(render_ca_apply_payload(ca, [leaf], include_private_keys=False))["changed"] is True
+    leaf.expires_at = instant
+    leaf.fingerprint = "pending"
+    assert unit(render_ca_apply_payload(ca, [leaf], include_private_keys=False))["changed"] is True
+    snapshot["summary"] = baseline["summary"] = ["different intent"]
+    baseline["snapshot_hash"] = appliance_snapshot_hash(snapshot)
+    assert unit(current)["changed"] is True
+    baseline["snapshot_hash"] = "invalid-binding"
+    assert unit(current)["changed"] is True

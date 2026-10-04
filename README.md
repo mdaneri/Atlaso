@@ -135,3 +135,5 @@ status checks alongside that heartbeat. See [Contributing](CONTRIBUTING.md) for 
 
 The documentation describes the latest supported Atlaso release. Pages marked **Roadmap** or **Historical** provide
 context and do not describe current appliance behavior.
+
+For local appliance recovery, see the [appliance console guide](docs/operate/appliance-console.md).
