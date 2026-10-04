@@ -4273,6 +4273,9 @@ authorization result between menus.</p>
 <li>Verify that <code>http://&lt;management-address&gt;/</code> redirects to HTTPS from another machine.</li>
 <li>Verify that <code>https://&lt;management-address&gt;/openapi.json</code> returns HTTP 200 from another machine.</li>
 </ol>
+<p>Management recovery rejects unrelated pending Certificate Authority, Appliance Settings, Firewall, or Public Services
+changes that already have an applied baseline. Resolve those changes through Appliance Apply before retrying. If protected
+settings change while recovery is being submitted, the console stops instead of including the new edits.</p>
 <p>The editor supports IPv4 DHCP or static configuration. IPv6 can be disabled, automatic through RA/SLAAC, or static.
 Static IPv4 and IPv6 gateways must be on-link and cannot equal their interface address; an IPv6 gateway may instead be
 link-local.</p>

@@ -4113,8 +4113,7 @@ changes</strong>.</p>
 <li>validation errors resolved for every unit you intend to submit; and</li>
 <li>no other Appliance Apply task pending or running.</li>
 </ul>
-<p>If a change can interrupt management access, use the local appliance console or VMware console as a recovery path
-before submitting it.</p>
+<p>Before submitting a change that can interrupt management access, prepare the local appliance or VMware console.</p>
 <h2 id="understand-the-workflow">Understand the workflow<a class="headerlink" href="#understand-the-workflow" title="Permanent link">&para;</a></h2>
 <pre class="mermaid"><code>flowchart LR
     A[Edit desired state] --&gt; B[Review pending units]
@@ -4173,6 +4172,9 @@ also validate listener conflicts. See <a href="../traffic-publishing/">Traffic P
 <li>Clear the checkbox for a valid unit that should remain pending for a later run.</li>
 </ol>
 <p>Valid changed units are selected by default; invalid units are not. Unselected units remain pending after submission.</p>
+<p>Select <strong>Network</strong> to verify DHCP/SLAAC listeners and <strong>DNS/DHCP</strong> to publish generated DNS, even after startup renewal.
+If applied listener ownership is unproven, apply the named service first. Inspect locked pending Certificate Authority,
+Firewall, Appliance Settings, and Public Services changes; clear Network to defer them. Omitted dependencies block submission.</p>
 <div class="admonition warning">
 <p class="admonition-title">Warning</p>
 <p>Review related units together when a feature crosses service boundaries; partial application can leave behavior unavailable.</p>
@@ -4253,8 +4255,7 @@ restart occurs after that database commit, startup idempotently acknowledges the
 claiming a rollback. A failed task whose helper acknowledgement or rollback is not proven retains the global Apply lock
 until startup or immediate exception recovery reconciles that state, even when an older task payload lacks the newer
 pending marker. Review the task before resubmitting.</p>
-<p>If a selected unit changed after submission but before execution, Atlaso fails closed and asks for a new review. This
-prevents a queued task from applying state that the administrator did not inspect.</p>
+<p>If a selected unit changes before execution, Atlaso rejects the task and asks for a new review.</p>
 <h2 id="safety-boundaries">Safety boundaries<a class="headerlink" href="#safety-boundaries" title="Permanent link">&para;</a></h2>
 <ul>
 <li><code>/ui/management/appliance-apply</code> is the only ordinary desired-state host-mutation workflow. The confirmed complete

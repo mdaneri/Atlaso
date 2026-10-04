@@ -4201,6 +4201,26 @@ unit through Appliance Apply.</p>
 <p><em>Figure: DNS in the verified clean-appliance desktop state.</em></p>
 <!-- END GENERATED INTERFACE OVERVIEW -->
 
+<p>Atlaso-owned service records follow applied listener-address changes automatically. A Network apply includes the
+generated DNS dependency for enabled local DNS, proves the new listener is ready, publishes its A/AAAA targets and
+CNAME aliases, and checks DNS answers before completing. The separate VCF Depot nginx listener, including a custom port,
+also moves and passes socket readiness before DNS publication; unrelated pending Depot settings remain pending.
+Network changes also protect active DHCP/SLAAC service sources when configured addresses are unchanged, because native
+addresses can change during reconfiguration. Dynamic Public Services listeners use the same protected handoff even when
+DNS is disabled or the listener has no generated DNS record. The same DNS-independent protection covers applied dynamic
+NTP, LDAP, KMS, and standalone Depot listeners; successful handoffs retain the verified native address observations.
+Readback checks retired owned names as well as replacement records. Static handoffs verify the submitted records and
+retain that verified ownership even if service identities are edited during readiness checks. Authoritative DNS is queried
+through the captured client-facing listeners and its isolated backend, alongside recursive loopback. Appliance-local
+resolution must also return a verified service address through <code>getent hosts</code>, and retired generated names must stop
+resolving unless replaced by the captured candidate; stale NSS answers trigger rollback.
+A failed handoff or DNS check restores the previous Network
+and DNS state together. Manual records and unrelated pending DNS edits remain unchanged; custom service hostnames keep
+their identity while their owned address targets move.</p>
+<p>This covers the appliance FQDN, CA portal, VCF Offline Depot, OIDC, LDAP, NTP/NTS, KMS/KMIP, ESX Storage, VCF Private
+Registry, and ESXi PXE service endpoints. Console setup and Web UI/API changes use the same global Apply reconciliation;
+restore and startup refresh the same desired service aliases. Client DHCP reservations and lab inventory names are
+separate identities and are not rewritten as appliance service targets.</p>
 <p>Select <strong>+ Domain</strong> to create a forward domain through the guided identity, enablement, and review steps. Each domain
 identity includes a full-width multiline description. The selected domain tab presents that description as its heading
 and keeps the DNS suffix in the supporting line. Each domain places its direct enablement switch at the right of the
