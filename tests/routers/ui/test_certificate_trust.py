@@ -301,6 +301,7 @@ def test_public_ca_root_page_is_unauthenticated(client):
         ).scalar_one()
         eth2.role = "access"
         eth2.ip_cidr = "192.168.87.32/24"
+        eth2.ipv6_enabled = True
         eth2.ipv6_cidr = "fd00:87::32/64"
         db.commit()
 

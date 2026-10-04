@@ -1153,3 +1153,125 @@ def test_render_network_config_includes_dual_stack_physical_and_vlan_cidrs():
     assert "vlan=eth1.20" in config
     assert "  ip_cidr=192.168.20.1/24" in config
     assert "  ipv6_cidr=2001:db8:20::1/64" in config
+
+
+def test_vlan_service_bindings_persist_applied_dns_alias_after_parent_rename(monkeypatch, tmp_path):
+    """Carry VLAN-backed service DNS provenance across a host NIC rename.
+
+    Args:
+        monkeypatch: Isolated database and host inventory substitutions.
+        tmp_path: Private pytest directory for the temporary database.
+    """
+    from sqlalchemy import select
+
+    import atlaso.app.database as database
+    from atlaso.app.config import get_settings
+    from atlaso.app.models import LdapSettings, NtpSettings, OidcProviderSettings
+
+    db_path = tmp_path / "atlaso-vlan-alias.db"
+    monkeypatch.setenv("ATLASO_DATABASE_URL", f"sqlite:///{db_path}")
+    monkeypatch.setenv("ATLASO_SECRET_KEY", "test-secret-key-with-enough-length")
+    monkeypatch.setenv("ATLASO_BOOTSTRAP_ADMIN_PASSWORD", "atlaso-admin")
+    get_settings.cache_clear()
+    database.engine.dispose()
+    database.engine = database.create_engine(
+        f"sqlite:///{db_path}",
+        connect_args={"check_same_thread": False},
+    )
+    database.SessionLocal.configure(bind=database.engine)
+    database.init_db()
+
+    monkeypatch.setattr(
+        "atlaso.app.services.networking.discover_host_physical_interfaces",
+        lambda: [HostPhysicalInterface(
+            name="eth1",
+            mac_address="00:15:5d:01:1d:15",
+            driver="hv_netvsc",
+            speed="10000 Mbps",
+            host_ip_cidr="192.168.50.1/24",
+            host_mtu=1500,
+            host_admin_state="up",
+            oper_state="up",
+        )],
+    )
+
+    old_vlan = "eth2.50"
+    new_vlan = "eth1.50"
+    service_dns_records = [
+        {
+            "hostname": hostname,
+            "record_type": "A",
+            "address": "192.168.50.1",
+            "description": description,
+            "source_interface": old_vlan,
+        }
+        for hostname, description in (
+            ("time.atlaso.internal", "Created from NTP/NTS endpoint."),
+            ("ldap.atlaso.internal", "Managed by Atlaso LDAP service"),
+            ("oidc.atlaso.internal", "Created from OpenID Connect provider endpoint."),
+        )
+    ]
+    baseline_network = "\n".join([
+        "[physical_interfaces]",
+        "interface=eth1",
+        "role=access",
+        "mode=trunk",
+        "admin_state=up",
+        "interface=eth2",
+        "role=access",
+        "mode=trunk",
+        "admin_state=up",
+        "[vlan_interfaces]",
+        "vlan=eth2.50",
+        "parent=eth2",
+        "vlan_id=50",
+    ])
+
+    with database.SessionLocal() as db:
+        db.add_all([
+            PhysicalInterface(
+                name="eth1", mac_address="00:15:5d:01:1d:14", role="access", mode="trunk",
+                inventory_source="host", desired_state_source="user",
+            ),
+            PhysicalInterface(
+                name="eth2", mac_address="00:15:5d:01:1d:15", role="access", mode="trunk",
+                inventory_source="host", desired_state_source="user",
+            ),
+            VlanInterface(
+                parent_interface="eth2", name=old_vlan, vlan_id=50, ip_cidr="192.168.50.1/24",
+                role="access", enabled=True,
+            ),
+            NtpSettings(enabled=True, listen_interface=old_vlan, listen_address="192.168.50.1"),
+            LdapSettings(enabled=True, listen_interface=old_vlan, listen_address="192.168.50.1"),
+            OidcProviderSettings(enabled=True, listen_interface=old_vlan, listen_address="192.168.50.1"),
+            Setting(
+                key="appliance_apply.baselines.v1",
+                value=json.dumps({
+                    "network": {"config_preview": baseline_network, "physical_interface_aliases": {}},
+                    "dnsmasq": {
+                        "config_preview": "listen-address=127.0.0.1\n",
+                        "dns_enabled": True,
+                        "service_dns_records": service_dns_records,
+                    },
+                }),
+            ),
+        ])
+        db.commit()
+
+        sync_host_physical_interfaces(db)
+
+        for model in (NtpSettings, LdapSettings, OidcProviderSettings):
+            settings = db.scalar(select(model))
+            assert settings.listen_interface == new_vlan
+        baselines = json.loads(
+            db.scalar(select(Setting).where(Setting.key == "appliance_apply.baselines.v1")).value
+        )
+        aliases = baselines["network"]["physical_interface_aliases"]
+        assert aliases[old_vlan] == new_vlan
+        assert aliases["eth2"] == "eth1"
+        assert {
+            aliases.get(record["source_interface"], record["source_interface"])
+            for record in baselines["dnsmasq"]["service_dns_records"]
+        } == {new_vlan}
+
+    get_settings.cache_clear()

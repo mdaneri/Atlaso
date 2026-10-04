@@ -1514,15 +1514,27 @@ def test_console_management_correction_reconciles_firewall_bootstrap_and_setting
         monkeypatch: Pytest fixture used to replace dependencies for the test.
     """
     events: list[tuple[str, object]] = []
+    expected_snapshots = {
+        "network": "network-snapshot",
+        "firewall": "firewall-snapshot",
+        "ca": "ca-snapshot",
+        "appliance_settings": "settings-snapshot",
+        "public_services": "public-services-snapshot",
+    }
+    monkeypatch.setattr(
+        appliance_console,
+        "_management_handoff_snapshot_hashes",
+        lambda _db: expected_snapshots,
+    )
 
-    def fake_submit(unit_ids, **_kwargs):
+    def fake_submit(unit_ids, **kwargs):
         """Record one scoped console apply submission.
 
         Args:
             unit_ids: Apply unit identifiers selected by the console.
-            **_kwargs: Additional submission options ignored by the test.
+            **kwargs: Submission options supplied by the console recovery flow.
         """
-        events.append(("apply", set(unit_ids)))
+        events.append(("apply", (set(unit_ids), kwargs)))
         return f"job_{len([event for event in events if event[0] == 'apply'])}"
 
     monkeypatch.setattr(appliance_console, "_submit_console_apply", fake_submit)
@@ -1544,11 +1556,269 @@ def test_console_management_correction_reconciles_firewall_bootstrap_and_setting
 
     assert result == "tasks job_1 and job_2"
     assert events == [
-        ("apply", {"network", "firewall"}),
+        (
+            "apply",
+            (
+                {"network", "firewall"},
+                {"expected_management_snapshots": expected_snapshots},
+            ),
+        ),
         ("recover", "Network and Firewall were applied"),
-        ("apply", {"appliance_settings"}),
+        (
+            "apply",
+            (
+                {"appliance_settings"},
+                {"expected_management_snapshots": {"appliance_settings": "settings-snapshot"}},
+            ),
+        ),
         ("recover", "Appliance Settings were applied"),
     ]
+
+
+@pytest.mark.parametrize("concurrent_edit", [False, True])
+def test_console_management_projects_settings_snapshot_from_dhcp_handoff_evidence(client, monkeypatch, concurrent_edit):
+    """Allow only the captured Settings projection proven by DHCP handoff evidence.
+
+    Args:
+        client: HTTP test client that initializes the appliance database.
+        monkeypatch: Pytest fixture used to replace helper execution.
+        concurrent_edit: Whether an unrelated Settings edit races with recovery.
+    """
+    from sqlalchemy import select
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import ApplianceSettings, Job, JobStatus, PhysicalInterface
+    from atlaso.app.ui import (
+        appliance_apply_units,
+        load_appliance_apply_baselines,
+        save_appliance_apply_baselines,
+    )
+
+    with SessionLocal() as db:
+        interface = db.scalar(select(PhysicalInterface).where(PhysicalInterface.role == "management"))
+        settings = db.scalar(select(ApplianceSettings).order_by(ApplianceSettings.id))
+        assert interface is not None
+        assert settings is not None
+        interface.host_ip_cidr = "192.0.2.10/24"
+        settings.web_terminal_enabled = True
+        settings.web_terminal_interfaces_json = "[]"
+        db.flush()
+        settings_unit = next(
+            unit for unit in appliance_apply_units(db, reconcile=False)
+            if unit["id"] == "appliance_settings"
+        )
+        baselines = load_appliance_apply_baselines(db)
+        baselines["appliance_settings"] = {
+            key: settings_unit[key]
+            for key in ("snapshot_hash", "config_preview", "config_path", "summary")
+        }
+        save_appliance_apply_baselines(db, baselines)
+        db.commit()
+
+    calls = 0
+    original_submit = appliance_console._submit_console_apply
+    observed_expected: list[str] = []
+
+    def submit(unit_ids, *, expected_management_snapshots=None):
+        """Persist helper-proven network evidence and inspect Settings recovery.
+
+        Args:
+            unit_ids: Unit identifiers selected by console recovery.
+            expected_management_snapshots: Captured unit hashes to guard.
+        """
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            with SessionLocal() as db:
+                interface = db.scalar(select(PhysicalInterface).where(PhysicalInterface.role == "management"))
+                assert interface is not None
+                interface.host_ip_cidr = "192.0.2.21/24"
+                db.add(Job(
+                    id="console-network-handoff",
+                    type="appliance-apply",
+                    status=JobStatus.SUCCEEDED.value,
+                    created_by="test",
+                    progress_percent=100,
+                    result=json.dumps({
+                        "management_handoff": True,
+                        "units": [{
+                            "unit_id": "network",
+                            "management_handoff": {"candidate_addresses": ["192.0.2.21"]},
+                        }],
+                    }),
+                ))
+                db.commit()
+            return "console-network-handoff"
+
+        assert unit_ids == {"appliance_settings"}
+        assert expected_management_snapshots is not None
+        expected = expected_management_snapshots["appliance_settings"]
+        observed_expected.append(expected)
+        if concurrent_edit:
+            with SessionLocal() as db:
+                settings = db.scalar(select(ApplianceSettings).order_by(ApplianceSettings.id))
+                assert settings is not None
+                settings.vmware_ceip_enabled = not settings.vmware_ceip_enabled
+                db.commit()
+            return original_submit(unit_ids, expected_management_snapshots=expected_management_snapshots)
+        with SessionLocal() as db:
+            live = next(
+                unit for unit in appliance_apply_units(db, reconcile=False)
+                if unit["id"] == "appliance_settings"
+            )
+        assert live["snapshot_hash"] == expected
+        settings_preview = json.loads(live["config_preview"])
+        assert settings_preview["management_ip"] == "192.0.2.21"
+        assert settings_preview["web_terminal_addresses"] == ["192.0.2.21"]
+        return "console-settings-handoff"
+
+    monkeypatch.setattr(appliance_console, "_submit_console_apply", submit)
+    monkeypatch.setattr(appliance_console, "_recover_management_plane", lambda _stage: None)
+
+    if concurrent_edit:
+        with pytest.raises(ConsoleOperationError, match="changed.*Appliance Settings"):
+            appliance_console.configure_management(
+                "dhcp", "", "", "disabled", "", "", "192.0.2.53",
+            )
+    else:
+        assert appliance_console.configure_management(
+            "dhcp", "", "", "disabled", "", "", "192.0.2.53",
+        ) == "tasks console-network-handoff and console-settings-handoff"
+
+    assert calls == 2
+    assert observed_expected
+
+
+def test_captured_console_apply_preserves_optional_listener_interface_metadata():
+    """Retain the applied listener identity in captured apply evidence when present."""
+    unit = {
+        "id": "kms",
+        "label": "KMIP",
+        "snapshot_hash": "snapshot",
+        "summary": [],
+        "validation_errors": [],
+        "validation_warnings": [],
+        "config_path": "/etc/atlaso/kmip.json",
+        "config_preview": "{}",
+        "config_diff": "",
+        "changed": True,
+        "applied_listener_interface": "eth2",
+        "applied_listener_sources": {"192.0.2.40": "eth2"},
+    }
+
+    _selected, payload = appliance_console._captured_apply_payload([unit], {"kms"})
+
+    assert payload["captured_units"][0]["applied_listener_interface"] == "eth2"
+    assert payload["captured_units"][0]["applied_listener_sources"] == {"192.0.2.40": "eth2"}
+
+
+def test_console_management_rejects_pending_handoff_dependency_before_mutation(client, monkeypatch):
+    """Leave unrelated protected edits pending instead of capturing them in console recovery.
+
+    Args:
+        client: HTTP test client that initializes the appliance database.
+        monkeypatch: Pytest fixture used to observe that no apply is submitted.
+    """
+    from sqlalchemy import select
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import CaSettings, PhysicalInterface
+    from atlaso.app.ui import (
+        appliance_apply_units,
+        load_appliance_apply_baselines,
+        save_appliance_apply_baselines,
+    )
+
+    with SessionLocal() as db:
+        ca = db.scalar(select(CaSettings).order_by(CaSettings.id))
+        interface = db.scalar(
+            select(PhysicalInterface).where(PhysicalInterface.role == "management").order_by(PhysicalInterface.id)
+        )
+        assert ca is not None
+        assert interface is not None
+        ca_unit = next(unit for unit in appliance_apply_units(db, reconcile=False) if unit["id"] == "ca")
+        baselines = load_appliance_apply_baselines(db)
+        baselines["ca"] = {
+            "snapshot_hash": ca_unit["snapshot_hash"],
+            "config_preview": ca_unit["config_preview"],
+            "config_path": ca_unit["config_path"],
+            "summary": ca_unit["summary"],
+        }
+        save_appliance_apply_baselines(db, baselines)
+        previous_network = (interface.ipv4_method, interface.ip_cidr, interface.gateway)
+        ca.enabled = not ca.enabled
+        db.commit()
+
+    submissions: list[set[str]] = []
+    monkeypatch.setattr(
+        appliance_console, "_submit_console_apply",
+        lambda unit_ids: submissions.append(unit_ids),
+    )
+
+    with pytest.raises(ConsoleOperationError, match="Certificate Authority.*Resolve them through Appliance Apply"):
+        appliance_console.configure_management(
+            "static", "192.0.2.20/24", "192.0.2.1", "disabled", "", "", "192.0.2.53",
+        )
+
+    with SessionLocal() as db:
+        interface = db.scalar(
+            select(PhysicalInterface).where(PhysicalInterface.role == "management").order_by(PhysicalInterface.id)
+        )
+        assert interface is not None
+        assert (interface.ipv4_method, interface.ip_cidr, interface.gateway) == previous_network
+    assert submissions == []
+
+
+@pytest.mark.parametrize(
+    ("unit_id", "label"),
+    [
+        ("ca", "Certificate Authority"),
+        ("appliance_settings", "Appliance Settings"),
+        ("firewall", "Firewall"),
+        ("public_services", "Public Services"),
+    ],
+)
+def test_console_apply_rejects_dependency_snapshot_race_before_capture(client, monkeypatch, unit_id, label):
+    """Reject a protected edit that appears after console preflight but before capture.
+
+    Args:
+        client: HTTP test client that initializes the appliance database.
+        monkeypatch: Pytest fixture used to provide stable apply-unit snapshots.
+        unit_id: Protected dependency whose expected snapshot changed.
+        label: Human-readable dependency label shown in the error.
+    """
+    import atlaso.app.ui as ui
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Job
+    from atlaso.app.ui import MANAGEMENT_HANDOFF_UNIT_IDS
+
+    units = [
+        {
+            "id": protected_id,
+            "label": {
+                "ca": "Certificate Authority",
+                "network": "Network",
+                "firewall": "Firewall",
+                "appliance_settings": "Appliance Settings",
+                "public_services": "Public Services",
+            }[protected_id],
+            "snapshot_hash": "current-snapshot",
+            "changed": False,
+            "has_baseline": True,
+        }
+        for protected_id in MANAGEMENT_HANDOFF_UNIT_IDS
+    ]
+    monkeypatch.setattr(ui, "appliance_apply_units", lambda _db, **_kwargs: units)
+    expected = {protected_id: "current-snapshot" for protected_id in MANAGEMENT_HANDOFF_UNIT_IDS}
+    expected[unit_id] = "older-snapshot"
+
+    with pytest.raises(ConsoleOperationError, match=f"{label}.*Review it in Appliance Apply"):
+        appliance_console._submit_console_apply(
+            {"network", "firewall"}, expected_management_snapshots=expected,
+        )
+
+    with SessionLocal() as db:
+        assert db.query(Job).filter(Job.type == "appliance-apply").count() == 0
 
 
 def test_console_management_recovery_reports_the_failed_layer(monkeypatch):

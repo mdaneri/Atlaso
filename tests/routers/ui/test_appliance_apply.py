@@ -1659,7 +1659,7 @@ def test_management_handoff_keeps_dns_shutdown_after_resolver_move(client):
 
     response = client.post(
         "/appliance-apply",
-        data={"csrf": csrf, "selected_units": ["network", "dnsmasq", "appliance_settings"]},
+        data={"csrf": csrf, "selected_units": ["network", "dnsmasq", "appliance_settings", "firewall"]},
         headers={"Accept": "application/json"},
     )
 
@@ -1703,7 +1703,7 @@ def test_management_handoff_leaves_unselected_dns_record_pending(client, monkeyp
 
     response = client.post(
         "/appliance-apply",
-        data={"csrf": csrf, "selected_units": "network"},
+        data={"csrf": csrf, "selected_units": ["network", "appliance_settings"]},
         headers={"Accept": "application/json"},
     )
 
@@ -1714,9 +1714,10 @@ def test_management_handoff_leaves_unselected_dns_record_pending(client, monkeyp
         payload = json.loads(job.result or "{}")
         pending = next(unit for unit in ui.appliance_apply_units(db) if unit["id"] == "dnsmasq")
     assert payload["management_handoff"] is True
-    assert "dnsmasq" not in payload["selected_units"]
-    assert "dnsmasq" not in payload["management_handoff_units"]
-    assert "dnsmasq" in {unit["unit_id"] for unit in payload["skipped_changed_units"]}
+    assert payload["generated_dns_only"] is True
+    assert "dnsmasq" in payload["management_handoff_units"]
+    captured_dns = next(unit for unit in payload["captured_units"] if unit["unit_id"] == "dnsmasq")
+    assert "pending.atlaso.internal" not in captured_dns["config_preview"]
     assert pending["changed"] is True
 
 
@@ -2042,6 +2043,8 @@ def test_management_handoff_timeout_stops_and_recovers_indeterminate_helper(monk
     ]
     units["network"]["removed_vlan_interfaces"] = []
     units["ca"]["context"] = {"ca_settings": object(), "ca_certificates": []}
+    monkeypatch.setattr(ui, "service_dns_identity_snapshot", lambda _db: [])
+    monkeypatch.setattr(ui, "owned_service_dns_records", lambda _db, _config: [])
     monkeypatch.setattr(ui, "load_appliance_apply_baselines", lambda _db: {"appliance_settings": {}})
     staged: dict[str, str] = {}
 
