@@ -1576,6 +1576,7 @@ class PhysicalInterfaceResponse(BaseModel):
             resource.
         host_ipv6_cidr: Validated network or address value for host ipv6 cidr in this physical
             interface resource.
+        host_ipv6_cidrs: Preferred automatic IPv6 addresses retained during prefix renumbering.
         host_mtu: Returned host mtu value for this physical interface resource.
         host_admin_state: Returned host admin state value for this physical interface resource.
         ip_cidr: Validated network or address value for ip cidr in this physical interface resource.
@@ -1609,6 +1610,7 @@ class PhysicalInterfaceResponse(BaseModel):
     speed: Annotated[str | None, Field(description='Returned speed value for this physical interface resource.')]
     host_ip_cidr: Annotated[str | None, Field(description='Validated network or address value for host ip cidr in this physical interface resource.')]
     host_ipv6_cidr: Annotated[str | None, Field(description='Validated network or address value for host ipv6 cidr in this physical interface resource.')]
+    host_ipv6_cidrs: Annotated[list[str], Field(description='Preferred automatic IPv6 addresses observed on this physical interface.')] = Field(default_factory=list)
     host_mtu: Annotated[int | None, Field(description='Returned host mtu value for this physical interface resource.')]
     host_admin_state: Annotated[str | None, Field(description='Returned host admin state value for this physical interface resource.')]
     ip_cidr: Annotated[str | None, Field(description='Validated network or address value for ip cidr in this physical interface resource.')]

@@ -1274,6 +1274,57 @@ def test_native_automatic_ipv6_observation_skips_lingering_static_and_expired_ad
 
 
 @pytest.mark.parametrize("enabled", [True, False])
+@pytest.mark.parametrize("source", [{"dynamic": True}, {"flags": ["dynamic"]}])
+def test_automatic_ipv6_renumbering_retains_every_preferred_address(enabled, source):
+    """Inventory preserves both preferred prefixes and drops a withdrawn prefix.
+
+    Args:
+        enabled: Whether IPv6 observation is permitted.
+        source: Native dynamic boolean or flags evidence.
+    """
+    from atlaso.app.services.networking import physical_ipv6_cidrs
+
+    addresses = [
+        {"family": "inet6", "local": value, "prefixlen": 64, "scope": "global", **source}
+        for value in ("2001:db8:1::10", "2001:db8:2::10")
+    ]
+    addresses.extend([
+        {"family": "inet6", "local": "2001:db8:3::10", "prefixlen": 64, "scope": "global", "deprecated": True, **source},
+        {"family": "inet6", "local": "2001:db8:4::10", "prefixlen": 64, "scope": "global", "preferred_life_time": 0, **source},
+        {"family": "inet6", "local": "2001:db8:5::10", "prefixlen": 64, "scope": "global"},
+    ])
+    row = {"ifname": "eth0", "link_type": "ether", "address": "00:15:5d:aa:bb:01", "addr_info": addresses}
+    interface = PhysicalInterface(name="eth0", mac_address=row["address"], ipv4_method="static", ipv6_enabled=enabled,
+                                  role="management", mode="access", admin_state="up", desired_state_source="console")
+    host = parse_linux_ip_interfaces(json.dumps([row]))[0]
+    expected = ("2001:db8:1::10/64", "2001:db8:2::10/64")
+    assert host.host_dynamic_ipv6_cidrs == expected
+    reconcile_host_physical_interfaces([interface], [host])
+    assert physical_ipv6_cidrs(interface) == (expected if enabled else ())
+    assert interface.ipv6_cidr is None
+    addresses[0]["preferred_life_time"] = 0
+    reconcile_host_physical_interfaces([interface], parse_linux_ip_interfaces(json.dumps([row])))
+    assert physical_ipv6_cidrs(interface) == ((expected[1],) if enabled else ())
+
+
+def test_automatic_ipv6_observation_schema_upgrade_is_additive_and_idempotent():
+    """Upgrade a legacy scalar observation without changing its stored address."""
+    from sqlalchemy import create_engine, text
+
+    from atlaso.app.database import _reconcile_interface_address_check_columns
+
+    engine = create_engine("sqlite://")
+    with engine.begin() as connection:
+        connection.execute(text("CREATE TABLE physical_interfaces (id INTEGER PRIMARY KEY, host_ipv6_cidr VARCHAR(64), check_duplicate_ip_addresses BOOLEAN)"))
+        connection.execute(text("CREATE TABLE vlan_interfaces (id INTEGER PRIMARY KEY, check_duplicate_ip_addresses BOOLEAN)"))
+        connection.execute(text("INSERT INTO physical_interfaces VALUES (1, '2001:db8::1/64', TRUE)"))
+        _reconcile_interface_address_check_columns(connection)
+        _reconcile_interface_address_check_columns(connection)
+        assert connection.execute(text("SELECT host_ipv6_cidr, host_ipv6_cidrs FROM physical_interfaces")).one() == ("2001:db8::1/64", "[]")
+    engine.dispose()
+
+
+@pytest.mark.parametrize("enabled", [True, False])
 @pytest.mark.parametrize("desired,candidate,expected", [
     (None, "2001:db8::3/64", "2001:db8::3/64"),
     (None, None, None),

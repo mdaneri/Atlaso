@@ -46,6 +46,7 @@ from atlaso.app.services.ca import (
 )
 from atlaso.app.services.network_objects import acquire_network_objects_write_lock
 from atlaso.app.services.networking import (
+    physical_ipv6_cidrs,
     render_network_config,
     sync_host_physical_interfaces,
 )
@@ -581,7 +582,7 @@ def recovery_dynamic_addresses_available(db, preview: str) -> bool:
         if path.get("ipv4_method") == "dhcp":
             required.append((4, interface.host_ip_cidr))
         if path.get("ipv6_enabled", "false").lower() == "true" and not path.get("ipv6_cidr"):
-            required.append((6, interface.host_ipv6_cidr))
+            required.extend((6, cidr) for cidr in (physical_ipv6_cidrs(interface) or (None,)))
         for family, cidr in required:
             try:
                 address = ip_interface(cidr or "")

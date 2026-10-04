@@ -1164,6 +1164,7 @@ def _preserve_management_dhcp_dns_on_static_conversion(
         ipv6_enabled=interface.ipv6_enabled,
         ipv6_cidr=interface.ipv6_cidr,
         host_ipv6_cidr=interface.host_ipv6_cidr,
+        host_ipv6_cidrs=list(interface.host_ipv6_cidrs or []),
     )
     interfaces = [
         candidate if row.name == interface.name else row

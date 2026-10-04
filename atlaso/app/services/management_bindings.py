@@ -12,6 +12,7 @@ from atlaso.app.models import PhysicalInterface, Setting, VlanInterface
 from atlaso.app.services.networking import (
     normalize_interface_mode,
     normalize_interface_role,
+    physical_ipv6_cidrs,
 )
 
 APPLIANCE_APPLY_BASELINES_KEY = "appliance_apply.baselines.v1"
@@ -145,7 +146,7 @@ def applied_management_bindings(db: Session) -> list[dict[str, str]] | None:
                     row.get("ipv6_enabled", "false").lower() == "true"
                     and not row.get("ipv6_cidr")
                 ):
-                    cidrs.append(observed.host_ipv6_cidr)
+                    cidrs.extend(physical_ipv6_cidrs(observed))
         for cidr in cidrs:
             address = _address_from_cidr(cidr)
             if not address or address in seen:

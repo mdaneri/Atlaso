@@ -89,6 +89,7 @@ from atlaso.app.services.network_objects import (  # noqa: E402 - appliance envi
 )
 from atlaso.app.services.networking import (  # noqa: E402 - appliance environment must load before configured imports.
     discover_host_physical_interfaces,
+    native_automatic_ipv6_cidrs,
     render_network_config,
 )
 
@@ -1307,11 +1308,14 @@ def _refresh_management_addresses(
                 if identity != interface_id and applied[0] != "dhcp" and not applied[1]:
                     observed_ipv4 = None
                 observed_ipv6 = (observed.host_dynamic_ipv6_cidr if not applied[3] else observed.host_ipv6_cidr) if applied[2] else None
+                observed_ipv6_cidrs = native_automatic_ipv6_cidrs(observed) if applied[2] and not applied[3] else ()
+                if observed_ipv6_cidrs:
+                    observed_ipv6 = observed_ipv6_cidrs[0]
                 required = []
                 if identity == interface_id or applied[0] == "dhcp" or applied[1]:
                     required.append((4, observed_ipv4, applied[1] if applied[0] != "dhcp" else None))
                 if applied[2]:
-                    required.append((6, observed_ipv6, applied[3]))
+                    required.extend((6, cidr, applied[3]) for cidr in (observed_ipv6_cidrs or (observed_ipv6,)))
                 verified = bool(required)
                 for family, observed_cidr, desired in required:
                     try:
@@ -1328,16 +1332,17 @@ def _refresh_management_addresses(
                         verified = False
                 if not verified:
                     break
-                verified_rows.append((identity, name, mac, applied, observed_ipv4, observed_ipv6))
+                verified_rows.append((identity, name, mac, applied, observed_ipv4, observed_ipv6, observed_ipv6_cidrs))
             if len(verified_rows) == len(targets):
                 # Publish the complete applied observation together, never reconcile unrelated intent.
                 pending = False
-                for identity, name, mac, applied, observed_ipv4, observed_ipv6 in verified_rows:
+                for identity, name, mac, applied, observed_ipv4, observed_ipv6, observed_ipv6_cidrs in verified_rows:
                     interface = db.get(PhysicalInterface, identity)
                     if interface is None or interface.name != name or (interface.mac_address or "").lower() != mac.lower():
                         raise ConsoleOperationError("An applied management interface identity changed; recovery was not started.")
                     interface.host_ip_cidr = observed_ipv4
                     interface.host_ipv6_cidr = observed_ipv6
+                    interface.host_ipv6_cidrs = list(observed_ipv6_cidrs)
                     pending = pending or (interface.ipv4_method, interface.ip_cidr, interface.ipv6_enabled, interface.ipv6_cidr) != applied
                 if expected_paths is not None:
                     current_preview = render_network_config(

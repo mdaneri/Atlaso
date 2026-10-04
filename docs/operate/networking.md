@@ -175,6 +175,11 @@ When an Apply changes an effective management interface, address, gateway, or li
 bundles Network with Firewall, Certificate Authority, Appliance Settings, and Public Services. The old management path
 stays active while the candidate network, policy routes, firewall, certificate/nginx configuration, Atlaso loopback
 upstream, and host-facing `/openapi.json` complete bounded readiness checks. Only then does Atlaso retire the old path.
+During automatic IPv6 prefix renumbering, native observation retains every preferred dynamic address. Management
+Settings and certificate SANs include both active prefixes until an address becomes deprecated or expires. The
+physical-interface API preserves `host_ipv6_cidr` as the first observation and returns the complete set in
+`host_ipv6_cidrs`; disabled or static IPv6 does not retain automatic observations.
+This runtime set is excluded from settings archives and must be acquired again from native inventory after restore.
 When the desired role conversion also staged a management-gateway default, **Routing & WAN** joins that same
 recoverable handoff. Its candidate and last-applied rollback configs are validated before mutation; failure restores
 the prior lab routes and the old management path together. Adding, editing, disabling, or removing a default on an

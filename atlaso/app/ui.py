@@ -471,9 +471,11 @@ from atlaso.app.services.networking import (
     discover_host_ipv4_default_gateways,
     discover_host_physical_interfaces,
     is_canonical_network_role,
+    native_automatic_ipv6_cidrs,
     normalize_interface_mode,
     normalize_interface_role,
     physical_interface_to_dict,
+    physical_ipv6_cidrs,
     render_network_config,
     trunk_parent_option,
     validate_network_state,
@@ -2478,7 +2480,7 @@ def management_ui_addresses(db: Session) -> list[str]:
         )
         if interface.oper_state == "missing" or not enabled:
             continue
-        for cidr in (interface.ip_cidr or interface.host_ip_cidr, (interface.ipv6_cidr or interface.host_ipv6_cidr) if interface.ipv6_enabled else None):
+        for cidr in (interface.ip_cidr or interface.host_ip_cidr, *physical_ipv6_cidrs(interface)):
             address = interface_address(cidr)
             if address and address not in addresses:
                 addresses.append(address)
@@ -5085,7 +5087,7 @@ def request_host_interface_binding(request_host: str, db: Session) -> dict[str, 
     for interface in physical_interfaces:
         if interface.oper_state == "missing":
             continue
-        for cidr in (interface.host_ip_cidr, interface.host_ipv6_cidr):
+        for cidr in (interface.host_ip_cidr, *(interface.host_ipv6_cidrs or [interface.host_ipv6_cidr])):
             address = interface_address(cidr)
             if address:
                 entries.append(
@@ -10369,14 +10371,18 @@ def refresh_management_handoff_dynamic_observations(
         if path.get("ipv4_method") == "dhcp":
             required.append(("IPv4", observed.host_dhcp_ip_cidr, "host_ip_cidr"))
         if path.get("ipv6_enabled", "").lower() == "true" and not path.get("ipv6_cidr"):
-            required.append(("IPv6", observed.host_dynamic_ipv6_cidr, "host_ipv6_cidr"))
+            required.extend(("IPv6", cidr, "host_ipv6_cidr") for cidr in (native_automatic_ipv6_cidrs(observed) or (None,)))
         for family, cidr, attribute in required:
             address = address_from_cidr(cidr)
             if not address or address not in confirmed_addresses:
                 raise RuntimeError(
                     f"Management handoff could not confirm the observed dynamic {family} address for {name}."
                 )
-            setattr(interface, attribute, cidr)
+            if attribute != "host_ipv6_cidr":
+                setattr(interface, attribute, cidr)
+        if path.get("ipv6_enabled", "").lower() == "true" and not path.get("ipv6_cidr"):
+            interface.host_ipv6_cidrs = list(native_automatic_ipv6_cidrs(observed))
+            interface.host_ipv6_cidr = interface.host_ipv6_cidrs[0]
     db.flush()
 
 

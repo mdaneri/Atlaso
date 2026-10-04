@@ -1749,7 +1749,8 @@ def test_console_management_waits_for_both_dynamic_families(client, monkeypatch)
         replace(observation, host_dhcp_ip_cidr=None, host_ipv6_cidr="2001:db8::172/64", host_dynamic_ipv6_cidr="2001:db8::174/64"),
         observation,
         replace(observation, host_ipv6_cidr="2001:db8::172/64"),
-        replace(observation, host_ipv6_cidr="2001:db8::172/64", host_dynamic_ipv6_cidr="2001:db8::174/64"),
+        replace(observation, host_ipv6_cidr="2001:db8::172/64", host_dynamic_ipv6_cidr="2001:db8::174/64",
+                host_dynamic_ipv6_cidrs=("2001:db8::174/64", "2001:db8:2::174/64")),
     ])
     monkeypatch.setattr(appliance_console, "discover_host_physical_interfaces", lambda **kwargs: [next(observations)])
     monkeypatch.setattr(appliance_console.time, "sleep", lambda seconds: None)
@@ -1759,6 +1760,23 @@ def test_console_management_waits_for_both_dynamic_families(client, monkeypatch)
         assert interface.ip_cidr is None
         assert interface.ipv6_cidr is None
         assert interface.host_ipv6_cidr == "2001:db8::174/64"
+        assert interface.host_ipv6_cidrs == ["2001:db8::174/64", "2001:db8:2::174/64"]
+        from atlaso.app.services.appliance_settings import management_ui_context
+        from atlaso.app.ui import managed_ca_certificate_specs, management_ui_addresses
+
+        expected = {"192.168.167.174", "2001:db8::174", "2001:db8:2::174"}
+        assert set(management_ui_addresses(db)) == expected
+        assert set(management_ui_context([interface], [])["addresses"]) == expected
+        spec = next(spec for spec in managed_ca_certificate_specs(db) if spec.owner == "appliance:https")
+        assert set(spec.ip_addresses) == expected
+        from atlaso.app.services.settings_archive import (
+            _model_kwargs,
+            export_settings_archive,
+        )
+
+        archive = export_settings_archive(db, actor="admin")
+        assert all("host_ipv6_cidrs" not in row for row in archive["data"]["physical_interfaces"])
+        assert "host_ipv6_cidrs" not in _model_kwargs(appliance_console.PhysicalInterface, {"host_ipv6_cidrs": interface.host_ipv6_cidrs})
 
 
 def test_console_management_observation_outage_preserves_entire_database(client, monkeypatch):

@@ -58,6 +58,7 @@ class HostPhysicalInterface:
         host_ipv6_cidr: Host ipv6 cidr maintained by this hostphysicalinterface.
         host_dhcp_ip_cidr: Usable IPv4 address explicitly marked dynamic by native inventory.
         host_dynamic_ipv6_cidr: Usable IPv6 address explicitly marked dynamic by native inventory.
+        host_dynamic_ipv6_cidrs: Every preferred automatic IPv6 candidate from native inventory.
     """
     name: str
     mac_address: str
@@ -70,6 +71,7 @@ class HostPhysicalInterface:
     host_ipv6_cidr: str | None = None
     host_dhcp_ip_cidr: str | None = None
     host_dynamic_ipv6_cidr: str | None = None
+    host_dynamic_ipv6_cidrs: tuple[str, ...] = ()
 
 
 def normalize_interface_mode(mode: str | None) -> str:
@@ -154,6 +156,7 @@ def physical_interface_to_dict(
         "speed": interface.speed or "",
         "host_ip_cidr": interface.host_ip_cidr or "",
         "host_ipv6_cidr": interface.host_ipv6_cidr or "",
+        "host_ipv6_cidrs": list(interface.host_ipv6_cidrs or []),
         "host_ipv4_gateway": observed_ipv4_gateway,
         "host_mtu": interface.host_mtu,
         "host_admin_state": interface.host_admin_state or "",
@@ -257,14 +260,15 @@ def _interface_speed(sysfs_interface: Path) -> str | None:
     return f"{speed} Mbps"
 
 
-def _host_ip_cidr(row: dict, family: str, *, dynamic_only: bool = False) -> str | None:
-    """Return host ip cidr.
+def _host_ip_cidrs(row: dict, family: str, *, dynamic_only: bool = False) -> tuple[str, ...]:
+    """Return all preferred native address candidates.
 
     Args:
         row: Persistent database row affected by the operation.
         family: Family consumed by host IP CIDR.
         dynamic_only: Require native dynamic source evidence for DHCP or automatic IPv6 observation.
     """
+    result: list[str] = []
     candidates = row.get("addr_info") or []
     for address in candidates:
         if address.get("family") != family:
@@ -281,8 +285,51 @@ def _host_ip_cidr(row: dict, family: str, *, dynamic_only: bool = False) -> str 
         local = address.get("local")
         prefixlen = address.get("prefixlen")
         if local and prefixlen is not None:
-            return f"{local}/{prefixlen}"
-    return None
+            try:
+                candidate = ip_interface(f"{local}/{prefixlen}")
+            except ValueError:
+                continue
+            if candidate.version != (4 if family == "inet" else 6):
+                continue
+            if candidate.ip.is_link_local or candidate.ip.is_loopback or candidate.ip.is_multicast or candidate.ip.is_unspecified:
+                continue
+            cidr = str(candidate)
+            if cidr not in result:
+                result.append(cidr)
+    return tuple(result)
+
+
+def _host_ip_cidr(row: dict, family: str, *, dynamic_only: bool = False) -> str | None:
+    """Return the first preferred native candidate for legacy scalar observations.
+
+    Args:
+        row: Native interface inventory row.
+        family: Native address family name.
+        dynamic_only: Require native dynamic source evidence.
+    """
+    return next(iter(_host_ip_cidrs(row, family, dynamic_only=dynamic_only)), None)
+
+
+def native_automatic_ipv6_cidrs(host: HostPhysicalInterface) -> tuple[str, ...]:
+    """Return the complete automatic observation with scalar compatibility.
+
+    Args:
+        host: Native inventory observation.
+    """
+    return host.host_dynamic_ipv6_cidrs or ((host.host_dynamic_ipv6_cidr,) if host.host_dynamic_ipv6_cidr else ())
+
+
+def physical_ipv6_cidrs(interface: PhysicalInterface) -> tuple[str, ...]:
+    """Project enabled static intent or every observed automatic IPv6 address.
+
+    Args:
+        interface: Physical interface containing desired and observed state.
+    """
+    if not interface.ipv6_enabled:
+        return ()
+    if interface.ipv6_cidr:
+        return (interface.ipv6_cidr,)
+    return tuple(interface.host_ipv6_cidrs or ()) or ((interface.host_ipv6_cidr,) if interface.host_ipv6_cidr else ())
 
 
 def parse_linux_ip_interfaces(payload: str, *, sysfs_base: Path = Path("/sys/class/net")) -> list[HostPhysicalInterface]:
@@ -325,6 +372,7 @@ def parse_linux_ip_interfaces(payload: str, *, sysfs_base: Path = Path("/sys/cla
                 host_dhcp_ip_cidr=_host_ip_cidr(row, "inet", dynamic_only=True),
                 host_ipv6_cidr=_host_ip_cidr(row, "inet6"),
                 host_dynamic_ipv6_cidr=_host_ip_cidr(row, "inet6", dynamic_only=True),
+                host_dynamic_ipv6_cidrs=_host_ip_cidrs(row, "inet6", dynamic_only=True),
                 host_mtu=int(row["mtu"]) if row.get("mtu") is not None else None,
                 host_admin_state="up" if "UP" in flags else "down",
                 oper_state=str(row.get("operstate") or "unknown").lower(),
@@ -1023,6 +1071,7 @@ def reconcile_host_physical_interfaces(
             (host.host_dynamic_ipv6_cidr if not interface.ipv6_cidr else host.host_ipv6_cidr)
             if interface.ipv6_enabled else None
         )
+        interface.host_ipv6_cidrs = list(native_automatic_ipv6_cidrs(host)) if interface.ipv6_enabled and not interface.ipv6_cidr else []
         interface.host_mtu = host.host_mtu
         interface.host_admin_state = host.host_admin_state
         interface.oper_state = host.oper_state

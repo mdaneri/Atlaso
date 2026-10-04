@@ -4277,13 +4277,15 @@ def test_appliance_apply_rejects_submission_while_another_task_is_active(client)
 
 
 @pytest.mark.parametrize("candidate", [None, "2001:db8::3/64"])
-def test_management_handoff_requires_native_automatic_ipv6_candidate(client, monkeypatch, candidate):
+@pytest.mark.parametrize("complete_proof", [True, False])
+def test_management_handoff_requires_native_automatic_ipv6_candidate(client, monkeypatch, candidate, complete_proof):
     """Require native automatic source even when the helper probed a lingering static address.
 
     Args:
         client: Isolated appliance database client.
         monkeypatch: Native inventory fixture control.
         candidate: Native dynamic candidate, absent before acquisition.
+        complete_proof: Whether both preferred prefixes were proven by the helper.
     """
     from sqlalchemy import select
 
@@ -4297,6 +4299,7 @@ def test_management_handoff_requires_native_automatic_ipv6_candidate(client, mon
         name="eth0", mac_address="00:15:5d:01:01:01", driver=None, speed=None,
         host_ip_cidr=None, host_mtu=1500, host_ipv6_cidr="2001:db8::1/64",
         host_dynamic_ipv6_cidr=candidate, host_admin_state="up", oper_state="up",
+        host_dynamic_ipv6_cidrs=(candidate, "2001:db8:2::3/64") if candidate else (),
     )
     monkeypatch.setattr(ui, "discover_host_physical_interfaces", lambda **kwargs: [observed])
     with SessionLocal() as db:
@@ -4306,13 +4309,16 @@ def test_management_handoff_requires_native_automatic_ipv6_candidate(client, mon
         interface.ipv6_cidr = None
         interface.host_ipv6_cidr = "2001:db8::1/64"
         evidence = {"candidate_addresses": ["2001:db8::1", "2001:db8::3"]}
-        if candidate is None:
+        if complete_proof:
+            evidence["candidate_addresses"].append("2001:db8:2::3")
+        if candidate is None or not complete_proof:
             with pytest.raises(RuntimeError, match="dynamic IPv6"):
                 ui.refresh_management_handoff_dynamic_observations(db, preview, evidence)
             assert interface.host_ipv6_cidr == "2001:db8::1/64"
         else:
             ui.refresh_management_handoff_dynamic_observations(db, preview, evidence)
             assert interface.host_ipv6_cidr == candidate
+            assert interface.host_ipv6_cidrs == [candidate, "2001:db8:2::3/64"]
         assert interface.ipv6_cidr is None
 
 

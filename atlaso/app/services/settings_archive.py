@@ -425,7 +425,7 @@ def _row_to_dict(row: object, *, exclude: set[str] | None = None) -> dict[str, A
         row: Persistent database row affected by the operation.
         exclude: Exclude consumed by row to dict.
     """
-    excluded = {"id", "created_at", "updated_at", *(exclude or set())}
+    excluded = {"id", "created_at", "updated_at", "host_ipv6_cidrs", *(exclude or set())}
     payload: dict[str, Any] = {}
     for column in row.__table__.columns:
         if column.name in excluded or isinstance(column.type, SqlDateTime):
@@ -4613,7 +4613,7 @@ def _model_kwargs(model: type, row: dict[str, Any], *, exclude: set[str] | None 
         row: Persistent database row affected by the operation.
         exclude: Exclude consumed by model kwargs.
     """
-    excluded = {"id", "created_at", "updated_at", *(exclude or set())}
+    excluded = {"id", "created_at", "updated_at", "host_ipv6_cidrs", *(exclude or set())}
     column_names = {column.name for column in model.__table__.columns if not isinstance(column.type, SqlDateTime)}
     payload = {key: value for key, value in row.items() if key in column_names and key not in excluded}
     if model is NatRule and payload.get("translation_mode") == "snat":
