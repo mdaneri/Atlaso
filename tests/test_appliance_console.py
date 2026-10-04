@@ -77,6 +77,52 @@ def test_readonly_registry_capture_preserves_pending_ca_and_writer(client, monke
         assert (leaf.serial_number, leaf.fingerprint, leaf.ip_addresses) == original
 
 
+@pytest.mark.parametrize("scope", ["registry", "all_units"])
+def test_readonly_enabled_registry_capture_does_not_initialize_missing_ca(client, monkeypatch, scope):
+    """Missing optional CA state cannot commit a staged console correction.
+
+    Args:
+        client: Initialized appliance database.
+        monkeypatch: Refuse commits during non-reconciling capture.
+        scope: Registry context alone or the complete Apply-unit projection.
+    """
+    from sqlalchemy import delete, select
+
+    from atlaso.app import ui
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import CaSettings, VcfPrivateRegistrySettings
+    from atlaso.app.services.network_objects import acquire_network_objects_write_lock
+
+    with SessionLocal() as db:
+        interface = appliance_console._management_interface(db)
+        interface.ipv4_method, interface.ip_cidr = "static", "192.0.2.70/24"
+        db.scalar(select(VcfPrivateRegistrySettings)).enabled = True
+        db.execute(delete(CaSettings))
+        db.commit()
+        acquire_network_objects_write_lock(db)
+        transaction = db.get_transaction()
+        interface.ip_cidr = "192.0.2.71/24"
+        db.flush()
+
+        def refuse_commit():
+            """Preserve the original capture transaction despite absent CA state."""
+            pytest.fail("Read-only Registry validation initialized and committed missing CA state")
+
+        monkeypatch.setattr(db, "commit", refuse_commit)
+        if scope == "registry":
+            context = ui.vcf_private_registry_context(db, reconcile=False)
+            assert context["vcf_registry_ca_bundle_source"] == "uploaded"
+        else:
+            with pytest.raises(ValueError, match="requires existing CA settings"):
+                ui.appliance_apply_units(db, reconcile=False)
+        assert db.get_transaction() is transaction
+        assert db.scalar(select(CaSettings)) is None
+        db.rollback()
+    with SessionLocal() as db:
+        assert appliance_console._management_interface(db).ip_cidr == "192.0.2.70/24"
+        assert db.scalar(select(CaSettings)) is None
+
+
 def synthetic_root_owned_publication(monkeypatch, directory):
     """Model root ownership only inside a synthetic private receipt filesystem.
 

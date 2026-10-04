@@ -3718,7 +3718,7 @@ def vcf_private_registry_context(db: Session, *, reconcile: bool = True) -> dict
         str(ca_bundle_context["source"]),
         bool(ca_bundle_context["available"]),
     )
-    if settings.enabled and get_ca_settings_row(db).enabled and not ca_certificate_available(db, "vcf_private_registry:https"):
+    if settings.enabled and ca_bundle_context["source"] == "local-ca" and not ca_certificate_available(db, "vcf_private_registry:https"):
         validation_errors.append("VCF Private Registry requires an issued CA-managed HTTPS certificate before apply.")
     harbor_config_preview = render_harbor_config(settings)
     relocation_preview = render_imgpkg_relocation_preview(settings, bundles)
@@ -12206,6 +12206,8 @@ def appliance_apply_units(db: Session, *, reconcile: bool = True, applying_dns: 
     """
     from atlaso.app.services.network_boot import load_esxi_applied_runtime
 
+    if not reconcile and db.scalar(select(CaSettings)) is None:
+        raise ValueError("Read-only Apply capture requires existing CA settings; initialize appliance state before capture.")
     if reconcile:
         remember_applied_service_dns_records(db)
         refresh_interface_service_dns_aliases(db, actor=None)

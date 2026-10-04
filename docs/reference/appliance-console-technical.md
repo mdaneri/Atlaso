@@ -50,6 +50,8 @@ The management block uses stable columns for interface, IPv4 address/gateway/mod
 Console Apply capture renders service contexts without reconciling desired state. This includes the VCF Private
 Registry CA-bundle projection: capture must not issue certificates or commit the shared writer transaction. Ordinary
 service-page reconciliation remains separate from the captured Network, Settings, and CA publication acknowledgement.
+Registry validation reuses that read-only bundle projection. If CA settings are absent, full Apply capture stops before
+any service context can initialize them or release the caller's writer; ordinary appliance initialization is required.
 
 The **Appliance services** projection covers Authentication, Certificate Authority, DHCP, DNS, ESX Storage NFS, ESXi
 PXE, Firewall, KMS/KMIP, Managed LDAP, NTP/NTS, Routing, VCF Backup SFTP, VCF Offline Depot, and VCF Private Registry.
