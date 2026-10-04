@@ -3112,7 +3112,7 @@ def test_console_recovery_cli_dispatches_completed_task_id(monkeypatch):
 
 @pytest.mark.parametrize("ready", [True, False])
 @pytest.mark.parametrize("artifacts_complete", [True, False])
-@pytest.mark.parametrize("pending", ["service", "certificate", "root", "root_key", "settings", "missing_settings", "missing_paths", "profile_policy", "subject_policy", "legacy_policy", "missing_dynamic_ack"])
+@pytest.mark.parametrize("pending", ["service", "certificate", "root", "root_key", "settings", "missing_settings", "missing_paths", "profile_policy", "subject_policy", "legacy_policy", "missing_dynamic_ack", "native_dhcp_ack", "native_slaac_ack"])
 @pytest.mark.parametrize("apply_result", [0, 1])
 def test_completed_recovery_publishes_only_management_and_records_exact_baseline(client, monkeypatch, tmp_path, pending, apply_result, artifacts_complete, ready):
     """Keep unrelated intent pending and acknowledge the management leaf only after success.
@@ -3208,8 +3208,14 @@ def test_completed_recovery_publishes_only_management_and_records_exact_baseline
         target = appliance_console._management_interface(db)
         target.ipv4_method = "static"
         target.ip_cidr = "192.0.2.74/24"
-        if pending == "missing_dynamic_ack":
+        if pending in {"missing_dynamic_ack", "native_dhcp_ack"}:
             target.ipv4_method, target.ip_cidr, target.host_ip_cidr = "dhcp", None, "192.0.2.74/24"
+        if pending == "native_slaac_ack":
+            target.ipv6_enabled = True
+            target.ipv6_cidr = None
+            target.host_ipv6_cidr = "2001:db8::74/64"
+            target.host_ipv6_cidrs = ["2001:db8::74/64", "2001:db8:1::74/64"]
+        native_identity = (target.name, target.mac_address)
         preview = render_network_config(interfaces=list(db.scalars(select(appliance_console.PhysicalInterface))),
                                         vlans=list(db.scalars(select(appliance_console.VlanInterface))))
         db.add(appliance_console.Job(id="job_scoped_ca", type="appliance-apply", status="succeeded", created_by="console:root",
@@ -3322,6 +3328,48 @@ def test_completed_recovery_publishes_only_management_and_records_exact_baseline
         assert bootstrap.acknowledge_console_publication("job_scoped_ca", digest) == 2
         with SessionLocal() as db:
             assert load_appliance_apply_baselines(db)["ca"] == before
+        return
+    if not apply_result and ready and pending in {"native_dhcp_ack", "native_slaac_ack"}:
+        from dataclasses import replace
+
+        from atlaso.app.services.networking import HostPhysicalInterface
+
+        receipt_path = publication_directory / "job_scoped_ca.publication.json"
+        original = receipt_path.read_bytes()
+        digest = bootstrap.hashlib.sha256(original).hexdigest()
+        host = HostPhysicalInterface(name=native_identity[0], mac_address=native_identity[1], driver=None,
+                                     speed=None, host_ip_cidr="192.0.2.74/24", host_mtu=1500,
+                                     host_admin_state="up", oper_state="up", host_dhcp_ip_cidr="192.0.2.74/24",
+                                     host_dynamic_ipv6_cidrs=("2001:db8::74/64", "2001:db8:1::74/64"))
+        def discover(*, timeout, require_success):
+            """Attest the native probe's deadline and strict result requirement."""
+            assert timeout == 5 and require_success is True
+            return [host]
+
+        monkeypatch.setattr(bootstrap, "discover_host_physical_interfaces", discover)
+        monkeypatch.setattr(bootstrap.ssl, "get_server_certificate",
+                            lambda *args, **kwargs: captured[0]["certificates"][0]["certificate_pem"])
+        good = host
+        changed = (replace(host, host_dhcp_ip_cidr="192.0.2.75/24") if pending == "native_dhcp_ack"
+                   else replace(host, host_dynamic_ipv6_cidrs=("2001:db8:1::74/64",)))
+        unavailable = (replace(good, host_dhcp_ip_cidr=None) if pending == "native_dhcp_ack"
+                       else replace(good, host_dynamic_ipv6_cidrs=()))
+        for candidate in (changed, unavailable, replace(good, oper_state="down"),
+                          replace(good, mac_address="00:00:00:00:00:99")):
+            host = candidate
+            assert bootstrap.acknowledge_console_publication("job_scoped_ca", digest) == 2
+            assert receipt_path.read_bytes() == original
+            with SessionLocal() as db:
+                assert load_appliance_apply_baselines(db)["ca"] == before
+        def timed_out(**kwargs):
+            """Model native discovery exceeding its bounded budget."""
+            raise subprocess.TimeoutExpired("ip", 5)
+
+        monkeypatch.setattr(bootstrap, "discover_host_physical_interfaces", timed_out)
+        assert bootstrap.acknowledge_console_publication("job_scoped_ca", digest) == 2
+        host = good
+        monkeypatch.setattr(bootstrap, "discover_host_physical_interfaces", discover)
+        assert bootstrap.acknowledge_console_publication("job_scoped_ca", digest) == 0
         return
     if not apply_result and ready:
         digest = bootstrap.hashlib.sha256((publication_directory / "job_scoped_ca.publication.json").read_bytes()).hexdigest()

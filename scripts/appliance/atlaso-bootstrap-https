@@ -46,6 +46,8 @@ from atlaso.app.services.ca import (
 )
 from atlaso.app.services.network_objects import acquire_network_objects_write_lock
 from atlaso.app.services.networking import (
+    discover_host_physical_interfaces,
+    native_automatic_ipv6_cidrs,
     physical_ipv6_cidrs,
     render_network_config,
     sync_host_physical_interfaces,
@@ -594,6 +596,51 @@ def recovery_dynamic_addresses_available(db, preview: str) -> bool:
     return True
 
 
+def recovery_dynamic_address_binding(db, preview: str, *, native: bool = False) -> dict:
+    """Capture or attest each dynamic listener's addresses under writer admission.
+
+    Args:
+        db: Admitted publication transaction.
+        preview: Completed Network snapshot.
+        native: Rediscover bounded native state rather than read issuance observations.
+    """
+    paths = [path for path in network_management_paths(preview) if path["kind"] == "physical"
+             and (path.get("ipv4_method") == "dhcp"
+                  or (path.get("ipv6_enabled", "false").lower() == "true" and not path.get("ipv6_cidr")))]
+    hosts = discover_host_physical_interfaces(timeout=5, require_success=True) if native and paths else []
+    binding = {}
+    for path in paths:
+        interface = db.scalar(select(PhysicalInterface).where(PhysicalInterface.name == path["name"]))
+        if interface is None or not interface.mac_address:
+            raise ValueError("Dynamic listener identity is unavailable")
+        mac = interface.mac_address.lower()
+        host = None
+        if native:
+            matches = [row for row in hosts if row.name == path["name"] and row.mac_address.lower() == mac]
+            if len(matches) != 1 or matches[0].host_admin_state != "up" or matches[0].oper_state != "up":
+                raise ValueError("Native dynamic listener identity is unavailable")
+            host = matches[0]
+        families = {}
+        if path.get("ipv4_method") == "dhcp":
+            families[4] = [host.host_dhcp_ip_cidr if host else interface.host_ip_cidr]
+        if path.get("ipv6_enabled", "false").lower() == "true" and not path.get("ipv6_cidr"):
+            families[6] = list(native_automatic_ipv6_cidrs(host) if host else physical_ipv6_cidrs(interface))
+        addresses = {}
+        for family, cidrs in families.items():
+            if not cidrs:
+                raise ValueError("Native dynamic family is unavailable")
+            values = set()
+            for cidr in cidrs:
+                address = ip_interface(cidr or "")
+                if (address.version != family or address.ip.is_unspecified or address.ip.is_loopback
+                        or address.ip.is_link_local or address.ip.is_multicast):
+                    raise ValueError("Native dynamic address is unusable")
+                values.add(str(address.ip))
+            addresses[str(family)] = sorted(values)
+        binding[path["name"]] = {"mac": mac, "addresses": addresses}
+    return binding
+
+
 def ensure_recovery_ca_state(
     db, network_job_id: str | None, *, commit: bool = True, management_snapshot: dict | None = None,
 ) -> list[str]:
@@ -755,6 +802,17 @@ def acknowledge_console_publication(network_job_id: str, receipt_sha256: str) ->
             leaves = json.loads(receipt["public_payload"]).get("certificates", [])
             if len(leaves) != 1 or leaves[0].get("managed_owner") != "appliance:https":
                 raise ValueError("Publication does not identify exactly one management leaf")
+            # Kernel leases can change without any database writer. Attest fresh
+            # state against issuance evidence, never retrofit the captured receipt.
+            dynamic = recovery_dynamic_address_binding(db, str(units[0]["config_preview"]), native=True)
+            if dynamic != receipt["dynamic_address_binding"]:
+                raise ValueError("Native dynamic addresses changed after publication")
+            leaf = x509.load_pem_x509_certificate(leaves[0]["certificate_pem"].encode("ascii"))
+            sans = leaf.extensions.get_extension_for_class(x509.SubjectAlternativeName).value
+            leaf_addresses = {str(address) for address in sans.get_values_for_type(x509.IPAddress)}
+            if any(address not in leaf_addresses for item in dynamic.values()
+                   for values in item["addresses"].values() for address in values):
+                raise ValueError("Native dynamic addresses are absent from the captured leaf")
             port = applied_settings.get("management_public_https_port", 443)
             if isinstance(port, bool) or not isinstance(port, int) or not 1 <= port <= 65535:
                 raise ValueError("Applied HTTPS listener port is invalid")
@@ -767,7 +825,8 @@ def acknowledge_console_publication(network_job_id: str, receipt_sha256: str) ->
             db.commit()
         # Retain the public receipt as evidence; never remove a concurrently replaced publication.
         return 0
-    except (OSError, UnicodeError, ValueError, KeyError, TypeError, SQLAlchemyError):
+    except (OSError, UnicodeError, ValueError, KeyError, TypeError, SQLAlchemyError,
+            RuntimeError, subprocess.TimeoutExpired, x509.ExtensionNotFound):
         print("Console publication acknowledgement failed; preserve the pending receipt and CA baseline.")
         return 2
 
@@ -867,6 +926,9 @@ def refresh_completed_management_certificate(network_job_id: str) -> int:
             for error in errors:
                 print(error)
             return 2
+        dynamic_binding = recovery_dynamic_address_binding(db, render_network_config(
+            interfaces=list(db.scalars(select(PhysicalInterface))), vlans=list(db.scalars(select(VlanInterface))),
+        ))
         ca_settings = db.execute(select(CaSettings)).scalar_one()
         certificates = db.scalars(select(CaCertificate).where(CaCertificate.managed_owner == "appliance:https")).all()
         public_payload = render_ca_apply_payload(ca_settings, certificates, include_private_keys=False, profiles=db.scalars(select(CaProfile)).all())
@@ -892,6 +954,7 @@ def refresh_completed_management_certificate(network_job_id: str) -> int:
             return result
         # Publication is durable, but the active worker is not proven until the outer helper reloads it.
         receipt = {"network_job_id": network_job_id, "public_payload": public_payload,
+                   "dynamic_address_binding": dynamic_binding,
                    "ca_baseline": load_appliance_apply_baselines(db).get("ca"), "settings_snapshot": applied_settings}
         write_text_atomic(console_publication_path(network_job_id), json.dumps(receipt, sort_keys=True), mode=0o600)
         db.commit()
