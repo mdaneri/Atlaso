@@ -3121,7 +3121,7 @@ def test_console_recovery_cli_dispatches_completed_task_id(monkeypatch):
 
 @pytest.mark.parametrize("ready", [True, False])
 @pytest.mark.parametrize("artifacts_complete", [True, False])
-@pytest.mark.parametrize("pending", ["service", "certificate", "root", "root_key", "settings", "missing_settings", "missing_paths", "profile_policy", "subject_policy", "legacy_policy", "missing_dynamic_ack", "native_dhcp_ack", "native_slaac_ack"])
+@pytest.mark.parametrize("pending", ["service", "certificate", "root", "root_key", "settings", "missing_settings", "missing_paths", "profile_policy", "subject_policy", "legacy_policy", "missing_dynamic_ack", "native_dhcp_ack", "native_slaac_ack", "native_vlan_ack"])
 @pytest.mark.parametrize("apply_result", [0, 1])
 def test_completed_recovery_publishes_only_management_and_records_exact_baseline(client, monkeypatch, tmp_path, pending, apply_result, artifacts_complete, ready):
     """Keep unrelated intent pending and acknowledge the management leaf only after success.
@@ -3225,6 +3225,13 @@ def test_completed_recovery_publishes_only_management_and_records_exact_baseline
             target.host_ipv6_cidr = "2001:db8::74/64"
             target.host_ipv6_cidrs = ["2001:db8::74/64", "2001:db8:1::74/64"]
         native_identity = (target.name, target.mac_address)
+        if pending == "native_vlan_ack":
+            db.add(appliance_console.PhysicalInterface(name="pr899-https-trunk", mac_address="00:15:5d:aa:bb:41",
+                                                      role="access", mode="trunk", admin_state="up", oper_state="up"))
+            db.add(appliance_console.VlanInterface(name="pr899-https-trunk.541", parent_interface="pr899-https-trunk",
+                                                  vlan_id=541, ip_cidr="198.51.100.41/24", enabled=True,
+                                                  access_management_ui_enabled=True))
+            db.flush()
         preview = render_network_config(interfaces=list(db.scalars(select(appliance_console.PhysicalInterface))),
                                         vlans=list(db.scalars(select(appliance_console.VlanInterface))))
         db.add(appliance_console.Job(id="job_scoped_ca", type="appliance-apply", status="succeeded", created_by="console:root",
@@ -3337,6 +3344,31 @@ def test_completed_recovery_publishes_only_management_and_records_exact_baseline
         assert bootstrap.acknowledge_console_publication("job_scoped_ca", digest) == 2
         with SessionLocal() as db:
             assert load_appliance_apply_baselines(db)["ca"] == before
+        return
+    if not apply_result and ready and pending == "native_vlan_ack":
+        from atlaso.app.services import networking
+
+        receipt_path = publication_directory / "job_scoped_ca.publication.json"
+        original = receipt_path.read_bytes()
+        digest = bootstrap.hashlib.sha256(original).hexdigest()
+        native_rows = [{"ifname": "pr899-https-trunk", "ifindex": 15, "address": "00:15:5d:aa:bb:41",
+                        "link_type": "ether", "flags": ["UP"], "operstate": "UP"}]
+        def native_run(command, **kwargs):
+            """Expose only native VLAN withdrawal while original publication and applied paths stay unchanged."""
+            assert command == ["ip", "-d", "-j", "address", "show"] and kwargs["timeout"] <= 5
+            return subprocess.CompletedProcess(command, 0, json.dumps(native_rows), "")
+
+        monkeypatch.setattr(networking.subprocess, "run", native_run)
+        monkeypatch.setattr(bootstrap.ssl, "get_server_certificate",
+                            lambda *args, **kwargs: captured[0]["certificates"][0]["certificate_pem"])
+        assert bootstrap.acknowledge_console_publication("job_scoped_ca", digest) == 2
+        assert receipt_path.read_bytes() == original
+        with SessionLocal() as db:
+            assert load_appliance_apply_baselines(db)["ca"] == before
+        native_rows.append({"ifname": "pr899-https-trunk.541", "link_index": 15, "flags": ["UP"], "operstate": "UP",
+                            "linkinfo": {"info_kind": "vlan", "info_data": {"id": 541}},
+                            "addr_info": [{"family": "inet", "local": "198.51.100.41", "prefixlen": 24, "scope": "global"}]})
+        assert bootstrap.acknowledge_console_publication("job_scoped_ca", digest) == 0
         return
     if not apply_result and ready and pending in {"native_dhcp_ack", "native_slaac_ack"}:
         from dataclasses import replace
@@ -3825,7 +3857,7 @@ def test_bound_issuance_refuses_cleared_dynamic_observation(client, monkeypatch,
         assert errors and "dynamic management observation is unavailable" in errors[0]
 
 
-@pytest.mark.parametrize("edit", ["unchanged", "physical", "vlan", "dynamic", "mode", "port", "native_dhcp", "native_slaac", "refreshed_dhcp", "timeout"])
+@pytest.mark.parametrize("edit", ["unchanged", "physical", "vlan", "dynamic", "mode", "port", "native_dhcp", "native_slaac", "refreshed_dhcp", "timeout", "native_vlan", "native_vlan_unchanged"])
 def test_http_final_recheck_refuses_drift_after_bootstrap(client, monkeypatch, tmp_path, edit):
     """HTTP readiness cannot certify Network or applied-mode drift after initial bootstrap validation.
 
@@ -3857,6 +3889,13 @@ def test_http_final_recheck_refuses_drift_after_bootstrap(client, monkeypatch, t
         target.host_ipv6_cidr = "2001:db8::63/64"
         target.host_ipv6_cidrs = ["2001:db8::63/64", "2001:db8:1::63/64"] if target.ipv6_enabled else []
         native_identity = (target.name, target.mac_address)
+        if edit.startswith("native_vlan"):
+            db.add(appliance_console.PhysicalInterface(name="pr899-http-trunk", mac_address="00:15:5d:aa:bb:40",
+                                                      role="access", mode="trunk", admin_state="up", oper_state="up"))
+            db.add(appliance_console.VlanInterface(name="pr899-http-trunk.540", parent_interface="pr899-http-trunk",
+                                                  vlan_id=540, ip_cidr="198.51.100.40/24", enabled=True,
+                                                  access_management_ui_enabled=True))
+            db.flush()
         db.flush()
         preview = bootstrap.render_network_config(interfaces=list(db.scalars(select(appliance_console.PhysicalInterface))),
                                                  vlans=list(db.scalars(select(appliance_console.VlanInterface))))
@@ -3872,7 +3911,7 @@ def test_http_final_recheck_refuses_drift_after_bootstrap(client, monkeypatch, t
 
     def discover(*, timeout, require_success):
         """Model kernel-only drift during final readiness without changing persisted observations."""
-        assert timeout == 5 and require_success is True
+        assert 0 <= timeout <= 5 and require_success is True
         if edit == "timeout":
             raise subprocess.TimeoutExpired("ip", 5)
         return [HostPhysicalInterface(name=native_identity[0], mac_address=native_identity[1], driver=None,
@@ -3882,6 +3921,21 @@ def test_http_final_recheck_refuses_drift_after_bootstrap(client, monkeypatch, t
                                       host_dynamic_ipv6_cidrs=("2001:db8:1::63/64",))]
 
     monkeypatch.setattr(bootstrap, "discover_host_physical_interfaces", discover)
+    if edit.startswith("native_vlan"):
+        from atlaso.app.services import networking
+
+        def native_vlan_run(command, **kwargs):
+            """Withdraw only the native VLAN after initial HTTP capture while DB state stays applied."""
+            assert command == ["ip", "-d", "-j", "address", "show"] and kwargs["timeout"] <= 5
+            rows = [{"ifname": "pr899-http-trunk", "ifindex": 14, "address": "00:15:5d:aa:bb:40",
+                     "link_type": "ether", "flags": ["UP"], "operstate": "UP"}]
+            if edit == "native_vlan_unchanged":
+                rows.append({"ifname": "pr899-http-trunk.540", "link_index": 14, "flags": ["UP"], "operstate": "UP",
+                             "linkinfo": {"info_kind": "vlan", "info_data": {"id": 540}},
+                             "addr_info": [{"family": "inet", "local": "198.51.100.40", "prefixlen": 24, "scope": "global"}]})
+            return subprocess.CompletedProcess(command, 0, json.dumps(rows), "")
+
+        monkeypatch.setattr(networking.subprocess, "run", native_vlan_run)
     with SessionLocal() as db:
         target = appliance_console._management_interface(db)
         if edit == "physical":
@@ -3897,24 +3951,29 @@ def test_http_final_recheck_refuses_drift_after_bootstrap(client, monkeypatch, t
             applied["management_https_enabled" if edit == "mode" else "management_public_http_port"] = True if edit == "mode" else 80
             save_appliance_apply_baselines(db, {"appliance_settings": {"config_preview": json.dumps(applied)}})
         db.commit()
-    assert bootstrap.verify_console_http_recovery("job_http_final", 8080) == (0 if edit == "unchanged" else 2)
+    assert bootstrap.verify_console_http_recovery("job_http_final", 8080) == (0 if edit in {"unchanged", "native_vlan_unchanged"} else 2)
     assert (publication / "job_http_final.publication.json").read_bytes() == original_receipt
 
 
-@pytest.mark.parametrize("parent_state", ["ready", "down", "access", "missing"])
-def test_console_refuses_ineligible_completed_vlan_with_working_physical_listener(client, monkeypatch, parent_state):
+@pytest.mark.parametrize("case", ["ready", "down", "access", "missing", "native_parent_missing", "native_parent_down",
+                                  "native_parent_mac", "native_vlan_missing", "native_vlan_down", "native_vlan_parent",
+                                  "native_vlan_tag", "native_vlan_address", "native_ipv6_address", "native_tentative",
+                                  "native_expired", "native_timeout", "native_failed", "native_duplicate"])
+def test_console_refuses_ineligible_completed_vlan_with_working_physical_listener(client, monkeypatch, case):
     """A working dedicated listener cannot mask an ineligible completed management VLAN.
 
     Args:
         client: Initialized appliance database.
         monkeypatch: Supply only the proven dedicated native observation.
-        parent_state: Eligible trunk or unavailable administrative/mode/identity state.
+        case: Administrative or native link/identity/address failure with a working dedicated listener.
     """
     from sqlalchemy import select
 
     from atlaso.app.database import SessionLocal
+    from atlaso.app.services import networking
     from atlaso.app.services.networking import HostPhysicalInterface
 
+    parent_state = case if case in {"down", "access", "missing"} else "ready"
     loader = importlib.machinery.SourceFileLoader("atlaso_vlan_eligibility", "scripts/appliance/atlaso-bootstrap-https")
     spec = importlib.util.spec_from_loader(loader.name, loader)
     bootstrap = importlib.util.module_from_spec(spec)
@@ -3934,6 +3993,7 @@ def test_console_refuses_ineligible_completed_vlan_with_working_physical_listene
                                                       admin_state="down" if parent_state == "down" else "up", oper_state="up"))
         db.add(appliance_console.VlanInterface(name="pr899-trunk.532", parent_interface="pr899-trunk", vlan_id=532,
                                               role="access", ip_cidr="198.51.100.32/24", enabled=True,
+                                              ipv6_cidr="2001:db8:532::32/64",
                                               access_management_ui_enabled=True))
         db.flush()
         preview = appliance_console.render_network_config(interfaces=list(db.scalars(select(appliance_console.PhysicalInterface))),
@@ -3948,16 +4008,71 @@ def test_console_refuses_ineligible_completed_vlan_with_working_physical_listene
         return [host]
 
     monkeypatch.setattr(appliance_console, "discover_host_physical_interfaces", discover)
-    if parent_state == "ready":
+    native_parent = {"ifname": "pr899-trunk", "ifindex": 12, "address": "00:15:5d:aa:bb:32", "link_type": "ether",
+                     "flags": ["UP", "LOWER_UP"], "operstate": "UP"}
+    native_vlan = {"ifname": "pr899-trunk.532", "ifindex": 13, "link_index": 12, "flags": ["UP", "LOWER_UP"],
+                   "operstate": "UP", "linkinfo": {"info_kind": "vlan", "info_data": {"id": 532}},
+                   "addr_info": [{"family": "inet", "local": "198.51.100.32", "prefixlen": 24, "scope": "global"},
+                                 {"family": "inet6", "local": "2001:db8:532::32", "prefixlen": 64, "scope": "global"}]}
+    native_rows = [native_parent, native_vlan]
+    if case == "native_parent_missing":
+        native_rows.remove(native_parent)
+    elif case == "native_parent_down":
+        native_parent["operstate"] = "DOWN"
+    elif case == "native_parent_mac":
+        native_parent["address"] = "00:15:5d:aa:bb:99"
+    elif case == "native_vlan_missing":
+        native_rows.remove(native_vlan)
+    elif case == "native_vlan_down":
+        native_vlan["flags"] = []
+    elif case == "native_vlan_parent":
+        native_vlan["link_index"] = 99
+    elif case == "native_vlan_tag":
+        native_vlan["linkinfo"]["info_data"]["id"] = 533
+    elif case == "native_vlan_address":
+        native_vlan["addr_info"][0]["local"] = "198.51.100.33"
+    elif case == "native_ipv6_address":
+        native_vlan["addr_info"].pop()
+    elif case == "native_tentative":
+        native_vlan["addr_info"][1]["tentative"] = True
+    elif case == "native_expired":
+        native_vlan["addr_info"][0]["valid_life_time"] = 0
+    elif case == "native_duplicate":
+        native_rows.append(native_vlan.copy())
+    native_calls = []
+    def native_run(command, **kwargs):
+        """Supply real iproute2 VLAN and parent evidence or its bounded failure."""
+        if command == ["ip", "-j", "-4", "route", "show", "default"]:
+            return subprocess.CompletedProcess(command, 0, "[]", "")
+        assert command == ["ip", "-d", "-j", "address", "show"]
+        assert 0 <= kwargs["timeout"] <= 5
+        native_calls.append(command)
+        if case == "native_timeout":
+            raise subprocess.TimeoutExpired(command, kwargs["timeout"])
+        return subprocess.CompletedProcess(command, 1 if case == "native_failed" else 0, json.dumps(native_rows), "")
+
+    monkeypatch.setattr(networking.subprocess, "run", native_run)
+    if case == "ready":
         appliance_console._refresh_management_addresses(identity, network_job_id="job_vlan_eligibility", timeout=0)
         assert len(calls) == 1
-    else:
+    elif parent_state != "ready":
         with pytest.raises(ConsoleOperationError, match="path is ineligible"):
             appliance_console._refresh_management_addresses(identity, network_job_id="job_vlan_eligibility", timeout=0)
         assert calls == []
         with pytest.raises(ConsoleOperationError, match="Appliance Settings were not submitted"):
             appliance_console._submit_console_apply({"appliance_settings"}, network_job_id="job_vlan_eligibility")
+    else:
+        with pytest.raises(ConsoleOperationError, match="fresh management address observation"):
+            appliance_console._refresh_management_addresses(identity, network_job_id="job_vlan_eligibility", timeout=0)
+        assert len(calls) == 1
+        assert len(native_calls) == 1
     with SessionLocal() as db:
         assert bootstrap.completed_network_binding_is_current(db, "job_vlan_eligibility") is (parent_state == "ready")
         assert bootstrap.recovery_dynamic_addresses_available(db, preview) is (parent_state == "ready")
-        assert db.get(appliance_console.PhysicalInterface, identity).host_ip_cidr == ("192.0.2.63/24" if parent_state == "ready" else "192.0.2.62/24")
+        assert db.get(appliance_console.PhysicalInterface, identity).host_ip_cidr == ("192.0.2.63/24" if case == "ready" else "192.0.2.62/24")
+        if parent_state == "ready":
+            if case == "ready":
+                assert bootstrap.recovery_dynamic_address_binding(db, preview, native=True) == {}
+            else:
+                with pytest.raises(ValueError, match="Native management VLAN"):
+                    bootstrap.recovery_dynamic_address_binding(db, preview, native=True)

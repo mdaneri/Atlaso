@@ -10284,6 +10284,8 @@ def network_management_paths(config_preview: str) -> list[dict[str, str]]:
                 "kind": row.get("kind", ""),
                 "name": row.get("name", ""),
                 "parent": row.get("parent", ""),
+                "parent_mac": row.get("parent_mac", ""),
+                "vlan_id": row.get("vlan_id", ""),
                 "parent_admin_state": physical_admin_states.get(row.get("parent", ""), ""),
                 "admin_state": row.get("admin_state", ""),
                 "mode": row.get("mode", ""),

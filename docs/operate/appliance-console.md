@@ -152,6 +152,10 @@ changed DHCP leases or SLAAC prefixes require another recovery attempt. HTTP rec
 The interface must be administratively and operationally up; a retained address on a disconnected link cannot pass.
 Every enabled management path in the completed snapshot must be eligible. A management VLAN with a missing,
 down, or non-trunk parent stops recovery and Settings capture even when another physical listener works.
+Native observation also proves each VLAN's tag, configured IPv4/IPv6 addresses and up state against the completed
+snapshot, including its parent's pinned MAC and native link identity. A missing or down VLAN or parent blocks all
+observation publication. Final HTTP and HTTPS acceptance repeats this proof under writer admission within its
+five-second native-discovery budget; a working physical listener cannot hide a failed VLAN path.
 Each discovery attempt uses the remaining acquisition timeout, so a stalled command cannot leave the console waiting
 indefinitely. Tentative or duplicate-address-detection-failed addresses cannot pass.
 If newer address edits are pending, Atlaso records the applied observation but stops dependent recovery and Settings;

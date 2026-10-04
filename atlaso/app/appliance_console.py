@@ -91,6 +91,7 @@ from atlaso.app.services.networking import (  # noqa: E402 - appliance environme
     discover_host_physical_interfaces,
     native_automatic_ipv6_cidrs,
     render_network_config,
+    verify_native_management_vlans,
 )
 
 HELPER_PATH = Path("/opt/atlaso/bin/atlaso-helper")
@@ -1339,7 +1340,9 @@ def _refresh_management_addresses(
                 if not verified:
                     break
                 verified_rows.append((identity, name, mac, applied, observed_ipv4, observed_ipv6, observed_ipv6_cidrs))
-            if len(verified_rows) == len(targets):
+            if len(verified_rows) == len(targets) and verify_native_management_vlans(
+                expected_paths or [], timeout=max(0, deadline - time.monotonic()),
+            ):
                 # Publish the complete applied observation together, never reconcile unrelated intent.
                 pending = False
                 for identity, name, mac, applied, observed_ipv4, observed_ipv6, observed_ipv6_cidrs in verified_rows:

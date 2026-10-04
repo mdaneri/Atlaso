@@ -14,6 +14,7 @@ import stat
 import subprocess
 import sys
 import tempfile
+import time
 from datetime import datetime, timezone
 from ipaddress import ip_interface
 from pathlib import Path
@@ -51,6 +52,7 @@ from atlaso.app.services.networking import (
     physical_ipv6_cidrs,
     render_network_config,
     sync_host_physical_interfaces,
+    verify_native_management_vlans,
 )
 from atlaso.app.ui import (
     ca_managed_certificate_paths,
@@ -606,10 +608,15 @@ def recovery_dynamic_address_binding(db, preview: str, *, native: bool = False) 
         preview: Completed Network snapshot.
         native: Rediscover bounded native state rather than read issuance observations.
     """
-    paths = [path for path in network_management_paths(preview) if path["kind"] == "physical"
+    deadline = time.monotonic() + 5
+    management_paths = network_management_paths(preview)
+    if native and not verify_native_management_vlans(management_paths, timeout=5):
+        raise ValueError("Native management VLAN listener is unavailable")
+    paths = [path for path in management_paths if path["kind"] == "physical"
              and (path.get("ipv4_method") == "dhcp"
                   or (path.get("ipv6_enabled", "false").lower() == "true" and not path.get("ipv6_cidr")))]
-    hosts = discover_host_physical_interfaces(timeout=5, require_success=True) if native and paths else []
+    remaining = max(0, deadline - time.monotonic()) if any(path["kind"] == "vlan" for path in management_paths) else 5
+    hosts = discover_host_physical_interfaces(timeout=remaining, require_success=True) if native and paths else []
     binding = {}
     for path in paths:
         interface = db.scalar(select(PhysicalInterface).where(PhysicalInterface.name == path["name"]))

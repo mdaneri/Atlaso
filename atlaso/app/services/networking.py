@@ -409,6 +409,56 @@ def discover_host_physical_interfaces(*, timeout: float | None = None, require_s
     return parse_linux_ip_interfaces(completed.stdout)
 
 
+def verify_native_management_vlans(paths: list[dict[str, str]], *, timeout: float) -> bool:
+    """Prove completed VLAN listeners and their pinned parents from native state.
+
+    Args:
+        paths: Management paths from the completed Network snapshot.
+        timeout: Remaining admitted native-observation deadline in seconds.
+
+    Returns:
+        Whether every VLAN has its exact parent, tag, up links and usable addresses.
+    """
+    vlans = [path for path in paths if path.get("kind") == "vlan"]
+    if not vlans:
+        return True
+    try:
+        result = subprocess.run(["ip", "-d", "-j", "address", "show"], check=False,
+                                capture_output=True, text=True, timeout=max(0, timeout))
+        rows = json.loads(result.stdout)
+        if result.returncode != 0 or not isinstance(rows, list) or any(not isinstance(row, dict) for row in rows):
+            return False
+        for path in vlans:
+            parents = [row for row in rows if row.get("ifname") == path.get("parent")]
+            listeners = [row for row in rows if row.get("ifname") == path.get("name")]
+            if len(parents) != 1 or len(listeners) != 1 or not path.get("parent_mac"):
+                return False
+            parent, listener = parents[0], listeners[0]
+            if parent.get("link_type") != "ether" or (parent.get("linkinfo") or {}).get("info_kind") == "vlan":
+                return False
+            if str(parent.get("address", "")).lower() != path["parent_mac"].lower():
+                return False
+            if any("UP" not in row.get("flags", []) or str(row.get("operstate", "")).lower() != "up"
+                   for row in (parent, listener)):
+                return False
+            linkinfo = listener.get("linkinfo") or {}
+            if (linkinfo.get("info_kind") != "vlan"
+                    or int((linkinfo.get("info_data") or {}).get("id", -1)) != int(path.get("vlan_id", "-2"))):
+                return False
+            if (not isinstance(parent.get("ifindex"), int)
+                    or listener.get("link_index") != parent["ifindex"]):
+                return False
+            required = [("inet", path.get("ip_cidr")), ("inet6", path.get("ipv6_cidr"))]
+            if not any(cidr for _, cidr in required):
+                return False
+            for family, cidr in required:
+                if cidr and ip_interface(cidr) not in {ip_interface(value) for value in _host_ip_cidrs(listener, family)}:
+                    return False
+        return True
+    except (OSError, subprocess.TimeoutExpired, ValueError, TypeError, AttributeError):
+        return False
+
+
 def parse_linux_ipv4_default_routes(payload: str) -> dict[str, str]:
     """Return one usable DHCP-learned IPv4 default gateway per interface.
 
