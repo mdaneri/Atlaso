@@ -97,6 +97,15 @@ After apply, verify the presented management certificate and download the expect
 snapshot or equivalent rollback point before replacing active trust. Use [VCF Certificate Trust](vcf-trust.md) for the
 separate task that installs the active Atlaso root into a supported VCF appliance.
 
+A revoked service-owned certificate can be replaced explicitly from **Certificate Requests** using the row menu's
+**Replace revoked managed certificate** action. The shared confirmation creates a pending managed successor;
+the original serial, certificate, key, revocation date and reason remain protected in history and in the CRL.
+Repeated replacement of the historical row is refused. Ordinary global CA Apply publishes the successor and CRL;
+this action does not alter appliance files or applied baselines. Both the management request page and authorized
+public request portal provide this action, with the same certificate-operator and CSRF checks as revocation.
+Replacement takes the shared writer before reading certificate or service/profile state and retains admission
+through its audit commit. Disabled services or CA profiles must be enabled before replacement.
+
 <!-- BEGIN GENERATED ADDITIONAL SCREENSHOTS -->
 ## Additional verified states
 
@@ -139,12 +148,3 @@ These captures show responsive layouts and useful operational states referenced 
 *Figure: Public certificate portal in the verified clean-appliance responsive state.*
 
 <!-- END GENERATED ADDITIONAL SCREENSHOTS -->
-
-A revoked service-owned certificate can be replaced explicitly from **Certificate Requests** using the row menu's
-**Replace revoked managed certificate** action. The shared confirmation creates a pending managed successor;
-the original serial, certificate, key, revocation date and reason remain protected in history and in the CRL.
-Repeated replacement of the historical row is refused. Ordinary global CA Apply publishes the successor and CRL;
-this action does not alter appliance files or applied baselines. Both the management request page and authorized
-public request portal provide this action, with the same certificate-operator and CSRF checks as revocation.
-Replacement takes the shared writer before reading certificate or service/profile state and retains admission
-through its audit commit. Disabled services or CA profiles must be enabled before replacement.
