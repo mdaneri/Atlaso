@@ -177,7 +177,8 @@ stays active while the candidate network, policy routes, firewall, certificate/n
 upstream, and host-facing `/openapi.json` complete bounded readiness checks. Only then does Atlaso retire the old path.
 During automatic IPv6 prefix renumbering, native observation retains every preferred dynamic address. Management
 Settings and certificate SANs include both active prefixes until an address becomes deprecated or expires. The
-physical-interface API preserves `host_ipv6_cidr` as the first observation and returns the complete set in
+automatic set has deterministic numeric address ordering, so kernel enumeration changes do not trigger reissuance.
+The physical-interface API preserves `host_ipv6_cidr` as the first observation and returns the complete set in
 `host_ipv6_cidrs`; disabled or static IPv6 does not retain automatic observations.
 This runtime set is excluded from settings archives and must be acquired again from native inventory after restore.
 When the desired role conversion also staged a management-gateway default, **Routing & WAN** joins that same

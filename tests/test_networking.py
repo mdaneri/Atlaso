@@ -1299,6 +1299,11 @@ def test_automatic_ipv6_renumbering_retains_every_preferred_address(enabled, sou
     host = parse_linux_ip_interfaces(json.dumps([row]))[0]
     expected = ("2001:db8:1::10/64", "2001:db8:2::10/64")
     assert host.host_dynamic_ipv6_cidrs == expected
+    row["addr_info"] = list(reversed(addresses))
+    reordered = parse_linux_ip_interfaces(json.dumps([row]))[0]
+    assert reordered.host_dynamic_ipv6_cidrs == expected
+    assert reordered.host_dynamic_ipv6_cidr == host.host_dynamic_ipv6_cidr
+    row["addr_info"] = addresses
     reconcile_host_physical_interfaces([interface], [host])
     assert physical_ipv6_cidrs(interface) == (expected if enabled else ())
     assert interface.ipv6_cidr is None

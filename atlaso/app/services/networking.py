@@ -296,6 +296,8 @@ def _host_ip_cidrs(row: dict, family: str, *, dynamic_only: bool = False) -> tup
             cidr = str(candidate)
             if cidr not in result:
                 result.append(cidr)
+    if family == "inet6" and dynamic_only:
+        result.sort(key=lambda cidr: (int(ip_interface(cidr).ip), ip_interface(cidr).network.prefixlen))
     return tuple(result)
 
 

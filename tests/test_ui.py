@@ -20066,6 +20066,57 @@ def test_committing_ca_reconciliation_waits_and_refreshes_recovered_leaf(client,
     assert observed == ["recovery-published-leaf"]
 
 
+def test_automatic_ipv6_enumeration_order_preserves_issued_ca_snapshot(client):
+    """Reversing preferred native prefixes does not replan or reissue the management leaf.
+
+    Args:
+        client: Initialized isolated appliance database.
+    """
+    from sqlalchemy import select
+
+    import atlaso.app.ui as ui
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import (
+        CaCertificate,
+        CaProfile,
+        CaSettings,
+        PhysicalInterface,
+    )
+    from atlaso.app.services.networking import (
+        parse_linux_ip_interfaces,
+        reconcile_host_physical_interfaces,
+    )
+
+    with SessionLocal() as db:
+        interface = db.scalar(select(PhysicalInterface).where(PhysicalInterface.name == "eth0"))
+        interface.role, interface.mode, interface.admin_state = "management", "access", "up"
+        interface.ip_cidr, interface.ipv4_method = "192.0.2.10/24", "static"
+        interface.ipv6_enabled, interface.ipv6_cidr = True, None
+        interface.desired_state_source = "console"
+        addresses = [{"family": "inet6", "local": value, "prefixlen": 64, "scope": "global", "dynamic": True}
+                     for value in ("2001:db8:2::10", "2001:db8:1::10")]
+        row = {"ifname": interface.name, "link_type": "ether", "address": interface.mac_address,
+               "flags": ["UP"], "operstate": "UP", "addr_info": addresses}
+        reconcile_host_physical_interfaces([interface], parse_linux_ip_interfaces(json.dumps([row])))
+        ui.get_ca_settings_row(db).enabled = True
+        assert ui.ensure_ca_state(db) == []
+        leaf = db.scalar(select(CaCertificate).where(CaCertificate.managed_owner == "appliance:https"))
+        assert leaf.status == "issued"
+        assert {"2001:db8:1::10", "2001:db8:2::10"}.issubset(set(leaf.ip_addresses.splitlines()))
+        original = (leaf.fingerprint, leaf.certificate_pem, leaf.ip_addresses)
+        settings = db.scalar(select(CaSettings))
+        profiles = list(db.scalars(select(CaProfile)))
+        certificates = list(db.scalars(select(CaCertificate)))
+        public_snapshot = ui.render_ca_apply_payload(settings, certificates, include_private_keys=False, profiles=profiles)
+        row["addr_info"] = list(reversed(addresses))
+        reconcile_host_physical_interfaces([interface], parse_linux_ip_interfaces(json.dumps([row])))
+        assert ui.ensure_ca_state(db) == []
+        db.refresh(leaf)
+        assert leaf.status == "issued"
+        assert (leaf.fingerprint, leaf.certificate_pem, leaf.ip_addresses) == original
+        assert ui.render_ca_apply_payload(settings, certificates, include_private_keys=False, profiles=profiles) == public_snapshot
+
+
 def test_ca_baseline_guard_refuses_intervening_recovery_after_listener_reload(client, monkeypatch):
     """A reload gap cannot acknowledge a superseded ordinary CA publication.
 
