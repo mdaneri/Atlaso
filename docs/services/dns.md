@@ -27,6 +27,9 @@ Atlaso-owned service records follow applied listener-address changes automatical
 generated DNS dependency for enabled local DNS, proves the new listener is ready, publishes its A/AAAA targets and
 CNAME aliases, and checks DNS answers before completing. The separate VCF Depot nginx listener, including a custom port,
 also moves and passes socket readiness before DNS publication; unrelated pending Depot settings remain pending.
+Network changes also protect active DHCP/SLAAC service sources when configured addresses are unchanged, because native
+addresses can change during reconfiguration. Dynamic Public Services listeners use the same protected handoff even when
+DNS is disabled or the listener has no generated DNS record.
 Readback checks retired owned names as well as replacement records. Static handoffs verify the submitted records and
 retain that verified ownership even if service identities are edited during readiness checks. Authoritative DNS is queried
 through the captured client-facing listeners and its isolated backend, alongside recursive loopback. Appliance-local

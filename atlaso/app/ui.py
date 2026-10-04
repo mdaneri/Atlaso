@@ -7489,6 +7489,22 @@ def network_generated_dns_unit(db: Session, units_by_id: dict[str, dict[str, Any
                 and row["record_type"] in {"A", "AAAA"} and source in candidate_network
                 and row["address"] not in management_addresses):
             affected.add(row["description"])
+    dynamic_descriptions = {
+        record["description"] for record in previous_records
+        if record["record_type"] in {"A", "AAAA"}
+        and candidate_network.get(record.get("source_interface", ""), {}).get("admin_state") == "up"
+        and (
+            candidate_network.get(record.get("source_interface", ""), {}).get("ipv4_method") == "dhcp"
+            if record["record_type"] == "A" else
+            candidate_network.get(record.get("source_interface", ""), {}).get("ipv6_enabled") == "true"
+            and not candidate_network.get(record.get("source_interface", ""), {}).get("ipv6_cidr")
+        )
+    }
+    pending_dynamic = bool(network_unit.get("changed") and dynamic_descriptions)
+    if pending_dynamic:
+        # Network reconfigures active links even when only MTU or another
+        # non-address setting changed, so their native lease may change.
+        affected.update(dynamic_descriptions)
     if not affected:
         return None
     previous_records = [row for row in previous_records if row["description"] in affected]
@@ -7514,12 +7530,6 @@ def network_generated_dns_unit(db: Session, units_by_id: dict[str, dict[str, Any
         projected, replacements,
         protected_ptr_owners={row.hostname for row in db.scalars(select(DnsRecord).where(DnsRecord.record_type == "PTR", DnsRecord.enabled.is_(True)))},
     )
-    pending_dynamic = bool(network_unit.get("changed") and any(
-        (candidate_network.get(row.get("source_interface", ""), {}).get("ipv4_method") == "dhcp"
-         or (candidate_network.get(row.get("source_interface", ""), {}).get("ipv6_enabled") == "true"
-             and not candidate_network.get(row.get("source_interface", ""), {}).get("ipv6_cidr")))
-        for row in previous_records
-    ))
     if projected == baseline.get("config_preview") and not pending_dynamic:
         return None
     projected_unit = make_appliance_apply_unit(
@@ -7557,6 +7567,44 @@ def network_generated_dns_unit(db: Session, units_by_id: dict[str, dict[str, Any
                     moves.append(move)
     projected_unit["listener_address_moves"] = moves
     return projected_unit
+
+
+def network_dynamic_public_bindings(units_by_id: dict[str, dict[str, Any]]) -> list[dict[str, str]]:
+    """Capture active dynamic Public Services sockets independently of DNS ownership.
+
+    Args:
+        units_by_id: Captured Network and Public Services Apply units.
+    """
+    network = units_by_id.get("network", {})
+    public_services = units_by_id.get("public_services", {})
+    network_rows = {row["name"]: row for row in network_interface_entries(
+        str(network.get("raw_config_preview") or network.get("config_preview") or "")
+    )}
+    public_dynamic_bindings = []
+    for entry in public_services.get("context", {}).get("public_service_entries", []):
+        row = network_rows.get(entry["interface"], {})
+        address = ip_address(entry["address"])
+        dynamic = (row.get("ipv4_method") == "dhcp" if address.version == 4
+                   else row.get("ipv6_enabled") == "true" and not row.get("ipv6_cidr"))
+        socket = f"[{address}]" if address.version == 6 else str(address)
+        if row.get("admin_state") == "up" and dynamic and f"listen {socket}:" in str(public_services.get("raw_config_preview") or public_services.get("config_preview") or ""):
+            binding = {"interface": entry["interface"], "old_address": str(address)}
+            if binding not in public_dynamic_bindings:
+                public_dynamic_bindings.append(binding)
+    return public_dynamic_bindings
+
+
+def network_listener_handoff_required(db: Session, units_by_id: dict[str, dict[str, Any]]) -> bool:
+    """Require readiness for generated DNS or active dynamic Public Services.
+
+    Args:
+        db: Session holding the applied DNS ownership baseline.
+        units_by_id: Reconciled Apply units used for admission and review.
+    """
+    return bool(
+        network_generated_dns_unit(db, units_by_id) is not None
+        or (units_by_id.get("network", {}).get("changed") and network_dynamic_public_bindings(units_by_id))
+    )
 
 
 def service_dns_identity_snapshot(db: Session) -> list[tuple[Any, ...]]:
@@ -12648,7 +12696,7 @@ def appliance_apply_context(db: Session) -> dict[str, Any]:
             ]
         else:
             review_units = [projected, *review_units]
-    if network_generated_dns_unit(db, unit_map) is not None:
+    if network_listener_handoff_required(db, unit_map):
         # Readiness replays the protected group. Make consent to pending group
         # edits visible before submission, rather than admitting unchecked edits.
         required_ids = {
@@ -12657,7 +12705,7 @@ def appliance_apply_context(db: Session) -> dict[str, Any]:
         }
         review_units = [
             {**unit, "requires_network_selection": True,
-             "summary": [*unit["summary"], "Required with Network for the protected DNS listener handoff"]}
+             "summary": [*unit["summary"], "Required with Network for the protected listener handoff"]}
             if unit["id"] in required_ids else unit
             for unit in review_units
         ]
@@ -15264,18 +15312,7 @@ def execute_management_handoff(
     prior_dns_records = (owned_service_dns_records(db, str(baselines.get("dnsmasq", {}).get("config_preview") or ""))
                          if dnsmasq is not None else [])
     previous_paths = list(network.get("previous_management_paths") or [])
-    network_rows = {row["name"]: row for row in network_interface_entries(network["raw_config_preview"])}
-    public_dynamic_bindings = []
-    for entry in public_services.get("context", {}).get("public_service_entries", []):
-        row = network_rows.get(entry["interface"], {})
-        address = ip_address(entry["address"])
-        dynamic = (row.get("ipv4_method") == "dhcp" if address.version == 4
-                   else row.get("ipv6_enabled") == "true" and not row.get("ipv6_cidr"))
-        socket = f"[{address}]" if address.version == 6 else str(address)
-        if row.get("admin_state") == "up" and dynamic and f"listen {socket}:" in public_services["raw_config_preview"]:
-            binding = {"interface": entry["interface"], "old_address": str(address)}
-            if binding not in public_dynamic_bindings:
-                public_dynamic_bindings.append(binding)
+    public_dynamic_bindings = network_dynamic_public_bindings(units_by_id)
     previous_addresses: list[str] = []
     previous_interfaces: list[str] = []
     previous_parent_interfaces: list[str] = []
@@ -18433,9 +18470,9 @@ def _submit_appliance_apply(
             and unit_map.get("network", {}).get("management_default_mirror_change")
         )
         or management_domain_migration
-        or ("network" in selected_ids and network_generated_dns_unit(db, unit_map) is not None)
+        or ("network" in selected_ids and network_listener_handoff_required(db, unit_map))
     )
-    if "network" in selected_ids and network_generated_dns_unit(db, unit_map) is not None:
+    if "network" in selected_ids and network_listener_handoff_required(db, unit_map):
         unchecked_dependencies = [
             unit["label"] for unit in units
             if unit["id"] in MANAGEMENT_HANDOFF_UNIT_IDS and unit["changed"]
@@ -18445,7 +18482,7 @@ def _submit_appliance_apply(
             detail = (
                 "Select the pending protected handoff changes with Network: "
                 + ", ".join(unchecked_dependencies)
-                + ". Unchecked changes cannot be applied by the DNS readiness handoff."
+                + ". Unchecked changes cannot be applied by the listener readiness handoff."
             )
             return JSONResponse({"detail": detail}, status_code=422) if wants_json else Response(
                 detail, status_code=422, media_type="text/plain",

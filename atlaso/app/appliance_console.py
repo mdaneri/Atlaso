@@ -1163,6 +1163,7 @@ def _submit_console_apply(
         active_vcf_depot_execution_job,
         appliance_apply_units,
         network_generated_dns_unit,
+        network_listener_handoff_required,
         ntp_owned_dns_is_only_pending_change,
         run_appliance_apply_job,
     )
@@ -1199,6 +1200,7 @@ def _submit_console_apply(
                     f"{', '.join(changed_during_recovery)}. Review it in Appliance Apply and retry."
                 )
         generated_dns = network_generated_dns_unit(db, unit_map) if "network" in selected_ids else None
+        listener_handoff = "network" in selected_ids and network_listener_handoff_required(db, unit_map)
         generated_dns_only = generated_dns is not None and "dnsmasq" not in selected_ids
         if generated_dns_only:
             unit_map["dnsmasq"] = generated_dns
@@ -1215,11 +1217,16 @@ def _submit_console_apply(
             units.remove(dns_unit)
             ntp_index = next(index for index, unit in enumerate(units) if unit["id"] == "ntpd")
             units.insert(ntp_index + 1, dns_unit)
+        if listener_handoff:
+            selected_ids.update(MANAGEMENT_HANDOFF_UNIT_IDS)
         selected, payload = _captured_apply_payload(units, selected_ids)
+        if listener_handoff:
+            payload["management_handoff"] = True
+            payload["management_handoff_units"] = [
+                *MANAGEMENT_HANDOFF_UNIT_IDS, *(("dnsmasq",) if "dnsmasq" in selected_ids else ()),
+            ]
         if generated_dns is not None:
             payload["generated_dns_only"] = generated_dns_only
-            payload["management_handoff"] = True
-            payload["management_handoff_units"] = [*MANAGEMENT_HANDOFF_UNIT_IDS, "dnsmasq"]
         job_id = f"job_{uuid4().hex[:12]}"
         job = Job(
             id=job_id,
