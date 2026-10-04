@@ -667,6 +667,7 @@ def _same_address_lease(
     client: FixtureHttpClient, connect: Callable[[], paramiko.SSHClient],
     topology: AdmittedTopology, server_action: Callable[[str], dict[str, Any]],
     baseline_dns_servers: list[str],
+    ownership_check: Callable[[], dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Prove DHCP activation against a live lease for the same static address.
 
@@ -676,7 +677,9 @@ def _same_address_lease(
         topology: Independently admitted fixture identities.
         server_action: Admitted DHCP server status controller.
         baseline_dns_servers: Original external resolvers to restore before DHCP activation.
+        ownership_check: Fresh dedicated-host and guest-conflict observation before each Apply.
     """
+    ownership = ownership_check() if ownership_check else None
     before = _lease(server_action("status"), topology)
     interface = topology.link("appliance", 0).interface
     path = f"/api/v1/interfaces/physical/{interface}"
@@ -687,6 +690,8 @@ def _same_address_lease(
     client.json_request("PATCH", path, json_body={
         "ipv4_method": "static", "ip_cidr": "192.0.2.10/24", "gateway": "192.0.2.1",
     })
+    if ownership_check:
+        ownership_check()
     static_apply = _apply(client, ["network", "firewall", "wan", "appliance_settings"], stage="same-address-static")
     static = _snapshot(connect)
     static_rows = [row for row in _addresses(static, interface) if row.get("local") == "192.0.2.10"]
@@ -698,13 +703,17 @@ def _same_address_lease(
     client.json_request("PATCH", path, json_body={"ipv4_method": "dhcp", "ip_cidr": None, "gateway": None})
     client.json_request("PATCH", "/api/v1/settings", json_body={"external_dns_servers": baseline_dns_servers})
     # Record the actual still-unexpired server lease immediately before activation.
+    if ownership_check:
+        ownership_check()
     activation_lease = _lease(server_action("status"), topology)
     dhcp_apply = _apply(client, ["network", "firewall", "wan", "appliance_settings"], stage="same-address-dhcp")
     acquired = _same_address_native(connect, topology)
+    final_ownership = ownership_check() if ownership_check else None
     desired = client.json_request("GET", path)
     if desired.get("ipv4_method") != "dhcp" or desired.get("ip_cidr"):
         raise OverlapPrerequisiteError("same-address activation did not retain desired DHCP")
     return {"original_lease": before, "static_phase_lease": retained,
+            "ownership_before": ownership, "ownership_after": final_ownership,
             "lease_before_activation": activation_lease,
             "static_apply": static_apply, "static_native": static,
             "dhcp_apply": dhcp_apply, "acquired_native": acquired,
@@ -715,6 +724,8 @@ def run_scenario(
     *, client: FixtureHttpClient, connect_appliance: Callable[[], paramiko.SSHClient],
     topology: AdmittedTopology, server_action: Callable[[str], dict[str, Any]],
     username: str, password: str,
+    same_address_only: bool = False,
+    ownership_check: Callable[[], dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Apply overlapping domains, prove native lease lifecycles, and restore desired state.
 
@@ -725,6 +736,8 @@ def run_scenario(
         server_action: Bound controller for the admitted private DHCP/RA server.
         username: Appliance administrator username, never included in evidence.
         password: In-memory administrator password, never included in evidence.
+        same_address_only: Exercise only the retained-static IPv4 lease handoff.
+        ownership_check: Live host and guest proof required by the focused mode.
     """
     status, body, _headers = client.request("GET", "/ui/management/login")
     if status != 200:
@@ -744,6 +757,11 @@ def run_scenario(
     client.diagnostic_secret = password
     recovery_required: ApplyOutcomeUnknown | RestorationIncomplete | None = None
     try:
+        if same_address_only:
+            if ownership_check is None:
+                raise OverlapPrerequisiteError("same-address acceptance requires dedicated-host proof")
+            return _run_authenticated(client, connect_appliance, topology, server_action,
+                                      same_address_only=True, ownership_check=ownership_check)
         return _run_authenticated(client, connect_appliance, topology, server_action)
     except (ApplyOutcomeUnknown, RestorationIncomplete) as failure:
         recovery_required = failure
@@ -765,6 +783,8 @@ def run_scenario(
 def _run_authenticated(
     client: FixtureHttpClient, connect_appliance: Callable[[], paramiko.SSHClient],
     topology: AdmittedTopology, server_action: Callable[[str], dict[str, Any]],
+    *, same_address_only: bool = False,
+    ownership_check: Callable[[], dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Run the scenario after authentication while preserving all baseline fields.
 
@@ -773,8 +793,14 @@ def _run_authenticated(
         connect_appliance: Fresh pinned root SSH factory.
         topology: Independently admitted fixture topology.
         server_action: Admitted private DHCP/RA server controller.
+        same_address_only: Skip the separate IPv6 and routing-overlap acceptance cases.
+        ownership_check: Required independent host and guest observations for the focused mode.
     """
     management, lab = (topology.link("appliance", index).interface for index in (0, 1))
+    if same_address_only:
+        if ownership_check is None:
+            raise OverlapPrerequisiteError("same-address acceptance requires dedicated-host proof")
+        ownership_check()
     setup = _setup(client)
     clean = setup.get("clean", setup.get("already_applied"))
     if not isinstance(clean, dict) or clean.get("pending_count") != 0:
@@ -799,6 +825,14 @@ def _run_authenticated(
     restore_allowed = True
     stage = "candidate-network"
     try:
+        if same_address_only:
+            evidence["covered"] = ["retained-static-same-address-lease"]
+            evidence["not_covered"] = ["slaac", "expiry", "routing-overlap", "dad-conflict", "reboot"]
+            stage = "same-address-lease"
+            evidence["same_address_lease"] = _same_address_lease(
+                client, connect_appliance, topology, server_action, baseline_dns_servers, ownership_check,
+            )
+            return evidence
         stage = "management-ipv6-certificate-preparation"
         evidence["management_certificate_preparation"] = _prepare_management_certificate(
             client, connect_appliance, topology,
@@ -935,6 +969,8 @@ def probe(args, management):
     finally:
         if restore_allowed:
             try:
+                if same_address_only and ownership_check:
+                    ownership_check()
                 evidence["restored"] = _restore(
                     client, connect_appliance, server_action, baseline, baseline_dns_servers,
                 )

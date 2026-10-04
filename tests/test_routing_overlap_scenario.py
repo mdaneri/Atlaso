@@ -903,6 +903,114 @@ def test_same_address_requires_live_server_lease(monkeypatch, topology, native, 
             if method == "PATCH" and path == "/api/v1/settings"] == [["192.0.2.1"], []]
 
 
+@pytest.mark.parametrize("outcome", ["success", "ordinary-failure"])
+def test_same_address_only_skips_ipv6_and_restores_original_baseline(monkeypatch, topology, outcome):
+    """Focused mode skips IPv6 preparation and restores all captured fields either way.
+
+    Args:
+        monkeypatch: Replace only setup, candidate phase, and external observations.
+        topology: Independently admitted original fixture identities.
+        outcome: Successful handoff or an ordinary prerequisite failure.
+    """
+    client = FakeClient()
+    original = copy.deepcopy(client.rows)
+    original_dns = list(client.external_dns_servers)
+    events = []
+    monkeypatch.setattr(scenario, "_setup", lambda _client: {"clean": {"pending_count": 0}})
+    monkeypatch.setattr(scenario, "_prepare_management_certificate",
+                        lambda *_args: pytest.fail("same-address-only must not prepare IPv6"))
+
+    def same_address(current, *_args, **_kwargs):
+        """Change desired state at the same-address phase boundary.
+
+        Args:
+            current: Synthetic authenticated appliance client.
+            *_args: Original phase dependencies and baseline settings.
+            **_kwargs: Optional phase controls.
+        """
+        events.append("same-address")
+        current.rows["eth0"].update(ipv4_method="dhcp", ip_cidr=None, gateway=None)
+        current.external_dns_servers = ["192.0.2.1"]
+        if outcome == "ordinary-failure":
+            raise OverlapPrerequisiteError("synthetic same-address refusal")
+        return {"lease": "proved"}
+
+    monkeypatch.setattr(scenario, "_same_address_lease", same_address)
+    monkeypatch.setattr(scenario, "_apply", lambda _client, units=None, **kwargs:
+                        events.append(("apply", kwargs["stage"])) or {"status": "succeeded"})
+    monkeypatch.setattr(scenario, "_snapshot", lambda _connect: {"links": [
+        {"ifname": "eth0", "addr_info": [{"local": "192.0.2.10", "scope": "global"}]},
+        {"ifname": "eth1", "addr_info": []},
+    ]})
+    monkeypatch.setattr(scenario, "_settle_dependent_dns", lambda _client: {"dns_settled": True})
+
+    if outcome == "ordinary-failure":
+        with pytest.raises(OverlapPrerequisiteError, match="same-address-lease: synthetic same-address refusal"):
+            scenario._run_authenticated(
+                client, lambda: None, topology, lambda _action: {}, same_address_only=True,
+                ownership_check=lambda: {"ownership": "stable"},
+            )
+    else:
+        evidence = scenario._run_authenticated(
+            client, lambda: None, topology, lambda _action: {}, same_address_only=True,
+            ownership_check=lambda: {"ownership": "stable"},
+        )
+        assert evidence["same_address_lease"] == {"lease": "proved"}
+
+    assert events[-1] == ("apply", "restoration")
+    assert client.rows == original
+    assert client.external_dns_servers == original_dns
+    assert not any(method == "PATCH" and body and
+                   (body.get("ipv6_enabled") is True or
+                    body.get("ipv6_cidr") == "fd74:1::250:56ff:fe00:10/64")
+                   for method, _path, body in client.calls)
+    assert len([event for event in events if event == "same-address"]) == 1
+
+
+def test_same_address_ownership_loss_prevents_baseline_restoration(monkeypatch, topology):
+    """Do not write baseline state after the dedicated-host ownership bracket is lost.
+
+    Args:
+        monkeypatch: Replace Apply and the ownership-loss boundary.
+        topology: Independently admitted original fixture identities.
+    """
+    client = FakeClient()
+    checks = 0
+    restorations = []
+    monkeypatch.setattr(scenario, "_setup", lambda _client: {"clean": {"pending_count": 0}})
+
+    def same_address(current, *_args, **_kwargs):
+        """Leave changed state for the restoration ownership test.
+
+        Args:
+            current: Synthetic authenticated appliance client.
+            *_args: Original phase dependencies and baseline settings.
+            **_kwargs: Optional phase controls.
+        """
+        current.rows["eth0"].update(ipv4_method="dhcp", ip_cidr=None, gateway=None)
+        return {"lease": "proved"}
+
+    def ownership_check():
+        nonlocal checks
+        checks += 1
+        if checks == 2:
+            raise OverlapPrerequisiteError("dedicated-host ownership changed")
+        return {"ownership": "stable"}
+
+    monkeypatch.setattr(scenario, "_same_address_lease", same_address)
+    monkeypatch.setattr(scenario, "_restore", lambda *_args: restorations.append("restore"))
+
+    with pytest.raises(scenario.RestorationIncomplete, match="restoration: dedicated-host ownership changed"):
+        scenario._run_authenticated(
+            client, lambda: None, topology, lambda _action: {}, same_address_only=True,
+            ownership_check=ownership_check,
+        )
+
+    assert checks == 2
+    assert restorations == []
+    assert client.rows["eth0"]["ipv4_method"] == "dhcp"
+
+
 @pytest.fixture
 def lease_native(native, topology):
     """Keep the installed helper's client lease verdict and raw kernel state distinct.
