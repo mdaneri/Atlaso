@@ -81,9 +81,9 @@ also validate listener conflicts. See [Traffic Publishing](traffic-publishing.md
 
 Valid changed units are selected by default; invalid units are not. Unselected units remain pending after submission.
 
-When DHCP or SLAAC changes a service address, select **Network** and **DNS/DHCP** to verify listeners before publishing
-generated DNS. Required pending Certificate Authority, Firewall, Appliance Settings, and Public Services changes are
-selected and locked with Network. Inspect diffs; clear Network to defer them. Omitted dependencies block submission.
+Select **Network** to verify DHCP/SLAAC listeners and **DNS/DHCP** to publish generated DNS, even after startup renewal.
+If KMS ownership is unproven, apply **vSphere Key Providers** first. Inspect locked pending Certificate Authority,
+Firewall, Appliance Settings, and Public Services changes; clear Network to defer them. Omitted dependencies block submission.
 
 !!! warning
     Review related units together when a feature crosses service boundaries; partial application can leave behavior unavailable.

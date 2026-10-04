@@ -360,3 +360,129 @@ def test_public_only_dynamic_readback_persists_host_address_and_baseline(client,
         baseline_config = ui.load_appliance_apply_baselines(db)["public_services"]["config_preview"]
         assert baseline_config == projected.rstrip("\n")
         assert refreshed["config_preview"] == baseline_config
+
+
+def test_kms_listener_source_survives_renewal_and_pending_interface_edit(client):
+    """Use the successfully applied KMS interface after startup renews SLAAC.
+
+    Args:
+        client: Isolated authenticated application client.
+    """
+    from atlaso.app import ui
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import KmsSettings, PhysicalInterface
+
+    login(client)
+    with SessionLocal() as db:
+        access, _units = _prepare_service_baselines(
+            db, ui, {"kms"}, dns_enabled=False, dynamic_ipv4=False, dynamic_ipv6=True,
+        )
+        baselines = ui.load_appliance_apply_baselines(db)
+        assert baselines["kms"]["applied_listener_sources"]["2001:db8::10"] == access.name
+        baselines["kms"]["applied_listener_sources"]["2001:db8::10"] = "renamed-access"
+        baselines["network"]["physical_interface_aliases"] = {"renamed-access": access.name}
+        ui.save_appliance_apply_baselines(db, baselines)
+        management = db.scalar(
+            select(PhysicalInterface).where(PhysicalInterface.role == "management")
+        )
+        assert management is not None
+
+        # Startup observed a new SLAAC address after the prior KMS Apply. The
+        # operator also has a different, still-pending KMS interface selection.
+        access.host_ipv6_cidr = "2001:db8::21/64"
+        db.scalar(select(KmsSettings)).listen_interface = management.name
+        db.flush()
+        assert all("2001:db8::10" not in option["addresses"] for option in ui.service_bind_options(db))
+        units = {unit["id"]: unit for unit in ui.appliance_apply_units(db)}
+
+        moves = ui.network_dynamic_service_listener_moves(db, units)
+        kms_move = next(move for move in moves if move["service"] == "kms")
+        assert kms_move == {
+            "service": "kms", "interface": access.name,
+            "old_address": "2001:db8::10", "new_address": "2001:db8::10",
+        }
+        assert units["network"]["validation_errors"] == []
+        assert units["kms"]["changed"] is True
+        projected = ui.projected_handoff_listener_baselines(
+            {"kms": baselines["kms"]}, units,
+            [{**kms_move, "new_address": "2001:db8::21"}],
+        )["kms"]
+        assert projected["applied_listener_sources"] == {
+            "192.0.2.10": access.name, "2001:db8::21": access.name,
+        }
+        assert "2001:db8::21" in projected["config_preview"]
+
+
+def test_legacy_kms_dynamic_listener_without_dns_source_fails_closed(client):
+    """Block Network Apply when a legacy KMS dynamic binding has no proven source.
+
+    Args:
+        client: Isolated authenticated application client.
+    """
+    from atlaso.app import ui
+    from atlaso.app.database import SessionLocal
+
+    login(client)
+    with SessionLocal() as db:
+        _access, units = _prepare_service_baselines(
+            db, ui, {"kms"}, dns_enabled=False, dynamic_ipv4=False, dynamic_ipv6=True,
+        )
+        baselines = ui.load_appliance_apply_baselines(db)
+        # Model an older applied DHCP/SLAAC Network snapshot without the KMS
+        # source metadata introduced by newer successful KMS Applies.
+        baselines["network"]["config_preview"] = units["network"]["config_preview"]
+        baselines["kms"].pop("applied_listener_interface", None)
+        baselines["kms"].pop("applied_listener_sources", None)
+        baselines["dnsmasq"]["service_dns_records"] = []
+        ui.save_appliance_apply_baselines(db, baselines)
+
+        reviewed = {unit["id"]: unit for unit in ui.appliance_apply_units(db)}
+        assert reviewed["network"]["validation_errors"] == [
+            "The applied KMS listener source cannot be proven from this legacy baseline. Apply vSphere Key Providers first, then review Network again."
+        ]
+
+
+def test_kms_applied_source_map_keeps_multiple_interface_bindings(client):
+    """Retain per-address source ownership when KMS listens on multiple interfaces.
+
+    Args:
+        client: Isolated authenticated application client.
+    """
+    from atlaso.app import ui
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import KmsSettings, PhysicalInterface
+
+    login(client)
+    with SessionLocal() as db:
+        access, _units = _prepare_service_baselines(
+            db, ui, {"kms"}, dns_enabled=False, dynamic_ipv4=False, dynamic_ipv6=True,
+        )
+        secondary = PhysicalInterface(
+            name="eth10", mac_address="02:00:00:00:00:20", role="access", mode="access",
+            admin_state="up", oper_state="up", ipv4_method="static", ip_cidr="203.0.113.10/24",
+        )
+        db.add(secondary)
+        db.flush()
+        options = {row["name"]: row["addresses"] for row in ui.service_bind_options(db)}
+        selected = [access.name, secondary.name]
+        addresses = list(dict.fromkeys([*options[access.name], *options[secondary.name]]))
+        kms_settings = db.scalar(select(KmsSettings))
+        kms_settings.listen_interface = "\n".join(selected)
+        kms_settings.listen_address = "\n".join(addresses)
+        db.flush()
+
+        captured = {unit["id"]: unit for unit in ui.appliance_apply_units(db)}
+        ui.update_appliance_apply_baselines(db, [captured["kms"]], {"kms"})
+        baseline_sources = ui.load_appliance_apply_baselines(db)["kms"]["applied_listener_sources"]
+        assert baseline_sources["2001:db8::10"] == access.name
+        assert baseline_sources["203.0.113.10"] == secondary.name
+
+        access.host_ipv6_cidr = "2001:db8::21/64"
+        db.flush()
+        candidate = {unit["id"]: unit for unit in ui.appliance_apply_units(db)}
+        kms_moves = [move for move in ui.network_dynamic_service_listener_moves(db, candidate)
+                     if move["service"] == "kms"]
+        assert kms_moves == [{
+            "service": "kms", "interface": access.name,
+            "old_address": "2001:db8::10", "new_address": "2001:db8::10",
+        }]

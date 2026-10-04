@@ -12,6 +12,7 @@ import subprocess
 import sys
 import textwrap
 import time
+from copy import deepcopy
 from dataclasses import dataclass
 from importlib.metadata import PackageNotFoundError, version
 from ipaddress import ip_address, ip_interface
@@ -1066,6 +1067,11 @@ def _captured_apply_payload(units: list[dict[str, Any]], selected_ids: set[str])
                 "config_path": unit["config_path"],
                 "config_preview": unit["config_preview"],
                 "config_diff": unit["config_diff"],
+                **{
+                    key: unit[key]
+                    for key in ("applied_listener_interface", "applied_listener_sources")
+                    if key in unit
+                },
             }
             for unit in selected
         ],
@@ -1139,6 +1145,109 @@ def _management_handoff_snapshot_hashes(db: Any) -> dict[str, str]:
         for unit in appliance_apply_units(db, reconcile=False)
         if unit["id"] in MANAGEMENT_HANDOFF_UNIT_IDS
     }
+
+
+def _captured_management_settings_unit(db: Any) -> tuple[dict[str, Any], str]:
+    """Capture the exact Settings and Network units used by console recovery.
+
+    Args:
+        db: Current transaction containing the console-owned desired-state changes.
+
+    Returns:
+        The captured Settings unit and Network preview.
+    """
+    from atlaso.app.ui import appliance_apply_units
+
+    units = {unit["id"]: unit for unit in appliance_apply_units(db, reconcile=False)}
+    settings_unit = units.get("appliance_settings")
+    network_unit = units.get("network")
+    if settings_unit is None or network_unit is None:
+        raise ConsoleOperationError("Console management recovery could not capture its protected settings.")
+    return deepcopy(settings_unit), str(network_unit.get("raw_config_preview") or network_unit.get("config_preview") or "")
+
+
+def _post_handoff_settings_snapshot(
+    network_job_id: str,
+    captured_settings: dict[str, Any],
+    network_preview: str,
+    fallback_snapshot: str,
+) -> str:
+    """Project the captured Settings snapshot through proven DHCP handoff evidence.
+
+    Args:
+        network_job_id: Persisted Network handoff task identifier.
+        captured_settings: Settings unit captured before the Network handoff.
+        network_preview: Exact Network configuration submitted with that handoff.
+        fallback_snapshot: Original snapshot for legacy mocked submitters without task evidence.
+
+    Returns:
+        The expected post-handoff snapshot hash.
+    """
+    with SessionLocal() as db:
+        job = db.get(Job, network_job_id)
+        if job is None:
+            return fallback_snapshot
+        if job.status != JobStatus.SUCCEEDED.value or not job.result:
+            raise ConsoleOperationError("Successful Network handoff evidence is unavailable for Settings recovery.")
+        try:
+            payload = json.loads(job.result)
+        except (TypeError, json.JSONDecodeError) as exc:
+            raise ConsoleOperationError("Successful Network handoff evidence is malformed.") from exc
+        evidence = next((
+            unit.get("management_handoff")
+            for unit in payload.get("units", [])
+            if isinstance(unit, dict) and unit.get("unit_id") == "network"
+        ), None)
+        if not isinstance(evidence, dict):
+            # Existing console submit mocks return opaque IDs and do not persist jobs.
+            if payload.get("management_handoff") is not True:
+                return fallback_snapshot
+            raise ConsoleOperationError("Successful Network handoff did not record address evidence.")
+        original = json.loads(str(captured_settings.get("raw_config_preview") or "{}"))
+        old_management_ip = str(original.get("management_ip") or "")
+        projected = deepcopy(captured_settings)
+        from atlaso.app.ui import (
+            baseline_management_handoff_dhcp_settings,
+            make_appliance_apply_unit,
+        )
+
+        try:
+            baseline_management_handoff_dhcp_settings(db, projected, network_preview, evidence)
+        except (RuntimeError, ValueError) as exc:
+            raise ConsoleOperationError(
+                f"Successful Network handoff could not project Appliance Settings: {exc}"
+            ) from exc
+        current = json.loads(str(projected.get("raw_config_preview") or "{}"))
+        new_management_ip = str(current.get("management_ip") or "")
+        if current.get("web_terminal_enabled") and old_management_ip and old_management_ip != new_management_ip:
+            options = projected.get("context", {}).get("web_terminal_interface_options", [])
+            selected = set(current.get("web_terminal_interfaces") or []) - {current.get("management_interface")}
+            old_address_still_selected = any(
+                option.get("name") in selected
+                and old_management_ip in option.get("addresses", [])
+                for option in options if isinstance(option, dict)
+            )
+            addresses = current.get("web_terminal_addresses") or []
+            current["web_terminal_addresses"] = [
+                value for value in addresses
+                if value != old_management_ip or old_address_still_selected
+            ]
+            rendered = json.dumps(current, indent=2, sort_keys=True) + "\n"
+            refreshed = make_appliance_apply_unit(
+                unit_id="appliance_settings",
+                label=projected["label"],
+                page_url=projected["page_url"],
+                context=projected["context"],
+                summary=projected["summary"],
+                validation_errors=projected["validation_errors"],
+                validation_warnings=projected["validation_warnings"],
+                config_path=projected["config_path"],
+                config_preview=rendered,
+                baseline=None,
+            )
+            for key in ("raw_config_preview", "config_preview", "snapshot_hash"):
+                projected[key] = refreshed[key]
+        return str(projected["snapshot_hash"])
 
 
 def _submit_console_apply(
@@ -1334,6 +1443,8 @@ def configure_management(
     dns_servers = validate_dns_servers(raw_dns_servers)
     _ensure_no_active_apply()
     expected_management_snapshots: dict[str, str]
+    captured_settings: dict[str, Any]
+    captured_network_preview: str
     with SessionLocal() as db:
         acquire_network_objects_write_lock(db)
         _ensure_no_pending_management_dependencies(db)
@@ -1365,6 +1476,7 @@ def configure_management(
             actor=None, dns_refresher=refresh_interface_service_dns_aliases,
         )
         expected_management_snapshots = _management_handoff_snapshot_hashes(db)
+        captured_settings, captured_network_preview = _captured_management_settings_unit(db)
         db.commit()
         record_audit(
             db,
@@ -1378,10 +1490,16 @@ def configure_management(
         {"network", "firewall"}, expected_management_snapshots=expected_management_snapshots,
     )
     _recover_management_plane("Network and Firewall were applied")
+    expected_settings_snapshot = _post_handoff_settings_snapshot(
+        network_job_id,
+        captured_settings,
+        captured_network_preview,
+        expected_management_snapshots["appliance_settings"],
+    )
     settings_job_id = _submit_console_apply(
         {"appliance_settings"},
         expected_management_snapshots={
-            "appliance_settings": expected_management_snapshots["appliance_settings"],
+            "appliance_settings": expected_settings_snapshot,
         },
     )
     _recover_management_plane("Appliance Settings were applied")
