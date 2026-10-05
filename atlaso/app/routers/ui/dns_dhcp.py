@@ -1038,7 +1038,8 @@ def build_router(dependencies: DnsDhcpUiDependencies) -> DnsDhcpUiRouter:
             The endpoint response.
         """
         context = dnsmasq_context(db)
-        context["dhcp_pool_reports"] = [dhcp_pool_verification.status(db, scope.id) for scope in context["dhcp_scopes"]]
+        context["dhcp_pool_reports"] = [dhcp_pool_verification.status(db, scope.id) for scope in context["dhcp_scopes"]
+                                        if scope.enabled and scope.address_family == "ipv4"]
         selected_pool = request.query_params.get("pool", "")
         context["selected_pool_report"] = next((report for report in context["dhcp_pool_reports"] if str(report["scope_id"]) == selected_pool), None)
         return render(
@@ -1058,7 +1059,8 @@ def build_router(dependencies: DnsDhcpUiDependencies) -> DnsDhcpUiRouter:
         """Refresh the current permission-checked pool health collection."""
         if not identity.can("read:dhcp"):
             raise HTTPException(status_code=403, detail="DHCP read permission required.")
-        reports = [dhcp_pool_verification.status(db, scope.id) for scope in db.scalars(select(DhcpScope).order_by(DhcpScope.name))]
+        reports = [dhcp_pool_verification.status(db, scope.id) for scope in db.scalars(select(DhcpScope).order_by(DhcpScope.name))
+                   if scope.enabled and scope.address_family == "ipv4"]
         return JSONResponse(reports, headers={"Cache-Control": "no-store"})
 
     @router.get("/dhcp/scopes/{scope_id}/verification", response_model=None)

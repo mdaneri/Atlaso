@@ -106,6 +106,8 @@ never evicts clients, deletes leases, changes reservations, blocks MACs, flushes
 allocator exclusions. Remediation requires explicit desired configuration and Apply. DHCP's existing Logs view remains
 the native allocation/exhaustion diagnostic surface; a scan does not prove every offer was protected.
 
+Pool Health lists enabled IPv4 pools; disabled and IPv6 scopes remain in the ordinary scope overview.
+
 Scheduled verification is optional and is not enabled by the default allocation-check switch. Choose **Schedule
 verification** from the pool menu or create a **dhcp pool verify** task in **Automation Schedules**, select the IPv4
 pool, then explicitly choose its state and an hourly or slower recurrence. Missed/overlapping runs are skipped;

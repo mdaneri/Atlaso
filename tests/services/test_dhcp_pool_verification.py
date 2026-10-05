@@ -432,3 +432,33 @@ def test_archived_schedule_rebinds_by_unique_pool_name(binding):
         config = json.loads(restored.task_config_json)
         assert config.get("scope_id") == (30 if binding == "valid" else None)
     engine.dispose()
+
+
+def test_pool_health_grid_excludes_unsupported_scopes(client):
+    """Initial/fallback and refreshed grids offer actions only for enabled IPv4."""
+    from atlaso.app.database import SessionLocal
+    from tests.routers.ui.helpers import login
+
+    with SessionLocal() as db:
+        for scope in db.scalars(select(DhcpScope)):
+            scope.enabled = False
+        db.commit()
+        pool, _config = setup_pool(db)
+        eligible_id = pool.id
+        db.add(DhcpScope(name="Disabled-only", address_family="ipv4", enabled=False, interface_name="eth1"))
+        db.add(DhcpScope(name="IPv6-only", address_family="ipv6", enabled=True, interface_name="eth2",
+                         site_address="fd50::1", prefix_length=64, range_expression="fd50::100-fd50::110"))
+        db.commit()
+    login(client)
+    response = client.get("/dhcp/verification")
+    assert response.status_code == 200
+    assert [report["scope_id"] for report in response.json()] == [eligible_id]
+    page = client.get("/dhcp")
+    assert page.status_code == 200
+    import html
+
+    payload = page.text.split("data-reports='", 1)[1].split("'", 1)[0]
+    assert [report["scope_id"] for report in json.loads(html.unescape(payload))] == [eligible_id]
+    fallback = page.text.split('id="dhcp-pool-health-fallback"', 1)[1].split("</table>", 1)[0]
+    assert "Disabled-only" not in fallback and "IPv6-only" not in fallback
+    assert f'/dhcp/scopes/{eligible_id}/verification"' in fallback
