@@ -949,7 +949,7 @@ def test_management_handoff_dns_readback_failure_triggers_proven_recovery(client
 
     monkeypatch.setattr(ui, "CA_STAGED_CONFIG_PATH", str(tmp_path / "ca.json"))
     monkeypatch.setattr(ui, "MANAGEMENT_HANDOFF_STAGED_MANIFEST_PATH", str(tmp_path / "handoff.json"))
-    monkeypatch.setattr(ui, "load_appliance_apply_baselines", lambda _db: {
+    monkeypatch.setattr(ui, "load_appliance_apply_baselines", lambda _db, *, refresh=False: {
         "appliance_settings": {},
         "dnsmasq": {"config_preview": "host-record=ca.custom.example.internal,192.0.2.10\n"},
     })
