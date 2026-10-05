@@ -17369,6 +17369,10 @@ def test_appliance_settings_rejects_rotation_without_retained_address_san(monkey
             command: OpenSSL invocation and candidate address.
             **_kwargs: Subprocess options unused by the stub.
         """
+        # Model the observed Photon CLI: -in - attempts to open a file named -.
+        if "-in" in command:
+            return subprocess.CompletedProcess(command, 1)
+        assert _kwargs["input"] == cert_path.read_text(encoding="utf-8").encode("utf-8")
         checked_addresses.append(command[-1])
         return subprocess.CompletedProcess(command, 0 if command[-1] == "192.168.49.1" else 1)
 

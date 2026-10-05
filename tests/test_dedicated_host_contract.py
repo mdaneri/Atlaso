@@ -1,0 +1,301 @@
+"""Contract tests for the bounded VMware dedicated-host observation."""
+
+from __future__ import annotations
+
+import copy
+
+import pytest
+
+from scripts.interop import dedicated_host_contract as contract
+
+APPLIANCE = r"E:\lab\appliance.vmx"
+PEER = r"E:\lab\peer.vmx"
+EXECUTABLE = r"C:\Program Files\VMware\VMware Workstation\vmware-vmx.exe"
+MAC_APPLIANCE = "00:50:56:aa:bb:01"
+MAC_PEER = "00:50:56:aa:bb:02"
+
+
+def _expected() -> dict[str, list[dict[str, object]]]:
+    return {
+        APPLIANCE: [{"index": 0, "connection_type": "pvn", "network_id": "segment-id",
+                     "mac": MAC_APPLIANCE}],
+        PEER: [{"index": 1, "connection_type": "pvn", "network_id": "segment-id",
+                "mac": MAC_PEER}],
+    }
+
+
+def _snapshot() -> dict[str, object]:
+    expected = _expected()
+    adapters: dict[str, list[dict[str, object]]] = {}
+    for vmx_path, wanted_rows in expected.items():
+        rows: list[dict[str, object]] = [
+            {"index": index, "present": False, "connection_type": "", "network_id": "",
+             "mac": "", "start_connected": False}
+            for index in range(contract.MAX_ADAPTERS)
+        ]
+        for wanted in wanted_rows:
+            index = int(wanted["index"])
+            rows[index] = {**wanted, "present": True, "start_connected": True}
+        adapters[vmx_path] = rows
+    return {"running_vm_paths": [APPLIANCE, PEER, r"E:\lab\unrelated.vmx"], "adapters": adapters}
+
+
+def _guest_interface(mac: str, *addresses: tuple[str, int]) -> dict[str, object]:
+    """Build one synthetic Ethernet interface with native address records.
+
+    Args:
+        mac: Interface MAC address.
+        *addresses: Address and prefix-length pairs to attach to the interface.
+    """
+    return {
+        "mac": mac,
+        "link_type": "ether",
+        "flags": ["BROADCAST", "MULTICAST", "UP", "LOWER_UP"],
+        "master": None,
+        "linkinfo": None,
+        "addresses": [{"local": address, "prefixlen": prefix} for address, prefix in addresses],
+    }
+
+
+def _guests() -> dict[str, list[dict[str, object]]]:
+    return {
+        "appliance": [
+            _guest_interface(MAC_APPLIANCE, ("192.168.77.40", 24)),
+            _guest_interface("00:50:56:aa:bb:03", ("192.168.77.50", 24)),
+        ],
+        "peer": [_guest_interface(MAC_PEER, ("192.168.77.1", 24))],
+    }
+
+
+def test_validates_fixture_snapshot_without_host_wide_claims() -> None:
+    evidence = contract.validate_snapshot(_expected(), _snapshot())
+
+    assert evidence["contract"] == "fixture-stable-observation-v1"
+    assert evidence["claim"] == "enrolled-fixture-observations-only"
+    assert evidence["atomic_snapshot"] is False
+    assert "exclusive_membership" not in evidence
+    assert "processes" not in evidence
+    assert evidence["running_vm_paths"] == [APPLIANCE, PEER]
+    assert len(evidence["adapters"]) == 2 * contract.MAX_ADAPTERS
+
+
+@pytest.mark.parametrize(
+    ("change", "reason"),
+    [
+        (lambda snap: snap["running_vm_paths"].remove(APPLIANCE), "enrolled_vm_not_running"),
+        (lambda snap: snap["adapters"][APPLIANCE].pop(), "adapter_inventory_incomplete"),
+        (lambda snap: snap["adapters"][APPLIANCE][0].update(present=False, connection_type="",
+                                                              network_id="", mac="", start_connected=False),
+         "adapter_set_mismatch"),
+        (lambda snap: snap["adapters"][APPLIANCE][0].update(start_connected=False),
+         "expected_adapter_not_start_connected"),
+        (lambda snap: snap["adapters"][APPLIANCE][0].update(connection_type="custom"),
+         "expected_adapter_mismatch"),
+        (lambda snap: snap["adapters"][APPLIANCE][0].update(network_id="other-segment"),
+         "expected_adapter_mismatch"),
+        (lambda snap: snap["adapters"][APPLIANCE][0].update(mac=MAC_PEER),
+         "adapter_mac_duplicate"),
+        (lambda snap: snap["adapters"][APPLIANCE][0].update(network_id=""),
+         "adapter_configuration_invalid"),
+        (lambda snap: snap["adapters"][PEER].append({"index": 1, "present": True,
+                                                       "connection_type": "pvn", "network_id": "segment-id",
+                                                       "mac": "00:50:56:aa:bb:04", "start_connected": True}),
+         "adapter_duplicate_index"),
+    ],
+)
+def test_refuses_invalid_or_changed_fixture_inventory(change: object, reason: str) -> None:
+    """Reject malformed VMX or adapter observations.
+
+    Args:
+        change: Mutation callback that corrupts a snapshot field.
+        reason: Expected fixed refusal category.
+    """
+    snapshot = _snapshot()
+    change(snapshot)  # type: ignore[operator]  # Each parameter is a test mutation callback.
+
+    with pytest.raises(contract.Refusal, match=reason):
+        contract.validate_snapshot(_expected(), snapshot)
+
+
+def test_rejects_unc_or_relative_enrollment_paths() -> None:
+    for path in (r"\\server\share\appliance.vmx", r"E:lab\appliance.vmx", r"E:\lab\..\appliance.vmx"):
+        with pytest.raises(contract.Refusal, match="expected_path_invalid"):
+            contract.validate_snapshot({path: _expected()[APPLIANCE]}, _snapshot())
+
+
+def test_rejects_extra_adapter_vm_even_when_expected_vm_inventory_matches() -> None:
+    snapshot = _snapshot()
+    extra_rows = copy.deepcopy(snapshot["adapters"][PEER])
+    extra_rows[1]["mac"] = "00:50:56:aa:bb:04"
+    snapshot["adapters"][r"E:\lab\other.vmx"] = extra_rows
+
+    with pytest.raises(contract.Refusal, match="unexpected_adapter_vm"):
+        contract.validate_snapshot(_expected(), snapshot)
+
+
+def test_unchanged_bracket_ignores_order_but_refuses_identity_or_topology_drift() -> None:
+    before = _snapshot()
+    after = copy.deepcopy(before)
+    after["running_vm_paths"].reverse()
+    after["adapters"][APPLIANCE].reverse()
+    contract.assert_unchanged(before, after)
+
+    after = copy.deepcopy(before)
+    after["running_vm_paths"][-1] = r"E:\lab\different-unrelated.vmx"
+    contract.assert_unchanged(before, after)
+
+    after = copy.deepcopy(before)
+    after["running_vm_paths"].remove(APPLIANCE)
+    with pytest.raises(contract.Refusal, match="host_snapshot_changed"):
+        contract.assert_unchanged(before, after)
+
+    after = copy.deepcopy(before)
+    after["adapters"][APPLIANCE][9].update(present=True, connection_type="custom",
+                                           network_id="VMnet8", mac="00:50:56:aa:bb:04",
+                                           start_connected=True)
+    with pytest.raises(contract.Refusal, match="host_snapshot_changed"):
+        contract.assert_unchanged(before, after)
+
+
+def test_unchanged_bracket_accepts_canonical_evidence_and_tracks_absent_slots() -> None:
+    before = contract.validate_snapshot(_expected(), _snapshot())
+    after = copy.deepcopy(before)
+    contract.assert_unchanged(before, after)
+
+    after["adapters"][9]["start_connected"] = True
+    with pytest.raises(contract.Refusal, match="adapter_absence_ambiguous"):
+        contract.assert_unchanged(before, after)
+
+
+def test_canonical_evidence_rejects_host_wide_exclusivity_claims() -> None:
+    evidence = contract.validate_snapshot(_expected(), _snapshot())
+    evidence["exclusive_membership"] = True
+
+    with pytest.raises(contract.Refusal, match="evidence_invalid"):
+        contract.assert_unchanged(evidence, evidence)
+
+
+def test_validates_candidate_claims_only_on_appliance_management_mac() -> None:
+    result = contract.validate_guest_addresses(
+        {"appliance": [MAC_APPLIANCE, "00:50:56:aa:bb:03"], "peer": [MAC_PEER]},
+        _guests(), ["192.168.77.40", "192.168.77.10", "2001:db8::10"],
+    )
+
+    assert result["claim"] == "candidate-claims-checked-on-enrolled-guest-interfaces"
+    assert result["candidate_claims"] == {
+        "192.168.77.40": {"role": "appliance", "mac": MAC_APPLIANCE},
+    }
+
+
+def test_allows_shared_non_candidate_addresses_on_isolated_private_nics() -> None:
+    """Allow intended peer-gateway addresses repeated across isolated client NICs."""
+    client_a = "00:50:56:aa:bb:0a"
+    client_b = "00:50:56:aa:bb:0b"
+    guests = {
+        "appliance": [_guest_interface(MAC_APPLIANCE, ("192.0.2.10", 24), ("fd74:1::10", 64))],
+        "client-a": [_guest_interface(client_a, ("192.0.2.1", 24), ("fd74:1::1", 64))],
+        "client-b": [_guest_interface(client_b, ("192.0.2.1", 24), ("fd74:1::1", 64))],
+    }
+
+    evidence = contract.validate_guest_addresses(
+        {"appliance": [MAC_APPLIANCE], "client-a": [client_a], "client-b": [client_b]},
+        guests,
+        ["192.0.2.10", "fd74:1::10"],
+    )
+
+    assert evidence["candidate_claims"] == {
+        "192.0.2.10": {"role": "appliance", "mac": MAC_APPLIANCE},
+        "fd74:1::10": {"role": "appliance", "mac": MAC_APPLIANCE},
+    }
+
+
+@pytest.mark.parametrize("conflict", ["duplicate-candidate", "foreign-interface"])
+def test_rejects_candidate_claim_on_duplicate_or_foreign_interface(conflict: str) -> None:
+    """Refuse a candidate address claimed by multiple or unauthorized interfaces.
+
+    Args:
+        conflict: Candidate claim shape to inject into the enrolled interfaces.
+    """
+    client_a = "00:50:56:aa:bb:0a"
+    client_b = "00:50:56:aa:bb:0b"
+    appliance_macs = [MAC_APPLIANCE, "00:50:56:aa:bb:03"]
+    guests = {
+        "appliance": [_guest_interface(MAC_APPLIANCE, ("192.0.2.10", 24)),
+                      _guest_interface(appliance_macs[1])],
+        "client-a": [_guest_interface(client_a)],
+        "client-b": [_guest_interface(client_b)],
+    }
+    if conflict == "duplicate-candidate":
+        guests["client-a"][0]["addresses"].append({"local": "192.0.2.10", "prefixlen": 24})
+        guests["client-b"][0]["addresses"].append({"local": "192.0.2.10", "prefixlen": 24})
+    else:
+        guests["appliance"][1]["addresses"].append({"local": "192.0.2.10", "prefixlen": 24})
+
+    with pytest.raises(contract.Refusal):
+        contract.validate_guest_addresses(
+            {"appliance": appliance_macs, "client-a": [client_a], "client-b": [client_b]},
+            guests,
+            ["192.0.2.10"],
+        )
+
+
+@pytest.mark.parametrize(
+    ("change", "reason"),
+    [
+        (lambda guests: guests["peer"][0]["addresses"].append(
+            {"local": "192.168.77.10", "prefixlen": 24}), "candidate_address_conflict"),
+        (lambda guests: guests["appliance"][1]["addresses"].append(
+            {"local": "192.168.77.10", "prefixlen": 24}), "candidate_address_conflict"),
+        (lambda guests: guests["peer"][0].update(mac=MAC_APPLIANCE), "guest_interface_mac_duplicate"),
+        (lambda guests: guests["peer"][0].update(flags=["UP"]), "guest_interface_not_up"),
+        (lambda guests: guests["peer"][0].update(link_type="loopback"), "guest_interface_not_ethernet"),
+        (lambda guests: guests["peer"][0].update(master="br0"), "guest_interface_master_present"),
+        (lambda guests: guests["peer"][0].update(linkinfo={"info_kind": "bridge"}),
+         "guest_virtual_interface_present"),
+        (lambda guests: guests["peer"][0]["addresses"].append(
+            {"local": "not-an-ip", "prefixlen": 24}), "guest_address_record_invalid"),
+    ],
+)
+def test_refuses_guest_address_or_topology_conflict(change: object, reason: str) -> None:
+    """Reject malformed or conflicting enrolled guest-interface observations.
+
+    Args:
+        change: Mutation callback that corrupts a guest inventory field.
+        reason: Expected fixed refusal category.
+    """
+    guests = _guests()
+    change(guests)  # type: ignore[operator]  # Each parameter is a test mutation callback.
+
+    with pytest.raises(contract.Refusal, match=reason):
+        contract.validate_guest_addresses(
+            {"appliance": [MAC_APPLIANCE, "00:50:56:aa:bb:03"], "peer": [MAC_PEER]},
+            guests, ["192.168.77.40", "192.168.77.10"],
+        )
+
+
+def test_guest_interface_allowlist_and_candidate_list_are_exact() -> None:
+    with pytest.raises(contract.Refusal, match="guest_interface_set_mismatch"):
+        contract.validate_guest_addresses(
+            {"appliance": [MAC_APPLIANCE], "peer": [MAC_PEER]}, _guests(), ["192.168.77.40"]
+        )
+    with pytest.raises(contract.Refusal, match="candidate_address_invalid"):
+        contract.validate_guest_addresses(
+            {"appliance": [MAC_APPLIANCE, "00:50:56:aa:bb:03"], "peer": [MAC_PEER]},
+            _guests(), ["192.0.2.1/24"],
+        )
+
+
+def test_unused_appliance_interface_may_be_admin_down_but_is_still_checked() -> None:
+    guests = _guests()
+    guests["appliance"][1]["flags"] = ["BROADCAST", "MULTICAST"]
+    contract.validate_guest_addresses(
+        {"appliance": [MAC_APPLIANCE, "00:50:56:aa:bb:03"], "peer": [MAC_PEER]},
+        guests, ["192.168.77.10"],
+    )
+
+    guests["appliance"][1]["addresses"].append({"local": "192.168.77.10", "prefixlen": 24})
+    with pytest.raises(contract.Refusal, match="candidate_address_conflict"):
+        contract.validate_guest_addresses(
+            {"appliance": [MAC_APPLIANCE, "00:50:56:aa:bb:03"], "peer": [MAC_PEER]},
+            guests, ["192.168.77.10"],
+        )

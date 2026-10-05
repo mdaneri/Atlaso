@@ -9,6 +9,8 @@ import ipaddress
 import json
 import os
 import re
+import shlex
+import ssl
 import sys
 import time
 import types
@@ -26,10 +28,14 @@ if __package__ in {None, ""}:
         module.__path__ = [str(directory)]
         sys.modules[package] = module
 
+from scripts.interop.dedicated_host_contract import Refusal, validate_guest_addresses
+from scripts.interop.dedicated_host_proof import DedicatedHostProof
 from scripts.interop.routing_overlap import FixtureOwner, admit_topology
 from scripts.interop.routing_overlap_transport import (
     FixtureHttpClient,
+    FixtureTransportError,
     PinnedFixtureGateway,
+    PinnedRootSuReadOnlyClient,
     pinned_client,
 )
 
@@ -182,12 +188,15 @@ def write_evidence(path: Path, value: dict[str, Any]) -> None:
         os.fsync(stream.fileno())
 
 
-def scenario_failure_result(failure: Exception, digest: str) -> tuple[dict[str, Any], int]:
+def scenario_failure_result(
+    failure: Exception, digest: str, *, same_address_only: bool = False,
+) -> tuple[dict[str, Any], int]:
     """Keep the private fixture when Apply or restoration lacks safe completion.
 
     Args:
         failure: Classified scenario prerequisite or restoration failure.
         digest: Proven topology digest for the result receipt.
+        same_address_only: Focused failures always retain the enrolled fixture.
     """
     from scripts.interop.routing_overlap_scenario import (
         ApplyOutcomeUnknown,
@@ -196,7 +205,7 @@ def scenario_failure_result(failure: Exception, digest: str) -> tuple[dict[str, 
 
     unknown = isinstance(failure, ApplyOutcomeUnknown)
     restoration_incomplete = isinstance(failure, RestorationIncomplete)
-    preserve = unknown or restoration_incomplete
+    preserve = same_address_only or unknown or restoration_incomplete
     return ({"schema": 1, "phase": "scenario", "ok": False,
              "apply_outcome_unknown": unknown, "restoration_incomplete": restoration_incomplete,
              "preserve_fixture": preserve, "error": str(failure), "topology_sha256": digest},
@@ -259,13 +268,49 @@ def main() -> int:
     parser.add_argument("--client-user", required=True)
     parser.add_argument("--admin-user", required=True)
     parser.add_argument("--trust", type=Path)
+    parser.add_argument("--same-address-only", action="store_true")
+    parser.add_argument("--vmrun", type=Path)
+    parser.add_argument("--powershell", type=Path)
     args = parser.parse_args()
     raw = args.descriptor.read_bytes()
     if len(raw) > 1048576 or hashlib.sha256(raw).hexdigest() != args.descriptor_sha256:
         raise ValueError("fixture descriptor digest mismatch")
+    descriptor = json.loads(raw)
+    host_guard = None
+    if args.same_address_only:
+        if args.vmrun is None or args.powershell is None:
+            raise ValueError("fixture provider paths are required")
+        paths = descriptor.get("vmx_paths", {})
+        if set(paths) != {"appliance", "client-a", "client-b"}:
+            raise ValueError("fixture requires original VMX paths")
+        expected = {}
+        for role, path in paths.items():
+            vmx = Path(path)
+            if not vmx.is_absolute() or not vmx.is_relative_to(Path(args.lab_root)):
+                raise ValueError("fixture VMX is outside the original lab")
+            expected[path] = [{"index": row["adapter"], "connection_type": row["network_type"],
+                               "network_id": row["network_id"], "mac": row["mac"]}
+                              for row in descriptor["provider_nics"] if row["role"] == role]
+        host_guard = DedicatedHostProof(expected, args.vmrun, args.powershell)
+        host_guard.__enter__()
+    try:
+        return run_admitted_phase(args, descriptor, host_guard)
+    finally:
+        if host_guard:
+            host_guard.__exit__()
+
+
+def run_admitted_phase(args: argparse.Namespace, descriptor: dict[str, Any], host_guard: DedicatedHostProof | None) -> int:
+    """Read credentials only after the focused fixture preflight succeeds.
+
+    Args:
+        args: Canonical wrapper's independently bound phase arguments.
+        descriptor: Digest-checked original public fixture descriptor.
+        host_guard: Admitted read pins and fixture observation for the focused mode.
+    """
     secrets = json.loads(sys.stdin.readline(65537))
     owner = FixtureOwner(args.task_id, "mdaneri/Atlaso", args.source_commit, args.pr, args.lab_root)
-    fixture = FixtureSession(json.loads(raw), owner, args.client_user, secrets["ssh_password"])
+    fixture = FixtureSession(descriptor, owner, args.client_user, secrets["ssh_password"])
     try:
         if args.action in {"bootstrap", "stop"}:
             states = run_client_phase(fixture, args.action)
@@ -285,20 +330,32 @@ def main() -> int:
             try:
                 gateway.connect(args.client_user, secrets["ssh_password"])
                 if args.action == "probe":
-                    status, _, _ = gateway.request("GET", "/openapi.json", timeout=20)
-                    if status != 200:
-                        raise ValueError("private HTTPS service is not ready")
-                    evidence = {"schema": 1, "phase": "probe", "status": status, "topology_sha256": fixture.digest}
+                    outcome = probe_readiness(gateway, host_guard)
+                    if outcome:
+                        return outcome
+                    evidence = {"schema": 1, "phase": "probe", "status": 200, "topology_sha256": fixture.digest}
                 else:
                     from scripts.interop.routing_overlap import OverlapPrerequisiteError
                     from scripts.interop.routing_overlap_scenario import run_scenario
                     try:
+                        def connect() -> paramiko.SSHClient:
+                            """Use protected su for same-address reads; retain overlap streaming."""
+                            if args.same_address_only:
+                                return connect_root_observer(gateway, args.admin_user, secrets["password"],
+                                                             secrets["appliance_ssh_password"])
+                            return gateway.connect_appliance("root", secrets["appliance_ssh_password"])
+                        options = {}
+                        if args.same_address_only:
+                            options = {"same_address_only": True,
+                                       "ownership_check": lambda: dedicated_guest_proof(fixture, connect, host_guard)}
                         evidence = run_scenario(client=FixtureHttpClient(gateway),
-                            connect_appliance=lambda: gateway.connect_appliance("root", secrets["appliance_ssh_password"]),
+                            connect_appliance=connect,
                             topology=fixture.topology, server_action=lambda action: fixture.action("client-a", action),
-                            username=args.admin_user, password=secrets["password"])
+                            username=args.admin_user, password=secrets["password"], **options)
                     except OverlapPrerequisiteError as failure:
-                        result, exit_code = scenario_failure_result(failure, fixture.digest)
+                        result, exit_code = scenario_failure_result(
+                            failure, fixture.digest, same_address_only=args.same_address_only,
+                        )
                         write_evidence(args.output, result)
                         return exit_code
             finally:
@@ -307,6 +364,108 @@ def main() -> int:
         return 0
     finally:
         fixture.close()
+
+
+def probe_readiness(gateway: PinnedFixtureGateway, host_guard: DedicatedHostProof | None) -> int:
+    """Distinguish transient service readiness from unverified host ownership.
+
+    Args:
+        gateway: Already authenticated gateway with pinned HTTPS trust.
+        host_guard: Focused mode's admitted host identity and topology bracket.
+    """
+    try:
+        status, _, _ = gateway.request("GET", "/openapi.json", timeout=20)
+    except (ConnectionError, TimeoutError, paramiko.ChannelException, ssl.SSLEOFError):
+        status = 0
+    # Authentication, certificate, malformed trust, and ownership failures are
+    # not service-readiness retries. Host loss propagates to the refusal path.
+    if host_guard:
+        host_guard.check()
+    return 0 if status == 200 else 4
+
+
+def connect_root_observer(
+    gateway: PinnedFixtureGateway, admin_user: str, admin_password: str, root_password: str,
+) -> PinnedRootSuReadOnlyClient:
+    """Authenticate the configured admin identity before a protected root read.
+
+    Args:
+        gateway: Appliance SSH endpoint with its provider-observed pinned host key.
+        admin_user: Configured non-root appliance SSH username.
+        admin_password: Admin SSH secret supplied through the existing stdin envelope.
+        root_password: Separate root secret supplied only after su verifies PTY echo is off.
+    """
+    if not admin_user or admin_user == "root":
+        raise FixtureTransportError("root observation requires a non-root admin identity")
+    client = gateway.connect_appliance(admin_user, admin_password)
+    try:
+        return PinnedRootSuReadOnlyClient(client, root_password)
+    except Exception:
+        client.close()
+        raise
+
+
+GUEST_INVENTORY = '''import json, os, subprocess
+from pathlib import Path
+base = os.readlink('/proc/1/ns/net')
+for entry in Path('/proc').iterdir():
+    if entry.name.isdecimal():
+        try:
+            current = os.readlink(entry / 'ns/net')
+        except FileNotFoundError:
+            continue
+        if current != base:
+            raise RuntimeError('additional network namespace')
+if Path('/var/run/netns').exists() and list(Path('/var/run/netns').iterdir()):
+    raise RuntimeError('named network namespace')
+read = subprocess.run(['ip', '-j', '-d', 'address', 'show'], capture_output=True, check=True, timeout=10)
+if len(read.stdout) > 262144:
+    raise RuntimeError('inventory exceeds bound')
+rows = json.loads(read.stdout)
+links = [{'mac': row.get('address'), 'link_type': row.get('link_type'), 'flags': row.get('flags'), 'master': row.get('master'),
+          'linkinfo': row.get('linkinfo'), 'addresses': row.get('addr_info', [])}
+         for row in rows if row.get('ifname') != 'lo']
+print(json.dumps({'schema': 1, 'ok': True, 'links': links}))
+'''
+
+
+def dedicated_guest_proof(fixture: FixtureSession, connect: Any, host_guard: DedicatedHostProof | None) -> dict[str, Any]:
+    """Bracket authenticated whole-guest address inventories with fixture proof.
+
+    Args:
+        fixture: Original admitted topology and pinned client transports.
+        connect: Pinned root appliance SSH factory.
+        host_guard: Still-held original provider and VMX pins.
+    """
+    from scripts.interop.routing_overlap_scenario import ApplyOutcomeUnknown
+
+    try:
+        if host_guard is None:
+            raise Refusal("dedicated_host_not_admitted")
+        before = host_guard.check()
+        observer = connect()
+        try:
+            appliance = observer.read_program(GUEST_INVENTORY)
+        finally:
+            observer.close()
+        if appliance.get("schema") != 1 or appliance.get("ok") is not True:
+            raise Refusal("guest_inventory_invalid")
+        guests = {"appliance": appliance["links"]}
+        for role in ("client-a", "client-b"):
+            # The controller rechecks its owned forward-drop guard, live processes,
+            # exact private addresses and lease before any address ownership claim.
+            fixture.action(role, "status")
+            peer = fixture.clients[role]
+            guests[role] = bounded_json_command(peer, "sudo -n python3 -I -c " + shlex.quote(GUEST_INVENTORY), {})["links"]
+        macs = {role: [link.mac for link in sorted(fixture.topology.links, key=lambda link: link.adapter)
+                       if link.role == role] for role in guests}
+        guest = validate_guest_addresses(macs, guests, ["192.0.2.10"])
+        host_guard.check()
+        return {"host": before, "guest": guest,
+                "scope": "fixture-scoped-stable-observation"}
+    except (ValueError, OSError, KeyError, TypeError, RuntimeError, paramiko.SSHException):
+        # Losing topology authority prohibits a competing restore/Apply as well.
+        raise ApplyOutcomeUnknown("fixture or guest ownership became unverified; preserve the fixture") from None
 
 
 if __name__ == "__main__":

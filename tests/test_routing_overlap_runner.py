@@ -2,15 +2,24 @@
 
 import base64
 import copy
+import hashlib
+import io
 import json
+import ssl
+from unittest.mock import Mock
 
+import paramiko
 import pytest
 
+from scripts.interop import routing_overlap_runner as overlap_runner
+from scripts.interop.dedicated_host_contract import Refusal
 from scripts.interop.routing_overlap import OverlapPrerequisiteError
 from scripts.interop.routing_overlap_runner import (
     ControllerFailure,
     FixtureSession,
     bounded_json_command,
+    connect_root_observer,
+    probe_readiness,
     run_client_phase,
     scenario_failure_result,
 )
@@ -18,6 +27,7 @@ from scripts.interop.routing_overlap_scenario import (
     ApplyOutcomeUnknown,
     RestorationIncomplete,
 )
+from scripts.interop.routing_overlap_transport import FixtureTransportError
 from tests import test_routing_overlap_lifecycle
 
 
@@ -82,8 +92,9 @@ def test_session_admission_is_side_effect_free(descriptor):
     (ApplyOutcomeUnknown("accepted task unresolved"), 3, True, False),
     (RestorationIncomplete("baseline Apply failed"), 3, False, True),
 ])
+@pytest.mark.parametrize("focused", [False, True])
 def test_scenario_exit_preserves_fixture_until_restoration_is_proven(
-    failure, exit_code, unknown, incomplete,
+    failure, exit_code, unknown, incomplete, focused,
 ):
     """A definite restoration failure must bypass client stop and VM cleanup.
 
@@ -92,12 +103,13 @@ def test_scenario_exit_preserves_fixture_until_restoration_is_proven(
         exit_code: Expected fixture-preservation exit status.
         unknown: Whether completion of the mutation is uncertain.
         incomplete: Whether restoration remains incomplete.
+        focused: Whether every nonretryable scenario failure requires preservation.
     """
-    result, actual_exit = scenario_failure_result(failure, "a" * 64)
-    assert actual_exit == exit_code
+    result, actual_exit = scenario_failure_result(failure, "a" * 64, same_address_only=focused)
+    assert actual_exit == (3 if focused else exit_code)
     assert result["apply_outcome_unknown"] is unknown
     assert result["restoration_incomplete"] is incomplete
-    assert result["preserve_fixture"] is (exit_code == 3)
+    assert result["preserve_fixture"] is (focused or exit_code == 3)
 
 
 def test_bootstrap_rolls_back_only_client_with_validated_start_receipt():
@@ -280,3 +292,294 @@ def test_controller_refusal_exposes_only_digest():
     assert hashlib.sha256(private.encode()).hexdigest()[:16] in str(failure.value)
     assert private not in str(failure.value)
     assert channel.closed
+
+
+def _focused_runner_args(tmp_path, monkeypatch):
+    """Create a task-local public descriptor and bind canonical runner arguments.
+
+    Args:
+        tmp_path: Pytest-owned disposable directory under the configured test root.
+        monkeypatch: Isolated command-line replacement.
+    """
+    lab = tmp_path / 'lab'
+    lab.mkdir()
+    paths = {role: str((lab / f'{role}.vmx').resolve()) for role in ('appliance', 'client-a', 'client-b')}
+    descriptor = {
+        'vmx_paths': paths,
+        'provider_nics': [
+            {'role': role, 'adapter': 0, 'network_type': 'pvn', 'network_id': 'segment-id',
+             'mac': f'00:50:56:00:00:{index:02x}'}
+            for index, role in enumerate(paths, 16)
+        ],
+    }
+    raw = json.dumps(descriptor).encode()
+    descriptor_path = tmp_path / 'descriptor.json'
+    descriptor_path.write_bytes(raw)
+    args = [
+        'routing-overlap-runner', '--action', 'bootstrap', '--descriptor', str(descriptor_path),
+        '--descriptor-sha256', hashlib.sha256(raw).hexdigest(), '--output', str(tmp_path / 'result.json'),
+        '--task-id', 'task', '--source-commit', 'a' * 40, '--pr', '837', '--lab-root', str(lab.resolve()),
+        '--client-user', 'root', '--admin-user', 'admin', '--same-address-only',
+        '--vmrun', str(tmp_path / 'vmrun.exe'), '--powershell', str(tmp_path / 'pwsh.exe'),
+    ]
+    monkeypatch.setattr(overlap_runner.sys, 'argv', args)
+    return descriptor
+
+
+def test_same_address_runner_admits_host_before_reading_credentials(tmp_path, monkeypatch):
+    """Host proof is acquired before the real client phase reads its stdin envelope.
+
+    Args:
+        tmp_path: Task-owned public descriptor directory.
+        monkeypatch: Replace only provider, stdin, and client work boundaries.
+    """
+    descriptor = _focused_runner_args(tmp_path, monkeypatch)
+    events = []
+
+    class HostGuard:
+        def __init__(self, expected, _vmrun, _powershell):
+            """Retain the public enrollment at the admission boundary.
+
+            Args:
+                expected: Original fixture VMX and adapter allowlist.
+                _vmrun: Synthetic provider path.
+                _powershell: Synthetic census executable path.
+            """
+            assert set(expected) == set(descriptor['vmx_paths'].values())
+            events.append('host-guard-created')
+
+        def __enter__(self):
+            events.append('host-admitted')
+            return self
+
+        def __exit__(self, *_args):
+            """Record release of the admitted host pins.
+
+            Args:
+                *_args: Context manager exception information.
+            """
+            events.append('host-released')
+
+    class TrackingStdin(io.StringIO):
+        def readline(self, *args):
+            """Record when the credential envelope is consumed.
+
+            Args:
+                *args: Optional stream read limit.
+            """
+            events.append('credential-read')
+            return super().readline(*args)
+
+    class Fixture:
+        digest = 'descriptor-digest'
+
+        def __init__(self, _descriptor, _owner, _user, _password):
+            """Record fixture creation after credential admission.
+
+            Args:
+                _descriptor: Public fixture descriptor.
+                _owner: Original task ownership.
+                _user: Synthetic client identity.
+                _password: Synthetic in-memory credential.
+            """
+            events.append('fixture-created')
+
+        def close(self):
+            events.append('fixture-closed')
+
+    monkeypatch.setattr(overlap_runner, 'DedicatedHostProof', HostGuard)
+    monkeypatch.setattr(overlap_runner, 'FixtureSession', Fixture)
+    monkeypatch.setattr(overlap_runner, 'run_client_phase', lambda _fixture, _action: {'client-a': {}})
+    monkeypatch.setattr(overlap_runner, 'write_evidence', lambda *_args: None)
+    monkeypatch.setattr(overlap_runner.sys, 'stdin', TrackingStdin('{"ssh_password":"synthetic"}\n'))
+
+    assert overlap_runner.main() == 0
+    assert events.index('host-admitted') < events.index('credential-read')
+    assert events[-1] == 'host-released'
+    assert 'fixture-closed' in events
+
+
+def test_failed_host_admission_does_not_read_credentials(tmp_path, monkeypatch):
+    """A refused host preflight stops before credential stdin is consumed.
+
+    Args:
+        tmp_path: Task-owned public descriptor directory.
+        monkeypatch: Replace provider and credential read boundaries.
+    """
+    _focused_runner_args(tmp_path, monkeypatch)
+    events = []
+
+    class RefusingHostGuard:
+        def __init__(self, *_args):
+            """Accept enrollment without admitting it.
+
+            Args:
+                *_args: Original enrollment and executable paths.
+            """
+            pass
+
+        def __enter__(self):
+            events.append('host-admission')
+            raise OverlapPrerequisiteError('host proof unavailable')
+
+    class TrackingStdin(io.StringIO):
+        def readline(self, *args):
+            """Record an unsafe credential read after refusal.
+
+            Args:
+                *args: Optional stream read limit.
+            """
+            events.append('credential-read')
+            return super().readline(*args)
+
+    monkeypatch.setattr(overlap_runner, 'DedicatedHostProof', RefusingHostGuard)
+    monkeypatch.setattr(overlap_runner.sys, 'stdin', TrackingStdin('{"ssh_password":"synthetic"}\n'))
+
+    with pytest.raises(OverlapPrerequisiteError, match='host proof unavailable'):
+        overlap_runner.main()
+    assert events == ['host-admission']
+
+
+def test_root_observer_authenticates_admin_then_retains_separate_root_secret():
+    """Use the configured admin SSH identity and a separate protected su secret."""
+    gateway = Mock()
+    admin_client = Mock()
+    gateway.connect_appliance.return_value = admin_client
+
+    observer = connect_root_observer(
+        gateway, 'configured-admin', 'synthetic-admin-secret', 'synthetic-root-secret',
+    )
+
+    gateway.connect_appliance.assert_called_once_with('configured-admin', 'synthetic-admin-secret')
+    assert isinstance(observer, paramiko.SSHClient)
+    assert observer._root_password == 'synthetic-root-secret'
+    assert 'synthetic-root-secret' not in str(gateway.connect_appliance.call_args)
+    observer.close()
+    admin_client.close.assert_called_once()
+
+
+def test_root_observer_refuses_root_login_before_authentication():
+    """Preserve the non-root SSH boundary before consuming either identity."""
+    gateway = Mock()
+    with pytest.raises(FixtureTransportError, match="non-root admin"):
+        connect_root_observer(gateway, "root", "synthetic-admin", "synthetic-root")
+    gateway.connect_appliance.assert_not_called()
+
+
+class ReadinessGateway:
+    """Record the authenticated readiness request and return or raise its outcome."""
+
+    def __init__(self, events, *, status=200, failure=None):
+        """Retain one synthetic HTTP result for the probe helper.
+
+        Args:
+            events: Ordered call log shared with the host guard.
+            status: HTTP response status to return.
+            failure: Optional transport exception to raise from the request.
+        """
+        self.events = events
+        self.status = status
+        self.failure = failure
+
+    def request(self, method, path, *, timeout):
+        """Record the fixed API request and expose the configured outcome.
+
+        Args:
+            method: HTTP method requested by the probe helper.
+            path: Origin-relative readiness resource.
+            timeout: Bounded request timeout.
+        """
+        self.events.append(('request', method, path, timeout))
+        if self.failure is not None:
+            raise self.failure
+        return self.status, b'', {}
+
+
+class ReadinessGuard:
+    """Record a fresh ownership observation after a readiness request."""
+
+    def __init__(self, events, failure=None):
+        """Retain the probe event log and optional host refusal.
+
+        Args:
+            events: Ordered call log shared with the gateway.
+            failure: Optional refusal raised from the fresh host check.
+        """
+        self.events = events
+        self.failure = failure
+
+    def check(self):
+        """Record a host bracket check and optionally refuse lost ownership."""
+        self.events.append(('host-check',))
+        if self.failure is not None:
+            raise self.failure
+
+
+def test_readiness_probe_returns_zero_after_authenticated_http_success():
+    """Return success only after both HTTPS readiness and host ownership checks."""
+    events = []
+
+    assert probe_readiness(ReadinessGateway(events), ReadinessGuard(events)) == 0
+    assert events == [('request', 'GET', '/openapi.json', 20), ('host-check',)]
+
+
+@pytest.mark.parametrize('status', [404, 503])
+def test_readiness_probe_retries_http_refusal_only_after_host_check(status):
+    """Classify non-200 HTTP responses as retryable after proving host stability.
+
+    Args:
+        status: Non-success HTTP response supplied by the private gateway.
+    """
+    events = []
+
+    assert probe_readiness(ReadinessGateway(events, status=status), ReadinessGuard(events)) == 4
+    assert events == [('request', 'GET', '/openapi.json', 20), ('host-check',)]
+
+
+@pytest.mark.parametrize('failure', [
+    ConnectionError('connection refused'),
+    TimeoutError('request timed out'),
+    paramiko.ChannelException(2, 'channel unavailable'),
+    ssl.SSLEOFError('peer closed early'),
+])
+def test_readiness_probe_retries_transport_failures_only_after_host_check(failure):
+    """Treat only the enumerated transport failures as retryable service readiness.
+
+    Args:
+        failure: Retryable transport exception raised by the gateway request.
+    """
+    events = []
+
+    assert probe_readiness(ReadinessGateway(events, failure=failure), ReadinessGuard(events)) == 4
+    assert events == [('request', 'GET', '/openapi.json', 20), ('host-check',)]
+
+
+def test_readiness_probe_propagates_lost_host_ownership():
+    """Do not turn a failed host bracket into a retryable readiness outcome."""
+    events = []
+    refusal = Refusal('host_snapshot_changed')
+
+    with pytest.raises(Refusal) as caught:
+        probe_readiness(ReadinessGateway(events, status=503), ReadinessGuard(events, refusal))
+
+    assert caught.value is refusal
+    assert events == [('request', 'GET', '/openapi.json', 20), ('host-check',)]
+
+
+@pytest.mark.parametrize('failure', [
+    ssl.SSLCertVerificationError('certificate identity failed'),
+    paramiko.BadHostKeyException('fixture-client', None, None),
+])
+def test_readiness_probe_propagates_certificate_and_identity_failures(failure):
+    """Keep CA validation and SSH identity failures outside retry classification.
+
+    Args:
+        failure: Certificate or pinned SSH identity exception from the gateway.
+    """
+    events = []
+
+    with pytest.raises(type(failure)) as caught:
+        probe_readiness(ReadinessGateway(events, failure=failure), ReadinessGuard(events))
+
+    assert caught.value is failure
+    assert events == [('request', 'GET', '/openapi.json', 20)]

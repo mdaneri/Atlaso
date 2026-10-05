@@ -9861,7 +9861,9 @@ def _management_certificate_covers_scoped_addresses(certificate_pem: str, addres
     for candidate in external_addresses:
         try:
             result = subprocess.run(
-                [openssl, "x509", "-in", "-", "-noout", "-checkip", str(candidate)],
+                # Omit -in to select stdin. Photon OpenSSL treats -in - as
+                # a literal filename, rejecting even a certificate with this IP SAN.
+                [openssl, "x509", "-noout", "-checkip", str(candidate)],
                 input=certificate_pem.encode("utf-8"), capture_output=True,
                 timeout=5, check=False,
             )
