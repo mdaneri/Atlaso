@@ -325,3 +325,105 @@ def test_running_cancellation_acknowledges_only_after_helper_chunk_returns(clien
         report = verifier.status(db, scope_id)
         assert report["state"] == "cancelled" and report["unresolved_count"] == 1
         assert len(report["observations"]) == 1
+
+
+def test_skipped_schedule_does_not_start_pool_cooldown():
+    """A rejected schedule cannot rate-limit a later admitted manual scan."""
+    from atlaso.app.models import JobStatus
+
+    engine = create_engine("sqlite://")
+    Base.metadata.create_all(engine)
+    with Session(engine) as db:
+        pool, _config = setup_pool(db)
+        db.add(Job(id="skipped", type=verifier.JOB_TYPE, status=JobStatus.SKIPPED.value, created_by="scheduler",
+                   task_config_json=json.dumps({"scope_id": pool.id})))
+        db.commit()
+        admitted = verifier.enqueue(db, scope_id=pool.id, actor="operator")
+        admitted.status = JobStatus.SUCCEEDED.value
+        db.commit()
+        with pytest.raises(ValueError, match="Wait 15 minutes"):
+            verifier.enqueue(db, scope_id=pool.id, actor="operator")
+    engine.dispose()
+
+
+@pytest.mark.parametrize("pending_change", ["edit", "disable", "delete"])
+def test_worker_uses_applied_overlap_after_other_pool_changes(client, monkeypatch, pending_change):
+    """Unapplied changes cannot attribute another link's lease to this pool."""
+    from atlaso.app.adapters.system import AdapterResult, SystemAdapter
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import JobStatus
+
+    with SessionLocal() as db:
+        pool, config = setup_pool(db)
+        other = DhcpScope(name="Other", address_family="ipv4", enabled=True, interface_name="eth2",
+                          site_address="192.168.50.2", prefix_length=24, range_expression="192.168.50.100-110")
+        db.add(other)
+        db.flush()
+        baseline = db.scalar(select(Setting).where(Setting.key == verifier.BASELINES_KEY))
+        preview = config + DHCP_POOL_METADATA_PREFIX + json.dumps(dhcp_pool_metadata(other, [])) + "\n"
+        baseline.value = json.dumps({"dnsmasq": {"config_preview": preview}})
+        if pending_change == "edit":
+            other.range_expression = "192.168.50.120-130"
+        elif pending_change == "disable":
+            other.enabled = False
+        else:
+            db.delete(other)
+        db.commit()
+        scope_id = pool.id
+        job = verifier.enqueue(db, scope_id=scope_id, actor="operator")
+        job.status = JobStatus.RUNNING.value
+        job_id = job.id
+        db.commit()
+        metadata, digest = verifier.applied_pool(db, scope_id)
+
+    def probe(_self, _scope_id, _offset, _digest):
+        return AdapterResult(command=[], dry_run=False, stdout=json.dumps({
+            "status": "complete", "config_hash": digest, "scope": metadata, "total": 1,
+            "offset": 0, "next_offset": None, "observed_at": NOW, "dnsmasq_version": "test-version",
+            "link_identity_hash": "a" * 64, "observations": [observation([MAC])],
+            "leases_before": [lease()], "leases_after": [lease()],
+        }))
+
+    monkeypatch.setattr(SystemAdapter, "verify_dhcp_pool", probe)
+    verifier.run(job_id)
+    with SessionLocal() as db:
+        report = verifier.status(db, scope_id)
+        assert report["state"] == "complete"
+        assert report["observations"][0]["status"] == "unknown"
+
+
+@pytest.mark.parametrize("binding", ["valid", "legacy", "missing"])
+def test_archived_schedule_rebinds_by_unique_pool_name(binding):
+    """Restore never treats a database-local integer as a portable pool binding."""
+    from atlaso.app.models import Schedule
+    from atlaso.app.services.settings_archive import (
+        _restore_schedules,
+        _schedules_to_archive,
+    )
+
+    engine = create_engine("sqlite://")
+    Base.metadata.create_all(engine)
+    with Session(engine) as db:
+        original = DhcpScope(id=12, name="Intended", address_family="ipv4", interface_name="eth1")
+        db.add(original)
+        db.add(Schedule(name="verify", task_type="dhcp_pool_verify", enabled=True, created_by="operator",
+                        cron_expression="0 * * * *", task_config_json=json.dumps({"scope_id": 12})))
+        db.commit()
+        rows = _schedules_to_archive(db)
+        assert rows[0]["dhcp_scope_name"] == "Intended"
+        for schedule in db.scalars(select(Schedule)):
+            db.delete(schedule)
+        db.delete(original)
+        db.flush()
+        db.add(DhcpScope(id=12, name="Unrelated", address_family="ipv4", interface_name="eth2"))
+        if binding != "missing":
+            db.add(DhcpScope(id=30, name="Intended", address_family="ipv4", interface_name="eth1"))
+        if binding == "legacy":
+            rows[0].pop("dhcp_scope_name")
+        db.flush()
+        _restore_schedules(db, rows)
+        restored = db.scalar(select(Schedule))
+        assert not restored.enabled and restored.next_run_at is None
+        config = json.loads(restored.task_config_json)
+        assert config.get("scope_id") == (30 if binding == "valid" else None)
+    engine.dispose()

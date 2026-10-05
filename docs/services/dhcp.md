@@ -93,13 +93,14 @@ its hardware identity. Stale neighbor entries are not accepted as fresh probe ev
 Reports distinguish **legitimate use**, **unexpected occupancy**, **occupant/lease mismatch**, **confirmed conflict**
 (multiple fresh responder MACs), **no response** and **unknown**. Unexpected occupancy can be legitimate static use;
 it does not label a device malicious or unauthorized. Expired leases are ignored. Changed lease/client identities
-during probing and unscoped leases for overlapping pools on different links remain unknown. A prior finding stays
+during probing and unscoped leases for overlapping applied pools on different links remain unknown,
+even when another pool has pending edits, disablement or deletion. A prior finding stays
 unresolved after silence or incomplete work and resolves only after positive matching lease/reservation evidence.
 Details include observed/expected MACs, available client identifiers, reason, first/last seen and verification time.
 
 Only one verifier is admitted globally. A run is limited to 1,024 addresses, chunks of at most 16, at most eight ARP
 requests per second, bounded helper calls and ten minutes overall. The same pool cannot queue more than once in 15
-minutes. Large or unsupported pools remain unknown; partial work never implies exhaustive discovery. Verification
+minutes; skipped schedule runs do not extend this cooldown. Large or unsupported pools remain unknown; partial work never implies exhaustive discovery. Verification
 never evicts clients, deletes leases, changes reservations, blocks MACs, flushes neighbors or feeds results into
 allocator exclusions. Remediation requires explicit desired configuration and Apply. DHCP's existing Logs view remains
 the native allocation/exhaustion diagnostic surface; a scan does not prove every offer was protected.
@@ -109,6 +110,8 @@ verification** from the pool menu or create a **dhcp pool verify** task in **Aut
 pool, then explicitly choose its state and an hourly or slower recurrence. Missed/overlapping runs are skipped;
 edited, deleted or unapplied dependencies are revalidated at queueing and execution. Disable or delete the schedule to
 stop future runs. Task history keeps bounded per-run identifiers and evidence; Pool Health retains the latest report.
+Archive restore rebinds disabled verification schedules by unique pool name. Legacy archives without that binding,
+or a missing or ambiguous name, leave the schedule detached and require explicit pool selection.
 Deleting a pool disables and detaches its verification schedules; select a pool explicitly before using them again.
 Deletion removes its verification report. A recreated pool starts without the deleted pool's observations,
 even when its database ID and configuration are reused. An old in-flight task cannot publish into the recreated pool.

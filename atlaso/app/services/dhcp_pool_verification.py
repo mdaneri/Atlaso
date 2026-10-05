@@ -86,6 +86,18 @@ def object_json(raw: str | None) -> dict[str, Any]:
     return value if isinstance(value, dict) else {}
 
 
+def applied_preview(db: Session) -> str:
+    """Read the last applied dnsmasq configuration, including every pool identity.
+
+    Args:
+        db: Read transaction.
+    """
+    row = db.scalar(select(Setting).where(Setting.key == BASELINES_KEY).execution_options(populate_existing=True))
+    baseline = object_json(row.value if row else None).get("dnsmasq", {})
+    preview = str(baseline.get("config_preview", "")) if isinstance(baseline, dict) else ""
+    return preview
+
+
 def applied_pool(db: Session, scope_id: int) -> tuple[dict[str, Any], str]:
     """Bind one current pool to its last successfully applied configuration.
 
@@ -96,9 +108,7 @@ def applied_pool(db: Session, scope_id: int) -> tuple[dict[str, Any], str]:
     scope = db.get(DhcpScope, scope_id, populate_existing=True)
     if scope is None or not scope.enabled or scope.address_family != "ipv4":
         raise ValueError("Choose an enabled IPv4 pool; IPv6 pools are not swept.")
-    row = db.scalar(select(Setting).where(Setting.key == BASELINES_KEY).execution_options(populate_existing=True))
-    baseline = object_json(row.value if row else None).get("dnsmasq", {})
-    preview = str(baseline.get("config_preview", "")) if isinstance(baseline, dict) else ""
+    preview = applied_preview(db)
     current = dhcp_pool_metadata(scope, list(db.scalars(select(DhcpReservation))))
     for line in preview.splitlines():
         if not line.startswith(DHCP_POOL_METADATA_PREFIX):
@@ -135,7 +145,7 @@ def enqueue(
     if active:
         raise ValueError(f"Pool verification already active in task {active}.")
     recent = list(db.scalars(select(Job).where(
-        Job.type == JOB_TYPE, Job.created_at >= utcnow() - timedelta(seconds=MIN_INTERVAL_SECONDS)
+        Job.type == JOB_TYPE, Job.status != JobStatus.SKIPPED.value, Job.created_at >= utcnow() - timedelta(seconds=MIN_INTERVAL_SECONDS)
     )))
     if any(object_json(job.task_config_json).get("scope_id") == scope_id for job in recent):
         raise ValueError("Wait 15 minutes between verification runs of the same pool.")
@@ -334,9 +344,10 @@ def run(job_id: str) -> None:
             # dnsmasq's lease file cannot attribute duplicate IPv4 ranges to links.
             from ipaddress import ip_address
 
-            other_pools = list(db.scalars(select(DhcpScope).where(DhcpScope.id != scope_id, DhcpScope.enabled.is_(True))))
-            reservations = list(db.scalars(select(DhcpReservation)))
-            overlapping = [dhcp_pool_metadata(other, reservations) for other in other_pools if other.address_family == "ipv4"]
+            overlapping = [
+                object_json(line[len(DHCP_POOL_METADATA_PREFIX):])
+                for line in applied_preview(db).splitlines() if line.startswith(DHCP_POOL_METADATA_PREFIX)
+            ]
         reply = SystemAdapter().verify_dhcp_pool(scope_id, offset, digest)
         data = object_json(reply.stdout)
         if reply.returncode or data.get("status") != "complete" or data.get("config_hash") != digest or data.get("scope") != pool:
