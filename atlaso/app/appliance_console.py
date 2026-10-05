@@ -50,6 +50,7 @@ from sqlalchemy.exc import (  # noqa: E402 - appliance environment must load bef
 from sqlalchemy.exc import (  # noqa: E402 - appliance environment must load before configured imports.
     OperationalError as SQLAlchemyOperationalError,
 )
+from sqlalchemy.orm import Session  # noqa: E402 - load appliance environment first.
 
 from atlaso.app.audit import (  # noqa: E402 - appliance environment must load before configured imports.
     record_audit,
@@ -1233,22 +1234,7 @@ def _post_handoff_settings_snapshot(
                 or network_management_paths(str(captured[0].get("config_preview") or "")) != paths
             ):
                 raise ConsoleOperationError("Completed Network task has no matching fresh DHCP observation for Settings.")
-            rows = native_observation.get("physical_interfaces", [])
-            if not rows:
-                raise ConsoleOperationError("Completed Network task has no fresh physical-interface observation.")
-            for row in rows:
-                interface = db.get(PhysicalInterface, row["id"])
-                if (
-                    interface is None or interface.name != row["name"]
-                    or (interface.mac_address or "").lower() != row["mac"].lower()
-                    or interface.host_admin_state != row["host_admin_state"]
-                    or interface.oper_state != row["oper_state"]
-                    or interface.host_admin_state != "up" or interface.oper_state != "up"
-                    or interface.host_ip_cidr != row["ipv4_cidr"]
-                    or interface.host_ipv6_cidr != row["ipv6_cidr"]
-                    or list(interface.host_ipv6_cidrs or []) != row["ipv6_cidrs"]
-                ):
-                    raise ConsoleOperationError("Fresh management observation changed before Settings projection.")
+            _verify_settings_native_observation(db, network_job_id, native_observation)
             evidence = native_observation
         original = json.loads(str(captured_settings.get("raw_config_preview") or "{}"))
         old_management_ip = str(original.get("management_ip") or "")
@@ -1297,8 +1283,40 @@ def _post_handoff_settings_snapshot(
         return str(projected["snapshot_hash"])
 
 
+def _verify_settings_native_observation(db: Session, network_job_id: str, observation: dict[str, Any]) -> None:
+    """Recheck complete observed identity and link state under Settings writer admission.
+
+    Args:
+        db: Admitted transaction retained through dependent capture.
+        network_job_id: Completed Network task owning the observation.
+        observation: Complete physical-interface proof captured after recovery.
+
+    Raises:
+        ConsoleOperationError: If observation identity, addresses or link state drifted.
+    """
+    if observation.get("network_job_id") != network_job_id:
+        raise ConsoleOperationError("Fresh management observation belongs to another Network task.")
+    rows = observation.get("physical_interfaces", [])
+    if not rows:
+        raise ConsoleOperationError("Completed Network task has no fresh physical-interface observation.")
+    for row in rows:
+        interface = db.get(PhysicalInterface, row["id"])
+        if (
+            interface is None or interface.name != row["name"]
+            or (interface.mac_address or "").lower() != row["mac"].lower()
+            or interface.host_admin_state != row["host_admin_state"]
+            or interface.oper_state != row["oper_state"]
+            or interface.host_admin_state != "up" or interface.oper_state != "up"
+            or interface.host_ip_cidr != row["ipv4_cidr"]
+            or interface.host_ipv6_cidr != row["ipv6_cidr"]
+            or list(interface.host_ipv6_cidrs or []) != row["ipv6_cidrs"]
+        ):
+            raise ConsoleOperationError("Fresh management observation changed before Settings projection.")
+
+
 def _submit_console_apply(
     required_ids: set[str], *, network_job_id: str | None = None, expected_management_snapshots: dict[str, str] | None = None,
+    native_observation: dict[str, Any] | None = None,
 ) -> str:
     # Imported lazily so read-only status remains available even if the web stack has a startup issue.
     """Return submit console apply.
@@ -1306,6 +1324,7 @@ def _submit_console_apply(
     Args:
         required_ids: Stable identifiers of the associated required resources.
         network_job_id: Completed Network task to atomically recheck before dependent capture.
+        native_observation: Fresh physical-interface proof to recheck inside final capture.
         expected_management_snapshots: Optional protected-unit hashes captured
             after console-owned changes, used to reject concurrent edits before
             creating an apply task.
@@ -1330,6 +1349,10 @@ def _submit_console_apply(
         if network_job_id is not None or expected_management_snapshots is not None:
             acquire_network_objects_write_lock(db)
         capture_transaction = db.get_transaction()
+        if native_observation is not None:
+            if network_job_id is None:
+                raise ConsoleOperationError("Fresh management observation requires its completed Network task.")
+            _verify_settings_native_observation(db, network_job_id, native_observation)
         selected_ids = set(required_ids)
         if "vcf_offline_depot" in selected_ids:
             acquire_vcf_depot_admission_gate(db)
@@ -1718,6 +1741,7 @@ def configure_management(
     settings_job_id = _submit_console_apply(
         {"appliance_settings"}, network_job_id=network_job_id,
         expected_management_snapshots={"appliance_settings": expected_settings_snapshot},
+        native_observation=native_observation,
     )
     _refresh_management_addresses(interface_id, network_job_id=network_job_id)
     _recover_management_plane("Appliance Settings were applied", network_job_id=network_job_id)

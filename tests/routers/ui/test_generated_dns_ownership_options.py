@@ -116,3 +116,46 @@ def test_service_bind_options_exclude_down_dynamic_physical_interfaces(client):
         db.flush()
         up_options = {row["name"]: row for row in ui.service_bind_options(db)}
         assert up_options["eth-dynamic-test"]["addresses"] == ["192.0.2.76", "2001:db8::76"]
+
+
+@pytest.mark.parametrize("same_writer", [False, True])
+def test_legacy_dns_backfill_preserves_newly_acknowledged_ca(client, same_writer):
+    """Refresh a cached baseline after admission before merging legacy DNS ownership.
+
+    Args:
+        client: Initialized appliance database.
+        same_writer: Preserve an unflushed acknowledgement in the caller transaction.
+    """
+    from sqlalchemy import select
+
+    from atlaso.app import ui
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Setting
+
+    with SessionLocal() as db:
+        ui.save_appliance_apply_baselines(db, {
+            "dnsmasq": {"config_preview": "# legacy DNS", "snapshot_hash": "dns-original"},
+            "ca": {"snapshot_hash": "ca-original"},
+        })
+        db.commit()
+    with SessionLocal() as stale:
+        cached = stale.scalar(select(Setting).where(Setting.key == ui.APPLIANCE_APPLY_BASELINES_KEY))
+        assert cached is not None
+        stale.commit()
+        if same_writer:
+            baselines = ui.load_appliance_apply_baselines(stale)
+            baselines["ca"] = {"snapshot_hash": "ca-acknowledged", "public_receipt": "immutable-receipt"}
+            ui.save_appliance_apply_baselines(stale, baselines)
+        else:
+            with SessionLocal() as publisher:
+                baselines = ui.load_appliance_apply_baselines(publisher)
+                baselines["ca"] = {"snapshot_hash": "ca-acknowledged", "public_receipt": "immutable-receipt"}
+                ui.save_appliance_apply_baselines(publisher, baselines)
+                publisher.commit()
+        ui.remember_applied_service_dns_records(stale)
+        stale.commit()
+    with SessionLocal() as db:
+        baselines = ui.load_appliance_apply_baselines(db)
+        assert baselines["ca"] == {"snapshot_hash": "ca-acknowledged", "public_receipt": "immutable-receipt"}
+        assert baselines["dnsmasq"]["snapshot_hash"] == "dns-original"
+        assert baselines["dnsmasq"]["service_dns_records"] == []

@@ -7464,7 +7464,9 @@ def remember_applied_service_dns_records(db: Session) -> None:
     Args:
         db: Caller-owned transaction; this function never commits.
     """
-    baselines = load_appliance_apply_baselines(db)
+    acquire_network_objects_write_lock(db)
+    db.flush()
+    baselines = load_appliance_apply_baselines(db, refresh=True)
     baseline = baselines.get("dnsmasq")
     if not baseline or "service_dns_records" in baseline:
         return

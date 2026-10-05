@@ -4570,7 +4570,8 @@ def test_console_static_observation_matches_complete_native_candidates(client, m
 
 @pytest.mark.parametrize("handoff,invalid_proof", [(False, None), (True, None), (False, "missing"),
                                                   (False, "job"), (False, "mac"), (False, "address"),
-                                                  (False, "host_admin_state"), (False, "oper_state")])
+                                                  (False, "host_admin_state"), (False, "oper_state"),
+                                                  (False, "final_host_admin_state"), (False, "final_oper_state")])
 @pytest.mark.parametrize("concurrent_edit", [False, True])
 def test_console_management_projects_settings_snapshot_from_dhcp_handoff_evidence(client, monkeypatch, concurrent_edit, handoff, invalid_proof):
     """Allow only the captured Settings projection proven by DHCP handoff evidence.
@@ -4617,13 +4618,14 @@ def test_console_management_projects_settings_snapshot_from_dhcp_handoff_evidenc
     original_submit = appliance_console._submit_console_apply
     observed_expected: list[str] = []
 
-    def submit(unit_ids, *, network_job_id=None, expected_management_snapshots=None):
+    def submit(unit_ids, *, network_job_id=None, expected_management_snapshots=None, **kwargs):
         """Persist helper-proven network evidence and inspect Settings recovery.
 
         Args:
             unit_ids: Unit identifiers selected by console recovery.
             network_job_id: Completed Network task bound to dependent Settings capture.
             expected_management_snapshots: Captured unit hashes to guard.
+            **kwargs: Fresh native proof supplied to final capture.
         """
         nonlocal calls
         calls += 1
@@ -4657,13 +4659,20 @@ def test_console_management_projects_settings_snapshot_from_dhcp_handoff_evidenc
         assert expected_management_snapshots is not None
         expected = expected_management_snapshots["appliance_settings"]
         observed_expected.append(expected)
+        if invalid_proof in {"final_host_admin_state", "final_oper_state"}:
+            with SessionLocal() as db:
+                interface = db.scalar(select(PhysicalInterface).where(PhysicalInterface.role == "management"))
+                setattr(interface, invalid_proof.removeprefix("final_"), "down")
+                db.commit()
+            return original_submit(unit_ids, network_job_id=network_job_id,
+                                   expected_management_snapshots=expected_management_snapshots, **kwargs)
         if concurrent_edit:
             with SessionLocal() as db:
                 settings = db.scalar(select(ApplianceSettings).order_by(ApplianceSettings.id))
                 assert settings is not None
                 settings.vmware_ceip_enabled = not settings.vmware_ceip_enabled
                 db.commit()
-            return original_submit(unit_ids, network_job_id=network_job_id, expected_management_snapshots=expected_management_snapshots)
+            return original_submit(unit_ids, network_job_id=network_job_id, expected_management_snapshots=expected_management_snapshots, **kwargs)
         with SessionLocal() as db:
             live = next(
                 unit for unit in appliance_apply_units(db, reconcile=False)
@@ -4723,8 +4732,8 @@ def test_console_management_projects_settings_snapshot_from_dhcp_handoff_evidenc
     if invalid_proof:
         with pytest.raises(ConsoleOperationError, match="observation|confirm the resolved DHCP"):
             appliance_console.configure_management("dhcp", "", "", "disabled", "", "", "192.0.2.53")
-        assert calls == 1
-        assert not observed_expected
+        assert calls == (2 if invalid_proof.startswith("final_") else 1)
+        assert bool(observed_expected) == invalid_proof.startswith("final_")
         return
     if concurrent_edit:
         with pytest.raises(ConsoleOperationError, match="changed.*Appliance Settings"):
