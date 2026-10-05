@@ -109,6 +109,8 @@ verification** from the pool menu or create a **dhcp pool verify** task in **Aut
 pool, then explicitly choose its state and an hourly or slower recurrence. Missed/overlapping runs are skipped;
 edited, deleted or unapplied dependencies are revalidated at queueing and execution. Disable or delete the schedule to
 stop future runs. Task history keeps bounded per-run identifiers and evidence; Pool Health retains the latest report.
+Deleting a pool removes its verification report. A recreated pool starts without the deleted pool's observations,
+even when its database ID and configuration are reused. An old in-flight task cannot publish into the recreated pool.
 No packet payload captures,
 credentials or external uploads are included.
 

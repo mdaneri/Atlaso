@@ -146,6 +146,88 @@ def test_worker_publishes_progress_report_and_keeps_service_untouched(client, mo
         assert db.get(Job, job_id).status == JobStatus.SUCCEEDED.value
 
 
+@pytest.mark.parametrize("transport", ["api", "ui"])
+def test_deleted_scope_id_reuse_does_not_inherit_report(client, transport):
+    """Both deletion paths clear evidence before SQLite reuses an identical pool ID."""
+    from atlaso.app.database import SessionLocal
+    from tests.routers.api_v1.test_dns_dhcp import create_token
+    from tests.routers.ui.helpers import login
+
+    with SessionLocal() as db:
+        pool, config = setup_pool(db)
+        scope_id = pool.id
+        values = {key: getattr(pool, key) for key in ("name", "address_family", "enabled", "interface_name",
+                  "site_address", "prefix_length", "range_expression")}
+        db.add(Setting(key=verifier.REPORT_PREFIX + str(scope_id), value=json.dumps({
+            "state": "complete", "job_id": "old_job", "config_hash": hashlib.sha256(config.encode()).hexdigest(),
+            "observations": [verifier.classify(observation([OTHER]), POOL, [], [], NOW)],
+        })))
+        db.commit()
+        assert verifier.status(db, scope_id)["observations"]
+    if transport == "api":
+        token = create_token(client, ["read:dhcp", "write:dhcp"])
+        response = client.delete(f"/api/v1/dhcp/scopes/{scope_id}", headers={"Authorization": f"Bearer {token}"})
+    else:
+        login(client)
+        page = client.get("/dhcp")
+        csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+        response = client.post(f"/dhcp/scopes/{scope_id}/delete", data={"csrf": csrf}, follow_redirects=False)
+    assert response.status_code in {204, 303}, response.text
+    with SessionLocal() as db:
+        assert db.scalar(select(Setting).where(Setting.key == verifier.REPORT_PREFIX + str(scope_id))) is None
+        replacement = DhcpScope(**values)
+        db.add(replacement)
+        db.commit()
+        assert replacement.id == scope_id
+        report = verifier.status(db, replacement.id)
+        assert report["state"] == "not_recorded" and report["job_id"] is None and report["observations"] == []
+        job = verifier.enqueue(db, scope_id=scope_id, actor="admin")
+        db.commit()
+        assert verifier.status(db, scope_id)["job_id"] == job.id
+        assert verifier.status(db, scope_id)["observations"] == []
+
+
+@pytest.mark.parametrize("delete_during_probe", [False, True])
+def test_deleted_report_cannot_be_republished_by_old_worker(client, monkeypatch, delete_during_probe):
+    """Reject old jobs before observation or after a completed in-flight helper chunk."""
+    from atlaso.app.adapters.system import AdapterResult, SystemAdapter
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import JobStatus
+
+    with SessionLocal() as db:
+        pool, _config = setup_pool(db)
+        scope_id = pool.id
+        job = verifier.enqueue(db, scope_id=scope_id, actor="admin")
+        job.status = JobStatus.RUNNING.value
+        job_id = job.id
+        db.commit()
+        metadata, digest = verifier.applied_pool(db, scope_id)
+        if not delete_during_probe:
+            verifier.forget_scope(db, scope_id)
+            db.commit()
+    calls = []
+
+    def probe(_adapter, _scope_id, offset, _digest):
+        calls.append(offset)
+        with SessionLocal() as db:
+            verifier.forget_scope(db, scope_id)
+            db.commit()
+        return AdapterResult(command=[], dry_run=False, stdout=json.dumps({
+            "status": "complete", "config_hash": digest, "scope": metadata, "total": 1,
+            "offset": 0, "next_offset": None, "observed_at": NOW, "dnsmasq_version": "test-version",
+            "link_identity_hash": "a" * 64,
+            "observations": [observation([MAC])], "leases_before": [], "leases_after": [],
+        }))
+
+    monkeypatch.setattr(SystemAdapter, "verify_dhcp_pool", probe)
+    with pytest.raises(ValueError, match="ownership changed"):
+        verifier.run(job_id)
+    assert calls == ([0] if delete_during_probe else [])
+    with SessionLocal() as db:
+        assert db.scalar(select(Setting).where(Setting.key == verifier.REPORT_PREFIX + str(scope_id))) is None
+        assert verifier.status(db, scope_id)["observations"] == []
+
+
 def test_native_lease_expiry_is_not_renewal_mismatch():
     """A refreshed lease expiry with the same MAC/client identity stays valid."""
     epoch = int(datetime.fromisoformat(NOW).replace(tzinfo=timezone.utc).timestamp())

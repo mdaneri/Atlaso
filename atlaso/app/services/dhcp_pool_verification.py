@@ -38,6 +38,32 @@ BASELINES_KEY = "appliance_apply.baselines.v1"
 REPORT_PREFIX = "dhcp.pool_verification."
 
 
+def forget_scope(db: Session, scope_id: int) -> None:
+    """Remove deleted scope evidence in the caller's scope-deletion transaction.
+
+    Args:
+        db: Caller-owned scope-deletion transaction.
+        scope_id: Scope being removed.
+    """
+    acquire_network_objects_write_lock(db)
+    stored = db.scalar(select(Setting).where(Setting.key == REPORT_PREFIX + str(scope_id)))
+    if stored is not None:
+        db.delete(stored)
+
+
+def require_report_owner(db: Session, scope_id: int, job_id: str) -> None:
+    """Reject a worker whose scope report was deleted or replaced.
+
+    Args:
+        db: Current publication transaction.
+        scope_id: Original scope ID.
+        job_id: Original admitted verifier job.
+    """
+    stored = db.scalar(select(Setting).where(Setting.key == REPORT_PREFIX + str(scope_id)))
+    if object_json(stored.value if stored else None).get("job_id") != job_id:
+        raise ValueError("Pool verification ownership changed; old result was not published.")
+
+
 def object_json(raw: str | None) -> dict[str, Any]:
     """Read bounded internal JSON without adopting malformed state.
 
@@ -277,6 +303,7 @@ def run(job_id: str) -> None:
         config = object_json(job.task_config_json)
         scope_id = int(config["scope_id"])
         digest = str(config["config_hash"])
+        require_report_owner(db, scope_id, job_id)
         previous = status(db, scope_id)
     state, reason = "complete", "Bounded verification completed; nonresponse is not proof of availability."
     version: str | None = None
@@ -288,6 +315,7 @@ def run(job_id: str) -> None:
             job = db.get(Job, job_id)
             if job is None or job.status not in task_cancellation.ACTIVE:
                 return
+            require_report_owner(db, scope_id, job_id)
             if job.cancel_requested_at is not None:
                 state, reason = "cancelled", "Stopped at a bounded observation checkpoint; partial report retained."
                 break
@@ -347,6 +375,7 @@ def run(job_id: str) -> None:
             job = db.get(Job, job_id)
             if job is None:
                 return
+            require_report_owner(db, scope_id, job_id)
             _current_pool, current_digest = applied_pool(db, scope_id)
             if current_digest != digest:
                 raise ValueError("Applied pool changed; partial result was not published.")
@@ -373,6 +402,7 @@ def run(job_id: str) -> None:
         job = db.get(Job, job_id, populate_existing=True)
         if job is None:
             return
+        require_report_owner(db, scope_id, job_id)
         _pool, current_digest = applied_pool(db, scope_id)
         if current_digest != digest:
             raise ValueError("Applied configuration changed; old result was not published.")

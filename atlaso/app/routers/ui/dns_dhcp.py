@@ -1398,6 +1398,7 @@ def build_router(dependencies: DnsDhcpUiDependencies) -> DnsDhcpUiRouter:
             HTTPException: If the request cannot be fulfilled.
         """
         verify_csrf(request, csrf)
+        dhcp_pool_verification.forget_scope(db, scope_id)
         scope = db.get(DhcpScope, scope_id)
         if not scope:
             raise HTTPException(status_code=404, detail="DHCP IP zone not found")

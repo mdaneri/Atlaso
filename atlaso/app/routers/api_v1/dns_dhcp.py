@@ -981,6 +981,7 @@ def build_router(dependencies: DnsDhcpApiDependencies) -> DnsDhcpApiRouter:
             identity: Authenticated identity authorizing the operation.
             db: Active database session used by the operation.
         """
+        dhcp_pool_verification.forget_scope(db, scope_id)
         scope = db.get(DhcpScope, scope_id)
         if not scope:
             raise HTTPException(status_code=404, detail="DHCP IP zone not found")

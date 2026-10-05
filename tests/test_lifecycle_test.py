@@ -33,7 +33,7 @@ def load_lifecycle_module():
     return module
 
 
-@pytest.mark.parametrize("state", ["complete", "unknown"])
+@pytest.mark.parametrize("state", ["complete", "unknown", "missing_config"])
 def test_dhcp_pool_acceptance_restores_native_checks_and_rejects_unknown(monkeypatch, state):
     """The deployed check restores opt-out and never counts unknown evidence as acceptance."""
     module = load_lifecycle_module()
@@ -55,11 +55,19 @@ def test_dhcp_pool_acceptance_restores_native_checks_and_rejects_unknown(monkeyp
                     "observations": [{"status": "legitimate_use"}], "unresolved_count": 0}
 
     monkeypatch.setattr(module, "apply_units", lambda *_args: runtime.update(desired))
-    monkeypatch.setattr(module, "ssh_command", lambda *_args, **_kwargs: {
-        "returncode": 0, "stdout": "CHECKS=enabled" if runtime["check_ip_availability"] else "CHECKS=disabled"})
+    def probe(*probe_args, **_kwargs):
+        assert 'test -f /etc/atlaso/dnsmasq.d/atlaso.conf || exit 1' in probe_args[2]
+        if state == "missing_config":
+            return {"returncode": 1, "stdout": "", "stderr": "managed configuration missing"}
+        return {"returncode": 0, "stdout": "CHECKS=enabled" if runtime["check_ip_availability"] else "CHECKS=disabled"}
+
+    monkeypatch.setattr(module, "ssh_command", probe)
     args = argparse.Namespace(skip_client_checks=False, client_a_host="fixture", appliance_ssh_host="appliance",
                               site_interface="eth1")
-    if state == "unknown":
+    if state == "missing_config":
+        with pytest.raises(module.LifecycleError, match="native DHCP default"):
+            module.dhcp_pool_verification_check(Client(), args)
+    elif state == "unknown":
         with pytest.raises(module.LifecycleError, match="incomplete"):
             module.dhcp_pool_verification_check(Client(), args)
     else:

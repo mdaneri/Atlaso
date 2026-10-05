@@ -5076,10 +5076,12 @@ def dhcp_pool_verification_check(client: HttpClient, args: argparse.Namespace) -
     if settings.get("check_ip_availability") is not True:
         raise LifecycleError("Native DHCP candidate checking did not retain the enabled default.")
     probe_command = (
-        f'ELEV="$({elevation_probe()})"; test -n "$ELEV"; '
-        'test -f /etc/dnsmasq.d/atlaso.conf; '
-        'if grep -qx no-ping /etc/dnsmasq.d/atlaso.conf; then echo CHECKS=disabled; else echo CHECKS=enabled; fi; '
-        'dnsmasq --version | head -n 1; systemctl is-active dnsmasq'
+        f'ELEV="$({elevation_probe()})"; test -n "$ELEV" || exit 1; '
+        'test -f /etc/atlaso/dnsmasq.d/atlaso.conf || exit 1; '
+        'if grep -qx no-ping /etc/atlaso/dnsmasq.d/atlaso.conf; then echo CHECKS=disabled; else echo CHECKS=enabled; fi; '
+        'command -v dnsmasq >/dev/null || exit 1; '
+        'VERSION="$(dnsmasq --version)" || exit 1; test -n "$VERSION" || exit 1; '
+        'printf "%s\\n" "$VERSION" | head -n 1; systemctl is-active dnsmasq'
     )
     before = ssh_command(args.appliance_ssh_host, args, probe_command, role="appliance")
     require_success(before, "native DHCP default and daemon observation")
