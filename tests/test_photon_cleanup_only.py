@@ -1,0 +1,299 @@
+"""Fail-closed admission tests for Photon staging-only recovery."""
+
+from __future__ import annotations
+
+import json
+import shutil
+import subprocess
+from pathlib import Path
+
+import pytest
+
+WRAPPER = Path("scripts/windows/vmware/build-photon-image.ps1").resolve()
+
+
+@pytest.mark.parametrize(
+    "arguments",
+    [
+        ["-CleanupOnly"],
+        ["-Cleanup"],
+        ["-WhatIf"],
+        ["-Confirm"],
+        ["-LocalBuilder", "-Confirm:$false"],
+        ["-CleanupOnly", "-LocalBuilder"],
+        ["-CleanupOnly", "-CleanupRepositoryRoot", "relative", "-CleanupRootIdentity", "invalid"],
+    ],
+)
+def test_cleanup_entry_rejects_ambiguous_inputs(arguments: list[str]) -> None:
+    """Recovery cannot accidentally admit a build or an unbound target.
+
+    Args:
+        arguments: Invalid public command selection.
+    """
+    pwsh = shutil.which("pwsh")
+    if pwsh is None:
+        pytest.skip("PowerShell 7 is unavailable")
+    result = subprocess.run(
+        [pwsh, "-NoProfile", "-File", str(WRAPPER), *arguments],
+        capture_output=True,
+        text=True,
+        timeout=45,
+        check=False,
+    )
+    assert result.returncode != 0
+    assert "Cleanup" in result.stderr
+    assert "PowerCLI refresh" not in result.stdout
+
+
+@pytest.mark.parametrize("registration", ["missing", "duplicate"])
+def test_cleanup_rejects_ambiguous_registered_inventory(tmp_path: Path, registration: str) -> None:
+    """Sharing metadata cannot substitute for one registered task path.
+
+    Args:
+        tmp_path: Isolated harness directory.
+        registration: Invalid inventory observation returned by the Git boundary.
+    """
+    pwsh = shutil.which("pwsh")
+    if pwsh is None:
+        pytest.skip("PowerShell 7 is unavailable")
+    script = tmp_path / "inventory.ps1"
+    script.write_text(
+        r"""
+param($Wrapper, $Repository, $Registration)
+$ErrorActionPreference = 'Stop'
+$nativeGit = (Get-Command git).Source
+function git {
+    if ('worktree' -in $args -and 'list' -in $args) {
+        $global:LASTEXITCODE = 0
+        if ($Registration -eq 'missing') { return "worktree /not-the-task$([char]0)$([char]0)" }
+        $row = "worktree $Repository$([char]0)$([char]0)"
+        return $row + $row
+    }
+    & $nativeGit @args
+}
+& $Wrapper -CleanupOnly -CleanupRepositoryRoot $Repository -CleanupRootIdentity 'FFFFFFFF:FFFFFFFFFFFFFFFF'
+""",
+        encoding="utf-8",
+    )
+    result = subprocess.run(
+        [pwsh, "-NoProfile", "-File", str(script), str(WRAPPER), str(WRAPPER.parents[3]), registration],
+        capture_output=True,
+        text=True,
+        timeout=45,
+        check=False,
+    )
+    assert result.returncode != 0
+    assert "one exact registered worktree" in result.stderr
+
+
+@pytest.mark.parametrize("case", ["preview", "wrong_identity", "process_unproven", "nested_preview"])
+def test_retained_marker_requires_identity_and_process_proofs(tmp_path: Path, case: str) -> None:
+    """Preview preserves state; mismatches and unproven descendants block retirement.
+
+    Args:
+        tmp_path: Isolated task-owned fixture directory.
+        case: Recovery boundary to exercise.
+    """
+    pwsh = shutil.which("pwsh")
+    if pwsh is None:
+        pytest.skip("PowerShell 7 is unavailable")
+    parent = tmp_path / "credentials"
+    if case == "nested_preview":
+        parent = parent / "nested-build-state" / "credentials"
+    root = parent / ("atlaso-photon-build-credentials-" + "a" * 32)
+    root.mkdir(parents=True)
+    marker_path = tmp_path / "marker.json"
+    marker = {
+        "Schema": 3,
+        "RootPath": str(root),
+        "RootIdentity": "original",
+        "BootIdentity": "current",
+        "Phase": "active",
+        "OwnerProcessId": 123,
+        "OwnerProcessStartFileTimeUtc": 456,
+        "ProcessJobName": "Local\\Atlaso-Photon-" + "a" * 32,
+        "ChildProcessId": 789,
+        "ChildProcessStartFileTimeUtc": 101112,
+        "ProcessOwnershipPhase": "assigned",
+    }
+    marker_bytes = json.dumps(marker).encode()
+    marker_path.write_bytes(marker_bytes)
+    script = tmp_path / "probe.ps1"
+    script.write_text(
+        r"""
+param($Wrapper, $Repository, $MarkerPath, $Case)
+$ErrorActionPreference = 'Stop'
+$tokens = $null; $errors = $null
+$ast = [Management.Automation.Language.Parser]::ParseFile($Wrapper, [ref]$tokens, [ref]$errors)
+if ($errors.Count) { throw 'Wrapper parse failed' }
+$function = $ast.Find({param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and
+    $node.Name -eq 'Invoke-AtlasoPhotonBuildCleanupRecovery'}, $true)
+Invoke-Expression $function.Extent.Text
+function Assert-AtlasoStrictDescendantPath { param($ParentPath, $ChildPath, $FailureMessage) }
+function Get-AtlasoPathIdentity { param($Path, $Description) return 'original' }
+function Get-AtlasoWindowsBootIdentityState { param($BootIdentity) return 'current' }
+function Complete-AtlasoPhotonSameBootProcessRecovery { param($Marker) throw 'Descendant quiescence unproven' }
+function Complete-AtlasoPhotonBuildCleanup { throw 'Retirement must not be reached' }
+$expected = if ($Case -eq 'wrong_identity') { 'replacement' } else { 'original' }
+try {
+    Invoke-AtlasoPhotonBuildCleanupRecovery -MarkerPath $MarkerPath -RepositoryRoot $Repository `
+        -AllowedParentRoots @(Join-Path $Repository 'credentials') -ExpectedRootIdentity $expected `
+        -Preview:($Case -in @('preview', 'nested_preview')) | ConvertTo-Json -Compress
+    if ($Case -notin @('preview', 'nested_preview')) { throw 'Unsafe recovery unexpectedly succeeded' }
+} catch {
+    if ($Case -in @('preview', 'nested_preview')) { throw }
+    if ($_.Exception.InnerException.Message -notmatch 'original task-recorded|quiescence unproven') { throw }
+    'preserved'
+}
+""",
+        encoding="utf-8",
+    )
+    result = subprocess.run(
+        [pwsh, "-NoProfile", "-File", str(script), str(WRAPPER), str(tmp_path), str(marker_path), case],
+        capture_output=True,
+        text=True,
+        timeout=45,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert marker_path.read_bytes() == marker_bytes
+    assert root.is_dir()
+    if case in {"preview", "nested_preview"}:
+        assert json.loads(result.stdout)["Status"] == "inspected"
+    else:
+        assert result.stdout.strip() == "preserved"
+
+
+@pytest.mark.parametrize("identity_bound", [True, False])
+def test_missing_marker_cannot_report_identity_bound_retirement(tmp_path: Path, identity_bound: bool) -> None:
+    """A vanished marker fails cleanup-only while ordinary startup remains a no-op.
+
+    Args:
+        tmp_path: Task-owned synthetic staging fixture.
+        identity_bound: Whether the cleanup caller supplied its original identity.
+    """
+    pwsh = shutil.which("pwsh")
+    if pwsh is None:
+        pytest.skip("PowerShell 7 is unavailable")
+    root = tmp_path / "sensitive-root"
+    root.mkdir()
+    sentinel = root / "sentinel.txt"
+    sentinel.write_text("Synthetic fixture; no credentials.", encoding="utf-8")
+    script = tmp_path / "missing-marker.ps1"
+    script.write_text(
+        r"""
+param($Wrapper, $MarkerPath, $IdentityBound)
+$ErrorActionPreference = 'Stop'
+$tokens = $null; $errors = $null
+$ast = [Management.Automation.Language.Parser]::ParseFile($Wrapper, [ref]$tokens, [ref]$errors)
+if ($errors.Count) { throw 'Wrapper parse failed' }
+$function = $ast.Find({param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and
+    $node.Name -eq 'Invoke-AtlasoPhotonBuildCleanupRecovery'}, $true)
+Invoke-Expression $function.Extent.Text
+$identity = if ($IdentityBound -eq 'True') { 'original' } else { '' }
+Invoke-AtlasoPhotonBuildCleanupRecovery -MarkerPath $MarkerPath -AllowedParentRoots @('unused') -ExpectedRootIdentity $identity
+'returned'
+""",
+        encoding="utf-8",
+    )
+    result = subprocess.run(
+        [pwsh, "-NoProfile", "-File", str(script), str(WRAPPER), str(tmp_path / "missing-marker.json"), str(identity_bound)],
+        capture_output=True,
+        text=True,
+        timeout=45,
+        check=False,
+    )
+    if identity_bound:
+        assert result.returncode != 0
+        assert "sensitive-root retirement was not proven" in result.stderr
+        assert "returned" not in result.stdout
+    else:
+        assert result.returncode == 0 and result.stdout.strip() == "returned"
+    assert sentinel.read_text(encoding="utf-8") == "Synthetic fixture; no credentials."
+
+
+def test_registration_revalidation_rejects_a_changed_inventory(tmp_path: Path) -> None:
+    """A previously admitted worktree cannot rely on its stale inventory snapshot.
+
+    Args:
+        tmp_path: Isolated task-owned harness directory.
+    """
+    pwsh = shutil.which("pwsh")
+    if pwsh is None:
+        pytest.skip("PowerShell 7 is unavailable")
+    repository = tmp_path / "primary"
+    repository.mkdir()
+    subprocess.run(["git", "init", str(repository)], capture_output=True, check=True)
+    subprocess.run(["git", "-C", str(repository), "-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid",
+                    "commit", "--allow-empty", "-m", "fixture"], capture_output=True, check=True)
+    linked = tmp_path / "linked"
+    subprocess.run(["git", "-C", str(repository), "worktree", "add", "--detach", str(linked), "HEAD"],
+                   capture_output=True, check=True)
+    other = tmp_path / "other-primary"
+    other.mkdir()
+    subprocess.run(["git", "init", str(other)], capture_output=True, check=True)
+    script = tmp_path / "readmission.ps1"
+    script.write_text(
+        r"""
+param($Wrapper, $Repository, $OtherRepository)
+$ErrorActionPreference = 'Stop'
+$tokens = $null; $errors = $null
+$ast = [Management.Automation.Language.Parser]::ParseFile($Wrapper, [ref]$tokens, [ref]$errors)
+if ($errors.Count) { throw 'Wrapper parse failed' }
+$function = $ast.Find({param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and
+    $node.Name -eq 'Assert-AtlasoPhotonCleanupRepositoryRegistration'}, $true)
+Invoke-Expression $function.Extent.Text
+function Assert-AtlasoStrictDescendantPath { param($ParentPath, $ChildPath, $FailureMessage) }
+$global:ReadmissionGit = (Get-Command git).Source
+$global:ReadmissionInventoryCalls = 0
+function git {
+    if ('worktree' -in $args -and 'list' -in $args) {
+        $global:ReadmissionInventoryCalls++
+        if ($global:ReadmissionInventoryCalls -eq 2) {
+            $global:LASTEXITCODE = 0
+            return "worktree /not-the-task$([char]0)$([char]0)"
+        }
+    }
+    & $global:ReadmissionGit @args
+}
+$env:GIT_COMMON_DIR = Join-Path (Split-Path -Parent $Repository) 'primary/.git'
+try {
+    Assert-AtlasoPhotonCleanupRepositoryRegistration -RepositoryRoot $Repository -ExecutingRepositoryRoot $OtherRepository
+    throw 'Cross-repository override unexpectedly admitted'
+} catch {
+    if ($_.Exception.Message -notmatch 'different Git repository') { throw }
+}
+if ($env:GIT_COMMON_DIR -ne (Join-Path (Split-Path -Parent $Repository) 'primary/.git')) {
+    throw 'Caller environment was not restored after refusal'
+}
+$env:GIT_COMMON_DIR = '/invalid-inherited-common-directory'
+$env:GIT_DIR = '/invalid-inherited-git-directory'
+$env:GIT_WORK_TREE = '/invalid-inherited-worktree'
+$env:GIT_CONFIG_COUNT = '1'
+$env:GIT_CONFIG_KEY_0 = 'safe.directory'
+$env:GIT_CONFIG_VALUE_0 = '/unrelated'
+$admitted = Assert-AtlasoPhotonCleanupRepositoryRegistration -RepositoryRoot $Repository -ExecutingRepositoryRoot $Repository
+if ($admitted -ne $Repository) { throw 'First admission failed' }
+if ($env:GIT_COMMON_DIR -ne '/invalid-inherited-common-directory' -or
+    $env:GIT_DIR -ne '/invalid-inherited-git-directory' -or $env:GIT_CONFIG_COUNT -ne '1') {
+    throw 'Caller environment was not restored'
+}
+Assert-AtlasoPhotonCleanupRepositoryRegistration -RepositoryRoot $Repository -ExecutingRepositoryRoot $Repository
+throw 'Stale registration unexpectedly admitted'
+""",
+        encoding="utf-8",
+    )
+    try:
+        result = subprocess.run(
+            [pwsh, "-NoProfile", "-File", str(script), str(WRAPPER), str(linked), str(other)],
+            capture_output=True,
+            text=True,
+            timeout=45,
+            check=False,
+        )
+    finally:
+        subprocess.run(["git", "-C", str(repository), "worktree", "remove", str(linked)],
+                       capture_output=True, check=True)
+    assert result.returncode != 0
+    assert "one exact registered worktree" in result.stderr
+    assert "Stale registration unexpectedly admitted" not in result.stderr

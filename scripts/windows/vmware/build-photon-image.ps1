@@ -168,6 +168,14 @@ Enable real system adapters in the image.
 Validate Packer inputs without building.
 .PARAMETER PrepareIsoOnly
 Reject ISO-only preparation because the retained ISO would contain reusable credentials.
+.PARAMETER CleanupOnly
+Inspect one retained task cleanup marker without entering the image-build workflow.
+.PARAMETER CleanupRepositoryRoot
+Exact registered same-repository task worktree owning the retained marker.
+.PARAMETER CleanupRootIdentity
+Original sensitive-root identity recorded by the creating task, required for cleanup-only admission.
+.PARAMETER Cleanup
+Execute admitted cleanup-only recovery; omission or WhatIf preserves all resources.
 #>
 [Diagnostics.CodeAnalysis.SuppressMessageAttribute(
     'PSAvoidUsingPlainTextForPassword',
@@ -194,7 +202,7 @@ Reject ISO-only preparation because the retained ISO would contain reusable cred
     'CredentialBundlePath',
     Justification = 'Path to current-user DPAPI ciphertext, not a plaintext password.'
 )]
-[CmdletBinding()]
+[CmdletBinding(SupportsShouldProcess = $true)]
 param(
     [Parameter()]
     [string]$IsoUrl = 'https://packages.broadcom.com/photon/5.0/GA/iso/photon-5.0-dde71ec57.x86_64.iso',
@@ -284,7 +292,11 @@ param(
     [switch]$KeepExistingOutput,
     [switch]$EnableRealSystemAdapters,
     [switch]$ValidateOnly,
-    [switch]$PrepareIsoOnly
+    [switch]$PrepareIsoOnly,
+    [switch]$CleanupOnly,
+    [string]$CleanupRepositoryRoot = '',
+    [string]$CleanupRootIdentity = '',
+    [switch]$Cleanup
 )
 
 Set-StrictMode -Version Latest
@@ -295,6 +307,11 @@ if ($env:OP_SERVICE_ACCOUNT_TOKEN) {
 }
 if ($PrepareIsoOnly) {
     throw 'PrepareIsoOnly is not supported because a retained remastered ISO would contain reusable build credentials. Run Packer validation or a build so the ISO can be deleted after the bounded consumer exits.'
+}
+if (-not $CleanupOnly -and ($Cleanup -or $WhatIfPreference -or $PSBoundParameters.ContainsKey('Confirm') -or
+        -not [string]::IsNullOrWhiteSpace($CleanupRepositoryRoot) -or
+        -not [string]::IsNullOrWhiteSpace($CleanupRootIdentity))) {
+    throw 'Cleanup parameters, WhatIf and Confirm require -CleanupOnly; no build was started.'
 }
 
 . (Join-Path $PSScriptRoot 'Atlaso.WorkstationFirstBoot.ps1')
@@ -1097,15 +1114,24 @@ Exact non-secret cleanup marker path.
 Exact admitted current or legacy parent roots that may own the marker root.
 .PARAMETER RepositoryRoot
 Optional exact task repository used to admit a marker-owned custom state root.
+.PARAMETER ExpectedRootIdentity
+Optional original sensitive-root identity required by the cleanup-only caller.
+.PARAMETER Preview
+Validate the retained marker and filesystem identities without process or filesystem mutation.
 #>
 function Invoke-AtlasoPhotonBuildCleanupRecovery {
     param(
         [Parameter(Mandatory = $true)][string]$MarkerPath,
         [Parameter(Mandatory = $true)][string[]]$AllowedParentRoots,
-        [string]$RepositoryRoot = ''
+        [string]$RepositoryRoot = '',
+        [string]$ExpectedRootIdentity = '',
+        [switch]$Preview
     )
 
     if (-not (Test-Path -LiteralPath $MarkerPath -PathType Leaf)) {
+        if (-not [string]::IsNullOrWhiteSpace($ExpectedRootIdentity)) {
+            throw 'The identity-bound cleanup marker disappeared; sensitive-root retirement was not proven.'
+        }
         return
     }
     try {
@@ -1183,7 +1209,14 @@ function Invoke-AtlasoPhotonBuildCleanupRecovery {
                     -ParentPath $resolvedRepositoryRoot `
                     -ChildPath $markerParentRoot `
                     -FailureMessage 'Photon cleanup parent escaped the exact task repository'
-                $candidateParentRoots += $markerParentRoot
+                if (-not [string]::IsNullOrWhiteSpace($ExpectedRootIdentity)) {
+                    # Identity-bound cleanup uses the one exact marker parent;
+                    # a nested custom state root must not also admit its ancestor.
+                    $candidateParentRoots = @($markerParentRoot)
+                }
+                else {
+                    $candidateParentRoots += $markerParentRoot
+                }
             }
         }
         $admitted = @(
@@ -1205,6 +1238,29 @@ function Invoke-AtlasoPhotonBuildCleanupRecovery {
         }
         if ($marker.Phase -notin @('active', 'root-absent', 'retired')) {
             throw 'Invalid cleanup marker phase.'
+        }
+        if (-not [string]::IsNullOrWhiteSpace($ExpectedRootIdentity)) {
+            if (-not $currentMarker -or [string]$marker.RootIdentity -cne $ExpectedRootIdentity) {
+                throw 'Retained marker does not match the original task-recorded root identity.'
+            }
+            Assert-AtlasoStrictDescendantPath `
+                -ParentPath $resolvedRepositoryRoot `
+                -ChildPath $resolvedRoot `
+                -FailureMessage 'Cleanup-only root escaped the exact task repository'
+            if ($marker.Phase -ceq 'active' -and
+                (Get-AtlasoPathIdentity -Path $resolvedRoot -Description 'Photon cleanup root') -cne
+                $ExpectedRootIdentity) {
+                throw 'Retained sensitive-root identity changed; resources were preserved.'
+            }
+        }
+        if ($Preview) {
+            [pscustomobject]@{
+                Status = 'inspected'
+                Schema = $marker.Schema
+                Phase = [string]$marker.Phase
+                ProcessRecovery = 'not attempted; execution must prove whole-tree quiescence'
+            }
+            return
         }
         if ($marker.Phase -ceq 'active') {
             $bootIdentityState = Get-AtlasoWindowsBootIdentityState -BootIdentity $marker.BootIdentity
@@ -1487,7 +1543,115 @@ function Invoke-AtlasoLegacyBuilderAddressHandoffRecovery {
     }
 }
 
+<#
+.SYNOPSIS
+Revalidate the exact registered cleanup worktree and its Git backlink.
+.PARAMETER RepositoryRoot
+Absolute cleanup task worktree to admit immediately before recovery.
+.PARAMETER ExecutingRepositoryRoot
+Registered repository containing this executing recovery wrapper.
+#>
+function Assert-AtlasoPhotonCleanupRepositoryRegistration {
+    param(
+        [Parameter(Mandatory = $true)][string]$RepositoryRoot,
+        [Parameter(Mandatory = $true)][string]$ExecutingRepositoryRoot
+    )
+
+    # Repository-routing/configuration overrides cannot authorize deletion.
+    # Scope removal to this admission and restore the caller environment afterward.
+    $savedGitEnvironment = @{}
+    foreach ($entry in @(Get-ChildItem Env: | Where-Object { $_.Name -like 'GIT_*' })) {
+        $savedGitEnvironment[$entry.Name] = $entry.Value
+        Remove-Item -LiteralPath ('Env:' + $entry.Name) -ErrorAction Stop
+    }
+    try {
+        $cleanupRepository = (Resolve-Path -LiteralPath $RepositoryRoot -ErrorAction Stop).Path
+        $cleanupTop = ([string](& git -C $cleanupRepository rev-parse --show-toplevel)).Trim()
+        if ($LASTEXITCODE -ne 0 -or
+            -not [IO.Path]::GetFullPath($cleanupTop).Equals($cleanupRepository, [StringComparison]::OrdinalIgnoreCase)) {
+            throw 'Cleanup repository must be an exact registered worktree root.'
+        }
+        $cleanupCommon = ([string](& git -C $cleanupRepository rev-parse --path-format=absolute --git-common-dir)).Trim()
+        if ($LASTEXITCODE -ne 0) { throw 'Cleanup repository registration is unavailable.' }
+        $ownCommon = ([string](& git -C $ExecutingRepositoryRoot rev-parse --path-format=absolute --git-common-dir)).Trim()
+        if ($LASTEXITCODE -ne 0 -or
+            -not $cleanupCommon.Equals($ownCommon, [StringComparison]::OrdinalIgnoreCase)) {
+            throw 'Cleanup repository belongs to a different Git repository.'
+        }
+        $worktreeInventory = [string](& git -C $ExecutingRepositoryRoot worktree list --porcelain -z)
+        if ($LASTEXITCODE -ne 0) { throw 'Registered worktree inventory is unavailable.' }
+        $registeredMatches = @($worktreeInventory.Split([char]0) | Where-Object {
+            $_.StartsWith('worktree ', [StringComparison]::Ordinal) -and
+            [IO.Path]::GetFullPath($_.Substring(9)).Equals($cleanupRepository, [StringComparison]::OrdinalIgnoreCase)
+        })
+        if ($registeredMatches.Count -ne 1) { throw 'Cleanup target is not one exact registered worktree.' }
+        $cleanupGitDirectory = ([string](& git -C $cleanupRepository rev-parse --absolute-git-dir)).Trim()
+        if ($LASTEXITCODE -ne 0) { throw 'Cleanup private Git directory is unavailable.' }
+        Assert-AtlasoStrictDescendantPath -ParentPath (Join-Path $ownCommon 'worktrees') `
+            -ChildPath $cleanupGitDirectory -FailureMessage 'Cleanup requires a registered linked task worktree'
+        $cleanupGitFile = Join-Path $cleanupRepository '.git'
+        $backlinkPath = Join-Path $cleanupGitDirectory 'gitdir'
+        foreach ($registrationFile in @($cleanupGitFile, $backlinkPath)) {
+            $registrationItem = Get-Item -LiteralPath $registrationFile -Force -ErrorAction Stop
+            if ($registrationItem.PSIsContainer -or $registrationItem.Length -gt 4096 -or
+                ($registrationItem.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+                throw 'Cleanup worktree registration file is not an ordinary bounded file.'
+            }
+        }
+        $backlink = [IO.File]::ReadAllText($backlinkPath).Trim()
+        if (-not [IO.Path]::IsPathFullyQualified($backlink) -or
+            -not [IO.Path]::GetFullPath($backlink).Equals($cleanupGitFile, [StringComparison]::OrdinalIgnoreCase)) {
+            throw 'Cleanup private Git directory backlink does not match the exact task worktree.'
+        }
+        return $cleanupRepository
+    }
+    finally {
+        foreach ($name in $savedGitEnvironment.Keys) {
+            [Environment]::SetEnvironmentVariable($name, $savedGitEnvironment[$name], 'Process')
+        }
+    }
+}
+
 $repoRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..\..')).Path
+if ($CleanupOnly) {
+    # Return before lock refresh, artifact downloads, credentials, reservation
+    # initialization, source protection, output claims, or any provider work.
+    $cleanupParameters = @('CleanupOnly', 'CleanupRepositoryRoot', 'CleanupRootIdentity',
+        'Cleanup', 'WhatIf', 'Confirm', 'Verbose', 'Debug', 'ErrorAction', 'WarningAction',
+        'InformationAction', 'ProgressAction', 'ErrorVariable', 'WarningVariable',
+        'InformationVariable', 'OutVariable', 'OutBuffer', 'PipelineVariable')
+    if (@($PSBoundParameters.Keys | Where-Object { $_ -notin $cleanupParameters }).Count -ne 0) {
+        throw 'Cleanup-only mode rejects all build and credential inputs.'
+    }
+    if (-not [IO.Path]::IsPathFullyQualified($CleanupRepositoryRoot) -or
+        $CleanupRootIdentity -notmatch '^[0-9A-F]{8}:[0-9A-F]{16}$') {
+        throw 'Cleanup-only mode requires an absolute task repository and its original sensitive-root identity.'
+    }
+    $cleanupRepository = Assert-AtlasoPhotonCleanupRepositoryRegistration `
+        -RepositoryRoot $CleanupRepositoryRoot -ExecutingRepositoryRoot $repoRoot
+    $cleanupOnlyMarker = Join-Path $cleanupRepository '.atlaso-local\photon-image-build-state\photon-image-build-cleanup.json'
+    if (-not (Test-Path -LiteralPath $cleanupOnlyMarker -PathType Leaf)) {
+        throw 'The exact retained cleanup marker is absent; no ownership or completion was inferred.'
+    }
+    $cleanupArguments = @{
+        MarkerPath = $cleanupOnlyMarker
+        AllowedParentRoots = @(Join-Path $cleanupRepository '.atlaso-local\photon-image-build-state\credentials')
+        RepositoryRoot = $cleanupRepository
+        ExpectedRootIdentity = $CleanupRootIdentity
+    }
+    Invoke-AtlasoPhotonBuildCleanupRecovery @cleanupArguments -Preview
+    if ($Cleanup -and $PSCmdlet.ShouldProcess($cleanupRepository, 'Recover exact retained Photon process tree and sensitive staging root')) {
+        $readmittedRepository = Assert-AtlasoPhotonCleanupRepositoryRegistration `
+            -RepositoryRoot $CleanupRepositoryRoot -ExecutingRepositoryRoot $repoRoot
+        if ($readmittedRepository -cne $cleanupRepository) {
+            throw 'Cleanup repository changed after confirmation; recovery was not attempted.'
+        }
+        Invoke-AtlasoPhotonBuildCleanupRecovery @cleanupArguments
+        if (Test-Path -LiteralPath $cleanupOnlyMarker) { throw 'Cleanup marker remains; recovery is incomplete.' }
+        [pscustomobject]@{ Status = 'retired'; Scope = 'sensitive staging only; VM, output claims and reservations retained' }
+    }
+    return
+}
 if (-not $CredentialChild) {
     $powerCliRefreshArguments = @((Join-Path $repoRoot 'scripts/update_powercli_lock.py'), '--before-build')
     if ($ReleaseBuilder) { $powerCliRefreshArguments += '--check' }
