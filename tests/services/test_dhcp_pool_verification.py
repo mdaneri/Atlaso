@@ -150,6 +150,11 @@ def test_worker_publishes_progress_report_and_keeps_service_untouched(client, mo
 def test_deleted_scope_id_reuse_does_not_inherit_report(client, transport):
     """Both deletion paths clear evidence before SQLite reuses an identical pool ID."""
     from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Schedule, utcnow
+    from atlaso.app.services.automation import (
+        enqueue_due_schedules,
+        enqueue_schedule_now,
+    )
     from tests.routers.api_v1.test_dns_dhcp import create_token
     from tests.routers.ui.helpers import login
 
@@ -164,6 +169,12 @@ def test_deleted_scope_id_reuse_does_not_inherit_report(client, transport):
         })))
         db.commit()
         assert verifier.status(db, scope_id)["observations"]
+        schedule = Schedule(name="deleted-pool", task_type="dhcp_pool_verify",
+                            task_config_json=json.dumps({"scope_id": scope_id}), enabled=True,
+                            cron_expression="0 * * * *", next_run_at=utcnow(), created_by="admin")
+        db.add(schedule)
+        db.commit()
+        schedule_id = schedule.id
     if transport == "api":
         token = create_token(client, ["read:dhcp", "write:dhcp"])
         response = client.delete(f"/api/v1/dhcp/scopes/{scope_id}", headers={"Authorization": f"Bearer {token}"})
@@ -179,6 +190,12 @@ def test_deleted_scope_id_reuse_does_not_inherit_report(client, transport):
         db.add(replacement)
         db.commit()
         assert replacement.id == scope_id
+        schedule = db.get(Schedule, schedule_id)
+        assert schedule.enabled is False and schedule.next_run_at is None
+        assert "scope_id" not in json.loads(schedule.task_config_json)
+        assert enqueue_due_schedules(db, now=utcnow()) == []
+        with pytest.raises(ValueError, match="scope is invalid"):
+            enqueue_schedule_now(db, schedule=schedule, actor="admin")
         report = verifier.status(db, replacement.id)
         assert report["state"] == "not_recorded" and report["job_id"] is None and report["observations"] == []
         job = verifier.enqueue(db, scope_id=scope_id, actor="admin")

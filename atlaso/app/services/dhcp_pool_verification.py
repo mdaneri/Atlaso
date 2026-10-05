@@ -19,6 +19,7 @@ from atlaso.app.models import (
     DhcpScope,
     Job,
     JobStatus,
+    Schedule,
     Setting,
     utcnow,
 )
@@ -49,6 +50,14 @@ def forget_scope(db: Session, scope_id: int) -> None:
     stored = db.scalar(select(Setting).where(Setting.key == REPORT_PREFIX + str(scope_id)))
     if stored is not None:
         db.delete(stored)
+    for schedule in db.scalars(select(Schedule).where(Schedule.task_type == "dhcp_pool_verify")):
+        config = object_json(schedule.task_config_json)
+        if config.get("scope_id") == scope_id:
+            schedule.enabled = False
+            schedule.next_run_at = None
+            config.pop("scope_id")
+            schedule.task_config_json = json.dumps(config, sort_keys=True)
+            schedule.updated_at = utcnow()
 
 
 def require_report_owner(db: Session, scope_id: int, job_id: str) -> None:
