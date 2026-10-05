@@ -96,6 +96,8 @@ it does not label a device malicious or unauthorized. Expired leases are ignored
 during probing and unscoped leases for overlapping applied pools on different links remain unknown,
 even when another pool has pending edits, disablement or deletion. A prior finding stays
 unresolved after silence or incomplete work and resolves only after positive matching lease/reservation evidence.
+Its original MAC/lease/client identity snapshot remains visible in the reason as retained evidence, with the original
+verification time; current observations remain distinct.
 Details include observed/expected MACs, available client identifiers, reason, first/last seen and verification time.
 
 Only one verifier is admitted globally. A run is limited to 1,024 addresses, chunks of at most 16, at most eight ARP

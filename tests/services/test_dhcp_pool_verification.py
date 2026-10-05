@@ -574,3 +574,27 @@ def test_pool_health_template_gates_schedule_permission(role, scopes, verify, sc
     page = template.render(identity=Identity("operator", role, scopes), csrf_token="test", management_ui_root="/ui/management")
     assert f'data-can-verify="{str(verify).lower()}"' in page
     assert f'data-can-schedule="{str(schedule).lower()}"' in page
+
+
+@pytest.mark.parametrize("macs,leases", [([MAC], []), ([OTHER], [lease()]), ([MAC, OTHER], [lease()])])
+@pytest.mark.parametrize("status", ["no_response", "incomplete"])
+def test_retained_finding_preserves_identity_evidence_until_positive_resolution(macs, leases, status):
+    """Repeated silent/incomplete observations retain a labelled original finding snapshot."""
+    finding = verifier.classify(observation(macs), POOL, leases, leases, NOW)
+    later_time = "2030-01-01T01:00:00+00:00"
+    current = verifier.classify(observation([], status), POOL, leases, leases, later_time)
+    retained = verifier.retain_history(current, finding)
+    evidence = retained["retained_finding"]
+    assert evidence == {key: finding[key] for key in (
+        "status", "observed_mac_addresses", "expected_mac_addresses", "expected_client_ids", "verified_at",
+    )}
+    assert retained["observed_mac_addresses"] == []  # Current observation stays truthful.
+    assert retained["verified_at"] == later_time and retained["last_seen"] == NOW
+    assert "Retained unresolved" in retained["reason"] and NOW in retained["reason"]
+    assert all(mac in retained["reason"] for mac in macs)
+    again = verifier.retain_history(verifier.classify(observation([], status), POOL, leases, leases, later_time), retained)
+    assert again["retained_finding"] == evidence and again["unresolved"]
+    matching = verifier.classify(observation([MAC]), POOL, [lease()], [lease()], later_time)
+    resolved = verifier.retain_history(matching, again)
+    assert not resolved["unresolved"] and resolved["resolved_at"] == later_time
+    assert "retained_finding" not in resolved and "Retained unresolved" not in resolved["reason"]

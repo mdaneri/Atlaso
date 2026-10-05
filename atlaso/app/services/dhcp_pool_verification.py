@@ -272,6 +272,24 @@ def retain_history(current: dict[str, Any], previous: dict[str, Any] | None) -> 
             current["unresolved"] = True
             if current["status"] not in FINDINGS:
                 current["last_seen"] = previous["last_seen"]
+                evidence = previous.get("retained_finding") or {
+                    key: previous.get(key) for key in (
+                        "status", "observed_mac_addresses", "expected_mac_addresses",
+                        "expected_client_ids", "verified_at",
+                    )
+                }
+                current["retained_finding"] = evidence
+                identities = "; ".join(
+                    f"{label}: {', '.join(evidence.get(key) or []) or 'not recorded'}"
+                    for label, key in (
+                        ("observed MAC", "observed_mac_addresses"),
+                        ("expected MAC", "expected_mac_addresses"),
+                        ("client IDs", "expected_client_ids"),
+                    )
+                )
+                current["reason"] += (
+                    f" Retained unresolved {evidence['status']} evidence from {evidence['verified_at']}: {identities}."
+                )
     return current
 
 
