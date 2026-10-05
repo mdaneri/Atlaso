@@ -4,97 +4,244 @@
         <loc>https://mdaneri.github.io/Atlaso/docs/</loc>
       </url>
       <url>
+        <loc>https://mdaneri.github.io/Atlaso/docs/appliance-apply/</loc>
+      </url>
+      <url>
+        <loc>https://mdaneri.github.io/Atlaso/docs/appliance-console/</loc>
+      </url>
+      <url>
+        <loc>https://mdaneri.github.io/Atlaso/docs/appliance-update/</loc>
+      </url>
+      <url>
+        <loc>https://mdaneri.github.io/Atlaso/docs/assets/brand/BRAND_GUIDE/</loc>
+      </url>
+      <url>
+        <loc>https://mdaneri.github.io/Atlaso/docs/automation/</loc>
+      </url>
+      <url>
+        <loc>https://mdaneri.github.io/Atlaso/docs/branding/</loc>
+      </url>
+      <url>
+        <loc>https://mdaneri.github.io/Atlaso/docs/ca-roadmap/</loc>
+      </url>
+      <url>
+        <loc>https://mdaneri.github.io/Atlaso/docs/contribute/</loc>
+      </url>
+      <url>
+        <loc>https://mdaneri.github.io/Atlaso/docs/contribute/agent-policies/</loc>
+      </url>
+      <url>
+        <loc>https://mdaneri.github.io/Atlaso/docs/contribute/agent-workflow/</loc>
+      </url>
+      <url>
+        <loc>https://mdaneri.github.io/Atlaso/docs/contribute/api-authoring/</loc>
+      </url>
+      <url>
+        <loc>https://mdaneri.github.io/Atlaso/docs/contribute/completed-task-cleanup/</loc>
+      </url>
+      <url>
+        <loc>https://mdaneri.github.io/Atlaso/docs/contribute/credential-policy/</loc>
+      </url>
+      <url>
+        <loc>https://mdaneri.github.io/Atlaso/docs/contribute/dependency-management/</loc>
+      </url>
+      <url>
+        <loc>https://mdaneri.github.io/Atlaso/docs/contribute/diagnostic-collectors/</loc>
+      </url>
+      <url>
+        <loc>https://mdaneri.github.io/Atlaso/docs/contribute/documentation-authoring/</loc>
+      </url>
+      <url>
+        <loc>https://mdaneri.github.io/Atlaso/docs/contribute/powershell-authoring/</loc>
+      </url>
+      <url>
+        <loc>https://mdaneri.github.io/Atlaso/docs/contribute/pr-workflow/</loc>
+      </url>
+      <url>
+        <loc>https://mdaneri.github.io/Atlaso/docs/contribute/progressive-policy/</loc>
+      </url>
+      <url>
+        <loc>https://mdaneri.github.io/Atlaso/docs/contribute/python-documentation/</loc>
+      </url>
+      <url>
+        <loc>https://mdaneri.github.io/Atlaso/docs/contribute/python-static-analysis/</loc>
+      </url>
+      <url>
+        <loc>https://mdaneri.github.io/Atlaso/docs/contribute/release-policy/</loc>
+      </url>
+      <url>
+        <loc>https://mdaneri.github.io/Atlaso/docs/contribute/router-architecture/</loc>
+      </url>
+      <url>
+        <loc>https://mdaneri.github.io/Atlaso/docs/contribute/ui-design-guide/</loc>
+      </url>
+      <url>
+        <loc>https://mdaneri.github.io/Atlaso/docs/contribute/windows-image-build-wsl/</loc>
+      </url>
+      <url>
+        <loc>https://mdaneri.github.io/Atlaso/docs/dashboard/</loc>
+      </url>
+      <url>
+        <loc>https://mdaneri.github.io/Atlaso/docs/dns/</loc>
+      </url>
+      <url>
+        <loc>https://mdaneri.github.io/Atlaso/docs/esx-storage/</loc>
+      </url>
+      <url>
         <loc>https://mdaneri.github.io/Atlaso/docs/getting-started/</loc>
+      </url>
+      <url>
+        <loc>https://mdaneri.github.io/Atlaso/docs/ipxe/</loc>
+      </url>
+      <url>
+        <loc>https://mdaneri.github.io/Atlaso/docs/managed-ldap/</loc>
+      </url>
+      <url>
+        <loc>https://mdaneri.github.io/Atlaso/docs/monitor-apply-ux-design-qa/</loc>
+      </url>
+      <url>
+        <loc>https://mdaneri.github.io/Atlaso/docs/oidc-provider/</loc>
       </url>
       <url>
         <loc>https://mdaneri.github.io/Atlaso/docs/operate/</loc>
       </url>
       <url>
-        <loc>https://mdaneri.github.io/Atlaso/docs/operate/dashboard/</loc>
-      </url>
-      <url>
-        <loc>https://mdaneri.github.io/Atlaso/docs/operate/navigation/</loc>
-      </url>
-      <url>
-        <loc>https://mdaneri.github.io/Atlaso/docs/operate/monitor/</loc>
-      </url>
-      <url>
-        <loc>https://mdaneri.github.io/Atlaso/docs/operate/logs/</loc>
-      </url>
-      <url>
-        <loc>https://mdaneri.github.io/Atlaso/docs/operate/audit-log/</loc>
-      </url>
-      <url>
-        <loc>https://mdaneri.github.io/Atlaso/docs/operate/tasks/</loc>
+        <loc>https://mdaneri.github.io/Atlaso/docs/operate/api/</loc>
       </url>
       <url>
         <loc>https://mdaneri.github.io/Atlaso/docs/operate/appliance-apply/</loc>
       </url>
       <url>
-        <loc>https://mdaneri.github.io/Atlaso/docs/operate/appliance-settings/</loc>
-      </url>
-      <url>
-        <loc>https://mdaneri.github.io/Atlaso/docs/operate/networking/</loc>
-      </url>
-      <url>
-        <loc>https://mdaneri.github.io/Atlaso/docs/operate/network-objects/</loc>
-      </url>
-      <url>
-        <loc>https://mdaneri.github.io/Atlaso/docs/operate/traffic-publishing/</loc>
-      </url>
-      <url>
         <loc>https://mdaneri.github.io/Atlaso/docs/operate/appliance-console/</loc>
+      </url>
+      <url>
+        <loc>https://mdaneri.github.io/Atlaso/docs/operate/appliance-settings/</loc>
       </url>
       <url>
         <loc>https://mdaneri.github.io/Atlaso/docs/operate/appliance-update/</loc>
       </url>
       <url>
-        <loc>https://mdaneri.github.io/Atlaso/docs/operate/onepassword-credential-bridge-recovery/</loc>
-      </url>
-      <url>
-        <loc>https://mdaneri.github.io/Atlaso/docs/operate/backup-restore/</loc>
-      </url>
-      <url>
-        <loc>https://mdaneri.github.io/Atlaso/docs/operate/diagnostics/</loc>
+        <loc>https://mdaneri.github.io/Atlaso/docs/operate/audit-log/</loc>
       </url>
       <url>
         <loc>https://mdaneri.github.io/Atlaso/docs/operate/automation/</loc>
       </url>
       <url>
-        <loc>https://mdaneri.github.io/Atlaso/docs/operate/api/</loc>
+        <loc>https://mdaneri.github.io/Atlaso/docs/operate/backup-restore/</loc>
+      </url>
+      <url>
+        <loc>https://mdaneri.github.io/Atlaso/docs/operate/dashboard/</loc>
+      </url>
+      <url>
+        <loc>https://mdaneri.github.io/Atlaso/docs/operate/diagnostics/</loc>
+      </url>
+      <url>
+        <loc>https://mdaneri.github.io/Atlaso/docs/operate/logs/</loc>
+      </url>
+      <url>
+        <loc>https://mdaneri.github.io/Atlaso/docs/operate/monitor/</loc>
+      </url>
+      <url>
+        <loc>https://mdaneri.github.io/Atlaso/docs/operate/navigation/</loc>
+      </url>
+      <url>
+        <loc>https://mdaneri.github.io/Atlaso/docs/operate/network-objects/</loc>
+      </url>
+      <url>
+        <loc>https://mdaneri.github.io/Atlaso/docs/operate/networking/</loc>
+      </url>
+      <url>
+        <loc>https://mdaneri.github.io/Atlaso/docs/operate/onepassword-credential-bridge-recovery/</loc>
+      </url>
+      <url>
+        <loc>https://mdaneri.github.io/Atlaso/docs/operate/tasks/</loc>
+      </url>
+      <url>
+        <loc>https://mdaneri.github.io/Atlaso/docs/operate/traffic-publishing/</loc>
       </url>
       <url>
         <loc>https://mdaneri.github.io/Atlaso/docs/operate/web-terminal/</loc>
       </url>
       <url>
+        <loc>https://mdaneri.github.io/Atlaso/docs/project/</loc>
+      </url>
+      <url>
+        <loc>https://mdaneri.github.io/Atlaso/docs/project/appliance-console-design-qa/</loc>
+      </url>
+      <url>
+        <loc>https://mdaneri.github.io/Atlaso/docs/project/branding/</loc>
+      </url>
+      <url>
+        <loc>https://mdaneri.github.io/Atlaso/docs/project/ca-roadmap/</loc>
+      </url>
+      <url>
+        <loc>https://mdaneri.github.io/Atlaso/docs/project/github-project/</loc>
+      </url>
+      <url>
+        <loc>https://mdaneri.github.io/Atlaso/docs/project/monitor-apply-ux-design-qa/</loc>
+      </url>
+      <url>
+        <loc>https://mdaneri.github.io/Atlaso/docs/project/routing-wan-roadmap/</loc>
+      </url>
+      <url>
+        <loc>https://mdaneri.github.io/Atlaso/docs/project/ui-compliance-matrix/</loc>
+      </url>
+      <url>
+        <loc>https://mdaneri.github.io/Atlaso/docs/project/what-is-atlaso/</loc>
+      </url>
+      <url>
+        <loc>https://mdaneri.github.io/Atlaso/docs/reference/</loc>
+      </url>
+      <url>
+        <loc>https://mdaneri.github.io/Atlaso/docs/reference/api/</loc>
+      </url>
+      <url>
+        <loc>https://mdaneri.github.io/Atlaso/docs/reference/appliance-apply-technical/</loc>
+      </url>
+      <url>
+        <loc>https://mdaneri.github.io/Atlaso/docs/reference/appliance-console-technical/</loc>
+      </url>
+      <url>
+        <loc>https://mdaneri.github.io/Atlaso/docs/reference/full-technical-reference/</loc>
+      </url>
+      <url>
+        <loc>https://mdaneri.github.io/Atlaso/docs/reference/interface-gallery/</loc>
+      </url>
+      <url>
+        <loc>https://mdaneri.github.io/Atlaso/docs/reference/virtualization-artifacts/</loc>
+      </url>
+      <url>
+        <loc>https://mdaneri.github.io/Atlaso/docs/reference/vmware-workstation-lifecycle-testing/</loc>
+      </url>
+      <url>
+        <loc>https://mdaneri.github.io/Atlaso/docs/reference/vsphere-key-provider-protocol/</loc>
+      </url>
+      <url>
+        <loc>https://mdaneri.github.io/Atlaso/docs/reference/vsphere-key-provider-security/</loc>
+      </url>
+      <url>
+        <loc>https://mdaneri.github.io/Atlaso/docs/routing-wan-roadmap/</loc>
+      </url>
+      <url>
         <loc>https://mdaneri.github.io/Atlaso/docs/services/</loc>
-      </url>
-      <url>
-        <loc>https://mdaneri.github.io/Atlaso/docs/services/dns/</loc>
-      </url>
-      <url>
-        <loc>https://mdaneri.github.io/Atlaso/docs/services/dhcp/</loc>
-      </url>
-      <url>
-        <loc>https://mdaneri.github.io/Atlaso/docs/services/firewall/</loc>
-      </url>
-      <url>
-        <loc>https://mdaneri.github.io/Atlaso/docs/services/ntp/</loc>
-      </url>
-      <url>
-        <loc>https://mdaneri.github.io/Atlaso/docs/services/public-services/</loc>
       </url>
       <url>
         <loc>https://mdaneri.github.io/Atlaso/docs/services/certificate-authority/</loc>
       </url>
       <url>
+        <loc>https://mdaneri.github.io/Atlaso/docs/services/dhcp/</loc>
+      </url>
+      <url>
+        <loc>https://mdaneri.github.io/Atlaso/docs/services/dns/</loc>
+      </url>
+      <url>
         <loc>https://mdaneri.github.io/Atlaso/docs/services/esx-storage/</loc>
       </url>
       <url>
-        <loc>https://mdaneri.github.io/Atlaso/docs/services/ipxe/</loc>
+        <loc>https://mdaneri.github.io/Atlaso/docs/services/firewall/</loc>
       </url>
       <url>
-        <loc>https://mdaneri.github.io/Atlaso/docs/services/vsphere-key-providers/</loc>
+        <loc>https://mdaneri.github.io/Atlaso/docs/services/ipxe/</loc>
       </url>
       <url>
         <loc>https://mdaneri.github.io/Atlaso/docs/services/local-users/</loc>
@@ -103,16 +250,22 @@
         <loc>https://mdaneri.github.io/Atlaso/docs/services/managed-ldap/</loc>
       </url>
       <url>
+        <loc>https://mdaneri.github.io/Atlaso/docs/services/ntp/</loc>
+      </url>
+      <url>
         <loc>https://mdaneri.github.io/Atlaso/docs/services/oidc-provider/</loc>
+      </url>
+      <url>
+        <loc>https://mdaneri.github.io/Atlaso/docs/services/public-services/</loc>
+      </url>
+      <url>
+        <loc>https://mdaneri.github.io/Atlaso/docs/services/vaults/</loc>
       </url>
       <url>
         <loc>https://mdaneri.github.io/Atlaso/docs/services/vcf-backups/</loc>
       </url>
       <url>
         <loc>https://mdaneri.github.io/Atlaso/docs/services/vcf-helper/</loc>
-      </url>
-      <url>
-        <loc>https://mdaneri.github.io/Atlaso/docs/services/vaults/</loc>
       </url>
       <url>
         <loc>https://mdaneri.github.io/Atlaso/docs/services/vcf-offline-depot/</loc>
@@ -124,117 +277,21 @@
         <loc>https://mdaneri.github.io/Atlaso/docs/services/vcf-trust/</loc>
       </url>
       <url>
-        <loc>https://mdaneri.github.io/Atlaso/docs/reference/</loc>
+        <loc>https://mdaneri.github.io/Atlaso/docs/services/vsphere-key-providers/</loc>
       </url>
       <url>
-        <loc>https://mdaneri.github.io/Atlaso/docs/reference/api/</loc>
+        <loc>https://mdaneri.github.io/Atlaso/docs/ui-design-guide/</loc>
       </url>
       <url>
-        <loc>https://mdaneri.github.io/Atlaso/docs/reference/interface-gallery/</loc>
+        <loc>https://mdaneri.github.io/Atlaso/docs/vcf-helper/</loc>
       </url>
       <url>
-        <loc>https://mdaneri.github.io/Atlaso/docs/reference/appliance-apply-technical/</loc>
+        <loc>https://mdaneri.github.io/Atlaso/docs/vcf-trust/</loc>
       </url>
       <url>
-        <loc>https://mdaneri.github.io/Atlaso/docs/reference/appliance-console-technical/</loc>
+        <loc>https://mdaneri.github.io/Atlaso/docs/vmware-workstation-lifecycle-testing/</loc>
       </url>
       <url>
-        <loc>https://mdaneri.github.io/Atlaso/docs/reference/vsphere-key-provider-protocol/</loc>
-      </url>
-      <url>
-        <loc>https://mdaneri.github.io/Atlaso/docs/reference/vsphere-key-provider-security/</loc>
-      </url>
-      <url>
-        <loc>https://mdaneri.github.io/Atlaso/docs/reference/full-technical-reference/</loc>
-      </url>
-      <url>
-        <loc>https://mdaneri.github.io/Atlaso/docs/reference/virtualization-artifacts/</loc>
-      </url>
-      <url>
-        <loc>https://mdaneri.github.io/Atlaso/docs/reference/vmware-workstation-lifecycle-testing/</loc>
-      </url>
-      <url>
-        <loc>https://mdaneri.github.io/Atlaso/docs/contribute/</loc>
-      </url>
-      <url>
-        <loc>https://mdaneri.github.io/Atlaso/docs/contribute/dependency-management/</loc>
-      </url>
-      <url>
-        <loc>https://mdaneri.github.io/Atlaso/docs/contribute/documentation-authoring/</loc>
-      </url>
-      <url>
-        <loc>https://mdaneri.github.io/Atlaso/docs/contribute/python-documentation/</loc>
-      </url>
-      <url>
-        <loc>https://mdaneri.github.io/Atlaso/docs/contribute/python-static-analysis/</loc>
-      </url>
-      <url>
-        <loc>https://mdaneri.github.io/Atlaso/docs/contribute/diagnostic-collectors/</loc>
-      </url>
-      <url>
-        <loc>https://mdaneri.github.io/Atlaso/docs/contribute/router-architecture/</loc>
-      </url>
-      <url>
-        <loc>https://mdaneri.github.io/Atlaso/docs/contribute/api-authoring/</loc>
-      </url>
-      <url>
-        <loc>https://mdaneri.github.io/Atlaso/docs/contribute/windows-image-build-wsl/</loc>
-      </url>
-      <url>
-        <loc>https://mdaneri.github.io/Atlaso/docs/contribute/ui-design-guide/</loc>
-      </url>
-      <url>
-        <loc>https://mdaneri.github.io/Atlaso/docs/contribute/agent-policies/</loc>
-      </url>
-      <url>
-        <loc>https://mdaneri.github.io/Atlaso/docs/contribute/progressive-policy/</loc>
-      </url>
-      <url>
-        <loc>https://mdaneri.github.io/Atlaso/docs/contribute/agent-workflow/</loc>
-      </url>
-      <url>
-        <loc>https://mdaneri.github.io/Atlaso/docs/contribute/pr-workflow/</loc>
-      </url>
-      <url>
-        <loc>https://mdaneri.github.io/Atlaso/docs/contribute/credential-policy/</loc>
-      </url>
-      <url>
-        <loc>https://mdaneri.github.io/Atlaso/docs/contribute/release-policy/</loc>
-      </url>
-      <url>
-        <loc>https://mdaneri.github.io/Atlaso/docs/contribute/powershell-authoring/</loc>
-      </url>
-      <url>
-        <loc>https://mdaneri.github.io/Atlaso/docs/contribute/completed-task-cleanup/</loc>
-      </url>
-      <url>
-        <loc>https://mdaneri.github.io/Atlaso/docs/project/</loc>
-      </url>
-      <url>
-        <loc>https://mdaneri.github.io/Atlaso/docs/project/what-is-atlaso/</loc>
-      </url>
-      <url>
-        <loc>https://mdaneri.github.io/Atlaso/docs/project/github-project/</loc>
-      </url>
-      <url>
-        <loc>https://mdaneri.github.io/Atlaso/docs/project/ui-compliance-matrix/</loc>
-      </url>
-      <url>
-        <loc>https://mdaneri.github.io/Atlaso/docs/project/branding/</loc>
-      </url>
-      <url>
-        <loc>https://mdaneri.github.io/Atlaso/docs/assets/brand/BRAND_GUIDE/</loc>
-      </url>
-      <url>
-        <loc>https://mdaneri.github.io/Atlaso/docs/project/ca-roadmap/</loc>
-      </url>
-      <url>
-        <loc>https://mdaneri.github.io/Atlaso/docs/project/routing-wan-roadmap/</loc>
-      </url>
-      <url>
-        <loc>https://mdaneri.github.io/Atlaso/docs/project/appliance-console-design-qa/</loc>
-      </url>
-      <url>
-        <loc>https://mdaneri.github.io/Atlaso/docs/project/monitor-apply-ux-design-qa/</loc>
+        <loc>https://mdaneri.github.io/Atlaso/docs/web-terminal/</loc>
       </url>
 </urlset>
