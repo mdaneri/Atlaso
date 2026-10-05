@@ -4607,7 +4607,10 @@ def test_console_static_observation_matches_complete_native_candidates(client, m
 @pytest.mark.parametrize("handoff,invalid_proof", [(False, None), (True, None), (False, "missing"),
                                                   (False, "job"), (False, "mac"), (False, "address"),
                                                   (False, "host_admin_state"), (False, "oper_state"),
-                                                  (False, "final_host_admin_state"), (False, "final_oper_state")])
+                                                  (False, "final_host_admin_state"), (False, "final_oper_state"),
+                                                  (False, "native_admin"), (False, "native_oper"),
+                                                  (False, "native_address"), (False, "native_mac"),
+                                                  (False, "native_vlan")])
 @pytest.mark.parametrize("concurrent_edit", [False, True])
 def test_console_management_projects_settings_snapshot_from_dhcp_handoff_evidence(client, monkeypatch, concurrent_edit, handoff, invalid_proof):
     """Allow only the captured Settings projection proven by DHCP handoff evidence.
@@ -4635,6 +4638,11 @@ def test_console_management_projects_settings_snapshot_from_dhcp_handoff_evidenc
         assert interface is not None
         assert settings is not None
         interface.host_ip_cidr = "192.0.2.10/24"
+        if invalid_proof == "native_vlan":
+            db.add(PhysicalInterface(name="pr899-native-trunk", mac_address="00:15:5d:aa:bb:54", role="access",
+                   mode="trunk", admin_state="up", host_admin_state="up", oper_state="up", ipv6_enabled=False))
+            db.add(appliance_console.VlanInterface(name="pr899-native-trunk.534", parent_interface="pr899-native-trunk",
+                   role="access", vlan_id=534, ip_cidr="198.51.100.1/24", enabled=True, access_management_ui_enabled=True))
         settings.web_terminal_enabled = True
         settings.web_terminal_interfaces_json = "[]"
         db.flush()
@@ -4695,6 +4703,9 @@ def test_console_management_projects_settings_snapshot_from_dhcp_handoff_evidenc
         assert expected_management_snapshots is not None
         expected = expected_management_snapshots["appliance_settings"]
         observed_expected.append(expected)
+        if invalid_proof and invalid_proof.startswith("native_"):
+            return original_submit(unit_ids, network_job_id=network_job_id,
+                                   expected_management_snapshots=expected_management_snapshots, **kwargs)
         if invalid_proof in {"final_host_admin_state", "final_oper_state"}:
             with SessionLocal() as db:
                 interface = db.scalar(select(PhysicalInterface).where(PhysicalInterface.role == "management"))
@@ -4727,16 +4738,41 @@ def test_console_management_projects_settings_snapshot_from_dhcp_handoff_evidenc
         Args:
             **kwargs: Bounded native discovery options.
         """
+        from dataclasses import replace
+
         from atlaso.app.services.networking import HostPhysicalInterface
 
         with SessionLocal() as db:
-            return [HostPhysicalInterface(
+            hosts = [HostPhysicalInterface(
                 name=row.name, mac_address=row.mac_address, driver=None, speed=None,
                 host_ip_cidr=row.ip_cidr or row.host_ip_cidr,
                 host_dhcp_ip_cidr="192.0.2.21/24" if row.role == "management" else None,
                 host_mtu=1500, host_admin_state="up", oper_state="up",
             ) for row in db.scalars(select(PhysicalInterface))]
+        if calls == 2:
+            target = hosts[0]
+            if invalid_proof == "native_admin":
+                hosts[0] = replace(target, host_admin_state="down")
+            elif invalid_proof == "native_oper":
+                hosts[0] = replace(target, oper_state="down")
+            elif invalid_proof == "native_address":
+                hosts[0] = replace(target, host_dhcp_ip_cidr=None)
+            elif invalid_proof == "native_mac":
+                hosts[0] = replace(target, mac_address="00:00:00:00:00:01")
+        return hosts
 
+    def native_vlans(paths, *, timeout):
+        """Simulate a native-only disappearance of the captured VLAN after recovery.
+
+        Args:
+            paths: Complete captured Network management paths.
+            timeout: Remaining native attestation budget.
+        """
+        if invalid_proof == "native_vlan":
+            assert any(path.get("kind") == "vlan" for path in paths)
+        return not (calls == 2 and invalid_proof == "native_vlan")
+
+    monkeypatch.setattr(appliance_console, "verify_native_management_vlans", native_vlans)
     monkeypatch.setattr(appliance_console, "discover_host_physical_interfaces", native_observation)
     monkeypatch.setattr(appliance_console, "_recover_management_plane", lambda _stage, **kwargs: None)
     refresh = appliance_console._refresh_management_addresses
@@ -4768,8 +4804,14 @@ def test_console_management_projects_settings_snapshot_from_dhcp_handoff_evidenc
     if invalid_proof:
         with pytest.raises(ConsoleOperationError, match="observation|confirm the resolved DHCP"):
             appliance_console.configure_management("dhcp", "", "", "disabled", "", "", "192.0.2.53")
-        assert calls == (2 if invalid_proof.startswith("final_") else 1)
-        assert bool(observed_expected) == invalid_proof.startswith("final_")
+        assert calls == (2 if invalid_proof.startswith(("final_", "native_")) else 1)
+        assert bool(observed_expected) == invalid_proof.startswith(("final_", "native_"))
+        if invalid_proof.startswith("native_"):
+            with SessionLocal() as db:
+                assert list(db.scalars(select(Job.id))) == ["console-network-handoff"]
+                interface = db.scalar(select(PhysicalInterface).where(PhysicalInterface.role == "management"))
+                assert interface.host_admin_state == "up" and interface.oper_state == "up"
+                assert interface.host_ip_cidr == "192.0.2.21/24"
         return
     if concurrent_edit:
         with pytest.raises(ConsoleOperationError, match="changed.*Appliance Settings"):
@@ -4918,3 +4960,53 @@ def test_console_apply_rejects_dependency_snapshot_race_before_capture(client, m
 
     with SessionLocal() as db:
         assert db.query(Job).filter(Job.type == "appliance-apply").count() == 0
+
+
+@pytest.mark.parametrize("overrun", [False, True])
+def test_console_final_native_attestation_shares_physical_vlan_deadline(monkeypatch, overrun):
+    """Share one native deadline and reject a verifier that completes after it.
+
+    Args:
+        monkeypatch: Controlled native providers and monotonic clock.
+        overrun: Whether the VLAN verifier exceeds the remaining shared budget.
+    """
+    from atlaso.app.services.networking import HostPhysicalInterface
+
+    clock = [100.0]
+    proof = {"management_paths": [{"kind": "physical", "name": "eth0", "ipv4_method": "dhcp",
+                                  "ipv6_enabled": "false"}],
+             "physical_interfaces": [{"name": "eth0", "mac": "00:15:5d:aa:bb:01", "ipv4_cidr": "192.0.2.21/24",
+                                      "ipv6_cidr": None, "ipv6_cidrs": []}]}
+
+    def physical(*, timeout, require_success):
+        """Consume two seconds from the admitted native budget.
+
+        Args:
+            timeout: Remaining shared budget for physical discovery.
+            require_success: Failed native commands must refuse.
+        """
+        assert timeout == 5 and require_success is True
+        clock[0] += 2
+        return [HostPhysicalInterface(name="eth0", mac_address="00:15:5d:aa:bb:01", driver=None, speed=None,
+                host_ip_cidr="192.0.2.21/24", host_dhcp_ip_cidr="192.0.2.21/24", host_mtu=1500,
+                host_admin_state="up", oper_state="up")]
+
+    def vlans(paths, *, timeout):
+        """Use only the remainder and simulate a late successful native response.
+
+        Args:
+            paths: Captured management paths passed to native VLAN verification.
+            timeout: Remainder of the physical/VLAN budget.
+        """
+        assert paths == proof["management_paths"] and timeout == 3
+        clock[0] += 4 if overrun else 1
+        return True
+
+    monkeypatch.setattr(appliance_console.time, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(appliance_console, "discover_host_physical_interfaces", physical)
+    monkeypatch.setattr(appliance_console, "verify_native_management_vlans", vlans)
+    if overrun:
+        with pytest.raises(ConsoleOperationError, match="Fresh native management observation"):
+            appliance_console._reattest_settings_native_observation(proof)
+    else:
+        appliance_console._reattest_settings_native_observation(proof)

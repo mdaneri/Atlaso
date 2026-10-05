@@ -171,7 +171,9 @@ certificate recovery or Appliance Settings capture. The gate requires one fresh 
 physical interface name and MAC identity, an administratively up link with native operational state `up`,
 and a usable address in every requested family. A retained address on a disconnected or down link is insufficient.
 Final Settings capture rechecks the completed-task observation, including both native link states, inside its writer
-transaction before collecting units or creating a job. Legacy DNS ownership backfill also acquires writer admission
+transaction before collecting units or creating a job. It repeats physical and management VLAN native attestation
+inside that admission with one shared five-second deadline, rejecting kernel-only drift without changing observations.
+Legacy DNS ownership backfill also acquires writer admission
 before refreshing and merging the baseline document, preserving concurrent publication acknowledgements.
 Retries never reconcile missing interfaces or change desired state;
 only verified address observations on the target row are committed. Static observations must match CIDRs in the

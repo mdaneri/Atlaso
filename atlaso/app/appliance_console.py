@@ -1314,6 +1314,42 @@ def _verify_settings_native_observation(db: Session, network_job_id: str, observ
             raise ConsoleOperationError("Fresh management observation changed before Settings projection.")
 
 
+def _reattest_settings_native_observation(observation: dict[str, Any]) -> None:
+    """Reattest the captured physical and VLAN listeners within one five-second budget.
+
+    Args:
+        observation: Complete completed-task proof already rechecked under writer admission.
+
+    Raises:
+        ConsoleOperationError: If current native listeners no longer prove the captured addresses.
+    """
+    deadline = time.monotonic() + 5
+    paths = observation.get("management_paths") or []
+    try:
+        discovered = discover_host_physical_interfaces(timeout=max(0, deadline - time.monotonic()), require_success=True)
+        for row in observation["physical_interfaces"]:
+            matches = [host for host in discovered if host.name == row["name"]
+                       and host.mac_address.lower() == row["mac"].lower()]
+            applied = [path for path in paths if path.get("kind") == "physical" and path.get("name") == row["name"]]
+            if len(matches) != 1 or len(applied) != 1:
+                raise ValueError("physical identity unavailable")
+            host, path = matches[0], applied[0]
+            ipv4 = (host.host_dhcp_ip_cidr if path.get("ipv4_method") == "dhcp"
+                    else native_static_ip_cidr(host, row["ipv4_cidr"]) if row["ipv4_cidr"] else None)
+            ipv6s = native_automatic_ipv6_cidrs(host) if path.get("ipv6_enabled") == "true" and not path.get("ipv6_cidr") else ()
+            ipv6 = (ipv6s[0] if ipv6s else native_static_ip_cidr(host, row["ipv6_cidr"]) if row["ipv6_cidr"] else None)
+            if (host.host_admin_state != "up" or host.oper_state != "up"
+                    or ipv4 != row["ipv4_cidr"] or ipv6 != row["ipv6_cidr"]
+                    or list(ipv6s) != row["ipv6_cidrs"]):
+                raise ValueError("physical link or address changed")
+        if time.monotonic() >= deadline or not verify_native_management_vlans(
+            paths, timeout=max(0, deadline - time.monotonic()),
+        ) or time.monotonic() >= deadline:
+            raise ValueError("native management VLAN or deadline changed")
+    except (OSError, subprocess.TimeoutExpired, RuntimeError, ValueError) as exc:
+        raise ConsoleOperationError("Fresh native management observation changed before Settings capture.") from exc
+
+
 def _submit_console_apply(
     required_ids: set[str], *, network_job_id: str | None = None, expected_management_snapshots: dict[str, str] | None = None,
     native_observation: dict[str, Any] | None = None,
@@ -1353,6 +1389,7 @@ def _submit_console_apply(
             if network_job_id is None:
                 raise ConsoleOperationError("Fresh management observation requires its completed Network task.")
             _verify_settings_native_observation(db, network_job_id, native_observation)
+            _reattest_settings_native_observation(native_observation)
         selected_ids = set(required_ids)
         if "vcf_offline_depot" in selected_ids:
             acquire_vcf_depot_admission_gate(db)
