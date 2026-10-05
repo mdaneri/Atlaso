@@ -118,6 +118,8 @@ or a missing or ambiguous name, leave the schedule detached and require explicit
 Deleting a pool disables and detaches its verification schedules; select an enabled IPv4 pool explicitly before
 using them again. The State toggle refuses detached, missing, disabled or IPv6 pool bindings.
 Settings restore retires pre-restore report and cooldown bindings while preserving verification job history.
+Disabled detached schedules remain portable in settings archives. Service Admins can verify and cancel from Tasks;
+creating verification schedules remains an administrator action.
 Deletion removes its verification report. A recreated pool starts without the deleted pool's observations,
 even when its database ID and configuration are reused. Historical jobs remain available; their retired scope
 bindings do not impose a cooldown on a recreated pool. An old in-flight task cannot publish into the recreated pool.

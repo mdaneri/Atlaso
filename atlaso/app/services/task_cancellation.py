@@ -15,7 +15,7 @@ from atlaso.app.security import Identity
 ACTIVE = {JobStatus.PENDING.value, JobStatus.RUNNING.value}
 PENDING_TYPES = {"dhcp-pool-verify", "appliance-apply", "appliance-update", "vcf-depot-download", "managed-script", "pxe-media-sync",
                  "diagnostic-bundle", "manual-placeholder"}
-SERVICE_ADMIN_TYPES = {"pxe-media-sync"}
+SERVICE_ADMIN_TYPES = {"pxe-media-sync", "dhcp-pool-verify"}
 
 
 @dataclass(frozen=True)

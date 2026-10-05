@@ -67,6 +67,8 @@ document.addEventListener("DOMContentLoaded", () => {
   const actions = [{label: "View address evidence", action: (_event, row) => show(row.getData().scope_id)}];
   if (panel.dataset.canVerify === "true") {
     actions.push({label: "Verify pool", action: (_event, row) => verify(row.getData().scope_id)});
+  }
+  if (panel.dataset.canSchedule === "true") {
     actions.push({label: "Schedule verification", action: (_event, row) => {
       window.location.assign(path(`/automation?new=dhcp_pool_verify&scope_id=${row.getData().scope_id}`));
     }});

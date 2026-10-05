@@ -334,6 +334,7 @@ def validate_schedule_values(
     cron_expression: str,
     run_once_at: datetime | None,
     timezone_name: str,
+    allow_detached_dhcp_scope: bool = False,
 ) -> list[str]:
     """Validate schedule values.
 
@@ -344,6 +345,7 @@ def validate_schedule_values(
         cron_expression: Cron expression supplied by the caller.
         run_once_at: Run once at supplied by the caller.
         timezone_name: Timezone name supplied by the caller.
+        allow_detached_dhcp_scope: Permit an absent binding only for disabled archive rows.
 
     Returns:
         The validate schedule values result.
@@ -366,7 +368,8 @@ def validate_schedule_values(
         errors.append("VCF Offline Depot schedules require an integer profile_id.")
     elif task_type == "dhcp_pool_verify":
         scope_id = config.get("scope_id")
-        if isinstance(scope_id, bool) or not isinstance(scope_id, int) or scope_id <= 0:
+        detached = allow_detached_dhcp_scope and "scope_id" not in config
+        if not detached and (isinstance(scope_id, bool) or not isinstance(scope_id, int) or scope_id <= 0):
             errors.append("DHCP pool verification schedules require a positive integer scope_id.")
     elif task_type == "managed_script":
         if not isinstance(config.get("revision_id"), int):

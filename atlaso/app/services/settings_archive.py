@@ -4069,6 +4069,7 @@ def _validate_archive_relationships(data: dict[str, list[dict[str, Any]]]) -> No
             cron_expression=str(row.get("cron_expression") or ""),
             run_once_at=run_once_at,
             timezone_name=str(row.get("timezone_name") or ""),
+            allow_detached_dhcp_scope=row.get("enabled") is False,
         )
         if schedule_errors:
             raise ValueError(

@@ -2,7 +2,7 @@
 {% set selected_pool_report = selected_pool_report | default(none) %}
 <div id="dhcp-pool-health" class="tab-panel" role="tabpanel" hidden
      data-reports='{{ dhcp_pool_reports | tojson }}' data-selected-pool="{{ selected_pool_report.scope_id if selected_pool_report else '' }}"
-     data-can-verify="{{ 'true' if identity.can('write:dhcp') else 'false' }}" data-csrf="{{ csrf_token }}">
+     data-can-schedule="{{ 'true' if identity.has_role('admin') else 'false' }}" data-can-verify="{{ 'true' if identity.can('write:dhcp') else 'false' }}" data-csrf="{{ csrf_token }}">
   <div class="section-head"><div><h2>Pool verification</h2><p class="muted">Report-only observations of applied IPv4 pools. No response does not prove availability. Open a pool for address evidence.</p></div></div>
   <p id="dhcp-pool-status" class="muted" role="status" aria-live="polite">{{ selected_pool_report.reason if selected_pool_report else 'Select a pool to inspect its report. Verification runs in Tasks; scheduling is optional in Automation Schedules.' }}</p>
   <div id="dhcp-pool-health-grid" class="tabulator-grid" data-fallback-id="dhcp-pool-health-fallback"></div>

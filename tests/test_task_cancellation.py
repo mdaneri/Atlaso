@@ -617,3 +617,13 @@ def test_cancelled_check_retains_completed_availability(db, monkeypatch, startup
     summary = update_availability_summary(actual, settings, result_streams=["atlaso_release"])
     release = next(row for row in summary["streams"] if row["id"] == "atlaso_release")
     assert release["confirmed"]["change_count"] == (1 if newer_confirmation else 0)
+
+
+@pytest.mark.parametrize("status", ["pending", "running"])
+def test_service_admin_can_cancel_pool_verification(db, status):
+    """DHCP writers retain queued and bounded-running cancellation through Tasks."""
+    job = make_job(db, kind="dhcp-pool-verify", status=status)
+    writer = Identity("operator", "service-admin", {"write:dhcp"})
+    assert cancellation.capability(job, writer).can_cancel
+    assert not cancellation.capability(job, Identity("viewer", "read-only", {"read:dhcp"})).can_cancel
+    assert not cancellation.capability(job, writer, api=True).can_cancel

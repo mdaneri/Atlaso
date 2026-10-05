@@ -121,3 +121,32 @@ def test_installed_reservation_mac_is_case_insensitive(helper, rendered_mac):
     assert "192.168.50.20" in addresses
     with pytest.raises(ValueError, match="Reservation metadata"):
         helper._dhcp_pool_candidates(config.replace(rendered_mac, "02:AB:CD:EF:01:21"), 7)
+
+
+@pytest.mark.parametrize("native_case", ["matching", "different_index", "missing_mac", "down"])
+def test_native_ipv4_address_and_ethernet_link_are_bound(helper, monkeypatch, native_case):
+    """Photon's IPv4-only observation omits MAC; bind a separate native link identity."""
+    address = {"ifindex": 3, "ifname": "eth1", "flags": ["UP", "LOWER_UP"],
+               "addr_info": [{"family": "inet", "local": "192.168.12.1", "prefixlen": 24}]}
+    native = {"ifindex": 3, "ifname": "eth1", "flags": ["UP", "LOWER_UP"],
+              "address": "00:0c:29:01:77:14", "link_type": "ether"}
+    if native_case == "different_index":
+        native["ifindex"] = 4
+    elif native_case == "missing_mac":
+        native.pop("address")
+    elif native_case == "down":
+        native["flags"] = ["UP"]
+    calls = []
+    def observe(command, **_kwargs):
+        calls.append(command)
+        row = address if "-4" in command else native
+        return SimpleNamespace(returncode=0, stdout=json.dumps([row]))
+    monkeypatch.setattr(helper.subprocess, "run", observe)
+    pool = {"interface_name": "eth1", "site_address": "192.168.12.1", "prefix_length": 24}
+    if native_case == "matching":
+        assert helper._dhcp_pool_link(pool) == ("192.168.12.1", "00:0c:29:01:77:14", {"192.168.12.1"}, 3)
+    else:
+        with pytest.raises(ValueError, match="Ethernet identity|link identity changed"):
+            helper._dhcp_pool_link(pool)
+    assert calls == [["ip", "-j", "-4", "address", "show", "dev", "eth1"],
+                     ["ip", "-j", "link", "show", "dev", "eth1"]]

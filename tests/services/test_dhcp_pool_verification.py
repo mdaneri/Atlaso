@@ -522,3 +522,55 @@ def test_settings_restore_retires_pre_restore_cooldown(client):
         job = verifier.enqueue(db, scope_id=restored.id, actor="admin")
         db.commit()
         assert verifier.status(db, scope_id)["job_id"] == job.id
+
+
+@pytest.mark.parametrize("enabled", [False, True])
+def test_detached_schedule_archive_validation(client, enabled):
+    """Disabled exported detachment is portable, while enabled unbound rows fail."""
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Schedule
+    from atlaso.app.services.settings_archive import (
+        _validate_archive,
+        export_settings_archive,
+        restore_settings_archive,
+    )
+
+    with SessionLocal() as db:
+        pool, _ = setup_pool(db)
+        db.add(Schedule(name="detached-export", task_type="dhcp_pool_verify", enabled=True, created_by="admin",
+                        cron_expression="0 * * * *", task_config_json=json.dumps({"scope_id": pool.id})))
+        db.commit()
+        verifier.forget_scope(db, pool.id)
+        db.delete(pool)
+        db.commit()
+        archive = export_settings_archive(db, actor="admin")
+        row = next(row for row in archive["data"]["schedules"] if row["name"] == "detached-export")
+        assert row["enabled"] is False and "scope_id" not in json.loads(row["task_config_json"])
+        row["enabled"] = enabled
+        if enabled:
+            with pytest.raises(ValueError, match="positive integer scope_id"):
+                _validate_archive(archive)
+        else:
+            restore_settings_archive(db, archive)
+            restored = db.scalar(select(Schedule).where(Schedule.name == "detached-export"))
+            assert restored.enabled is False and "scope_id" not in json.loads(restored.task_config_json)
+
+
+@pytest.mark.parametrize("role,scopes,verify,schedule", [
+    ("admin", {"admin:all"}, True, True),
+    ("service-admin", {"write:dhcp"}, True, False),
+    ("read-only", {"read:dhcp"}, False, False),
+])
+def test_pool_health_template_gates_schedule_permission(role, scopes, verify, schedule):
+    """The real template gives DHCP writers Verify and administrators Schedule."""
+    from pathlib import Path
+
+    from jinja2 import Environment, FileSystemLoader
+
+    from atlaso.app.security import Identity
+
+    templates = Path(__file__).resolve().parents[2] / "atlaso/app/templates"
+    template = Environment(loader=FileSystemLoader(templates), autoescape=True).get_template("partials/dhcp_pool_health.html")
+    page = template.render(identity=Identity("operator", role, scopes), csrf_token="test", management_ui_root="/ui/management")
+    assert f'data-can-verify="{str(verify).lower()}"' in page
+    assert f'data-can-schedule="{str(schedule).lower()}"' in page

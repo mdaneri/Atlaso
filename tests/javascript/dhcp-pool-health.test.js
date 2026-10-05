@@ -3,7 +3,8 @@ const fs = require("node:fs");
 const test = require("node:test");
 const vm = require("node:vm");
 
-test("pool evidence refreshes in place, preserves selection and obeys page visibility", async () => {
+for (const [canVerify, canSchedule, expectedActions] of [["false", "false", 1], ["true", "false", 2], ["true", "true", 3]]) {
+test(`pool evidence refreshes and gates actions (verify=${canVerify}, schedule=${canSchedule})`, async () => {
   const elements = new Map();
   const get = (id) => {
     if (!elements.has(id)) elements.set(id, {dataset: {}, hidden: false, textContent: ""});
@@ -12,7 +13,7 @@ test("pool evidence refreshes in place, preserves selection and obeys page visib
   const report = {scope_id: 7, name: "Site", interface_name: "eth1.50", job_id: "job_test",
     progress_percent: 0, reason: "Queued", observations: []};
   const panel = get("dhcp-pool-health");
-  panel.dataset = {reports: JSON.stringify([report]), selectedPool: "7", canVerify: "false"};
+  panel.dataset = {reports: JSON.stringify([report]), selectedPool: "7", canVerify, canSchedule};
   const configs = [];
   const grids = [];
   const visibility = {};
@@ -44,7 +45,8 @@ test("pool evidence refreshes in place, preserves selection and obeys page visib
   assert.equal(grids[0].data[0].status, "unexpected_occupancy");
   assert.match(get("dhcp-pool-status").textContent, /Complete/);
   assert.equal(get("dhcp-pool-task-link").href, "/ui/management/tasks?job_id=job_test");
-  assert.equal(configs[1].rowActions.length, 1, "read-only users receive no launch/schedule action");
+  assert.equal(configs[1].rowActions.length, expectedActions);
+  assert.equal(configs[1].rowActions.some(action => action.label === "Schedule verification"), canSchedule === "true");
   document.hidden = true;
   const previousRequests = requests;
   await timer();
@@ -55,3 +57,5 @@ test("pool evidence refreshes in place, preserves selection and obeys page visib
   assert.equal(grids[0].data[0].status, "legitimate_use");
   assert.equal(grids[0].data[0].unresolved, false);
 });
+
+}

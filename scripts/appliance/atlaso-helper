@@ -3819,7 +3819,20 @@ def _dhcp_pool_link(pool: dict) -> tuple[str, str, set[str], int]:
     link = links[0]
     if link.get("ifname") != pool["interface_name"] or type(link.get("ifindex")) is not int or link["ifindex"] < 1:
         raise ValueError("Pool native link identity is unavailable.")
-    mac = link.get("address", "")
+    # iproute2 omits link-layer fields from an IPv4-only address query.
+    # Match a separate native link observation before accepting its Ethernet MAC.
+    native = subprocess.run(["ip", "-j", "link", "show", "dev", pool["interface_name"]],
+                            capture_output=True, text=True, timeout=1, check=False)
+    if native.returncode or len(native.stdout) > 128 * 1024:
+        raise ValueError("Pool Ethernet link observation is unavailable.")
+    native_links = json.loads(native.stdout)
+    if len(native_links) != 1:
+        raise ValueError("Pool Ethernet link identity is ambiguous.")
+    native_link = native_links[0]
+    if (native_link.get("ifname") != pool["interface_name"] or native_link.get("ifindex") != link["ifindex"]
+            or "UP" not in native_link.get("flags", []) or "LOWER_UP" not in native_link.get("flags", [])):
+        raise ValueError("Pool Ethernet link identity changed during observation.")
+    mac = native_link.get("address", "")
     if not _valid_network_mac(mac) or int(mac.split(":")[0], 16) & 1 or mac == "00:00:00:00:00:00":
         raise ValueError("Pool link has no usable Ethernet identity.")
     info = link.get("addr_info", [])
