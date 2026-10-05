@@ -39,7 +39,11 @@ def test_opt_out_changes_native_ping_option_without_changing_lease_uniqueness():
 
 
 def test_archive_opt_out_round_trip_and_legacy_default(client):
-    """Restore explicit false and preserve native checking for old archives."""
+    """Restore explicit false and preserve native checking for old archives.
+
+    Args:
+        client: HTTP test client with isolated appliance state.
+    """
     from atlaso.app.services.settings_archive import (
         export_settings_archive,
         restore_settings_archive,

@@ -35,13 +35,25 @@ def load_lifecycle_module():
 
 @pytest.mark.parametrize("state", ["complete", "unknown", "missing_config"])
 def test_dhcp_pool_acceptance_restores_native_checks_and_rejects_unknown(monkeypatch, state):
-    """The deployed check restores opt-out and never counts unknown evidence as acceptance."""
+    """The deployed check restores opt-out and never counts unknown evidence as acceptance.
+
+    Args:
+        monkeypatch: Fixture replacing native adapters with bounded test doubles.
+        state: Native acceptance state returned by the lifecycle fixture.
+    """
     module = load_lifecycle_module()
     desired = {"check_ip_availability": True}
     runtime = {"check_ip_availability": True}
 
     class Client:
         def json_request(self, method, path, json_body=None):
+            """Provide the bounded native observation or assertion test double.
+
+            Args:
+                method: HTTP method sent by the lifecycle acceptance probe.
+                path: Management API path sent by the lifecycle acceptance probe.
+                json_body: Request payload supplied by the lifecycle probe.
+            """
             if path == "/api/v1/dhcp/settings":
                 if method == "PATCH":
                     desired.update(json_body)
@@ -56,6 +68,12 @@ def test_dhcp_pool_acceptance_restores_native_checks_and_rejects_unknown(monkeyp
 
     monkeypatch.setattr(module, "apply_units", lambda *_args: runtime.update(desired))
     def probe(*probe_args, **_kwargs):
+        """Provide the bounded native observation or assertion test double.
+
+        Args:
+            *probe_args: Positional native probe arguments accepted by the test double.
+            **_kwargs: Unused keyword options accepted by the test double.
+        """
         transport = probe_args[2]
         assert transport.startswith("printf %s ") and transport.endswith(" | base64 -d | sh")
         script = base64.b64decode(transport.split()[2]).decode("utf-8")

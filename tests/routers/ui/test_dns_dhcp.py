@@ -1057,7 +1057,11 @@ def test_dns_settings_autosave_filters_invalid_listen_interfaces(client):
 
 
 def test_dhcp_availability_checkbox_duplicate_values_and_legacy_save(client):
-    """The hidden checkbox fallback saves opt-out and checked values correctly."""
+    """The hidden checkbox fallback saves opt-out and checked values correctly.
+
+    Args:
+        client: HTTP test client with isolated appliance state.
+    """
     from sqlalchemy import select
 
     from atlaso.app.database import SessionLocal

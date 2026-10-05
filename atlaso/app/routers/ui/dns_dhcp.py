@@ -1056,7 +1056,12 @@ def build_router(dependencies: DnsDhcpUiDependencies) -> DnsDhcpUiRouter:
     def dhcp_pool_health_status(
         identity: Identity = Depends(require_session_identity), db: Session = Depends(get_db),
     ) -> JSONResponse:
-        """Refresh the current permission-checked pool health collection."""
+        """Refresh the current permission-checked pool health collection.
+
+        Args:
+            identity: Authenticated identity authorizing the operation.
+            db: Database session holding the pool, job or schedule state.
+        """
         if not identity.can("read:dhcp"):
             raise HTTPException(status_code=403, detail="DHCP read permission required.")
         reports = [dhcp_pool_verification.status(db, scope.id) for scope in db.scalars(select(DhcpScope).order_by(DhcpScope.name))
@@ -1067,7 +1072,13 @@ def build_router(dependencies: DnsDhcpUiDependencies) -> DnsDhcpUiRouter:
     def dhcp_pool_verification_status(
         scope_id: int, identity: Identity = Depends(require_session_identity), db: Session = Depends(get_db),
     ) -> JSONResponse:
-        """Read permission-checked pool status for the live DHCP grid."""
+        """Read permission-checked pool status for the live DHCP grid.
+
+        Args:
+            scope_id: Managed DHCP pool identifier being selected or tested.
+            identity: Authenticated identity authorizing the operation.
+            db: Database session holding the pool, job or schedule state.
+        """
         if not identity.can("read:dhcp"):
             raise HTTPException(status_code=403, detail="DHCP read permission required.")
         try:
@@ -1080,7 +1091,15 @@ def build_router(dependencies: DnsDhcpUiDependencies) -> DnsDhcpUiRouter:
         request: Request, scope_id: int, csrf: str = Form(...),
         identity: Identity = Depends(require_session_identity), db: Session = Depends(get_db),
     ) -> JSONResponse | RedirectResponse:
-        """Queue a report-only task after CSRF and DHCP write authorization."""
+        """Queue a report-only task after CSRF and DHCP write authorization.
+
+        Args:
+            request: Browser request carrying the form submission.
+            scope_id: Managed DHCP pool identifier being selected or tested.
+            csrf: Submitted browser CSRF token.
+            identity: Authenticated identity authorizing the operation.
+            db: Database session holding the pool, job or schedule state.
+        """
         verify_csrf(request, csrf)
         if not identity.can("write:dhcp"):
             raise HTTPException(status_code=403, detail="DHCP write permission required.")
@@ -1113,6 +1132,7 @@ def build_router(dependencies: DnsDhcpUiDependencies) -> DnsDhcpUiRouter:
         """Handle the update dhcp from ui endpoint.
 
         Args:
+            check_ip_availability: Submitted values for the enabled-by-default native DHCP ping-check setting.
             request: Incoming HTTP request.
             enabled: Whether the requested behavior is enabled.
             interface_name: Linux interface name of the network target.

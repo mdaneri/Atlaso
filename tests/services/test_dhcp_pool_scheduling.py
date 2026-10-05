@@ -12,7 +12,11 @@ from atlaso.app.services.automation import validate_schedule_values
     "expression", ["0 * * * *", "15 2 * * *", "59 23 1 * 0", "0 0,12 * * *"]
 )
 def test_dhcp_pool_schedule_accepts_fixed_minute_cron(expression: str) -> None:
-    """Accept recurring schedules with at most one run in each hour."""
+    """Accept recurring schedules with at most one run in each hour.
+
+    Args:
+        expression: Cron expression whose bounded verification cadence is validated.
+    """
     assert validate_schedule_values(
         task_type="dhcp_pool_verify",
         task_config_json=json.dumps({"scope_id": 7}),
@@ -28,7 +32,11 @@ def test_dhcp_pool_schedule_accepts_fixed_minute_cron(expression: str) -> None:
     ["*/15 * * * *", "0,30 * * * *", "0-30 * * * *"],
 )
 def test_dhcp_pool_schedule_rejects_frequent_or_multiple_minute_runs(expression: str) -> None:
-    """Reject minute fields that can queue verification more than hourly."""
+    """Reject minute fields that can queue verification more than hourly.
+
+    Args:
+        expression: Cron expression whose bounded verification cadence is validated.
+    """
     errors = validate_schedule_values(
         task_type="dhcp_pool_verify",
         task_config_json=json.dumps({"scope_id": 7}),
@@ -55,7 +63,11 @@ def test_dhcp_pool_schedule_rejects_one_time_run() -> None:
 
 @pytest.mark.parametrize("scope_id", [None, "7", 0, -1, True])
 def test_dhcp_pool_schedule_requires_positive_integer_scope_id(scope_id: object) -> None:
-    """Reject missing, coerced, non-positive, and boolean scope identities."""
+    """Reject missing, coerced, non-positive, and boolean scope identities.
+
+    Args:
+        scope_id: Managed DHCP pool identifier being selected or tested.
+    """
     errors = validate_schedule_values(
         task_type="dhcp_pool_verify",
         task_config_json=json.dumps({"scope_id": scope_id}),

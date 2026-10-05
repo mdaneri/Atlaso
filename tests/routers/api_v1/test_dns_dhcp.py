@@ -2,7 +2,11 @@
 
 
 def test_dhcp_availability_opt_out_survives_omitted_api_field(client):
-    """Old API clients cannot silently re-enable an explicit opt-out."""
+    """Old API clients cannot silently re-enable an explicit opt-out.
+
+    Args:
+        client: HTTP test client with isolated appliance state.
+    """
     token = create_token(client, ["read:dhcp", "write:dhcp"])
     headers = {"Authorization": f"Bearer {token}"}
     current = client.get("/api/v1/dhcp/settings", headers=headers).json()
@@ -18,7 +22,11 @@ def test_dhcp_availability_opt_out_survives_omitted_api_field(client):
 
 
 def test_pool_verification_requires_scopes_and_rejects_unapplied_identity(client):
-    """Permission checks precede reading evidence or queueing network work."""
+    """Permission checks precede reading evidence or queueing network work.
+
+    Args:
+        client: HTTP test client with isolated appliance state.
+    """
     token = create_token(client, ["read:dhcp", "write:dhcp"])
     headers = {"Authorization": f"Bearer {token}"}
     scope_id = client.get("/api/v1/dhcp/scopes", headers=headers).json()[0]["id"]

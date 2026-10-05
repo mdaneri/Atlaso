@@ -21,12 +21,22 @@ POOL = {"reservations": []}
 
 
 def observation(macs, status="response"):
-    """Build a fresh helper observation with no payload content."""
+    """Build a fresh helper observation with no payload content.
+
+    Args:
+        macs: Fresh responder MAC identities supplied by the fixture.
+        status: Fresh response or incomplete observation status under test.
+    """
     return {"ip_address": IP, "mac_addresses": macs, "status": status}
 
 
 def lease(mac=MAC, expires=0):
-    """Build an attributable current DHCP lease."""
+    """Build an attributable current DHCP lease.
+
+    Args:
+        mac: Lease hardware identity supplied by the fixture.
+        expires: Lease expiry epoch; zero represents an unexpiring lease.
+    """
     return {"ip_address": IP, "mac_address": mac, "client_id": "01:client", "expires_epoch": expires}
 
 
@@ -38,7 +48,13 @@ def lease(mac=MAC, expires=0):
     ([MAC], [lease(expires=1)], "unexpected_occupancy"),
 ])
 def test_fresh_occupancy_identity_classification(macs, leases, expected):
-    """Distinguish valid clients, expired leases and unexpected responders."""
+    """Distinguish valid clients, expired leases and unexpected responders.
+
+    Args:
+        macs: Fresh responder MAC identities supplied by the fixture.
+        leases: Before-and-after lease identities used to classify occupancy.
+        expected: Expected occupancy classification.
+    """
     result = verifier.classify(observation(macs), POOL, leases, leases, NOW)
     assert result["status"] == expected
 
@@ -72,7 +88,11 @@ def test_no_response_retains_finding_until_positive_matching_use():
 
 
 def setup_pool(db):
-    """Persist a known applied identity using an in-memory database."""
+    """Persist a known applied identity using an in-memory database.
+
+    Args:
+        db: Database session holding the pool, job or schedule state.
+    """
     pool = DhcpScope(name="Site", address_family="ipv4", enabled=True, interface_name="eth1",
                      site_address="192.168.50.1", prefix_length=24, range_expression="192.168.50.100-110")
     db.add(pool)
@@ -111,7 +131,12 @@ def test_enqueue_deduplicates_and_invalidates_changed_or_deleted_pool():
 
 
 def test_worker_publishes_progress_report_and_keeps_service_untouched(client, monkeypatch):
-    """One fresh probe updates live status without a service reload or lease mutation."""
+    """One fresh probe updates live status without a service reload or lease mutation.
+
+    Args:
+        client: HTTP test client with isolated appliance state.
+        monkeypatch: Fixture replacing native adapters with bounded test doubles.
+    """
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import JobStatus
 
@@ -129,6 +154,14 @@ def test_worker_publishes_progress_report_and_keeps_service_untouched(client, mo
     from atlaso.app.adapters.system import AdapterResult, SystemAdapter
 
     def probe(_self, received_scope, offset, received_digest):
+        """Provide the bounded native observation or assertion test double.
+
+        Args:
+            _self: Unused adapter instance in the test double.
+            received_scope: Pool identifier received by the native adapter double.
+            offset: Chunk offset supplied by the worker.
+            received_digest: Applied configuration hash received by the adapter double.
+        """
         assert (received_scope, offset, received_digest) == (scope_id, 0, digest)
         return AdapterResult(command=[], dry_run=False, stdout=json.dumps({
             "status": "complete", "config_hash": digest, "scope": metadata, "total": 1,
@@ -148,7 +181,12 @@ def test_worker_publishes_progress_report_and_keeps_service_untouched(client, mo
 
 @pytest.mark.parametrize("transport", ["api", "ui"])
 def test_deleted_scope_id_reuse_does_not_inherit_report(client, transport):
-    """Both deletion paths clear evidence before SQLite reuses an identical pool ID."""
+    """Both deletion paths clear evidence before SQLite reuses an identical pool ID.
+
+    Args:
+        client: HTTP test client with isolated appliance state.
+        transport: API or browser path used to delete the pool.
+    """
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import JobStatus, Schedule, utcnow
     from atlaso.app.services.automation import (
@@ -211,7 +249,13 @@ def test_deleted_scope_id_reuse_does_not_inherit_report(client, transport):
 
 @pytest.mark.parametrize("delete_during_probe", [False, True])
 def test_deleted_report_cannot_be_republished_by_old_worker(client, monkeypatch, delete_during_probe):
-    """Reject old jobs before observation or after a completed in-flight helper chunk."""
+    """Reject old jobs before observation or after a completed in-flight helper chunk.
+
+    Args:
+        client: HTTP test client with isolated appliance state.
+        monkeypatch: Fixture replacing native adapters with bounded test doubles.
+        delete_during_probe: Whether the pool is deleted while its worker observes a chunk.
+    """
     from atlaso.app.adapters.system import AdapterResult, SystemAdapter
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import JobStatus
@@ -230,6 +274,14 @@ def test_deleted_report_cannot_be_republished_by_old_worker(client, monkeypatch,
     calls = []
 
     def probe(_adapter, _scope_id, offset, _digest):
+        """Provide the bounded native observation or assertion test double.
+
+        Args:
+            _adapter: Unused adapter instance in the test double.
+            _scope_id: Pool identifier supplied to the test double.
+            offset: Chunk offset supplied by the worker.
+            _digest: Applied configuration hash supplied to the test double.
+        """
         calls.append(offset)
         with SessionLocal() as db:
             verifier.forget_scope(db, scope_id)
@@ -258,7 +310,11 @@ def test_native_lease_expiry_is_not_renewal_mismatch():
 
 
 def test_due_and_manual_schedules_share_global_admission_and_current_pool_identity(client):
-    """Scheduled and manual runs cannot create overlapping network probes."""
+    """Scheduled and manual runs cannot create overlapping network probes.
+
+    Args:
+        client: HTTP test client with isolated appliance state.
+    """
     from datetime import timedelta
 
     from atlaso.app.database import SessionLocal
@@ -291,7 +347,12 @@ def test_due_and_manual_schedules_share_global_admission_and_current_pool_identi
 
 
 def test_running_cancellation_acknowledges_only_after_helper_chunk_returns(client, monkeypatch):
-    """Keep a returned partial observation and stop without another helper call."""
+    """Keep a returned partial observation and stop without another helper call.
+
+    Args:
+        client: HTTP test client with isolated appliance state.
+        monkeypatch: Fixture replacing native adapters with bounded test doubles.
+    """
     from atlaso.app.adapters.system import AdapterResult, SystemAdapter
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import JobStatus, utcnow
@@ -309,6 +370,14 @@ def test_running_cancellation_acknowledges_only_after_helper_chunk_returns(clien
     calls = []
 
     def probe(_adapter, _scope_id, offset, _digest):
+        """Provide the bounded native observation or assertion test double.
+
+        Args:
+            _adapter: Unused adapter instance in the test double.
+            _scope_id: Pool identifier supplied to the test double.
+            offset: Chunk offset supplied by the worker.
+            _digest: Applied configuration hash supplied to the test double.
+        """
         calls.append(offset)
         with SessionLocal() as db:
             job = db.get(Job, job_id)
@@ -353,7 +422,13 @@ def test_skipped_schedule_does_not_start_pool_cooldown():
 
 @pytest.mark.parametrize("pending_change", ["edit", "disable", "delete"])
 def test_worker_uses_applied_overlap_after_other_pool_changes(client, monkeypatch, pending_change):
-    """Unapplied changes cannot attribute another link's lease to this pool."""
+    """Unapplied changes cannot attribute another link's lease to this pool.
+
+    Args:
+        client: HTTP test client with isolated appliance state.
+        monkeypatch: Fixture replacing native adapters with bounded test doubles.
+        pending_change: Desired edit to another pool while applied evidence remains unchanged.
+    """
     from atlaso.app.adapters.system import AdapterResult, SystemAdapter
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import JobStatus
@@ -382,6 +457,14 @@ def test_worker_uses_applied_overlap_after_other_pool_changes(client, monkeypatc
         metadata, digest = verifier.applied_pool(db, scope_id)
 
     def probe(_self, _scope_id, _offset, _digest):
+        """Provide the bounded native observation or assertion test double.
+
+        Args:
+            _self: Unused adapter instance in the test double.
+            _scope_id: Pool identifier supplied to the test double.
+            _offset: Chunk offset supplied to the test double.
+            _digest: Applied configuration hash supplied to the test double.
+        """
         return AdapterResult(command=[], dry_run=False, stdout=json.dumps({
             "status": "complete", "config_hash": digest, "scope": metadata, "total": 1,
             "offset": 0, "next_offset": None, "observed_at": NOW, "dnsmasq_version": "test-version",
@@ -399,7 +482,11 @@ def test_worker_uses_applied_overlap_after_other_pool_changes(client, monkeypatc
 
 @pytest.mark.parametrize("binding", ["valid", "legacy", "missing"])
 def test_archived_schedule_rebinds_by_unique_pool_name(binding):
-    """Restore never treats a database-local integer as a portable pool binding."""
+    """Restore never treats a database-local integer as a portable pool binding.
+
+    Args:
+        binding: Archived pool-name binding used to test restoration.
+    """
     from atlaso.app.models import Schedule
     from atlaso.app.services.settings_archive import (
         _restore_schedules,
@@ -435,7 +522,11 @@ def test_archived_schedule_rebinds_by_unique_pool_name(binding):
 
 
 def test_pool_health_grid_excludes_unsupported_scopes(client):
-    """Initial/fallback and refreshed grids offer actions only for enabled IPv4."""
+    """Initial/fallback and refreshed grids offer actions only for enabled IPv4.
+
+    Args:
+        client: HTTP test client with isolated appliance state.
+    """
     from atlaso.app.database import SessionLocal
     from tests.routers.ui.helpers import login
 
@@ -466,7 +557,12 @@ def test_pool_health_grid_excludes_unsupported_scopes(client):
 
 @pytest.mark.parametrize("scope_case", ["detached", "missing", "disabled", "ipv6", "eligible"])
 def test_schedule_toggle_requires_eligible_pool(client, scope_case):
-    """A State toggle cannot revive detached or unsupported verification schedules."""
+    """A State toggle cannot revive detached or unsupported verification schedules.
+
+    Args:
+        client: HTTP test client with isolated appliance state.
+        scope_case: Pool eligibility or detached-binding case under test.
+    """
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import Schedule
     from tests.routers.ui.helpers import login
@@ -495,7 +591,11 @@ def test_schedule_toggle_requires_eligible_pool(client, scope_case):
 
 
 def test_settings_restore_retires_pre_restore_cooldown(client):
-    """Retained job history cannot prevent verification of a restored, reused pool ID."""
+    """Retained job history cannot prevent verification of a restored, reused pool ID.
+
+    Args:
+        client: HTTP test client with isolated appliance state.
+    """
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import JobStatus
     from atlaso.app.services.settings_archive import _clear_desired_state
@@ -526,7 +626,12 @@ def test_settings_restore_retires_pre_restore_cooldown(client):
 
 @pytest.mark.parametrize("enabled", [False, True])
 def test_detached_schedule_archive_validation(client, enabled):
-    """Disabled exported detachment is portable, while enabled unbound rows fail."""
+    """Disabled exported detachment is portable, while enabled unbound rows fail.
+
+    Args:
+        client: HTTP test client with isolated appliance state.
+        enabled: Whether the archived detached schedule is enabled.
+    """
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import Schedule
     from atlaso.app.services.settings_archive import (
@@ -562,7 +667,14 @@ def test_detached_schedule_archive_validation(client, enabled):
     ("read-only", {"read:dhcp"}, False, False),
 ])
 def test_pool_health_template_gates_schedule_permission(role, scopes, verify, schedule):
-    """The real template gives DHCP writers Verify and administrators Schedule."""
+    """The real template gives DHCP writers Verify and administrators Schedule.
+
+    Args:
+        role: Atlaso role used to render the Pool Health actions.
+        scopes: Permission scopes granted to the rendered identity.
+        verify: Expected visibility of the Verify pool action.
+        schedule: Expected visibility of the administrator Schedule action.
+    """
     from pathlib import Path
 
     from jinja2 import Environment, FileSystemLoader
@@ -579,7 +691,13 @@ def test_pool_health_template_gates_schedule_permission(role, scopes, verify, sc
 @pytest.mark.parametrize("macs,leases", [([MAC], []), ([OTHER], [lease()]), ([MAC, OTHER], [lease()])])
 @pytest.mark.parametrize("status", ["no_response", "incomplete"])
 def test_retained_finding_preserves_identity_evidence_until_positive_resolution(macs, leases, status):
-    """Repeated silent/incomplete observations retain a labelled original finding snapshot."""
+    """Repeated silent/incomplete observations retain a labelled original finding snapshot.
+
+    Args:
+        macs: Fresh responder MAC identities supplied by the fixture.
+        leases: Before-and-after lease identities used to classify occupancy.
+        status: Fresh response or incomplete observation status under test.
+    """
     finding = verifier.classify(observation(macs), POOL, leases, leases, NOW)
     later_time = "2030-01-01T01:00:00+00:00"
     current = verifier.classify(observation([], status), POOL, leases, leases, later_time)
@@ -603,7 +721,15 @@ def test_retained_finding_preserves_identity_evidence_until_positive_resolution(
 @pytest.mark.parametrize("macs,leases", [([MAC], []), ([OTHER], [lease()]), ([MAC, OTHER], [lease()])])
 @pytest.mark.parametrize("stop", ["cancelled", "partial"])
 def test_unchecked_finding_snapshot_survives_progress_and_stopped_worker(client, monkeypatch, macs, leases, stop):
-    """Running and final unchecked merges preserve the original finding with labelled evidence."""
+    """Running and final unchecked merges preserve the original finding with labelled evidence.
+
+    Args:
+        client: HTTP test client with isolated appliance state.
+        monkeypatch: Fixture replacing native adapters with bounded test doubles.
+        macs: Fresh responder MAC identities supplied by the fixture.
+        leases: Before-and-after lease identities used to classify occupancy.
+        stop: Cancellation or incomplete-probe outcome for the worker.
+    """
     from atlaso.app.adapters.system import AdapterResult, SystemAdapter
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import JobStatus, utcnow
@@ -628,6 +754,11 @@ def test_unchecked_finding_snapshot_survives_progress_and_stopped_worker(client,
     calls = []
 
     def assert_retained(report):
+        """Provide the bounded native observation or assertion test double.
+
+        Args:
+            report: Published address report whose retained evidence is asserted.
+        """
         row = next(item for item in report["observations"] if item["ip_address"] == IP)
         assert row["status"] == "unknown" and row["unresolved"]
         assert row["previous_status"] == finding["status"] and row["verified_at"] is None
@@ -638,6 +769,14 @@ def test_unchecked_finding_snapshot_survives_progress_and_stopped_worker(client,
         assert "Retained unresolved" in row["reason"]
 
     def probe(_adapter, _scope_id, offset, _digest):
+        """Provide the bounded native observation or assertion test double.
+
+        Args:
+            _adapter: Unused adapter instance in the test double.
+            _scope_id: Pool identifier supplied to the test double.
+            offset: Chunk offset supplied by the worker.
+            _digest: Applied configuration hash supplied to the test double.
+        """
         calls.append(offset)
         if offset == 0:
             return AdapterResult(command=[], dry_run=False, stdout=json.dumps({

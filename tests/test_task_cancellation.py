@@ -621,7 +621,12 @@ def test_cancelled_check_retains_completed_availability(db, monkeypatch, startup
 
 @pytest.mark.parametrize("status", ["pending", "running"])
 def test_service_admin_can_cancel_pool_verification(db, status):
-    """DHCP writers retain queued and bounded-running cancellation through Tasks."""
+    """DHCP writers retain queued and bounded-running cancellation through Tasks.
+
+    Args:
+        db: Database session holding the pool, job or schedule state.
+        status: Fresh response or incomplete observation status under test.
+    """
     job = make_job(db, kind="dhcp-pool-verify", status=status)
     writer = Identity("operator", "service-admin", {"write:dhcp"})
     assert cancellation.capability(job, writer).can_cancel

@@ -23,7 +23,11 @@ def helper():
 
 
 def pool_config(end="192.168.50.110"):
-    """Describe one installed VLAN pool and an out-of-range reservation."""
+    """Describe one installed VLAN pool and an out-of-range reservation.
+
+    Args:
+        end: Last IPv4 address in the rendered dynamic pool.
+    """
     pool = {"scope_id": 7, "name": "Site A", "interface_name": "eth1.50", "address_family": "ipv4",
             "site_address": "192.168.50.1", "prefix_length": 24,
             "ranges": [["192.168.50.100", end]],
@@ -34,7 +38,11 @@ def pool_config(end="192.168.50.110"):
 
 
 def test_applied_selection_includes_reservations_and_rejects_uninstalled_ranges(helper):
-    """Do not scan arbitrary metadata or omit declared static use."""
+    """Do not scan arbitrary metadata or omit declared static use.
+
+    Args:
+        helper: Loaded appliance helper module with native operations stubbed.
+    """
     pool, addresses = helper._dhcp_pool_candidates(pool_config(), 7)
     assert pool["interface_name"] == "eth1.50"
     assert addresses == ["192.168.50.20"] + [f"192.168.50.{value}" for value in range(100, 111)]
@@ -47,7 +55,12 @@ def test_applied_selection_includes_reservations_and_rejects_uninstalled_ranges(
 
 
 def arp_frame(sender_ip="192.168.50.100", target_ip="192.168.50.1"):
-    """Make a transient ARP reply to a selected gateway probe."""
+    """Make a transient ARP reply to a selected gateway probe.
+
+    Args:
+        sender_ip: ARP responder IPv4 address encoded in the fixture frame.
+        target_ip: ARP target IPv4 address encoded in the fixture frame.
+    """
     local = bytes.fromhex("020000000001")
     remote = bytes.fromhex("020000000020")
     return (local + remote + bytes.fromhex("08060001080006040002") + remote
@@ -55,7 +68,11 @@ def arp_frame(sender_ip="192.168.50.100", target_ip="192.168.50.1"):
 
 
 def test_arp_evidence_requires_exact_probe_target_and_hardware_identity(helper):
-    """Ignore unrelated, malformed, multicast and mismatched frames."""
+    """Ignore unrelated, malformed, multicast and mismatched frames.
+
+    Args:
+        helper: Loaded appliance helper module with native operations stubbed.
+    """
     local = bytes.fromhex("020000000001")
     args = ({"192.168.50.100"}, "192.168.50.1", local)
     packet = arp_frame()
@@ -66,7 +83,13 @@ def test_arp_evidence_requires_exact_probe_target_and_hardware_identity(helper):
 
 
 def test_verify_chunk_is_read_only_and_detects_mid_probe_config_change(helper, monkeypatch, capsys):
-    """Discard observations when the applied configuration changes during probes."""
+    """Discard observations when the applied configuration changes during probes.
+
+    Args:
+        helper: Loaded appliance helper module with native operations stubbed.
+        monkeypatch: Fixture replacing native adapters with bounded test doubles.
+        capsys: Fixture capturing sanitized helper output.
+    """
     raw = pool_config().encode()
     digest = hashlib.sha256(raw).hexdigest()
     reads = iter([raw, raw + b"# changed\n"])
@@ -76,6 +99,14 @@ def test_verify_chunk_is_read_only_and_detects_mid_probe_config_change(helper, m
     chunks = []
 
     def probe(interface, _source, _mac, addresses):
+        """Provide the bounded native observation or assertion test double.
+
+        Args:
+            interface: Selected interface passed to the bounded ARP probe.
+            _source: Source IPv4 address supplied to the ARP test double.
+            _mac: Local Ethernet identity supplied to the ARP test double.
+            addresses: IPv4 probe targets supplied to the ARP test double.
+        """
         assert interface == "eth1.50" and len(addresses) <= 16
         chunks.append(addresses)
         return [{"ip_address": value, "status": "no_response", "mac_addresses": []} for value in addresses]
@@ -86,7 +117,13 @@ def test_verify_chunk_is_read_only_and_detects_mid_probe_config_change(helper, m
 
 
 def test_verify_chunks_exclude_local_addresses_and_report_actual_version(helper, monkeypatch, capsys):
-    """Use installed identity and fixed bounds without probing another local address."""
+    """Use installed identity and fixed bounds without probing another local address.
+
+    Args:
+        helper: Loaded appliance helper module with native operations stubbed.
+        monkeypatch: Fixture replacing native adapters with bounded test doubles.
+        capsys: Fixture capturing sanitized helper output.
+    """
     raw = pool_config("192.168.50.150").encode()
     monkeypatch.setattr(helper, "_dhcp_pool_read", lambda _path: raw)
     monkeypatch.setattr(helper, "_dhcp_pool_link", lambda _pool: ("192.168.50.1", "02:00:00:00:00:01", {"192.168.50.1", "192.168.50.100"}, 5))
@@ -104,7 +141,12 @@ def test_verify_chunks_exclude_local_addresses_and_report_actual_version(helper,
 
 
 def test_pool_input_rejects_oversized_files(helper, tmp_path):
-    """Fixed evidence input cannot consume unbounded content."""
+    """Fixed evidence input cannot consume unbounded content.
+
+    Args:
+        helper: Loaded appliance helper module with native operations stubbed.
+        tmp_path: Owned temporary fixture directory.
+    """
     path = tmp_path / "config"
     path.write_bytes(b"a" * (1024 * 1024 + 1))
     with pytest.raises(ValueError, match="bounded"):
@@ -113,7 +155,12 @@ def test_pool_input_rejects_oversized_files(helper, tmp_path):
 
 @pytest.mark.parametrize("rendered_mac", ["02:AB:CD:EF:01:20", "02:aB:cD:eF:01:20"])
 def test_installed_reservation_mac_is_case_insensitive(helper, rendered_mac):
-    """Valid API/UI MAC casing cannot make an applied pool unverifiable."""
+    """Valid API/UI MAC casing cannot make an applied pool unverifiable.
+
+    Args:
+        helper: Loaded appliance helper module with native operations stubbed.
+        rendered_mac: Reservation MAC spelling rendered into installed configuration.
+    """
     config = pool_config().replace('"mac_address": "02:00:00:00:00:20"',
                                    '"mac_address": "02:ab:cd:ef:01:20"')
     config = config.replace("dhcp-host=02:00:00:00:00:20,", f"dhcp-host={rendered_mac},")
@@ -125,7 +172,13 @@ def test_installed_reservation_mac_is_case_insensitive(helper, rendered_mac):
 
 @pytest.mark.parametrize("native_case", ["matching", "different_index", "missing_mac", "down"])
 def test_native_ipv4_address_and_ethernet_link_are_bound(helper, monkeypatch, native_case):
-    """Photon's IPv4-only observation omits MAC; bind a separate native link identity."""
+    """Photon's IPv4-only observation omits MAC; bind a separate native link identity.
+
+    Args:
+        helper: Loaded appliance helper module with native operations stubbed.
+        monkeypatch: Fixture replacing native adapters with bounded test doubles.
+        native_case: Native address/link identity case under test.
+    """
     address = {"ifindex": 3, "ifname": "eth1", "flags": ["UP", "LOWER_UP"],
                "addr_info": [{"family": "inet", "local": "192.168.12.1", "prefixlen": 24}]}
     native = {"ifindex": 3, "ifname": "eth1", "flags": ["UP", "LOWER_UP"],
@@ -138,6 +191,12 @@ def test_native_ipv4_address_and_ethernet_link_are_bound(helper, monkeypatch, na
         native["flags"] = ["UP"]
     calls = []
     def observe(command, **_kwargs):
+        """Provide the bounded native observation or assertion test double.
+
+        Args:
+            command: Native command selected by the observation test double.
+            **_kwargs: Unused keyword options accepted by the test double.
+        """
         calls.append(command)
         row = address if "-4" in command else native
         return SimpleNamespace(returncode=0, stdout=json.dumps([row]))

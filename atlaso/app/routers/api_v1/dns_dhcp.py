@@ -748,7 +748,13 @@ def build_router(dependencies: DnsDhcpApiDependencies) -> DnsDhcpApiRouter:
         identity: Annotated[Identity, Depends(require_scope("read:dhcp"))],
         db: Session = Depends(get_db),
     ) -> DhcpPoolReport:
-        """Read authorized bounded operational evidence for a pool."""
+        """Read authorized bounded operational evidence for a pool.
+
+        Args:
+            scope_id: Managed DHCP pool identifier being selected or tested.
+            identity: Authenticated identity authorizing the operation.
+            db: Database session holding the pool, job or schedule state.
+        """
         try:
             return DhcpPoolReport.model_validate(dhcp_pool_verification.status(db, scope_id))
         except ValueError as exc:
@@ -766,7 +772,13 @@ def build_router(dependencies: DnsDhcpApiDependencies) -> DnsDhcpApiRouter:
         identity: Annotated[Identity, Depends(require_scope("write:dhcp"))],
         db: Session = Depends(get_db),
     ) -> DhcpPoolVerificationQueued:
-        """Queue bounded observations; global Appliance Apply is unaffected."""
+        """Queue bounded observations; global Appliance Apply is unaffected.
+
+        Args:
+            scope_id: Managed DHCP pool identifier being selected or tested.
+            identity: Authenticated identity authorizing the operation.
+            db: Database session holding the pool, job or schedule state.
+        """
         try:
             job = dhcp_pool_verification.enqueue(db, scope_id=scope_id, actor=identity.username)
             db.commit()
