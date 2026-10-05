@@ -159,3 +159,51 @@ try {
         assert json.loads(result.stdout)["Status"] == "inspected"
     else:
         assert result.stdout.strip() == "preserved"
+
+
+@pytest.mark.parametrize("identity_bound", [True, False])
+def test_missing_marker_cannot_report_identity_bound_retirement(tmp_path: Path, identity_bound: bool) -> None:
+    """A vanished marker fails cleanup-only while ordinary startup remains a no-op.
+
+    Args:
+        tmp_path: Task-owned synthetic staging fixture.
+        identity_bound: Whether the cleanup caller supplied its original identity.
+    """
+    pwsh = shutil.which("pwsh")
+    if pwsh is None:
+        pytest.skip("PowerShell 7 is unavailable")
+    root = tmp_path / "sensitive-root"
+    root.mkdir()
+    sentinel = root / "sentinel.txt"
+    sentinel.write_text("Synthetic fixture; no credentials.", encoding="utf-8")
+    script = tmp_path / "missing-marker.ps1"
+    script.write_text(
+        r"""
+param($Wrapper, $MarkerPath, $IdentityBound)
+$ErrorActionPreference = 'Stop'
+$tokens = $null; $errors = $null
+$ast = [Management.Automation.Language.Parser]::ParseFile($Wrapper, [ref]$tokens, [ref]$errors)
+if ($errors.Count) { throw 'Wrapper parse failed' }
+$function = $ast.Find({param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and
+    $node.Name -eq 'Invoke-AtlasoPhotonBuildCleanupRecovery'}, $true)
+Invoke-Expression $function.Extent.Text
+$identity = if ($IdentityBound -eq 'True') { 'original' } else { '' }
+Invoke-AtlasoPhotonBuildCleanupRecovery -MarkerPath $MarkerPath -AllowedParentRoots @('unused') -ExpectedRootIdentity $identity
+'returned'
+""",
+        encoding="utf-8",
+    )
+    result = subprocess.run(
+        [pwsh, "-NoProfile", "-File", str(script), str(WRAPPER), str(tmp_path / "missing-marker.json"), str(identity_bound)],
+        capture_output=True,
+        text=True,
+        timeout=45,
+        check=False,
+    )
+    if identity_bound:
+        assert result.returncode != 0
+        assert "sensitive-root retirement was not proven" in result.stderr
+        assert "returned" not in result.stdout
+    else:
+        assert result.returncode == 0 and result.stdout.strip() == "returned"
+    assert sentinel.read_text(encoding="utf-8") == "Synthetic fixture; no credentials."

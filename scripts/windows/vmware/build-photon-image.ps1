@@ -1129,6 +1129,9 @@ function Invoke-AtlasoPhotonBuildCleanupRecovery {
     )
 
     if (-not (Test-Path -LiteralPath $MarkerPath -PathType Leaf)) {
+        if (-not [string]::IsNullOrWhiteSpace($ExpectedRootIdentity)) {
+            throw 'The identity-bound cleanup marker disappeared; sensitive-root retirement was not proven.'
+        }
         return
     }
     try {
