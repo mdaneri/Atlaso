@@ -820,6 +820,19 @@ def build_router(dependencies: AutomationUiDependencies) -> AutomationUiRouter:
                     "Enable the VCF Offline Depot profile before enabling its schedule.",
                     status_code=409,
                 )
+        if not schedule.enabled and schedule.task_type == "dhcp_pool_verify":
+            try:
+                config = json.loads(schedule.task_config_json or "{}")
+                scope_id = int(config.get("scope_id") or 0)
+            except (AttributeError, TypeError, ValueError):
+                scope_id = 0
+            scope = db.get(DhcpScope, scope_id) if scope_id > 0 else None
+            if scope is None or not scope.enabled or str(scope.address_family or "").lower() != "ipv4":
+                return _automation_render_error(
+                    request, identity, db,
+                    "Choose an enabled IPv4 DHCP scope before enabling its schedule.",
+                    status_code=409,
+                )
         schedule.enabled = not schedule.enabled
         try:
             schedule.next_run_at = (

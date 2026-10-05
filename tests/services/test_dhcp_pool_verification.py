@@ -462,3 +462,63 @@ def test_pool_health_grid_excludes_unsupported_scopes(client):
     fallback = page.text.split('id="dhcp-pool-health-fallback"', 1)[1].split("</table>", 1)[0]
     assert "Disabled-only" not in fallback and "IPv6-only" not in fallback
     assert f'/dhcp/scopes/{eligible_id}/verification"' in fallback
+
+
+@pytest.mark.parametrize("scope_case", ["detached", "missing", "disabled", "ipv6", "eligible"])
+def test_schedule_toggle_requires_eligible_pool(client, scope_case):
+    """A State toggle cannot revive detached or unsupported verification schedules."""
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Schedule
+    from tests.routers.ui.helpers import login
+
+    with SessionLocal() as db:
+        pool, _ = setup_pool(db)
+        if scope_case == "disabled":
+            pool.enabled = False
+        if scope_case == "ipv6":
+            pool.address_family = "ipv6"
+        config = {} if scope_case == "detached" else {"scope_id": pool.id if scope_case != "missing" else pool.id + 1000}
+        schedule = Schedule(name="toggle-pool", task_type="dhcp_pool_verify", enabled=False,
+                            task_config_json=json.dumps(config), cron_expression="0 * * * *", created_by="admin")
+        db.add(schedule)
+        db.commit()
+        schedule_id = schedule.id
+    login(client)
+    page = client.get("/automation")
+    csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    response = client.post(f"/automation/schedules/{schedule_id}/toggle", data={"csrf": csrf}, follow_redirects=False)
+    assert response.status_code == (303 if scope_case == "eligible" else 409)
+    with SessionLocal() as db:
+        schedule = db.get(Schedule, schedule_id)
+        assert schedule.enabled is (scope_case == "eligible")
+        assert (schedule.next_run_at is not None) is (scope_case == "eligible")
+
+
+def test_settings_restore_retires_pre_restore_cooldown(client):
+    """Retained job history cannot prevent verification of a restored, reused pool ID."""
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import JobStatus
+    from atlaso.app.services.settings_archive import _clear_desired_state
+
+    with SessionLocal() as db:
+        _clear_desired_state(db)
+        db.commit()
+        pool, _ = setup_pool(db)
+        scope_id = pool.id
+        db.add(Job(id="pre_restore", type=verifier.JOB_TYPE, status=JobStatus.SUCCEEDED.value,
+                   created_by="admin", task_config_json=json.dumps({"scope_id": scope_id})))
+        db.commit()
+        _clear_desired_state(db)
+        db.commit()
+        historical = json.loads(db.get(Job, "pre_restore").task_config_json)
+        assert historical["scope_id"] == scope_id and historical["scope_retired"] is True
+        # The fixture's simulated Apply installs a new baseline; restore itself
+        # deliberately retains the prior appliance baseline.
+        baseline = db.scalar(select(Setting).where(Setting.key == verifier.BASELINES_KEY))
+        db.delete(baseline)
+        db.flush()
+        restored, _ = setup_pool(db)
+        assert restored.id == scope_id
+        job = verifier.enqueue(db, scope_id=restored.id, actor="admin")
+        db.commit()
+        assert verifier.status(db, scope_id)["job_id"] == job.id

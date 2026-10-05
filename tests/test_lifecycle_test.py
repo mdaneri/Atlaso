@@ -56,7 +56,12 @@ def test_dhcp_pool_acceptance_restores_native_checks_and_rejects_unknown(monkeyp
 
     monkeypatch.setattr(module, "apply_units", lambda *_args: runtime.update(desired))
     def probe(*probe_args, **_kwargs):
-        assert 'test -f /etc/atlaso/dnsmasq.d/atlaso.conf || exit 1' in probe_args[2]
+        transport = probe_args[2]
+        assert transport.startswith("printf %s ") and transport.endswith(" | base64 -d | sh")
+        script = base64.b64decode(transport.split()[2]).decode("utf-8")
+        assert 'test -f /etc/atlaso/dnsmasq.d/atlaso.conf || exit 1' in script
+        assert 'VERSION="$(dnsmasq --version)"' in script
+        assert "ELEV=" not in script
         if state == "missing_config":
             return {"returncode": 1, "stdout": "", "stderr": "managed configuration missing"}
         return {"returncode": 0, "stdout": "CHECKS=enabled" if runtime["check_ip_availability"] else "CHECKS=disabled"}

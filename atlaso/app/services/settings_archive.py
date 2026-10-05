@@ -1719,6 +1719,12 @@ def _clear_desired_state(db: Session) -> None:
     Args:
         db: Active database session.
     """
+    from atlaso.app.services.dhcp_pool_verification import forget_scope
+
+    # Restore replaces pool identities while retaining historical jobs. Retire
+    # their report/cooldown ownership in the same transaction before ID reuse.
+    for scope_id in db.scalars(select(DhcpScope.id)).all():
+        forget_scope(db, scope_id)
     for job in db.execute(select(Job).where(Job.schedule_id.is_not(None))).scalars().all():
         job.schedule_id = None
         db.add(job)
