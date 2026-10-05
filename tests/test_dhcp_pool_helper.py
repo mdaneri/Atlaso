@@ -109,3 +109,15 @@ def test_pool_input_rejects_oversized_files(helper, tmp_path):
     path.write_bytes(b"a" * (1024 * 1024 + 1))
     with pytest.raises(ValueError, match="bounded"):
         helper._dhcp_pool_read(path)
+
+
+@pytest.mark.parametrize("rendered_mac", ["02:AB:CD:EF:01:20", "02:aB:cD:eF:01:20"])
+def test_installed_reservation_mac_is_case_insensitive(helper, rendered_mac):
+    """Valid API/UI MAC casing cannot make an applied pool unverifiable."""
+    config = pool_config().replace('"mac_address": "02:00:00:00:00:20"',
+                                   '"mac_address": "02:ab:cd:ef:01:20"')
+    config = config.replace("dhcp-host=02:00:00:00:00:20,", f"dhcp-host={rendered_mac},")
+    _pool, addresses = helper._dhcp_pool_candidates(config, 7)
+    assert "192.168.50.20" in addresses
+    with pytest.raises(ValueError, match="Reservation metadata"):
+        helper._dhcp_pool_candidates(config.replace(rendered_mac, "02:AB:CD:EF:01:21"), 7)

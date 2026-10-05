@@ -3770,7 +3770,7 @@ def _dhcp_pool_candidates(config: str, scope_id: int) -> tuple[dict, list[str]]:
         mac = str(row["mac_address"]).lower()
         if address not in network or not _valid_network_mac(mac):
             raise ValueError("Invalid applied reservation identity.")
-        if not any(line.startswith(f"dhcp-host={mac},") and str(address) in line.split(",") for line in lines):
+        if not any(line.lower().startswith(f"dhcp-host={mac},") and str(address) in line.split(",") for line in lines):
             raise ValueError("Reservation metadata does not match installed DHCP configuration.")
         addresses.add(address)
         if len(addresses) > 1024:

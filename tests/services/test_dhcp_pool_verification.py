@@ -150,7 +150,7 @@ def test_worker_publishes_progress_report_and_keeps_service_untouched(client, mo
 def test_deleted_scope_id_reuse_does_not_inherit_report(client, transport):
     """Both deletion paths clear evidence before SQLite reuses an identical pool ID."""
     from atlaso.app.database import SessionLocal
-    from atlaso.app.models import Schedule, utcnow
+    from atlaso.app.models import JobStatus, Schedule, utcnow
     from atlaso.app.services.automation import (
         enqueue_due_schedules,
         enqueue_schedule_now,
@@ -163,6 +163,9 @@ def test_deleted_scope_id_reuse_does_not_inherit_report(client, transport):
         scope_id = pool.id
         values = {key: getattr(pool, key) for key in ("name", "address_family", "enabled", "interface_name",
                   "site_address", "prefix_length", "range_expression")}
+        db.add(Job(id="old_job", type=verifier.JOB_TYPE, status=JobStatus.SUCCEEDED.value,
+                   created_by="admin", task_config_json=json.dumps({"scope_id": scope_id,
+                   "config_hash": hashlib.sha256(config.encode()).hexdigest()})))
         db.add(Setting(key=verifier.REPORT_PREFIX + str(scope_id), value=json.dumps({
             "state": "complete", "job_id": "old_job", "config_hash": hashlib.sha256(config.encode()).hexdigest(),
             "observations": [verifier.classify(observation([OTHER]), POOL, [], [], NOW)],
@@ -190,6 +193,8 @@ def test_deleted_scope_id_reuse_does_not_inherit_report(client, transport):
         db.add(replacement)
         db.commit()
         assert replacement.id == scope_id
+        historical = json.loads(db.get(Job, "old_job").task_config_json)
+        assert historical["scope_id"] == scope_id and historical["scope_retired"] is True
         schedule = db.get(Schedule, schedule_id)
         assert schedule.enabled is False and schedule.next_run_at is None
         assert "scope_id" not in json.loads(schedule.task_config_json)

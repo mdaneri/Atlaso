@@ -50,6 +50,13 @@ def forget_scope(db: Session, scope_id: int) -> None:
     stored = db.scalar(select(Setting).where(Setting.key == REPORT_PREFIX + str(scope_id)))
     if stored is not None:
         db.delete(stored)
+    for job in db.scalars(select(Job).where(
+        Job.type == JOB_TYPE, Job.created_at >= utcnow() - timedelta(seconds=MIN_INTERVAL_SECONDS)
+    )):
+        config = object_json(job.task_config_json)
+        if config.get("scope_id") == scope_id:
+            config["scope_retired"] = True
+            job.task_config_json = json.dumps(config, sort_keys=True)
     for schedule in db.scalars(select(Schedule).where(Schedule.task_type == "dhcp_pool_verify")):
         config = object_json(schedule.task_config_json)
         if config.get("scope_id") == scope_id:
@@ -147,7 +154,8 @@ def enqueue(
     recent = list(db.scalars(select(Job).where(
         Job.type == JOB_TYPE, Job.status != JobStatus.SKIPPED.value, Job.created_at >= utcnow() - timedelta(seconds=MIN_INTERVAL_SECONDS)
     )))
-    if any(object_json(job.task_config_json).get("scope_id") == scope_id for job in recent):
+    if any(config.get("scope_id") == scope_id and not config.get("scope_retired")
+           for job in recent for config in [object_json(job.task_config_json)]):
         raise ValueError("Wait 15 minutes between verification runs of the same pool.")
     job = Job(
         id=f"job_{uuid4().hex[:12]}", type=JOB_TYPE, status=JobStatus.PENDING.value,
