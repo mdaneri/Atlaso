@@ -91,6 +91,10 @@ product and release names remain PR-independent. Before a pull request exists, t
 normal test-VM modes derive guarded identities from the clean source commit; protected release paths reject local/test
 provenance, and acceptance evidence remains PR-numbered. See the
 [VMware Workstation lifecycle testing guide](docs/reference/vmware-workstation-lifecycle-testing.md).
+Interrupted Photon sensitive staging has a supported `-CleanupOnly` recovery path bound to the original task worktree
+and root identity. Inspection preserves state; execution revalidates registration after confirmation and proves process
+quiescence before retirement. VM artifacts and reservations use separate owning cleanup procedures; recovery obtains
+no new credentials and never starts an image build.
 Certificate-only handoff testing on a retained clone requires an independently owned private management segment,
 receipt-bound address control, pinned peer and appliance identities, and CA-verified HTTPS before any native address
 change. A discovered DHCP address or successful clone deployment alone is not acceptance evidence; the

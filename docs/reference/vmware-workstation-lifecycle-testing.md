@@ -1047,6 +1047,35 @@ release and retry paths. Do not erase their ledgers or recovery markers to simul
 build merely to trigger recovery. If no supported bounded cleanup-only path applies, record the blocked resource and
 track the missing capability separately. A successful VM-removal command does not waive independent absence checks.
 
+For a retained current Photon sensitive-staging marker, the builder also supports a cleanup-only mode. Use the exact
+registered task worktree and the sensitive-root identity recorded by its creating task. The executing wrapper may live
+in another registered worktree of the same Git repository. Missing markers, mismatched identities, legacy markers
+without an original root identity, changed ancestry, and unproven process ownership preserve resources.
+Admission ignores inherited Git environment overrides and restores them after checking the repository.
+Identity-bound recovery admits the exact credential parent, including nested custom build-state roots.
+Admission checks Git's NUL-delimited registered worktree inventory and the private Git directory's backlink; sharing
+repository metadata alone does not admit a moved or copied worktree.
+
+```powershell
+$taskRepository = 'E:\task\Atlaso'
+$originalRootIdentity = '<original task-recorded sensitive-root identity>'
+.\scripts\windows\vmware\build-photon-image.ps1 -CleanupOnly -CleanupRepositoryRoot $taskRepository -CleanupRootIdentity $originalRootIdentity
+.\scripts\windows\vmware\build-photon-image.ps1 -CleanupOnly -CleanupRepositoryRoot $taskRepository -CleanupRootIdentity $originalRootIdentity -Cleanup -WhatIf
+.\scripts\windows\vmware\build-photon-image.ps1 -CleanupOnly -CleanupRepositoryRoot $taskRepository -CleanupRootIdentity $originalRootIdentity -Cleanup
+```
+
+The first two commands inspect marker and filesystem identity without terminating processes or changing files. An
+inspection does not prove process quiescence or cleanup eligibility. If the identity-bound marker disappears between
+inspection and execution, recovery fails; marker absence alone never proves sensitive-root retirement.
+Execution repeats Git registration and backlink admission after confirmation, immediately before recovery, and uses
+the existing
+same-boot named-job/controller/child proof or verified host-restart recovery before retiring sensitive staging. It
+returns before PowerCLI refresh, package downloads, credential retrieval, reservation initialization, output claims,
+source protection, or Packer. Build and credential arguments are rejected in this mode. Ordinary image builds reject
+`-WhatIf` and `-Confirm`, which are supported only with `-CleanupOnly`. VMware VMs, builder output,
+output-claim markers, and address reservations require their separate owning cleanup procedures. Record their independent
+absence or preservation; staging retirement does not prove deployment acceptance or authorize a new build.
+
 ## Cleanup Safety
 
 The synthetic lifecycle storage fixture exercises the runner's cleanup statements inside their containing try body,
