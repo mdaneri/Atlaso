@@ -53,6 +53,10 @@ service-page reconciliation remains separate from the captured Network, Settings
 Registry validation reuses that read-only bundle projection. If CA settings are absent, full Apply capture stops before
 any service context can initialize them or release the caller's writer; ordinary appliance initialization is required.
 
+For a Network-only console correction, DHCP Settings projection uses the complete native observation collected after
+recovery. It rechecks the completed task, captured Network intent, physical identities and observed addresses under
+the writer before projecting the original captured Settings. Missing or changed proof refuses Settings submission.
+
 The **Appliance services** projection covers Authentication, Certificate Authority, DHCP, DNS, ESX Storage NFS, ESXi
 PXE, Firewall, KMS/KMIP, Managed LDAP, NTP/NTS, Routing, VCF Backup SFTP, VCF Offline Depot, and VCF Private Registry.
 

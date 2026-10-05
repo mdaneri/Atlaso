@@ -4568,14 +4568,18 @@ def test_console_static_observation_matches_complete_native_candidates(client, m
         assert target.ipv6_cidr == "2001:db8::63/64"
 
 
+@pytest.mark.parametrize("handoff,invalid_proof", [(False, None), (True, None), (False, "missing"),
+                                                  (False, "job"), (False, "mac"), (False, "address")])
 @pytest.mark.parametrize("concurrent_edit", [False, True])
-def test_console_management_projects_settings_snapshot_from_dhcp_handoff_evidence(client, monkeypatch, concurrent_edit):
+def test_console_management_projects_settings_snapshot_from_dhcp_handoff_evidence(client, monkeypatch, concurrent_edit, handoff, invalid_proof):
     """Allow only the captured Settings projection proven by DHCP handoff evidence.
 
     Args:
         client: HTTP test client that initializes the appliance database.
         monkeypatch: Pytest fixture used to replace helper execution.
         concurrent_edit: Whether an unrelated Settings edit races with recovery.
+        handoff: Whether the completed job includes bundled helper handoff evidence.
+        invalid_proof: Missing or changed native proof must refuse Settings capture.
     """
     from sqlalchemy import select
 
@@ -4638,10 +4642,10 @@ def test_console_management_projects_settings_snapshot_from_dhcp_handoff_evidenc
                             interfaces=list(db.scalars(select(PhysicalInterface))),
                             vlans=list(db.scalars(select(appliance_console.VlanInterface))),
                         )}],
-                        "management_handoff": True,
+                        "management_handoff": handoff,
                         "units": [{
                             "unit_id": "network",
-                            "management_handoff": {"candidate_addresses": ["192.0.2.21"]},
+                            **({"management_handoff": {"candidate_addresses": ["192.0.2.21"]}} if handoff else {}),
                         }],
                     }),
                 ))
@@ -4689,7 +4693,33 @@ def test_console_management_projects_settings_snapshot_from_dhcp_handoff_evidenc
 
     monkeypatch.setattr(appliance_console, "discover_host_physical_interfaces", native_observation)
     monkeypatch.setattr(appliance_console, "_recover_management_plane", lambda _stage, **kwargs: None)
+    refresh = appliance_console._refresh_management_addresses
 
+    def observed(*args, **kwargs):
+        """Exercise the actual observer and corrupt only its returned proof.
+
+        Args:
+            *args: Stable interface identity.
+            **kwargs: Completed Network task and observation deadline.
+        """
+        proof = refresh(*args, **kwargs)
+        if invalid_proof == "missing":
+            return None
+        if invalid_proof == "job":
+            proof["network_job_id"] = "another-job"
+        if invalid_proof == "mac":
+            proof["physical_interfaces"][0]["mac"] = "00:00:00:00:00:01"
+        if invalid_proof == "address":
+            proof["candidate_addresses"] = ["192.0.2.99"]
+        return proof
+
+    monkeypatch.setattr(appliance_console, "_refresh_management_addresses", observed)
+    if invalid_proof:
+        with pytest.raises(ConsoleOperationError, match="observation|confirm the resolved DHCP"):
+            appliance_console.configure_management("dhcp", "", "", "disabled", "", "", "192.0.2.53")
+        assert calls == 1
+        assert not observed_expected
+        return
     if concurrent_edit:
         with pytest.raises(ConsoleOperationError, match="changed.*Appliance Settings"):
             appliance_console.configure_management(

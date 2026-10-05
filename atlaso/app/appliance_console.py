@@ -1179,6 +1179,7 @@ def _post_handoff_settings_snapshot(
     captured_settings: dict[str, Any],
     network_preview: str,
     fallback_snapshot: str,
+    *, native_observation: dict[str, Any] | None = None,
 ) -> str:
     """Project the captured Settings snapshot through proven DHCP handoff evidence.
 
@@ -1187,11 +1188,13 @@ def _post_handoff_settings_snapshot(
         captured_settings: Settings unit captured before the Network handoff.
         network_preview: Exact Network configuration submitted with that handoff.
         fallback_snapshot: Original snapshot for legacy mocked submitters without task evidence.
+        native_observation: Complete fresh observation bound to this completed Network task.
 
     Returns:
         The expected post-handoff snapshot hash.
     """
     with SessionLocal() as db:
+        acquire_network_objects_write_lock(db)
         job = db.get(Job, network_job_id)
         if job is None:
             return fallback_snapshot
@@ -1207,10 +1210,43 @@ def _post_handoff_settings_snapshot(
             if isinstance(unit, dict) and unit.get("unit_id") == "network"
         ), None)
         if not isinstance(evidence, dict):
-            # Existing console submit mocks return opaque IDs and do not persist jobs.
-            if payload.get("management_handoff") is not True:
+            if payload.get("management_handoff") is True:
+                raise ConsoleOperationError("Successful Network handoff did not record address evidence.")
+            from atlaso.app.ui import network_management_paths
+
+            paths = network_management_paths(network_preview)
+            if not any(path.get("ipv4_method") == "dhcp" for path in paths):
                 return fallback_snapshot
-            raise ConsoleOperationError("Successful Network handoff did not record address evidence.")
+            captured = [unit for unit in payload.get("captured_units", []) if unit.get("unit_id") == "network"]
+            current_preview = render_network_config(
+                interfaces=list(db.scalars(select(PhysicalInterface))),
+                vlans=list(db.scalars(select(VlanInterface))),
+            )
+            if network_management_paths(current_preview) != paths:
+                raise ConsoleOperationError(
+                    "Management Network changed during recovery. Appliance Settings were not submitted; "
+                    "newer edits remain pending. Apply or reconcile those edits first."
+                )
+            if (
+                native_observation is None or native_observation.get("network_job_id") != network_job_id
+                or native_observation.get("management_paths") != paths or len(captured) != 1
+                or network_management_paths(str(captured[0].get("config_preview") or "")) != paths
+            ):
+                raise ConsoleOperationError("Completed Network task has no matching fresh DHCP observation for Settings.")
+            rows = native_observation.get("physical_interfaces", [])
+            if not rows:
+                raise ConsoleOperationError("Completed Network task has no fresh physical-interface observation.")
+            for row in rows:
+                interface = db.get(PhysicalInterface, row["id"])
+                if (
+                    interface is None or interface.name != row["name"]
+                    or (interface.mac_address or "").lower() != row["mac"].lower()
+                    or interface.host_ip_cidr != row["ipv4_cidr"]
+                    or interface.host_ipv6_cidr != row["ipv6_cidr"]
+                    or list(interface.host_ipv6_cidrs or []) != row["ipv6_cidrs"]
+                ):
+                    raise ConsoleOperationError("Fresh management observation changed before Settings projection.")
+            evidence = native_observation
         original = json.loads(str(captured_settings.get("raw_config_preview") or "{}"))
         old_management_ip = str(original.get("management_ip") or "")
         projected = deepcopy(captured_settings)
@@ -1443,13 +1479,16 @@ def _recover_management_plane(stage: str, *, network_job_id: str | None = None) 
 
 def _refresh_management_addresses(
     interface_id: int, *, network_job_id: str | None = None, timeout: float = 30,
-) -> None:
+) -> dict[str, Any]:
     """Observe the corrected link before recovery captures certificates and Settings.
 
     Args:
         interface_id: Stable identity of the physical interface edited by the console.
         network_job_id: Completed task containing the exact submitted Network snapshot.
         timeout: Maximum seconds to wait for every requested address family.
+
+    Returns:
+        Complete verified physical observations bound to the completed Network task.
 
     Raises:
         ConsoleOperationError: If fresh host inventory cannot confirm the corrected addresses.
@@ -1563,7 +1602,16 @@ def _refresh_management_addresses(
                         "The applied management addresses were observed, but newer address edits remain pending. "
                         "Certificate recovery and Appliance Settings were not started; apply or reconcile those edits first."
                     )
-                return
+                return {
+                    "network_job_id": network_job_id,
+                    "management_paths": expected_paths,
+                    "candidate_addresses": [str(ip_interface(row[4]).ip) for row in verified_rows if row[4]],
+                    "physical_interfaces": [
+                        {"id": identity, "name": name, "mac": mac, "ipv4_cidr": ipv4,
+                         "ipv6_cidr": ipv6, "ipv6_cidrs": list(ipv6_cidrs)}
+                        for identity, name, mac, _applied, ipv4, ipv6, ipv6_cidrs in verified_rows
+                    ],
+                }
         remaining = deadline - time.monotonic()
         if remaining <= 0:
             raise ConsoleOperationError(
@@ -1654,10 +1702,10 @@ def configure_management(
     )
     _refresh_management_addresses(interface_id, network_job_id=network_job_id)
     _recover_management_plane("Network and Firewall were applied", network_job_id=network_job_id)
-    _refresh_management_addresses(interface_id, network_job_id=network_job_id)
+    native_observation = _refresh_management_addresses(interface_id, network_job_id=network_job_id)
     expected_settings_snapshot = _post_handoff_settings_snapshot(
         network_job_id, captured_settings, captured_network_preview,
-        expected_management_snapshots["appliance_settings"],
+        expected_management_snapshots["appliance_settings"], native_observation=native_observation,
     )
     settings_job_id = _submit_console_apply(
         {"appliance_settings"}, network_job_id=network_job_id,
