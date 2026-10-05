@@ -13,9 +13,9 @@ from atlaso.app.models import AuditEvent, Job, JobStatus, JobStep, Role, utcnow
 from atlaso.app.security import Identity
 
 ACTIVE = {JobStatus.PENDING.value, JobStatus.RUNNING.value}
-PENDING_TYPES = {"appliance-apply", "appliance-update", "vcf-depot-download", "managed-script", "pxe-media-sync",
+PENDING_TYPES = {"dhcp-pool-verify", "appliance-apply", "appliance-update", "vcf-depot-download", "managed-script", "pxe-media-sync",
                  "diagnostic-bundle", "manual-placeholder"}
-SERVICE_ADMIN_TYPES = {"pxe-media-sync"}
+SERVICE_ADMIN_TYPES = {"pxe-media-sync", "dhcp-pool-verify"}
 
 
 @dataclass(frozen=True)
@@ -88,6 +88,9 @@ def capability(job: Job, identity: Identity | None = None, *, api: bool = False)
         return CancellationCapability(False, "Helper ownership is unresolved; recovery must verify cleanup first.")
     if job.status == JobStatus.PENDING.value and job.type in PENDING_TYPES:
         return CancellationCapability(True, "Queued task has not been claimed.", "Prevent this queued task from starting and remove its owned staging, if any?")
+    if job.type == "dhcp-pool-verify":
+        return CancellationCapability(True, "Stops at the next bounded observation checkpoint.",
+                                      "Stop pool verification and retain its partial report? DHCP service continues normally.")
     config = payload(job.task_config_json)
     if job.type == "appliance-update" and config.get("mode") == "check":
         from atlaso.app.services.appliance_update import UPDATE_STREAM_LABELS

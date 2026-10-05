@@ -1395,6 +1395,7 @@ def _schedules_to_archive(db: Session) -> list[dict[str, Any]]:
     profiles = {profile.id: profile.name for profile in db.execute(select(VcfDepotDownloadProfile)).scalars().all()}
     revisions = {revision.id: revision for revision in db.execute(select(AutomationScriptRevision)).scalars().all()}
     scripts = {script.id: script.name for script in db.execute(select(AutomationScript)).scalars().all()}
+    scopes = {scope.id: scope.name for scope in db.scalars(select(DhcpScope))}
     rows: list[dict[str, Any]] = []
     for schedule in db.execute(select(Schedule).order_by(Schedule.name)).scalars().all():
         payload = _row_to_dict(schedule, exclude={"enabled", "next_run_at", "last_run_at", "last_job_id", "run_once_at"})
@@ -1406,6 +1407,8 @@ def _schedules_to_archive(db: Session) -> list[dict[str, Any]]:
             config = {}
         if schedule.task_type == "vcf_depot_download":
             payload["vcf_profile_name"] = profiles.get(config.get("profile_id"), "")
+        elif schedule.task_type == "dhcp_pool_verify":
+            payload["dhcp_scope_name"] = scopes.get(config.get("scope_id"), "")
         elif schedule.task_type == "managed_script":
             revision = revisions.get(config.get("revision_id"))
             if revision is not None:
@@ -1716,6 +1719,12 @@ def _clear_desired_state(db: Session) -> None:
     Args:
         db: Active database session.
     """
+    from atlaso.app.services.dhcp_pool_verification import forget_scope
+
+    # Restore replaces pool identities while retaining historical jobs. Retire
+    # their report/cooldown ownership in the same transaction before ID reuse.
+    for scope_id in db.scalars(select(DhcpScope.id)).all():
+        forget_scope(db, scope_id)
     for job in db.execute(select(Job).where(Job.schedule_id.is_not(None))).scalars().all():
         job.schedule_id = None
         db.add(job)
@@ -2774,6 +2783,8 @@ def _validate_archive_relationships(data: dict[str, list[dict[str, Any]]]) -> No
 
     dhcp_enabled = False
     for row_index, row in enumerate(data.get("dhcp_settings", []), start=1):
+        if not isinstance(row.get("check_ip_availability", True), bool):
+            raise ValueError("The settings archive DHCP IP availability setting must be a boolean.")
         enabled = row.get("enabled", False)
         if not isinstance(enabled, bool):
             raise ValueError(
@@ -4058,6 +4069,7 @@ def _validate_archive_relationships(data: dict[str, list[dict[str, Any]]]) -> No
             cron_expression=str(row.get("cron_expression") or ""),
             run_once_at=run_once_at,
             timezone_name=str(row.get("timezone_name") or ""),
+            allow_detached_dhcp_scope=row.get("enabled") is False,
         )
         if schedule_errors:
             raise ValueError(
@@ -4565,6 +4577,9 @@ def _restore_schedules(db: Session, rows: list[dict[str, Any]]) -> int:
         (revision.script_id, revision.revision): revision.id
         for revision in db.execute(select(AutomationScriptRevision)).scalars().all()
     }
+    scopes: dict[str, list[int]] = {}
+    for scope in db.scalars(select(DhcpScope)):
+        scopes.setdefault(scope.name, []).append(scope.id)
     for row in rows:
         payload = _model_kwargs(
             Schedule,
@@ -4596,6 +4611,12 @@ def _restore_schedules(db: Session, rows: list[dict[str, Any]]) -> int:
             config["selected_streams"] = normalized
         if task_type == "vcf_depot_download":
             config["profile_id"] = profiles.get(str(row.get("vcf_profile_name") or ""), 0)
+        elif task_type == "dhcp_pool_verify":
+            # Local database IDs are never portable, including legacy archives.
+            config.pop("scope_id", None)
+            matches = scopes.get(str(row.get("dhcp_scope_name") or ""), [])
+            if len(matches) == 1:
+                config["scope_id"] = matches[0]
         elif task_type == "managed_script":
             script_id = scripts.get(str(row.get("script_name") or ""), 0)
             config["revision_id"] = revisions.get((script_id, int(row.get("script_revision") or 0)), 0)

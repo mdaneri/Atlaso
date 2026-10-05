@@ -56,6 +56,90 @@ enablement, and review the desired state. Existing option enablement remains dir
 Confirm the task succeeded, `dnsmasq` is healthy, and a test client on the selected network receives the expected lease
 and options. Roll back by restoring the previous desired state and submitting a new global apply.
 
+## Check IPv4 allocation candidates
+
+**Check IP availability before assignment** is enabled by default in DHCP Settings. It preserves dnsmasq's native,
+daemon-wide IPv4 candidate ICMP checks. Disable it only when you accept that ordinary automatically selected candidates
+will not be pinged: Atlaso stages `no-ping`. Saving changes desired state; submit **DNS/DHCP (dnsmasq)** through
+Appliance Apply to activate it. Saving does not restart DHCP. New settings and legacy backups without this field
+default to enabled; explicit opt-out persists across saves, restart and settings-archive restore.
+
+Native checking is limited. Requested addresses, remembered leases, reservations and renewal paths may bypass the
+candidate probe; dnsmasq can also reuse recent probe evidence or limit probes under load. ICMP-blocking devices and
+devices appearing after an offer are not comprehensively detected. A nonresponse is not proof of availability. Keep
+unmanaged static devices outside dynamic pools, or declare intended reservations. Ordinary lease and reservation
+uniqueness checks remain active when candidate checking is disabled. DHCPv6 behavior is unchanged. See the
+[dnsmasq manual](https://dnsmasq.org/docs/dnsmasq-man.html) and the
+[upstream requested-address explanation](https://lists.thekelleys.org.uk/pipermail/dnsmasq-discuss/2017q2/011437.html).
+
+## Verify an applied pool
+
+1. Apply the enabled IPv4 pool, its reservations and required interface/VLAN configuration. Edited desired state cannot
+   be verified until its new configuration is applied.
+2. Open **Pool Health**, select the pool and choose **Verify pool** from its row menu. Read-only users can inspect
+   results; launching requires DHCP write permission and browser CSRF authorization.
+3. Follow the linked task in **Tasks** for progress and authorized cancellation. Cancellation stops at the next bounded
+   observation checkpoint and retains the partial report without stopping DHCP.
+4. Inspect the live pool summary and address grid. The visible page updates without a reload. Results are bound to
+   applied configuration, exact pool and interface/VLAN; editing or deleting that identity invalidates older results.
+
+Verification uses fresh interface-scoped ARP replies on directly connected IPv4 networks. It probes only applied
+dynamic ranges and declared reservations in that pool's subnet. Gaps between ranges are excluded; gateway, local,
+network and broadcast addresses are not probed. Arbitrary networks, relayed networks and IPv6 are not swept.
+Unsupported links, unavailable lease evidence and incomplete observations remain **unknown**. ICMP-blocking devices
+can still respond to ARP, but ARP does not authenticate devices. Proxy ARP can represent a remote endpoint instead of
+its hardware identity. Stale neighbor entries are not accepted as fresh probe evidence.
+
+Reports distinguish **legitimate use**, **unexpected occupancy**, **occupant/lease mismatch**, **confirmed conflict**
+(multiple fresh responder MACs), **no response** and **unknown**. Unexpected occupancy can be legitimate static use;
+it does not label a device malicious or unauthorized. Expired leases are ignored. Changed lease/client identities
+during probing and unscoped leases for overlapping applied pools on different links remain unknown,
+even when another pool has pending edits, disablement or deletion. A prior finding stays
+unresolved after silence or incomplete work and resolves only after positive matching lease/reservation evidence.
+Its original MAC/lease/client identity snapshot remains visible in the reason as retained evidence, with the original
+verification time; current observations remain distinct. The API exposes that snapshot as `retained_finding`; an unchecked
+address has a null current `verified_at` rather than claiming a fresh observation.
+Details include observed/expected MACs, available client identifiers, reason, first/last seen and verification time.
+
+Only one verifier is admitted globally. A run is limited to 1,024 addresses, chunks of at most 16, at most eight ARP
+requests per second, bounded helper calls and ten minutes overall. The same pool cannot queue more than once in 15
+minutes; skipped schedule runs do not extend this cooldown. Large or unsupported pools remain unknown; partial work never
+implies exhaustive discovery. Verification
+never evicts clients, deletes leases, changes reservations, blocks MACs, flushes neighbors or feeds results into
+allocator exclusions. Remediation requires explicit desired configuration and Apply. DHCP's existing Logs view remains
+the native allocation/exhaustion diagnostic surface; a scan does not prove every offer was protected.
+
+Pool Health lists enabled IPv4 pools; disabled and IPv6 scopes remain in the ordinary scope overview.
+
+Scheduled verification is optional and is not enabled by the default allocation-check switch. Choose **Schedule
+verification** from the pool menu or create a **dhcp pool verify** task in **Automation Schedules**, select the IPv4
+pool, then explicitly choose its state and an hourly or slower recurrence. Missed/overlapping runs are skipped;
+edited, deleted or unapplied dependencies are revalidated at queueing and execution. Disable or delete the schedule to
+stop future runs. Task history keeps bounded per-run identifiers and evidence; Pool Health retains the latest report.
+Archive restore rebinds disabled verification schedules by unique pool name. Legacy archives without that binding,
+or a missing or ambiguous name, leave the schedule detached and require explicit pool selection.
+Deleting a pool disables and detaches its verification schedules; select an enabled IPv4 pool explicitly before
+using them again. The State toggle refuses detached, missing, disabled or IPv6 pool bindings.
+Settings restore retires pre-restore report and cooldown bindings while preserving verification job history.
+Disabled detached schedules remain portable in settings archives. Service Admins can verify and cancel from Tasks;
+creating verification schedules remains an administrator action.
+Deletion removes its verification report. A recreated pool starts without the deleted pool's observations,
+even when its database ID and configuration are reused. Historical jobs remain available; their retired scope
+bindings do not impose a cooldown on a recreated pool. An old in-flight task cannot publish into the recreated pool.
+No packet payload captures,
+credentials or external uploads are included.
+
+The full VMware lifecycle includes `dhcp-pool-verification-check`: it measures the installed dnsmasq version and check
+mode, verifies that saving opt-out leaves runtime unchanged until Apply, restores checking, and requires fresh
+legitimate-use evidence from its SiteA DHCP client. This is narrower than comprehensive packet/allocation acceptance;
+requested-address, reservation, renewal and DHCPDECLINE behavior retain the documented native limits.
+
+API clients use `GET /api/v1/dhcp/scopes/{scope_id}/verification` with `read:dhcp` and
+`POST /api/v1/dhcp/scopes/{scope_id}/verification` with `write:dhcp`. POST returns `202` and a task ID; it accepts
+only a managed pool ID and returns `409` for unavailable identity or admission. These calls neither apply configuration
+nor restart services. The additive `check_ip_availability` settings field saves desired state; omission preserves an
+existing explicit opt-out.
+
 ## Transport ownership
 
 The management DHCP transports and their API v1 counterparts are owned by the dedicated `dns_dhcp` domain

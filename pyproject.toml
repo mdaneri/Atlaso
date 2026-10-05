@@ -1,6 +1,6 @@
 [project]
 name = "atlaso"
-version = "0.9.392"
+version = "0.9.393"
 description = "Atlaso supports POC, lab, and test environments by simplifying deployment, maintenance, and validation."
 readme = "README.md"
 license = "MIT"
@@ -91,6 +91,7 @@ show_error_codes = true
 warn_unused_configs = true
 follow_imports = "silent"
 files = [
+  "atlaso/app/services/dhcp_pool_verification.py",
   "scripts/interop/dedicated_host_contract.py",
   "scripts/interop/dedicated_host_proof.py",
   "atlaso/app/services/routing_permissions.py",

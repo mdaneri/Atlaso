@@ -692,8 +692,10 @@ preserved with their affected subsystem below. Keep new requirements at their to
   reporting publication success.
 - Durable automation runs in the separate `atlaso-worker.service`; the web process creates schedules and queued jobs but
   does not execute them inline. Keep schedule task types allowlisted to Appliance Update check/install, VCF Offline
-  Depot downloads, and enabled immutable managed-script revisions. Revalidate mutable dependencies when the worker
-  claims a job, including rejecting VCF Offline Depot downloads whose profile was disabled after queueing. Skip
+  Depot downloads, bounded report-only DHCP pool verification, and enabled immutable managed-script revisions. DHCP
+  verification uses applied IPv4 pool identities, at most 1024 addresses per run, one verifier globally, and an hourly
+  or slower configured schedule; never sweep IPv6 or accept arbitrary networks. Revalidate mutable dependencies when
+  the worker claims a job, including rejecting VCF Offline Depot downloads whose profile was disabled after queueing. Skip
   missed/overlapping runs instead of replaying them, preserve schedule-to-task execution history, and mark an in-flight
   job failed if the worker restarts.
 - Keep the Automation workspace as three full-space tabs: Schedules, Executions, and Managed Scripts. Add/edit schedules

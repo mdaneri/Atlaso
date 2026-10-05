@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import shlex
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -28,6 +29,9 @@ from atlaso.app.services.appliance_update import (
     APPLIANCE_UPDATE_EXECUTION_ORDER,
     ensure_appliance_update_job_steps,
 )
+from atlaso.app.services.dhcp_pool_verification import (
+    enqueue as enqueue_dhcp_pool_verification,
+)
 from atlaso.app.services.vaults import vault_scope_identity
 from atlaso.app.services.vcf_depot_downloads import (
     ActiveVcfDepotDownloadError,
@@ -43,6 +47,7 @@ SCHEDULE_TASK_TYPES = {
     "appliance_update_install",
     "vcf_depot_download",
     "managed_script",
+    "dhcp_pool_verify",
 }
 SCRIPT_INTERPRETERS = {"bash", "python", "powershell"}
 SCHEDULE_JOB_TYPES = {
@@ -50,6 +55,7 @@ SCHEDULE_JOB_TYPES = {
     "appliance_update_install": "appliance-update",
     "vcf_depot_download": "vcf-depot-download",
     "managed_script": "managed-script",
+    "dhcp_pool_verify": "dhcp-pool-verify",
 }
 MAX_SCRIPT_TIMEOUT_SECONDS = 24 * 60 * 60
 MAX_SCRIPT_CONTENT_BYTES = 1024 * 1024
@@ -328,6 +334,7 @@ def validate_schedule_values(
     cron_expression: str,
     run_once_at: datetime | None,
     timezone_name: str,
+    allow_detached_dhcp_scope: bool = False,
 ) -> list[str]:
     """Validate schedule values.
 
@@ -338,6 +345,7 @@ def validate_schedule_values(
         cron_expression: Cron expression supplied by the caller.
         run_once_at: Run once at supplied by the caller.
         timezone_name: Timezone name supplied by the caller.
+        allow_detached_dhcp_scope: Permit an absent binding only for disabled archive rows.
 
     Returns:
         The validate schedule values result.
@@ -358,6 +366,11 @@ def validate_schedule_values(
             errors.append("Appliance update schedule contains a retired or unsupported stream.")
     elif task_type == "vcf_depot_download" and not isinstance(config.get("profile_id"), int):
         errors.append("VCF Offline Depot schedules require an integer profile_id.")
+    elif task_type == "dhcp_pool_verify":
+        scope_id = config.get("scope_id")
+        detached = allow_detached_dhcp_scope and "scope_id" not in config
+        if not detached and (isinstance(scope_id, bool) or not isinstance(scope_id, int) or scope_id <= 0):
+            errors.append("DHCP pool verification schedules require a positive integer scope_id.")
     elif task_type == "managed_script":
         if not isinstance(config.get("revision_id"), int):
             errors.append("Managed script schedules require an integer revision_id.")
@@ -373,8 +386,14 @@ def validate_schedule_values(
             parse_cron_expression(cron_expression)
         except (TypeError, ValueError) as exc:
             errors.append(str(exc))
+        if task_type == "dhcp_pool_verify":
+            fields = cron_expression.split()
+            if not fields or not re.fullmatch(r"(?:0?[0-9]|[1-5][0-9])", fields[0]):
+                errors.append("DHCP pool verification schedules must recur hourly or less often.")
     elif schedule_kind == "once":
-        if run_once_at is None:
+        if task_type == "dhcp_pool_verify":
+            errors.append("DHCP pool verification schedules must recur hourly or less often.")
+        elif run_once_at is None:
             errors.append("One-time schedules require a run date and time.")
     else:
         errors.append("Schedule kind must be cron or once.")
@@ -515,7 +534,7 @@ def enqueue_schedule_now(db: Session, *, schedule: Schedule, actor: str, now: da
     current = _aware_utc(now or utcnow())
     active = (
         None
-        if schedule.task_type == "vcf_depot_download"
+        if schedule.task_type in {"vcf_depot_download", "dhcp_pool_verify"}
         else db.execute(
             select(Job).where(
                 Job.schedule_id == schedule.id,
@@ -526,6 +545,33 @@ def enqueue_schedule_now(db: Session, *, schedule: Schedule, actor: str, now: da
     if active is not None:
         raise ValueError(f"Schedule already has active task {active.id}.")
     config = json_object(schedule.task_config_json, label="Task configuration")
+    if schedule.task_type == "dhcp_pool_verify":
+        scope_id = config.get("scope_id")
+        if isinstance(scope_id, bool) or not isinstance(scope_id, int) or scope_id <= 0:
+            raise ValueError("The DHCP pool verification scope is invalid.")
+        job = enqueue_dhcp_pool_verification(
+            db,
+            scope_id=scope_id,
+            actor=actor,
+            schedule_id=schedule.id,
+            trigger="manual_schedule",
+            planned_for=current,
+        )
+        schedule.last_run_at = current
+        schedule.last_job_id = job.id
+        schedule.updated_at = current
+        db.add(schedule)
+        db.add(
+            AuditEvent(
+                actor=actor,
+                action="queue_schedule_now",
+                resource_type="job",
+                resource_id=job.id,
+                detail=f"schedule_id={schedule.id}; task_type={schedule.task_type}",
+            )
+        )
+        db.commit()
+        return job
     if schedule.task_type == "managed_script":
         bind_managed_script_vault_scope(db, config)
     if schedule.task_type == "appliance_update_check":
@@ -608,7 +654,7 @@ def enqueue_due_schedules(db: Session, *, now: datetime | None = None) -> list[J
     for schedule in due:
         active = (
             None
-            if schedule.task_type == "vcf_depot_download"
+            if schedule.task_type in {"vcf_depot_download", "dhcp_pool_verify"}
             else db.execute(
                 select(Job).where(
                     Job.schedule_id == schedule.id,
@@ -624,7 +670,7 @@ def enqueue_due_schedules(db: Session, *, now: datetime | None = None) -> list[J
         else:
             schedule.next_run_at = next_cron_run(schedule.cron_expression, schedule.timezone_name, after=current)
         schedule.updated_at = current
-        if active is not None and schedule.task_type != "vcf_depot_download":
+        if active is not None and schedule.task_type not in {"vcf_depot_download", "dhcp_pool_verify"}:
             db.add(
                 AuditEvent(
                     actor=f"scheduler:{schedule.name}",
@@ -729,6 +775,51 @@ def enqueue_due_schedules(db: Session, *, now: datetime | None = None) -> list[J
                     )
                     db.add(job)
                     db.flush()
+        elif schedule.task_type == "dhcp_pool_verify":
+            scope_id = config.get("scope_id")
+            try:
+                if isinstance(scope_id, bool) or not isinstance(scope_id, int) or scope_id <= 0:
+                    raise ValueError("The DHCP pool verification scope is invalid.")
+                job = enqueue_dhcp_pool_verification(
+                    db,
+                    scope_id=scope_id,
+                    actor=f"scheduler:{schedule.name}",
+                    schedule_id=schedule.id,
+                    trigger="scheduled",
+                    planned_for=planned_for,
+                )
+            except ValueError as exc:
+                job_id = f"job_schedule_{schedule.id}_{int(current.timestamp())}"
+                safe_error = str(exc)
+                job = Job(
+                    id=job_id,
+                    type="dhcp-pool-verify",
+                    status=JobStatus.SKIPPED.value,
+                    created_by=f"scheduler:{schedule.name}",
+                    progress_percent=100,
+                    schedule_id=schedule.id,
+                    trigger="scheduled",
+                    planned_for=planned_for,
+                    task_config_json=json.dumps({"scope_id": scope_id}, sort_keys=True),
+                    result=json.dumps(
+                        {
+                            "schedule_id": schedule.id,
+                            "schedule_name": schedule.name,
+                            "scope_id": scope_id,
+                            "trigger": "scheduled",
+                            "planned_for": planned_for.isoformat() if planned_for else "",
+                            "success": False,
+                            "status": JobStatus.SKIPPED.value,
+                            "error": safe_error,
+                        },
+                        indent=2,
+                        sort_keys=True,
+                    ),
+                    error=safe_error,
+                    finished_at=current,
+                )
+                db.add(job)
+                db.flush()
         else:
             job = Job(
                 id=(
@@ -760,15 +851,23 @@ def enqueue_due_schedules(db: Session, *, now: datetime | None = None) -> list[J
                 skipped_result = json.loads(job.result or "{}")
             except json.JSONDecodeError:
                 skipped_result = {}
+            is_dhcp_pool_verification = schedule.task_type == "dhcp_pool_verify"
             db.add(
                 AuditEvent(
                     actor=f"scheduler:{schedule.name}",
-                    action="skip_scheduled_vcf_depot_download",
+                    action=(
+                        "skip_scheduled_task"
+                        if is_dhcp_pool_verification
+                        else "skip_scheduled_vcf_depot_download"
+                    ),
                     resource_type="job",
                     resource_id=job.id,
                     success=False,
                     detail=(
-                        f"active_job={skipped_result.get('active_job_id', '')}; "
+                        f"{skipped_result.get('error', '')}; "
+                        f"planned_for={planned_for.isoformat() if planned_for else ''}"
+                        if is_dhcp_pool_verification
+                        else f"active_job={skipped_result.get('active_job_id', '')}; "
                         f"planned_for={planned_for.isoformat() if planned_for else ''}"
                     ),
                 )

@@ -1,0 +1,24 @@
+{% set dhcp_pool_reports = dhcp_pool_reports | default([]) %}
+{% set selected_pool_report = selected_pool_report | default(none) %}
+<div id="dhcp-pool-health" class="tab-panel" role="tabpanel" hidden
+     data-reports='{{ dhcp_pool_reports | tojson }}' data-selected-pool="{{ selected_pool_report.scope_id if selected_pool_report else '' }}"
+     data-can-schedule="{{ 'true' if identity.has_role('admin') else 'false' }}" data-can-verify="{{ 'true' if identity.can('write:dhcp') else 'false' }}" data-csrf="{{ csrf_token }}">
+  <div class="section-head"><div><h2>Pool verification</h2><p class="muted">Report-only observations of applied IPv4 pools. No response does not prove availability. Open a pool for address evidence.</p></div></div>
+  <p id="dhcp-pool-status" class="muted" role="status" aria-live="polite">{{ selected_pool_report.reason if selected_pool_report else 'Select a pool to inspect its report. Verification runs in Tasks; scheduling is optional in Automation Schedules.' }}</p>
+  <div id="dhcp-pool-health-grid" class="tabulator-grid" data-fallback-id="dhcp-pool-health-fallback"></div>
+  <table id="dhcp-pool-health-fallback" class="data-table dns-fallback-table">
+    <thead><tr><th>Pool</th><th>Interface / VLAN</th><th>Verification</th><th>Unresolved</th><th>Verified at</th><th>Actions</th></tr></thead>
+    <tbody>{% for report in dhcp_pool_reports %}<tr>
+      <td><a href="{{ management_ui_root }}/dhcp?pool={{ report.scope_id }}#dhcp-pool-health">{{ report.name }}</a></td>
+      <td>{{ report.interface_name }}</td><td>{{ report.state }}</td><td>{{ report.unresolved_count }}</td><td>{{ report.verified_at or 'Not recorded' }}</td>
+      <td>{% if identity.can('write:dhcp') %}<form action="{{ management_ui_root }}/dhcp/scopes/{{ report.scope_id }}/verification" method="post"><input type="hidden" name="csrf" value="{{ csrf_token }}"><button class="button secondary small" type="submit">Verify pool</button></form>{% endif %}</td>
+    </tr>{% endfor %}</tbody>
+  </table>
+  <div class="section-head"><h3 id="dhcp-pool-detail-title">{{ selected_pool_report.name if selected_pool_report else 'Address evidence' }}</h3><a id="dhcp-pool-task-link" class="button secondary small" href="{{ management_ui_root }}/tasks">Open Tasks</a></div>
+  <p class="muted">Fresh ARP replies may include proxy ARP. Client identifiers cannot be authenticated by ARP. Relayed networks, IPv6 and unavailable links remain unknown. Earlier findings resolve only after positive matching identity evidence.</p>
+  <div id="dhcp-pool-address-grid" class="tabulator-grid" data-fallback-id="dhcp-pool-address-fallback"></div>
+  <table id="dhcp-pool-address-fallback" class="data-table dns-fallback-table">
+    <thead><tr><th>IP</th><th>State</th><th>Observed MAC</th><th>Expected MAC</th><th>Reason</th><th>First seen</th><th>Last seen</th><th>Verified at</th></tr></thead>
+    <tbody>{% if selected_pool_report %}{% for row in selected_pool_report.observations %}<tr><td>{{ row.ip_address }}</td><td>{{ row.status }}{% if row.unresolved %} (unresolved){% endif %}</td><td>{{ row.observed_mac_addresses | join(', ') }}</td><td>{{ row.expected_mac_addresses | join(', ') }}</td><td>{{ row.reason }}</td><td>{{ row.first_seen }}</td><td>{{ row.last_seen }}</td><td>{{ row.verified_at }}</td></tr>{% endfor %}{% endif %}</tbody>
+  </table>
+</div>

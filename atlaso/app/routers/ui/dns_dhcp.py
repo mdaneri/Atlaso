@@ -37,6 +37,7 @@ from atlaso.app.security import (
     Identity,
     require_session_identity,
 )
+from atlaso.app.services import dhcp_pool_verification
 from atlaso.app.services.dnsmasq import (
     DHCP_DENY_RESERVATION_DESCRIPTION_PREFIX,
     DNS_CONDITIONAL_FORWARDERS_SETTING_KEY,
@@ -1037,6 +1038,10 @@ def build_router(dependencies: DnsDhcpUiDependencies) -> DnsDhcpUiRouter:
             The endpoint response.
         """
         context = dnsmasq_context(db)
+        context["dhcp_pool_reports"] = [dhcp_pool_verification.status(db, scope.id) for scope in context["dhcp_scopes"]
+                                        if scope.enabled and scope.address_family == "ipv4"]
+        selected_pool = request.query_params.get("pool", "")
+        context["selected_pool_report"] = next((report for report in context["dhcp_pool_reports"] if str(report["scope_id"]) == selected_pool), None)
         return render(
             request,
             "dhcp.html",
@@ -1047,10 +1052,72 @@ def build_router(dependencies: DnsDhcpUiDependencies) -> DnsDhcpUiRouter:
             },
         )
 
+    @router.get("/dhcp/verification", response_model=None)
+    def dhcp_pool_health_status(
+        identity: Identity = Depends(require_session_identity), db: Session = Depends(get_db),
+    ) -> JSONResponse:
+        """Refresh the current permission-checked pool health collection.
+
+        Args:
+            identity: Authenticated identity authorizing the operation.
+            db: Database session holding the pool, job or schedule state.
+        """
+        if not identity.can("read:dhcp"):
+            raise HTTPException(status_code=403, detail="DHCP read permission required.")
+        reports = [dhcp_pool_verification.status(db, scope.id) for scope in db.scalars(select(DhcpScope).order_by(DhcpScope.name))
+                   if scope.enabled and scope.address_family == "ipv4"]
+        return JSONResponse(reports, headers={"Cache-Control": "no-store"})
+
+    @router.get("/dhcp/scopes/{scope_id}/verification", response_model=None)
+    def dhcp_pool_verification_status(
+        scope_id: int, identity: Identity = Depends(require_session_identity), db: Session = Depends(get_db),
+    ) -> JSONResponse:
+        """Read permission-checked pool status for the live DHCP grid.
+
+        Args:
+            scope_id: Managed DHCP pool identifier being selected or tested.
+            identity: Authenticated identity authorizing the operation.
+            db: Database session holding the pool, job or schedule state.
+        """
+        if not identity.can("read:dhcp"):
+            raise HTTPException(status_code=403, detail="DHCP read permission required.")
+        try:
+            return JSONResponse(dhcp_pool_verification.status(db, scope_id), headers={"Cache-Control": "no-store"})
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    @router.post("/dhcp/scopes/{scope_id}/verification", response_model=None)
+    def verify_dhcp_pool_from_ui(
+        request: Request, scope_id: int, csrf: str = Form(...),
+        identity: Identity = Depends(require_session_identity), db: Session = Depends(get_db),
+    ) -> JSONResponse | RedirectResponse:
+        """Queue a report-only task after CSRF and DHCP write authorization.
+
+        Args:
+            request: Browser request carrying the form submission.
+            scope_id: Managed DHCP pool identifier being selected or tested.
+            csrf: Submitted browser CSRF token.
+            identity: Authenticated identity authorizing the operation.
+            db: Database session holding the pool, job or schedule state.
+        """
+        verify_csrf(request, csrf)
+        if not identity.can("write:dhcp"):
+            raise HTTPException(status_code=403, detail="DHCP write permission required.")
+        try:
+            job = dhcp_pool_verification.enqueue(db, scope_id=scope_id, actor=identity.username)
+            db.commit()
+        except ValueError as exc:
+            db.rollback()
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        if request.headers.get("X-Requested-With") == "XMLHttpRequest":
+            return JSONResponse({"job_id": job.id, "scope_id": scope_id}, status_code=202)
+        return RedirectResponse(f"{MANAGEMENT_UI_ROOT}/dhcp?pool={scope_id}", status_code=303)
+
     @router.post("/dhcp/settings", response_model=None)
     def update_dhcp_from_ui(
         request: Request,
         enabled: str | None = Form(None),
+        check_ip_availability: str | None = Form(None),
         interface_name: str | None = Form(None),
         site_address: str | None = Form(None),
         prefix_length: str | None = Form(None),
@@ -1065,6 +1132,7 @@ def build_router(dependencies: DnsDhcpUiDependencies) -> DnsDhcpUiRouter:
         """Handle the update dhcp from ui endpoint.
 
         Args:
+            check_ip_availability: Submitted values for the enabled-by-default native DHCP ping-check setting.
             request: Incoming HTTP request.
             enabled: Whether the requested behavior is enabled.
             interface_name: Linux interface name of the network target.
@@ -1084,6 +1152,8 @@ def build_router(dependencies: DnsDhcpUiDependencies) -> DnsDhcpUiRouter:
         verify_csrf(request, csrf)
         settings = get_dhcp_settings_row(db)
         settings.enabled = enabled == "on"
+        if check_ip_availability is not None:
+            settings.check_ip_availability = check_ip_availability == "on"
         if interface_name is not None:
             settings.interface_name = interface_name.strip()
         if site_address is not None:
@@ -1350,6 +1420,7 @@ def build_router(dependencies: DnsDhcpUiDependencies) -> DnsDhcpUiRouter:
             HTTPException: If the request cannot be fulfilled.
         """
         verify_csrf(request, csrf)
+        dhcp_pool_verification.forget_scope(db, scope_id)
         scope = db.get(DhcpScope, scope_id)
         if not scope:
             raise HTTPException(status_code=404, detail="DHCP IP zone not found")

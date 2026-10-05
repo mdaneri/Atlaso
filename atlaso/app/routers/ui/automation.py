@@ -21,6 +21,7 @@ from atlaso.app.database import get_db
 from atlaso.app.models import (
     AutomationScript,
     AutomationScriptRevision,
+    DhcpScope,
     Job,
     JobStatus,
     Schedule,
@@ -181,6 +182,7 @@ def build_router(dependencies: AutomationUiDependencies) -> AutomationUiRouter:
         vcf_profile_id: int | None,
         revision_id: int | None,
         vault_id: int | None,
+        dhcp_scope_id: str,
         script_arguments: str,
     ) -> tuple[dict[str, Any], str]:
         """Return automation task config.
@@ -192,6 +194,7 @@ def build_router(dependencies: AutomationUiDependencies) -> AutomationUiRouter:
             vcf_profile_id: Identifier of the vcf profile.
             revision_id: Identifier of the revision.
             vault_id: Identifier of the vault.
+            dhcp_scope_id: DHCP scope identifier selected for verification.
             script_arguments: Script arguments supplied by the caller.
         """
         if task_type in {"appliance_update_check", "appliance_update_install"}:
@@ -219,6 +222,21 @@ def build_router(dependencies: AutomationUiDependencies) -> AutomationUiRouter:
                 "arguments": arguments,
                 **({"vault_id": selected_vault_id} if selected_vault_id else {}),
             }, ""
+        if task_type == "dhcp_pool_verify":
+            try:
+                scope_id = int(dhcp_scope_id)
+            except (TypeError, ValueError):
+                return {}, "Choose an enabled IPv4 DHCP scope."
+            if scope_id <= 0:
+                return {}, "Choose an enabled IPv4 DHCP scope."
+            scope = db.get(DhcpScope, scope_id)
+            if (
+                scope is None
+                or not scope.enabled
+                or str(scope.address_family or "").lower() != "ipv4"
+            ):
+                return {}, "Choose an enabled IPv4 DHCP scope."
+            return {"scope_id": scope.id}, ""
         return {}, ""
 
     class AutomationScheduleInputError(ValueError):
@@ -244,6 +262,7 @@ def build_router(dependencies: AutomationUiDependencies) -> AutomationUiRouter:
         vcf_profile_id: int | None,
         revision_id: int | None,
         vault_id: int | None,
+        dhcp_scope_id: str,
         script_arguments: str,
         schedule_kind: str,
         cron_expression: str,
@@ -262,6 +281,7 @@ def build_router(dependencies: AutomationUiDependencies) -> AutomationUiRouter:
             vcf_profile_id: Server-validated VCF Offline Depot profile identifier.
             revision_id: Managed script revision identifier.
             vault_id: Optional scoped vault identifier.
+            dhcp_scope_id: DHCP scope identifier selected for verification.
             script_arguments: Literal managed-script arguments.
             schedule_kind: Cron or one-time schedule kind.
             cron_expression: Five-field cron expression.
@@ -294,6 +314,7 @@ def build_router(dependencies: AutomationUiDependencies) -> AutomationUiRouter:
             vcf_profile_id=vcf_profile_id,
             revision_id=revision_id,
             vault_id=vault_id,
+            dhcp_scope_id=dhcp_scope_id,
             script_arguments=script_arguments,
         )
         if config_error:
@@ -353,6 +374,7 @@ def build_router(dependencies: AutomationUiDependencies) -> AutomationUiRouter:
         vcf_profile_id: int | None = Form(None),
         revision_id: int | None = Form(None),
         vault_id: int | None = Form(None),
+        dhcp_scope_id: str = Form(""),
         script_arguments: str = Form(""),
         schedule_kind: str = Form("cron"),
         cron_expression: str = Form("0 2 * * *"),
@@ -373,6 +395,7 @@ def build_router(dependencies: AutomationUiDependencies) -> AutomationUiRouter:
             vcf_profile_id: Identifier of the vcf profile.
             revision_id: Identifier of the revision.
             vault_id: Identifier of the vault.
+            dhcp_scope_id: Identifier of the DHCP scope to verify.
             script_arguments: Script arguments supplied by the caller.
             schedule_kind: Schedule kind supplied by the caller.
             cron_expression: Cron expression supplied by the caller.
@@ -397,6 +420,7 @@ def build_router(dependencies: AutomationUiDependencies) -> AutomationUiRouter:
                 vcf_profile_id=vcf_profile_id,
                 revision_id=revision_id,
                 vault_id=vault_id,
+                dhcp_scope_id=dhcp_scope_id,
                 script_arguments=script_arguments,
                 schedule_kind=schedule_kind,
                 cron_expression=cron_expression,
@@ -483,6 +507,7 @@ def build_router(dependencies: AutomationUiDependencies) -> AutomationUiRouter:
                 vcf_profile_id=profile_id,
                 revision_id=None,
                 vault_id=None,
+                dhcp_scope_id="",
                 script_arguments="",
                 schedule_kind=schedule_kind,
                 cron_expression=cron_expression,
@@ -549,6 +574,7 @@ def build_router(dependencies: AutomationUiDependencies) -> AutomationUiRouter:
         vcf_profile_id: int | None = Form(None),
         revision_id: int | None = Form(None),
         vault_id: int | None = Form(None),
+        dhcp_scope_id: str = Form(""),
         script_arguments: str = Form(""),
         schedule_kind: str = Form("cron"),
         cron_expression: str = Form("0 2 * * *"),
@@ -570,6 +596,7 @@ def build_router(dependencies: AutomationUiDependencies) -> AutomationUiRouter:
             vcf_profile_id: Identifier of the vcf profile.
             revision_id: Identifier of the revision.
             vault_id: Identifier of the vault.
+            dhcp_scope_id: Identifier of the DHCP scope to verify.
             script_arguments: Script arguments supplied by the caller.
             schedule_kind: Schedule kind supplied by the caller.
             cron_expression: Cron expression supplied by the caller.
@@ -609,6 +636,7 @@ def build_router(dependencies: AutomationUiDependencies) -> AutomationUiRouter:
             vcf_profile_id=vcf_profile_id,
             revision_id=revision_id,
             vault_id=vault_id,
+            dhcp_scope_id=dhcp_scope_id,
             script_arguments=script_arguments,
         )
         if config_error:
@@ -790,6 +818,19 @@ def build_router(dependencies: AutomationUiDependencies) -> AutomationUiRouter:
                     identity,
                     db,
                     "Enable the VCF Offline Depot profile before enabling its schedule.",
+                    status_code=409,
+                )
+        if not schedule.enabled and schedule.task_type == "dhcp_pool_verify":
+            try:
+                config = json.loads(schedule.task_config_json or "{}")
+                scope_id = int(config.get("scope_id") or 0)
+            except (AttributeError, TypeError, ValueError):
+                scope_id = 0
+            scope = db.get(DhcpScope, scope_id) if scope_id > 0 else None
+            if scope is None or not scope.enabled or str(scope.address_family or "").lower() != "ipv4":
+                return _automation_render_error(
+                    request, identity, db,
+                    "Choose an enabled IPv4 DHCP scope before enabling its schedule.",
                     status_code=409,
                 )
         schedule.enabled = not schedule.enabled

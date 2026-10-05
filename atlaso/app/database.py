@@ -82,6 +82,7 @@ def _create_database_schema(bind: Engine) -> None:
                 _reconcile_routing_permission_columns(connection)
                 _reconcile_interface_address_check_columns(connection)
                 _reconcile_ntp_time_source_column(connection)
+                _reconcile_dhcp_availability_column(connection)
             except Exception:
                 connection.rollback()
                 raise
@@ -99,6 +100,7 @@ def _create_database_schema(bind: Engine) -> None:
             _reconcile_routing_permission_columns(connection)
             _reconcile_interface_address_check_columns(connection)
             _reconcile_ntp_time_source_column(connection)
+            _reconcile_dhcp_availability_column(connection)
         return
     with bind.begin() as connection:
         Base.metadata.create_all(bind=connection)
@@ -107,6 +109,21 @@ def _create_database_schema(bind: Engine) -> None:
         _reconcile_routing_permission_columns(connection)
         _reconcile_interface_address_check_columns(connection)
         _reconcile_ntp_time_source_column(connection)
+        _reconcile_dhcp_availability_column(connection)
+
+
+def _reconcile_dhcp_availability_column(connection: Connection) -> None:
+    """Preserve native IPv4 allocation checks in legacy databases.
+
+    Args:
+        connection: Transaction holding the startup schema lock.
+    """
+    columns = {column["name"] for column in inspect(connection).get_columns("dhcp_settings")}
+    if "check_ip_availability" not in columns:
+        connection.execute(text(
+            "ALTER TABLE dhcp_settings ADD COLUMN "
+            "check_ip_availability BOOLEAN NOT NULL DEFAULT TRUE"
+        ))
 
 
 def _reconcile_ntp_time_source_column(connection: Connection) -> None:

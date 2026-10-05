@@ -18,8 +18,10 @@
       <button class="tab-button active" type="button" role="tab" data-tab-target="dhcp-desired-state" aria-controls="dhcp-desired-state" aria-selected="true">Desired State</button>
       <button class="tab-button" type="button" role="tab" data-tab-target="dhcp-generated-pxe" aria-controls="dhcp-generated-pxe" aria-selected="false">Generated PXE</button>
       <button class="tab-button" type="button" role="tab" data-tab-target="dhcp-actual-leases" aria-controls="dhcp-actual-leases" aria-selected="false">Actual Leases</button>
+      <button class="tab-button" type="button" role="tab" data-tab-target="dhcp-pool-health" aria-controls="dhcp-pool-health" aria-selected="false">Pool Health</button>
     </div>
     <div class="tab-panels">
+      {% include "partials/dhcp_pool_health.html" %}
       <div id="dhcp-desired-state" class="tab-panel active" role="tabpanel">
     <div class="section-head">
       <div>
@@ -335,6 +337,8 @@
       <form class="form-stack" action="{{ management_ui_root }}/dhcp/settings" method="post" data-autosave-form data-autosave-status-id="dhcp-settings-autosave-status">
         <input type="hidden" name="csrf" value="{{ csrf_token }}">
         <label class="switch-field"><span class="field-label"><span>Service enabled</span><button class="help-icon" type="button" data-help="Controls whether Atlaso renders DHCP as enabled desired state for dnsmasq.">i</button></span><input class="switch-input" type="checkbox" name="enabled" {{ "checked" if dhcp_settings.enabled else "" }}><span class="switch-track" aria-hidden="true"></span></label>
+        <input type="hidden" name="check_ip_availability" value="off">
+        <label class="switch-field"><span class="field-label"><span>Check IP availability before assignment</span><button class="help-icon" type="button" data-help="Enables dnsmasq's native IPv4 candidate ping checks across all pools after Appliance Apply. Requested addresses, reservations, renewals and ICMP-blocking devices are not comprehensively protected. A nonresponse is not proof of availability. Disabling checks keeps ordinary lease and reservation uniqueness checks. IPv6 behavior is unchanged. Saving does not restart DHCP.">i</button></span><input class="switch-input" type="checkbox" name="check_ip_availability" {{ "checked" if dhcp_settings.check_ip_availability is not sameas false else "" }}><span class="switch-track" aria-hidden="true"></span></label>
         <input type="hidden" name="interface_name" value="{{ dhcp_settings.interface_name }}">
         <input type="hidden" name="site_address" value="{{ dhcp_settings.site_address }}">
         <input type="hidden" name="prefix_length" value="{{ dhcp_settings.prefix_length }}">
@@ -474,4 +478,7 @@
     <div class="alert warning">Saving changes DHCP desired state only. dnsmasq enforcement waits for global appliance apply.</div>
   </section>
 {% endcall %}
+{% endblock %}
+{% block extra_scripts %}
+<script src="/static/dhcp-pool-health.js?v=819-2" defer></script>
 {% endblock %}

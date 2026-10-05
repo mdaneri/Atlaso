@@ -22311,6 +22311,8 @@ function initializeAutomationTables() {
         ? { label: "Managed script", subtitle: "Choose enabled revision", title: "Choose a managed script", description: "Select the enabled immutable script revision this schedule should run." }
         : value === "vcf_depot_download"
           ? { label: "Depot profile", subtitle: "Choose download profile", title: "Choose a depot profile", description: "Select the enabled VCF Offline Depot download profile this schedule should run." }
+          : value === "dhcp_pool_verify"
+            ? { label: "DHCP pool", subtitle: "Choose IPv4 scope", title: "Choose a DHCP pool", description: "Select the enabled IPv4 DHCP scope whose applied address pool should be verified." }
           : value === "appliance_update_install"
             ? { label: "Update streams", subtitle: "Choose install streams", title: "Choose update streams", description: "Select the repository-backed update streams this task should install." }
             : { label: "Update streams", subtitle: "Choose check streams", title: "Choose update streams", description: "Select the repository-backed update streams this task should check." };
@@ -22326,9 +22328,14 @@ function initializeAutomationTables() {
           ? value.startsWith("appliance_update_")
           : group === "vcf-depot"
             ? value === "vcf_depot_download"
-            : value === "managed_script";
+            : group === "dhcp-pool"
+              ? value === "dhcp_pool_verify"
+              : value === "managed_script";
         element.classList.toggle("hidden", !visible);
       });
+      const dhcpScope = scheduleForm.querySelector("[data-automation-dhcp-scope]");
+      if (dhcpScope instanceof HTMLSelectElement) dhcpScope.required = value === "dhcp_pool_verify";
+      updateTimingVisibility();
       if (scheduleWizard?.currentStepId === "config") scheduleWizard.showStep("config");
     };
     const cronWeekdayNames = { "0": "Sunday", "1": "Monday", "2": "Tuesday", "3": "Wednesday", "4": "Thursday", "5": "Friday", "6": "Saturday" };
@@ -22397,6 +22404,15 @@ function initializeAutomationTables() {
       updateCronBuilder();
     };
     const updateTimingVisibility = () => {
+      const dhcpPoolSchedule = scheduleTaskValue() === "dhcp_pool_verify";
+      const oneTimeOption = scheduleKind?.querySelector('option[value="once"]');
+      if (oneTimeOption instanceof HTMLOptionElement) {
+        oneTimeOption.disabled = dhcpPoolSchedule;
+        oneTimeOption.hidden = dhcpPoolSchedule;
+      }
+      if (dhcpPoolSchedule && scheduleKind instanceof HTMLSelectElement && scheduleKind.value === "once") {
+        scheduleKind.value = "cron";
+      }
       const value = scheduleKind instanceof HTMLSelectElement ? scheduleKind.value : "cron";
       scheduleForm.querySelectorAll("[data-automation-schedule-timing]").forEach((element) => {
         const visible = element.getAttribute("data-automation-schedule-timing") === value;
@@ -22421,6 +22437,16 @@ function initializeAutomationTables() {
             field: requiredConfig,
           };
         }
+        if (taskValue === "dhcp_pool_verify" && !String(scheduleForm.elements.dhcp_scope_id?.value || "")) {
+          return {
+            valid: false,
+            message: "Choose an enabled IPv4 DHCP scope.",
+            field: "dhcp_scope_id",
+          };
+        }
+      }
+      if (step.id === "timing" && taskValue === "dhcp_pool_verify" && scheduleKind instanceof HTMLSelectElement && scheduleKind.value !== "cron") {
+        return { valid: false, message: "DHCP pool verification must recur hourly or less often.", field: "schedule_kind" };
       }
       return true;
     };
@@ -22446,6 +22472,8 @@ function initializeAutomationTables() {
         configValue = isContextualVcfSchedule
           ? String(selectedContextualProfile?.name || "not selected")
           : scheduleForm.elements.vcf_profile_id.selectedOptions[0]?.textContent?.trim() || "not selected";
+      } else if (taskValue === "dhcp_pool_verify") {
+        configValue = scheduleForm.elements.dhcp_scope_id.selectedOptions[0]?.textContent?.trim() || "not selected";
       }
       reviewValue("[data-automation-review-name]", String(scheduleForm.elements.name.value || ""));
       reviewValue("[data-automation-review-task]", taskValue.replaceAll("_", " "));
@@ -22482,12 +22510,16 @@ function initializeAutomationTables() {
           scheduleForm.elements.cron_expression.value = rowData.cron_expression || "0 2 * * *";
           scheduleForm.elements.run_once_at.value = rowData.run_once_local || "";
           scheduleForm.elements.enabled.checked = Boolean(rowData.enabled);
+          scheduleForm.elements.dhcp_scope_id.value = String(rowData.task_config?.scope_id || "");
           const selectedStreams = new Set(rowData.task_config?.selected_streams || []);
           scheduleForm.querySelectorAll('input[name="selected_streams"]').forEach((input) => { input.checked = selectedStreams.has(input.value); });
           scheduleForm.elements.vcf_profile_id.value = String(rowData.task_config?.profile_id || "");
           scheduleForm.elements.revision_id.value = String(rowData.task_config?.revision_id || "");
           scheduleForm.elements.vault_id.value = String(rowData.task_config?.vault_id || "");
           scheduleForm.elements.script_arguments.value = formatScriptArguments(rowData.task_config?.arguments, selectedScriptInterpreter());
+        }
+        else {
+          scheduleForm.elements.dhcp_scope_id.value = "";
         }
         updateScriptArgumentsGuidance();
         loadCronBuilder(rowData?.cron_expression || "0 2 * * *");
@@ -22583,6 +22615,16 @@ function initializeAutomationTables() {
         options: atlasoGridOptions31,
       }).table;
       const scheduleQuery = new URLSearchParams(window.location.search);
+      if (scheduleQuery.get("new") === "dhcp_pool_verify") {
+        const requestedScopeId = scheduleQuery.get("scope_id") || "";
+        const scopeOption = [...scheduleForm.elements.dhcp_scope_id.options]
+          .find((option) => option.value === requestedScopeId && !option.disabled);
+        openScheduleWizard(null, schedulesElement);
+        scheduleForm.elements.task_type.value = "dhcp_pool_verify";
+        scheduleForm.elements.dhcp_scope_id.value = scopeOption ? requestedScopeId : "";
+        updateConfigVisibility();
+        window.history.replaceState({}, "", `${window.location.pathname}${window.location.hash || "#schedules"}`);
+      }
       if (scheduleQuery.get("new") === "vcf_depot_download") {
         const requestedProfileId = scheduleQuery.get("vcf_profile_id") || "";
         const profileOption = [...scheduleForm.elements.vcf_profile_id.options]

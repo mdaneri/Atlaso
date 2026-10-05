@@ -98,7 +98,7 @@ COMMANDS: dict[str, set[str]] = {
     "management-front-door": {"recover"},
     "management-handoff": {"validate", "apply", "acknowledge", "recover"},
     "firewall": {"validate", "apply", "replay"},
-    "dnsmasq": {"validate", "apply", "reload", "leases", "logs"},
+    "dnsmasq": {"validate", "apply", "reload", "leases", "logs", "verify-pool"},
     "ca": {"validate", "apply"},
     "kms": {"validate", "apply", "status"},
     "ldap": {"validate", "apply", "status", "export", "logs", "authenticate"},
@@ -243,6 +243,7 @@ NO_PATH_ACTIONS = {
     ("appliance-update", "quiesce-action"),
 }
 NON_PATH_ARGUMENT_ACTIONS = {
+    ("dnsmasq", "verify-pool"),
     ("console", "recover-management-plane"),
     ("network", "recover"),
     ("network", "acknowledge"),
@@ -3704,6 +3705,250 @@ def _restore_dnsmasq_activation_on_failure() -> Iterator[Callable[[], None]]:
                 raise OSError("Failed to restore prior DNS service state: " + ", ".join(failures))
 
 
+def _dhcp_pool_read(path: Path) -> bytes:
+    """Read one fixed ordinary config/lease file without following a leaf link.
+
+    Args:
+        path: Fixed helper-owned input, never a caller-supplied path.
+    """
+    if path.is_symlink():
+        raise ValueError("Pool input is not an ordinary file.")
+    descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0))
+    with os.fdopen(descriptor, "rb") as handle:
+        identity = os.fstat(handle.fileno())
+        if not stat.S_ISREG(identity.st_mode) or identity.st_nlink != 1 or identity.st_size > 1024 * 1024:
+            raise ValueError("Pool input is not a bounded single-link regular file.")
+        raw = handle.read(1024 * 1024 + 1)
+        if len(raw) > 1024 * 1024:
+            raise ValueError("Pool input exceeded the evidence limit.")
+        after = os.fstat(handle.fileno())
+        if (identity.st_size, identity.st_mtime_ns) != (after.st_size, after.st_mtime_ns):
+            raise ValueError("Pool input changed during read.")
+        return raw
+
+
+def _dhcp_pool_candidates(config: str, scope_id: int) -> tuple[dict, list[str]]:
+    """Project only installed DHCP ranges/reservations; refuse unbounded pools.
+
+    Args:
+        config: Installed client-facing dnsmasq configuration.
+        scope_id: Positive managed pool ID.
+    """
+    prefix = "# atlaso-dhcp-pool="
+    matches = [json.loads(line[len(prefix):]) for line in config.splitlines() if line.startswith(prefix)]
+    matches = [pool for pool in matches if pool.get("scope_id") == scope_id]
+    if len(matches) != 1:
+        raise ValueError("No unique applied pool identity; apply DNS/DHCP before verification.")
+    pool = matches[0]
+    if pool.get("address_family") != "ipv4":
+        raise ValueError("IPv6 pools are not swept.")
+    interface = pool.get("interface_name", "")
+    if not _valid_network_interface_name(interface):
+        raise ValueError("Pool interface is not a native network link.")
+    network = IPv4Network(f"{pool['site_address']}/{int(pool['prefix_length'])}", strict=False)
+    tag = "".join(character.lower() if character.isalnum() else "-" for character in str(pool["name"]).strip()).strip("-") or "scope"
+    addresses: set[IPv4Address] = set()
+    ranges = pool.get("ranges", [])
+    if not isinstance(ranges, list) or not 1 <= len(ranges) <= 128:
+        raise ValueError("Applied pool ranges are unavailable or unbounded.")
+    lines = config.splitlines()
+    for pair in ranges:
+        start, end = (IPv4Address(value) for value in pair)
+        if start not in network or end not in network or int(start) > int(end) or int(end) - int(start) >= 1024:
+            raise ValueError("Pool is outside its subnet or exceeds 1024 addresses.")
+        rendered = f"dhcp-range=set:{tag},{start},{end},"
+        if not any(line.startswith(rendered) for line in lines):
+            raise ValueError("Pool metadata does not match an installed DHCP range.")
+        addresses.update(IPv4Address(value) for value in range(int(start), int(end) + 1))
+        if len(addresses) > 1024:
+            raise ValueError("Pool exceeds 1024 addresses.")
+    reservations = pool.get("reservations", [])
+    if not isinstance(reservations, list) or len(reservations) > 1024:
+        raise ValueError("Reservation evidence exceeded its limit.")
+    for row in reservations:
+        address = IPv4Address(row["ip_address"])
+        mac = str(row["mac_address"]).lower()
+        if address not in network or not _valid_network_mac(mac):
+            raise ValueError("Invalid applied reservation identity.")
+        if not any(line.lower().startswith(f"dhcp-host={mac},") and str(address) in line.split(",") for line in lines):
+            raise ValueError("Reservation metadata does not match installed DHCP configuration.")
+        addresses.add(address)
+        if len(addresses) > 1024:
+            raise ValueError("Pool with reservations exceeds 1024 addresses.")
+    addresses -= {network.network_address, network.broadcast_address, IPv4Address(pool["site_address"])}
+    return pool, [str(address) for address in sorted(addresses)]
+
+
+def _dhcp_pool_leases(addresses: list[str]) -> list[dict]:
+    """Capture bounded lease/client identities around a fresh observation.
+
+    Args:
+        addresses: Selected chunk addresses.
+    """
+    raw = _dhcp_pool_read(DNSMASQ_LEASE_FILE_PATH).decode("utf-8")
+    lines = raw.splitlines()
+    if len(lines) > 10000:
+        raise ValueError("Lease snapshot is too large for bounded verification.")
+    rows = []
+    for line in lines:
+        parts = line.split()
+        if len(parts) >= 4 and parts[2] in addresses:
+            expires = int(parts[0])
+            if expires < 0 or not _valid_network_mac(parts[1]):
+                raise ValueError("Lease identity is malformed.")
+            rows.append({"ip_address": parts[2], "mac_address": parts[1].lower(),
+                         "client_id": parts[4] if len(parts) > 4 and parts[4] != "*" else "", "expires_epoch": expires})
+            if len(rows) > 128:
+                raise ValueError("Ambiguous lease snapshot exceeded its limit.")
+    return rows
+
+
+def _dhcp_pool_link(pool: dict) -> tuple[str, str, set[str], int]:
+    """Require an up directly connected link owning the applied pool gateway.
+
+    Args:
+        pool: Validated applied pool identity.
+    """
+    result = subprocess.run(["ip", "-j", "-4", "address", "show", "dev", pool["interface_name"]],
+                            capture_output=True, text=True, timeout=1, check=False)
+    if result.returncode or len(result.stdout) > 128 * 1024:
+        raise ValueError("Pool link observation is unavailable.")
+    links = json.loads(result.stdout)
+    if len(links) != 1 or "UP" not in links[0].get("flags", []) or "LOWER_UP" not in links[0].get("flags", []):
+        raise ValueError("Pool link is not administratively and operationally up.")
+    link = links[0]
+    if link.get("ifname") != pool["interface_name"] or type(link.get("ifindex")) is not int or link["ifindex"] < 1:
+        raise ValueError("Pool native link identity is unavailable.")
+    # iproute2 omits link-layer fields from an IPv4-only address query.
+    # Match a separate native link observation before accepting its Ethernet MAC.
+    native = subprocess.run(["ip", "-j", "link", "show", "dev", pool["interface_name"]],
+                            capture_output=True, text=True, timeout=1, check=False)
+    if native.returncode or len(native.stdout) > 128 * 1024:
+        raise ValueError("Pool Ethernet link observation is unavailable.")
+    native_links = json.loads(native.stdout)
+    if len(native_links) != 1:
+        raise ValueError("Pool Ethernet link identity is ambiguous.")
+    native_link = native_links[0]
+    if (native_link.get("ifname") != pool["interface_name"] or native_link.get("ifindex") != link["ifindex"]
+            or "UP" not in native_link.get("flags", []) or "LOWER_UP" not in native_link.get("flags", [])):
+        raise ValueError("Pool Ethernet link identity changed during observation.")
+    mac = native_link.get("address", "")
+    if not _valid_network_mac(mac) or int(mac.split(":")[0], 16) & 1 or mac == "00:00:00:00:00:00":
+        raise ValueError("Pool link has no usable Ethernet identity.")
+    info = link.get("addr_info", [])
+    if not any(row.get("local") == pool["site_address"] and row.get("prefixlen") == pool["prefix_length"] for row in info):
+        raise ValueError("Pool gateway/prefix is not directly connected on the applied interface; relay verification is unknown.")
+    local = {str(row["local"]) for row in info if "local" in row}
+    return str(pool["site_address"]), mac.lower(), local, link["ifindex"]
+
+
+def _dhcp_pool_arp_reply(packet: bytes, addresses: set[str], source_ip: str, source_mac: bytes) -> tuple[str, str] | None:
+    """Accept only matching Ethernet IPv4 ARP replies to this link-local probe.
+
+    Args:
+        packet: Transient frame; never retained or logged.
+        addresses: Requested IPv4 addresses on this link.
+        source_ip: Local probe origin.
+        source_mac: Local Ethernet identity.
+    """
+    if len(packet) < 42 or packet[12:14] != b"\x08\x06" or packet[14:22] != b"\x00\x01\x08\x00\x06\x04\x00\x02":
+        return None
+    if packet[:6] != source_mac or packet[6:12] != packet[22:28] or packet[32:38] != source_mac:
+        return None
+    if packet[38:42] != socket.inet_aton(source_ip) or packet[22] & 1 or packet[22:28] == b"\0" * 6:
+        return None
+    address = socket.inet_ntoa(packet[28:32])
+    if address not in addresses:
+        return None
+    return address, ":".join(f"{part:02x}" for part in packet[22:28])
+
+
+def _dhcp_pool_probe(interface: str, source_ip: str, mac: str, addresses: list[str]) -> list[dict]:
+    """Probe a small chunk at eight ARP requests/sec; never alter neighbors.
+
+    Args:
+        interface: Applied native interface, including a VLAN link.
+        source_ip: Verified local gateway address.
+        mac: Verified local Ethernet MAC.
+        addresses: At most 16 validated applied candidates.
+    """
+    hardware = bytes.fromhex(mac.replace(":", ""))
+    requested: set[str] = set()
+    seen = {address: set() for address in addresses}
+    with socket.socket(socket.AF_PACKET, socket.SOCK_RAW, socket.htons(0x0806)) as sock:
+        sock.bind((interface, 0))
+        sock.settimeout(0.02)
+        deadline = time.monotonic() + min(3.5, len(addresses) / 8 + 1)
+        next_send = time.monotonic()
+        position = 0
+        received = 0
+        while time.monotonic() < deadline:
+            if position < len(addresses) and time.monotonic() >= next_send:
+                target = socket.inet_aton(addresses[position])
+                frame = b"\xff" * 6 + hardware + b"\x08\x06\x00\x01\x08\x00\x06\x04\x00\x01" + hardware + socket.inet_aton(source_ip) + b"\0" * 6 + target
+                sock.send(frame)
+                requested.add(addresses[position])
+                position += 1
+                next_send = time.monotonic() + 0.125
+            try:
+                packet = sock.recv(2048)
+            except TimeoutError:
+                continue
+            reply = _dhcp_pool_arp_reply(packet, requested, source_ip, hardware)
+            received += 1
+            if received >= 2048:
+                raise ValueError("ARP observation frame limit reached; verification is incomplete.")
+            if reply is not None and len(seen[reply[0]]) < 4:
+                seen[reply[0]].add(reply[1])
+        if position != len(addresses):
+            raise ValueError("Probe deadline reached before every candidate was checked.")
+    return [{"ip_address": address, "mac_addresses": sorted(seen[address]),
+             "status": "response" if seen[address] else "no_response", "reason": "Fresh interface-scoped ARP; proxy ARP remains possible."}
+            for address in addresses]
+
+
+def _verify_dhcp_pool(args: list[str]) -> int:
+    """Return one bounded read-only observation chunk from installed config.
+
+    Args:
+        args: Pool ID, chunk offset and expected installed-config digest.
+    """
+    try:
+        if len(args) != 3 or not re.fullmatch(r"[0-9a-f]{64}", args[2]):
+            raise ValueError("Verification needs a pool ID, offset and applied configuration digest.")
+        scope_id, offset = int(args[0]), int(args[1])
+        if scope_id < 1 or offset < 0 or offset >= 1024:
+            raise ValueError("Invalid bounded pool cursor.")
+        raw = _dhcp_pool_read(DNSMASQ_CONFIG_PATH)
+        digest = hashlib.sha256(raw).hexdigest()
+        if digest != args[2]:
+            raise ValueError("Installed configuration changed or does not match the applied identity.")
+        pool, candidates = _dhcp_pool_candidates(raw.decode("utf-8"), scope_id)
+        source_ip, mac, local, ifindex = _dhcp_pool_link(pool)
+        candidates = [address for address in candidates if address not in local]
+        if not candidates or offset >= len(candidates):
+            raise ValueError("No eligible addresses remain at this pool cursor.")
+        chunk = candidates[offset:offset + 16]
+        before = _dhcp_pool_leases(chunk)
+        observations = _dhcp_pool_probe(pool["interface_name"], source_ip, mac, chunk)
+        after = _dhcp_pool_leases(chunk)
+        if _dhcp_pool_link(pool) != (source_ip, mac, local, ifindex):
+            raise ValueError("Pool link identity changed during observation.")
+        if hashlib.sha256(_dhcp_pool_read(DNSMASQ_CONFIG_PATH)).hexdigest() != digest:
+            raise ValueError("Installed configuration changed during observation; result is unknown.")
+        version = subprocess.run(["dnsmasq", "--version"], capture_output=True, text=True, timeout=1, check=False)
+        cursor = offset + len(chunk)
+        print(json.dumps({"status": "complete", "config_hash": digest, "scope": pool,
+                          "offset": offset, "total": len(candidates), "next_offset": cursor if cursor < len(candidates) else None,
+                          "observed_at": datetime.now(timezone.utc).isoformat(), "observations": observations,
+                          "leases_before": before, "leases_after": after,
+                          "link_identity_hash": hashlib.sha256(json.dumps([source_ip, mac, sorted(local), ifindex]).encode()).hexdigest(),
+                          "dnsmasq_version": version.stdout.splitlines()[0][:200] if version.returncode == 0 and version.stdout else "Unknown"}))
+    except (OSError, ValueError, KeyError, TypeError, AttributeError, subprocess.TimeoutExpired):
+        print(json.dumps({"status": "unknown", "reason": "Bounded applied-pool observation unavailable: check applied identity, pool size, link, leases and helper capabilities."}))
+    return 0
+
+
 def _handle_dnsmasq(action: str, args: list[str]) -> int:
     """Handle dnsmasq.
 
@@ -3711,6 +3956,8 @@ def _handle_dnsmasq(action: str, args: list[str]) -> int:
         action: Action consumed by handle dnsmasq.
         args: Parsed command-line options consumed by the operation.
     """
+    if action == "verify-pool":
+        return _verify_dhcp_pool(args)
     if action == "logs":
         if args:
             print("dnsmasq logs does not accept a path", file=sys.stderr)
@@ -34029,6 +34276,8 @@ def main(argv: list[str]) -> int:
 
     if (group, action) == ("network", "address-status") and real_apply:
         return _handle_network(action, normalized_args)
+    if (group, action) == ("dnsmasq", "verify-pool") and real_apply:
+        return _verify_dhcp_pool(normalized_args)
     if (group, action) == ("kms", "status"):
         return _handle_kms(action, normalized_args)
     if (group, action) == ("diagnostics", "source"):

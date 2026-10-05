@@ -521,6 +521,7 @@ def test_postgresql_startup_adds_address_checks_under_schema_lock(monkeypatch):
 
     calls = []
     columns = {table: [{"name": "id"}] for table in ("physical_interfaces", "vlan_interfaces", "routing_rules")}
+    columns["dhcp_settings"] = [{"name": "id"}]
     columns["ntp_settings"] = [{"name": "id"}, {"name": "time_source"}]
     columns["jobs"] = [{"name": name} for name in (
         "id", "cancel_requested_at", "cancel_requested_by", "cancel_completed_at", "cancel_outcome",
@@ -547,7 +548,7 @@ def test_postgresql_startup_adds_address_checks_under_schema_lock(monkeypatch):
                 columns[table].append({"name": "host_ipv6_cidrs"})
             else:
                 assert sql.endswith("BOOLEAN NOT NULL DEFAULT TRUE")
-                columns[table].append({"name": "check_duplicate_ip_addresses"})
+                columns[table].append({"name": sql.split()[5]})
 
     connection = SimpleNamespace(execute=execute, dialect=SimpleNamespace(name="postgresql"))
     engine = SimpleNamespace(dialect=SimpleNamespace(name="postgresql"), begin=lambda: nullcontext(connection))
@@ -556,7 +557,8 @@ def test_postgresql_startup_adds_address_checks_under_schema_lock(monkeypatch):
     monkeypatch.setattr(database, "_reconcile_nat_ingress_column", lambda _connection: None)
     database._create_database_schema(engine)
     database._create_database_schema(engine)
-    assert len([sql for sql in calls if sql.startswith("ALTER TABLE")]) == 5
+    assert len([sql for sql in calls if sql.startswith("ALTER TABLE")]) == 6
+    assert {column["name"] for column in columns["dhcp_settings"]} == {"id", "check_ip_availability"}
     assert {column["name"] for column in columns["routing_rules"]} == {"id", "policy", "ip_family"}
     assert {column["name"] for column in columns["physical_interfaces"]} == {
         "id", "check_duplicate_ip_addresses", "host_ipv6_cidrs",

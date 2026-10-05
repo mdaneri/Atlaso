@@ -5059,6 +5059,77 @@ def client_checks(args: argparse.Namespace) -> dict[str, Any]:
     return evidence
 
 
+def dhcp_pool_verification_check(client: HttpClient, args: argparse.Namespace) -> dict[str, Any]:
+    """Verify deployed candidate-check configuration and fresh leased-client evidence.
+
+    Args:
+        client: Authenticated appliance transport.
+        args: Owned lifecycle appliance and client identities.
+    """
+    if args.skip_client_checks or not args.client_a_host:
+        return {"skipped": "DHCP verification needs the owned SiteA client"}
+    scopes = client.json_request("GET", "/api/v1/dhcp/scopes")
+    scope = next((row for row in scopes if row.get("name") == "Lifecycle SiteA" and row.get("enabled")), None)
+    if scope is None:
+        raise LifecycleError("No enabled Lifecycle SiteA pool for deployed verification.")
+    settings = client.json_request("GET", "/api/v1/dhcp/settings")
+    if settings.get("check_ip_availability") is not True:
+        raise LifecycleError("Native DHCP candidate checking did not retain the enabled default.")
+    probe_command = (
+        'test -f /etc/atlaso/dnsmasq.d/atlaso.conf || exit 1; '
+        'if grep -qx no-ping /etc/atlaso/dnsmasq.d/atlaso.conf; then echo CHECKS=disabled; else echo CHECKS=enabled; fi; '
+        'command -v dnsmasq >/dev/null || exit 1; '
+        'VERSION="$(dnsmasq --version)" || exit 1; test -n "$VERSION" || exit 1; '
+        'printf "%s\\n" "$VERSION" | head -n 1; systemctl is-active dnsmasq'
+    )
+    # Match host-state checks: keep nested shell syntax out of plink's Windows
+    # argument parsing and the outer sudo shell; decode only on the appliance.
+    encoded_probe = base64.b64encode(probe_command.encode("utf-8")).decode("ascii")
+    probe_command = f"printf %s {encoded_probe} | base64 -d | sh"
+    before = ssh_command(args.appliance_ssh_host, args, probe_command, role="appliance")
+    require_success(before, "native DHCP default and daemon observation")
+    if "CHECKS=enabled" not in before["stdout"]:
+        raise LifecycleError("Installed DHCP configuration unexpectedly disables native checks.")
+    try:
+        client.json_request("PATCH", "/api/v1/dhcp/settings", json_body={**settings, "check_ip_availability": False})
+        staged = ssh_command(args.appliance_ssh_host, args, probe_command, role="appliance")
+        require_success(staged, "DHCP save must preserve running native checks")
+        if "CHECKS=enabled" not in staged["stdout"]:
+            raise LifecycleError("Saving DHCP desired state changed the installed check mode before Apply.")
+        apply_units(client, ["dnsmasq"], args)
+        disabled = ssh_command(args.appliance_ssh_host, args, probe_command, role="appliance")
+        require_success(disabled, "native DHCP opt-out after Apply")
+        if "CHECKS=disabled" not in disabled["stdout"]:
+            raise LifecycleError("Applied DHCP opt-out did not emit native no-ping.")
+    finally:
+        client.json_request("PATCH", "/api/v1/dhcp/settings", json_body=settings)
+        apply_units(client, ["dnsmasq"], args)
+    restored = ssh_command(args.appliance_ssh_host, args, probe_command, role="appliance")
+    require_success(restored, "native DHCP check restoration")
+    if "CHECKS=enabled" not in restored["stdout"]:
+        raise LifecycleError("Restored DHCP checks are not enabled in installed configuration.")
+    queued = client.json_request("POST", f"/api/v1/dhcp/scopes/{scope['id']}/verification")
+    deadline = time.monotonic() + 120
+    while time.monotonic() < deadline:
+        report = client.json_request("GET", f"/api/v1/dhcp/scopes/{scope['id']}/verification")
+        if report.get("job_id") != queued["job_id"]:
+            raise LifecycleError("Pool verification task identity changed during deployed acceptance.")
+        if report.get("state") not in {"pending", "running"}:
+            break
+        time.sleep(2)
+    else:
+        raise LifecycleError("Bounded deployed pool verification did not finish within 120 seconds.")
+    if report.get("state") != "complete" or report.get("interface_name") != args.site_interface:
+        raise LifecycleError("Deployed pool observation is incomplete or belongs to another link.")
+    if not any(row.get("status") == "legitimate_use" for row in report.get("observations", [])):
+        raise LifecycleError("Fresh ARP evidence did not identify the owned client's legitimate DHCP lease.")
+    return {"scope_id": scope["id"], "interface_name": report["interface_name"], "job_id": queued["job_id"],
+            "dnsmasq_version": report.get("dnsmasq_version"), "config_hash": report.get("config_hash"),
+            "verified_at": report.get("verified_at"), "address_count": len(report["observations"]),
+            "unresolved_count": report["unresolved_count"],
+            "coverage": "native switch/Apply and fresh leased-client ARP; comprehensive allocation veto is not claimed"}
+
+
 def ntp_client_checks(args: argparse.Namespace) -> dict[str, Any]:
     """Return ntp client checks.
 
@@ -5521,6 +5592,7 @@ def run_full_lifecycle(results: list[StepResult], client: HttpClient, args: argp
     run_step(results, "host-state-checks", host_state_checks, args)
     run_step(results, "managed-ldap-helper-authentication", managed_ldap_helper_authentication_check, args)
     run_step(results, "client-checks", client_checks, args)
+    run_step(results, "dhcp-pool-verification-check", dhcp_pool_verification_check, client, args)
     run_step(results, "ntp-client-checks", ntp_client_checks, args)
     run_step(results, "wan-packet-loss-check", wan_packet_loss_check, client, args)
     run_step(results, "ca-client-certificate-check", ca_client_certificate_check, client, args)

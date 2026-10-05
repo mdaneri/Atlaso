@@ -11,6 +11,9 @@ DNS listeners serve managed zones and configured upstream forwarding together. A
 resolution with DNS activation and updates Atlaso-owned service records after listener-address readiness; DHCP scopes
 may advertise routed DNS/NTP service endpoints. See the
 [DNS](docs/services/dns.md) and [DHCP](docs/services/dhcp.md) guides.
+DHCP exposes an enabled-by-default IP availability check, staged until Apply, with dnsmasq native limits documented.
+Pool Health supports bounded report-only IPv4 verification and administrator-managed hourly-or-slower schedules;
+DHCP writers can verify and cancel, and unresolved findings retain identity evidence through silent scans.
 
 [Appliance time synchronization](docs/services/ntp.md#appliance-clock-source) uses one clock authority: VMware Tools,
 NTP client, or the managed NTP/NTS server. Server mode takes precedence over the remembered client choice. Appliance

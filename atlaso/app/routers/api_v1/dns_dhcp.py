@@ -18,6 +18,7 @@ from sqlalchemy.orm import Session
 from atlaso.app.adapters.system import SystemAdapter
 from atlaso.app.audit import record_audit
 from atlaso.app.database import get_db
+from atlaso.app.dhcp_pool_schemas import DhcpPoolReport, DhcpPoolVerificationQueued
 from atlaso.app.models import (
     DhcpOption,
     DhcpReservation,
@@ -49,12 +50,14 @@ from atlaso.app.schemas import (
     DnsSettingsResponse,
     DnsSettingsUpdate,
     DnsStatusResponse,
+    ProblemDetails,
     ServiceStateResponse,
 )
 from atlaso.app.security import (
     Identity,
     require_scope,
 )
+from atlaso.app.services import dhcp_pool_verification
 from atlaso.app.services.dnsmasq import (
     DNS_CONDITIONAL_FORWARDERS_SETTING_KEY,
     dhcp_bind_target_families,
@@ -734,6 +737,57 @@ def build_router(dependencies: DnsDhcpApiDependencies) -> DnsDhcpApiRouter:
         )
 
     @router.get(
+        "/dhcp/scopes/{scope_id}/verification", response_model=DhcpPoolReport,
+        tags=["DHCP"], operation_id="getDhcpPoolVerification",
+        summary="Read DHCP pool verification",
+        responses={404: {"model": ProblemDetails, "description": "The managed DHCP pool no longer exists."}},
+        description="Requires read:dhcp. Reads current applied IPv4 pool evidence and durable task progress without changing leases or runtime configuration. Edited or deleted pool identities invalidate older observations. Nonresponse never proves availability.",
+    )
+    def get_dhcp_pool_verification(
+        scope_id: Annotated[int, ApiPath(description="Existing managed DHCP pool identifier.", ge=1)],
+        identity: Annotated[Identity, Depends(require_scope("read:dhcp"))],
+        db: Session = Depends(get_db),
+    ) -> DhcpPoolReport:
+        """Read authorized bounded operational evidence for a pool.
+
+        Args:
+            scope_id: Managed DHCP pool identifier being selected or tested.
+            identity: Authenticated identity authorizing the operation.
+            db: Database session holding the pool, job or schedule state.
+        """
+        try:
+            return DhcpPoolReport.model_validate(dhcp_pool_verification.status(db, scope_id))
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    @router.post(
+        "/dhcp/scopes/{scope_id}/verification", response_model=DhcpPoolVerificationQueued,
+        status_code=202, tags=["DHCP"], operation_id="verifyDhcpPool",
+        summary="Queue report-only DHCP pool verification",
+        responses={409: {"model": ProblemDetails, "description": "The pool is absent, unsupported, unapplied, edited, busy or within its admission interval."}},
+        description="Requires write:dhcp. Queues a bounded worker task for an enabled, applied IPv4 pool with fresh link-scoped ARP observations. Only one verifier runs globally, at most 1024 addresses are examined, and the same pool has a 15-minute admission interval. No leases, reservations, runtime configuration or neighbor entries are deleted. Edited, unapplied, unsupported or busy pools fail with 409. Use Tasks for progress and authorized cancellation.",
+    )
+    def verify_dhcp_pool(
+        scope_id: Annotated[int, ApiPath(description="Enabled applied IPv4 pool identifier; arbitrary networks are not accepted.", ge=1)],
+        identity: Annotated[Identity, Depends(require_scope("write:dhcp"))],
+        db: Session = Depends(get_db),
+    ) -> DhcpPoolVerificationQueued:
+        """Queue bounded observations; global Appliance Apply is unaffected.
+
+        Args:
+            scope_id: Managed DHCP pool identifier being selected or tested.
+            identity: Authenticated identity authorizing the operation.
+            db: Database session holding the pool, job or schedule state.
+        """
+        try:
+            job = dhcp_pool_verification.enqueue(db, scope_id=scope_id, actor=identity.username)
+            db.commit()
+        except ValueError as exc:
+            db.rollback()
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        return DhcpPoolVerificationQueued(job_id=job.id, scope_id=scope_id)
+
+    @router.get(
         "/dhcp/settings",
         response_model=DhcpSettingsResponse,
         tags=["DHCP"],
@@ -777,6 +831,8 @@ def build_router(dependencies: DnsDhcpApiDependencies) -> DnsDhcpApiRouter:
         """
         settings = get_dhcp_settings_row(db)
         for key, value in payload.model_dump().items():
+            if key == "check_ip_availability" and key not in payload.model_fields_set:
+                continue
             setattr(settings, key, value)
         settings.updated_at = utcnow()
         db.commit()
@@ -940,6 +996,7 @@ def build_router(dependencies: DnsDhcpApiDependencies) -> DnsDhcpApiRouter:
             identity: Authenticated identity authorizing the operation.
             db: Active database session used by the operation.
         """
+        dhcp_pool_verification.forget_scope(db, scope_id)
         scope = db.get(DhcpScope, scope_id)
         if not scope:
             raise HTTPException(status_code=404, detail="DHCP IP zone not found")

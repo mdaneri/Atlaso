@@ -37,6 +37,20 @@ class SystemAdapter:
 
     HELPER_PATH = "/opt/atlaso/bin/atlaso-helper"
 
+    def verify_dhcp_pool(self, scope_id: int, offset: int, config_hash: str) -> AdapterResult:
+        """Observe one bounded chunk of a currently applied IPv4 pool.
+
+        Args:
+            scope_id: Managed pool identity, never an arbitrary network.
+            offset: Server-selected chunk offset.
+            config_hash: Expected installed configuration digest.
+        """
+        return self._helper_result(
+            "dnsmasq", "verify-pool", str(scope_id), str(offset), config_hash,
+            timeout_seconds=8,
+            dry_run_message=json.dumps({"status": "unknown", "reason": "No network observations in dry-run mode."}),
+        )
+
     def read_log_history(self, source: str, position: dict[str, object]) -> AdapterResult:
         """Read one fixed-source history page through the privileged boundary.
 

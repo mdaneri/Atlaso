@@ -14077,6 +14077,7 @@ def automation_context(db: Session) -> dict[str, Any]:
         "automation_revision_schedule_counts": revision_schedule_counts,
         "automation_enabled_revision_schedule_counts": enabled_revision_schedule_counts,
         "automation_task_types": sorted(SCHEDULE_TASK_TYPES),
+        "automation_dhcp_scopes": list(db.scalars(select(DhcpScope).where(DhcpScope.enabled.is_(True), DhcpScope.address_family == "ipv4").order_by(DhcpScope.name))),
         "automation_interpreters": sorted(SCRIPT_INTERPRETERS),
         "automation_vcf_profiles": profiles,
         "automation_vcf_enabled_profile_count": sum(1 for profile in profiles if profile.enabled),

@@ -33,6 +33,72 @@ def load_lifecycle_module():
     return module
 
 
+@pytest.mark.parametrize("state", ["complete", "unknown", "missing_config"])
+def test_dhcp_pool_acceptance_restores_native_checks_and_rejects_unknown(monkeypatch, state):
+    """The deployed check restores opt-out and never counts unknown evidence as acceptance.
+
+    Args:
+        monkeypatch: Fixture replacing native adapters with bounded test doubles.
+        state: Native acceptance state returned by the lifecycle fixture.
+    """
+    module = load_lifecycle_module()
+    desired = {"check_ip_availability": True}
+    runtime = {"check_ip_availability": True}
+
+    class Client:
+        def json_request(self, method, path, json_body=None):
+            """Provide the bounded native observation or assertion test double.
+
+            Args:
+                method: HTTP method sent by the lifecycle acceptance probe.
+                path: Management API path sent by the lifecycle acceptance probe.
+                json_body: Request payload supplied by the lifecycle probe.
+            """
+            if path == "/api/v1/dhcp/settings":
+                if method == "PATCH":
+                    desired.update(json_body)
+                return dict(desired)
+            if path == "/api/v1/dhcp/scopes":
+                return [{"id": 7, "name": "Lifecycle SiteA", "enabled": True}]
+            if method == "POST":
+                return {"job_id": "job_test"}
+            return {"job_id": "job_test", "state": state, "interface_name": "eth1",
+                    "dnsmasq_version": "test", "config_hash": "a" * 64, "verified_at": "2030-01-01",
+                    "observations": [{"status": "legitimate_use"}], "unresolved_count": 0}
+
+    monkeypatch.setattr(module, "apply_units", lambda *_args: runtime.update(desired))
+    def probe(*probe_args, **_kwargs):
+        """Provide the bounded native observation or assertion test double.
+
+        Args:
+            *probe_args: Positional native probe arguments accepted by the test double.
+            **_kwargs: Unused keyword options accepted by the test double.
+        """
+        transport = probe_args[2]
+        assert transport.startswith("printf %s ") and transport.endswith(" | base64 -d | sh")
+        script = base64.b64decode(transport.split()[2]).decode("utf-8")
+        assert 'test -f /etc/atlaso/dnsmasq.d/atlaso.conf || exit 1' in script
+        assert 'VERSION="$(dnsmasq --version)"' in script
+        assert "ELEV=" not in script
+        if state == "missing_config":
+            return {"returncode": 1, "stdout": "", "stderr": "managed configuration missing"}
+        return {"returncode": 0, "stdout": "CHECKS=enabled" if runtime["check_ip_availability"] else "CHECKS=disabled"}
+
+    monkeypatch.setattr(module, "ssh_command", probe)
+    args = argparse.Namespace(skip_client_checks=False, client_a_host="fixture", appliance_ssh_host="appliance",
+                              site_interface="eth1")
+    if state == "missing_config":
+        with pytest.raises(module.LifecycleError, match="native DHCP default"):
+            module.dhcp_pool_verification_check(Client(), args)
+    elif state == "unknown":
+        with pytest.raises(module.LifecycleError, match="incomplete"):
+            module.dhcp_pool_verification_check(Client(), args)
+    else:
+        evidence = module.dhcp_pool_verification_check(Client(), args)
+        assert evidence["scope_id"] == 7 and evidence["address_count"] == 1
+    assert desired["check_ip_availability"] and runtime["check_ip_availability"]
+
+
 def load_network_boot_lifecycle_module():
     """Return network boot lifecycle module."""
     path = Path(__file__).resolve().parents[1] / "scripts" / "interop" / "network_boot_lifecycle.py"
