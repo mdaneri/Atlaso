@@ -80,6 +80,7 @@ AUTOMATION_VAULT_STAGE_DIR = Path("/run/atlaso-automation-vaults")
 WORKER_STARTUP_STATUS_PATH = Path("/var/lib/atlaso/worker-startup.json")
 APPLIANCE_UPDATE_STATUS_MARKER_PATH = Path("/run/atlaso-appliance-update-status")
 WORKER_JOB_TYPES = {
+    "dhcp-pool-verify",
     "diagnostic-bundle",
     "appliance-update",
     "vcf-depot-download",
@@ -2124,7 +2125,11 @@ def run_worker_once() -> str | None:
         job_id = job.id
         job_type = job.type
     try:
-        if job_type == "diagnostic-bundle":
+        if job_type == "dhcp-pool-verify":
+            from atlaso.app.services.dhcp_pool_verification import run
+
+            run(job_id)
+        elif job_type == "diagnostic-bundle":
             diagnostics.run(job_id)
         elif job_type == "appliance-update":
             _run_appliance_update(job_id)

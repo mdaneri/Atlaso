@@ -1056,6 +1056,25 @@ def test_dns_settings_autosave_filters_invalid_listen_interfaces(client):
     assert "interface=eth2" in response.json()["config_preview"]
 
 
+def test_dhcp_availability_checkbox_duplicate_values_and_legacy_save(client):
+    """The hidden checkbox fallback saves opt-out and checked values correctly."""
+    from sqlalchemy import select
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import DhcpSettings
+
+    login(client)
+    page = client.get("/dhcp")
+    csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    for suffix, expected in (("&check_ip_availability=off", False), ("", False),
+                             ("&check_ip_availability=off&check_ip_availability=on", True)):
+        response = client.post("/dhcp/settings", content=f"csrf={csrf}{suffix}",
+                               headers={"Content-Type": "application/x-www-form-urlencoded", "X-Atlaso-Autosave": "1"})
+        assert response.status_code == 200, response.text
+        with SessionLocal() as db:
+            assert db.scalar(select(DhcpSettings)).check_ip_availability is expected
+
+
 def test_dhcp_settings_autosave_returns_json(client):
     """Verify that dhcp settings autosave returns json.
 

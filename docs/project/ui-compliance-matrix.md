@@ -218,6 +218,11 @@ Page templates covered by the route rows are `appliance_update.html`, `audit.htm
 `vaults.html`, `vcf_backups.html`, `vcf_helper.html`, `vcf_offline_depot.html`,
 `vcf_offline_depot_task_log.html`, `vcf_private_registry.html`, and `vlan_interfaces.html`.
 
+The DHCP **Pool Health** view uses `partials/dhcp_pool_health.html` and the read-only Tasks grid pattern for pool
+summaries and address evidence. It retains semantic fallbacks, permission-checked launch actions, live updates and
+explicit nonresponse/unknown states; **Verify pool** creates a cancellable report-only task. DHCP settings retain the
+non-grid DNS settings reference, and optional schedules reuse the Automation Schedules wizard.
+
 Shared-only templates are `base.html`, `public_portal_base.html`, `partials/appliance_apply_status.html`,
 `partials/brand_mark.html`, `partials/config_preview_action.html`, `partials/resource_wizard.html`,
 `partials/port_forwarding.html`,

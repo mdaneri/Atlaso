@@ -1,6 +1,39 @@
 """Test DNS/DHCP API v1 transport behavior."""
 
 
+def test_dhcp_availability_opt_out_survives_omitted_api_field(client):
+    """Old API clients cannot silently re-enable an explicit opt-out."""
+    token = create_token(client, ["read:dhcp", "write:dhcp"])
+    headers = {"Authorization": f"Bearer {token}"}
+    current = client.get("/api/v1/dhcp/settings", headers=headers).json()
+    assert current["check_ip_availability"] is True
+    current["check_ip_availability"] = False
+    saved = client.patch("/api/v1/dhcp/settings", headers=headers, json=current)
+    assert saved.status_code == 200, saved.text
+    assert saved.json()["check_ip_availability"] is False
+    current.pop("check_ip_availability")
+    saved = client.patch("/api/v1/dhcp/settings", headers=headers, json=current)
+    assert saved.status_code == 200, saved.text
+    assert saved.json()["check_ip_availability"] is False
+
+
+def test_pool_verification_requires_scopes_and_rejects_unapplied_identity(client):
+    """Permission checks precede reading evidence or queueing network work."""
+    token = create_token(client, ["read:dhcp", "write:dhcp"])
+    headers = {"Authorization": f"Bearer {token}"}
+    scope_id = client.get("/api/v1/dhcp/scopes", headers=headers).json()[0]["id"]
+    path = f"/api/v1/dhcp/scopes/{scope_id}/verification"
+    denied = create_token(client, ["read:dashboard"])
+    denied_headers = {"Authorization": f"Bearer {denied}"}
+    assert client.get(path, headers=denied_headers).status_code == 403
+    assert client.post(path, headers=denied_headers).status_code == 403
+    report = client.get(path, headers=headers)
+    assert report.status_code == 200 and report.json()["state"] == "unknown"
+    assert report.json()["observations"] == []
+    assert client.post(path, headers=headers).status_code == 409
+    assert client.get("/api/v1/dhcp/scopes/999999/verification", headers=headers).status_code == 404
+
+
 def create_token(client, scopes):
     """Create token.
 

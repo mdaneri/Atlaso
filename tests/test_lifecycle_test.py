@@ -33,6 +33,41 @@ def load_lifecycle_module():
     return module
 
 
+@pytest.mark.parametrize("state", ["complete", "unknown"])
+def test_dhcp_pool_acceptance_restores_native_checks_and_rejects_unknown(monkeypatch, state):
+    """The deployed check restores opt-out and never counts unknown evidence as acceptance."""
+    module = load_lifecycle_module()
+    desired = {"check_ip_availability": True}
+    runtime = {"check_ip_availability": True}
+
+    class Client:
+        def json_request(self, method, path, json_body=None):
+            if path == "/api/v1/dhcp/settings":
+                if method == "PATCH":
+                    desired.update(json_body)
+                return dict(desired)
+            if path == "/api/v1/dhcp/scopes":
+                return [{"id": 7, "name": "Lifecycle SiteA", "enabled": True}]
+            if method == "POST":
+                return {"job_id": "job_test"}
+            return {"job_id": "job_test", "state": state, "interface_name": "eth1",
+                    "dnsmasq_version": "test", "config_hash": "a" * 64, "verified_at": "2030-01-01",
+                    "observations": [{"status": "legitimate_use"}], "unresolved_count": 0}
+
+    monkeypatch.setattr(module, "apply_units", lambda *_args: runtime.update(desired))
+    monkeypatch.setattr(module, "ssh_command", lambda *_args, **_kwargs: {
+        "returncode": 0, "stdout": "CHECKS=enabled" if runtime["check_ip_availability"] else "CHECKS=disabled"})
+    args = argparse.Namespace(skip_client_checks=False, client_a_host="fixture", appliance_ssh_host="appliance",
+                              site_interface="eth1")
+    if state == "unknown":
+        with pytest.raises(module.LifecycleError, match="incomplete"):
+            module.dhcp_pool_verification_check(Client(), args)
+    else:
+        evidence = module.dhcp_pool_verification_check(Client(), args)
+        assert evidence["scope_id"] == 7 and evidence["address_count"] == 1
+    assert desired["check_ip_availability"] and runtime["check_ip_availability"]
+
+
 def load_network_boot_lifecycle_module():
     """Return network boot lifecycle module."""
     path = Path(__file__).resolve().parents[1] / "scripts" / "interop" / "network_boot_lifecycle.py"

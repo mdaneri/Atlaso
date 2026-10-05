@@ -938,6 +938,7 @@ class DhcpSettings(Base):
     """
     __tablename__ = "dhcp_settings"
 
+    check_ip_availability: Mapped[bool] = mapped_column(Boolean, default=True, server_default="1")
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     enabled: Mapped[bool] = mapped_column(Boolean, default=False)
     interface_name: Mapped[str] = mapped_column(String(80), default="")

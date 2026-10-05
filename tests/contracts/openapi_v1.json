@@ -546,6 +546,110 @@
         "title": "DashboardResponse",
         "type": "object"
       },
+      "DhcpAddressObservation": {
+        "description": "Bounded identity evidence for one applied pool address.",
+        "properties": {
+          "expected_client_ids": {
+            "description": "Available current DHCP client identifiers; ARP cannot independently authenticate these.",
+            "items": {
+              "type": "string"
+            },
+            "title": "Expected Client Ids",
+            "type": "array"
+          },
+          "expected_mac_addresses": {
+            "description": "Current unexpired lease and declared reservation MAC identities when attributable.",
+            "items": {
+              "type": "string"
+            },
+            "title": "Expected Mac Addresses",
+            "type": "array"
+          },
+          "first_seen": {
+            "description": "UTC time when retained evidence for this address was first recorded.",
+            "title": "First Seen",
+            "type": "string"
+          },
+          "ip_address": {
+            "description": "IPv4 address in the applied pool or its declared reservations.",
+            "title": "Ip Address",
+            "type": "string"
+          },
+          "last_seen": {
+            "description": "UTC time when the retained finding was last observed; a nonresponse does not resolve a finding.",
+            "title": "Last Seen",
+            "type": "string"
+          },
+          "observed_mac_addresses": {
+            "description": "Fresh ARP responder identities on the pool interface; proxy ARP may be present.",
+            "items": {
+              "type": "string"
+            },
+            "title": "Observed Mac Addresses",
+            "type": "array"
+          },
+          "previous_status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Retained prior finding classification, or null when absent.",
+            "title": "Previous Status"
+          },
+          "reason": {
+            "description": "Evidence explanation and observation limitations, without packet payloads.",
+            "title": "Reason",
+            "type": "string"
+          },
+          "resolved_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "UTC time of positive matching identity evidence resolving the prior finding, or null.",
+            "title": "Resolved At"
+          },
+          "status": {
+            "description": "legitimate_use, unexpected_occupancy, occupant_lease_mismatch, confirmed_conflict, no_response, or unknown.",
+            "title": "Status",
+            "type": "string"
+          },
+          "unresolved": {
+            "description": "Whether an observed finding still lacks positive matching identity evidence of resolution.",
+            "title": "Unresolved",
+            "type": "boolean"
+          },
+          "verified_at": {
+            "description": "UTC time of the latest bounded observation for this address.",
+            "title": "Verified At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "ip_address",
+          "status",
+          "reason",
+          "observed_mac_addresses",
+          "expected_mac_addresses",
+          "expected_client_ids",
+          "first_seen",
+          "last_seen",
+          "verified_at",
+          "unresolved",
+          "previous_status",
+          "resolved_at"
+        ],
+        "title": "DhcpAddressObservation",
+        "type": "object"
+      },
       "DhcpLeaseResponse": {
         "description": "Fields returned by the Atlaso dhcp lease API.\n\nAttributes:\n    expires_at: UTC timestamp after which the resource or credential is no longer accepted.\n    mac_address: Normalized hardware MAC address used to identify the network interface or host.\n    ip_address: IPv4 or IPv6 address associated with the resource.\n    hostname: DNS hostname associated with the resource, normalized according to the endpoint\n        contract.\n    client_id: Stable identifier of the related client resource.\n    status: Returned status value for this dhcp lease resource.",
         "properties": {
@@ -727,6 +831,145 @@
           "updated_at"
         ],
         "title": "DhcpOptionResponse",
+        "type": "object"
+      },
+      "DhcpPoolReport": {
+        "description": "Current pool identity, task progress and bounded observations.",
+        "properties": {
+          "config_hash": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "SHA256 of the applied client-facing dnsmasq configuration, or null when unverified.",
+            "title": "Config Hash"
+          },
+          "dnsmasq_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Native daemon version observed by the helper, or null when unavailable.",
+            "title": "Dnsmasq Version"
+          },
+          "interface_name": {
+            "description": "Exact network interface or VLAN selected by this pool.",
+            "title": "Interface Name",
+            "type": "string"
+          },
+          "job_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Durable Tasks job identifier when present, or null.",
+            "title": "Job Id"
+          },
+          "name": {
+            "description": "Current managed pool name.",
+            "title": "Name",
+            "type": "string"
+          },
+          "observations": {
+            "description": "At most 1024 address records retained for the current applied pool; incomplete work remains partial.",
+            "items": {
+              "$ref": "#/components/schemas/DhcpAddressObservation"
+            },
+            "title": "Observations",
+            "type": "array"
+          },
+          "progress_percent": {
+            "description": "Current task progress from 0 through 100, independent of evidence completeness.",
+            "title": "Progress Percent",
+            "type": "integer"
+          },
+          "reason": {
+            "description": "Pool verification summary or reason verification is unavailable.",
+            "title": "Reason",
+            "type": "string"
+          },
+          "scope_id": {
+            "description": "Managed DHCP pool identifier.",
+            "title": "Scope Id",
+            "type": "integer"
+          },
+          "state": {
+            "description": "not_recorded, pending, running, complete, partial, unknown, or cancelled; none guarantees address availability.",
+            "title": "State",
+            "type": "string"
+          },
+          "unresolved_count": {
+            "description": "Count of unresolved findings; no-response addresses do not establish a healthy pool.",
+            "title": "Unresolved Count",
+            "type": "integer"
+          },
+          "verified_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Latest observed UTC verification time, or null when no probe completed.",
+            "title": "Verified At"
+          }
+        },
+        "required": [
+          "scope_id",
+          "name",
+          "interface_name",
+          "state",
+          "reason",
+          "job_id",
+          "progress_percent",
+          "config_hash",
+          "verified_at",
+          "dnsmasq_version",
+          "observations",
+          "unresolved_count"
+        ],
+        "title": "DhcpPoolReport",
+        "type": "object"
+      },
+      "DhcpPoolVerificationQueued": {
+        "description": "Accepted asynchronous verification task.",
+        "properties": {
+          "job_id": {
+            "description": "Tasks job identifier for progress, retained report and authorized cancellation.",
+            "title": "Job Id",
+            "type": "string"
+          },
+          "scope_id": {
+            "description": "Managed applied IPv4 pool selected for verification.",
+            "title": "Scope Id",
+            "type": "integer"
+          },
+          "status": {
+            "default": "pending",
+            "description": "Queued task state; acceptance does not mean verification has completed.",
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "job_id",
+          "scope_id"
+        ],
+        "title": "DhcpPoolVerificationQueued",
         "type": "object"
       },
       "DhcpReservationCreate": {
@@ -1057,6 +1300,12 @@
             "title": "Authoritative",
             "type": "boolean"
           },
+          "check_ip_availability": {
+            "default": true,
+            "description": "Enable daemon-wide native dnsmasq IPv4 candidate ping checks after Appliance Apply. Defaults to enabled. Native checks do not cover every requested-address, reservation or renewal path; IPv6 behavior is separate.",
+            "title": "Check Ip Availability",
+            "type": "boolean"
+          },
           "config_path": {
             "description": "Appliance path where the rendered configuration is staged or installed; it is not a free-form input.",
             "title": "Config Path",
@@ -1143,6 +1392,12 @@
             "default": true,
             "description": "Whether authoritative is enabled for this dhcp settings resource.",
             "title": "Authoritative",
+            "type": "boolean"
+          },
+          "check_ip_availability": {
+            "default": true,
+            "description": "Enable daemon-wide native dnsmasq IPv4 candidate ping checks after Appliance Apply. Defaults to enabled. Native checks do not cover every requested-address, reservation or renewal path; IPv6 behavior is separate.",
+            "title": "Check Ip Availability",
             "type": "boolean"
           },
           "dns_server": {
@@ -10953,6 +11208,106 @@
           }
         ],
         "summary": "Update Dhcp Scope",
+        "tags": [
+          "DHCP"
+        ]
+      }
+    },
+    "/api/v1/dhcp/scopes/{scope_id}/verification": {
+      "get": {
+        "description": "Requires read:dhcp. Reads current applied IPv4 pool evidence and durable task progress without changing leases or runtime configuration. Edited or deleted pool identities invalidate older observations. Nonresponse never proves availability.",
+        "operationId": "getDhcpPoolVerification",
+        "parameters": [
+          {
+            "description": "Existing managed DHCP pool identifier.",
+            "in": "path",
+            "name": "scope_id",
+            "required": true,
+            "schema": {
+              "description": "Existing managed DHCP pool identifier.",
+              "minimum": 1,
+              "title": "Scope Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DhcpPoolReport"
+                }
+              }
+            },
+            "description": "Read authorized bounded operational evidence for a pool. The response body matches the documented success schema."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "The request parameters or body failed Atlaso validation. The response includes a request ID that can be correlated with operational logs."
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Read DHCP pool verification",
+        "tags": [
+          "DHCP"
+        ]
+      },
+      "post": {
+        "description": "Requires write:dhcp. Queues a bounded worker task for an enabled, applied IPv4 pool with fresh link-scoped ARP observations. Only one verifier runs globally, at most 1024 addresses are examined, and the same pool has a 15-minute admission interval. No leases, reservations, runtime configuration or neighbor entries are deleted. Edited, unapplied, unsupported or busy pools fail with 409. Use Tasks for progress and authorized cancellation.",
+        "operationId": "verifyDhcpPool",
+        "parameters": [
+          {
+            "description": "Enabled applied IPv4 pool identifier; arbitrary networks are not accepted.",
+            "in": "path",
+            "name": "scope_id",
+            "required": true,
+            "schema": {
+              "description": "Enabled applied IPv4 pool identifier; arbitrary networks are not accepted.",
+              "minimum": 1,
+              "title": "Scope Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DhcpPoolVerificationQueued"
+                }
+              }
+            },
+            "description": "Queue bounded observations; global Appliance Apply is unaffected. The response body matches the documented success schema."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "The request parameters or body failed Atlaso validation. The response includes a request ID that can be correlated with operational logs."
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Queue report-only DHCP pool verification",
         "tags": [
           "DHCP"
         ]

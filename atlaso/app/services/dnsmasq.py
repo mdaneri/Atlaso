@@ -27,6 +27,7 @@ DNSMASQ_AUTHORITATIVE_LOOPBACK_ADDRESS = "127.0.0.1"
 DNSMASQ_AUTHORITATIVE_PORT = 5353
 DNSMASQ_AUTHORITATIVE_CONFIG_PREFIX = "# atlaso-authoritative-config: "
 DHCP_DENY_RESERVATION_DESCRIPTION_PREFIX = "Deny DHCP for "
+DHCP_POOL_METADATA_PREFIX = "# atlaso-dhcp-pool="
 DNS_RECORD_TYPES = {"A", "AAAA", "CNAME", "TXT", "SRV", "MX", "CAA", "PTR"}
 DNS_HOSTNAME_PATTERN = re.compile(r"^(?=.{1,253}$)([a-z0-9_](?:[a-z0-9_-]{0,61}[a-z0-9_])?\.)*[a-z0-9_](?:[a-z0-9_-]{0,61}[a-z0-9_])?$")
 DNS_AUTHORITATIVE_TTL_DEFAULT = 3600
@@ -45,6 +46,34 @@ def _dhcp_scope_network(scope: DhcpScope):
         return ip_network(f"{scope.site_address}/{scope.prefix_length}", strict=False)
     except ValueError:
         return None
+
+
+def dhcp_pool_metadata(scope: DhcpScope, reservations: list[DhcpReservation]) -> dict:
+    """Capture a pool's normalized desired identity in its applied configuration.
+
+    Args:
+        scope: Enabled managed pool.
+        reservations: Declared static assignments; only this pool's subnet is included.
+    """
+    errors, ranges = parse_dhcp_range_expression(scope)
+    network = _dhcp_scope_network(scope)
+    declared = []
+    for reservation in reservations:
+        if reservation.enabled is False:
+            continue
+        try:
+            address = ip_address(reservation.ip_address)
+        except ValueError:
+            continue
+        if network is not None and address in network:
+            declared.append({"ip_address": str(address), "mac_address": reservation.mac_address.lower()})
+    return {
+        "scope_id": scope.id or 0, "name": scope.name, "interface_name": scope.interface_name,
+        "address_family": dhcp_scope_address_family(scope), "site_address": scope.site_address,
+        "prefix_length": scope.prefix_length,
+        "ranges": [[str(start), str(end)] for start, end in ranges] if not errors else [],
+        "reservations": sorted(declared, key=lambda item: (item["ip_address"], item["mac_address"])),
+    }
 
 
 def _parse_compact_ipv4_endpoint(value: str, start: IPv4Address) -> IPv4Address:
@@ -1643,6 +1672,14 @@ def render_dnsmasq_config(
             authoritative_lines.append("expand-hosts")
     if dhcp_settings.enabled and dhcp_settings.authoritative:
         lines.append("dhcp-authoritative")
+    if dhcp_settings.enabled:
+        for scope in scopes:
+            if scope.enabled is not False and scope.id:
+                lines.append(DHCP_POOL_METADATA_PREFIX + json.dumps(
+                    dhcp_pool_metadata(scope, dhcp_reservations), sort_keys=True, separators=(",", ":")
+                ))
+    if dhcp_settings.enabled and dhcp_settings.check_ip_availability is False:
+        lines.append("no-ping")
     if dns_settings.enabled and dhcp_settings.enabled:
         # The hook retires transition mirrors as ordinary lease names resume
         # after authoritative mode is disabled.

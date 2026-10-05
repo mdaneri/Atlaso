@@ -2774,6 +2774,8 @@ def _validate_archive_relationships(data: dict[str, list[dict[str, Any]]]) -> No
 
     dhcp_enabled = False
     for row_index, row in enumerate(data.get("dhcp_settings", []), start=1):
+        if not isinstance(row.get("check_ip_availability", True), bool):
+            raise ValueError("The settings archive DHCP IP availability setting must be a boolean.")
         enabled = row.get("enabled", False)
         if not isinstance(enabled, bool):
             raise ValueError(

@@ -2085,6 +2085,7 @@ class DhcpSettingsUpdate(BaseModel):
         authoritative: Whether authoritative is enabled for this dhcp settings resource.
     """
 
+    check_ip_availability: Annotated[bool, Field(description="Enable daemon-wide native dnsmasq IPv4 candidate ping checks after Appliance Apply. Defaults to enabled. Native checks do not cover every requested-address, reservation or renewal path; IPv6 behavior is separate.")] = True
     enabled: Annotated[bool, Field(description='Whether the resource is enabled in saved Atlaso state.')] = False
     interface_name: Annotated[str, Field(description='Requested interface name value for this dhcp settings resource.')] = Field(default="eth2", min_length=1, max_length=80)
     site_address: Annotated[str, Field(description='Requested site address value for this dhcp settings resource.')] = Field(default="192.168.50.1", min_length=1, max_length=64)
