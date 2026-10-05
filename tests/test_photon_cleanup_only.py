@@ -218,6 +218,14 @@ def test_registration_revalidation_rejects_a_changed_inventory(tmp_path: Path) -
     pwsh = shutil.which("pwsh")
     if pwsh is None:
         pytest.skip("PowerShell 7 is unavailable")
+    repository = tmp_path / "primary"
+    repository.mkdir()
+    subprocess.run(["git", "init", str(repository)], capture_output=True, check=True)
+    subprocess.run(["git", "-C", str(repository), "-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid",
+                    "commit", "--allow-empty", "-m", "fixture"], capture_output=True, check=True)
+    linked = tmp_path / "linked"
+    subprocess.run(["git", "-C", str(repository), "worktree", "add", "--detach", str(linked), "HEAD"],
+                   capture_output=True, check=True)
     script = tmp_path / "readmission.ps1"
     script.write_text(
         r"""
@@ -249,13 +257,17 @@ throw 'Stale registration unexpectedly admitted'
 """,
         encoding="utf-8",
     )
-    result = subprocess.run(
-        [pwsh, "-NoProfile", "-File", str(script), str(WRAPPER), str(WRAPPER.parents[3])],
-        capture_output=True,
-        text=True,
-        timeout=45,
-        check=False,
-    )
+    try:
+        result = subprocess.run(
+            [pwsh, "-NoProfile", "-File", str(script), str(WRAPPER), str(linked)],
+            capture_output=True,
+            text=True,
+            timeout=45,
+            check=False,
+        )
+    finally:
+        subprocess.run(["git", "-C", str(repository), "worktree", "remove", str(linked)],
+                       capture_output=True, check=True)
     assert result.returncode != 0
     assert "one exact registered worktree" in result.stderr
     assert "Stale registration unexpectedly admitted" not in result.stderr
