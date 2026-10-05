@@ -47,6 +47,17 @@ The management block uses stable columns for interface, IPv4 address/gateway/mod
 
 ## Desired and runtime service state
 
+Console Apply capture renders service contexts without reconciling desired state. This includes the VCF Private
+Registry CA-bundle projection: capture must not issue certificates or commit the shared writer transaction. Ordinary
+service-page reconciliation remains separate from the captured Network, Settings, and CA publication acknowledgement.
+Registry validation reuses that read-only bundle projection. If CA settings are absent, full Apply capture stops before
+any service context can initialize them or release the caller's writer; ordinary appliance initialization is required.
+
+For a Network-only console correction, DHCP Settings projection uses the complete native observation collected after
+recovery. It rechecks the completed task, captured Network intent, physical identities, native administrative and
+operational link states, and observed addresses under the writer before projecting the original captured Settings.
+Missing or changed proof refuses Settings submission.
+
 The **Appliance services** projection covers Authentication, Certificate Authority, DHCP, DNS, ESX Storage NFS, ESXi
 PXE, Firewall, KMS/KMIP, Managed LDAP, NTP/NTS, Routing, VCF Backup SFTP, VCF Offline Depot, and VCF Private Registry.
 
@@ -155,7 +166,29 @@ Network, DNS, and Firewall edits update desired state and create two synchronous
 the persisted nftables rules are regenerated from the corrected management CIDR instead of retaining an OVF-derived
 source restriction. Other pending units remain unselected.
 
-After the first task, the constrained console helper retries `atlaso-bootstrap-https.service` when
+After the first task, the console reads observations through `discover_host_physical_interfaces()` before any
+certificate recovery or Appliance Settings capture. The gate requires one fresh observation matching the edited
+physical interface name and MAC identity, an administratively up link with native operational state `up`,
+and a usable address in every requested family. A retained address on a disconnected or down link is insufficient.
+Final Settings capture rechecks the completed-task observation, including both native link states, inside its writer
+transaction before collecting units or creating a job. It repeats physical and management VLAN native attestation
+inside that admission with one shared five-second deadline, rejecting kernel-only drift without changing observations.
+Legacy DNS ownership backfill also acquires writer admission
+before refreshing and merging the baseline document, preserving concurrent publication acknowledgements.
+Retries never reconcile missing interfaces or change desired state;
+only verified address observations on the target row are committed. Static observations must match CIDRs in the
+completed task's captured Network preview;
+DHCP and RA/SLAAC observations do not populate static desired fields. Acquisition retries for at most 30 seconds,
+with each native discovery subprocess bounded by the remaining deadline.
+An unavailable inventory, missing link, wrong-family address,
+link-local-only acquisition, tentative or DAD-failed addresses, or incomplete dual stack stops dependent work and
+cannot record recovery success.
+
+The observation gate freezes address methods and CIDRs from the completed Network task before retrying.
+If current desired addresses differ, it preserves those pending edits and publishes the verified applied observation,
+then stops before certificate recovery or Settings capture with a concurrent-edit diagnostic.
+
+Once observations are verified, the constrained console helper retries `atlaso-bootstrap-https.service` when
 the exact `/var/lib/atlaso/first-boot-https.applied` completion record or the applied management nginx contract is
 missing, empty, unsafe, or inconsistent. The boot unit always invokes the idempotent bootstrap instead of trusting path
 existence as a systemd condition. A valid completion record may accompany either the applied HTTPS front door or a
@@ -209,3 +242,11 @@ the five-second automatic boot.
 `/boot/grub2/themes/atlaso`, preserves the original GRUB configuration once as `grub.cfg.atlaso-backup`, and changes
 the theme reference, Photon menu-entry label, Photon-style `gfxmode="1280x800"` and `gfxpayload=keep` assignments, and
 the Photon kernel entry's framebuffer-console font. It does not add Plymouth or alter boot timing.
+
+Certificate bootstrap is bound to the completed Network task and checks its management paths while holding the shared
+writer lock through issuance. Pending address, VLAN, or administrative-state changes stop recovery before certificate
+mutation.
+
+Before Appliance Settings is submitted, the console rechecks the completed Network management paths under the shared
+network-object writer lock held through Settings capture. An address edit made during HTTPS recovery stops submission
+and remains pending; it cannot enter Settings as though Network had already applied it.

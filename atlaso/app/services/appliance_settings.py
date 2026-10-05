@@ -15,6 +15,7 @@ from atlaso.app.services.networking import (
     normalize_interface_mode,
     normalize_interface_role,
     normalize_ipv4_method,
+    physical_ipv6_cidrs,
 )
 
 APPLIANCE_SETTINGS_DEFAULT_FQDN = "core.atlaso.internal"
@@ -456,7 +457,7 @@ def management_interface_context(interfaces: list[PhysicalInterface]) -> dict[st
         ipv4_cidr = interface.host_ip_cidr if normalize_ipv4_method(interface.ipv4_method) == "dhcp" else interface.ip_cidr
         ipv6_cidr = (interface.ipv6_cidr or interface.host_ipv6_cidr) if interface.ipv6_enabled else None
         addresses: list[str] = []
-        for candidate_cidr in (ipv4_cidr, ipv6_cidr):
+        for candidate_cidr in (ipv4_cidr, *physical_ipv6_cidrs(interface)):
             if not candidate_cidr:
                 continue
             try:
@@ -538,29 +539,28 @@ def management_ui_context(
         ),
         key=lambda interface: (interface.name != "eth0", interface.name),
     )
-    candidates: list[tuple[str, str | None, str | None, str]] = [
+    candidates: list[tuple[str, str | None, tuple[str, ...], str]] = [
         (
             interface.name,
             interface.host_ip_cidr
             if normalize_ipv4_method(interface.ipv4_method) == "dhcp"
             else interface.ip_cidr,
-            (interface.ipv6_cidr or interface.host_ipv6_cidr)
-            if interface.ipv6_enabled
-            else None,
+            physical_ipv6_cidrs(interface),
             normalize_ipv4_method(interface.ipv4_method),
         )
         for interface in physical_candidates
     ]
     candidates.extend(
-        (vlan.name, vlan.ip_cidr, vlan.ipv6_cidr, "static")
+        (vlan.name, vlan.ip_cidr, (vlan.ipv6_cidr,) if vlan.ipv6_cidr else (), "static")
         for vlan in sorted(vlans, key=lambda item: (item.parent_interface, item.vlan_id))
         if vlan.enabled
         and normalize_interface_role(vlan.role) == "access"
         and vlan.access_management_ui_enabled
     )
-    for name, ipv4_cidr, ipv6_cidr, ipv4_method in candidates:
+    for name, ipv4_cidr, ipv6_cidrs, ipv4_method in candidates:
+        ipv6_cidr = next(iter(ipv6_cidrs), None)
         addresses: list[str] = []
-        for candidate_cidr in (ipv4_cidr, ipv6_cidr):
+        for candidate_cidr in (ipv4_cidr, *ipv6_cidrs):
             if not candidate_cidr:
                 continue
             try:

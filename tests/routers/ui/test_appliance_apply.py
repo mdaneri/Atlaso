@@ -750,6 +750,12 @@ interface=eth1
             "name": "eth0",
             "parent": "",
             "parent_admin_state": "",
+            "admin_state": "up",
+            "mode": "access",
+            "parent_mode": "",
+            "parent_mac": "",
+            "vlan_id": "",
+            "management_eligible": "true",
             "check_duplicate_ip_addresses": "false",
             "role": "management",
             "mtu": "",
@@ -767,6 +773,12 @@ interface=eth1
             "name": "eth1",
             "parent": "",
             "parent_admin_state": "",
+            "admin_state": "up",
+            "mode": "access",
+            "parent_mode": "",
+            "parent_mac": "",
+            "vlan_id": "",
+            "management_eligible": "true",
             "check_duplicate_ip_addresses": "false",
             "role": "access",
             "mtu": "",
@@ -791,6 +803,10 @@ interface=eth1
     assert management_handoff_required(
         {"raw_config_preview": checked}, {"config_preview": dedicated},
     )
+
+    down = dedicated.replace("admin_state=up", "admin_state=down", 1)
+    assert network_management_paths(down)[0]["management_eligible"] == "false"
+    assert management_handoff_required({"raw_config_preview": down}, {"config_preview": dedicated})
 
 
 def test_management_binding_change_requires_protected_handoff():
@@ -1891,6 +1907,8 @@ def test_management_handoff_staging_failure_removes_private_ca_payload(
     """
     from atlaso.app import ui
 
+    monkeypatch.setattr(ui, "acquire_network_objects_write_lock", lambda _db: None)
+
     class UnusedAdapter:
         """Reject helper calls because staging must fail first."""
 
@@ -1920,7 +1938,7 @@ def test_management_handoff_staging_failure_removes_private_ca_payload(
     }
     units["network"]["previous_management_paths"] = []
     units["network"]["removed_vlan_interfaces"] = []
-    units["ca"]["context"] = {"ca_settings": object(), "ca_certificates": []}
+    units["ca"]["context"] = {"ca_settings": object(), "ca_certificates": [], "ca_profiles": []}
     ca_path = tmp_path / "atlaso-ca.json"
     manifest_path = tmp_path / "atlaso-management-handoff.json"
     monkeypatch.setattr(ui, "CA_STAGED_CONFIG_PATH", str(ca_path))
@@ -1966,6 +1984,8 @@ def test_management_handoff_timeout_stops_and_recovers_indeterminate_helper(monk
     """
     from atlaso.app import ui
     from atlaso.app.adapters.system import AdapterResult
+
+    monkeypatch.setattr(ui, "acquire_network_objects_write_lock", lambda _db: None)
 
     class TimeoutAdapter:
         """Return an indeterminate apply result followed by proven rollback."""
@@ -2042,7 +2062,7 @@ def test_management_handoff_timeout_stops_and_recovers_indeterminate_helper(monk
         }
     ]
     units["network"]["removed_vlan_interfaces"] = []
-    units["ca"]["context"] = {"ca_settings": object(), "ca_certificates": []}
+    units["ca"]["context"] = {"ca_settings": object(), "ca_certificates": [], "ca_profiles": []}
     monkeypatch.setattr(ui, "service_dns_identity_snapshot", lambda _db: [])
     monkeypatch.setattr(ui, "owned_service_dns_records", lambda _db, _config: [])
     monkeypatch.setattr(ui, "load_appliance_apply_baselines", lambda _db: {"appliance_settings": {}})
@@ -2157,7 +2177,7 @@ def test_management_handoff_preserves_newer_routing_desired_state(client, monkey
     }
     units["network"]["previous_management_paths"] = []
     units["network"]["removed_vlan_interfaces"] = []
-    units["ca"]["context"] = {"ca_settings": object(), "ca_certificates": []}
+    units["ca"]["context"] = {"ca_settings": object(), "ca_certificates": [], "ca_profiles": []}
     units["wan"]["config_path"] = str(tmp_path / "wan.json")
     units["wan"]["context"] = {
         "routes_wan_settings": SimpleNamespace(routing_enabled=True)
@@ -2195,7 +2215,7 @@ def test_management_handoff_preserves_newer_routing_desired_state(client, monkey
         )
 
         assert group["success"] is True
-        assert lock_events == ["routing-sync"]
+        assert lock_events == ["routing-sync", "routing-sync"]
         assert routing_service.enabled is False
         assert routing_service.running is True
         assert routing_service.health == "healthy"
@@ -2688,25 +2708,67 @@ def test_appliance_apply_job_persists_helper_confirmed_transition(client, monkey
                     and persisted_step is not None
                     and persisted_step.status == JobStatus.SUCCEEDED.value
                     and persisted_step.finished_at is not None
+                    and ui.load_appliance_apply_baselines(verification_db)["appliance_settings"]["snapshot_hash"] == "captured-settings"
                 )
         return [unit]
 
     monkeypatch.setattr(ui, "appliance_apply_units", appliance_apply_units_with_durable_probe)
-    monkeypatch.setattr(
-        ui,
-        "execute_appliance_apply_unit",
-        lambda _unit, **_kwargs: {
-            **unit,
-            "unit_id": "appliance_settings",
-            "success": True,
-            "status": JobStatus.SUCCEEDED.value,
-            "dry_run": False,
-            "commands": [],
-            "management_status_transition": transition,
-        },
-    )
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Event
 
-    ui.run_appliance_apply_job("job_confirmed_management_restart")
+    attempted, admitted = Event(), Event()
+    publication_transaction = {}
+    futures = []
+    baseline_updates = []
+    update_baselines = ui.update_appliance_apply_baselines
+
+    def acknowledge():
+        """A waiting acknowledgement must see the newly executed Settings baseline."""
+        with SessionLocal() as db:
+            attempted.set()
+            ui.acquire_network_objects_write_lock(db)
+            admitted.set()
+            baseline = ui.load_appliance_apply_baselines(db)["appliance_settings"]
+            assert baseline["snapshot_hash"] == "captured-settings"
+            db.rollback()
+
+    def execute(_unit, *, db, **kwargs):
+        """Simulate native Settings publication under the real shared writer.
+
+        Args:
+            _unit: Captured appliance unit supplied by the runner.
+            db: Database session participating in the admitted transaction.
+            **kwargs: Additional options supplied by the production caller.
+        """
+        ui.acquire_network_objects_write_lock(db)
+        publication_transaction["value"] = db.get_transaction()
+        futures.append(executor.submit(acknowledge))
+        assert attempted.wait(3) and not admitted.wait(0.1)
+        return {**unit, "unit_id": "appliance_settings", "success": True,
+                "status": JobStatus.SUCCEEDED.value, "dry_run": False,
+                "commands": [], "management_status_transition": transition}
+
+    def baseline(db, units, selected_ids):
+        """The runner retains publication admission through exactly one baseline write.
+
+        Args:
+            db: Database session participating in the admitted transaction.
+            units: Captured appliance units supplied by the caller.
+            selected_ids: Identifiers of the executed units whose baselines are committed.
+        """
+        assert db.get_transaction() is publication_transaction["value"]
+        assert not admitted.is_set()
+        baseline_updates.append(selected_ids)
+        return update_baselines(db, units, selected_ids)
+
+    monkeypatch.setattr(ui, "execute_appliance_apply_unit", execute)
+    monkeypatch.setattr(ui, "update_appliance_apply_baselines", baseline)
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        ui.run_appliance_apply_job("job_confirmed_management_restart")
+        assert len(futures) == 1
+        futures[0].result(timeout=5)
+    assert admitted.is_set()
+    assert baseline_updates == [{"appliance_settings"}]
 
     with SessionLocal() as db:
         completed = db.get(Job, "job_confirmed_management_restart")
@@ -3783,12 +3845,13 @@ ipv6_cidr=
         mac_address="00:15:5d:01:01:01",
         driver="vmxnet3",
         speed="10000 Mbps",
-        host_ip_cidr="192.168.167.134/24",
+        host_ip_cidr="192.168.49.10/24",
+        host_dhcp_ip_cidr="192.168.167.134/24",
         host_mtu=1500,
         host_admin_state="up",
         oper_state="up",
     )
-    monkeypatch.setattr(ui, "discover_host_physical_interfaces", lambda: [observed])
+    monkeypatch.setattr(ui, "discover_host_physical_interfaces", lambda **kwargs: [observed])
 
     with SessionLocal() as db:
         interface = db.scalar(select(PhysicalInterface).where(PhysicalInterface.name == "eth0"))
@@ -4234,3 +4297,102 @@ def test_appliance_apply_rejects_submission_while_another_task_is_active(client)
     with SessionLocal() as db:
         jobs = db.scalars(select(Job).where(Job.type == "appliance-apply")).all()
         assert [job.id for job in jobs] == ["job_active_apply"]
+
+
+@pytest.mark.parametrize("candidate", [None, "2001:db8::3/64"])
+@pytest.mark.parametrize("complete_proof", [True, False])
+def test_management_handoff_requires_native_automatic_ipv6_candidate(client, monkeypatch, candidate, complete_proof):
+    """Require native automatic source even when the helper probed a lingering static address.
+
+    Args:
+        client: Isolated appliance database client.
+        monkeypatch: Native inventory fixture control.
+        candidate: Native dynamic candidate, absent before acquisition.
+        complete_proof: Whether both preferred prefixes were proven by the helper.
+    """
+    from sqlalchemy import select
+
+    import atlaso.app.ui as ui
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import PhysicalInterface
+    from atlaso.app.services.networking import HostPhysicalInterface
+
+    preview = "[physical_interfaces]\ninterface=eth0\nrole=management\nmode=access\nadmin_state=up\nipv4_method=disabled\nip_cidr=\nipv6_enabled=true\nipv6_cidr=\n"
+    observed = HostPhysicalInterface(
+        name="eth0", mac_address="00:15:5d:01:01:01", driver=None, speed=None,
+        host_ip_cidr=None, host_mtu=1500, host_ipv6_cidr="2001:db8::1/64",
+        host_dynamic_ipv6_cidr=candidate, host_admin_state="up", oper_state="up",
+        host_dynamic_ipv6_cidrs=(candidate, "2001:db8:2::3/64") if candidate else (),
+    )
+    monkeypatch.setattr(ui, "discover_host_physical_interfaces", lambda **kwargs: [observed])
+    with SessionLocal() as db:
+        interface = db.scalar(select(PhysicalInterface).where(PhysicalInterface.name == "eth0"))
+        assert interface is not None
+        interface.ipv6_enabled = True
+        interface.ipv6_cidr = None
+        interface.host_ipv6_cidr = "2001:db8::1/64"
+        evidence = {"candidate_addresses": ["2001:db8::1", "2001:db8::3"]}
+        if complete_proof:
+            evidence["candidate_addresses"].append("2001:db8:2::3")
+        if candidate is None or not complete_proof:
+            with pytest.raises(RuntimeError, match="dynamic IPv6"):
+                ui.refresh_management_handoff_dynamic_observations(db, preview, evidence)
+            assert interface.host_ipv6_cidr == "2001:db8::1/64"
+        else:
+            ui.refresh_management_handoff_dynamic_observations(db, preview, evidence)
+            assert interface.host_ipv6_cidr == candidate
+            assert interface.host_ipv6_cidrs == [candidate, "2001:db8:2::3/64"]
+        assert interface.ipv6_cidr is None
+
+
+@pytest.mark.parametrize("failure", ["timeout", "os_error", "exit_code"])
+def test_management_handoff_discovery_failure_preserves_observations(client, monkeypatch, failure):
+    """Failed bounded handoff discovery cannot publish observations or retain admission after rollback.
+
+    Args:
+        client: Isolated appliance database fixture.
+        monkeypatch: Supply failed native discovery.
+        failure: Native timeout, launch failure, or nonzero exit.
+    """
+    import subprocess
+
+    from sqlalchemy import select
+
+    from atlaso.app import ui
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import PhysicalInterface
+    from atlaso.app.services import networking
+
+    preview = "[physical_interfaces]\ninterface=eth0\nrole=management\nmode=access\nadmin_state=up\nipv4_method=dhcp\nip_cidr=\nipv6_enabled=false\n"
+    with SessionLocal() as db:
+        interface = db.scalar(select(PhysicalInterface).where(PhysicalInterface.name == "eth0"))
+        interface.host_ip_cidr = "192.0.2.10/24"
+        db.commit()
+
+    def fail(args, **kwargs):
+        """The actual discovery subprocess must have a finite deadline.
+
+        Args:
+            args: Positional arguments supplied by the production caller.
+            **kwargs: Additional options supplied by the production caller.
+        """
+        assert args == ["ip", "-j", "address", "show"]
+        assert kwargs["timeout"] == 5.0
+        if failure == "timeout":
+            raise subprocess.TimeoutExpired(args, kwargs["timeout"])
+        if failure == "os_error":
+            raise OSError("native command unavailable")
+        return subprocess.CompletedProcess(args, 1, stdout="", stderr="")
+
+    monkeypatch.setattr(networking.subprocess, "run", fail)
+    with SessionLocal() as db:
+        with pytest.raises(RuntimeError, match="before observation publication"):
+            ui.refresh_management_handoff_dynamic_observations(db, preview, {"candidate_addresses": ["192.0.2.20"]})
+        interface = db.scalar(select(PhysicalInterface).where(PhysicalInterface.name == "eth0"))
+        assert interface.host_ip_cidr == "192.0.2.10/24"
+        db.rollback()
+        with SessionLocal() as next_writer:
+            ui.acquire_network_objects_write_lock(next_writer)
+            interface = next_writer.scalar(select(PhysicalInterface).where(PhysicalInterface.name == "eth0"))
+            assert interface.host_ip_cidr == "192.0.2.10/24"
+            next_writer.rollback()

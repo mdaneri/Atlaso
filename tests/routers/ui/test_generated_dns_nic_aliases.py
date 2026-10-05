@@ -74,17 +74,19 @@ def test_startup_mac_rename_projects_dhcp_dns_move_through_applied_nic_alias(
 
     monkeypatch.setattr(
         "atlaso.app.services.networking.discover_host_physical_interfaces",
-        lambda: [
+        lambda **kwargs: [
             HostPhysicalInterface(
                 name="ens192",
                 mac_address="02:00:00:00:00:19",
                 driver="test",
                 speed="1000 Mbps",
-                host_ip_cidr="192.0.2.11/24",
+                host_ip_cidr="192.0.2.11/24", host_dhcp_ip_cidr="192.0.2.11/24",
                 host_mtu=1500,
                 host_admin_state="up",
                 oper_state="up",
                 host_ipv6_cidr="2001:db8::11/64",
+                host_dynamic_ipv6_cidr="2001:db8::11/64",
+                host_dynamic_ipv6_cidrs=("2001:db8::11/64",),
             ),
             management_host,
         ],
@@ -161,7 +163,7 @@ def test_applied_alias_chains_through_missing_startup_inventory(client, monkeypa
         ui.update_appliance_apply_baselines(db, units, {unit["id"] for unit in units})
         db.commit()
 
-    monkeypatch.setattr("atlaso.app.services.networking.discover_host_physical_interfaces", lambda: [])
+    monkeypatch.setattr("atlaso.app.services.networking.discover_host_physical_interfaces", lambda **kwargs: [])
     with SessionLocal() as db:
         main.refresh_startup_host_inventory(db, environment="appliance")
     with SessionLocal() as db:
@@ -170,9 +172,9 @@ def test_applied_alias_chains_through_missing_startup_inventory(client, monkeypa
 
     monkeypatch.setattr(
         "atlaso.app.services.networking.discover_host_physical_interfaces",
-        lambda: [HostPhysicalInterface(
+        lambda **kwargs: [HostPhysicalInterface(
             name="ens192", mac_address="02:00:00:00:00:19", driver="test", speed="1000 Mbps",
-            host_ip_cidr="192.0.2.11/24", host_mtu=1500, host_admin_state="up", oper_state="up",
+            host_ip_cidr="192.0.2.11/24", host_dhcp_ip_cidr="192.0.2.11/24", host_mtu=1500, host_admin_state="up", oper_state="up",
         )],
     )
     with SessionLocal() as db:

@@ -29,6 +29,7 @@ from atlaso.app.services.appliance_settings import (
     normalize_multiline_values,
     web_terminal_interfaces_to_json,
 )
+from atlaso.app.services.network_objects import acquire_network_objects_write_lock
 
 Endpoint = Callable[..., Any]
 
@@ -121,7 +122,10 @@ def build_router(dependencies: SettingsApiDependencies) -> SettingsApiRouter:
             db: Active database session used by the operation.
             settings: Current Atlaso settings used to configure the operation.
         """
+        acquire_network_objects_write_lock(db)
         desired = get_appliance_settings(db)
+        acquire_network_objects_write_lock(db)
+        db.refresh(desired)
         supplied_fields = payload.model_fields_set
         previous_fqdn = desired.fqdn
         fqdn_changed = False

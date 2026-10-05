@@ -31,6 +31,7 @@ import time
 import uuid
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager, nullcontext
+from contextvars import ContextVar
 from datetime import datetime, timezone
 from ipaddress import (
     IPv4Address,
@@ -185,6 +186,12 @@ SYSTEMD_RUN_CHILD_ENV = "ATLASO_HELPER_SYSTEMD_RUN_CHILD"
 SYSTEMD_RUN_ACTION_UNIT_PREFIX = "atlaso-helper-action"
 UPDATE_CHECK_TIMEOUT_SECONDS = 300
 UPDATE_CHECK_STOP_SECONDS = 30
+CONSOLE_RECOVERY_OPERATION_SECONDS = 100
+# Service state (2s), native attestation (5s), served DER (3s), and process overhead (2s).
+CONSOLE_RECOVERY_FINAL_SECONDS = 12
+CONSOLE_RECOVERY_RUNTIME_SECONDS = 108
+CONSOLE_RECOVERY_STOP_SECONDS = 2
+_CONSOLE_RECOVERY_DEADLINE: ContextVar[float | None] = ContextVar("console_recovery_deadline", default=None)
 UPDATE_RELEASE_NOTES_URL_MAX_LENGTH = 2048
 NO_PATH_ACTIONS = {
     ("firewall", "replay"),
@@ -236,6 +243,7 @@ NO_PATH_ACTIONS = {
     ("appliance-update", "quiesce-action"),
 }
 NON_PATH_ARGUMENT_ACTIONS = {
+    ("console", "recover-management-plane"),
     ("network", "recover"),
     ("network", "acknowledge"),
     ("nat", "validate-publishing"),
@@ -933,6 +941,18 @@ def _run_real_action_with_systemd(group: str, action: str, args: list[str]) -> i
                 )
                 return 1
         command.append(f"--unit={unit.removesuffix('.service')}")
+    bounded_recovery = group == "console" and action == "recover-management-plane"
+    if bounded_recovery:
+        # Transient system services do not inherit the appliance service environment.
+        # Acknowledgement must use the same database and state root as the worker.
+        command.extend([
+            f"--property=WorkingDirectory={ATLASO_STATE_DIR}",
+            f"--property=EnvironmentFile={ATLASO_ENV_PATH}",
+            f"--property=RuntimeMaxSec={CONSOLE_RECOVERY_RUNTIME_SECONDS}",
+            f"--property=TimeoutStopSec={CONSOLE_RECOVERY_STOP_SECONDS}",
+            "--property=KillMode=control-group",
+            "--property=SendSIGKILL=yes",
+        ])
     if group in {"appliance-update", "appliance-settings"}:
         powershell_env = _privileged_powershell_environment()
         command.extend(
@@ -963,6 +983,16 @@ def _run_real_action_with_systemd(group: str, action: str, args: list[str]) -> i
             return 75
         if result.returncode != 0:
             print("Appliance Update check failed or exceeded its five-minute deadline; its helper has stopped.", file=sys.stderr)
+    elif bounded_recovery:
+        try:
+            result = _run(command, timeout=CONSOLE_RECOVERY_RUNTIME_SECONDS + CONSOLE_RECOVERY_STOP_SECONDS + 1)
+        except subprocess.TimeoutExpired:
+            result = subprocess.CompletedProcess(command, 124, "", "Console recovery exceeded its deadline.\n")
+        try:
+            _quiesce_console_recovery_unit(f"{unit_name}.service")
+        except (ValueError, OSError, subprocess.TimeoutExpired):
+            print("Console recovery unit cleanup could not be verified; reconcile before retrying.", file=sys.stderr)
+            return 75
     else:
         result = _run(command)
     print(result.stdout, end="")
@@ -25970,17 +26000,39 @@ def _restore_console_managed_services() -> int:
     return 1 if failures else 0
 
 
-def _console_recovery_command(label: str, command: list[str]) -> subprocess.CompletedProcess[str]:
+def _console_recovery_remaining(maximum: float | None = None) -> float | None:
+    """Bound a recovery stage by its shared operation deadline.
+
+    Args:
+        maximum: Optional stage-specific maximum duration.
+    """
+    deadline = _CONSOLE_RECOVERY_DEADLINE.get()
+    if deadline is None:
+        return maximum
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        raise ValueError("Management recovery exhausted its complete operation budget")
+    return min(remaining, maximum) if maximum is not None else remaining
+
+
+def _console_recovery_command(
+    label: str, command: list[str], *, maximum_seconds: float | None = None,
+) -> subprocess.CompletedProcess[str]:
     """Run one required management-plane recovery command.
 
     Args:
         label: Human-readable recovery stage.
         command: Command and arguments to execute.
+        maximum_seconds: Optional stage limit within the shared operation deadline.
 
     Raises:
         ValueError: If the command does not succeed.
     """
-    result = _run(command)
+    try:
+        remaining = _console_recovery_remaining(maximum_seconds)
+        result = _run(command, **({"timeout": remaining} if remaining is not None else {}))
+    except subprocess.TimeoutExpired as exc:
+        raise ValueError(f"{label} exceeded the complete recovery budget") from exc
     if result.returncode != 0:
         detail = (result.stderr or result.stdout or f"exit code {result.returncode}").strip()
         raise ValueError(f"{label} failed: {detail}")
@@ -26015,7 +26067,8 @@ def _console_management_http_status(
         command.extend(["--cacert", str(ca_certificate)])
     elif insecure:
         command.append("--insecure")
-    result = _run([*command, url])
+    remaining = _console_recovery_remaining(3) if _CONSOLE_RECOVERY_DEADLINE.get() is not None else None
+    result = _run([*command, url], **({"timeout": remaining} if remaining is not None else {}))
     return result.stdout.strip() if result.returncode == 0 else "000"
 
 
@@ -26034,16 +26087,30 @@ def _console_management_readiness_checks() -> tuple[bool, tuple[tuple[str, str, 
         raise ValueError(f"reading the applied nginx management configuration failed: {exc}") from exc
     if not _console_management_config_contract_is_complete(management_config):
         raise ValueError("the applied nginx management configuration is incomplete")
-    https_enabled = bool(re.search(
-        r"(?m)^\s*listen\s+(?:\d+|127\.0\.0\.1:\d+)\s+ssl(?:\s+default_server)?;",
-        management_config,
-    ))
-    nginx_checks = (
-        ("nginx HTTP redirect", "http://127.0.0.1/", False, "308"),
-        ("nginx HTTPS readiness", "https://127.0.0.1/openapi.json", True, "200"),
-    ) if https_enabled else (
-        ("nginx HTTP readiness", "http://127.0.0.1/openapi.json", False, "200"),
-    )
+    ports: dict[bool, set[int]] = {False: set(), True: set()}
+    for listener in re.finditer(
+        r"(?m)^\s*listen\s+(?:127\.0\.0\.1:)?(\d+)\s+([^;]*);", management_config,
+    ):
+        options = listener.group(2).split()
+        if "default_server" in options:
+            port = int(listener.group(1))
+            if not 1 <= port <= 65535:
+                raise ValueError("the applied management listener port is invalid")
+            ports["ssl" in options].add(port)
+    if (len(ports[False]) > 1 or len(ports[True]) > 1
+            or not (ports[False] or ports[True])):
+        raise ValueError("the applied management loopback listener ports are ambiguous or unavailable")
+    http_port = next(iter(ports[False]), 80)
+    http_origin = "http://127.0.0.1" + (f":{http_port}" if http_port != 80 else "")
+    https_enabled = bool(ports[True])
+    if https_enabled:
+        https_port = next(iter(ports[True]))
+        https_origin = "https://127.0.0.1" + (f":{https_port}" if https_port != 443 else "")
+        nginx_checks = (
+            (("nginx HTTP redirect", http_origin + "/", False, "308"),) if ports[False] else ()
+        ) + (("nginx HTTPS readiness", https_origin + "/openapi.json", True, "200"),)
+    else:
+        nginx_checks = (("nginx HTTP readiness", http_origin + "/openapi.json", False, "200"),)
     return https_enabled, (*MANAGEMENT_APPLICATION_READINESS_CHECK, *nginx_checks)
 
 
@@ -26090,63 +26157,243 @@ def _console_nginx_main_config_activates_atlaso(config: str) -> bool:
     )
 
 
-def _console_first_boot_https_contract_is_complete() -> bool:
-    """Return whether durable bootstrap evidence matches applied nginx state."""
+def _console_first_boot_https_contract_is_complete(*, require_marker: bool = True) -> bool:
+    """Validate the applied site, optionally requiring ordinary first-boot evidence.
+
+    Args:
+        require_marker: Ordinary bootstrap requires its marker; bound recovery validates the applied site.
+    """
+    paths = [(NGINX_MAIN_CONFIG_PATH, 1048576), (NGINX_CONF_INCLUDE_PATH, 4096),
+             (NGINX_MANAGEMENT_SITE_PATH, 262144)]
+    if require_marker:
+        paths.append((FIRST_BOOT_HTTPS_MARKER_PATH, 256))
     try:
-        marker_stat = FIRST_BOOT_HTTPS_MARKER_PATH.lstat()
-        main_config_stat = NGINX_MAIN_CONFIG_PATH.lstat()
-        include_stat = NGINX_CONF_INCLUDE_PATH.lstat()
-        management_stat = NGINX_MANAGEMENT_SITE_PATH.lstat()
-        if (
-            FIRST_BOOT_HTTPS_MARKER_PATH.is_symlink()
-            or NGINX_MAIN_CONFIG_PATH.is_symlink()
-            or NGINX_CONF_INCLUDE_PATH.is_symlink()
-            or NGINX_MANAGEMENT_SITE_PATH.is_symlink()
-            or not FIRST_BOOT_HTTPS_MARKER_PATH.is_file()
-            or not NGINX_MAIN_CONFIG_PATH.is_file()
-            or not NGINX_CONF_INCLUDE_PATH.is_file()
-            or not NGINX_MANAGEMENT_SITE_PATH.is_file()
-            or not 0 < marker_stat.st_size <= 256
-            or not 0 < main_config_stat.st_size <= 1048576
-            or not 0 < include_stat.st_size <= 4096
-            or not 0 < management_stat.st_size <= 262144
-        ):
-            return False
-        marker = FIRST_BOOT_HTTPS_MARKER_PATH.read_text(encoding="utf-8")
+        for path, maximum in paths:
+            metadata = path.lstat()
+            if path.is_symlink() or not stat.S_ISREG(metadata.st_mode) or not 0 < metadata.st_size <= maximum:
+                return False
         main_config = NGINX_MAIN_CONFIG_PATH.read_text(encoding="utf-8")
         include = NGINX_CONF_INCLUDE_PATH.read_text(encoding="utf-8")
         management = NGINX_MANAGEMENT_SITE_PATH.read_text(encoding="utf-8")
+        if require_marker and FIRST_BOOT_HTTPS_MARKER_PATH.read_text(encoding="utf-8") != FIRST_BOOT_HTTPS_MARKER_TEXT:
+            return False
     except (OSError, UnicodeError):
         return False
-    return (
-        marker == FIRST_BOOT_HTTPS_MARKER_TEXT
-        and _console_nginx_main_config_activates_atlaso(main_config)
-        and include == FIRST_BOOT_HTTPS_INCLUDE_TEXT
-        and _console_management_config_contract_is_complete(management)
-    )
+    return (_console_nginx_main_config_activates_atlaso(main_config)
+            and include == FIRST_BOOT_HTTPS_INCLUDE_TEXT
+            and _console_management_config_contract_is_complete(management))
 
 
-def _recover_console_management_plane(timeout_seconds: int = 60) -> int:
+def _console_publication_fingerprint(network_job_id: str) -> tuple[str, str]:
+    """Capture the task-bound published leaf and immutable receipt digest before readiness.
+
+    Args:
+        network_job_id: Completed Network task selecting the root-private publication receipt.
+    """
+    if not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", network_job_id):
+        raise ValueError("Invalid completed Network publication binding")
+    directory = CONSOLE_BOOTSTRAP_BINDING_DIRECTORY
+    metadata = directory.lstat()
+    if (directory.is_symlink() or not stat.S_ISDIR(metadata.st_mode)
+            or (fcntl is not None and (metadata.st_uid != 0 or metadata.st_mode & 0o077))):
+        raise ValueError("Console publication directory is unsafe")
+    path = directory / (network_job_id + ".publication.json")
+    descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+    with os.fdopen(descriptor, "rb") as stream:
+        metadata = os.fstat(stream.fileno())
+        if (not stat.S_ISREG(metadata.st_mode) or metadata.st_nlink != 1 or metadata.st_size > 2097152
+                or (fcntl is not None and (metadata.st_uid != 0 or metadata.st_mode & 0o077))):
+            raise ValueError("Console publication receipt is unsafe")
+        raw = stream.read(2097153)
+    current = path.lstat()
+    if path.is_symlink() or (current.st_dev, current.st_ino) != (metadata.st_dev, metadata.st_ino) or len(raw) > 2097152:
+        raise ValueError("Console publication receipt changed")
+    try:
+        receipt = json.loads(raw)
+        payload = json.loads(receipt["public_payload"])
+        leaves = [row for row in payload["certificates"] if row.get("managed_owner") == "appliance:https"]
+        if receipt["network_job_id"] != network_job_id or len(leaves) != 1:
+            raise ValueError("Console publication receipt binding is incomplete")
+        fingerprint = leaves[0]["fingerprint"]
+        if not isinstance(fingerprint, str) or not re.fullmatch(r"[0-9a-f]{64}", fingerprint):
+            raise ValueError("Console publication fingerprint is unavailable")
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ValueError("Console publication receipt is invalid") from exc
+    return fingerprint, hashlib.sha256(raw).hexdigest()
+
+
+def _console_management_leaf_is_active(expected_fingerprint: str) -> bool:
+    """Compare the worker leaf with the captured recovery publication, independent of nginx paths.
+
+    Args:
+        expected_fingerprint: SHA-256 DER fingerprint from the immutable task-bound publication receipt.
+    """
+    try:
+        config = NGINX_MANAGEMENT_SITE_PATH.read_text(encoding="utf-8")
+        listener = re.search(r"(?m)^\s*listen\s+(?:127\.0\.0\.1:)?(\d+)\s+ssl\b", config)
+        if listener is None:
+            return False
+        served = ssl.get_server_certificate(("127.0.0.1", int(listener.group(1))), timeout=_console_recovery_remaining(3))
+        return hashlib.sha256(ssl.PEM_cert_to_DER_cert(served)).hexdigest() == expected_fingerprint
+    except (OSError, ValueError, UnicodeError):
+        return False
+
+
+CONSOLE_BOOTSTRAP_BINDING_DIRECTORY = Path("/run/atlaso-console-recovery")
+
+
+def _console_bootstrap_is_idle() -> bool:
+    """Prove the original oneshot has no queued or running job before unbinding."""
+    try:
+        result = _run(["systemctl", "show", FIRST_BOOT_HTTPS_UNIT, "-p", "ActiveState", "-p", "SubState", "-p", "Job"], timeout=5)
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    state = dict(line.split("=", 1) for line in result.stdout.splitlines() if "=" in line)
+    return bool(result.returncode == 0 and state.get("Job") in {"", "0"}
+                and (state.get("ActiveState"), state.get("SubState")) in {
+                    ("inactive", "dead"), ("failed", "failed"), ("active", "exited"),
+                })
+
+
+def _console_restart_bootstrap() -> None:
+    """Bound the original systemd restart before the outer console helper timeout."""
+    try:
+        result = _run(["systemctl", "restart", FIRST_BOOT_HTTPS_UNIT], timeout=_console_recovery_remaining(40))
+    except subprocess.TimeoutExpired as exc:
+        _run(["systemctl", "stop", "--no-block", FIRST_BOOT_HTTPS_UNIT], timeout=5)
+        deadline = time.monotonic() + 10
+        while not _console_bootstrap_is_idle() and time.monotonic() < deadline:
+            time.sleep(0.2)
+        raise ValueError("HTTPS bootstrap timed out; its stop was requested. Retry after the service is idle.") from exc
+    if result.returncode != 0:
+        raise ValueError("retrying first-boot HTTPS bootstrap failed: " + (result.stderr or result.stdout).strip())
+
+
+@contextmanager
+def _console_bootstrap_binding(network_job_id: str | None):
+    """Bind one serialized bootstrap service invocation without changing its unit gates.
+
+    Args:
+        network_job_id: Completed Network task, or ordinary unbound service recovery.
+    """
+    directory = CONSOLE_BOOTSTRAP_BINDING_DIRECTORY
+    directory.mkdir(mode=0o700, parents=True, exist_ok=True)
+    if directory.is_symlink():
+        raise ValueError("Console bootstrap binding directory is unsafe")
+    if fcntl is not None:
+        metadata = directory.stat()
+        if metadata.st_uid != 0 or metadata.st_mode & 0o077:
+            raise ValueError("Console bootstrap binding directory must be private and root-owned")
+    flags = os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0)
+    descriptor = os.open(directory / ".lock", flags, 0o600)
+    with os.fdopen(descriptor, "a+b") as handle:
+        if fcntl is not None:
+            metadata = os.fstat(handle.fileno())
+            if metadata.st_uid != 0 or not stat.S_ISREG(metadata.st_mode) or metadata.st_mode & 0o077:
+                raise ValueError("Console bootstrap binding lock is unsafe")
+            try:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError as exc:
+                raise ValueError("Console bootstrap recovery is busy; retry after the active operation") from exc
+        binding = directory / "network.env"
+        created = False
+        identity = None
+        try:
+            if binding.exists() or binding.is_symlink():
+                metadata = binding.lstat()
+                if (not stat.S_ISREG(metadata.st_mode) or metadata.st_nlink != 1
+                        or (fcntl is not None and (metadata.st_uid != 0 or metadata.st_mode & 0o077))
+                        or not _console_bootstrap_is_idle()):
+                    raise ValueError("A previous console bootstrap binding remains; reconcile it before retrying")
+                descriptor = os.open(binding, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+                with os.fdopen(descriptor, "r", encoding="utf-8") as previous:
+                    pinned = os.fstat(previous.fileno())
+                    content = previous.read(4097)
+                current = binding.lstat()
+                if ((metadata.st_dev, metadata.st_ino) != (pinned.st_dev, pinned.st_ino)
+                        or (current.st_dev, current.st_ino) != (pinned.st_dev, pinned.st_ino)
+                        or not re.fullmatch(r"ATLASO_CONSOLE_NETWORK_JOB_ID=[A-Za-z0-9_-]{1,128}\n", content)):
+                    raise ValueError("Previous console bootstrap binding changed or is invalid; preserve it")
+                binding.unlink()
+            if network_job_id:
+                descriptor = os.open(binding, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o600)
+                created = True
+                metadata = os.fstat(descriptor)
+                identity = (metadata.st_dev, metadata.st_ino)
+                with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
+                    stream.write(f"ATLASO_CONSOLE_NETWORK_JOB_ID={network_job_id}\n")
+                    stream.flush()
+                    os.fsync(stream.fileno())
+            yield
+        finally:
+            if created:
+                if not _console_bootstrap_is_idle():
+                    raise ValueError("Console bootstrap is still active; preserve its binding until the service is idle")
+                metadata = binding.lstat()
+                if binding.is_symlink() or (metadata.st_dev, metadata.st_ino) != identity:
+                    raise ValueError("Console bootstrap binding changed; preserve it for reconciliation")
+                binding.unlink()
+            if fcntl is not None:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+
+
+def _quiesce_console_recovery_unit(unit_name: str) -> None:
+    """Stop and verify this caller's unique transient recovery within the console budget.
+
+    Args:
+        unit_name: Exact collision-resistant unit created by this invocation.
+    """
+    active = {"active", "activating", "deactivating", "reloading"}
+    known = active | {"inactive", "failed", "unknown"}
+    initial = _run(["systemctl", "is-active", unit_name], timeout=1).stdout.strip()
+    if initial not in known:
+        raise ValueError("Console recovery unit state could not be verified")
+    if initial in active:
+        stopped = _run(["systemctl", "stop", unit_name], timeout=CONSOLE_RECOVERY_STOP_SECONDS + 2)
+        if stopped.returncode != 0:
+            raise ValueError("Console recovery unit could not be stopped")
+    final = _run(["systemctl", "is-active", unit_name], timeout=1).stdout.strip()
+    if final not in {"inactive", "failed", "unknown"}:
+        raise ValueError("Console recovery unit did not stop")
+
+
+def _recover_console_management_plane(timeout_seconds: int = 60, *, network_job_id: str | None = None) -> int:
+    """Serialize recovery through readiness and acknowledgement, including orphaned callers.
+
+    Args:
+        timeout_seconds: Maximum readiness wait after service recovery.
+        network_job_id: Completed Network task binding bootstrap certificate mutation.
+    """
+    token = _CONSOLE_RECOVERY_DEADLINE.set(time.monotonic() + CONSOLE_RECOVERY_OPERATION_SECONDS)
+    try:
+        with _console_bootstrap_binding(network_job_id):
+            return _recover_console_management_plane_bound(timeout_seconds, network_job_id=network_job_id)
+    except (OSError, UnicodeError, ValueError) as exc:
+        print(f"Management plane recovery failed: {exc}", file=sys.stderr)
+        return 1
+    finally:
+        _CONSOLE_RECOVERY_DEADLINE.reset(token)
+
+
+def _recover_console_management_plane_bound(timeout_seconds: int = 60, *, network_job_id: str | None = None) -> int:
     """Recover and verify the complete local management plane.
 
     Args:
         timeout_seconds: Maximum readiness wait after service recovery.
+        network_job_id: Completed Network task binding bootstrap certificate mutation.
     """
     bootstrap_retried = False
     atlaso_restarted = False
     try:
-        if not _console_first_boot_https_contract_is_complete():
+        if network_job_id is not None or not _console_first_boot_https_contract_is_complete():
             _console_recovery_command(
                 "resetting the first-boot HTTPS bootstrap failure",
                 ["systemctl", "reset-failed", FIRST_BOOT_HTTPS_UNIT],
             )
-            _console_recovery_command(
-                "retrying first-boot HTTPS bootstrap",
-                ["systemctl", "restart", FIRST_BOOT_HTTPS_UNIT],
-            )
+            _console_restart_bootstrap()
             bootstrap_retried = True
-            if not _console_first_boot_https_contract_is_complete():
-                raise ValueError("first-boot HTTPS bootstrap returned without a complete durable contract")
+            if not _console_first_boot_https_contract_is_complete(require_marker=network_job_id is None):
+                raise ValueError("HTTPS bootstrap returned without a complete applied management site")
 
         nginx = shutil.which("nginx")
         if nginx is None:
@@ -26161,48 +26408,73 @@ def _recover_console_management_plane(timeout_seconds: int = 60) -> int:
             ["systemctl", "enable", *MANAGEMENT_PLANE_UNITS],
         )
         _console_recovery_command("starting Atlaso", ["systemctl", "start", "atlaso.service"])
-        nginx_active = _run(["systemctl", "is-active", "nginx.service"])
+        nginx_active = _run(["systemctl", "is-active", "nginx.service"], timeout=_console_recovery_remaining())
         nginx_action = "reload" if nginx_active.returncode == 0 else "start"
         _console_recovery_command(
             f"{nginx_action}ing nginx",
             ["systemctl", nginx_action, "nginx.service"],
         )
         management_https_enabled, readiness_checks = _console_management_readiness_checks()
+        publication = _console_publication_fingerprint(network_job_id) if network_job_id is not None and management_https_enabled else None
 
-        deadline = time.monotonic() + timeout_seconds
+        # Unbound recovery only needs the final service check; bound recovery
+        # additionally needs native/served-leaf attestation.
+        final_seconds = CONSOLE_RECOVERY_FINAL_SECONDS if network_job_id is not None else 2
+        probe_deadline = (_CONSOLE_RECOVERY_DEADLINE.get() or float("inf")) - final_seconds
+        deadline = min(time.monotonic() + timeout_seconds, probe_deadline)
         consecutive_successes = 0
         statuses: dict[str, str] = {}
-        while time.monotonic() < deadline:
-            statuses = {
-                label: _console_management_http_status(curl, url, insecure=insecure)
-                for label, url, insecure, _expected in readiness_checks
-            }
-            ready = all(
-                statuses[label] == expected
-                for label, _url, _insecure, expected in readiness_checks
-            )
-            if ready:
-                consecutive_successes += 1
-                if consecutive_successes >= 5:
-                    break
+        # Cap every readiness probe to its subdeadline; a final iteration cannot
+        # consume the native/TLS attestation reserve from the operation deadline.
+        readiness_token = _CONSOLE_RECOVERY_DEADLINE.set(probe_deadline)
+        try:
+            while time.monotonic() < deadline:
+                statuses = {
+                    label: _console_management_http_status(curl, url, insecure=insecure)
+                    for label, url, insecure, _expected in readiness_checks
+                }
+                ready = all(
+                    statuses[label] == expected
+                    for label, _url, _insecure, expected in readiness_checks
+                )
+                if ready and network_job_id is not None and management_https_enabled:
+                    ready = _console_management_leaf_is_active(publication[0])
+                    statuses["published management leaf"] = "active" if ready else "not active"
+                if ready:
+                    consecutive_successes += 1
+                    if consecutive_successes >= 5:
+                        break
+                else:
+                    consecutive_successes = 0
+                    if statuses.get("Atlaso application loopback") != "200" and not atlaso_restarted:
+                        _console_recovery_command(
+                            "restarting an unready Atlaso service",
+                            ["systemctl", "restart", "atlaso.service"],
+                        )
+                        atlaso_restarted = True
+                time.sleep(1)
             else:
-                consecutive_successes = 0
-                if statuses.get("Atlaso application loopback") != "200" and not atlaso_restarted:
-                    _console_recovery_command(
-                        "restarting an unready Atlaso service",
-                        ["systemctl", "restart", "atlaso.service"],
-                    )
-                    atlaso_restarted = True
-            time.sleep(1)
-        else:
-            summary = ", ".join(f"{label}={status}" for label, status in statuses.items())
-            raise ValueError(f"management readiness did not stabilize within {timeout_seconds} seconds ({summary})")
+                summary = ", ".join(f"{label}={status}" for label, status in statuses.items())
+                raise ValueError(f"management readiness did not stabilize within {timeout_seconds} seconds ({summary})")
+        finally:
+            _CONSOLE_RECOVERY_DEADLINE.reset(readiness_token)
 
         _console_recovery_command(
             "checking management service state",
             ["systemctl", "is-active", *MANAGEMENT_PLANE_UNITS],
+            maximum_seconds=2,
         )
-    except ValueError as exc:
+        if network_job_id is not None and management_https_enabled:
+            _console_recovery_command("acknowledging ready management certificate publication",
+                                      ["/opt/atlaso/.venv/bin/python", "/opt/atlaso/bin/atlaso-bootstrap-https",
+                                       "--acknowledge-console-publication", network_job_id, publication[1]])
+        elif network_job_id is not None:
+            http_url = next(url for label, url, _insecure, _expected in readiness_checks if label == "nginx HTTP readiness")
+            http_port = urlparse(http_url).port or 80
+            _console_recovery_command("rechecking ready HTTP management Network binding",
+                                      ["/opt/atlaso/.venv/bin/python", "/opt/atlaso/bin/atlaso-bootstrap-https",
+                                       "--verify-console-http", network_job_id, str(http_port)])
+    except (OSError, UnicodeError, ValueError, subprocess.TimeoutExpired) as exc:
         print(f"Management plane recovery failed: {exc}", file=sys.stderr)
         return 1
 
@@ -26230,6 +26502,11 @@ def _handle_console(action: str, args: list[str]) -> int:
         action: Action consumed by handle console.
         args: Parsed command-line options consumed by the operation.
     """
+    if action == "recover-management-plane" and args:
+        if len(args) != 1 or not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", args[0]):
+            print("console recovery requires one valid completed Network task ID", file=sys.stderr)
+            return 2
+        return _recover_console_management_plane(network_job_id=args[0])
     if args:
         print(f"console {action} does not accept a path", file=sys.stderr)
         return 2

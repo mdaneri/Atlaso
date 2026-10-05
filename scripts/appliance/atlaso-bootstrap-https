@@ -3,14 +3,20 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
 import shlex
 import shutil
+import ssl
+import stat
 import subprocess
 import sys
 import tempfile
+import time
+from datetime import datetime, timezone
+from ipaddress import ip_interface
 from pathlib import Path
 
 from cryptography import x509
@@ -20,17 +26,46 @@ from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
 
 from atlaso.app.database import SessionLocal, init_db
-from atlaso.app.models import ApplianceSettings, CaCertificate, CaSettings
+from atlaso.app.models import (
+    ApplianceSettings,
+    CaCertificate,
+    CaProfile,
+    CaSettings,
+    Job,
+    JobStatus,
+    PhysicalInterface,
+    VlanInterface,
+)
 from atlaso.app.seed import seed_initial_data
 from atlaso.app.services.ca import (
     CA_STAGED_CONFIG_PATH,
     _load_root,
+    ensure_aware,
     import_root_ca_material,
     render_ca_apply_payload,
+    validate_ca_private_key_material,
 )
-from atlaso.app.services.networking import sync_host_physical_interfaces
-from atlaso.app.ui import ca_managed_certificate_paths, ensure_ca_state
+from atlaso.app.services.network_objects import acquire_network_objects_write_lock
+from atlaso.app.services.networking import (
+    discover_host_physical_interfaces,
+    native_automatic_ipv6_cidrs,
+    native_static_ip_cidr,
+    physical_ipv6_cidrs,
+    render_network_config,
+    sync_host_physical_interfaces,
+    verify_native_management_vlans,
+)
+from atlaso.app.ui import (
+    ca_managed_certificate_paths,
+    ensure_ca_state,
+    load_appliance_apply_baselines,
+    make_appliance_apply_unit,
+    network_management_paths,
+    redact_config_preview,
+    update_appliance_apply_baselines,
+)
 
+CONSOLE_PUBLICATION_DIRECTORY = Path("/run/atlaso-console-recovery")
 ENV_PATH = Path("/var/lib/atlaso/apply/ca/first-boot-management.env")
 MARKER_PATH = Path("/var/lib/atlaso/first-boot-https.applied")
 HELPER_PATH = Path("/opt/atlaso/bin/atlaso-helper")
@@ -493,12 +528,15 @@ server {{
     ensure_nginx_main_config_includes_atlaso()
 
 
-def apply_ca_files() -> int:
-    """Perform apply CA files.
+def apply_ca_files(config_path: Path | None = None) -> int:
+    """Publish a caller-owned CA staging artifact.
 
+    Args:
+        config_path: Private recovery artifact, or the ordinary bootstrap staging path.
     """
+    staged_path = config_path if config_path is not None else Path(CA_STAGED_CONFIG_PATH)
     for action in ("validate", "apply"):
-        result = run([str(HELPER_PATH), "ca", action, str(CA_STAGED_CONFIG_PATH), "--real"])
+        result = run([str(HELPER_PATH), "ca", action, str(staged_path), "--real"])
         if result.stdout:
             print(result.stdout, end="")
         if result.stderr:
@@ -532,10 +570,467 @@ def fix_state_permissions() -> None:
             path.chmod(0o750 if path.is_dir() else 0o600)
 
 
-def main() -> int:
+def recovery_dynamic_addresses_available(db, preview: str) -> bool:
+    """Require every applied dynamic management family before issuance or acknowledgement.
+
+    Args:
+        db: Admitted writer transaction containing native observations.
+        preview: Completed Network snapshot defining all management listeners.
+    """
+    for path in network_management_paths(preview):
+        if path.get("management_eligible") != "true":
+            return False
+        if path["kind"] != "physical":
+            continue
+        interface = db.scalar(select(PhysicalInterface).where(PhysicalInterface.name == path["name"]))
+        if interface is None:
+            return False
+        required = []
+        if path.get("ipv4_method") == "dhcp":
+            required.append((4, interface.host_ip_cidr))
+        if path.get("ipv6_enabled", "false").lower() == "true" and not path.get("ipv6_cidr"):
+            required.extend((6, cidr) for cidr in (physical_ipv6_cidrs(interface) or (None,)))
+        for family, cidr in required:
+            try:
+                address = ip_interface(cidr or "")
+            except ValueError:
+                return False
+            if (address.version != family or address.ip.is_unspecified or address.ip.is_loopback
+                    or address.ip.is_link_local or address.ip.is_multicast):
+                return False
+    return True
+
+
+def recovery_dynamic_address_binding(db, preview: str, *, native: bool = False) -> dict:
+    """Capture or attest every physical listener under writer admission.
+
+    Args:
+        db: Admitted publication transaction.
+        preview: Completed Network snapshot.
+        native: Rediscover bounded native state rather than read issuance observations.
+    """
+    # Retain the receipt field/function names; new receipts bind static paths too.
+    # Older incomplete receipts fail comparison rather than acquire new provenance.
+    deadline = time.monotonic() + 5
+    management_paths = network_management_paths(preview)
+    if native and not verify_native_management_vlans(management_paths, timeout=5):
+        raise ValueError("Native management VLAN listener is unavailable")
+    paths = [path for path in management_paths if path["kind"] == "physical"]
+    remaining = max(0, deadline - time.monotonic()) if any(path["kind"] == "vlan" for path in management_paths) else 5
+    hosts = discover_host_physical_interfaces(timeout=remaining, require_success=True) if native and paths else []
+    binding = {}
+    for path in paths:
+        interface = db.scalar(select(PhysicalInterface).where(PhysicalInterface.name == path["name"]))
+        if interface is None or not interface.mac_address:
+            raise ValueError("Physical listener identity is unavailable")
+        mac = interface.mac_address.lower()
+        host = None
+        if native:
+            matches = [row for row in hosts if row.name == path["name"] and row.mac_address.lower() == mac]
+            if len(matches) != 1 or matches[0].host_admin_state != "up" or matches[0].oper_state != "up":
+                raise ValueError("Native physical listener identity is unavailable")
+            host = matches[0]
+        families = {}
+        if path.get("ipv4_method") == "dhcp":
+            families[4] = [host.host_dhcp_ip_cidr if host else interface.host_ip_cidr]
+        elif path.get("ip_cidr"):
+            families[4] = [native_static_ip_cidr(host, path["ip_cidr"]) if host else path["ip_cidr"]]
+        if path.get("ipv6_enabled", "false").lower() == "true":
+            if path.get("ipv6_cidr"):
+                families[6] = [native_static_ip_cidr(host, path["ipv6_cidr"]) if host else path["ipv6_cidr"]]
+            else:
+                families[6] = list(native_automatic_ipv6_cidrs(host) if host else physical_ipv6_cidrs(interface))
+        if not families:
+            raise ValueError("Physical listener has no applied address family")
+        addresses = {}
+        for family, cidrs in families.items():
+            if not cidrs:
+                raise ValueError("Native management family is unavailable")
+            values = set()
+            for cidr in cidrs:
+                address = ip_interface(cidr or "")
+                if (address.version != family or address.ip.is_unspecified or address.ip.is_loopback
+                        or address.ip.is_link_local or address.ip.is_multicast):
+                    raise ValueError("Native management address is unusable")
+                values.add(str(address.ip))
+            addresses[str(family)] = sorted(values)
+        binding[path["name"]] = {"mac": mac, "addresses": addresses}
+    return binding
+
+
+def ensure_recovery_ca_state(
+    db, network_job_id: str | None, *, commit: bool = True, management_snapshot: dict | None = None,
+) -> list[str]:
+    """Serialize certificate issuance against the completed Network management paths.
+
+    Args:
+        db: Bootstrap database transaction containing initialized CA settings.
+        network_job_id: Exact completed console Network task, or ordinary bootstrap.
+        commit: Whether to release the writer transaction after issuance.
+        management_snapshot: Applied Settings identity captured for completed recovery.
+    """
+    acquire_network_objects_write_lock(db)
+    transaction = db.get_transaction()
+    if network_job_id is not None:
+        job = db.get(Job, network_job_id)
+        payload = json.loads(job.result or "{}") if job is not None else {}
+        units = [unit for unit in payload.get("captured_units", []) if unit.get("unit_id") == "network"]
+        if job is None or job.status != JobStatus.SUCCEEDED.value or len(units) != 1:
+            return ["Completed Network snapshot is unavailable; certificate recovery was not started."]
+        preview = str(units[0].get("config_preview") or "")
+    else:
+        baseline = load_appliance_apply_baselines(db).get("network")
+        preview = str(baseline.get("config_preview") or "") if baseline else None
+    if preview is not None:
+        current = render_network_config(
+            interfaces=list(db.scalars(select(PhysicalInterface))), vlans=list(db.scalars(select(VlanInterface))),
+        )
+        if not network_management_paths(preview) or network_management_paths(preview) != network_management_paths(current):
+            return ["Management paths changed after Network apply; pending edits prevent certificate recovery."]
+    if network_job_id is not None and not recovery_dynamic_addresses_available(db, preview):
+        return ["Applied dynamic management observation is unavailable; certificate recovery was not started."]
+    if network_job_id is not None:
+        management_leaf = db.scalar(
+            select(CaCertificate).where(CaCertificate.managed_owner == "appliance:https")
+            .execution_options(populate_existing=True)
+        )
+        if management_leaf is not None and management_leaf.status == "revoked":
+            return ["Management certificate is revoked; explicit CA operator action is required before recovery."]
+    projection = {"management_snapshot": management_snapshot} if management_snapshot is not None else {}
+    errors = ensure_ca_state(
+        db, commit=False, managed_owners={"appliance:https"} if network_job_id is not None else None, **projection,
+    )
+    if db.get_transaction() is not transaction:
+        return ["Certificate recovery lost its Network writer lock; retry the console correction."]
+    if not errors and commit:
+        db.commit()
+    return errors
+
+
+def recovery_root_matches_baseline(db) -> bool:
+    """Refuse pending trust-root or root-path changes before completed recovery.
+
+    Args:
+        db: Admitted writer transaction before management issuance.
+    """
+    baseline = load_appliance_apply_baselines(db).get("ca")
+    try:
+        previous = json.loads(str((baseline or {}).get("config_preview") or ""))
+        settings = db.scalar(select(CaSettings))
+        if settings is None or validate_ca_private_key_material(settings, []):
+            return False
+        current = json.loads(redact_config_preview(render_ca_apply_payload(settings, [], include_private_keys=False, profiles=db.scalars(select(CaProfile)).all())))
+        ignored = {"crl_path", "crl_pem", "expires_at"}
+        return bool(current["enabled"] and previous["enabled"] and
+                    current["issuance_policy"] == previous["issuance_policy"] and
+                    {key: value for key, value in current["root"].items() if key not in ignored} ==
+                    {key: value for key, value in previous["root"].items() if key not in ignored})
+    except (KeyError, TypeError, ValueError):
+        return False
+
+
+def record_ca_publication_baseline(db, public_payload: str, summary: list[str], *, management_only: bool) -> None:
+    """Acknowledge the exact publication while retaining unrelated pending CA intent.
+
+    Args:
+        db: Writer transaction protecting the successful publication record.
+        public_payload: Redacted immutable payload captured before helper apply.
+        summary: Captured CA counts and enabled state for ordinary first boot.
+        management_only: Advance only the management leaf and written root files.
+    """
+    baseline = load_appliance_apply_baselines(db).get("ca")
+    payload = json.loads(public_payload)
+    if management_only and baseline:
+        previous = json.loads(str(baseline["config_preview"]))
+        leaves = [row for row in previous["certificates"] if row.get("managed_owner") != "appliance:https"]
+        previous["certificates"] = sorted(leaves + payload["certificates"], key=lambda row: row["common_name"])
+        for key, value in payload["root"].items():
+            if key not in {"crl_path", "crl_pem"}:
+                previous["root"][key] = value
+        payload = previous
+        summary = baseline["summary"]
+    # SQLite reloads UTC timestamps without tzinfo; preserve identical instants in the stable preview.
+    for row in [payload["root"], *payload["certificates"]]:
+        if row.get("expires_at"):
+            row["expires_at"] = ensure_aware(datetime.fromisoformat(row["expires_at"])).astimezone(timezone.utc).replace(tzinfo=None).isoformat()
+    unit = make_appliance_apply_unit(
+        unit_id="ca", label="Certificate Authority", page_url="/certificate-authority", context={},
+        summary=summary, validation_errors=[], config_path=CA_STAGED_CONFIG_PATH,
+        config_preview=json.dumps(payload, indent=2, sort_keys=True) + "\n", baseline=baseline,
+    )
+    update_appliance_apply_baselines(db, [unit], {"ca"})
+
+
+def console_publication_path(network_job_id: str) -> Path:
+    """Validate the root-private receipt directory and completed task filename.
+
+    Args:
+        network_job_id: Exact completed Network task identifier.
+    """
+    if not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", network_job_id):
+        raise ValueError("Invalid completed Network task binding")
+    directory = CONSOLE_PUBLICATION_DIRECTORY
+    metadata = directory.lstat()
+    if (directory.is_symlink() or not stat.S_ISDIR(metadata.st_mode) or (hasattr(os, "getuid") and (metadata.st_uid != 0 or metadata.st_mode & 0o077))):
+        raise ValueError("Console publication directory must be private and root-owned")
+    return directory / (network_job_id + ".publication.json")
+
+
+def acknowledge_console_publication(network_job_id: str, receipt_sha256: str) -> int:
+    """Acknowledge captured publication only after the helper proves management readiness.
+
+    Args:
+        network_job_id: Exact completed Network task identifying the pending public receipt.
+        receipt_sha256: Immutable receipt digest captured by the helper before served-leaf verification.
+    """
+    try:
+        path = console_publication_path(network_job_id)
+        descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+        with os.fdopen(descriptor, "rb") as stream:
+            metadata = os.fstat(stream.fileno())
+            if (not stat.S_ISREG(metadata.st_mode) or metadata.st_nlink != 1
+                    or metadata.st_size > 2097152
+                    or (hasattr(os, "getuid") and (metadata.st_uid != 0 or metadata.st_mode & 0o077))):
+                raise ValueError("Console publication receipt is unsafe")
+            raw = stream.read(2097153)
+            if not re.fullmatch(r"[0-9a-f]{64}", receipt_sha256) or hashlib.sha256(raw).hexdigest() != receipt_sha256:
+                raise ValueError("Verified console publication receipt changed")
+            receipt = json.loads(raw)
+        if receipt["network_job_id"] != network_job_id:
+            raise ValueError("Console publication receipt binding changed")
+        with SessionLocal() as db:
+            acquire_network_objects_write_lock(db)
+            baselines = load_appliance_apply_baselines(db)
+            applied_settings = json.loads(str((baselines.get("appliance_settings") or {}).get("config_preview") or "{}"))
+            if baselines.get("ca") != receipt["ca_baseline"] or applied_settings != receipt["settings_snapshot"]:
+                raise ValueError("Applied CA or Settings changed before publication acknowledgement")
+            job = db.get(Job, network_job_id)
+            payload = json.loads(job.result or "{}") if job is not None else {}
+            units = [unit for unit in payload.get("captured_units", []) if unit.get("unit_id") == "network"]
+            current_network = render_network_config(interfaces=list(db.scalars(select(PhysicalInterface))),
+                                                    vlans=list(db.scalars(select(VlanInterface))))
+            if (job is None or job.status != JobStatus.SUCCEEDED.value or len(units) != 1
+                    or not network_management_paths(str(units[0].get("config_preview") or ""))
+                    or network_management_paths(str(units[0]["config_preview"])) != network_management_paths(current_network)):
+                raise ValueError("Management paths changed before publication acknowledgement")
+            settings = db.scalar(select(CaSettings))
+            certificates = db.scalars(select(CaCertificate).where(CaCertificate.managed_owner == "appliance:https")).all()
+            if not recovery_dynamic_addresses_available(db, str(units[0].get("config_preview") or "")):
+                return 2
+            current = render_ca_apply_payload(settings, certificates, include_private_keys=False, profiles=db.scalars(select(CaProfile)).all())
+            if current != receipt["public_payload"]:
+                raise ValueError("Published management certificate changed before acknowledgement")
+            current_identity = path.lstat()
+            if path.is_symlink() or (current_identity.st_dev, current_identity.st_ino) != (metadata.st_dev, metadata.st_ino):
+                raise ValueError("Console publication receipt changed before acknowledgement")
+            leaves = json.loads(receipt["public_payload"]).get("certificates", [])
+            if len(leaves) != 1 or leaves[0].get("managed_owner") != "appliance:https":
+                raise ValueError("Publication does not identify exactly one management leaf")
+            # Kernel addresses and carrier can change without a database writer.
+            # Attest every physical listener against the original issuance receipt.
+            dynamic = recovery_dynamic_address_binding(db, str(units[0]["config_preview"]), native=True)
+            if dynamic != receipt["dynamic_address_binding"]:
+                raise ValueError("Native physical listener binding changed after publication")
+            leaf = x509.load_pem_x509_certificate(leaves[0]["certificate_pem"].encode("ascii"))
+            sans = leaf.extensions.get_extension_for_class(x509.SubjectAlternativeName).value
+            leaf_addresses = {str(address) for address in sans.get_values_for_type(x509.IPAddress)}
+            if any(address not in leaf_addresses for item in dynamic.values()
+                   for values in item["addresses"].values() for address in values):
+                raise ValueError("Native physical listener addresses are absent from the captured leaf")
+            port = applied_settings.get("management_public_https_port", 443)
+            if isinstance(port, bool) or not isinstance(port, int) or not 1 <= port <= 65535:
+                raise ValueError("Applied HTTPS listener port is invalid")
+            # Repeat the served-leaf proof inside the writer shared with Settings
+            # publication, immediately before acknowledging the captured baseline.
+            served = ssl.get_server_certificate(("127.0.0.1", port), timeout=3)
+            if hashlib.sha256(ssl.PEM_cert_to_DER_cert(served)).hexdigest() != leaves[0].get("fingerprint"):
+                raise ValueError("Served management leaf changed before acknowledgement")
+            record_ca_publication_baseline(db, receipt["public_payload"], [], management_only=True)
+            db.commit()
+        # Retain the public receipt as evidence; never remove a concurrently replaced publication.
+        return 0
+    except (OSError, UnicodeError, ValueError, KeyError, TypeError, SQLAlchemyError,
+            RuntimeError, subprocess.TimeoutExpired, x509.ExtensionNotFound):
+        print("Console publication acknowledgement failed; preserve the pending receipt and CA baseline.")
+        return 2
+
+
+def completed_network_binding_is_current(db, network_job_id: str) -> bool:
+    """Validate completed management paths and dynamic observations under writer admission.
+
+    Args:
+        db: Admitted recovery transaction.
+        network_job_id: Exact completed console Network task.
+    """
+    job = db.get(Job, network_job_id)
+    try:
+        payload = json.loads(job.result or "{}") if job is not None else {}
+        units = [unit for unit in payload.get("captured_units", []) if unit.get("unit_id") == "network"]
+        preview = str(units[0].get("config_preview") or "") if len(units) == 1 else ""
+    except (TypeError, ValueError, AttributeError):
+        return False
+    current = render_network_config(
+        interfaces=list(db.scalars(select(PhysicalInterface))), vlans=list(db.scalars(select(VlanInterface))),
+    )
+    return bool(job is not None and job.status == JobStatus.SUCCEEDED.value
+                and network_management_paths(preview)
+                and network_management_paths(preview) == network_management_paths(current)
+                and recovery_dynamic_addresses_available(db, preview))
+
+
+def verify_console_http_recovery(network_job_id: str, http_port: int) -> int:
+    """Recheck HTTP-only recovery after outer readiness without certificate mutation.
+
+    Args:
+        network_job_id: Exact completed console Network task.
+        http_port: Applied HTTP listener used by the stable readiness samples.
+    """
+    if not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", network_job_id) or not 1 <= http_port <= 65535:
+        return 2
+    try:
+        with SessionLocal() as db:
+            acquire_network_objects_write_lock(db)
+            baseline = load_appliance_apply_baselines(db).get("appliance_settings")
+            applied = json.loads(str((baseline or {}).get("config_preview") or "{}"))
+            if (not isinstance(applied, dict) or applied.get("management_https_enabled") is not False
+                    or isinstance(applied.get("management_public_http_port", 80), bool)
+                    or applied.get("management_public_http_port", 80) != http_port
+                    or not completed_network_binding_is_current(db, network_job_id)):
+                return 2
+            path = console_publication_path(network_job_id)
+            descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+            with os.fdopen(descriptor, "rb") as stream:
+                metadata = os.fstat(stream.fileno())
+                if (not stat.S_ISREG(metadata.st_mode) or metadata.st_nlink != 1 or metadata.st_size > 2097152
+                        or (hasattr(os, "getuid") and (metadata.st_uid != 0 or metadata.st_mode & 0o077))):
+                    return 2
+                receipt = json.loads(stream.read(2097153))
+            job = db.get(Job, network_job_id)
+            units = json.loads(job.result)["captured_units"]
+            preview = next(unit["config_preview"] for unit in units if unit["unit_id"] == "network")
+            if (receipt["network_job_id"] != network_job_id or receipt["http_settings_snapshot"] != applied
+                    or recovery_dynamic_address_binding(db, preview, native=True) != receipt["dynamic_address_binding"]):
+                return 2
+            current = path.lstat()
+            if path.is_symlink() or (current.st_dev, current.st_ino) != (metadata.st_dev, metadata.st_ino):
+                return 2
+    except (OSError, UnicodeError, ValueError, TypeError, KeyError, SQLAlchemyError,
+            RuntimeError, subprocess.TimeoutExpired):
+        return 2
+    return 0
+
+
+def refresh_completed_management_certificate(network_job_id: str) -> int:
+    """Publish only the management leaf and record it under the admitted writer lock.
+
+    Args:
+        network_job_id: Completed console Network task protecting issuance/publication.
+    """
+    with SessionLocal() as db:
+        acquire_network_objects_write_lock(db)
+        settings_baseline = load_appliance_apply_baselines(db).get("appliance_settings")
+        try:
+            applied_settings = json.loads(str((settings_baseline or {}).get("config_preview") or "{}"))
+        except (TypeError, ValueError):
+            applied_settings = {}
+        if not isinstance(applied_settings, dict):
+            applied_settings = {}
+        if applied_settings.get("management_https_enabled") is False:
+            if not completed_network_binding_is_current(db, network_job_id):
+                print("Completed Network binding is unavailable or changed; HTTP management recovery was not accepted.")
+                return 2
+            nginx = shutil.which("nginx")
+            if nginx is None:
+                print("nginx is unavailable; completed HTTP management configuration cannot be validated")
+                return 2
+            result = run([nginx, "-t"]).returncode
+            if result != 0:
+                return result
+            # Retain the original HTTP address scope before outer readiness. A
+            # later inventory refresh must not redefine what this recovery served.
+            try:
+                dynamic_binding = recovery_dynamic_address_binding(db, render_network_config(
+                    interfaces=list(db.scalars(select(PhysicalInterface))), vlans=list(db.scalars(select(VlanInterface))),
+                ))
+                receipt = {"network_job_id": network_job_id, "http_settings_snapshot": applied_settings,
+                           "dynamic_address_binding": dynamic_binding}
+                write_text_atomic(console_publication_path(network_job_id), json.dumps(receipt, sort_keys=True), mode=0o600)
+            except (OSError, ValueError):
+                return 2
+            return 0
+        if (
+            not isinstance(applied_settings.get("fqdn"), str) or not applied_settings["fqdn"]
+            or not isinstance(applied_settings.get("web_terminal_enabled"), bool)
+            or not isinstance(applied_settings.get("web_terminal_addresses"), list)
+            or not all(isinstance(address, str) for address in applied_settings["web_terminal_addresses"])
+            or not all(isinstance(applied_settings.get(field), str) and applied_settings[field].startswith("/etc/atlaso/https/certs/")
+                       for field in ("management_https_cert_path", "management_https_key_path"))
+            or applied_settings.get("management_https_enabled") is not True
+        ):
+            print("Applied Appliance Settings identity is unavailable; apply Settings before certificate recovery.")
+            return 2
+        if not recovery_root_matches_baseline(db):
+            print("Applied CA root baseline is unavailable or changed; apply CA intent before console recovery.")
+            return 2
+        try:
+            console_publication_path(network_job_id)
+        except (OSError, ValueError):
+            print("Private publication receipt storage is unavailable; certificate recovery was not started.")
+            return 2
+        errors = ensure_recovery_ca_state(db, network_job_id, commit=False, management_snapshot=applied_settings)
+        if errors:
+            for error in errors:
+                print(error)
+            return 2
+        dynamic_binding = recovery_dynamic_address_binding(db, render_network_config(
+            interfaces=list(db.scalars(select(PhysicalInterface))), vlans=list(db.scalars(select(VlanInterface))),
+        ))
+        ca_settings = db.execute(select(CaSettings)).scalar_one()
+        certificates = db.scalars(select(CaCertificate).where(CaCertificate.managed_owner == "appliance:https")).all()
+        public_payload = render_ca_apply_payload(ca_settings, certificates, include_private_keys=False, profiles=db.scalars(select(CaProfile)).all())
+        private_payload = json.loads(render_ca_apply_payload(ca_settings, certificates, include_private_keys=True, profiles=db.scalars(select(CaProfile)).all()))
+        # Recovery does not publish revocations or remove the existing CRL.
+        private_payload["root"]["crl_path"] = ""
+        private_payload["root"]["crl_pem"] = ""
+        staging_parent = Path(CA_STAGED_CONFIG_PATH).parent
+        staging_parent.mkdir(parents=True, exist_ok=True)
+        # A global CA Apply must never replace or remove this worker's private payload.
+        with tempfile.TemporaryDirectory(prefix="console-recovery-", dir=staging_parent) as owned_directory:
+            owned_path = Path(owned_directory) / "ca.json"
+            write_secret_text_atomic(owned_path, json.dumps(private_payload, indent=2, sort_keys=True))
+            result = apply_ca_files(owned_path)
+        if result != 0:
+            return result
+        nginx = shutil.which("nginx")
+        if nginx is None:
+            print("nginx is unavailable; completed management configuration cannot be validated")
+            return 2
+        result = run([nginx, "-t"]).returncode
+        if result != 0:
+            return result
+        # Publication is durable, but the active worker is not proven until the outer helper reloads it.
+        receipt = {"network_job_id": network_job_id, "public_payload": public_payload,
+                   "dynamic_address_binding": dynamic_binding,
+                   "ca_baseline": load_appliance_apply_baselines(db).get("ca"), "settings_snapshot": applied_settings}
+        write_text_atomic(console_publication_path(network_job_id), json.dumps(receipt, sort_keys=True), mode=0o600)
+        db.commit()
+        return 0
+
+
+def main(network_job_id: str | None = None) -> int:
     """Run the command-line entry point.
 
+    Args:
+        network_job_id: Completed console Network task binding certificate recovery.
     """
+    network_job_id = network_job_id or os.environ.get("ATLASO_CONSOLE_NETWORK_JOB_ID")
+    if network_job_id is not None and not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", network_job_id):
+        print("Invalid completed Network task binding; certificate recovery was not started.")
+        return 2
+    # A completed task is always recovery, even when first-boot evidence is damaged.
+    # Never reseed or render a default front door over the applied Settings identity.
+    if network_job_id is not None:
+        return refresh_completed_management_certificate(network_job_id)
     if first_boot_https_artifacts_are_complete():
         if not first_boot_https_contract_is_complete():
             ensure_nginx_main_config_includes_atlaso()
@@ -567,15 +1062,18 @@ def main() -> int:
         publish_first_boot_stage("https-development-root-proof-complete")
         return 0
 
-    init_db()
+    if network_job_id is None:
+        init_db()
     development_root_fingerprint = ""
     with SessionLocal() as db:
-        seed_initial_data(db, include_examples=False, appliance_mode=True)
-        sync_host_physical_interfaces(db)
+        if network_job_id is None:
+            seed_initial_data(db, include_examples=False, appliance_mode=True)
+            sync_host_physical_interfaces(db)
         appliance_settings = db.execute(select(ApplianceSettings)).scalar_one()
         ca_settings = db.execute(select(CaSettings)).scalar_one()
-        appliance_settings.management_https_enabled = True
-        ca_settings.enabled = True
+        if network_job_id is None:
+            appliance_settings.management_https_enabled = True
+            ca_settings.enabled = True
         managed_certificates = (
             db.execute(select(CaCertificate).where(CaCertificate.managed_owner != ""))
             .scalars()
@@ -613,18 +1111,31 @@ def main() -> int:
             development_root_fingerprint = ca_settings.root_fingerprint.upper()
             publish_first_boot_stage("https-development-root-import-complete")
 
-        errors = ensure_ca_state(db)
+        errors = ensure_recovery_ca_state(db, network_job_id)
         if errors:
             for error in errors:
                 print(error)
             return 2
 
         ca_settings = db.execute(select(CaSettings)).scalar_one()
-        certificates = db.execute(select(CaCertificate).order_by(CaCertificate.common_name)).scalars().all()
+        certificate_query = select(CaCertificate).order_by(CaCertificate.common_name)
+        if network_job_id is not None:
+            certificate_query = certificate_query.where(CaCertificate.managed_owner == "appliance:https")
+        certificates = db.scalars(certificate_query).all()
+        applied_public_payload = render_ca_apply_payload(ca_settings, certificates, include_private_keys=False, profiles=db.scalars(select(CaProfile)).all())
+        applied_summary = [
+            "service enabled" if ca_settings.enabled else "service disabled",
+            f"{len(db.scalars(select(CaProfile)).all())} profiles",
+            f"{len(db.scalars(select(CaCertificate)).all())} certificate requests",
+        ]
+        private_payload = json.loads(render_ca_apply_payload(ca_settings, certificates, include_private_keys=True, profiles=db.scalars(select(CaProfile)).all()))
+        if network_job_id is not None:
+            private_payload["root"]["crl_path"] = ""
+            private_payload["root"]["crl_pem"] = ""
         config_path = Path(CA_STAGED_CONFIG_PATH)
         write_secret_text_atomic(
             config_path,
-            render_ca_apply_payload(ca_settings, certificates, include_private_keys=True),
+            json.dumps(private_payload, indent=2, sort_keys=True),
         )
 
         cert_path, key_path, _chain_path = ca_managed_certificate_paths(db, "appliance:https")
@@ -675,6 +1186,10 @@ def main() -> int:
     if validation.returncode != 0:
         return validation.returncode
 
+    with SessionLocal() as db:
+        acquire_network_objects_write_lock(db)
+        record_ca_publication_baseline(db, applied_public_payload, applied_summary, management_only=network_job_id is not None)
+        db.commit()
     fix_state_permissions()
     if development_root_fingerprint:
         try:
@@ -702,4 +1217,14 @@ if __name__ == "__main__":
             # Never disclose database connection details or decrypted material.
             verified = False
         raise SystemExit(0 if verified else 2)
+    if len(sys.argv) == 4 and sys.argv[1] == "--acknowledge-console-publication":
+        raise SystemExit(acknowledge_console_publication(sys.argv[2], sys.argv[3]))
+    if len(sys.argv) == 4 and sys.argv[1] == "--verify-console-http":
+        try:
+            result = verify_console_http_recovery(sys.argv[2], int(sys.argv[3]))
+        except ValueError:
+            result = 2
+        raise SystemExit(result)
+    if sys.argv[1:]:
+        raise SystemExit(2)
     raise SystemExit(main())

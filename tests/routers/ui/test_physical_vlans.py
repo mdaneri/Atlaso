@@ -75,7 +75,8 @@ def test_access_management_address_edit_matches_console_desired_state(
     console_calls = []
     monkeypatch.setattr(appliance_console, "_management_interface", lambda db: db.get(PhysicalInterface, interface_id))
     monkeypatch.setattr(appliance_console, "_ensure_no_active_apply", lambda: None)
-    monkeypatch.setattr(appliance_console, "_recover_management_plane", lambda stage: None)
+    monkeypatch.setattr(appliance_console, "_refresh_management_addresses", lambda interface_id, **kwargs: None)
+    monkeypatch.setattr(appliance_console, "_recover_management_plane", lambda stage, **kwargs: None)
     monkeypatch.setattr(
         appliance_console,
         "_submit_console_apply",
@@ -515,8 +516,12 @@ def test_physical_interface_refresh_imports_host_inventory_without_apply_job(cli
 
     login(client)
 
-    def fake_discover():
-        """Return fake discover."""
+    def fake_discover(**kwargs):
+        """Return fake discover.
+
+        Args:
+            **kwargs: Additional options supplied by the production caller.
+        """
         return [
             HostPhysicalInterface(
                 name="ens192",
@@ -2178,3 +2183,34 @@ def test_access_static_conversion_preserves_dhcp_dns_for_new_listener(client, mo
         assert interface.admin_state == "down"
         assert interface.mode == old_mode
         assert interface.access_management_ui_enabled is False
+
+
+def test_vlan_ui_writers_require_capture_lock_before_lookup(client, monkeypatch):
+    """Refuse UI VLAN mutations and parent removal before an unlocked state read.
+
+    Args:
+        client: Authenticated management UI client fixture.
+        monkeypatch: Simulate refusal to acquire the Settings capture lock.
+    """
+    from atlaso.app.routers.ui import physical_vlans
+
+    def blocked(db):
+        """Refuse writer admission while Settings owns the capture lock.
+
+        Args:
+            db: UI writer transaction requesting capture admission.
+        """
+        raise RuntimeError("capture lock unavailable")
+
+    login(client)
+    page = client.get("/vlan-interfaces")
+    csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    monkeypatch.setattr(physical_vlans, "acquire_network_objects_write_lock", blocked)
+    data = {"parent_interface": "eth1", "vlan_id": "533", "ip_cidr": "192.0.2.1/24",
+            "mtu": "1500", "role": "access", "enabled": "on", "csrf": csrf}
+    for path in (
+        "/ui/management/vlan-interfaces", "/ui/management/vlan-interfaces/99999/edit",
+        "/ui/management/vlan-interfaces/99999/delete", "/ui/management/physical-interfaces/99999/forget",
+    ):
+        with pytest.raises(RuntimeError, match="capture lock unavailable"):
+            client.post(path, data=data)

@@ -4151,6 +4151,33 @@ function submitCaRequestRevocation(element, data, row) {
   });
 }
 
+function submitCaRequestReplacement(element, data, row) {
+  const template = element.dataset.replaceUrlTemplate || "";
+  const csrf = element.dataset.csrf || "";
+  if (!template || !csrf || !data?.can_replace) return;
+  requestConfirmation({
+    title: `Replace ${data.common_name}?`,
+    message: "Create a new managed certificate request and retain the revoked serial in CRL history. Appliance files change only after global CA apply.",
+    label: "Replace certificate",
+  }).then((confirmed) => {
+    if (!confirmed) {
+      row?.getElement?.()?.focus();
+      return;
+    }
+    const form = document.createElement("form");
+    form.method = "post";
+    form.action = template.replace("__id__", encodeURIComponent(String(data.id)));
+    form.hidden = true;
+    const input = document.createElement("input");
+    input.type = "hidden";
+    input.name = "csrf";
+    input.value = csrf;
+    form.append(input);
+    document.body.append(form);
+    form.submit();
+  });
+}
+
 function initializeCaRequestsTable() {
   const element = document.getElementById("ca-requests-table");
   if (!(element instanceof HTMLElement)) return;
@@ -4165,6 +4192,11 @@ function initializeCaRequestsTable() {
         label: "Revoke certificate",
         disabled: (row) => !row.getData().can_revoke,
         action: (_event, row) => submitCaRequestRevocation(element, row.getData(), row),
+      },
+      {
+        label: "Replace revoked managed certificate",
+        disabled: (row) => !row.getData().can_replace,
+        action: (_event, row) => submitCaRequestReplacement(element, row.getData(), row),
       },
     ],
     options: {

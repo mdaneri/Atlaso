@@ -44,6 +44,9 @@ FQDN and certificate record retain their original identity, while service paths 
 Shorter names keep their existing subject Common Name. This also applies during first-boot HTTPS bootstrap and
 subsequent certificate renewal.
 
+CA page and certificate-download reconciliation waits for management recovery before updating certificate material.
+After admission it refreshes cached CA rows, preserving the certificate recovery just published.
+
 Certificate filenames use the sanitized identity when it fits within 245 ASCII bytes, leaving room for the longest
 `-chain.pem` suffix under the filesystem's 255-byte filename limit. Longer names keep a readable prefix followed by
 the full SHA-256 digest of the original identity. This bounds downloads and deployed service files without changing
@@ -70,6 +73,9 @@ The management and public request lists use the same read-only collection patter
 when an issued certificate can be revoked, open its row menu and select **Revoke certificate**. The shared confirmation
 states that revocation changes desired state and reaches appliance files only through the next global CA apply. The
 server-rendered list and revoke forms remain available when browser scripting is unavailable.
+Revocation takes the shared publication writer before reading the certificate and waits for any active management
+recovery to finish. Automatic SAN or path reconciliation preserves a revoked managed certificate. A revoked management
+leaf blocks console HTTPS recovery; recovery does not undo the revocation or publish its CRL.
 The request wizard presents the common name, profile, multiline description, DNS SANs, and IP SANs on separate rows so
 long names, operator notes, and multi-value SAN lists remain readable before review. Descriptions stay with request
 identity, while enablement has a
@@ -90,6 +96,15 @@ internally and retain their CSRF, role, request validation, and listener checks.
 After apply, verify the presented management certificate and download the expected public root certificate. Keep a VM
 snapshot or equivalent rollback point before replacing active trust. Use [VCF Certificate Trust](vcf-trust.md) for the
 separate task that installs the active Atlaso root into a supported VCF appliance.
+
+A revoked service-owned certificate can be replaced explicitly from **Certificate Requests** using the row menu's
+**Replace revoked managed certificate** action. The shared confirmation creates a pending managed successor;
+the original serial, certificate, key, revocation date and reason remain protected in history and in the CRL.
+Repeated replacement of the historical row is refused. Ordinary global CA Apply publishes the successor and CRL;
+this action does not alter appliance files or applied baselines. Both the management request page and authorized
+public request portal provide this action, with the same certificate-operator and CSRF checks as revocation.
+Replacement takes the shared writer before reading certificate or service/profile state and retains admission
+through its audit commit. Disabled services or CA profiles must be enabled before replacement.
 
 <!-- BEGIN GENERATED ADDITIONAL SCREENSHOTS -->
 ## Additional verified states

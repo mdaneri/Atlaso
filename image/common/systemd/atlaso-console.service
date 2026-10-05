@@ -9,6 +9,7 @@ Conflicts=getty@tty1.service
 Type=simple
 EnvironmentFile=/etc/atlaso/atlaso.env
 Environment=PYTHONDONTWRITEBYTECODE=1
+Environment=ATLASO_HELPER_USE_SYSTEMD_RUN=1
 ExecStart=/opt/atlaso/.venv/bin/python -m atlaso.app.appliance_console
 Restart=always
 RestartSec=2

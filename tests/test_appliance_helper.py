@@ -2896,12 +2896,15 @@ def test_management_handoff_scopes_old_http_before_new_address_activation(monkey
     assert "listen [::]:80 default_server;" not in installed[0]
 
 
-def test_management_readiness_accepts_committed_scoped_loopback(monkeypatch, tmp_path):
+@pytest.mark.parametrize("http_port,https_port", [(80, 443), (8080, 8443)])
+def test_management_readiness_accepts_committed_scoped_loopback(monkeypatch, tmp_path, http_port, https_port):
     """Console and update readiness retain their loopback path after handoff.
 
     Args:
         monkeypatch: Isolated management site replacement.
         tmp_path: Disposable management site and certificate location.
+        http_port: Applied default HTTP listener port.
+        https_port: Applied default HTTPS listener port.
     """
     helper = load_helper_module()
     certificate = tmp_path / "site.crt"
@@ -2910,9 +2913,9 @@ def test_management_readiness_accepts_committed_scoped_loopback(monkeypatch, tmp
     key.write_text("test", encoding="utf-8")
     site = tmp_path / "management.conf"
     site.write_text(
-        "server {\n  listen 192.0.2.10:443 ssl default_server;\n"
-        "  listen 127.0.0.1:443 ssl default_server;\n"
-        "  listen 127.0.0.1:80 default_server;\n"
+        f"server {{\n  listen 192.0.2.10:{https_port} ssl default_server;\n"
+        f"  listen 127.0.0.1:{https_port} ssl default_server;\n"
+        f"  listen 127.0.0.1:{http_port} default_server;\n"
         f"  ssl_certificate {certificate};\n  ssl_certificate_key {key};\n"
         "  proxy_pass http://127.0.0.1:8000;\n}\n",
         encoding="utf-8",
@@ -2922,7 +2925,10 @@ def test_management_readiness_accepts_committed_scoped_loopback(monkeypatch, tmp
     assert helper._console_management_config_contract_is_complete(site.read_text(encoding="utf-8"))
     https_enabled, checks = helper._console_management_readiness_checks()
     assert https_enabled is True
-    assert ("nginx HTTPS readiness", "https://127.0.0.1/openapi.json", True, "200") in checks
+    suffix = f":{https_port}" if https_port != 443 else ""
+    assert ("nginx HTTPS readiness", f"https://127.0.0.1{suffix}/openapi.json", True, "200") in checks
+    suffix = f":{http_port}" if http_port != 80 else ""
+    assert ("nginx HTTP redirect", f"http://127.0.0.1{suffix}/", False, "308") in checks
 
 
 def test_management_handoff_refuses_uncanonical_old_tls_site(monkeypatch, tmp_path):
@@ -11710,6 +11716,104 @@ def test_real_mutating_helper_action_escapes_service_mount_namespace(monkeypatch
         r"--unit=atlaso-helper-action-[0-9a-f]{32}", commands[0][7]
     )
     assert commands[0][-4:] == ["dnsmasq", "apply", "--real", str(config_path)]
+
+
+@pytest.mark.parametrize("network_job_id", [None, "job_completed_network"])
+def test_console_recovery_transient_unit_loads_appliance_database_environment(monkeypatch, network_job_id):
+    """Transient recovery explicitly selects the appliance environment for receipt acknowledgement.
+
+    Args:
+        monkeypatch: Bounded systemd command capture.
+        network_job_id: Exact completed Network binding or ordinary recovery.
+    """
+    helper = load_helper_module()
+    commands = []
+    monkeypatch.setenv("ATLASO_HELPER_USE_SYSTEMD_RUN", "1")
+    monkeypatch.setenv("ATLASO_DATABASE_URL", "sqlite:///wrong-caller-database.db")
+    monkeypatch.delenv(helper.SYSTEMD_RUN_CHILD_ENV, raising=False)
+    monkeypatch.setattr(helper.shutil, "which", lambda command:
+                        "/usr/bin/systemd-run" if command == "systemd-run" else None)
+    monkeypatch.setattr(helper, "_run", lambda command, **_kwargs: commands.append(command)
+                        or subprocess.CompletedProcess(command, 0, "", ""))
+    monkeypatch.setattr(helper, "_handle_console", lambda *_args:
+                        (_ for _ in ()).throw(AssertionError("Recovery must run in the transient unit")))
+    monkeypatch.setattr(helper, "_quiesce_console_recovery_unit", lambda _unit: None)
+    args = [network_job_id] if network_job_id else []
+    assert helper.main(["atlaso-helper", "console", "recover-management-plane", "--real", *args]) == 0
+    assert len(commands) == 1
+    command = commands[0]
+    assert f"--property=WorkingDirectory={helper.ATLASO_STATE_DIR}" in command
+    assert f"--property=EnvironmentFile={helper.ATLASO_ENV_PATH}" in command
+    assert helper.ATLASO_STATE_DIR.as_posix() == "/var/lib/atlaso"
+    assert helper.ATLASO_ENV_PATH.as_posix() == "/etc/atlaso/atlaso.env"
+    assert f"--setenv={helper.SYSTEMD_RUN_CHILD_ENV}=1" in command
+    assert not any("wrong-caller-database" in argument or "ATLASO_DATABASE_URL=" in argument for argument in command)
+    assert command[-(3 + len(args)):] == ["console", "recover-management-plane", "--real", *args]
+
+
+@pytest.mark.parametrize("survives_stop", [False, True])
+def test_console_recovery_timeout_stops_only_owned_unit(monkeypatch, survives_stop):
+    """A timed-out waiter cannot leave privileged recovery running or report success.
+
+    Args:
+        monkeypatch: Replace bounded systemd commands.
+        survives_stop: Simulate failed final quiescence verification.
+    """
+    helper = load_helper_module()
+    unit = "atlaso-helper-action-" + "a" * 32
+    monkeypatch.setattr(helper, "_systemd_run_action_unit_name", lambda: unit)
+    commands = []
+    probes = iter(["active", "active" if survives_stop else "inactive"])
+
+    def run(command, *, timeout=None):
+        """Simulate a lost waiter and an independently surviving PID1 service.
+
+        Args:
+            command: Exact native command.
+            timeout: Bounded wait budget.
+        """
+        commands.append((command, timeout))
+        if "--wait" in command:
+            assert timeout == 111
+            assert "--property=RuntimeMaxSec=108" in command
+            assert "--property=TimeoutStopSec=2" in command
+            assert "--property=KillMode=control-group" in command
+            assert "--property=SendSIGKILL=yes" in command
+            raise subprocess.TimeoutExpired(command, timeout)
+        assert command[-1] == unit + ".service"
+        if command[1] == "is-active":
+            return subprocess.CompletedProcess(command, 3, next(probes) + "\n", "")
+        assert command[:2] == ["systemctl", "stop"]
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    monkeypatch.setattr(helper, "_run", run)
+    assert helper._run_real_action_with_systemd("console", "recover-management-plane", ["job_completed"]) == (75 if survives_stop else 124)
+    assert [timeout for _command, timeout in commands] == [111, 1, 4, 1]
+
+
+
+def test_console_recovery_shared_deadline_blocks_late_acknowledgement(monkeypatch):
+    """Bootstrap time reduces the remaining operation budget and expired work cannot acknowledge.
+
+    Args:
+        monkeypatch: Control the operation clock and privileged command boundary.
+    """
+    helper = load_helper_module()
+    clock = [35.0]
+    monkeypatch.setattr(helper.time, "monotonic", lambda: clock[0])
+    token = helper._CONSOLE_RECOVERY_DEADLINE.set(100.0)
+    calls = []
+    monkeypatch.setattr(helper, "_run", lambda command, *, timeout:
+                        calls.append((command, timeout)) or subprocess.CompletedProcess(command, 0, "", ""))
+    try:
+        helper._console_recovery_command("readiness", ["probe"])
+        assert calls == [(["probe"], 65.0)]
+        clock[0] = 100.0
+        with pytest.raises(ValueError, match="complete operation budget"):
+            helper._console_recovery_command("acknowledgement", ["acknowledge"])
+        assert len(calls) == 1
+    finally:
+        helper._CONSOLE_RECOVERY_DEADLINE.reset(token)
 
 
 def test_account_commands_use_bounded_helper_action_units(monkeypatch):

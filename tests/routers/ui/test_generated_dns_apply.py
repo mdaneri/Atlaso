@@ -854,7 +854,10 @@ def test_management_handoff_dns_readback_failure_triggers_proven_recovery(client
                 manifest_path: Path to the staged management-handoff manifest.
             """
             if (dynamic_failure or "").startswith("identity"):
-                with SessionLocal() as other:
+                # Inject a same-writer callback fault; external writers now wait for publication.
+                from contextlib import nullcontext
+
+                with nullcontext(db) as other:
                     if dynamic_failure == "identity-storage":
                         storage = ui.get_esx_storage_settings_row(other)
                         storage.enabled = True
@@ -903,7 +906,7 @@ def test_management_handoff_dns_readback_failure_triggers_proven_recovery(client
                         ui.refresh_interface_service_dns_aliases(other, actor=None)
                         settings = ui.get_appliance_settings_row(other)
                         ui.ensure_dns_for_appliance_settings(other, settings, previous_fqdn="atlaso.internal", actor=None)
-                    other.commit()
+                    other.flush()
             return AdapterResult(
                 command=["atlaso-helper", "management-handoff", "apply", manifest_path],
                 dry_run=False, returncode=0,
@@ -946,7 +949,7 @@ def test_management_handoff_dns_readback_failure_triggers_proven_recovery(client
 
     monkeypatch.setattr(ui, "CA_STAGED_CONFIG_PATH", str(tmp_path / "ca.json"))
     monkeypatch.setattr(ui, "MANAGEMENT_HANDOFF_STAGED_MANIFEST_PATH", str(tmp_path / "handoff.json"))
-    monkeypatch.setattr(ui, "load_appliance_apply_baselines", lambda _db: {
+    monkeypatch.setattr(ui, "load_appliance_apply_baselines", lambda _db, *, refresh=False: {
         "appliance_settings": {},
         "dnsmasq": {"config_preview": "host-record=ca.custom.example.internal,192.0.2.10\n"},
     })
@@ -975,7 +978,7 @@ def test_management_handoff_dns_readback_failure_triggers_proven_recovery(client
     units["network"]["previous_management_paths"] = []
     units["network"]["removed_vlan_interfaces"] = []
     units["network"]["raw_config_preview"] = "[physical_interfaces]\ninterface=inactive\nadmin_state=down\nipv4_method=dhcp\nipv6_enabled=true\n"
-    units["ca"]["context"] = {"ca_settings": object(), "ca_certificates": []}
+    units["ca"]["context"] = {"ca_settings": object(), "ca_certificates": [], "ca_profiles": []}
     units["dnsmasq"]["raw_config_preview"] = "host-record=ca.custom.example.internal,192.0.2.11\n"
     units["dnsmasq"]["context"] = {"dns_settings": SimpleNamespace(enabled=False)}
     units["dnsmasq"]["applied_dns_enabled"] = True
@@ -1018,6 +1021,7 @@ def test_management_handoff_dns_readback_failure_triggers_proven_recovery(client
             for row in db.scalars(select(DnsRecord)).all()
         )
         dns_updated_at_before = db.scalar(select(DnsSettings)).updated_at
+        dns_cache_size_before = db.scalar(select(DnsSettings)).cache_size
         group, results = ui.execute_management_handoff(
             units,
             job_id="job_generated_dns_readback",
@@ -1028,17 +1032,18 @@ def test_management_handoff_dns_readback_failure_triggers_proven_recovery(client
         db.add(Job(id="job_dynamic_dns_failure", type="appliance-apply", status="failed", created_by="admin", result=json.dumps(group)))
         db.commit()
     if dynamic_failure:
+        # Recovery discards the injected, uncommitted same-writer fault.
         with SessionLocal() as db:
             assert db.scalar(select(PhysicalInterface).where(PhysicalInterface.name == "dynamic0")).host_ip_cidr == "192.0.2.11/24"
             assert db.scalar(select(CaSettings)).listen_address == "192.0.2.11"
             dns_settings = db.scalar(select(DnsSettings))
             if dynamic_failure == "identity-dns-zone-toggle":
-                assert dns_settings.domain == "atlaso.internal"
-                assert dns_settings.disabled_domains == "custom.example.internal"
+                assert dns_settings.domain == "atlaso.internal\ncustom.example.internal"
+                assert dns_settings.disabled_domains == ""
             elif dynamic_failure == "identity-dns-render-setting":
                 assert dns_settings.domain == "atlaso.internal\ncustom.example.internal"
                 assert dns_settings.disabled_domains == ""
-                assert dns_settings.cache_size == 4321
+                assert dns_settings.cache_size == dns_cache_size_before
                 assert dns_settings.updated_at == dns_updated_at_before
             if dynamic_failure in {"identity-dns-zone-toggle", "identity-dns-render-setting"}:
                 dns_rows_after = sorted(
@@ -1057,7 +1062,7 @@ def test_management_handoff_dns_readback_failure_triggers_proven_recovery(client
                     DnsRecord.address == "192.0.2.11",
                     DnsRecord.description == CA_PORTAL_DNS_DESCRIPTION,
                 ))
-                assert generated is not None and generated.enabled is False
+                assert generated is not None and generated.enabled is True
             elif dynamic_failure == "identity-dns-create":
                 concurrent_conflict = db.scalar(select(DnsRecord).where(
                     DnsRecord.hostname == "ca.custom.example.internal",
@@ -1065,7 +1070,7 @@ def test_management_handoff_dns_readback_failure_triggers_proven_recovery(client
                     DnsRecord.address == "192.0.2.99",
                     DnsRecord.description == "Operator conflict",
                 ))
-                assert concurrent_conflict is not None and concurrent_conflict.enabled is True
+                assert concurrent_conflict is None
             assert db.get(Job, "job_dynamic_dns_failure").status == "failed"
 
     assert group["success"] is False
@@ -1101,7 +1106,7 @@ def _run_static_identity_race_handoff(client, monkeypatch, tmp_path, *, concurre
         client: Isolated application client used to initialize the database.
         monkeypatch: Replace helper staging and DNS readback boundaries.
         tmp_path: Owned location for mocked staged configuration paths.
-        concurrent_identity_edit: Commit a service hostname edit during helper apply.
+        concurrent_identity_edit: Inject a service hostname edit in the admitted helper callback.
         missing_replacement: Simulate a DNS answer that lacks the submitted owner.
         nss_failure: Fail appliance-local resolution after direct DNS succeeds.
     """
@@ -1131,11 +1136,14 @@ def _run_static_identity_race_handoff(client, monkeypatch, tmp_path, *, concurre
                 manifest_path: Path to the staged management-handoff manifest.
             """
             if concurrent_identity_edit:
-                with SessionLocal() as other:
+                # Inject a same-writer callback fault; external writers now wait for publication.
+                from contextlib import nullcontext
+
+                with nullcontext(db) as other:
                     settings = other.scalar(select(CaSettings))
                     settings.portal_hostname = "ca.concurrent.example.internal"
                     ui.refresh_interface_service_dns_aliases(other, actor=None)
-                    other.commit()
+                    other.flush()
             return AdapterResult(command=["atlaso-helper", "apply", manifest_path], dry_run=False, returncode=0)
 
         def recover_management_handoff(self):
@@ -1353,8 +1361,10 @@ def test_slaac_address_drift_offers_network_review_and_captures_dns_after_reboot
             host_ipv6_cidr=(
                 "2001:db8::21/64" if is_access else interface.ipv6_cidr or interface.host_ipv6_cidr
             ),
+            host_dynamic_ipv6_cidr="2001:db8::21/64" if is_access else None,
+            host_dynamic_ipv6_cidrs=("2001:db8::21/64",) if is_access else (),
         ))
-    monkeypatch.setattr("atlaso.app.services.networking.discover_host_physical_interfaces", lambda: discovery)
+    monkeypatch.setattr("atlaso.app.services.networking.discover_host_physical_interfaces", lambda **kwargs: discovery)
     with SessionLocal() as db:
         main.refresh_startup_host_inventory(db, environment="appliance")
         context = ui.appliance_apply_context(db)

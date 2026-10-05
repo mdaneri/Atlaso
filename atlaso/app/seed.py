@@ -62,6 +62,7 @@ from atlaso.app.services.networking import (
     normalize_interface_mode,
     normalize_interface_role,
     normalize_ipv4_method,
+    physical_ipv6_cidrs,
 )
 from atlaso.app.services.ntp import (
     NTP_STAGED_CONFIG_PATH,
@@ -870,8 +871,7 @@ def _management_ips(db: Session) -> list[str]:
         if interface.oper_state == "missing" or not exposes_management:
             continue
         ipv4_cidr = interface.host_ip_cidr if normalize_ipv4_method(interface.ipv4_method) == "dhcp" else interface.ip_cidr
-        ipv6_cidr = (interface.ipv6_cidr or interface.host_ipv6_cidr) if interface.ipv6_enabled else None
-        for candidate_cidr in (ipv4_cidr, ipv6_cidr):
+        for candidate_cidr in (ipv4_cidr, *physical_ipv6_cidrs(interface)):
             if not candidate_cidr:
                 continue
             try:

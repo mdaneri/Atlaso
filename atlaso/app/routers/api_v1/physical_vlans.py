@@ -29,6 +29,7 @@ from atlaso.app.services.management_bindings import (
     MANAGEMENT_LISTENER_REQUIRED_DETAIL,
     desired_management_candidate_exists,
 )
+from atlaso.app.services.network_objects import acquire_network_objects_write_lock
 from atlaso.app.services.networking import sync_host_physical_interfaces
 from atlaso.app.services.physical_interfaces import (
     PhysicalInterfaceMutation,
@@ -319,6 +320,7 @@ def build_router(dependencies: PhysicalVlanApiDependencies) -> PhysicalVlanApiRo
             identity: Authenticated identity authorizing the operation.
             db: Active database session used by the operation.
         """
+        acquire_network_objects_write_lock(db)
         values = dependencies.validate_vlan_api_payload(payload, db)
         vlan = VlanInterface(
             name=f"{values['parent_interface']}.{values['vlan_id']}",
@@ -391,6 +393,7 @@ def build_router(dependencies: PhysicalVlanApiDependencies) -> PhysicalVlanApiRo
             identity: Authenticated identity authorizing the operation.
             db: Active database session used by the operation.
         """
+        acquire_network_objects_write_lock(db)
         vlan = db.get(VlanInterface, vlan_id)
         if not vlan:
             raise HTTPException(status_code=404, detail="VLAN not found")
@@ -440,6 +443,7 @@ def build_router(dependencies: PhysicalVlanApiDependencies) -> PhysicalVlanApiRo
             identity: Authenticated identity authorizing the operation.
             db: Active database session used by the operation.
         """
+        acquire_network_objects_write_lock(db)
         vlan = db.get(VlanInterface, vlan_id)
         if not vlan:
             raise HTTPException(status_code=404, detail="VLAN not found")
@@ -484,6 +488,7 @@ def build_router(dependencies: PhysicalVlanApiDependencies) -> PhysicalVlanApiRo
             identity: Authenticated identity authorizing the operation.
             db: Active database session used by the operation.
         """
+        acquire_network_objects_write_lock(db)
         vlan = db.get(VlanInterface, vlan_id)
         if not vlan:
             raise HTTPException(status_code=404, detail="VLAN not found")
@@ -537,6 +542,7 @@ def build_router(dependencies: PhysicalVlanApiDependencies) -> PhysicalVlanApiRo
             identity: Authenticated identity authorizing the operation.
             db: Active database session used by the operation.
         """
+        acquire_network_objects_write_lock(db)
         vlan = db.get(VlanInterface, vlan_id)
         if not vlan:
             raise HTTPException(status_code=404, detail="VLAN not found")

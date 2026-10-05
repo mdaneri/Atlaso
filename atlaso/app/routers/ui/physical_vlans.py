@@ -25,6 +25,7 @@ from atlaso.app.services.management_bindings import (
     desired_management_candidate_exists,
 )
 from atlaso.app.services.network_address_status import read_status, row_status
+from atlaso.app.services.network_objects import acquire_network_objects_write_lock
 from atlaso.app.services.networking import sync_host_physical_interfaces
 from atlaso.app.services.physical_interfaces import (
     PhysicalInterfaceMutation,
@@ -225,6 +226,7 @@ def build_router(dependencies: PhysicalVlanUiDependencies) -> PhysicalVlanUiRout
             db: Active database session.
         """
         dependencies.verify_csrf(request, csrf)
+        acquire_network_objects_write_lock(db)
         interface = db.get(PhysicalInterface, interface_id)
         if not interface:
             raise HTTPException(status_code=404, detail="Physical interface not found")
@@ -347,6 +349,7 @@ def build_router(dependencies: PhysicalVlanUiDependencies) -> PhysicalVlanUiRout
             db: Active database session.
         """
         dependencies.verify_csrf(request, csrf)
+        acquire_network_objects_write_lock(db)
         requested_enabled = enabled == "on"
         parsed = dependencies.validate_vlan_form_values(
             parent_interface, vlan_id, ip_cidr, ipv6_cidr, mtu, role, requested_enabled, db
@@ -442,6 +445,7 @@ def build_router(dependencies: PhysicalVlanUiDependencies) -> PhysicalVlanUiRout
             db: Active database session.
         """
         dependencies.verify_csrf(request, csrf)
+        acquire_network_objects_write_lock(db)
         vlan = db.get(VlanInterface, vlan_id)
         if not vlan:
             raise HTTPException(status_code=404, detail="VLAN interface not found")
@@ -555,6 +559,7 @@ def build_router(dependencies: PhysicalVlanUiDependencies) -> PhysicalVlanUiRout
             db: Active database session.
         """
         dependencies.verify_csrf(request, csrf)
+        acquire_network_objects_write_lock(db)
         vlan = db.get(VlanInterface, vlan_id)
         if not vlan:
             raise HTTPException(status_code=404, detail="VLAN interface not found")

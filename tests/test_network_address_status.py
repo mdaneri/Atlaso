@@ -541,6 +541,10 @@ def test_postgresql_startup_adds_address_checks_under_schema_lock(monkeypatch):
             if table == "routing_rules":
                 assert sql.endswith(("VARCHAR(16) NOT NULL DEFAULT 'allow'", "INTEGER NOT NULL DEFAULT 0"))
                 columns[table].append({"name": sql.split()[5]})
+            elif sql.split()[5] == "host_ipv6_cidrs":
+                assert table == "physical_interfaces"
+                assert sql.endswith("JSON NOT NULL DEFAULT '[]'")
+                columns[table].append({"name": "host_ipv6_cidrs"})
             else:
                 assert sql.endswith("BOOLEAN NOT NULL DEFAULT TRUE")
                 columns[table].append({"name": "check_duplicate_ip_addresses"})
@@ -552,8 +556,11 @@ def test_postgresql_startup_adds_address_checks_under_schema_lock(monkeypatch):
     monkeypatch.setattr(database, "_reconcile_nat_ingress_column", lambda _connection: None)
     database._create_database_schema(engine)
     database._create_database_schema(engine)
-    assert len([sql for sql in calls if sql.startswith("ALTER TABLE")]) == 4
+    assert len([sql for sql in calls if sql.startswith("ALTER TABLE")]) == 5
     assert {column["name"] for column in columns["routing_rules"]} == {"id", "policy", "ip_family"}
+    assert {column["name"] for column in columns["physical_interfaces"]} == {
+        "id", "check_duplicate_ip_addresses", "host_ipv6_cidrs",
+    }
     assert len([sql for sql in calls if "pg_advisory_xact_lock" in sql]) == 2
 
 

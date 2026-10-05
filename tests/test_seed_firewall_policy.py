@@ -180,7 +180,8 @@ def test_console_updates_untouched_bootstrap_family_before_apply(client, monkeyp
         return "test-job"
 
     monkeypatch.setattr(appliance_console, "_submit_console_apply", submit)
-    monkeypatch.setattr(appliance_console, "_recover_management_plane", lambda _stage: None)
+    monkeypatch.setattr(appliance_console, "_recover_management_plane", lambda _stage, **kwargs: None)
+    monkeypatch.setattr(appliance_console, "_refresh_management_addresses", lambda _interface_id, **_kwargs: None)
     appliance_console.configure_management("dhcp", "", "", mode, cidr, "", "192.0.2.53")
 
 
@@ -232,7 +233,8 @@ def test_console_waits_for_operator_source_group_save(client, monkeypatch):
 
     monkeypatch.setattr(appliance_console, "acquire_network_objects_write_lock", lock)
     monkeypatch.setattr(appliance_console, "_submit_console_apply", apply)
-    monkeypatch.setattr(appliance_console, "_recover_management_plane", lambda _stage: None)
+    monkeypatch.setattr(appliance_console, "_recover_management_plane", lambda _stage, **kwargs: None)
+    monkeypatch.setattr(appliance_console, "_refresh_management_addresses", lambda _interface_id, **_kwargs: None)
     with ThreadPoolExecutor(max_workers=1) as executor:
         with SessionLocal() as operator:
             acquire_network_objects_write_lock(operator)
@@ -319,7 +321,8 @@ def test_flagged_listener_assignment_save_survives_reload_and_render(client, tar
     from atlaso.app import appliance_console
 
     monkeypatch.setattr(appliance_console, "_submit_console_apply", lambda *_args, **_kwargs: "test-job")
-    monkeypatch.setattr(appliance_console, "_recover_management_plane", lambda _stage: None)
+    monkeypatch.setattr(appliance_console, "_recover_management_plane", lambda _stage, **kwargs: None)
+    monkeypatch.setattr(appliance_console, "_refresh_management_addresses", lambda _interface_id, **_kwargs: None)
     appliance_console.configure_management("dhcp", "", "", "auto", "", "", "192.0.2.53")
     with SessionLocal() as db:
         row = db.scalar(select(Setting).where(Setting.key == FIREWALL_SOURCE_GROUPS_SETTING_KEY))
