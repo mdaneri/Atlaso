@@ -54,21 +54,21 @@ sections as needed. Resolve unknown applicability before mutation rather than tr
 | api | API operations, route ownership, compatibility | [API authoring](docs/contribute/api-authoring.md), [router architecture](docs/contribute/router-architecture.md) |
 | python | Python source or tests | [Static analysis](docs/contribute/python-static-analysis.md) |
 | powershell | PowerShell source or modules | [PowerShell authoring](docs/contribute/powershell-authoring.md) |
-| documentation | Documentation, screenshots, media, branding | [Documentation authoring](docs/contribute/documentation-authoring.md) |
+| documentation | Docs, screenshots, media, branding | [Documentation authoring](docs/contribute/documentation-authoring.md) |
 | dependencies | Dependency updates or generated locks, including Dependabot | [Dependency management](docs/contribute/dependency-management.md) |
 | release | Changes to release/version tooling, trusted CI, signing, publication, promotion, GitHub Pages; routine synchronized version bumps follow CONTRIBUTING only | [Release policy](docs/contribute/release-policy.md) |
-| subsystem | Appliance, networking, services, authentication, storage, host-mutation behavior | [Relevant subsystem sections](docs/contribute/agent-policies.md) |
+| subsystem | Appliance, networking, services, authentication, storage, host-mutation behavior | [Subsystem sections](docs/contribute/agent-policies.md) |
 | infrastructure | Image builds, builder reservations, VMware validation, deployment, infrastructure mutation | [VMs / `-CleanupOnly`](docs/reference/vmware-workstation-lifecycle-testing.md), [subsystem contracts](docs/contribute/agent-policies.md) |
 | cleanup | Creating task worktrees or disposable validation resources (ownership section), resource release, destructive cleanup, completed-task handoff | [Cleanup policy](docs/contribute/completed-task-cleanup.md) |
 | community | Community participation | [Code of conduct](CODE_OF_CONDUCT.md) |
 
-[Routing](docs/operate/networking.md).
+[Routing](docs/operate/networking.md); [DHCP](docs/services/dhcp.md): native limits/report-only checks.
 
 For tty1, load subsystem applied-address observation and atomic Settings capture.
 
 ## Review and delegation
 
-For every PR review load the review route, even for an assignment mentioning individual files. Complete analysis and verification
+For every PR review, including file assignments, load the review route. Complete analysis and verification
 before one consolidated review. Never repeatedly review an unchanged head without
 material new evidence; relevant commits still require re-review under that contract.
 
@@ -76,9 +76,9 @@ A delegating agent's prompt lists the startup gate, exact worktree/state roots, 
 checks; verify compliance and the diff before use.
 Delegation never expands permissions. The implementation route owns the Luna contract and unavailable-worker fallback.
 
-For UI work complete the **Mandatory UI Design Guide Gate** in the UI guide: classify the interaction, name the reused
-Atlaso reference, and obtain explicit maintainer approval for `custom/other` before implementation.
+UI work requires the **Mandatory UI Design Guide Gate**: classify the interaction, name the reused Atlaso reference,
+and obtain explicit maintainer approval for `custom/other` before implementation.
 
-See [progressive policy](docs/contribute/progressive-policy.md).
+[progressive policy](docs/contribute/progressive-policy.md).
 
 See [VCF SSH/su](docs/services/vcf-helper.md) and [KMIP trust](docs/services/vsphere-key-providers.md).
