@@ -1065,7 +1065,8 @@ $originalRootIdentity = '<original task-recorded sensitive-root identity>'
 The first two commands inspect marker and filesystem identity without terminating processes or changing files. An
 inspection does not prove process quiescence or cleanup eligibility. If the identity-bound marker disappears between
 inspection and execution, recovery fails; marker absence alone never proves sensitive-root retirement.
-Execution repeats admission and uses the existing
+Execution repeats Git registration and backlink admission after confirmation, immediately before recovery, and uses
+the existing
 same-boot named-job/controller/child proof or verified host-restart recovery before retiring sensitive staging. It
 returns before PowerCLI refresh, package downloads, credential retrieval, reservation initialization, output claims,
 source protection, or Packer. Build and credential arguments are rejected in this mode. Ordinary image builds reject

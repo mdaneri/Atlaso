@@ -207,3 +207,55 @@ Invoke-AtlasoPhotonBuildCleanupRecovery -MarkerPath $MarkerPath -AllowedParentRo
     else:
         assert result.returncode == 0 and result.stdout.strip() == "returned"
     assert sentinel.read_text(encoding="utf-8") == "Synthetic fixture; no credentials."
+
+
+def test_registration_revalidation_rejects_a_changed_inventory(tmp_path: Path) -> None:
+    """A previously admitted worktree cannot rely on its stale inventory snapshot.
+
+    Args:
+        tmp_path: Isolated task-owned harness directory.
+    """
+    pwsh = shutil.which("pwsh")
+    if pwsh is None:
+        pytest.skip("PowerShell 7 is unavailable")
+    script = tmp_path / "readmission.ps1"
+    script.write_text(
+        r"""
+param($Wrapper, $Repository)
+$ErrorActionPreference = 'Stop'
+$tokens = $null; $errors = $null
+$ast = [Management.Automation.Language.Parser]::ParseFile($Wrapper, [ref]$tokens, [ref]$errors)
+if ($errors.Count) { throw 'Wrapper parse failed' }
+$function = $ast.Find({param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and
+    $node.Name -eq 'Assert-AtlasoPhotonCleanupRepositoryRegistration'}, $true)
+Invoke-Expression $function.Extent.Text
+function Assert-AtlasoStrictDescendantPath { param($ParentPath, $ChildPath, $FailureMessage) }
+$global:ReadmissionGit = (Get-Command git).Source
+$global:ReadmissionInventoryCalls = 0
+function git {
+    if ('worktree' -in $args -and 'list' -in $args) {
+        $global:ReadmissionInventoryCalls++
+        if ($global:ReadmissionInventoryCalls -eq 2) {
+            $global:LASTEXITCODE = 0
+            return "worktree /not-the-task$([char]0)$([char]0)"
+        }
+    }
+    & $global:ReadmissionGit @args
+}
+$admitted = Assert-AtlasoPhotonCleanupRepositoryRegistration -RepositoryRoot $Repository -ExecutingRepositoryRoot $Repository
+if ($admitted -ne $Repository) { throw 'First admission failed' }
+Assert-AtlasoPhotonCleanupRepositoryRegistration -RepositoryRoot $Repository -ExecutingRepositoryRoot $Repository
+throw 'Stale registration unexpectedly admitted'
+""",
+        encoding="utf-8",
+    )
+    result = subprocess.run(
+        [pwsh, "-NoProfile", "-File", str(script), str(WRAPPER), str(WRAPPER.parents[3])],
+        capture_output=True,
+        text=True,
+        timeout=45,
+        check=False,
+    )
+    assert result.returncode != 0
+    assert "one exact registered worktree" in result.stderr
+    assert "Stale registration unexpectedly admitted" not in result.stderr
