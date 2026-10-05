@@ -1746,11 +1746,42 @@ def test_console_management_correction_reconciles_firewall_bootstrap_and_setting
         return f"job_{len([event for event in events if event[0] == 'apply'])}"
 
     monkeypatch.setattr(appliance_console, "_submit_console_apply", fake_submit)
-    monkeypatch.setattr(
-        appliance_console,
-        "_refresh_management_addresses",
-        lambda interface_id, **kwargs: events.append(("observe", interface_id)),
-    )
+    observations: list[dict[str, object]] = []
+
+    def fake_observe(interface_id, *, network_job_id):
+        """Record observation ordering and return its complete task-bound proof.
+
+        Args:
+            interface_id: Physical interface selected by console correction.
+            network_job_id: Completed Network task owning the fresh observation.
+        """
+        from sqlalchemy import select
+
+        from atlaso.app.database import SessionLocal
+        from atlaso.app.models import PhysicalInterface, VlanInterface
+        from atlaso.app.ui import network_management_paths
+
+        events.append(("observe", interface_id))
+        with SessionLocal() as db:
+            interface = db.get(PhysicalInterface, interface_id)
+            preview = appliance_console.render_network_config(
+                interfaces=list(db.scalars(select(PhysicalInterface))),
+                vlans=list(db.scalars(select(VlanInterface))),
+            )
+            proof = {
+                "network_job_id": network_job_id,
+                "management_paths": network_management_paths(preview),
+                "candidate_addresses": ["192.0.2.21"],
+                "physical_interfaces": [{
+                    "id": interface.id, "name": interface.name, "mac": interface.mac_address,
+                    "host_admin_state": "up", "oper_state": "up",
+                    "ipv4_cidr": "192.0.2.21/24", "ipv6_cidr": None, "ipv6_cidrs": [],
+                }],
+            }
+        observations.append(proof)
+        return proof
+
+    monkeypatch.setattr(appliance_console, "_refresh_management_addresses", fake_observe)
     monkeypatch.setattr(
         appliance_console,
         "_recover_management_plane",
@@ -1777,11 +1808,16 @@ def test_console_management_correction_reconciles_firewall_bootstrap_and_setting
             "apply",
             (
                 {"appliance_settings"},
-                {"network_job_id": "job_1", "expected_management_snapshots": {"appliance_settings": "settings-snapshot"}},
+                {"network_job_id": "job_1", "expected_management_snapshots": {"appliance_settings": "settings-snapshot"},
+                 "native_observation": observations[1]},
             ),
         ),
         ("recover", "Appliance Settings were applied"),
     ]
+
+    assert len(observations) == 3
+    submission = [value for event, value in events if event == "apply"][1]
+    assert submission[1]["native_observation"] is observations[1]
 
 
 def test_console_management_refreshes_changed_dhcp_lease_before_recovery_and_settings(client, monkeypatch):
