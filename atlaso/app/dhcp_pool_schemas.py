@@ -3,6 +3,16 @@
 from pydantic import BaseModel, Field
 
 
+class DhcpRetainedFinding(BaseModel):
+    """Original unresolved finding evidence, distinct from the current observation."""
+
+    status: str = Field(description="Original unexpected occupancy, lease mismatch or confirmed conflict classification.")
+    observed_mac_addresses: list[str] = Field(description="ARP responder identities supporting the retained finding, not fresh observations.")
+    expected_mac_addresses: list[str] = Field(description="Lease/reservation identities recorded with the original finding.")
+    expected_client_ids: list[str] = Field(description="DHCP client identifiers recorded with the original finding.")
+    verified_at: str | None = Field(description="Original finding observation UTC time, or null when legacy evidence lacks it.")
+
+
 class DhcpAddressObservation(BaseModel):
     """Bounded identity evidence for one applied pool address."""
 
@@ -14,10 +24,11 @@ class DhcpAddressObservation(BaseModel):
     expected_client_ids: list[str] = Field(description="Available current DHCP client identifiers; ARP cannot independently authenticate these.")
     first_seen: str = Field(description="UTC time when retained evidence for this address was first recorded.")
     last_seen: str = Field(description="UTC time when the retained finding was last observed; a nonresponse does not resolve a finding.")
-    verified_at: str = Field(description="UTC time of the latest bounded observation for this address.")
+    verified_at: str | None = Field(description="UTC time of the current bounded observation, or null when this run has not checked the address.")
     unresolved: bool = Field(description="Whether an observed finding still lacks positive matching identity evidence of resolution.")
     previous_status: str | None = Field(description="Retained prior finding classification, or null when absent.")
     resolved_at: str | None = Field(description="UTC time of positive matching identity evidence resolving the prior finding, or null.")
+    retained_finding: DhcpRetainedFinding | None = Field(default=None, description="Original unresolved identity evidence retained through silence or incomplete work, distinct from current observations; null after positive resolution or when absent.")
 
 
 class DhcpPoolReport(BaseModel):

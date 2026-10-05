@@ -607,7 +607,9 @@ def test_unchecked_finding_snapshot_survives_progress_and_stopped_worker(client,
     from atlaso.app.adapters.system import AdapterResult, SystemAdapter
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import JobStatus, utcnow
+    from tests.routers.api_v1.test_dns_dhcp import create_token
 
+    headers = {"Authorization": "Bearer " + create_token(client, ["read:dhcp"])}
     finding = verifier.classify(observation(macs), POOL, leases, leases, NOW)
     with SessionLocal() as db:
         for scope in db.scalars(select(DhcpScope)):
@@ -647,6 +649,9 @@ def test_unchecked_finding_snapshot_survives_progress_and_stopped_worker(client,
             }))
         with SessionLocal() as db:
             assert_retained(verifier.status(db, scope_id))
+            response = client.get(f"/api/v1/dhcp/scopes/{scope_id}/verification", headers=headers)
+            assert response.status_code == 200
+            assert_retained(response.json())
             if stop == "cancelled":
                 db.get(Job, job_id).cancel_requested_at = utcnow()
                 db.commit()
@@ -659,3 +664,6 @@ def test_unchecked_finding_snapshot_survives_progress_and_stopped_worker(client,
         report = verifier.status(db, scope_id)
         assert report["state"] == stop
         assert_retained(report)
+    response = client.get(f"/api/v1/dhcp/scopes/{scope_id}/verification", headers=headers)
+    assert response.status_code == 200
+    assert_retained(response.json())

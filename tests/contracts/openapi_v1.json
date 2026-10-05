@@ -617,6 +617,17 @@
             "description": "UTC time of positive matching identity evidence resolving the prior finding, or null.",
             "title": "Resolved At"
           },
+          "retained_finding": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DhcpRetainedFinding"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Original unresolved identity evidence retained through silence or incomplete work, distinct from current observations; null after positive resolution or when absent."
+          },
           "status": {
             "description": "legitimate_use, unexpected_occupancy, occupant_lease_mismatch, confirmed_conflict, no_response, or unknown.",
             "title": "Status",
@@ -628,9 +639,16 @@
             "type": "boolean"
           },
           "verified_at": {
-            "description": "UTC time of the latest bounded observation for this address.",
-            "title": "Verified At",
-            "type": "string"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "UTC time of the current bounded observation, or null when this run has not checked the address.",
+            "title": "Verified At"
           }
         },
         "required": [
@@ -1085,6 +1103,61 @@
           "created_at"
         ],
         "title": "DhcpReservationResponse",
+        "type": "object"
+      },
+      "DhcpRetainedFinding": {
+        "description": "Original unresolved finding evidence, distinct from the current observation.",
+        "properties": {
+          "expected_client_ids": {
+            "description": "DHCP client identifiers recorded with the original finding.",
+            "items": {
+              "type": "string"
+            },
+            "title": "Expected Client Ids",
+            "type": "array"
+          },
+          "expected_mac_addresses": {
+            "description": "Lease/reservation identities recorded with the original finding.",
+            "items": {
+              "type": "string"
+            },
+            "title": "Expected Mac Addresses",
+            "type": "array"
+          },
+          "observed_mac_addresses": {
+            "description": "ARP responder identities supporting the retained finding, not fresh observations.",
+            "items": {
+              "type": "string"
+            },
+            "title": "Observed Mac Addresses",
+            "type": "array"
+          },
+          "status": {
+            "description": "Original unexpected occupancy, lease mismatch or confirmed conflict classification.",
+            "title": "Status",
+            "type": "string"
+          },
+          "verified_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Original finding observation UTC time, or null when legacy evidence lacks it.",
+            "title": "Verified At"
+          }
+        },
+        "required": [
+          "status",
+          "observed_mac_addresses",
+          "expected_mac_addresses",
+          "expected_client_ids",
+          "verified_at"
+        ],
+        "title": "DhcpRetainedFinding",
         "type": "object"
       },
       "DhcpScopeCreate": {
