@@ -1051,6 +1051,8 @@ For a retained current Photon sensitive-staging marker, the builder also support
 registered task worktree and the sensitive-root identity recorded by its creating task. The executing wrapper may live
 in another registered worktree of the same Git repository. Missing markers, mismatched identities, legacy markers
 without an original root identity, changed ancestry, and unproven process ownership preserve resources.
+Admission ignores inherited Git environment overrides and restores them after checking the repository.
+Identity-bound recovery admits the exact credential parent, including nested custom build-state roots.
 Admission checks Git's NUL-delimited registered worktree inventory and the private Git directory's backlink; sharing
 repository metadata alone does not admit a moved or copied worktree.
 

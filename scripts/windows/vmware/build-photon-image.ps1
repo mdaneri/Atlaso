@@ -1209,7 +1209,14 @@ function Invoke-AtlasoPhotonBuildCleanupRecovery {
                     -ParentPath $resolvedRepositoryRoot `
                     -ChildPath $markerParentRoot `
                     -FailureMessage 'Photon cleanup parent escaped the exact task repository'
-                $candidateParentRoots += $markerParentRoot
+                if (-not [string]::IsNullOrWhiteSpace($ExpectedRootIdentity)) {
+                    # Identity-bound cleanup uses the one exact marker parent;
+                    # a nested custom state root must not also admit its ancestor.
+                    $candidateParentRoots = @($markerParentRoot)
+                }
+                else {
+                    $candidateParentRoots += $markerParentRoot
+                }
             }
         }
         $admitted = @(
@@ -1550,45 +1557,59 @@ function Assert-AtlasoPhotonCleanupRepositoryRegistration {
         [Parameter(Mandatory = $true)][string]$ExecutingRepositoryRoot
     )
 
-    $cleanupRepository = (Resolve-Path -LiteralPath $RepositoryRoot -ErrorAction Stop).Path
-    $cleanupTop = ([string](& git -C $cleanupRepository rev-parse --show-toplevel)).Trim()
-    if ($LASTEXITCODE -ne 0 -or
-        -not [IO.Path]::GetFullPath($cleanupTop).Equals($cleanupRepository, [StringComparison]::OrdinalIgnoreCase)) {
-        throw 'Cleanup repository must be an exact registered worktree root.'
+    # Repository-routing/configuration overrides cannot authorize deletion.
+    # Scope removal to this admission and restore the caller environment afterward.
+    $savedGitEnvironment = @{}
+    foreach ($entry in @(Get-ChildItem Env: | Where-Object { $_.Name -like 'GIT_*' })) {
+        $savedGitEnvironment[$entry.Name] = $entry.Value
+        Remove-Item -LiteralPath ('Env:' + $entry.Name) -ErrorAction Stop
     }
-    $cleanupCommon = ([string](& git -C $cleanupRepository rev-parse --path-format=absolute --git-common-dir)).Trim()
-    if ($LASTEXITCODE -ne 0) { throw 'Cleanup repository registration is unavailable.' }
-    $ownCommon = ([string](& git -C $ExecutingRepositoryRoot rev-parse --path-format=absolute --git-common-dir)).Trim()
-    if ($LASTEXITCODE -ne 0 -or
-        -not $cleanupCommon.Equals($ownCommon, [StringComparison]::OrdinalIgnoreCase)) {
-        throw 'Cleanup repository belongs to a different Git repository.'
+    try {
+        $cleanupRepository = (Resolve-Path -LiteralPath $RepositoryRoot -ErrorAction Stop).Path
+        $cleanupTop = ([string](& git -C $cleanupRepository rev-parse --show-toplevel)).Trim()
+        if ($LASTEXITCODE -ne 0 -or
+            -not [IO.Path]::GetFullPath($cleanupTop).Equals($cleanupRepository, [StringComparison]::OrdinalIgnoreCase)) {
+            throw 'Cleanup repository must be an exact registered worktree root.'
+        }
+        $cleanupCommon = ([string](& git -C $cleanupRepository rev-parse --path-format=absolute --git-common-dir)).Trim()
+        if ($LASTEXITCODE -ne 0) { throw 'Cleanup repository registration is unavailable.' }
+        $ownCommon = ([string](& git -C $ExecutingRepositoryRoot rev-parse --path-format=absolute --git-common-dir)).Trim()
+        if ($LASTEXITCODE -ne 0 -or
+            -not $cleanupCommon.Equals($ownCommon, [StringComparison]::OrdinalIgnoreCase)) {
+            throw 'Cleanup repository belongs to a different Git repository.'
+        }
+        $worktreeInventory = [string](& git -C $ExecutingRepositoryRoot worktree list --porcelain -z)
+        if ($LASTEXITCODE -ne 0) { throw 'Registered worktree inventory is unavailable.' }
+        $registeredMatches = @($worktreeInventory.Split([char]0) | Where-Object {
+            $_.StartsWith('worktree ', [StringComparison]::Ordinal) -and
+            [IO.Path]::GetFullPath($_.Substring(9)).Equals($cleanupRepository, [StringComparison]::OrdinalIgnoreCase)
+        })
+        if ($registeredMatches.Count -ne 1) { throw 'Cleanup target is not one exact registered worktree.' }
+        $cleanupGitDirectory = ([string](& git -C $cleanupRepository rev-parse --absolute-git-dir)).Trim()
+        if ($LASTEXITCODE -ne 0) { throw 'Cleanup private Git directory is unavailable.' }
+        Assert-AtlasoStrictDescendantPath -ParentPath (Join-Path $ownCommon 'worktrees') `
+            -ChildPath $cleanupGitDirectory -FailureMessage 'Cleanup requires a registered linked task worktree'
+        $cleanupGitFile = Join-Path $cleanupRepository '.git'
+        $backlinkPath = Join-Path $cleanupGitDirectory 'gitdir'
+        foreach ($registrationFile in @($cleanupGitFile, $backlinkPath)) {
+            $registrationItem = Get-Item -LiteralPath $registrationFile -Force -ErrorAction Stop
+            if ($registrationItem.PSIsContainer -or $registrationItem.Length -gt 4096 -or
+                ($registrationItem.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+                throw 'Cleanup worktree registration file is not an ordinary bounded file.'
+            }
+        }
+        $backlink = [IO.File]::ReadAllText($backlinkPath).Trim()
+        if (-not [IO.Path]::IsPathFullyQualified($backlink) -or
+            -not [IO.Path]::GetFullPath($backlink).Equals($cleanupGitFile, [StringComparison]::OrdinalIgnoreCase)) {
+            throw 'Cleanup private Git directory backlink does not match the exact task worktree.'
+        }
+        return $cleanupRepository
     }
-    $worktreeInventory = [string](& git -C $ExecutingRepositoryRoot worktree list --porcelain -z)
-    if ($LASTEXITCODE -ne 0) { throw 'Registered worktree inventory is unavailable.' }
-    $registeredMatches = @($worktreeInventory.Split([char]0) | Where-Object {
-        $_.StartsWith('worktree ', [StringComparison]::Ordinal) -and
-        [IO.Path]::GetFullPath($_.Substring(9)).Equals($cleanupRepository, [StringComparison]::OrdinalIgnoreCase)
-    })
-    if ($registeredMatches.Count -ne 1) { throw 'Cleanup target is not one exact registered worktree.' }
-    $cleanupGitDirectory = ([string](& git -C $cleanupRepository rev-parse --absolute-git-dir)).Trim()
-    if ($LASTEXITCODE -ne 0) { throw 'Cleanup private Git directory is unavailable.' }
-    Assert-AtlasoStrictDescendantPath -ParentPath (Join-Path $ownCommon 'worktrees') `
-        -ChildPath $cleanupGitDirectory -FailureMessage 'Cleanup requires a registered linked task worktree'
-    $cleanupGitFile = Join-Path $cleanupRepository '.git'
-    $backlinkPath = Join-Path $cleanupGitDirectory 'gitdir'
-    foreach ($registrationFile in @($cleanupGitFile, $backlinkPath)) {
-        $registrationItem = Get-Item -LiteralPath $registrationFile -Force -ErrorAction Stop
-        if ($registrationItem.PSIsContainer -or $registrationItem.Length -gt 4096 -or
-            ($registrationItem.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
-            throw 'Cleanup worktree registration file is not an ordinary bounded file.'
+    finally {
+        foreach ($name in $savedGitEnvironment.Keys) {
+            [Environment]::SetEnvironmentVariable($name, $savedGitEnvironment[$name], 'Process')
         }
     }
-    $backlink = [IO.File]::ReadAllText($backlinkPath).Trim()
-    if (-not [IO.Path]::IsPathFullyQualified($backlink) -or
-        -not [IO.Path]::GetFullPath($backlink).Equals($cleanupGitFile, [StringComparison]::OrdinalIgnoreCase)) {
-        throw 'Cleanup private Git directory backlink does not match the exact task worktree.'
-    }
-    return $cleanupRepository
 }
 
 $repoRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..\..')).Path

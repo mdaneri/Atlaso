@@ -86,7 +86,7 @@ function git {
     assert "one exact registered worktree" in result.stderr
 
 
-@pytest.mark.parametrize("case", ["preview", "wrong_identity", "process_unproven"])
+@pytest.mark.parametrize("case", ["preview", "wrong_identity", "process_unproven", "nested_preview"])
 def test_retained_marker_requires_identity_and_process_proofs(tmp_path: Path, case: str) -> None:
     """Preview preserves state; mismatches and unproven descendants block retirement.
 
@@ -97,7 +97,10 @@ def test_retained_marker_requires_identity_and_process_proofs(tmp_path: Path, ca
     pwsh = shutil.which("pwsh")
     if pwsh is None:
         pytest.skip("PowerShell 7 is unavailable")
-    root = tmp_path / "credentials" / ("atlaso-photon-build-credentials-" + "a" * 32)
+    parent = tmp_path / "credentials"
+    if case == "nested_preview":
+        parent = parent / "nested-build-state" / "credentials"
+    root = parent / ("atlaso-photon-build-credentials-" + "a" * 32)
     root.mkdir(parents=True)
     marker_path = tmp_path / "marker.json"
     marker = {
@@ -135,10 +138,10 @@ $expected = if ($Case -eq 'wrong_identity') { 'replacement' } else { 'original' 
 try {
     Invoke-AtlasoPhotonBuildCleanupRecovery -MarkerPath $MarkerPath -RepositoryRoot $Repository `
         -AllowedParentRoots @(Join-Path $Repository 'credentials') -ExpectedRootIdentity $expected `
-        -Preview:($Case -eq 'preview') | ConvertTo-Json -Compress
-    if ($Case -ne 'preview') { throw 'Unsafe recovery unexpectedly succeeded' }
+        -Preview:($Case -in @('preview', 'nested_preview')) | ConvertTo-Json -Compress
+    if ($Case -notin @('preview', 'nested_preview')) { throw 'Unsafe recovery unexpectedly succeeded' }
 } catch {
-    if ($Case -eq 'preview') { throw }
+    if ($Case -in @('preview', 'nested_preview')) { throw }
     if ($_.Exception.InnerException.Message -notmatch 'original task-recorded|quiescence unproven') { throw }
     'preserved'
 }
@@ -155,7 +158,7 @@ try {
     assert result.returncode == 0, result.stderr
     assert marker_path.read_bytes() == marker_bytes
     assert root.is_dir()
-    if case == "preview":
+    if case in {"preview", "nested_preview"}:
         assert json.loads(result.stdout)["Status"] == "inspected"
     else:
         assert result.stdout.strip() == "preserved"
@@ -226,10 +229,13 @@ def test_registration_revalidation_rejects_a_changed_inventory(tmp_path: Path) -
     linked = tmp_path / "linked"
     subprocess.run(["git", "-C", str(repository), "worktree", "add", "--detach", str(linked), "HEAD"],
                    capture_output=True, check=True)
+    other = tmp_path / "other-primary"
+    other.mkdir()
+    subprocess.run(["git", "init", str(other)], capture_output=True, check=True)
     script = tmp_path / "readmission.ps1"
     script.write_text(
         r"""
-param($Wrapper, $Repository)
+param($Wrapper, $Repository, $OtherRepository)
 $ErrorActionPreference = 'Stop'
 $tokens = $null; $errors = $null
 $ast = [Management.Automation.Language.Parser]::ParseFile($Wrapper, [ref]$tokens, [ref]$errors)
@@ -250,8 +256,28 @@ function git {
     }
     & $global:ReadmissionGit @args
 }
+$env:GIT_COMMON_DIR = Join-Path (Split-Path -Parent $Repository) 'primary/.git'
+try {
+    Assert-AtlasoPhotonCleanupRepositoryRegistration -RepositoryRoot $Repository -ExecutingRepositoryRoot $OtherRepository
+    throw 'Cross-repository override unexpectedly admitted'
+} catch {
+    if ($_.Exception.Message -notmatch 'different Git repository') { throw }
+}
+if ($env:GIT_COMMON_DIR -ne (Join-Path (Split-Path -Parent $Repository) 'primary/.git')) {
+    throw 'Caller environment was not restored after refusal'
+}
+$env:GIT_COMMON_DIR = '/invalid-inherited-common-directory'
+$env:GIT_DIR = '/invalid-inherited-git-directory'
+$env:GIT_WORK_TREE = '/invalid-inherited-worktree'
+$env:GIT_CONFIG_COUNT = '1'
+$env:GIT_CONFIG_KEY_0 = 'safe.directory'
+$env:GIT_CONFIG_VALUE_0 = '/unrelated'
 $admitted = Assert-AtlasoPhotonCleanupRepositoryRegistration -RepositoryRoot $Repository -ExecutingRepositoryRoot $Repository
 if ($admitted -ne $Repository) { throw 'First admission failed' }
+if ($env:GIT_COMMON_DIR -ne '/invalid-inherited-common-directory' -or
+    $env:GIT_DIR -ne '/invalid-inherited-git-directory' -or $env:GIT_CONFIG_COUNT -ne '1') {
+    throw 'Caller environment was not restored'
+}
 Assert-AtlasoPhotonCleanupRepositoryRegistration -RepositoryRoot $Repository -ExecutingRepositoryRoot $Repository
 throw 'Stale registration unexpectedly admitted'
 """,
@@ -259,7 +285,7 @@ throw 'Stale registration unexpectedly admitted'
     )
     try:
         result = subprocess.run(
-            [pwsh, "-NoProfile", "-File", str(script), str(WRAPPER), str(linked)],
+            [pwsh, "-NoProfile", "-File", str(script), str(WRAPPER), str(linked), str(other)],
             capture_output=True,
             text=True,
             timeout=45,
