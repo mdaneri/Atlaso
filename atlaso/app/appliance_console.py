@@ -1241,6 +1241,9 @@ def _post_handoff_settings_snapshot(
                 if (
                     interface is None or interface.name != row["name"]
                     or (interface.mac_address or "").lower() != row["mac"].lower()
+                    or interface.host_admin_state != row["host_admin_state"]
+                    or interface.oper_state != row["oper_state"]
+                    or interface.host_admin_state != "up" or interface.oper_state != "up"
                     or interface.host_ip_cidr != row["ipv4_cidr"]
                     or interface.host_ipv6_cidr != row["ipv6_cidr"]
                     or list(interface.host_ipv6_cidrs or []) != row["ipv6_cidrs"]
@@ -1576,16 +1579,20 @@ def _refresh_management_addresses(
                         verified = False
                 if not verified:
                     break
-                verified_rows.append((identity, name, mac, applied, observed_ipv4, observed_ipv6, observed_ipv6_cidrs))
+                verified_rows.append((identity, name, mac, applied, observed_ipv4, observed_ipv6, observed_ipv6_cidrs,
+                                      observed.host_admin_state, observed.oper_state))
             if len(verified_rows) == len(targets) and verify_native_management_vlans(
                 expected_paths or [], timeout=max(0, deadline - time.monotonic()),
             ):
                 # Publish the complete applied observation together, never reconcile unrelated intent.
                 pending = False
-                for identity, name, mac, applied, observed_ipv4, observed_ipv6, observed_ipv6_cidrs in verified_rows:
+                for (identity, name, mac, applied, observed_ipv4, observed_ipv6, observed_ipv6_cidrs,
+                     observed_admin_state, observed_oper_state) in verified_rows:
                     interface = db.get(PhysicalInterface, identity)
                     if interface is None or interface.name != name or (interface.mac_address or "").lower() != mac.lower():
                         raise ConsoleOperationError("An applied management interface identity changed; recovery was not started.")
+                    interface.host_admin_state = observed_admin_state
+                    interface.oper_state = observed_oper_state
                     interface.host_ip_cidr = observed_ipv4
                     interface.host_ipv6_cidr = observed_ipv6
                     interface.host_ipv6_cidrs = list(observed_ipv6_cidrs)
@@ -1608,8 +1615,9 @@ def _refresh_management_addresses(
                     "candidate_addresses": [str(ip_interface(row[4]).ip) for row in verified_rows if row[4]],
                     "physical_interfaces": [
                         {"id": identity, "name": name, "mac": mac, "ipv4_cidr": ipv4,
+                         "host_admin_state": admin_state, "oper_state": oper_state,
                          "ipv6_cidr": ipv6, "ipv6_cidrs": list(ipv6_cidrs)}
-                        for identity, name, mac, _applied, ipv4, ipv6, ipv6_cidrs in verified_rows
+                        for identity, name, mac, _applied, ipv4, ipv6, ipv6_cidrs, admin_state, oper_state in verified_rows
                     ],
                 }
         remaining = deadline - time.monotonic()

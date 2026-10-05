@@ -4569,7 +4569,8 @@ def test_console_static_observation_matches_complete_native_candidates(client, m
 
 
 @pytest.mark.parametrize("handoff,invalid_proof", [(False, None), (True, None), (False, "missing"),
-                                                  (False, "job"), (False, "mac"), (False, "address")])
+                                                  (False, "job"), (False, "mac"), (False, "address"),
+                                                  (False, "host_admin_state"), (False, "oper_state")])
 @pytest.mark.parametrize("concurrent_edit", [False, True])
 def test_console_management_projects_settings_snapshot_from_dhcp_handoff_evidence(client, monkeypatch, concurrent_edit, handoff, invalid_proof):
     """Allow only the captured Settings projection proven by DHCP handoff evidence.
@@ -4711,6 +4712,11 @@ def test_console_management_projects_settings_snapshot_from_dhcp_handoff_evidenc
             proof["physical_interfaces"][0]["mac"] = "00:00:00:00:00:01"
         if invalid_proof == "address":
             proof["candidate_addresses"] = ["192.0.2.99"]
+        if invalid_proof in {"host_admin_state", "oper_state"}:
+            with SessionLocal() as db:
+                interface = db.get(PhysicalInterface, proof["physical_interfaces"][0]["id"])
+                setattr(interface, invalid_proof, "down")
+                db.commit()
         return proof
 
     monkeypatch.setattr(appliance_console, "_refresh_management_addresses", observed)
