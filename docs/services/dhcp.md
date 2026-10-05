@@ -100,7 +100,8 @@ Details include observed/expected MACs, available client identifiers, reason, fi
 
 Only one verifier is admitted globally. A run is limited to 1,024 addresses, chunks of at most 16, at most eight ARP
 requests per second, bounded helper calls and ten minutes overall. The same pool cannot queue more than once in 15
-minutes; skipped schedule runs do not extend this cooldown. Large or unsupported pools remain unknown; partial work never implies exhaustive discovery. Verification
+minutes; skipped schedule runs do not extend this cooldown. Large or unsupported pools remain unknown; partial work never
+implies exhaustive discovery. Verification
 never evicts clients, deletes leases, changes reservations, blocks MACs, flushes neighbors or feeds results into
 allocator exclusions. Remediation requires explicit desired configuration and Apply. DHCP's existing Logs view remains
 the native allocation/exhaustion diagnostic surface; a scan does not prove every offer was protected.
