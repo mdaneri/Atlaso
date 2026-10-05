@@ -4595,8 +4595,9 @@ preserved with their affected subsystem below. Keep new requirements at their to
 <li>Label the global submit action around the user's intent, such as <code>Submit appliance changes</code>, and explain that the task
   validates and applies selected desired state through Atlaso adapters.</li>
 <li>Fresh Photon appliance startup may initialize the factory desired-state baseline automatically when no baseline,
-  appliance-apply job, or non-auth operator audit event exists. This is comparison metadata only and must not run helper
-  commands or mutate host services.</li>
+  appliance-apply job, or non-auth operator audit event exists. A sole first-boot CA publication baseline also permits
+  initialization of the remaining units before operator activity; preserve that executed CA snapshot exactly.
+  This is comparison metadata only and must not run helper commands or mutate host services.</li>
 <li>Keep dry-run boundaries visible. In development, applying should record command intent through adapters instead of
   mutating host services directly.</li>
 <li>Appliance Settings owns appliance FQDN, OS hostname, appliance resolver mode/servers, management UI HTTPS preference,
@@ -5568,8 +5569,54 @@ preserved with their affected subsystem below. Keep new requirements at their to
   OVF export requires an explicit proven source VMX; exported product identity, deployed-appliance names, and immutable
   release asset names remain canonical and never inherit a transient pull-request number.</li>
 <li>Validate live appliance readiness through <code>/openapi.json</code>, not VMware Tools IP discovery or service color alone.</li>
+<li>The tty1 console service enables privileged systemd helper execution, matching the worker and preserving its
+  root-private PowerShell environment for Appliance Settings.</li>
 <li>A successful tty1 management-network correction must explicitly apply Network and Firewall from the corrected state,
-  retry unfinished first-boot HTTPS before applying Appliance Settings, validate nginx before reload, ensure nginx and
+  verify fresh usable addresses on an administratively and operationally up link against the completed task's Network
+  snapshot before recovery, reject tentative/DAD-failed and zero-valid-lifetime addresses, and bound native acquisition
+  to 30 seconds. DHCPv4 and automatic IPv6 observation, inventory reconciliation, and helper-confirmed refresh require native
+  dynamic-source evidence and exclude
+  lingering static addresses.
+  Publish only verified target observations without reconciling inventory or changing desired state. Preserve newer
+  edits as pending and stop dependent recovery when they drift. Hold the shared network-object writer lock from the
+  final observation refresh through the pending-state decision and commit. Compare every completed Network management
+  path, including dedicated administrative state and effective eligibility, before starting certificate recovery.
+  Recheck the completed Network management
+  paths under the shared network-object writer lock atomically with Settings capture, including edits during HTTPS recovery.
+  Stage scoped recovery CA payloads in an independently owned private artifact so ordinary CA Apply cannot replace
+  or remove them; remove recovery secret staging after its helper completes.
+  Bind console HTTPS bootstrap to the completed Network task through a private, serialized runtime EnvironmentFile
+  consumed by the original systemd unit; retain its data-disk dependency, ordering, and service serialization gates.
+  Bound restart before the console's outer timeout; cancel a timed-out job and prove systemd idle before removing or
+  replacing its runtime binding. Preserve active or ambiguous bindings. Completed bootstrap refreshes certificates
+  without replacing the applied management protocol or listener ports.
+  Compare management paths under the shared writer lock
+  and retain that transaction through certificate issuance. Guarded certificate projection reads saved service rows
+  without getter reconciliation or optional-row initialization that could commit the writer transaction.
+  Completed recovery freezes the applied Settings hostname and terminal SANs before issuance; desired Settings saves
+  cannot alter that leaf. Publish to the certificate/key destinations captured by applied nginx Settings, even when
+  their filenames differ from the applied hostname. Missing applied identity or destinations stops publication.
+  Bound issuance and publication select only the appliance management leaf, leaving unrelated TLS-service certificates
+  and CRL files untouched. Completed recovery requires the applied root identity/paths and holds writer admission
+  through publication, capturing a root-private public receipt without advancing its CA baseline. After reload, stable
+  readiness and served DER fingerprint matching the task receipt, acknowledge that same receipt digest under writer
+  admission, rechecking completed paths,
+  applied Settings, CA baseline and published leaf. Preserve other baseline leaves and pending CA intent; outer recovery
+  failure never acknowledges publication. A completed Network binding selects this scoped path
+  regardless of first-boot marker completeness; validate its applied nginx site without requiring the first-boot marker.
+  It never falls through to default first-boot rendering.
+  CA baseline comparison accepts equivalent legacy naive and timezone-aware UTC expiry encodings, without rewriting
+  stored snapshots or hiding actual expiry/certificate changes.
+  Ordinary CA Apply must share this writer admission through native publication. Baseline acknowledgement must reacquire
+  admission after listener reloads and reject a superseded captured CA payload rather than baseline refreshed intent.
+  Recovery readiness probes use the applied default listener ports, including preserved nonstandard HTTP/HTTPS ports.
+  Transient console recovery must load the appliance EnvironmentFile and state working directory so its receipt
+  acknowledgement opens the appliance database, independently of the caller's environment.
+  Ordinary first boot records its captured full CA baseline.
+  Ordinary bootstrap with a Network baseline rejects pending
+  management-path edits too. Bound recovery must refresh HTTPS even after first boot is complete, without seeding or
+  reconciling desired state. Retry unfinished first-boot HTTPS before applying Appliance Settings, validate nginx before
+  reload, ensure nginx and
   Atlaso are enabled/running, and require stable loopback readiness matching the applied HTTP-only or HTTPS management
   mode before the console reports success. Keep this recovery idempotent and preserve an actionable failing-layer
   message.</li>
@@ -6306,7 +6353,12 @@ preserved with their affected subsystem below. Keep new requirements at their to
   HTTP/HTTPS ports. This includes flagged access physical interfaces and VLANs, with the same Source Group predicate in
   desired previews and old/candidate/final handoff rules. Never infer root SSH enablement from firewall admission, and
   never open TCP/22 merely because an unflagged access network exists.</li>
-<li>Physical-interface desired-state updates from the API and UI use one atomic domain service. Capture the previous
+<li>Physical-interface desired-state updates from the API and UI use one atomic domain service. Its writers acquire
+  the shared network-object transaction lock before mutation and refresh the transport-cached interface after admission
+  so inventory renames and console Settings capture cannot race address saves.
+  VLAN create/edit/enable/disable/delete, missing-interface removal, and host-inventory reconciliation use the same
+  lock before their database reads and writes; flagged VLANs and parent removal can change management paths.
+  Capture the previous
   IPv4 and IPv6 CIDRs before mutation, refresh dependent service, ESX Storage, Web Terminal, DHCP, and Network Boot
   bindings before one commit, include child VLAN dependencies when their parent becomes unavailable, roll back every
   row when reconciliation fails, rebase reservations and their app-owned DNS records only when one updated DHCP scope
