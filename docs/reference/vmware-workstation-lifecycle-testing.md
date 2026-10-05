@@ -1051,6 +1051,8 @@ For a retained current Photon sensitive-staging marker, the builder also support
 registered task worktree and the sensitive-root identity recorded by its creating task. The executing wrapper may live
 in another registered worktree of the same Git repository. Missing markers, mismatched identities, legacy markers
 without an original root identity, changed ancestry, and unproven process ownership preserve resources.
+Admission checks Git's NUL-delimited registered worktree inventory and the private Git directory's backlink; sharing
+repository metadata alone does not admit a moved or copied worktree.
 
 ```powershell
 $taskRepository = 'E:\task\Atlaso'
@@ -1064,7 +1066,8 @@ The first two commands inspect marker and filesystem identity without terminatin
 inspection does not prove process quiescence or cleanup eligibility. Execution repeats admission and uses the existing
 same-boot named-job/controller/child proof or verified host-restart recovery before retiring sensitive staging. It
 returns before PowerCLI refresh, package downloads, credential retrieval, reservation initialization, output claims,
-source protection, or Packer. Build and credential arguments are rejected in this mode. VMware VMs, builder output,
+source protection, or Packer. Build and credential arguments are rejected in this mode. Ordinary image builds reject
+`-WhatIf` and `-Confirm`, which are supported only with `-CleanupOnly`. VMware VMs, builder output,
 output-claim markers, and address reservations require their separate owning cleanup procedures. Record their independent
 absence or preservation; staging retirement does not prove deployment acceptance or authorize a new build.
 

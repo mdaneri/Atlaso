@@ -18,6 +18,8 @@ WRAPPER = Path("scripts/windows/vmware/build-photon-image.ps1").resolve()
         ["-CleanupOnly"],
         ["-Cleanup"],
         ["-WhatIf"],
+        ["-Confirm"],
+        ["-LocalBuilder", "-Confirm:$false"],
         ["-CleanupOnly", "-LocalBuilder"],
         ["-CleanupOnly", "-CleanupRepositoryRoot", "relative", "-CleanupRootIdentity", "invalid"],
     ],
@@ -41,6 +43,47 @@ def test_cleanup_entry_rejects_ambiguous_inputs(arguments: list[str]) -> None:
     assert result.returncode != 0
     assert "Cleanup" in result.stderr
     assert "PowerCLI refresh" not in result.stdout
+
+
+@pytest.mark.parametrize("registration", ["missing", "duplicate"])
+def test_cleanup_rejects_ambiguous_registered_inventory(tmp_path: Path, registration: str) -> None:
+    """Sharing metadata cannot substitute for one registered task path.
+
+    Args:
+        tmp_path: Isolated harness directory.
+        registration: Invalid inventory observation returned by the Git boundary.
+    """
+    pwsh = shutil.which("pwsh")
+    if pwsh is None:
+        pytest.skip("PowerShell 7 is unavailable")
+    script = tmp_path / "inventory.ps1"
+    script.write_text(
+        r"""
+param($Wrapper, $Repository, $Registration)
+$ErrorActionPreference = 'Stop'
+$nativeGit = (Get-Command git).Source
+function git {
+    if ('worktree' -in $args -and 'list' -in $args) {
+        $global:LASTEXITCODE = 0
+        if ($Registration -eq 'missing') { return "worktree /not-the-task$([char]0)$([char]0)" }
+        $row = "worktree $Repository$([char]0)$([char]0)"
+        return $row + $row
+    }
+    & $nativeGit @args
+}
+& $Wrapper -CleanupOnly -CleanupRepositoryRoot $Repository -CleanupRootIdentity 'FFFFFFFF:FFFFFFFFFFFFFFFF'
+""",
+        encoding="utf-8",
+    )
+    result = subprocess.run(
+        [pwsh, "-NoProfile", "-File", str(script), str(WRAPPER), str(WRAPPER.parents[3]), registration],
+        capture_output=True,
+        text=True,
+        timeout=45,
+        check=False,
+    )
+    assert result.returncode != 0
+    assert "one exact registered worktree" in result.stderr
 
 
 @pytest.mark.parametrize("case", ["preview", "wrong_identity", "process_unproven"])

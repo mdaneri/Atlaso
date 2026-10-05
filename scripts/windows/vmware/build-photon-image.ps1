@@ -308,10 +308,10 @@ if ($env:OP_SERVICE_ACCOUNT_TOKEN) {
 if ($PrepareIsoOnly) {
     throw 'PrepareIsoOnly is not supported because a retained remastered ISO would contain reusable build credentials. Run Packer validation or a build so the ISO can be deleted after the bounded consumer exits.'
 }
-if (-not $CleanupOnly -and ($Cleanup -or $WhatIfPreference -or
+if (-not $CleanupOnly -and ($Cleanup -or $WhatIfPreference -or $PSBoundParameters.ContainsKey('Confirm') -or
         -not [string]::IsNullOrWhiteSpace($CleanupRepositoryRoot) -or
         -not [string]::IsNullOrWhiteSpace($CleanupRootIdentity))) {
-    throw 'Cleanup parameters and WhatIf require -CleanupOnly; no build was started.'
+    throw 'Cleanup parameters, WhatIf and Confirm require -CleanupOnly; no build was started.'
 }
 
 . (Join-Path $PSScriptRoot 'Atlaso.WorkstationFirstBoot.ps1')
@@ -1560,6 +1560,31 @@ if ($CleanupOnly) {
     if ($LASTEXITCODE -ne 0 -or
         -not $cleanupCommon.Equals($ownCommon, [StringComparison]::OrdinalIgnoreCase)) {
         throw 'Cleanup repository belongs to a different Git repository.'
+    }
+    $worktreeInventory = [string](& git -C $repoRoot worktree list --porcelain -z)
+    if ($LASTEXITCODE -ne 0) { throw 'Registered worktree inventory is unavailable.' }
+    $registeredMatches = @($worktreeInventory.Split([char]0) | Where-Object {
+        $_.StartsWith('worktree ', [StringComparison]::Ordinal) -and
+        [IO.Path]::GetFullPath($_.Substring(9)).Equals($cleanupRepository, [StringComparison]::OrdinalIgnoreCase)
+    })
+    if ($registeredMatches.Count -ne 1) { throw 'Cleanup target is not one exact registered worktree.' }
+    $cleanupGitDirectory = ([string](& git -C $cleanupRepository rev-parse --absolute-git-dir)).Trim()
+    if ($LASTEXITCODE -ne 0) { throw 'Cleanup private Git directory is unavailable.' }
+    Assert-AtlasoStrictDescendantPath -ParentPath (Join-Path $ownCommon 'worktrees') `
+        -ChildPath $cleanupGitDirectory -FailureMessage 'Cleanup requires a registered linked task worktree'
+    $cleanupGitFile = Join-Path $cleanupRepository '.git'
+    $backlinkPath = Join-Path $cleanupGitDirectory 'gitdir'
+    foreach ($registrationFile in @($cleanupGitFile, $backlinkPath)) {
+        $registrationItem = Get-Item -LiteralPath $registrationFile -Force -ErrorAction Stop
+        if ($registrationItem.PSIsContainer -or $registrationItem.Length -gt 4096 -or
+            ($registrationItem.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+            throw 'Cleanup worktree registration file is not an ordinary bounded file.'
+        }
+    }
+    $backlink = [IO.File]::ReadAllText($backlinkPath).Trim()
+    if (-not [IO.Path]::IsPathFullyQualified($backlink) -or
+        -not [IO.Path]::GetFullPath($backlink).Equals($cleanupGitFile, [StringComparison]::OrdinalIgnoreCase)) {
+        throw 'Cleanup private Git directory backlink does not match the exact task worktree.'
     }
     $cleanupOnlyMarker = Join-Path $cleanupRepository '.atlaso-local\photon-image-build-state\photon-image-build-cleanup.json'
     if (-not (Test-Path -LiteralPath $cleanupOnlyMarker -PathType Leaf)) {
