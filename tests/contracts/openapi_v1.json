@@ -11242,6 +11242,16 @@
             },
             "description": "Read authorized bounded operational evidence for a pool. The response body matches the documented success schema."
           },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "The managed DHCP pool no longer exists."
+          },
           "422": {
             "content": {
               "application/json": {
@@ -11290,6 +11300,16 @@
               }
             },
             "description": "Queue bounded observations; global Appliance Apply is unaffected. The response body matches the documented success schema."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "The pool is absent, unsupported, unapplied, edited, busy or within its admission interval."
           },
           "422": {
             "content": {

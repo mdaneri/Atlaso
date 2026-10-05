@@ -50,6 +50,7 @@ from atlaso.app.schemas import (
     DnsSettingsResponse,
     DnsSettingsUpdate,
     DnsStatusResponse,
+    ProblemDetails,
     ServiceStateResponse,
 )
 from atlaso.app.security import (
@@ -739,6 +740,7 @@ def build_router(dependencies: DnsDhcpApiDependencies) -> DnsDhcpApiRouter:
         "/dhcp/scopes/{scope_id}/verification", response_model=DhcpPoolReport,
         tags=["DHCP"], operation_id="getDhcpPoolVerification",
         summary="Read DHCP pool verification",
+        responses={404: {"model": ProblemDetails, "description": "The managed DHCP pool no longer exists."}},
         description="Requires read:dhcp. Reads current applied IPv4 pool evidence and durable task progress without changing leases or runtime configuration. Edited or deleted pool identities invalidate older observations. Nonresponse never proves availability.",
     )
     def get_dhcp_pool_verification(
@@ -756,6 +758,7 @@ def build_router(dependencies: DnsDhcpApiDependencies) -> DnsDhcpApiRouter:
         "/dhcp/scopes/{scope_id}/verification", response_model=DhcpPoolVerificationQueued,
         status_code=202, tags=["DHCP"], operation_id="verifyDhcpPool",
         summary="Queue report-only DHCP pool verification",
+        responses={409: {"model": ProblemDetails, "description": "The pool is absent, unsupported, unapplied, edited, busy or within its admission interval."}},
         description="Requires write:dhcp. Queues a bounded worker task for an enabled, applied IPv4 pool with fresh link-scoped ARP observations. Only one verifier runs globally, at most 1024 addresses are examined, and the same pool has a 15-minute admission interval. No leases, reservations, runtime configuration or neighbor entries are deleted. Edited, unapplied, unsupported or busy pools fail with 409. Use Tasks for progress and authorized cancellation.",
     )
     def verify_dhcp_pool(
