@@ -293,6 +293,20 @@ def retain_history(current: dict[str, Any], previous: dict[str, Any] | None) -> 
     return current
 
 
+def unchecked_history(previous: dict[str, Any], reason: str) -> dict[str, Any]:
+    """Label unchecked history without presenting prior identities as fresh observations.
+
+    Args:
+        previous: Prior address evidence for the same applied pool.
+        reason: Why this run has not checked the address.
+    """
+    current = dict(previous, status="unknown", reason=reason, observed_mac_addresses=[],
+                   expected_mac_addresses=[], expected_client_ids=[], verified_at=None,
+                   unresolved=False, previous_status=None, resolved_at=None)
+    current.pop("retained_finding", None)
+    return retain_history(current, previous)
+
+
 def status(db: Session, scope_id: int) -> dict[str, Any]:
     """Project current progress and invalidate edited/deleted/applied identities.
 
@@ -427,7 +441,7 @@ def run(job_id: str) -> None:
                 raise ValueError("Applied pool changed; partial result was not published.")
             job.progress_percent = min(99, int(len(observations) / total * 100))
             job.result = json.dumps({"state": "running", "scope_id": scope_id, "checked": len(observations), "total": total})
-            partial_rows = observations + [dict(row, status="unknown", reason="Not yet checked in this run; retained evidence may be stale.")
+            partial_rows = observations + [unchecked_history(row, "Not yet checked in this run; prior evidence is not fresh.")
                 for row in previous.get("observations", []) if row["ip_address"] not in {item["ip_address"] for item in observations}]
             partial = {"state": "running", "reason": "Bounded verification in progress; unchecked evidence remains unknown.",
                        "config_hash": digest, "job_id": job_id, "verified_at": verified_at,
@@ -456,7 +470,7 @@ def run(job_id: str) -> None:
             state, reason = "cancelled", "Cancellation acknowledged; partial report retained."
         if state != "complete":
             seen = {item["ip_address"] for item in observations}
-            observations.extend(dict(row, status="unknown", reason="Not checked in the completed portion; retained finding is unresolved.")
+            observations.extend(unchecked_history(row, "Not checked in the completed portion; prior evidence is not fresh.")
                                 for row in previous.get("observations", []) if row["ip_address"] not in seen)
         report = {
             "state": state, "reason": reason, "config_hash": digest, "job_id": job_id,

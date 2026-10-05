@@ -598,3 +598,64 @@ def test_retained_finding_preserves_identity_evidence_until_positive_resolution(
     resolved = verifier.retain_history(matching, again)
     assert not resolved["unresolved"] and resolved["resolved_at"] == later_time
     assert "retained_finding" not in resolved and "Retained unresolved" not in resolved["reason"]
+
+
+@pytest.mark.parametrize("macs,leases", [([MAC], []), ([OTHER], [lease()]), ([MAC, OTHER], [lease()])])
+@pytest.mark.parametrize("stop", ["cancelled", "partial"])
+def test_unchecked_finding_snapshot_survives_progress_and_stopped_worker(client, monkeypatch, macs, leases, stop):
+    """Running and final unchecked merges preserve the original finding with labelled evidence."""
+    from atlaso.app.adapters.system import AdapterResult, SystemAdapter
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import JobStatus, utcnow
+
+    finding = verifier.classify(observation(macs), POOL, leases, leases, NOW)
+    with SessionLocal() as db:
+        for scope in db.scalars(select(DhcpScope)):
+            scope.enabled = False
+        db.commit()
+        pool, _ = setup_pool(db)
+        metadata, digest = verifier.applied_pool(db, pool.id)
+        db.add(Setting(key=verifier.REPORT_PREFIX + str(pool.id), value=json.dumps({
+            "config_hash": digest, "observations": [finding],
+        })))
+        db.commit()
+        job = verifier.enqueue(db, scope_id=pool.id, actor="admin")
+        job.status = JobStatus.RUNNING.value
+        db.commit()
+        scope_id, job_id = pool.id, job.id
+    calls = []
+
+    def assert_retained(report):
+        row = next(item for item in report["observations"] if item["ip_address"] == IP)
+        assert row["status"] == "unknown" and row["unresolved"]
+        assert row["previous_status"] == finding["status"] and row["verified_at"] is None
+        assert row["observed_mac_addresses"] == []
+        assert row["retained_finding"]["observed_mac_addresses"] == macs
+        assert row["retained_finding"]["status"] == finding["status"]
+        assert row["retained_finding"]["verified_at"] == NOW
+        assert "Retained unresolved" in row["reason"]
+
+    def probe(_adapter, _scope_id, offset, _digest):
+        calls.append(offset)
+        if offset == 0:
+            return AdapterResult(command=[], dry_run=False, stdout=json.dumps({
+                "status": "complete", "config_hash": digest, "scope": metadata, "total": 2,
+                "offset": 0, "next_offset": 1, "observed_at": NOW, "dnsmasq_version": "test-version",
+                "link_identity_hash": "a" * 64,
+                "observations": [{"ip_address": "192.168.50.101", "mac_addresses": [], "status": "no_response"}],
+                "leases_before": [], "leases_after": [],
+            }))
+        with SessionLocal() as db:
+            assert_retained(verifier.status(db, scope_id))
+            if stop == "cancelled":
+                db.get(Job, job_id).cancel_requested_at = utcnow()
+                db.commit()
+        return AdapterResult(command=[], dry_run=False, returncode=1, stdout="{}")
+
+    monkeypatch.setattr(SystemAdapter, "verify_dhcp_pool", probe)
+    verifier.run(job_id)
+    assert calls == [0, 1]
+    with SessionLocal() as db:
+        report = verifier.status(db, scope_id)
+        assert report["state"] == stop
+        assert_retained(report)
