@@ -7901,7 +7901,7 @@ async function saveWanEnabledState(cell, csrf, path, errorId, fallbackMessage, o
   showTransientGridStatus("Saved");
 }
 
-async function refreshRoutesWanRoutingProjection(tableElement, table, isCurrent = () => true, enqueueUpdate = (update) => update(), applyTargetOptions = null) {
+async function refreshRoutesWanRoutingProjection(tableElement, table, isCurrent = () => true, enqueueUpdate = (update) => update(), applyTargetOptions = null, applyProjectedRows = null) {
   if (!isCurrent()) return false;
   const response = await fetch(window.location.href, {
     credentials: "same-origin",
@@ -7971,6 +7971,7 @@ async function refreshRoutesWanRoutingProjection(tableElement, table, isCurrent 
     tableElement.dataset.rules = JSON.stringify(explicitRows);
     tableElement.dataset.generatedRules = JSON.stringify(generatedRows);
     tableElement.dataset.targetOptions = JSON.stringify(targetOptions);
+    if (typeof applyProjectedRows === "function") applyProjectedRows(explicitRows);
     return true;
   });
   if (!applied || !isCurrent()) return false;
@@ -8528,6 +8529,12 @@ function initializeRoutesWanRoutingTable() {
                   return () => {
                     targetValues = previousTargetValues;
                   };
+                },
+                (projectedExplicitRows) => {
+                  if (!isCurrent()) return;
+                  for (const projectedRow of projectedExplicitRows) {
+                    routingConfirmedEnabled.set(String(projectedRow.id), Boolean(projectedRow.enabled));
+                  }
                 },
               );
             };

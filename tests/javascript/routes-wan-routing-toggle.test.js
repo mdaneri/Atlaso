@@ -1352,6 +1352,43 @@ test("a failed grid projection restores the previous target labels", async () =>
   assert.equal(row.effective_action, "explicit allow");
 });
 
+test("an applied projection updates the confirmed value used by a later failed save", async () => {
+  const rows = twoRoutingRows();
+  let projectionRequests = 0;
+  let saveRequests = 0;
+  const state = routingInitializerContext({
+    rows,
+    ErrorConstructor: Error,
+    projection: () => {
+      projectionRequests += 1;
+      if (projectionRequests > 1) throw new Error("recovery projection unavailable");
+      return projectionDocument(
+        [
+          { ...rows[0], enabled: false, effective_action: "suspended", apply_state: "pending" },
+          { ...rows[1], enabled: false, effective_action: "suspended", apply_state: "pending" },
+        ],
+        [],
+      );
+    },
+    postWanAction: async () => {
+      saveRequests += 1;
+      if (saveRequests === 2) throw new Error("save rejected");
+    },
+  });
+
+  const triggerProjection = state.edit(10);
+  triggerProjection.row.enabled = false;
+  await triggerProjection.submit();
+  assert.equal(state.table.rows.get("9").enabled, false);
+
+  const failedExternalValueEdit = state.edit(9);
+  failedExternalValueEdit.row.enabled = true;
+  await failedExternalValueEdit.submit();
+
+  assert.equal(state.table.rows.get("9").enabled, false);
+  assert.match(state.messages.at(-1).message, /save rejected/);
+});
+
 test("initializer serializes same-row POST snapshots so the final server and grid values match", async () => {
   const requests = [];
   const serverRows = twoRoutingRows();
@@ -1397,6 +1434,7 @@ test("a stalled obsolete projection does not block a newer Routing POST or repla
     projection: () => {
       projectionRequests += 1;
       if (projectionRequests === 1) return oldProjection.promise;
+      if (projectionRequests > 2) throw new Error("recovery projection unavailable");
       return projectionDocument(
         serverRows.map((row) => ({
           ...row,
@@ -1452,6 +1490,14 @@ test("a stalled obsolete projection does not block a newer Routing POST or repla
     getValue: () => row.source_networks,
     getRow: () => ({ getData: () => row }),
   }), /Latest access target/);
+
+  const failedEdit = state.edit(9);
+  failedEdit.row.enabled = false;
+  const failedSave = failedEdit.submit();
+  await waitForCondition(() => requests.length === 3, "rollback-check Routing POST did not start");
+  requests[2].deferred.reject(new Error("save rejected"));
+  await failedSave;
+  assert.equal(state.table.rows.get("9").enabled, true);
 });
 
 test("a stalled obsolete side-panel refresh does not block a newer Routing POST or final rail refresh", async () => {
