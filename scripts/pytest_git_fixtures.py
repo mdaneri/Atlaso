@@ -244,6 +244,12 @@ class PytestGitFixtures:
             common = ordinary(Path(runner.git("-C", str(path), "rev-parse", "--path-format=absolute", "--git-common-dir")))
             git_dir = ordinary(Path(runner.git("-C", str(path), "rev-parse", "--absolute-git-dir")))
             require(beneath(common, self.root) and beneath(git_dir, self.root), "External Git metadata blocks fixture release.")
+            bare = runner.git("-C", str(path), "rev-parse", "--is-bare-repository")
+            require(bare in {"true", "false"}, "Fixture repository mode is unproven.")
+            if bare == "false":
+                worktree = ordinary(Path(runner.git("-C", str(path), "rev-parse", "--show-toplevel")))
+                require(beneath(worktree, self.root) and worktree == path,
+                        "Effective Git worktree differs from its contained creation root.")
             common_dirs.add(common)
             for metadata in (common, git_dir):
                 require(not (metadata / "objects/info/alternates").exists()

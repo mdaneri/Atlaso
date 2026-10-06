@@ -221,6 +221,8 @@ The root and receipts must be beneath the configured worktree root. Call `create
 root; call `register(repository_path)` immediately after creating each ordinary repository, bare repository, or
 linked worktree. Keep every common directory and registered worktree inside that same artifact root. Original
 root and repository identities are recorded durably, not inferred from their names or a later cleanup snapshot.
+Every non-bare repository's effective Git working-tree root must equal its recorded creation root; external
+or redirected effective worktrees block sealing even when common metadata and registrations remain internal.
 
 After validation stops, call `seal()` to preserve the complete bounded identity/content inventory and Git topology.
 The returned small `.manifest` receipt is the resource's `ownership_manifest`; record its SHA-256 in the task inventory.

@@ -595,6 +595,26 @@ def test_invalid_absence_receipt_blocks_completion(git_fixture: GitFixtureOwner,
         path.write_bytes(original)
 
 
+def test_external_effective_worktree_blocks_sealing(git_fixture: GitFixtureOwner) -> None:
+    """Preserve metadata redirected to an effective working tree outside the owned artifact.
+
+    Args:
+        git_fixture: Creation-bound fixture beneath an existing external validation parent.
+    """
+    repository = git_fixture.ordinary_repo()
+    git(repository, "config", "core.worktree", str(git_fixture.permitted))
+    assert Path(git(repository, "rev-parse", "--show-toplevel")) == git_fixture.permitted
+    before = git_fixture.owner.files.snapshot(git_fixture.root)
+    try:
+        with pytest.raises(Refusal, match="Effective Git worktree"):
+            git_fixture.owner.seal()
+        assert git_fixture.owner.files.snapshot(git_fixture.root) == before
+        assert not git_fixture.receipt.with_name(git_fixture.receipt.name + ".sealed").exists()
+    finally:
+        git(repository, "config", "--unset", "core.worktree")
+    git_fixture.seal()
+
+
 def test_foreign_common_directory_and_worktree_registrations_block_sealing(
     git_fixture: GitFixtureOwner,
     monkeypatch: pytest.MonkeyPatch,
