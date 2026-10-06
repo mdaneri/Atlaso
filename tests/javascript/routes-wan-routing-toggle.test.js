@@ -87,6 +87,14 @@ function deferred() {
   return { promise, resolve, reject };
 }
 
+async function waitForCondition(predicate, message, timeoutMs = 1000) {
+  const deadline = Date.now() + timeoutMs;
+  while (!predicate()) {
+    if (Date.now() >= deadline) throw new Error(message);
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+}
+
 function responseFor(document) {
   return { ok: true, text: async () => document };
 }
@@ -616,6 +624,123 @@ test("initializer serializes same-row POST snapshots so the final server and gri
 
   assert.equal(serverRows.find((row) => row.id === 9).enabled, true);
   assert.equal(state.table.rows.get("9").enabled, true);
+});
+
+test("a stalled obsolete projection does not block a newer Routing POST or replace its projection", async () => {
+  const requests = [];
+  const serverRows = twoRoutingRows().map((row) => ({ ...row, source_interface: "eth2", source_networks: [] }));
+  const oldProjection = deferred();
+  const generatedRow = { id: "generated:access-a-to-b-ipv4", generated: true, effective_action: "automatic allow", apply_state: "applied" };
+  let projectionRequests = 0;
+  const state = routingInitializerContext({
+    rows: serverRows,
+    generatedRows: [generatedRow],
+    projection: () => {
+      projectionRequests += 1;
+      if (projectionRequests === 1) return oldProjection.promise;
+      return projectionDocument(
+        serverRows.map((row) => ({
+          ...row,
+          effective_action: row.enabled ? "explicit allow" : "suspended",
+          apply_state: row.enabled ? "applied" : "pending",
+        })),
+        [{ ...generatedRow }],
+        [{ name: "eth2", label: "Latest access target" }],
+      );
+    },
+    postWanAction: (_url, data) => {
+      const request = { data: { ...data }, deferred: deferred() };
+      requests.push(request);
+      return request.deferred.promise.then(() => {
+        serverRows.find((row) => String(row.id) === String(data.id)).enabled = data.enabled;
+      });
+    },
+  });
+  const oldEdit = state.edit(9);
+  oldEdit.row.enabled = false;
+  const oldSave = oldEdit.submit();
+
+  await waitForCondition(() => requests.length === 1, "first Routing POST did not start");
+  requests[0].deferred.resolve();
+  await waitForCondition(() => projectionRequests === 1, "first projection GET did not start");
+
+  const latestEdit = state.edit(9);
+  latestEdit.row.enabled = true;
+  const latestSave = latestEdit.submit();
+  await waitForCondition(() => requests.length === 2, "newer Routing POST was blocked by the stalled projection GET");
+  assert.equal(requests[1].data.enabled, true);
+  requests[1].deferred.resolve();
+  await latestSave;
+
+  oldProjection.resolve(projectionDocument(
+    serverRows.map((row) => ({ ...row, enabled: false, effective_action: "suspended", apply_state: "pending" })),
+    [{ id: "generated:access-a-to-b-ipv4", generated: true, effective_action: "automatic deny", apply_state: "pending" }],
+    [{ name: "eth2", label: "Obsolete access target" }],
+  ));
+  await oldSave;
+
+  assert.equal(serverRows[0].enabled, true);
+  assert.equal(state.table.rows.get("9").enabled, true);
+  assert.equal(state.table.rows.get("9").effective_action, "explicit allow");
+  assert.equal(state.table.rows.get("9").apply_state, "applied");
+  assert.equal(state.table.rows.get("generated:access-a-to-b-ipv4").effective_action, "automatic allow");
+  assert.deepEqual(JSON.parse(state.tableElement.dataset.rules).find((row) => row.id === 9).enabled, true);
+  assert.equal(JSON.parse(state.tableElement.dataset.generatedRules)[0].effective_action, "automatic allow");
+  assert.deepEqual(JSON.parse(state.tableElement.dataset.targetOptions), [{ name: "eth2", label: "Latest access target" }]);
+  const sourceColumn = state.gridOptions.columns.find((column) => column.field === "source_networks");
+  const row = state.table.rows.get("9");
+  assert.match(sourceColumn.formatter({
+    getValue: () => row.source_networks,
+    getRow: () => ({ getData: () => row }),
+  }), /Latest access target/);
+});
+
+test("a stalled obsolete side-panel refresh does not block a newer Routing POST or final rail refresh", async () => {
+  const requests = [];
+  const serverRows = twoRoutingRows();
+  const railRequests = [];
+  let railSnapshot = null;
+  const state = routingInitializerContext({
+    rows: serverRows,
+    refreshSideStack: () => {
+      const refresh = deferred();
+      railRequests.push(refresh);
+      return refresh.promise.then(() => {
+        railSnapshot = serverRows.map((row) => `${row.id}:${row.enabled ? "enabled" : "disabled"}`);
+      });
+    },
+    postWanAction: (_url, data) => {
+      const request = { data: { ...data }, deferred: deferred() };
+      requests.push(request);
+      return request.deferred.promise.then(() => {
+        serverRows.find((row) => String(row.id) === String(data.id)).enabled = data.enabled;
+      });
+    },
+  });
+  const oldEdit = state.edit(9);
+  oldEdit.row.enabled = false;
+  const oldSave = oldEdit.submit();
+  await waitForCondition(() => requests.length === 1, "first Routing POST did not start");
+  requests[0].deferred.resolve();
+  await waitForCondition(() => railRequests.length === 1, "first side-panel refresh did not start");
+
+  const latestEdit = state.edit(9);
+  latestEdit.row.enabled = true;
+  const latestSave = latestEdit.submit();
+  await waitForCondition(() => requests.length === 2, "newer Routing POST was blocked by the stalled side-panel refresh");
+  assert.equal(requests[1].data.enabled, true);
+  requests[1].deferred.resolve();
+  await waitForCondition(() => railRequests.length === 2, "newer side-panel refresh did not start");
+  railRequests[1].resolve(true);
+  await latestSave;
+  assert.deepEqual(railSnapshot, ["9:enabled", "10:enabled"]);
+
+  railRequests[0].resolve(true);
+  await oldSave;
+  assert.equal(serverRows[0].enabled, true);
+  assert.equal(state.table.rows.get("9").enabled, true);
+  assert.equal(state.table.rows.get("9").effective_action, "explicit allow");
+  assert.equal(state.sideStackRefreshes(), 2);
 });
 
 test("a failed earlier row save restores that row while a newer different row saves", async () => {

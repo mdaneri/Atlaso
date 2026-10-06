@@ -7788,9 +7788,20 @@ async function saveWanEnabledState(cell, csrf, path, errorId, fallbackMessage, o
   const data = options.data || cell.getRow().getData();
   const isCurrent = typeof options.isCurrent === "function" ? options.isCurrent : () => true;
   const isLatestEdit = typeof options.isLatestEdit === "function" ? options.isLatestEdit : isCurrent;
+  const persist = async () => {
+    await postWanAction(managementUiPath(`${path}/${data.id}/edit`), data, csrf, { reload: false });
+    if (typeof options.onSaved === "function") {
+      try {
+        options.onSaved(data);
+      } catch (_stateError) {
+        // Persistence succeeded; a local bookkeeping failure must not turn it into a failed save.
+      }
+    }
+  };
   clearCaMessage(errorId);
   try {
-    await postWanAction(managementUiPath(`${path}/${data.id}/edit`), data, csrf, { reload: false });
+    if (typeof options.enqueuePost === "function") await options.enqueuePost(persist);
+    else await persist();
   } catch (error) {
     if (!isLatestEdit()) return;
     try {
@@ -7811,13 +7822,6 @@ async function saveWanEnabledState(cell, csrf, path, errorId, fallbackMessage, o
       }
     }
     return;
-  }
-  if (typeof options.onSaved === "function") {
-    try {
-      options.onSaved(data);
-    } catch (_stateError) {
-      // Persistence succeeded; a local bookkeeping failure must not turn it into a failed save.
-    }
   }
   if (!isCurrent()) return;
   showTransientGridStatus("Saved");
@@ -8476,7 +8480,7 @@ function initializeRoutesWanRoutingTable() {
                 throw new Error("The current network status panel could not be refreshed.");
               }
             };
-            return enqueueRoutingSave(() => saveWanEnabledState(
+            return saveWanEnabledState(
               cell,
               csrf,
               "/routes-wan/routing-rules",
@@ -8484,6 +8488,7 @@ function initializeRoutesWanRoutingTable() {
               "The routing permission could not be saved.",
               {
                 data: rowData,
+                enqueuePost: enqueueRoutingSave,
                 isCurrent,
                 isLatestEdit,
                 onSaved: (savedData) => routingConfirmedEnabled.set(rowId, Boolean(savedData.enabled)),
@@ -8499,7 +8504,7 @@ function initializeRoutesWanRoutingTable() {
                 afterFailure: refreshAfterFailure,
                 refreshFailureMessage: "The routing permission was saved, but its displayed effective state could not be refreshed. Reload the page to see the latest state.",
               },
-            ));
+            );
           },
         },
         {
