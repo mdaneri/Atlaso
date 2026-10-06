@@ -137,6 +137,7 @@ def test_static_analysis_configuration_is_pinned_and_scoped() -> None:
         "warn_unused_configs": True,
         "follow_imports": "silent",
         "files": [
+            "scripts/pytest_git_fixtures.py",
             "atlaso/app/services/dhcp_pool_verification.py",
             "scripts/interop/dedicated_host_contract.py",
             "scripts/interop/dedicated_host_proof.py",
