@@ -210,18 +210,20 @@ test("a newer edit queues behind an in-flight grid update and remains the final 
   assert.equal(JSON.parse(tableElement.dataset.targetOptions)[0].name, "eth3");
 });
 
-function saveContext({ postError = null } = {}) {
+function saveContext({ postError = null, ErrorConstructor = null } = {}) {
   const messages = [];
   let restores = 0;
   let sideStackRefreshes = 0;
-  const ctx = vm.createContext({
+  const globals = {
     clearCaMessage() {},
     managementUiPath: (path) => path,
     postWanAction: async () => { if (postError) throw postError; },
     refreshNetworkSideStack: async () => { sideStackRefreshes += 1; },
     showTransientGridStatus() {},
     showWanMessage: (_id, message) => messages.push(message),
-  });
+  };
+  if (ErrorConstructor) globals.Error = ErrorConstructor;
+  const ctx = vm.createContext(globals);
   vm.runInContext(
     `async ${functionSource("saveWanEnabledState")}; globalThis.save = saveWanEnabledState;`,
     ctx,
@@ -246,6 +248,17 @@ test("a failed Enabled save restores the edited cell", async () => {
   });
   assert.equal(state.restores(), 1);
   assert.equal(state.messages[0], "Save failed");
+  assert.equal(state.sideStackRefreshes(), 0);
+});
+
+test("a failed-save projection refresh keeps the save error and adds reload guidance", async () => {
+  const state = saveContext({ postError: new Error("permission was rejected"), ErrorConstructor: Error });
+  await state.ctx.save(state.cell, "csrf", "/routes-wan/routing-rules", "routing-error", "Save failed", {
+    afterSave: async () => assert.fail("failed saves must not run the success callback"),
+    afterFailure: async () => { throw new Error("projection response unavailable"); },
+  });
+  assert.equal(state.restores(), 1);
+  assert.match(state.messages.at(-1), /permission was rejected.*current routing permission state could not be refreshed.*reload the page/i);
   assert.equal(state.sideStackRefreshes(), 0);
 });
 
@@ -305,7 +318,8 @@ test("an older save completion cannot restore or refresh over a newer edit", asy
   assert.deepEqual(calls, []);
 });
 
-function routingInitializerContext({ rows, postWanAction }) {
+function routingInitializerContext({ rows, generatedRows = [], postWanAction, projection = null }) {
+  const messages = [];
   const HTMLElementStub = class HTMLElement {};
   const tableElement = new class extends HTMLElementStub {
     constructor() {
@@ -314,7 +328,7 @@ function routingInitializerContext({ rows, postWanAction }) {
         canWrite: "true",
         csrf: "csrf",
         rules: JSON.stringify(rows),
-        generatedRules: "[]",
+        generatedRules: JSON.stringify(generatedRows),
         targetOptions: JSON.stringify([{ name: "eth1", label: "Access 1" }]),
       };
     }
@@ -339,15 +353,18 @@ function routingInitializerContext({ rows, postWanAction }) {
     Tabulator: function Tabulator() {},
     clearCaMessage() {},
     document: { getElementById: (id) => id === "routes-wan-routing-table" ? tableElement : null },
-    fetch: async () => ({ ok: true, text: async () => projectionDocument(
-      rows.map((row) => ({ ...row, effective_action: row.enabled ? "explicit allow" : "suspended", apply_state: "pending" })),
-      [],
-    ) }),
+    escapeHtml: (value) => String(value ?? ""),
+    fetch: async () => ({ ok: true, text: async () => projection
+      ? projection()
+      : projectionDocument(
+        rows.map((row) => ({ ...row, effective_action: row.enabled ? "explicit allow" : "suspended", apply_state: "pending" })),
+        generatedRows,
+      ) }),
     managementUiPath: (path) => path,
     postWanAction,
     refreshNetworkSideStack: async () => {},
     showTransientGridStatus() {},
-    showWanMessage: () => {},
+    showWanMessage: (id, message) => messages.push({ id, message }),
     window: {
       location: { href: "/ui/management/routes-wan#routes-wan-routing-panel" },
       AtlasoUiPatterns: {
@@ -384,7 +401,7 @@ function routingInitializerContext({ rows, postWanAction }) {
       }),
     };
   };
-  return { table, tableElement, edit };
+  return { table, tableElement, edit, gridOptions, messages };
 }
 
 const twoRoutingRows = () => [
@@ -485,9 +502,90 @@ test("two failed same-row edits restore the last confirmed Enabled value", async
   assert.equal(serverRows[0].enabled, true);
 });
 
+test("a latest failed edit refreshes the authoritative projection after an earlier save commits", async (t) => {
+  for (const scenario of [
+    { name: "same row", newerId: 9, newerValue: true, expectedSecond: true },
+    { name: "different row", newerId: 10, newerValue: false, expectedSecond: true },
+  ]) {
+    await t.test(scenario.name, async () => {
+      const requests = [];
+      const serverRows = twoRoutingRows().map((row) => ({ ...row, source_interface: "eth2", source_networks: [] }));
+      const generatedRow = {
+        id: "generated:access-a-to-b-ipv4",
+        generated: true,
+        effective_action: "automatic allow",
+        apply_state: "applied",
+      };
+      const projection = () => {
+        const anyDisabled = serverRows.some((row) => !row.enabled);
+        return projectionDocument(
+          serverRows.map((row) => ({
+            ...row,
+            effective_action: row.enabled ? "explicit allow" : "suspended",
+            apply_state: row.enabled ? "applied" : "pending",
+          })),
+          [{
+            ...generatedRow,
+            effective_action: anyDisabled ? "automatic deny" : "automatic allow",
+            apply_state: anyDisabled ? "pending" : "applied",
+          }],
+          [{ name: "eth2", label: "Updated access target" }],
+        );
+      };
+      const state = routingInitializerContext({
+        rows: serverRows,
+        generatedRows: [generatedRow],
+        projection,
+        postWanAction: (_url, data) => {
+          const request = { data: { ...data }, deferred: deferred() };
+          requests.push(request);
+          return request.deferred.promise.then(() => {
+            const saved = serverRows.find((row) => String(row.id) === String(data.id));
+            saved.enabled = data.enabled;
+          });
+        },
+      });
+      const first = state.edit(9);
+      first.row.enabled = false;
+      const firstEdit = first.submit();
+      const second = state.edit(scenario.newerId);
+      second.row.enabled = scenario.newerValue;
+      const secondEdit = second.submit();
+
+      while (requests.length < 1) await new Promise((resolve) => setImmediate(resolve));
+      requests[0].deferred.resolve();
+      while (requests.length < 2) await new Promise((resolve) => setImmediate(resolve));
+      requests[1].deferred.reject(new Error("newer save failed"));
+      await Promise.all([firstEdit, secondEdit]);
+
+      assert.equal(serverRows.find((row) => row.id === 9).enabled, false);
+      assert.equal(serverRows.find((row) => row.id === 10).enabled, scenario.expectedSecond);
+      for (const row of serverRows) {
+        const displayed = state.table.rows.get(String(row.id));
+        assert.equal(displayed.enabled, row.enabled);
+        assert.equal(displayed.effective_action, row.enabled ? "explicit allow" : "suspended");
+        assert.equal(displayed.apply_state, row.enabled ? "applied" : "pending");
+      }
+      const displayedGenerated = state.table.rows.get(generatedRow.id);
+      assert.equal(displayedGenerated.effective_action, "automatic deny");
+      assert.equal(displayedGenerated.apply_state, "pending");
+      assert.equal(JSON.parse(state.tableElement.dataset.rules).find((row) => row.id === 9).enabled, false);
+      assert.equal(JSON.parse(state.tableElement.dataset.generatedRules)[0].effective_action, "automatic deny");
+      assert.deepEqual(JSON.parse(state.tableElement.dataset.targetOptions), [{ name: "eth2", label: "Updated access target" }]);
+      const sourceColumn = state.gridOptions.columns.find((column) => column.field === "source_networks");
+      const sourceRow = state.table.rows.get("9");
+      assert.match(sourceColumn.formatter({
+        getValue: () => sourceRow.source_networks,
+        getRow: () => ({ getData: () => sourceRow }),
+      }), /Updated access target/);
+      assert.match(state.messages.at(-1).message, /The routing permission could not be saved\./);
+    });
+  }
+});
+
 test("routing Enabled uses the authoritative projection refresh while other resource toggles remain shared", () => {
   const routing = functionSource("initializeRoutesWanRoutingTable");
-  assert.ok(routing.includes("afterSave: async () => {"));
+  assert.ok(routing.includes("afterFailure: refreshProjection"));
   assert.ok(routing.includes("const generation = ++routingEditGeneration"));
   assert.ok(routing.includes("if (refreshedTargets && isCurrent())"));
   assert.ok(routing.includes("refreshRoutesWanRoutingProjection("));

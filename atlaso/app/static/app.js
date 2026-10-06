@@ -7799,7 +7799,17 @@ async function saveWanEnabledState(cell, csrf, path, errorId, fallbackMessage, o
     } catch (_restoreError) {
       // Keep the save failure visible even if the grid cannot restore the prior value.
     }
-    showWanMessage(errorId, error instanceof Error ? error.message : fallbackMessage);
+    const saveError = error instanceof Error ? error.message : fallbackMessage;
+    showWanMessage(errorId, saveError);
+    if (isCurrent() && typeof options.afterFailure === "function") {
+      try {
+        await options.afterFailure();
+      } catch (_refreshError) {
+        if (isCurrent()) {
+          showWanMessage(errorId, `${saveError} The current routing permission state could not be refreshed. Reload the page to see the latest state.`);
+        }
+      }
+    }
     return;
   }
   if (typeof options.onSaved === "function") {
@@ -8440,6 +8450,18 @@ function initializeRoutesWanRoutingTable() {
             const rowGeneration = (routingRowGenerations.get(rowId) || 0) + 1;
             routingRowGenerations.set(rowId, rowGeneration);
             const isLatestEdit = () => routingRowGenerations.get(rowId) === rowGeneration;
+            const refreshProjection = async () => {
+              if (!isCurrent()) return;
+              const refreshedTargets = await refreshRoutesWanRoutingProjection(
+                tableElement,
+                table,
+                isCurrent,
+                enqueueProjectionUpdate,
+              );
+              if (refreshedTargets && isCurrent()) {
+                targetValues = Object.fromEntries(refreshedTargets.map((target) => [target.name, target.label]));
+              }
+            };
             return enqueueRoutingSave(() => saveWanEnabledState(
               cell,
               csrf,
@@ -8459,17 +8481,8 @@ function initializeRoutesWanRoutingTable() {
                     cell.restoreOldValue?.();
                   }
                 },
-                afterSave: async () => {
-                  const refreshedTargets = await refreshRoutesWanRoutingProjection(
-                    tableElement,
-                    table,
-                    isCurrent,
-                    enqueueProjectionUpdate,
-                  );
-                  if (refreshedTargets && isCurrent()) {
-                    targetValues = Object.fromEntries(refreshedTargets.map((target) => [target.name, target.label]));
-                  }
-                },
+                afterSave: refreshProjection,
+                afterFailure: refreshProjection,
                 refreshFailureMessage: "The routing permission was saved, but its displayed effective state could not be refreshed. Reload the page to see the latest state.",
               },
             ));
