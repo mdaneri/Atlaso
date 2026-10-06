@@ -495,7 +495,7 @@ test("an older save completion cannot restore or refresh over a newer edit", asy
   assert.deepEqual(calls, []);
 });
 
-function routingInitializerContext({ rows, generatedRows = [], postWanAction, projection = null, refreshSideStack = async () => true, ErrorConstructor = null }) {
+function routingInitializerContext({ rows, generatedRows = [], postWanAction, projection = null, refreshSideStack = async () => true, ErrorConstructor = null, duringUpdate = null }) {
   const messages = [];
   let sideStackRefreshes = 0;
   const HTMLElementStub = class HTMLElement {};
@@ -519,6 +519,7 @@ function routingInitializerContext({ rows, generatedRows = [], postWanAction, pr
       return [...this.rows.values()].map((data) => ({ getData: () => data }));
     },
     async updateData(updates) {
+      if (duringUpdate) await duringUpdate(updates, this);
       for (const update of updates) {
         const current = this.rows.get(String(update.id));
         this.rows.set(String(update.id), { ...current, ...update });
@@ -592,6 +593,83 @@ const twoRoutingRows = () => [
   { id: 9, generated: false, enabled: true, effective_action: "explicit allow", apply_state: "applied" },
   { id: 10, generated: false, enabled: true, effective_action: "explicit allow", apply_state: "applied" },
 ];
+
+test("initializer refreshes Source and Destination target labels before grid rows are formatted", async () => {
+  const rows = twoRoutingRows().map((row) => ({
+    ...row,
+    source_interface: "eth2",
+    source_networks: [],
+    destination_interface: "eth3",
+    destination_networks: [],
+  }));
+  let state;
+  let formattedDuringUpdate;
+  state = routingInitializerContext({
+    rows,
+    projection: () => projectionDocument(
+      rows.map((row) => ({ ...row, effective_action: "explicit allow", apply_state: "applied" })),
+      [],
+      [
+        { name: "eth2", label: "Refreshed source access" },
+        { name: "eth3", label: "Refreshed destination access" },
+      ],
+    ),
+    duringUpdate: (_updates, table) => {
+      const row = table.rows.get("9");
+      const format = (field) => {
+        const column = state.gridOptions.columns.find((candidate) => candidate.field === field);
+        return column.formatter({
+          getValue: () => row[field],
+          getRow: () => ({ getData: () => row }),
+        });
+      };
+      formattedDuringUpdate = {
+        source: format("source_networks"),
+        destination: format("destination_networks"),
+      };
+    },
+    postWanAction: async () => {},
+  });
+
+  const edit = state.edit(9);
+  edit.row.enabled = false;
+  await edit.submit();
+
+  assert.deepEqual(formattedDuringUpdate, {
+    source: "Refreshed source access",
+    destination: "Refreshed destination access",
+  });
+  assert.deepEqual(JSON.parse(state.tableElement.dataset.targetOptions), [
+    { name: "eth2", label: "Refreshed source access" },
+    { name: "eth3", label: "Refreshed destination access" },
+  ]);
+});
+
+test("a failed grid projection restores the previous target labels", async () => {
+  const rows = twoRoutingRows().map((row) => ({ ...row, source_interface: "eth2", source_networks: [] }));
+  const state = routingInitializerContext({
+    rows,
+    projection: () => projectionDocument(
+      rows.map((row) => ({ ...row, effective_action: "explicit allow", apply_state: "applied" })),
+      [],
+      [{ name: "eth2", label: "Unapplied refreshed target" }],
+    ),
+    duringUpdate: () => { throw new Error("grid update failed"); },
+    postWanAction: async () => {},
+  });
+  const edit = state.edit(9);
+  edit.row.enabled = false;
+  await edit.submit();
+
+  const sourceColumn = state.gridOptions.columns.find((column) => column.field === "source_networks");
+  const row = state.table.rows.get("9");
+  assert.equal(sourceColumn.formatter({
+    getValue: () => row.source_networks,
+    getRow: () => ({ getData: () => row }),
+  }), "eth2");
+  assert.deepEqual(JSON.parse(state.tableElement.dataset.targetOptions), [{ name: "eth1", label: "Access 1" }]);
+  assert.equal(row.effective_action, "explicit allow");
+});
 
 test("initializer serializes same-row POST snapshots so the final server and grid values match", async () => {
   const requests = [];
@@ -921,7 +999,8 @@ test("routing Enabled uses the authoritative projection refresh while other reso
   const routing = functionSource("initializeRoutesWanRoutingTable");
   assert.ok(routing.includes("afterFailure: refreshAfterFailure"));
   assert.ok(routing.includes("const generation = ++routingEditGeneration"));
-  assert.ok(routing.includes("if (refreshedTargets && isCurrent())"));
+  assert.ok(routing.includes("previousTargetValues = targetValues"));
+  assert.ok(routing.includes("targetValues = Object.fromEntries(targetOptions.map"));
   assert.ok(routing.includes("refreshRoutesWanRoutingProjection("));
   assert.ok(routing.includes("table = window.AtlasoUiPatterns.createGrid"));
   const initializer = functionSource("initializeRoutesWanNatTable");

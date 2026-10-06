@@ -7854,7 +7854,7 @@ async function saveWanEnabledState(cell, csrf, path, errorId, fallbackMessage, o
   }
 }
 
-async function refreshRoutesWanRoutingProjection(tableElement, table, isCurrent = () => true, enqueueUpdate = (update) => update()) {
+async function refreshRoutesWanRoutingProjection(tableElement, table, isCurrent = () => true, enqueueUpdate = (update) => update(), applyTargetOptions = null) {
   if (!isCurrent()) return false;
   const response = await fetch(window.location.href, {
     credentials: "same-origin",
@@ -7911,7 +7911,15 @@ async function refreshRoutesWanRoutingProjection(tableElement, table, isCurrent 
   }
   const applied = await enqueueUpdate(async () => {
     if (!isCurrent()) return false;
-    await table.updateData(projectedRows);
+    const restoreTargetOptions = typeof applyTargetOptions === "function"
+      ? applyTargetOptions(targetOptions)
+      : null;
+    try {
+      await table.updateData(projectedRows);
+    } catch (error) {
+      if (isCurrent() && typeof restoreTargetOptions === "function") restoreTargetOptions();
+      throw error;
+    }
     if (!isCurrent()) return false;
     tableElement.dataset.rules = JSON.stringify(explicitRows);
     tableElement.dataset.generatedRules = JSON.stringify(generatedRows);
@@ -8462,15 +8470,19 @@ function initializeRoutesWanRoutingTable() {
             const isLatestEdit = () => routingRowGenerations.get(rowId) === rowGeneration;
             const refreshProjection = async () => {
               if (!isCurrent()) return;
-              const refreshedTargets = await refreshRoutesWanRoutingProjection(
+              await refreshRoutesWanRoutingProjection(
                 tableElement,
                 table,
                 isCurrent,
                 enqueueProjectionUpdate,
+                (targetOptions) => {
+                  const previousTargetValues = targetValues;
+                  targetValues = Object.fromEntries(targetOptions.map((target) => [target.name, target.label]));
+                  return () => {
+                    targetValues = previousTargetValues;
+                  };
+                },
               );
-              if (refreshedTargets && isCurrent()) {
-                targetValues = Object.fromEntries(refreshedTargets.map((target) => [target.name, target.label]));
-              }
             };
             const refreshAfterFailure = async () => {
               await refreshProjection();
