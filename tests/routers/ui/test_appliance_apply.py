@@ -591,6 +591,26 @@ def test_upgrade_network_migration_with_legacy_routing_baselines(client, monkeyp
             assert "Disable Routing" in response.json()["detail"]
 
 
+@pytest.mark.parametrize("section,line,owned", [
+    ("feature_settings", "nat_enabled=true", True),
+    ("nat_rules", "nat=Unreviewed source NAT", True),
+    ("port_forwards", 'json=[{"name":"Unreviewed forward"}]', True),
+    ("targets", "target=eth2\n  ip_cidr=192.168.50.11/24", False),
+    ("feature_settings", "routing_enabled=false", False),
+])
+def test_nat_migration_intent_separates_owned_and_derived_changes(section, line, owned):
+    """Publishing consent covers owned settings and rules, excluding derived state.
+
+    Args:
+        section: Rendered snapshot section containing the delta.
+        line: Changed setting or record in that section.
+        owned: Whether Traffic Publishing owns the changed intent.
+    """
+    from atlaso.app import ui
+
+    assert (ui.nat_migration_intent(f"[{section}]\n{line}\n") != ui.nat_migration_intent("")) is owned
+
+
 @pytest.mark.parametrize("pending_unit", ["firewall", "ca", "appliance_settings", "public_services", "nat"])
 @pytest.mark.parametrize("selected", [False, True])
 def test_upgrade_migration_requires_consent_for_pending_protected_units(client, monkeypatch, pending_unit, selected):
@@ -648,6 +668,8 @@ def test_upgrade_migration_requires_consent_for_pending_protected_units(client, 
             preview = json.loads(unit["config_preview"])
             preview["pending_review_edit"] = True
             unit["config_preview"] = json.dumps(preview)
+        elif pending_unit == "nat":
+            unit["config_preview"] = unit["config_preview"].replace("nat_enabled=false", "nat_enabled=true")
         else:
             unit["config_preview"] += "\n# pending protected edit\n"
         unit["snapshot_hash"] = "pending-protected-edit"

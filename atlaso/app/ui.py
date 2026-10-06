@@ -10766,6 +10766,25 @@ def wan_migration_intent(preview: str) -> dict[str, list[str]]:
     return intent
 
 
+def nat_migration_intent(preview: str) -> dict[str, list[str]]:
+    """Project publishing-owned settings without Network-derived target state.
+
+    Args:
+        preview: Desired or last-applied Traffic Publishing configuration.
+    """
+    intent: dict[str, list[str]] = {"feature_settings": [], "nat_rules": [], "port_forwards": []}
+    section = ""
+    for raw_line in preview.splitlines():
+        line = raw_line.strip()
+        if line.startswith("[") and line.endswith("]"):
+            section = line[1:-1]
+        elif section in intent and line and not line.startswith("#"):
+            if section == "feature_settings" and line.startswith(("routing_enabled=", "wan_simulation_enabled=")):
+                continue
+            intent[section].append(line)
+    return intent
+
+
 def wan_applied_network_ingress(db: Session) -> list[str] | None:
     """Project WAN ingress selectors from the saved Network baseline.
 
@@ -19021,10 +19040,15 @@ def _submit_appliance_apply(
     if "network" in selected_ids and (
         network_listener_handoff_required(db, unit_map) or management_domain_migration
     ):
+        pending_nat_intent = bool(
+            management_domain_migration
+            and nat_migration_intent(str(unit_map.get("nat", {}).get("config_preview") or ""))
+            != nat_migration_intent(str(nat_baseline.get("config_preview") or ""))
+        )
         unchecked_dependencies = [
             unit["label"] for unit in units
             if (unit["id"] in MANAGEMENT_HANDOFF_UNIT_IDS
-                or (management_domain_migration and unit["id"] == "nat")) and unit["changed"]
+                or (pending_nat_intent and unit["id"] == "nat")) and unit["changed"]
             and unit["id"] not in requested_ids
         ]
         if unchecked_dependencies:
