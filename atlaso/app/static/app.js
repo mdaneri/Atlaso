@@ -1405,6 +1405,13 @@ function initializeAtlasoResourceWizard(config) {
     }
     showTransientGridStatus(message, { error: statusError });
   };
+  const reportSideStackRefreshWarning = (message) => {
+    const status = config.actionErrorSelector
+      ? document.querySelector(config.actionErrorSelector)
+      : null;
+    reportActionError(new Error(message), { statusError: true });
+    rememberNetworkSideStackRefreshWarning(status instanceof HTMLElement ? status : document.getElementById("grid-status-toast"), message);
+  };
   const wrapRowAction = (action) => ({
     ...action,
     ...(typeof action.action === "function"
@@ -1447,7 +1454,7 @@ function initializeAtlasoResourceWizard(config) {
       await Promise.resolve(config.onSaved?.({ payload, resource, form, table }));
       const sideStackRefreshed = await refreshNetworkSideStack();
       if (sideStackRefreshed === false) {
-        reportActionError(new Error(networkSideStackRefreshFailureMessage()), { statusError: true });
+        reportSideStackRefreshWarning(networkSideStackRefreshFailureMessage());
         return;
       }
       if (sideStackRefreshed !== true) return;
@@ -1473,7 +1480,7 @@ function initializeAtlasoResourceWizard(config) {
     await Promise.resolve(config.onDeleted?.({ data, table }));
     const sideStackRefreshed = await refreshNetworkSideStack();
     if (sideStackRefreshed === false) {
-      reportActionError(new Error(networkSideStackRefreshFailureMessage()), { statusError: true });
+      reportSideStackRefreshWarning(networkSideStackRefreshFailureMessage());
       return;
     }
     if (sideStackRefreshed !== true) return;
@@ -1595,7 +1602,7 @@ function initializeAtlasoResourceWizard(config) {
       await Promise.resolve(config.onSaved?.({ payload, resource, form, table }));
       const sideStackRefreshed = await refreshNetworkSideStack();
       if (sideStackRefreshed === false) {
-        reportActionError(new Error(networkSideStackRefreshFailureMessage()), { statusError: true });
+        reportSideStackRefreshWarning(networkSideStackRefreshFailureMessage());
         return { valid: true };
       }
       if (sideStackRefreshed !== true) return { valid: true };
@@ -4368,7 +4375,7 @@ async function autoSaveFirewallRule(cell, csrf) {
     await postFirewallRuleAction(managementUiPath(`/firewall/rules/${data.id}/edit`), data, csrf, { reload: false });
     const sideStackRefreshed = await refreshNetworkSideStack();
     if (sideStackRefreshed === false) {
-      showCaMessage("firewall-rule-error", networkSideStackRefreshFailureMessage());
+      showNetworkSideStackRefreshWarning("firewall-rule-error", networkSideStackRefreshFailureMessage());
       return;
     }
     if (sideStackRefreshed !== true) return;
@@ -6256,7 +6263,7 @@ function initializeVsphereKeyProviderTables() {
         await updateCertificateCounts(providerId, vcenterId, 1, payload.certificate.status === "valid" ? 1 : 0);
         const sideStackRefreshed = await refreshNetworkSideStack();
         if (sideStackRefreshed === false) {
-          showCaMessage("vsphere-certificate-error", networkSideStackRefreshFailureMessage());
+          showNetworkSideStackRefreshWarning("vsphere-certificate-error", networkSideStackRefreshFailureMessage());
           return { valid: true };
         }
         if (sideStackRefreshed !== true) return { valid: true };
@@ -6281,7 +6288,7 @@ function initializeVsphereKeyProviderTables() {
       await updateCertificateCounts(data.provider_id, data.trusted_vcenter_id, -1, data.status === "valid" ? -1 : 0);
       const sideStackRefreshed = await refreshNetworkSideStack();
       if (sideStackRefreshed === false) {
-        showCaMessage("vsphere-certificate-error", networkSideStackRefreshFailureMessage());
+        showNetworkSideStackRefreshWarning("vsphere-certificate-error", networkSideStackRefreshFailureMessage());
         return;
       }
       if (sideStackRefreshed !== true) return;
@@ -7874,7 +7881,7 @@ async function saveWanEnabledState(cell, csrf, path, errorId, fallbackMessage, o
         const message = typeof options.afterSave === "function"
           ? "The routing permission and its displayed state were saved, but the network status panel could not be refreshed. Reload the page to see the latest state."
           : networkSideStackRefreshFailureMessage();
-        showWanMessage(errorId, message);
+        showNetworkSideStackRefreshWarning(errorId, message);
       }
       return;
     }
@@ -7884,7 +7891,7 @@ async function saveWanEnabledState(cell, csrf, path, errorId, fallbackMessage, o
     const message = typeof options.afterSave === "function"
       ? "The routing permission and its displayed state were saved, but the network status panel could not be refreshed. Reload the page to see the latest state."
       : networkSideStackRefreshFailureMessage();
-    showWanMessage(errorId, message);
+    showNetworkSideStackRefreshWarning(errorId, message);
     return;
   }
   if (!isCurrent()) return;
@@ -9567,8 +9574,11 @@ function initializePortForwarding() {
               try {
                 await post(`${root}/${cell.getRow().getData().id}/enabled`, body);
                 const sideStackRefreshed = await refreshNetworkSideStack();
+                if (sideStackRefreshed === false) {
+                  showNetworkSideStackRefreshWarning("port-forward-error", networkSideStackRefreshFailureMessage());
+                }
                 await refresh();
-                if (sideStackRefreshed === false) { fail(networkSideStackRefreshFailureMessage()); return; }
+                if (sideStackRefreshed === false) return;
                 if (sideStackRefreshed !== true) return;
                 showTransientGridStatus("Saved");
               }
@@ -9863,6 +9873,40 @@ function networkSideStackRefreshFailureMessage() {
   return "The change was saved, but the network status panel could not be refreshed. Reload the page to see the latest state.";
 }
 
+let networkSideStackRefreshWarnings = new Map();
+
+function networkSideStackRefreshWarningText(element) {
+  if (element?.id === "grid-status-toast") {
+    return element.querySelector("span")?.textContent ?? element.textContent;
+  }
+  return element?.textContent;
+}
+
+function rememberNetworkSideStackRefreshWarning(element, message) {
+  if (element && networkSideStackRefreshWarningText(element) === message) {
+    networkSideStackRefreshWarnings.set(element, message);
+  }
+}
+
+function showNetworkSideStackRefreshWarning(elementId, message) {
+  showCaMessage(elementId, message);
+  rememberNetworkSideStackRefreshWarning(document.getElementById(elementId), message);
+}
+
+function clearNetworkSideStackRefreshWarnings() {
+  for (const [element, message] of networkSideStackRefreshWarnings) {
+    if (networkSideStackRefreshWarningText(element) !== message) continue;
+    if (element.id === "grid-status-toast") {
+      element.replaceChildren();
+      element.classList.remove("visible", "error");
+    } else {
+      element.textContent = "";
+      element.classList.add("hidden");
+    }
+  }
+  networkSideStackRefreshWarnings.clear();
+}
+
 let networkSideStackRefreshGeneration = 0;
 let networkSideStackRefreshRequest = null;
 
@@ -9913,7 +9957,9 @@ async function refreshNetworkSideStack(isCurrent = () => true) {
     initializeRefreshedSideStack(nextSideStack);
     highlightConfigPreviews(nextSideStack);
     if (!isCurrentRequest()) return "superseded";
-    return document.querySelector("aside.side-stack") === nextSideStack;
+    if (document.querySelector("aside.side-stack") !== nextSideStack) return false;
+    clearNetworkSideStackRefreshWarnings();
+    return true;
   };
   void refresh().then(
     (refreshed) => request.resolve(refreshed),
@@ -9958,7 +10004,7 @@ async function autoSavePhysicalInterface(cell, csrf) {
     await postNetworkAction(managementUiPath(`/physical-interfaces/${data.id}/edit`), data, csrf, { reload: false });
     const sideStackRefreshed = await refreshNetworkSideStack();
     if (sideStackRefreshed === false) {
-      showNetworkMessage("physical-interface-error", networkSideStackRefreshFailureMessage());
+      showNetworkSideStackRefreshWarning("physical-interface-error", networkSideStackRefreshFailureMessage());
       return;
     }
     if (sideStackRefreshed !== true) return;
@@ -9991,7 +10037,7 @@ async function savePhysicalInterfaceRow(row, csrf, successMessage = "Saved") {
     await postNetworkAction(managementUiPath(`/physical-interfaces/${data.id}/edit`), data, csrf, { reload: false });
     const sideStackRefreshed = await refreshNetworkSideStack();
     if (sideStackRefreshed === false) {
-      showNetworkMessage("physical-interface-error", networkSideStackRefreshFailureMessage());
+      showNetworkSideStackRefreshWarning("physical-interface-error", networkSideStackRefreshFailureMessage());
       return;
     }
     if (sideStackRefreshed !== true) return;
@@ -11729,7 +11775,7 @@ function initializeVlanInterfacesTable() {
           savedRow?.reformat?.();
         }, 2400);
         if (sideStackRefreshed === false) {
-          showNetworkMessage("vlan-interface-error", networkSideStackRefreshFailureMessage());
+          showNetworkSideStackRefreshWarning("vlan-interface-error", networkSideStackRefreshFailureMessage());
           return { valid: true };
         }
         if (sideStackRefreshed !== true) return { valid: true };

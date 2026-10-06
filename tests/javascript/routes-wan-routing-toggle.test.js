@@ -131,6 +131,7 @@ function sideStackContext({ currentPresent = true, refreshedPresent = true, resp
       calls.initialized.push(sideStack);
       initialize(sideStack);
     },
+    clearNetworkSideStackRefreshWarnings() {},
     window: { location: { href: "/ui/management/routes-wan" } },
   });
   vm.runInContext(`let networkSideStackRefreshGeneration = 0; let networkSideStackRefreshRequest = null; async ${functionSource("refreshNetworkSideStack")}; globalThis.refresh = refreshNetworkSideStack;`, ctx);
@@ -139,7 +140,20 @@ function sideStackContext({ currentPresent = true, refreshedPresent = true, resp
 
 function concurrentSideStackContext() {
   const HTMLElementStub = class HTMLElement {
-    constructor(name) { this.name = name; }
+    constructor(name) {
+      this.name = name;
+      this.textContent = "";
+      this.classes = new Set();
+      this.classList = {
+        add: (...names) => names.forEach((value) => this.classes.add(value)),
+        remove: (...names) => names.forEach((value) => this.classes.delete(value)),
+        toggle: (value, enabled) => {
+          if (enabled) this.classes.add(value);
+          else this.classes.delete(value);
+          return this.classes.has(value);
+        },
+      };
+    }
   };
   const calls = { fetch: 0, replacements: [], initialized: [], highlighted: [] };
   const saves = { firewall: 0 };
@@ -155,6 +169,16 @@ function concurrentSideStackContext() {
   ]]);
   let attachedSideStack = initialSideStack;
   const messages = [];
+  const alertElements = new Map();
+  let firewallPostFailure = null;
+  const alertElement = (id) => {
+    if (!alertElements.has(id)) {
+      const element = new HTMLElementStub(id);
+      element.id = id;
+      alertElements.set(id, element);
+    }
+    return alertElements.get(id);
+  };
   const attachable = [initialSideStack, oldSideStack, newSideStack];
   const statuses = [];
   attachable.forEach((sideStack) => {
@@ -168,31 +192,48 @@ function concurrentSideStackContext() {
   const ctx = vm.createContext({
     DOMParser: class { parseFromString(html) { return { querySelector: () => sideStacksByResponse.get(html) || null }; } },
     HTMLElement: HTMLElementStub,
-    document: { querySelector: () => attachedSideStack },
+    document: {
+      querySelector: (selector) => selector === "aside.side-stack" ? attachedSideStack : null,
+      getElementById: alertElement,
+    },
     fetch: async () => { calls.fetch += 1; return responses.shift(); },
     highlightConfigPreviews: (sideStack) => calls.highlighted.push(sideStack),
     initializeRefreshedSideStack: (sideStack) => calls.initialized.push(sideStack),
-    clearCaMessage() {},
+    clearCaMessage: (id) => { alertElement(id).textContent = ""; },
     managementUiPath: (path) => path,
     postWanAction: async () => {},
-    postFirewallRuleAction: async () => { saves.firewall += 1; },
+    postFirewallRuleAction: async () => {
+      saves.firewall += 1;
+      if (firewallPostFailure) throw firewallPostFailure;
+    },
     showTransientGridStatus: (status) => statuses.push(status),
-    showWanMessage: (id, message) => messages.push({ id, message }),
-    showCaMessage: (id, message) => messages.push({ id, message }),
+    showWanMessage: (id, message) => {
+      messages.push({ id, message });
+      alertElement(id).textContent = message;
+    },
+    showCaMessage: (id, message) => {
+      messages.push({ id, message });
+      const element = alertElement(id);
+      element.textContent = message;
+      element.classList.toggle("error", true);
+      element.classList.remove("hidden");
+    },
     window: { location: { href: "/ui/management/routes-wan" } },
   });
-  vm.runInContext(`let networkSideStackRefreshGeneration = 0; let networkSideStackRefreshRequest = null; ${functionSource("networkSideStackRefreshFailureMessage")}; async ${functionSource("refreshNetworkSideStack")}; async ${functionSource("saveWanEnabledState")}; async ${functionSource("autoSaveFirewallRule")}; globalThis.refresh = refreshNetworkSideStack; globalThis.save = saveWanEnabledState; globalThis.saveFirewall = autoSaveFirewallRule;`, ctx);
+  vm.runInContext(`let networkSideStackRefreshGeneration = 0; let networkSideStackRefreshRequest = null; let networkSideStackRefreshWarnings = new Map(); ${functionSource("networkSideStackRefreshWarningText")}; ${functionSource("networkSideStackRefreshFailureMessage")}; ${functionSource("rememberNetworkSideStackRefreshWarning")}; ${functionSource("showNetworkSideStackRefreshWarning")}; ${functionSource("clearNetworkSideStackRefreshWarnings")}; async ${functionSource("refreshNetworkSideStack")}; async ${functionSource("saveWanEnabledState")}; async ${functionSource("autoSaveFirewallRule")}; globalThis.refresh = refreshNetworkSideStack; globalThis.save = saveWanEnabledState; globalThis.saveFirewall = autoSaveFirewallRule;`, ctx);
   return {
     ctx,
     calls,
     saves,
     statuses,
     messages,
+    alertElements,
     responses,
     oldSideStack,
     newSideStack,
     attachedSideStack: () => attachedSideStack,
     setAttachedSideStack: (sideStack) => { attachedSideStack = sideStack; },
+    setFirewallPostFailure: (error) => { firewallPostFailure = error; },
   };
 }
 
@@ -531,6 +572,127 @@ test("a committed legacy firewall save reports a superseding refresh failure wit
   assert.match(state.messages[0].message, /change was saved.*could not be refreshed.*reload the page/i);
 });
 
+test("a later successful Routing refresh clears only a settled side-panel warning", async () => {
+  const state = concurrentSideStackContext();
+  state.responses.push(
+    { ok: false },
+    { ok: true, text: async () => "newer response" },
+  );
+  const firewallCell = {
+    getRow: () => ({ getData: () => ({ id: 77, enabled: false }) }),
+    restoreOldValue() { assert.fail("a committed save must not roll back"); },
+  };
+  await state.ctx.saveFirewall(firewallCell, "csrf");
+
+  const warning = "The change was saved, but the network status panel could not be refreshed. Reload the page to see the latest state.";
+  const firewallAlert = state.alertElements.get("firewall-rule-error");
+  assert.equal(firewallAlert.textContent, warning);
+
+  const routingCell = { getRow: () => ({ getData: () => ({ id: 9, enabled: false }) }) };
+  await state.ctx.save(routingCell, "csrf", "/routes-wan/routing-rules", "routing-error", "Save failed", {
+    afterSave: async () => {},
+  });
+
+  assert.equal(state.attachedSideStack(), state.newSideStack);
+  assert.equal(firewallAlert.textContent, "");
+  assert.equal(firewallAlert.classes.has("hidden"), true);
+  assert.equal(state.messages.length, 1);
+  assert.deepEqual(state.statuses, ["Saved"]);
+});
+
+test("a successful side-panel refresh preserves a genuine save error", async () => {
+  const state = concurrentSideStackContext();
+  const firewallCell = {
+    getRow: () => ({ getData: () => ({ id: 77, enabled: false }) }),
+    restoreOldValue() {},
+  };
+  state.responses.push({ ok: false }, { ok: true, text: async () => "newer response" });
+  await state.ctx.saveFirewall(firewallCell, "csrf");
+  const refreshWarning = "The change was saved, but the network status panel could not be refreshed. Reload the page to see the latest state.";
+  const firewallAlert = state.alertElements.get("firewall-rule-error");
+  assert.equal(firewallAlert.textContent, refreshWarning);
+
+  state.setFirewallPostFailure(new Error("The firewall rule could not be saved."));
+  await state.ctx.saveFirewall(firewallCell, "csrf");
+  assert.match(firewallAlert.textContent, /firewall rule could not be saved/i);
+
+  const routingCell = { getRow: () => ({ getData: () => ({ id: 9, enabled: false }) }) };
+  await state.ctx.save(routingCell, "csrf", "/routes-wan/routing-rules", "routing-error", "Save failed", {
+    afterSave: async () => {},
+  });
+
+  assert.match(firewallAlert.textContent, /firewall rule could not be saved/i);
+  assert.deepEqual(state.calls.replacements, [state.newSideStack]);
+});
+
+test("refresh warning cleanup handles the actual dismissible error toast", () => {
+  class ElementStub {
+    constructor(tagName) {
+      this.tagName = tagName;
+      this.id = "";
+      this.attributes = {};
+      this.children = [];
+      this._textContent = "";
+      this.classes = new Set();
+      this.listeners = new Map();
+      this.classList = {
+        add: (...names) => names.forEach((name) => this.classes.add(name)),
+        remove: (...names) => names.forEach((name) => this.classes.delete(name)),
+        toggle: (name, enabled) => {
+          if (enabled) this.classes.add(name);
+          else this.classes.delete(name);
+          return this.classes.has(name);
+        },
+      };
+    }
+    get textContent() {
+      return this._textContent + this.children.map((child) => child.textContent).join("");
+    }
+    set textContent(value) {
+      this._textContent = String(value);
+      this.children = [];
+    }
+    setAttribute(name, value) { this.attributes[name] = value; }
+    addEventListener(name, callback) { this.listeners.set(name, callback); }
+    querySelector(selector) { return selector === "span" ? this.children.find((child) => child.tagName === "span") || null : null; }
+    replaceChildren(...children) {
+      this._textContent = "";
+      this.children = children;
+    }
+  }
+  let toast = null;
+  const ctx = vm.createContext({
+    document: {
+      getElementById: (id) => id === "grid-status-toast" ? toast : null,
+      createElement: (tagName) => new ElementStub(tagName),
+      body: { appendChild: (element) => { toast = element; } },
+    },
+    window: { clearTimeout, setTimeout },
+  });
+  vm.runInContext(`let networkSideStackRefreshWarnings = new Map(); ${functionSource("networkSideStackRefreshWarningText")}; ${functionSource("rememberNetworkSideStackRefreshWarning")}; ${functionSource("clearNetworkSideStackRefreshWarnings")}; ${functionSource("showTransientGridStatus")};`, ctx);
+  const warning = "The change was saved, but the network status panel could not be refreshed. Reload the page to see the latest state.";
+
+  ctx.showTransientGridStatus(warning, { error: true });
+  ctx.rememberNetworkSideStackRefreshWarning(toast, warning);
+  assert.equal(toast.attributes.role, "alert");
+  assert.equal(toast.attributes["aria-live"], "assertive");
+  assert.equal(toast.children[0].textContent, warning);
+  assert.equal(toast.children[1].textContent, "Dismiss");
+  toast.children[1].listeners.get("click")();
+  assert.equal(toast.classes.has("visible"), false);
+  ctx.clearNetworkSideStackRefreshWarnings();
+  assert.deepEqual(toast.children, []);
+  assert.equal(toast.classes.has("error"), false);
+
+  ctx.showTransientGridStatus(warning, { error: true });
+  ctx.rememberNetworkSideStackRefreshWarning(toast, warning);
+  ctx.showTransientGridStatus("A separate save failed.", { error: true });
+  ctx.clearNetworkSideStackRefreshWarnings();
+  assert.equal(toast.children[0].textContent, "A separate save failed.");
+  assert.equal(toast.classes.has("visible"), true);
+  assert.equal(toast.classes.has("error"), true);
+});
+
 test("the shared wizard Enabled callback reports side-panel failure after a committed save", async () => {
   class HTMLElementStub {
     constructor() {
@@ -589,6 +751,7 @@ test("the shared wizard Enabled callback reports side-panel failure after a comm
     atlasoGridWizardRequest: async () => { writes += 1; return { item: { id: 12, enabled: true } }; },
     refreshNetworkSideStack: async () => false,
     networkSideStackRefreshFailureMessage: () => "The change was saved, but the network status panel could not be refreshed. Reload the page to see the latest state.",
+    rememberNetworkSideStackRefreshWarning() {},
     showTransientGridStatus: (message) => statuses.push(message),
   });
   vm.runInContext(`function initializeAtlasoResourceWizard(config) { ${functionSource("initializeAtlasoResourceWizard").slice("function initializeAtlasoResourceWizard(config) {".length, -1)} }; globalThis.initialize = initializeAtlasoResourceWizard;`, ctx);
@@ -753,20 +916,32 @@ test("a newer edit queues behind an in-flight grid update and remains the final 
 function saveContext({ postError = null, ErrorConstructor = null, sideStackResult = true } = {}) {
   const messages = [];
   const statuses = [];
+  const alertElements = new Map();
+  const alertElement = (id) => {
+    if (!alertElements.has(id)) {
+      alertElements.set(id, { id, textContent: "", classList: { add() {}, remove() {} } });
+    }
+    return alertElements.get(id);
+  };
   let restores = 0;
   let sideStackRefreshes = 0;
   const globals = {
     clearCaMessage() {},
+    document: { getElementById: alertElement },
     managementUiPath: (path) => path,
     postWanAction: async () => { if (postError) throw postError; },
     refreshNetworkSideStack: async () => { sideStackRefreshes += 1; return sideStackResult; },
     showTransientGridStatus: (message) => statuses.push(message),
     showWanMessage: (_id, message) => messages.push(message),
+    showCaMessage: (id, message) => {
+      messages.push(message);
+      alertElement(id).textContent = message;
+    },
   };
   if (ErrorConstructor) globals.Error = ErrorConstructor;
   const ctx = vm.createContext(globals);
   vm.runInContext(
-    `${functionSource("networkSideStackRefreshFailureMessage")}\nasync ${functionSource("saveWanEnabledState")}; globalThis.save = saveWanEnabledState;`,
+    `let networkSideStackRefreshWarnings = new Map(); ${functionSource("networkSideStackRefreshWarningText")}\n${functionSource("rememberNetworkSideStackRefreshWarning")}\n${functionSource("showNetworkSideStackRefreshWarning")}\n${functionSource("networkSideStackRefreshFailureMessage")}\nasync ${functionSource("saveWanEnabledState")}; globalThis.save = saveWanEnabledState;`,
     ctx,
   );
   const cell = {
@@ -778,6 +953,7 @@ function saveContext({ postError = null, ErrorConstructor = null, sideStackResul
     cell,
     messages,
     statuses,
+    alertElements,
     restores: () => restores,
     sideStackRefreshes: () => sideStackRefreshes,
   };
