@@ -19015,7 +19015,9 @@ def _submit_appliance_apply(
         or management_domain_migration
         or ("network" in selected_ids and network_listener_handoff_required(db, unit_map))
     )
-    if "network" in selected_ids and network_listener_handoff_required(db, unit_map):
+    if "network" in selected_ids and (
+        network_listener_handoff_required(db, unit_map) or management_domain_migration
+    ):
         unchecked_dependencies = [
             unit["label"] for unit in units
             if unit["id"] in MANAGEMENT_HANDOFF_UNIT_IDS and unit["changed"]
