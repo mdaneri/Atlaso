@@ -473,6 +473,104 @@ def test_legacy_flagged_default_network_revision_couples_wan_handoff(client, mon
         assert "wan" not in payload["selected_units"]
 
 
+@pytest.mark.parametrize("fingerprint", [None, "old-fingerprint"])
+@pytest.mark.parametrize("change", ["none", "address", "permission", "route", "pin", "wan_topology"])
+@pytest.mark.parametrize("apply_fails", [False, True])
+def test_upgrade_network_migration_with_legacy_routing_baselines(client, monkeypatch, fingerprint, change, apply_fails):
+    """Admit only proven unchanged upgrade intent and retain failed snapshots.
+
+    Args:
+        client: Authenticated application test client.
+        monkeypatch: Inject a protected helper failure without host mutation.
+        fingerprint: Missing or obsolete applied authorization metadata.
+        change: Additional desired edit that must retain the transition guard.
+        apply_fails: Whether the protected helper fails and leaves baselines pending.
+    """
+    from atlaso.app import ui
+    from atlaso.app.adapters.system import AdapterResult, SystemAdapter
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Job, PhysicalInterface, Route, RoutingRule
+    from atlaso.app.services.routes_wan import save_routes_wan_settings
+
+    login(client)
+    with SessionLocal() as db:
+        interface = db.query(PhysicalInterface).filter_by(name="eth2").one()
+        interface.role = "access"
+        interface.access_management_ui_enabled = True
+        interface.ipv4_method = "static"
+        interface.ip_cidr = "192.168.50.10/24"
+        route = Route(destination_cidr="0.0.0.0/0", gateway="192.168.50.1", interface_name="eth2", enabled=True)
+        db.add(route)
+        save_routes_wan_settings(db, routing_enabled=True, nat_enabled=False, wan_simulation_enabled=False)
+        db.commit()
+        units = ui.appliance_apply_units(db)
+        ui.update_appliance_apply_baselines(db, units, {unit["id"] for unit in units})
+        baselines = ui.load_appliance_apply_baselines(db)
+        for owner in ("wan", "firewall"):
+            if fingerprint is None:
+                baselines[owner].pop("routing_permission_fingerprint", None)
+            else:
+                baselines[owner]["routing_permission_fingerprint"] = fingerprint
+        baselines["network"]["config_preview"] = "\n".join(
+            line for line in baselines["network"]["config_preview"].splitlines()
+            if not line.startswith(("# Network runtime revision:", "# Network identity pins:"))
+            and not line.strip().startswith(("mac=", "parent_mac="))
+        ) + "\n"
+        baselines["network"]["snapshot_hash"] = "legacy-network"
+        if change == "wan_topology":
+            baselines["wan"]["config_preview"] = baselines["wan"]["config_preview"].replace(
+                "ip_cidr=192.168.50.10/24", "ip_cidr=192.168.50.20/24",
+            )
+        if change == "pin":
+            baselines["network"]["config_preview"] = baselines["network"]["config_preview"].replace(
+                "interface=eth2\n", "interface=eth2\n  mac=02:00:00:00:00:99\n",
+            )
+        ui.save_appliance_apply_baselines(db, baselines)
+        if change == "address":
+            interface.ip_cidr = "192.168.50.11/24"
+        elif change == "permission":
+            db.add(RoutingRule(name="New permission", enabled=True, source_interface="eth2",
+                               destination_interface="eth1.20", policy="allow", ip_family=4))
+        elif change == "route":
+            route.metric = 200
+        db.commit()
+        before = ui.load_appliance_apply_baselines(db)
+
+    if apply_fails:
+        def fail_handoff(_adapter, manifest_path):
+            """Refuse the captured protected transaction.
+
+            Args:
+                _adapter: Dry-run adapter.
+                manifest_path: Exact staged handoff manifest.
+            """
+            return AdapterResult(command=["management", "apply-handoff", manifest_path], dry_run=True,
+                                 stderr="injected migration failure", returncode=1)
+
+        monkeypatch.setattr(SystemAdapter, "apply_management_handoff", fail_handoff)
+    csrf = client.get("/dashboard").text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    response = client.post("/appliance-apply", data={"csrf": csrf, "selected_units": "network"},
+                           headers={"Accept": "application/json"})
+    assert response.status_code == (202 if change == "none" else 422), response.text
+    with SessionLocal() as db:
+        after = ui.load_appliance_apply_baselines(db)
+        if change != "none" or apply_fails:
+            assert after == before
+        else:
+            assert after["network"]["snapshot_hash"] != "legacy-network"
+            assert after["wan"]["routing_permission_fingerprint"] == after["firewall"]["routing_permission_fingerprint"]
+        if change == "none":
+            job = db.get(Job, response.json()["job_id"])
+            payload = json.loads(job.result)
+            assert payload["management_handoff"] is True
+            assert {"network", "wan", "firewall"} <= set(payload["management_handoff_units"])
+            assert job.status == ("failed" if apply_fails else "succeeded"), job.error
+        elif change in {"route", "wan_topology"}:
+            assert "pending settings beyond" in response.json()["detail"]
+        else:
+            assert "Disable Routing" in response.json()["detail"]
+
+
 @pytest.mark.parametrize("commit_fails", [False, True])
 @pytest.mark.parametrize("cleanup_fails", [False, True])
 def test_network_apply_acknowledges_only_durable_executed_baseline(client, monkeypatch, commit_fails, cleanup_fails):

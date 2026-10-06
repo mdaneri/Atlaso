@@ -72,6 +72,13 @@ Atlaso includes **Routing & WAN** in a protected management handoff. That handof
 lab-domain replacement is ready, then applies the captured WAN configuration. Other migrations use the already-applied
 forwarding setting and do not apply pending Routes & WAN edits. Rollback restores the prior rules, network files,
 routing service state, and any WAN runtime included in the handoff. Subsequent WAN Apply uses the applied Network ownership.
+Older successful WAN and Firewall snapshots may lack the current Routing Permission fingerprint. That comparison
+metadata alone does not require disabling Routing for this upgrade: Atlaso admits the protected migration with Routing
+enabled only when saved interface settings and WAN intent are unchanged, apart from revision comments and newly added
+MAC pins. Existing MAC pins must still match. The handoff installs the new domain rules and commits both enforcement
+baselines only after success; failure retains the previous snapshots for retry. Genuine Network or Routing Permission
+changes retain the forwarding-off prerequisite. If an unselected Routing & WAN edit is also pending, apply it separately
+before retrying the Network migration; the migration does not silently apply those settings.
 Before the transition guard is enabled, Atlaso records the old listener's observed connected and default routes in
 the Network transaction, stages any missing copies in its source-selected table, then installs exact rules for proven
 live sources. It retires only those recorded temporary routes after networkd installs replacements, or during rollback.
