@@ -302,10 +302,19 @@ class PytestGitFixtures:
             for index, _ in enumerate(self.repositories()):
                 path = self.receipt.with_name(self.receipt.name + f".repo-{index:04d}")
                 provenance[str(path)] = hashlib.sha256(read_bounded_regular(path, MAX_MANIFEST)).hexdigest()
-            sealed = self.record(".sealed", {"binding": self.binding, "entries": snapshot, "topology": topology,
-                                             "provenance": provenance})
-            return self.record(".manifest", {"binding": self.binding, "sealed_sha256": hashlib.sha256(
-                read_bounded_regular(sealed, MAX_MANIFEST)).hexdigest()})
+            sealed_value = {"binding": self.binding, "entries": snapshot, "topology": topology, "provenance": provenance}
+            sealed = self.receipt.with_name(self.receipt.name + ".sealed")
+            if sealed.exists():
+                require(self.load(".sealed") == sealed_value, "Fixture differs from its previously sealed inventory.")
+            else:
+                self.record(".sealed", sealed_value)
+            manifest_value = {"binding": self.binding, "sealed_sha256": hashlib.sha256(
+                read_bounded_regular(sealed, MAX_MANIFEST)).hexdigest()}
+            manifest = self.receipt.with_name(self.receipt.name + ".manifest")
+            if manifest.exists():
+                require(self.load(".manifest") == manifest_value, "Fixture manifest differs from its sealed inventory.")
+                return manifest
+            return self.record(".manifest", manifest_value)
 
     def inspect(self) -> dict[str, Any]:
         """Return fresh owning-tool evidence compatible with live resource.inspect."""

@@ -392,6 +392,60 @@ def test_replaced_empty_root_identity_is_removed_before_original_restoration(
     git_fixture.seal()
 
 
+@pytest.mark.parametrize("changed", [False, True])
+def test_seal_resumes_after_inventory_publication(
+    git_fixture: GitFixtureOwner,
+    monkeypatch: pytest.MonkeyPatch,
+    changed: bool,
+) -> None:
+    """Publish a missing manifest only when the durable sealed state still matches.
+
+    Args:
+        git_fixture: Creation-bound fixture with external immutable receipts.
+        monkeypatch: Scoped interruption restored before retry.
+        changed: Whether to verify changed contents are preserved before restoration.
+    """
+    repository = git_fixture.ordinary_repo()
+    record = git_fixture.owner.record
+
+    def interrupted(suffix: str, value: dict) -> Path:
+        """Interrupt after sealed publication and before manifest publication.
+
+        Args:
+            suffix: Durable receipt stage selected by seal.
+            value: Exact evidence selected for publication.
+        """
+        if suffix == ".manifest":
+            raise OSError("interrupted before manifest publication")
+        return record(suffix, value)
+
+    monkeypatch.setattr(git_fixture.owner, "record", interrupted)
+    with pytest.raises(OSError, match="before manifest publication"):
+        git_fixture.owner.seal()
+    sealed = git_fixture.receipt.with_name(git_fixture.receipt.name + ".sealed")
+    original_sealed = sealed.read_bytes()
+    monkeypatch.setattr(git_fixture.owner, "record", record)
+    if changed:
+        tracked = repository / "tracked.txt"
+        original = tracked.read_bytes()
+        stamp = tracked.stat()
+        tracked.write_bytes(original.replace(b"source", b"sourcf"))
+        os.utime(tracked, ns=(stamp.st_atime_ns, stamp.st_mtime_ns))
+        try:
+            with pytest.raises(Refusal, match="previously sealed inventory"):
+                git_fixture.owner.seal()
+            assert not sealed.with_name(sealed.name + ".pending").exists()
+            assert sealed.read_bytes() == original_sealed
+        finally:
+            tracked.write_bytes(original)
+            os.utime(tracked, ns=(stamp.st_atime_ns, stamp.st_mtime_ns))
+    manifest = git_fixture.seal()
+    assert git_fixture.owner.seal() == manifest
+    assert sealed.read_bytes() == original_sealed
+    assert not sealed.with_name(sealed.name + ".pending").exists()
+    assert git_fixture.owner.inspect()["evidence_preserved"] is True
+
+
 def test_pending_seal_receipt_blocks_inspect_and_can_be_reconciled(git_fixture: GitFixtureOwner) -> None:
     """Refuse an interrupted manifest publication, then resume after exact reconciliation.
 

@@ -226,6 +226,9 @@ After validation stops, call `seal()` to preserve the complete bounded identity/
 The returned small `.manifest` receipt is the resource's `ownership_manifest`; record its SHA-256 in the task inventory.
 It binds the larger `.sealed` inventory, which binds the original creation receipts by hash. Do not change fixtures
 after sealing.
+If sealing stops between inventory and manifest publication, `seal()` validates the existing inventory against
+fresh identities, contents, topology, and original receipts before publishing the missing manifest. It never
+replaces existing evidence; a matching completed seal is idempotent, and changed state or pending publication blocks retry.
 Unrecorded repositories, external/shared common directories, foreign or locked registrations, object alternates,
 Git locks, reparse points, hard links, credential/recovery trees, changed identities, or changed file contents block
 release. Validation must finish and the controller must independently prove exclusive ownership and inactivity;
