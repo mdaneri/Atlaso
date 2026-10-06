@@ -244,6 +244,9 @@ An interrupted retry checks every surviving entry against that inventory, allows
 release and directory timestamps changed by child removal, and refuses new, replaced, or changed data. A surviving
 pending publication requires reconciliation. Successful release records durable absence evidence and independently
 reads back root absence. An absent root without prepared evidence does not establish ownership or completed release.
+If deletion finishes before absence publication, inspection reports `evidence_preserved: false`; the controller
+must stop. Resume the owning tool's exact-scope `release()` to finalize the durable absence receipt, then repeat
+controller inspection. Missing, pending, or invalid absence evidence never authorizes task cleanup.
 Legacy artifacts without original creation receipts remain preserved; never retrofit them or use broad directory deletion.
 Read-only Git objects use the checked-handle
 [Windows disposition flag](https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/ntddk/ns-ntddk-_file_disposition_information_ex)

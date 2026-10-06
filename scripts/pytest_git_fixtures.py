@@ -339,8 +339,17 @@ class PytestGitFixtures:
                         and (entry["directory"] or entry == original), "Fixture identity or contents changed.")
             if not prepared:
                 require(self.topology(snapshot) == sealed["topology"], "Fixture Git registration graph changed.")
+        absence_path = self.receipt.with_name(self.receipt.name + ".absent")
+        require(not absence_path.with_name(absence_path.name + ".pending").exists(),
+                "Pending fixture absence receipt requires reconciliation.")
+        evidence_preserved = not absent
+        if absence_path.exists():
+            absence = self.load(".absent")
+            require(absent and absence.get("absent") is True
+                    and absence.get("removal_scopes") == [str(self.root)], "Fixture absence evidence is invalid.")
+            evidence_preserved = True
         return {"ownership_verified": True, "inactive": True, "retained": False, "supported_cleanup": True,
-                "evidence_preserved": True, "absent": absent, "removal_scopes": [str(self.root)]}
+                "evidence_preserved": evidence_preserved, "absent": absent, "removal_scopes": [str(self.root)]}
 
     def release(self, removal_scopes: list[str]) -> dict[str, bool]:
         """Release exact sealed handles, then preserve independently observed root absence.

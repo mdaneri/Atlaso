@@ -450,6 +450,69 @@ def test_interrupted_subset_release_can_resume_from_sealed_survivors(
     assert git_fixture.owner.inspect()["absent"] is True
 
 
+def test_absent_root_requires_durable_absence_finalization(
+    git_fixture: GitFixtureOwner,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Keep controller completion blocked after deletion until owning release saves absence.
+
+    Args:
+        git_fixture: Creation-bound artifact with durable receipts outside its removal scope.
+        monkeypatch: Scoped interruption restored before owning-tool recovery.
+    """
+    git_fixture.ordinary_repo()
+    manifest = git_fixture.seal()
+    resource = git_fixture.resource(manifest)
+    payload = {"resource": resource, "handoff_sha256": "a" * 64}
+    record = git_fixture.owner.record
+
+    def interrupted(suffix: str, value: dict) -> Path:
+        """Model interruption before publishing the independent absence receipt.
+
+        Args:
+            suffix: Receipt stage selected by the owning tool.
+            value: Exact durable evidence to publish.
+        """
+        if suffix == ".absent":
+            raise OSError("interrupted before absence publication")
+        return record(suffix, value)
+
+    monkeypatch.setattr(git_fixture.owner, "record", interrupted)
+    with pytest.raises(OSError, match="before absence publication"):
+        git_fixture.release()
+    inspected = git_fixture.owner.controller_call("resource.inspect", payload, resource)
+    assert inspected["absent"] is True
+    assert inspected["evidence_preserved"] is False
+    assert not git_fixture.receipt.with_name(git_fixture.receipt.name + ".absent").exists()
+    monkeypatch.setattr(git_fixture.owner, "record", record)
+    assert git_fixture.owner.controller_call(
+        "resource.release", {**payload, "removal_scopes": inspected["removal_scopes"]}, resource,
+    ) == {"success": True}
+    assert git_fixture.owner.controller_call("resource.inspect", payload, resource)["evidence_preserved"] is True
+
+
+@pytest.mark.parametrize("invalid", [{"absent": False}, {"removal_scopes": ["foreign"]}])
+def test_invalid_absence_receipt_blocks_completion(git_fixture: GitFixtureOwner, invalid: dict) -> None:
+    """Reject invalid durable absence evidence even when the original root is gone.
+
+    Args:
+        git_fixture: Creation-bound fixture released through its owning tool.
+        invalid: Absence receipt field replaced with invalid state.
+    """
+    git_fixture.ordinary_repo()
+    git_fixture.seal()
+    git_fixture.release()
+    path = git_fixture.receipt.with_name(git_fixture.receipt.name + ".absent")
+    original = path.read_bytes()
+    value = json.loads(original)
+    path.write_text(json.dumps({**value, **invalid}), encoding="utf-8")
+    try:
+        with pytest.raises(Refusal, match="absence evidence is invalid"):
+            git_fixture.owner.inspect()
+    finally:
+        path.write_bytes(original)
+
+
 def test_foreign_common_directory_and_worktree_registrations_block_sealing(
     git_fixture: GitFixtureOwner,
     monkeypatch: pytest.MonkeyPatch,
