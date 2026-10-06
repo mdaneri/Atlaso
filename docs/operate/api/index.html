@@ -4169,6 +4169,13 @@
 
 
 <h1 id="use-the-atlaso-api">Use the Atlaso API<a class="headerlink" href="#use-the-atlaso-api" title="Permanent link">&para;</a></h1>
+<p>DHCP pool verification uses <code>GET /api/v1/dhcp/scopes/{scope_id}/verification</code> (<code>read:dhcp</code>) and
+<code>POST /api/v1/dhcp/scopes/{scope_id}/verification</code> (<code>write:dhcp</code>). POST queues a bounded, report-only worker task and
+returns <code>202</code> with its task ID; unavailable applied identity or admission returns <code>409</code>. It accepts a managed IPv4
+pool ID rather than an arbitrary network. Reports distinguish occupancy, mismatches, nonresponse and unknown evidence
+and do not change leases or runtime configuration. The additive DHCP settings field <code>check_ip_availability</code> controls
+native daemon-wide IPv4 candidate checking after global Appliance Apply; omission preserves an existing explicit
+opt-out. See <a href="../../services/dhcp/#verify-an-applied-pool">DHCP</a> for limits, scheduling, cancellation and evidence meaning.</p>
 <p>Atlaso publishes its supported REST contract under <code>/api/v1</code>. Use the interactive Swagger UI at <code>/api/docs</code>, the
 alternative ReDoc view at <code>/api/redoc</code>, or the machine-readable OpenAPI 3.1 document at <code>/openapi.json</code>. The schema
 contains only versioned <code>/api/v1</code> operations; browser pages and service-specific protocol routes remain supported but

@@ -4619,6 +4619,10 @@ moving essential title/action context outside the viewport.</p>
 <code>routes_wan.html</code>, <code>services.html</code>, <code>settings.html</code>, <code>tasks.html</code>, <code>terminal.html</code>, <code>users.html</code>,
 <code>vaults.html</code>, <code>vcf_backups.html</code>, <code>vcf_helper.html</code>, <code>vcf_offline_depot.html</code>,
 <code>vcf_offline_depot_task_log.html</code>, <code>vcf_private_registry.html</code>, and <code>vlan_interfaces.html</code>.</p>
+<p>The DHCP <strong>Pool Health</strong> view uses <code>partials/dhcp_pool_health.html</code> and the read-only Tasks grid pattern for pool
+summaries and address evidence. It retains semantic fallbacks, permission-checked launch actions, live updates and
+explicit nonresponse/unknown states; <strong>Verify pool</strong> creates a cancellable report-only task. DHCP settings retain the
+non-grid DNS settings reference, and optional schedules reuse the Automation Schedules wizard.</p>
 <p>Shared-only templates are <code>base.html</code>, <code>public_portal_base.html</code>, <code>partials/appliance_apply_status.html</code>,
 <code>partials/brand_mark.html</code>, <code>partials/config_preview_action.html</code>, <code>partials/resource_wizard.html</code>,
 <code>partials/port_forwarding.html</code>,
