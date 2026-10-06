@@ -169,7 +169,7 @@ function concurrentSideStackContext() {
     showCaMessage: (id, message) => messages.push({ id, message }),
     window: { location: { href: "/ui/management/routes-wan" } },
   });
-  vm.runInContext(`let networkSideStackRefreshGeneration = 0; let networkSideStackRefreshRequest = null; async ${functionSource("refreshNetworkSideStack")}; async ${functionSource("saveWanEnabledState")}; async ${functionSource("autoSaveFirewallRule")}; globalThis.refresh = refreshNetworkSideStack; globalThis.save = saveWanEnabledState; globalThis.saveFirewall = autoSaveFirewallRule;`, ctx);
+  vm.runInContext(`let networkSideStackRefreshGeneration = 0; let networkSideStackRefreshRequest = null; ${functionSource("networkSideStackRefreshFailureMessage")}; async ${functionSource("refreshNetworkSideStack")}; async ${functionSource("saveWanEnabledState")}; async ${functionSource("autoSaveFirewallRule")}; globalThis.refresh = refreshNetworkSideStack; globalThis.save = saveWanEnabledState; globalThis.saveFirewall = autoSaveFirewallRule;`, ctx);
   return {
     ctx,
     calls,
@@ -410,7 +410,7 @@ test("superseded callers receive false when the newest side-panel refresh throws
   olderText.resolve("older response");
 });
 
-test("a committed legacy firewall save is not rolled back when its own refresh throws", async () => {
+test("a committed legacy firewall save reports its own refresh failure without rollback or success status", async () => {
   const fetchFailure = deferred();
   const state = concurrentSideStackContext();
   state.responses.push(fetchFailure.promise);
@@ -426,11 +426,13 @@ test("a committed legacy firewall save is not rolled back when its own refresh t
 
   assert.equal(state.saves.firewall, 1);
   assert.equal(restores, 0);
-  assert.deepEqual(state.statuses, ["Saved"]);
-  assert.deepEqual(state.messages, []);
+  assert.deepEqual(state.statuses, []);
+  assert.equal(state.messages.length, 1);
+  assert.equal(state.messages[0].id, "firewall-rule-error");
+  assert.match(state.messages[0].message, /change was saved.*could not be refreshed.*reload the page/i);
 });
 
-test("a committed legacy firewall save is not rolled back when a superseding refresh throws", async () => {
+test("a committed legacy firewall save reports a superseding refresh failure without rollback or success status", async () => {
   const olderText = deferred();
   let olderTextStarted = false;
   const state = concurrentSideStackContext();
@@ -451,8 +453,98 @@ test("a committed legacy firewall save is not rolled back when a superseding ref
 
   assert.equal(state.saves.firewall, 1);
   assert.equal(restores, 0);
-  assert.deepEqual(state.statuses, ["Saved"]);
-  assert.deepEqual(state.messages, []);
+  assert.deepEqual(state.statuses, []);
+  assert.equal(state.messages.length, 1);
+  assert.equal(state.messages[0].id, "firewall-rule-error");
+  assert.match(state.messages[0].message, /change was saved.*could not be refreshed.*reload the page/i);
+});
+
+test("the shared wizard Enabled callback reports side-panel failure after a committed save", async () => {
+  class HTMLElementStub {
+    constructor() {
+      this.classList = { add() {}, remove() {} };
+    }
+    setAttribute() {}
+  }
+  class HTMLFormElementStub extends HTMLElementStub {
+    constructor() {
+      super();
+      this.elements = { namedItem: (name) => name === "enabled" ? enabledControl : null };
+    }
+  }
+  class HTMLDialogElementStub extends HTMLElementStub {}
+  class HTMLInputElementStub extends HTMLElementStub {}
+  const tableElement = Object.assign(new HTMLElementStub(), {
+    dataset: { csrf: "csrf", fallbackId: "resource-fallback" },
+    addEventListener() {},
+  });
+  const dialog = new HTMLDialogElementStub();
+  const enabledControl = new HTMLInputElementStub();
+  const form = new HTMLFormElementStub();
+  const status = new HTMLElementStub();
+  let clickHandler;
+  const button = {
+    setAttribute() {},
+    addEventListener: (_name, handler) => { clickHandler = handler; },
+  };
+  const rowData = { id: 12, enabled: false };
+  const row = {
+    getData: () => rowData,
+    async update(resource) { Object.assign(rowData, resource); },
+  };
+  let gridOptions;
+  let writes = 0;
+  const statuses = [];
+  const ctx = vm.createContext({
+    HTMLElement: HTMLElementStub,
+    HTMLFormElement: HTMLFormElementStub,
+    HTMLDialogElement: HTMLDialogElementStub,
+    HTMLInputElement: HTMLInputElementStub,
+    HTMLButtonElement: class HTMLButtonElement extends HTMLElementStub {},
+    FormData: class { constructor() {} },
+    document: {
+      getElementById: (id) => id === "resource-table" ? tableElement : dialog,
+      querySelector: (selector) => selector === "#resource-form" ? form : selector === "#resource-error" ? status : null,
+      querySelectorAll: () => [],
+      createElement: () => button,
+    },
+    window: { AtlasoUiPatterns: {
+      createGrid: ({ options }) => { gridOptions = options; return { table: { getRow: () => row } }; },
+      createWizard: () => ({}),
+    } },
+    populateAtlasoWizardForm: () => {},
+    atlasoBooleanFormatter: (cell) => String(cell.getValue()),
+    atlasoGridWizardRequest: async () => { writes += 1; return { item: { id: 12, enabled: true } }; },
+    refreshNetworkSideStack: async () => false,
+    networkSideStackRefreshFailureMessage: () => "The change was saved, but the network status panel could not be refreshed. Reload the page to see the latest state.",
+    showTransientGridStatus: (message) => statuses.push(message),
+  });
+  vm.runInContext(`function initializeAtlasoResourceWizard(config) { ${functionSource("initializeAtlasoResourceWizard").slice("function initializeAtlasoResourceWizard(config) {".length, -1)} }; globalThis.initialize = initializeAtlasoResourceWizard;`, ctx);
+  ctx.initialize({
+    elementId: "resource-table",
+    formSelector: "#resource-form",
+    dialogId: "resource-dialog",
+    actionErrorSelector: "#resource-error",
+    resourceName: "item",
+    editUrl: (id) => `/items/${id}`,
+    rows: [rowData],
+    newRow: { id: "__new__", is_new: true },
+    options: { columns: [{ field: "enabled" }] },
+  });
+
+  const cell = {
+    getValue: () => rowData.enabled,
+    getRow: () => row,
+    setValue: (value) => { rowData.enabled = value; },
+  };
+  gridOptions.columns[0].formatter(cell);
+  clickHandler({ stopPropagation() {} });
+  await waitForCondition(() => status.textContent, "shared wizard did not report the side-panel failure");
+
+  assert.equal(writes, 1);
+  assert.equal(rowData.enabled, true);
+  assert.match(status.textContent, /change was saved.*could not be refreshed.*reload the page/i);
+  assert.deepEqual(statuses, []);
 });
 
 test("a side-stack response cannot report success if its originally attached aside was detached", async () => {
@@ -588,6 +680,7 @@ test("a newer edit queues behind an in-flight grid update and remains the final 
 
 function saveContext({ postError = null, ErrorConstructor = null, sideStackResult = true } = {}) {
   const messages = [];
+  const statuses = [];
   let restores = 0;
   let sideStackRefreshes = 0;
   const globals = {
@@ -595,13 +688,13 @@ function saveContext({ postError = null, ErrorConstructor = null, sideStackResul
     managementUiPath: (path) => path,
     postWanAction: async () => { if (postError) throw postError; },
     refreshNetworkSideStack: async () => { sideStackRefreshes += 1; return sideStackResult; },
-    showTransientGridStatus() {},
+    showTransientGridStatus: (message) => statuses.push(message),
     showWanMessage: (_id, message) => messages.push(message),
   };
   if (ErrorConstructor) globals.Error = ErrorConstructor;
   const ctx = vm.createContext(globals);
   vm.runInContext(
-    `async ${functionSource("saveWanEnabledState")}; globalThis.save = saveWanEnabledState;`,
+    `${functionSource("networkSideStackRefreshFailureMessage")}\nasync ${functionSource("saveWanEnabledState")}; globalThis.save = saveWanEnabledState;`,
     ctx,
   );
   const cell = {
@@ -612,6 +705,7 @@ function saveContext({ postError = null, ErrorConstructor = null, sideStackResul
     ctx,
     cell,
     messages,
+    statuses,
     restores: () => restores,
     sideStackRefreshes: () => sideStackRefreshes,
   };
@@ -656,11 +750,17 @@ test("Routing warns and gives reload guidance when the successful-save side rail
   assert.equal(state.restores(), 0);
   assert.match(state.messages.at(-1), /routing permission and its displayed state were saved.*network status panel could not be refreshed.*reload the page/i);
   assert.equal(state.sideStackRefreshes(), 1);
+  assert.deepEqual(state.statuses, []);
+});
 
-  const otherResource = saveContext({ sideStackResult: false });
-  await otherResource.ctx.save(otherResource.cell, "csrf", "/traffic-publishing/nat-rules", "nat-error", "Save failed");
-  assert.deepEqual(otherResource.messages, []);
-  assert.equal(otherResource.restores(), 0);
+test("a non-Routing save reports side-rail refresh failure without rollback or success status", async () => {
+  const state = saveContext({ sideStackResult: false });
+  await state.ctx.save(state.cell, "csrf", "/traffic-publishing/nat-rules", "nat-error", "Save failed");
+
+  assert.equal(state.restores(), 0);
+  assert.equal(state.sideStackRefreshes(), 1);
+  assert.match(state.messages[0], /change was saved.*network status panel could not be refreshed.*reload the page/i);
+  assert.deepEqual(state.statuses, []);
 });
 
 test("an older save completion cannot restore or refresh over a newer edit", async () => {

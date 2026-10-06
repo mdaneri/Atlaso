@@ -155,7 +155,7 @@ function physicalGridScenario() {
     adminStateFormatter() {}, operStateFormatter() {}, clearCaMessage() {}, showTransientGridStatus() {},
     showNetworkMessage: (_id, message) => { throw new Error(message); },
     managementUiPath: (path) => `/ui/management${path}`,
-    refreshNetworkSideStack: async () => {},
+    refreshNetworkSideStack: async () => true,
     fetch: async (url, request) => { requests.push({ url, request }); return { ok: true }; },
   });
   const names = ["isValidIpv4Address", "isValidIpv6Address", "isValidCidr", "cidrInputEditor", "canConvertPhysicalDhcpToStatic", "postNetworkAction", "autoSavePhysicalInterface", "initializePhysicalInterfacesTable"];
