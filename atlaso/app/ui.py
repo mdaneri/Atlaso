@@ -19023,7 +19023,8 @@ def _submit_appliance_apply(
     ):
         unchecked_dependencies = [
             unit["label"] for unit in units
-            if unit["id"] in MANAGEMENT_HANDOFF_UNIT_IDS and unit["changed"]
+            if (unit["id"] in MANAGEMENT_HANDOFF_UNIT_IDS
+                or (management_domain_migration and unit["id"] == "nat")) and unit["changed"]
             and unit["id"] not in requested_ids
         ]
         if unchecked_dependencies:

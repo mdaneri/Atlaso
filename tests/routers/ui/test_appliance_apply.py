@@ -591,7 +591,7 @@ def test_upgrade_network_migration_with_legacy_routing_baselines(client, monkeyp
             assert "Disable Routing" in response.json()["detail"]
 
 
-@pytest.mark.parametrize("pending_unit", ["firewall", "ca", "appliance_settings", "public_services"])
+@pytest.mark.parametrize("pending_unit", ["firewall", "ca", "appliance_settings", "public_services", "nat"])
 @pytest.mark.parametrize("selected", [False, True])
 def test_upgrade_migration_requires_consent_for_pending_protected_units(client, monkeypatch, pending_unit, selected):
     """An upgrade handoff cannot capture unchecked protected desired edits.
@@ -664,7 +664,9 @@ def test_upgrade_migration_requires_consent_for_pending_protected_units(client, 
         assert ui.load_appliance_apply_baselines(db) == before
         if selected:
             payload = json.loads(db.get(Job, response.json()["job_id"]).result)
-            assert pending_unit in payload["management_handoff_units"]
+            assert pending_unit in payload["selected_units"]
+            if pending_unit != "nat":
+                assert pending_unit in payload["management_handoff_units"]
             captured = next(unit for unit in payload["captured_units"] if unit["unit_id"] == pending_unit)
             assert captured["snapshot_hash"] == "pending-protected-edit"
         else:

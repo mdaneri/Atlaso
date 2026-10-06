@@ -79,8 +79,9 @@ MAC pins. Existing MAC pins must still match. The handoff installs the new domai
 baselines only after success; failure retains the previous snapshots for retry. Genuine Network or Routing Permission
 changes retain the forwarding-off prerequisite. If an unselected Routing & WAN edit is also pending, apply it separately
 before retrying the Network migration; the migration does not silently apply those settings.
-Pending Firewall, Certificate Authority, Appliance Settings, and Public Services edits must also be explicitly selected
-before the protected migration can run. Unchecked protected changes remain pending and prevent task submission.
+Pending Firewall, Certificate Authority, Appliance Settings, Public Services, and Traffic Publishing edits must be
+explicitly selected before the protected migration can run. Unchecked protected changes remain pending and prevent
+task submission.
 Before the transition guard is enabled, Atlaso records the old listener's observed connected and default routes in
 the Network transaction, stages any missing copies in its source-selected table, then installs exact rules for proven
 live sources. It retires only those recorded temporary routes after networkd installs replacements, or during rollback.
