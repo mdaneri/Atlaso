@@ -7963,6 +7963,8 @@ async function refreshRoutesWanRoutingProjection(tableElement, table, isCurrent 
       : null;
     try {
       await table.updateData(projectedRows);
+      if (!isCurrent()) return false;
+      table.getRows("all").forEach((row) => row.reformat?.());
     } catch (error) {
       if (isCurrent() && typeof restoreTargetOptions === "function") restoreTargetOptions();
       throw error;

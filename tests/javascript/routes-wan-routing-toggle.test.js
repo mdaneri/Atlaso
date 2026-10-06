@@ -1179,6 +1179,8 @@ test("an older save completion cannot restore or refresh over a newer edit", asy
 function routingInitializerContext({ rows, generatedRows = [], postWanAction, projection = null, refreshSideStack = async () => true, ErrorConstructor = null, duringUpdate = null }) {
   const messages = [];
   let sideStackRefreshes = 0;
+  let reformattedRows = 0;
+  const formattedNetworkCells = new Map();
   const HTMLElementStub = class HTMLElement {};
   const tableElement = new class extends HTMLElementStub {
     constructor() {
@@ -1193,17 +1195,41 @@ function routingInitializerContext({ rows, generatedRows = [], postWanAction, pr
     }
   }();
   let gridOptions;
+  const formatNetworkCell = (row, field) => {
+    const column = gridOptions?.columns.find((candidate) => candidate.field === field);
+    if (!column) return;
+    const value = column.formatter({
+      getValue: () => row[field],
+      getRow: () => ({ getData: () => row }),
+    });
+    const formatted = formattedNetworkCells.get(String(row.id)) || {};
+    formatted[field] = value;
+    formattedNetworkCells.set(String(row.id), formatted);
+  };
+  const reformatNetworkCells = (row) => {
+    reformattedRows += 1;
+    formatNetworkCell(row, "source_networks");
+    formatNetworkCell(row, "destination_networks");
+  };
   const table = {
     rows: new Map(),
     getRows(kind) {
       assert.equal(kind, "all");
-      return [...this.rows.values()].map((data) => ({ getData: () => data }));
+      return [...this.rows.values()].map((data) => ({
+        getData: () => data,
+        reformat: () => reformatNetworkCells(data),
+      }));
     },
     async updateData(updates) {
       if (duringUpdate) await duringUpdate(updates, this);
       for (const update of updates) {
         const current = this.rows.get(String(update.id));
-        this.rows.set(String(update.id), { ...current, ...update });
+        const next = { ...current, ...update };
+        this.rows.set(String(update.id), next);
+        // Model Tabulator's updateData behavior: unchanged values do not redraw those cells.
+        for (const field of ["source_networks", "destination_networks"]) {
+          if (JSON.stringify(current[field]) !== JSON.stringify(next[field])) formatNetworkCell(next, field);
+        }
       }
     },
   };
@@ -1235,6 +1261,7 @@ function routingInitializerContext({ rows, generatedRows = [], postWanAction, pr
         createGrid: ({ options }) => {
           gridOptions = options;
           table.rows = new Map(options.data.map((row) => [String(row.id), { ...row }]));
+          for (const row of table.rows.values()) reformatNetworkCells(row);
           return { table };
         },
       },
@@ -1267,7 +1294,16 @@ function routingInitializerContext({ rows, generatedRows = [], postWanAction, pr
       }),
     };
   };
-  return { table, tableElement, edit, gridOptions, messages, sideStackRefreshes: () => sideStackRefreshes };
+  return {
+    table,
+    tableElement,
+    edit,
+    gridOptions,
+    messages,
+    formattedNetworkCells,
+    reformatCount: () => reformattedRows,
+    sideStackRefreshes: () => sideStackRefreshes,
+  };
 }
 
 const twoRoutingRows = () => [
@@ -1324,6 +1360,41 @@ test("initializer refreshes Source and Destination target labels before grid row
     { name: "eth2", label: "Refreshed source access" },
     { name: "eth3", label: "Refreshed destination access" },
   ]);
+});
+
+test("an applied target refresh reformats unchanged Source and Destination cells", async () => {
+  const rows = twoRoutingRows().map((row) => ({
+    ...row,
+    source_interface: "eth2",
+    source_networks: [],
+    destination_interface: "eth3",
+    destination_networks: [],
+  }));
+  const state = routingInitializerContext({
+    rows,
+    projection: () => projectionDocument(
+      rows.map((row) => ({ ...row, effective_action: "explicit allow", apply_state: "applied" })),
+      [],
+      [
+        { name: "eth2", label: "Refreshed source access" },
+        { name: "eth3", label: "Refreshed destination access" },
+      ],
+    ),
+    postWanAction: async () => {},
+  });
+  const before = { ...state.formattedNetworkCells.get("9") };
+  const edit = state.edit(9);
+  edit.row.enabled = false;
+  await edit.submit();
+
+  assert.deepEqual(before, {
+    source_networks: "eth2",
+    destination_networks: "eth3",
+  });
+  assert.deepEqual(state.formattedNetworkCells.get("9"), {
+    source_networks: "Refreshed source access",
+    destination_networks: "Refreshed destination access",
+  });
 });
 
 test("a failed grid projection restores the previous target labels", async () => {
@@ -1469,6 +1540,7 @@ test("a stalled obsolete projection does not block a newer Routing POST or repla
   requests[1].deferred.resolve();
   await latestSave;
 
+  const reformatCountAfterLatestProjection = state.reformatCount();
   oldProjection.resolve(projectionDocument(
     serverRows.map((row) => ({ ...row, enabled: false, effective_action: "suspended", apply_state: "pending" })),
     [{ id: "generated:access-a-to-b-ipv4", generated: true, effective_action: "automatic deny", apply_state: "pending" }],
@@ -1490,6 +1562,8 @@ test("a stalled obsolete projection does not block a newer Routing POST or repla
     getValue: () => row.source_networks,
     getRow: () => ({ getData: () => row }),
   }), /Latest access target/);
+  assert.equal(state.formattedNetworkCells.get("9").source_networks, "Latest access target");
+  assert.equal(state.reformatCount(), reformatCountAfterLatestProjection);
 
   const failedEdit = state.edit(9);
   failedEdit.row.enabled = false;
