@@ -693,6 +693,121 @@ test("refresh warning cleanup handles the actual dismissible error toast", () =>
   assert.equal(toast.classes.has("error"), true);
 });
 
+test("the shared wizard skips optional side-panel refreshes on rail-less pages", async () => {
+  class HTMLElementStub {
+    constructor() { this.classList = { add() {}, remove() {} }; }
+    setAttribute() {}
+  }
+  class HTMLFormElementStub extends HTMLElementStub {
+    constructor() {
+      super();
+      this.elements = { namedItem: (name) => name === "enabled" ? enabledControl : null };
+    }
+  }
+  class HTMLDialogElementStub extends HTMLElementStub {}
+  class HTMLInputElementStub extends HTMLElementStub {}
+  class FormDataStub {
+    constructor() { this.values = new Map(); }
+    set(name, value) { this.values.set(name, value); }
+    get(name) { return this.values.get(name) ?? null; }
+  }
+  const enabledControl = new HTMLInputElementStub();
+  const tableElement = Object.assign(new HTMLElementStub(), {
+    dataset: { csrf: "csrf", fallbackId: "resource-fallback" },
+    addEventListener() {},
+  });
+  const dialog = new HTMLDialogElementStub();
+  const form = new HTMLFormElementStub();
+  const status = new HTMLElementStub();
+  const rowData = { id: 12, enabled: false };
+  let rowDeleted = false;
+  const row = {
+    getData: () => rowData,
+    async update(resource) { Object.assign(rowData, resource); },
+    async delete() { rowDeleted = true; },
+  };
+  const addedRows = [];
+  const statuses = [];
+  let refreshes = 0;
+  let savedCallbacks = 0;
+  let deletedCallbacks = 0;
+  let clickHandler;
+  let gridOptions;
+  let wizardOptions;
+  const button = { setAttribute() {}, addEventListener: (_event, handler) => { clickHandler = handler; } };
+  const table = {
+    getRow: () => row,
+    async addRow(resource) { addedRows.push(resource); return row; },
+  };
+  const ctx = vm.createContext({
+    HTMLElement: HTMLElementStub,
+    HTMLFormElement: HTMLFormElementStub,
+    HTMLDialogElement: HTMLDialogElementStub,
+    HTMLInputElement: HTMLInputElementStub,
+    HTMLButtonElement: class HTMLButtonElement extends HTMLElementStub {},
+    FormData: FormDataStub,
+    document: {
+      getElementById: (id) => id === "resource-table" ? tableElement : dialog,
+      querySelector: (selector) => selector === "#resource-form" ? form : selector === "#resource-error" ? status : null,
+      querySelectorAll: () => [],
+      createElement: () => button,
+    },
+    window: { AtlasoUiPatterns: {
+      createGrid: ({ options, rowActions }) => { gridOptions = options; table.rowActions = rowActions; return { table }; },
+      createWizard: (options) => { wizardOptions = options; return {}; },
+    } },
+    populateAtlasoWizardForm: () => {},
+    atlasoBooleanFormatter: (cell) => String(cell.getValue()),
+    atlasoGridWizardRequest: async (_url, body, options = {}) => {
+      if (options.expectJson === false) return {};
+      return body.get("record_id")
+        ? { item: { id: 12, enabled: true } }
+        : { item: { id: 13, enabled: true } };
+    },
+    requestConfirmation: async () => true,
+    refreshNetworkSideStack: async () => { refreshes += 1; return false; },
+    networkSideStackRefreshFailureMessage: () => "The change was saved, but the network status panel could not be refreshed. Reload the page to see the latest state.",
+    rememberNetworkSideStackRefreshWarning() {},
+    showTransientGridStatus: (message) => statuses.push(message),
+  });
+  vm.runInContext(`function initializeAtlasoResourceWizard(config) { ${functionSource("initializeAtlasoResourceWizard").slice("function initializeAtlasoResourceWizard(config) {".length, -1)} }; globalThis.initialize = initializeAtlasoResourceWizard;`, ctx);
+  ctx.initialize({
+    elementId: "resource-table",
+    formSelector: "#resource-form",
+    dialogId: "resource-dialog",
+    actionErrorSelector: "#resource-error",
+    resourceName: "item",
+    editUrl: (id) => `/items/${id}`,
+    createUrl: "/items",
+    deleteResource: true,
+    deleteUrl: (id) => `/items/${id}`,
+    deleteConfirmation: () => ({ title: "Delete item?" }),
+    onSaved: () => { savedCallbacks += 1; },
+    onDeleted: () => { deletedCallbacks += 1; },
+    rows: [rowData],
+    newRow: { id: "__new__", is_new: true },
+    options: { columns: [{ field: "enabled" }] },
+  });
+
+  const cell = {
+    getValue: () => rowData.enabled,
+    getRow: () => row,
+    setValue: (value) => { rowData.enabled = value; },
+  };
+  gridOptions.columns[0].formatter(cell);
+  clickHandler({ stopPropagation() {} });
+  await waitForCondition(() => statuses.length === 1, "rail-less inline save did not complete");
+  assert.equal((await wizardOptions.onSubmit()).valid, true);
+  await table.rowActions.find((action) => action.label === "Delete").action({}, row);
+
+  assert.equal(refreshes, 0);
+  assert.deepEqual(statuses, ["Enabled", "Created", "Deleted"]);
+  assert.equal(savedCallbacks, 2);
+  assert.equal(deletedCallbacks, 1);
+  assert.equal(addedRows.length, 1);
+  assert.equal(rowDeleted, true);
+});
+
 test("the shared wizard Enabled callback reports side-panel failure after a committed save", async () => {
   class HTMLElementStub {
     constructor() {
@@ -712,6 +827,7 @@ test("the shared wizard Enabled callback reports side-panel failure after a comm
     dataset: { csrf: "csrf", fallbackId: "resource-fallback" },
     addEventListener() {},
   });
+  let attachedSideStack = new HTMLElementStub();
   const dialog = new HTMLDialogElementStub();
   const enabledControl = new HTMLInputElementStub();
   const form = new HTMLFormElementStub();
@@ -728,6 +844,7 @@ test("the shared wizard Enabled callback reports side-panel failure after a comm
   };
   let gridOptions;
   let writes = 0;
+  let refreshes = 0;
   const statuses = [];
   const ctx = vm.createContext({
     HTMLElement: HTMLElementStub,
@@ -738,7 +855,7 @@ test("the shared wizard Enabled callback reports side-panel failure after a comm
     FormData: class { constructor() {} },
     document: {
       getElementById: (id) => id === "resource-table" ? tableElement : dialog,
-      querySelector: (selector) => selector === "#resource-form" ? form : selector === "#resource-error" ? status : null,
+      querySelector: (selector) => selector === "#resource-form" ? form : selector === "#resource-error" ? status : selector === "aside.side-stack" ? attachedSideStack : null,
       querySelectorAll: () => [],
       createElement: () => button,
     },
@@ -749,7 +866,7 @@ test("the shared wizard Enabled callback reports side-panel failure after a comm
     populateAtlasoWizardForm: () => {},
     atlasoBooleanFormatter: (cell) => String(cell.getValue()),
     atlasoGridWizardRequest: async () => { writes += 1; return { item: { id: 12, enabled: true } }; },
-    refreshNetworkSideStack: async () => false,
+    refreshNetworkSideStack: async () => { refreshes += 1; return attachedSideStack !== null; },
     networkSideStackRefreshFailureMessage: () => "The change was saved, but the network status panel could not be refreshed. Reload the page to see the latest state.",
     rememberNetworkSideStackRefreshWarning() {},
     showTransientGridStatus: (message) => statuses.push(message),
@@ -766,6 +883,7 @@ test("the shared wizard Enabled callback reports side-panel failure after a comm
     newRow: { id: "__new__", is_new: true },
     options: { columns: [{ field: "enabled" }] },
   });
+  attachedSideStack = null;
 
   const cell = {
     getValue: () => rowData.enabled,
@@ -777,6 +895,7 @@ test("the shared wizard Enabled callback reports side-panel failure after a comm
   await waitForCondition(() => status.textContent, "shared wizard did not report the side-panel failure");
 
   assert.equal(writes, 1);
+  assert.equal(refreshes, 1);
   assert.equal(rowData.enabled, true);
   assert.match(status.textContent, /change was saved.*could not be refreshed.*reload the page/i);
   assert.deepEqual(statuses, []);

@@ -1387,6 +1387,9 @@ function initializeAtlasoResourceWizard(config) {
   if (!(element instanceof HTMLElement) || !(form instanceof HTMLFormElement) || !(dialog instanceof HTMLDialogElement)) {
     return null;
   }
+  const refreshResourceSideStack = document.querySelector("aside.side-stack") instanceof HTMLElement
+    ? refreshNetworkSideStack
+    : async () => true;
   const csrf = element.dataset.csrf || form.elements.namedItem("csrf")?.value || "";
   let table = null;
   let wizard = null;
@@ -1452,7 +1455,7 @@ function initializeAtlasoResourceWizard(config) {
       if (!resource) throw new Error("The server did not return the saved resource.");
       await cell.getRow().update(resource);
       await Promise.resolve(config.onSaved?.({ payload, resource, form, table }));
-      const sideStackRefreshed = await refreshNetworkSideStack();
+      const sideStackRefreshed = await refreshResourceSideStack();
       if (sideStackRefreshed === false) {
         reportSideStackRefreshWarning(networkSideStackRefreshFailureMessage());
         return;
@@ -1478,7 +1481,7 @@ function initializeAtlasoResourceWizard(config) {
     await atlasoGridWizardRequest(config.deleteUrl(data.id), body, { expectJson: false });
     await row.delete();
     await Promise.resolve(config.onDeleted?.({ data, table }));
-    const sideStackRefreshed = await refreshNetworkSideStack();
+    const sideStackRefreshed = await refreshResourceSideStack();
     if (sideStackRefreshed === false) {
       reportSideStackRefreshWarning(networkSideStackRefreshFailureMessage());
       return;
@@ -1600,7 +1603,7 @@ function initializeAtlasoResourceWizard(config) {
         await table.addRow(resource, true, config.newRow.id);
       }
       await Promise.resolve(config.onSaved?.({ payload, resource, form, table }));
-      const sideStackRefreshed = await refreshNetworkSideStack();
+      const sideStackRefreshed = await refreshResourceSideStack();
       if (sideStackRefreshed === false) {
         reportSideStackRefreshWarning(networkSideStackRefreshFailureMessage());
         return { valid: true };
