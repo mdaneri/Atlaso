@@ -806,11 +806,18 @@ def build_router(dependencies: RoutesWanUiDependencies) -> RoutesWanUiRouter:
         )
         db.add(rule)
         try:
-            db.commit()
+            db.flush()
         except IntegrityError:
             db.rollback()
-            return Response(f"Routing rule {rule.name} already exists.", status_code=409, media_type="text/plain")
-        record_audit(db, actor=identity.username, action="create_routing_rule", resource_type="routing_rule", resource_id=str(rule.id))
+            return Response(f"Routing rule {name_value} already exists.", status_code=409, media_type="text/plain")
+        except Exception:
+            db.rollback()
+            raise
+        try:
+            record_audit(db, actor=identity.username, action="create_routing_rule", resource_type="routing_rule", resource_id=str(rule.id))
+        except Exception:
+            db.rollback()
+            raise
         return RedirectResponse("/routes-wan", status_code=303)
 
 
@@ -884,11 +891,18 @@ def build_router(dependencies: RoutesWanUiDependencies) -> RoutesWanUiRouter:
         rule.enabled = enabled == "on"
         db.add(rule)
         try:
-            db.commit()
+            db.flush()
         except IntegrityError:
             db.rollback()
-            return Response(f"Routing rule {rule.name} already exists.", status_code=409, media_type="text/plain")
-        record_audit(db, actor=identity.username, action="update_routing_rule", resource_type="routing_rule", resource_id=str(rule.id))
+            return Response(f"Routing rule {name_value} already exists.", status_code=409, media_type="text/plain")
+        except Exception:
+            db.rollback()
+            raise
+        try:
+            record_audit(db, actor=identity.username, action="update_routing_rule", resource_type="routing_rule", resource_id=str(rule.id))
+        except Exception:
+            db.rollback()
+            raise
         return RedirectResponse("/routes-wan", status_code=303)
 
 
@@ -922,9 +936,12 @@ def build_router(dependencies: RoutesWanUiDependencies) -> RoutesWanUiRouter:
         rule = db.get(RoutingRule, rule_id)
         if not rule:
             raise HTTPException(status_code=404, detail="Routing rule not found")
-        db.delete(rule)
-        db.commit()
-        record_audit(db, actor=identity.username, action="delete_routing_rule", resource_type="routing_rule", resource_id=str(rule_id))
+        try:
+            db.delete(rule)
+            record_audit(db, actor=identity.username, action="delete_routing_rule", resource_type="routing_rule", resource_id=str(rule_id))
+        except Exception:
+            db.rollback()
+            raise
         return RedirectResponse("/routes-wan", status_code=303)
 
 
