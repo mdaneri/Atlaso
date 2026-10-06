@@ -18,7 +18,7 @@
         <link rel="prev" href="../virtualization-artifacts/">
       
       
-        <link rel="next" href="../../contribute/">
+        <link rel="next" href="../certificate-address-control/">
       
       
         
@@ -380,6 +380,8 @@
       
         
           
+        
+      
         
       
         
@@ -2195,6 +2197,8 @@
       
         
       
+        
+      
     
     
     
@@ -2818,6 +2822,40 @@
   
 </nav>
       
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../certificate-address-control/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Certificate address control
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
     </li>
   
 
@@ -4240,6 +4278,8 @@
       
         
       
+        
+      
     
     
     
@@ -4616,7 +4656,9 @@ discovers the runtime address through VMware Tools.</p>
 <h2 id="isolated-routing-overlap-fixture-contracts">Isolated routing-overlap fixture contracts<a class="headerlink" href="#isolated-routing-overlap-fixture-contracts" title="Permanent link">&para;</a></h2>
 <p>Certificate handoff preparation requires independent proof that the candidate management address belongs exclusively
 to the appliance; the <a href="#single-command-run">certificate peer procedure</a> describes the current producer
-limitation. A MAC-derived address and task-owned VM receipts alone do not provide this proof.</p>
+limitation. A MAC-derived address and task-owned VM receipts alone do not provide this proof. The
+<a href="../certificate-address-control/">certificate address-control procedure</a> defines a maintainer-collected acceptance path
+for a lab; its evidence does not satisfy native receipt admission or enable the credentialed wrappers.</p>
 <p>The opt-in <code>-RoutingOverlapOnly</code> mode first applies the MAC-derived management IPv6 address as static state,
 then requires native assignment and a CA-validated served certificate containing that address before switching
 to SLAAC. The preparation address is not counted as SLAAC; native acquisition must later prove the same address
@@ -5597,13 +5639,13 @@ Exact allocation identity, owner inactivity, provider state, and address-use che
         
         
           
-          <a href="../../contribute/" class="md-footer__link md-footer__link--next" aria-label="Next: Overview">
+          <a href="../certificate-address-control/" class="md-footer__link md-footer__link--next" aria-label="Next: Certificate address control">
             <div class="md-footer__title">
               <span class="md-footer__direction">
                 Next
               </span>
               <div class="md-ellipsis">
-                Overview
+                Certificate address control
               </div>
             </div>
             <div class="md-footer__button md-icon">
