@@ -28,6 +28,7 @@ from scripts.completed_task_files import (
 
 TOOL = "PytestGitFixtures"
 MAX_MANIFEST = 64 * 1024 * 1024
+MAX_REPOSITORIES = 1000
 
 
 class FixtureFiles(WindowsFiles):
@@ -199,7 +200,7 @@ class PytestGitFixtures:
     def repositories(self) -> list[dict[str, Any]]:
         """Read the contiguous creation journal; gaps or interrupted publication block release."""
         records = sorted(self.receipt.parent.glob(self.receipt.name + ".repo-*"))
-        require(len(records) <= 1000, "Fixture repository inventory exceeds its bounded limit.")
+        require(len(records) <= MAX_REPOSITORIES, "Fixture repository inventory exceeds its bounded limit.")
         result = []
         for index, path in enumerate(records):
             suffix = f".repo-{index:04d}"
@@ -219,6 +220,7 @@ class PytestGitFixtures:
             repository = ordinary(repository)
             require(beneath(repository, self.root), "Repository creation lies outside the fixture root.")
             records = self.repositories()
+            require(len(records) < MAX_REPOSITORIES, "Fixture repository creation journal is at capacity.")
             require(str(repository) not in {item["path"] for item in records}, "Duplicate fixture repository creation.")
             identity = self.files.snapshot(repository)["."]["identity"]
             self.record(f".repo-{len(records):04d}", {"binding": self.binding, "path": str(repository), "identity": identity})

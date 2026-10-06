@@ -12,7 +12,12 @@ from typing import Iterator
 import pytest
 
 from scripts.completed_task_cleanup import Refusal
-from scripts.pytest_git_fixtures import TOOL, FixtureGit, PytestGitFixtures
+from scripts.pytest_git_fixtures import (
+    MAX_REPOSITORIES,
+    TOOL,
+    FixtureGit,
+    PytestGitFixtures,
+)
 
 
 def run_git(arguments: list[str]) -> subprocess.CompletedProcess[str]:
@@ -444,6 +449,29 @@ def test_seal_resumes_after_inventory_publication(
     assert sealed.read_bytes() == original_sealed
     assert not sealed.with_name(sealed.name + ".pending").exists()
     assert git_fixture.owner.inspect()["evidence_preserved"] is True
+
+
+def test_full_repository_journal_refuses_before_publication(
+    git_fixture: GitFixtureOwner,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Preserve a usable creation journal when capacity prevents another registration.
+
+    Args:
+        git_fixture: Creation-bound artifact with one real registered repository.
+        monkeypatch: Scoped capacity readback restored before seal and release.
+    """
+    git_fixture.ordinary_repo()
+    records = git_fixture.owner.repositories()
+    before = {path.name: path.read_bytes() for path in git_fixture.receipts.iterdir()}
+    with monkeypatch.context() as context:
+        context.setattr(git_fixture.owner, "repositories", lambda: records * MAX_REPOSITORIES)
+        with pytest.raises(Refusal, match="journal is at capacity"):
+            git_fixture.owner.register(git_fixture.root / "overflow")
+    assert {path.name: path.read_bytes() for path in git_fixture.receipts.iterdir()} == before
+    assert git_fixture.owner.repositories() == records
+    git_fixture.seal()
+    assert git_fixture.release() == {"success": True}
 
 
 def test_pending_seal_receipt_blocks_inspect_and_can_be_reconciled(git_fixture: GitFixtureOwner) -> None:
