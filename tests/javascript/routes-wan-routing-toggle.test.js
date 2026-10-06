@@ -258,7 +258,7 @@ test("a failed-save projection refresh keeps the save error and adds reload guid
     afterFailure: async () => { throw new Error("projection response unavailable"); },
   });
   assert.equal(state.restores(), 1);
-  assert.match(state.messages.at(-1), /permission was rejected.*current routing permission state could not be refreshed.*reload the page/i);
+  assert.match(state.messages.at(-1), /permission was rejected.*current routing state could not be fully refreshed.*reload the page/i);
   assert.equal(state.sideStackRefreshes(), 0);
 });
 
@@ -318,8 +318,9 @@ test("an older save completion cannot restore or refresh over a newer edit", asy
   assert.deepEqual(calls, []);
 });
 
-function routingInitializerContext({ rows, generatedRows = [], postWanAction, projection = null }) {
+function routingInitializerContext({ rows, generatedRows = [], postWanAction, projection = null, refreshSideStack = async () => {}, ErrorConstructor = null }) {
   const messages = [];
+  let sideStackRefreshes = 0;
   const HTMLElementStub = class HTMLElement {};
   const tableElement = new class extends HTMLElementStub {
     constructor() {
@@ -347,7 +348,7 @@ function routingInitializerContext({ rows, generatedRows = [], postWanAction, pr
       }
     },
   };
-  const ctx = vm.createContext({
+  const globals = {
     DOMParser: class { parseFromString(value) { return value; } },
     HTMLElement: HTMLElementStub,
     Tabulator: function Tabulator() {},
@@ -362,7 +363,10 @@ function routingInitializerContext({ rows, generatedRows = [], postWanAction, pr
       ) }),
     managementUiPath: (path) => path,
     postWanAction,
-    refreshNetworkSideStack: async () => {},
+    refreshNetworkSideStack: async () => {
+      sideStackRefreshes += 1;
+      return refreshSideStack();
+    },
     showTransientGridStatus() {},
     showWanMessage: (id, message) => messages.push({ id, message }),
     window: {
@@ -375,7 +379,9 @@ function routingInitializerContext({ rows, generatedRows = [], postWanAction, pr
         },
       },
     },
-  });
+  };
+  if (ErrorConstructor) globals.Error = ErrorConstructor;
+  const ctx = vm.createContext(globals);
   vm.runInContext(
     `async ${functionSource("saveWanEnabledState")}\nasync ${functionSource("refreshRoutesWanRoutingProjection")}\n${functionSource("initializeRoutesWanRoutingTable")}\nglobalThis.initialize = initializeRoutesWanRoutingTable;`,
     ctx,
@@ -401,7 +407,7 @@ function routingInitializerContext({ rows, generatedRows = [], postWanAction, pr
       }),
     };
   };
-  return { table, tableElement, edit, gridOptions, messages };
+  return { table, tableElement, edit, gridOptions, messages, sideStackRefreshes: () => sideStackRefreshes };
 }
 
 const twoRoutingRows = () => [
@@ -466,6 +472,7 @@ test("a failed earlier row save restores that row while a newer different row sa
   requests[0].deferred.reject(new Error("row 9 rejected"));
   await firstEdit;
   assert.equal(first.row.enabled, true);
+  assert.equal(state.sideStackRefreshes(), 0);
   while (requests.length < 2) await new Promise((resolve) => setImmediate(resolve));
   requests[1].deferred.resolve();
   await secondEdit;
@@ -510,6 +517,7 @@ test("a latest failed edit refreshes the authoritative projection after an earli
     await t.test(scenario.name, async () => {
       const requests = [];
       const serverRows = twoRoutingRows().map((row) => ({ ...row, source_interface: "eth2", source_networks: [] }));
+      let railSnapshot = null;
       const generatedRow = {
         id: "generated:access-a-to-b-ipv4",
         generated: true,
@@ -536,6 +544,13 @@ test("a latest failed edit refreshes the authoritative projection after an earli
         rows: serverRows,
         generatedRows: [generatedRow],
         projection,
+        refreshSideStack: async () => {
+          const anyDisabled = serverRows.some((row) => !row.enabled);
+          railSnapshot = {
+            validation: anyDisabled ? "review required" : "valid",
+            preview: serverRows.map((row) => `${row.id}:${row.enabled ? "enabled" : "disabled"}`),
+          };
+        },
         postWanAction: (_url, data) => {
           const request = { data: { ...data }, deferred: deferred() };
           requests.push(request);
@@ -560,6 +575,11 @@ test("a latest failed edit refreshes the authoritative projection after an earli
 
       assert.equal(serverRows.find((row) => row.id === 9).enabled, false);
       assert.equal(serverRows.find((row) => row.id === 10).enabled, scenario.expectedSecond);
+      assert.deepEqual(railSnapshot, {
+        validation: "review required",
+        preview: serverRows.map((row) => `${row.id}:${row.enabled ? "enabled" : "disabled"}`),
+      });
+      assert.equal(state.sideStackRefreshes(), 1);
       for (const row of serverRows) {
         const displayed = state.table.rows.get(String(row.id));
         assert.equal(displayed.enabled, row.enabled);
@@ -583,9 +603,28 @@ test("a latest failed edit refreshes the authoritative projection after an earli
   }
 });
 
+test("a failed save keeps its error and reload guidance when the recovery rail refresh fails", async () => {
+  const request = deferred();
+  const state = routingInitializerContext({
+    rows: twoRoutingRows(),
+    ErrorConstructor: Error,
+    postWanAction: () => request.promise,
+    refreshSideStack: async () => { throw new Error("network status unavailable"); },
+  });
+  const edit = state.edit(9);
+  edit.row.enabled = false;
+  const pendingEdit = edit.submit();
+  request.reject(new Error("permission was rejected"));
+  await pendingEdit;
+
+  assert.equal(edit.row.enabled, true);
+  assert.equal(state.sideStackRefreshes(), 1);
+  assert.match(state.messages.at(-1).message, /permission was rejected.*current routing state could not be fully refreshed.*reload the page/i);
+});
+
 test("routing Enabled uses the authoritative projection refresh while other resource toggles remain shared", () => {
   const routing = functionSource("initializeRoutesWanRoutingTable");
-  assert.ok(routing.includes("afterFailure: refreshProjection"));
+  assert.ok(routing.includes("afterFailure: refreshAfterFailure"));
   assert.ok(routing.includes("const generation = ++routingEditGeneration"));
   assert.ok(routing.includes("if (refreshedTargets && isCurrent())"));
   assert.ok(routing.includes("refreshRoutesWanRoutingProjection("));

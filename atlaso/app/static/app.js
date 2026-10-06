@@ -7806,7 +7806,7 @@ async function saveWanEnabledState(cell, csrf, path, errorId, fallbackMessage, o
         await options.afterFailure();
       } catch (_refreshError) {
         if (isCurrent()) {
-          showWanMessage(errorId, `${saveError} The current routing permission state could not be refreshed. Reload the page to see the latest state.`);
+          showWanMessage(errorId, `${saveError} The current routing state could not be fully refreshed. Reload the page to see the latest state.`);
         }
       }
     }
@@ -8462,6 +8462,10 @@ function initializeRoutesWanRoutingTable() {
                 targetValues = Object.fromEntries(refreshedTargets.map((target) => [target.name, target.label]));
               }
             };
+            const refreshAfterFailure = async () => {
+              await refreshProjection();
+              if (isCurrent()) await refreshNetworkSideStack();
+            };
             return enqueueRoutingSave(() => saveWanEnabledState(
               cell,
               csrf,
@@ -8482,7 +8486,7 @@ function initializeRoutesWanRoutingTable() {
                   }
                 },
                 afterSave: refreshProjection,
-                afterFailure: refreshProjection,
+                afterFailure: refreshAfterFailure,
                 refreshFailureMessage: "The routing permission was saved, but its displayed effective state could not be refreshed. Reload the page to see the latest state.",
               },
             ));
