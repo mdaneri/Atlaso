@@ -209,6 +209,29 @@ A TLS mismatch, HTTP denial, or failed ping alone is not evidence that the liste
 must agree with native address/listener absence; if peer routing, transport, or the independent fence is uncertain,
 preserve the lab and report acceptance incomplete rather than treating a timeout as proof.
 
+## Hand off a successful lab for cleanup
+
+After either case completes, preserve the acceptance record, original ownership receipts and their independently
+recorded digests outside every removable VM, lab, and result root. Hand off a bounded inventory of the appliance VM,
+peer VM, private LAN segment, DHCP/address reservations, independent admission controls, lifecycle result and other
+artifact roots, helper processes, and recovery state. Bind each exact path or provider identity to its original
+ownership manifest, task, repository, source, and PR; record the verified restoration result. Explicitly record any
+required retention with its resource, owner, reason, and retry condition, including a downstream diagnosis need.
+
+Once evidence is preserved, the PR is terminal, and no review, diagnosis, retry, deployment, release, or maintainer
+activity needs the lab, follow [completed task resource cleanup](vmware-workstation-lifecycle-testing.md#completed-task-resource-cleanup)
+and its [supported removal entry points](vmware-workstation-lifecycle-testing.md#supported-removal-entry-points).
+Use the exact owned lifecycle VM cleanup path; release each owned LAN segment through its
+[LAN-segment procedure](vmware-workstation-lifecycle-testing.md#release-task-owned-lan-segments). VM removal alone
+neither releases reservations and controls nor removes the result root. Release each associated resource through its
+supported owning tool, then release the exact quiescent artifact root only after preserving evidence and verifying
+its ownership and containment. Record independent absence/readback evidence for every released resource.
+
+Retained, shared, differently owned, unsupported, or ambiguously owned resources must be preserved and reported with
+the blocking condition. Do not substitute broad provider cleanup or recursive deletion, and do not mark the lab
+cleanup complete while retention or release gates remain unresolved. Branch/worktree completion separately follows
+the [completed-task cleanup policy](../contribute/completed-task-cleanup.md).
+
 ## Failure handling and limits
 
 If any admission fact is missing, stale, or ambiguous, make no appliance change and preserve the VM, peer, LAN,
