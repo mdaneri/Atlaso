@@ -277,8 +277,16 @@ class WindowsFiles:
                     raise FileRefusal("An output entry was replaced or changed; preserve remaining entries.")
                 # The kernel rejects nonempty directories. A concurrently added child therefore
                 # blocks completion instead of being swept into a recursive path-based deletion.
-                disposition = ctypes.c_ubyte(1)
-                if not self.kernel.SetFileInformationByHandle(handle, 4, ctypes.byref(disposition), 1):
-                    raise FileRefusal("Exact output deletion failed; preserve remaining entries and retry after inspection.")
+                self.dispose(handle)
             if path.exists():
                 raise FileRefusal("Output absence verification failed.")
+
+    def dispose(self, handle: int) -> None:
+        """Mark one already verified handle for ordinary deletion without changing file attributes.
+
+        Args:
+            handle: Pinned exact-object handle whose identity and stamp were checked by remove.
+        """
+        disposition = ctypes.c_ubyte(1)
+        if not self.kernel.SetFileInformationByHandle(handle, 4, ctypes.byref(disposition), 1):
+            raise FileRefusal("Exact output deletion failed; preserve remaining entries and retry after inspection.")
