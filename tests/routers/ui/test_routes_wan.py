@@ -235,6 +235,7 @@ def test_routing_permission_mutations_roll_back_with_persistence_failures(client
 
     Args:
         client: Isolated browser client.
+        monkeypatch: Fixture replacing the database flush for failure injection.
         operation: Permission mutation exercised by this case.
         failure_point: Whether the rule flush or real database audit insert fails.
     """
@@ -293,6 +294,13 @@ def test_routing_permission_mutations_roll_back_with_persistence_failures(client
         original_flush = Session.flush
 
         def fail_routing_rule_flush(session, *args, **kwargs):
+            """Reject permission writes while allowing unrelated session flushes.
+
+            Args:
+                session: Database session whose pending objects are inspected.
+                *args: Positional arguments forwarded to the original flush.
+                **kwargs: Keyword arguments forwarded to the original flush.
+            """
             if any(isinstance(row, RoutingRule) for row in session.new | session.dirty | session.deleted):
                 raise RuntimeError("injected routing rule flush failure")
             return original_flush(session, *args, **kwargs)
