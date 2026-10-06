@@ -10756,8 +10756,11 @@ def wan_migration_intent(preview: str) -> dict[str, list[str]]:
             intent[section].append(line)
     # Network can already have a newer successful snapshot than WAN. Missing
     # fingerprints cannot prove that the applied forwarding targets kept up.
+    # Only NAT-owned eligibility and physical identity are excluded; every
+    # other parsed field must match, including fields added by future renderers.
     intent["targets"] = sorted(
-        json.dumps([row.get(field, "") for field in ("name", "kind", "role", "ip_cidr", "ipv6_cidr")])
+        json.dumps({key: value for key, value in row.items()
+                    if key not in {"nat_allowed", "nat_physical_interface", "nat_physical_mac"}}, sort_keys=True)
         for row in wan_config_target_entries(preview)
     )
     return intent

@@ -474,7 +474,9 @@ def test_legacy_flagged_default_network_revision_couples_wan_handoff(client, mon
 
 
 @pytest.mark.parametrize("fingerprint", [None, "old-fingerprint"])
-@pytest.mark.parametrize("change", ["none", "address", "permission", "route", "pin", "wan_topology"])
+@pytest.mark.parametrize("change", ["none", "address", "permission", "route", "pin", "wan_topology",
+                                    "wan_management_ui", "wan_gateway", "wan_ipv6_gateway",
+                                    "wan_ipv4_method", "wan_routing_domain", "wan_route_allowed"])
 @pytest.mark.parametrize("apply_fails", [False, True])
 def test_upgrade_network_migration_with_legacy_routing_baselines(client, monkeypatch, fingerprint, change, apply_fails):
     """Admit only proven unchanged upgrade intent and retain failed snapshots.
@@ -521,6 +523,21 @@ def test_upgrade_network_migration_with_legacy_routing_baselines(client, monkeyp
             baselines["wan"]["config_preview"] = baselines["wan"]["config_preview"].replace(
                 "ip_cidr=192.168.50.10/24", "ip_cidr=192.168.50.20/24",
             )
+        stale_target_fields = {
+            "wan_management_ui": ("management_ui=true", "management_ui=false"),
+            "wan_gateway": ("gateway=", "gateway=192.168.50.254"),
+            "wan_ipv6_gateway": ("ipv6_gateway=", "ipv6_gateway=2001:db8::1"),
+            "wan_ipv4_method": ("ipv4_method=static", "ipv4_method=dhcp"),
+            "wan_routing_domain": ("routing_domain=lab", "routing_domain=management"),
+            "wan_route_allowed": ("route_allowed=true", "route_allowed=false"),
+        }
+        if change in stale_target_fields:
+            old, stale = stale_target_fields[change]
+            preview = baselines["wan"]["config_preview"]
+            target_start = preview.index("target=eth2\n")
+            field_start = preview.index("  " + old, target_start)
+            field_end = preview.index("\n", field_start)
+            baselines["wan"]["config_preview"] = preview[:field_start] + "  " + stale + preview[field_end:]
         if change == "pin":
             baselines["network"]["config_preview"] = baselines["network"]["config_preview"].replace(
                 "interface=eth2\n", "interface=eth2\n  mac=02:00:00:00:00:99\n",
@@ -568,7 +585,7 @@ def test_upgrade_network_migration_with_legacy_routing_baselines(client, monkeyp
             assert payload["management_handoff"] is True
             assert {"network", "wan", "firewall"} <= set(payload["management_handoff_units"])
             assert job.status == ("failed" if apply_fails else "succeeded"), job.error
-        elif change in {"route", "wan_topology"}:
+        elif change == "route" or change.startswith("wan_"):
             assert "pending settings beyond" in response.json()["detail"]
         else:
             assert "Disable Routing" in response.json()["detail"]
