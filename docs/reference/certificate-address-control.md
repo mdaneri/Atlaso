@@ -48,6 +48,13 @@ Before any appliance configuration change, establish all of the following:
   original task identity. Bind the exact appliance VMX and VM root identity to its immutable original creation-intent
   and ownership receipts. Record the original receipt paths and SHA-256 digests in durable evidence outside any
   disposable VM directory.
+- Before any appliance SSH readback or mutation, capture its public SSH host-key fingerprint through the authorized
+  console of the exact admitted VM, independently matched to its original VMX, root identity, and ownership receipt.
+  Record that fingerprint, its observation source/time, and receipt binding in the durable evidence. Require strict
+  matching to this recorded pin for every appliance SSH connection, including connections after an address change.
+  Do not establish trust from the candidate endpoint alone or automatically accept a new or changed host key.
+  If this pin cannot be established, use only that independently verified VM console for guest observations; record
+  the console identity and transport choice before mutation. If neither path is verified, refuse the test.
 - The appliance adapter and candidate interface are the intended ones. Record the VMX adapter-to-LAN mapping, the
   observed appliance MAC and interface, the candidate IPv4 address and prefix, gateway, and the prior static
   management configuration.
@@ -78,7 +85,8 @@ particular installation provides them.
 
 Keep the independent admission control active from the initial observation through both the test and restoration.
 Recheck the attachment inventory, reservation, and claimant state before each Apply and after each address transition.
-Stop before another change if any check is unavailable or differs. Any membership, reservation, peer trust, VM,
+Stop before another change if any check is unavailable or differs. Any membership, reservation, appliance or peer
+trust, VM,
 source,
 route, or candidate-address drift invalidates the evidence. If the control boundary is interrupted, the VM reboots,
 the relevant task/source binding changes, or a verification interval is missed, treat the proof as stale and do not
@@ -88,7 +96,8 @@ resume from the old receipt. Re-admit from original evidence before any new muta
 
 Keep one append-only lab record in the maintainer-approved durable evidence location, outside the removable lab root.
 Record the task, issue, PR, repository, source commit, appliance and peer identities, LAN identity, address plan,
-original receipt digests, public CA digest, peer SSH host-key fingerprint, independent authority and source, and each
+original receipt digests, public CA digest, appliance and peer SSH host-key fingerprints or the verified appliance
+console binding, independent authority and source, and each
 observation and action in order. Preserve the original bytes of creation receipts; calculate and independently record
 their SHA-256 digests before use. Do not edit, relabel, or recreate them to match a later task or pull request.
 
@@ -135,7 +144,8 @@ ID. In either case, verify a clean applied baseline, the original address and ro
 HTTPS /openapi.json at the original address. The restoration may reissue the management certificate:
 validate its chain against the admitted public CA and confirm its IP subject alternative name covers the original
 address. Record the actual restored fingerprint and whether it differs from the original; exact fingerprint equality
-is not a static-restoration requirement. Recheck the peer trust pin and independent LAN fence. Acceptance is
+is not a static-restoration requirement. Recheck both SSH trust pins (or the admitted appliance console binding) and
+the independent LAN fence. Acceptance is
 incomplete until both candidate and restored state are observed and the candidate address is retired using the
 native checks below.
 
@@ -177,8 +187,11 @@ The expected certificate rejection and the successful restoration are distinct a
 ## Verify retired addresses natively
 
 For each retirement check, retain time-stamped guest and private-peer observations under the same independent LAN
-fence. Use the pinned appliance SSH or authorized local console for read-only `ip -j -4 addr show` and route/listener
-inspection. Verify the retired address is absent from every guest interface, not merely from saved desired state,
+fence. Before each SSH readback, recheck the appliance host-key fingerprint against its pre-mutation, VM-bound pin;
+refuse a missing or changed pin without collecting acceptance observations or accepting replacement trust. For the
+console alternative, recheck the console's binding to the original VMX and VM root identity. Use only the admitted
+transport for read-only `ip -j -4 addr show` and route/listener inspection. Verify the retired address is absent from
+every guest interface, not merely from saved desired state,
 and that no active management listener or owned handoff route still binds that address. Record the actual native
 observations after the terminal Apply result; a pending task or unavailable observation cannot establish retirement.
 
