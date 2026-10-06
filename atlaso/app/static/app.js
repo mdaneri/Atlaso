@@ -9798,29 +9798,33 @@ function initializeRefreshedSideStack(sideStack) {
   initializeLdapSettingsStatus(sideStack);
 }
 
+let networkSideStackRefreshGeneration = 0;
+
 async function refreshNetworkSideStack(isCurrent = () => true) {
   if (!isCurrent()) return false;
-  const currentSideStack = document.querySelector("aside.side-stack");
-  if (!(currentSideStack instanceof HTMLElement)) {
-    return false;
-  }
+  if (!(document.querySelector("aside.side-stack") instanceof HTMLElement)) return false;
+  const generation = ++networkSideStackRefreshGeneration;
+  const isCurrentRequest = () => generation === networkSideStackRefreshGeneration && isCurrent();
   const response = await fetch(window.location.href, {
     credentials: "same-origin",
     headers: { "X-Requested-With": "AtlasoSideRefresh" },
   });
-  if (!isCurrent()) return false;
+  if (!isCurrentRequest()) return false;
   if (!response.ok) {
     return false;
   }
   const html = await response.text();
-  if (!isCurrent()) return false;
+  if (!isCurrentRequest()) return false;
   const nextDocument = new DOMParser().parseFromString(html, "text/html");
   const nextSideStack = nextDocument.querySelector("aside.side-stack");
-  if (!(nextSideStack instanceof HTMLElement) || !isCurrent()) return false;
+  if (!(nextSideStack instanceof HTMLElement) || !isCurrentRequest()) return false;
+  const currentSideStack = document.querySelector("aside.side-stack");
+  if (!(currentSideStack instanceof HTMLElement) || !isCurrentRequest()) return false;
   currentSideStack.replaceWith(nextSideStack);
+  if (document.querySelector("aside.side-stack") !== nextSideStack) return false;
   initializeRefreshedSideStack(nextSideStack);
   highlightConfigPreviews(nextSideStack);
-  return true;
+  return isCurrentRequest() && document.querySelector("aside.side-stack") === nextSideStack;
 }
 
 async function refreshPersistedPhysicalInterfaceRow(row) {

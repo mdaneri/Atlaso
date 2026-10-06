@@ -95,19 +95,69 @@ function sideStackContext({ currentPresent = true, refreshedPresent = true, resp
   const HTMLElementStub = class HTMLElement {};
   const currentSideStack = currentPresent ? new HTMLElementStub() : null;
   const nextSideStack = refreshedPresent ? new HTMLElementStub() : null;
+  let attachedSideStack = currentSideStack;
   const calls = { fetch: 0, replacements: [], initialized: [], highlighted: [] };
-  if (currentSideStack) currentSideStack.replaceWith = (replacement) => calls.replacements.push(replacement);
+  if (currentSideStack) currentSideStack.replaceWith = (replacement) => {
+    calls.replacements.push(replacement);
+    if (attachedSideStack === currentSideStack) attachedSideStack = replacement;
+  };
   const ctx = vm.createContext({
     DOMParser: class { parseFromString() { return { querySelector: () => nextSideStack }; } },
     HTMLElement: HTMLElementStub,
-    document: { querySelector: () => currentSideStack },
+    document: { querySelector: () => attachedSideStack },
     fetch: async () => { calls.fetch += 1; return response; },
     highlightConfigPreviews: (sideStack) => calls.highlighted.push(sideStack),
     initializeRefreshedSideStack: (sideStack) => calls.initialized.push(sideStack),
     window: { location: { href: "/ui/management/routes-wan" } },
   });
-  vm.runInContext(`async ${functionSource("refreshNetworkSideStack")}; globalThis.refresh = refreshNetworkSideStack;`, ctx);
-  return { ctx, calls, currentSideStack, nextSideStack };
+  vm.runInContext(`let networkSideStackRefreshGeneration = 0; async ${functionSource("refreshNetworkSideStack")}; globalThis.refresh = refreshNetworkSideStack;`, ctx);
+  return { ctx, calls, currentSideStack, nextSideStack, attachedSideStack: () => attachedSideStack };
+}
+
+function concurrentSideStackContext() {
+  const HTMLElementStub = class HTMLElement {
+    constructor(name) { this.name = name; }
+  };
+  const calls = { fetch: 0, replacements: [], initialized: [], highlighted: [] };
+  const initialSideStack = new HTMLElementStub("initial");
+  const oldSideStack = new HTMLElementStub("old response");
+  const newSideStack = new HTMLElementStub("new response");
+  const sideStacksByResponse = new Map([[
+    "older response",
+    oldSideStack,
+  ], [
+    "newer response",
+    newSideStack,
+  ]]);
+  let attachedSideStack = initialSideStack;
+  const attachable = [initialSideStack, oldSideStack, newSideStack];
+  attachable.forEach((sideStack) => {
+    sideStack.replaceWith = (replacement) => {
+      if (attachedSideStack !== sideStack) return;
+      calls.replacements.push(replacement);
+      attachedSideStack = replacement;
+    };
+  });
+  const responses = [];
+  const ctx = vm.createContext({
+    DOMParser: class { parseFromString(html) { return { querySelector: () => sideStacksByResponse.get(html) || null }; } },
+    HTMLElement: HTMLElementStub,
+    document: { querySelector: () => attachedSideStack },
+    fetch: async () => { calls.fetch += 1; return responses.shift(); },
+    highlightConfigPreviews: (sideStack) => calls.highlighted.push(sideStack),
+    initializeRefreshedSideStack: (sideStack) => calls.initialized.push(sideStack),
+    window: { location: { href: "/ui/management/routes-wan" } },
+  });
+  vm.runInContext(`let networkSideStackRefreshGeneration = 0; async ${functionSource("refreshNetworkSideStack")}; globalThis.refresh = refreshNetworkSideStack;`, ctx);
+  return {
+    ctx,
+    calls,
+    responses,
+    oldSideStack,
+    newSideStack,
+    attachedSideStack: () => attachedSideStack,
+    setAttachedSideStack: (sideStack) => { attachedSideStack = sideStack; },
+  };
 }
 
 test("side-stack refresh reports non-success HTTP responses and missing current or refreshed asides", async (t) => {
@@ -150,6 +200,49 @@ test("a superseded side-stack response does not replace the latest aside", async
   responseText.resolve("obsolete side stack");
   assert.equal(await refresh, false);
   assert.equal(state.calls.replacements.length, 0);
+});
+
+test("overlapping side-stack refreshes replace the attached rail in either completion order", async (t) => {
+  for (const order of ["newer first", "older first"]) {
+    await t.test(order, async () => {
+      const oldText = deferred();
+      const newText = deferred();
+      const state = concurrentSideStackContext();
+      state.responses.push(
+        { ok: true, text: () => oldText.promise },
+        { ok: true, text: () => newText.promise },
+      );
+      const oldRefresh = state.ctx.refresh();
+      const newRefresh = state.ctx.refresh();
+      if (order === "newer first") {
+        newText.resolve("newer response");
+        assert.equal(await newRefresh, true);
+        oldText.resolve("older response");
+        assert.equal(await oldRefresh, false);
+      } else {
+        oldText.resolve("older response");
+        assert.equal(await oldRefresh, false);
+        newText.resolve("newer response");
+        assert.equal(await newRefresh, true);
+      }
+      assert.equal(state.attachedSideStack(), state.newSideStack);
+      assert.deepEqual(state.calls.replacements, [state.newSideStack]);
+      assert.deepEqual(state.calls.initialized, [state.newSideStack]);
+      assert.deepEqual(state.calls.highlighted, [state.newSideStack]);
+    });
+  }
+});
+
+test("a side-stack response cannot report success if its originally attached aside was detached", async () => {
+  const responseText = deferred();
+  const state = concurrentSideStackContext();
+  state.responses.push({ ok: true, text: () => responseText.promise });
+  const refresh = state.ctx.refresh();
+  state.setAttachedSideStack(null);
+  responseText.resolve("older response");
+  assert.equal(await refresh, false);
+  assert.equal(state.calls.replacements.length, 0);
+  assert.equal(state.calls.initialized.length, 0);
 });
 
 test("routing Enabled refreshes explicit and generated projections in the same grid", async () => {
