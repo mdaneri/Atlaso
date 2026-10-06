@@ -228,6 +228,229 @@ def test_routing_permission_browser_names_match_apply_uniqueness(client):
         assert [rule.name for rule in db.scalars(select(RoutingRule).order_by(RoutingRule.id))] == ["lAb PaTh", "Other path"]
 
 
+@pytest.mark.parametrize("operation", ["create", "edit", "delete"])
+@pytest.mark.parametrize("failure_point", ["rule_flush", "audit_insert"])
+def test_routing_permission_mutations_roll_back_with_persistence_failures(client, monkeypatch, operation, failure_point):
+    """Keep each permission mutation atomic when the rule or audit insert fails.
+
+    Args:
+        client: Isolated browser client.
+        monkeypatch: Fixture replacing the database flush for failure injection.
+        operation: Permission mutation exercised by this case.
+        failure_point: Whether the rule flush or real database audit insert fails.
+    """
+    from sqlalchemy import select, text
+    from sqlalchemy.exc import IntegrityError
+    from sqlalchemy.orm import Session
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import AuditEvent, RoutingRule
+
+    login(client)
+    page = client.get("/routes-wan")
+    csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    rule_id = None
+    if operation != "create":
+        with SessionLocal() as db:
+            rule = RoutingRule(
+                name="Atomic permission",
+                source_interface="eth2",
+                destination_interface="eth1.20",
+                policy="deny",
+                ip_family=4,
+                enabled=True,
+                description="before mutation",
+            )
+            db.add(rule)
+            db.commit()
+            rule_id = rule.id
+
+    action = {
+        "create": "create_routing_rule",
+        "edit": "update_routing_rule",
+        "delete": "delete_routing_rule",
+    }[operation]
+    payload = {
+        "name": "Atomic permission updated",
+        "source_interface": "eth1.20" if operation == "edit" else "eth2",
+        "destination_interface": "eth2" if operation == "edit" else "eth1.20",
+        "priority": "120",
+        "policy": "allow",
+        "ip_family": "4",
+        "description": "after mutation",
+        "enabled": "on",
+        "csrf": csrf,
+    }
+    if operation == "edit":
+        payload.pop("enabled")
+    paths = {
+        "create": "/routes-wan/routing-rules",
+        "edit": f"/routes-wan/routing-rules/{rule_id}/edit",
+        "delete": f"/routes-wan/routing-rules/{rule_id}/delete",
+    }
+
+    trigger_name = "fail_routing_rule_audit_insert"
+    if failure_point == "rule_flush":
+        original_flush = Session.flush
+
+        def fail_routing_rule_flush(session, *args, **kwargs):
+            """Reject permission writes while allowing unrelated session flushes.
+
+            Args:
+                session: Database session whose pending objects are inspected.
+                *args: Positional arguments forwarded to the original flush.
+                **kwargs: Keyword arguments forwarded to the original flush.
+            """
+            if any(isinstance(row, RoutingRule) for row in session.new | session.dirty | session.deleted):
+                raise RuntimeError("injected routing rule flush failure")
+            return original_flush(session, *args, **kwargs)
+
+        monkeypatch.setattr(Session, "flush", fail_routing_rule_flush)
+    else:
+        with SessionLocal() as db:
+            db.execute(
+                text(
+                    f"CREATE TRIGGER {trigger_name} BEFORE INSERT ON audit_events "
+                    f"WHEN NEW.action = '{action}' BEGIN "
+                    "SELECT RAISE(ABORT, 'injected audit insert failure'); END"
+                )
+            )
+            db.commit()
+    try:
+        expected_error = RuntimeError if failure_point == "rule_flush" else IntegrityError
+        with pytest.raises(expected_error):
+            client.post(paths[operation], data=payload, follow_redirects=False)
+    finally:
+        if failure_point == "audit_insert":
+            with SessionLocal() as db:
+                db.execute(text(f"DROP TRIGGER IF EXISTS {trigger_name}"))
+                db.commit()
+
+    with SessionLocal() as db:
+        rule = db.get(RoutingRule, rule_id) if rule_id is not None else None
+        if operation == "create":
+            assert rule is None
+            assert db.scalar(select(RoutingRule).where(RoutingRule.name == payload["name"])) is None
+        elif operation == "delete":
+            assert rule is not None
+            assert (
+                rule.name,
+                rule.source_interface,
+                rule.destination_interface,
+                rule.priority,
+                rule.policy,
+                rule.ip_family,
+                rule.enabled,
+                rule.description,
+            ) == (
+                "Atomic permission", "eth2", "eth1.20", 100, "deny", 4, True, "before mutation"
+            )
+        else:
+            assert rule is not None
+            assert (
+                rule.name,
+                rule.source_interface,
+                rule.destination_interface,
+                rule.priority,
+                rule.policy,
+                rule.ip_family,
+                rule.enabled,
+                rule.description,
+            ) == (
+                "Atomic permission", "eth2", "eth1.20", 100, "deny", 4, True, "before mutation"
+            )
+        assert db.scalars(
+            select(AuditEvent).where(
+                AuditEvent.resource_type == "routing_rule",
+                AuditEvent.action == action,
+            )
+        ).all() == []
+
+
+def test_routing_permission_mutations_commit_with_audit_events(client):
+    """Persist each routing permission change with its action and resource ID audit.
+
+    Args:
+        client: Isolated browser client.
+    """
+    from sqlalchemy import select
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import AuditEvent, RoutingRule
+
+    login(client)
+    page = client.get("/routes-wan")
+    csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    base_payload = {
+        "name": "Atomic permission",
+        "source_interface": "eth2",
+        "destination_interface": "eth1.20",
+        "priority": "100",
+        "policy": "deny",
+        "ip_family": "4",
+        "description": "initial policy",
+        "enabled": "on",
+        "csrf": csrf,
+    }
+
+    created = client.post("/routes-wan/routing-rules", data=base_payload, follow_redirects=False)
+    assert created.status_code == 303
+    assert created.headers["location"] == "/ui/management/routes-wan"
+    with SessionLocal() as db:
+        rule = db.scalar(select(RoutingRule).where(RoutingRule.name == base_payload["name"]))
+        assert rule is not None
+        rule_id = rule.id
+        create_event = db.scalar(
+            select(AuditEvent).where(
+                AuditEvent.resource_type == "routing_rule",
+                AuditEvent.action == "create_routing_rule",
+            )
+        )
+        assert create_event is not None
+        assert create_event.id is not None
+        assert create_event.resource_id == str(rule_id)
+
+    edited = client.post(
+        f"/routes-wan/routing-rules/{rule_id}/edit",
+        data={**base_payload, "policy": "allow", "ip_family": "4", "description": "updated policy"},
+        follow_redirects=False,
+    )
+    assert edited.status_code == 303
+    assert edited.headers["location"] == "/ui/management/routes-wan"
+    with SessionLocal() as db:
+        rule = db.get(RoutingRule, rule_id)
+        assert rule is not None
+        assert (rule.policy, rule.ip_family, rule.description) == ("allow", 4, "updated policy")
+        edit_event = db.scalar(
+            select(AuditEvent).where(
+                AuditEvent.resource_type == "routing_rule",
+                AuditEvent.action == "update_routing_rule",
+            )
+        )
+        assert edit_event is not None
+        assert edit_event.id is not None
+        assert edit_event.resource_id == str(rule_id)
+
+    deleted = client.post(
+        f"/routes-wan/routing-rules/{rule_id}/delete",
+        data={"csrf": csrf},
+        follow_redirects=False,
+    )
+    assert deleted.status_code == 303
+    assert deleted.headers["location"] == "/ui/management/routes-wan"
+    with SessionLocal() as db:
+        assert db.get(RoutingRule, rule_id) is None
+        delete_event = db.scalar(
+            select(AuditEvent).where(
+                AuditEvent.resource_type == "routing_rule",
+                AuditEvent.action == "delete_routing_rule",
+            )
+        )
+        assert delete_event is not None
+        assert delete_event.id is not None
+        assert delete_event.resource_id == str(rule_id)
+
+
 def test_routes_wan_settings_autosave_reports_suspended_nat(client):
     """Autosave global settings and expose NAT's effective suspended state.
 
