@@ -9822,11 +9822,9 @@ async function refreshNetworkSideStack(isCurrent = () => true) {
   if (!isCurrent()) return false;
   const generation = ++networkSideStackRefreshGeneration;
   let resolveRefresh;
-  let rejectRefresh;
   let settled = false;
-  const result = new Promise((resolve, reject) => {
+  const result = new Promise((resolve) => {
     resolveRefresh = resolve;
-    rejectRefresh = reject;
   });
   const request = {
     result,
@@ -9835,11 +9833,6 @@ async function refreshNetworkSideStack(isCurrent = () => true) {
       if (settled) return;
       settled = true;
       resolveRefresh(value);
-    },
-    reject(error) {
-      if (settled) return;
-      settled = true;
-      rejectRefresh(error);
     },
   };
   const previousRequest = networkSideStackRefreshRequest;
@@ -9871,7 +9864,7 @@ async function refreshNetworkSideStack(isCurrent = () => true) {
   };
   void refresh().then(
     (refreshed) => request.resolve(refreshed),
-    (error) => request.reject(error),
+    () => request.resolve(false),
   );
   return request.result;
 }

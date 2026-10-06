@@ -99,7 +99,7 @@ function responseFor(document) {
   return { ok: true, text: async () => document };
 }
 
-function sideStackContext({ currentPresent = true, refreshedPresent = true, response = { ok: true, text: async () => "updated side stack" } } = {}) {
+function sideStackContext({ currentPresent = true, refreshedPresent = true, response = { ok: true, text: async () => "updated side stack" }, initialize = () => {} } = {}) {
   const HTMLElementStub = class HTMLElement {};
   const currentSideStack = currentPresent ? new HTMLElementStub() : null;
   const nextSideStack = refreshedPresent ? new HTMLElementStub() : null;
@@ -115,7 +115,10 @@ function sideStackContext({ currentPresent = true, refreshedPresent = true, resp
     document: { querySelector: () => attachedSideStack },
     fetch: async () => { calls.fetch += 1; return response; },
     highlightConfigPreviews: (sideStack) => calls.highlighted.push(sideStack),
-    initializeRefreshedSideStack: (sideStack) => calls.initialized.push(sideStack),
+    initializeRefreshedSideStack: (sideStack) => {
+      calls.initialized.push(sideStack);
+      initialize(sideStack);
+    },
     window: { location: { href: "/ui/management/routes-wan" } },
   });
   vm.runInContext(`let networkSideStackRefreshGeneration = 0; let networkSideStackRefreshRequest = null; async ${functionSource("refreshNetworkSideStack")}; globalThis.refresh = refreshNetworkSideStack;`, ctx);
@@ -127,6 +130,7 @@ function concurrentSideStackContext() {
     constructor(name) { this.name = name; }
   };
   const calls = { fetch: 0, replacements: [], initialized: [], highlighted: [] };
+  const saves = { firewall: 0 };
   const initialSideStack = new HTMLElementStub("initial");
   const oldSideStack = new HTMLElementStub("old response");
   const newSideStack = new HTMLElementStub("new response");
@@ -140,6 +144,7 @@ function concurrentSideStackContext() {
   let attachedSideStack = initialSideStack;
   const messages = [];
   const attachable = [initialSideStack, oldSideStack, newSideStack];
+  const statuses = [];
   attachable.forEach((sideStack) => {
     sideStack.replaceWith = (replacement) => {
       if (attachedSideStack !== sideStack) return;
@@ -158,14 +163,18 @@ function concurrentSideStackContext() {
     clearCaMessage() {},
     managementUiPath: (path) => path,
     postWanAction: async () => {},
-    showTransientGridStatus() {},
+    postFirewallRuleAction: async () => { saves.firewall += 1; },
+    showTransientGridStatus: (status) => statuses.push(status),
     showWanMessage: (id, message) => messages.push({ id, message }),
+    showCaMessage: (id, message) => messages.push({ id, message }),
     window: { location: { href: "/ui/management/routes-wan" } },
   });
-  vm.runInContext(`let networkSideStackRefreshGeneration = 0; let networkSideStackRefreshRequest = null; async ${functionSource("refreshNetworkSideStack")}; async ${functionSource("saveWanEnabledState")}; globalThis.refresh = refreshNetworkSideStack; globalThis.save = saveWanEnabledState;`, ctx);
+  vm.runInContext(`let networkSideStackRefreshGeneration = 0; let networkSideStackRefreshRequest = null; async ${functionSource("refreshNetworkSideStack")}; async ${functionSource("saveWanEnabledState")}; async ${functionSource("autoSaveFirewallRule")}; globalThis.refresh = refreshNetworkSideStack; globalThis.save = saveWanEnabledState; globalThis.saveFirewall = autoSaveFirewallRule;`, ctx);
   return {
     ctx,
     calls,
+    saves,
+    statuses,
     messages,
     responses,
     oldSideStack,
@@ -190,6 +199,14 @@ test("side-stack refresh reports non-success HTTP responses and missing current 
     const state = sideStackContext({ refreshedPresent: false });
     assert.equal(await state.ctx.refresh(), false);
     assert.equal(state.calls.replacements.length, 0);
+  });
+  await t.test("response-body exception", async () => {
+    const state = sideStackContext({ response: { ok: true, text: async () => { throw new Error("body read failed"); } } });
+    assert.equal(await state.ctx.refresh(), false);
+  });
+  await t.test("side-stack initialization exception", async () => {
+    const state = sideStackContext({ initialize: () => { throw new Error("initialization failed"); } });
+    assert.equal(await state.ctx.refresh(), false);
   });
 });
 
@@ -372,7 +389,7 @@ test("a Routing save still warns when the newest shared side-panel refresh fails
   assert.equal(state.calls.replacements.length, 0);
 });
 
-test("superseded callers receive rejection from the newest side-panel refresh", async () => {
+test("superseded callers receive false when the newest side-panel refresh throws", async () => {
   const olderText = deferred();
   const newestText = deferred();
   let olderTextStarted = false;
@@ -386,12 +403,56 @@ test("superseded callers receive rejection from the newest side-panel refresh", 
   await waitForCondition(() => olderTextStarted, "older side-panel response text did not start");
   const newestRefresh = state.ctx.refresh();
   await waitForCondition(() => newestTextStarted, "newest side-panel response text did not start");
-  const newestRejected = assert.rejects(newestRefresh, /newest side-panel response failed/);
-  const olderRejected = assert.rejects(oldRefresh, /newest side-panel response failed/);
   newestText.reject(new Error("newest side-panel response failed"));
 
-  await Promise.all([newestRejected, olderRejected]);
+  assert.equal(await newestRefresh, false);
+  assert.equal(await oldRefresh, false);
   olderText.resolve("older response");
+});
+
+test("a committed legacy firewall save is not rolled back when its own refresh throws", async () => {
+  const fetchFailure = deferred();
+  const state = concurrentSideStackContext();
+  state.responses.push(fetchFailure.promise);
+  let restores = 0;
+  const cell = {
+    getRow: () => ({ getData: () => ({ id: 77, enabled: false }) }),
+    restoreOldValue: () => { restores += 1; },
+  };
+  const save = state.ctx.saveFirewall(cell, "csrf");
+  await waitForCondition(() => state.calls.fetch === 1, "firewall side-panel refresh did not start");
+  fetchFailure.reject(new Error("side-panel fetch failed"));
+  await save;
+
+  assert.equal(state.saves.firewall, 1);
+  assert.equal(restores, 0);
+  assert.deepEqual(state.statuses, ["Saved"]);
+  assert.deepEqual(state.messages, []);
+});
+
+test("a committed legacy firewall save is not rolled back when a superseding refresh throws", async () => {
+  const olderText = deferred();
+  let olderTextStarted = false;
+  const state = concurrentSideStackContext();
+  state.responses.push(
+    { ok: true, text: () => { olderTextStarted = true; return olderText.promise; } },
+    { ok: true, text: async () => { throw new Error("newer side-panel body failed"); } },
+  );
+  let restores = 0;
+  const cell = {
+    getRow: () => ({ getData: () => ({ id: 77, enabled: false }) }),
+    restoreOldValue: () => { restores += 1; },
+  };
+  const save = state.ctx.saveFirewall(cell, "csrf");
+  await waitForCondition(() => olderTextStarted, "firewall side-panel response text did not start");
+  assert.equal(await state.ctx.refresh(), false);
+  await save;
+  olderText.resolve("older response");
+
+  assert.equal(state.saves.firewall, 1);
+  assert.equal(restores, 0);
+  assert.deepEqual(state.statuses, ["Saved"]);
+  assert.deepEqual(state.messages, []);
 });
 
 test("a side-stack response cannot report success if its originally attached aside was detached", async () => {
