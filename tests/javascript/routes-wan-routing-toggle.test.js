@@ -95,6 +95,18 @@ async function waitForCondition(predicate, message, timeoutMs = 1000) {
   }
 }
 
+async function withTimeout(promise, message, timeoutMs = 1000) {
+  let timer;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise((_, reject) => { timer = setTimeout(() => reject(new Error(message)), timeoutMs); }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 function responseFor(document) {
   return { ok: true, text: async () => document };
 }
@@ -218,7 +230,7 @@ test("side-stack refresh replaces and initializes the refreshed aside", async ()
   assert.deepEqual(state.calls.highlighted, [state.nextSideStack]);
 });
 
-test("a stale caller observes the latest side-stack refresh result without replacing its aside", async () => {
+test("an invalidated side-stack refresh resolves as superseded without waiting for a successor", async () => {
   const responseText = deferred();
   let readingText = false;
   const state = sideStackContext({ response: { ok: true, text: () => {
@@ -230,8 +242,68 @@ test("a stale caller observes the latest side-stack refresh result without repla
   while (!readingText) await new Promise((resolve) => setImmediate(resolve));
   current = false;
   responseText.resolve("obsolete side stack");
-  assert.equal(await refresh, false);
+  assert.equal(await withTimeout(refresh, "superseded refresh remained pending"), "superseded");
   assert.equal(state.calls.replacements.length, 0);
+});
+
+test("legacy save callers stay neutral when their adopted Routing refresh is invalidated", async (t) => {
+  for (const finalRail of ["success", "failure"]) {
+    await t.test(`newest rail ${finalRail}`, async () => {
+      const legacyText = deferred();
+      const routingText = deferred();
+      const latestText = deferred();
+      let legacyTextStarted = false;
+      let routingTextStarted = false;
+      let latestTextStarted = false;
+      const state = concurrentSideStackContext();
+      state.responses.push(
+        { ok: true, text: () => { legacyTextStarted = true; return legacyText.promise; } },
+        { ok: true, text: () => { routingTextStarted = true; return routingText.promise; } },
+        finalRail === "success"
+          ? { ok: true, text: () => { latestTextStarted = true; return latestText.promise; } }
+          : { ok: false },
+      );
+      const firewallCell = { getRow: () => ({ getData: () => ({ id: 77, enabled: false }) }) };
+      const legacySave = state.ctx.saveFirewall(firewallCell, "csrf");
+      await waitForCondition(() => legacyTextStarted, "legacy side-panel refresh did not start");
+
+      let routingEditCurrent = true;
+      const routingCell = { getRow: () => ({ getData: () => ({ id: 9, enabled: false }) }) };
+      const routingSave = state.ctx.save(routingCell, "csrf", "/routes-wan/routing-rules", "routing-error", "Save failed", {
+        isCurrent: () => routingEditCurrent,
+        afterSave: async () => {},
+      });
+      await waitForCondition(() => routingTextStarted, "guarded Routing refresh did not start");
+      routingEditCurrent = false;
+      routingText.resolve("obsolete Routing response");
+      await withTimeout(Promise.all([legacySave, routingSave]), "invalidated callers remained pending");
+      assert.deepEqual(state.messages, []);
+      assert.deepEqual(state.statuses, []);
+      assert.deepEqual(state.calls.replacements, []);
+
+      const latestSave = state.ctx.save(routingCell, "csrf", "/routes-wan/routing-rules", "routing-error", "Save failed", {
+        afterSave: async () => {},
+      });
+      if (finalRail === "success") {
+        await waitForCondition(() => latestTextStarted, "latest Routing refresh did not start");
+      }
+
+      if (finalRail === "success") latestText.resolve("newer response");
+      await latestSave;
+      legacyText.resolve("obsolete legacy response");
+      await Promise.resolve();
+
+      assert.equal(state.saves.firewall, 1);
+      assert.deepEqual(state.messages, finalRail === "success" ? [] : [
+        {
+          id: "routing-error",
+          message: "The routing permission and its displayed state were saved, but the network status panel could not be refreshed. Reload the page to see the latest state.",
+        },
+      ]);
+      assert.deepEqual(state.statuses, finalRail === "success" ? ["Saved"] : []);
+      assert.deepEqual(state.calls.replacements, finalRail === "success" ? [state.newSideStack] : []);
+    });
+  }
 });
 
 test("overlapping side-stack refreshes replace the attached rail in either completion order", async (t) => {

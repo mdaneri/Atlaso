@@ -1446,10 +1446,11 @@ function initializeAtlasoResourceWizard(config) {
       await cell.getRow().update(resource);
       await Promise.resolve(config.onSaved?.({ payload, resource, form, table }));
       const sideStackRefreshed = await refreshNetworkSideStack();
-      if (!sideStackRefreshed) {
+      if (sideStackRefreshed === false) {
         reportActionError(new Error(networkSideStackRefreshFailureMessage()), { statusError: true });
         return;
       }
+      if (sideStackRefreshed !== true) return;
       showTransientGridStatus(resource.enabled ? "Enabled" : "Disabled");
     } catch (error) {
       cell.setValue(previousValue);
@@ -1471,10 +1472,11 @@ function initializeAtlasoResourceWizard(config) {
     await row.delete();
     await Promise.resolve(config.onDeleted?.({ data, table }));
     const sideStackRefreshed = await refreshNetworkSideStack();
-    if (!sideStackRefreshed) {
+    if (sideStackRefreshed === false) {
       reportActionError(new Error(networkSideStackRefreshFailureMessage()), { statusError: true });
       return;
     }
+    if (sideStackRefreshed !== true) return;
     showTransientGridStatus("Deleted");
   };
   const rowActions = [];
@@ -1592,10 +1594,11 @@ function initializeAtlasoResourceWizard(config) {
       }
       await Promise.resolve(config.onSaved?.({ payload, resource, form, table }));
       const sideStackRefreshed = await refreshNetworkSideStack();
-      if (!sideStackRefreshed) {
+      if (sideStackRefreshed === false) {
         reportActionError(new Error(networkSideStackRefreshFailureMessage()), { statusError: true });
         return { valid: true };
       }
+      if (sideStackRefreshed !== true) return { valid: true };
       showTransientGridStatus(recordId ? "Updated" : "Created");
       return { valid: true };
     },
@@ -4364,10 +4367,11 @@ async function autoSaveFirewallRule(cell, csrf) {
   try {
     await postFirewallRuleAction(managementUiPath(`/firewall/rules/${data.id}/edit`), data, csrf, { reload: false });
     const sideStackRefreshed = await refreshNetworkSideStack();
-    if (!sideStackRefreshed) {
+    if (sideStackRefreshed === false) {
       showCaMessage("firewall-rule-error", networkSideStackRefreshFailureMessage());
       return;
     }
+    if (sideStackRefreshed !== true) return;
     showTransientGridStatus("Saved");
   } catch (error) {
     showCaMessage("firewall-rule-error", error instanceof Error ? error.message : "The firewall rule could not be saved.");
@@ -6251,10 +6255,11 @@ function initializeVsphereKeyProviderTables() {
         await certificateTable?.addRow?.(payload.certificate, true);
         await updateCertificateCounts(providerId, vcenterId, 1, payload.certificate.status === "valid" ? 1 : 0);
         const sideStackRefreshed = await refreshNetworkSideStack();
-        if (!sideStackRefreshed) {
+        if (sideStackRefreshed === false) {
           showCaMessage("vsphere-certificate-error", networkSideStackRefreshFailureMessage());
           return { valid: true };
         }
+        if (sideStackRefreshed !== true) return { valid: true };
         showTransientGridStatus("Certificate added");
         return { valid: true };
       },
@@ -6275,10 +6280,11 @@ function initializeVsphereKeyProviderTables() {
       await row.delete();
       await updateCertificateCounts(data.provider_id, data.trusted_vcenter_id, -1, data.status === "valid" ? -1 : 0);
       const sideStackRefreshed = await refreshNetworkSideStack();
-      if (!sideStackRefreshed) {
+      if (sideStackRefreshed === false) {
         showCaMessage("vsphere-certificate-error", networkSideStackRefreshFailureMessage());
         return;
       }
+      if (sideStackRefreshed !== true) return;
       showTransientGridStatus("Certificate retired");
     };
     const grid = window.AtlasoUiPatterns.createGrid({
@@ -7862,7 +7868,8 @@ async function saveWanEnabledState(cell, csrf, path, errorId, fallbackMessage, o
   if (!isCurrent()) return;
   try {
     const refreshed = await refreshNetworkSideStack(isCurrent);
-    if (refreshed !== true) {
+    if (refreshed === "superseded") return;
+    if (refreshed === false) {
       if (isCurrent()) {
         const message = typeof options.afterSave === "function"
           ? "The routing permission and its displayed state were saved, but the network status panel could not be refreshed. Reload the page to see the latest state."
@@ -7871,6 +7878,7 @@ async function saveWanEnabledState(cell, csrf, path, errorId, fallbackMessage, o
       }
       return;
     }
+    if (refreshed !== true) return;
   } catch (error) {
     if (!isCurrent()) return;
     const message = typeof options.afterSave === "function"
@@ -8517,7 +8525,7 @@ function initializeRoutesWanRoutingTable() {
               await refreshProjection();
               if (!isCurrent()) return;
               const refreshed = await refreshNetworkSideStack(isCurrent);
-              if (isCurrent() && refreshed !== true) {
+              if (isCurrent() && refreshed === false) {
                 throw new Error("The current network status panel could not be refreshed.");
               }
             };
@@ -9560,7 +9568,8 @@ function initializePortForwarding() {
                 await post(`${root}/${cell.getRow().getData().id}/enabled`, body);
                 const sideStackRefreshed = await refreshNetworkSideStack();
                 await refresh();
-                if (!sideStackRefreshed) { fail(networkSideStackRefreshFailureMessage()); return; }
+                if (sideStackRefreshed === false) { fail(networkSideStackRefreshFailureMessage()); return; }
+                if (sideStackRefreshed !== true) return;
                 showTransientGridStatus("Saved");
               }
               catch (error) { cell.restoreOldValue?.(); fail(error.message); }
@@ -9858,7 +9867,7 @@ let networkSideStackRefreshGeneration = 0;
 let networkSideStackRefreshRequest = null;
 
 async function refreshNetworkSideStack(isCurrent = () => true) {
-  if (!isCurrent()) return false;
+  if (!isCurrent()) return "superseded";
   const generation = ++networkSideStackRefreshGeneration;
   let resolveRefresh;
   let settled = false;
@@ -9867,6 +9876,7 @@ async function refreshNetworkSideStack(isCurrent = () => true) {
   });
   const request = {
     result,
+    isCurrent,
     get settled() { return settled; },
     resolve(value) {
       if (settled) return;
@@ -9877,33 +9887,37 @@ async function refreshNetworkSideStack(isCurrent = () => true) {
   const previousRequest = networkSideStackRefreshRequest;
   networkSideStackRefreshRequest = request;
   if (previousRequest && !previousRequest.settled) {
-    previousRequest.resolve(result);
+    previousRequest.resolve(previousRequest.isCurrent() ? result : "superseded");
   }
   const isCurrentRequest = () => generation === networkSideStackRefreshGeneration && isCurrent();
   const refresh = async () => {
-    if (!isCurrentRequest() || !(document.querySelector("aside.side-stack") instanceof HTMLElement)) return false;
+    if (!isCurrentRequest()) return "superseded";
+    if (!(document.querySelector("aside.side-stack") instanceof HTMLElement)) return false;
     const response = await fetch(window.location.href, {
       credentials: "same-origin",
       headers: { "X-Requested-With": "AtlasoSideRefresh" },
     });
-    if (!isCurrentRequest()) return false;
+    if (!isCurrentRequest()) return "superseded";
     if (!response.ok) return false;
     const html = await response.text();
-    if (!isCurrentRequest()) return false;
+    if (!isCurrentRequest()) return "superseded";
     const nextDocument = new DOMParser().parseFromString(html, "text/html");
     const nextSideStack = nextDocument.querySelector("aside.side-stack");
-    if (!(nextSideStack instanceof HTMLElement) || !isCurrentRequest()) return false;
+    if (!isCurrentRequest()) return "superseded";
+    if (!(nextSideStack instanceof HTMLElement)) return false;
     const currentSideStack = document.querySelector("aside.side-stack");
-    if (!(currentSideStack instanceof HTMLElement) || !isCurrentRequest()) return false;
+    if (!isCurrentRequest()) return "superseded";
+    if (!(currentSideStack instanceof HTMLElement)) return false;
     currentSideStack.replaceWith(nextSideStack);
     if (document.querySelector("aside.side-stack") !== nextSideStack) return false;
     initializeRefreshedSideStack(nextSideStack);
     highlightConfigPreviews(nextSideStack);
-    return isCurrentRequest() && document.querySelector("aside.side-stack") === nextSideStack;
+    if (!isCurrentRequest()) return "superseded";
+    return document.querySelector("aside.side-stack") === nextSideStack;
   };
   void refresh().then(
     (refreshed) => request.resolve(refreshed),
-    () => request.resolve(false),
+    () => request.resolve(isCurrentRequest() ? false : "superseded"),
   );
   return request.result;
 }
@@ -9943,10 +9957,11 @@ async function autoSavePhysicalInterface(cell, csrf) {
   try {
     await postNetworkAction(managementUiPath(`/physical-interfaces/${data.id}/edit`), data, csrf, { reload: false });
     const sideStackRefreshed = await refreshNetworkSideStack();
-    if (!sideStackRefreshed) {
+    if (sideStackRefreshed === false) {
       showNetworkMessage("physical-interface-error", networkSideStackRefreshFailureMessage());
       return;
     }
+    if (sideStackRefreshed !== true) return;
     showTransientGridStatus("Saved");
   } catch (error) {
     showNetworkMessage("physical-interface-error", error instanceof Error ? error.message : "The physical interface could not be saved.");
@@ -9975,10 +9990,11 @@ async function savePhysicalInterfaceRow(row, csrf, successMessage = "Saved") {
   try {
     await postNetworkAction(managementUiPath(`/physical-interfaces/${data.id}/edit`), data, csrf, { reload: false });
     const sideStackRefreshed = await refreshNetworkSideStack();
-    if (!sideStackRefreshed) {
+    if (sideStackRefreshed === false) {
       showNetworkMessage("physical-interface-error", networkSideStackRefreshFailureMessage());
       return;
     }
+    if (sideStackRefreshed !== true) return;
     showTransientGridStatus(successMessage);
   } catch (error) {
     showNetworkMessage("physical-interface-error", error instanceof Error ? error.message : "The physical interface could not be saved.");
@@ -11712,10 +11728,11 @@ function initializeVlanInterfacesTable() {
           highlightedVlanId = "";
           savedRow?.reformat?.();
         }, 2400);
-        if (!sideStackRefreshed) {
+        if (sideStackRefreshed === false) {
           showNetworkMessage("vlan-interface-error", networkSideStackRefreshFailureMessage());
           return { valid: true };
         }
+        if (sideStackRefreshed !== true) return { valid: true };
         showTransientGridStatus(recordId ? "VLAN updated" : "VLAN added");
         return { valid: true };
       },
