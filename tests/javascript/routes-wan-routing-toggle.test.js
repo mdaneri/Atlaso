@@ -118,7 +118,7 @@ function sideStackContext({ currentPresent = true, refreshedPresent = true, resp
     initializeRefreshedSideStack: (sideStack) => calls.initialized.push(sideStack),
     window: { location: { href: "/ui/management/routes-wan" } },
   });
-  vm.runInContext(`let networkSideStackRefreshGeneration = 0; async ${functionSource("refreshNetworkSideStack")}; globalThis.refresh = refreshNetworkSideStack;`, ctx);
+  vm.runInContext(`let networkSideStackRefreshGeneration = 0; let networkSideStackRefreshRequest = null; async ${functionSource("refreshNetworkSideStack")}; globalThis.refresh = refreshNetworkSideStack;`, ctx);
   return { ctx, calls, currentSideStack, nextSideStack, attachedSideStack: () => attachedSideStack };
 }
 
@@ -138,6 +138,7 @@ function concurrentSideStackContext() {
     newSideStack,
   ]]);
   let attachedSideStack = initialSideStack;
+  const messages = [];
   const attachable = [initialSideStack, oldSideStack, newSideStack];
   attachable.forEach((sideStack) => {
     sideStack.replaceWith = (replacement) => {
@@ -154,12 +155,18 @@ function concurrentSideStackContext() {
     fetch: async () => { calls.fetch += 1; return responses.shift(); },
     highlightConfigPreviews: (sideStack) => calls.highlighted.push(sideStack),
     initializeRefreshedSideStack: (sideStack) => calls.initialized.push(sideStack),
+    clearCaMessage() {},
+    managementUiPath: (path) => path,
+    postWanAction: async () => {},
+    showTransientGridStatus() {},
+    showWanMessage: (id, message) => messages.push({ id, message }),
     window: { location: { href: "/ui/management/routes-wan" } },
   });
-  vm.runInContext(`let networkSideStackRefreshGeneration = 0; async ${functionSource("refreshNetworkSideStack")}; globalThis.refresh = refreshNetworkSideStack;`, ctx);
+  vm.runInContext(`let networkSideStackRefreshGeneration = 0; let networkSideStackRefreshRequest = null; async ${functionSource("refreshNetworkSideStack")}; async ${functionSource("saveWanEnabledState")}; globalThis.refresh = refreshNetworkSideStack; globalThis.save = saveWanEnabledState;`, ctx);
   return {
     ctx,
     calls,
+    messages,
     responses,
     oldSideStack,
     newSideStack,
@@ -194,7 +201,7 @@ test("side-stack refresh replaces and initializes the refreshed aside", async ()
   assert.deepEqual(state.calls.highlighted, [state.nextSideStack]);
 });
 
-test("a superseded side-stack response does not replace the latest aside", async () => {
+test("a stale caller observes the latest side-stack refresh result without replacing its aside", async () => {
   const responseText = deferred();
   let readingText = false;
   const state = sideStackContext({ response: { ok: true, text: () => {
@@ -215,23 +222,28 @@ test("overlapping side-stack refreshes replace the attached rail in either compl
     await t.test(order, async () => {
       const oldText = deferred();
       const newText = deferred();
+      let oldTextStarted = false;
+      let newTextStarted = false;
       const state = concurrentSideStackContext();
       state.responses.push(
-        { ok: true, text: () => oldText.promise },
-        { ok: true, text: () => newText.promise },
+        { ok: true, text: () => { oldTextStarted = true; return oldText.promise; } },
+        { ok: true, text: () => { newTextStarted = true; return newText.promise; } },
       );
       const oldRefresh = state.ctx.refresh();
+      await waitForCondition(() => oldTextStarted, "older side-panel response text did not start");
       const newRefresh = state.ctx.refresh();
+      await waitForCondition(() => newTextStarted, "newer side-panel response text did not start");
       if (order === "newer first") {
         newText.resolve("newer response");
         assert.equal(await newRefresh, true);
         oldText.resolve("older response");
-        assert.equal(await oldRefresh, false);
+        assert.equal(await oldRefresh, true);
       } else {
         oldText.resolve("older response");
-        assert.equal(await oldRefresh, false);
+        const supersededOldRefresh = assert.doesNotReject(oldRefresh);
         newText.resolve("newer response");
         assert.equal(await newRefresh, true);
+        await supersededOldRefresh;
       }
       assert.equal(state.attachedSideStack(), state.newSideStack);
       assert.deepEqual(state.calls.replacements, [state.newSideStack]);
@@ -239,6 +251,147 @@ test("overlapping side-stack refreshes replace the attached rail in either compl
       assert.deepEqual(state.calls.highlighted, [state.newSideStack]);
     });
   }
+});
+
+test("superseded side-stack callers observe the newest HTTP failure", async () => {
+  const oldText = deferred();
+  let oldTextStarted = false;
+  const state = concurrentSideStackContext();
+  state.responses.push(
+    { ok: true, text: () => { oldTextStarted = true; return oldText.promise; } },
+    { ok: false },
+  );
+  const oldRefresh = state.ctx.refresh();
+  await waitForCondition(() => oldTextStarted, "older side-panel response text did not start");
+  const newestRefresh = state.ctx.refresh();
+
+  assert.equal(await newestRefresh, false);
+  assert.equal(await oldRefresh, false);
+  oldText.resolve("obsolete response");
+  await Promise.resolve();
+  assert.equal(state.attachedSideStack().name, "initial");
+  assert.deepEqual(state.calls.replacements, []);
+});
+
+test("superseded side-stack text failures defer to the latest success", async () => {
+  const oldText = deferred();
+  const newText = deferred();
+  let oldTextStarted = false;
+  let newTextStarted = false;
+  const state = concurrentSideStackContext();
+  state.responses.push(
+    { ok: true, text: () => { oldTextStarted = true; return oldText.promise; } },
+    { ok: true, text: () => { newTextStarted = true; return newText.promise; } },
+  );
+  const oldRefresh = state.ctx.refresh();
+  await waitForCondition(() => oldTextStarted, "older side-panel response text did not start");
+  const newestRefresh = state.ctx.refresh();
+  await waitForCondition(() => newTextStarted, "newer side-panel response text did not start");
+
+  newText.resolve("newer response");
+  assert.equal(await newestRefresh, true);
+  oldText.reject(new Error("obsolete response text failed"));
+  assert.equal(await oldRefresh, true);
+  assert.equal(state.attachedSideStack(), state.newSideStack);
+  assert.deepEqual(state.calls.replacements, [state.newSideStack]);
+});
+
+test("multiple side-stack supersessions follow the final refresh result", async () => {
+  const firstText = deferred();
+  const secondText = deferred();
+  const finalText = deferred();
+  const textStarted = [false, false, false];
+  const state = concurrentSideStackContext();
+  state.responses.push(
+    { ok: true, text: () => { textStarted[0] = true; return firstText.promise; } },
+    { ok: true, text: () => { textStarted[1] = true; return secondText.promise; } },
+    { ok: true, text: () => { textStarted[2] = true; return finalText.promise; } },
+  );
+  const firstRefresh = state.ctx.refresh();
+  await waitForCondition(() => textStarted[0], "first side-panel response text did not start");
+  const secondRefresh = state.ctx.refresh();
+  await waitForCondition(() => textStarted[1], "second side-panel response text did not start");
+  const finalRefresh = state.ctx.refresh();
+  await waitForCondition(() => textStarted[2], "final side-panel response text did not start");
+
+  finalText.resolve("newer response");
+  assert.equal(await finalRefresh, true);
+  assert.equal(await firstRefresh, true);
+  assert.equal(await secondRefresh, true);
+  firstText.resolve("older response");
+  secondText.resolve("older response");
+  assert.equal(state.attachedSideStack(), state.newSideStack);
+  assert.deepEqual(state.calls.replacements, [state.newSideStack]);
+});
+
+test("a Routing save does not warn when a newer shared side-panel refresh succeeds", async () => {
+  const routingText = deferred();
+  const staticText = deferred();
+  let routingTextStarted = false;
+  let staticTextStarted = false;
+  const state = concurrentSideStackContext();
+  state.responses.push(
+    { ok: true, text: () => { routingTextStarted = true; return routingText.promise; } },
+    { ok: true, text: () => { staticTextStarted = true; return staticText.promise; } },
+  );
+  const cell = { getRow: () => ({ getData: () => ({ id: 9, enabled: false }) }) };
+  const routingSave = state.ctx.save(cell, "csrf", "/routes-wan/routing-rules", "routing-error", "Save failed", {
+    afterSave: async () => {},
+  });
+  await waitForCondition(() => routingTextStarted, "Routing side-panel response text did not start");
+  const staticRefresh = state.ctx.refresh();
+  await waitForCondition(() => staticTextStarted, "newer side-panel response text did not start");
+  staticText.resolve("newer response");
+
+  assert.equal(await staticRefresh, true);
+  await routingSave;
+  assert.deepEqual(state.messages, []);
+  routingText.resolve("older response");
+  assert.equal(state.attachedSideStack(), state.newSideStack);
+});
+
+test("a Routing save still warns when the newest shared side-panel refresh fails", async () => {
+  const routingText = deferred();
+  let routingTextStarted = false;
+  const state = concurrentSideStackContext();
+  state.responses.push(
+    { ok: true, text: () => { routingTextStarted = true; return routingText.promise; } },
+    { ok: false },
+  );
+  const cell = { getRow: () => ({ getData: () => ({ id: 9, enabled: false }) }) };
+  const routingSave = state.ctx.save(cell, "csrf", "/routes-wan/routing-rules", "routing-error", "Save failed", {
+    afterSave: async () => {},
+  });
+  await waitForCondition(() => routingTextStarted, "Routing side-panel response text did not start");
+  const staticRefresh = state.ctx.refresh();
+
+  assert.equal(await staticRefresh, false);
+  await routingSave;
+  assert.match(state.messages.at(-1).message, /network status panel could not be refreshed.*reload the page/i);
+  routingText.resolve("older response");
+  assert.equal(state.calls.replacements.length, 0);
+});
+
+test("superseded callers receive rejection from the newest side-panel refresh", async () => {
+  const olderText = deferred();
+  const newestText = deferred();
+  let olderTextStarted = false;
+  let newestTextStarted = false;
+  const state = concurrentSideStackContext();
+  state.responses.push(
+    { ok: true, text: () => { olderTextStarted = true; return olderText.promise; } },
+    { ok: true, text: () => { newestTextStarted = true; return newestText.promise; } },
+  );
+  const oldRefresh = state.ctx.refresh();
+  await waitForCondition(() => olderTextStarted, "older side-panel response text did not start");
+  const newestRefresh = state.ctx.refresh();
+  await waitForCondition(() => newestTextStarted, "newest side-panel response text did not start");
+  const newestRejected = assert.rejects(newestRefresh, /newest side-panel response failed/);
+  const olderRejected = assert.rejects(oldRefresh, /newest side-panel response failed/);
+  newestText.reject(new Error("newest side-panel response failed"));
+
+  await Promise.all([newestRejected, olderRejected]);
+  olderText.resolve("older response");
 });
 
 test("a side-stack response cannot report success if its originally attached aside was detached", async () => {
