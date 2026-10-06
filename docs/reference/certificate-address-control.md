@@ -128,9 +128,11 @@ task identity, status, and sanitized failure details if any. Acceptance requires
 - The independent authority rechecks exclusive LAN membership, claimant absence, and reservation enforcement at the
   candidate address after the transition.
 
-Then restore the exact original static desired fields using the same editor and Apply workflow, including the
-protected bundle selected by review. Verify a successful Apply, the original address and route, the original DNS
-baseline, and HTTPS /openapi.json at the original address. The restoration may reissue the management certificate:
+Then restore the exact original static desired fields using the same editor and Apply review. Require the previous
+task to be terminal. If review returns units, submit its valid protected bundle, record the restoration task, and
+verify that Apply succeeds. If review returns no units, submit nothing and record a no-op restoration with no task
+ID. In either case, verify a clean applied baseline, the original address and route, the original DNS baseline, and
+HTTPS /openapi.json at the original address. The restoration may reissue the management certificate:
 validate its chain against the admitted public CA and confirm its IP subject alternative name covers the original
 address. Record the actual restored fingerprint and whether it differs from the original; exact fingerprint equality
 is not a static-restoration requirement. Recheck the peer trust pin and independent LAN fence. Acceptance is
@@ -161,11 +163,15 @@ the management handoff rolled back. A failed task by itself is not acceptance. R
 - The independent authority confirms the address reservation and exclusive LAN membership remained enforced through
   acquisition and rollback.
 
-Finally, restore the saved original static desired fields through **Physical Interfaces** and the protected Apply
-bundle selected by review. Verify the original applied fields, route, DNS, and HTTPS endpoint; validate the served
+Finally, restore the saved original static desired fields through **Physical Interfaces**, then open Apply review
+with the failed handoff task terminal. If review returns units, submit its valid protected bundle, record this
+restoration task separately, and require success. If review returns no units because the desired fields already
+match the rolled-back applied baseline, do not submit a second Apply: record a no-op restoration with no task ID.
+In both branches, require no pending units or active task and verify the original saved and applied fields, route,
+DNS, and HTTPS endpoint; validate the served
 certificate chain against the admitted public CA and confirm the certificate IP subject alternative name covers the
-original address. Record the actual restored fingerprint, including any change from the captured fingerprint, and
-record this second Apply separately. Recheck that the DHCP candidate remains retired after this restoration.
+original address. Record the actual restored fingerprint, including any change from the captured fingerprint.
+Recheck that the DHCP candidate remains retired after this restoration.
 The expected certificate rejection and the successful restoration are distinct acceptance observations.
 
 ## Verify retired addresses natively
