@@ -120,6 +120,8 @@ task identity, status, and sanitized failure details if any. Acceptance requires
   subject alternative name matching the candidate address. Verify /openapi.json at that address.
 - Readback shows the intended interface still has the admitted MAC and exact candidate static fields. Route and DNS
   state match the approved plan and captured baseline.
+- After candidate readiness and final cutover, verify retirement of the original address using the native checks
+  below. Candidate reachability and saved desired fields alone do not prove retirement.
 - The served public TLS identity is captured before and after the handoff. Report the actual certificate fingerprint
   and address coverage; do not claim observation of transient nginx certificate generations that were not directly
   observed.
@@ -132,7 +134,8 @@ baseline, and HTTPS /openapi.json at the original address. The restoration may r
 validate its chain against the admitted public CA and confirm its IP subject alternative name covers the original
 address. Record the actual restored fingerprint and whether it differs from the original; exact fingerprint equality
 is not a static-restoration requirement. Recheck the peer trust pin and independent LAN fence. Acceptance is
-incomplete until both candidate and restored state are observed.
+incomplete until both candidate and restored state are observed and the candidate address is retired using the
+native checks below.
 
 ## Run and accept the DHCP-rejection case
 
@@ -154,7 +157,7 @@ the management handoff rolled back. A failed task by itself is not acceptance. R
   address, /openapi.json succeeds, and the served TLS identity exactly equals the captured original identity.
 - Readback confirms that no partial candidate management state remains applied. The original interface, route, DNS,
   and certificate baselines remain intact, and the certificate inventory still identifies the same selected public
-  leaf.
+  leaf. Verify that the acquired DHCP candidate is retired using the native checks below.
 - The independent authority confirms the address reservation and exclusive LAN membership remained enforced through
   acquisition and rollback.
 
@@ -162,8 +165,24 @@ Finally, restore the saved original static desired fields through **Physical Int
 bundle selected by review. Verify the original applied fields, route, DNS, and HTTPS endpoint; validate the served
 certificate chain against the admitted public CA and confirm the certificate IP subject alternative name covers the
 original address. Record the actual restored fingerprint, including any change from the captured fingerprint, and
-record this second Apply separately.
+record this second Apply separately. Recheck that the DHCP candidate remains retired after this restoration.
 The expected certificate rejection and the successful restoration are distinct acceptance observations.
+
+## Verify retired addresses natively
+
+For each retirement check, retain time-stamped guest and private-peer observations under the same independent LAN
+fence. Use the pinned appliance SSH or authorized local console for read-only `ip -j -4 addr show` and route/listener
+inspection. Verify the retired address is absent from every guest interface, not merely from saved desired state,
+and that no active management listener or owned handoff route still binds that address. Record the actual native
+observations after the terminal Apply result; a pending task or unavailable observation cannot establish retirement.
+
+From the admitted private peer, attempt a direct TCP connection to the retired IPv4 address on the configured
+management HTTPS port with a bounded timeout, while verifying that the active address remains reachable over the
+same path. Do not use DNS, proxy fallback, or a hostname that could select another address. Any accepted connection
+at the retired address fails retirement, even when TLS certificate validation or authentication subsequently fails.
+A TLS mismatch, HTTP denial, or failed ping alone is not evidence that the listener is gone. Peer connection failure
+must agree with native address/listener absence; if peer routing, transport, or the independent fence is uncertain,
+preserve the lab and report acceptance incomplete rather than treating a timeout as proof.
 
 ## Failure handling and limits
 
