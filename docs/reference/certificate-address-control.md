@@ -152,8 +152,11 @@ native checks below.
 ## Run and accept the DHCP-rejection case
 
 Run this case only from a proven static management baseline and only when the authoritative DHCP plan identifies a
-candidate lease that is not covered by the selected management certificate. Verify certificate selection and its
-fingerprint against the live appliance:https certificate before the test. After saving the DHCP desired state but
+candidate lease that is not covered by the selected management certificate. Before mutation, record the exact
+expected DHCP IPv4 address and bind it to the original appliance MAC, peer reservation, independent address-control
+evidence, and task/VM/LAN identities. Recheck that same reservation before Apply; do not infer the expected address
+from a later acquired lease. Verify certificate selection and its fingerprint against the live appliance:https
+certificate before the test. After saving the DHCP desired state but
 before submitting Apply, verify again that the enabled appliance:https inventory row has the same ID and fingerprint
 captured at admission. Validate its public chain with the admitted CA and confirm that it does not cover the expected
 acquired address. The independent reservation and LAN admission controls remain active throughout.
@@ -163,8 +166,11 @@ protected **Network** Apply bundle with **Submit appliance changes**, including 
 The expected outcome is rejection at the certificate prerequisite after the acquired address is known, with
 the management handoff rolled back. A failed task by itself is not acceptance. Record and verify all of the following:
 
-- The Apply task reports failed at the certificate prerequisite and identifies the acquired candidate address as
-  outside the selected certificate's IP address coverage.
+- The Apply task reports failed at the certificate prerequisite and explicitly identifies the acquired IPv4 address.
+  That address must equal the exact expected DHCP address admitted and recorded before mutation, and the task must
+  identify it as outside the selected certificate's IP address coverage. Missing or different acquired-address
+  evidence fails acceptance, even if the unexpected address is also uncovered and rollback succeeds. Preserve that
+  failure and reconcile under the supported recovery workflow; do not relabel the reservation or proof afterward.
 - The task reports that the management handoff was rolled back. HTTPS remains reachable at the original management
   address, /openapi.json succeeds, and the served TLS identity exactly equals the captured original identity.
 - Readback confirms that no partial candidate management state remains applied. The original interface, route, DNS,
