@@ -69,6 +69,7 @@ nav = [
     { "Full technical reference" = "reference/full-technical-reference.md" },
     { "Portable virtualization artifacts" = "reference/virtualization-artifacts.md" },
     { "VMware lifecycle testing" = "reference/vmware-workstation-lifecycle-testing.md" },
+    { "Certificate address control" = "reference/certificate-address-control.md" },
   ] },
   { "Contribute" = [
     { "Overview" = "contribute/index.md" },
