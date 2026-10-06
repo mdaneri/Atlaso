@@ -7832,11 +7832,17 @@ async function saveWanEnabledState(cell, csrf, path, errorId, fallbackMessage, o
   }
   if (!isCurrent()) return;
   try {
-    await refreshNetworkSideStack();
+    const refreshed = await refreshNetworkSideStack(isCurrent);
+    if (typeof options.afterSave === "function" && refreshed !== true) {
+      if (isCurrent()) {
+        showWanMessage(errorId, "The routing permission and its displayed state were saved, but the network status panel could not be refreshed. Reload the page to see the latest state.");
+      }
+      return;
+    }
   } catch (error) {
     if (!isCurrent()) return;
     if (typeof options.afterSave === "function") {
-      showWanMessage(errorId, "The routing permission and its displayed state were saved, but the network status panel could not be refreshed.");
+      showWanMessage(errorId, "The routing permission and its displayed state were saved, but the network status panel could not be refreshed. Reload the page to see the latest state.");
       return;
     }
     cell.restoreOldValue?.();
@@ -8464,7 +8470,11 @@ function initializeRoutesWanRoutingTable() {
             };
             const refreshAfterFailure = async () => {
               await refreshProjection();
-              if (isCurrent()) await refreshNetworkSideStack();
+              if (!isCurrent()) return;
+              const refreshed = await refreshNetworkSideStack(isCurrent);
+              if (isCurrent() && refreshed !== true) {
+                throw new Error("The current network status panel could not be refreshed.");
+              }
             };
             return enqueueRoutingSave(() => saveWanEnabledState(
               cell,
@@ -9788,26 +9798,29 @@ function initializeRefreshedSideStack(sideStack) {
   initializeLdapSettingsStatus(sideStack);
 }
 
-async function refreshNetworkSideStack() {
+async function refreshNetworkSideStack(isCurrent = () => true) {
+  if (!isCurrent()) return false;
   const currentSideStack = document.querySelector("aside.side-stack");
   if (!(currentSideStack instanceof HTMLElement)) {
-    return;
+    return false;
   }
   const response = await fetch(window.location.href, {
     credentials: "same-origin",
     headers: { "X-Requested-With": "AtlasoSideRefresh" },
   });
+  if (!isCurrent()) return false;
   if (!response.ok) {
-    return;
+    return false;
   }
   const html = await response.text();
+  if (!isCurrent()) return false;
   const nextDocument = new DOMParser().parseFromString(html, "text/html");
   const nextSideStack = nextDocument.querySelector("aside.side-stack");
-  if (nextSideStack instanceof HTMLElement) {
-    currentSideStack.replaceWith(nextSideStack);
-    initializeRefreshedSideStack(nextSideStack);
-    highlightConfigPreviews(nextSideStack);
-  }
+  if (!(nextSideStack instanceof HTMLElement) || !isCurrent()) return false;
+  currentSideStack.replaceWith(nextSideStack);
+  initializeRefreshedSideStack(nextSideStack);
+  highlightConfigPreviews(nextSideStack);
+  return true;
 }
 
 async function refreshPersistedPhysicalInterfaceRow(row) {

@@ -91,6 +91,67 @@ function responseFor(document) {
   return { ok: true, text: async () => document };
 }
 
+function sideStackContext({ currentPresent = true, refreshedPresent = true, response = { ok: true, text: async () => "updated side stack" } } = {}) {
+  const HTMLElementStub = class HTMLElement {};
+  const currentSideStack = currentPresent ? new HTMLElementStub() : null;
+  const nextSideStack = refreshedPresent ? new HTMLElementStub() : null;
+  const calls = { fetch: 0, replacements: [], initialized: [], highlighted: [] };
+  if (currentSideStack) currentSideStack.replaceWith = (replacement) => calls.replacements.push(replacement);
+  const ctx = vm.createContext({
+    DOMParser: class { parseFromString() { return { querySelector: () => nextSideStack }; } },
+    HTMLElement: HTMLElementStub,
+    document: { querySelector: () => currentSideStack },
+    fetch: async () => { calls.fetch += 1; return response; },
+    highlightConfigPreviews: (sideStack) => calls.highlighted.push(sideStack),
+    initializeRefreshedSideStack: (sideStack) => calls.initialized.push(sideStack),
+    window: { location: { href: "/ui/management/routes-wan" } },
+  });
+  vm.runInContext(`async ${functionSource("refreshNetworkSideStack")}; globalThis.refresh = refreshNetworkSideStack;`, ctx);
+  return { ctx, calls, currentSideStack, nextSideStack };
+}
+
+test("side-stack refresh reports non-success HTTP responses and missing current or refreshed asides", async (t) => {
+  await t.test("non-2xx", async () => {
+    const state = sideStackContext({ response: { ok: false } });
+    assert.equal(await state.ctx.refresh(), false);
+    assert.equal(state.calls.replacements.length, 0);
+  });
+  await t.test("missing current aside", async () => {
+    const state = sideStackContext({ currentPresent: false });
+    assert.equal(await state.ctx.refresh(), false);
+    assert.equal(state.calls.fetch, 0);
+  });
+  await t.test("missing refreshed aside", async () => {
+    const state = sideStackContext({ refreshedPresent: false });
+    assert.equal(await state.ctx.refresh(), false);
+    assert.equal(state.calls.replacements.length, 0);
+  });
+});
+
+test("side-stack refresh replaces and initializes the refreshed aside", async () => {
+  const state = sideStackContext();
+  assert.equal(await state.ctx.refresh(), true);
+  assert.deepEqual(state.calls.replacements, [state.nextSideStack]);
+  assert.deepEqual(state.calls.initialized, [state.nextSideStack]);
+  assert.deepEqual(state.calls.highlighted, [state.nextSideStack]);
+});
+
+test("a superseded side-stack response does not replace the latest aside", async () => {
+  const responseText = deferred();
+  let readingText = false;
+  const state = sideStackContext({ response: { ok: true, text: () => {
+    readingText = true;
+    return responseText.promise;
+  } } });
+  let current = true;
+  const refresh = state.ctx.refresh(() => current);
+  while (!readingText) await new Promise((resolve) => setImmediate(resolve));
+  current = false;
+  responseText.resolve("obsolete side stack");
+  assert.equal(await refresh, false);
+  assert.equal(state.calls.replacements.length, 0);
+});
+
 test("routing Enabled refreshes explicit and generated projections in the same grid", async () => {
   const tableElement = { dataset: {} };
   const table = createGrid();
@@ -210,7 +271,7 @@ test("a newer edit queues behind an in-flight grid update and remains the final 
   assert.equal(JSON.parse(tableElement.dataset.targetOptions)[0].name, "eth3");
 });
 
-function saveContext({ postError = null, ErrorConstructor = null } = {}) {
+function saveContext({ postError = null, ErrorConstructor = null, sideStackResult = true } = {}) {
   const messages = [];
   let restores = 0;
   let sideStackRefreshes = 0;
@@ -218,7 +279,7 @@ function saveContext({ postError = null, ErrorConstructor = null } = {}) {
     clearCaMessage() {},
     managementUiPath: (path) => path,
     postWanAction: async () => { if (postError) throw postError; },
-    refreshNetworkSideStack: async () => { sideStackRefreshes += 1; },
+    refreshNetworkSideStack: async () => { sideStackRefreshes += 1; return sideStackResult; },
     showTransientGridStatus() {},
     showWanMessage: (_id, message) => messages.push(message),
   };
@@ -272,6 +333,21 @@ test("a successful save keeps the new Enabled value when projection refresh fail
   assert.equal(state.sideStackRefreshes(), 0);
 });
 
+test("Routing warns and gives reload guidance when the successful-save side rail returns false", async () => {
+  const state = saveContext({ sideStackResult: false });
+  await state.ctx.save(state.cell, "csrf", "/routes-wan/routing-rules", "routing-error", "Save failed", {
+    afterSave: async () => {},
+  });
+  assert.equal(state.restores(), 0);
+  assert.match(state.messages.at(-1), /routing permission and its displayed state were saved.*network status panel could not be refreshed.*reload the page/i);
+  assert.equal(state.sideStackRefreshes(), 1);
+
+  const otherResource = saveContext({ sideStackResult: false });
+  await otherResource.ctx.save(otherResource.cell, "csrf", "/traffic-publishing/nat-rules", "nat-error", "Save failed");
+  assert.deepEqual(otherResource.messages, []);
+  assert.equal(otherResource.restores(), 0);
+});
+
 test("an older save completion cannot restore or refresh over a newer edit", async () => {
   const olderSave = deferred();
   const newerSave = deferred();
@@ -282,7 +358,7 @@ test("an older save completion cannot restore or refresh over a newer edit", asy
     clearCaMessage() {},
     managementUiPath: (path) => path,
     postWanAction: (_url, data) => data.enabled ? newerSave.promise : olderSave.promise,
-    refreshNetworkSideStack: async () => {},
+    refreshNetworkSideStack: async () => true,
     showTransientGridStatus: (message) => status.push(message),
     showWanMessage: (_id, message) => calls.push(message),
   });
@@ -318,7 +394,7 @@ test("an older save completion cannot restore or refresh over a newer edit", asy
   assert.deepEqual(calls, []);
 });
 
-function routingInitializerContext({ rows, generatedRows = [], postWanAction, projection = null, refreshSideStack = async () => {}, ErrorConstructor = null }) {
+function routingInitializerContext({ rows, generatedRows = [], postWanAction, projection = null, refreshSideStack = async () => true, ErrorConstructor = null }) {
   const messages = [];
   let sideStackRefreshes = 0;
   const HTMLElementStub = class HTMLElement {};
@@ -365,7 +441,8 @@ function routingInitializerContext({ rows, generatedRows = [], postWanAction, pr
     postWanAction,
     refreshNetworkSideStack: async () => {
       sideStackRefreshes += 1;
-      return refreshSideStack();
+      const result = await refreshSideStack();
+      return result === undefined ? true : result;
     },
     showTransientGridStatus() {},
     showWanMessage: (id, message) => messages.push({ id, message }),
@@ -603,13 +680,13 @@ test("a latest failed edit refreshes the authoritative projection after an earli
   }
 });
 
-test("a failed save keeps its error and reload guidance when the recovery rail refresh fails", async () => {
+test("a failed save keeps its error and reload guidance when the recovery rail reports false", async () => {
   const request = deferred();
   const state = routingInitializerContext({
     rows: twoRoutingRows(),
     ErrorConstructor: Error,
     postWanAction: () => request.promise,
-    refreshSideStack: async () => { throw new Error("network status unavailable"); },
+    refreshSideStack: async () => false,
   });
   const edit = state.edit(9);
   edit.row.enabled = false;
