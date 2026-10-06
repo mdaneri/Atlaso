@@ -385,7 +385,9 @@ discovers the runtime address through VMware Tools.
 
 Certificate handoff preparation requires independent proof that the candidate management address belongs exclusively
 to the appliance; the [certificate peer procedure](#single-command-run) describes the current producer
-limitation. A MAC-derived address and task-owned VM receipts alone do not provide this proof.
+limitation. A MAC-derived address and task-owned VM receipts alone do not provide this proof. The
+[certificate address-control procedure](certificate-address-control.md) defines a maintainer-collected acceptance path
+for a lab; its evidence does not satisfy native receipt admission or enable the credentialed wrappers.
 
 The opt-in `-RoutingOverlapOnly` mode first applies the MAC-derived management IPv6 address as static state,
 then requires native assignment and a CA-validated served certificate containing that address before switching
