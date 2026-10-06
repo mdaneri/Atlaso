@@ -4539,6 +4539,8 @@ submit both <strong>Routing &amp; WAN</strong> (<code>wan</code>) and <strong>Fi
 are suspended. To roll an override back, edit its policy to <strong>Automatic</strong> or remove the override; generated defaults
 then apply again after the paired Apply succeeds. The applied baseline changes only after successful apply, so a
 pending or failed apply must not be reported as active forwarding policy.
+Browser permission creation, edits, and deletion save the desired-state change and its audit event together. If audit
+persistence fails, the save fails and the previous desired state remains available for retry.
 Disabled permissions can retain an unavailable interface or IP family; re-enabling requires valid current topology.
 Permission names must be unique regardless of case and cannot contain line breaks; the browser wizard and API reject
 conflicts before saving, so a later Apply cannot fail on two names that differ only by capitalization.
