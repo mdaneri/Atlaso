@@ -209,17 +209,21 @@ A TLS mismatch, HTTP denial, or failed ping alone is not evidence that the liste
 must agree with native address/listener absence; if peer routing, transport, or the independent fence is uncertain,
 preserve the lab and report acceptance incomplete rather than treating a timeout as proof.
 
-## Hand off a successful lab for cleanup
+## Hand off lab resources for cleanup
 
-After either case completes, preserve the acceptance record, original ownership receipts and their independently
+After successful acceptance or a recorded terminal failure disposition, preserve the acceptance or failure record,
+original ownership receipts and their independently
 recorded digests outside every removable VM, lab, and result root. Hand off a bounded inventory of the appliance VM,
 peer VM, private LAN segment, DHCP/address reservations, independent admission controls, lifecycle result and other
 artifact roots, helper processes, and recovery state. Bind each exact path or provider identity to its original
-ownership manifest, task, repository, source, and PR; record the verified restoration result. Explicitly record any
+ownership manifest, task, repository, source, and PR; record the verified restoration result or explicitly record
+that restoration was not verified and the disposable lab was abandoned. Never report an abandoned run as acceptance.
+Explicitly record any
 required retention with its resource, owner, reason, and retry condition, including a downstream diagnosis need.
 
 Once evidence is preserved, the PR is terminal, and no review, diagnosis, retry, deployment, release, or maintainer
-activity needs the lab, follow [completed task resource cleanup](vmware-workstation-lifecycle-testing.md#completed-task-resource-cleanup)
+activity needs the lab, follow [completed task resource
+cleanup](vmware-workstation-lifecycle-testing.md#completed-task-resource-cleanup)
 and its [supported removal entry points](vmware-workstation-lifecycle-testing.md#supported-removal-entry-points).
 Use the exact owned lifecycle VM cleanup path; release each owned LAN segment through its
 [LAN-segment procedure](vmware-workstation-lifecycle-testing.md#release-task-owned-lan-segments). VM removal alone
@@ -236,10 +240,21 @@ the [completed-task cleanup policy](../contribute/completed-task-cleanup.md).
 
 If any admission fact is missing, stale, or ambiguous, make no appliance change and preserve the VM, peer, LAN,
 receipts, and evidence for maintainer review. If an Apply result or rollback is uncertain, do not resubmit the
-operation
-or clean up the lab. Preserve the state, task output, original rollback inputs, and sanitized observations; reconcile
+operation or clean up the lab while diagnosis,
+recovery, or retry still needs its state. Preserve the state, task output, original rollback inputs, and sanitized
+observations; reconcile
 using the supported Atlaso workflow under the same independent address fence. If the original state cannot be
 verified, stop and escalate to the maintainer who controls the lab.
+
+Failed or interrupted admission and acceptance may retain resources only while diagnosis, recovery, or retry needs
+them. Once maintainer review ends, record the disposition: a controlled retry, explicit resource retention, or
+abandonment of the disposable lab. For abandonment, preserve failure and recovery evidence outside removal roots,
+record that acceptance/restoration is unverified where applicable, and use the same
+[cleanup handoff](#hand-off-lab-resources-for-cleanup) after its terminal-PR, inactivity, ownership, and quiescence
+gates pass. Do not restart Apply just to make an abandoned lab eligible for teardown. If recovery activity, ownership,
+a supported cleanup capability, or another release gate remains uncertain, record the exact blocked resource, owner,
+reason, and retry condition and preserve it; uncertainty is neither cleanup authorization nor indefinite unrecorded
+retention. A terminal failed run does not waive any branch/worktree completion gate.
 
 Manual acceptance is useful for a maintainer-directed lab decision only. It does not authorize automated certificate
 handoff, replace machine-admissible address proof, or permit broader infrastructure mutation. Existing
