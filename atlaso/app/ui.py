@@ -10700,6 +10700,91 @@ def routing_network_topology_entries(config_preview: str) -> list[tuple[str, ...
     )
 
 
+def network_revision_only_migration(network: dict[str, Any], baseline: dict[str, Any]) -> bool:
+    """Prove an upgrade changes only revision comments and newly added identity pins.
+
+    Args:
+        network: Current Network Apply unit.
+        baseline: Last successful Network Apply snapshot.
+    """
+    previous = str(baseline.get("config_preview") or "")
+    current = str(network.get("raw_config_preview") or network.get("config_preview") or "")
+    if not network.get("management_domain_migration_required") or not previous:
+        return False
+    old_rows = network_interface_entries(previous)
+    new_rows = network_interface_entries(current)
+    if not old_rows or len(old_rows) != len(new_rows):
+        return False
+    old_by_name = {row["name"]: row for row in old_rows}
+    if len(old_by_name) != len(old_rows) or len({row["name"] for row in new_rows}) != len(new_rows):
+        return False
+    for row in new_rows:
+        old = old_by_name.get(row["name"])
+        if old is None:
+            return False
+        comparable = dict(row)
+        for pin in ("mac", "parent_mac"):
+            # Existing pins must still match; only an absent legacy pin may be added.
+            if pin not in old:
+                comparable.pop(pin, None)
+        if comparable != old:
+            return False
+    return True
+
+
+def wan_migration_intent(preview: str) -> dict[str, list[str]]:
+    """Compare saved WAN intent independently of regenerated runtime commands.
+
+    Args:
+        preview: Desired or last-applied WAN configuration.
+    """
+    intent = {section: [] for section in (
+        "feature_settings", "routes", "removed_routes", "routing_rules", "wan_policies",
+    )}
+    section = ""
+    for raw_line in preview.splitlines():
+        line = raw_line.strip()
+        if line.startswith("[") and line.endswith("]"):
+            section = line[1:-1]
+        elif section in intent and line and not line.startswith("#"):
+            # NAT has its own Apply owner. These legacy defaults do not change
+            # the routing permissions represented by an older WAN snapshot.
+            if section == "feature_settings" and line.startswith("nat_enabled="):
+                continue
+            if section == "routing_rules" and line in {"policy=allow", "ip_family=0"}:
+                continue
+            intent[section].append(line)
+    # Network can already have a newer successful snapshot than WAN. Missing
+    # fingerprints cannot prove that the applied forwarding targets kept up.
+    # Only NAT-owned eligibility and physical identity are excluded; every
+    # other parsed field must match, including fields added by future renderers.
+    intent["targets"] = sorted(
+        json.dumps({key: value for key, value in row.items()
+                    if key not in {"nat_allowed", "nat_physical_interface", "nat_physical_mac"}}, sort_keys=True)
+        for row in wan_config_target_entries(preview)
+    )
+    return intent
+
+
+def nat_migration_intent(preview: str) -> dict[str, list[str]]:
+    """Project publishing-owned settings without Network-derived target state.
+
+    Args:
+        preview: Desired or last-applied Traffic Publishing configuration.
+    """
+    intent: dict[str, list[str]] = {"feature_settings": [], "nat_rules": [], "port_forwards": []}
+    section = ""
+    for raw_line in preview.splitlines():
+        line = raw_line.strip()
+        if line.startswith("[") and line.endswith("]"):
+            section = line[1:-1]
+        elif section in intent and line and not line.startswith("#"):
+            if section == "feature_settings" and line.startswith(("routing_enabled=", "wan_simulation_enabled=")):
+                continue
+            intent[section].append(line)
+    return intent
+
+
 def wan_applied_network_ingress(db: Session) -> list[str] | None:
     """Project WAN ingress selectors from the saved Network baseline.
 
@@ -18952,10 +19037,18 @@ def _submit_appliance_apply(
         or management_domain_migration
         or ("network" in selected_ids and network_listener_handoff_required(db, unit_map))
     )
-    if "network" in selected_ids and network_listener_handoff_required(db, unit_map):
+    if "network" in selected_ids and (
+        network_listener_handoff_required(db, unit_map) or management_domain_migration
+    ):
+        pending_nat_intent = bool(
+            management_domain_migration
+            and nat_migration_intent(str(unit_map.get("nat", {}).get("config_preview") or ""))
+            != nat_migration_intent(str(nat_baseline.get("config_preview") or ""))
+        )
         unchecked_dependencies = [
             unit["label"] for unit in units
-            if unit["id"] in MANAGEMENT_HANDOFF_UNIT_IDS and unit["changed"]
+            if (unit["id"] in MANAGEMENT_HANDOFF_UNIT_IDS
+                or (pending_nat_intent and unit["id"] == "nat")) and unit["changed"]
             and unit["id"] not in requested_ids
         ]
         if unchecked_dependencies:
@@ -18985,7 +19078,30 @@ def _submit_appliance_apply(
         previous_routing_off = bool(re.search(r"(?m)^routing_enabled=false$", previous_wan))
         desired_wan_settings = unit_map.get("wan", {}).get("context", {}).get("routes_wan_settings")
         desired_routing_off = getattr(desired_wan_settings, "routing_enabled", True) is False
-        if not (previous_routing_off and desired_routing_off):
+        revision_only_migration = network_revision_only_migration(
+            unit_map.get("network", {}), apply_baselines.get("network") or {},
+        )
+        desired_wan = str(unit_map.get("wan", {}).get("config_preview") or "")
+        previous_intent = wan_migration_intent(previous_wan)
+        desired_intent = wan_migration_intent(desired_wan)
+        unchanged_wan_intent = previous_intent == desired_intent
+        unchanged_permissions = (
+            previous_intent["routing_rules"] == desired_intent["routing_rules"]
+            and [line for line in previous_intent["feature_settings"] if line.startswith("routing_enabled=")]
+            == [line for line in desired_intent["feature_settings"] if line.startswith("routing_enabled=")]
+        )
+        if (revision_only_migration and unchanged_permissions
+                and not unchanged_wan_intent and "wan" not in requested_ids):
+            detail = (
+                "Routing & WAN has pending settings beyond the Network upgrade migration. "
+                "Apply those settings separately before retrying Network; they have not been applied."
+            )
+            return JSONResponse({"detail": detail}, status_code=422) if wants_json else Response(
+                detail, status_code=422, media_type="text/plain",
+            )
+        if not (previous_routing_off and desired_routing_off) and not (
+            revision_only_migration and unchanged_wan_intent
+        ):
             detail = (
                 "Disable Routing and apply that change first, then apply the management Network change. "
                 "Re-enable Routing after the management handoff completes."

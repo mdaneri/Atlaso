@@ -473,6 +473,228 @@ def test_legacy_flagged_default_network_revision_couples_wan_handoff(client, mon
         assert "wan" not in payload["selected_units"]
 
 
+@pytest.mark.parametrize("fingerprint", [None, "old-fingerprint"])
+@pytest.mark.parametrize("change", ["none", "address", "permission", "route", "pin", "wan_topology",
+                                    "wan_management_ui", "wan_gateway", "wan_ipv6_gateway",
+                                    "wan_ipv4_method", "wan_routing_domain", "wan_route_allowed"])
+@pytest.mark.parametrize("apply_fails", [False, True])
+def test_upgrade_network_migration_with_legacy_routing_baselines(client, monkeypatch, fingerprint, change, apply_fails):
+    """Admit only proven unchanged upgrade intent and retain failed snapshots.
+
+    Args:
+        client: Authenticated application test client.
+        monkeypatch: Inject a protected helper failure without host mutation.
+        fingerprint: Missing or obsolete applied authorization metadata.
+        change: Additional desired edit that must retain the transition guard.
+        apply_fails: Whether the protected helper fails and leaves baselines pending.
+    """
+    from atlaso.app import ui
+    from atlaso.app.adapters.system import AdapterResult, SystemAdapter
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Job, PhysicalInterface, Route, RoutingRule
+    from atlaso.app.services.routes_wan import save_routes_wan_settings
+
+    login(client)
+    with SessionLocal() as db:
+        interface = db.query(PhysicalInterface).filter_by(name="eth2").one()
+        interface.role = "access"
+        interface.access_management_ui_enabled = True
+        interface.ipv4_method = "static"
+        interface.ip_cidr = "192.168.50.10/24"
+        route = Route(destination_cidr="0.0.0.0/0", gateway="192.168.50.1", interface_name="eth2", enabled=True)
+        db.add(route)
+        save_routes_wan_settings(db, routing_enabled=True, nat_enabled=False, wan_simulation_enabled=False)
+        db.commit()
+        units = ui.appliance_apply_units(db)
+        ui.update_appliance_apply_baselines(db, units, {unit["id"] for unit in units})
+        baselines = ui.load_appliance_apply_baselines(db)
+        for owner in ("wan", "firewall"):
+            if fingerprint is None:
+                baselines[owner].pop("routing_permission_fingerprint", None)
+            else:
+                baselines[owner]["routing_permission_fingerprint"] = fingerprint
+        baselines["network"]["config_preview"] = "\n".join(
+            line for line in baselines["network"]["config_preview"].splitlines()
+            if not line.startswith(("# Network runtime revision:", "# Network identity pins:"))
+            and not line.strip().startswith(("mac=", "parent_mac="))
+        ) + "\n"
+        baselines["network"]["snapshot_hash"] = "legacy-network"
+        if change == "wan_topology":
+            baselines["wan"]["config_preview"] = baselines["wan"]["config_preview"].replace(
+                "ip_cidr=192.168.50.10/24", "ip_cidr=192.168.50.20/24",
+            )
+        stale_target_fields = {
+            "wan_management_ui": ("management_ui=true", "management_ui=false"),
+            "wan_gateway": ("gateway=", "gateway=192.168.50.254"),
+            "wan_ipv6_gateway": ("ipv6_gateway=", "ipv6_gateway=2001:db8::1"),
+            "wan_ipv4_method": ("ipv4_method=static", "ipv4_method=dhcp"),
+            "wan_routing_domain": ("routing_domain=lab", "routing_domain=management"),
+            "wan_route_allowed": ("route_allowed=true", "route_allowed=false"),
+        }
+        if change in stale_target_fields:
+            old, stale = stale_target_fields[change]
+            preview = baselines["wan"]["config_preview"]
+            target_start = preview.index("target=eth2\n")
+            field_start = preview.index("  " + old, target_start)
+            field_end = preview.index("\n", field_start)
+            baselines["wan"]["config_preview"] = preview[:field_start] + "  " + stale + preview[field_end:]
+        if change == "pin":
+            baselines["network"]["config_preview"] = baselines["network"]["config_preview"].replace(
+                "interface=eth2\n", "interface=eth2\n  mac=02:00:00:00:00:99\n",
+            )
+        ui.save_appliance_apply_baselines(db, baselines)
+        if change == "address":
+            interface.ip_cidr = "192.168.50.11/24"
+        elif change == "permission":
+            db.add(RoutingRule(name="New permission", enabled=True, source_interface="eth2",
+                               destination_interface="eth1.20", policy="allow", ip_family=4))
+        elif change == "route":
+            route.metric = 200
+        db.commit()
+        before = ui.load_appliance_apply_baselines(db)
+
+    if apply_fails:
+        def fail_handoff(_adapter, manifest_path):
+            """Refuse the captured protected transaction.
+
+            Args:
+                _adapter: Dry-run adapter.
+                manifest_path: Exact staged handoff manifest.
+            """
+            return AdapterResult(command=["management", "apply-handoff", manifest_path], dry_run=True,
+                                 stderr="injected migration failure", returncode=1)
+
+        monkeypatch.setattr(SystemAdapter, "apply_management_handoff", fail_handoff)
+    csrf = client.get("/dashboard").text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    # A permission edit also changes Firewall. Select it deliberately so this
+    # case still reaches the forwarding-off guard after the consent gate.
+    requested = ["network", "firewall"] if change == "permission" else ["network"]
+    response = client.post("/appliance-apply", data={"csrf": csrf, "selected_units": requested},
+                           headers={"Accept": "application/json"})
+    assert response.status_code == (202 if change == "none" else 422), response.text
+    with SessionLocal() as db:
+        after = ui.load_appliance_apply_baselines(db)
+        if change != "none" or apply_fails:
+            assert after == before
+        else:
+            assert after["network"]["snapshot_hash"] != "legacy-network"
+            assert after["wan"]["routing_permission_fingerprint"] == after["firewall"]["routing_permission_fingerprint"]
+        if change == "none":
+            job = db.get(Job, response.json()["job_id"])
+            payload = json.loads(job.result)
+            assert payload["management_handoff"] is True
+            assert {"network", "wan", "firewall"} <= set(payload["management_handoff_units"])
+            assert job.status == ("failed" if apply_fails else "succeeded"), job.error
+        elif change == "route" or change.startswith("wan_"):
+            assert "pending settings beyond" in response.json()["detail"]
+        else:
+            assert "Disable Routing" in response.json()["detail"]
+
+
+@pytest.mark.parametrize("section,line,owned", [
+    ("feature_settings", "nat_enabled=true", True),
+    ("nat_rules", "nat=Unreviewed source NAT", True),
+    ("port_forwards", 'json=[{"name":"Unreviewed forward"}]', True),
+    ("targets", "target=eth2\n  ip_cidr=192.168.50.11/24", False),
+    ("feature_settings", "routing_enabled=false", False),
+])
+def test_nat_migration_intent_separates_owned_and_derived_changes(section, line, owned):
+    """Publishing consent covers owned settings and rules, excluding derived state.
+
+    Args:
+        section: Rendered snapshot section containing the delta.
+        line: Changed setting or record in that section.
+        owned: Whether Traffic Publishing owns the changed intent.
+    """
+    from atlaso.app import ui
+
+    assert (ui.nat_migration_intent(f"[{section}]\n{line}\n") != ui.nat_migration_intent("")) is owned
+
+
+@pytest.mark.parametrize("pending_unit", ["firewall", "ca", "appliance_settings", "public_services", "nat"])
+@pytest.mark.parametrize("selected", [False, True])
+def test_upgrade_migration_requires_consent_for_pending_protected_units(client, monkeypatch, pending_unit, selected):
+    """An upgrade handoff cannot capture unchecked protected desired edits.
+
+    Args:
+        client: Authenticated application client.
+        monkeypatch: Inject a changed protected preview and retain queued jobs.
+        pending_unit: Protected Apply owner with an unrelated pending edit.
+        selected: Whether the operator explicitly selected that edit.
+    """
+    from atlaso.app import ui
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Job, PhysicalInterface, Route
+    from atlaso.app.services.routes_wan import save_routes_wan_settings
+
+    login(client)
+    with SessionLocal() as db:
+        interface = db.query(PhysicalInterface).filter_by(name="eth2").one()
+        interface.role = "access"
+        interface.access_management_ui_enabled = True
+        db.add(Route(destination_cidr="0.0.0.0/0", gateway="192.168.50.1", interface_name="eth2", enabled=True))
+        save_routes_wan_settings(db, routing_enabled=True, nat_enabled=False, wan_simulation_enabled=False)
+        db.commit()
+        units = ui.appliance_apply_units(db)
+        ui.update_appliance_apply_baselines(db, units, {unit["id"] for unit in units})
+        baselines = ui.load_appliance_apply_baselines(db)
+        baselines["network"]["config_preview"] = baselines["network"]["config_preview"].replace(
+            "# Network runtime revision: exact-source-routing-v1.\n", "",
+        )
+        baselines["network"]["snapshot_hash"] = "legacy-network"
+        for owner in ("wan", "firewall"):
+            baselines[owner].pop("routing_permission_fingerprint", None)
+        ui.save_appliance_apply_baselines(db, baselines)
+        db.commit()
+        before = ui.load_appliance_apply_baselines(db)
+        job_count = db.query(Job).count()
+
+    original_units = ui.appliance_apply_units
+
+    def pending_units(db, **kwargs):
+        """Expose one pending protected preview through the ordinary builder.
+
+        Args:
+            db: Active desired-state session.
+            **kwargs: Options passed to the ordinary unit builder.
+        """
+        units = original_units(db, **kwargs)
+        network = next(unit for unit in units if unit["id"] == "network")
+        assert network["management_domain_migration_required"]
+        assert not network["management_handoff_required"]
+        unit = next(unit for unit in units if unit["id"] == pending_unit)
+        unit["changed"] = True
+        if pending_unit == "ca":
+            preview = json.loads(unit["config_preview"])
+            preview["pending_review_edit"] = True
+            unit["config_preview"] = json.dumps(preview)
+        elif pending_unit == "nat":
+            unit["config_preview"] = unit["config_preview"].replace("nat_enabled=false", "nat_enabled=true")
+        else:
+            unit["config_preview"] += "\n# pending protected edit\n"
+        unit["snapshot_hash"] = "pending-protected-edit"
+        return units
+
+    monkeypatch.setattr(ui, "appliance_apply_units", pending_units)
+    monkeypatch.setattr(ui, "run_appliance_apply_job", lambda _job_id: None)
+    csrf = client.get("/dashboard").text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    response = client.post("/appliance-apply", data={"csrf": csrf, "selected_units": ["network", pending_unit] if selected else ["network"]},
+                           headers={"Accept": "application/json"})
+    assert response.status_code == (202 if selected else 422), response.text
+    with SessionLocal() as db:
+        assert db.query(Job).count() == job_count + int(selected)
+        assert ui.load_appliance_apply_baselines(db) == before
+        if selected:
+            payload = json.loads(db.get(Job, response.json()["job_id"]).result)
+            assert pending_unit in payload["selected_units"]
+            if pending_unit != "nat":
+                assert pending_unit in payload["management_handoff_units"]
+            captured = next(unit for unit in payload["captured_units"] if unit["unit_id"] == pending_unit)
+            assert captured["snapshot_hash"] == "pending-protected-edit"
+        else:
+            assert "Select the pending protected handoff changes" in response.json()["detail"]
+
+
 @pytest.mark.parametrize("commit_fails", [False, True])
 @pytest.mark.parametrize("cleanup_fails", [False, True])
 def test_network_apply_acknowledges_only_durable_executed_baseline(client, monkeypatch, commit_fails, cleanup_fails):
