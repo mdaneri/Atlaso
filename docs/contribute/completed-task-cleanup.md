@@ -208,6 +208,55 @@ durable evidence survived release. Later eligibility
 checks repeat that aggregate readback and require completed remote/local ref gates to remain absent, even if a
 recreated ref points to the original SHA. Reappearance blocks completion and preserves the recreated resource/ref.
 
+### Disposable pytest Git fixtures
+
+`scripts.pytest_git_fixtures.PytestGitFixtures` owns Windows disposable pytest Git artifact roots. Use
+`kind: "artifact"` and `cleanup_tool: "PytestGitFixtures"`; generic generated-tree removal continues to reject
+nested and bare repositories. This tool removes the complete owned fixture graph, including its internal Git
+registrations, through checked Windows handles. It never prunes or removes registrations in an external repository.
+
+Before validation, construct the tool with the active Codex configuration, a new durable receipt filename outside
+the task worktree and every removal root, and verified `id`, `task_id`, `repository`, `source_commit`, and absolute `path`.
+The root and receipts must be beneath the configured worktree root. Call `create()` before using the new empty
+root; call `register(repository_path)` immediately after creating each ordinary repository, bare repository, or
+linked worktree. Keep every common directory and registered worktree inside that same artifact root. Original
+root and repository identities are recorded durably, not inferred from their names or a later cleanup snapshot.
+Every non-bare repository's effective Git working-tree root must equal its recorded creation root; external
+or redirected effective worktrees block sealing even when common metadata and registrations remain internal.
+
+After validation stops, call `seal()` to preserve the complete bounded identity/content inventory and Git topology.
+The returned small `.manifest` receipt is the resource's `ownership_manifest`; record its SHA-256 in the task inventory.
+It binds the larger `.sealed` inventory, which binds the original creation receipts by hash. Do not change fixtures
+after sealing.
+If sealing stops between inventory and manifest publication, `seal()` validates the existing inventory against
+fresh identities, contents, topology, and original receipts before publishing the missing manifest. It never
+replaces existing evidence; a matching completed seal is idempotent, and changed state or pending publication blocks retry.
+Unrecorded repositories, external/shared common directories, foreign or locked registrations, object alternates,
+Git locks, reparse points, hard links, credential/recovery trees, changed identities, or changed file contents block
+release. Validation must finish and the controller must independently prove exclusive ownership and inactivity;
+the receipt alone does not authorize cleanup.
+
+For each fresh `resource.inspect` or `resource.release` request, the live controller may call
+`tool.controller_call(operation, payload, approved_resource)` after independently approving that exact resource,
+its positive PR identity, source ancestry, originating task, retention state, and manifest hash. This adapter
+requires the request's handoff digest and exact removal scopes. Its single filesystem scope is the fixture root.
+Inspect again after release; the acknowledgment alone does not satisfy the enclosing cleanup protocol.
+
+Release durably prepares the sealed inventory before deleting any entry and retains all receipts outside the root.
+It pins every expected entry and verifies file hashes through those handles before the first deletion, retaining
+the handles until each child is disposed and closed. Changes after inspection therefore cannot become a new baseline.
+An interrupted retry checks every surviving entry against that inventory, allows only missing entries from a prepared
+release and directory timestamps changed by child removal, and refuses new, replaced, or changed data. A surviving
+pending publication requires reconciliation. Successful release records durable absence evidence and independently
+reads back root absence. An absent root without prepared evidence does not establish ownership or completed release.
+If deletion finishes before absence publication, inspection reports `evidence_preserved: false`; the controller
+must stop. Resume the owning tool's exact-scope `release()` to finalize the durable absence receipt, then repeat
+controller inspection. Missing, pending, or invalid absence evidence never authorizes task cleanup.
+Legacy artifacts without original creation receipts remain preserved; never retrofit them or use broad directory deletion.
+Read-only Git objects use the checked-handle
+[Windows disposition flag](https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/ntddk/ns-ntddk-_file_disposition_information_ex)
+without changing file permissions or enabling deletion of active shared handles. Ordinary generated-tree behavior is unchanged.
+
 ### Completion title
 
 For `task.title`, use supported `set_thread_title` with the exact supplied title, then `read_thread` to retrieve the
