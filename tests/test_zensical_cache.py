@@ -22,12 +22,18 @@ pytestmark = pytest.mark.skipif(os.name != "nt", reason="Zensical cache cleanup 
 class CacheOwner:
     """Supply a contained checkout and external durable receipt for one test cache."""
 
-    def __init__(self, root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def __init__(
+        self,
+        root: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        receipt_name: str = "zensical-cache.json",
+    ) -> None:
         """Prepare active Codex configuration without creating the cache or receipt.
 
         Args:
             root: Pytest-owned validation directory beneath the task validation root.
             monkeypatch: Scoped environment substitutions restored after the test.
+            receipt_name: Exact receipt filename, including any literal glob characters.
         """
         self.permitted = root / "permitted"
         self.permitted.mkdir(parents=True)
@@ -43,7 +49,7 @@ class CacheOwner:
         monkeypatch.setenv("CODEX_HOME", str(self.codex_home))
         self.checkout = self.permitted / "checkout"
         self.checkout.mkdir()
-        self.receipt = self.evidence / "zensical-cache.json"
+        self.receipt = self.evidence / receipt_name
         self.binding = {
             "id": "test-zensical-cache",
             "task_id": f"pytest-{root.name}",
@@ -143,10 +149,12 @@ def test_generation_is_recorded_before_cache_use(cache_owner: CacheOwner) -> Non
 
 
 @pytest.mark.parametrize("stage", ["original", "generation", "marker"])
+@pytest.mark.parametrize("receipt_name", ["zensical-cache.json", "cache[1].json"])
 def test_original_receipted_bootstrap_resumes_only_empty_or_marked_cache(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     stage: str,
+    receipt_name: str,
 ) -> None:
     """Resume bootstrap after each durable receipt/marker boundary without adoption.
 
@@ -154,8 +162,9 @@ def test_original_receipted_bootstrap_resumes_only_empty_or_marked_cache(
         tmp_path: Pytest-owned directory for the partial bootstrap state.
         monkeypatch: Scoped configuration environment substitution.
         stage: Last completed original-receipt, generation, or marker bootstrap step.
+        receipt_name: Literal receipt filename under test.
     """
-    owner = CacheOwner(tmp_path, monkeypatch)
+    owner = CacheOwner(tmp_path, monkeypatch, receipt_name=receipt_name)
     write_original_only(owner)
     if stage in {"generation", "marker"}:
         owner.owner._record(".generation-0000", {
@@ -172,6 +181,27 @@ def test_original_receipted_bootstrap_resumes_only_empty_or_marked_cache(
     assert set(owner.owner.files.snapshot(owner.owner.root)) == {".", MARKER_NAME}
     owner.owner.seal()
     owner.owner.release([str(owner.owner.root)])
+
+
+def test_bracketed_receipt_refuses_malformed_generation_name(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A malformed generation with a bracketed base name blocks bootstrap recovery.
+
+    Args:
+        tmp_path: Pytest-owned directory for partial bootstrap state.
+        monkeypatch: Scoped configuration environment substitution.
+    """
+    owner = CacheOwner(tmp_path, monkeypatch, receipt_name="cache[1].json")
+    write_original_only(owner)
+    malformed = owner.receipt.with_name(owner.receipt.name + ".generation-000x")
+    malformed.write_bytes(b"preserve malformed evidence")
+
+    with pytest.raises(Refusal, match="generation receipt is malformed"):
+        owner.owner.begin()
+    assert malformed.read_bytes() == b"preserve malformed evidence"
+    assert not (owner.owner.root / MARKER_NAME).exists()
 
 
 def test_bootstrap_recovery_refuses_unreceipted_contents_and_replaced_identity(
@@ -233,7 +263,8 @@ def test_failed_first_receipt_rolls_back_only_exact_empty_cache(
     with pytest.raises(OSError, match="original receipt failure"):
         owner.owner.begin()
     assert not owner.owner.root.exists()
-    assert not list(owner.receipt.parent.glob(owner.receipt.name + "*"))
+    assert not [path for path in owner.receipt.parent.iterdir()
+                if path.name.startswith(owner.receipt.name)]
 
 
 def test_existing_cache_cannot_be_adopted(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -269,7 +300,51 @@ def test_receipt_parent_ancestor_refuses_before_cache_creation(
         owner.begin()
     assert not owner.root.exists()
     assert not receipt.exists()
-    assert not list(fixture.permitted.glob(receipt.name + "*"))
+    assert not [path for path in fixture.permitted.iterdir() if path.name.startswith(receipt.name)]
+
+
+def test_bracketed_receipt_name_supports_pending_bootstrap_and_repeat_builds(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Receipt bookkeeping treats bracket characters as literal filename characters.
+
+    Args:
+        tmp_path: Pytest-owned directory for the bracketed receipt lifecycle.
+        monkeypatch: Scoped environment and configuration substitutions.
+    """
+    cache_owner = CacheOwner(tmp_path, monkeypatch, receipt_name="cache[1].json")
+    pending = cache_owner.receipt.with_name(cache_owner.receipt.name.swapcase() + ".pending")
+    pending.write_bytes(b"pending evidence")
+    with pytest.raises(Refusal, match="Pending Zensical cache evidence"):
+        cache_owner.owner.begin()
+    assert not cache_owner.owner.root.exists()
+    pending.unlink()
+
+    cache_owner.owner.begin()
+    first_generation = cache_owner.owner.generations()[0]
+    assert first_generation["root_identity"] == cache_owner.owner.files.snapshot(cache_owner.owner.root)["."]["identity"]
+    (cache_owner.owner.root / "first.bin").write_bytes(b"first")
+    first_manifest = cache_owner.owner.seal()
+    first_manifest_bytes = first_manifest.read_bytes()
+
+    cache_owner.owner.begin()
+    assert set(cache_owner.owner.files.snapshot(cache_owner.owner.root)) == {".", MARKER_NAME}
+    (cache_owner.owner.root / "second.bin").write_bytes(b"second")
+    second_manifest = cache_owner.owner.seal()
+
+    assert first_manifest.read_bytes() == first_manifest_bytes
+    assert second_manifest.name == "cache[1].json.attempt-0001.manifest"
+    assert cache_owner.owner.generations()[0]["root_identity"] == first_generation["root_identity"]
+    resource = cache_owner.resource(second_manifest)
+    request = {"resource": resource, "handoff_sha256": "9" * 64}
+    inspected = cache_owner.owner.controller_call("resource.inspect", request, resource)
+    assert inspected["absent"] is False
+    assert cache_owner.owner.controller_call(
+        "resource.release",
+        {**request, "removal_scopes": inspected["removal_scopes"]},
+        resource,
+    ) == {"success": True}
 
 
 def test_seal_and_controller_release(cache_owner: CacheOwner) -> None:

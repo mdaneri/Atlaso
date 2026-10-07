@@ -120,8 +120,26 @@ class ZensicalCache:
         self.lock_id = hashlib.sha256(str(receipt).casefold().encode("utf-8")).hexdigest()
 
     def _pending(self) -> list[Path]:
-        return [path for path in self.receipt.parent.glob(self.receipt.name + "*")
+        receipt_prefix = self.receipt.name.casefold()
+        return [path for path in self.receipt.parent.iterdir()
+                if path.name.casefold().startswith(receipt_prefix)
                 if path.name.endswith(".pending")]
+
+    def _generation_receipts(self) -> list[Path]:
+        """Return generation receipt entries using literal filename prefixes."""
+        prefix = (self.receipt.name + ".generation-").casefold()
+        return sorted(path for path in self.receipt.parent.iterdir()
+                      if path.name.casefold().startswith(prefix) and not path.name.endswith(".pending"))
+
+    def _receipt_family(self) -> list[Path]:
+        """Return entries in this receipt's literal filename family.
+
+        The directory scan intentionally avoids glob syntax because receipt names
+        may contain characters such as brackets that glob treats as patterns.
+        """
+        prefix = self.receipt.name.casefold()
+        return [path for path in self.receipt.parent.iterdir()
+                if path.name.casefold().startswith(prefix)]
 
     def _check_pending(self) -> None:
         require(not self._pending(), "Pending Zensical cache evidence requires reconciliation before retry.")
@@ -296,8 +314,7 @@ class ZensicalCache:
     def generations(self) -> list[dict[str, Any]]:
         """Load the original generation journal and reject gaps or duplicates."""
         self._check_pending()
-        records = sorted(path for path in self.receipt.parent.glob(self.receipt.name + ".generation-*")
-                         if not path.name.endswith(".pending"))
+        records = self._generation_receipts()
         require(len(records) == 1 and records[0].name == self.receipt.name + ".generation-0000",
                 "Zensical cache generation journal is missing, duplicated, or incomplete.")
         return [self._load(".generation-0000")]
@@ -352,7 +369,7 @@ class ZensicalCache:
                     })
                 return
 
-            require(not list(self.receipt.parent.glob(self.receipt.name + "*")) and not self.root.exists(),
+            require(not self._receipt_family() and not self.root.exists(),
                     "Zensical cache creation requires new cache and receipt paths; preserve existing state.")
             with self.files.ancestors(self.root), self.files.opened(self.checkout, directory=True) as (
                     _, checkout_identity, _):
@@ -364,7 +381,7 @@ class ZensicalCache:
                             self._record("", {"root_identity": list(root_identity),
                                                "checkout_identity": list(checkout_identity)})
                         except (OSError, RuntimeError):
-                            if not list(self.receipt.parent.glob(self.receipt.name + "*")):
+                            if not self._receipt_family():
                                 try:
                                     snapshot = self.files.snapshot(self.root)
                                     if set(snapshot) == {"."} and snapshot["."]["identity"] == list(root_identity):
@@ -407,10 +424,7 @@ class ZensicalCache:
         with self.files.ancestors(self.root), self.files.opened(self.root, directory=True) as (_, identity, _):
             require(list(identity) == original.get("root_identity"),
                     "Zensical cache root identity differs from its original receipt.")
-            generation_paths = sorted(
-                path for path in self.receipt.parent.glob(self.receipt.name + ".generation-*")
-                if not path.name.endswith(".pending")
-            )
+            generation_paths = self._generation_receipts()
             require(len(generation_paths) <= 1 and all(
                 path.name == self.receipt.name + ".generation-0000" for path in generation_paths
             ), "Zensical cache generation receipt is malformed; reconcile before retry.")
