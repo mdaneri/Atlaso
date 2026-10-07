@@ -8,7 +8,15 @@ from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
 
 from atlaso.app.database import Base
-from atlaso.app.models import AuditEvent, Setting, User, Vault, VaultEntry
+from atlaso.app.models import (
+    AuditEvent,
+    Job,
+    Setting,
+    TaskLogCheckpoint,
+    User,
+    Vault,
+    VaultEntry,
+)
 from atlaso.app.services import vcf_lab_overrides as lab
 from atlaso.app.services.vcf_lab_remote import (
     KEYS,
@@ -315,6 +323,96 @@ def test_job_outcomes_preserve_recovery_state(db, values, state, monkeypatch, fa
     if failure == "restart":
         assert json.loads(job.result)["property_verified"] is True
         assert json.loads(job.result)["service_active"] is False
+
+
+@pytest.mark.parametrize("outcome", ["success", "interrupted"])
+def test_worker_claim_is_durably_logged_before_remote_execution(
+    db, values, state, monkeypatch, outcome
+):
+    """Commit the running milestone before entering the mocked remote boundary.
+
+    Args:
+        db: Test database session.
+        values: Reviewed target selection.
+        state: Mutable inspected-state fixture.
+        monkeypatch: Replaces all remote execution boundaries.
+        outcome: Successful completion or a safe simulated interruption.
+    """
+    reviewed = lab.review(db, "admin", lab.target_from_values(db, values), values)
+    job = lab.enqueue(db, "admin", reviewed["token"])
+    execution_calls = []
+
+    def inspect(_db, _target, _fingerprint):
+        """Use a separate reader to observe the committed claim before dispatch.
+
+        Args:
+            _db: Worker session.
+            _target: Credential-free selected endpoint.
+            _fingerprint: Reviewed SSH identity.
+        """
+        with Session(db.get_bind()) as reader:
+            persisted = reader.get(Job, job.id)
+            checkpoint = reader.get(TaskLogCheckpoint, job.id)
+            assert persisted.status == "running"
+            events = json.loads(checkpoint.state_json)["important_events"]
+            assert sum(
+                event["component"] == "task"
+                and event["stage"] == "started"
+                and event["outcome"] == "running"
+                for event in events
+            ) == 1
+        return dict(state)
+
+    def remote(_db, _target, _fingerprint, _request, *, before_dispatch):
+        """Simulate the only execution boundary without native SSH actions.
+
+        Args:
+            _db: Worker session.
+            _target: Credential-free selected endpoint.
+            _fingerprint: Reviewed SSH identity.
+            _request: Fixed property update request.
+            before_dispatch: Durable provenance callback.
+        """
+        execution_calls.append("remote")
+        if outcome == "interrupted":
+            raise RuntimeError("synthetic worker interruption")
+        before_dispatch()
+        return {
+            "ok": True,
+            "changed": True,
+            "values": dict(values["desired"]),
+            "service_active": True,
+        }
+
+    monkeypatch.setattr(lab, "inspect_target", inspect)
+    monkeypatch.setattr(lab, "remote", remote)
+    monkeypatch.setattr(
+        lab,
+        "appliance_info",
+        lambda *_args: {"role": state["role"], "version": state["version"]},
+    )
+
+    lab.run_job(job.id)
+    db.refresh(job)
+    expected_status = "succeeded" if outcome == "success" else "failed"
+    assert job.status == expected_status
+    assert len(execution_calls) == 1
+    events = json.loads(db.get(TaskLogCheckpoint, job.id).state_json)["important_events"]
+    assert sum(
+        event["component"] == "task"
+        and event["stage"] == "started"
+        and event["outcome"] == "running"
+        for event in events
+    ) == 1
+    assert any(
+        event["component"] == "task"
+        and event["stage"] == "completed"
+        and event["outcome"] == expected_status
+        for event in events
+    )
+
+    lab.run_job(job.id)
+    assert len(execution_calls) == 1
 
 
 def test_review_requires_nonempty_allowlisted_selection(db, values, state):

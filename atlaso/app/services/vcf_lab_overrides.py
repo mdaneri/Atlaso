@@ -582,6 +582,11 @@ def run_job(job_id: str, credentials: dict[str, str] | None = None) -> None:
         if claimed is None:
             db.rollback()
             return
+        from atlaso.app.services.task_log_history import (
+            capture_task_history_for_session,
+        )
+
+        capture_task_history_for_session(db, job_id, result_changed=False)
         db.commit()
         result: dict[str, Any] = {
             "target": plan["target"]["host"],
