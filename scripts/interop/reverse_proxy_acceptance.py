@@ -4,12 +4,16 @@ from __future__ import annotations
 
 import hashlib
 import http.client
+import importlib.util
 import json
 import socket
 import ssl
+import sys
 import threading
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from ipaddress import IPv4Address, ip_interface
+from pathlib import Path
 from typing import Any
 
 API = "/api/v1/traffic-publishing/reverse-proxies"
@@ -106,8 +110,6 @@ def run_reverse_proxy_acceptance(lifecycle: Any, results: list[Any], client: Any
     host = str(IPv4Address(args.reverse_proxy_upstream_host))
     if host == address or IPv4Address(host).is_loopback or IPv4Address(host).is_unspecified:
         raise lifecycle.LifecycleError("The upstream must be the selected remote host adapter.")
-    if args.reverse_proxy_screenshot_dir:
-        raise lifecycle.LifecycleError("Authenticated browser capture is not yet admitted by this acceptance consumer.")
     step = lifecycle.run_step
     step(results, "appliance-health", lifecycle.appliance_health, client, args)
     step(results, "configure-proxy-listener", lifecycle.configure_oidc_listener, client, args)
@@ -146,7 +148,10 @@ def run_reverse_proxy_acceptance(lifecycle: Any, results: list[Any], client: Any
                 code, _body, _ = listener_request(address, payload["port"], payload["hostname"], "/api/v1/version", context=tls)
                 if code not in {403, 404}:
                     raise lifecycle.LifecycleError("Reserved API path was not isolated.")
-            code, _body, _ = listener_request(address, 8080, "unknown.proxy.atlaso.internal", "/preserve/value")
+            try:
+                code, _body, _ = listener_request(address, 8080, "unknown.proxy.atlaso.internal", "/preserve/value")
+            except http.client.RemoteDisconnected:
+                code = 444
             if code not in {400, 403, 404, 421, 444}:
                 raise lifecycle.LifecycleError("Unknown Host reached a proxy route.")
             code, _body, headers = listener_request(address, 8081, https_payload["hostname"], "/preserve/value")
@@ -159,8 +164,28 @@ def run_reverse_proxy_acceptance(lifecycle: Any, results: list[Any], client: Any
         code, _body, _ = client.request_bytes("POST", API, json_body=conflicting)
         if code not in {409, 422}:
             raise lifecycle.LifecycleError("Duplicate proxy hostname was accepted.")
-        health = client.json_request("GET", API + "/health")
-        step(results, "proxy-cached-health", lambda: {"response_type": type(health).__name__, "proxy_ids": [http_proxy["id"], https_proxy["id"]]})
+        def verify_cached_health() -> dict[str, Any]:
+            """Wait for applied cached probes without initiating upstream traffic."""
+            expected = {http_proxy["id"], https_proxy["id"]}
+            deadline = time.monotonic() + 90
+            while time.monotonic() < deadline:
+                rows = client.json_request("GET", API + "/health")["items"]
+                selected = [row for row in rows if row["proxy_id"] in expected]
+                if len(selected) == 4 and all(row["applied"] and not row["pending"] and row["status"] == "healthy" and row["http_status"] == 200 for row in selected):
+                    return {"proxy_ids": sorted(expected), "routes": 4, "status": "healthy", "applied": True}
+                time.sleep(2)
+            raise lifecycle.LifecycleError("Applied cached HTTP route observations did not become healthy.")
+
+        step(results, "proxy-cached-health", verify_cached_health)
+        if args.reverse_proxy_screenshot_dir:
+            module_path = Path(__file__).with_name("reverse_proxy_browser.py")
+            spec = importlib.util.spec_from_file_location("atlaso_reverse_proxy_browser", module_path)
+            if spec is None or spec.loader is None:
+                raise lifecycle.LifecycleError("Browser capture consumer is unavailable.")
+            module = importlib.util.module_from_spec(spec)
+            sys.modules[spec.name] = module
+            spec.loader.exec_module(module)
+            step(results, "reverse-proxy-ui-capture", module.capture_ui, client, args)
     finally:
         server.shutdown()
         server.server_close()

@@ -2896,6 +2896,57 @@ def test_management_handoff_scopes_old_http_before_new_address_activation(monkey
     assert "listen [::]:80 default_server;" not in installed[0]
 
 
+@pytest.mark.parametrize("https_enabled", [False, True])
+def test_management_handoff_scopes_canonical_ipv4_only_site(monkeypatch, tmp_path, https_enabled):
+    """Accept native IPv4-only listeners without inventing IPv6 exposure.
+
+    Args:
+        monkeypatch: Isolated managed site and installer replacements.
+        tmp_path: Owned disposable configuration root.
+        https_enabled: Whether the canonical site also serves TLS.
+    """
+    helper = load_helper_module()
+    site = tmp_path / "management.conf"
+    site.write_text("# Managed by Atlaso. Local changes may be overwritten.\n"
+                    "server {\n  listen 80 default_server;\n}\n" +
+                    ("server {\n  listen 443 ssl default_server;\n}\n" if https_enabled else ""), encoding="utf-8")
+    monkeypatch.setattr(helper, "NGINX_MANAGEMENT_SITE_PATH", site)
+    installed = []
+    monkeypatch.setattr(helper, "_install_nginx_site", lambda _path, text: installed.append(text) or 0)
+    helper._scope_management_handoff_old_listener({"previous_https_enabled": https_enabled,
+                                                 "previous_management_addresses": ["192.0.2.10"]})
+    assert len(installed) == 1
+    assert "listen 192.0.2.10:80 default_server;" in installed[0]
+    assert "[::]" not in installed[0]
+    if https_enabled:
+        assert "listen 192.0.2.10:443 ssl default_server;" in installed[0]
+
+
+@pytest.mark.parametrize("addresses,tls_lines", [
+    (["192.0.2.10", "2001:db8::10"], "  listen 443 ssl default_server;\n"),
+    (["192.0.2.10"], ""),
+    (["192.0.2.10"], "  listen 80 default_server;\n"),
+])
+def test_management_handoff_rejects_incomplete_ipv4_only_inventory(monkeypatch, tmp_path, addresses, tls_lines):
+    """Require every previous family and protocol without duplicate wildcards.
+
+    Args:
+        monkeypatch: Isolated configuration path replacement.
+        tmp_path: Owned disposable configuration root.
+        addresses: Previously reachable management addresses.
+        tls_lines: Missing, valid or duplicated candidate wildcard lines.
+    """
+    helper = load_helper_module()
+    site = tmp_path / "management.conf"
+    site.write_text("# Managed by Atlaso. Local changes may be overwritten.\n"
+                    "server {\n  listen 80 default_server;\n" + tls_lines + "}\n", encoding="utf-8")
+    monkeypatch.setattr(helper, "NGINX_MANAGEMENT_SITE_PATH", site)
+    monkeypatch.setattr(helper, "_install_nginx_site", lambda *_args: pytest.fail("Invalid inventory reached publication"))
+    with pytest.raises(ValueError, match="listener inventory is incomplete"):
+        helper._scope_management_handoff_old_listener({"previous_https_enabled": True,
+                                                     "previous_management_addresses": addresses})
+
+
 @pytest.mark.parametrize("http_port,https_port", [(80, 443), (8080, 8443)])
 def test_management_readiness_accepts_committed_scoped_loopback(monkeypatch, tmp_path, http_port, https_port):
     """Console and update readiness retain their loopback path after handoff.

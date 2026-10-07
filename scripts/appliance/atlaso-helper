@@ -31416,6 +31416,7 @@ def _scope_management_handoff_old_listener(state: dict) -> None:
         raise ValueError("previous management listener addresses are invalid")
     scoped: list[str] = []
     listeners = 0
+    wildcard_inventory: list[tuple[int, bool]] = []
     already_scoped: set[tuple[str, bool]] = set()
     scoped_ports: dict[bool, set[int]] = {False: set(), True: set()}
     allowed = {str(address) for address in addresses} | {"127.0.0.1", "::1"}
@@ -31426,6 +31427,7 @@ def _scope_management_handoff_old_listener(state: dict) -> None:
             match = ipv4 or ipv6
             listeners += 1
             family = 4 if ipv4 else 6
+            wildcard_inventory.append((family, "ssl" in match.group(3).split()))
             for address in addresses:
                 if address.version == family:
                     binding = str(address) if family == 4 else f"[{address}]"
@@ -31469,8 +31471,14 @@ def _scope_management_handoff_old_listener(state: dict) -> None:
         if dedicated and public_port not in scoped_ports[bool(state["previous_https_enabled"])]:
             raise ValueError("previous management nginx listener is not canonical")
         return
-    expected_listeners = 4 if state["previous_https_enabled"] else 2
-    if listeners != expected_listeners:
+    wildcard_families = {family for family, _tls in wildcard_inventory}
+    expected_inventory = {
+        (family, tls) for family in wildcard_families
+        for tls in ((False, True) if state["previous_https_enabled"] else (False,))
+    }
+    if (not {address.version for address in addresses} <= wildcard_families
+            or set(wildcard_inventory) != expected_inventory
+            or len(wildcard_inventory) != len(expected_inventory)):
         raise ValueError("previous management nginx listener inventory is incomplete")
     if _install_nginx_site(NGINX_MANAGEMENT_SITE_PATH, "\n".join(scoped) + "\n") != 0:
         raise ValueError("previous management nginx listener could not be address scoped")
