@@ -69,7 +69,12 @@ def test_read_only_firewall_user_keeps_fallback_without_mutation_wizard(client):
 
 
 def test_reverse_proxy_transport_verifies_csrf_before_json_and_uses_strict_integer_ids(client, monkeypatch):
-    """Reject invalid CSRF before body parsing, then save a complete desired record."""
+    """Reject invalid CSRF before body parsing, then save a complete desired record.
+
+    Args:
+        client: Initialized authenticated appliance test client.
+        monkeypatch: Scoped dependency replacements supplied by pytest.
+    """
     import json
     from datetime import datetime, timezone
 
@@ -165,7 +170,11 @@ def test_reverse_proxy_transport_verifies_csrf_before_json_and_uses_strict_integ
 
 
 def test_reverse_proxy_transports_require_firewall_scope(client):
-    """Firewall readers can inspect proxies but cannot call mutation transports."""
+    """Firewall readers can inspect proxies but cannot call mutation transports.
+
+    Args:
+        client: Initialized authenticated appliance test client.
+    """
     with SessionLocal() as db:
         admin = db.scalar(select(User).where(User.username == "admin"))
         assert admin is not None
@@ -208,7 +217,12 @@ def _prepare_proxy_apply_intent(ui, *, applied_intent: str, desired_intent: str,
         db.commit()
 
     def planned_units(db, **kwargs):
-        """Return ordinary units with only the proxy case controlled."""
+        """Return ordinary units with only the proxy case controlled.
+
+        Args:
+            db: Caller-owned database session for proxy desired state.
+            **kwargs: Input used by planned units.
+        """
         units = original(db, **kwargs)
         for unit in units:
             if unit["id"] in changed_ids:
@@ -226,7 +240,12 @@ def _prepare_proxy_apply_intent(ui, *, applied_intent: str, desired_intent: str,
 
 
 def test_changed_reverse_proxy_intent_requires_pending_publication_dependencies(client, monkeypatch):
-    """A proxy publication change cannot apply while its pending handoff peers are unchecked."""
+    """A proxy publication change cannot apply while its pending handoff peers are unchecked.
+
+    Args:
+        client: Initialized authenticated appliance test client.
+        monkeypatch: Scoped dependency replacements supplied by pytest.
+    """
     import json
 
     from atlaso.app import ui
@@ -274,7 +293,12 @@ def test_changed_reverse_proxy_intent_requires_pending_publication_dependencies(
 
 
 def test_unchanged_reverse_proxy_intent_keeps_public_services_apply_independent(client, monkeypatch):
-    """An unrelated Public Services change retains its existing independent Apply behavior."""
+    """An unrelated Public Services change retains its existing independent Apply behavior.
+
+    Args:
+        client: Initialized authenticated appliance test client.
+        monkeypatch: Scoped dependency replacements supplied by pytest.
+    """
     import json
 
     from atlaso.app import ui

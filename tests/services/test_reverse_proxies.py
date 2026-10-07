@@ -32,7 +32,11 @@ from atlaso.app.services.reverse_proxies import (
 
 
 def payload(**overrides):
-    """Return one safe HTTPS virtual-host request for a lab target."""
+    """Return one safe HTTPS virtual-host request for a lab target.
+
+    Args:
+        **overrides: Input used by payload.
+    """
     value = {
         "name": "Application",
         "description": "Internal application",
@@ -111,7 +115,11 @@ def test_managed_dns_hostname_bound_prevents_invalid_owned_record():
 
 @pytest.mark.parametrize("upstream", ["application.example.test", "peer.example.test"])
 def test_reverse_proxy_hostnames_are_reserved_as_upstreams(upstream):
-    """Prevent self and peer proxy targets that resolve onto appliance listeners."""
+    """Prevent self and peer proxy targets that resolve onto appliance listeners.
+
+    Args:
+        upstream: Input used by test reverse proxy hostnames are reserved as upstreams.
+    """
     engine, db = create_db()
     try:
         save_proxy(db, payload(name="Peer", hostname="peer.example.test"), actor="operator")
@@ -137,7 +145,13 @@ def test_reverse_proxy_hostnames_are_reserved_as_upstreams(upstream):
 def test_network_boot_hostname_is_reserved_for_serving_and_upstreams(
     setting_value, reserved_hostname, target
 ):
-    """Reserve the configured PXE name or canonical default, even while disabled."""
+    """Reserve the configured PXE name or canonical default, even while disabled.
+
+    Args:
+        setting_value: Input used by test network boot hostname is reserved for serving and upstreams.
+        reserved_hostname: Input used by test network boot hostname is reserved for serving and upstreams.
+        target: Served or upstream hostname relationship under test.
+    """
     engine, db = create_db()
     try:
         if setting_value is not None:
@@ -220,14 +234,23 @@ def test_schema_canonicalizes_hostnames_and_fingerprints():
     ],
 )
 def test_schema_rejects_ambiguous_paths_hosts_and_unreviewed_trust(route, match):
-    """Reject nginx syntax ambiguity, special destinations and missing acknowledgements."""
+    """Reject nginx syntax ambiguity, special destinations and missing acknowledgements.
+
+    Args:
+        route: Input used by test schema rejects ambiguous paths hosts and unreviewed trust.
+        match: Expected validation error text.
+    """
     candidate = payload(routes=[{**payload()["routes"][0], **route}])
     with pytest.raises(ValidationError, match=match):
         ReverseProxyCreate.model_validate(candidate)
 
 
 def test_acknowledged_insecure_upstream_emits_bounded_operational_warning(caplog):
-    """Warn on a persisted trust exception using only proxy identity and route count."""
+    """Warn on a persisted trust exception using only proxy identity and route count.
+
+    Args:
+        caplog: Captured bounded operational events.
+    """
     engine, db = create_db()
     try:
         caplog.set_level("WARNING", logger="atlaso.operational")
@@ -274,7 +297,12 @@ def test_acknowledged_insecure_upstream_emits_bounded_operational_warning(caplog
     ],
 )
 def test_schema_and_service_enforce_bounded_runtime_and_unambiguous_routes(overrides, match):
-    """Reject out-of-policy timeouts/body sizes and overlapping route prefixes."""
+    """Reject out-of-policy timeouts/body sizes and overlapping route prefixes.
+
+    Args:
+        overrides: Desired-state fields replaced by the fixture.
+        match: Expected validation error text.
+    """
     engine, db = create_db()
     try:
         try:
@@ -393,7 +421,14 @@ def test_named_nginx_front_doors_share_sockets_but_exclusive_claims_block():
 
 
 def validate_candidate(db: Session, request: ReverseProxyCreate, *, context=None, existing=None) -> list[str]:
-    """Build a complete model candidate for service-level validation."""
+    """Build a complete model candidate for service-level validation.
+
+    Args:
+        db: Caller-owned database session for proxy desired state.
+        request: Incoming browser request carrying the payload and CSRF token.
+        context: Validated listener, address, service, and socket inventory.
+        existing: Current proxy collection used for replacement and conflict checks.
+    """
     values = request.model_dump(exclude={"routes"})
     values["listeners"] = [listener.model_dump() for listener in request.listeners]
     candidate = ReverseProxy(**values)
@@ -517,7 +552,11 @@ def test_listener_fanout_is_bounded_before_saved_state_or_audit():
 
 
 def test_save_replaces_routes_atomically_preserves_owned_ids_and_audits(monkeypatch):
-    """Preserve submitted child identities and roll back when audit commit fails."""
+    """Preserve submitted child identities and roll back when audit commit fails.
+
+    Args:
+        monkeypatch: Scoped dependency replacements supplied by pytest.
+    """
     engine, db = create_db()
     try:
         created = save_proxy(db, payload(), actor="operator")
@@ -634,8 +673,14 @@ def test_enable_and_delete_use_complete_audited_operations():
 
 @pytest.mark.parametrize("operation", ["save", "delete"])
 def test_proxy_mutations_capture_legacy_applied_service_dns_before_reconcile(monkeypatch, operation):
-    """Keep DNS rows from an older apply baseline before proxy reconciliation changes desired state."""
+    """Keep DNS rows from an older apply baseline before proxy reconciliation changes desired state.
+
+    Args:
+        monkeypatch: Scoped dependency replacements supplied by pytest.
+        operation: Proxy mutation selected by the fixture.
+    """
     from atlaso.app import ui
+    from atlaso.app.services import applied_service_dns
 
     engine, db = create_db()
     try:
@@ -657,10 +702,16 @@ def test_proxy_mutations_capture_legacy_applied_service_dns_before_reconcile(mon
         observations = []
 
         def capture_legacy_rows(session, _preview):
+            """Run capture legacy rows for the bounded proxy operation.
+
+            Args:
+                session: Caller-owned database session used by the fixture.
+                _preview: Rendered DNS snapshot passed to the ownership capture fixture.
+            """
             observations.append(len(list(session.scalars(select(ReverseProxy)))))
             return [legacy_record]
 
-        monkeypatch.setattr(ui, "owned_service_dns_records", capture_legacy_rows)
+        monkeypatch.setattr(applied_service_dns, "owned_service_dns_records", capture_legacy_rows)
         if operation == "save":
             save_proxy(db, payload(), actor="operator")
             assert observations == [0]

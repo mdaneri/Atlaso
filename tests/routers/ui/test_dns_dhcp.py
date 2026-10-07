@@ -2149,7 +2149,11 @@ def test_dns_settings_reconcile_reverse_proxy_records_and_preserve_operator_dns(
 
 
 def test_dns_zone_eligibility_reconciles_proxy_records_atomically(client):
-    """Create, disable and re-enable an authoritative zone with its managed proxy DNS rows."""
+    """Create, disable and re-enable an authoritative zone with its managed proxy DNS rows.
+
+    Args:
+        client: Initialized authenticated appliance test client.
+    """
     from sqlalchemy import select
 
     from atlaso.app.database import SessionLocal
@@ -2210,7 +2214,11 @@ def test_dns_zone_eligibility_reconciles_proxy_records_atomically(client):
 
 
 def test_dns_zone_enable_conflict_rolls_back_eligibility_and_operator_record(client):
-    """Reject a zone activation that would claim an operator-owned proxy hostname."""
+    """Reject a zone activation that would claim an operator-owned proxy hostname.
+
+    Args:
+        client: Initialized authenticated appliance test client.
+    """
     from sqlalchemy import select
 
     from atlaso.app.database import SessionLocal

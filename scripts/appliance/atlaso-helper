@@ -194,6 +194,7 @@ CONSOLE_RECOVERY_STOP_SECONDS = 2
 _CONSOLE_RECOVERY_DEADLINE: ContextVar[float | None] = ContextVar("console_recovery_deadline", default=None)
 UPDATE_RELEASE_NOTES_URL_MAX_LENGTH = 2048
 NO_PATH_ACTIONS = {
+    ("public-services", "reverse-proxy-status"),
     ("firewall", "replay"),
     ("network", "prepare-observation"),
     ("network", "address-status"),
@@ -9501,7 +9502,11 @@ def _nginx_worker_generation() -> tuple[int, set[int]] | None:
 
 
 def _wait_nginx_reload_generation(previous: tuple[int, set[int]]) -> bool:
-    """A successful signal command does not prove the master accepted a config."""
+    """A successful signal command does not prove the master accepted a config.
+
+    Args:
+        previous: Admitted nginx master identity and child generation before reload.
+    """
     deadline = time.monotonic() + 10
     while time.monotonic() < deadline:
         current = _nginx_worker_generation()
@@ -9758,7 +9763,11 @@ WantedBy=multi-user.target
 
 
 def _reverse_proxy_unit(generation: str) -> str:
-    """Resolve only an exact content-bound generation service identity."""
+    """Resolve only an exact content-bound generation service identity.
+
+    Args:
+        generation: Exact immutable reverse-proxy transport generation.
+    """
     if not isinstance(generation, str) or re.fullmatch(r"[0-9a-f]{64}", generation) is None:
         raise ValueError("reverse-proxy generation identity is invalid")
     return f"atlaso-reverse-proxy@{generation}.service"
@@ -9773,7 +9782,11 @@ def _reverse_proxy_applied() -> dict:
 
 
 def _reverse_proxy_tls_paths(proxies: list[dict]) -> set[Path]:
-    """Return deterministic TLS artifacts owned by enabled HTTPS proxy intent."""
+    """Return deterministic TLS artifacts owned by enabled HTTPS proxy intent.
+
+    Args:
+        proxies: Validated canonical proxy collection.
+    """
     paths = set()
     for proxy in proxies:
         if not proxy["enabled"] or proxy["scheme"] != "https":
@@ -9787,7 +9800,11 @@ def _reverse_proxy_tls_paths(proxies: list[dict]) -> set[Path]:
 
 
 def _reverse_proxy_tls_owner(path: Path) -> dict | None:
-    """Pin a canonical applied TLS file before the journal admits retirement."""
+    """Pin a canonical applied TLS file before the journal admits retirement.
+
+    Args:
+        path: Candidate Atlaso-owned TLS material path.
+    """
     try:
         relative = path.relative_to(REVERSE_PROXY_TLS_ROOT).as_posix()
     except ValueError as exc:
@@ -9805,7 +9822,11 @@ def _reverse_proxy_tls_owner(path: Path) -> dict | None:
 
 
 def _reverse_proxy_runtime_paths(payload: dict) -> list[Path]:
-    """Bind candidate and previous immutable manifests to the handoff snapshot."""
+    """Bind candidate and previous immutable manifests to the handoff snapshot.
+
+    Args:
+        payload: Admitted protected Apply configuration and listener inventory.
+    """
     candidate_path = payload.get("public_services_config_path")
     candidate = _reverse_proxy_publication(Path(candidate_path).read_text(encoding="utf-8") if candidate_path else "")
     previous = _reverse_proxy_applied()
@@ -9830,7 +9851,11 @@ def _reverse_proxy_runtime_paths(payload: dict) -> list[Path]:
 
 
 def _snapshot_reverse_proxy_runtime(payload: dict) -> dict:
-    """Capture service state before the durable journal authorizes mutation."""
+    """Capture service state before the durable journal authorizes mutation.
+
+    Args:
+        payload: Admitted protected Apply configuration and listener inventory.
+    """
     previous_metadata = _reverse_proxy_applied()
     previous = previous_metadata["manifest"]
     candidate_path = payload.get("public_services_config_path")
@@ -9891,7 +9916,12 @@ def _snapshot_reverse_proxy_runtime(payload: dict) -> dict:
 
 
 def _validate_reverse_proxy_listener_protocols(metadata: dict, payload: dict) -> None:
-    """Refuse HTTP/TLS ambiguity on any shared nginx TCP socket."""
+    """Refuse HTTP/TLS ambiguity on any shared nginx TCP socket.
+
+    Args:
+        metadata: Independently validated publication metadata.
+        payload: Admitted protected Apply configuration and listener inventory.
+    """
     candidate_text = Path(payload["public_services_config_path"]).read_text(encoding="utf-8")
     # Canonical proxy metadata is a suffix; the prefix contains existing service listeners.
     texts = [candidate_text.split("# Managed reverse-proxy generation: ", 1)[0]]
@@ -9918,7 +9948,11 @@ def _validate_reverse_proxy_listener_protocols(metadata: dict, payload: dict) ->
 
 
 def _reverse_proxy_command(command: list[str]) -> None:
-    """Require success for a bounded exact-generation service operation."""
+    """Require success for a bounded exact-generation service operation.
+
+    Args:
+        command: Fixed bounded service lifecycle command.
+    """
     try:
         result = _run(command, timeout=15)
     except subprocess.TimeoutExpired:
@@ -9928,7 +9962,12 @@ def _reverse_proxy_command(command: list[str]) -> None:
 
 
 def _prepare_reverse_proxy_runtime(state: dict, payload: dict) -> None:
-    """Install and start one journal-owned generation before publishing nginx."""
+    """Install and start one journal-owned generation before publishing nginx.
+
+    Args:
+        state: Durable protected Apply journal and original ownership identities.
+        payload: Admitted protected Apply configuration and listener inventory.
+    """
     owner = state.get("reverse_proxy_runtime") or {}
     generation = owner.get("candidate_generation")
     if not generation:
@@ -9980,7 +10019,11 @@ def _prepare_reverse_proxy_runtime(state: dict, payload: dict) -> None:
 
 
 def _quiesce_reverse_proxy_candidate(state: dict) -> None:
-    """Stop only a candidate that this durable handoff created."""
+    """Stop only a candidate that this durable handoff created.
+
+    Args:
+        state: Durable protected Apply journal and original ownership identities.
+    """
     owner = state.get("reverse_proxy_runtime") or {}
     candidate = owner.get("candidate_generation")
     if candidate and candidate != owner.get("previous_generation") and REVERSE_PROXY_UNIT_PATH.exists():
@@ -9988,7 +10031,11 @@ def _quiesce_reverse_proxy_candidate(state: dict) -> None:
 
 
 def _restore_reverse_proxy_runtime(state: dict) -> None:
-    """Restore the previous generation's exact active and enabled state."""
+    """Restore the previous generation's exact active and enabled state.
+
+    Args:
+        state: Durable protected Apply journal and original ownership identities.
+    """
     owner = state.get("reverse_proxy_runtime") or {}
     previous = owner.get("previous_generation")
     if previous:
@@ -9998,7 +10045,11 @@ def _restore_reverse_proxy_runtime(state: dict) -> None:
 
 
 def _retire_reverse_proxy_runtime(state: dict) -> None:
-    """Retire the replaced generation only after application commit is durable."""
+    """Retire the replaced generation only after application commit is durable.
+
+    Args:
+        state: Durable protected Apply journal and original ownership identities.
+    """
     owner = state.get("reverse_proxy_runtime") or {}
     previous = owner.get("previous_generation")
     if previous and previous != owner.get("candidate_generation"):
@@ -10126,6 +10177,9 @@ def _verify_reverse_proxy_front_doors(payload: dict) -> None:
 
     The guard needs no upstream connection, so unreachable applications remain
     degraded observations and do not make an otherwise valid Apply fail.
+
+    Args:
+        payload: Admitted protected Apply configuration and listener inventory.
     """
     metadata = _reverse_proxy_publication(Path(payload["public_services_config_path"]).read_text(encoding="utf-8"))
     deadline = time.monotonic() + 45
@@ -34879,6 +34933,8 @@ def main(argv: list[str]) -> int:
         print(str(exc), file=sys.stderr)
         return 2
 
+    if (group, action) == ("public-services", "reverse-proxy-status") and real_apply:
+        return _handle_public_services(action, normalized_args)
     if (group, action) == ("network", "address-status") and real_apply:
         return _handle_network(action, normalized_args)
     if (group, action) == ("dnsmasq", "verify-pool") and real_apply:

@@ -84,7 +84,12 @@ def observe_reverse_proxy_health(db: Session, *, now: datetime | None = None) ->
 
 
 def _validate_observation(value: Any, *, now: datetime | None) -> dict[str, Any]:
-    """Validate the complete bounded helper response and its cache freshness."""
+    """Validate the complete bounded helper response and its cache freshness.
+
+    Args:
+        value: Candidate value to normalize or validate.
+        now: Input used by  validate observation.
+    """
     required = {"schema", "proxies", "generation", "health", "observed_at"}
     if not isinstance(value, dict) or set(value) != required or type(value.get("schema")) is not int or value["schema"] != 1:
         raise ValueError("Invalid reverse-proxy observation schema.")
@@ -134,7 +139,11 @@ def _validate_observation(value: Any, *, now: datetime | None) -> dict[str, Any]
 
 
 def _parse_timestamp(value: Any) -> datetime:
-    """Parse one bounded ISO timestamp and require an explicit UTC offset."""
+    """Parse one bounded ISO timestamp and require an explicit UTC offset.
+
+    Args:
+        value: Candidate value to normalize or validate.
+    """
     if not isinstance(value, str) or len(value) > 64:
         raise ValueError("Invalid reverse-proxy observation timestamp.")
     try:
@@ -147,7 +156,11 @@ def _parse_timestamp(value: Any) -> datetime:
 
 
 def _pending_items(proxies: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Build desired-state rows while a different applied snapshot is active."""
+    """Build desired-state rows while a different applied snapshot is active.
+
+    Args:
+        proxies: Complete bounded proxy desired-state collection.
+    """
     return [
         _base_item(proxy, route, status="pending", applied=False, pending=True,
                    failure_class="desired_state_pending", tls_status="not_probed", http_status=None, last_success=None,
@@ -157,7 +170,12 @@ def _pending_items(proxies: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 
 def _unavailable_items(proxies: list[dict[str, Any]], failure: str) -> list[dict[str, Any]]:
-    """Build explicit unavailable rows when helper evidence cannot be trusted."""
+    """Build explicit unavailable rows when helper evidence cannot be trusted.
+
+    Args:
+        proxies: Complete bounded proxy desired-state collection.
+        failure: Input used by  unavailable items.
+    """
     return [
         _base_item(proxy, route, status="unavailable", applied=False, pending=True,
                    failure_class=failure, tls_status="not_probed", http_status=None, last_success=None,
@@ -171,7 +189,20 @@ def _base_item(
     failure_class: str, tls_status: str, http_status: int | None, last_success: str | None,
     warning: str = "",
 ) -> dict[str, Any]:
-    """Return the stable, body-free API and browser health projection."""
+    """Return the stable, body-free API and browser health projection.
+
+    Args:
+        proxy: Desired-state proxy model or projection.
+        route: Input used by  base item.
+        status: Input used by  base item.
+        applied: Input used by  base item.
+        pending: Input used by  base item.
+        failure_class: Input used by  base item.
+        tls_status: Input used by  base item.
+        http_status: Input used by  base item.
+        last_success: Input used by  base item.
+        warning: Input used by  base item.
+    """
     return {
         "proxy_id": proxy["id"],
         "route_id": route["id"],

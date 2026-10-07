@@ -37,14 +37,23 @@ def build_router(
     )
 
     def authorize(identity: Identity, *, write: bool) -> None:
-        """Enforce the existing Firewall read or write scope."""
+        """Enforce the existing Firewall read or write scope.
+
+        Args:
+            identity: Authenticated identity whose firewall scope is checked.
+            write: Whether mutation permission is required.
+        """
         permission = "write:firewall" if write else "read:firewall"
         if not identity.can(permission):
             operation = "write" if write else "read"
             raise HTTPException(403, f"Firewall {operation} permission is required")
 
     def collection_payload(db: Session) -> dict[str, Any]:
-        """Build the bounded browser collection from publication-owned validation."""
+        """Build the bounded browser collection from publication-owned validation.
+
+        Args:
+            db: Caller-owned database session for proxy desired state.
+        """
         context = reverse_proxy_publication.context(db)
         rows = [response_for_proxy(proxy).model_dump(mode="json") for proxy in desired_rows(db)]
         return {
@@ -57,18 +66,32 @@ def build_router(
         }
 
     def csrf(request: Request) -> None:
-        """Verify the established browser header before parsing request JSON."""
+        """Verify the established browser header before parsing request JSON.
+
+        Args:
+            request: Incoming browser request carrying the payload and CSRF token.
+        """
         verify_csrf(request, request.headers.get("X-CSRF-Token", ""))
 
     @router.get("/data")
     def data(identity: Identity = Depends(require_session_identity), db: Session = Depends(get_db)) -> JSONResponse:
-        """Return complete reverse-proxy desired state and publication validation."""
+        """Return complete reverse-proxy desired state and publication validation.
+
+        Args:
+            identity: Authenticated identity whose firewall scope is checked.
+            db: Caller-owned database session for proxy desired state.
+        """
         authorize(identity, write=False)
         return JSONResponse(collection_payload(db), headers={"Cache-Control": "no-store"})
 
     @router.get("/health")
     def health(identity: Identity = Depends(require_session_identity), db: Session = Depends(get_db)) -> JSONResponse:
-        """Return bounded cached route health without probing upstreams per request."""
+        """Return bounded cached route health without probing upstreams per request.
+
+        Args:
+            identity: Authenticated identity whose firewall scope is checked.
+            db: Caller-owned database session for proxy desired state.
+        """
         authorize(identity, write=False)
         items = observe_reverse_proxy_health(db)[:MAX_HEALTH_ITEMS]
         return JSONResponse({"items": items}, headers={"Cache-Control": "no-store"})
@@ -79,7 +102,13 @@ def build_router(
         identity: Identity = Depends(require_session_identity),
         db: Session = Depends(get_db),
     ) -> JSONResponse:
-        """Create or fully replace desired state without publishing host changes."""
+        """Create or fully replace desired state without publishing host changes.
+
+        Args:
+            request: Incoming browser request carrying the payload and CSRF token.
+            identity: Authenticated identity whose firewall scope is checked.
+            db: Caller-owned database session for proxy desired state.
+        """
         authorize(identity, write=True)
         csrf(request)
         try:
@@ -111,7 +140,14 @@ def build_router(
         identity: Identity = Depends(require_session_identity),
         db: Session = Depends(get_db),
     ) -> JSONResponse:
-        """Delete saved desired state; global Appliance Apply owns retirement."""
+        """Delete saved desired state; global Appliance Apply owns retirement.
+
+        Args:
+            proxy_id: Exact saved proxy identifier.
+            request: Incoming browser request carrying the payload and CSRF token.
+            identity: Authenticated identity whose firewall scope is checked.
+            db: Caller-owned database session for proxy desired state.
+        """
         authorize(identity, write=True)
         csrf(request)
         try:

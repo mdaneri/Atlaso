@@ -81,12 +81,21 @@ RESERVED_DNS_OWNER_ERROR = "The Reverse Proxies DNS owner marker is reserved for
 
 
 def _is_reverse_proxy_dns_record(record: DnsRecord) -> bool:
-    """Identify DNS records whose lifecycle belongs to Reverse Proxies."""
+    """Identify DNS records whose lifecycle belongs to Reverse Proxies.
+
+    Args:
+        record: Candidate DNS record whose managed ownership is checked.
+    """
     return (record.description or "").startswith(DNS_OWNER_PREFIX)
 
 
 def _is_reverse_proxy_dns_hostname(db: Session, hostname: str) -> bool:
-    """Identify DNS names with at least one record owned by Reverse Proxies."""
+    """Identify DNS names with at least one record owned by Reverse Proxies.
+
+    Args:
+        db: Caller-owned database session for proxy desired state.
+        hostname: Canonical hostname whose proxy reservation is checked.
+    """
     return db.scalar(
         select(DnsRecord.id).where(
             func.lower(DnsRecord.hostname) == hostname.lower(),
@@ -96,8 +105,14 @@ def _is_reverse_proxy_dns_hostname(db: Session, hostname: str) -> bool:
 
 
 def _remember_applied_dns_records(db: Session) -> None:
-    """Capture legacy service-record ownership before generated DNS rows change."""
-    from atlaso.app.ui import remember_applied_service_dns_records
+    """Capture legacy service-record ownership before generated DNS rows change.
+
+    Args:
+        db: Caller-owned database session for proxy desired state.
+    """
+    from atlaso.app.services.applied_service_dns import (
+        remember_applied_service_dns_records,
+    )
 
     remember_applied_service_dns_records(db)
 

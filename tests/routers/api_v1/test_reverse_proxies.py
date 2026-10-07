@@ -6,7 +6,11 @@ from tests.routers.api_v1.helpers import create_token
 
 
 def _payload(**overrides):
-    """Return one complete proxy request for an eligible exact listener."""
+    """Return one complete proxy request for an eligible exact listener.
+
+    Args:
+        **overrides: Input used by  payload.
+    """
     value = {
         "name": "Application",
         "description": "Internal application",
@@ -279,7 +283,12 @@ def test_reverse_proxy_health_returns_one_cached_applied_observation(client, mon
 
 
 def test_reverse_proxy_delete_conflict_returns_problem_details_and_retains_intent(client, monkeypatch):
-    """Project a failed DNS ownership transaction through the documented delete boundary."""
+    """Project a failed DNS ownership transaction through the documented delete boundary.
+
+    Args:
+        client: Initialized authenticated appliance test client.
+        monkeypatch: Scoped dependency replacements supplied by pytest.
+    """
     from atlaso.app.schemas import ProblemDetails
     from atlaso.app.services import reverse_proxies
 
@@ -292,6 +301,12 @@ def test_reverse_proxy_delete_conflict_returns_problem_details_and_retains_inten
     proxy_id = created.json()["id"]
 
     def conflict(*_args, **_kwargs):
+        """Run conflict for the bounded proxy operation.
+
+        Args:
+            *_args: Input used by conflict.
+            **_kwargs: Input used by conflict.
+        """
         raise ValueError("Managed reverse-proxy DNS conflicts with an operator record.")
 
     monkeypatch.setattr(reverse_proxies, "delete_proxy", conflict)
