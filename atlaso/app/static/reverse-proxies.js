@@ -191,7 +191,14 @@
         }
         if (sequence !== requestSequence) return;
         const rows = payload.items.map(healthDisplayRow);
-        await table?.replaceData?.(rows);
+        if (!table || typeof table.replaceData !== "function") {
+          element.classList.add("hidden");
+          fallback?.classList.remove("hidden");
+          element.dataset.atlasoGridState = "fallback";
+          if (message) message.textContent = "The health grid is unavailable. Showing the fallback view.";
+          return;
+        }
+        await table.replaceData(rows);
         element.classList.remove("hidden");
         fallback?.classList.add("hidden");
         element.dataset.atlasoGridState = rows.length ? "ready" : "empty";

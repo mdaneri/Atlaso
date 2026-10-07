@@ -2859,11 +2859,14 @@ def test_management_handoff_scopes_old_tls_before_new_address_activation(monkeyp
         "previous_https_enabled": True,
         "previous_management_addresses": ["192.0.2.10", "2001:db8::10"],
     })
-    assert len(installed) == 1
-    assert "listen 192.0.2.10:443 ssl default_server;" in installed[0]
-    assert "listen [2001:db8::10]:443 ssl default_server;" in installed[0]
-    assert "listen 443 ssl default_server;" not in installed[0]
-    assert "listen [::]:443 ssl default_server;" not in installed[0]
+    assert len(installed) == 3
+    assert "default_server reuseport;" in installed[0]
+    assert "default_server reuseport;" in installed[1]
+    assert "reuseport" not in installed[-1]
+    assert "listen 192.0.2.10:443 ssl default_server;" in installed[-1]
+    assert "listen [2001:db8::10]:443 ssl default_server;" in installed[-1]
+    assert "listen 443 ssl default_server;" not in installed[-1]
+    assert "listen [::]:443 ssl default_server;" not in installed[-1]
 
 
 def test_management_handoff_scopes_old_http_before_new_address_activation(monkeypatch, tmp_path):
@@ -2889,11 +2892,14 @@ def test_management_handoff_scopes_old_http_before_new_address_activation(monkey
         "previous_management_addresses": ["192.0.2.10", "2001:db8::10"],
     })
 
-    assert len(installed) == 1
-    assert "listen 192.0.2.10:80 default_server;" in installed[0]
-    assert "listen [2001:db8::10]:80 default_server;" in installed[0]
-    assert "listen 80 default_server;" not in installed[0]
-    assert "listen [::]:80 default_server;" not in installed[0]
+    assert len(installed) == 3
+    assert "default_server reuseport;" in installed[0]
+    assert "default_server reuseport;" in installed[1]
+    assert "reuseport" not in installed[-1]
+    assert "listen 192.0.2.10:80 default_server;" in installed[-1]
+    assert "listen [2001:db8::10]:80 default_server;" in installed[-1]
+    assert "listen 80 default_server;" not in installed[-1]
+    assert "listen [::]:80 default_server;" not in installed[-1]
 
 
 @pytest.mark.parametrize("https_enabled", [False, True])
@@ -2915,11 +2921,14 @@ def test_management_handoff_scopes_canonical_ipv4_only_site(monkeypatch, tmp_pat
     monkeypatch.setattr(helper, "_install_nginx_site", lambda _path, text: installed.append(text) or 0)
     helper._scope_management_handoff_old_listener({"previous_https_enabled": https_enabled,
                                                  "previous_management_addresses": ["192.0.2.10"]})
-    assert len(installed) == 1
-    assert "listen 192.0.2.10:80 default_server;" in installed[0]
-    assert "[::]" not in installed[0]
+    assert len(installed) == 3
+    assert "default_server reuseport;" in installed[0]
+    assert "default_server reuseport;" in installed[1]
+    assert "reuseport" not in installed[-1]
+    assert "listen 192.0.2.10:80 default_server;" in installed[-1]
+    assert "[::]" not in installed[-1]
     if https_enabled:
-        assert "listen 192.0.2.10:443 ssl default_server;" in installed[0]
+        assert "listen 192.0.2.10:443 ssl default_server;" in installed[-1]
 
 
 @pytest.mark.parametrize("addresses,tls_lines", [

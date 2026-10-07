@@ -150,6 +150,23 @@ def certificate_specs(proxies: list[dict[str, Any]]) -> list[ManagedCertificateS
     return result
 
 
+def retire_obsolete_proxy_certificates(db: Session, proxies: list[dict[str, Any]]) -> bool:
+    """Disable orphaned proxy CA owners and discard their encrypted private keys."""
+    owners = {spec.owner for spec in certificate_specs(proxies)}
+    changed = False
+    certificates = db.scalars(select(models.CaCertificate).where(models.CaCertificate.managed_owner.like("reverse_proxy:%")))
+    for certificate in certificates:
+        if not re.fullmatch(r"reverse_proxy:[1-9][0-9]*:https", certificate.managed_owner or ""):
+            continue
+        if certificate.managed_owner not in owners and (certificate.enabled or certificate.private_key_encrypted):
+            certificate.enabled = False
+            certificate.private_key_encrypted = ""
+            changed = True
+    if changed:
+        db.flush()
+    return changed
+
+
 def render_proxy_servers(proxies: list[dict[str, Any]], manifest: dict[str, Any]) -> str:
     """Render exact-host servers; rejected paths take precedence over proxy routes."""
     validate_manifest(manifest)

@@ -1603,6 +1603,15 @@ def ensure_ca_state(
             changed = True
         changed = ensure_root_ca_material(settings) or changed
         specs = managed_ca_certificate_specs(db, reconcile=False, managed_owners=managed_owners, management_snapshot=management_snapshot)
+        if managed_owners is None:
+            from atlaso.app.services.reverse_proxies import (
+                runtime_snapshot as proxy_snapshot,
+            )
+            from atlaso.app.services.reverse_proxy_publication import (
+                retire_obsolete_proxy_certificates,
+            )
+
+            changed = retire_obsolete_proxy_certificates(db, proxy_snapshot(db)) or changed
         if managed_owners is not None:
             specs = [spec for spec in specs if spec.owner in managed_owners]
         changed = ensure_managed_certificate_rows(db, settings=settings, profiles=profiles, specs=specs) or changed
