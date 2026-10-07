@@ -14,6 +14,11 @@ Use **Traffic Publishing** at `/ui/management/traffic-publishing` to configure s
 at `/ui/management/routes-wan` owns static routes, routing permissions, forwarding, and WAN simulation. Traffic
 Publishing requires Firewall read permission; changing its browser settings or rules requires Firewall write permission.
 
+Managed HTTP/HTTPS reverse proxies are tracked by issue #723. The [reverse-proxy workflow](../services/reverse-proxies.md)
+describes their desired-state collection, trust choices, cached health, and native acceptance requirements. The branch
+implementation publishes them through global Appliance Apply; native appliance acceptance remains pending, so this
+page makes no claim about a released appliance.
+
 <!-- BEGIN GENERATED INTERFACE OVERVIEW -->
 ## Interface overview
 

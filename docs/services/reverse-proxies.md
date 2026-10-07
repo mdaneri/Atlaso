@@ -1,0 +1,105 @@
+---
+title: Reverse Proxies
+description: Configure path-based public reverse proxies through the global appliance change workflow.
+audience:
+  - operator
+status: roadmap
+---
+
+# Reverse Proxies
+
+This page describes the planned operator workflow for issue #723. The feature remains roadmap work until native appliance
+acceptance is complete; this guide does not claim that the described behavior is available on a released appliance.
+
+The API saves complete desired state at `/api/v1/traffic-publishing/reverse-proxies`; create and replace include the
+complete ordered route collection. Reads require `read:firewall`; mutations require `write:firewall`. `GET
+/api/v1/traffic-publishing/reverse-proxies/health` compares saved intent with the helper's applied snapshot and reports
+cached per-route observations. It does not probe the upstream on a browser or API request; missing, stale, or mismatched
+evidence remains unavailable or pending.
+
+## Before you begin
+
+Choose an eligible addressed access or route interface, or enabled VLAN, for each listener. Management-role interfaces
+and trunk physical interfaces are not public reverse-proxy listeners. Confirm that the upstream host and port are
+reachable from the appliance and that its name resolves to the intended upstream. Use HTTPS when the upstream supports
+it; HTTP sends the application traffic without TLS protection between Atlaso and the upstream.
+
+Reverse proxies preserve the application’s own authentication. Atlaso forwards the selected paths and manages the
+forwarded host, client address, protocol, and WebSocket upgrade headers. The editor does not accept arbitrary headers,
+authentication bypasses, or raw nginx directives.
+
+## Create a reverse proxy
+
+Open **Traffic Publishing**, select **Reverse Proxies**, and choose **Add reverse proxy**. The wizard has six steps:
+
+1. **Identity**: enter a unique **Name** and **Hostname**. Add a **Description** to record the application's purpose.
+   Atlaso reserves its own service hostnames.
+2. **Listener**: select one or more exact **Listener addresses**, then choose the **Listener scheme** and **Listener
+   port**. A shared nginx address and port can serve only one protocol. HTTPS uses an Atlaso CA-managed certificate for
+   the hostname; its private key is not shown in the editor.
+   Optionally enable **Redirect HTTP to HTTPS** and choose the **Redirect listener port**. The redirect applies only to
+   the selected listener addresses and port.
+3. **Routes**: add one or more path routes. Set an absolute **Path prefix**, upstream HTTP or HTTPS **Upstream
+   scheme**, **Upstream host or IP**, and **Upstream port**. Choose whether to **Preserve prefix** or **Strip prefix**.
+   Route prefixes must not overlap one another or reserved Atlaso and machine paths. For HTTPS upstreams, choose
+   **HTTPS upstream trust**:
+   - **Trusted CA validation** uses the system's trusted certificate authorities.
+   - **Exact SHA-256 fingerprint** pins the upstream leaf certificate on each TLS connection. Enter the expected
+     certificate digest in **SHA-256 fingerprint**.
+   - **Insecure certificate verification** disables certificate verification. Atlaso marks this choice with a warning
+     in validation, configuration previews, and operational status. Use it only when you accept the risk of an
+     unverified upstream identity.
+
+   The defaults are 5 seconds for **Connection timeout**, 60 seconds each for **Read timeout** and **Send timeout**,
+   and 16 MiB for **Maximum request body**. The timeouts accept 1–30 seconds for connection and 1–300 seconds for read
+   and send; request bodies accept 1 byte–1 GiB. Adjust them for the application's expected connection and transfer
+   behavior.
+   WebSocket traffic uses the same path mapping and managed upgrade headers.
+4. **Publication**: enable **Publish in Public Services** to show a service card on matching public listener views.
+   This setting is independent of direct access: hiding the card does not disable the configured proxy. **Manage
+   authoritative DNS** is a separate opt-in. When enabled and Atlaso authoritative DNS can serve the hostname, Atlaso
+   reconciles its A and AAAA records to the selected listener addresses. Otherwise, create those records in your
+   external DNS service.
+5. **State**: **Proxy enabled** defaults off. Turn it on to include the proxy in validated desired state.
+6. **Review**: check the identity, listener, path routes, publication, and desired state, including any TLS warnings.
+   Choose **Save reverse proxy** to save the desired state.
+
+Saving changes desired state only. Review the changed units in **Review appliance changes**, select the applicable
+units, and submit **Submit appliance changes**. Appliance Apply validates and publishes the proxy together with its
+listener, certificate, firewall, DNS, and Public Services changes. The route becomes active only after the complete
+apply succeeds.
+
+## Verify runtime behavior
+
+The transport worker refreshes cached route health in batches, pausing 30 seconds between batches, with at most eight
+probes running at once. Each
+probe sends `HEAD` to the configured public hostname and route path and keeps no response body. Fingerprint trust checks
+the SHA-256 digest of the leaf certificate on the connected upstream TLS session before forwarding data. Insecure TLS
+verification is always reported as degraded, even when an HTTP status is returned. These observations are operational
+signals, not proof that an application's complete workflow works.
+
+After a successful appliance apply, test the configured hostname, scheme, port, and path from an authorized client on
+each selected listener. Confirm both path-prefix behaviors as configured, the upstream application's normal sign-in and
+authorization behavior, and a WebSocket connection when the application uses one. For an HTTP-to-HTTPS redirect,
+confirm that the selected HTTP listener redirects to the configured HTTPS hostname and port. Check **Reverse Proxy
+Health** after choosing **Refresh health**; it reads the latest cached status and reports the last successful probe,
+failure class, HTTP status, TLS status, applied/pending state, and any warning without returning response bodies.
+Refreshing the page does not trigger another upstream probe.
+
+If validation fails, correct the listed desired-state error before applying again. If publication or readiness fails,
+review the appliance-apply task and its recovery result. Do not edit generated nginx files or bypass the global apply
+workflow.
+
+Settings archives retain proxy and ordered route desired state. They do not carry active transport generations, cached
+health observations, or proxy-owned CA certificate rows and their private keys. Preserve the appliance secrets key with
+recovery material; global CA and Public Services Apply regenerate the proxy certificate from restored desired state.
+A restore changes desired state only and still requires global Appliance Apply.
+
+<!-- ATLASO-REVERSE-PROXY-ACCEPTANCE-PENDING -->
+## Native appliance acceptance pending
+
+The operator workflow remains **roadmap** until a native appliance run verifies listener and path isolation, HTTP
+redirect behavior, managed HTTPS certificates, every-connection fingerprint enforcement, visible insecure-mode
+warnings, normal application authentication, WebSocket traffic, coordinated Firewall/DNS/Public Services publication,
+rollback, and state after reboot. Remove this section and change the page status to `current` only after that evidence
+has been recorded.

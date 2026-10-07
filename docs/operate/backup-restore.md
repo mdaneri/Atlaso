@@ -47,6 +47,12 @@ cleanup before applying defaults. Unresolved publication recovery blocks reset u
 Before replacing desired state, restore rejects enabled mappings that collide with reserved protocol ports or
 service listeners configured in the archive, including custom ports and Network Boot bindings.
 
+Settings archives include reverse-proxy desired state and ordered routes, but not active relay generations, cached
+health observations, or proxy-owned CA certificate rows and their private keys. The broader CA archive still includes
+encrypted private-key material for other included certificates; retain the appliance secrets key with recovery
+material. Global CA and Public Services Apply regenerate proxy certificates after restore. Restore changes desired
+state only; use global Appliance Apply to republish proxies. See the [reverse-proxy guide](../services/reverse-proxies.md).
+
 ## Create a backup
 
 1. Create a named backup before a high-risk configuration or update operation.

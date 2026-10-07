@@ -1402,6 +1402,13 @@ def managed_ca_certificate_specs(
     if managed_owners == {"appliance:https"}:
         return specs
 
+    from atlaso.app.services.reverse_proxies import runtime_snapshot as proxy_snapshot
+    from atlaso.app.services.reverse_proxy_publication import (
+        certificate_specs as proxy_certificates,
+    )
+
+    specs.extend(proxy_certificates(proxy_snapshot(db)))
+
     oidc_settings = ensure_oidc_provider_settings(db) if reconcile else db.scalar(select(OidcProviderSettings))
     if oidc_settings is not None and oidc_settings.enabled:
         oidc_hostname = normalize_dns_hostname(
@@ -4548,6 +4555,12 @@ def firewall_context(db: Session, *, reconcile: bool = True) -> dict:
             and vlan.access_management_ui_enabled
         ],
     )
+    from atlaso.app.services.reverse_proxies import runtime_snapshot as proxy_snapshot
+    from atlaso.app.services.reverse_proxy_publication import (
+        firewall_rules as proxy_firewall_rules,
+    )
+
+    generated_rules.extend(proxy_firewall_rules(proxy_snapshot(db)))
     generated_rules.extend(
         managed_routing_firewall_rules(
             physical_interfaces,
@@ -4761,6 +4774,10 @@ def public_services_context(db: Session, *, reconcile: bool = True) -> dict[str,
         db: Active database session.
         reconcile: Whether dependent desired state should be reconciled.
     """
+    from atlaso.app.services.reverse_proxy_publication import context as proxy_context
+
+    proxy_publication = proxy_context(db)
+
     interfaces = db.execute(select(PhysicalInterface).order_by(PhysicalInterface.name)).scalars().all()
     vlans = db.execute(select(VlanInterface).where(VlanInterface.enabled.is_(True)).order_by(VlanInterface.parent_interface, VlanInterface.vlan_id)).scalars().all()
     ca_settings = get_ca_settings_row(db)
@@ -4826,7 +4843,7 @@ def public_services_context(db: Session, *, reconcile: bool = True) -> dict[str,
             for address in web_terminal_addresses(terminal_interfaces, terminal_options)
         )
     )
-    validation_errors = []
+    validation_errors = list(proxy_publication["reverse_proxy_validation_errors"])
     if depot_settings.enabled and not depot_settings.allow_unauthenticated_access:
         depot_user = db.get(User, depot_settings.http_user_id) if depot_settings.http_user_id else None
         if depot_user is None:
@@ -4864,12 +4881,13 @@ def public_services_context(db: Session, *, reconcile: bool = True) -> dict[str,
         management_certificate_path=terminal_cert_path,
         management_key_path=terminal_key_path,
     )
+    config_preview = config_preview.rstrip() + "\n" + proxy_publication["reverse_proxy_config_preview"]
     return {
         "public_service_entries": entries,
         "public_service_config_preview": config_preview,
         "public_service_config_path": PUBLIC_SERVICES_STAGED_CONFIG_PATH,
         "public_service_validation_errors": validation_errors,
-        "public_service_validation_warnings": [],
+        "public_service_validation_warnings": proxy_publication["reverse_proxy_validation_warnings"],
     }
 
 
@@ -5213,6 +5231,12 @@ def public_service_directory_context(db: Session, binding: dict[str, str]) -> di
                 "pill": "good",
             }
         )
+    from atlaso.app.services.reverse_proxies import runtime_snapshot as proxy_snapshot
+    from atlaso.app.services.reverse_proxy_publication import (
+        directory_entries as proxy_directory_entries,
+    )
+
+    services.extend(proxy_directory_entries(proxy_snapshot(db), binding["address"]))
     services = [
         {
             **service,
@@ -5661,6 +5685,10 @@ def traffic_publishing_context(db: Session) -> dict:
     Args:
         db: Session containing desired rules, interfaces and shared Source Groups.
     """
+    from atlaso.app.services.reverse_proxy_publication import (
+        context as reverse_proxy_context,
+    )
+
     ensure_routes_wan_settings(db)
     settings = ensure_traffic_publishing_settings(db)
     rules = list(db.scalars(select(NatRule).order_by(NatRule.priority, NatRule.name)))
@@ -5680,6 +5708,7 @@ def traffic_publishing_context(db: Session) -> dict:
     validation_errors = [*(errors if settings.effective_nat_enabled else []),
                          *(forward_errors if settings.routing_enabled else [])]
     return {
+        **reverse_proxy_context(db),
         "nat_rules": rules, "nat_rule_rows": [nat_rule_to_dict(rule) for rule in rules],
         "port_forwards": forwards,
         "port_forward_rows": [PortForwardResponse.model_validate(rule).model_dump(mode="json") for rule in forwards],
@@ -7411,6 +7440,10 @@ def owned_service_dns_records(db: Session, config: str) -> list[dict[str, str]]:
         NTP_DNS_DESCRIPTION, OIDC_DNS_RECORD_DESCRIPTION,
         VCF_DEPOT_DNS_DESCRIPTION, VCF_REGISTRY_DNS_DESCRIPTION,
     }
+    from atlaso.app.services.reverse_proxy_publication import DNS_OWNER_PREFIX
+
+    descriptions.update(row.description for row in db.scalars(select(DnsRecord))
+                        if (row.description or "").startswith(DNS_OWNER_PREFIX))
     directives = {line.removeprefix("# atlaso-authoritative-config: ") for line in config.splitlines()}
     service_interfaces = {}
     for model, description in (
@@ -10514,6 +10547,8 @@ def rotated_ca_certificate_consumers(ca_unit: dict[str, Any], ca_baseline: dict[
         "ntp:nts": "ntpd",
         "vcf_private_registry:https": "vcf_private_registry",
     }
+    owner_units.update({row["managed_owner"]: "public_services" for row in current.get("certificates", [])
+                        if isinstance(row, dict) and str(row.get("managed_owner") or "").startswith("reverse_proxy:")})
     return {
         owner_units[row["managed_owner"]]
         for row in current.get("certificates", [])
@@ -19043,12 +19078,32 @@ def _submit_appliance_apply(
         return JSONResponse({"detail": detail}, status_code=422) if wants_json else Response(
             detail, status_code=422, media_type="text/plain",
         )
+    proxy_markers = ("# Reverse-proxy intent: ", "# Reverse-proxy transport manifest: ")
+    desired_proxy_intent = [line for line in str(unit_map.get("public_services", {}).get("config_preview") or "").splitlines()
+                            if line.startswith(proxy_markers)]
+    applied_proxy_intent = [line for line in str((apply_baselines.get("public_services") or {}).get("config_preview") or "").splitlines()
+                            if line.startswith(proxy_markers)]
+    proxy_handoff = bool(desired_proxy_intent != applied_proxy_intent
+                         and selected_ids.intersection({*MANAGEMENT_HANDOFF_UNIT_IDS, "dnsmasq"}))
+    if proxy_handoff:
+        unchecked_dependencies = [unit["label"] for unit in units
+                                  if unit["id"] in {*MANAGEMENT_HANDOFF_UNIT_IDS, "dnsmasq"}
+                                  and unit["changed"] and unit["id"] not in requested_ids]
+        if unchecked_dependencies:
+            detail = ("Select the pending reverse-proxy publication dependencies together: "
+                      + ", ".join(unchecked_dependencies) + ". Unchecked changes cannot be applied by the protected handoff.")
+            return JSONResponse({"detail": detail}, status_code=422) if wants_json else Response(
+                detail, status_code=422, media_type="text/plain",
+            )
+        if "dnsmasq" in unit_map and unit_map["dnsmasq"]["changed"]:
+            selected_ids.add("dnsmasq")
     management_handoff = bool(
         (
             selected_ids.intersection(MANAGEMENT_HANDOFF_UNIT_IDS)
             and unit_map.get("network", {}).get("management_handoff_required")
         )
         or binding_change
+        or proxy_handoff
         or (
             "wan" in selected_ids
             and unit_map.get("network", {}).get("management_default_mirror_change")

@@ -37,6 +37,10 @@ and never expose private keys in documentation, screenshots, tasks, or logs.
 An enabled CA with no listen interface still writes its root bundle and managed service certificates through global
 appliance apply. It does not add the CA portal to access-interface DNS, firewall, or public-service configuration.
 
+Enabled HTTPS reverse proxies consume CA-managed certificates for their configured hostnames and selected listener
+addresses. The proxy editor never exposes the generated private key. See the [reverse-proxy guide](reverse-proxies.md)
+for the coordinated publication and trust model.
+
 Managed service certificates retain the complete hostname in their DNS Subject Alternative Name (SAN), including
 valid appliance FQDNs longer than the certificate subject Common Name's 64-byte limit. For those names, Atlaso uses
 `Atlaso managed service` as the subject Common Name. Hostname verification uses the complete DNS SAN; the appliance

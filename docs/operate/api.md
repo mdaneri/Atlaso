@@ -270,6 +270,16 @@ Atlaso preserves existing operation IDs, request and response shapes, authentica
 within the published compatibility contract. Additive fields may appear. Clients should ignore unknown response fields
 and must not depend on browser pages or non-`/api/v1` protocol routes as generated REST-client contracts.
 
+## Managed reverse proxies
+
+`/api/v1/traffic-publishing/reverse-proxies` is the Firewall-scoped desired-state collection. `GET` and `POST` list
+and create complete proxies; `GET` and `PUT /{proxy_id}` read and replace one complete proxy, including its ordered
+routes; `DELETE /{proxy_id}` removes it. `GET` and `PUT /{proxy_id}/routes` read or replace the complete route list.
+Read operations require `read:firewall`; mutations require `write:firewall`. Writes save desired state only and the
+global Appliance Apply workflow owns publication. `GET /health` returns bounded cached route observations and applied
+or pending state without probing on the request or returning upstream bodies. Refer to the
+[reverse-proxy operator guide](../services/reverse-proxies.md) for field behavior, health freshness, and recovery.
+
 ## NAT ingress compatibility
 
 Destination translations use the separate `/api/v1/traffic-publishing/port-forwards` collection. CRUD and status

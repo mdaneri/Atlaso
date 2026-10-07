@@ -1,0 +1,212 @@
+{% from "partials/resource_wizard.html" import resource_wizard %}
+
+{% macro reverse_proxy_validation_panel() -%}
+<div class="panel" data-reverse-proxy-validation>
+  <div class="panel-head">
+    <h2>Validation</h2>
+    <span class="status-pill {{ 'good' if not reverse_proxy_validation_errors else 'warn' }}" data-reverse-proxy-validation-status>
+      {{ "valid" if not reverse_proxy_validation_errors else "needs attention" }}
+    </span>
+  </div>
+  <div class="alert error {{ 'hidden' if not reverse_proxy_validation_errors else '' }}" data-reverse-proxy-validation-errors aria-live="polite">
+    {% for error in reverse_proxy_validation_errors %}<div>{{ error }}</div>{% endfor %}
+  </div>
+  <div class="alert warning {{ 'hidden' if not reverse_proxy_validation_warnings else '' }}" data-reverse-proxy-validation-warnings aria-live="polite">
+    {% for warning in reverse_proxy_validation_warnings %}<div>{{ warning }}</div>{% endfor %}
+  </div>
+  <p class="muted" data-reverse-proxy-validation-message>
+    {% if reverse_proxy_validation_errors %}
+      Resolve the listed errors before applying these reverse-proxy changes.
+    {% elif reverse_proxy_validation_warnings %}
+      Review the warnings before global Appliance Apply.
+    {% else %}
+      Reverse-proxy desired state passes Atlaso validation. Global Appliance Apply validates and publishes the configuration.
+    {% endif %}
+  </p>
+  {% set preview_label = "Reverse proxy config" %}
+  {% set preview_path = reverse_proxy_config_path %}
+  {% set preview_path_attr = "data-reverse-proxy-config-path" %}
+  {% set preview_title = "Reverse proxy configuration" %}
+  {% set preview_text = reverse_proxy_config_preview %}
+  {% set preview_data_attr = "data-reverse-proxy-config-preview" %}
+  {% include "partials/config_preview_action.html" %}
+</div>
+{%- endmacro %}
+
+<section id="reverse-proxy-panel" class="tab-panel" role="tabpanel" aria-label="Reverse Proxies" hidden data-reverse-proxy-workspace>
+  <div class="section-head compact-section-head">
+    <div>
+      <h3>Reverse Proxies</h3>
+      <p class="muted">Publish selected application paths on exact hostnames and listener addresses.</p>
+    </div>
+    <span class="status-pill muted">{{ reverse_proxies|length }} proxies</span>
+  </div>
+  <div id="reverse-proxy-error" class="alert error hidden" role="alert" data-reverse-proxy-error></div>
+  <div
+    id="reverse-proxies-table"
+    class="tabulator-shell routes-wan-table"
+    data-reverse-proxies='{{ reverse_proxies|tojson }}'
+    data-listener-options='{{ reverse_proxy_listener_options|tojson }}'
+    data-csrf="{{ csrf_token }}"
+    data-can-write="{{ 'true' if can_write_firewall else 'false' }}"
+    data-fallback-id="reverse-proxies-fallback"
+    data-data-url="{{ management_ui_root }}/traffic-publishing/reverse-proxies/data"
+    data-save-url="{{ management_ui_root }}/traffic-publishing/reverse-proxies/save"
+  ></div>
+  <table id="reverse-proxies-fallback" class="data-table dns-fallback-table">
+    <thead>
+      <tr><th>Name</th><th>Hostname</th><th>Scheme / port</th><th>Listeners</th><th>Paths</th><th>Publication</th><th>Enabled</th><th>Actions</th></tr>
+    </thead>
+    <tbody>
+      {% for proxy in reverse_proxies %}
+      <tr>
+        <td>{{ proxy.name }}</td>
+        <td><code>{{ proxy.hostname }}</code></td>
+        <td>{{ proxy.scheme|upper }} {{ proxy.port }}{% if proxy.redirect_http %} · HTTP → HTTPS {{ proxy.redirect_port }}{% endif %}</td>
+        <td>{% for listener in proxy.listeners %}{{ listener.interface }} · {{ listener.address }}{% if not loop.last %}<br>{% endif %}{% else %}No listener{% endfor %}</td>
+        <td>{% for route in proxy.routes %}<code>{{ route.path_prefix }}</code>{% if not loop.last %}<br>{% endif %}{% else %}No paths{% endfor %}</td>
+        <td>{{ "Public directory" if proxy.public_listing else "Hidden" }} · {{ "Atlaso DNS" if proxy.managed_dns else "External DNS" }}</td>
+        <td>{{ "Enabled" if proxy.enabled else "Disabled" }}</td>
+        <td>{% if can_write_firewall %}<button class="button tiny" type="button" data-reverse-proxy-edit="{{ proxy.id }}">Edit</button>{% else %}<span class="muted">Read only</span>{% endif %}</td>
+      </tr>
+      {% else %}
+      <tr><td colspan="8" class="muted">No reverse proxies are configured.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+
+  <section class="panel" aria-labelledby="reverse-proxy-health-title" data-reverse-proxy-health-section>
+    <div class="panel-head">
+      <div>
+        <h4 id="reverse-proxy-health-title">Reverse Proxy Health</h4>
+        <p class="muted" data-reverse-proxy-health-message aria-live="polite">Health observations have not been refreshed.</p>
+      </div>
+      <button class="button ghost compact-button" type="button" data-reverse-proxy-health-refresh>Refresh health</button>
+    </div>
+    <div
+      id="reverse-proxy-health-table"
+      class="tabulator-shell"
+      data-health-url="{{ management_ui_root }}/traffic-publishing/reverse-proxies/health"
+      data-fallback-id="reverse-proxy-health-fallback"
+    ></div>
+    <table id="reverse-proxy-health-fallback" class="data-table compact">
+      <thead><tr><th>Proxy</th><th>Path</th><th>Status</th><th>Last success</th><th>Failure class</th><th>HTTP / TLS</th><th>Apply state</th><th>Warning</th></tr></thead>
+      <tbody><tr><td colspan="8" class="muted">Refresh health to load bounded proxy and route observations.</td></tr></tbody>
+    </table>
+  </section>
+</section>
+
+{% if can_write_firewall %}
+{% set reverse_proxy_steps = [
+  {"id": "identity", "label": "Identity", "summary": "Name, hostname, and purpose"},
+  {"id": "listener", "label": "Listener", "summary": "Address, scheme, and ports"},
+  {"id": "routes", "label": "Routes", "summary": "Paths and upstream trust"},
+  {"id": "publication", "label": "Publication", "summary": "Directory and DNS"},
+  {"id": "state", "label": "State", "summary": "Enable or disable"},
+  {"id": "review", "label": "Review", "summary": "Confirm desired state"}
+] %}
+{% call resource_wizard(
+  "reverse-proxy-dialog",
+  "reverse-proxy-wizard",
+  management_ui_root ~ "/traffic-publishing/reverse-proxies/save",
+  reverse_proxy_steps,
+  "Add reverse proxy",
+  "Publish selected application paths through an exact hostname and listener.",
+  "Save reverse proxy"
+) %}
+  <input type="hidden" name="csrf" value="{{ csrf_token }}">
+  <input type="hidden" name="id" data-reverse-proxy-id>
+  <section class="vcf-sddc-step-page" data-atlaso-wizard-step="identity">
+    <div class="form-stack">
+      <label><span class="field-label"><span>Name</span><button class="help-icon" type="button" data-help="A stable operator-facing name for this proxy.">i</button></span><input name="name" maxlength="120" required></label>
+      <label><span class="field-label"><span>Hostname</span><button class="help-icon" type="button" data-help="A unique DNS hostname owned by this proxy. Atlaso-owned service hostnames are reserved.">i</button></span><input name="hostname" maxlength="253" autocomplete="off" required></label>
+      <label><span class="field-label"><span>Description</span><button class="help-icon" type="button" data-help="Explain the application's purpose and operator context.">i</button></span><textarea name="description" rows="3" maxlength="1000"></textarea></label>
+    </div>
+  </section>
+  <section class="vcf-sddc-step-page hidden" data-atlaso-wizard-step="listener">
+    <div class="form-grid">
+      <label class="full"><span class="field-label"><span>Listener addresses</span><button class="help-icon" type="button" data-help="Choose one or more eligible, addressed non-management interfaces or VLANs. Atlaso validates address family and listener ownership before save and apply.">i</button></span>
+        <select name="listeners" multiple size="5" required data-reverse-proxy-listeners>
+          {% for option in reverse_proxy_listener_options %}<option value="{{ option.interface }}|{{ option.address }}">{{ option.interface }} · {{ option.address }}</option>{% endfor %}
+        </select>
+        <small class="muted">Use Ctrl or Command to select multiple exact addresses.</small>
+      </label>
+      <label><span class="field-label"><span>Listener scheme</span><button class="help-icon" type="button" data-help="HTTPS uses an Atlaso CA-managed certificate for this hostname.">i</button></span>
+        <select name="scheme" data-reverse-proxy-scheme><option value="http">HTTP</option><option value="https">HTTPS</option></select>
+      </label>
+      <label><span class="field-label"><span>Listener port</span><button class="help-icon" type="button" data-help="Select an available HTTP or HTTPS port for the exact listener addresses.">i</button></span><input type="number" name="port" min="1" max="65535" value="80" required></label>
+      <p class="muted full hidden" data-reverse-proxy-certificate-note>Atlaso manages the HTTPS certificate lifecycle for this hostname. Private keys are never shown or returned through this editor.</p>
+      <label class="switch-field full"><span class="field-label"><span>Redirect HTTP to HTTPS</span><button class="help-icon" type="button" data-help="Adds an HTTP redirect only on the selected exact listener addresses and redirect port.">i</button></span><input class="switch-input" type="checkbox" name="redirect_http" data-reverse-proxy-redirect><span class="switch-track" aria-hidden="true"></span></label>
+      <label class="hidden" data-reverse-proxy-redirect-port-field><span class="field-label"><span>Redirect listener port</span><button class="help-icon" type="button" data-help="The exact HTTP port that redirects to this proxy's HTTPS hostname and port.">i</button></span><input type="number" name="redirect_port" min="1" max="65535" value="80" data-reverse-proxy-redirect-port></label>
+    </div>
+  </section>
+  <section class="vcf-sddc-step-page hidden" data-atlaso-wizard-step="routes">
+    <div class="form-stack" data-reverse-proxy-routes>
+      <template data-reverse-proxy-route-template>
+        <fieldset class="form-stack" data-reverse-proxy-route>
+          <legend>Path route</legend>
+          <input type="hidden" name="route_id">
+          <button class="button ghost compact-button" type="button" data-reverse-proxy-route-remove>Remove route</button>
+          <div class="form-grid">
+            <label><span class="field-label"><span>Path prefix</span><button class="help-icon" type="button" data-help="An absolute path prefix up to 1024 characters. Path routes must not overlap each other or reserved Atlaso and machine paths.">i</button></span><input name="path_prefix" maxlength="1024" placeholder="/app/" required></label>
+            <label><span class="field-label"><span>Upstream scheme</span><button class="help-icon" type="button" data-help="HTTP sends plaintext to the upstream. HTTPS applies the selected certificate trust mode.">i</button></span><select name="upstream_scheme" data-reverse-proxy-upstream-scheme><option value="http">HTTP</option><option value="https">HTTPS</option></select></label>
+            <label><span class="field-label"><span>Upstream host or IP</span><button class="help-icon" type="button" data-help="Use a host or IP without URL credentials. Atlaso preserves application-owned authentication.">i</button></span><input name="upstream_host" maxlength="253" autocomplete="off" required></label>
+            <label><span class="field-label"><span>Upstream port</span><button class="help-icon" type="button" data-help="The exact TCP port on the selected upstream.">i</button></span><input type="number" name="upstream_port" min="1" max="65535" required></label>
+            <label><span class="field-label"><span>Path behavior</span><button class="help-icon" type="button" data-help="Preserve the matched prefix or strip it before forwarding to the upstream.">i</button></span><select name="path_behavior"><option value="preserve">Preserve prefix</option><option value="strip">Strip prefix</option></select></label>
+            <label data-reverse-proxy-trust-field><span class="field-label"><span>HTTPS upstream trust</span><button class="help-icon" type="button" data-help="Validate a trusted CA, pin an exact SHA-256 certificate fingerprint, or explicitly accept insecure verification.">i</button></span><select name="trust_mode" data-reverse-proxy-trust-mode><option value="trusted_ca">Trusted CA validation</option><option value="fingerprint">Exact SHA-256 fingerprint</option><option value="insecure">Insecure certificate verification</option></select></label>
+            <label class="hidden" data-reverse-proxy-fingerprint-field><span class="field-label"><span>SHA-256 fingerprint</span><button class="help-icon" type="button" data-help="Exact upstream certificate fingerprint in hexadecimal. Atlaso does not fetch or store the upstream private key.">i</button></span><input name="fingerprint" maxlength="95" autocomplete="off" data-reverse-proxy-fingerprint></label>
+          </div>
+          <p class="alert warning hidden" data-reverse-proxy-insecure-warning role="status">Insecure upstream certificate verification is explicitly selected. Atlaso will warn in configuration previews and operational status.</p>
+        </fieldset>
+      </template>
+      <fieldset class="form-stack" data-reverse-proxy-route>
+        <legend>Path route</legend>
+        <input type="hidden" name="route_id">
+        <button class="button ghost compact-button" type="button" data-reverse-proxy-route-remove>Remove route</button>
+        <div class="form-grid">
+          <label><span class="field-label"><span>Path prefix</span><button class="help-icon" type="button" data-help="An absolute path prefix up to 1024 characters. Path routes must not overlap each other or reserved Atlaso and machine paths.">i</button></span><input name="path_prefix" maxlength="1024" placeholder="/app/" required></label>
+          <label><span class="field-label"><span>Upstream scheme</span><button class="help-icon" type="button" data-help="HTTP sends plaintext to the upstream. HTTPS applies the selected certificate trust mode.">i</button></span><select name="upstream_scheme" data-reverse-proxy-upstream-scheme><option value="http">HTTP</option><option value="https">HTTPS</option></select></label>
+          <label><span class="field-label"><span>Upstream host or IP</span><button class="help-icon" type="button" data-help="Use a host or IP without URL credentials. Atlaso preserves application-owned authentication.">i</button></span><input name="upstream_host" maxlength="253" autocomplete="off" required></label>
+          <label><span class="field-label"><span>Upstream port</span><button class="help-icon" type="button" data-help="The exact TCP port on the selected upstream.">i</button></span><input type="number" name="upstream_port" min="1" max="65535" required></label>
+          <label><span class="field-label"><span>Path behavior</span><button class="help-icon" type="button" data-help="Preserve the matched prefix or strip it before forwarding to the upstream.">i</button></span><select name="path_behavior"><option value="preserve">Preserve prefix</option><option value="strip">Strip prefix</option></select></label>
+          <label data-reverse-proxy-trust-field><span class="field-label"><span>HTTPS upstream trust</span><button class="help-icon" type="button" data-help="Validate a trusted CA, pin an exact SHA-256 certificate fingerprint, or explicitly accept insecure verification.">i</button></span><select name="trust_mode" data-reverse-proxy-trust-mode><option value="trusted_ca">Trusted CA validation</option><option value="fingerprint">Exact SHA-256 fingerprint</option><option value="insecure">Insecure certificate verification</option></select></label>
+          <label class="hidden" data-reverse-proxy-fingerprint-field><span class="field-label"><span>SHA-256 fingerprint</span><button class="help-icon" type="button" data-help="Exact upstream certificate fingerprint in hexadecimal. Atlaso does not fetch or store the upstream private key.">i</button></span><input name="fingerprint" maxlength="95" autocomplete="off" data-reverse-proxy-fingerprint></label>
+        </div>
+        <p class="alert warning hidden" data-reverse-proxy-insecure-warning role="status">Insecure upstream certificate verification is explicitly selected. Atlaso will warn in configuration previews and operational status.</p>
+      </fieldset>
+      <button class="button secondary" type="button" data-reverse-proxy-route-add>Add path route</button>
+    </div>
+    <fieldset class="form-grid">
+      <legend>Request limits</legend>
+      <label><span class="field-label"><span>Connection timeout (seconds)</span><button class="help-icon" type="button" data-help="Maximum time to establish a connection to the upstream. Choose 1 to 30 seconds.">i</button></span><input type="number" name="connect_timeout" min="1" max="30" value="5" required></label>
+      <label><span class="field-label"><span>Read timeout (seconds)</span><button class="help-icon" type="button" data-help="Maximum wait for the upstream to send response data. Choose 1 to 300 seconds.">i</button></span><input type="number" name="read_timeout" min="1" max="300" value="60" required></label>
+      <label><span class="field-label"><span>Send timeout (seconds)</span><button class="help-icon" type="button" data-help="Maximum wait while sending request data to the upstream. Choose 1 to 300 seconds.">i</button></span><input type="number" name="send_timeout" min="1" max="300" value="60" required></label>
+      <label><span class="field-label"><span>Maximum request body (bytes)</span><button class="help-icon" type="button" data-help="Maximum accepted request body size in bytes. Choose a positive limit up to 1 GiB; the default is 16 MiB.">i</button></span><input type="number" name="body_limit" min="1" max="1073741824" value="16777216" required></label>
+    </fieldset>
+    <p class="muted">Forwarded host, client address, protocol, and WebSocket upgrade headers are managed by Atlaso. Arbitrary header scripts and raw nginx directives are unavailable.</p>
+  </section>
+  <section class="vcf-sddc-step-page hidden" data-atlaso-wizard-step="publication">
+    <div class="form-stack">
+      <label class="switch-field"><span class="field-label"><span>Publish in Public Services</span><button class="help-icon" type="button" data-help="Adds an enabled service card to matching non-management listener views. The proxy remains directly reachable when hidden.">i</button></span><input class="switch-input" type="checkbox" name="public_listing" checked><span class="switch-track" aria-hidden="true"></span></label>
+      <label class="switch-field"><span class="field-label"><span>Manage authoritative DNS</span><button class="help-icon" type="button" data-help="Reconcile exact A and AAAA records to the selected listener addresses when Atlaso authoritative DNS can serve this hostname.">i</button></span><input class="switch-input" type="checkbox" name="managed_dns"><span class="switch-track" aria-hidden="true"></span></label>
+      <div class="alert warning" data-reverse-proxy-dns-guidance>When managed DNS is off or unavailable, configure the displayed hostname records in your external DNS service.</div>
+    </div>
+  </section>
+  <section class="vcf-sddc-step-page hidden" data-atlaso-wizard-step="state">
+    <label class="switch-field"><span class="field-label"><span>Proxy enabled</span><button class="help-icon" type="button" data-help="Include this proxy in validated desired state. Global Appliance Apply owns listener publication.">i</button></span><input class="switch-input" type="checkbox" name="enabled"><span class="switch-track" aria-hidden="true"></span></label>
+    <p class="muted">Saving updates Atlaso desired state only. Global Appliance Apply validates and publishes listeners, certificates, DNS, firewall admission, and Public Services together.</p>
+  </section>
+  <section class="vcf-sddc-step-page hidden" data-atlaso-wizard-step="review">
+    <div class="settings-list">
+      <div><span>Name and hostname</span><strong data-reverse-proxy-review="identity"></strong></div>
+      <div><span>Listener</span><strong data-reverse-proxy-review="listener"></strong></div>
+      <div><span>Path routes</span><strong data-reverse-proxy-review="routes"></strong></div>
+      <div><span>Publication</span><strong data-reverse-proxy-review="publication"></strong></div>
+      <div><span>Desired state</span><strong data-reverse-proxy-review="state"></strong></div>
+    </div>
+    <div class="alert warning hidden" data-reverse-proxy-review-insecure-warning>One or more upstreams use insecure TLS certificate verification. This choice remains visibly warned in validation and operational status.</div>
+    <label class="switch-field hidden" data-reverse-proxy-insecure-ack-panel><span class="field-label"><span>Acknowledge insecure upstream verification</span><button class="help-icon" type="button" data-help="Confirms that you reviewed this route's disabled certificate verification. This state is sent only for routes using insecure trust mode.">i</button></span><input class="switch-input" type="checkbox" data-reverse-proxy-insecure-ack><span class="switch-track" aria-hidden="true"></span></label>
+    <p class="muted">Atlaso saves desired state here. The host changes only through global Appliance Apply after listener, path, certificate, firewall, DNS, and nginx validation.</p>
+  </section>
+{% endcall %}
+{% endif %}

@@ -7756,6 +7756,619 @@
         "title": "ProblemDetails",
         "type": "object"
       },
+      "ReverseProxyCreate": {
+        "additionalProperties": false,
+        "description": "Describe a complete reverse-proxy desired-state replacement.",
+        "properties": {
+          "body_limit": {
+            "default": 16777216,
+            "description": "Maximum accepted request body size in bytes, from 1 byte through 1 GiB.",
+            "maximum": 1073741824.0,
+            "minimum": 1.0,
+            "title": "Body Limit",
+            "type": "integer"
+          },
+          "connect_timeout": {
+            "default": 5,
+            "description": "Maximum seconds nginx waits to connect to an upstream.",
+            "maximum": 30.0,
+            "minimum": 1.0,
+            "title": "Connect Timeout",
+            "type": "integer"
+          },
+          "description": {
+            "default": "",
+            "description": "Operator purpose, at most 1,000 UTF-16 code units.",
+            "title": "Description",
+            "type": "string",
+            "x-maxLengthUtf16CodeUnits": 1000
+          },
+          "enabled": {
+            "default": false,
+            "description": "Desired enablement; global Appliance Apply owns listener publication.",
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "hostname": {
+            "description": "Unique fully qualified DNS hostname served by this virtual host.",
+            "maxLength": 253,
+            "minLength": 1,
+            "title": "Hostname",
+            "type": "string"
+          },
+          "listeners": {
+            "description": "Exact interface/address pairs on which nginx may publish this host.",
+            "items": {
+              "$ref": "#/components/schemas/ReverseProxyListener"
+            },
+            "maxItems": 64,
+            "minItems": 1,
+            "title": "Listeners",
+            "type": "array"
+          },
+          "managed_dns": {
+            "default": false,
+            "description": "Request app-owned DNS management for this hostname; DNS validation and publication remain separate.",
+            "title": "Managed Dns",
+            "type": "boolean"
+          },
+          "name": {
+            "description": "Unique operator-facing name for this reverse proxy.",
+            "maxLength": 120,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "port": {
+            "default": 443,
+            "description": "Client-facing TCP listener port for the selected protocol.",
+            "maximum": 65535.0,
+            "minimum": 1.0,
+            "title": "Port",
+            "type": "integer"
+          },
+          "public_listing": {
+            "default": true,
+            "description": "Include this proxy in the matching interface's public service directory.",
+            "title": "Public Listing",
+            "type": "boolean"
+          },
+          "read_timeout": {
+            "default": 60,
+            "description": "Maximum seconds nginx waits between upstream reads.",
+            "maximum": 300.0,
+            "minimum": 1.0,
+            "title": "Read Timeout",
+            "type": "integer"
+          },
+          "redirect_http": {
+            "default": false,
+            "description": "Redirect this hostname from its HTTP listener to the selected HTTPS listener.",
+            "title": "Redirect Http",
+            "type": "boolean"
+          },
+          "redirect_port": {
+            "default": 80,
+            "description": "HTTP TCP listener port used when redirect_http is enabled.",
+            "maximum": 65535.0,
+            "minimum": 1.0,
+            "title": "Redirect Port",
+            "type": "integer"
+          },
+          "routes": {
+            "description": "Ordered path mappings that are replaced atomically with the proxy.",
+            "items": {
+              "$ref": "#/components/schemas/ReverseProxyRouteInput"
+            },
+            "maxItems": 64,
+            "minItems": 1,
+            "title": "Routes",
+            "type": "array"
+          },
+          "scheme": {
+            "default": "https",
+            "description": "Client-facing protocol served by this virtual host.",
+            "enum": [
+              "http",
+              "https"
+            ],
+            "title": "Scheme",
+            "type": "string"
+          },
+          "send_timeout": {
+            "default": 60,
+            "description": "Maximum seconds nginx waits while sending a request to an upstream.",
+            "maximum": 300.0,
+            "minimum": 1.0,
+            "title": "Send Timeout",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "name",
+          "hostname",
+          "listeners",
+          "routes"
+        ],
+        "title": "ReverseProxyCreate",
+        "type": "object"
+      },
+      "ReverseProxyHealthItem": {
+        "description": "Report bounded applied-state and route-health evidence without probing upstreams.",
+        "properties": {
+          "applied": {
+            "description": "True only when the complete helper snapshot matches current desired proxy intent.",
+            "title": "Applied",
+            "type": "boolean"
+          },
+          "failure_class": {
+            "description": "Bounded failure category without upstream request or response contents.",
+            "title": "Failure Class",
+            "type": "string"
+          },
+          "http_status": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Cached upstream HTTP status; null when no status is recorded.",
+            "title": "Http Status"
+          },
+          "last_success": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Last successful cached upstream probe time; null when no success is recorded.",
+            "title": "Last Success"
+          },
+          "path_prefix": {
+            "description": "Configured path prefix; no request or response body is included.",
+            "title": "Path Prefix",
+            "type": "string"
+          },
+          "pending": {
+            "description": "True while desired intent differs from the complete applied proxy snapshot or observations are unavailable.",
+            "title": "Pending",
+            "type": "boolean"
+          },
+          "proxy_id": {
+            "description": "Saved reverse-proxy identity associated with this route.",
+            "title": "Proxy Id",
+            "type": "integer"
+          },
+          "proxy_name": {
+            "description": "Operator-facing reverse-proxy name.",
+            "title": "Proxy Name",
+            "type": "string"
+          },
+          "route_id": {
+            "description": "Saved path-route identity associated with this observation.",
+            "title": "Route Id",
+            "type": "integer"
+          },
+          "status": {
+            "description": "Cached route state, desired-state pending state, or disabled state.",
+            "enum": [
+              "healthy",
+              "degraded",
+              "unavailable",
+              "pending",
+              "disabled"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "tls_status": {
+            "description": "Cached TLS verification state, or not_probed when no status is available.",
+            "title": "Tls Status",
+            "type": "string"
+          },
+          "warning": {
+            "description": "Operator-facing explanation; never contains upstream response data.",
+            "title": "Warning",
+            "type": "string"
+          }
+        },
+        "required": [
+          "proxy_id",
+          "route_id",
+          "proxy_name",
+          "path_prefix",
+          "status",
+          "failure_class",
+          "tls_status",
+          "pending",
+          "applied",
+          "warning"
+        ],
+        "title": "ReverseProxyHealthItem",
+        "type": "object"
+      },
+      "ReverseProxyHealthResponse": {
+        "description": "Return a bounded list of read-only route-health observations.",
+        "properties": {
+          "items": {
+            "description": "At most 256 route observations in stable proxy and route order.",
+            "items": {
+              "$ref": "#/components/schemas/ReverseProxyHealthItem"
+            },
+            "title": "Items",
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "title": "ReverseProxyHealthResponse",
+        "type": "object"
+      },
+      "ReverseProxyListener": {
+        "additionalProperties": false,
+        "description": "Select one exact eligible appliance interface address.",
+        "properties": {
+          "address": {
+            "description": "Exact canonical IPv4 or IPv6 address saved on the selected interface.",
+            "maxLength": 45,
+            "minLength": 2,
+            "title": "Address",
+            "type": "string"
+          },
+          "interface": {
+            "description": "Exact saved non-management access or route interface or VLAN name.",
+            "maxLength": 80,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9_.:-]+$",
+            "title": "Interface",
+            "type": "string"
+          }
+        },
+        "required": [
+          "interface",
+          "address"
+        ],
+        "title": "ReverseProxyListener",
+        "type": "object"
+      },
+      "ReverseProxyResponse": {
+        "description": "Return one proxy's complete saved desired state.",
+        "properties": {
+          "apply_required": {
+            "const": true,
+            "default": true,
+            "description": "Global Appliance Apply owns listener publication.",
+            "title": "Apply Required",
+            "type": "boolean"
+          },
+          "body_limit": {
+            "description": "Maximum request body size in bytes, from 1 byte through 1 GiB.",
+            "title": "Body Limit",
+            "type": "integer"
+          },
+          "connect_timeout": {
+            "description": "Maximum upstream connection wait in seconds.",
+            "title": "Connect Timeout",
+            "type": "integer"
+          },
+          "created_at": {
+            "description": "UTC timestamp when the proxy was created.",
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "description": {
+            "description": "Operator purpose for this reverse proxy.",
+            "title": "Description",
+            "type": "string"
+          },
+          "enabled": {
+            "description": "Desired publication state; effective after global Appliance Apply.",
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "hostname": {
+            "description": "Unique fully qualified hostname served by nginx.",
+            "title": "Hostname",
+            "type": "string"
+          },
+          "id": {
+            "description": "Stable database identity of this reverse proxy.",
+            "title": "Id",
+            "type": "integer"
+          },
+          "listeners": {
+            "description": "Saved exact interface/address nginx listeners.",
+            "items": {
+              "$ref": "#/components/schemas/ReverseProxyListener"
+            },
+            "title": "Listeners",
+            "type": "array"
+          },
+          "managed_dns": {
+            "description": "Whether the hostname is selected for app-owned DNS management.",
+            "title": "Managed Dns",
+            "type": "boolean"
+          },
+          "name": {
+            "description": "Unique operator-facing name.",
+            "title": "Name",
+            "type": "string"
+          },
+          "port": {
+            "description": "Client-facing TCP listener port.",
+            "title": "Port",
+            "type": "integer"
+          },
+          "public_listing": {
+            "description": "Whether the matching public service directory lists this proxy.",
+            "title": "Public Listing",
+            "type": "boolean"
+          },
+          "read_timeout": {
+            "description": "Maximum upstream read wait in seconds.",
+            "title": "Read Timeout",
+            "type": "integer"
+          },
+          "redirect_http": {
+            "description": "Whether the hostname also redirects from HTTP.",
+            "title": "Redirect Http",
+            "type": "boolean"
+          },
+          "redirect_port": {
+            "description": "TCP port used for HTTP redirection.",
+            "title": "Redirect Port",
+            "type": "integer"
+          },
+          "routes": {
+            "description": "Ordered saved path mappings.",
+            "items": {
+              "$ref": "#/components/schemas/ReverseProxyRouteResponse"
+            },
+            "title": "Routes",
+            "type": "array"
+          },
+          "scheme": {
+            "description": "Client-facing protocol.",
+            "enum": [
+              "http",
+              "https"
+            ],
+            "title": "Scheme",
+            "type": "string"
+          },
+          "send_timeout": {
+            "description": "Maximum upstream send wait in seconds.",
+            "title": "Send Timeout",
+            "type": "integer"
+          },
+          "updated_at": {
+            "description": "UTC timestamp of its latest desired-state update.",
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "description",
+          "hostname",
+          "scheme",
+          "port",
+          "redirect_http",
+          "redirect_port",
+          "enabled",
+          "public_listing",
+          "managed_dns",
+          "listeners",
+          "connect_timeout",
+          "read_timeout",
+          "send_timeout",
+          "body_limit",
+          "routes",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "ReverseProxyResponse",
+        "type": "object"
+      },
+      "ReverseProxyRouteInput": {
+        "additionalProperties": false,
+        "description": "Describe one ordered route mapping in a complete proxy replacement.",
+        "properties": {
+          "fingerprint": {
+            "default": "",
+            "description": "Canonical lowercase SHA-256 certificate fingerprint required by fingerprint trust mode.",
+            "maxLength": 95,
+            "title": "Fingerprint",
+            "type": "string"
+          },
+          "id": {
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Existing route identity to retain; omit for a newly added route.",
+            "title": "Id"
+          },
+          "insecure_acknowledged": {
+            "default": false,
+            "description": "Explicitly acknowledge disabled upstream certificate verification when trust mode is insecure; request-only.",
+            "title": "Insecure Acknowledged",
+            "type": "boolean"
+          },
+          "path_behavior": {
+            "default": "preserve",
+            "description": "Preserve the matched prefix upstream or remove it before forwarding the remaining path.",
+            "enum": [
+              "preserve",
+              "strip"
+            ],
+            "title": "Path Behavior",
+            "type": "string"
+          },
+          "path_prefix": {
+            "description": "Absolute unambiguous URL path prefix matched by this route; '/' matches the whole host.",
+            "maxLength": 1024,
+            "minLength": 1,
+            "title": "Path Prefix",
+            "type": "string"
+          },
+          "trust_mode": {
+            "default": "trusted_ca",
+            "description": "HTTPS upstream verification mode; insecure disables certificate verification.",
+            "enum": [
+              "trusted_ca",
+              "fingerprint",
+              "insecure"
+            ],
+            "title": "Trust Mode",
+            "type": "string"
+          },
+          "upstream_host": {
+            "description": "Separate DNS hostname or IP literal for the upstream; URLs and credentials are not accepted.",
+            "maxLength": 253,
+            "minLength": 1,
+            "title": "Upstream Host",
+            "type": "string"
+          },
+          "upstream_port": {
+            "description": "TCP port on the upstream host.",
+            "maximum": 65535.0,
+            "minimum": 1.0,
+            "title": "Upstream Port",
+            "type": "integer"
+          },
+          "upstream_scheme": {
+            "default": "http",
+            "description": "Transport used to connect to this upstream host and port.",
+            "enum": [
+              "http",
+              "https"
+            ],
+            "title": "Upstream Scheme",
+            "type": "string"
+          }
+        },
+        "required": [
+          "path_prefix",
+          "upstream_host",
+          "upstream_port"
+        ],
+        "title": "ReverseProxyRouteInput",
+        "type": "object"
+      },
+      "ReverseProxyRouteResponse": {
+        "description": "Return one saved path mapping without request-only acknowledgement state.",
+        "properties": {
+          "fingerprint": {
+            "description": "Canonical SHA-256 certificate fingerprint, empty when not used.",
+            "title": "Fingerprint",
+            "type": "string"
+          },
+          "id": {
+            "description": "Stable saved identity of this route.",
+            "title": "Id",
+            "type": "integer"
+          },
+          "insecure_acknowledged": {
+            "description": "True when insecure verification was explicitly acknowledged on save.",
+            "title": "Insecure Acknowledged",
+            "type": "boolean"
+          },
+          "path_behavior": {
+            "description": "Whether the path prefix is preserved upstream.",
+            "enum": [
+              "preserve",
+              "strip"
+            ],
+            "title": "Path Behavior",
+            "type": "string"
+          },
+          "path_prefix": {
+            "description": "Absolute path prefix selected by this route.",
+            "title": "Path Prefix",
+            "type": "string"
+          },
+          "trust_mode": {
+            "description": "Saved HTTPS certificate verification mode.",
+            "enum": [
+              "trusted_ca",
+              "fingerprint",
+              "insecure"
+            ],
+            "title": "Trust Mode",
+            "type": "string"
+          },
+          "upstream_host": {
+            "description": "Validated upstream DNS hostname or IP literal.",
+            "title": "Upstream Host",
+            "type": "string"
+          },
+          "upstream_port": {
+            "description": "TCP port on the upstream host.",
+            "title": "Upstream Port",
+            "type": "integer"
+          },
+          "upstream_scheme": {
+            "description": "Transport used for the upstream connection.",
+            "enum": [
+              "http",
+              "https"
+            ],
+            "title": "Upstream Scheme",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "path_prefix",
+          "upstream_scheme",
+          "upstream_host",
+          "upstream_port",
+          "path_behavior",
+          "trust_mode",
+          "fingerprint",
+          "insecure_acknowledged"
+        ],
+        "title": "ReverseProxyRouteResponse",
+        "type": "object"
+      },
+      "ReverseProxyRoutesReplace": {
+        "additionalProperties": false,
+        "description": "Describe an atomic replacement of every ordered path route.",
+        "properties": {
+          "routes": {
+            "description": "Complete ordered route collection; omitted saved routes are deleted atomically.",
+            "items": {
+              "$ref": "#/components/schemas/ReverseProxyRouteInput"
+            },
+            "maxItems": 64,
+            "minItems": 1,
+            "title": "Routes",
+            "type": "array"
+          }
+        },
+        "required": [
+          "routes"
+        ],
+        "title": "ReverseProxyRoutesReplace",
+        "type": "object"
+      },
       "RouteCreate": {
         "description": "Fields accepted when creating a route resource.\n\nAttributes:\n    destination_cidr: Destination network CIDR. Canonical IPv4 and IPv6 /0 CIDRs represent\n        default routes and remain accepted for API compatibility.\n    gateway: Optional next-hop for directly connected destinations and required for a default\n        route; it must use the destination's IP family and be on-link for the selected target,\n        except that an IPv6 link-local next hop is supported.\n    interface_name: Requested interface name value for this route resource.\n    metric: Requested metric value for this route resource.\n    enabled: Whether the resource is enabled in saved Atlaso state.\n    wan_policy_id: Stable identifier of the related wan policy resource.\n    wan_mode: Requested wan mode value for this route resource.",
         "properties": {
@@ -11667,6 +12280,16 @@
             },
             "description": "Create Dns Record. The response body matches the documented success schema."
           },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "The hostname is managed by Reverse Proxies or the record already exists."
+          },
           "422": {
             "content": {
               "application/json": {
@@ -11675,7 +12298,7 @@
                 }
               }
             },
-            "description": "The request parameters or body failed Atlaso validation. The response includes a request ID that can be correlated with operational logs."
+            "description": "DNS input is invalid or uses a reserved owner marker."
           }
         },
         "security": [
@@ -11714,6 +12337,16 @@
             },
             "description": "Import Dns Hosts File. The response body matches the documented success schema."
           },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "The import would replace or add a record at a hostname managed by Reverse Proxies."
+          },
           "422": {
             "content": {
               "application/json": {
@@ -11722,7 +12355,7 @@
                 }
               }
             },
-            "description": "The request parameters or body failed Atlaso validation. The response includes a request ID that can be correlated with operational logs."
+            "description": "The hosts file or its DNS owner marker is invalid."
           }
         },
         "security": [
@@ -11756,6 +12389,26 @@
         "responses": {
           "204": {
             "description": "Delete Dns Record. The operation completed successfully and returns no response body."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "The DNS record does not exist."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A record managed by Reverse Proxies can only be removed by its owner."
           },
           "422": {
             "content": {
@@ -11815,6 +12468,26 @@
             },
             "description": "Update Dns Record. The response body matches the documented success schema."
           },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "The DNS record does not exist."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "The record or hostname is managed by Reverse Proxies."
+          },
           "422": {
             "content": {
               "application/json": {
@@ -11823,7 +12496,7 @@
                 }
               }
             },
-            "description": "The request parameters or body failed Atlaso validation. The response includes a request ID that can be correlated with operational logs."
+            "description": "DNS input is invalid or uses a reserved owner marker."
           }
         },
         "security": [
@@ -11874,7 +12547,7 @@
         ]
       },
       "patch": {
-        "description": "Update Dns Settings.\n\nRequires the `write:dns` API scope. The operation updates saved Atlaso state and does not bypass\nthe documented global Appliance Apply or service lifecycle boundary.",
+        "description": "Update Dns Settings.\n\nRequires the `write:dns` API scope. The operation serializes DNS eligibility changes with proxy\nwrites and reconciles proxy-owned records atomically. A conflicting operator record returns 409\nwithout saving settings. Host enforcement remains subject to global Appliance Apply.",
         "operationId": "updateDnsSettings",
         "requestBody": {
           "content": {
@@ -11896,6 +12569,16 @@
               }
             },
             "description": "Update Dns Settings. The response body matches the documented success schema."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Reverse-proxy-managed DNS conflicts with an operator or other service record; settings remain unchanged."
           },
           "422": {
             "content": {
@@ -19234,6 +19917,449 @@
         "summary": "Replace Port Forward",
         "tags": [
           "NAT"
+        ]
+      }
+    },
+    "/api/v1/traffic-publishing/reverse-proxies": {
+      "get": {
+        "description": "List saved reverse-proxy desired state.\n\nRequires `read:firewall`. Returns no more than 256 saved proxies, including\ndisabled intent. The result does not claim that a proxy is applied or healthy;\nglobal Appliance Apply owns host publication.",
+        "operationId": "listReverseProxies",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/ReverseProxyResponse"
+                  },
+                  "title": "Response Listreverseproxies",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "List saved reverse-proxy desired state. The response body matches the documented success schema."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "The request is invalid or conflicts with saved desired state."
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Reverse Proxies",
+        "tags": [
+          "Firewall"
+        ]
+      },
+      "post": {
+        "description": "Create a complete proxy and its ordered routes as desired state.\n\nRequires `write:firewall`. Validates and saves the proxy, nested routes, and\naudit record atomically. Success does not publish listeners; global Appliance\nApply is the only host-mutation boundary. Invalid intent returns 422 ProblemDetails.",
+        "operationId": "createReverseProxy",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReverseProxyCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReverseProxyResponse"
+                }
+              }
+            },
+            "description": "Create a complete proxy and its ordered routes as desired state. The response body matches the documented success schema."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "The request is invalid or conflicts with saved desired state."
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Create Reverse Proxy",
+        "tags": [
+          "Firewall"
+        ]
+      }
+    },
+    "/api/v1/traffic-publishing/reverse-proxies/health": {
+      "get": {
+        "description": "Return bounded cached applied-state and route-health observations.\n\nRequires `read:firewall`. The endpoint makes one bounded read-only helper\ncall and never performs request-time network probes or returns bodies.",
+        "operationId": "getReverseProxyHealth",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReverseProxyHealthResponse"
+                }
+              }
+            },
+            "description": "Return bounded cached applied-state and route-health observations. The response body matches the documented success schema."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "The request parameters or body failed Atlaso validation. The response includes a request ID that can be correlated with operational logs."
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Reverse Proxy Health",
+        "tags": [
+          "Firewall"
+        ]
+      }
+    },
+    "/api/v1/traffic-publishing/reverse-proxies/{proxy_id}": {
+      "delete": {
+        "description": "Delete a proxy and its nested routes from desired state.\n\nRequires `write:firewall`. Success removes the saved intent and audit-logs\nthe change; nginx, firewall, certificates, and DNS change only through the\nglobal Appliance Apply transaction. Missing proxies return 404 ProblemDetails;\nDNS ownership conflicts return 422 without deleting the saved proxy.",
+        "operationId": "deleteReverseProxy",
+        "parameters": [
+          {
+            "description": "Positive identifier of the saved reverse-proxy resource.",
+            "in": "path",
+            "name": "proxy_id",
+            "required": true,
+            "schema": {
+              "description": "Positive identifier of the saved reverse-proxy resource.",
+              "minimum": 1,
+              "title": "Proxy Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Delete a proxy and its nested routes from desired state. The operation completed successfully and returns no response body."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "The reverse-proxy resource does not exist."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "The request is invalid or conflicts with saved desired state."
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Delete Reverse Proxy",
+        "tags": [
+          "Firewall"
+        ]
+      },
+      "get": {
+        "description": "Read one complete saved proxy and its ordered route collection.\n\nRequires `read:firewall`. Returns desired state only and never probes or\napplies the host. Missing proxies return 404 ProblemDetails.",
+        "operationId": "getReverseProxy",
+        "parameters": [
+          {
+            "description": "Positive identifier of the saved reverse-proxy resource.",
+            "in": "path",
+            "name": "proxy_id",
+            "required": true,
+            "schema": {
+              "description": "Positive identifier of the saved reverse-proxy resource.",
+              "minimum": 1,
+              "title": "Proxy Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReverseProxyResponse"
+                }
+              }
+            },
+            "description": "Read one complete saved proxy and its ordered route collection. The response body matches the documented success schema."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "The reverse-proxy resource does not exist."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "The request parameters or body failed Atlaso validation. The response includes a request ID that can be correlated with operational logs."
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Reverse Proxy",
+        "tags": [
+          "Firewall"
+        ]
+      },
+      "put": {
+        "description": "Atomically replace one proxy and its complete ordered route collection.\n\nRequires `write:firewall`. The complete object is required so listener,\nidentity, publication, timeout, and nested-route intent are validated and\naudited in one desired-state transaction. Publication requires global Apply.",
+        "operationId": "replaceReverseProxy",
+        "parameters": [
+          {
+            "description": "Positive identifier of the saved reverse-proxy resource.",
+            "in": "path",
+            "name": "proxy_id",
+            "required": true,
+            "schema": {
+              "description": "Positive identifier of the saved reverse-proxy resource.",
+              "minimum": 1,
+              "title": "Proxy Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReverseProxyCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReverseProxyResponse"
+                }
+              }
+            },
+            "description": "Atomically replace one proxy and its complete ordered route collection. The response body matches the documented success schema."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "The reverse-proxy resource does not exist."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "The request is invalid or conflicts with saved desired state."
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Replace Reverse Proxy",
+        "tags": [
+          "Firewall"
+        ]
+      }
+    },
+    "/api/v1/traffic-publishing/reverse-proxies/{proxy_id}/routes": {
+      "get": {
+        "description": "Read the ordered route resources nested under one proxy.\n\nRequires `read:firewall`. Route order is the matching precedence order used\nby the saved collection. Missing proxies return 404 ProblemDetails.",
+        "operationId": "listReverseProxyRoutes",
+        "parameters": [
+          {
+            "description": "Positive identifier of the saved reverse-proxy resource.",
+            "in": "path",
+            "name": "proxy_id",
+            "required": true,
+            "schema": {
+              "description": "Positive identifier of the saved reverse-proxy resource.",
+              "minimum": 1,
+              "title": "Proxy Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/ReverseProxyRouteResponse"
+                  },
+                  "title": "Response Listreverseproxyroutes",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Read the ordered route resources nested under one proxy. The response body matches the documented success schema."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "The reverse-proxy resource does not exist."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "The request parameters or body failed Atlaso validation. The response includes a request ID that can be correlated with operational logs."
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Reverse Proxy Routes",
+        "tags": [
+          "Firewall"
+        ]
+      },
+      "put": {
+        "description": "Atomically replace all route resources under one saved proxy.\n\nRequires `write:firewall`. The submitted collection is complete: omitted\nroutes are deleted, and any invalid route leaves the saved proxy unchanged.\nThe shared service validates and commits the entire parent and route set.",
+        "operationId": "replaceReverseProxyRoutes",
+        "parameters": [
+          {
+            "description": "Positive identifier of the saved reverse-proxy resource.",
+            "in": "path",
+            "name": "proxy_id",
+            "required": true,
+            "schema": {
+              "description": "Positive identifier of the saved reverse-proxy resource.",
+              "minimum": 1,
+              "title": "Proxy Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReverseProxyRoutesReplace"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/ReverseProxyRouteResponse"
+                  },
+                  "title": "Response Replacereverseproxyroutes",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Atomically replace all route resources under one saved proxy. The response body matches the documented success schema."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "The reverse-proxy resource does not exist."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "The request is invalid or conflicts with saved desired state."
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Replace Reverse Proxy Routes",
+        "tags": [
+          "Firewall"
         ]
       }
     },

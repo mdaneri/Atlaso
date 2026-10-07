@@ -55,6 +55,10 @@ Atlaso groups related settings into apply units. DNS and DHCP share one `DNS/DHC
 can require **Appliance Settings**, **Public Services**, and **Firewall**. A management-to-access conversion with a
 gateway change also selects **Routing & WAN** with Network and uses the protected handoff. A WAN-only change
 to a mirrored management default uses the same handoff. Each WAN unit executes from its captured snapshot.
+Reverse-proxy publication is rendered with **Public Services**; enabled HTTPS listeners also depend on **Certificate
+Authority**, listener admissions on **Firewall**, and managed authoritative records on **DNS/DHCP**. Review and select
+the changed dependencies together. The [reverse-proxy guide](../services/reverse-proxies.md) describes its generated
+artifacts and recovery checks.
 When effective source NAT or port forwarding depends on changed Network and WAN state, reviewing Network also
 selects and locks **Routing & WAN**. The review validates that WAN candidate before submission, so required changes
 and any blocking errors are visible together.

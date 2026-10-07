@@ -79,8 +79,52 @@ from atlaso.app.services.dnsmasq import (
     validate_dns_record,
     validate_dns_settings,
 )
+from atlaso.app.services.network_objects import acquire_network_objects_write_lock
+from atlaso.app.services.reverse_proxies import runtime_snapshot
+from atlaso.app.services.reverse_proxy_publication import (
+    DNS_OWNER_PREFIX,
+    reconcile_proxy_dns,
+)
 
 Endpoint = Callable[..., Any]
+REVERSE_PROXY_DNS_OWNER_ERROR = "This DNS record is managed by Reverse Proxies. Edit it in Reverse Proxies."
+RESERVED_DNS_OWNER_ERROR = "The Reverse Proxies DNS owner marker is reserved for that service."
+
+
+def _is_reverse_proxy_dns_record(record: DnsRecord) -> bool:
+    """Identify DNS records whose lifecycle belongs to Reverse Proxies."""
+    return (record.description or "").startswith(DNS_OWNER_PREFIX)
+
+
+def _reject_reverse_proxy_dns_record(record: DnsRecord) -> None:
+    """Stop independent writes to a reverse-proxy-owned DNS record."""
+    if _is_reverse_proxy_dns_record(record):
+        raise HTTPException(status_code=409, detail=REVERSE_PROXY_DNS_OWNER_ERROR)
+
+
+def _reject_reserved_dns_owner_description(description: str | None) -> None:
+    """Prevent ordinary DNS writes from impersonating the service owner marker."""
+    if (description or "").startswith(DNS_OWNER_PREFIX):
+        raise HTTPException(status_code=422, detail=RESERVED_DNS_OWNER_ERROR)
+
+
+def _reject_reverse_proxy_dns_hostname(db: Session, hostname: str) -> None:
+    """Prevent ordinary records from sharing a reverse-proxy-owned hostname."""
+    owner_record_id = db.scalar(
+        select(DnsRecord.id).where(
+            func.lower(DnsRecord.hostname) == hostname.lower(),
+            DnsRecord.description.startswith(DNS_OWNER_PREFIX),
+        )
+    )
+    if owner_record_id is not None:
+        raise HTTPException(status_code=409, detail=REVERSE_PROXY_DNS_OWNER_ERROR)
+
+
+def _remember_applied_dns_records(db: Session) -> None:
+    """Capture legacy service-record ownership before generated DNS rows change."""
+    from atlaso.app.ui import remember_applied_service_dns_records
+
+    remember_applied_service_dns_records(db)
 
 
 @dataclass(frozen=True)
@@ -189,6 +233,7 @@ def build_router(dependencies: DnsDhcpApiDependencies) -> DnsDhcpApiRouter:
         response_model=DnsSettingsResponse,
         tags=["DNS"],
         operation_id="updateDnsSettings",
+        responses={409: {"model": ProblemDetails, "description": "Reverse-proxy-managed DNS conflicts with an operator or other service record; settings remain unchanged."}},
     )
     def update_dns_settings(
         payload: DnsSettingsUpdate,
@@ -197,15 +242,26 @@ def build_router(dependencies: DnsDhcpApiDependencies) -> DnsDhcpApiRouter:
     ) -> DnsSettingsResponse:
         """Update Dns Settings.
 
-        Requires the `write:dns` API scope. The operation updates saved Atlaso state and does not bypass
-        the documented global Appliance Apply or service lifecycle boundary.
+        Requires the `write:dns` API scope. The operation serializes DNS eligibility changes with proxy
+        writes and reconciles proxy-owned records atomically. A conflicting operator record returns 409
+        without saving settings. Host enforcement remains subject to global Appliance Apply.
 
         Args:
             payload: Validated request or task payload consumed by the operation.
             identity: Authenticated identity authorizing the operation.
             db: Active database session used by the operation.
         """
+        acquire_network_objects_write_lock(db)
         settings = get_dns_settings_row(db)
+        # The compatibility getter can commit when it fills missing defaults.
+        # Reacquire after it, then refresh before deriving owner-managed DNS.
+        acquire_network_objects_write_lock(db)
+        db.refresh(settings)
+        try:
+            _remember_applied_dns_records(db)
+        except ValueError as exc:
+            db.rollback()
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
         for key, value in payload.model_dump().items():
             if key == "upstream_servers":
                 value = join_servers(value)
@@ -220,6 +276,11 @@ def build_router(dependencies: DnsDhcpApiDependencies) -> DnsDhcpApiRouter:
                 value = join_domains(split_domains(value))
             setattr(settings, key, value)
         settings.updated_at = utcnow()
+        try:
+            reconcile_proxy_dns(db, runtime_snapshot(db))
+        except ValueError as exc:
+            db.rollback()
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
         db.commit()
         db.refresh(settings)
         record_audit(
@@ -274,6 +335,10 @@ def build_router(dependencies: DnsDhcpApiDependencies) -> DnsDhcpApiRouter:
         status_code=201,
         tags=["DNS"],
         operation_id="createDnsRecord",
+        responses={
+            409: {"model": ProblemDetails, "description": "The hostname is managed by Reverse Proxies or the record already exists."},
+            422: {"model": ProblemDetails, "description": "DNS input is invalid or uses a reserved owner marker."},
+        },
     )
     def create_dns_record(
         payload: DnsRecordCreate,
@@ -291,16 +356,18 @@ def build_router(dependencies: DnsDhcpApiDependencies) -> DnsDhcpApiRouter:
             identity: Authenticated identity authorizing the operation.
             db: Active database session used by the operation.
         """
+        acquire_network_objects_write_lock(db)
         hostname = payload.hostname.strip().lower()
         record_type = payload.record_type.strip().upper()
         address = payload.address.strip()
+        _reject_reserved_dns_owner_description(payload.description)
         record_data_json = dump_dns_record_data(record_type, address)
         validation_errors = validate_dns_record(hostname, record_type, address)
-        validation_errors.extend(
-            validate_authoritative_dns_record(
-                get_dns_settings_row(db), hostname, record_type, address
-            )
-        )
+        dns_settings = get_dns_settings_row(db)
+        acquire_network_objects_write_lock(db)
+        db.refresh(dns_settings)
+        _reject_reverse_proxy_dns_hostname(db, hostname)
+        validation_errors.extend(validate_authoritative_dns_record(dns_settings, hostname, record_type, address))
         if validation_errors:
             raise HTTPException(status_code=422, detail=" ".join(validation_errors))
         existing = db.execute(
@@ -347,6 +414,11 @@ def build_router(dependencies: DnsDhcpApiDependencies) -> DnsDhcpApiRouter:
         response_model=DnsRecordResponse,
         tags=["DNS"],
         operation_id="updateDnsRecord",
+        responses={
+            404: {"model": ProblemDetails, "description": "The DNS record does not exist."},
+            409: {"model": ProblemDetails, "description": "The record or hostname is managed by Reverse Proxies."},
+            422: {"model": ProblemDetails, "description": "DNS input is invalid or uses a reserved owner marker."},
+        },
     )
     def update_dns_record(
         record_id: Annotated[
@@ -370,19 +442,23 @@ def build_router(dependencies: DnsDhcpApiDependencies) -> DnsDhcpApiRouter:
             identity: Authenticated identity authorizing the operation.
             db: Active database session used by the operation.
         """
+        acquire_network_objects_write_lock(db)
         record = db.get(DnsRecord, record_id)
         if not record:
             raise HTTPException(status_code=404, detail="DNS record not found")
+        _reject_reverse_proxy_dns_record(record)
+        _reject_reserved_dns_owner_description(payload.description)
         hostname = payload.hostname.strip().lower()
         record_type = payload.record_type.strip().upper()
         address = payload.address.strip()
         record_data_json = dump_dns_record_data(record_type, address)
         validation_errors = validate_dns_record(hostname, record_type, address)
-        validation_errors.extend(
-            validate_authoritative_dns_record(
-                get_dns_settings_row(db), hostname, record_type, address
-            )
-        )
+        dns_settings = get_dns_settings_row(db)
+        acquire_network_objects_write_lock(db)
+        db.refresh(dns_settings)
+        db.refresh(record)
+        _reject_reverse_proxy_dns_hostname(db, hostname)
+        validation_errors.extend(validate_authoritative_dns_record(dns_settings, hostname, record_type, address))
         if validation_errors:
             raise HTTPException(status_code=422, detail=" ".join(validation_errors))
         existing = db.execute(
@@ -427,6 +503,10 @@ def build_router(dependencies: DnsDhcpApiDependencies) -> DnsDhcpApiRouter:
         response_model=DnsHostsImportResponse,
         tags=["DNS"],
         operation_id="importDnsHostsFile",
+        responses={
+            409: {"model": ProblemDetails, "description": "The import would replace or add a record at a hostname managed by Reverse Proxies."},
+            422: {"model": ProblemDetails, "description": "The hosts file or its DNS owner marker is invalid."},
+        },
     )
     def import_dns_hosts_file(
         payload: DnsHostsImportRequest,
@@ -445,7 +525,10 @@ def build_router(dependencies: DnsDhcpApiDependencies) -> DnsDhcpApiRouter:
             db: Active database session used by the operation.
         """
         parsed_records, errors = parse_hosts_records(payload.hosts_text)
+        acquire_network_objects_write_lock(db)
         dns_settings = get_dns_settings_row(db)
+        acquire_network_objects_write_lock(db)
+        db.refresh(dns_settings)
         for item in parsed_records:
             errors.extend(
                 validate_authoritative_dns_record(
@@ -457,8 +540,19 @@ def build_router(dependencies: DnsDhcpApiDependencies) -> DnsDhcpApiRouter:
             )
         if errors:
             raise HTTPException(status_code=422, detail="; ".join(errors))
+        _reject_reserved_dns_owner_description(
+            next((str(item["description"]) for item in parsed_records
+                  if str(item.get("description") or "").startswith(DNS_OWNER_PREFIX)), None)
+        )
+        existing_records = db.execute(select(DnsRecord)).scalars().all()
+        proxy_owned = [record for record in existing_records if _is_reverse_proxy_dns_record(record)]
+        proxy_owned_hostnames = {record.hostname.casefold() for record in proxy_owned}
+        if any(str(item["hostname"]).casefold() in proxy_owned_hostnames for item in parsed_records):
+            raise HTTPException(status_code=409, detail=REVERSE_PROXY_DNS_OWNER_ERROR)
         if payload.replace_existing:
-            for record in db.execute(select(DnsRecord)).scalars().all():
+            if proxy_owned:
+                raise HTTPException(status_code=409, detail=REVERSE_PROXY_DNS_OWNER_ERROR)
+            for record in existing_records:
                 db.delete(record)
             db.flush()
         for item in parsed_records:
@@ -511,6 +605,10 @@ def build_router(dependencies: DnsDhcpApiDependencies) -> DnsDhcpApiRouter:
         status_code=204,
         tags=["DNS"],
         operation_id="deleteDnsRecord",
+        responses={
+            404: {"model": ProblemDetails, "description": "The DNS record does not exist."},
+            409: {"model": ProblemDetails, "description": "A record managed by Reverse Proxies can only be removed by its owner."},
+        },
     )
     def delete_dns_record(
         record_id: Annotated[
@@ -532,9 +630,11 @@ def build_router(dependencies: DnsDhcpApiDependencies) -> DnsDhcpApiRouter:
             identity: Authenticated identity authorizing the operation.
             db: Active database session used by the operation.
         """
+        acquire_network_objects_write_lock(db)
         record = db.get(DnsRecord, record_id)
         if not record:
             raise HTTPException(status_code=404, detail="DNS record not found")
+        _reject_reverse_proxy_dns_record(record)
         db.delete(record)
         db.commit()
         record_audit(

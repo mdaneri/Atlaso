@@ -109,7 +109,7 @@ COMMANDS: dict[str, set[str]] = {
     "vcf-offline-depot": {"validate", "stage-tool", "reset-tool", "generate-software-depot-id", "read-software-depot-id", "sync", "apply-https", "apply-properties", "apply-ceip"},
     "esxi-pxe": {"validate", "apply"},
     "esx-storage": {"inventory", "validate", "apply", "status", "logs"},
-    "public-services": {"validate", "preflight", "apply"},
+    "public-services": {"validate", "preflight", "apply", "reverse-proxy-status"},
     "appliance-update": {
         "check",
         "apply",
@@ -9661,6 +9661,437 @@ def _validate_public_services_config_path(path_value: str) -> Path:
     return path
 
 
+def _reverse_proxy_publication(text: str) -> dict:
+    """Validate exact generated proxy intent through the installed fixed module.
+
+    Args:
+        text: Staged or applied bounded Public Services configuration.
+    """
+    if not any(line.startswith("# Managed reverse-proxy generation: ") for line in text.splitlines()):
+        if any(line.startswith(("# Reverse-proxy transport manifest: ", "# Reverse-proxy intent: ")) for line in text.splitlines()):
+            raise ValueError("reverse-proxy metadata is missing its generation")
+        return {"manifest": None, "endpoints": [], "proxies": []}
+    try:
+        result = _run_with_input([str(ATLASO_VENV_PYTHON_PATH), "-I", "-B", "-m",
+                                  "atlaso.app.services.reverse_proxy_publication", "--validate"], text, timeout=10)
+    except subprocess.TimeoutExpired:
+        raise ValueError("reverse-proxy canonical publication validation timed out") from None
+    if result.returncode != 0 or len(result.stdout) > 1_500_000:
+        raise ValueError("reverse-proxy canonical publication validation failed")
+    try:
+        metadata = json.loads(result.stdout)
+    except json.JSONDecodeError:
+        raise ValueError("reverse-proxy canonical publication validation is unavailable") from None
+    if not isinstance(metadata, dict) or set(metadata) != {"manifest", "endpoints", "proxies"}:
+        raise ValueError("reverse-proxy publication projection is invalid")
+    manifest = metadata["manifest"]
+    if manifest is not None and (not isinstance(manifest, dict) or re.fullmatch(r"[0-9a-f]{64}", str(manifest.get("generation") or "")) is None):
+        raise ValueError("reverse-proxy publication generation is invalid")
+    return metadata
+
+
+REVERSE_PROXY_CONFIG_ROOT = Path("/etc/atlaso/traffic-publishing/reverse-proxies")
+REVERSE_PROXY_RUNTIME_ROOT = Path("/run/atlaso-rp")
+REVERSE_PROXY_UNIT_PATH = Path("/etc/systemd/system/atlaso-reverse-proxy@.service")
+REVERSE_PROXY_UNIT_TEXT = """[Unit]
+Description=Atlaso managed reverse-proxy transport %i
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=atlaso
+Group=nginx
+ExecStart=/opt/atlaso/.venv/bin/python -I -B -m atlaso.app.services.reverse_proxy_transport --generation %i
+RuntimeDirectory=atlaso-rp/%i
+RuntimeDirectoryMode=0750
+RuntimeDirectoryPreserve=no
+UMask=0007
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ReadWritePaths=/run/atlaso-rp/%i
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK
+CapabilityBoundingSet=
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
+"""
+
+
+def _reverse_proxy_unit(generation: str) -> str:
+    """Resolve only an exact content-bound generation service identity."""
+    if not isinstance(generation, str) or re.fullmatch(r"[0-9a-f]{64}", generation) is None:
+        raise ValueError("reverse-proxy generation identity is invalid")
+    return f"atlaso-reverse-proxy@{generation}.service"
+
+
+def _reverse_proxy_applied() -> dict:
+    """Read only the bounded root-owned applied Public Services artifact."""
+    path = NGINX_PUBLIC_SERVICES_SITE_PATH
+    if path.is_symlink() or (path.exists() and (not path.is_file() or path.stat().st_size > 2_000_000)):
+        raise ValueError("applied Public Services artifact is unsafe")
+    return _reverse_proxy_publication(path.read_text(encoding="utf-8") if path.exists() else "")
+
+
+def _reverse_proxy_runtime_paths(payload: dict) -> list[Path]:
+    """Bind candidate and previous immutable manifests to the handoff snapshot."""
+    candidate_path = payload.get("public_services_config_path")
+    candidate = _reverse_proxy_publication(Path(candidate_path).read_text(encoding="utf-8") if candidate_path else "")
+    previous = _reverse_proxy_applied()
+    if not candidate["manifest"] and not previous["manifest"]:
+        return []
+    paths = [REVERSE_PROXY_UNIT_PATH]
+    for metadata in (candidate, previous):
+        manifest = metadata["manifest"]
+        if manifest:
+            paths.append(REVERSE_PROXY_CONFIG_ROOT / (manifest["generation"] + ".json"))
+    if candidate["manifest"]:
+        pending = REVERSE_PROXY_CONFIG_ROOT / (candidate["manifest"]["generation"] + ".pending")
+        if pending.exists() or pending.is_symlink():
+            raise ValueError("reverse-proxy manifest staging has unrelated ownership")
+        paths.append(pending)
+    for path in paths:
+        if path.is_symlink() or (path.exists() and (not path.is_file() or path.stat().st_uid != 0)):
+            raise ValueError("reverse-proxy runtime artifact ownership is ambiguous")
+    if REVERSE_PROXY_UNIT_PATH.exists() and REVERSE_PROXY_UNIT_PATH.read_text(encoding="utf-8") != REVERSE_PROXY_UNIT_TEXT:
+        raise ValueError("reverse-proxy service template is not Atlaso-owned")
+    return paths
+
+
+def _snapshot_reverse_proxy_runtime(payload: dict) -> dict:
+    """Capture service state before the durable journal authorizes mutation."""
+    previous = _reverse_proxy_applied()["manifest"]
+    candidate_path = payload.get("public_services_config_path")
+    metadata = _reverse_proxy_publication(Path(candidate_path).read_text(encoding="utf-8") if candidate_path else "")
+    candidate = metadata["manifest"]
+    if candidate:
+        physical, vlans, _removed = _parse_network_config(Path(payload["network_config_path"]))
+        parents = {row["name"]: row for row in physical}
+        eligible = set()
+        for row in physical + vlans:
+            if row.get("role") not in {"access", "route"}:
+                continue
+            if row in physical:
+                if row.get("mode") != "access" or row.get("admin_state") != "up":
+                    continue
+            else:
+                parent = parents.get(row.get("parent", ""), {})
+                if parent.get("mode") != "trunk" or parent.get("admin_state") != "up":
+                    continue
+            for field in ("ip_cidr", "ipv6_cidr"):
+                if row.get(field):
+                    eligible.add((row["name"], str(ip_interface(row[field]).ip)))
+        if any((listener["interface"], listener["address"]) not in eligible
+               for proxy in metadata["proxies"] if proxy["enabled"] for listener in proxy["listeners"]):
+            raise ValueError("reverse-proxy listener is not bound to an eligible candidate Network interface")
+        if candidate["routes"]:
+            _validate_reverse_proxy_listener_protocols(metadata, payload)
+            admission = _vcf_depot_listener_admission(Path(payload["public_services_config_path"]).read_text(encoding="utf-8"))
+            if admission:
+                raise ValueError("reverse-proxy TCP listener ownership is unavailable or conflicts")
+    previous_generation = previous["generation"] if previous and previous["routes"] else None
+    candidate_generation = candidate["generation"] if candidate and candidate["routes"] else None
+    if previous_generation and not candidate_path:
+        raise ValueError("reverse-proxy handoff is missing its candidate publication")
+    if not previous_generation and not candidate_generation:
+        return {}
+    previous_manifest_hash = None
+    if previous_generation:
+        path = REVERSE_PROXY_CONFIG_ROOT / (previous_generation + ".json")
+        if path.is_symlink() or not path.is_file() or json.loads(path.read_text(encoding="utf-8")) != previous:
+            raise ValueError("applied reverse-proxy immutable manifest is missing or differs")
+        previous_manifest_hash = _sha256_file(path)
+    previous_unit = _reverse_proxy_unit(previous_generation) if previous_generation else None
+    # An already running candidate without applied ownership must be preserved.
+    if candidate_generation and candidate_generation != previous_generation:
+        candidate_unit = _reverse_proxy_unit(candidate_generation)
+        if (_run(["systemctl", "is-active", candidate_unit]).returncode == 0
+                or _run(["systemctl", "is-enabled", candidate_unit]).returncode == 0):
+            raise ValueError("candidate reverse-proxy generation has unrelated runtime ownership")
+    return {"previous_generation": previous_generation, "candidate_generation": candidate_generation,
+            "previous_manifest_sha256": previous_manifest_hash,
+            "previous_active": bool(previous_unit and _run(["systemctl", "is-active", previous_unit]).returncode == 0),
+            "previous_enabled": bool(previous_unit and _run(["systemctl", "is-enabled", previous_unit]).returncode == 0)}
+
+
+def _validate_reverse_proxy_listener_protocols(metadata: dict, payload: dict) -> None:
+    """Refuse HTTP/TLS ambiguity on any shared nginx TCP socket."""
+    candidate_text = Path(payload["public_services_config_path"]).read_text(encoding="utf-8")
+    # Canonical proxy metadata is a suffix; the prefix contains existing service listeners.
+    texts = [candidate_text.split("# Managed reverse-proxy generation: ", 1)[0]]
+    if NGINX_SITES_DIR.exists():
+        for path in NGINX_SITES_DIR.glob("*.conf"):
+            if path == NGINX_PUBLIC_SERVICES_SITE_PATH:
+                continue
+            if path.is_symlink() or not path.is_file() or path.stat().st_size > 2_000_000:
+                raise ValueError("nginx listener ownership inventory is unsafe")
+            texts.append(path.read_text(encoding="utf-8"))
+    inventory = [(_listen_address_and_port(value), "https" if "ssl" in value.split() else "http")
+                 for text in texts for value in _nginx_directive(text, "listen")]
+    for proxy in metadata["proxies"]:
+        if not proxy["enabled"]:
+            continue
+        ports = [(proxy["port"], proxy["scheme"])]
+        if proxy["redirect_http"]:
+            ports.append((proxy["redirect_port"], "http"))
+        for listener in proxy["listeners"]:
+            for port, scheme in ports:
+                if any(_vcf_depot_listener_overlap((listener["address"], port), occupied) and scheme != actual
+                       for occupied, actual in inventory):
+                    raise ValueError("reverse-proxy listener conflicts with the shared nginx socket protocol")
+
+
+def _reverse_proxy_command(command: list[str]) -> None:
+    """Require success for a bounded exact-generation service operation."""
+    try:
+        result = _run(command, timeout=15)
+    except subprocess.TimeoutExpired:
+        raise ValueError("reverse-proxy service lifecycle operation timed out") from None
+    if result.returncode != 0:
+        raise ValueError("reverse-proxy service lifecycle operation failed")
+
+
+def _prepare_reverse_proxy_runtime(state: dict, payload: dict) -> None:
+    """Install and start one journal-owned generation before publishing nginx."""
+    owner = state.get("reverse_proxy_runtime") or {}
+    generation = owner.get("candidate_generation")
+    if not generation:
+        return
+    manifest = _reverse_proxy_publication(Path(payload["public_services_config_path"]).read_text(encoding="utf-8"))["manifest"]
+    if not manifest or manifest["generation"] != generation:
+        raise ValueError("reverse-proxy generation changed after journal capture")
+    group_id = grp.getgrnam("nginx").gr_gid
+    for directory in (REVERSE_PROXY_CONFIG_ROOT.parent, REVERSE_PROXY_CONFIG_ROOT):
+        if directory.is_symlink() or (directory.exists() and (not directory.is_dir() or directory.stat().st_uid != 0
+                or directory.stat().st_mode & 0o022)):
+            raise ValueError("reverse-proxy configuration directory ownership is unsafe")
+        if not directory.exists():
+            directory.mkdir(mode=0o750)
+            os.chown(directory, 0, group_id)
+            _fsync_directory(directory.parent)
+    target = REVERSE_PROXY_CONFIG_ROOT / (generation + ".json")
+    if target.exists():
+        if target.is_symlink() or json.loads(target.read_text(encoding="utf-8")) != manifest:
+            raise ValueError("immutable reverse-proxy manifest conflicts with its generation")
+    else:
+        temporary = target.with_suffix(".pending")
+        descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o640)
+        with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
+            json.dump(manifest, stream, sort_keys=True)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.chown(temporary, 0, group_id)
+        temporary.replace(target)
+        _fsync_directory(target.parent)
+    if not REVERSE_PROXY_UNIT_PATH.exists():
+        with REVERSE_PROXY_UNIT_PATH.open("x", encoding="utf-8") as stream:
+            stream.write(REVERSE_PROXY_UNIT_TEXT)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.chmod(REVERSE_PROXY_UNIT_PATH, 0o644)
+        _fsync_directory(REVERSE_PROXY_UNIT_PATH.parent)
+    _reverse_proxy_command(["systemctl", "daemon-reload"])
+    unit = _reverse_proxy_unit(generation)
+    _reverse_proxy_command(["systemctl", "enable", "--now", unit])
+    deadline = time.monotonic() + 10
+    paths = [REVERSE_PROXY_RUNTIME_ROOT / generation / (route["socket_id"] + ".sock") for route in manifest["routes"]]
+    while time.monotonic() < deadline:
+        if all(not path.is_symlink() and path.exists() and stat.S_ISSOCK(path.stat().st_mode) for path in paths):
+            if _run(["systemctl", "is-active", unit]).returncode == 0:
+                return
+        time.sleep(0.1)
+    raise ValueError("reverse-proxy generation sockets did not become ready")
+
+
+def _quiesce_reverse_proxy_candidate(state: dict) -> None:
+    """Stop only a candidate that this durable handoff created."""
+    owner = state.get("reverse_proxy_runtime") or {}
+    candidate = owner.get("candidate_generation")
+    if candidate and candidate != owner.get("previous_generation") and REVERSE_PROXY_UNIT_PATH.exists():
+        _reverse_proxy_command(["systemctl", "disable", "--now", _reverse_proxy_unit(candidate)])
+
+
+def _restore_reverse_proxy_runtime(state: dict) -> None:
+    """Restore the previous generation's exact active and enabled state."""
+    owner = state.get("reverse_proxy_runtime") or {}
+    previous = owner.get("previous_generation")
+    if previous:
+        unit = _reverse_proxy_unit(previous)
+        _reverse_proxy_command(["systemctl", "enable" if owner["previous_enabled"] else "disable", unit])
+        _reverse_proxy_command(["systemctl", "start" if owner["previous_active"] else "stop", unit])
+
+
+def _retire_reverse_proxy_runtime(state: dict) -> None:
+    """Retire the replaced generation only after application commit is durable."""
+    owner = state.get("reverse_proxy_runtime") or {}
+    previous = owner.get("previous_generation")
+    if previous and previous != owner.get("candidate_generation"):
+        unit = _reverse_proxy_unit(previous)
+        _reverse_proxy_command(["systemctl", "disable", "--now", unit])
+        if _run(["systemctl", "is-active", unit]).returncode == 0:
+            raise ValueError("retired reverse-proxy generation is still active")
+        path = REVERSE_PROXY_CONFIG_ROOT / (previous + ".json")
+        if path.exists() or path.is_symlink():
+            if (path.is_symlink() or not path.is_file() or path.stat().st_uid != 0 or path.stat().st_nlink != 1
+                    or _sha256_file(path) != owner.get("previous_manifest_sha256")):
+                raise ValueError("retired reverse-proxy manifest ownership changed")
+            _durable_management_handoff_unlink(path)
+
+
+def _reset_reverse_proxy_runtime() -> None:
+    """Remove only proven proxy-owned generations under admitted factory reset."""
+    if not _factory_reset_runtime_cleanup_is_admitted():
+        raise ValueError("reverse-proxy reset requires the protected applying marker")
+    root = REVERSE_PROXY_CONFIG_ROOT
+    if root.is_symlink() or (root.exists() and (not root.is_dir() or root.stat().st_uid != 0 or root.stat().st_mode & 0o022)):
+        raise ValueError("reverse-proxy reset configuration ownership is unsafe")
+    if REVERSE_PROXY_UNIT_PATH.is_symlink() or (REVERSE_PROXY_UNIT_PATH.exists()
+            and (not REVERSE_PROXY_UNIT_PATH.is_file() or REVERSE_PROXY_UNIT_PATH.stat().st_uid != 0
+                 or REVERSE_PROXY_UNIT_PATH.read_text(encoding="utf-8") != REVERSE_PROXY_UNIT_TEXT)):
+        raise ValueError("reverse-proxy reset unit ownership is unsafe")
+    manifests = []
+    for path in sorted(root.iterdir()) if root.exists() else []:
+        if (not re.fullmatch(r"[0-9a-f]{64}\.json", path.name) or path.is_symlink()
+                or not path.is_file() or path.stat().st_uid != 0 or path.stat().st_nlink != 1
+                or path.stat().st_size > 1048576):
+            raise ValueError("reverse-proxy reset encountered unproven configuration state")
+        text = path.read_text(encoding="utf-8")
+        manifest = json.loads(text)
+        if not isinstance(manifest, dict) or manifest.get("generation") != path.stem:
+            raise ValueError("reverse-proxy reset generation binding is invalid")
+        try:
+            validation = _run_with_input([str(ATLASO_VENV_PYTHON_PATH), "-I", "-B", "-m",
+                                          "atlaso.app.services.reverse_proxy_transport", "--validate-manifest"], text, timeout=10)
+        except subprocess.TimeoutExpired:
+            raise ValueError("reverse-proxy reset manifest validation timed out") from None
+        if validation.returncode != 0:
+            raise ValueError("reverse-proxy reset manifest ownership is invalid")
+        manifests.append(path)
+    if manifests and not REVERSE_PROXY_UNIT_PATH.is_file():
+        raise ValueError("reverse-proxy reset service ownership is missing")
+    # Finish all ownership checks before the first service or file mutation.
+    for path in manifests:
+        unit = _reverse_proxy_unit(path.stem)
+        _reverse_proxy_command(["systemctl", "disable", "--now", unit])
+        if _run(["systemctl", "is-active", unit]).returncode == 0:
+            raise ValueError("reverse-proxy reset generation is still active")
+    for path in manifests:
+        _durable_management_handoff_unlink(path)
+    if REVERSE_PROXY_UNIT_PATH.exists():
+        _durable_management_handoff_unlink(REVERSE_PROXY_UNIT_PATH)
+        _reverse_proxy_command(["systemctl", "daemon-reload"])
+
+
+def _reverse_proxy_status() -> dict:
+    """Return applied intent and cached health without making upstream requests."""
+    applied = None
+    if MANAGEMENT_HANDOFF_STATE_PATH.is_file():
+        if MANAGEMENT_HANDOFF_STATE_PATH.stat().st_size > 2_000_000:
+            raise ValueError("reverse-proxy Apply observation exceeds its bound")
+        state = json.loads(MANAGEMENT_HANDOFF_STATE_PATH.read_text(encoding="utf-8"))
+        try:
+            receipt = json.loads(MANAGEMENT_HANDOFF_COMMIT_PATH.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            receipt = {}
+        committed = receipt.get("phase") == "committed" and receipt.get("job_id") == state.get("job_id")
+        if not committed:
+            snapshot = next((item for item in state.get("snapshots", [])
+                             if item.get("path") == str(NGINX_PUBLIC_SERVICES_SITE_PATH)), None)
+            if snapshot is None:
+                raise ValueError("reverse-proxy Apply observation has no publication snapshot")
+            if snapshot.get("existed"):
+                backup = Path(snapshot["backup"])
+                if (backup.is_symlink() or not backup.is_file() or backup.stat().st_size > 2_000_000
+                        or not backup.resolve().is_relative_to(MANAGEMENT_HANDOFF_BACKUP_DIR.resolve())):
+                    raise ValueError("reverse-proxy Apply publication snapshot is unsafe")
+                applied = _reverse_proxy_publication(backup.read_text(encoding="utf-8"))
+            else:
+                applied = _reverse_proxy_publication("")
+    if applied is None:
+        applied = _reverse_proxy_applied()
+    manifest = applied["manifest"]
+    generation = manifest["generation"] if manifest and manifest["routes"] else None
+    result = {"schema": 1, "proxies": applied["proxies"], "generation": generation,
+              "health": {}, "observed_at": None}
+    if not generation:
+        result["observed_at"] = datetime.now(timezone.utc).isoformat()
+        return result
+    path = REVERSE_PROXY_RUNTIME_ROOT / generation / "health.json"
+    if path.is_symlink() or not path.is_file() or path.stat().st_size > 262144:
+        return result
+    try:
+        cached = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        return result
+    if (isinstance(cached, dict) and set(cached) == {"schema", "generation", "health", "observed_at"}
+            and cached["schema"] == 1 and cached["generation"] == generation
+            and isinstance(cached["health"], dict) and len(cached["health"]) <= 256):
+        result["health"] = cached["health"]
+        result["observed_at"] = cached["observed_at"]
+    return result
+
+
+def _verify_reverse_proxy_front_doors(payload: dict) -> None:
+    """Verify exact Host/TLS identity and the nginx-owned reserved-path guard.
+
+    The guard needs no upstream connection, so unreachable applications remain
+    degraded observations and do not make an otherwise valid Apply fail.
+    """
+    metadata = _reverse_proxy_publication(Path(payload["public_services_config_path"]).read_text(encoding="utf-8"))
+    deadline = time.monotonic() + 45
+    for proxy in metadata["proxies"]:
+        if not proxy["enabled"]:
+            continue
+        context = None
+        if proxy["scheme"] == "https":
+            name = proxy["hostname"]
+            if len(name) > 245:
+                name = f"{name[:180]}-{hashlib.sha256(name.encode('utf-8')).hexdigest()}"
+            certificate = Path(f"/etc/atlaso/reverse-proxy-{proxy['id']}/certs/{name}.crt")
+            context = ssl.create_default_context(cafile=str(certificate))
+            context.minimum_version = ssl.TLSVersion.TLSv1_2
+            context.verify_flags |= ssl.VERIFY_X509_PARTIAL_CHAIN
+        for listener in proxy["listeners"]:
+            for publication_port in [proxy["port"], *([proxy["redirect_port"]] if proxy["redirect_http"] else [])]:
+                listener_context = context if publication_port == proxy["port"] else None
+                ready = False
+                for _attempt in range(3):
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        break
+                    try:
+                        with socket.create_connection((listener["address"], publication_port), timeout=min(3, remaining)) as raw:
+                            stream = listener_context.wrap_socket(raw, server_hostname=proxy["hostname"]) if listener_context else raw
+                            try:
+                                stream.settimeout(min(3, max(0.1, deadline - time.monotonic())))
+                                stream.sendall(f"HEAD /api/v1/ HTTP/1.1\r\nHost: {proxy['hostname']}:{publication_port}\r\nConnection: close\r\n\r\n".encode("ascii"))
+                                headers = bytearray()
+                                while len(headers) < 8192 and not headers.endswith(b"\r\n\r\n"):
+                                    chunk = stream.recv(1)
+                                    if not chunk:
+                                        break
+                                    headers.extend(chunk)
+                                lines = bytes(headers).split(b"\r\n")
+                                identity = f"x-atlaso-reverse-proxy: {proxy['id']}-{metadata['manifest']['generation']}".encode("ascii")
+                                ready = (headers.endswith(b"\r\n\r\n")
+                                         and bool(re.fullmatch(rb"HTTP/1\.[01] 404(?: [^\r\n]*)?", lines[0]))
+                                         and identity in [line.lower() for line in lines[1:]])
+                            finally:
+                                if listener_context:
+                                    stream.close()
+                        if ready:
+                            break
+                    except (OSError, ValueError):
+                        pass
+                    time.sleep(0.1)
+                if not ready:
+                    raise ValueError("reverse-proxy exact-host front-door readiness failed")
+
+
 def _public_services_config_errors(
     path: Path,
     *,
@@ -9677,6 +10108,17 @@ def _public_services_config_errors(
     except OSError as exc:
         return [str(exc)]
     errors: list[str] = []
+    certificate_text = text
+    try:
+        _reverse_proxy_publication(text)
+    except (OSError, ValueError, subprocess.TimeoutExpired):
+        errors.append("Public Services reverse-proxy publication is invalid or unavailable.")
+    # Existing machine-service checks apply to their generated block. The proxy
+    # block is independently reproduced from strict intent; comments and reserved
+    # deny locations must not be mistaken for machine-service publication.
+    proxy_start = next((match.start() for match in re.finditer(r"(?m)^# Managed reverse-proxy generation: ", text)), None)
+    if proxy_start is not None:
+        text = text[:proxy_start]
     if "IP-scoped public service front door" not in text:
         errors.append("Public services nginx config must be generated by Atlaso.")
     if _nginx_directive(text, "root"):
@@ -9797,7 +10239,7 @@ def _public_services_config_errors(
         ("ssl_certificate", "Public services certificate", False),
         ("ssl_certificate_key", "Public services private key", True),
     ]:
-        for value in _nginx_directive(text, directive):
+        for value in _nginx_directive(certificate_text, directive):
             try:
                 cert_path = _ca_managed_path(value, directive)
                 staged_pem = None
@@ -9838,6 +10280,15 @@ def _handle_public_services(action: str, args: list[str], *, transitional_text: 
         args: Parsed command-line options consumed by the operation.
         transitional_text: Candidate listeners joined with snapshotted old listeners.
     """
+    if action == "reverse-proxy-status":
+        if args:
+            return 2
+        try:
+            print(json.dumps(_reverse_proxy_status(), sort_keys=True))
+            return 0
+        except (OSError, ValueError):
+            print("reverse-proxy applied observation is unavailable", file=sys.stderr)
+            return 1
     if len(args) != 1:
         print(f"public-services {action} requires exactly one staged nginx config path", file=sys.stderr)
         return 2
@@ -9864,8 +10315,21 @@ def _handle_public_services(action: str, args: list[str], *, transitional_text: 
         print(result.stderr, end="", file=sys.stderr)
         return result.returncode
     if action == "apply":
+        previous = _reverse_proxy_applied()
+        candidate = _reverse_proxy_publication(config_path.read_text(encoding="utf-8"))
+        if previous != candidate and (previous["manifest"] or candidate["manifest"]):
+            reset_removal = bool(not candidate["proxies"] and _factory_reset_runtime_cleanup_is_admitted())
+            if not MANAGEMENT_HANDOFF_STATE_PATH.is_file() and not reset_removal:
+                print("reverse-proxy publication requires the protected Apply journal", file=sys.stderr)
+                return 2
+            if not reset_removal:
+                state = json.loads(MANAGEMENT_HANDOFF_STATE_PATH.read_text(encoding="utf-8"))
+                expected = (candidate["manifest"]["generation"] if candidate["manifest"] and candidate["manifest"]["routes"] else None)
+                if state.get("reverse_proxy_runtime", {}).get("candidate_generation") != expected:
+                    print("reverse-proxy generation does not match the protected Apply owner", file=sys.stderr)
+                    return 2
         text = transitional_text if transitional_text is not None else config_path.read_text(encoding="utf-8")
-        if "server {" not in text:
+        if "server {" not in text and not candidate["proxies"]:
             result = _remove_nginx_site(NGINX_PUBLIC_SERVICES_SITE_PATH)
         else:
             if _vcf_depot_auth_required(text) and _write_vcf_depot_htpasswd(_vcf_depot_auth_username(text)) != 0:
@@ -28996,6 +29460,7 @@ def _reset_factory_retained_runtime() -> int:
         return 2
     try:
         repositories = _factory_reset_retained_runtime_paths_are_safe()
+        _reset_reverse_proxy_runtime()
         _cleanup_stale_photon_repository_views(force=True)
         managed_photon_repo_existed = MANAGED_PHOTON_REPO_PATH.is_file()
         result = _sync_appliance_update_sources({"source_definitions": []})
@@ -30226,6 +30691,7 @@ def _management_handoff_runtime_paths(payload: dict) -> list[Path]:
         WAN_SERVICE_PATH,
         *_management_handoff_certificate_paths(payload),
         *_management_handoff_previous_certificate_paths(),
+        *_reverse_proxy_runtime_paths(payload),
     ]
     listener_paths: list[Path] = []
     for move in payload.get("listener_address_moves", []):
@@ -31067,6 +31533,7 @@ def _snapshot_management_handoff(payload: dict) -> dict:
         raise ValueError("previous firewall config and service state are incoherent")
     state = {
         "schema_version": 1,
+        "reverse_proxy_runtime": _snapshot_reverse_proxy_runtime(payload),
         "job_id": payload["job_id"],
         "phase": "snapshotted",
         "snapshots": snapshots,
@@ -31941,6 +32408,7 @@ def _management_handoff_public_site_with_holdover(
     if not previous_site:
         previous_site = "# Managed by Atlaso. Local changes may be overwritten.\n"
     block_pattern = re.compile(r"(?ms)^server \{.*?^\}")
+    proxy_map = "map $http_upgrade $atlaso_reverse_proxy_connection { default upgrade; '' close; }"
 
     def blocks_and_sockets(site: str) -> list[tuple[str, set[str]]]:
         """Require managed top-level server blocks and collect their exact sockets.
@@ -31952,6 +32420,7 @@ def _management_handoff_public_site_with_holdover(
             raise ValueError("Public Services handoff site is not canonical")
         blocks = list(block_pattern.finditer(site))
         remainder = block_pattern.sub("", site)
+        remainder = remainder.replace(proxy_map, "")
         if any(line.strip() and not line.lstrip().startswith("#") for line in remainder.splitlines()):
             raise ValueError("Public Services handoff site is not canonical")
         parsed: list[tuple[str, set[str]]] = []
@@ -31971,6 +32440,8 @@ def _management_handoff_public_site_with_holdover(
                 raise ValueError("Public Services handoff server mixes old and new sockets")
             continue
         additions.append(block)
+    if proxy_map in candidate_site and proxy_map not in previous_site:
+        additions.insert(0, proxy_map)
     return previous_site.rstrip() + "\n\n" + "\n\n".join(additions) + "\n"
 
 
@@ -31993,7 +32464,7 @@ def _management_handoff_publish_final_sites(management_site: str, public_site: s
     _install_nginx_include()
     sites: tuple[tuple[Path, str | None], ...] = (
         (NGINX_MANAGEMENT_SITE_PATH, management_site),
-        (NGINX_PUBLIC_SERVICES_SITE_PATH, public_site if "server {" in public_site else None),
+        (NGINX_PUBLIC_SERVICES_SITE_PATH, public_site if "server {" in public_site or "# Managed reverse-proxy generation: " in public_site else None),
     )
     previous: dict[Path, bytes | None] = {}
     for path, _text in sites:
@@ -32710,6 +33181,7 @@ def _restore_management_handoff(state: dict) -> dict:
         "firewall service quiesce",
         lambda: _quiesce_management_handoff_firewall(state, commands),
     )
+    attempt("reverse-proxy candidate quiesce", lambda: _quiesce_reverse_proxy_candidate(state))
     if (
         state.get("dnsmasq_included")
         and not state.get("previous_dnsmasq_authoritative_present")
@@ -32765,6 +33237,7 @@ def _restore_management_handoff(state: dict) -> dict:
                 raise ValueError(f"rollback command failed: {' '.join(command)}")
 
         attempt(f"{' '.join(command)}", run_reload)
+    attempt("reverse-proxy generation restore", lambda: _restore_reverse_proxy_runtime(state))
     attempt("resolver restore", lambda: _restore_management_handoff_resolver(state, commands))
     before_links = len(errors)
     attempt("network link restore", lambda: _restore_management_handoff_links(state, commands))
@@ -32983,8 +33456,9 @@ def _acknowledge_management_handoff(job_id: str) -> int:
             receipt = {}
         if receipt.get("job_id") == job_id and receipt.get("phase") == "committed":
             try:
+                _retire_reverse_proxy_runtime(receipt)
                 _clear_management_handoff_state(keep_commit_receipt=True)
-            except OSError as exc:
+            except (OSError, ValueError) as exc:
                 print(
                     json.dumps(
                         {
@@ -33037,11 +33511,13 @@ def _acknowledge_management_handoff(job_id: str) -> int:
         "job_id": job_id,
         "phase": "committed",
         "candidate_addresses": list(state.get("candidate_addresses") or []),
+        "reverse_proxy_runtime": state.get("reverse_proxy_runtime") or {},
     }
     _durable_management_handoff_state_write(receipt, MANAGEMENT_HANDOFF_COMMIT_PATH)
     try:
+        _retire_reverse_proxy_runtime(state)
         _clear_management_handoff_state(keep_commit_receipt=True)
-    except OSError as exc:
+    except (OSError, ValueError) as exc:
         print(
             json.dumps(
                 {
@@ -33235,6 +33711,16 @@ def _recover_management_handoff() -> int:
         return 0
     try:
         state = json.loads(MANAGEMENT_HANDOFF_STATE_PATH.read_text(encoding="utf-8"))
+        try:
+            receipt = json.loads(MANAGEMENT_HANDOFF_COMMIT_PATH.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            receipt = {}
+        if receipt.get("phase") == "committed" and receipt.get("job_id") == state.get("job_id"):
+            _retire_reverse_proxy_runtime(state)
+            _clear_management_handoff_state(keep_commit_receipt=True)
+            print(json.dumps({"management_handoff": "committed recovery complete", "rolled_back": False,
+                              "helper_state": helper_state}, sort_keys=True))
+            return 0
         evidence = _restore_management_handoff(state)
     except (OSError, ValueError, json.JSONDecodeError) as exc:
         print(
@@ -33637,6 +34123,8 @@ def _apply_management_handoff(payload: dict) -> int:
             previous_http_addresses = set(state["previous_management_addresses"])
             initial_http_addresses = [address for address in initial_listener_addresses
                                       if address not in previous_http_addresses]
+        failing_layer = "reverse-proxy transport preparation"
+        _prepare_reverse_proxy_runtime(state, payload)
         failing_layer = "nginx management front door"
         management_https_result, _restart_delay_seconds = _configure_atlaso_management_https(
             settings_payload,
@@ -33844,6 +34332,9 @@ def _apply_management_handoff(payload: dict) -> int:
             failing_layer = "generated service DNS publication"
             if _handle_dnsmasq("apply", [service_dns_path]) != 0:
                 raise ValueError("service DNS publication failed after candidate readiness")
+        if (state.get("reverse_proxy_runtime") or {}).get("candidate_generation"):
+            failing_layer = "reverse-proxy front-door readiness"
+            _verify_reverse_proxy_front_doors(payload)
         failing_layer = "candidate durability"
         _sync_management_handoff_candidate(state, payload)
         state["candidate_addresses"] = candidate_addresses

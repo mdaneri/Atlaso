@@ -11,6 +11,10 @@ status: current
 Use **Physical Interfaces**, **VLAN Interfaces**, and **Routes and WAN** to build Atlaso network desired state while
 preserving management access.
 
+Public reverse proxies bind to exact addresses on eligible addressed access or route interfaces and enabled VLANs.
+Management-role interfaces and trunk physical interfaces are excluded; see the
+[reverse-proxy guide](../services/reverse-proxies.md) before changing a selected listener's interface or address.
+
 <!-- BEGIN GENERATED INTERFACE OVERVIEW -->
 ## Interface overview
 
