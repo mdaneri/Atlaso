@@ -108,17 +108,6 @@ def test_dns_payload_only_changes_authoritative_ipv4_listener():
 def test_dns_configuration_calls_only_dns_settings_endpoint():
     """Save the managed zone and address without touching DHCP state."""
     module = load_module("proxy_dns_configure_test", "reverse_proxy_acceptance.py")
-    current = {
-        "enabled": False, "listen_interface": "eth0", "listen_address": "192.0.2.10",
-        "domain": "old.example.test", "upstream_servers": ["192.0.2.53"],
-        "conditional_forwarders": [], "cache_size": 1000, "expand_hosts": True,
-        "authoritative": False, "authoritative_server": "ns.old.example.test",
-        "authoritative_contact": "hostmaster.old.example.test", "authoritative_ttl": 3600,
-        "authoritative_refresh": 1200, "authoritative_retry": 180, "authoritative_expire": 1209600,
-        "dnssec_enabled": False, "rebind_protection_enabled": False,
-        "rebind_domain_exemptions": "", "query_logging_mode": "off",
-    }
-
     class Client:
         def __init__(self):
             self.calls = []
@@ -132,15 +121,16 @@ def test_dns_configuration_calls_only_dns_settings_endpoint():
                 json_body: Desired-state payload submitted to the simulated API.
             """
             self.calls.append((method, path, json_body))
-            return current if method == "GET" else json_body
+            assert method == "PATCH", "Fresh disabled DNS must not require a GET response."
+            return json_body
 
     client = Client()
     args = SimpleNamespace(domain="site.example.test", site_interface="eth1")
     result = module.configure_proxy_dns(client, args, "192.0.2.44")
     assert [call[:2] for call in client.calls] == [
-        ("GET", "/api/v1/dns/settings"), ("PATCH", "/api/v1/dns/settings"),
+        ("PATCH", "/api/v1/dns/settings"),
     ]
-    assert client.calls[1][2]["listen_address"] == "192.0.2.44"
+    assert client.calls[0][2]["listen_address"] == "192.0.2.44"
     assert result == {"authoritative": True, "listener_address": "192.0.2.44", "domain": "site.example.test"}
 
 
