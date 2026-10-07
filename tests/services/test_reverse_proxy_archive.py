@@ -13,7 +13,12 @@ from atlaso.app.models import (
     Setting,
 )
 from atlaso.app.services.esxi_pxe import ESXI_PXE_HOSTNAME_KEY
-from atlaso.app.services.reverse_proxies import save_proxy
+from atlaso.app.services.reverse_proxies import (
+    desired_rows,
+    save_proxy,
+    validate_proxy,
+    validation_context,
+)
 from atlaso.app.services.service_dns_defaults import factory_service_hostname
 from atlaso.app.services.settings_archive import (
     export_settings_archive,
@@ -36,6 +41,13 @@ def test_archive_round_trip_uses_names_and_legacy_v2_remains_supported(client):
         db.expire_all()
         restored = db.scalar(select(ReverseProxy))
         assert restored.routes[0].upstream_host == "10.10.20.30"
+        restored_rows = desired_rows(db)
+        assert not validate_proxy(
+            restored_rows[0],
+            validation_context(db),
+            restored_rows,
+            exclude_id=restored_rows[0].id,
+        )
         legacy = deepcopy(archive)
         legacy["data"].pop("reverse_proxies")
         legacy["data"].pop("reverse_proxy_routes")
@@ -75,6 +87,32 @@ def test_archive_reserves_configured_network_boot_hostname_before_replacement(cl
         with pytest.raises(ValueError, match="Atlaso"):
             restore_settings_archive(db, archive)
 
+        assert db.get(ReverseProxy, saved.id).hostname == "application.example.test"
+
+
+@pytest.mark.parametrize(
+    ("section", "field", "value"),
+    [
+        ("reverse_proxies", "hostname", "APP.EXAMPLE.TEST."),
+        ("reverse_proxy_routes", "upstream_host", "UPSTREAM.EXAMPLE.TEST."),
+        ("reverse_proxy_routes", "path_prefix", " / "),
+    ],
+)
+def test_archive_rejects_proxy_values_that_schema_would_normalize(
+    client, section, field, value
+):
+    """Fail preflight instead of restoring values that future Apply rejects."""
+    with SessionLocal() as db:
+        interface = db.scalar(select(PhysicalInterface).where(PhysicalInterface.name == "eth2"))
+        saved = save_proxy(db, payload(listeners=[{"interface": "eth2", "address": interface.ip_cidr.split("/")[0]}]), actor="test")
+        archive = export_settings_archive(db, actor="test")
+        archive_row = archive["data"][section][0]
+        archive_row[field] = value
+
+        with pytest.raises(ValueError, match="non-canonical"):
+            restore_settings_archive(db, archive)
+
+        db.expire_all()
         assert db.get(ReverseProxy, saved.id).hostname == "application.example.test"
 
 

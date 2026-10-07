@@ -36,6 +36,18 @@ def candidates(data: dict[str, Any]) -> list[models.ReverseProxy]:
              "insecure_acknowledged": route.get("trust_mode") == "insecure"}
             for route in selected]})
         normalized = request.model_dump(exclude={"routes"})
+        for field, archived_value in row.items():
+            if field in normalized and archived_value != normalized[field]:
+                raise ValueError(
+                    f"Settings archive reverse proxy {row['name']} has a non-canonical {field}."
+                )
+        for archived_route, route_request in zip(selected, request.routes, strict=True):
+            normalized_route = route_request.model_dump(exclude={"id", "insecure_acknowledged"})
+            for field, archived_value in archived_route.items():
+                if field in normalized_route and archived_value != normalized_route[field]:
+                    raise ValueError(
+                        f"Settings archive reverse proxy {row['name']} has a non-canonical route {field}."
+                    )
         reconstructed = [models.ReverseProxyRoute(id=position + 1, position=position,
                           **route.model_dump(exclude={"id", "insecure_acknowledged"}))
                          for position, route in enumerate(request.routes)]
