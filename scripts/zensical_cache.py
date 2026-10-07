@@ -7,7 +7,7 @@ import json
 import os
 import re
 from collections.abc import Callable
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 from functools import wraps
 from pathlib import Path
 from typing import Any, Concatenate, Iterator
@@ -51,7 +51,11 @@ def _pinned_checkout[**P, R](
             *args: Positional arguments forwarded to the lifecycle method.
             **kwargs: Keyword arguments forwarded to the lifecycle method.
         """
-        with self.files.ancestors(self.root):
+        if method.__name__ in {"inspect", "release"}:
+            ancestors = self._existing_ancestors()
+        else:
+            ancestors = self.files.ancestors(self.root)
+        with ancestors:
             return method(self, *args, **kwargs)
 
     return wrapped
@@ -119,6 +123,16 @@ class ZensicalCache:
 
     def _check_pending(self) -> None:
         require(not self._pending(), "Pending Zensical cache evidence requires reconciliation before retry.")
+
+    @contextmanager
+    def _existing_ancestors(self) -> Iterator[None]:
+        """Pin every existing cache ancestor, allowing only a verified missing suffix."""
+        with ExitStack() as stack:
+            for parent in reversed(self.root.parents):
+                if not os.path.lexists(parent):
+                    break
+                stack.enter_context(self.files.opened(parent, directory=True))
+            yield
 
     def _path(self, suffix: str) -> Path:
         """Return the receipt path for a fixed lifecycle stage.
@@ -236,10 +250,14 @@ class ZensicalCache:
         require(original.get("schema") == 1 and len(generations) == 1
                 and original.get("root_identity") == generations[-1].get("root_identity"),
                 "Zensical cache creation receipt is invalid.")
-        with self.files.opened(self.checkout, directory=True) as (_, checkout_identity, _):
-            require(list(checkout_identity) == original.get("checkout_identity"),
-                    "Zensical cache checkout identity differs from its original binding.")
-        if self.root.exists():
+        if os.path.lexists(self.checkout):
+            with self.files.opened(self.checkout, directory=True) as (_, checkout_identity, _):
+                require(list(checkout_identity) == original.get("checkout_identity"),
+                        "Zensical cache checkout identity differs from its original binding.")
+        else:
+            require(not os.path.lexists(self.root) and self._path(".prepared").is_file(),
+                    "Missing checkout requires prepared cache provenance and exact cache absence.")
+        if os.path.lexists(self.root):
             require(self.files.snapshot(self.root)["."]["identity"] == original["root_identity"],
                     "Zensical cache root identity differs from its original generation.")
         return original
@@ -314,13 +332,18 @@ class ZensicalCache:
         absent_path = self._path(".absent")
         require(not absent_path.with_name(absent_path.name + ".pending").exists(),
                 "Pending Zensical cache absence receipt requires reconciliation.")
-        evidence_preserved = not absent
+        # The original generation, sealed content inventory, and prepared receipt
+        # remain durable ownership evidence even when interruption happens after
+        # removal but before the optional final .absent receipt is published. The
+        # enclosing controller can complete its release gate from that provenance
+        # plus this fresh namespace absence; release() still publishes .absent on
+        # an uninterrupted run.
+        evidence_preserved = True
         if absent_path.exists():
             absence = self._load(".absent")
             require(absent and absence.get("absent") is True
                     and absence.get("removal_scopes") == [str(self.root)],
                     "Zensical cache absence evidence is invalid.")
-            evidence_preserved = True
         return {
             "ownership_verified": True,
             "inactive": True,

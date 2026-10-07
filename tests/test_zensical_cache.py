@@ -11,7 +11,7 @@ from typing import Iterator
 import pytest
 
 from scripts import build_docs
-from scripts.completed_task_cleanup import Refusal
+from scripts.completed_task_cleanup import Cleanup, Refusal
 from scripts.completed_task_files import FileRefusal
 from scripts.zensical_cache import MARKER_CONTENT, MARKER_NAME, TOOL, ZensicalCache
 
@@ -165,6 +165,132 @@ def test_seal_and_controller_release(cache_owner: CacheOwner) -> None:
     assert not cache_owner.owner.root.exists()
 
 
+def test_interrupted_absence_publication_recovers_through_cleanup_resources(
+    cache_owner: CacheOwner,
+) -> None:
+    """Prepared provenance plus fresh absence lets the real controller finish recovery.
+
+    Args:
+        cache_owner: Sealed cache whose final absence receipt publication is interrupted.
+    """
+    manifest = cache_owner.seal()
+    resource = cache_owner.resource(manifest)
+    request = {"resource": resource, "handoff_sha256": "d" * 64}
+    original_record = cache_owner.owner._record
+
+    def interrupt_absence(suffix: str, value: dict[str, object]) -> Path:
+        """Interrupt only the optional final receipt after the cache has been removed.
+
+        Args:
+            suffix: Receipt suffix the adapter is attempting to publish.
+            value: Receipt payload the adapter is attempting to publish.
+        """
+        if suffix == ".absent":
+            raise OSError("simulated interruption before final absence receipt")
+        return original_record(suffix, value)
+
+    cache_owner.owner._record = interrupt_absence
+    with pytest.raises(OSError, match="simulated interruption"):
+        cache_owner.owner.controller_call(
+            "resource.release",
+            {**request, "removal_scopes": [str(cache_owner.owner.root)]},
+            resource,
+        )
+    cache_owner.owner._record = original_record
+
+    assert not cache_owner.owner.root.exists()
+    assert cache_owner.owner._path(".prepared").is_file()
+    assert not cache_owner.owner._path(".absent").exists()
+    inspected = cache_owner.owner.controller_call("resource.inspect", request, resource)
+    assert inspected["absent"] is True
+    assert inspected["evidence_preserved"] is True
+
+    class AdapterController:
+        """Route enclosing cleanup requests through the actual cache adapter."""
+
+        def call(self, operation: str, payload: dict[str, object]) -> dict[str, object]:
+            """Forward one controller operation with its approved resource identity.
+
+            Args:
+                operation: Cleanup controller operation to forward.
+                payload: Controller request containing resource and handoff identity.
+            """
+            return cache_owner.owner.controller_call(operation, payload, resource)
+
+    class RecoveryCleanup(Cleanup):
+        """Exercise Cleanup.resources while substituting external Git and journal state."""
+
+        def git(self, *args: str) -> str:
+            """Model a valid immutable ancestry check without invoking external Git.
+
+            Args:
+                *args: Git arguments requested by the cleanup controller.
+            """
+            return ""
+
+        def inventory_scopes(self) -> dict[str, list[str]]:
+            """Return the already approved exact cache removal scope."""
+            return {resource["id"]: [str(cache_owner.owner.root)]}
+
+        def eligibility(self) -> None:
+            """Model external task/GitHub eligibility as independently satisfied."""
+
+        def record(self, gate: str) -> None:
+            """Record recovery gates in the in-memory test journal.
+
+            Args:
+                gate: Cleanup transition recorded by the resource controller.
+            """
+            if gate not in self.gates:
+                self.gates.append(gate)
+
+        def verify_directory_release(self) -> None:
+            """Skip unrelated Git directory verification for this isolated resource test."""
+
+    def new_cleanup(execute: bool) -> RecoveryCleanup:
+        """Build a real cleanup controller with only external prerequisites stubbed.
+
+        Args:
+            execute: Select mutation mode or read-only preview mode.
+        """
+        cleanup = RecoveryCleanup.__new__(RecoveryCleanup)
+        cleanup.execute = execute
+        cleanup.controller = AdapterController()
+        cleanup.handoff = {"resources": [resource], "pr": 920, "task_id": resource["task_id"]}
+        cleanup.handoff_path = cache_owner.evidence / "handoff.json"
+        cleanup.digest = "d" * 64
+        cleanup.head = resource["source_commit"]
+        cleanup.repository = resource["repository"]
+        cleanup.target = cache_owner.checkout
+        cleanup.root = cache_owner.permitted
+        cleanup.evidence = cache_owner.evidence
+        cleanup.config = cache_owner.config
+        cleanup.gates = [f"resource_release_prepared:{resource['id']}"]
+        cleanup.proposed = []
+        cleanup.resource_evidence = []
+        cleanup.repo = cache_owner.permitted / "primary"
+        return cleanup
+
+    cleanup = new_cleanup(execute=True)
+    cleanup.resources()
+
+    assert f"resource_released:{resource['id']}" in cleanup.gates
+    assert "validation_resources_released" in cleanup.gates
+    assert not cache_owner.owner._path(".absent").exists()
+    preview_cleanup = new_cleanup(execute=False)
+    prior_gates = list(preview_cleanup.gates)
+    preview_cleanup.resources()
+    assert preview_cleanup.gates == prior_gates
+    assert not cache_owner.owner._path(".absent").exists()
+    preview = cache_owner.owner.controller_call("resource.inspect", request, resource)
+    assert preview["absent"] is True
+    assert preview["evidence_preserved"] is True
+    cache_owner.owner.root.mkdir()
+    with pytest.raises(Refusal, match="root identity differs"):
+        cache_owner.owner.controller_call("resource.inspect", request, resource)
+    cache_owner.owner.root.rmdir()
+
+
 def test_changed_file_content_blocks_release(cache_owner: CacheOwner) -> None:
     """A same-size edit with restored timestamps still fails the sealed content hash.
 
@@ -265,6 +391,56 @@ def test_cache_reappearance_after_absence_is_refused(cache_owner: CacheOwner) ->
         cache_owner.owner.inspect()
     cache_owner.owner.root.rmdir()
     assert cache_owner.owner.inspect()["absent"] is True
+
+
+def test_absence_readback_survives_removed_checkout_but_rejects_replacement(
+    cache_owner: CacheOwner,
+) -> None:
+    """Readback works after parent worktree removal and rejects any new checkout.
+
+    Args:
+        cache_owner: Released cache whose original checkout is removed and recreated.
+    """
+    cache_owner.seal()
+    cache_owner.owner.release([str(cache_owner.owner.root)])
+    resource = cache_owner.resource(cache_owner.owner._path(".manifest"))
+    request = {"resource": resource, "handoff_sha256": "e" * 64}
+    original = cache_owner.permitted / "checkout-original"
+    cache_owner.checkout.rename(original)
+
+    inspected = cache_owner.owner.controller_call("resource.inspect", request, resource)
+    assert inspected["absent"] is True
+    assert inspected["evidence_preserved"] is True
+
+    cache_owner.checkout.mkdir()
+    with pytest.raises(Refusal, match="checkout identity differs"):
+        cache_owner.owner.controller_call("resource.inspect", request, resource)
+    cache_owner.checkout.rmdir()
+    original.rename(cache_owner.checkout)
+    assert cache_owner.owner.inspect()["absent"] is True
+
+
+def test_missing_checkout_requires_prepared_cache_release(cache_owner: CacheOwner) -> None:
+    """A missing worktree alone cannot prove release of an unprepared cache.
+
+    Args:
+        cache_owner: Sealed but unprepared cache whose original checkout is moved away.
+    """
+    cache_owner.seal()
+    inventory = cache_owner.owner._inventory()
+    cache_owner.owner.files.remove(cache_owner.owner.root, inventory)
+    original = cache_owner.permitted / "checkout-original"
+    cache_owner.checkout.rename(original)
+
+    with pytest.raises(Refusal, match="prepared cache provenance"):
+        cache_owner.owner.inspect()
+
+    original.rename(cache_owner.checkout)
+    cache_owner.owner._record(".prepared", {
+        "sealed_sha256": hashlib.sha256(cache_owner.owner._path(".sealed").read_bytes()).hexdigest(),
+    })
+    assert cache_owner.owner.inspect()["absent"] is True
+    cache_owner.owner.release([str(cache_owner.owner.root)])
 
 
 def test_pending_publication_blocks_inspection(cache_owner: CacheOwner) -> None:

@@ -247,6 +247,10 @@ retry accepts only already removed entries and directory timestamps changed by r
 changed file bytes block retry. Pending receipt publication requires reconciliation. Repeat fresh `resource.inspect`
 after release and require exact absence; acknowledgment alone cannot complete the resource gate. A later build needs
 a new creation receipt and resource identity, and reappearance after completed release must be preserved.
+If deletion finishes before the final absence receipt is published, verified creation/sealed/prepared receipts and
+fresh namespace absence still establish preserved evidence. The enclosing controller can finalize its resource gate
+from those independent reads; inspection never writes a missing receipt, and unprepared absence remains a refusal.
+Receipt-backed absence readback also works after checkout removal; any recreated checkout must match its original identity.
 
 ### Disposable pytest Git fixtures
 
