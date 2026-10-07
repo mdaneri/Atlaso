@@ -10059,6 +10059,7 @@ def _verify_reverse_proxy_front_doors(payload: dict) -> None:
             for publication_port in [proxy["port"], *([proxy["redirect_port"]] if proxy["redirect_http"] else [])]:
                 listener_context = context if publication_port == proxy["port"] else None
                 ready = False
+                failure_class = "deadline"
                 for _attempt in range(3):
                     remaining = deadline - time.monotonic()
                     if remaining <= 0:
@@ -10080,16 +10081,22 @@ def _verify_reverse_proxy_front_doors(payload: dict) -> None:
                                 ready = (headers.endswith(b"\r\n\r\n")
                                          and bool(re.fullmatch(rb"HTTP/1\.[01] 404(?: [^\r\n]*)?", lines[0]))
                                          and identity in [line.lower() for line in lines[1:]])
+                                failure_class = "response_or_generation_identity"
                             finally:
                                 if listener_context:
                                     stream.close()
                         if ready:
                             break
+                    except ssl.SSLCertVerificationError:
+                        failure_class = "tls_verification"
                     except (OSError, ValueError):
-                        pass
+                        failure_class = "listener_transport"
                     time.sleep(0.1)
                 if not ready:
-                    raise ValueError("reverse-proxy exact-host front-door readiness failed")
+                    raise ValueError(
+                        "reverse-proxy exact-host front-door readiness failed "
+                        f"(proxy={proxy['id']}, port={publication_port}, class={failure_class})"
+                    )
 
 
 def _public_services_config_errors(

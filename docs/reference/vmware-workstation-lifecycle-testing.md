@@ -22,9 +22,12 @@ when retaining the dedicated documentation appliance. Credentials follow the pro
 
 The host fixture binds only to the selected Site A host address. The consumer saves desired state and uses global
 Appliance Apply to verify HTTP and HTTPS publication, the managed listener certificate, preserve and strip path
-mapping, upstream authentication challenges, reserved paths, exact Host selection, custom-port redirects, duplicate
-hostname rejection, and the cached health API. These checks do not yet prove WebSocket traffic, upstream HTTPS trust
-modes, DNS ownership, reboot persistence, archive/reset recovery, or failed-Apply rollback. Those remain acceptance
+mapping, upstream authentication challenges, WebSocket upgrade and frame exchange, reserved paths, exact Host
+selection, custom-port redirects, duplicate hostname rejection, and the cached health API. HTTPS upstream checks use
+public `example.com` and `self-signed.badssl.com` endpoints to prove CA validation, connected-leaf fingerprint pinning,
+wrong-pin rejection, and explicit insecure degradation; endpoint failure fails the run rather than skipping evidence.
+These checks do not yet prove DNS ownership, reboot persistence, archive/reset recovery, or failed-Apply rollback.
+Those remain acceptance
 gates for issue #723. Optional screenshot tooling uses the installed Node.js, Playwright, Sharp, and Chrome paths.
 Session cookies travel through standard input after the Node consumer is assigned to a Windows process job. Capture
 uses an isolated browser context, stores no session-state file, and proves the entire browser process tree inactive
