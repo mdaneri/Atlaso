@@ -4,9 +4,12 @@ import http.client
 import importlib.util
 import io
 import json
+import os
+import shutil
 import sys
 import threading
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -64,3 +67,20 @@ def test_fixture_challenge_and_bounded_echo():
         server.server_close()
         thread.join(timeout=5)
         assert not thread.is_alive()
+
+
+@pytest.mark.skipif(os.name != "nt" or not shutil.which("node"), reason="Windows Node job boundary")
+def test_browser_failure_terminates_its_owned_job(tmp_path):
+    """Launch the actual stdin-gated Node consumer and prove failure cleanup.
+
+    Args:
+        tmp_path: Test-owned lifecycle result root.
+    """
+    module = load_module("proxy_browser_test", "reverse_proxy_browser.py")
+    client = SimpleNamespace(base_url="http://invalid.example.test", cookie_jar=[])
+    args = SimpleNamespace(result_dir=str(tmp_path), reverse_proxy_screenshot_dir=str(tmp_path / "screenshots"),
+                           reverse_proxy_screenshot_node=shutil.which("node"), reverse_proxy_screenshot_packages="unused",
+                           reverse_proxy_screenshot_browser="unused")
+    with pytest.raises(RuntimeError, match="^Reverse-proxy browser capture failed\\.$"):
+        module.capture_ui(client, args)
+    assert list((tmp_path / "screenshots").iterdir()) == []

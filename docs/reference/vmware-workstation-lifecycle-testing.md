@@ -25,8 +25,11 @@ Appliance Apply to verify HTTP and HTTPS publication, the managed listener certi
 mapping, upstream authentication challenges, reserved paths, exact Host selection, custom-port redirects, duplicate
 hostname rejection, and the cached health API. These checks do not yet prove WebSocket traffic, upstream HTTPS trust
 modes, DNS ownership, reboot persistence, archive/reset recovery, or failed-Apply rollback. Those remain acceptance
-gates for issue #723. Optional authenticated screenshot capture is rejected until its bounded browser consumer is
-implemented; no screenshot success is implied by passing the socket checks.
+gates for issue #723. Optional screenshot tooling uses the installed Node.js, Playwright, Sharp, and Chrome paths.
+Session cookies travel through standard input after the Node consumer is assigned to a Windows process job. Capture
+uses an isolated browser context, stores no session-state file, and proves the entire browser process tree inactive
+before reporting success. The lifecycle owns the screenshot output beneath its result root; no screenshot success is
+implied by passing the socket checks.
 
 ## Configure non-interactive 1Password authentication
 
