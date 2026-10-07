@@ -63,10 +63,12 @@ def configure_proxy_dns(client: Any, args: Any, address: str) -> dict[str, Any]:
         args: Admitted lifecycle credentials and network selections.
         address: Exact selected Site A IPv4 listener address.
     """
-    current = client.json_request("GET", f"{DNS_API}/settings")
+    # This consumer owns a fresh clone. Initialize its DNS fixture through the
+    # established PATCH contract; disabled, unbound DNS cannot yet be read by
+    # the legacy response schema (tracked separately from proxy acceptance).
     updated = client.json_request(
         "PATCH", f"{DNS_API}/settings",
-        json_body=dns_settings_payload(current, domain=args.domain, interface=args.site_interface, address=address),
+        json_body=dns_settings_payload({}, domain=args.domain, interface=args.site_interface, address=address),
     )
     if not updated.get("enabled") or not updated.get("authoritative") or updated.get("listen_address") != address:
         raise RuntimeError("Authoritative DNS did not retain the bounded Site A listener configuration.")
