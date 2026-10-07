@@ -4222,12 +4222,11 @@ before delivery.</p>
 </span><span id="__span-0-8"><a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a><span class="n">python</span> <span class="n">scripts</span><span class="p">/</span><span class="n">check_repo</span><span class="p">.</span><span class="n">py</span>
 </span><span id="__span-0-9"><a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a><span class="n">git</span> <span class="nb">diff </span><span class="p">-</span><span class="n">-check</span>
 </span></code></pre></div>
-<p>The build wrapper removes only a repository-local Zensical <code>.cache</code> carrying its Atlaso-specific ownership marker, or
-the exact marker-free legacy Zensical file layout during migration, before invoking <code>build --clean --strict</code>. It then
-recreates the ownership marker and generates the legacy redirect pages. An ambiguous cache fails closed without being
-removed. Do not replace the wrapper with a direct Zensical invocation: stale cache entries can otherwise make unchanged
-redirect targets fail nondeterministically. The wrapper does not disable link or anchor validation, so genuine missing
-targets still fail the strict build.</p>
+<p>The wrapper resets only marker-owned Zensical <code>.cache</code> or its exact marker-free legacy layout; ambiguous caches are
+preserved. It runs <code>build --clean --strict</code>, restores the marker, and generates redirects. Direct Zensical invocation
+can leave stale caches and nondeterministic redirect failures. Link and anchor validation remain strict.
+Disposable Windows tasks use <a href="../completed-task-cleanup/#disposable-documentation-caches">creation-bound cache mode</a>
+to receipt and pin an empty cache before use, omitting the redundant native <code>--clean</code> reset.</p>
 <p>Lint all tracked Markdown; keep sources outside excluded root <code>.atlaso-local/</code>. Opt in to fixture paths with
 <code>--no-globs</code>. Never suppress sources or use warning-only baselines. Test stable markers/paths instead of exact prose.</p>
 

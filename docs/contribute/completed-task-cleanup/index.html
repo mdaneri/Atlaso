@@ -3397,6 +3397,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#disposable-documentation-caches" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Disposable documentation caches
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#disposable-pytest-git-fixtures" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -3964,6 +3975,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#disposable-documentation-caches" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Disposable documentation caches
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#disposable-pytest-git-fixtures" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -4341,6 +4363,57 @@ never authorizes their deletion.</p>
 durable evidence survived release. Later eligibility
 checks repeat that aggregate readback and require completed remote/local ref gates to remain absent, even if a
 recreated ref points to the original SHA. Reappearance blocks completion and preserves the recreated resource/ref.</p>
+<h3 id="disposable-documentation-caches">Disposable documentation caches<a class="headerlink" href="#disposable-documentation-caches" title="Permanent link">&para;</a></h3>
+<p><code>scripts.zensical_cache.ZensicalCache</code> owns creation-bound Windows documentation caches. Inventory the exact
+checkout-local <code>.cache</code> as <code>kind: "artifact"</code> with <code>cleanup_tool: "ZensicalCache"</code>. Generic generated-tree cleanup
+continues to require its original directory identity and must never adopt a cache recreated by Zensical.</p>
+<p>Before a task build, choose a new durable receipt filename beneath the configured worktree root, outside the task
+checkout and every removal scope. Use a separate evidence directory that is not an ancestor of the checkout; placing
+receipts directly in a pinned ancestor would prevent Windows write-through publication. With the cache absent, run
+the canonical wrapper using the documentation interpreter:</p>
+<div class="language-powershell highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="p">.\.</span><span class="n">venv-docs</span><span class="p">\</span><span class="n">Scripts</span><span class="p">\</span><span class="n">python</span><span class="p">.</span><span class="n">exe</span> <span class="n">scripts</span><span class="p">/</span><span class="n">build_docs</span><span class="p">.</span><span class="n">py</span> <span class="p">`</span>
+</span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>  <span class="p">-</span><span class="n">-cache-receipt</span> <span class="nv">$receipt</span> <span class="p">-</span><span class="n">-task-id</span> <span class="nv">$taskId</span> <span class="p">-</span><span class="n">-resource-id</span> <span class="nv">$resourceId</span> <span class="p">-</span><span class="n">-source-commit</span> <span class="nv">$sourceCommit</span>
+</span></code></pre></div>
+<p>Use the independently verified originating task identity and creation commit. The wrapper reads the active Codex
+configuration, creates the exact <code>.cache</code> exclusively, and durably records its original identity and checkout binding
+before use. The wrapper holds an exclusive lifecycle claim from bootstrap through build, sealing, and redirects.
+It refuses unreceipted cache state and pins that directory throughout <code>build --strict</code> and sealing; the
+cache starts empty, so Zensical's native <code>--clean</code> replacement is omitted. Unexpected replacement or receipt publication
+failure stops the operation. Ordinary hosted CI retains the portable <code>--clean --strict</code> path.</p>
+<p>After the child exits or process creation fails, sealing verifies the creation identity and ownership marker, and
+preserves a bounded inventory of exact identities and content hashes.
+The owned wrapper prints a JSON <code>ownership_manifest</code> record with the authoritative path and bounded-file SHA-256
+after each successful seal, including a failed builder launch. Record that identity in the resource inventory.
+Preserve all creation, attempt, sealed, prepared, and absence receipts outside removal roots.
+A failed strict build may still
+seal its owned cache for diagnosis and eventual release; passing or failing validation does not authorize teardown.</p>
+<p>To repeat validation before release, use the same receipt and original task/resource/source binding. The owner first
+verifies the current sealed identities and content hashes, then records a numbered attempt bound to the prior manifest
+before clearing its verified contents in place. The original directory and creation receipts remain unchanged, and the
+cache starts empty for the next strict build. Each attempt publishes new immutable sealed inventory and manifest files;
+refresh the inventory's <code>ownership_manifest</code> to the latest returned path and hash. A prior manifest cannot approve the
+new revision. Prepared or completed release blocks another build.</p>
+<p>An interrupted bootstrap may resume only from a durable original receipt, matching checkout/cache identities, and an
+empty or exact-marker-only cache. It completes missing generation/marker steps before any builder use. An unfinished
+attempt cannot start another build or authorize release; preserve it for owning-tool sealing and independent recovery.
+Missing original provenance, pending receipt publication, changed entries, or replaced identities remain refusals.
+A caught failure before any receipt publication may roll back only the still-empty exact root created by that invocation.
+A process stop before the original receipt is durable has no independent identity proof and remains cleanup-blocked.</p>
+<p>For each fresh <code>resource.inspect</code> or <code>resource.release</code>, construct the tool using the same active configuration,
+receipt, and independently verified binding (<code>id</code>, <code>task_id</code>, <code>repository</code>, <code>source_commit</code>, and absolute <code>path</code>). Call
+<code>controller_call(operation, payload, approved_resource)</code> only after independently verifying source ancestry, positive
+PR identity, manifest hash, exclusive task ownership, inactivity, retention, and downstream needs. The adapter's only
+removal scope is the exact <code>.cache</code>. Shared or retained state, changed contents or identities, reparse points, hard
+links, Git metadata, and credential/recovery trees require refusal and preservation.</p>
+<p>Release durably records its sealed inventory before deleting checked objects through Windows handles. An interrupted
+retry accepts only already removed entries and directory timestamps changed by removal; new or replaced entries and
+changed file bytes block retry. Pending receipt publication requires reconciliation. Repeat fresh <code>resource.inspect</code>
+after release and require exact absence; acknowledgment alone cannot complete the resource gate. A later build needs
+a new creation receipt and resource identity after completed release; reappearance must be preserved.
+If deletion finishes before the final absence receipt is published, verified creation/sealed/prepared receipts and
+fresh namespace absence still establish preserved evidence. The enclosing controller can finalize its resource gate
+from those independent reads; inspection never writes a missing receipt, and unprepared absence remains a refusal.
+Receipt-backed absence readback also works after checkout removal; any recreated checkout must match its original identity.</p>
 <h3 id="disposable-pytest-git-fixtures">Disposable pytest Git fixtures<a class="headerlink" href="#disposable-pytest-git-fixtures" title="Permanent link">&para;</a></h3>
 <p><code>scripts.pytest_git_fixtures.PytestGitFixtures</code> owns Windows disposable pytest Git artifact roots. Use
 <code>kind: "artifact"</code> and <code>cleanup_tool: "PytestGitFixtures"</code>; generic generated-tree removal continues to reject
