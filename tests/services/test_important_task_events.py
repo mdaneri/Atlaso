@@ -343,12 +343,16 @@ def test_event_projection_rejects_malformed_and_secret_fields():
     assert {"network", "task", "ntpd"} <= COMPONENTS
 
 
-def test_legacy_backfill_uses_persisted_stage_times_and_omits_undated_evidence(db):
+def test_legacy_backfill_orders_persisted_times_before_bounded_retention(db, monkeypatch):
     """Initialization dates lifecycle/cancellation evidence from durable columns only.
 
     Args:
         db: Persistent isolated producer.
+        monkeypatch: Bound retained events to exercise chronological eviction.
     """
+    from atlaso.app.services import important_task_events
+
+    monkeypatch.setattr(important_task_events, "EVENT_LIMIT", 4)
     engine = db.get_bind()
     times = {
         "queued": datetime(2024, 1, 2, 3, 4, 5, tzinfo=timezone.utc),
@@ -356,7 +360,8 @@ def test_legacy_backfill_uses_persisted_stage_times_and_omits_undated_evidence(d
         "running_started": datetime(2024, 2, 2, 3, 5, 5, tzinfo=timezone.utc),
         "completed_created": datetime(2024, 3, 2, 3, 4, 5, tzinfo=timezone.utc),
         "completed_started": datetime(2024, 3, 2, 3, 5, 5, tzinfo=timezone.utc),
-        "completed_finished": datetime(2024, 3, 2, 3, 6, 5, tzinfo=timezone.utc),
+        "completed_step_one_finished": datetime(2024, 3, 2, 3, 5, 45, tzinfo=timezone.utc),
+        "completed_finished": datetime(2024, 3, 2, 3, 7, 5, tzinfo=timezone.utc),
         "cancel_requested": datetime(2024, 3, 2, 3, 5, 30, tzinfo=timezone.utc),
         "cancel_completed": datetime(2024, 3, 2, 3, 6, 30, tzinfo=timezone.utc),
     }
@@ -382,29 +387,54 @@ def test_legacy_backfill_uses_persisted_stage_times_and_omits_undated_evidence(d
              "started_at": times["running_started"], "result": "{}"},
             {"id": "step_backfill_complete", "job_id": "job_backfill_complete", "component_key": "network",
              "label": "Network", "position": 1, "status": "succeeded", "created_at": times["completed_created"],
-             "started_at": times["completed_started"], "finished_at": times["completed_finished"], "result": "{}"},
+             "started_at": times["completed_started"], "finished_at": times["completed_step_one_finished"], "result": "{}"},
+            {"id": "step_backfill_ntpd", "job_id": "job_backfill_complete", "component_key": "ntpd",
+             "label": "Time service", "position": 2, "status": "succeeded", "created_at": times["completed_created"],
+             "started_at": times["completed_started"], "finished_at": times["cancel_completed"], "result": "{}"},
+            {"id": "step_backfill_firewall", "job_id": "job_backfill_complete", "component_key": "firewall",
+             "label": "Firewall", "position": 3, "status": "succeeded", "created_at": times["completed_created"],
+             "started_at": times["completed_started"], "finished_at": datetime(2024, 3, 2, 3, 6, 45, tzinfo=timezone.utc),
+             "result": "{}"},
         ]:
             connection.execute(JobStep.__table__.insert().values(**values))
 
     initialize_task_history(engine)
     db.expire_all()
     expected = {
-        "job_backfill_queued": {"task": times["queued"], "network": times["queued"]},
-        "job_backfill_running": {"task": times["running_started"], "network": times["running_started"]},
-        "job_backfill_complete": {"task": times["completed_finished"], "network": times["completed_finished"]},
+        "job_backfill_queued": {"task": ("queued", times["queued"]), "network": ("queued", times["queued"])},
+        "job_backfill_running": {"task": ("started", times["running_started"]),
+                                 "network": ("started", times["running_started"])},
+        "job_backfill_complete": {"task": ("completed", times["completed_finished"])},
     }
     for job_id, stages in expected.items():
         events = json.loads(db.get(TaskLogCheckpoint, job_id).state_json)["important_events"]
-        for component, timestamp in stages.items():
-            event = next((event for event in events if event["component"] == component), None)
+        for component, (stage, timestamp) in stages.items():
+            event = next((event for event in events if event["component"] == component and event["stage"] == stage), None)
             assert event is not None, (job_id, component, events)
             assert datetime.fromisoformat(event["at"]) == timestamp
             assert datetime.fromisoformat(event["at"]).utcoffset().total_seconds() == 0
 
     completed_state = json.loads(db.get(TaskLogCheckpoint, "job_backfill_complete").state_json)
-    cancellation = next(event for event in completed_state["important_events"] if event["stage"] == "cancellation")
-    assert datetime.fromisoformat(cancellation["at"]) == times["cancel_completed"]
-    assert completed_state["important_events_omitted"] == 2  # Undated execution and cleanup projections.
+    ordered = completed_state["important_events"]
+    expected_order = [
+        ("task", "cancellation", times["cancel_completed"]),
+        ("ntpd", "completed", times["cancel_completed"]),
+        ("firewall", "completed", datetime(2024, 3, 2, 3, 6, 45, tzinfo=timezone.utc)),
+        ("task", "completed", times["completed_finished"]),
+    ]
+    assert [(event["component"], event["stage"], datetime.fromisoformat(event["at"]))
+            for event in ordered] == expected_order
+    assert completed_state["important_events_omitted"] == 3  # Two undated projections and oldest retained event.
+    history_text = task_history_page(db, "job_backfill_complete")["text"]
+    expected_text_order = [
+        "component=network stage=completed",
+        "component=task stage=cancellation",
+        "component=ntpd stage=completed",
+        "component=firewall stage=completed",
+        "component=task stage=completed",
+    ]
+    positions = [history_text.index(marker) for marker in expected_text_order]
+    assert positions == sorted(positions)
     before = {
         job_id: db.get(TaskLogCheckpoint, job_id).state_json
         for job_id in expected

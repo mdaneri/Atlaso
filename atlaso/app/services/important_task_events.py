@@ -154,6 +154,10 @@ def capture_important_events(connection: Connection, job_id: str, previous: dict
             projections.append((f"step:{row['position']}:command:{index}", result, None))
     for index, result in enumerate(execution_projection(payload, "task")):
         projections.append((f"command:{index}", result, None))
+    if backfill:
+        # Persisted UTC ISO timestamps sort chronologically; Python's stable sort
+        # keeps producer order for stages recorded at the same instant.
+        projections.sort(key=lambda item: item[2] or "")
     events = [event for value in previous.get("important_events", []) if (event := validate_event(value)) is not None]
     appended = []
     omitted = previous.get("important_events_omitted", 0)
