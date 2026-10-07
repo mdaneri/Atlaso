@@ -1300,7 +1300,12 @@ def test_every_existing_tabulator_uses_the_shared_grid_foundation(client):
     assert "cell.setValue(!previousValue)" in adapter_block
     assert "void saveInlineEnabled(cell, previousValue)" in adapter_block
     assert "cell.setValue(previousValue)" in adapter_block
-    assert adapter_block.count("await refreshNetworkSideStack();") == 3
+    assert '''const refreshResourceSideStack = document.querySelector("aside.side-stack") instanceof HTMLElement
+    ? refreshNetworkSideStack
+    : async () => true;''' in adapter_block
+    assert adapter_block.count("const sideStackRefreshed = await refreshResourceSideStack();") == 3
+    assert adapter_block.count("if (sideStackRefreshed === false)") == 3
+    assert adapter_block.count("if (sideStackRefreshed !== true)") == 3
     for name in (
         "initializeApiTokensTable",
         "initializeCaProfilesTable",
