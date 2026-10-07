@@ -4114,14 +4114,21 @@ terminal <strong>skipped</strong> task linked to the already-active profile down
 Appliance Apply; a failed execution-time prerequisite is a terminal <strong>failed</strong> task. Neither outcome implies depot
 content changed, and neither is replayed automatically.</p>
 <h2 id="diagnose-a-failure">Diagnose a failure<a class="headerlink" href="#diagnose-a-failure" title="Permanent link">&para;</a></h2>
-<p>Read the failed step and sanitized task log, then correlate its identifier with <a href="../logs/">Operational logs</a> and the
-<a href="../audit-log/">Audit log</a>. Correct desired state in the owning page and submit a new task. Do not edit task history or
-fabricate a successful result.</p>
+<p>Read the failed step and its ordered important-event history, then correlate the task identifier with
+<a href="../logs/">Operational logs</a> and the <a href="../audit-log/">Audit log</a>. Important events retain bounded stage, outcome, and
+safe failure or recovery detail with the task even when the App log level filters successful <code>INFO</code> entries. The task
+history holds at most 64 important-event records and reports when additional events were truncated. Correct desired
+state in the owning page and submit a new task. Do not edit task history or fabricate a successful result.</p>
 <p>Task history pages exclude the changing status and progress summary, which remains in the task detail dialog.
 Updating that summary does not reset an older log page. Result changes and audit events are captured transactionally
 as an ordered history stream. New fields and appended output do not move an existing history cursor; updated or removed
 fields add entries while earlier output stays readable. Existing retained tasks are initialized when the appliance
 starts. Cancelling or rolling back a producer transaction does not publish uncommitted log entries.</p>
+<p>Important task events cover significant queued, started, skipped, no-op, partial, failed, cancelled, and recovered
+outcomes when the owning producer reports them. They are not a trace of every request or helper command. Routine reads,
+polls, and repeated healthy observations do not create task events. A task can identify the failing stage and available
+safe return/error code without establishing the underlying native cause; use the linked service's verification
+procedure when the evidence remains incomplete. See <a href="../logs/#important-event-coverage">Important-event coverage</a>.</p>
 <h2 id="cancellation-and-execution-ownership">Cancellation and execution ownership<a class="headerlink" href="#cancellation-and-execution-ownership" title="Permanent link">&para;</a></h2>
 <p>Tasks and the API expose the same backend-owned <code>can_cancel</code>, <code>cancel_reason</code>, and <code>cancel_confirmation</code> fields.
 The task detail shows the reason even when cancellation is unavailable. Its Cancel action also works for a task

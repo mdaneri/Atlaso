@@ -3996,8 +3996,8 @@ startup, web dependencies, system mutation helpers, or credential providers.</p>
 </tr>
 <tr>
 <td>Appliance SQLite in read-only mode</td>
-<td>Schema metadata, selected interface fields, bounded task identity/status/times, PXE enablement</td>
-<td>Database copies, secret settings, task results, error strings</td>
+<td>Schema metadata, selected interface fields, bounded task identity/status/times, PXE enablement, validated task checkpoint important events</td>
+<td>Database copies, secret settings, task results, error strings, task-log chunks</td>
 </tr>
 <tr>
 <td><code>ip</code> JSON, numeric <code>ss</code>, <code>resolvectl dns</code></td>
@@ -4026,6 +4026,23 @@ startup, web dependencies, system mutation helpers, or credential providers.</p>
 </tr>
 </tbody>
 </table>
+<p>Task important events are projected from <code>task_log_checkpoints.state_json</code> only. The collector revalidates schema 1,
+timezone-aware timestamps, severity, reviewed component IDs for Apply units, update streams, VCF workflow stages and
+task-level events, plus stage, outcome, reason code and bounded return code.
+Unknown keys and invalid events are discarded; only the fixed explanation for a validated reason code is added.
+The bundle includes at most 64 events per task and reports the producer's omitted count plus invalid or over-limit
+events. A checkpoint without the typed field, an absent checkpoint table, or malformed checkpoint JSON is marked
+<code>evidence_unavailable</code>; an empty typed event list means the checkpoint is available and contains no retained events.
+Legacy task result/error columns and task-log chunks remain excluded. Important-event retention in the support bundle
+does not depend on the runtime verbosity setting.</p>
+<p>Journal evidence carries an explicit <code>availability</code> outcome. <code>available</code>, <code>no_entries</code>, <code>source_missing</code>,
+<code>permission_denied</code>, <code>timed_out</code>, <code>malformed_data</code>, <code>truncated</code>, <code>helper_incompatible</code>, <code>command_missing</code>, and
+<code>unavailable</code> remain distinct in the evidence and manifest. Empty journals never imply a healthy service. The helper
+protocol still accepts only the fixed <code>diagnostics source</code> names and bounded time window; the collector validates its
+evidence envelope and event fields. Direct <code>journalctl</code> stderr is drained into a 64 KiB memory bound and used only to
+classify a fixed permission-denied signal; its text is never exported. The privileged helper continues to suppress
+stderr, and the collector never falls back to helper stderr or arbitrary command output. A nonzero helper result with
+no typed response remains <code>unavailable</code> because the constrained helper intentionally suppresses stderr.</p>
 <p>The worker invokes only the helper's allowlisted <code>diagnostics source</code> operation for journals, firewall tables and
 protected update records. The helper runs the installed standard-library collector in isolated Python mode with a
 fixed environment, deadline and bounded projection. No request-provided source path or command is accepted.</p>
