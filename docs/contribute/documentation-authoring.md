@@ -122,12 +122,11 @@ python scripts/check_repo.py
 git diff --check
 ```
 
-The build wrapper removes only a repository-local Zensical `.cache` carrying its Atlaso-specific ownership marker, or
-the exact marker-free legacy Zensical file layout during migration, before invoking `build --clean --strict`. It then
-recreates the ownership marker and generates the legacy redirect pages. An ambiguous cache fails closed without being
-removed. Do not replace the wrapper with a direct Zensical invocation: stale cache entries can otherwise make unchanged
-redirect targets fail nondeterministically. The wrapper does not disable link or anchor validation, so genuine missing
-targets still fail the strict build.
+The wrapper resets only marker-owned Zensical `.cache` or its exact marker-free legacy layout; ambiguous caches are
+preserved. It runs `build --clean --strict`, restores the marker, and generates redirects. Direct Zensical invocation
+can leave stale caches and nondeterministic redirect failures. Link and anchor validation remain strict.
+Disposable Windows tasks use [creation-bound cache mode](completed-task-cleanup.md#disposable-documentation-caches)
+to receipt and pin an empty cache before use, omitting the redundant native `--clean` reset.
 
 Lint all tracked Markdown; keep sources outside excluded root `.atlaso-local/`. Opt in to fixture paths with
 `--no-globs`. Never suppress sources or use warning-only baselines. Test stable markers/paths instead of exact prose.

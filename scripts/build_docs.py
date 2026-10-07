@@ -3,9 +3,14 @@
 
 from __future__ import annotations
 
+import argparse
+import hashlib
+import json
+import os
 import shutil
 import subprocess
 import sys
+from contextlib import nullcontext
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -91,36 +96,91 @@ def mark_zensical_cache(cache: Path) -> None:
     (cache / CACHE_MARKER_NAME).write_text(CACHE_MARKER_CONTENT, encoding="utf-8")
 
 
-def main() -> int:
+def report_owned_manifest(manifest: Path) -> None:
+    """Write the sealed manifest identity as one machine-readable stdout record.
+
+    Args:
+        manifest: Exact durable manifest path returned by the cache owner.
+    """
+    from scripts.completed_task_files import read_bounded_regular
+
+    digest = hashlib.sha256(read_bounded_regular(manifest, 262_144)).hexdigest()
+    print(json.dumps({"ownership_manifest": {"path": str(manifest), "sha256": digest}},
+                     sort_keys=True, separators=(",", ":")))
+
+
+def main(argv: list[str] | None = None) -> int:
     """Run the deterministic strict documentation build.
+
+    Args:
+        argv: Optional creation-bound local cache ownership arguments.
 
     Returns:
         The first failed command status, or zero after redirect generation succeeds.
     """
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--cache-receipt", type=Path)
+    parser.add_argument("--task-id")
+    parser.add_argument("--resource-id")
+    parser.add_argument("--source-commit")
+    args = parser.parse_args(argv)
+    owner = None
     try:
-        reset_zensical_cache()
-        initialize_zensical_cache()
+        ownership = (args.cache_receipt, args.task_id, args.resource_id, args.source_commit)
+        if any(value is not None for value in ownership):
+            if not all(value is not None for value in ownership):
+                raise RuntimeError("cache ownership requires receipt, task, resource, and source commit")
+            # Local task cleanup is Windows-only; ordinary hosted CI uses the portable wrapper.
+            sys.path.insert(0, str(ROOT))
+            from scripts.zensical_cache import ZensicalCache
+
+            config = Path(os.environ.get("CODEX_HOME", str(Path.home() / ".codex"))) / "config.toml"
+            owner = ZensicalCache(config, args.cache_receipt, {
+                "id": args.resource_id, "task_id": args.task_id, "repository": "mdaneri/Atlaso",
+                "source_commit": args.source_commit, "path": str(ROOT / ".cache"),
+            })
     except (OSError, RuntimeError) as exc:
         print(f"Documentation build failed: {exc}", file=sys.stderr)
         return 1
-    build = subprocess.run(
-        [sys.executable, "-m", "zensical", "build", "--clean", "--strict"],
-        cwd=ROOT,
-        check=False,
-    )
     try:
-        mark_zensical_cache(ROOT / ".cache")
+        # Keep one task claim from cache initialization through all outputs. The
+        # cache lifecycle methods acquire the same mutex reentrantly.
+        claim = owner.claim() if owner else nullcontext()
+        with claim:
+            if owner:
+                owner.begin()
+            else:
+                reset_zensical_cache()
+                initialize_zensical_cache()
+
+            # The wrapper already starts from an empty cache. In owned mode, prevent
+            # the native builder from replacing the creation-bound root with an
+            # unreceipted one.
+            pin = owner.pin() if owner else nullcontext()
+            with pin:
+                command = [sys.executable, "-m", "zensical", "build", "--strict"]
+                if owner is None:
+                    command.append("--clean")
+                if owner:
+                    try:
+                        build = subprocess.run(command, cwd=ROOT, check=False)
+                    finally:
+                        report_owned_manifest(owner.seal())
+                else:
+                    build = subprocess.run(command, cwd=ROOT, check=False)
+            if owner is None:
+                mark_zensical_cache(ROOT / ".cache")
+            if build.returncode:
+                return build.returncode
+            redirects = subprocess.run(
+                [sys.executable, str(ROOT / "scripts" / "generate_docs_redirects.py")],
+                cwd=ROOT,
+                check=False,
+            )
+            return redirects.returncode
     except (OSError, RuntimeError) as exc:
         print(f"Documentation build failed: {exc}", file=sys.stderr)
         return 1
-    if build.returncode:
-        return build.returncode
-    redirects = subprocess.run(
-        [sys.executable, str(ROOT / "scripts" / "generate_docs_redirects.py")],
-        cwd=ROOT,
-        check=False,
-    )
-    return redirects.returncode
 
 
 if __name__ == "__main__":

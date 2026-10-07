@@ -208,6 +208,68 @@ durable evidence survived release. Later eligibility
 checks repeat that aggregate readback and require completed remote/local ref gates to remain absent, even if a
 recreated ref points to the original SHA. Reappearance blocks completion and preserves the recreated resource/ref.
 
+### Disposable documentation caches
+
+`scripts.zensical_cache.ZensicalCache` owns creation-bound Windows documentation caches. Inventory the exact
+checkout-local `.cache` as `kind: "artifact"` with `cleanup_tool: "ZensicalCache"`. Generic generated-tree cleanup
+continues to require its original directory identity and must never adopt a cache recreated by Zensical.
+
+Before a task build, choose a new durable receipt filename beneath the configured worktree root, outside the task
+checkout and every removal scope. Use a separate evidence directory that is not an ancestor of the checkout; placing
+receipts directly in a pinned ancestor would prevent Windows write-through publication. With the cache absent, run
+the canonical wrapper using the documentation interpreter:
+
+```powershell
+.\.venv-docs\Scripts\python.exe scripts/build_docs.py `
+  --cache-receipt $receipt --task-id $taskId --resource-id $resourceId --source-commit $sourceCommit
+```
+
+Use the independently verified originating task identity and creation commit. The wrapper reads the active Codex
+configuration, creates the exact `.cache` exclusively, and durably records its original identity and checkout binding
+before use. The wrapper holds an exclusive lifecycle claim from bootstrap through build, sealing, and redirects.
+It refuses unreceipted cache state and pins that directory throughout `build --strict` and sealing; the
+cache starts empty, so Zensical's native `--clean` replacement is omitted. Unexpected replacement or receipt publication
+failure stops the operation. Ordinary hosted CI retains the portable `--clean --strict` path.
+
+After the child exits or process creation fails, sealing verifies the creation identity and ownership marker, and
+preserves a bounded inventory of exact identities and content hashes.
+The owned wrapper prints a JSON `ownership_manifest` record with the authoritative path and bounded-file SHA-256
+after each successful seal, including a failed builder launch. Record that identity in the resource inventory.
+Preserve all creation, attempt, sealed, prepared, and absence receipts outside removal roots.
+A failed strict build may still
+seal its owned cache for diagnosis and eventual release; passing or failing validation does not authorize teardown.
+
+To repeat validation before release, use the same receipt and original task/resource/source binding. The owner first
+verifies the current sealed identities and content hashes, then records a numbered attempt bound to the prior manifest
+before clearing its verified contents in place. The original directory and creation receipts remain unchanged, and the
+cache starts empty for the next strict build. Each attempt publishes new immutable sealed inventory and manifest files;
+refresh the inventory's `ownership_manifest` to the latest returned path and hash. A prior manifest cannot approve the
+new revision. Prepared or completed release blocks another build.
+
+An interrupted bootstrap may resume only from a durable original receipt, matching checkout/cache identities, and an
+empty or exact-marker-only cache. It completes missing generation/marker steps before any builder use. An unfinished
+attempt cannot start another build or authorize release; preserve it for owning-tool sealing and independent recovery.
+Missing original provenance, pending receipt publication, changed entries, or replaced identities remain refusals.
+A caught failure before any receipt publication may roll back only the still-empty exact root created by that invocation.
+A process stop before the original receipt is durable has no independent identity proof and remains cleanup-blocked.
+
+For each fresh `resource.inspect` or `resource.release`, construct the tool using the same active configuration,
+receipt, and independently verified binding (`id`, `task_id`, `repository`, `source_commit`, and absolute `path`). Call
+`controller_call(operation, payload, approved_resource)` only after independently verifying source ancestry, positive
+PR identity, manifest hash, exclusive task ownership, inactivity, retention, and downstream needs. The adapter's only
+removal scope is the exact `.cache`. Shared or retained state, changed contents or identities, reparse points, hard
+links, Git metadata, and credential/recovery trees require refusal and preservation.
+
+Release durably records its sealed inventory before deleting checked objects through Windows handles. An interrupted
+retry accepts only already removed entries and directory timestamps changed by removal; new or replaced entries and
+changed file bytes block retry. Pending receipt publication requires reconciliation. Repeat fresh `resource.inspect`
+after release and require exact absence; acknowledgment alone cannot complete the resource gate. A later build needs
+a new creation receipt and resource identity after completed release; reappearance must be preserved.
+If deletion finishes before the final absence receipt is published, verified creation/sealed/prepared receipts and
+fresh namespace absence still establish preserved evidence. The enclosing controller can finalize its resource gate
+from those independent reads; inspection never writes a missing receipt, and unprepared absence remains a refusal.
+Receipt-backed absence readback also works after checkout removal; any recreated checkout must match its original identity.
+
 ### Disposable pytest Git fixtures
 
 `scripts.pytest_git_fixtures.PytestGitFixtures` owns Windows disposable pytest Git artifact roots. Use
