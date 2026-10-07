@@ -107,7 +107,8 @@ def _validate_observation(value: Any, *, now: datetime | None) -> dict[str, Any]
     for socket_id, record in health.items():
         if not isinstance(socket_id, str) or not _SOCKET_ID.fullmatch(socket_id):
             raise ValueError("Invalid reverse-proxy health identity.")
-        if not isinstance(record, dict) or set(record) != {"status", "last_success", "failure_class", "http_status", "tls_status"}:
+        record_fields = {"status", "last_success", "failure_class", "http_status", "tls_status"}
+        if not isinstance(record, dict) or set(record) not in (record_fields, record_fields | {"observed_at"}):
             raise ValueError("Invalid reverse-proxy health record.")
         if record["status"] not in _STATUSES:
             raise ValueError("Invalid reverse-proxy health status.")
@@ -121,7 +122,15 @@ def _validate_observation(value: Any, *, now: datetime | None) -> dict[str, Any]
             raise ValueError("Invalid observed upstream HTTP status.")
         if record["last_success"] is not None:
             _parse_timestamp(record["last_success"])
-    return value
+    fresh_health = {}
+    for socket_id, record in health.items():
+        sampled = _parse_timestamp(record.get("observed_at", value["observed_at"]))
+        sampled_age = current.astimezone(timezone.utc) - sampled
+        if sampled_age < -MAX_FUTURE_SKEW:
+            raise ValueError("Reverse-proxy route sample is from the future.")
+        if sampled_age <= MAX_OBSERVATION_AGE:
+            fresh_health[socket_id] = record
+    return {**value, "health": fresh_health}
 
 
 def _parse_timestamp(value: Any) -> datetime:

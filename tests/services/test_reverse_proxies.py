@@ -96,6 +96,35 @@ def create_db() -> tuple[object, Session]:
     return engine, db
 
 
+def test_managed_dns_hostname_bound_prevents_invalid_owned_record():
+    """Reject a DNS-owned name beyond the record response contract before save."""
+    engine, db = create_db()
+    try:
+        hostname = ".".join(["a" * 60, "b" * 60, "test"])
+        with pytest.raises(ValueError, match="at most 120 characters"):
+            save_proxy(db, payload(hostname=hostname, managed_dns=True), actor="operator")
+        assert list(db.scalars(select(ReverseProxy))) == []
+    finally:
+        db.close()
+        engine.dispose()
+
+
+@pytest.mark.parametrize("upstream", ["application.example.test", "peer.example.test"])
+def test_reverse_proxy_hostnames_are_reserved_as_upstreams(upstream):
+    """Prevent self and peer proxy targets that resolve onto appliance listeners."""
+    engine, db = create_db()
+    try:
+        save_proxy(db, payload(name="Peer", hostname="peer.example.test"), actor="operator")
+        candidate = payload()
+        candidate["routes"][0]["upstream_host"] = upstream
+        with pytest.raises(ValueError, match="managed reverse-proxy hostname"):
+            save_proxy(db, candidate, actor="operator")
+        assert len(list(db.scalars(select(ReverseProxy)))) == 1
+    finally:
+        db.close()
+        engine.dispose()
+
+
 def test_schema_canonicalizes_hostnames_and_fingerprints():
     """Normalize harmless DNS/fingerprint formatting before saving."""
     request = ReverseProxyCreate.model_validate(
@@ -381,6 +410,47 @@ def test_service_rejects_appliance_addresses_and_service_hostnames_as_upstreams(
         )
         with pytest.raises(ValueError, match="ordinary unicast"):
             save_proxy(db, request, actor="operator")
+    finally:
+        db.close()
+        engine.dispose()
+
+
+def test_esx_storage_hostname_is_reserved_for_serving_and_upstreams():
+    """Preserve the canonical ESX hostname even when its service is disabled."""
+    from atlaso.app.models import EsxStorageSettings
+
+    engine, db = create_db()
+    try:
+        db.add(EsxStorageSettings(hostname="nfs.atlaso.internal"))
+        db.commit()
+        with pytest.raises(ValueError, match="owned by an Atlaso service"):
+            save_proxy(db, payload(hostname="nfs.atlaso.internal"), actor="operator")
+        with pytest.raises(ValueError, match="Atlaso-owned"):
+            save_proxy(db, payload(routes=[{**payload()["routes"][0], "upstream_host": "nfs.atlaso.internal"}]), actor="operator")
+        assert desired_rows(db) == []
+    finally:
+        db.close()
+        engine.dispose()
+
+
+def test_listener_fanout_is_bounded_before_saved_state_or_audit():
+    """Count selected listeners across disabled proxies before later enablement."""
+    engine, db = create_db()
+    try:
+        listeners = [{"interface": "eth1", "address": "192.168.1.10"}]
+        for index in range(2, 17):
+            address = f"192.168.1.{index + 9}"
+            db.add(PhysicalInterface(name=f"eth{index}", mac_address=f"02:00:00:00:01:{index:02x}",
+                                     admin_state="up", oper_state="up", role="access", mode="access", ip_cidr=address + "/24"))
+            listeners.append({"interface": f"eth{index}", "address": address})
+        db.commit()
+        for index in range(16):
+            save_proxy(db, payload(name=f"Application {index}", hostname=f"app{index}.example.test", listeners=listeners), actor="operator")
+        before_audits = list(db.scalars(select(AuditEvent)))
+        with pytest.raises(ValueError, match="listener/route combinations"):
+            save_proxy(db, payload(name="Excess", hostname="excess.example.test", listeners=listeners), actor="operator")
+        assert len(desired_rows(db)) == 16
+        assert list(db.scalars(select(AuditEvent))) == before_audits
     finally:
         db.close()
         engine.dispose()

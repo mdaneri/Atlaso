@@ -281,17 +281,20 @@ async def observe_health(manifest: dict[str, Any], root: Path) -> None:
             key = route["socket_id"]
             if result["last_success"] is None:
                 result["last_success"] = previous.get(key, {}).get("last_success")
+            result["observed_at"] = datetime.now(timezone.utc).isoformat()
             return key, result
 
     while True:
-        previous = dict(await asyncio.gather(*(observe(route) for route in manifest["routes"])))
-        payload = {"schema": 1, "generation": manifest["generation"], "health": previous,
-                   "observed_at": datetime.now(timezone.utc).isoformat()}
-        temporary = root / "health.pending"
-        descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_NOFOLLOW", 0), 0o640)
-        with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
-            json.dump(payload, stream, sort_keys=True, separators=(",", ":"))
-        temporary.replace(root / "health.json")
+        routes = manifest["routes"]
+        for start in range(0, max(1, len(routes)), 8):
+            previous.update(await asyncio.gather(*(observe(route) for route in routes[start:start + 8])))
+            payload = {"schema": 1, "generation": manifest["generation"], "health": previous,
+                       "observed_at": datetime.now(timezone.utc).isoformat()}
+            temporary = root / "health.pending"
+            descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_NOFOLLOW", 0), 0o640)
+            with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
+                json.dump(payload, stream, sort_keys=True, separators=(",", ":"))
+            temporary.replace(root / "health.json")
         await asyncio.sleep(30)
 
 

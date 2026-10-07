@@ -20,6 +20,7 @@ from atlaso.app.services.traffic_publishing import nat_targets
 MAX_REVERSE_PROXIES = 256
 MAX_PROXY_ROUTES = 64
 MAX_TOTAL_PROXY_ROUTES = 256
+MAX_TOTAL_PROXY_PUBLICATION_ROUTES = 256
 _DNS_LABEL = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$")
 _FINGERPRINT = re.compile(r"^[0-9a-f]{64}$")
 _SERVICE_SETTING_MODELS = (
@@ -27,6 +28,7 @@ _SERVICE_SETTING_MODELS = (
     models.CaSettings,
     models.KmsSettings,
     models.LdapSettings,
+    models.EsxStorageSettings,
     models.OidcProviderSettings,
     models.VcfBackupSettings,
     models.VcfPrivateRegistrySettings,
@@ -237,6 +239,10 @@ def validate_proxy(
         errors.append(str(exc))
 
     service_names = context.get("service_hostnames", set())
+    proxy_names = {peer.hostname.strip().rstrip(".").casefold() for peer in existing}
+    proxy_names.add(hostname)
+    if candidate.managed_dns and len(hostname) > 120:
+        errors.append("Managed DNS requires a hostname of at most 120 characters.")
     if hostname and hostname in service_names:
         errors.append("This hostname is already owned by an Atlaso service.")
     for proxy in existing:
@@ -371,6 +377,8 @@ def validate_proxy(
                     errors.append("Use a canonical lowercase upstream hostname without a final dot.")
                 if canonical_host in service_names:
                     errors.append("An upstream cannot target an Atlaso-owned service hostname.")
+                if canonical_host in proxy_names:
+                    errors.append("An upstream cannot target a managed reverse-proxy hostname.")
             except ValueError as exc:
                 errors.append(f"Invalid upstream host: {exc}")
 
@@ -393,6 +401,10 @@ def validate_proxy(
 
     if len(candidate.routes) > MAX_PROXY_ROUTES:
         errors.append("A reverse proxy may contain at most 64 routes.")
+    publication_routes = sum(len(peer.listeners or []) * len(peer.routes) for peer in existing if peer.id != exclude_id)
+    publication_routes += len(candidate.listeners or []) * len(candidate.routes)
+    if publication_routes > MAX_TOTAL_PROXY_PUBLICATION_ROUTES:
+        errors.append("At most 256 reverse-proxy listener/route combinations may be saved across the appliance.")
     return list(dict.fromkeys(errors))
 
 
@@ -467,6 +479,16 @@ def save_proxy(
         db.flush()
         if not 1 <= current.id <= 0xFFFFFF:
             raise ValueError("Reverse-proxy identity capacity is exhausted; contact the appliance maintainer.")
+        from atlaso.app.services.reverse_proxy_publication import (
+            appliance_addresses,
+            render_proxy_servers,
+            transport_manifest,
+        )
+
+        snapshot = runtime_snapshot(db)
+        rendered = render_proxy_servers(snapshot, transport_manifest(snapshot, appliance_addresses(db)))
+        if len(rendered.encode("utf-8")) > 1_500_000:
+            raise ValueError("Reverse-proxy publication exceeds its generated configuration size bound.")
         from atlaso.app.services.reverse_proxy_publication import reconcile_proxy_dns
 
         reconcile_proxy_dns(db, runtime_snapshot(db))

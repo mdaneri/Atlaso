@@ -84,6 +84,21 @@ def test_applied_snapshot_projects_cached_healthy_status_without_probing(monkeyp
     assert "body" not in result[0]
 
 
+def test_fresh_batch_does_not_refresh_an_old_route_sample(monkeypatch):
+    """A recently written batch must not restamp a stale successful route.
+
+    Args:
+        monkeypatch: Isolated helper and desired-state boundaries.
+    """
+    payload = _payload(observed_at="2026-10-07T00:02:00+00:00")
+    payload["health"]["1-2"]["observed_at"] = "2026-10-07T00:00:00+00:00"
+    _configure(monkeypatch, payload)
+    result = observation.observe_reverse_proxy_health(object(), now=datetime(2026, 10, 7, 0, 2, tzinfo=timezone.utc))
+    assert result[0]["status"] == "unavailable"
+    assert result[0]["applied"] is True
+    assert result[0]["http_status"] is None
+
+
 def test_changed_snapshot_is_pending_and_does_not_expose_old_health(monkeypatch):
     previous = _desired()
     previous[0]["name"] = "Old name"

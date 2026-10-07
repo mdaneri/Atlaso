@@ -28,6 +28,10 @@ Reverse proxies preserve the application’s own authentication. Atlaso forwards
 forwarded host, client address, protocol, and WebSocket upgrade headers. The editor does not accept arbitrary headers,
 authentication bypasses, or raw nginx directives.
 
+The appliance accepts at most 256 proxies, 256 total path routes, and 256 selected listener/route combinations.
+A route selected on four listener addresses counts as four combinations. Disabled proxies retain these capacity
+reservations so enabling saved state cannot exceed the generated publication bound.
+
 ## Create a reverse proxy
 
 Open **Traffic Publishing**, select **Reverse Proxies**, and choose **Add reverse proxy**. The wizard has six steps:
@@ -71,9 +75,10 @@ apply succeeds.
 
 ## Verify runtime behavior
 
-The transport worker refreshes cached route health in batches, pausing 30 seconds between batches, with at most eight
-probes running at once. Each
-probe sends `HEAD` to the configured public hostname and route path and keeps no response body. Fingerprint trust checks
+The transport worker publishes cached route health after each batch, pausing 30 seconds between full cycles, with at most
+eight probes running at once. Every route retains its own observation time; samples older than 90 seconds are unavailable
+even when another batch has just published. Each probe sends `HEAD` to the configured public hostname and route path and
+keeps no response body. Fingerprint trust checks
 the SHA-256 digest of the leaf certificate on the connected upstream TLS session before forwarding data. Insecure TLS
 verification is always reported as degraded, even when an HTTP status is returned. These observations are operational
 signals, not proof that an application's complete workflow works.

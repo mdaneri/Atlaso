@@ -189,8 +189,10 @@ def run_reverse_proxy_acceptance(lifecycle: Any, results: list[Any], client: Any
         fixture_port = server.server_address[1]
         http_payload = proxy_payload("Native HTTP application", "http.proxy.atlaso.internal", address, args.site_interface, host, fixture_port)
         https_payload = proxy_payload("Native HTTPS application", "https.proxy.atlaso.internal", address, args.site_interface, host, fixture_port, scheme="https", port=8443)
+        upstream_context = ssl.create_default_context()
+        upstream_context.minimum_version = ssl.TLSVersion.TLSv1_2
         with socket.create_connection(("example.com", 443), timeout=15) as raw:
-            with ssl.create_default_context().wrap_socket(raw, server_hostname="example.com") as upstream:
+            with upstream_context.wrap_socket(raw, server_hostname="example.com") as upstream:
                 fingerprint = hashlib.sha256(upstream.getpeercert(binary_form=True)).hexdigest()
         trust_routes = [
             ("/trusted/", "example.com", "trusted_ca", ""),
@@ -211,6 +213,7 @@ def run_reverse_proxy_acceptance(lifecycle: Any, results: list[Any], client: Any
         if status != 200 or "BEGIN CERTIFICATE" not in root:
             raise lifecycle.LifecycleError("Applied proxy CA root is unavailable.")
         context = ssl.create_default_context(cadata=root)
+        context.minimum_version = ssl.TLSVersion.TLSv1_2
 
         def verify_publication() -> dict[str, Any]:
             """Verify TLS identity, both mappings, auth challenge and exact host."""
