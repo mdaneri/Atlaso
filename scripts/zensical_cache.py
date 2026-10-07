@@ -127,6 +127,17 @@ class ZensicalCache:
         require(not self._pending(), "Pending Zensical cache evidence requires reconciliation before retry.")
 
     @contextmanager
+    def claim(self) -> Iterator[None]:
+        """Hold the task's cleanup mutex across one complete owned build lifecycle.
+
+        The wrapper uses this outer claim while ``begin`` and ``seal`` acquire the
+        same mutex reentrantly. This prevents another process from entering
+        between generation creation, the native build, sealing, and redirects.
+        """
+        with cleanup_lock(self.permitted, self.lock_id):
+            yield
+
+    @contextmanager
     def _existing_ancestors(self) -> Iterator[None]:
         """Pin every existing cache ancestor, allowing only a verified missing suffix."""
         with ExitStack() as stack:

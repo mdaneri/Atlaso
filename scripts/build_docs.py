@@ -124,41 +124,48 @@ def main(argv: list[str] | None = None) -> int:
                 "id": args.resource_id, "task_id": args.task_id, "repository": "mdaneri/Atlaso",
                 "source_commit": args.source_commit, "path": str(ROOT / ".cache"),
             })
-            owner.begin()
-        else:
-            reset_zensical_cache()
-            initialize_zensical_cache()
     except (OSError, RuntimeError) as exc:
         print(f"Documentation build failed: {exc}", file=sys.stderr)
         return 1
     try:
-        # The wrapper already starts from an empty cache. In owned mode, prevent the
-        # native builder from replacing the creation-bound root with an unreceipted one.
-        pin = owner.pin() if owner else nullcontext()
-        with pin:
-            command = [sys.executable, "-m", "zensical", "build", "--strict"]
-            if owner is None:
-                command.append("--clean")
+        # Keep one task claim from cache initialization through all outputs. The
+        # cache lifecycle methods acquire the same mutex reentrantly.
+        claim = owner.claim() if owner else nullcontext()
+        with claim:
             if owner:
-                try:
-                    build = subprocess.run(command, cwd=ROOT, check=False)
-                finally:
-                    owner.seal()
+                owner.begin()
             else:
-                build = subprocess.run(command, cwd=ROOT, check=False)
-        if owner is None:
-            mark_zensical_cache(ROOT / ".cache")
+                reset_zensical_cache()
+                initialize_zensical_cache()
+
+            # The wrapper already starts from an empty cache. In owned mode, prevent
+            # the native builder from replacing the creation-bound root with an
+            # unreceipted one.
+            pin = owner.pin() if owner else nullcontext()
+            with pin:
+                command = [sys.executable, "-m", "zensical", "build", "--strict"]
+                if owner is None:
+                    command.append("--clean")
+                if owner:
+                    try:
+                        build = subprocess.run(command, cwd=ROOT, check=False)
+                    finally:
+                        owner.seal()
+                else:
+                    build = subprocess.run(command, cwd=ROOT, check=False)
+            if owner is None:
+                mark_zensical_cache(ROOT / ".cache")
+            if build.returncode:
+                return build.returncode
+            redirects = subprocess.run(
+                [sys.executable, str(ROOT / "scripts" / "generate_docs_redirects.py")],
+                cwd=ROOT,
+                check=False,
+            )
+            return redirects.returncode
     except (OSError, RuntimeError) as exc:
         print(f"Documentation build failed: {exc}", file=sys.stderr)
         return 1
-    if build.returncode:
-        return build.returncode
-    redirects = subprocess.run(
-        [sys.executable, str(ROOT / "scripts" / "generate_docs_redirects.py")],
-        cwd=ROOT,
-        check=False,
-    )
-    return redirects.returncode
 
 
 if __name__ == "__main__":

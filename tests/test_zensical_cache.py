@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+from threading import Event, Thread
 from typing import Iterator
 
 import pytest
@@ -87,6 +88,31 @@ def write_original_only(owner: CacheOwner) -> None:
                 "root_identity": list(root_identity),
                 "checkout_identity": list(checkout_identity),
             })
+
+
+def assert_claim_available_from_another_thread(owner: ZensicalCache) -> None:
+    """Prove a completed wrapper released its non-waiting task mutex.
+
+    Args:
+        owner: Cache owner whose outer build claim should have been released.
+    """
+    acquired = Event()
+    failures: list[Exception] = []
+
+    def probe() -> None:
+        """Acquire the claim from a different thread, where mutex recursion cannot mask leaks."""
+        try:
+            with owner.claim():
+                acquired.set()
+        except (FileRefusal, OSError) as exc:
+            failures.append(exc)
+
+    thread = Thread(target=probe)
+    thread.start()
+    thread.join(timeout=5)
+    assert not thread.is_alive(), "claim availability probe did not finish"
+    assert not failures, f"claim remained held after wrapper exit: {failures!r}"
+    assert acquired.is_set()
 
 
 @pytest.fixture
@@ -643,6 +669,75 @@ def test_owned_build_pins_and_seals_cache_on_success_or_failure(
     cache_owner.owner.release([str(cache_owner.owner.root)])
 
 
+def test_competing_owned_build_is_refused_until_complete_lifecycle_finishes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """One build claim spans bootstrap, native output, sealing, and redirects.
+
+    Args:
+        tmp_path: Pytest-owned directory for the test build checkout and receipts.
+        monkeypatch: Scoped environment, build root, and child-process substitutions.
+    """
+    cache_owner = CacheOwner(tmp_path, monkeypatch)
+    monkeypatch.setattr(build_docs, "ROOT", cache_owner.checkout)
+    build_started = Event()
+    finish_build = Event()
+    calls: list[list[str]] = []
+    first_result: list[int] = []
+    first_errors: list[Exception] = []
+
+    def run(command: list[str], **kwargs: object) -> object:
+        """Pause the first build while a second wrapper attempts to claim the cache.
+
+        Args:
+            command: Exact subprocess argument vector issued by the wrapper.
+            **kwargs: Subprocess keyword arguments supplied by the wrapper.
+        """
+        calls.append(command)
+        if "zensical" in command:
+            assert "--clean" not in command
+            build_started.set()
+            assert finish_build.wait(timeout=10)
+            (cache_owner.owner.root / "builder-output.bin").write_bytes(b"output")
+        return type("ProcessResult", (), {"returncode": 0})()
+
+    monkeypatch.setattr(build_docs.subprocess, "run", run)
+    arguments = [
+        "--cache-receipt", str(cache_owner.receipt),
+        "--task-id", cache_owner.binding["task_id"],
+        "--resource-id", cache_owner.binding["id"],
+        "--source-commit", cache_owner.binding["source_commit"],
+    ]
+
+    def first_wrapper() -> None:
+        """Run the owning wrapper on a separate thread while holding its claim."""
+        try:
+            first_result.append(build_docs.main(arguments))
+        except AssertionError as exc:
+            first_errors.append(exc)
+
+    thread = Thread(target=first_wrapper)
+    thread.start()
+    assert build_started.wait(timeout=10), "first builder did not start"
+    try:
+        assert build_docs.main(arguments) == 1
+        assert len(calls) == 1, "competing wrapper launched a subprocess despite the active claim"
+    finally:
+        finish_build.set()
+        thread.join(timeout=10)
+    assert not thread.is_alive(), "first wrapper did not finish after its child was released"
+    assert not first_errors
+    assert first_result == [0]
+    assert len(calls) == 2
+    assert cache_owner.owner._path(".manifest").is_file()
+    resource = cache_owner.resource(cache_owner.owner._path(".manifest"))
+    inspected = cache_owner.owner.controller_call(
+        "resource.inspect", {"resource": resource, "handoff_sha256": "8" * 64}, resource,
+    )
+    cache_owner.owner.release(inspected["removal_scopes"])
+
+
 def test_owned_build_repeats_with_immutable_attempt_receipts(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -863,6 +958,7 @@ def test_owned_build_oserror_seals_and_releases_cache(
     assert result == 1
     assert len(calls) == 1
     assert cache_owner.owner.files.snapshot(cache_owner.owner.root)["."]["identity"] == original_identity
+    assert_claim_available_from_another_thread(cache_owner.owner)
     manifest = cache_owner.owner._path(".manifest")
     assert manifest.is_file()
     resource = cache_owner.resource(manifest)
@@ -910,6 +1006,7 @@ def test_owned_build_seal_refusal_preserves_unsafe_cache(
     ])
 
     assert result == 1
+    assert_claim_available_from_another_thread(cache_owner.owner)
     assert (cache_owner.owner.root / ".git").is_dir()
     assert not cache_owner.owner._path(".manifest").exists()
     (cache_owner.owner.root / ".git").rmdir()

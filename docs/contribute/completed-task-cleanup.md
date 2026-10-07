@@ -226,7 +226,8 @@ the canonical wrapper using the documentation interpreter:
 
 Use the independently verified originating task identity and creation commit. The wrapper reads the active Codex
 configuration, creates the exact `.cache` exclusively, and durably records its original identity and checkout binding
-before use. It refuses unreceipted cache state. It pins that directory throughout `build --strict` and sealing; the
+before use. The wrapper holds an exclusive lifecycle claim from bootstrap through build, sealing, and redirects.
+It refuses unreceipted cache state and pins that directory throughout `build --strict` and sealing; the
 cache starts empty, so Zensical's native `--clean` replacement is omitted. Unexpected replacement or receipt publication
 failure stops the operation. Ordinary hosted CI retains the portable `--clean --strict` path.
 
