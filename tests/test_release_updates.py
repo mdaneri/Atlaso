@@ -636,9 +636,11 @@ def test_candidate_worker_exits_after_reconciling_healthy_rollback(monkeypatch):
     """
     from contextlib import nullcontext
 
+    import atlaso.app.operational_logging as operational_logging
     import atlaso.app.worker as worker
 
     events: list[str] = []
+    monkeypatch.setattr(operational_logging, "configure_operational_logging", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(worker.signal, "signal", lambda *_args: None)
     monkeypatch.setattr(worker, "init_db", lambda: None)
     monkeypatch.setattr(worker, "_write_worker_startup_status", lambda: None)

@@ -376,6 +376,11 @@ def test_journal_distinguishes_empty_missing_and_malformed_sources(
     collector = Collector(Options.parse({"detailed_logs": True}), database=tmp_path / "missing.db")
 
     def command(args):
+        """Return fixed fixture output for the requested source command.
+
+        Args:
+            args: Fixed collector command arguments.
+        """
         if args[0] == "journalctl":
             return journal_output
         if args[0] == "systemctl":
@@ -407,6 +412,11 @@ def test_journal_permission_and_timeout_are_explicit(tmp_path, monkeypatch, fail
     collector = Collector(Options.parse({"detailed_logs": True}), database=tmp_path / "missing.db")
 
     def command(args):
+        """Raise the configured source failure or return a healthy unit fixture.
+
+        Args:
+            args: Fixed collector command arguments.
+        """
         if args[0] == "journalctl":
             raise failure
         return "ActiveState=active"

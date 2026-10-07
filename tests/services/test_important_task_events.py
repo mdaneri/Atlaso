@@ -2,6 +2,7 @@
 
 import json
 import logging
+from datetime import datetime, timezone
 
 import pytest
 from sqlalchemy import create_engine, select, update
@@ -18,6 +19,7 @@ from atlaso.app.models import (
 )
 from atlaso.app.services.task_log_history import (
     capture_task_history_for_session,
+    initialize_task_history,
     task_history_page,
 )
 from atlaso.important_events import COMPONENTS, validate_event
@@ -42,6 +44,7 @@ def _new_task(db, task_id="job_123456789abc"):
 
     Args:
         db: Isolated producer session.
+        task_id: Unique identifier for the fixture task.
     """
     task = Job(id=task_id, type="appliance-apply", created_by="console:root", status="pending", result="{}")
     step = JobStep(id=f"{task.id}:network", job=task, component_key="network", label="Network", position=1, status="pending")
@@ -338,3 +341,82 @@ def test_event_projection_rejects_malformed_and_secret_fields():
     assert validate_event({"schema": True}) is None
     assert validate_event({"schema": 1, "at": "password=synthetic", "severity": "ERROR"}) is None
     assert {"network", "task", "ntpd"} <= COMPONENTS
+
+
+def test_legacy_backfill_uses_persisted_stage_times_and_omits_undated_evidence(db):
+    """Initialization dates lifecycle/cancellation evidence from durable columns only.
+
+    Args:
+        db: Persistent isolated producer.
+    """
+    engine = db.get_bind()
+    times = {
+        "queued": datetime(2024, 1, 2, 3, 4, 5, tzinfo=timezone.utc),
+        "running_created": datetime(2024, 2, 2, 3, 4, 5, tzinfo=timezone.utc),
+        "running_started": datetime(2024, 2, 2, 3, 5, 5, tzinfo=timezone.utc),
+        "completed_created": datetime(2024, 3, 2, 3, 4, 5, tzinfo=timezone.utc),
+        "completed_started": datetime(2024, 3, 2, 3, 5, 5, tzinfo=timezone.utc),
+        "completed_finished": datetime(2024, 3, 2, 3, 6, 5, tzinfo=timezone.utc),
+        "cancel_requested": datetime(2024, 3, 2, 3, 5, 30, tzinfo=timezone.utc),
+        "cancel_completed": datetime(2024, 3, 2, 3, 6, 30, tzinfo=timezone.utc),
+    }
+    with engine.begin() as connection:
+        for values in [
+            {"id": "job_backfill_queued", "type": "test", "created_by": "test", "status": "pending",
+             "created_at": times["queued"], "result": "{}"},
+            {"id": "job_backfill_running", "type": "test", "created_by": "test", "status": "running",
+             "created_at": times["running_created"], "started_at": times["running_started"], "result": "{}"},
+            {"id": "job_backfill_complete", "type": "test", "created_by": "test", "status": "succeeded",
+             "created_at": times["completed_created"], "started_at": times["completed_started"],
+             "finished_at": times["completed_finished"], "cancel_requested_at": times["cancel_requested"],
+             "cancel_completed_at": times["cancel_completed"], "cancel_outcome": "completion-won",
+             "result": json.dumps({"commands": [{"stage": "execution", "returncode": 0}],
+                                   "state": "cleanup-required"})},
+        ]:
+            connection.execute(Job.__table__.insert().values(**values))
+        for values in [
+            {"id": "step_backfill_queued", "job_id": "job_backfill_queued", "component_key": "network",
+             "label": "Network", "position": 1, "status": "pending", "created_at": times["queued"], "result": "{}"},
+            {"id": "step_backfill_running", "job_id": "job_backfill_running", "component_key": "network",
+             "label": "Network", "position": 1, "status": "running", "created_at": times["running_created"],
+             "started_at": times["running_started"], "result": "{}"},
+            {"id": "step_backfill_complete", "job_id": "job_backfill_complete", "component_key": "network",
+             "label": "Network", "position": 1, "status": "succeeded", "created_at": times["completed_created"],
+             "started_at": times["completed_started"], "finished_at": times["completed_finished"], "result": "{}"},
+        ]:
+            connection.execute(JobStep.__table__.insert().values(**values))
+
+    initialize_task_history(engine)
+    db.expire_all()
+    expected = {
+        "job_backfill_queued": {"task": times["queued"], "network": times["queued"]},
+        "job_backfill_running": {"task": times["running_started"], "network": times["running_started"]},
+        "job_backfill_complete": {"task": times["completed_finished"], "network": times["completed_finished"]},
+    }
+    for job_id, stages in expected.items():
+        events = json.loads(db.get(TaskLogCheckpoint, job_id).state_json)["important_events"]
+        for component, timestamp in stages.items():
+            event = next((event for event in events if event["component"] == component), None)
+            assert event is not None, (job_id, component, events)
+            assert datetime.fromisoformat(event["at"]) == timestamp
+            assert datetime.fromisoformat(event["at"]).utcoffset().total_seconds() == 0
+
+    completed_state = json.loads(db.get(TaskLogCheckpoint, "job_backfill_complete").state_json)
+    cancellation = next(event for event in completed_state["important_events"] if event["stage"] == "cancellation")
+    assert datetime.fromisoformat(cancellation["at"]) == times["cancel_completed"]
+    assert completed_state["important_events_omitted"] == 2  # Undated execution and cleanup projections.
+    before = {
+        job_id: db.get(TaskLogCheckpoint, job_id).state_json
+        for job_id in expected
+    }
+    initialize_task_history(engine)
+    db.expire_all()
+    assert {job_id: db.get(TaskLogCheckpoint, job_id).state_json for job_id in expected} == before
+
+    running = db.get(Job, "job_backfill_running")
+    running.status = "succeeded"
+    live_transition = datetime.now(timezone.utc)
+    running.finished_at = times["completed_finished"]
+    db.commit()
+    latest = json.loads(db.get(TaskLogCheckpoint, running.id).state_json)["important_events"][-1]
+    assert datetime.fromisoformat(latest["at"]) >= live_transition

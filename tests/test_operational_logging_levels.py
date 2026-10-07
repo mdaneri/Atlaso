@@ -178,6 +178,12 @@ def test_refresh_with_unchanged_preferences_keeps_existing_handler(logging_conte
     original_setup = op_logging._ensure_file_handler
 
     def count_setup(*args, **kwargs):
+        """Count handler setup calls while preserving the original behavior.
+
+        Args:
+            *args: Positional arguments forwarded to the original setup function.
+            **kwargs: Keyword arguments forwarded to the original setup function.
+        """
         nonlocal setup_calls
         setup_calls += 1
         return original_setup(*args, **kwargs)

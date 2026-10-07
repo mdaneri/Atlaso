@@ -276,8 +276,10 @@ def create_app() -> FastAPI:
         request.state.request_id = f"req_{uuid4().hex[:12]}"
         from atlaso.app.operational_logging import refresh_logging_preferences
 
-        with SessionLocal() as logging_db:
-            refresh_logging_preferences(logging_db)
+        # Machine/static contracts use the current handlers without a UI DB lookup.
+        if not is_protocol_path(request.scope.get("path", request.url.path)):
+            with SessionLocal() as logging_db:
+                refresh_logging_preferences(logging_db)
         try:
             response = await call_next(request)
         except Exception:

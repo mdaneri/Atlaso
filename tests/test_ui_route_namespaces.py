@@ -163,6 +163,24 @@ def test_protocol_and_static_requests_skip_ui_listener_lookup(client, monkeypatc
     assert client.get("/static/app.js").status_code == 200
 
 
+def test_browser_requests_refresh_logging_preferences(client, monkeypatch):
+    """Refresh persisted web logging preferences on browser requests only.
+
+    Args:
+        client: Test application client.
+        monkeypatch: Pytest monkeypatch helper.
+    """
+    from atlaso.app import operational_logging
+
+    calls = []
+    monkeypatch.setattr(operational_logging, "refresh_logging_preferences", calls.append)
+    client.get(MANAGEMENT_UI_ROOT, follow_redirects=False)
+    assert len(calls) == 1
+    client.get("/openapi.json")
+    client.get("/static/app.js")
+    assert len(calls) == 1
+
+
 def test_listener_address_header_is_trusted_only_from_loopback_proxy():
     """Classify aliases by nginx listener identity without trusting remote spoofing."""
     headers = [(b"host", b"alias.example.test"), (b"x-atlaso-listener-address", b"192.0.2.25")]

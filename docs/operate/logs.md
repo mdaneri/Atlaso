@@ -70,11 +70,16 @@ observations do not produce operation events.
 | `DEBUG` | Additional bounded diagnostic context is useful without carrying essential task evidence. | Extra producer or collector details. |
 
 The Settings page controls the minimum level written to the local App log (`WARNING`, `INFO`, or `DEBUG`); changes
-apply to web, worker, and local console logging at their next request, worker pass, or console refresh without a restart.
+apply to web, worker, and local console logging at their next browser request, worker pass, or console refresh without
+a restart.
 External syslog has a separate minimum level. At `WARNING`,
 successful `INFO` entries may be absent from the App log; the
 committed Audit event and important task history remain the durable records for their respective events. Essential
 failure, stage, and recovery information belongs in task history and is not conditional on selecting `DEBUG`.
+
+On upgrade, initial task and step records use their persisted lifecycle timestamps. Historical stages without a recorded
+timestamp are omitted from typed events and counted; existing sanitized task text remains available. Subsequent live
+transitions use the observation time.
 
 Task producers retain bounded important-event records with the task. Each task history accepts at most 64 such records;
 older successful entries are removed first, and an omission count reports truncation. Sanitized task text retains an

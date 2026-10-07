@@ -254,7 +254,8 @@ def capture_task_history(
     private = bool(active_label)
     state["partial_pem_states"] = partials
     important = capture_important_events(connection, job_id, previous, state,
-                                        result_changed=result_changed or checkpoint is None)
+                                        result_changed=result_changed or checkpoint is None,
+                                        backfill=only_if_missing)
     lines.extend(format_event(event) for event in important)
     text = "".join(line + "\n" for line in lines)
     for start in range(0, len(text), CHUNK_CHARS):
