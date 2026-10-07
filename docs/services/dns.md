@@ -12,10 +12,6 @@ Atlaso manages DNS desired state through dnsmasq. Editing settings, zones, or re
 and the global DNS/DHCP preview; it does not mutate the appliance until an operator submits the `DNS/DHCP (dnsmasq)`
 unit through Appliance Apply.
 
-Reverse proxies can opt into Atlaso-managed A/AAAA records when their hostname belongs to an enabled authoritative
-zone. Otherwise the [reverse-proxy guide](reverse-proxies.md) shows the exact listener records to configure in external
-DNS. Existing operator-owned records are not replaced to satisfy a proxy hostname conflict.
-
 <!-- BEGIN GENERATED INTERFACE OVERVIEW -->
 ## Interface overview
 
@@ -26,6 +22,10 @@ This verified appliance view provides visual orientation before you begin.
 *Figure: DNS in the verified clean-appliance desktop state.*
 
 <!-- END GENERATED INTERFACE OVERVIEW -->
+
+Reverse proxies can opt into Atlaso-managed A/AAAA records when their hostname belongs to an enabled authoritative
+zone. Otherwise the [reverse-proxy guide](reverse-proxies.md) shows the exact listener records to configure in external
+DNS. Existing operator-owned records are not replaced to satisfy a proxy hostname conflict.
 
 Atlaso-owned service records follow applied listener-address changes automatically. A Network apply includes the
 generated DNS dependency for enabled local DNS, proves the new listener is ready, publishes its A/AAAA targets and
