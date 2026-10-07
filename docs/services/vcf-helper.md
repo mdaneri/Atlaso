@@ -108,9 +108,13 @@ The wizard chooses vault or manual credentials first, confirms the server second
 Atlaso probes the server without resolving or sending credentials and requires the operator to confirm the observed
 fingerprint before vault or manual authentication can continue. The probe requires TLS 1.2 or newer, and explicit
 fingerprint confirmation remains the trust decision rather than being replaced with ordinary CA verification. It
-displays only discovered metadata for selection, then re-fetches and encrypts the reviewed VCF/ESX passwords in the
-selected vault. Source credentials are request-local and password values are never included in the discovery response.
-See [Vaults](vaults.md) for supported entries, managed-script and Kickstart access, URI targets, and restore behavior.
+displays discovered metadata and safe skipped counts by reason for review; raw vendor errors and password values are
+never shown. SDDC Manager discovery follows its documented all-records collection behavior and retrieves supported
+listed passwords individually when the collection response omits or masks them. Installer discovery uses only the
+latest available SDDC specification, so the results do not represent every appliance account. After selection, Atlaso
+revalidates and re-fetches the reviewed values, then encrypts them in the selected vault. Source credentials are
+request-local. See [Vaults](vaults.md) for resource-based URI mapping, unsupported FTP endpoint association, URI repair,
+reimport behavior, managed-script and Kickstart access, and restore behavior.
 
 The helper creates DNS records in Atlaso, deploys SDDC Manager OVAs, and configures VCF 9 appliances to use the applied
 local offline depot. DNS does not reload `dnsmasq` or change the appliance directly. Review and submit the changed

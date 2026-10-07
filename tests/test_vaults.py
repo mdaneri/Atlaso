@@ -1069,7 +1069,7 @@ def test_vcf_import_discovers_sddc_manager_and_installer_passwords():
                 path: Filesystem or URL path to read, validate, or update.
                 **_kwargs: Additional keyword arguments accepted by the test double.
             """
-            return httpx.Response(200, json=self.payloads[path])
+            return httpx.Response(200, json=self.payloads[path]) if path in self.payloads else httpx.Response(403)
 
     class FakeApi:
         """Represent fake api.
@@ -1352,6 +1352,7 @@ def test_vcf_helper_inspection_returns_metadata_and_import_encrypts_value(client
         username="root",
         resource_name="esx01",
         value="ImportedSecret!",
+        uris=("https://esx01.example.internal",),
     )
     monkeypatch.setattr(ui, "_confirmed_tls_fingerprint", lambda *_args: ("AA:BB", None))
     monkeypatch.setattr(ui, "discover_vcf_passwords", lambda **_kwargs: [candidate])
@@ -1392,6 +1393,35 @@ def test_vcf_helper_inspection_returns_metadata_and_import_encrypts_value(client
         entry = db.execute(select(VaultEntry).where(VaultEntry.vault_id == vault_id)).scalar_one()
         assert entry.encrypted_value != "ImportedSecret!"
         assert decrypt_secret(entry.encrypted_value) == "ImportedSecret!"
+        assert json.loads(entry.uris_json) == ["https://esx01.example.internal"]
+        entry.uris_json = json.dumps(["https://operator.example.internal", "ssh://operator.example.internal"])
+        db.commit()
+    helper_page = client.get("/vcf-helper")
+    options = json.loads(helper_page.text.split(
+        '<script id="vcf-vault-credential-options" type="application/json">', 1,
+    )[1].split("</script>", 1)[0])
+    imported_options = next(item for item in options if item["id"] == vault_id)
+    assert imported_options["entries"][0]["uris"] == [
+        "https://operator.example.internal", "ssh://operator.example.internal",
+    ]
+    assert "ImportedSecret!" not in helper_page.text
+    from dataclasses import replace
+
+    monkeypatch.setattr(ui, "discover_vcf_passwords", lambda **_kwargs: [replace(candidate, uris=())])
+    rotated = client.post(
+        "/vcf-helper/vault-import",
+        json={**source, "vault_id": vault_id, "candidate_ids": ["credential-1"]},
+    )
+    assert rotated.status_code == 200
+    assert rotated.json()["rotated"] == 1
+    with SessionLocal() as db:
+        entry = db.execute(select(VaultEntry).where(VaultEntry.vault_id == vault_id)).scalar_one()
+        assert json.loads(entry.uris_json) == ["https://operator.example.internal", "ssh://operator.example.internal"]
+    duplicate = client.post(
+        "/vcf-helper/vault-import",
+        json={**source, "vault_id": vault_id, "candidate_ids": ["credential-1", "credential-1"]},
+    )
+    assert duplicate.status_code == 422
 
 
 def test_vcf_helper_vault_picker_resolves_password_only_on_server(client, monkeypatch):

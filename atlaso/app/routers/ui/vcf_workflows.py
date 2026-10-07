@@ -60,6 +60,7 @@ from atlaso.app.services.vaults import (
     redact_secret_values,
     upsert_vault_entry,
     vault_entry_metadata,
+    vault_entry_uris,
 )
 from atlaso.app.services.vcf_backups import (
     VCF_BACKUP_DEFAULT_USERNAME,
@@ -825,7 +826,8 @@ def build_router(dependencies: VcfWorkflowsUiDependencies) -> VcfWorkflowsUiRout
                 detail=redact_secret_values(str(exc), [source_password]),
             ) from exc
         return JSONResponse(
-            {"candidates": [candidate.sanitized() for candidate in candidates]},
+            {"candidates": [candidate.sanitized() for candidate in candidates],
+             "discovery": candidates.summary() if hasattr(candidates, "summary") else {}},
             headers={"Cache-Control": "no-store, private", "Pragma": "no-cache"},
         )
 
@@ -867,6 +869,7 @@ def build_router(dependencies: VcfWorkflowsUiDependencies) -> VcfWorkflowsUiRout
             not isinstance(selected, list)
             or not selected
             or any(not isinstance(item, str) for item in selected)
+            or len(selected) != len(set(selected))
         ):
             raise HTTPException(
                 status_code=422, detail="Select at least one password to import."
@@ -911,6 +914,11 @@ def build_router(dependencies: VcfWorkflowsUiDependencies) -> VcfWorkflowsUiRout
             created_count = 0
             for candidate_id in selected:
                 candidate = by_id[candidate_id]
+                existing = db.execute(select(VaultEntry).where(
+                    VaultEntry.vault_id == vault.id, VaultEntry.key == candidate.key,
+                )).scalar_one_or_none()
+                # Operator-maintained URI positions are stable across password rotation.
+                uris = vault_entry_uris(existing) if existing is not None else ()
                 entry, created = upsert_vault_entry(
                     db,
                     vault=vault,
@@ -924,6 +932,7 @@ def build_router(dependencies: VcfWorkflowsUiDependencies) -> VcfWorkflowsUiRout
                         source_type=source_type,
                         source_endpoint=f"{address}:{port}",
                         imported_at=utcnow(),
+                        uris=uris or candidate.uris,
                     ),
                     actor=identity.username,
                 )

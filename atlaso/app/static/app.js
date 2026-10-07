@@ -24166,6 +24166,7 @@ function initializeVcfVaultImport() {
   const form = document.querySelector("[data-vcf-vault-import-form]");
   if (!(modal instanceof HTMLDialogElement) || !(form instanceof HTMLFormElement) || !window.AtlasoUiPatterns) return;
   const candidatesElement = form.querySelector("[data-vcf-vault-candidates]");
+  const discoverySummary = form.querySelector("[data-vcf-vault-discovery-summary]");
   const fingerprintHelp = form.querySelector("[data-vcf-vault-fingerprint]");
   const fingerprintConfirm = form.querySelector("[data-vcf-vault-fingerprint-confirm]");
   let candidates = [];
@@ -24194,6 +24195,10 @@ function initializeVcfVaultImport() {
       const copy = document.createElement("span");
       copy.className = "vcf-helper-action-copy";
       copy.innerHTML = `<strong><code>${escapeHtml(candidate.key)}</code></strong><span class="muted">${escapeHtml(candidate.description || candidate.resource_name || "")}</span>`;
+      const endpoints = document.createElement("span");
+      endpoints.className = "muted";
+      endpoints.textContent = candidate.uris?.length ? candidate.uris.join(" · ") : "No verified endpoint. Add a URI in the Vault editor after import.";
+      copy.append(endpoints);
       label.append(checkbox, copy);
       candidatesElement.append(label);
     });
@@ -24219,9 +24224,12 @@ function initializeVcfVaultImport() {
       return "error";
     }
     candidates = Array.isArray(payload.candidates) ? payload.candidates : [];
+    const discovery = payload.discovery || {};
+    const skipped = Object.entries(discovery.skipped || {}).map(([reason, count]) => `${reason}: ${count}`);
+    if (discoverySummary) discoverySummary.textContent = [discovery.scope, `${candidates.length} available.`, ...skipped].filter(Boolean).join(" ");
     if (!candidates.length) {
-      controller.setError("The source returned no supported passwords.");
-      return "error";
+      renderCandidates();
+      return "ready";
     }
     renderCandidates();
     return "ready";
@@ -24245,6 +24253,7 @@ function initializeVcfVaultImport() {
       if (fingerprintHelp) fingerprintHelp.textContent = "Not inspected yet";
       if (fingerprintConfirm instanceof HTMLInputElement) fingerprintConfirm.checked = false;
       candidates = [];
+      if (discoverySummary) discoverySummary.textContent = "";
       candidatesElement?.replaceChildren();
     },
     onNext: async ({ controller, step }) => {

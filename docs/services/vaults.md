@@ -89,8 +89,26 @@ audit event. An SFTP URI opens an interactive SSH terminal on the same endpoint;
 **VCF Helper > Import passwords into a vault** discovers supported password metadata from a VCF 9 SDDC Manager or VCF
 Installer. After the server page, Atlaso probes without resolving or sending credentials and opens a dedicated TLS
 page. Confirm the observed SHA-256 fingerprint out of band before authentication, select the passwords, and choose a
-destination vault. Atlaso re-reads the selected values during the reviewed import and encrypts them immediately.
-Existing keys are rotated.
+destination vault. Discovery covers credentials the authenticated account can access; it is not a complete inventory of
+every appliance account. For SDDC Manager, Atlaso requests the credential collection with the documented
+`pageSize=0` all-records behavior and follows additional pages only when response metadata explicitly reports them.
+Duplicate or incomplete page results stop discovery. If a listed SDDC Manager password is absent or masked, Atlaso
+retrieves that supported credential by ID with `GET /v1/credentials/{id}`. For VCF Installer, discovery reads password
+fields from its latest available SDDC specification only. Unsupported, unavailable, masked, or permission-limited
+candidates are summarized by skipped count and reason; vendor error messages and password values are not shown.
+
+Atlaso builds credential-free URIs only from authoritative resource metadata. SDDC Manager SSH credentials use a
+validated FQDN `resourceName` or `resourceIp`; API, SSO, AUDIT, and missing credential types use HTTPS only for known
+web resource types. Installer credentials use the nearest available `hostname`, `hostName`, `fqdn`, or `ipAddress` in
+the latest specification; root and ESX accounts use SSH, while known web-component accounts use HTTPS. Unknown
+credential purposes need an operator URI association. FTP credentials are not
+treated as SFTP endpoints. If the metadata has no valid host, including a short resource label or opaque ID, the URI
+list stays empty. After import, use the entry's **Edit** action to add a verified endpoint. Reimport preserves an
+existing nonempty operator-managed URI list and adds discovered URIs only when that list is empty. Atlaso re-reads the
+selected values during the reviewed import and encrypts them immediately; existing keys are rotated.
+
+For the SDDC Manager response and endpoint contract, see Broadcom's [Get Credentials API](https://developer.broadcom.com/xapis/vmware-cloud-foundation-api/latest/v1/credentials/get/)
+and [Get Credential API](https://developer.broadcom.com/xapis/vmware-cloud-foundation-api/latest/v1/credentials/id/get/).
 
 ## VCF Helper autofill
 
