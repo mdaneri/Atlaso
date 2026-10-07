@@ -282,4 +282,3 @@ def test_owned_build_pins_and_seals_cache_on_success_or_failure(
     assert json.loads(cache_owner.receipt.read_text(encoding="utf-8"))["binding"] == cache_owner.binding
     assert cache_owner.owner.inspect()["absent"] is False
     cache_owner.owner.release([str(cache_owner.owner.root)])
-

@@ -347,4 +347,3 @@ class ZensicalCache:
             return self.inspect()
         require(operation == "resource.release", "Unsupported Zensical cache owning-tool operation.")
         return self.release(payload.get("removal_scopes", []))
-
