@@ -5134,6 +5134,10 @@ select them. Explicit additional listeners continue to derive from Web Terminal 
 The Network baseline moves this classification only after the protected handoff application commit, so failure,
 rollback, cancellation, and desired-state reversion retain the old terminal listener.</p>
 <h3 id="network-apply">Network apply<a class="headerlink" href="#network-apply" title="Permanent link">&para;</a></h3>
+<p>During upgrade handoff, Atlaso scopes legacy wildcard management listeners to the previous addresses while preserving
+Public Services ownership of existing management HTTPS sockets. The management site retains HTTP redirects and
+loopback readiness listeners. Nginx configuration validation must pass before activation; a validation failure restores
+the prior site and leaves the handoff to recover the captured state.</p>
 <p>The real network apply path is Photon <code>systemd-networkd</code> backed. The <code>network</code> apply unit stages Atlaso's rendered
 network config at <code>/var/lib/atlaso/apply/network/atlaso-network.conf</code>, validates management, physical, VLAN, CIDR, and
 gateway intent, installs Atlaso-owned <code>.network</code> and <code>.netdev</code> files under <code>/etc/systemd/network/</code>, reloads networkd,
