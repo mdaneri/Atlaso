@@ -4562,7 +4562,10 @@ the same intended interfaces.</p>
 <p>Use the bottom add row in each tab to open the shared reviewed wizard. Double-click a saved row or use <strong>Edit</strong> in its
 row menu to update it. The standard step rail remains beside the form on wide screens and adapts to the narrow layout.
 Each wizard retains entered values while moving backward, validates before Review, and saves only after the final
-add/update action. A saved row's <strong>Enabled</strong> value remains directly editable; this changes desired state only.</p>
+add/update action. A saved row's <strong>Enabled</strong> value remains directly editable; this changes desired state only.
+After an inline Routing Permission change, the grid refreshes its desired and effective state in place. Older
+refreshes cannot replace the latest edit, generated permission rows, or interface choices. If the save succeeds but
+the refreshed state is unavailable, reload the page as directed by the error message.</p>
 <p>Generated route-role permission rows stay read-only. Use their row action to open the Routing Permission wizard and
 save a persistent override for the selected source, destination, and IP family. The override does not change the
 underlying interface roles or generated topology. <strong>Automatic</strong> follows the defaults: route-role pairs allow
