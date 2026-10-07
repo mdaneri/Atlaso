@@ -900,8 +900,11 @@ def load_console_status() -> ConsoleStatus:
     Raises:
         ConsoleNetworkInventoryUnavailable: If the operation encounters an invalid state.
     """
+    from atlaso.app.operational_logging import refresh_logging_preferences
+
     try:
         with SessionLocal() as db:
+            refresh_logging_preferences(db, writer="console")
             interface = _management_interface(db)
             settings = db.scalar(select(ApplianceSettings).order_by(ApplianceSettings.id))
             firewall = db.scalar(select(FirewallSettings).order_by(FirewallSettings.id))
@@ -3273,14 +3276,19 @@ def main() -> int:
     from atlaso.app.config import get_settings
 
     get_settings.cache_clear()
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.operational_logging import configure_operational_logging
+
+    with SessionLocal() as logging_db:
+        configure_operational_logging(logging_db, writer="console")
     try:
         import curses
 
         curses.wrapper(lambda stdscr: CursesConsole(stdscr).run())
     except KeyboardInterrupt:
         return 0
-    except Exception as exc:  # noqa: BLE001 - systemd will restart the recovery console.
-        print(f"Atlaso appliance console failed: {exc}", file=sys.stderr)
+    except Exception:  # noqa: BLE001 - systemd will restart the recovery console.
+        print("Atlaso appliance console failed; inspect the correlated operational logs.", file=sys.stderr)
         return 1
     return 0
 

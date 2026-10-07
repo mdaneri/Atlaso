@@ -59,15 +59,23 @@ content changed, and neither is replayed automatically.
 
 ## Diagnose a failure
 
-Read the failed step and sanitized task log, then correlate its identifier with [Operational logs](logs.md) and the
-[Audit log](audit-log.md). Correct desired state in the owning page and submit a new task. Do not edit task history or
-fabricate a successful result.
+Read the failed step and its ordered important-event history, then correlate the task identifier with
+[Operational logs](logs.md) and the [Audit log](audit-log.md). Important events retain bounded stage, outcome, and
+safe failure or recovery detail with the task even when the App log level filters successful `INFO` entries. The task
+history holds at most 64 important-event records and reports when additional events were truncated. Correct desired
+state in the owning page and submit a new task. Do not edit task history or fabricate a successful result.
 
 Task history pages exclude the changing status and progress summary, which remains in the task detail dialog.
 Updating that summary does not reset an older log page. Result changes and audit events are captured transactionally
 as an ordered history stream. New fields and appended output do not move an existing history cursor; updated or removed
 fields add entries while earlier output stays readable. Existing retained tasks are initialized when the appliance
 starts. Cancelling or rolling back a producer transaction does not publish uncommitted log entries.
+
+Important task events cover significant queued, started, skipped, no-op, partial, failed, cancelled, and recovered
+outcomes when the owning producer reports them. They are not a trace of every request or helper command. Routine reads,
+polls, and repeated healthy observations do not create task events. A task can identify the failing stage and available
+safe return/error code without establishing the underlying native cause; use the linked service's verification
+procedure when the evidence remains incomplete. See [Important-event coverage](logs.md#important-event-coverage).
 
 ## Cancellation and execution ownership
 

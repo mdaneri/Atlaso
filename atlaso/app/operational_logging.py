@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import copy
 import logging
 import socket
+import threading
 from dataclasses import dataclass
 from logging.handlers import RotatingFileHandler, SysLogHandler
 from pathlib import Path
@@ -36,6 +38,7 @@ from atlaso.app.services.log_sanitization import (
 from atlaso.app.services.log_sanitization import (
     URL_USERINFO_PATTERN as URL_USERINFO_PATTERN,
 )
+from atlaso.app.services.log_sanitization import _safe_lines as _safe_lines
 from atlaso.app.services.log_sanitization import (
     redact_operational_text as redact_operational_text,
 )
@@ -53,7 +56,32 @@ SYSLOG_PROTOCOLS = ("udp", "tcp")
 SYSLOG_FACILITIES = ("auth", "authpriv", "cron", "daemon", "kern", "local0", "local1", "local2", "local3", "local4", "local5", "local6", "local7", "user")
 
 LOGGER = logging.getLogger("atlaso.operational")
-FORMATTER = logging.Formatter("%(asctime)s %(levelname)s [%(name)s] %(message)s")
+MAX_LOG_RECORD_BYTES = 64 * 1024
+_MAX_FORMATTED_BYTES = MAX_LOG_RECORD_BYTES - 64
+TRUNCATION_MARKER = " [truncated]"
+
+
+class _BoundedFormatter(logging.Formatter):
+    """Format a sanitized record within the fixed output byte limit."""
+
+    def format(self, record: logging.LogRecord) -> str:
+        """Format and byte-bound one already-sanitized record.
+
+        Args:
+            record: Sanitized log record supplied by an output handler.
+        """
+        rendered = super().format(record)
+        encoded = rendered.encode("utf-8")
+        if len(encoded) <= _MAX_FORMATTED_BYTES:
+            return rendered
+        marker = TRUNCATION_MARKER.encode("utf-8")
+        prefix = encoded[: _MAX_FORMATTED_BYTES - len(marker)].decode("utf-8", errors="ignore").rstrip()
+        return f"{prefix}{TRUNCATION_MARKER}"
+
+
+FORMATTER = _BoundedFormatter("%(asctime)s %(levelname)s [%(name)s] %(message)s")
+_CONFIGURATION_LOCK = threading.RLock()
+_APPLIED_CONFIGURATION: tuple[object, ...] | None = None
 
 
 @dataclass(frozen=True)
@@ -151,7 +179,7 @@ def _normalize_facility(value: str | None) -> str:
     return facility if facility in SYSLOG_FACILITIES else "local0"
 
 
-def _setting_map(db: Session | None) -> dict[str, str]:
+def _setting_map(db: Session | None) -> dict[str, str] | None:
     """Return setting map.
 
     Args:
@@ -171,16 +199,18 @@ def _setting_map(db: Session | None) -> dict[str, str]:
         }
         return {row.key: row.value for row in db.execute(select(Setting).where(Setting.key.in_(keys))).scalars().all()}
     except SQLAlchemyError:
-        return {}
+        return None
 
 
-def logging_preferences_from_db(db: Session | None) -> LoggingPreferences:
-    """Return logging preferences from db.
+def _read_logging_preferences(db: Session | None) -> LoggingPreferences | None:
+    """Read preferences, returning ``None`` when a database read failed.
 
     Args:
         db: Active database session.
     """
     values = _setting_map(db)
+    if values is None:
+        return None
     return LoggingPreferences(
         level=_normalize_level(values.get(LOGGING_LEVEL_KEY)),
         syslog_enabled=_normalize_bool(values.get(LOGGING_SYSLOG_ENABLED_KEY)),
@@ -190,6 +220,15 @@ def logging_preferences_from_db(db: Session | None) -> LoggingPreferences:
         syslog_facility=_normalize_facility(values.get(LOGGING_SYSLOG_FACILITY_KEY)),
         syslog_level=_normalize_level(values.get(LOGGING_SYSLOG_LEVEL_KEY)),
     )
+
+
+def logging_preferences_from_db(db: Session | None) -> LoggingPreferences:
+    """Return logging preferences from db.
+
+    Args:
+        db: Active database session.
+    """
+    return _read_logging_preferences(db) or LoggingPreferences()
 
 
 def _set_setting(db: Session, key: str, value: str) -> Setting:
@@ -328,6 +367,71 @@ def _level_number(level: str) -> int:
     return int(getattr(logging, _normalize_level(level), logging.INFO))
 
 
+class _OperationalRedactionState:
+    """Share parser state across handlers that emit the same process records."""
+
+    def __init__(self) -> None:
+        self.lock = threading.RLock()
+        self.parser: dict[str, str] = {}
+        self.private = False
+
+
+class _OperationalRedactionFilter(logging.Filter):
+    """Sanitize handler records using shared, synchronized private-key state."""
+
+    def __init__(self, destination_level: int, state: _OperationalRedactionState | None = None) -> None:
+        """Create an output filter with destination-specific level and shared parser state.
+
+        Args:
+            destination_level: Minimum level emitted by this destination.
+            state: Parser state shared with other Atlaso output handlers.
+        """
+        super().__init__()
+        self.destination_level = destination_level
+        self._state = state or _OperationalRedactionState()
+
+    def filter(self, record: logging.LogRecord) -> bool | logging.LogRecord:
+        """Return a sanitized record, consuming lower-level records to keep parser state.
+
+        Args:
+            record: Candidate log record dispatched to the output handler.
+        """
+        with self._state.lock:
+            safe_record = copy.copy(record)
+            cache = record.__dict__.get("_atlaso_redacted_messages")
+            if not isinstance(cache, dict):
+                cache = {}
+            state_key = id(self._state)
+            if state_key not in cache:
+                try:
+                    message = record.getMessage()
+                except (AttributeError, IndexError, KeyError, TypeError, ValueError):
+                    message = "[log message formatting failed]"
+                lines, self._state.private = _safe_lines(
+                    [message],
+                    self._state.private,
+                    self._state.parser,
+                )
+                safe_message = "\n".join(lines)
+                if record.exc_info and record.exc_info[0] is not None:
+                    exception_name = record.exc_info[0].__name__
+                    if not exception_name.isascii() or not exception_name.isidentifier():
+                        exception_name = "Error"
+                    safe_message = f"{safe_message} exception_type={exception_name}"
+                cache[state_key] = safe_message
+                record.__dict__["_atlaso_redacted_messages"] = cache
+            else:
+                safe_message = cache[state_key]
+            safe_record.msg = safe_message
+            safe_record.args = ()
+            safe_record.exc_info = None
+            safe_record.exc_text = None
+            safe_record.stack_info = None
+            if record.levelno < self.destination_level:
+                return False
+            return safe_record
+
+
 class _HistoryFileHandler(RotatingFileHandler):
     """Capture App records synchronously before mirroring them to the existing file."""
 
@@ -355,33 +459,82 @@ class _HistoryFileHandler(RotatingFileHandler):
         super().emit(record)
 
 
-def _ensure_file_handler(log_path: Path, level: int, history_path: Path | None = None, writer: str = "web") -> None:
+def _redaction_filter(handler: logging.Handler | None) -> _OperationalRedactionFilter | None:
+    """Find the operational redaction filter attached to a handler.
+
+    Args:
+        handler: Output handler to inspect.
+    """
+    if handler is None:
+        return None
+    return next((item for item in handler.filters if isinstance(item, _OperationalRedactionFilter)), None)
+
+
+def _set_destination_level(
+    handler: logging.Handler,
+    destination_level: int,
+    state: _OperationalRedactionState | None = None,
+) -> None:
+    """Update a destination threshold without resetting redaction state.
+
+    Args:
+        handler: Output handler to update.
+        destination_level: Threshold selected for this destination.
+        state: Shared parser state for an output handler replacement.
+    """
+    # Receive every Atlaso record so filtered low-level PEM markers still update
+    # the stateful sanitizer before the destination threshold is applied.
+    handler.setLevel(logging.DEBUG)
+    redactor = _redaction_filter(handler)
+    if redactor is None:
+        redactor = _OperationalRedactionFilter(destination_level, state)
+        handler.addFilter(redactor)
+    else:
+        with redactor._state.lock:
+            redactor.destination_level = destination_level
+
+
+def _ensure_file_handler(
+    log_path: Path,
+    level: int,
+    history_path: Path | None = None,
+    writer: str = "web",
+) -> None:
     """Ensure file handler.
 
     Args:
         log_path: Filesystem path used for log.
-        level: Level consumed by ensure file handler.
+        level: Minimum file destination level.
         history_path: Optional prepared producer store; absent until explicit capture cutover.
         writer: Fixed process writer slot for producer capture.
     """
     root_logger = logging.getLogger()
+    previous_handler: logging.Handler | None = None
+    previous_redactor: _OperationalRedactionFilter | None = None
     for handler in list(root_logger.handlers):
         if not _handler_is_file(handler):
             continue
         if (Path(getattr(handler, "baseFilename", "")) == log_path
                 and getattr(handler, "history_path", None) == history_path
                 and getattr(handler, "writer", "web") == writer):
-            handler.setLevel(level)
+            _set_destination_level(handler, level)
             return
-        root_logger.removeHandler(handler)
-        handler.close()
+        previous_handler = handler
+        previous_redactor = _redaction_filter(handler)
+    if previous_redactor is None:
+        previous_redactor = _redaction_filter(
+            next((handler for handler in root_logger.handlers if _handler_is_syslog(handler)), None)
+        )
     log_path.parent.mkdir(parents=True, exist_ok=True)
     handler = (_HistoryFileHandler(log_path, history_path, writer) if history_path is not None
                else RotatingFileHandler(log_path, maxBytes=2 * 1024 * 1024, backupCount=3, encoding="utf-8"))
     handler.setFormatter(FORMATTER)
-    handler.setLevel(level)
+    _set_destination_level(handler, level, previous_redactor._state if previous_redactor is not None else None)
     handler._atlaso_file_handler = True  # type: ignore[attr-defined]  # Atlaso adds a private runtime marker to Handler.
     root_logger.addHandler(handler)
+    if previous_handler is not None:
+        root_logger.removeHandler(previous_handler)
+        previous_handler.close()
 
 
 def _ensure_syslog_handler(preferences: LoggingPreferences) -> bool:
@@ -389,22 +542,110 @@ def _ensure_syslog_handler(preferences: LoggingPreferences) -> bool:
 
     Args:
         preferences: Preferences consumed by ensure syslog handler.
-
-
     Returns:
         The ensure syslog handler result.
     """
-    _remove_handlers(_handler_is_syslog)
     if not preferences.syslog_enabled or not preferences.syslog_host:
+        _remove_handlers(_handler_is_syslog)
         return False
+    signature = (
+        preferences.syslog_host,
+        preferences.syslog_port,
+        preferences.syslog_protocol,
+        preferences.syslog_facility,
+    )
+    existing = next((handler for handler in logging.getLogger().handlers if _handler_is_syslog(handler)), None)
+    if existing is not None and getattr(existing, "_atlaso_syslog_configuration", None) == signature:
+        _set_destination_level(existing, _level_number(preferences.syslog_level))
+        return True
+    previous_redactor = _redaction_filter(existing) if existing is not None else _redaction_filter(
+        next((handler for handler in logging.getLogger().handlers if _handler_is_file(handler)), None)
+    )
     socktype = socket.SOCK_STREAM if preferences.syslog_protocol == "tcp" else socket.SOCK_DGRAM
     facility = SysLogHandler.facility_names.get(preferences.syslog_facility, SysLogHandler.LOG_LOCAL0)
     handler = SysLogHandler(address=(preferences.syslog_host, preferences.syslog_port), facility=facility, socktype=socktype)
-    handler.setFormatter(logging.Formatter("atlaso %(levelname)s [%(name)s] %(message)s"))
-    handler.setLevel(_level_number(preferences.syslog_level))
+    handler.setFormatter(_BoundedFormatter("atlaso %(levelname)s [%(name)s] %(message)s"))
+    _set_destination_level(
+        handler,
+        _level_number(preferences.syslog_level),
+        previous_redactor._state if previous_redactor is not None else None,
+    )
+    handler._atlaso_syslog_configuration = signature  # type: ignore[attr-defined]  # Atlaso tracks its owned handler configuration.
     handler._atlaso_syslog_handler = True  # type: ignore[attr-defined]  # Atlaso adds a private runtime marker to Handler.
     logging.getLogger().addHandler(handler)
+    if existing is not None:
+        logging.getLogger().removeHandler(existing)
+        existing.close()
     return True
+
+
+def _configuration_signature(preferences: LoggingPreferences, settings: Any, writer: str) -> tuple[object, ...]:
+    """Return the normalized process logging configuration identity.
+
+    Args:
+        preferences: Validated logging preferences.
+        settings: Current application settings.
+        writer: Fixed producer identity used for history capture.
+    """
+    return (
+        preferences,
+        str(settings.app_log_path),
+        str(settings.app_log_history_path),
+        writer,
+    )
+
+
+def _apply_logging_preferences(
+    preferences: LoggingPreferences,
+    settings: Any,
+    writer: str,
+) -> LoggingPreferences:
+    """Apply one normalized preference snapshot under the process configuration lock.
+
+    Args:
+        preferences: Current normalized logging preferences.
+        settings: Current application path settings.
+        writer: Fixed process producer identity when history capture is enabled.
+
+    Returns:
+        The applied logging preferences.
+    """
+    signature = _configuration_signature(preferences, settings, writer)
+    global _APPLIED_CONFIGURATION
+    with _CONFIGURATION_LOCK:
+        if _APPLIED_CONFIGURATION == signature:
+            return preferences
+        file_level = _level_number(preferences.level)
+        logging.getLogger("atlaso").setLevel(logging.DEBUG)
+        try:
+            _ensure_file_handler(
+                settings.app_log_path,
+                file_level,
+                settings.app_log_history_path,
+                writer,
+            )
+        except OSError:
+            logging.getLogger("atlaso").error(
+                "event=operational_logging_initialization_failed destination=file error_code=file_handler_unavailable"
+            )
+            return preferences
+        configuration_succeeded = True
+        try:
+            syslog_configured = _ensure_syslog_handler(preferences)
+        except OSError:
+            logging.getLogger("atlaso").warning(
+                "event=operational_logging_initialization_failed destination=syslog error_code=syslog_handler_unavailable"
+            )
+            syslog_configured = False
+            configuration_succeeded = False
+        if configuration_succeeded:
+            _APPLIED_CONFIGURATION = signature
+        LOGGER.info(
+            "Atlaso operational logging configured level=%s syslog=%s",
+            preferences.level,
+            "enabled" if syslog_configured else "disabled",
+        )
+        return preferences
 
 
 def configure_operational_logging(db: Session | None = None, *, writer: str = "web") -> LoggingPreferences:
@@ -419,27 +660,34 @@ def configure_operational_logging(db: Session | None = None, *, writer: str = "w
     """
     settings = get_settings()
     preferences = logging_preferences_from_db(db)
-    root_logger = logging.getLogger()
-    file_level = _level_number(preferences.level)
-    root_logger.setLevel(min(file_level, _level_number(preferences.syslog_level) if preferences.syslog_enabled else file_level))
-    try:
-        _ensure_file_handler(settings.app_log_path, file_level, settings.app_log_history_path, writer)
-    except OSError:
-        logging.getLogger("atlaso").exception("Unable to initialize Atlaso app log at %s", settings.app_log_path)
-        return preferences
-    try:
-        syslog_configured = _ensure_syslog_handler(preferences)
-    except OSError as exc:
-        _remove_handlers(_handler_is_syslog)
-        logging.getLogger("atlaso").warning("Unable to initialize external syslog forwarding: %s", exc)
-        syslog_configured = False
-    LOGGER.info(
-        "Atlaso operational logging configured file=%s level=%s syslog=%s",
-        settings.app_log_path,
-        preferences.level,
-        "enabled" if syslog_configured else "disabled",
-    )
-    return preferences
+    return _apply_logging_preferences(preferences, settings, writer)
+
+
+def refresh_logging_preferences(db: Session | None, *, writer: str = "web") -> LoggingPreferences:
+    """Apply persisted preference changes without rebuilding handlers on each refresh.
+
+    Args:
+        db: Active database session used to read current settings.
+        writer: Fixed process producer identity when history capture is enabled.
+
+    Returns:
+        The latest available logging preferences. A failed database read preserves
+        the last applied preferences and handlers.
+    """
+    preferences = _read_logging_preferences(db)
+    if preferences is None:
+        with _CONFIGURATION_LOCK:
+            if _APPLIED_CONFIGURATION is not None:
+                cached = _APPLIED_CONFIGURATION[0]
+                if isinstance(cached, LoggingPreferences):
+                    return cached
+        return LoggingPreferences()
+    settings = get_settings()
+    signature = _configuration_signature(preferences, settings, writer)
+    with _CONFIGURATION_LOCK:
+        if _APPLIED_CONFIGURATION == signature:
+            return preferences
+    return _apply_logging_preferences(preferences, settings, writer)
 
 
 def log_audit_event(event: Any) -> None:

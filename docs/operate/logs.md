@@ -23,6 +23,11 @@ This interface capture uses synthetic test data for visual orientation.
 
 <!-- END GENERATED INTERFACE OVERVIEW -->
 
+Atlaso records significant state changes, execution milestones, failures, incomplete evidence, and recovery outcomes in
+the existing audit, task, and operational log surfaces. Routine page reads, polls, and unchanged healthy observations
+are suppressed. See [Important-event coverage](#important-event-coverage) for event scope, severity, retention, and
+limits.
+
 ## Captured application and HTTP history
 
 Supported provisioning and development deployment prepare producer-owned history for App, KMS, and HTTP logs.
@@ -48,6 +53,80 @@ Signed-release migration runs only after the release has committed and before ma
 A failure at this stage requires forward recovery, not rollback of the selected history. For first adoption from a
 release with the older helper, install the verified new helper through the supported deployment procedure before
 starting the signed update: an already-running older helper cannot execute the newly installed completion hook.
+
+## Important-event coverage
+
+Atlaso records important changes and operation outcomes in its existing Audit, Tasks, and Operational Logs surfaces.
+It does not create a separate task or log for every action. Routine page reads, polls, and repeated unchanged healthy
+observations do not produce operation events.
+
+### Severity and retention
+
+| Level | Record when | Example |
+| --- | --- | --- |
+| `ERROR` | An operation or recovery step fails, or state cannot be safely reconciled. | A failed Apply component or a rollback that could not be proven. |
+| `WARNING` | Evidence is incomplete, an attempt is retried, or an operation ends in a degraded or attention-needed state. | A timed-out helper whose final native state is unknown. |
+| `INFO` | A significant operation starts or reaches a meaningful success, skip, no-op, cancellation, or state transition. | A committed configuration change or completed service update. |
+| `DEBUG` | Additional bounded diagnostic context is useful without carrying essential task evidence. | Extra producer or collector details. |
+
+The Settings page controls the minimum level written to the local App log (`WARNING`, `INFO`, or `DEBUG`); changes
+apply to web, worker, and local console logging at their next browser request, worker pass, or console refresh without
+a restart.
+External syslog has a separate minimum level. At `WARNING`,
+successful `INFO` entries may be absent from the App log; the
+committed Audit event and important task history remain the durable records for their respective events. Essential
+failure, stage, and recovery information belongs in task history and is not conditional on selecting `DEBUG`.
+
+On upgrade, initial task and step records use their persisted lifecycle timestamps. Historical stages without a recorded
+timestamp are omitted from typed events and counted; existing sanitized task text remains available. Subsequent live
+transitions use the observation time.
+
+Task producers retain bounded important-event records with the task. Each task history accepts at most 64 such records;
+older successful entries are removed first, and an omission count reports truncation. Sanitized task text retains an
+8 MiB character window per task; an expired cursor reopens retained history with an explicit notice. Producers store only
+reviewed safe fields
+and bounded execution evidence. App log rotation and service-specific journal/file retention remain separate limits.
+
+### Coverage by operation family
+
+| Important event family | Producer boundary | Existing evidence and useful correlation |
+| --- | --- | --- |
+| Committed UI, API, and console changes | `atlaso/app/audit.py:record_audit`, direct `AuditEvent` producers, and console actions in `atlaso/app/appliance_console.py` | Audit actor, action, resource, outcome, and request/task ID when available; significant committed events are mirrored to App Logs after commit. Use the Audit log for attribution. |
+| Apply and configuration activation | `atlaso/app/ui.py:run_appliance_apply_job` and the per-component Apply producer | Task and component history preserve selected work, validation decisions, stage outcomes, skipped units, cancellation, handoff result, rollback, and recovery. Correlate the master task ID with Logs and Audit. |
+| Appliance updates and deployments | `atlaso/app/ui.py:execute_appliance_update_job`, the worker update handler, and VCF workflow task producers | Parent/child tasks retain stream or workflow milestones, final results, retries, interruption, cleanup, and rollback evidence reported by the producer. VCF Offline Depot also has its task log. |
+| Scheduled and managed automation | `atlaso/app/services/automation.py:enqueue_due_schedules` and `atlaso/app/worker.py` task handlers | Schedule identity, planned time, queued/started/terminal status, skipped prerequisites or collisions, script revision, bounded result, and cancellation/recovery where supplied. Task history is the primary execution record. |
+| Diagnostics and support bundles | `atlaso/app/services/diagnostics.py` and `atlaso/diagnostics.py` | A task-correlated bounded projection records collection outcome, source omissions, and typed safe failure context. A bundle remains observational and is never uploaded automatically. |
+| Network, service, storage, identity, certificate, and VCF helper work | Domain service producers through `atlaso/app/adapters/system.py:SystemAdapter` | Task or audit history records the significant action and the safe stage/result returned by its producer. Native journals remain a separate evidence source with their own availability and retention. |
+| Cancellation, interruption, startup recovery, and cleanup | `atlaso/app/services/task_cancellation.py`, `atlaso/app/main.py:lifespan`, `atlaso/app/worker.py:recover_interrupted_worker_jobs`, and domain recovery functions | Task status/outcome and important events retain the requested and confirmed disposition, cleanup state, and recovery outcome when known. A cancellation request alone does not prove that work stopped. |
+
+This coverage policy selects significant milestones, transitions, failures, and recoveries. It does not promise that every
+native service exposes a detailed explanation, or that a helper's return code identifies the underlying cause. When a
+producer has only a stage and exit status, the record must say what is known and leave the cause unknown. Do not infer
+successful execution or rollback from a generic failure message, a healthy status captured later, or the absence of a
+journal entry.
+
+### Journal and collector evidence
+
+Collector results distinguish evidence that is unavailable from evidence that was collected and contained no matching
+entries. Relevant bounded reason categories include source missing or unreadable, permission denied, collection timed
+out, malformed/unsupported helper response, truncation or output limit, and helper/collector compatibility failure.
+Each omission is attached to its source and collection outcome. An unavailable source never means the service is healthy.
+
+Task projections use reviewed typed fields; they do not export arbitrary exception text, command lines, stderr, raw
+database rows, raw journal messages, or unrestricted request bodies. Credentials, authenticated URLs, session material,
+private keys, password hashes, and credential verifiers remain excluded. Secret-safe operational identifiers may be
+included when they are not paired with authentication or cryptographic material.
+
+### Follow an incident
+
+1. Open **Tasks** and note the task ID, failed or skipped stage, timestamp, bounded reason, and any recovery result.
+2. Open **Operational Logs** and filter around that time and component; search by the same task ID where present.
+3. Open the **Audit log** to identify the actor and committed state changes that preceded the operation.
+4. In a support bundle, inspect the task projection and each source omission/reason. Treat missing evidence as unknown.
+5. Follow the owning service's verification or recovery procedure before concluding that runtime state changed.
+
+See [Tasks](tasks.md), [Audit log](audit-log.md), [Appliance Apply](appliance-apply.md), and
+[Diagnostic collectors](../contribute/diagnostic-collectors.md).
 
 ## Investigate a problem
 
@@ -117,10 +196,25 @@ Manual history navigation remains available afterward. Only retained output is a
 entries removed by retention or never captured by
 the producing command cannot be recovered by the viewer. Downloaded log files are snapshots taken at download time.
 
+Important task events are retained with the task independently of the App log level. They include bounded stage,
+outcome, and safe failure or recovery detail supplied by the producer. Each task retains up to 64 important-event
+records; if the producer exceeds that limit, the history reports truncation. A task record may identify a failed stage
+and helper return code while the underlying native service still reports no more specific safe cause.
+
+The **Operational Logs** setting controls the minimum level written to the local App log. Choose `INFO` to include
+significant successful milestones and state changes, `WARNING` for incomplete or degraded outcomes, or `DEBUG` for
+additional diagnostic records. Changing this setting does not remove task events or audit history. External syslog has
+its own minimum level; configure a secret-free host and protect the receiver according to your site policy.
+
 1. Set a narrow time window around the observed failure.
 2. Filter by severity and the affected Atlaso component.
 3. Correlate task identifiers with [Tasks](tasks.md) and operator actions with the [Audit log](audit-log.md).
 4. Record the smallest sanitized excerpt that explains the failure.
+
+For an operation failure, start with the task ID and inspect its ordered events and final result, then correlate that ID
+and the time window in Logs. Use the Audit log for actor and committed state-change attribution. For a support bundle,
+review the task failure projection and each collector omission or source-reason code; a missing journal is unavailable
+evidence, not a healthy result.
 
 The UI intentionally avoids presenting credentials and secret-bearing command lines. If a log entry appears to contain
 sensitive data, do not publish it; follow the private process in the repository security policy.

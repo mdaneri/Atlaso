@@ -23,7 +23,7 @@ from uuid import uuid4
 from atlaso.app.services.log_sanitization import _safe_lines, redact_operational_text
 
 SOURCES = frozenset({"app", "kms", "nginx-access", "nginx-error"})
-WRITERS = {"app": frozenset({"web", "worker"}), "kms": frozenset({"service"}),
+WRITERS = {"app": frozenset({"web", "worker", "console"}), "kms": frozenset({"service"}),
            "nginx-access": frozenset({"service"}), "nginx-error": frozenset({"service"})}
 BATCH_BYTES = 1024 * 1024
 RETAINED_BYTES = 8 * BATCH_BYTES

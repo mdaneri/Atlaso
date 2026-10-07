@@ -58,7 +58,6 @@ to a mirrored management default uses the same handoff. Each WAN unit executes f
 When effective source NAT or port forwarding depends on changed Network and WAN state, reviewing Network also
 selects and locks **Routing & WAN**. The review validates that WAN candidate before submission, so required changes
 and any blocking errors are visible together.
-
 **Routing & WAN** owns routing and WAN simulation; **Traffic Publishing** owns source NAT and port forwarding.
 Turning either feature off removes its runtime state while preserving saved rows. NAT is **suspended** while Routing
 is off. Port forwards couple Firewall and Traffic Publishing, including when deleting the last mapping; service edits
@@ -100,7 +99,6 @@ If another session starts an Apply after the current one, the monitor finishes t
 
 Components run sequentially. On failure, Atlaso marks the rest **skipped**. Writes are locked while a master task
 is pending or running; read-only pages, task inspection, authentication, and safe cancellation remain available.
-
 A management-path change is the exception to independent component execution. Atlaso selects Certificate Authority,
 Network, Firewall, Appliance Settings, and Public Services together after all other dependencies expand, then runs one
 recoverable handoff. It retains the previous addresses, listener, firewall policy, and TLS identity until bounded Atlaso
@@ -122,7 +120,6 @@ lock when the master task becomes terminal.
 An ordinary Appliance Settings Apply keeps management access online without restarting the Atlaso worker. It checks
 the front door before and after activation and restores the previous configuration if readiness fails. See the
 [technical reference](../reference/appliance-apply-technical.md) for durable recovery and interruption handling.
-
 The dialog still understands the bounded **Applying management settings; Atlaso is reconnecting to task status.** state
 when following a retained task created by an older release that contains authenticated restart metadata. Current
 Appliance Settings tasks do not create that restart window.
@@ -150,7 +147,6 @@ If enabling Management HTTPS creates a pending CA-managed certificate, the revie
 installs its files before **Appliance Settings**. Changing the management HTTP/HTTPS mode or public listener port uses
 the protected handoff to recompute Network, Firewall, and Public Services listeners together. If Network has separate
 pending edits, select Network explicitly with Appliance Settings before submitting that change.
-
 Examples include checking service health, resolving a managed DNS name, reaching the intended listener, or confirming
 installed configuration from the appliance console. Use the service-specific procedure; a green UI status is insufficient.
 
@@ -159,10 +155,15 @@ the command intent; it does not prove that Photon services changed.
 
 ## Recover from a failed apply
 
-1. Open the failed component and read its validation, error, and redacted command output.
+1. Open the failed component and read its validation, ordered task events, error, and redacted command output.
 2. Correct the desired state on the owning service page.
 3. Review pending units again; successful units keep their baselines, while failed and skipped changes remain pending.
 4. Submit only the units required for the corrected run.
+
+Tasks retain bounded Apply stage, component, skip, cancellation, handoff, and recovery events at every log level.
+Correlate their task IDs and timestamps with [Operational Logs](logs.md) and the [Audit log](audit-log.md).
+Safe helper stages and return codes may be retained while the cause remains unknown. See
+[Important-event coverage](logs.md#important-event-coverage) for retained evidence and limits.
 
 If Atlaso restarts during an ordinary apply, startup fails the running child and master task, skips pending children,
 and releases the global lock. For an interrupted management handoff, the privileged helper first stops and verifies any
@@ -175,7 +176,6 @@ restart occurs after that database commit, startup idempotently acknowledges the
 claiming a rollback. A failed task whose helper acknowledgement or rollback is not proven retains the global Apply lock
 until startup or immediate exception recovery reconciles that state, even when an older task payload lacks the newer
 pending marker. Review the task before resubmitting.
-
 If a selected unit changes before execution, Atlaso rejects the task and asks for a new review.
 
 ## Safety boundaries

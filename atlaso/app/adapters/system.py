@@ -1,12 +1,54 @@
 """Translate validated operations into dry-run records or helper calls."""
 
 import json
+import logging
 import os
 import subprocess
+import threading
 from dataclasses import dataclass
 from pathlib import Path
 
 from atlaso.app.config import get_settings
+from atlaso.important_events import COMPONENTS, failure_reason
+
+_HELPER_OBSERVATIONS: dict[tuple[str, str], tuple[int, str]] = {}
+_HELPER_LOG_LOCK = threading.Lock()
+
+
+def _log_helper_outcome(group: str, action: str, result: "AdapterResult") -> None:
+    """Record safe execution outcomes and observation transitions without raw output.
+
+    Args:
+        group: Server-owned helper group.
+        action: Server-owned helper action; only fixed stage names are logged.
+        result: Result whose raw command/streams remain excluded from this event.
+    """
+    component = group.replace("-", "_")
+    component = component if component in COMPONENTS else "task"
+    stage = "validation" if action.startswith("validate") else "recovery" if action.startswith("recover") else "cleanup" if action in {"cleanup", "reset-tool"} else "execution"
+    observing = action in {"status", "logs", "leases", "access-logs", "error-logs", "source", "read-log", "check",
+                           "page", "inventory", "address-status", "dhcp-dns", "capabilities", "verify-pool",
+                           "read-software-depot-id", "status-inspect", "restart-inspect"}
+    reason = failure_reason(result.stderr, result.returncode) if result.returncode else "none"
+    if stage == "validation" and reason == "helper_failed":
+        reason = "validation_rejected"
+    with _HELPER_LOG_LOCK:
+        if observing:
+            key = (component, action)
+            previous = _HELPER_OBSERVATIONS.get(key)
+            current = (result.returncode, reason)
+            _HELPER_OBSERVATIONS[key] = current
+            if previous == current or (previous is None and not result.returncode):
+                return
+            stage = "readiness"
+    try:
+        logging.getLogger("atlaso.helper").log(
+            logging.ERROR if result.returncode and not observing else logging.WARNING if result.returncode else logging.INFO,
+            "component=%s stage=%s outcome=%s reason=%s returncode=%s",
+            component, stage, "failed" if result.returncode else "succeeded", reason, result.returncode,
+        )
+    except Exception:  # noqa: BLE001 - log unavailability must not change an already executed helper outcome.
+        pass
 
 
 @dataclass(frozen=True)
@@ -1438,23 +1480,29 @@ class SystemAdapter:
         try:
             completed = subprocess.run(command, **run_kwargs)
         except OSError as exc:
-            return AdapterResult(
+            result = AdapterResult(
                 command=command,
                 dry_run=False,
                 stderr=f"Unable to execute {' '.join(command)}: {exc}",
                 returncode=127,
             )
+            _log_helper_outcome(group, action, result)
+            return result
         except subprocess.TimeoutExpired:
-            return AdapterResult(
+            result = AdapterResult(
                 command=command,
                 dry_run=False,
                 stderr=f"{' '.join(command)} timed out after {timeout_seconds} seconds",
                 returncode=124,
             )
-        return AdapterResult(
+            _log_helper_outcome(group, action, result)
+            return result
+        result = AdapterResult(
             command=command,
             dry_run=False,
             stdout=completed.stdout,
             stderr=completed.stderr,
             returncode=completed.returncode,
         )
+        _log_helper_outcome(group, action, result)
+        return result

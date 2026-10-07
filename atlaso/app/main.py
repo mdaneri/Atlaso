@@ -272,21 +272,33 @@ def create_app() -> FastAPI:
             request: Incoming HTTP request.
             call_next: Call next supplied by the caller.
         """
-        request.state.request_id = request.headers.get("X-Request-ID", f"req_{uuid4().hex[:12]}")
+        # Correlation must never reflect arbitrary header content into logs.
+        request.state.request_id = f"req_{uuid4().hex[:12]}"
+        from atlaso.app.operational_logging import refresh_logging_preferences
+
+        # Machine/static contracts use the current handlers without a UI DB lookup.
+        if not is_protocol_path(request.scope.get("path", request.url.path)):
+            with SessionLocal() as logging_db:
+                refresh_logging_preferences(logging_db)
         try:
             response = await call_next(request)
         except Exception:
-            REQUEST_LOGGER.exception(
-                "Unhandled request exception request_id=%s method=%s path=%s",
+            REQUEST_LOGGER.error(
+                "Unhandled request failure request_id=%s method=%s route=%s; raw exception omitted",
                 request.state.request_id,
                 request.method,
-                redacted_request_path(request.url.path),
+                getattr(request.scope.get("route"), "name", "unmatched"),
             )
             if request.url.path.startswith(("/pxe/esxi/ks/", "/pxe/esxi/claim/")):
                 request.scope["path"] = redacted_request_path(request.url.path)
                 request.scope["raw_path"] = request.scope["path"].encode("ascii")
                 request.scope["query_string"] = b""
             raise
+        if request.method.upper() not in {"GET", "HEAD", "OPTIONS"} and response.status_code >= 400:
+            endpoint = request.scope.get("route")
+            REQUEST_LOGGER.warning("Request rejected request_id=%s method=%s route=%s status=%s",
+                                   request.state.request_id, request.method,
+                                   getattr(endpoint, "name", "unmatched"), response.status_code)
         response.headers["X-Request-ID"] = request.state.request_id
         if request.url.path.startswith(("/pxe/esxi/ks/", "/pxe/esxi/claim/")):
             request.scope["path"] = redacted_request_path(request.url.path)

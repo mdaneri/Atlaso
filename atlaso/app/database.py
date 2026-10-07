@@ -1,9 +1,11 @@
 """Configure database sessions and perform bounded startup reconciliation."""
 
 import json
+import logging
 from collections.abc import Generator
 from datetime import datetime, timezone
 from pathlib import Path
+from types import SimpleNamespace
 
 from sqlalchemy import create_engine, delete, event, inspect, select, text
 from sqlalchemy.engine import Connection, Engine
@@ -511,12 +513,24 @@ def _collect_task_history(session: Session, _context, _instances) -> None:
         _context: SQLAlchemy flush context.
         _instances: Optional flush targets.
     """
-    from atlaso.app.models import AuditEvent, Job, TaskLogCheckpoint, TaskLogChunk
+    from atlaso.app.models import (
+        AuditEvent,
+        Job,
+        JobStep,
+        TaskLogCheckpoint,
+        TaskLogChunk,
+    )
 
     jobs = {item.id for item in session.new | session.dirty if isinstance(item, Job)}
+    jobs.update(item.job_id for item in session.new | session.dirty if isinstance(item, JobStep) and item.job_id)
     results = {item.id for item in session.new | session.dirty
                if isinstance(item, Job) and (item in session.new or inspect(item).attrs.result.history.has_changes())}
+    results.update(item.job_id for item in session.new | session.dirty
+                   if isinstance(item, JobStep) and item.job_id
+                   and (item in session.new or inspect(item).attrs.result.history.has_changes()))
     audits = [item for item in session.new if isinstance(item, AuditEvent) and item.resource_type == "job"]
+    session.info["important_audits_flush"] = [item for item in session.new if isinstance(item, AuditEvent)
+                                               and not getattr(item, "_atlaso_deferred_operational", False)]
     jobs.update(item.resource_id for item in audits if item.resource_id)
     deleted = {item.id for item in session.deleted if isinstance(item, Job)}
     for job_id in deleted:
@@ -537,8 +551,99 @@ def _capture_flushed_task_history(session: Session, _context) -> None:
 
     jobs, audits, results = session.info.pop("task_history_flush", (set(), [], set()))
     for job_id in sorted(jobs):
-        capture_task_history(session.connection(), job_id, tuple(item.id for item in audits if item.resource_id == job_id),
-                             result_changed=job_id in results)
+        events = capture_task_history(session.connection(), job_id, tuple(item.id for item in audits if item.resource_id == job_id),
+                                      result_changed=job_id in results)
+        session.info.setdefault("important_events_commit", []).extend((job_id, item) for item in events)
+    for item in session.info.pop("important_audits_flush", []):
+        snapshot = SimpleNamespace(**{key: getattr(item, key) for key in (
+            "actor", "action", "resource_type", "resource_id", "success", "detail", "request_id")})
+        session.info.setdefault("important_audits_commit", []).append(snapshot)
+
+
+@event.listens_for(Session, "after_transaction_create")
+def _snapshot_important_events_for_savepoint(session: Session, transaction) -> None:
+    """Remember the outer event queue boundary for a nested transaction.
+
+    Args:
+        session: Session whose nested transaction was created.
+        transaction: Newly-created SQLAlchemy transaction.
+    """
+    if not transaction.nested:
+        return
+    snapshots = session.info.setdefault("important_event_savepoints", {})
+    snapshots[transaction] = (
+        len(session.info.get("important_events_commit", [])),
+        len(session.info.get("important_audits_commit", [])),
+    )
+
+
+@event.listens_for(Session, "after_commit")
+def _publish_committed_important_events(session: Session) -> None:
+    """Mirror significant committed records, retaining durable evidence on log failure.
+
+    Args:
+        session: Producer session whose transaction has committed.
+    """
+    if session.in_nested_transaction():
+        transaction = session.get_nested_transaction()
+        session.info.get("important_event_savepoints", {}).pop(transaction, None)
+        return
+    from atlaso.app.operational_logging import log_audit_event
+    from atlaso.important_events import format_event
+
+    session.info.pop("important_event_savepoints", None)
+    events = session.info.pop("important_events_commit", [])
+    audits = session.info.pop("important_audits_commit", [])
+    try:
+        for job_id, item in events:
+            logging.getLogger("atlaso.tasks").log(getattr(logging, item["severity"]), "task_id=%s %s", job_id, format_event(item))
+        for audit in audits:
+            log_audit_event(audit)
+    except Exception:  # noqa: BLE001 - logging cannot reverse a committed producer transaction.
+        # Task checkpoints and audit attribution remain available for diagnostics.
+        pass
+
+
+@event.listens_for(Session, "after_rollback")
+def _discard_uncommitted_important_events(session: Session) -> None:
+    """Discard aborted mirrors so rollback never reports an uncommitted success.
+
+    Args:
+        session: Producer session abandoning its transaction.
+    """
+    if session.in_nested_transaction():
+        return
+    for key in ("important_events_commit", "important_audits_commit", "important_audits_flush"):
+        session.info.pop(key, None)
+    session.info.pop("important_event_savepoints", None)
+
+
+@event.listens_for(Session, "after_soft_rollback")
+def _discard_rolled_back_savepoint_events(session: Session, previous_transaction) -> None:
+    """Discard only mirror entries added inside a rolled-back savepoint.
+
+    Args:
+        session: Session whose transaction boundary was rolled back.
+        previous_transaction: Closed transaction whose changes were reverted.
+    """
+    snapshots = session.info.get("important_event_savepoints", {})
+    boundary = snapshots.pop(previous_transaction, None)
+    if boundary is not None:
+        event_count, audit_count = boundary
+        events = session.info.get("important_events_commit")
+        if events is not None:
+            del events[event_count:]
+        audits = session.info.get("important_audits_commit")
+        if audits is not None:
+            del audits[audit_count:]
+    for transaction in tuple(snapshots):
+        parent = transaction
+        while parent is not None and parent is not previous_transaction:
+            parent = parent.parent
+        if parent is previous_transaction:
+            snapshots.pop(transaction, None)
+    if not snapshots:
+        session.info.pop("important_event_savepoints", None)
 
 
 def init_db() -> None:

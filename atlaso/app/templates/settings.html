@@ -152,7 +152,7 @@
     <form class="form-stack" action="{{ management_ui_root }}/settings/logging" method="post" data-autosave-form data-autosave-status-id="logging-settings-autosave-status">
       <input type="hidden" name="csrf" value="{{ csrf_token }}">
       <label>
-        <span class="field-label"><span>File verbosity</span><button class="help-icon" type="button" data-help="Controls how much Atlaso writes to the local app log. INFO records compact configuration and state events; DEBUG adds extra diagnostic detail where safe.">i</button></span>
+        <span class="field-label"><span>Log level</span><button class="help-icon" type="button" data-help="Applies to the App log in the web, worker and local console. INFO records significant milestones and state changes; WARNING retains warnings and errors; DEBUG adds safe diagnostic detail. Essential task evidence and audit history remain retained at every level.">i</button></span>
         <select name="level">
           {% for option in logging_preferences.levels %}
             <option value="{{ option }}" {{ "selected" if logging_preferences.level == option else "" }}>{{ option }}</option>

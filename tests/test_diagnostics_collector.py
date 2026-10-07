@@ -350,7 +350,123 @@ def test_journal_limit_reaches_manifest_and_summary(tmp_path, monkeypatch, count
     assert entry["status"] == ("truncated" if count == 2 else "success")
     with zipfile.ZipFile(io.BytesIO(data)) as archive:
         assert (b"journal-atlaso: truncated" in archive.read("summary.txt")) == (count == 2)
-        assert json.loads(archive.read(entry["path"]))["possibly_truncated"] == (count == 2)
+        journal = json.loads(archive.read(entry["path"]))
+        assert journal["possibly_truncated"] == (count == 2)
+        assert journal["availability"] == ("truncated" if count == 2 else "available")
+
+
+@pytest.mark.parametrize(("journal_output", "unit_state", "expected"), [
+    ("", "loaded", "no_entries"),
+    ("", "not-found", "source_missing"),
+    ("{malformed", "loaded", "malformed_data"),
+])
+def test_journal_distinguishes_empty_missing_and_malformed_sources(
+    tmp_path, monkeypatch, journal_output, unit_state, expected,
+):
+    """Keep absent journal rows distinct from missing sources and malformed output.
+
+    Args:
+        tmp_path: Isolated database fixture directory.
+        monkeypatch: Fixture restoring synthetic command responses.
+        journal_output: Fixed structured journal output fixture.
+        unit_state: Fixed unit load-state fixture.
+        expected: Expected safe source status.
+    """
+    monkeypatch.setattr("atlaso.diagnostics.os.geteuid", lambda: 0, raising=False)
+    collector = Collector(Options.parse({"detailed_logs": True}), database=tmp_path / "missing.db")
+
+    def command(args):
+        """Return fixed fixture output for the requested source command.
+
+        Args:
+            args: Fixed collector command arguments.
+        """
+        if args[0] == "journalctl":
+            return journal_output
+        if args[0] == "systemctl":
+            return unit_state
+        return "ActiveState=active"
+
+    monkeypatch.setattr(collector, "command", command)
+    _, manifest = collector.capture()
+    entry = next(item for item in manifest["collectors"] if item["collector"] == "journal-atlaso")
+    assert entry["status"] == expected
+    assert entry["reason"]
+
+
+@pytest.mark.parametrize(("failure", "expected"), [
+    (PermissionError("TOPSECRET"), "permission_denied"),
+    (EvidenceError("timed_out"), "timed_out"),
+    (EvidenceError("command_missing"), "command_missing"),
+])
+def test_journal_permission_and_timeout_are_explicit(tmp_path, monkeypatch, failure, expected):
+    """Expose fixed collector failure categories without copying exception text.
+
+    Args:
+        tmp_path: Isolated database fixture directory.
+        monkeypatch: Fixture restoring synthetic command responses.
+        failure: Synthetic source error.
+        expected: Safe manifest status.
+    """
+    monkeypatch.setattr("atlaso.diagnostics.os.geteuid", lambda: 0, raising=False)
+    collector = Collector(Options.parse({"detailed_logs": True}), database=tmp_path / "missing.db")
+
+    def command(args):
+        """Raise the configured source failure or return a healthy unit fixture.
+
+        Args:
+            args: Fixed collector command arguments.
+        """
+        if args[0] == "journalctl":
+            raise failure
+        return "ActiveState=active"
+
+    monkeypatch.setattr(collector, "command", command)
+    _, manifest = collector.capture()
+    entry = next(item for item in manifest["collectors"] if item["collector"] == "journal-atlaso")
+    assert entry["status"] == expected
+    assert "TOPSECRET" not in json.dumps(entry)
+
+
+def test_journal_rejects_incompatible_helper_envelopes(monkeypatch):
+    """Reject helper output that predates the explicit journal outcome contract.
+
+    Args:
+        monkeypatch: Fixture restoring the privilege boundary fixture.
+    """
+    collector = Collector(Options.parse({"detailed_logs": True}))
+    monkeypatch.setattr("atlaso.diagnostics.os.name", "posix")
+    monkeypatch.setattr("atlaso.diagnostics.os.geteuid", lambda: 1000, raising=False)
+    monkeypatch.setattr(collector, "command", lambda args: json.dumps({
+        "source": "journal-atlaso", "evidence": {"availability": "available", "events": "invalid"},
+    }))
+    evidence = collector.journal("atlaso")
+    assert evidence["availability"] == "helper_incompatible"
+
+
+def test_journal_accepts_valid_privileged_helper_envelope(monkeypatch):
+    """Retain typed events carried through the installed helper contract.
+
+    Args:
+        monkeypatch: Fixture restoring the privilege boundary fixture.
+    """
+    collector = Collector(Options.parse({"detailed_logs": True, "log_lines": 2, "anonymize": True}))
+    monkeypatch.setattr("atlaso.diagnostics.os.name", "posix")
+    monkeypatch.setattr("atlaso.diagnostics.os.geteuid", lambda: 1000, raising=False)
+    baseline_hostname = collector.projection.identifier("appliance.example", "hostname")
+    event = {"timestamp_us": 1_799_300_000_000_000, "priority": 3, "unit": "atlaso",
+             "category": "connection_refused", "hostname": "appliance.example", "message": "TOPSECRET"}
+    evidence = {"availability": "available", "events": [event], "limit": 2,
+                "possibly_truncated": False, "unsafe": "TOPSECRET"}
+    monkeypatch.setattr(collector, "command", lambda args: json.dumps({"source": "journal-atlaso", "evidence": evidence}))
+    projected = collector.journal("atlaso")
+    assert projected["availability"] == "available"
+    assert projected["events"][0]["hostname"] == baseline_hostname
+    assert len(collector.projection.aliases) == 1
+    assert collector.projection.render(json.dumps([
+        baseline_hostname, projected["events"][0]["hostname"],
+    ]).encode()) == b'["hostname0001", "hostname0001"]'
+    assert '"message"' not in json.dumps(projected) and "TOPSECRET" not in json.dumps(projected)
 
 
 def test_recovery_does_not_import_application_database():
@@ -389,6 +505,122 @@ def test_readonly_database_projection_excludes_task_payloads(tmp_path, task_id, 
     assert evidence["tasks"][0]["status"] == status
     assert evidence["tasks"][0]["id"] == task_id
     assert path.read_bytes() == before
+
+
+def test_checkpoint_projects_bounded_typed_events_and_omission_count(tmp_path):
+    """Export only validated important events from the correlated task checkpoint.
+
+    Args:
+        tmp_path: Isolated database fixture directory.
+    """
+    path = tmp_path / "checkpoint.db"
+    event = {
+        "schema": 1, "at": "2026-10-06T20:20:54Z", "severity": "ERROR", "component": "network",
+        "stage": "execution", "outcome": "failed", "reason": "helper_failed", "returncode": 7,
+        "message": "password=TOPSECRET https://user:token@private.example", "token": "TOPSECRET",
+    }
+    with sqlite3.connect(path) as db:
+        db.executescript(
+            "CREATE TABLE jobs(id TEXT,type TEXT,status TEXT,created_at TEXT,started_at TEXT,finished_at TEXT,result TEXT,error TEXT);"
+            "CREATE TABLE task_log_checkpoints(job_id TEXT,state_json TEXT,end_offset INTEGER);"
+        )
+        db.execute("INSERT INTO jobs VALUES(?,?,?,?,?,?,?,?)", (
+            "job_123456abcdef", "appliance-apply", "failed", "2026-10-06 20:20:53", None, None,
+            "password=TOPSECRET", "https://user:token@private.example",
+        ))
+        db.execute("INSERT INTO task_log_checkpoints VALUES(?,?,0)", (
+            "job_123456abcdef", json.dumps({
+                "important_events": [event], "important_events_omitted": 3,
+                "unrelated_safe_result": "A" * 300_000,
+            }),
+        ))
+    evidence = Collector(Options.parse({
+        "correlation_id": "job_123456abcdef", "since": "2026-10-06T20:00:00Z", "until": "2026-10-06T21:00:00Z",
+    }), database=path).database_evidence()
+    task = evidence["tasks"][0]
+    encoded = json.dumps(task)
+    assert task["important_events_status"] == "truncated"
+    assert task["important_events_omitted"] == 3
+    assert task["important_events"][0]["reason"] == "helper_failed"
+    assert task["important_events"][0]["returncode"] == 7
+    assert task["important_events"][0]["explanation"]
+    assert "TOPSECRET" not in encoded and "private.example" not in encoded and "message" not in encoded
+
+
+def test_checkpoint_reports_legacy_and_invalid_event_evidence_unavailable(tmp_path):
+    """Identify legacy checkpoint data without trusting malformed typed content.
+
+    Args:
+        tmp_path: Isolated database fixture directory.
+    """
+    path = tmp_path / "legacy-checkpoint.db"
+    with sqlite3.connect(path) as db:
+        db.executescript(
+            "CREATE TABLE jobs(id TEXT,type TEXT,status TEXT,created_at TEXT,started_at TEXT,finished_at TEXT);"
+            "CREATE TABLE task_log_checkpoints(job_id TEXT,state_json TEXT,end_offset INTEGER);"
+        )
+        db.execute("INSERT INTO jobs VALUES('job_123456abcdef','appliance-apply','failed','2026-10-06 20:20:53',NULL,NULL)")
+        db.execute("INSERT INTO task_log_checkpoints VALUES('job_123456abcdef',?,0)", (json.dumps({"old_state": "TOPSECRET"}),))
+    evidence = Collector(Options.parse({
+        "correlation_id": "job_123456abcdef", "since": "2026-10-06T20:00:00Z", "until": "2026-10-06T21:00:00Z",
+    }), database=path).database_evidence()
+    task = evidence["tasks"][0]
+    assert task["important_events_status"] == "evidence_unavailable"
+    assert task["important_events"] == []
+    assert task["important_events_omitted"] is None
+    assert "TOPSECRET" not in json.dumps(evidence)
+
+
+def test_checkpoint_malformed_json_is_unavailable_without_exporting_state(tmp_path):
+    """Keep malformed checkpoint state out of the support archive.
+
+    Args:
+        tmp_path: Isolated database fixture directory.
+    """
+    path = tmp_path / "malformed-checkpoint.db"
+    with sqlite3.connect(path) as db:
+        db.executescript(
+            "CREATE TABLE jobs(id TEXT,type TEXT,status TEXT,created_at TEXT,started_at TEXT,finished_at TEXT);"
+            "CREATE TABLE task_log_checkpoints(job_id TEXT,state_json TEXT,end_offset INTEGER);"
+        )
+        db.execute("INSERT INTO jobs VALUES('job_123456abcdef','appliance-apply','failed','2026-10-06 20:20:53',NULL,NULL)")
+        db.execute("INSERT INTO task_log_checkpoints VALUES('job_123456abcdef',?,0)", ('{password="TOPSECRET"',))
+    evidence = Collector(Options.parse({
+        "correlation_id": "job_123456abcdef", "since": "2026-10-06T20:00:00Z", "until": "2026-10-06T21:00:00Z",
+    }), database=path).database_evidence()
+    task = evidence["tasks"][0]
+    assert task["important_events_status"] == "evidence_unavailable"
+    assert task["important_events"] == []
+    assert "TOPSECRET" not in json.dumps(evidence)
+
+
+def test_checkpoint_event_limit_and_invalid_entries_are_counted(tmp_path):
+    """Bound projected events and explicitly count invalid and excess entries.
+
+    Args:
+        tmp_path: Isolated database fixture directory.
+    """
+    path = tmp_path / "bounded-checkpoint.db"
+    valid = {"schema": 1, "at": "2026-10-06T20:20:54+00:00", "severity": "INFO", "component": "task",
+             "stage": "completed", "outcome": "succeeded", "reason": "none", "returncode": None}
+    invalid = {**valid, "reason": "raw exception: TOPSECRET"}
+    events = [valid] * 63 + [invalid] + [valid] * 4
+    with sqlite3.connect(path) as db:
+        db.executescript(
+            "CREATE TABLE jobs(id TEXT,type TEXT,status TEXT,created_at TEXT,started_at TEXT,finished_at TEXT);"
+            "CREATE TABLE task_log_checkpoints(job_id TEXT,state_json TEXT,end_offset INTEGER);"
+        )
+        db.execute("INSERT INTO jobs VALUES('job_123456abcdef','maintenance','succeeded','2026-10-06 20:20:53',NULL,NULL)")
+        db.execute("INSERT INTO task_log_checkpoints VALUES('job_123456abcdef',?,0)", (
+            json.dumps({"important_events": events, "important_events_omitted": 2}),
+        ))
+    evidence = Collector(Options.parse({
+        "correlation_id": "job_123456abcdef", "since": "2026-10-06T20:00:00Z", "until": "2026-10-06T21:00:00Z",
+    }), database=path).database_evidence()
+    task = evidence["tasks"][0]
+    assert len(task["important_events"]) == 63
+    assert task["important_events_omitted"] == 7
+    assert "TOPSECRET" not in json.dumps(evidence)
 
 
 def test_optional_sources_project_identifiers_and_reject_payloads(monkeypatch, tmp_path):
@@ -462,6 +694,26 @@ def test_command_overflow_and_deadline_kill_child(monkeypatch):
     with pytest.raises(EvidenceError, match="timed_out"):
         collector.command(["python", "-c", "import time; time.sleep(30)"])
     assert time.monotonic() - started < 5
+
+
+def test_journalctl_permission_stderr_is_classified_without_leaking_text(monkeypatch):
+    """Classify only a bounded known permission signal from journalctl stderr.
+
+    Args:
+        monkeypatch: Fixture restoring executable lookup.
+    """
+    monkeypatch.setattr("atlaso.diagnostics.shutil.which", lambda *args, **kwargs: sys.executable)
+    collector = Collector(Options.parse({}))
+    script = "import sys; sys.stderr.write('synthetic-secret permission denied'); sys.exit(1)"
+    with pytest.raises(EvidenceError) as journal_error:
+        collector.command(["journalctl", "-c", script])
+    assert journal_error.value.status == "permission_denied"
+    assert "synthetic-secret" not in str(journal_error.value)
+
+    with pytest.raises(EvidenceError) as other_error:
+        collector.command(["systemctl", "-c", script])
+    assert other_error.value.status == "unavailable"
+    assert "synthetic-secret" not in str(other_error.value)
 
 
 def test_collector_statuses_cover_application_job_states():

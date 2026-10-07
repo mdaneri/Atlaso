@@ -35,6 +35,11 @@ Apply and startup enforce mutual exclusion; health requires actual synchronizati
 [Appliance Update](docs/operate/appliance-update.md) follows one durable task through service restarts and recovery,
 with automatic browser status navigation and a final result backed by active-release and service checks.
 
+For troubleshooting, correlate significant operation events across [Tasks](docs/operate/tasks.md),
+[Operational Logs](docs/operate/logs.md), and the [Audit log](docs/operate/audit-log.md). The
+[important-event coverage guide](docs/operate/logs.md#important-event-coverage) explains which milestones are retained,
+how verbosity affects App logs, and where native evidence can remain incomplete.
+
 [vSphere Key Providers](docs/services/vsphere-key-providers.md) starts enrollment in vCenter, then requires an Atlaso
 administrator to verify and approve its discovered public client certificate for one provider before Appliance Apply
 permits KMIP key operations. Atlaso CA manages the server identity; certificate cutover retains the prior files and
