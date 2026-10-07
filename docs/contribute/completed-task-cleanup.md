@@ -233,7 +233,8 @@ failure stops the operation. Ordinary hosted CI retains the portable `--clean --
 
 After the child exits or process creation fails, sealing verifies the creation identity and ownership marker, and
 preserves a bounded inventory of exact identities and content hashes.
-Record the returned `.manifest` path and SHA-256 as `ownership_manifest`.
+The owned wrapper prints a JSON `ownership_manifest` record with the authoritative path and bounded-file SHA-256
+after each successful seal, including a failed builder launch. Record that identity in the resource inventory.
 Preserve all creation, attempt, sealed, prepared, and absence receipts outside removal roots.
 A failed strict build may still
 seal its owned cache for diagnosis and eventual release; passing or failing validation does not authorize teardown.

@@ -4,6 +4,8 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
+import json
 import os
 import shutil
 import subprocess
@@ -94,6 +96,19 @@ def mark_zensical_cache(cache: Path) -> None:
     (cache / CACHE_MARKER_NAME).write_text(CACHE_MARKER_CONTENT, encoding="utf-8")
 
 
+def report_owned_manifest(manifest: Path) -> None:
+    """Write the sealed manifest identity as one machine-readable stdout record.
+
+    Args:
+        manifest: Exact durable manifest path returned by the cache owner.
+    """
+    from scripts.completed_task_files import read_bounded_regular
+
+    digest = hashlib.sha256(read_bounded_regular(manifest, 262_144)).hexdigest()
+    print(json.dumps({"ownership_manifest": {"path": str(manifest), "sha256": digest}},
+                     sort_keys=True, separators=(",", ":")))
+
+
 def main(argv: list[str] | None = None) -> int:
     """Run the deterministic strict documentation build.
 
@@ -150,7 +165,7 @@ def main(argv: list[str] | None = None) -> int:
                     try:
                         build = subprocess.run(command, cwd=ROOT, check=False)
                     finally:
-                        owner.seal()
+                        report_owned_manifest(owner.seal())
                 else:
                     build = subprocess.run(command, cwd=ROOT, check=False)
             if owner is None:

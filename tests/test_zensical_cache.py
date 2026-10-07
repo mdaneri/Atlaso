@@ -624,6 +624,7 @@ def test_controller_rejects_changed_manifest_hash(cache_owner: CacheOwner) -> No
 def test_owned_build_pins_and_seals_cache_on_success_or_failure(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
     build_status: int,
 ) -> None:
     """The native builder cannot replace its recorded root, and both outcomes seal evidence.
@@ -631,6 +632,7 @@ def test_owned_build_pins_and_seals_cache_on_success_or_failure(
     Args:
         tmp_path: Pytest-owned directory for the test build checkout and receipts.
         monkeypatch: Scoped environment, build root, and child-process substitutions.
+        capsys: Captured stdout and stderr for the ownership-manifest record.
         build_status: Child builder exit code used to check success and failure sealing.
     """
     cache_owner = CacheOwner(tmp_path, monkeypatch)
@@ -663,7 +665,16 @@ def test_owned_build_pins_and_seals_cache_on_success_or_failure(
     ])
     assert result == build_status
     assert len(calls) == (1 if build_status else 2)
-    assert cache_owner.owner._path(".manifest").is_file()
+    manifest = cache_owner.owner._path(".manifest")
+    assert manifest.is_file()
+    output = capsys.readouterr().out.splitlines()
+    assert len(output) == 1
+    assert json.loads(output[0]) == {
+        "ownership_manifest": {
+            "path": str(manifest),
+            "sha256": hashlib.sha256(manifest.read_bytes()).hexdigest(),
+        },
+    }
     assert json.loads(cache_owner.receipt.read_text(encoding="utf-8"))["binding"] == cache_owner.binding
     assert cache_owner.owner.inspect()["absent"] is False
     cache_owner.owner.release([str(cache_owner.owner.root)])
@@ -741,12 +752,14 @@ def test_competing_owned_build_is_refused_until_complete_lifecycle_finishes(
 def test_owned_build_repeats_with_immutable_attempt_receipts(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
     """Repeated wrapper builds reuse one root while resetting and appending receipts.
 
     Args:
         tmp_path: Pytest-owned directory for the repeated build checkout and receipt.
         monkeypatch: Scoped environment, build root, and child-process substitutions.
+        capsys: Captured stdout for each sealed manifest identity.
     """
     cache_owner = CacheOwner(tmp_path, monkeypatch)
     monkeypatch.setattr(build_docs, "ROOT", cache_owner.checkout)
@@ -790,6 +803,19 @@ def test_owned_build_repeats_with_immutable_attempt_receipts(
     first_attempt_manifest = cache_owner.owner._stage_path(".attempt-0001.manifest").read_bytes()
     assert build_docs.main(arguments) == 0
     assert build_count == 3
+    manifest_paths = [
+        cache_owner.owner._stage_path(".manifest"),
+        cache_owner.owner._stage_path(".attempt-0001.manifest"),
+        cache_owner.owner._stage_path(".attempt-0002.manifest"),
+    ]
+    records = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
+    assert records == [
+        {"ownership_manifest": {
+            "path": str(path),
+            "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+        }}
+        for path in manifest_paths
+    ]
     assert cache_owner.owner.generations()[0]["root_identity"] == initial_identity
     assert cache_owner.owner._stage_path(".sealed").read_bytes() == base_sealed
     assert cache_owner.owner._stage_path(".manifest").read_bytes() == base_manifest
@@ -919,12 +945,14 @@ def test_tampered_prior_inventory_cannot_authorize_reset_recovery(
 def test_owned_build_oserror_seals_and_releases_cache(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
     """An interrupted subprocess still leaves a sealed, inspectable, releasable cache.
 
     Args:
         tmp_path: Pytest-owned directory for the test build checkout and receipts.
         monkeypatch: Scoped environment, build root, and child-process substitutions.
+        capsys: Captured stdout and stderr for the sealed manifest record after launch failure.
     """
     cache_owner = CacheOwner(tmp_path, monkeypatch)
     monkeypatch.setattr(build_docs, "ROOT", cache_owner.checkout)
@@ -961,6 +989,14 @@ def test_owned_build_oserror_seals_and_releases_cache(
     assert_claim_available_from_another_thread(cache_owner.owner)
     manifest = cache_owner.owner._path(".manifest")
     assert manifest.is_file()
+    output = capsys.readouterr().out.splitlines()
+    assert len(output) == 1
+    assert json.loads(output[0]) == {
+        "ownership_manifest": {
+            "path": str(manifest),
+            "sha256": hashlib.sha256(manifest.read_bytes()).hexdigest(),
+        },
+    }
     resource = cache_owner.resource(manifest)
     request = {"resource": resource, "handoff_sha256": "f" * 64}
     inspected = cache_owner.owner.controller_call("resource.inspect", request, resource)
@@ -976,12 +1012,14 @@ def test_owned_build_oserror_seals_and_releases_cache(
 def test_owned_build_seal_refusal_preserves_unsafe_cache(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
     """A seal refusal after subprocess failure preserves unsafe contents for review.
 
     Args:
         tmp_path: Pytest-owned directory for the test build checkout and receipts.
         monkeypatch: Scoped environment, build root, and child-process substitutions.
+        capsys: Captured stdout used to ensure refused seals publish no manifest record.
     """
     cache_owner = CacheOwner(tmp_path, monkeypatch)
     monkeypatch.setattr(build_docs, "ROOT", cache_owner.checkout)
@@ -1007,6 +1045,7 @@ def test_owned_build_seal_refusal_preserves_unsafe_cache(
 
     assert result == 1
     assert_claim_available_from_another_thread(cache_owner.owner)
+    assert capsys.readouterr().out == ""
     assert (cache_owner.owner.root / ".git").is_dir()
     assert not cache_owner.owner._path(".manifest").exists()
     (cache_owner.owner.root / ".git").rmdir()
