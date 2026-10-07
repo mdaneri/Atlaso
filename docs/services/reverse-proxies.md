@@ -99,6 +99,8 @@ Settings archives retain proxy and ordered route desired state. They do not carr
 health observations, or proxy-owned CA certificate rows and their private keys. Preserve the appliance secrets key with
 recovery material; global CA and Public Services Apply regenerate the proxy certificate from restored desired state.
 A restore changes desired state only and still requires global Appliance Apply.
+Archives with an enabled HTTPS proxy require an enabled CA; restore rejects this inconsistent relationship before
+replacing saved state. Disabled HTTPS intent and enabled HTTP proxies remain portable without an enabled CA.
 
 <!-- ATLASO-REVERSE-PROXY-ACCEPTANCE-PENDING -->
 ## Native appliance acceptance pending

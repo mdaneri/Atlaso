@@ -115,6 +115,12 @@ def validate_candidates(proxies: list[models.ReverseProxy], data: dict[str, Any]
         if not available:
             proxy.enabled = False
             row["enabled"] = False
+        if proxy.enabled and proxy.scheme == "https" and not any(
+            ca_row.get("enabled", False) for ca_row in data.get("ca_settings", [])
+        ):
+            raise ValueError(
+                f"Settings archive reverse proxy {proxy.name} requires an enabled CA for HTTPS."
+            )
         errors = validate_proxy(proxy, context, proxies, exclude_id=proxy.id, require_binding=available)
         if errors:
             raise ValueError(f"Settings archive reverse proxy {proxy.name} is invalid: {errors[0]}")

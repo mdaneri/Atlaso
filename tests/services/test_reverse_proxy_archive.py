@@ -27,6 +27,46 @@ from atlaso.app.services.settings_archive import (
 from tests.services.test_reverse_proxies import payload
 
 
+def test_archive_rejects_enabled_https_without_ca_before_replacement(client):
+    """Keep every saved section intact when HTTPS cannot recreate its managed leaf.
+
+    Args:
+        client: Initialized appliance test fixture.
+    """
+    with SessionLocal() as db:
+        interface = db.scalar(select(PhysicalInterface).where(PhysicalInterface.name == "eth2"))
+        saved = save_proxy(db, payload(port=8443, redirect_http=False, listeners=[{"interface": "eth2", "address": interface.ip_cidr.split("/")[0]}]), actor="test")
+        before = export_settings_archive(db, actor="test")["data"]
+        archive = deepcopy(export_settings_archive(db, actor="test"))
+        archive["data"]["ca_settings"][0]["enabled"] = False
+        archive["data"]["reverse_proxies"][0]["enabled"] = True
+        with pytest.raises(ValueError, match="requires an enabled CA for HTTPS"):
+            restore_settings_archive(db, archive)
+        db.expire_all()
+        assert not db.get(ReverseProxy, saved.id).enabled
+        assert export_settings_archive(db, actor="test")["data"] == before
+
+
+@pytest.mark.parametrize(("scheme", "enabled"), [("https", False), ("http", True)])
+def test_archive_without_ca_preserves_disabled_https_and_enabled_http(client, scheme, enabled):
+    """Retain intent that does not need an immediately issuable HTTPS leaf.
+
+    Args:
+        client: Initialized appliance test fixture.
+        scheme: Archived listener protocol.
+        enabled: Archived publication enablement.
+    """
+    with SessionLocal() as db:
+        interface = db.scalar(select(PhysicalInterface).where(PhysicalInterface.name == "eth2"))
+        save_proxy(db, payload(listeners=[{"interface": "eth2", "address": interface.ip_cidr.split("/")[0]}]), actor="test")
+        archive = export_settings_archive(db, actor="test")
+        archive["data"]["ca_settings"][0]["enabled"] = False
+        archive["data"]["reverse_proxies"][0].update(scheme=scheme, enabled=enabled, port=8080, redirect_http=False)
+        restore_settings_archive(db, archive)
+        restored = db.scalar(select(ReverseProxy))
+        assert restored.enabled is enabled and restored.scheme == scheme
+
+
 def test_archive_round_trip_uses_names_and_legacy_v2_remains_supported(client):
     """Restore nested routes by stable proxy name and accept pre-proxy archives.
 
