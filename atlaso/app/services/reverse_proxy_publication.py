@@ -347,6 +347,19 @@ def dns_plan(proxies: list[dict[str, Any]], settings: models.DnsSettings | None)
     return records, warnings
 
 
+def validate_dns_ownership(plan: list[dict[str, Any]], records: list[models.DnsRecord]) -> None:
+    """Reject DNS-equivalent operator names before managed publication changes.
+
+    Args:
+        plan: Proposed exact DNS publication records, including managed eligibility.
+        records: Existing or archived records whose ownership must be preserved.
+    """
+    wanted_names = {row["hostname"].strip().rstrip(".").casefold() for row in plan if row["managed"]}
+    for record in records:
+        if record.hostname.strip().rstrip(".").casefold() in wanted_names and not (record.description or "").startswith(DNS_OWNER_PREFIX):
+            raise ValueError("Managed reverse-proxy DNS conflicts with an operator or another service record. Preserve that record and resolve the hostname first.")
+
+
 def reconcile_proxy_dns(db: Session, proxies: list[dict[str, Any]]) -> None:
     """Reconcile desired records within the caller's locked atomic transaction.
 
@@ -357,9 +370,7 @@ def reconcile_proxy_dns(db: Session, proxies: list[dict[str, Any]]) -> None:
     plan, _warnings = dns_plan(proxies, db.scalar(select(models.DnsSettings)))
     wanted = {(row["hostname"], row["record_type"], row["address"]): row for row in plan if row["managed"]}
     existing = list(db.scalars(select(models.DnsRecord)))
-    for record in existing:
-        if record.hostname in {row["hostname"] for row in wanted.values()} and not (record.description or "").startswith(DNS_OWNER_PREFIX):
-            raise ValueError("Managed reverse-proxy DNS conflicts with an operator or another service record. Preserve that record and resolve the hostname first.")
+    validate_dns_ownership(plan, existing)
     retained = set()
     for record in existing:
         if not (record.description or "").startswith(DNS_OWNER_PREFIX):

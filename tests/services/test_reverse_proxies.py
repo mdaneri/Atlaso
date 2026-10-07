@@ -27,8 +27,52 @@ from atlaso.app.services.reverse_proxies import (
     save_proxy,
     set_enabled,
     validate_proxy,
+    validate_service_listener_sockets,
     validation_context,
 )
+
+
+@pytest.mark.parametrize(("model_name", "scheme", "conflicts"), [
+    ("KmsSettings", "https", True),
+    ("LdapSettings", "https", True),
+    ("VcfBackupSettings", "https", True),
+    ("VcfPrivateRegistrySettings", "https", True),
+    ("OidcProviderSettings", "http", True),
+    ("OidcProviderSettings", "https", False),
+    ("VcfOfflineDepotSettings", "http", True),
+    ("VcfOfflineDepotSettings", "https", False),
+    ("NtpSettings", "http", False),
+])
+def test_service_socket_guard_retains_exclusive_and_shared_protocol_ownership(model_name, scheme, conflicts):
+    """Validate service-first and proxy-first ownership with shared nginx exceptions.
+
+    Args:
+        model_name: Canonical service settings model owning the requested socket.
+        scheme: Existing proxy protocol on the shared TCP port.
+        conflicts: Whether the service must reject the enabled proxy socket.
+    """
+    from atlaso.app import models
+    from atlaso.app.services.network_objects import acquire_network_objects_write_lock
+
+    engine, db = create_db()
+    try:
+        proxy = save_proxy(db, payload(enabled=True, scheme=scheme, port=9443, redirect_http=False), actor="test")
+        acquire_network_objects_write_lock(db)
+        service = getattr(models, model_name)(enabled=True, port=9443, listen_interface="eth1", listen_address="192.168.1.10")
+        if model_name == "LdapSettings":
+            service.ldaps_enabled = True
+        db.add(service)
+        db.flush()
+        if conflicts:
+            with pytest.raises(ValueError, match="Service listener conflicts"):
+                validate_service_listener_sockets(db)
+            assert "exclusive Atlaso service" in " ".join(validate_proxy(proxy, validation_context(db), [proxy], exclude_id=proxy.id))
+            proxy.enabled = False
+        validate_service_listener_sockets(db)
+    finally:
+        db.rollback()
+        db.close()
+        engine.dispose()
 
 
 def payload(**overrides):
@@ -66,6 +110,40 @@ def payload(**overrides):
     }
     value.update(overrides)
     return value
+
+
+@pytest.mark.parametrize(("scheme", "conflicts"), [("http", False), ("https", True)])
+def test_network_boot_save_preserves_proxy_protocol_ownership(scheme, conflicts):
+    """Allow shared HTTP and roll back a Network Boot edit taking an HTTPS socket.
+
+    Args:
+        scheme: Enabled proxy protocol on the candidate Network Boot port.
+        conflicts: Whether the requested HTTP publication must be rejected.
+    """
+    from atlaso.app.services.esxi_pxe import (
+        esxi_pxe_boot_settings,
+        save_esxi_pxe_boot_settings,
+    )
+
+    engine, db = create_db()
+    try:
+        save_proxy(db, payload(enabled=True, scheme=scheme, port=9443, redirect_http=False), actor="test")
+        before = esxi_pxe_boot_settings(db)
+        values = {"enabled": True, "hostname": "pxe.example.test", "listen_interface": "eth1",
+                  "listen_address": "192.168.1.10", "http_port": 9443,
+                  "tftp_root": before["tftp_root"], "bios_bootfile": before["bios_bootfile"],
+                  "uefi_bootfile": before["uefi_bootfile"]}
+        if conflicts:
+            with pytest.raises(ValueError, match="Service listener conflicts"):
+                save_esxi_pxe_boot_settings(db, **values)
+            db.rollback()
+            assert esxi_pxe_boot_settings(db) == before
+        else:
+            assert save_esxi_pxe_boot_settings(db, **values)["http_port"] == 9443
+    finally:
+        db.rollback()
+        db.close()
+        engine.dispose()
 
 
 def create_db() -> tuple[object, Session]:

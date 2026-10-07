@@ -8,6 +8,40 @@ from atlaso.app.security import roles_to_json
 from tests.routers.ui.helpers import login
 
 
+def test_service_ui_enable_rejects_existing_proxy_socket(client):
+    """Reject the reverse-order KMIP collision without persisting service edits.
+
+    Args:
+        client: Isolated management client.
+    """
+    from atlaso.app.models import KmsSettings
+    from atlaso.app.services.reverse_proxies import save_proxy
+    from tests.routers.api_v1.test_reverse_proxies import (
+        _enable_test_listener,
+        _payload,
+    )
+
+    _enable_test_listener()
+    with SessionLocal() as db:
+        settings = db.scalar(select(KmsSettings))
+        settings.enabled = False
+        db.commit()
+        before = (settings.enabled, settings.port, settings.hostname)
+        save_proxy(db, _payload(enabled=True, scheme="http", port=5696, redirect_http=False), actor="test")
+    login(client)
+    page = client.get("/ui/management/vsphere-key-providers")
+    csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    response = client.post("/ui/management/vsphere-key-providers/settings", data={
+        "enabled": "on", "listen_interfaces": "eth1", "listen_addresses": "192.0.2.10",
+        "listen_interfaces_present": "1", "listen_addresses_present": "1",
+        "hostname": "kms.example.test", "port": "5696", "csrf": csrf,
+    })
+    assert response.status_code == 409, response.text
+    with SessionLocal() as db:
+        settings = db.scalar(select(KmsSettings))
+        assert (settings.enabled, settings.port, settings.hostname) == before
+
+
 def test_reverse_proxy_page_uses_reviewed_grid_wizard_and_health_contract(client):
     """The management page retains its fallback and explicit review flow.
 

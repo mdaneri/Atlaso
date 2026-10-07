@@ -254,6 +254,33 @@ def _nginx_http_front_door(claim: ListenerClaim) -> bool:
     )
 
 
+def validate_service_listener_sockets(db: Session) -> None:
+    """Reject service edits that take an enabled proxy's socket before commit.
+
+    Callers hold the Network Objects writer lock before reading or changing
+    desired state and roll back their transaction when validation fails.
+
+    Args:
+        db: Caller-owned session containing the complete candidate service state.
+
+    Raises:
+        ValueError: If a service requires an exclusive or incompatible socket.
+    """
+    claims = listener_claims(db, include_reverse_proxies=False)
+    for proxy in desired_rows(db):
+        if not proxy.enabled:
+            continue
+        for interface, address, port, scheme in _listener_sockets(proxy):
+            for claim in claims:
+                if _claim_conflicts(claim, interface=interface, address=address, port=port):
+                    if _nginx_http_front_door(claim) and scheme == claim.scheme:
+                        continue
+                    raise ValueError(
+                        f"Service listener conflicts with enabled reverse proxy {proxy.name} on {interface} {address}:{port}. "
+                        "Disable or move the proxy before saving this service listener."
+                    )
+
+
 def _route_overlap(left: str, right: str) -> bool:
     """Return whether nginx's prefix matching makes two routes ambiguous.
 

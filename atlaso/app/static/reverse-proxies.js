@@ -259,16 +259,47 @@
       const tableRows = canWrite ? [...items.map(visibleProxyRow), { is_new: true, name: "" }] : items.map(visibleProxyRow);
       void table?.setData?.(tableRows);
       const fallback = document.getElementById(element.dataset.fallbackId || "");
-      if (fallback instanceof HTMLElement && !items.length) {
+      if (fallback instanceof HTMLElement) {
         const body = fallback.tBodies[0];
         if (body) {
-          const row = document.createElement("tr");
-          const cell = document.createElement("td");
-          cell.colSpan = 8;
-          cell.className = "muted";
-          cell.textContent = "No reverse proxies are configured.";
-          row.append(cell);
-          body.replaceChildren(row);
+          const rows = items.map((proxy) => {
+            const row = document.createElement("tr");
+            const values = [proxy.name, proxy.hostname,
+              `${String(proxy.scheme).toUpperCase()} ${proxy.port}${proxy.redirect_http ? ` · HTTP → HTTPS ${proxy.redirect_port}` : ""}`,
+              (proxy.listeners || []).map((listener) => `${listener.interface} · ${listener.address}`).join("\n") || "No listener",
+              (proxy.routes || []).map((route) => route.path_prefix).join("\n") || "No paths",
+              `${proxy.public_listing ? "Public directory" : "Hidden"} · ${proxy.managed_dns ? "Atlaso DNS" : "External DNS"}`,
+              proxy.enabled ? "Enabled" : "Disabled"];
+            for (const value of values) {
+              const cell = document.createElement("td");
+              String(value ?? "").split("\n").forEach((line, index) => {
+                if (index) cell.append(document.createElement("br"));
+                cell.append(document.createTextNode(line));
+              });
+              row.append(cell);
+            }
+            const actions = document.createElement("td");
+            const action = document.createElement(canWrite ? "button" : "span");
+            action.className = canWrite ? "button tiny" : "muted";
+            action.textContent = canWrite ? "Edit" : "Read only";
+            if (canWrite) {
+              action.type = "button";
+              action.dataset.reverseProxyEdit = String(proxy.id);
+            }
+            actions.append(action);
+            row.append(actions);
+            return row;
+          });
+          if (!rows.length) {
+            const row = document.createElement("tr");
+            const cell = document.createElement("td");
+            cell.colSpan = 8;
+            cell.className = "muted";
+            cell.textContent = "No reverse proxies are configured.";
+            row.append(cell);
+            rows.push(row);
+          }
+          body.replaceChildren(...rows);
         }
       }
     }

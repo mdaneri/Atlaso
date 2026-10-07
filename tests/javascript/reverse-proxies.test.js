@@ -300,8 +300,8 @@ test("display escaping protects operator-controlled text", () => {
 
 test("management service worker precaches the reverse-proxy page asset", () => {
   const worker = fs.readFileSync("atlaso/app/static/service-worker.js", "utf8");
-  assert.match(worker, /const ATLASO_CACHE = `\$\{ATLASO_CACHE_PREFIX\}355`;/);
-  assert.match(worker, /"\/static\/reverse-proxies\.js\?v=issue-723-3"/);
+  assert.match(worker, /const ATLASO_CACHE = `\$\{ATLASO_CACHE_PREFIX\}356`;/);
+  assert.match(worker, /"\/static\/reverse-proxies\.js\?v=issue-723-4"/);
 });
 
 function classListFor(classes) {
@@ -310,3 +310,44 @@ function classListFor(classes) {
     remove: (name) => classes.delete(name),
   };
 }
+
+test("fallback refresh replaces nonempty rows, removes stale actions, and escapes text", () => {
+  const source = fs.readFileSync("atlaso/app/static/reverse-proxies.js", "utf8");
+  const start = source.indexOf("    function setCollectionRows(");
+  const end = source.indexOf("    function setValidation(", start);
+  class HTMLElement {
+    constructor(tag = "table") { this.tag = tag; this.children = []; this.dataset = {}; }
+    append(...children) { this.children.push(...children); }
+    replaceChildren(...children) { this.children = children; }
+  }
+  const body = new HTMLElement("tbody");
+  const fallback = new HTMLElement();
+  fallback.tBodies = [body];
+  const context = vm.createContext({ HTMLElement, document: {
+    getElementById: () => fallback,
+    createElement: (tag) => new HTMLElement(tag),
+    createTextNode: (text) => ({ textContent: text }),
+  }, visibleProxyRow: reverseProxies.visibleProxyRow });
+  vm.runInContext(`const MAX_ITEMS = 256; let items = []; const table = null;
+    let canWrite = true; const element = {dataset: {fallbackId: "fallback"}};
+    ${source.slice(start, end)}`, context);
+  const refresh = (rows) => {
+    context.nextRows = rows;
+    vm.runInContext("setCollectionRows(nextRows)", context);
+  };
+  refresh([{ id: 10, name: "Old", hostname: "old.example.test", listeners: [], routes: [] }]);
+  refresh([{ id: 11, name: "<img src=x>", hostname: "new.example.test", scheme: "https", port: 443,
+    listeners: [{interface: "eth1", address: "192.0.2.10"}], routes: [{path_prefix: "/new/"}], enabled: true }]);
+  assert.equal(body.children.length, 1);
+  assert.equal(body.children[0].children[0].children[0].textContent, "<img src=x>");
+  assert.equal(body.children[0].children[6].children[0].textContent, "Enabled");
+  assert.equal(body.children[0].children[7].children[0].dataset.reverseProxyEdit, "11");
+  vm.runInContext("canWrite = false", context);
+  refresh([{id: 12, name: "Read", listeners: [], routes: []}]);
+  assert.equal(body.children[0].children[7].children[0].textContent, "Read only");
+  assert.deepEqual(body.children[0].children[7].children[0].dataset, {});
+  refresh([]);
+  assert.equal(body.children.length, 1);
+  assert.equal(body.children[0].children[0].textContent, "No reverse proxies are configured.");
+  assert.equal(body.children[0].children[0].colSpan, 8);
+});

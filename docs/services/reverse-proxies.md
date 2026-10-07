@@ -32,6 +32,10 @@ The appliance accepts at most 256 proxies, 256 total path routes, and 256 select
 A route selected on four listener addresses counts as four combinations. Disabled proxies retain these capacity
 reservations so enabling saved state cannot exceed the generated publication bound.
 
+Exclusive Atlaso services cannot take a socket used by an enabled proxy. Service settings saves reject this conflict
+before changing desired state; move or disable the proxy first. Matching HTTP or HTTPS virtual hosts can share nginx
+sockets, but HTTP and HTTPS cannot occupy the same socket. API settings writers return **409 Conflict** for this case.
+
 ## Create a reverse proxy
 
 Open **Traffic Publishing**, select **Reverse Proxies**, and choose **Add reverse proxy**. The wizard has six steps:
@@ -63,7 +67,8 @@ Open **Traffic Publishing**, select **Reverse Proxies**, and choose **Add revers
    This setting is independent of direct access: hiding the card does not disable the configured proxy. **Manage
    authoritative DNS** is a separate opt-in. When enabled and Atlaso authoritative DNS can serve the hostname, Atlaso
    reconciles its A and AAAA records to the selected listener addresses. Otherwise, create those records in your
-   external DNS service.
+   external DNS service. Existing operator DNS records for the same name, including a different letter case or final
+   dot, prevent managed publication; resolve the conflict without deleting unrelated records.
 5. **State**: **Proxy enabled** defaults off. Turn it on to include the proxy in validated desired state.
 6. **Review**: check the identity, listener, path routes, publication, and desired state, including any TLS warnings.
    Choose **Save reverse proxy** to save the desired state.

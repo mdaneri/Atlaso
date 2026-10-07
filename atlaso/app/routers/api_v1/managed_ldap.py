@@ -51,6 +51,7 @@ from atlaso.app.schemas import (
     LdapVcfConfigureRequest,
     LdapVcfInspectionResponse,
     LdapVcfInspectRequest,
+    ProblemDetails,
 )
 from atlaso.app.security import Identity, require_scope
 from atlaso.app.services.dnsmasq import split_addresses, split_interfaces
@@ -334,6 +335,7 @@ def build_router(dependencies: ManagedLdapApiDependencies) -> ManagedLdapApiRout
         response_model=LdapSettingsResponse,
         tags=["LDAP"],
         operation_id="updateLdapSettings",
+        responses={409: {"model": ProblemDetails, "description": "The desired listener conflicts with an enabled reverse proxy; no service edits are saved."}},
     )
     def update_ldap_settings(
         payload: LdapSettingsUpdate,
@@ -344,13 +346,26 @@ def build_router(dependencies: ManagedLdapApiDependencies) -> ManagedLdapApiRout
 
         Requires the `write:ldap` API scope. The operation updates saved Atlaso state and does not
         bypass the documented global Appliance Apply or service lifecycle boundary.
+        Listener writes share the Network Objects transaction lock and return 409 without saving changes
+        when an enabled reverse proxy owns the requested exclusive socket.
 
         Args:
             payload: Validated request or task payload consumed by the operation.
             identity: Authenticated identity authorizing the operation.
             db: Active database session used by the operation.
         """
+        from atlaso.app.services.network_objects import (
+            acquire_network_objects_write_lock,
+        )
+        from atlaso.app.services.reverse_proxies import (
+            validate_service_listener_sockets,
+        )
+
+        acquire_network_objects_write_lock(db)
         settings = _ldap_settings_row(db)
+        # Default-row readers may commit; reacquire before editing their result.
+        acquire_network_objects_write_lock(db)
+        db.refresh(settings)
         settings.enabled = payload.enabled
         settings.hostname = (payload.hostname or settings.hostname).strip().lower()
         available = _ldap_api_interface_addresses(db)
@@ -371,6 +386,11 @@ def build_router(dependencies: ManagedLdapApiDependencies) -> ManagedLdapApiRout
         settings.port = payload.port
         settings.ldap_enabled = payload.ldap_enabled
         settings.ldap_port = payload.ldap_port
+        try:
+            validate_service_listener_sockets(db)
+        except ValueError as exc:
+            db.rollback()
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
         settings.min_password_length = payload.password_policy.min_length
         settings.require_uppercase = payload.password_policy.require_uppercase
         settings.require_lowercase = payload.password_policy.require_lowercase

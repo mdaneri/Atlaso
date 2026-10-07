@@ -5,6 +5,35 @@ from sqlalchemy import select
 from tests.routers.api_v1.helpers import create_token
 
 
+def test_service_enable_rejects_proxy_socket_and_preserves_settings(client):
+    """Reject the reverse-order KMIP collision through its real settings API.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+    """
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import KmsSettings
+    from atlaso.app.services.reverse_proxies import save_proxy
+
+    _enable_test_listener()
+    with SessionLocal() as db:
+        settings = db.scalar(select(KmsSettings))
+        settings.enabled = False
+        db.commit()
+        before = (settings.enabled, settings.port, settings.hostname, settings.listen_interface, settings.listen_address)
+        save_proxy(db, _payload(enabled=True, scheme="http", port=5696, redirect_http=False), actor="test")
+    token, _ = create_token(client, scopes=["write:kms"])
+    response = client.patch("/api/v1/vsphere-key-providers/settings", headers={"Authorization": f"Bearer {token}"}, json={
+        "enabled": True, "listen_interfaces": ["eth1"], "listen_addresses": ["192.0.2.10"],
+        "hostname": "kms.example.test", "port": 5696,
+    })
+    assert response.status_code == 409, response.text
+    assert "enabled reverse proxy" in response.json()["detail"]
+    with SessionLocal() as db:
+        settings = db.scalar(select(KmsSettings))
+        assert (settings.enabled, settings.port, settings.hostname, settings.listen_interface, settings.listen_address) == before
+
+
 def _payload(**overrides):
     """Return one complete proxy request for an eligible exact listener.
 

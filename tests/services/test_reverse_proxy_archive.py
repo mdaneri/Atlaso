@@ -27,6 +27,30 @@ from atlaso.app.services.settings_archive import (
 from tests.services.test_reverse_proxies import payload
 
 
+@pytest.mark.parametrize("hostname", ["APPLICATION.EXAMPLE.TEST", "Application.Example.Test."])
+def test_archive_dns_collision_rejects_before_replacement(client, hostname):
+    """Preserve all saved sections when archived operator DNS conflicts with a proxy.
+
+    Args:
+        client: Initialized appliance test fixture.
+        hostname: DNS-equivalent archived operator hostname.
+    """
+    with SessionLocal() as db:
+        interface = db.scalar(select(PhysicalInterface).where(PhysicalInterface.name == "eth2"))
+        save_proxy(db, payload(listeners=[{"interface": "eth2", "address": interface.ip_cidr.split("/")[0]}]), actor="test")
+        before = export_settings_archive(db, actor="test")["data"]
+        archive = deepcopy(export_settings_archive(db, actor="test"))
+        archive["data"]["dns_settings"][0].update(enabled=True, authoritative=True, domain="example.test", disabled_domains="",
+                                                  authoritative_server="ns.example.test", authoritative_admin="hostmaster.example.test")
+        archive["data"]["reverse_proxies"][0].update(enabled=True, managed_dns=True, scheme="http", port=8080, redirect_http=False)
+        archive["data"]["dns_records"].append({"hostname": hostname, "record_type": "A", "address": "192.0.2.50",
+                                                "description": "operator", "enabled": True})
+        with pytest.raises(ValueError, match="conflicts with an operator"):
+            restore_settings_archive(db, archive)
+        db.expire_all()
+        assert export_settings_archive(db, actor="test")["data"] == before
+
+
 def test_archive_rejects_enabled_https_without_ca_before_replacement(client):
     """Keep every saved section intact when HTTPS cannot recreate its managed leaf.
 

@@ -18,6 +18,34 @@ from atlaso.app.services.reverse_proxy_publication import (
 )
 
 
+@pytest.mark.parametrize("hostname", ["APPLICATION.EXAMPLE.TEST", "Application.Example.Test."])
+def test_managed_dns_collision_preserves_operator_record_and_proxy_state(hostname):
+    """Reject DNS-equivalent names atomically without changing an operator row.
+
+    Args:
+        hostname: Operator spelling of the proxy's canonical DNS name.
+    """
+    from sqlalchemy import select
+
+    from atlaso.app.models import DnsRecord, DnsSettings, ReverseProxy
+    from atlaso.app.services.reverse_proxies import save_proxy
+    from tests.services.test_reverse_proxies import create_db, payload
+
+    engine, db = create_db()
+    try:
+        record = DnsRecord(hostname=hostname, record_type="A", address="192.0.2.50", description="operator", enabled=True)
+        db.add_all([record, DnsSettings(enabled=True, authoritative=True, domain="example.test", disabled_domains="")])
+        db.commit()
+        with pytest.raises(ValueError, match="conflicts with an operator"):
+            save_proxy(db, payload(enabled=True, managed_dns=True), actor="test")
+        assert list(db.scalars(select(ReverseProxy))) == []
+        assert list(db.scalars(select(DnsRecord))) == [record]
+        assert (record.hostname, record.address, record.description, record.enabled) == (hostname, "192.0.2.50", "operator", True)
+    finally:
+        db.close()
+        engine.dispose()
+
+
 @pytest.mark.parametrize("retirement", ["disabled", "http", "deleted"])
 def test_obsolete_proxy_ca_owners_discard_keys_without_touching_other_owners(retirement):
     """Retire only obsolete proxy owners and preserve manual and active material.

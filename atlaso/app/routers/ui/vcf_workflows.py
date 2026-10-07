@@ -2419,8 +2419,19 @@ def build_router(dependencies: VcfWorkflowsUiDependencies) -> VcfWorkflowsUiRout
         Raises:
             HTTPException: If the request cannot be fulfilled.
         """
+        from atlaso.app.services.network_objects import (
+            acquire_network_objects_write_lock,
+        )
+        from atlaso.app.services.reverse_proxies import (
+            validate_service_listener_sockets,
+        )
+
         verify_csrf(request, csrf)
+        acquire_network_objects_write_lock(db)
         settings = get_vcf_offline_depot_settings_row(db, reconcile_default_user=False)
+        # Default-row readers may commit; reacquire before editing their result.
+        acquire_network_objects_write_lock(db)
+        db.refresh(settings)
         previous_hostname = settings.hostname
         user_id = int(http_user_id) if str(http_user_id).strip() else None
         if user_id and not db.get(User, user_id):
@@ -2444,6 +2455,11 @@ def build_router(dependencies: VcfWorkflowsUiDependencies) -> VcfWorkflowsUiRout
         settings.listen_address = selected_addresses
         if port is not None:
             settings.port = port
+        try:
+            validate_service_listener_sockets(db)
+        except ValueError as exc:
+            db.rollback()
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
         settings.http_user_id = user_id
         settings.allow_unauthenticated_access = allow_unauthenticated_access == "on"
         settings.server_certificate = settings.hostname
@@ -3764,8 +3780,19 @@ def build_router(dependencies: VcfWorkflowsUiDependencies) -> VcfWorkflowsUiRout
         Returns:
             The endpoint response.
         """
+        from atlaso.app.services.network_objects import (
+            acquire_network_objects_write_lock,
+        )
+        from atlaso.app.services.reverse_proxies import (
+            validate_service_listener_sockets,
+        )
+
         verify_csrf(request, csrf)
+        acquire_network_objects_write_lock(db)
         settings = get_vcf_private_registry_settings_row(db)
+        # Default-row readers may commit; reacquire before editing their result.
+        acquire_network_objects_write_lock(db)
+        db.refresh(settings)
         previous_hostname = settings.hostname
         selected_interfaces, selected_addresses = resolve_service_bind_targets(
             db,
@@ -3781,6 +3808,11 @@ def build_router(dependencies: VcfWorkflowsUiDependencies) -> VcfWorkflowsUiRout
         settings.listen_interface = selected_interfaces
         settings.listen_address = selected_addresses
         settings.port = port
+        try:
+            validate_service_listener_sockets(db)
+        except ValueError as exc:
+            db.rollback()
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
         settings.harbor_project = harbor_project.strip() or VCF_REGISTRY_DEFAULT_PROJECT
         settings.storage_path = VCF_REGISTRY_DEFAULT_STORAGE_PATH
         settings.config_path = VCF_REGISTRY_DEFAULT_CONFIG_PATH
@@ -4113,8 +4145,19 @@ def build_router(dependencies: VcfWorkflowsUiDependencies) -> VcfWorkflowsUiRout
         Raises:
             HTTPException: If the request cannot be fulfilled.
         """
+        from atlaso.app.services.network_objects import (
+            acquire_network_objects_write_lock,
+        )
+        from atlaso.app.services.reverse_proxies import (
+            validate_service_listener_sockets,
+        )
+
         verify_csrf(request, csrf)
+        acquire_network_objects_write_lock(db)
         settings = get_vcf_backup_settings_row(db, reconcile_default_user=False)
+        # Default-row readers may commit; reacquire before editing their result.
+        acquire_network_objects_write_lock(db)
+        db.refresh(settings)
         user_id = int(sftp_user_id) if str(sftp_user_id).strip() else None
         if user_id and not db.get(User, user_id):
             raise HTTPException(
@@ -4133,6 +4176,11 @@ def build_router(dependencies: VcfWorkflowsUiDependencies) -> VcfWorkflowsUiRout
         settings.listen_interface = selected_interfaces
         settings.listen_address = selected_addresses
         settings.port = port
+        try:
+            validate_service_listener_sockets(db)
+        except ValueError as exc:
+            db.rollback()
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
         settings.sftp_user_id = user_id
         settings.storage_path = VCF_BACKUP_DEFAULT_VOLUME_MOUNT
         settings.chroot_enabled = chroot_enabled == "on"
