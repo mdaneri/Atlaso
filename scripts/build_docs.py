@@ -139,9 +139,13 @@ def main(argv: list[str] | None = None) -> int:
             command = [sys.executable, "-m", "zensical", "build", "--strict"]
             if owner is None:
                 command.append("--clean")
-            build = subprocess.run(command, cwd=ROOT, check=False)
             if owner:
-                owner.seal()
+                try:
+                    build = subprocess.run(command, cwd=ROOT, check=False)
+                finally:
+                    owner.seal()
+            else:
+                build = subprocess.run(command, cwd=ROOT, check=False)
         if owner is None:
             mark_zensical_cache(ROOT / ".cache")
     except (OSError, RuntimeError) as exc:

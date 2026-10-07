@@ -532,3 +532,107 @@ def test_owned_build_pins_and_seals_cache_on_success_or_failure(
     assert json.loads(cache_owner.receipt.read_text(encoding="utf-8"))["binding"] == cache_owner.binding
     assert cache_owner.owner.inspect()["absent"] is False
     cache_owner.owner.release([str(cache_owner.owner.root)])
+
+
+def test_owned_build_oserror_seals_and_releases_cache(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An interrupted subprocess still leaves a sealed, inspectable, releasable cache.
+
+    Args:
+        tmp_path: Pytest-owned directory for the test build checkout and receipts.
+        monkeypatch: Scoped environment, build root, and child-process substitutions.
+    """
+    cache_owner = CacheOwner(tmp_path, monkeypatch)
+    monkeypatch.setattr(build_docs, "ROOT", cache_owner.checkout)
+    calls: list[list[str]] = []
+    original_identity: list[int] = []
+
+    def run(command: list[str], **kwargs: object) -> object:
+        """Write partial builder output and fail while the owned cache is pinned.
+
+        Args:
+            command: Exact subprocess argument vector issued by the wrapper.
+            **kwargs: Subprocess keyword arguments supplied by the wrapper.
+        """
+        calls.append(command)
+        assert "--clean" not in command
+        original_identity[:] = cache_owner.owner.files.snapshot(cache_owner.owner.root)["."]["identity"]
+        replacement = cache_owner.checkout / ".cache-replacement"
+        with pytest.raises(OSError):
+            cache_owner.owner.root.rename(replacement)
+        (cache_owner.owner.root / "partial-builder-output.bin").write_bytes(b"partial output")
+        raise OSError("simulated process launch failure")
+
+    monkeypatch.setattr(build_docs.subprocess, "run", run)
+    result = build_docs.main([
+        "--cache-receipt", str(cache_owner.receipt),
+        "--task-id", cache_owner.binding["task_id"],
+        "--resource-id", cache_owner.binding["id"],
+        "--source-commit", cache_owner.binding["source_commit"],
+    ])
+
+    assert result == 1
+    assert len(calls) == 1
+    assert cache_owner.owner.files.snapshot(cache_owner.owner.root)["."]["identity"] == original_identity
+    manifest = cache_owner.owner._path(".manifest")
+    assert manifest.is_file()
+    resource = cache_owner.resource(manifest)
+    request = {"resource": resource, "handoff_sha256": "f" * 64}
+    inspected = cache_owner.owner.controller_call("resource.inspect", request, resource)
+    assert inspected["absent"] is False
+    assert cache_owner.owner.controller_call(
+        "resource.release",
+        {**request, "removal_scopes": inspected["removal_scopes"]},
+        resource,
+    ) == {"success": True}
+    assert cache_owner.owner.controller_call("resource.inspect", request, resource)["absent"] is True
+
+
+def test_owned_build_seal_refusal_preserves_unsafe_cache(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A seal refusal after subprocess failure preserves unsafe contents for review.
+
+    Args:
+        tmp_path: Pytest-owned directory for the test build checkout and receipts.
+        monkeypatch: Scoped environment, build root, and child-process substitutions.
+    """
+    cache_owner = CacheOwner(tmp_path, monkeypatch)
+    monkeypatch.setattr(build_docs, "ROOT", cache_owner.checkout)
+
+    def run(command: list[str], **kwargs: object) -> object:
+        """Create forbidden Git metadata, then model a subprocess launch failure.
+
+        Args:
+            command: Exact subprocess argument vector issued by the wrapper.
+            **kwargs: Subprocess keyword arguments supplied by the wrapper.
+        """
+        assert "--clean" not in command
+        (cache_owner.owner.root / ".git").mkdir()
+        raise OSError("simulated process launch failure")
+
+    monkeypatch.setattr(build_docs.subprocess, "run", run)
+    result = build_docs.main([
+        "--cache-receipt", str(cache_owner.receipt),
+        "--task-id", cache_owner.binding["task_id"],
+        "--resource-id", cache_owner.binding["id"],
+        "--source-commit", cache_owner.binding["source_commit"],
+    ])
+
+    assert result == 1
+    assert (cache_owner.owner.root / ".git").is_dir()
+    assert not cache_owner.owner._path(".manifest").exists()
+    (cache_owner.owner.root / ".git").rmdir()
+    manifest = cache_owner.owner.seal()
+    resource = cache_owner.resource(manifest)
+    request = {"resource": resource, "handoff_sha256": "1" * 64}
+    inspected = cache_owner.owner.controller_call("resource.inspect", request, resource)
+    assert inspected["absent"] is False
+    cache_owner.owner.controller_call(
+        "resource.release",
+        {**request, "removal_scopes": inspected["removal_scopes"]},
+        resource,
+    )

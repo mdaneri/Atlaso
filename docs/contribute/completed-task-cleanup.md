@@ -230,8 +230,8 @@ before use. It refuses existing cache state. It pins that directory throughout `
 is already empty, so Zensical's native `--clean` replacement is omitted. Unexpected replacement or receipt publication
 failure stops the operation. Ordinary hosted CI retains the portable `--clean --strict` path.
 
-After the child exits, sealing verifies the creation identity and ownership marker, and preserves a bounded inventory
-of exact identities and content hashes. Record the returned `.manifest` path and SHA-256 as `ownership_manifest`.
+After the child exits or process creation fails, sealing verifies the creation identity and ownership marker, and
+preserves a bounded inventory of exact identities and content hashes. Record the returned `.manifest` path and SHA-256 as `ownership_manifest`.
 Preserve all creation, sealed, prepared, and absence receipts outside removal roots. A failed strict build may still
 seal its owned cache for diagnosis and eventual release; passing or failing validation does not authorize teardown.
 
