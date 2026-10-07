@@ -13,6 +13,21 @@ The shared lifecycle host-state checks verify that first-boot appliances retain 
 `VCF.PowerCLI==9.1.1.25718932`, and `Connect-VIServer` after the wheel-only test deployment. The PowerCLI import and
 command check run directly as the unprivileged appliance SSH user rather than through sudo.
 
+## Focused reverse-proxy acceptance
+
+`invoke-lifecycle-test.ps1 -ReverseProxyOnly -PullRequestNumber <number>` uses a two-interface appliance and a
+host-reachable Site A network. Supply the powered-off, provenance-admitted builder VMX explicitly with
+`-ApplianceVmxPath`; the runner installs its wheel from the admitted clean source commit. Use `-Purpose docs -KeepVms`
+when retaining the dedicated documentation appliance. Credentials follow the protected lifecycle handoff.
+
+The host fixture binds only to the selected Site A host address. The consumer saves desired state and uses global
+Appliance Apply to verify HTTP and HTTPS publication, the managed listener certificate, preserve and strip path
+mapping, upstream authentication challenges, reserved paths, exact Host selection, custom-port redirects, duplicate
+hostname rejection, and the cached health API. These checks do not yet prove WebSocket traffic, upstream HTTPS trust
+modes, DNS ownership, reboot persistence, archive/reset recovery, or failed-Apply rollback. Those remain acceptance
+gates for issue #723. Optional authenticated screenshot capture is rejected until its bounded browser consumer is
+implemented; no screenshot success is implied by passing the socket checks.
+
 ## Configure non-interactive 1Password authentication
 
 Use a 1Password service account with read access to the exact `Atlaso` Environment. Vault access is not required. Copy
