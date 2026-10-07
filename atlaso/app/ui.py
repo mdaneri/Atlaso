@@ -15051,13 +15051,22 @@ def log_appliance_apply_failures(job_id: str, unit_results: list[dict[str, Any]]
         unit_results: Unit results consumed by log appliance apply failures.
     """
     from atlaso.app.services.important_task_events import execution_projection
+    from atlaso.important_events import COMPONENTS, REASONS, STAGES
 
+    # Emit repository-owned vocabulary values, never producer strings, at the sink.
+    components = {name: name for name in COMPONENTS}
+    stages = {name: name for name in STAGES}
+    reasons = {name: name for name in REASONS}
     for unit in unit_results:
-        component = unit.get("unit_id") if unit.get("unit_id") in APPLIANCE_APPLY_UNIT_IDS else "task"
+        unit_id = unit.get("unit_id")
+        component = components.get(unit_id, "task") if isinstance(unit_id, str) else "task"
         for event in execution_projection(unit, component):
-            if event["outcome"] == "failed":
-                APPLY_LOGGER.error("task_id=%s component=%s stage=%s reason=%s returncode=%s",
-                                   job_id, event["component"], event["stage"], event["reason"], event["returncode"])
+            code = event.get("returncode")
+            if event["outcome"] == "failed" and type(code) is int and -65536 <= code <= 65536:
+                APPLY_LOGGER.error("task_id=%s component=%s stage=%s reason=%s returncode=%d",
+                                   job_id, components.get(event.get("component"), "task"),
+                                   stages.get(event.get("stage"), "execution"),
+                                   reasons.get(event.get("reason"), "unknown_failure"), int(code))
 
 
 def log_appliance_apply_submission(

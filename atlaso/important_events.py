@@ -1,5 +1,6 @@
 """Shared fixed vocabulary for retained diagnostic evidence; no application imports."""
 
+from collections.abc import Iterable
 from datetime import datetime
 from typing import Any
 
@@ -14,7 +15,8 @@ COMPONENTS = frozenset({
 })
 STAGES = frozenset({"queued", "started", "completed", "validation", "execution", "readiness",
                     "rollback", "cleanup", "recovery", "cancellation", "interrupted"})
-OUTCOMES = frozenset({"pending", "running", "succeeded", "failed", "cancelled", "skipped", "partial"})
+OUTCOMES = frozenset({"pending", "running", "succeeded", "failed", "cancelled", "skipped", "no-op",
+                     "partial", "partial-failure"})
 REASONS = {
     "none": "The recorded stage completed or is in progress.",
     "validation_rejected": "Validation rejected the candidate. Review the component's Validation panel before resubmitting.",
@@ -38,6 +40,18 @@ REASONS = {
 EVENT_LIMIT = 64
 
 
+def canonical_value(value: Any, vocabulary: Iterable[str]) -> str | None:
+    """Return the repository-owned spelling for a member of a fixed vocabulary.
+
+    Args:
+        value: Untrusted persisted or producer-owned value.
+        vocabulary: Repository-owned set of allowed values.
+    """
+    if not isinstance(value, str):
+        return None
+    return next((candidate for candidate in vocabulary if value == candidate), None)
+
+
 def validate_event(value: Any) -> dict[str, Any] | None:
     """Revalidate persisted evidence without admitting any free-form source text.
 
@@ -46,10 +60,16 @@ def validate_event(value: Any) -> dict[str, Any] | None:
     """
     if not isinstance(value, dict) or type(value.get("schema")) is not int or value["schema"] != 1:
         return None
-    for key, allowed in (("severity", {"INFO", "WARNING", "ERROR"}), ("component", COMPONENTS),
-                         ("stage", STAGES), ("outcome", OUTCOMES), ("reason", REASONS)):
-        if not isinstance(value.get(key), str) or value[key] not in allowed:
-            return None
+    vocabularies = (
+        ("severity", ("INFO", "WARNING", "ERROR")),
+        ("component", COMPONENTS),
+        ("stage", STAGES),
+        ("outcome", OUTCOMES),
+        ("reason", REASONS.keys()),
+    )
+    canonical = {key: canonical_value(value.get(key), allowed) for key, allowed in vocabularies}
+    if any(item is None for item in canonical.values()):
+        return None
     at = value.get("at")
     if not isinstance(at, str) or len(at) > 40:
         return None
@@ -62,7 +82,7 @@ def validate_event(value: Any) -> dict[str, Any] | None:
     code = value.get("returncode")
     if code is not None and (type(code) is not int or not -65536 <= code <= 65536):
         return None
-    return {key: value[key] for key in ("schema", "at", "severity", "component", "stage", "outcome", "reason")} | {"returncode": code}
+    return {"schema": 1, "at": parsed_at.isoformat(), **canonical, "returncode": int(code) if code is not None else None}
 
 
 def failure_reason(text: Any, returncode: Any = None) -> str:

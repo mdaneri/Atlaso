@@ -12,11 +12,6 @@ status: current
 Open **Logs** for read-only application and appliance diagnostics. Use the page to narrow an incident by time, severity,
 source, and message before moving to a service-specific verification step.
 
-Atlaso records significant state changes, execution milestones, failures, incomplete evidence, and recovery outcomes in
-the existing audit, task, and operational log surfaces. Routine page reads, polls, and unchanged healthy observations
-are suppressed. See [Important-event coverage](#important-event-coverage) for event scope, severity, retention, and
-limits.
-
 <!-- BEGIN GENERATED INTERFACE OVERVIEW -->
 ## Interface overview
 
@@ -27,6 +22,11 @@ This interface capture uses synthetic test data for visual orientation.
 *Figure: Logs history controls in the desktop layout with synthetic test data.*
 
 <!-- END GENERATED INTERFACE OVERVIEW -->
+
+Atlaso records significant state changes, execution milestones, failures, incomplete evidence, and recovery outcomes in
+the existing audit, task, and operational log surfaces. Routine page reads, polls, and unchanged healthy observations
+are suppressed. See [Important-event coverage](#important-event-coverage) for event scope, severity, retention, and
+limits.
 
 ## Captured application and HTTP history
 

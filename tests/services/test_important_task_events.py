@@ -37,13 +37,13 @@ def db(tmp_path):
     engine.dispose()
 
 
-def _new_task(db):
+def _new_task(db, task_id="job_123456789abc"):
     """Submit a task and component using the same transaction as admission.
 
     Args:
         db: Isolated producer session.
     """
-    task = Job(id="job_123456789abc", type="appliance-apply", created_by="console:root", status="pending", result="{}")
+    task = Job(id=task_id, type="appliance-apply", created_by="console:root", status="pending", result="{}")
     step = JobStep(id=f"{task.id}:network", job=task, component_key="network", label="Network", position=1, status="pending")
     db.add_all([task, step])
     db.commit()
@@ -96,6 +96,39 @@ def test_failure_and_failed_recovery_survive_restart_without_raw_data(db, caplog
     assert "synthetic-private-key-fragment" not in persisted
     with Session(db.get_bind()) as restarted:
         assert json.loads(restarted.get(TaskLogCheckpoint, task.id).state_json)["important_events"] == events
+
+
+def test_vcf_noop_and_partial_failure_keep_truthful_outcome_reason_and_severity(db):
+    """Preserve VCF terminal statuses and classify partial failure as an error.
+
+    Args:
+        db: Isolated producer session.
+    """
+    noop, noop_step = _new_task(db, "job_vcf_noop_1234")
+    noop.type = "vcf-target-trust"
+    noop.status = noop_step.status = "no-op"
+    noop.result = '{"status":"no-op"}'
+    db.commit()
+
+    partial, partial_step = _new_task(db, "job_vcf_partial_1234")
+    partial.type = "vcf-sddc-deployment"
+    partial.status = partial_step.status = "partial-failure"
+    partial.error = partial_step.error = "Connection refused by the target service."
+    partial.result = '{"status":"partial-failure","reason_code":"connection_refused"}'
+    db.commit()
+
+    noop_events = _state(db, noop)["important_events"]
+    assert all(validate_event(event) == event for event in noop_events)
+    assert any(event["outcome"] == "no-op" and event["severity"] == "INFO" and event["reason"] == "none"
+               for event in noop_events)
+    partial_events = _state(db, partial)["important_events"]
+    assert all(validate_event(event) == event for event in partial_events)
+    assert any(event["component"] == "task" and event["outcome"] == "partial-failure"
+               and event["severity"] == "ERROR" and event["reason"] == "connection_refused"
+               for event in partial_events)
+    assert any(event["component"] == "network" and event["outcome"] == "partial-failure"
+               and event["severity"] == "ERROR" and event["reason"] == "connection_refused"
+               for event in partial_events)
 
 
 def test_committed_audits_and_core_claims_mirror_once_aborted_writes_do_not(db, caplog):

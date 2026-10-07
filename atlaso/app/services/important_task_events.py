@@ -14,6 +14,7 @@ from atlaso.important_events import (
     OUTCOMES,
     REASONS,
     STAGES,
+    canonical_value,
     failure_reason,
     validate_event,
 )
@@ -42,6 +43,7 @@ def execution_projection(payload: dict[str, Any], component: str) -> list[dict[s
         component: Fixed component associated with the result.
     """
     output = []
+    component = canonical_value(component, COMPONENTS) or "task"
     commands = payload.get("commands", [])
     if not isinstance(commands, list):
         commands = []
@@ -51,20 +53,20 @@ def execution_projection(payload: dict[str, Any], component: str) -> list[dict[s
         code = command.get("returncode")
         if type(code) is not int or not -65536 <= code <= 65536:
             continue
-        stage = command.get("stage")
-        if not isinstance(stage, str) or stage not in STAGES:
+        stage = canonical_value(command.get("stage"), STAGES)
+        if stage is None:
             # Legacy command intent is inspected only to recognize fixed verbs.
             parts = command.get("command", [])
             stage = next((name for name in ("validation", "rollback", "recovery", "readiness", "cleanup")
                           if isinstance(parts, list) and {"validation": "validate"}.get(name, name) in parts[:8]), "execution")
-        recorded_reason = command.get("reason_code")
-        reason = "none" if code == 0 else recorded_reason if isinstance(recorded_reason, str) and recorded_reason in REASONS else failure_reason(command.get("stderr"), code)
+        recorded_reason = canonical_value(command.get("reason_code"), REASONS.keys())
+        reason = "none" if code == 0 else recorded_reason or failure_reason(command.get("stderr"), code)
         if stage == "validation" and code and reason == "helper_failed":
             reason = "validation_rejected"
         if stage == "rollback" and code:
             reason = "rollback_failed"
         output.append({"component": component, "stage": stage, "outcome": "succeeded" if code == 0 else "failed",
-                       "reason": reason, "returncode": code})
+                       "reason": reason, "returncode": int(code)})
     for key, stage in (("network_transaction_recovery", "recovery"),
                        ("management_handoff_exception_recovery", "rollback")):
         recovery = payload.get(key)
@@ -73,7 +75,7 @@ def execution_projection(payload: dict[str, Any], component: str) -> list[dict[s
             if -65536 <= code <= 65536:
                 output.append({"component": component, "stage": stage, "outcome": "failed" if code else "succeeded",
                                "reason": "rollback_failed" if code and stage == "rollback" else "cleanup_required" if code else "none",
-                               "returncode": code})
+                               "returncode": int(code)})
     return output
 
 
@@ -96,9 +98,11 @@ def capture_important_events(connection: Connection, job_id: str, previous: dict
     old_snapshots = old_snapshots if isinstance(old_snapshots, dict) else {}
     snapshots: dict[str, Any] = dict(old_snapshots)
     projections = []
-    status = job["status"] if job["status"] in OUTCOMES else "failed"
-    recorded_reason = payload.get("reason_code")
-    reason = "none" if status not in {"failed", "cancelled"} else recorded_reason if isinstance(recorded_reason, str) and recorded_reason in REASONS else failure_reason(job["error"])
+    status = canonical_value(job["status"], OUTCOMES) or "failed"
+    recorded_reason = canonical_value(payload.get("reason_code"), REASONS.keys())
+    reason = ("none" if status not in {"failed", "cancelled", "partial-failure"}
+              else recorded_reason if recorded_reason is not None
+              else failure_reason(job["error"]))
     if status == "cancelled":
         reason = "cancelled"
     stage = "queued" if status == "pending" else "started" if status == "running" else "completed"
@@ -114,9 +118,10 @@ def capture_important_events(connection: Connection, job_id: str, previous: dict
     columns.append(JobStep.__table__.c.result if result_changed else literal(None).label("result"))
     rows = connection.execute(select(*columns).where(JobStep.job_id == job_id).order_by(JobStep.position).limit(100)).mappings()
     for row in rows:
-        component = row["component_key"] if row["component_key"] in COMPONENTS else "task"
-        step_status = row["status"] if row["status"] in OUTCOMES else "failed"
-        step_reason = failure_reason(row["error"]) if step_status == "failed" else "cancelled" if step_status == "cancelled" else "none"
+        component = canonical_value(row["component_key"], COMPONENTS) or "task"
+        step_status = canonical_value(row["status"], OUTCOMES) or "failed"
+        step_reason = (failure_reason(row["error"]) if step_status in {"failed", "partial-failure"}
+                       else "cancelled" if step_status == "cancelled" else "none")
         projections.append((f"step:{row['position']}", {"component": component,
                             "stage": "queued" if step_status == "pending" else "started" if step_status == "running" else "completed",
                             "outcome": step_status, "reason": step_reason, "returncode": None}))
@@ -131,7 +136,8 @@ def capture_important_events(connection: Connection, job_id: str, previous: dict
         if projection == old_snapshots.get(key):
             continue
         event = {"schema": 1, "at": datetime.now(timezone.utc).isoformat(),
-                 "severity": "ERROR" if projection["outcome"] == "failed" else "WARNING" if projection["reason"] != "none" else "INFO",
+                 "severity": "ERROR" if projection["outcome"] in {"failed", "partial-failure"}
+                 else "WARNING" if projection["reason"] != "none" else "INFO",
                  **projection}
         if (safe := validate_event(event)) is not None:
             events.append(safe)

@@ -4122,7 +4122,11 @@ def test_appliance_settings_apply_task_records_redacted_dry_run_command_evidence
         for record in caplog.records
         if record.name == "atlaso.appliance_apply"
     )
-    assert "succeeded; desired-state and helper details omitted" in apply_logs
+    assert "Apply outcome=succeeded" in apply_logs
+    assert "completed_components=" in apply_logs
+    assert "selected_components=" in apply_logs
+    assert "skipped_changes=" in apply_logs
+    assert "inspect Tasks for stages" in apply_logs
     assert "selected_units" not in apply_logs
     assert "unit=appliance_settings" not in apply_logs
     assert "command_index" not in apply_logs
@@ -9209,6 +9213,50 @@ def test_appliance_apply_logging_redacts_commands_and_helper_output(caplog):
     assert "command_index" not in logged
     assert "returncode=2" in logged
     assert "stdout_present" not in logged
+
+
+def test_appliance_apply_logging_projects_only_fixed_failure_fields(caplog):
+    """Reject attacker-controlled projection fields and invalid return codes.
+
+    Args:
+        caplog: Pytest log capture fixture.
+    """
+    import logging
+
+    from atlaso.app.ui import log_appliance_apply_failures
+
+    hostile = "private-hostile-value"
+    unit_results = [
+        {
+            "unit_id": hostile,
+            "commands": [
+                {
+                    "stage": hostile,
+                    "reason_code": hostile,
+                    "command": ["atlaso-helper", "validate", hostile],
+                    "command_line": hostile,
+                    "returncode": 9,
+                    "stderr": hostile,
+                    "stdout": hostile,
+                },
+                {"stage": "execution", "returncode": True},
+                {"stage": "execution", "returncode": "17"},
+                {"stage": "execution", "returncode": 65537},
+                {"stage": "execution", "returncode": -65537},
+            ],
+        }
+    ]
+
+    with caplog.at_level(logging.INFO, logger="atlaso.appliance_apply"):
+        log_appliance_apply_failures("job_projection", unit_results)
+
+    logged = caplog.text
+    assert "component=task stage=validation reason=validation_rejected returncode=9" in logged
+    assert "private-hostile-value" not in logged
+    assert "returncode=True" not in logged
+    assert "returncode=17" not in logged
+    assert "returncode=65537" not in logged
+    assert "returncode=-65537" not in logged
 
 
 def test_record_audit_writes_redacted_operational_log(client, tmp_path, monkeypatch):
