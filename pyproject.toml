@@ -122,6 +122,7 @@ files = [
   "atlaso/app/port_forward_schemas.py",
   "atlaso/app/reverse_proxy_schemas.py",
   "atlaso/app/services/reverse_proxies.py",
+  "atlaso/app/services/applied_service_dns.py",
   "atlaso/app/services/reverse_proxy_transport.py",
   "atlaso/app/services/reverse_proxy_publication.py",
   "atlaso/app/services/reverse_proxy_archive.py",

@@ -28,7 +28,11 @@ from tests.services.test_reverse_proxies import payload
 
 
 def test_archive_round_trip_uses_names_and_legacy_v2_remains_supported(client):
-    """Restore nested routes by stable proxy name and accept pre-proxy archives."""
+    """Restore nested routes by stable proxy name and accept pre-proxy archives.
+
+    Args:
+        client: Initialized authenticated appliance test client.
+    """
     with SessionLocal() as db:
         interface = db.scalar(select(PhysicalInterface).where(PhysicalInterface.name == "eth2"))
         saved = save_proxy(db, payload(listeners=[{"interface": "eth2", "address": interface.ip_cidr.split("/")[0]}]), actor="test")
@@ -56,7 +60,11 @@ def test_archive_round_trip_uses_names_and_legacy_v2_remains_supported(client):
 
 
 def test_archive_round_trip_preserves_network_boot_hostname(client):
-    """Retain the public Network Boot hostname as a portable safe setting."""
+    """Retain the public Network Boot hostname as a portable safe setting.
+
+    Args:
+        client: Initialized authenticated appliance test client.
+    """
     with SessionLocal() as db:
         db.add(Setting(key=ESXI_PXE_HOSTNAME_KEY, value="boot.example.test"))
         db.commit()
@@ -72,7 +80,12 @@ def test_archive_round_trip_preserves_network_boot_hostname(client):
 
 @pytest.mark.parametrize("target", ["served", "upstream"])
 def test_archive_reserves_configured_network_boot_hostname_before_replacement(client, target):
-    """Reject archived served and upstream names colliding with Network Boot."""
+    """Reject archived served and upstream names colliding with Network Boot.
+
+    Args:
+        client: Initialized authenticated appliance test client.
+        target: Served or upstream hostname relationship under test.
+    """
     with SessionLocal() as db:
         db.add(Setting(key=ESXI_PXE_HOSTNAME_KEY, value="boot.example.test"))
         db.commit()
@@ -101,7 +114,14 @@ def test_archive_reserves_configured_network_boot_hostname_before_replacement(cl
 def test_archive_rejects_proxy_values_that_schema_would_normalize(
     client, section, field, value
 ):
-    """Fail preflight instead of restoring values that future Apply rejects."""
+    """Fail preflight instead of restoring values that future Apply rejects.
+
+    Args:
+        client: Initialized authenticated appliance test client.
+        section: Archive section containing the candidate value.
+        field: Archived field whose value is under test.
+        value: Candidate value to normalize or validate.
+    """
     with SessionLocal() as db:
         interface = db.scalar(select(PhysicalInterface).where(PhysicalInterface.name == "eth2"))
         saved = save_proxy(db, payload(listeners=[{"interface": "eth2", "address": interface.ip_cidr.split("/")[0]}]), actor="test")
@@ -117,7 +137,11 @@ def test_archive_rejects_proxy_values_that_schema_would_normalize(
 
 
 def test_legacy_archive_without_network_boot_hostname_reserves_canonical_default(client):
-    """Derive the appliance-domain Network Boot default for older archives."""
+    """Derive the appliance-domain Network Boot default for older archives.
+
+    Args:
+        client: Initialized authenticated appliance test client.
+    """
     with SessionLocal() as db:
         interface = db.scalar(select(PhysicalInterface).where(PhysicalInterface.name == "eth2"))
         saved = save_proxy(db, payload(listeners=[{"interface": "eth2", "address": interface.ip_cidr.split("/")[0]}]), actor="test")
@@ -138,7 +162,12 @@ def test_legacy_archive_without_network_boot_hostname_reserves_canonical_default
 
 @pytest.mark.parametrize("target", ["served", "upstream"])
 def test_archive_reserves_esx_storage_hostname_before_replacement(client, target):
-    """Reject archived storage collisions while retaining the saved proxy."""
+    """Reject archived storage collisions while retaining the saved proxy.
+
+    Args:
+        client: Initialized authenticated appliance test client.
+        target: Served or upstream hostname relationship under test.
+    """
     with SessionLocal() as db:
         storage = db.scalar(select(EsxStorageSettings))
         if storage is None:
@@ -159,7 +188,12 @@ def test_archive_reserves_esx_storage_hostname_before_replacement(client, target
 
 @pytest.mark.parametrize("corruption", ["missing_owner", "credentials", "reserved_path", "mixed_protocol", "position"])
 def test_invalid_proxy_archive_preserves_saved_state(client, corruption):
-    """Reject invalid route ownership and traffic intent before deleting current rows."""
+    """Reject invalid route ownership and traffic intent before deleting current rows.
+
+    Args:
+        client: Initialized authenticated appliance test client.
+        corruption: Parameterized invalid archive relationship.
+    """
     with SessionLocal() as db:
         interface = db.scalar(select(PhysicalInterface).where(PhysicalInterface.name == "eth2"))
         saved = save_proxy(db, payload(listeners=[{"interface": "eth2", "address": interface.ip_cidr.split("/")[0]}]), actor="test")
@@ -179,3 +213,33 @@ def test_invalid_proxy_archive_preserves_saved_state(client, corruption):
             restore_settings_archive(db, archive)
         db.expire_all()
         assert db.get(ReverseProxy, saved.id).routes[0].path_prefix == "/"
+
+
+@pytest.mark.parametrize(
+    ("field", "cidr", "upstream"),
+    [("host_ip_cidr", "192.0.2.99/24", "192.0.2.99"),
+     ("host_ipv6_cidr", "2001:db8::99/64", "2001:db8::99")],
+)
+def test_archive_rejects_observed_appliance_upstream_before_replacement(client, field, cidr, upstream):
+    """Preserve all saved state when an upstream loops to an observed address.
+
+    Args:
+        client: Initialized appliance test fixture.
+        field: Archived physical observed-address field.
+        cidr: Observed interface address including prefix.
+        upstream: Route destination equal to that observed appliance address.
+    """
+    with SessionLocal() as db:
+        interface = db.scalar(select(PhysicalInterface).where(PhysicalInterface.name == "eth2"))
+        saved = save_proxy(db, payload(listeners=[{"interface": "eth2", "address": interface.ip_cidr.split("/")[0]}]), actor="test")
+        before = export_settings_archive(db, actor="test")["data"]
+        original = export_settings_archive(db, actor="test")
+        archive = deepcopy(original)
+        row = next(row for row in archive["data"]["physical_interfaces"] if row["name"] == "eth2")
+        row[field] = cidr
+        archive["data"]["reverse_proxy_routes"][0]["upstream_host"] = upstream
+        with pytest.raises(ValueError, match="appliance"):
+            restore_settings_archive(db, archive)
+        db.expire_all()
+        assert db.get(ReverseProxy, saved.id).routes[0].upstream_host == "10.10.20.30"
+        assert export_settings_archive(db, actor="test")["data"] == before

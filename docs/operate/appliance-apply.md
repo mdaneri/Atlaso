@@ -112,21 +112,18 @@ and retires the old path only after readiness succeeds. Before publishing the ap
 the helper-confirmed DHCP or SLAAC address in observed interface state so the committed listener remains immediately
 eligible. On failure it restores the complete previous state and records the same actionable failing layer and rollback
 result on every bundled component.
-Successful baselines use the exact submitted snapshots, including applied resolver values; unrelated or concurrently
-saved Appliance Settings changes remain pending. A missing known-good Network baseline blocks mutation. Durable state
-and backups remain until the database commit is proven and acknowledged, so interruption or cleanup failure can retry
-rollback or acknowledgement safely. See the technical reference for the complete handoff and recovery contract.
+Successful baselines use the submitted snapshots, including applied resolver values; unrelated desired changes remain
+pending. A missing known-good Network baseline blocks mutation. Durable state and backups support safe recovery until
+the database commit is proven and acknowledged. See the [technical reference](../reference/appliance-apply-technical.md)
+for the complete handoff and recovery contract.
 
 Safe cancellation does not interrupt the component already running. Every helper or adapter command in that component
 continues to completion. After the component returns, Atlaso skips the remaining components and releases the mutation
 lock when the master task becomes terminal.
 
-An ordinary Appliance Settings Apply keeps management access online without restarting the Atlaso worker. It checks
-the front door before and after activation and restores the previous configuration if readiness fails. See the
-[technical reference](../reference/appliance-apply-technical.md) for durable recovery and interruption handling.
-The dialog still understands the bounded **Applying management settings; Atlaso is reconnecting to task status.** state
-when following a retained task created by an older release that contains authenticated restart metadata. Current
-Appliance Settings tasks do not create that restart window.
+An ordinary Appliance Settings Apply keeps management access online, checks readiness, and restores the previous
+configuration on failure; see the [technical reference](../reference/appliance-apply-technical.md). Retained older tasks
+may show **Applying management settings; Atlaso is reconnecting to task status.** Current tasks do not restart the worker.
 
 If that reconnect exceeds the bounded grace window, or a status failure is not part of the planned restart, the dialog
 instead shows **Live task status is temporarily unavailable** with a link-free instruction to open **Tasks** in another
@@ -135,8 +132,6 @@ response arrives. Use Tasks to inspect the master task and verify appliance conn
 reload the affected page.
 
 ## Verify the result
-
-Do not treat a submitted task as proof that the appliance changed successfully.
 
 1. Confirm that the master task is **succeeded**.
 2. Confirm that every selected component is **succeeded**, not **failed** or **skipped**.

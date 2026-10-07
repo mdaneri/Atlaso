@@ -84,7 +84,11 @@ class ReverseProxyRouteInput(BaseModel):
     @field_validator("path_prefix")
     @classmethod
     def validate_path_prefix(cls, value: str) -> str:
-        """Reject path encodings and segments whose nginx interpretation can differ."""
+        """Reject path encodings and segments whose nginx interpretation can differ.
+
+        Args:
+            value: Candidate schema value to normalize or validate.
+        """
         if (
             not value.startswith("/")
             or "\\" in value
@@ -103,7 +107,11 @@ class ReverseProxyRouteInput(BaseModel):
     @field_validator("fingerprint")
     @classmethod
     def normalize_fingerprint(cls, value: str) -> str:
-        """Canonicalize a SHA-256 hexadecimal fingerprint."""
+        """Canonicalize a SHA-256 hexadecimal fingerprint.
+
+        Args:
+            value: Candidate schema value to normalize or validate.
+        """
         normalized = value.replace(":", "").strip().lower()
         if normalized and (len(normalized) != 64 or any(character not in "0123456789abcdef" for character in normalized)):
             raise ValueError("Enter a SHA-256 fingerprint as 64 hexadecimal characters.")
@@ -112,7 +120,11 @@ class ReverseProxyRouteInput(BaseModel):
     @field_validator("upstream_host")
     @classmethod
     def normalize_upstream_host(cls, value: str) -> str:
-        """Canonicalize a separate upstream DNS hostname or IP literal."""
+        """Canonicalize a separate upstream DNS hostname or IP literal.
+
+        Args:
+            value: Candidate schema value to normalize or validate.
+        """
         candidate = value.strip()
         try:
             return str(ipaddress.ip_address(candidate))
@@ -222,7 +234,11 @@ class ReverseProxyCreate(BaseModel):
     @field_validator("hostname")
     @classmethod
     def normalize_hostname(cls, value: str) -> str:
-        """Canonicalize a fully qualified DNS hostname without URL delimiters."""
+        """Canonicalize a fully qualified DNS hostname without URL delimiters.
+
+        Args:
+            value: Candidate schema value to normalize or validate.
+        """
         normalized = value.rstrip(".").lower()
         labels = normalized.split(".")
         label_pattern = r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$"
@@ -233,7 +249,11 @@ class ReverseProxyCreate(BaseModel):
     @field_validator("connect_timeout")
     @classmethod
     def validate_connect_timeout(cls, value: int) -> int:
-        """Keep the upstream connect timeout within its bounded runtime range."""
+        """Keep the upstream connect timeout within its bounded runtime range.
+
+        Args:
+            value: Candidate schema value to normalize or validate.
+        """
         if value > 30:
             raise ValueError("Upstream connect timeout may not exceed 30 seconds.")
         return value
@@ -241,7 +261,11 @@ class ReverseProxyCreate(BaseModel):
     @field_validator("read_timeout", "send_timeout")
     @classmethod
     def validate_io_timeouts(cls, value: int) -> int:
-        """Keep upstream read and send timeouts within their bounded runtime range."""
+        """Keep upstream read and send timeouts within their bounded runtime range.
+
+        Args:
+            value: Candidate schema value to normalize or validate.
+        """
         if value > 300:
             raise ValueError("Upstream read and send timeouts may not exceed 300 seconds.")
         return value
@@ -249,7 +273,11 @@ class ReverseProxyCreate(BaseModel):
     @field_validator("body_limit")
     @classmethod
     def validate_body_limit(cls, value: int) -> int:
-        """Reject unbounded request body settings."""
+        """Reject unbounded request body settings.
+
+        Args:
+            value: Candidate schema value to normalize or validate.
+        """
         if value < 1:
             raise ValueError("Request body limit must be between 1 byte and 1 GiB.")
         return value
@@ -298,7 +326,11 @@ class ReverseProxyResponse(BaseModel):
 
 
 def response_for_proxy(proxy: Any) -> ReverseProxyResponse:
-    """Build a response including the derived insecure verification acknowledgement."""
+    """Build a response including the derived insecure verification acknowledgement.
+
+    Args:
+        proxy: Saved proxy identity and desired-state projection.
+    """
     values = {
         field: getattr(proxy, field)
         for field in ReverseProxyResponse.model_fields

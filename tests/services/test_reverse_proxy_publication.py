@@ -20,7 +20,11 @@ from atlaso.app.services.reverse_proxy_publication import (
 
 @pytest.mark.parametrize("retirement", ["disabled", "http", "deleted"])
 def test_obsolete_proxy_ca_owners_discard_keys_without_touching_other_owners(retirement):
-    """Retire only obsolete proxy owners and preserve manual and active material."""
+    """Retire only obsolete proxy owners and preserve manual and active material.
+
+    Args:
+        retirement: Proxy state change that must retire obsolete CA ownership.
+    """
     from atlaso.app.models import CaCertificate
     from tests.services.test_reverse_proxies import create_db
 
@@ -52,7 +56,12 @@ def test_obsolete_proxy_ca_owners_discard_keys_without_touching_other_owners(ret
 
 @pytest.mark.parametrize("retirement", ["disabled", "http", "deleted"])
 def test_normal_ca_reconciliation_retires_proxy_keys_and_scoped_issuance_preserves_them(client, retirement):
-    """Exercise real CA issuance, retirement, and the management-only boundary."""
+    """Exercise real CA issuance, retirement, and the management-only boundary.
+
+    Args:
+        client: Initialized authenticated appliance test client.
+        retirement: Proxy state change that must retire obsolete CA ownership.
+    """
     from sqlalchemy import select
 
     from atlaso.app.database import SessionLocal
@@ -92,7 +101,11 @@ def test_normal_ca_reconciliation_retires_proxy_keys_and_scoped_issuance_preserv
 
 
 def proxy_payload(*, proxy_id: int = 10) -> dict:
-    """Return one representative public reverse-proxy desired-state snapshot."""
+    """Return one representative public reverse-proxy desired-state snapshot.
+
+    Args:
+        proxy_id: Exact saved proxy identifier.
+    """
     return {
         "id": proxy_id,
         "name": "Example portal",
@@ -223,7 +236,12 @@ def test_public_directory_visibility_is_independent_of_dns_and_listener_scoped()
 
 @pytest.mark.parametrize(("route_count", "proxy_count"), [(10, 1), (64, 1), (64, 4)])
 def test_large_publication_metadata_uses_bounded_comments(route_count, proxy_count):
-    """Multi-route intent must fit nginx's lexer and retain exact validation."""
+    """Multi-route intent must fit nginx's lexer and retain exact validation.
+
+    Args:
+        route_count: Number of canonical routes included in the publication.
+        proxy_count: Number of proxies included in the publication.
+    """
     proxy = proxy_payload()
     proxy["listeners"] = proxy["listeners"][:1]
     route = proxy["routes"][0]
@@ -259,7 +277,11 @@ def test_large_publication_metadata_uses_bounded_comments(route_count, proxy_cou
 
 @pytest.mark.parametrize("mutation", ["proxy_header", "pin", "reserved", "extra_server"])
 def test_publication_rejects_changed_directives_or_manifest(mutation):
-    """The privileged publication boundary accepts only canonical proxy intent."""
+    """The privileged publication boundary accepts only canonical proxy intent.
+
+    Args:
+        mutation: Canonical artifact corruption that must fail validation.
+    """
     proxy = proxy_payload()
     manifest = transport_manifest([proxy], ["192.0.2.10", "2001:db8::10"])
     rendered = render_proxy_servers([proxy], manifest)

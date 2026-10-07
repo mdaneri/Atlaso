@@ -37,7 +37,12 @@ _SERVICE_SETTING_MODELS = (
 
 
 def _canonical_dns_name(value: str, *, require_fqdn: bool) -> str:
-    """Return a canonical DNS name or raise for ambiguous host syntax."""
+    """Return a canonical DNS name or raise for ambiguous host syntax.
+
+    Args:
+        value: Candidate value to normalize or validate.
+        require_fqdn: Whether the DNS name must contain multiple labels.
+    """
     candidate = value.strip().rstrip(".").lower()
     if not candidate or len(candidate) > 253 or any(not _DNS_LABEL.fullmatch(label) for label in candidate.split(".")):
         raise ValueError("Enter a valid DNS hostname without a URL, port, or credentials.")
@@ -54,7 +59,11 @@ def _canonical_dns_name(value: str, *, require_fqdn: bool) -> str:
 
 
 def _host_literal(value: str) -> ipaddress.IPv4Address | ipaddress.IPv6Address | None:
-    """Parse a safe upstream IP literal, excluding special-purpose addresses."""
+    """Parse a safe upstream IP literal, excluding special-purpose addresses.
+
+    Args:
+        value: Candidate value to normalize or validate.
+    """
     try:
         address = ipaddress.ip_address(value)
     except ValueError:
@@ -73,7 +82,11 @@ def _host_literal(value: str) -> ipaddress.IPv4Address | ipaddress.IPv6Address |
 
 
 def _valid_listener_address(value: str) -> bool:
-    """Return whether an assigned listener address is an ordinary unicast address."""
+    """Return whether an assigned listener address is an ordinary unicast address.
+
+    Args:
+        value: Candidate value to normalize or validate.
+    """
     try:
         address = ipaddress.ip_address(value)
     except ValueError:
@@ -90,7 +103,11 @@ def _valid_listener_address(value: str) -> bool:
 
 
 def desired_rows(db: Session) -> list[models.ReverseProxy]:
-    """Return reverse proxies with routes in their saved order."""
+    """Return reverse proxies with routes in their saved order.
+
+    Args:
+        db: Caller-owned database session for proxy desired state.
+    """
     return list(
         db.scalars(
             select(models.ReverseProxy)
@@ -101,7 +118,11 @@ def desired_rows(db: Session) -> list[models.ReverseProxy]:
 
 
 def listener_options(db: Session) -> list[dict[str, str]]:
-    """Return exact configured addresses on available non-management targets."""
+    """Return exact configured addresses on available non-management targets.
+
+    Args:
+        db: Caller-owned database session for proxy desired state.
+    """
     interfaces = list(db.scalars(select(models.PhysicalInterface)))
     vlans = list(db.scalars(select(models.VlanInterface)))
     targets = nat_targets(interfaces, vlans)
@@ -120,7 +141,11 @@ def listener_options(db: Session) -> list[dict[str, str]]:
 
 
 def _service_hostnames(db: Session) -> set[str]:
-    """Collect Atlaso-owned service and appliance names reserved by existing services."""
+    """Collect Atlaso-owned service and appliance names reserved by existing services.
+
+    Args:
+        db: Caller-owned database session for proxy desired state.
+    """
     names: set[str] = set()
     for model in _SERVICE_SETTING_MODELS:
         row = db.scalar(select(model))
@@ -152,7 +177,11 @@ def _service_hostnames(db: Session) -> set[str]:
 
 
 def validation_context(db: Session) -> dict[str, Any]:
-    """Capture eligible listeners, appliance identities, socket claims and peer state."""
+    """Capture eligible listeners, appliance identities, socket claims and peer state.
+
+    Args:
+        db: Caller-owned database session for proxy desired state.
+    """
     interfaces = list(db.scalars(select(models.PhysicalInterface)))
     vlans = list(db.scalars(select(models.VlanInterface)))
     addresses: set[str] = set()
@@ -173,7 +202,11 @@ def validation_context(db: Session) -> dict[str, Any]:
 
 
 def _listener_sockets(proxy: models.ReverseProxy) -> list[tuple[str, str, int, str]]:
-    """Enumerate the TCP sockets and protocol occupied by a proxy candidate."""
+    """Enumerate the TCP sockets and protocol occupied by a proxy candidate.
+
+    Args:
+        proxy: Desired-state proxy model or projection.
+    """
     ports = [(int(proxy.port), proxy.scheme)]
     if proxy.redirect_http:
         ports.append((int(proxy.redirect_port), "http"))
@@ -191,7 +224,14 @@ def _claim_conflicts(
     address: str,
     port: int,
 ) -> bool:
-    """Check exact or wildcard socket overlap with an existing service claim."""
+    """Check exact or wildcard socket overlap with an existing service claim.
+
+    Args:
+        claim: Input used by  claim conflicts.
+        interface: Input used by  claim conflicts.
+        address: Input used by  claim conflicts.
+        port: Input used by  claim conflicts.
+    """
     return (
         claim.interface in ("*", interface)
         and claim.address in ("*", "0.0.0.0", "::", address)
@@ -201,7 +241,11 @@ def _claim_conflicts(
 
 
 def _nginx_http_front_door(claim: ListenerClaim) -> bool:
-    """Recognize only inventory entries explicitly owned by the nginx front door."""
+    """Recognize only inventory entries explicitly owned by the nginx front door.
+
+    Args:
+        claim: Input used by  nginx http front door.
+    """
     return (
         claim.owner == "nginx"
         and claim.scheme in {"http", "https"}
@@ -211,7 +255,12 @@ def _nginx_http_front_door(claim: ListenerClaim) -> bool:
 
 
 def _route_overlap(left: str, right: str) -> bool:
-    """Return whether nginx's prefix matching makes two routes ambiguous."""
+    """Return whether nginx's prefix matching makes two routes ambiguous.
+
+    Args:
+        left: Input used by  route overlap.
+        right: Input used by  route overlap.
+    """
     return left.startswith(right) or right.startswith(left)
 
 
@@ -222,7 +271,11 @@ _RESERVED_ROUTE_PREFIXES = {
 
 
 def _reserved_route_path(path: str) -> bool:
-    """Return whether a path would shadow a stable Atlaso machine or browser route."""
+    """Return whether a path would shadow a stable Atlaso machine or browser route.
+
+    Args:
+        path: Input used by  reserved route path.
+    """
     if path == "/":
         return False
     return path.lstrip("/").split("/", 1)[0].casefold() in _RESERVED_ROUTE_PREFIXES
@@ -236,7 +289,15 @@ def validate_proxy(
     *,
     require_binding: bool = True,
 ) -> list[str]:
-    """Validate one complete proxy and nested route replacement before persistence."""
+    """Validate one complete proxy and nested route replacement before persistence.
+
+    Args:
+        candidate: Input used by validate proxy.
+        context: Validated listener, address, service, and socket inventory.
+        existing: Current proxy collection used for replacement and conflict checks.
+        exclude_id: Existing proxy replaced by the candidate.
+        require_binding: Whether exact eligible listener binding must be present.
+    """
     errors: list[str] = []
     try:
         hostname = _canonical_dns_name(candidate.hostname, require_fqdn=True)
@@ -427,11 +488,20 @@ def save_proxy(
     actor: str,
     proxy_id: int | None = None,
 ) -> models.ReverseProxy:
-    """Atomically replace proxy and nested routes, then audit desired-state save."""
+    """Atomically replace proxy and nested routes, then audit desired-state save.
+
+    Args:
+        db: Caller-owned database session for proxy desired state.
+        payload: Desired-state or cached-observation fixture payload.
+        actor: Authenticated audit identity responsible for the mutation.
+        proxy_id: Exact saved proxy identifier.
+    """
     request = payload if isinstance(payload, ReverseProxyCreate) else ReverseProxyCreate.model_validate(payload)
     acquire_network_objects_write_lock(db)
     try:
-        from atlaso.app.ui import remember_applied_service_dns_records
+        from atlaso.app.services.applied_service_dns import (
+            remember_applied_service_dns_records,
+        )
 
         remember_applied_service_dns_records(db)
         peers = desired_rows(db)
@@ -534,7 +604,11 @@ def save_proxy(
 
 
 def _normalize_upstream_host(value: str) -> str:
-    """Normalize a validated upstream IP literal or DNS hostname."""
+    """Normalize a validated upstream IP literal or DNS hostname.
+
+    Args:
+        value: Candidate value to normalize or validate.
+    """
     address = _host_literal(value)
     if address is not None:
         return str(address)
@@ -542,10 +616,18 @@ def _normalize_upstream_host(value: str) -> str:
 
 
 def delete_proxy(db: Session, proxy_id: int, *, actor: str) -> None:
-    """Delete one proxy and its ordered routes as an audited transaction."""
+    """Delete one proxy and its ordered routes as an audited transaction.
+
+    Args:
+        db: Caller-owned database session for proxy desired state.
+        proxy_id: Exact saved proxy identifier.
+        actor: Authenticated audit identity responsible for the mutation.
+    """
     acquire_network_objects_write_lock(db)
     try:
-        from atlaso.app.ui import remember_applied_service_dns_records
+        from atlaso.app.services.applied_service_dns import (
+            remember_applied_service_dns_records,
+        )
 
         remember_applied_service_dns_records(db)
         proxy = db.get(models.ReverseProxy, proxy_id)
@@ -573,7 +655,14 @@ def delete_proxy(db: Session, proxy_id: int, *, actor: str) -> None:
 
 
 def set_enabled(db: Session, proxy_id: int, *, enabled: bool, actor: str) -> models.ReverseProxy:
-    """Save a complete proxy replacement with only the enabled value changed."""
+    """Save a complete proxy replacement with only the enabled value changed.
+
+    Args:
+        db: Caller-owned database session for proxy desired state.
+        proxy_id: Exact saved proxy identifier.
+        enabled: Input used by set enabled.
+        actor: Authenticated audit identity responsible for the mutation.
+    """
     acquire_network_objects_write_lock(db)
     proxy = db.scalar(
         select(models.ReverseProxy)
@@ -606,7 +695,11 @@ def set_enabled(db: Session, proxy_id: int, *, enabled: bool, actor: str) -> mod
 
 
 def runtime_snapshot(db: Session) -> list[dict[str, Any]]:
-    """Return renderer-safe desired state without private key material."""
+    """Return renderer-safe desired state without private key material.
+
+    Args:
+        db: Caller-owned database session for proxy desired state.
+    """
     return [
         {
             "id": proxy.id,

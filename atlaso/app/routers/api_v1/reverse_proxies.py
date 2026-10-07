@@ -225,7 +225,12 @@ def replace_reverse_proxy_routes(
 
 
 def _get_proxy(db: Session, proxy_id: int) -> ReverseProxy | None:
-    """Load one proxy and its bounded ordered route collection eagerly."""
+    """Load one proxy and its bounded ordered route collection eagerly.
+
+    Args:
+        db: Caller-owned database session for proxy desired state.
+        proxy_id: Exact saved proxy identifier.
+    """
     return db.scalar(
         select(ReverseProxy)
         .options(selectinload(ReverseProxy.routes))

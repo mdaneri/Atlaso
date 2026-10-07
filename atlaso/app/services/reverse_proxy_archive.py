@@ -81,7 +81,7 @@ def validate_candidates(proxies: list[models.ReverseProxy], data: dict[str, Any]
     options = []
     addresses = set()
     for row in [*data["physical_interfaces"], *data["vlan_interfaces"]]:
-        for field in ("ip_cidr", "ipv6_cidr"):
+        for field in ("ip_cidr", "ipv6_cidr", "host_ip_cidr", "host_ipv6_cidr"):
             try:
                 addresses.add(str(ip_interface(row.get(field) or "").ip))
             except ValueError:

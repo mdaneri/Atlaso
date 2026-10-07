@@ -35,14 +35,25 @@ METADATA_CHUNK_SIZE = 2048
 
 
 def _metadata_lines(marker: str, value: Any) -> list[str]:
-    """Keep ASCII metadata comments below nginx's configuration token buffer."""
+    """Keep ASCII metadata comments below nginx's configuration token buffer.
+
+    Args:
+        marker: Input used by  metadata lines.
+        value: Candidate value to normalize or validate.
+    """
     encoded = json.dumps(value, sort_keys=True, separators=(",", ":"))
     return [marker + encoded[offset:offset + METADATA_CHUNK_SIZE]
             for offset in range(0, len(encoded), METADATA_CHUNK_SIZE)]
 
 
 def _read_metadata(lines: list[str], start: int, marker: str) -> tuple[Any, int]:
-    """Read consecutive bounded fragments; canonical rendering verifies order."""
+    """Read consecutive bounded fragments; canonical rendering verifies order.
+
+    Args:
+        lines: Input used by  read metadata.
+        start: Input used by  read metadata.
+        marker: Input used by  read metadata.
+    """
     fragments = []
     while start < len(lines) and lines[start].startswith(marker):
         fragment = lines[start][len(marker):].rstrip("\n")
@@ -56,7 +67,12 @@ def _read_metadata(lines: list[str], start: int, marker: str) -> tuple[Any, int]
 
 
 def proxy_certificate_paths(proxy_id: int, hostname: str) -> tuple[str, str, str]:
-    """Use the CA's bounded filename convention beneath one stable owner root."""
+    """Use the CA's bounded filename convention beneath one stable owner root.
+
+    Args:
+        proxy_id: Exact saved proxy identifier.
+        hostname: Canonical hostname whose proxy reservation is checked.
+    """
     base = f"/etc/atlaso/reverse-proxy-{proxy_id}/certs/{safe_certificate_name(hostname)}"
     return f"{base}.crt", f"{base}.key", f"{base}-chain.pem"
 
@@ -125,7 +141,12 @@ def validated_snapshot(text: str) -> tuple[list[dict[str, Any]], dict[str, Any] 
 
 
 def transport_manifest(proxies: list[dict[str, Any]], forbidden_addresses: list[str]) -> dict[str, Any]:
-    """Capture complete immutable upstream transport state without secrets."""
+    """Capture complete immutable upstream transport state without secrets.
+
+    Args:
+        proxies: Complete bounded proxy desired-state collection.
+        forbidden_addresses: Input used by transport manifest.
+    """
     routes = []
     for proxy in proxies:
         if not proxy["enabled"]:
@@ -144,7 +165,11 @@ def transport_manifest(proxies: list[dict[str, Any]], forbidden_addresses: list[
 
 
 def appliance_addresses(db: Session) -> list[str]:
-    """Include desired addresses from every role in the outbound exclusion set."""
+    """Include desired addresses from every role in the outbound exclusion set.
+
+    Args:
+        db: Caller-owned database session for proxy desired state.
+    """
     result = set()
     for model in (models.PhysicalInterface, models.VlanInterface):
         for row in db.scalars(select(model)):
@@ -157,7 +182,11 @@ def appliance_addresses(db: Session) -> list[str]:
 
 
 def certificate_specs(proxies: list[dict[str, Any]]) -> list[ManagedCertificateSpec]:
-    """Reuse CA custody and deterministic service paths for HTTPS certificates."""
+    """Reuse CA custody and deterministic service paths for HTTPS certificates.
+
+    Args:
+        proxies: Complete bounded proxy desired-state collection.
+    """
     result = []
     for proxy in proxies:
         if not proxy["enabled"] or proxy["scheme"] != "https":
@@ -171,7 +200,12 @@ def certificate_specs(proxies: list[dict[str, Any]]) -> list[ManagedCertificateS
 
 
 def retire_obsolete_proxy_certificates(db: Session, proxies: list[dict[str, Any]]) -> bool:
-    """Disable orphaned proxy CA owners and discard their encrypted private keys."""
+    """Disable orphaned proxy CA owners and discard their encrypted private keys.
+
+    Args:
+        db: Caller-owned database session for proxy desired state.
+        proxies: Complete bounded proxy desired-state collection.
+    """
     owners = {spec.owner for spec in certificate_specs(proxies)}
     changed = False
     certificates = db.scalars(select(models.CaCertificate).where(models.CaCertificate.managed_owner.like("reverse_proxy:%")))
@@ -188,7 +222,12 @@ def retire_obsolete_proxy_certificates(db: Session, proxies: list[dict[str, Any]
 
 
 def render_proxy_servers(proxies: list[dict[str, Any]], manifest: dict[str, Any]) -> str:
-    """Render exact-host servers; rejected paths take precedence over proxy routes."""
+    """Render exact-host servers; rejected paths take precedence over proxy routes.
+
+    Args:
+        proxies: Complete bounded proxy desired-state collection.
+        manifest: Input used by render proxy servers.
+    """
     validate_manifest(manifest)
     if not proxies:
         return ""
@@ -246,7 +285,12 @@ def render_proxy_servers(proxies: list[dict[str, Any]], manifest: dict[str, Any]
 
 
 def directory_entries(proxies: list[dict[str, Any]], address: str) -> list[dict[str, Any]]:
-    """Publish opted-in resources only on the called listener address."""
+    """Publish opted-in resources only on the called listener address.
+
+    Args:
+        proxies: Complete bounded proxy desired-state collection.
+        address: Input used by directory entries.
+    """
     entries = []
     for proxy in proxies:
         if not proxy["enabled"] or not proxy["public_listing"] or address not in {item["address"] for item in proxy["listeners"]}:
@@ -261,7 +305,11 @@ def directory_entries(proxies: list[dict[str, Any]], address: str) -> list[dict[
 
 
 def firewall_rules(proxies: list[dict[str, Any]]) -> list[models.FirewallRule]:
-    """Generate exact-address TCP admissions in the existing managed collection."""
+    """Generate exact-address TCP admissions in the existing managed collection.
+
+    Args:
+        proxies: Complete bounded proxy desired-state collection.
+    """
     result = []
     for proxy in proxies:
         if not proxy["enabled"]:
@@ -278,7 +326,12 @@ def firewall_rules(proxies: list[dict[str, Any]]) -> list[models.FirewallRule]:
 
 
 def dns_plan(proxies: list[dict[str, Any]], settings: models.DnsSettings | None) -> tuple[list[dict[str, Any]], list[str]]:
-    """Describe exact records and truthfully report external-DNS prerequisites."""
+    """Describe exact records and truthfully report external-DNS prerequisites.
+
+    Args:
+        proxies: Complete bounded proxy desired-state collection.
+        settings: Input used by dns plan.
+    """
     records = []
     warnings = []
     zones = set(split_domains(settings.domain)) - set(split_domains(settings.disabled_domains)) if settings else set()
@@ -295,7 +348,12 @@ def dns_plan(proxies: list[dict[str, Any]], settings: models.DnsSettings | None)
 
 
 def reconcile_proxy_dns(db: Session, proxies: list[dict[str, Any]]) -> None:
-    """Reconcile desired records within the caller's locked atomic transaction."""
+    """Reconcile desired records within the caller's locked atomic transaction.
+
+    Args:
+        db: Caller-owned database session for proxy desired state.
+        proxies: Complete bounded proxy desired-state collection.
+    """
     plan, _warnings = dns_plan(proxies, db.scalar(select(models.DnsSettings)))
     wanted = {(row["hostname"], row["record_type"], row["address"]): row for row in plan if row["managed"]}
     existing = list(db.scalars(select(models.DnsRecord)))
@@ -321,7 +379,11 @@ def reconcile_proxy_dns(db: Session, proxies: list[dict[str, Any]]) -> None:
 
 
 def context(db: Session) -> dict[str, Any]:
-    """Build read-only collection, validation and redacted publication previews."""
+    """Build read-only collection, validation and redacted publication previews.
+
+    Args:
+        db: Caller-owned database session for proxy desired state.
+    """
     from atlaso.app.reverse_proxy_schemas import response_for_proxy
     from atlaso.app.services.reverse_proxies import (
         desired_rows,

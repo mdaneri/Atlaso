@@ -28,13 +28,21 @@ BUFFER_LIMIT = 65536
 
 
 def manifest_generation(manifest: dict[str, Any]) -> str:
-    """Bind a generation to its complete non-secret transport intent."""
+    """Bind a generation to its complete non-secret transport intent.
+
+    Args:
+        manifest: Input used by manifest generation.
+    """
     content = {key: value for key, value in manifest.items() if key != "generation"}
     return hashlib.sha256(json.dumps(content, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
 
 
 def validate_manifest(manifest: dict[str, Any]) -> None:
-    """Refuse malformed or unbounded data independently of the management API."""
+    """Refuse malformed or unbounded data independently of the management API.
+
+    Args:
+        manifest: Input used by validate manifest.
+    """
     if not isinstance(manifest, dict) or set(manifest) != {"schema", "generation", "routes", "forbidden_addresses"} or type(manifest["schema"]) is not int or manifest["schema"] != 1:
         raise ValueError("Unsupported reverse-proxy transport manifest.")
     if manifest["generation"] != manifest_generation(manifest):
@@ -131,7 +139,12 @@ def native_addresses() -> set[str]:
 
 
 def safe_destination(address: str, forbidden: set[str]) -> bool:
-    """Exclude appliance and special addresses after DNS resolution."""
+    """Exclude appliance and special addresses after DNS resolution.
+
+    Args:
+        address: Input used by safe destination.
+        forbidden: Input used by safe destination.
+    """
     value = ip_address(address)
     return not (str(value) in forbidden or value.is_loopback or value.is_link_local
                 or value.is_multicast or value.is_unspecified or value.is_reserved
@@ -139,7 +152,11 @@ def safe_destination(address: str, forbidden: set[str]) -> bool:
 
 
 def tls_context(route: dict[str, Any]) -> ssl.SSLContext | None:
-    """Select explicit TLS policy without weakening the trusted default."""
+    """Select explicit TLS policy without weakening the trusted default.
+
+    Args:
+        route: Input used by tls context.
+    """
     if route["upstream_scheme"] == "http":
         return None
     context = ssl.create_default_context()
@@ -151,7 +168,12 @@ def tls_context(route: dict[str, Any]) -> ssl.SSLContext | None:
 
 
 def verify_peer(route: dict[str, Any], writer: asyncio.StreamWriter) -> None:
-    """Compare the leaf of the connected TLS stream before forwarding bytes."""
+    """Compare the leaf of the connected TLS stream before forwarding bytes.
+
+    Args:
+        route: Input used by verify peer.
+        writer: Input used by verify peer.
+    """
     if route["trust_mode"] != "fingerprint":
         return
     peer = writer.get_extra_info("ssl_object")
@@ -161,7 +183,12 @@ def verify_peer(route: dict[str, Any], writer: asyncio.StreamWriter) -> None:
 
 
 async def open_upstream(route: dict[str, Any], forbidden: set[str]) -> tuple[asyncio.StreamReader, asyncio.StreamWriter]:
-    """Resolve once and connect to a validated literal under one deadline."""
+    """Resolve once and connect to a validated literal under one deadline.
+
+    Args:
+        route: Input used by open upstream.
+        forbidden: Input used by open upstream.
+    """
     writer = None
     async with asyncio.timeout(route["connect_timeout"]):
         local = await asyncio.to_thread(native_addresses)
@@ -191,7 +218,14 @@ async def open_upstream(route: dict[str, Any], forbidden: set[str]) -> tuple[asy
 
 
 async def relay(source: asyncio.StreamReader, target: asyncio.StreamWriter, read_timeout: int, send_timeout: int) -> None:
-    """Copy a fixed-size buffer with backpressure and bounded idle time."""
+    """Copy a fixed-size buffer with backpressure and bounded idle time.
+
+    Args:
+        source: Input used by relay.
+        target: Served or upstream hostname relationship under test.
+        read_timeout: Input used by relay.
+        send_timeout: Input used by relay.
+    """
     while True:
         async with asyncio.timeout(read_timeout):
             data = await source.read(BUFFER_LIMIT)
@@ -205,7 +239,11 @@ async def relay(source: asyncio.StreamReader, target: asyncio.StreamWriter, read
 
 
 async def serve(manifest: dict[str, Any]) -> None:
-    """Serve the immutable generation using sockets accessible only to nginx."""
+    """Serve the immutable generation using sockets accessible only to nginx.
+
+    Args:
+        manifest: Input used by serve.
+    """
     validate_manifest(manifest)
     root = SOCKET_ROOT / manifest["generation"]
     if root.is_symlink() or not root.is_dir() or any(root.iterdir()):
@@ -216,6 +254,13 @@ async def serve(manifest: dict[str, Any]) -> None:
     health_task: asyncio.Task[None] | None = None
 
     async def connection(route: dict[str, Any], reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+        """Run connection for the bounded proxy operation.
+
+        Args:
+            route: Input used by connection.
+            reader: Input used by connection.
+            writer: Input used by connection.
+        """
         nonlocal active
         if active >= MAX_CONNECTIONS:
             writer.close()
@@ -248,6 +293,13 @@ async def serve(manifest: dict[str, Any]) -> None:
     try:
         for route in manifest["routes"]:
             async def handler(reader: asyncio.StreamReader, writer: asyncio.StreamWriter, selected: dict[str, Any] = route) -> None:
+                """Run handler for the bounded proxy operation.
+
+                Args:
+                    reader: Input used by handler.
+                    writer: Input used by handler.
+                    selected: Input used by handler.
+                """
                 await connection(selected, reader, writer)
             path = root / (route["socket_id"] + ".sock")
             unix_server_factory = getattr(asyncio, "start_unix_server")  # noqa: B009 - Windows asyncio stubs omit this Linux-only API.
@@ -266,11 +318,21 @@ async def serve(manifest: dict[str, Any]) -> None:
 
 
 async def observe_health(manifest: dict[str, Any], root: Path) -> None:
-    """Publish bounded observations independently of management HTTP requests."""
+    """Publish bounded observations independently of management HTTP requests.
+
+    Args:
+        manifest: Input used by observe health.
+        root: Input used by observe health.
+    """
     semaphore = asyncio.Semaphore(8)
     previous: dict[str, Any] = {}
 
     async def observe(route: dict[str, Any]) -> tuple[str, dict[str, Any]]:
+        """Run observe for the bounded proxy operation.
+
+        Args:
+            route: Input used by observe.
+        """
         async with semaphore:
             try:
                 async with asyncio.timeout(10):
@@ -299,7 +361,12 @@ async def observe_health(manifest: dict[str, Any], root: Path) -> None:
 
 
 async def probe(route: dict[str, Any], forbidden: set[str]) -> dict[str, Any]:
-    """Probe TLS and an HTTP HEAD status without retaining response content."""
+    """Probe TLS and an HTTP HEAD status without retaining response content.
+
+    Args:
+        route: Input used by probe.
+        forbidden: Input used by probe.
+    """
     writer = None
     result: dict[str, Any] = {"status": "degraded", "last_success": None, "failure_class": None,
                               "http_status": None, "tls_status": "not_probed"}

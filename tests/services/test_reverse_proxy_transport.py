@@ -13,7 +13,11 @@ from atlaso.app.services import reverse_proxy_transport as transport
 
 
 def route(**changes):
-    """Return one bounded transport request without credentials."""
+    """Return one bounded transport request without credentials.
+
+    Args:
+        **changes: Fixture input for route.
+    """
     return {"socket_id": "1-1", "probe_host": "portal.example.test", "probe_path": "/app/",
             "upstream_scheme": "https", "upstream_host": "app.example.test",
             "upstream_port": 443, "trust_mode": "fingerprint", "fingerprint": hashlib.sha256(b"leaf").hexdigest(),
@@ -22,7 +26,11 @@ def route(**changes):
 
 @pytest.mark.parametrize("address", ["127.0.0.1", "::1", "169.254.169.254", "fe80::1", "224.0.0.1", "0.0.0.0", "::", "::ffff:192.0.2.1"])
 def test_special_destinations_are_refused(address):
-    """DNS cannot bypass special-address restrictions."""
+    """DNS cannot bypass special-address restrictions.
+
+    Args:
+        address: Fixture input for test special destinations are refused.
+    """
     assert not transport.safe_destination(address, set())
 
 
@@ -41,7 +49,11 @@ def test_actual_peer_pin_and_default_ca_verification():
 
 @pytest.mark.asyncio
 async def test_mixed_dns_answers_refused_before_connect(monkeypatch):
-    """Reject a DNS answer set containing any appliance address."""
+    """Reject a DNS answer set containing any appliance address.
+
+    Args:
+        monkeypatch: Scoped dependency replacements supplied by pytest.
+    """
     monkeypatch.setattr(transport, "native_addresses", lambda: {"192.0.2.10"})
     resolve = AsyncMock(return_value=[(socket.AF_INET, socket.SOCK_STREAM, 6, "", (value, 443))
                                      for value in ["192.0.2.20", "192.0.2.10"]])
@@ -55,7 +67,11 @@ async def test_mixed_dns_answers_refused_before_connect(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_pin_mismatch_closes_same_connection_before_bytes(monkeypatch):
-    """Reject a wrong certificate on the actual stream without writing a request."""
+    """Reject a wrong certificate on the actual stream without writing a request.
+
+    Args:
+        monkeypatch: Scoped dependency replacements supplied by pytest.
+    """
     monkeypatch.setattr(transport, "native_addresses", lambda: {"192.0.2.10"})
     monkeypatch.setattr(asyncio.get_running_loop(), "getaddrinfo", AsyncMock(return_value=[
         (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("192.0.2.20", 443))]))
@@ -73,7 +89,11 @@ async def test_pin_mismatch_closes_same_connection_before_bytes(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_native_observation_failure_refuses_outbound(monkeypatch):
-    """Unknown local-address state cannot silently relax the exclusion set."""
+    """Unknown local-address state cannot silently relax the exclusion set.
+
+    Args:
+        monkeypatch: Scoped dependency replacements supplied by pytest.
+    """
     def unavailable():
         raise OSError("no native inventory")
 
@@ -87,7 +107,12 @@ async def test_native_observation_failure_refuses_outbound(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_health_cache_sampling_is_periodic_atomic_and_bounded(tmp_path, monkeypatch):
-    """Sample at most eight routes concurrently and publish one compact cache generation."""
+    """Sample at most eight routes concurrently and publish one compact cache generation.
+
+    Args:
+        tmp_path: Isolated filesystem root supplied by pytest.
+        monkeypatch: Scoped dependency replacements supplied by pytest.
+    """
     routes = [route(socket_id=f"1-{index}", trust_mode="trusted_ca", fingerprint="") for index in range(1, 11)]
     manifest = {"generation": "a" * 64, "routes": routes, "forbidden_addresses": ["192.0.2.10"]}
     release = asyncio.Event()
@@ -97,6 +122,12 @@ async def test_health_cache_sampling_is_periodic_atomic_and_bounded(tmp_path, mo
     calls = 0
 
     async def fake_probe(selected, _forbidden):
+        """Simulate fake probe for the focused fixture.
+
+        Args:
+            selected: Fixture input for fake probe.
+            _forbidden: Fixture input for fake probe.
+        """
         nonlocal active, peak, calls
         if selected["socket_id"] == routes[8]["socket_id"]:
             published = json.loads((tmp_path / "health.json").read_text(encoding="utf-8"))
@@ -115,6 +146,11 @@ async def test_health_cache_sampling_is_periodic_atomic_and_bounded(tmp_path, mo
         pass
 
     async def stop_after_interval(seconds):
+        """Simulate stop after interval for the focused fixture.
+
+        Args:
+            seconds: Requested pause between probe cycles.
+        """
         assert seconds == 30
         raise StopAfterPublish
 
@@ -141,7 +177,11 @@ async def test_health_cache_sampling_is_periodic_atomic_and_bounded(tmp_path, mo
 
 @pytest.mark.asyncio
 async def test_probe_uses_public_host_and_route_aware_path_without_retaining_body(monkeypatch):
-    """Health requests target the published virtual host and only the bounded HEAD path."""
+    """Health requests target the published virtual host and only the bounded HEAD path.
+
+    Args:
+        monkeypatch: Scoped dependency replacements supplied by pytest.
+    """
     reader = Mock()
     reader.readuntil = AsyncMock(return_value=b"HTTP/1.1 204 No Content\r\n")
     writer = Mock()
@@ -161,7 +201,11 @@ async def test_probe_uses_public_host_and_route_aware_path_without_retaining_bod
 
 @pytest.mark.asyncio
 async def test_probe_timeout_is_reported_as_bounded_unavailable_health(monkeypatch):
-    """A timed-out HEAD observation degrades status without surfacing exception data."""
+    """A timed-out HEAD observation degrades status without surfacing exception data.
+
+    Args:
+        monkeypatch: Scoped dependency replacements supplied by pytest.
+    """
     monkeypatch.setattr(transport, "open_upstream", AsyncMock(side_effect=TimeoutError("private detail")))
 
     result = await transport.probe(route(), set())

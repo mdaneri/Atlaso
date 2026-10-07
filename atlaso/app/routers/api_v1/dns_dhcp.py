@@ -92,24 +92,41 @@ RESERVED_DNS_OWNER_ERROR = "The Reverse Proxies DNS owner marker is reserved for
 
 
 def _is_reverse_proxy_dns_record(record: DnsRecord) -> bool:
-    """Identify DNS records whose lifecycle belongs to Reverse Proxies."""
+    """Identify DNS records whose lifecycle belongs to Reverse Proxies.
+
+    Args:
+        record: Candidate DNS record whose managed ownership is checked.
+    """
     return (record.description or "").startswith(DNS_OWNER_PREFIX)
 
 
 def _reject_reverse_proxy_dns_record(record: DnsRecord) -> None:
-    """Stop independent writes to a reverse-proxy-owned DNS record."""
+    """Stop independent writes to a reverse-proxy-owned DNS record.
+
+    Args:
+        record: Candidate DNS record whose managed ownership is checked.
+    """
     if _is_reverse_proxy_dns_record(record):
         raise HTTPException(status_code=409, detail=REVERSE_PROXY_DNS_OWNER_ERROR)
 
 
 def _reject_reserved_dns_owner_description(description: str | None) -> None:
-    """Prevent ordinary DNS writes from impersonating the service owner marker."""
+    """Prevent ordinary DNS writes from impersonating the service owner marker.
+
+    Args:
+        description: DNS description marker submitted by the caller.
+    """
     if (description or "").startswith(DNS_OWNER_PREFIX):
         raise HTTPException(status_code=422, detail=RESERVED_DNS_OWNER_ERROR)
 
 
 def _reject_reverse_proxy_dns_hostname(db: Session, hostname: str) -> None:
-    """Prevent ordinary records from sharing a reverse-proxy-owned hostname."""
+    """Prevent ordinary records from sharing a reverse-proxy-owned hostname.
+
+    Args:
+        db: Caller-owned database session for proxy desired state.
+        hostname: Canonical hostname whose proxy reservation is checked.
+    """
     owner_record_id = db.scalar(
         select(DnsRecord.id).where(
             func.lower(DnsRecord.hostname) == hostname.lower(),
@@ -121,8 +138,14 @@ def _reject_reverse_proxy_dns_hostname(db: Session, hostname: str) -> None:
 
 
 def _remember_applied_dns_records(db: Session) -> None:
-    """Capture legacy service-record ownership before generated DNS rows change."""
-    from atlaso.app.ui import remember_applied_service_dns_records
+    """Capture legacy service-record ownership before generated DNS rows change.
+
+    Args:
+        db: Caller-owned database session for proxy desired state.
+    """
+    from atlaso.app.services.applied_service_dns import (
+        remember_applied_service_dns_records,
+    )
 
     remember_applied_service_dns_records(db)
 

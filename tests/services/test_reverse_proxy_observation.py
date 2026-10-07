@@ -41,7 +41,13 @@ def _desired():
 
 
 def _payload(*, proxies=None, observed_at="2026-10-07T00:00:00+00:00", health=None):
-    """Return a complete helper payload with one body-free status row."""
+    """Return a complete helper payload with one body-free status row.
+
+    Args:
+        proxies: Complete bounded proxy desired-state collection.
+        observed_at: UTC completion time of the cached observation.
+        health: Bounded per-route cached health values.
+    """
     return {
         "schema": 1,
         "proxies": _desired() if proxies is None else proxies,
@@ -60,7 +66,14 @@ def _payload(*, proxies=None, observed_at="2026-10-07T00:00:00+00:00", health=No
 
 
 def _configure(monkeypatch, payload, *, dry_run=False, returncode=0):
-    """Replace desired-state and helper boundaries for a focused observation test."""
+    """Replace desired-state and helper boundaries for a focused observation test.
+
+    Args:
+        monkeypatch: Scoped dependency replacements supplied by pytest.
+        payload: Desired-state or cached-observation fixture payload.
+        dry_run: Whether the adapter result represents unexecuted work.
+        returncode: Simulated helper exit status.
+    """
     monkeypatch.setattr(observation, "runtime_snapshot", lambda _db: _desired())
     monkeypatch.setattr(
         observation.SystemAdapter,
@@ -71,6 +84,11 @@ def _configure(monkeypatch, payload, *, dry_run=False, returncode=0):
 
 
 def test_applied_snapshot_projects_cached_healthy_status_without_probing(monkeypatch):
+    """Run test applied snapshot projects cached healthy status without probing for the bounded proxy operation.
+
+    Args:
+        monkeypatch: Scoped dependency replacements supplied by pytest.
+    """
     now = datetime(2026, 10, 7, tzinfo=timezone.utc)
     _configure(monkeypatch, _payload())
 
@@ -100,6 +118,11 @@ def test_fresh_batch_does_not_refresh_an_old_route_sample(monkeypatch):
 
 
 def test_changed_snapshot_is_pending_and_does_not_expose_old_health(monkeypatch):
+    """Run test changed snapshot is pending and does not expose old health for the bounded proxy operation.
+
+    Args:
+        monkeypatch: Scoped dependency replacements supplied by pytest.
+    """
     previous = _desired()
     previous[0]["name"] = "Old name"
     _configure(monkeypatch, _payload(proxies=previous))
@@ -113,6 +136,11 @@ def test_changed_snapshot_is_pending_and_does_not_expose_old_health(monkeypatch)
 
 
 def test_stale_malformed_and_dry_run_snapshots_fail_closed(monkeypatch):
+    """Run test stale malformed and dry run snapshots fail closed for the bounded proxy operation.
+
+    Args:
+        monkeypatch: Scoped dependency replacements supplied by pytest.
+    """
     now = datetime(2026, 10, 7, tzinfo=timezone.utc)
     _configure(monkeypatch, _payload(observed_at="2026-10-06T23:58:00+00:00"))
     stale = observation.observe_reverse_proxy_health(object(), now=now)
@@ -129,6 +157,11 @@ def test_stale_malformed_and_dry_run_snapshots_fail_closed(monkeypatch):
 
 
 def test_insecure_upstream_is_always_degraded_even_when_cached_probe_is_healthy(monkeypatch):
+    """Run test insecure upstream is always degraded even when cached probe is healthy for the bounded proxy operation.
+
+    Args:
+        monkeypatch: Scoped dependency replacements supplied by pytest.
+    """
     desired = _desired()
     desired[0]["routes"][0]["trust_mode"] = "insecure"
     desired[0]["routes"][0]["fingerprint"] = ""
