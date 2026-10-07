@@ -57,7 +57,11 @@ class CacheOwner:
         return self.owner.seal()
 
     def resource(self, manifest: Path) -> dict[str, object]:
-        """Build the exact resource identity expected by the live controller adapter."""
+        """Build the exact resource identity expected by the live controller adapter.
+
+        Args:
+            manifest: Durable ownership manifest returned by cache sealing.
+        """
         return {
             **self.binding,
             "kind": "artifact",
@@ -72,7 +76,12 @@ class CacheOwner:
 
 @pytest.fixture
 def cache_owner(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[CacheOwner]:
-    """Yield an exclusively created cache and release it after tests that seal it."""
+    """Yield an exclusively created cache and release it after tests that seal it.
+
+    Args:
+        tmp_path: Pytest-owned directory beneath the receipted validation root.
+        monkeypatch: Scoped environment substitutions restored after the test.
+    """
     fixture = CacheOwner(tmp_path, monkeypatch)
     fixture.owner.begin()
     yield fixture
@@ -81,7 +90,11 @@ def cache_owner(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Cac
 
 
 def test_generation_is_recorded_before_cache_use(cache_owner: CacheOwner) -> None:
-    """Record the original empty root before any builder content is added."""
+    """Record the original empty root before any builder content is added.
+
+    Args:
+        cache_owner: New cache owner whose original generation was recorded before use.
+    """
     generation = cache_owner.owner.generations()[0]
     assert generation["root_identity"] == cache_owner.owner.files.snapshot(cache_owner.owner.root)["."]["identity"]
     assert (cache_owner.owner.root / MARKER_NAME).read_bytes() == MARKER_CONTENT
@@ -89,7 +102,12 @@ def test_generation_is_recorded_before_cache_use(cache_owner: CacheOwner) -> Non
 
 
 def test_existing_cache_cannot_be_adopted(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """A cache that predates its receipt is never adopted as task-owned."""
+    """A cache that predates its receipt is never adopted as task-owned.
+
+    Args:
+        tmp_path: Pytest-owned directory for the pre-existing unreceipted cache.
+        monkeypatch: Scoped environment substitutions restored after the test.
+    """
     fixture = CacheOwner(tmp_path, monkeypatch)
     cache = fixture.owner.root
     cache.mkdir()
@@ -103,7 +121,12 @@ def test_receipt_parent_ancestor_refuses_before_cache_creation(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A worktree-root receipt is rejected before creating cache or receipt files."""
+    """A worktree-root receipt is rejected before creating cache or receipt files.
+
+    Args:
+        tmp_path: Pytest-owned directory for the checkout and ancestor receipt.
+        monkeypatch: Scoped environment substitutions restored after the test.
+    """
     fixture = CacheOwner(tmp_path, monkeypatch)
     receipt = fixture.permitted / "cache-receipt.json"
     owner = ZensicalCache(fixture.config, receipt, fixture.binding)
@@ -115,7 +138,11 @@ def test_receipt_parent_ancestor_refuses_before_cache_creation(
 
 
 def test_seal_and_controller_release(cache_owner: CacheOwner) -> None:
-    """Seal hashes, inspect the approved artifact, then release and verify its absence."""
+    """Seal hashes, inspect the approved artifact, then release and verify its absence.
+
+    Args:
+        cache_owner: New cache owner used for sealing and exact-scope release.
+    """
     (cache_owner.owner.root / "objects").mkdir()
     payload = cache_owner.owner.root / "objects" / "index.bin"
     payload.write_bytes(b"document cache contents")
@@ -139,7 +166,11 @@ def test_seal_and_controller_release(cache_owner: CacheOwner) -> None:
 
 
 def test_changed_file_content_blocks_release(cache_owner: CacheOwner) -> None:
-    """A same-size edit with restored timestamps still fails the sealed content hash."""
+    """A same-size edit with restored timestamps still fails the sealed content hash.
+
+    Args:
+        cache_owner: Sealed cache whose file contents are modified and restored.
+    """
     path = cache_owner.owner.root / "index.bin"
     path.write_bytes(b"original")
     cache_owner.seal()
@@ -153,7 +184,11 @@ def test_changed_file_content_blocks_release(cache_owner: CacheOwner) -> None:
 
 
 def test_prepared_retry_allows_only_missing_entries(cache_owner: CacheOwner) -> None:
-    """An interrupted release may lose sealed entries but cannot gain or replace any."""
+    """An interrupted release may lose sealed entries but cannot gain or replace any.
+
+    Args:
+        cache_owner: Sealed cache prepared for interrupted-release recovery.
+    """
     path = cache_owner.owner.root / "index.bin"
     path.write_bytes(b"original")
     cache_owner.seal()
@@ -170,7 +205,11 @@ def test_prepared_retry_allows_only_missing_entries(cache_owner: CacheOwner) -> 
 
 
 def test_prepared_retry_allows_missing_marker(cache_owner: CacheOwner) -> None:
-    """A marker removed during an interrupted prepared release remains an allowed missing entry."""
+    """A marker removed during an interrupted prepared release remains an allowed missing entry.
+
+    Args:
+        cache_owner: Sealed cache prepared before its marker is removed.
+    """
     cache_owner.seal()
     cache_owner.owner._record(".prepared", {
         "sealed_sha256": hashlib.sha256(cache_owner.owner._path(".sealed").read_bytes()).hexdigest(),
@@ -181,7 +220,11 @@ def test_prepared_retry_allows_missing_marker(cache_owner: CacheOwner) -> None:
 
 
 def test_replaced_checkout_identity_blocks_readback(cache_owner: CacheOwner) -> None:
-    """A replaced checkout cannot inherit the cache's durable ownership evidence."""
+    """A replaced checkout cannot inherit the cache's durable ownership evidence.
+
+    Args:
+        cache_owner: Released cache owner used to verify checkout replacement refusal.
+    """
     cache_owner.seal()
     cache_owner.owner.release([str(cache_owner.owner.root)])
     backup = cache_owner.permitted / "checkout-original"
@@ -195,7 +238,11 @@ def test_replaced_checkout_identity_blocks_readback(cache_owner: CacheOwner) -> 
 
 
 def test_hard_link_blocks_cache_sealing(cache_owner: CacheOwner) -> None:
-    """Cache entries with shared filesystem identity cannot be released."""
+    """Cache entries with shared filesystem identity cannot be released.
+
+    Args:
+        cache_owner: Cache owner whose file is linked into a second path.
+    """
     path = cache_owner.owner.root / "shared.bin"
     path.write_bytes(b"shared")
     alias = cache_owner.evidence / "shared-alias.bin"
@@ -206,7 +253,11 @@ def test_hard_link_blocks_cache_sealing(cache_owner: CacheOwner) -> None:
 
 
 def test_cache_reappearance_after_absence_is_refused(cache_owner: CacheOwner) -> None:
-    """A new cache directory cannot inherit an already published absence receipt."""
+    """A new cache directory cannot inherit an already published absence receipt.
+
+    Args:
+        cache_owner: Cache owner whose released root is recreated.
+    """
     cache_owner.seal()
     cache_owner.owner.release([str(cache_owner.owner.root)])
     cache_owner.owner.root.mkdir()
@@ -217,7 +268,11 @@ def test_cache_reappearance_after_absence_is_refused(cache_owner: CacheOwner) ->
 
 
 def test_pending_publication_blocks_inspection(cache_owner: CacheOwner) -> None:
-    """Incomplete durable evidence requires reconciliation before any retry."""
+    """Incomplete durable evidence requires reconciliation before any retry.
+
+    Args:
+        cache_owner: Sealed cache with an incomplete pending receipt.
+    """
     cache_owner.seal()
     pending = cache_owner.owner._path(".prepared").with_name(cache_owner.owner.receipt.name + ".prepared.pending")
     pending.write_bytes(b"pending")
@@ -227,7 +282,11 @@ def test_pending_publication_blocks_inspection(cache_owner: CacheOwner) -> None:
 
 
 def test_git_metadata_blocks_sealing(cache_owner: CacheOwner) -> None:
-    """Generic cache cleanup refuses Git worktrees and never uses the Git fixture remover."""
+    """Generic cache cleanup refuses Git worktrees and never uses the Git fixture remover.
+
+    Args:
+        cache_owner: Cache owner containing unowned Git metadata.
+    """
     (cache_owner.owner.root / ".git").mkdir()
     with pytest.raises(Refusal, match="Git metadata"):
         cache_owner.seal()
@@ -235,7 +294,11 @@ def test_git_metadata_blocks_sealing(cache_owner: CacheOwner) -> None:
 
 
 def test_controller_rejects_changed_manifest_hash(cache_owner: CacheOwner) -> None:
-    """The approved manifest digest is checked on every fresh controller request."""
+    """The approved manifest digest is checked on every fresh controller request.
+
+    Args:
+        cache_owner: Sealed cache whose approved manifest digest is altered.
+    """
     resource = cache_owner.resource(cache_owner.seal())
     resource["ownership_manifest"] = {**resource["ownership_manifest"], "sha256": "0" * 64}
     with pytest.raises(Refusal, match="manifest differs"):
@@ -252,13 +315,24 @@ def test_owned_build_pins_and_seals_cache_on_success_or_failure(
     monkeypatch: pytest.MonkeyPatch,
     build_status: int,
 ) -> None:
-    """The native builder cannot replace its recorded root, and both outcomes seal evidence."""
+    """The native builder cannot replace its recorded root, and both outcomes seal evidence.
+
+    Args:
+        tmp_path: Pytest-owned directory for the test build checkout and receipts.
+        monkeypatch: Scoped environment, build root, and child-process substitutions.
+        build_status: Child builder exit code used to check success and failure sealing.
+    """
     cache_owner = CacheOwner(tmp_path, monkeypatch)
     monkeypatch.setattr(build_docs, "ROOT", cache_owner.checkout)
     calls: list[list[str]] = []
 
     def run(command: list[str], **kwargs: object) -> object:
-        """Capture build arguments and model builder output while the cache root is pinned."""
+        """Capture build arguments and model builder output while the cache root is pinned.
+
+        Args:
+            command: Exact subprocess argument vector captured from the documentation wrapper.
+            **kwargs: Subprocess keyword arguments supplied by the wrapper.
+        """
         calls.append(command)
         if "zensical" in command:
             assert "--clean" not in command

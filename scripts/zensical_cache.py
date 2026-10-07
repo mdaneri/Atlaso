@@ -38,9 +38,19 @@ MAX_ENTRIES = 50_000
 def _pinned_checkout[**P, R](
     method: Callable[Concatenate[ZensicalCache, P], R],
 ) -> Callable[Concatenate[ZensicalCache, P], R]:
-    """Hold checkout ancestors throughout one cache lifecycle operation."""
+    """Hold checkout ancestors throughout one cache lifecycle operation.
+
+    Args:
+        method: Lifecycle method whose checkout ancestors must remain pinned.
+    """
     @wraps(method)
     def wrapped(self: ZensicalCache, /, *args: P.args, **kwargs: P.kwargs) -> R:
+        """Run the lifecycle method while checkout ancestors remain pinned.
+
+        Args:
+            *args: Positional arguments forwarded to the lifecycle method.
+            **kwargs: Keyword arguments forwarded to the lifecycle method.
+        """
         with self.files.ancestors(self.root):
             return method(self, *args, **kwargs)
 
@@ -48,12 +58,22 @@ def _pinned_checkout[**P, R](
 
 
 def _sha256(path: Path, limit: int = MAX_RECEIPT_BYTES) -> str:
-    """Hash a bounded, ordinary file without following its final path entry."""
+    """Hash a bounded, ordinary file without following its final path entry.
+
+    Args:
+        path: Bounded regular file whose bytes are hashed.
+        limit: Maximum number of bytes to read.
+    """
     return hashlib.sha256(read_bounded_regular(path, limit)).hexdigest()
 
 
 def _publish(path: Path, value: dict[str, Any]) -> None:
-    """Durably publish a new JSON record without replacing creation evidence."""
+    """Durably publish a new JSON record without replacing creation evidence.
+
+    Args:
+        path: New durable receipt path.
+        value: JSON receipt fields to publish without replacement.
+    """
     ordinary(path)
     payload = json.dumps(value, sort_keys=True, separators=(",", ":")).encode("utf-8")
     require(len(payload) <= MAX_RECEIPT_BYTES, "Zensical cache evidence exceeds the bounded receipt limit.")
@@ -101,15 +121,31 @@ class ZensicalCache:
         require(not self._pending(), "Pending Zensical cache evidence requires reconciliation before retry.")
 
     def _path(self, suffix: str) -> Path:
+        """Return the receipt path for a fixed lifecycle stage.
+
+        Args:
+            suffix: Fixed receipt stage suffix.
+        """
         return self.receipt.with_name(self.receipt.name + suffix)
 
     def _record(self, suffix: str, value: dict[str, Any]) -> Path:
+        """Durably publish one new stage receipt bound to this cache.
+
+        Args:
+            suffix: Receipt stage suffix.
+            value: Stage-specific JSON evidence bound to the task.
+        """
         path = self._path(suffix)
         with self.files.ancestors(path.parent):
             _publish(path, {"schema": 1, "binding": self.binding, **value})
         return path
 
     def _load(self, suffix: str = "") -> dict[str, Any]:
+        """Load and validate one bounded durable receipt.
+
+        Args:
+            suffix: Receipt stage suffix to read.
+        """
         self._check_pending()
         value = json.loads(read_bounded_regular(ordinary(self._path(suffix)), MAX_RECEIPT_BYTES))
         require(isinstance(value, dict) and value.get("schema") == 1 and value.get("binding") == self.binding,
@@ -297,7 +333,11 @@ class ZensicalCache:
 
     @_pinned_checkout
     def release(self, removal_scopes: list[str]) -> dict[str, bool]:
-        """Release exactly the sealed cache root and durably verify absence."""
+        """Release exactly the sealed cache root and durably verify absence.
+
+        Args:
+            removal_scopes: Exact filesystem scopes independently approved by the controller.
+        """
         with cleanup_lock(self.permitted, self.lock_id):
             require(removal_scopes == [str(self.root)],
                     "Zensical cache release scope differs from controller preflight.")
@@ -331,6 +371,11 @@ class ZensicalCache:
 
         The controller must independently prove task quiescence and exclusive ownership.
         Receipt evidence establishes object ownership, not activity state.
+
+        Args:
+            operation: Fresh resource.inspect or resource.release controller operation.
+            payload: Nonce-bound controller request with handoff identity and removal scopes.
+            resource: Exact artifact identity independently approved by the controller.
         """
         require(payload.get("resource") == resource and resource.get("kind") == "artifact"
                 and resource.get("cleanup_tool") == TOOL
