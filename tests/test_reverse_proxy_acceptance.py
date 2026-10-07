@@ -49,6 +49,7 @@ def test_fixture_challenge_and_bounded_echo():
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     try:
+        module.websocket_exchange("127.0.0.1", server.server_address[1], "fixture.example.test")
         connection = http.client.HTTPConnection(*server.server_address, timeout=5)
         connection.request("GET", "/value?q=1", headers={"X-Forwarded-Proto": "https"})
         response = connection.getresponse()
