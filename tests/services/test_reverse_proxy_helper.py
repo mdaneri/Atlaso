@@ -419,6 +419,26 @@ def test_nginx_reload_confirms_master_acceptance_before_existing_restart_fallbac
     )
 
 
+@pytest.mark.parametrize("status,pid,expected", [(0, "0", None), (1, "100", "unavailable"), (0, "invalid", "unavailable")])
+def test_nginx_generation_observer_rejects_unavailable_service_identity(monkeypatch, status, pid, expected):
+    """Exercise the production observer without inspecting an unrelated host service."""
+    helper = load_helper_module(observe_nginx=True)
+    helper.os = SimpleNamespace(name="posix")
+    calls = []
+
+    def run(command, *, timeout):
+        calls.append((command, timeout))
+        return subprocess.CompletedProcess(command, status, pid + "\n", "")
+
+    monkeypatch.setattr(helper, "_run", run)
+    if expected:
+        with pytest.raises(ValueError, match=expected):
+            helper._nginx_worker_generation()
+    else:
+        assert helper._nginx_worker_generation() is None
+    assert calls == [(["systemctl", "show", "nginx", "--property=MainPID", "--value"], 5)]
+
+
 @pytest.mark.parametrize("observations,accepted", [([(100, {101}), (100, {101, 102})], True), ([(100, {101})], False)])
 def test_nginx_reload_generation_requires_new_master_children(monkeypatch, observations, accepted):
     """Bound reload confirmation and reject the unchanged old generation."""

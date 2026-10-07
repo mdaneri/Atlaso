@@ -22,13 +22,19 @@ import pytest
 HELPER_PATH = Path(__file__).resolve().parents[1] / "scripts" / "appliance" / "atlaso-helper"
 
 
-def load_helper_module():
-    """Return helper module."""
+def load_helper_module(*, observe_nginx=False):
+    """Load the helper without observing the test host's nginx process tree.
+
+    Args:
+        observe_nginx: Retain the real observer for tests of its admitted inputs.
+    """
     loader = importlib.machinery.SourceFileLoader("atlaso_helper", str(HELPER_PATH))
     spec = importlib.util.spec_from_loader("atlaso_helper", loader)
     assert spec is not None
     module = importlib.util.module_from_spec(spec)
     loader.exec_module(module)
+    if not observe_nginx:
+        module._nginx_worker_generation = lambda: None
     return module
 
 
