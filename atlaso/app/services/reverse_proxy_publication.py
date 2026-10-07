@@ -31,6 +31,28 @@ DNS_OWNER_PREFIX = "Atlaso-managed reverse proxy DNS: "
 GENERATION_MARKER = "# Managed reverse-proxy generation: "
 MANIFEST_MARKER = "# Reverse-proxy transport manifest: "
 INTENT_MARKER = "# Reverse-proxy intent: "
+METADATA_CHUNK_SIZE = 2048
+
+
+def _metadata_lines(marker: str, value: Any) -> list[str]:
+    """Keep ASCII metadata comments below nginx's configuration token buffer."""
+    encoded = json.dumps(value, sort_keys=True, separators=(",", ":"))
+    return [marker + encoded[offset:offset + METADATA_CHUNK_SIZE]
+            for offset in range(0, len(encoded), METADATA_CHUNK_SIZE)]
+
+
+def _read_metadata(lines: list[str], start: int, marker: str) -> tuple[Any, int]:
+    """Read consecutive bounded fragments; canonical rendering verifies order."""
+    fragments = []
+    while start < len(lines) and lines[start].startswith(marker):
+        fragment = lines[start][len(marker):].rstrip("\n")
+        if not 1 <= len(fragment) <= METADATA_CHUNK_SIZE:
+            raise ValueError("Reverse-proxy metadata fragment exceeds its bound.")
+        fragments.append(fragment)
+        start += 1
+    if not fragments:
+        raise ValueError("Reverse-proxy generation metadata is incomplete.")
+    return json.loads("".join(fragments)), start
 
 
 def proxy_certificate_paths(proxy_id: int, hostname: str) -> tuple[str, str, str]:
@@ -62,10 +84,8 @@ def validated_snapshot(text: str) -> tuple[list[dict[str, Any]], dict[str, Any] 
     if len(starts) != 1:
         raise ValueError("Reverse-proxy generation must occur exactly once.")
     start = starts[0]
-    if len(lines) < start + 3 or not lines[start + 1].startswith(MANIFEST_MARKER) or not lines[start + 2].startswith(INTENT_MARKER):
-        raise ValueError("Reverse-proxy generation metadata is incomplete.")
-    manifest = json.loads(lines[start + 1][len(MANIFEST_MARKER):])
-    proxies = json.loads(lines[start + 2][len(INTENT_MARKER):])
+    manifest, metadata_end = _read_metadata(lines, start + 1, MANIFEST_MARKER)
+    proxies, _metadata_end = _read_metadata(lines, metadata_end, INTENT_MARKER)
     validate_manifest(manifest)
     if not isinstance(proxies, list) or not 1 <= len(proxies) <= 256:
         raise ValueError("Invalid reverse-proxy collection size.")
@@ -172,9 +192,9 @@ def render_proxy_servers(proxies: list[dict[str, Any]], manifest: dict[str, Any]
     validate_manifest(manifest)
     if not proxies:
         return ""
-    lines = ["# Managed reverse-proxy generation: " + manifest["generation"],
-             "# Reverse-proxy transport manifest: " + json.dumps(manifest, sort_keys=True, separators=(",", ":")),
-             "# Reverse-proxy intent: " + json.dumps(proxies, sort_keys=True, separators=(",", ":"))]
+    lines = [GENERATION_MARKER + manifest["generation"],
+             *_metadata_lines(MANIFEST_MARKER, manifest),
+             *_metadata_lines(INTENT_MARKER, proxies)]
     if manifest["routes"]:
         lines.append("map $http_upgrade $atlaso_reverse_proxy_connection { default upgrade; '' close; }")
     for proxy in proxies:

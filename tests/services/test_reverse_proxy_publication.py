@@ -6,6 +6,9 @@ from copy import deepcopy
 import pytest
 
 from atlaso.app.services.reverse_proxy_publication import (
+    INTENT_MARKER,
+    MANIFEST_MARKER,
+    METADATA_CHUNK_SIZE,
     directory_entries,
     firewall_rules,
     render_proxy_servers,
@@ -216,6 +219,42 @@ def test_public_directory_visibility_is_independent_of_dns_and_listener_scoped()
 
     proxy["public_listing"] = False
     assert directory_entries([proxy], "192.0.2.10") == []
+
+
+@pytest.mark.parametrize(("route_count", "proxy_count"), [(10, 1), (64, 1), (64, 4)])
+def test_large_publication_metadata_uses_bounded_comments(route_count, proxy_count):
+    """Multi-route intent must fit nginx's lexer and retain exact validation."""
+    proxy = proxy_payload()
+    proxy["listeners"] = proxy["listeners"][:1]
+    route = proxy["routes"][0]
+    proxy["routes"] = [dict(route, id=100 + index, position=index,
+                            path_prefix=f"/application-{index}/")
+                       for index in range(route_count)]
+    proxies = []
+    for proxy_index in range(proxy_count):
+        item = deepcopy(proxy)
+        item["id"] += proxy_index
+        item["name"] = f"Portal {proxy_index}"
+        item["hostname"] = f"portal-{proxy_index}.example.test"
+        for route in item["routes"]:
+            route["id"] += 100 * proxy_index
+        proxies.append(item)
+    manifest = transport_manifest(proxies, ["192.0.2.10", "2001:db8::10"])
+    rendered = render_proxy_servers(proxies, manifest)
+    lines = rendered.splitlines(keepends=True)
+    metadata = [line for line in lines if line.startswith((MANIFEST_MARKER, INTENT_MARKER))]
+    assert len(metadata) > 2
+    assert all(len(line.encode("ascii")) <= METADATA_CHUNK_SIZE + len(MANIFEST_MARKER) + 1
+               for line in metadata)
+    assert validated_snapshot(rendered) == (proxies, manifest)
+    # Dropped, duplicated, or reordered fragments must never admit a new config.
+    fragment_index = next(index for index, line in enumerate(lines) if line.startswith(INTENT_MARKER))
+    for changed in (lines[:fragment_index] + lines[fragment_index + 1:],
+                    lines[:fragment_index] + [lines[fragment_index]] + lines[fragment_index:],
+                    lines[:fragment_index] + [lines[fragment_index + 1], lines[fragment_index]]
+                    + lines[fragment_index + 2:]):
+        with pytest.raises(ValueError):
+            validated_snapshot("".join(changed))
 
 
 @pytest.mark.parametrize("mutation", ["proxy_header", "pin", "reserved", "extra_server"])

@@ -193,6 +193,56 @@ test("inline save serializes only the complete desired-state model", () => {
   assert.equal(Object.hasOwn(payload.routes[0], "last_probe_detail"), false);
 });
 
+test("wizard payload normalizes every fingerprint separator accepted by validation", () => {
+  const source = fs.readFileSync("atlaso/app/static/reverse-proxies.js", "utf8");
+  const helperStart = source.indexOf("  function normalizeFingerprint(value) {");
+  const helperEnd = source.indexOf("\n  }", helperStart) + "\n  }".length;
+  const collectStart = source.indexOf("    function collectPayload() {");
+  const validateStart = source.indexOf("    function validateStep({ step }) {", collectStart);
+  assert.ok(helperStart >= 0 && helperEnd > helperStart && collectStart >= 0 && validateStart > collectStart);
+  const helperSource = source.slice(helperStart, helperEnd);
+  const collectSource = source.slice(collectStart, validateStart);
+  const expected = "ab".repeat(32);
+  const variants = [
+    expected.match(/.{2}/g).join(":"),
+    expected.match(/.{2}/g).join("-"),
+    `${expected.slice(0, 18)} ${expected.slice(18, 42)}\t${expected.slice(42)}`,
+  ];
+
+  for (const fingerprint of variants) {
+    const harness = `
+      const DEFAULTS = { connect_timeout: 5, read_timeout: 60, send_timeout: 60, body_limit: 16777216 };
+      ${helperSource}
+      const routeFields = {
+        route_id: { value: "" }, path_prefix: { value: "/" },
+        upstream_scheme: { value: "https" }, upstream_host: { value: "upstream.example.test" },
+        upstream_port: { value: "443" }, path_behavior: { value: "preserve" },
+        trust_mode: { value: "fingerprint" }, fingerprint: { value: ${JSON.stringify(fingerprint)} },
+      };
+      function routeField(_route, name) { return routeFields[name]; }
+      function routeNodes() { return [{}]; }
+      const listenerSelect = null;
+      const values = {
+        name: { value: "Inventory" }, description: { value: "" }, hostname: { value: "inventory.example.test" },
+        scheme: { value: "https" }, port: { value: "443" }, redirect_port: { value: "0" },
+        redirect_http: { checked: false }, enabled: { checked: false }, public_listing: { checked: true },
+        managed_dns: { checked: false }, connect_timeout: { value: "5" }, read_timeout: { value: "60" },
+        send_timeout: { value: "60" }, body_limit: { value: "16777216" }, id: { value: "" },
+      };
+      const form = { querySelector(selector) {
+        if (selector === "[data-reverse-proxy-insecure-ack]") return { checked: false };
+        const match = selector.match(/^\\[name="([^"]+)"\\]$/);
+        return match ? values[match[1]] || null : null;
+      } };
+      ${collectSource}
+      collectPayload();
+    `;
+    const payload = vm.runInNewContext(harness, { HTMLSelectElement: class HTMLSelectElement {} });
+    assert.equal(payload.hostname, "inventory.example.test");
+    assert.equal(payload.routes[0].fingerprint, expected);
+  }
+});
+
 test("visible row keeps all strict desired-state fields and drops projection extras", () => {
   const row = reverseProxies.visibleProxyRow({
     id: 91,
@@ -250,8 +300,8 @@ test("display escaping protects operator-controlled text", () => {
 
 test("management service worker precaches the reverse-proxy page asset", () => {
   const worker = fs.readFileSync("atlaso/app/static/service-worker.js", "utf8");
-  assert.match(worker, /const ATLASO_CACHE = `\$\{ATLASO_CACHE_PREFIX\}354`;/);
-  assert.match(worker, /"\/static\/reverse-proxies\.js\?v=issue-723-2"/);
+  assert.match(worker, /const ATLASO_CACHE = `\$\{ATLASO_CACHE_PREFIX\}355`;/);
+  assert.match(worker, /"\/static\/reverse-proxies\.js\?v=issue-723-3"/);
 });
 
 function classListFor(classes) {

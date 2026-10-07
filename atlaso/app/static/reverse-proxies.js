@@ -29,6 +29,10 @@
     return Boolean(first && second && (first.startsWith(second) || second.startsWith(first)));
   }
 
+  function normalizeFingerprint(value) {
+    return String(value || "").replace(/[:\s-]/g, "");
+  }
+
   function routeHealthRow(item = {}) {
     return {
       proxy_id: Number(item.proxy_id || 0),
@@ -459,7 +463,7 @@
           path_behavior: routeField(route, "path_behavior")?.value || "preserve",
           trust_mode: trustMode,
           fingerprint: upstreamScheme === "https" && trustMode === "fingerprint"
-            ? String(routeField(route, "fingerprint")?.value || "").trim() : "",
+            ? normalizeFingerprint(routeField(route, "fingerprint")?.value) : "",
           insecure_acknowledged: trustMode === "insecure" && reviewed,
         };
       });
@@ -508,7 +512,7 @@
             return { valid: false, message: "Enter an upstream host or IP without a URL scheme, path, or user information.", field: routeField(route, "upstream_host") };
           }
           if (routeField(route, "upstream_scheme")?.value === "https" && routeField(route, "trust_mode")?.value === "fingerprint") {
-            const fingerprint = String(routeField(route, "fingerprint")?.value || "").replace(/[:\s-]/g, "");
+            const fingerprint = normalizeFingerprint(routeField(route, "fingerprint")?.value);
             if (!/^[a-f\d]{64}$/i.test(fingerprint)) return { valid: false, message: "Enter the exact 64-character SHA-256 certificate fingerprint.", field: routeField(route, "fingerprint") };
           }
         }
