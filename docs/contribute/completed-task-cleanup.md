@@ -208,6 +208,46 @@ durable evidence survived release. Later eligibility
 checks repeat that aggregate readback and require completed remote/local ref gates to remain absent, even if a
 recreated ref points to the original SHA. Reappearance blocks completion and preserves the recreated resource/ref.
 
+### Disposable documentation caches
+
+`scripts.zensical_cache.ZensicalCache` owns creation-bound Windows documentation caches. Inventory the exact
+checkout-local `.cache` as `kind: "artifact"` with `cleanup_tool: "ZensicalCache"`. Generic generated-tree cleanup
+continues to require its original directory identity and must never adopt a cache recreated by Zensical.
+
+Before a task build, choose a new durable receipt filename beneath the configured worktree root, outside the task
+checkout and every removal scope. Use a separate evidence directory that is not an ancestor of the checkout; placing
+receipts directly in a pinned ancestor would prevent Windows write-through publication. With the cache absent, run
+the canonical wrapper using the documentation interpreter:
+
+```powershell
+.\.venv-docs\Scripts\python.exe scripts/build_docs.py `
+  --cache-receipt $receipt --task-id $taskId --resource-id $resourceId --source-commit $sourceCommit
+```
+
+Use the independently verified originating task identity and creation commit. The wrapper reads the active Codex
+configuration, creates the exact `.cache` exclusively, and durably records its original identity and checkout binding
+before use. It refuses existing cache state. It pins that directory throughout `build --strict` and sealing; the cache
+is already empty, so Zensical's native `--clean` replacement is omitted. Unexpected replacement or receipt publication
+failure stops the operation. Ordinary hosted CI retains the portable `--clean --strict` path.
+
+After the child exits, sealing verifies the creation identity and ownership marker, and preserves a bounded inventory
+of exact identities and content hashes. Record the returned `.manifest` path and SHA-256 as `ownership_manifest`.
+Preserve all creation, sealed, prepared, and absence receipts outside removal roots. A failed strict build may still
+seal its owned cache for diagnosis and eventual release; passing or failing validation does not authorize teardown.
+
+For each fresh `resource.inspect` or `resource.release`, construct the tool using the same active configuration,
+receipt, and independently verified binding (`id`, `task_id`, `repository`, `source_commit`, and absolute `path`). Call
+`controller_call(operation, payload, approved_resource)` only after independently verifying source ancestry, positive
+PR identity, manifest hash, exclusive task ownership, inactivity, retention, and downstream needs. The adapter's only
+removal scope is the exact `.cache`. Shared or retained state, changed contents or identities, reparse points, hard
+links, Git metadata, and credential/recovery trees require refusal and preservation.
+
+Release durably records its sealed inventory before deleting checked objects through Windows handles. An interrupted
+retry accepts only already removed entries and directory timestamps changed by removal; new or replaced entries and
+changed file bytes block retry. Pending receipt publication requires reconciliation. Repeat fresh `resource.inspect`
+after release and require exact absence; acknowledgment alone cannot complete the resource gate. A later build needs
+a new creation receipt and resource identity, and reappearance after completed release must be preserved.
+
 ### Disposable pytest Git fixtures
 
 `scripts.pytest_git_fixtures.PytestGitFixtures` owns Windows disposable pytest Git artifact roots. Use

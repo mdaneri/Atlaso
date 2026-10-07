@@ -3,9 +3,12 @@
 
 from __future__ import annotations
 
+import argparse
+import os
 import shutil
 import subprocess
 import sys
+from contextlib import nullcontext
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -91,25 +94,56 @@ def mark_zensical_cache(cache: Path) -> None:
     (cache / CACHE_MARKER_NAME).write_text(CACHE_MARKER_CONTENT, encoding="utf-8")
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
     """Run the deterministic strict documentation build.
+
+    Args:
+        argv: Optional creation-bound local cache ownership arguments.
 
     Returns:
         The first failed command status, or zero after redirect generation succeeds.
     """
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--cache-receipt", type=Path)
+    parser.add_argument("--task-id")
+    parser.add_argument("--resource-id")
+    parser.add_argument("--source-commit")
+    args = parser.parse_args(argv)
+    owner = None
     try:
-        reset_zensical_cache()
-        initialize_zensical_cache()
+        ownership = (args.cache_receipt, args.task_id, args.resource_id, args.source_commit)
+        if any(value is not None for value in ownership):
+            if not all(value is not None for value in ownership):
+                raise RuntimeError("cache ownership requires receipt, task, resource, and source commit")
+            # Local task cleanup is Windows-only; ordinary hosted CI uses the portable wrapper.
+            sys.path.insert(0, str(ROOT))
+            from scripts.zensical_cache import ZensicalCache
+
+            config = Path(os.environ.get("CODEX_HOME", str(Path.home() / ".codex"))) / "config.toml"
+            owner = ZensicalCache(config, args.cache_receipt, {
+                "id": args.resource_id, "task_id": args.task_id, "repository": "mdaneri/Atlaso",
+                "source_commit": args.source_commit, "path": str(ROOT / ".cache"),
+            })
+            owner.begin()
+        else:
+            reset_zensical_cache()
+            initialize_zensical_cache()
     except (OSError, RuntimeError) as exc:
         print(f"Documentation build failed: {exc}", file=sys.stderr)
         return 1
-    build = subprocess.run(
-        [sys.executable, "-m", "zensical", "build", "--clean", "--strict"],
-        cwd=ROOT,
-        check=False,
-    )
     try:
-        mark_zensical_cache(ROOT / ".cache")
+        # The wrapper already starts from an empty cache. In owned mode, prevent the
+        # native builder from replacing the creation-bound root with an unreceipted one.
+        pin = owner.pin() if owner else nullcontext()
+        with pin:
+            command = [sys.executable, "-m", "zensical", "build", "--strict"]
+            if owner is None:
+                command.append("--clean")
+            build = subprocess.run(command, cwd=ROOT, check=False)
+            if owner:
+                owner.seal()
+        if owner is None:
+            mark_zensical_cache(ROOT / ".cache")
     except (OSError, RuntimeError) as exc:
         print(f"Documentation build failed: {exc}", file=sys.stderr)
         return 1
