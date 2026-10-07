@@ -3,6 +3,7 @@
 import hashlib
 import json
 import subprocess
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -185,6 +186,7 @@ def test_snapshot_refuses_unrelated_active_candidate_and_records_prior_state(tmp
     assert snapshot == {
         "previous_generation": "a" * 64,
         "candidate_generation": "b" * 64,
+        "retired_certificate_files": [],
         "previous_manifest_sha256": hashlib.sha256(previous_manifest_path.read_bytes()).hexdigest(),
         "previous_active": True,
         "previous_enabled": False,
@@ -234,8 +236,8 @@ vlan=eth2.20
         encoding="utf-8",
     )
     candidate = _metadata("b" * 64)
-    candidate["proxies"] = [{"enabled": True, "listeners": [{"interface": interface, "address": address}]}]
-    monkeypatch.setattr(helper, "_reverse_proxy_applied", lambda: {"manifest": None})
+    candidate["proxies"] = [{"enabled": True, "scheme": "http", "listeners": [{"interface": interface, "address": address}]}]
+    monkeypatch.setattr(helper, "_reverse_proxy_applied", lambda: {"manifest": None, "proxies": []})
     monkeypatch.setattr(helper, "_reverse_proxy_publication", lambda _text: candidate)
     monkeypatch.setattr(helper, "_validate_reverse_proxy_listener_protocols", lambda *_args: None)
     monkeypatch.setattr(helper, "_vcf_depot_listener_admission", lambda _path: [])
@@ -351,6 +353,90 @@ def test_retirement_unlinks_only_unchanged_captured_manifest(tmp_path, monkeypat
     with pytest.raises(ValueError, match="manifest ownership changed"):
         helper._retire_reverse_proxy_runtime(state)
     assert removed == []
+
+
+@pytest.mark.parametrize("change", ["unchanged", "bytes", "identity", "missing", "foreign"])
+def test_certificate_retirement_uses_original_identity_without_snapshot_backups(tmp_path, monkeypatch, change):
+    """Commit receipts retire unchanged keys and preserve replacement or foreign files."""
+    helper = load_helper_module()
+    root = tmp_path / "atlaso"
+    path = root / "reverse-proxy-10" / "certs" / "app.example.test.key"
+    path.parent.mkdir(parents=True)
+    path.write_text("opaque test key", encoding="utf-8")
+    monkeypatch.setattr(helper, "REVERSE_PROXY_TLS_ROOT", root)
+    # Windows does not expose POSIX write permissions; emulate the appliance's
+    # root-owned 0600 key while preserving the real file identity and bytes.
+    original_lstat = Path.lstat
+
+    def key_lstat(self):
+        info = original_lstat(self)
+        if self == path:
+            return SimpleNamespace(st_mode=0o100600, st_uid=0, st_nlink=1,
+                                   st_dev=info.st_dev, st_ino=info.st_ino)
+        return info
+
+    monkeypatch.setattr(Path, "lstat", key_lstat)
+    recorded = helper._reverse_proxy_tls_owner(path)
+    state = {"reverse_proxy_runtime": {"retired_certificate_files": [recorded]}}
+    removed = []
+    monkeypatch.setattr(helper, "_durable_management_handoff_unlink", removed.append)
+    if change == "bytes":
+        path.write_text("replacement key", encoding="utf-8")
+    elif change == "identity":
+        recorded["inode"] += 1
+    elif change == "missing":
+        path.unlink()
+    elif change == "foreign":
+        recorded["path"] = str(root / "manual" / "certs" / "app.example.test.key")
+    if change in {"bytes", "identity", "foreign"}:
+        with pytest.raises(ValueError, match="ownership changed|path is unproven"):
+            helper._retire_reverse_proxy_runtime(state)
+        assert removed == []
+    else:
+        helper._retire_reverse_proxy_runtime(state)
+        assert removed == ([path] if change == "unchanged" else [])
+
+
+@pytest.mark.parametrize("accepted,restart_result", [(True, 0), (False, 0), (False, 1)])
+def test_nginx_reload_confirms_master_acceptance_before_existing_restart_fallback(monkeypatch, accepted, restart_result):
+    """A successful SIGHUP command with rejected bindings cannot report apply success."""
+    helper = load_helper_module()
+    previous = (100, {101})
+    observed = []
+    commands = []
+    monkeypatch.setattr(helper, "_nginx_worker_generation", lambda: previous)
+    monkeypatch.setattr(helper, "_wait_nginx_reload_generation", lambda generation: observed.append(generation) or accepted)
+
+    def run(command):
+        commands.append(command)
+        return subprocess.CompletedProcess(command, restart_result if command == ["systemctl", "restart", "nginx"] else 0, "", "")
+
+    monkeypatch.setattr(helper, "_run", run)
+    assert helper._reload_nginx() == (0 if accepted else restart_result)
+    assert observed == [previous]
+    assert commands == [["systemctl", "reload", "nginx"], ["systemctl", "enable", "--now", "nginx"]] + (
+        [] if accepted else [["systemctl", "restart", "nginx"]]
+    )
+
+
+@pytest.mark.parametrize("observations,accepted", [([(100, {101}), (100, {101, 102})], True), ([(100, {101})], False)])
+def test_nginx_reload_generation_requires_new_master_children(monkeypatch, observations, accepted):
+    """Bound reload confirmation and reject the unchanged old generation."""
+    helper = load_helper_module()
+    generations = iter(observations)
+    clock = iter([0, 1, 2] if accepted else [0, 1, 11])
+    monkeypatch.setattr(helper, "_nginx_worker_generation", lambda: next(generations))
+    monkeypatch.setattr(helper.time, "monotonic", lambda: next(clock))
+    monkeypatch.setattr(helper.time, "sleep", lambda _seconds: None)
+    assert helper._wait_nginx_reload_generation((100, {101})) is accepted
+
+
+def test_nginx_reload_generation_preserves_unexpected_master_change(monkeypatch):
+    """An unrelated service generation cannot authorize further reload fallback."""
+    helper = load_helper_module()
+    monkeypatch.setattr(helper, "_nginx_worker_generation", lambda: (200, {201}))
+    with pytest.raises(ValueError, match="master changed"):
+        helper._wait_nginx_reload_generation((100, {101}))
 
 
 def test_reverse_proxy_service_timeout_is_sanitized_and_bounded(monkeypatch):

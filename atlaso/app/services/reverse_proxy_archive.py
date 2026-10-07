@@ -80,7 +80,7 @@ def validate_candidates(proxies: list[models.ReverseProxy], data: dict[str, Any]
                 pass
     names = {str(row.get(field) or "").strip().lower().rstrip(".")
              for section in ("appliance_settings", "ca_settings", "kms_settings", "ldap_settings",
-                             "oidc_provider_settings", "ntp_settings", "vcf_backup_settings",
+                             "esx_storage_settings", "oidc_provider_settings", "ntp_settings", "vcf_backup_settings",
                              "vcf_offline_depot_settings", "vcf_private_registry_settings")
              for row in data.get(section, []) for field in ("hostname", "portal_hostname", "fqdn")}
     context = {"targets": targets, "listeners": options, "addresses": addresses,

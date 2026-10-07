@@ -1,5 +1,6 @@
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
+const vm = require("node:vm");
 const test = require("node:test");
 
 const reverseProxies = require("../../atlaso/app/static/reverse-proxies.js");
@@ -98,6 +99,45 @@ test("health display maps worker states without losing apply, TLS, or warning de
   });
   assert.equal(disabled.status, "Disabled");
   assert.equal(disabled.apply_state, "Applied");
+});
+
+test("health refresh keeps the visible fallback when shared grid creation has no table", async () => {
+  const source = fs.readFileSync("atlaso/app/static/reverse-proxies.js", "utf8");
+  const hook = "  const api = Object.freeze({";
+  assert.equal(source.split(hook).length, 2, "expected one private API assembly point");
+  const instrumented = source.replace(hook, "  globalThis.__initializeHealthForTest = initializeHealth;\n" + hook);
+  const fallbackClasses = new Set(["hidden"]);
+  const gridClasses = new Set();
+  const fallback = { classList: classListFor(fallbackClasses) };
+  const element = {
+    dataset: { fallbackId: "health-fallback", healthUrl: "/health" },
+    classList: classListFor(gridClasses),
+  };
+  const message = { textContent: "" };
+  const sandbox = {
+    AbortController,
+    AtlasoUiPatterns: { createGrid: () => ({ table: null }) },
+    document: {
+      readyState: "loading",
+      addEventListener() {},
+      getElementById: () => fallback,
+      querySelector: (selector) => selector === "[data-reverse-proxy-health-message]" ? message : null,
+    },
+    fetch: async () => ({ ok: true, json: async () => ({ items: [] }) }),
+    window: { setTimeout: () => 1, clearTimeout() {} },
+  };
+  vm.runInNewContext(instrumented, sandbox, { filename: "reverse-proxies.js" });
+
+  const errors = [];
+  const health = sandbox.__initializeHealthForTest(element, (error) => errors.push(error));
+  await health.refresh();
+
+  assert.equal(health.table, null);
+  assert.equal(gridClasses.has("hidden"), true);
+  assert.equal(fallbackClasses.has("hidden"), false);
+  assert.equal(element.dataset.atlasoGridState, "fallback");
+  assert.match(message.textContent, /Showing the fallback view/);
+  assert.deepEqual(errors, []);
 });
 
 test("inline save serializes only the complete desired-state model", () => {
@@ -210,6 +250,13 @@ test("display escaping protects operator-controlled text", () => {
 
 test("management service worker precaches the reverse-proxy page asset", () => {
   const worker = fs.readFileSync("atlaso/app/static/service-worker.js", "utf8");
-  assert.match(worker, /const ATLASO_CACHE = `\$\{ATLASO_CACHE_PREFIX\}353`;/);
-  assert.match(worker, /"\/static\/reverse-proxies\.js\?v=issue-723-1"/);
+  assert.match(worker, /const ATLASO_CACHE = `\$\{ATLASO_CACHE_PREFIX\}354`;/);
+  assert.match(worker, /"\/static\/reverse-proxies\.js\?v=issue-723-2"/);
 });
+
+function classListFor(classes) {
+  return {
+    add: (name) => classes.add(name),
+    remove: (name) => classes.delete(name),
+  };
+}

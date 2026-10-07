@@ -9480,13 +9480,47 @@ def _nginx_test_command() -> subprocess.CompletedProcess[str]:
     return _run([nginx, "-t"])
 
 
+def _nginx_worker_generation() -> tuple[int, set[int]] | None:
+    """Observe the admitted nginx master and its current child generation."""
+    if os.name != "posix":
+        return None
+    result = _run(["systemctl", "show", "nginx", "--property=MainPID", "--value"], timeout=5)
+    if result.returncode or not result.stdout.strip().isdigit():
+        raise ValueError("nginx master ownership observation is unavailable")
+    pid = int(result.stdout.strip())
+    if pid == 0:
+        return None
+    nginx = _nginx_binary()
+    process = Path("/proc") / str(pid)
+    if nginx is None or process.stat().st_uid != 0 or not _vcf_depot_listener_is_nginx(pid, Path(nginx)):
+        raise ValueError("nginx master ownership changed")
+    children = (process / "task" / str(pid) / "children").read_text(encoding="ascii").split()
+    if any(not value.isdigit() for value in children):
+        raise ValueError("nginx child generation is invalid")
+    return pid, {int(value) for value in children}
+
+
+def _wait_nginx_reload_generation(previous: tuple[int, set[int]]) -> bool:
+    """A successful signal command does not prove the master accepted a config."""
+    deadline = time.monotonic() + 10
+    while time.monotonic() < deadline:
+        current = _nginx_worker_generation()
+        if current is None or current[0] != previous[0]:
+            raise ValueError("nginx master changed during reload confirmation")
+        if current[1] - previous[1]:
+            return True
+        time.sleep(0.1)
+    return False
+
+
 def _reload_nginx() -> int:
     """Perform reload nginx.
 
     """
+    previous = _nginx_worker_generation()
     commands = [["systemctl", "enable", "--now", "nginx"]]
     reload_result = _run(["systemctl", "reload", "nginx"])
-    if reload_result.returncode == 0:
+    if reload_result.returncode == 0 and (previous is None or _wait_nginx_reload_generation(previous)):
         print(reload_result.stdout, end="")
         print(reload_result.stderr, end="", file=sys.stderr)
         return _run_checked_commands(commands)
@@ -9691,6 +9725,7 @@ def _reverse_proxy_publication(text: str) -> dict:
 
 
 REVERSE_PROXY_CONFIG_ROOT = Path("/etc/atlaso/traffic-publishing/reverse-proxies")
+REVERSE_PROXY_TLS_ROOT = Path("/etc/atlaso")
 REVERSE_PROXY_RUNTIME_ROOT = Path("/run/atlaso-rp")
 REVERSE_PROXY_UNIT_PATH = Path("/etc/systemd/system/atlaso-reverse-proxy@.service")
 REVERSE_PROXY_UNIT_TEXT = """[Unit]
@@ -9737,6 +9772,38 @@ def _reverse_proxy_applied() -> dict:
     return _reverse_proxy_publication(path.read_text(encoding="utf-8") if path.exists() else "")
 
 
+def _reverse_proxy_tls_paths(proxies: list[dict]) -> set[Path]:
+    """Return deterministic TLS artifacts owned by enabled HTTPS proxy intent."""
+    paths = set()
+    for proxy in proxies:
+        if not proxy["enabled"] or proxy["scheme"] != "https":
+            continue
+        name = proxy["hostname"]
+        if len(name) > 245:
+            name = f"{name[:180]}-{hashlib.sha256(name.encode('utf-8')).hexdigest()}"
+        root = REVERSE_PROXY_TLS_ROOT / f"reverse-proxy-{proxy['id']}" / "certs"
+        paths.update(root / f"{name}{suffix}" for suffix in (".crt", ".key", "-chain.pem"))
+    return paths
+
+
+def _reverse_proxy_tls_owner(path: Path) -> dict | None:
+    """Pin a canonical applied TLS file before the journal admits retirement."""
+    try:
+        relative = path.relative_to(REVERSE_PROXY_TLS_ROOT).as_posix()
+    except ValueError as exc:
+        raise ValueError("retired reverse-proxy certificate path is unproven") from exc
+    if not re.fullmatch(r"reverse-proxy-[1-9][0-9]*/certs/[a-z0-9.-]+(?:\.crt|\.key|-chain\.pem)", relative):
+        raise ValueError("retired reverse-proxy certificate path is unproven")
+    if path.resolve() != path or any(parent.is_symlink() for parent in path.parents):
+        raise ValueError("retired reverse-proxy certificate ancestry changed")
+    if not path.exists() and not path.is_symlink():
+        return None
+    info = path.lstat()
+    if not stat.S_ISREG(info.st_mode) or info.st_uid != 0 or info.st_nlink != 1 or info.st_mode & 0o022:
+        raise ValueError("retired reverse-proxy certificate ownership changed")
+    return {"path": str(path), "device": info.st_dev, "inode": info.st_ino, "sha256": _sha256_file(path)}
+
+
 def _reverse_proxy_runtime_paths(payload: dict) -> list[Path]:
     """Bind candidate and previous immutable manifests to the handoff snapshot."""
     candidate_path = payload.get("public_services_config_path")
@@ -9744,7 +9811,7 @@ def _reverse_proxy_runtime_paths(payload: dict) -> list[Path]:
     previous = _reverse_proxy_applied()
     if not candidate["manifest"] and not previous["manifest"]:
         return []
-    paths = [REVERSE_PROXY_UNIT_PATH]
+    paths = [REVERSE_PROXY_UNIT_PATH, *sorted(_reverse_proxy_tls_paths(previous["proxies"]))]
     for metadata in (candidate, previous):
         manifest = metadata["manifest"]
         if manifest:
@@ -9764,7 +9831,8 @@ def _reverse_proxy_runtime_paths(payload: dict) -> list[Path]:
 
 def _snapshot_reverse_proxy_runtime(payload: dict) -> dict:
     """Capture service state before the durable journal authorizes mutation."""
-    previous = _reverse_proxy_applied()["manifest"]
+    previous_metadata = _reverse_proxy_applied()
+    previous = previous_metadata["manifest"]
     candidate_path = payload.get("public_services_config_path")
     metadata = _reverse_proxy_publication(Path(candidate_path).read_text(encoding="utf-8") if candidate_path else "")
     candidate = metadata["manifest"]
@@ -9812,7 +9880,11 @@ def _snapshot_reverse_proxy_runtime(payload: dict) -> dict:
         if (_run(["systemctl", "is-active", candidate_unit]).returncode == 0
                 or _run(["systemctl", "is-enabled", candidate_unit]).returncode == 0):
             raise ValueError("candidate reverse-proxy generation has unrelated runtime ownership")
+    retired_files = [owner for path in sorted(
+        _reverse_proxy_tls_paths(previous_metadata["proxies"]) - _reverse_proxy_tls_paths(metadata["proxies"]))
+        if (owner := _reverse_proxy_tls_owner(path)) is not None]
     return {"previous_generation": previous_generation, "candidate_generation": candidate_generation,
+            "retired_certificate_files": retired_files,
             "previous_manifest_sha256": previous_manifest_hash,
             "previous_active": bool(previous_unit and _run(["systemctl", "is-active", previous_unit]).returncode == 0),
             "previous_enabled": bool(previous_unit and _run(["systemctl", "is-enabled", previous_unit]).returncode == 0)}
@@ -9940,6 +10012,20 @@ def _retire_reverse_proxy_runtime(state: dict) -> None:
                     or _sha256_file(path) != owner.get("previous_manifest_sha256")):
                 raise ValueError("retired reverse-proxy manifest ownership changed")
             _durable_management_handoff_unlink(path)
+
+    for recorded in owner.get("retired_certificate_files", []):
+        if (not isinstance(recorded, dict) or set(recorded) != {"path", "device", "inode", "sha256"}
+                or not isinstance(recorded["path"], str)
+                or type(recorded["device"]) is not int or type(recorded["inode"]) is not int
+                or not isinstance(recorded["sha256"], str) or not re.fullmatch(r"[0-9a-f]{64}", recorded["sha256"])):
+            raise ValueError("retired reverse-proxy certificate path is unproven")
+        path = Path(recorded["path"])
+        current = _reverse_proxy_tls_owner(path)
+        if current is None:
+            continue
+        if current != recorded:
+            raise ValueError("retired reverse-proxy certificate ownership changed")
+        _durable_management_handoff_unlink(path)
 
 
 def _reset_reverse_proxy_runtime() -> None:
@@ -31489,8 +31575,19 @@ def _scope_management_handoff_old_listener(state: dict) -> None:
             or set(wildcard_inventory) != expected_inventory
             or len(wildcard_inventory) != len(expected_inventory)):
         raise ValueError("previous management nginx listener inventory is incomplete")
-    if _install_nginx_site(NGINX_MANAGEMENT_SITE_PATH, "\n".join(scoped) + "\n") != 0:
-        raise ValueError("previous management nginx listener could not be address scoped")
+    # Linux cannot bind a specific address while the previous wildcard socket
+    # remains open without SO_REUSEPORT on both sockets. First upgrade the
+    # existing socket in place; confirmed reloads preserve the old endpoint
+    # while the next generation opens the scoped sockets. No new addresses have
+    # been activated yet. The final site returns to the canonical directive form.
+    reusable_wildcard = re.sub(
+        r"(?m)^(\s*listen (?:\d+|\[::\]:\d+)(?: ssl)? default_server);$",
+        r"\1 reuseport;", site,
+    )
+    reusable_scoped = re.sub(r"(?m)^(\s*listen [^;]+);$", r"\1 reuseport;", "\n".join(scoped) + "\n")
+    for candidate in (reusable_wildcard, reusable_scoped, "\n".join(scoped) + "\n"):
+        if _install_nginx_site(NGINX_MANAGEMENT_SITE_PATH, candidate) != 0:
+            raise ValueError("previous management nginx listener could not be address scoped")
 
 
 def _snapshot_management_handoff(payload: dict) -> dict:

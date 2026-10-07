@@ -771,7 +771,7 @@ def lifecycle_plan(args: argparse.Namespace) -> dict[str, Any]:
             "interfaces": {"site": {"name": args.site_interface, "ip_cidr": args.site_cidr, "mode": "access"}},
             "upstream_host": args.reverse_proxy_upstream_host,
             "apply_units": ["network", "firewall", "ca", "appliance_settings", "dnsmasq", "public_services"],
-            "checks": ["managed HTTP and HTTPS publication", "trusted listener certificate", "preserve and strip mappings", "upstream authentication challenge", "WebSocket upgrade and frame exchange", "HTTPS upstream CA and exact-leaf trust", "rejected leaf and insecure degradation", "reserved paths and exact Host", "custom HTTPS redirect", "duplicate hostname rejection", "cached health response"],
+            "checks": ["standard and custom HTTP and HTTPS publication", "trusted listener certificate", "preserve and strip mappings", "normalized forwarding headers", "upstream authentication challenge", "WebSocket upgrade and frame exchange", "HTTPS upstream CA and exact-leaf trust", "rejected leaf and insecure degradation", "reserved paths and exact Host", "standard and custom HTTPS redirects", "duplicate hostname rejection", "cached health response", "safe Apply during upstream outage and recovery", "audited reboot and runtime persistence"],
             "client_checks_enabled": False,
         }
     if args.time_source_only:

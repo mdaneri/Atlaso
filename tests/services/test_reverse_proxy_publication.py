@@ -1,5 +1,6 @@
 """Test reverse-proxy publication metadata and generated listener intent."""
 
+import json
 from copy import deepcopy
 
 import pytest
@@ -8,9 +9,83 @@ from atlaso.app.services.reverse_proxy_publication import (
     directory_entries,
     firewall_rules,
     render_proxy_servers,
+    retire_obsolete_proxy_certificates,
     transport_manifest,
     validated_snapshot,
 )
+
+
+@pytest.mark.parametrize("retirement", ["disabled", "http", "deleted"])
+def test_obsolete_proxy_ca_owners_discard_keys_without_touching_other_owners(retirement):
+    """Retire only obsolete proxy owners and preserve manual and active material."""
+    from atlaso.app.models import CaCertificate
+    from tests.services.test_reverse_proxies import create_db
+
+    engine, db = create_db()
+    try:
+        retired = CaCertificate(common_name="old.example.test", managed_owner="reverse_proxy:10:https", enabled=True,
+                                private_key_encrypted="opaque-test-key")
+        active = CaCertificate(common_name="active.example.test", managed_owner="reverse_proxy:11:https", enabled=True,
+                               private_key_encrypted="active-test-key")
+        manual = CaCertificate(common_name="manual.example.test", managed_owner="", enabled=True,
+                               private_key_encrypted="manual-test-key")
+        db.add_all([retired, active, manual])
+        db.flush()
+        old = proxy_payload()
+        if retirement == "disabled":
+            old["enabled"] = False
+        elif retirement == "http":
+            old["scheme"] = "http"
+        snapshots = [proxy_payload(proxy_id=11)] + ([] if retirement == "deleted" else [old])
+        assert retire_obsolete_proxy_certificates(db, snapshots)
+        assert not retired.enabled and retired.private_key_encrypted == ""
+        assert active.enabled and active.private_key_encrypted == "active-test-key"
+        assert manual.enabled and manual.private_key_encrypted == "manual-test-key"
+        assert not retire_obsolete_proxy_certificates(db, snapshots)
+    finally:
+        db.close()
+        engine.dispose()
+
+
+@pytest.mark.parametrize("retirement", ["disabled", "http", "deleted"])
+def test_normal_ca_reconciliation_retires_proxy_keys_and_scoped_issuance_preserves_them(client, retirement):
+    """Exercise real CA issuance, retirement, and the management-only boundary."""
+    from sqlalchemy import select
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import CaCertificate, CaSettings, ReverseProxy
+    from atlaso.app.services.ca import render_ca_apply_payload
+    from atlaso.app.ui import ensure_ca_state
+
+    with SessionLocal() as db:
+        settings = db.scalar(select(CaSettings))
+        settings.enabled = True
+        proxy = ReverseProxy(name="Certificate lifecycle", hostname="ca-proxy.example.test", scheme="https", port=8443,
+                             enabled=True, listeners=[{"interface": "eth1", "address": "192.0.2.10"}])
+        db.add(proxy)
+        db.commit()
+        owner = f"reverse_proxy:{proxy.id}:https"
+        assert ensure_ca_state(db) == []
+        certificate = db.scalar(select(CaCertificate).where(CaCertificate.managed_owner == owner))
+        assert certificate.enabled and certificate.private_key_encrypted.startswith("fernet:v1:")
+        issued_key = certificate.private_key_encrypted
+        if retirement == "deleted":
+            db.delete(proxy)
+        elif retirement == "http":
+            proxy.scheme = "http"
+        else:
+            proxy.enabled = False
+        db.commit()
+        assert ensure_ca_state(db, managed_owners={"appliance:https"}) == []
+        db.refresh(certificate)
+        assert certificate.enabled and certificate.private_key_encrypted == issued_key
+        assert ensure_ca_state(db) == []
+        db.refresh(certificate)
+        assert not certificate.enabled and certificate.private_key_encrypted == ""
+        assert json.loads(render_ca_apply_payload(settings, [certificate], include_private_keys=False))["certificates"] == []
+        assert ensure_ca_state(db) == []
+        db.refresh(certificate)
+        assert not certificate.enabled and certificate.private_key_encrypted == ""
 
 
 def proxy_payload(*, proxy_id: int = 10) -> dict:

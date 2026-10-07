@@ -63,6 +63,17 @@ def test_fixture_challenge_and_bounded_echo():
         assert response.getheader("WWW-Authenticate")
         assert response.read() == b""
         connection.close()
+        server.unavailable.set()
+        connection = http.client.HTTPConnection(*server.server_address, timeout=5)
+        connection.request("HEAD", "/")
+        with pytest.raises(http.client.RemoteDisconnected):
+            connection.getresponse()
+        connection.close()
+        server.unavailable.clear()
+        connection = http.client.HTTPConnection(*server.server_address, timeout=5)
+        connection.request("HEAD", "/")
+        assert connection.getresponse().status == 200
+        connection.close()
     finally:
         server.shutdown()
         server.server_close()

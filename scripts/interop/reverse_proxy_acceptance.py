@@ -30,12 +30,18 @@ class FixtureHandler(BaseHTTPRequestHandler):
 
     def do_HEAD(self) -> None:
         """Answer the runtime's bounded health probe."""
+        if self.server.unavailable.is_set():
+            self.close_connection = True
+            return
         self.send_response(200)
         self.send_header("Content-Length", "0")
         self.end_headers()
 
     def do_GET(self) -> None:
         """Echo non-secret path and managed forwarding headers or challenge auth."""
+        if self.server.unavailable.is_set():
+            self.close_connection = True
+            return
         if self.path.endswith("/auth"):
             self.send_response(401)
             self.send_header("WWW-Authenticate", 'Basic realm="Atlaso acceptance fixture"')
@@ -72,6 +78,9 @@ class FixtureHandler(BaseHTTPRequestHandler):
             "path": self.path[:2048],
             "host": self.headers.get("Host", "")[:253],
             "forwarded_proto": self.headers.get("X-Forwarded-Proto", "")[:16],
+            "forwarded_host": self.headers.get("X-Forwarded-Host", "")[:253],
+            "forwarded_for": self.headers.get("X-Forwarded-For", "")[:253],
+            "real_ip": self.headers.get("X-Real-IP", "")[:253],
         }).encode()
         self.send_response(200)
         self.send_header("Content-Type", "application/json")
@@ -85,6 +94,11 @@ class FixtureServer(ThreadingHTTPServer):
 
     daemon_threads = True
     request_queue_size = 8
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        """Own an explicit availability switch without replacing the socket."""
+        self.unavailable = threading.Event()
+        super().__init__(*args, **kwargs)
 
     def get_request(self) -> tuple[socket.socket, Any]:
         """Set a finite timeout before a request worker consumes the socket."""
@@ -103,7 +117,7 @@ def listener_request(address: str, port: int, hostname: str, path: str, *, conte
             connection.close()
             raise
     with connection:
-        connection.sendall(f"GET {path} HTTP/1.1\r\nHost: {hostname}\r\nConnection: close\r\n\r\n".encode("ascii"))
+        connection.sendall(f"GET {path} HTTP/1.1\r\nHost: {hostname}\r\nX-Forwarded-For: 203.0.113.99\r\nX-Forwarded-Host: spoof.example.test\r\nX-Forwarded-Proto: spoof\r\nConnection: close\r\n\r\n".encode("ascii"))
         response = http.client.HTTPResponse(connection)
         response.begin()
         body = response.read(65537)
@@ -189,6 +203,9 @@ def run_reverse_proxy_acceptance(lifecycle: Any, results: list[Any], client: Any
         fixture_port = server.server_address[1]
         http_payload = proxy_payload("Native HTTP application", "http.proxy.atlaso.internal", address, args.site_interface, host, fixture_port)
         https_payload = proxy_payload("Native HTTPS application", "https.proxy.atlaso.internal", address, args.site_interface, host, fixture_port, scheme="https", port=8443)
+        standard_http = proxy_payload("Standard HTTP application", "http.standard.atlaso.internal", address, args.site_interface, host, fixture_port, port=80)
+        standard_https = proxy_payload("Standard HTTPS application", "https.standard.atlaso.internal", address, args.site_interface, host, fixture_port, scheme="https", port=443)
+        standard_https["redirect_port"] = 80
         upstream_context = ssl.create_default_context()
         upstream_context.minimum_version = ssl.TLSVersion.TLSv1_2
         with socket.create_connection(("example.com", 443), timeout=15) as raw:
@@ -208,6 +225,8 @@ def run_reverse_proxy_acceptance(lifecycle: Any, results: list[Any], client: Any
                                             "fingerprint": digest, "insecure_acknowledged": trust == "insecure"})
         http_proxy = client.json_request("POST", API, json_body=http_payload)
         https_proxy = client.json_request("POST", API, json_body=https_payload)
+        client.json_request("POST", API, json_body=standard_http)
+        client.json_request("POST", API, json_body=standard_https)
         step(results, "apply-managed-proxies", lifecycle.apply_units, client, UNITS, args)
         status, root, _headers = client.request("GET", "/certificate-authority/downloads/root-ca.pem")
         if status != 200 or "BEGIN CERTIFICATE" not in root:
@@ -218,7 +237,7 @@ def run_reverse_proxy_acceptance(lifecycle: Any, results: list[Any], client: Any
         def verify_publication() -> dict[str, Any]:
             """Verify TLS identity, both mappings, auth challenge and exact host."""
             observations = []
-            for payload, tls in ((http_payload, None), (https_payload, context)):
+            for payload, tls in ((http_payload, None), (https_payload, context), (standard_http, None), (standard_https, context)):
                 websocket_exchange(address, payload["port"], payload["hostname"], context=tls)
                 for prefix, expected in (("/preserve/", "/preserve/value?q=1"), ("/strip/", "/value?q=1")):
                     code, body, _ = listener_request(address, payload["port"], payload["hostname"], prefix + "value?q=1", context=tls)
@@ -227,6 +246,10 @@ def run_reverse_proxy_acceptance(lifecycle: Any, results: list[Any], client: Any
                     observed = json.loads(body)
                     if observed["path"] != expected or observed["forwarded_proto"] != payload["scheme"]:
                         raise lifecycle.LifecycleError("Proxy path mapping or forwarded protocol differs from intent.")
+                    if observed["host"] != payload["hostname"] or observed["forwarded_host"] != payload["hostname"]:
+                        raise lifecycle.LifecycleError("Public Host normalization differs from intent.")
+                    if observed["forwarded_for"] != host or observed["real_ip"] != host:
+                        raise lifecycle.LifecycleError("Proxy forwarding headers did not preserve the observed client address.")
                     observations.append({"scheme": payload["scheme"], "mapping": prefix, "status": code})
                 code, _body, headers = listener_request(address, payload["port"], payload["hostname"], "/strip/auth", context=tls)
                 if code != 401 or not headers.get("WWW-Authenticate"):
@@ -243,6 +266,9 @@ def run_reverse_proxy_acceptance(lifecycle: Any, results: list[Any], client: Any
             code, _body, headers = listener_request(address, 8081, https_payload["hostname"], "/preserve/value")
             if code not in {301, 302, 307, 308} or headers.get("Location") != "https://https.proxy.atlaso.internal:8443/preserve/value":
                 raise lifecycle.LifecycleError("Custom-port HTTPS redirect differs from intent.")
+            code, _body, headers = listener_request(address, 80, standard_https["hostname"], "/preserve/value")
+            if code not in {301, 302, 307, 308} or headers.get("Location") != "https://https.standard.atlaso.internal/preserve/value":
+                raise lifecycle.LifecycleError("Standard-port HTTPS redirect differs from intent.")
             return {"mappings": observations, "ca_sha256": hashlib.sha256(root.encode()).hexdigest(), "authentication": "challenge preserved", "reserved_paths": "isolated"}
 
         step(results, "host-facing-proxy-publication", verify_publication)
@@ -291,6 +317,36 @@ def run_reverse_proxy_acceptance(lifecycle: Any, results: list[Any], client: Any
             raise lifecycle.LifecycleError("Cached upstream TLS outcomes did not match trust intent.")
 
         step(results, "https-upstream-cached-health", verify_trust_health)
+        server.unavailable.set()
+        step(results, "apply-with-unavailable-upstream", lifecycle.apply_units, client, UNITS, args)
+
+        def verify_unavailable_health() -> dict[str, Any]:
+            """Prove outage degradation while valid applied publication remains live."""
+            code, _body, _headers = listener_request(address, 8080, http_payload["hostname"], "/strip/value")
+            if code not in {502, 503, 504}:
+                raise lifecycle.LifecycleError("Unavailable upstream did not produce a bounded gateway failure.")
+            deadline = time.monotonic() + 90
+            while time.monotonic() < deadline:
+                selected = [row for row in client.json_request("GET", API + "/health")["items"]
+                            if row["proxy_id"] in {http_proxy["id"], https_proxy["id"]}
+                            and row["path_prefix"] in {"/preserve/", "/strip/"}]
+                if len(selected) == 4 and all(row["applied"] and not row["pending"]
+                                             and row["status"] == "degraded" and row["failure_class"] == "unavailable"
+                                             for row in selected):
+                    return {"routes": 4, "status": "degraded", "apply_succeeded": True, "gateway_status": code}
+                time.sleep(2)
+            raise lifecycle.LifecycleError("Unavailable upstream did not publish degraded cached health.")
+
+        step(results, "unavailable-proxy-cached-health", verify_unavailable_health)
+        server.unavailable.clear()
+        step(results, "proxy-publication-after-recovery", verify_publication)
+        step(results, "proxy-health-after-recovery", verify_cached_health)
+        step(results, "proxy-appliance-reboot", lifecycle._reboot_appliance_and_wait, client, args)
+        lifecycle.api_login(client, args)
+        lifecycle.ui_login(client, args)
+        step(results, "proxy-publication-after-reboot", verify_publication)
+        step(results, "proxy-health-after-reboot", verify_cached_health)
+        step(results, "proxy-trust-after-reboot", verify_trust_health)
         if args.reverse_proxy_screenshot_dir:
             module_path = Path(__file__).with_name("reverse_proxy_browser.py")
             spec = importlib.util.spec_from_file_location("atlaso_reverse_proxy_browser", module_path)
