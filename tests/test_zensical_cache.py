@@ -74,6 +74,21 @@ class CacheOwner:
         }
 
 
+def write_original_only(owner: CacheOwner) -> None:
+    """Create an original receipt without completing generation or marker bootstrap.
+
+    Args:
+        owner: Test cache whose checkout exists and whose cache has not been created.
+    """
+    with owner.owner.files.opened(owner.checkout, directory=True) as (_, checkout_identity, _):
+        owner.owner.root.mkdir()
+        with owner.owner.files.opened(owner.owner.root, directory=True) as (_, root_identity, _):
+            owner.owner._record("", {
+                "root_identity": list(root_identity),
+                "checkout_identity": list(checkout_identity),
+            })
+
+
 @pytest.fixture
 def cache_owner(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[CacheOwner]:
     """Yield an exclusively created cache and release it after tests that seal it.
@@ -99,6 +114,100 @@ def test_generation_is_recorded_before_cache_use(cache_owner: CacheOwner) -> Non
     assert generation["root_identity"] == cache_owner.owner.files.snapshot(cache_owner.owner.root)["."]["identity"]
     assert (cache_owner.owner.root / MARKER_NAME).read_bytes() == MARKER_CONTENT
     assert cache_owner.receipt.exists()
+
+
+@pytest.mark.parametrize("stage", ["original", "generation", "marker"])
+def test_original_receipted_bootstrap_resumes_only_empty_or_marked_cache(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    stage: str,
+) -> None:
+    """Resume bootstrap after each durable receipt/marker boundary without adoption.
+
+    Args:
+        tmp_path: Pytest-owned directory for the partial bootstrap state.
+        monkeypatch: Scoped configuration environment substitution.
+        stage: Last completed original-receipt, generation, or marker bootstrap step.
+    """
+    owner = CacheOwner(tmp_path, monkeypatch)
+    write_original_only(owner)
+    if stage in {"generation", "marker"}:
+        owner.owner._record(".generation-0000", {
+            "root_identity": owner.owner._load()["root_identity"],
+        })
+    if stage == "marker":
+        (owner.owner.root / MARKER_NAME).write_bytes(MARKER_CONTENT)
+
+    root_identity = owner.owner._load()["root_identity"]
+    owner.owner.begin()
+
+    assert owner.owner._load(".generation-0000")["root_identity"] == root_identity
+    assert owner.owner.files.snapshot(owner.owner.root)["."]["identity"] == root_identity
+    assert set(owner.owner.files.snapshot(owner.owner.root)) == {".", MARKER_NAME}
+    owner.owner.seal()
+    owner.owner.release([str(owner.owner.root)])
+
+
+def test_bootstrap_recovery_refuses_unreceipted_contents_and_replaced_identity(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Bootstrap recovery preserves extra contents and a replacement cache root.
+
+    Args:
+        tmp_path: Pytest-owned directory for partial bootstrap variants.
+        monkeypatch: Scoped configuration environment substitution.
+    """
+    owner = CacheOwner(tmp_path, monkeypatch)
+    write_original_only(owner)
+    extra = owner.owner.root / "unreceipted.bin"
+    extra.write_bytes(b"preserve")
+    with pytest.raises(Refusal, match="Unreceipted Zensical cache contents"):
+        owner.owner.begin()
+    assert extra.read_bytes() == b"preserve"
+    extra.unlink()
+
+    original_root = owner.permitted / "cache-original"
+    owner.owner.root.rename(original_root)
+    owner.owner.root.mkdir()
+    with pytest.raises(Refusal, match="root identity differs"):
+        owner.owner.begin()
+    assert original_root.is_dir()
+    owner.owner.root.rmdir()
+    original_root.rename(owner.owner.root)
+    owner.owner.begin()
+    owner.owner.seal()
+    owner.owner.release([str(owner.owner.root)])
+
+
+def test_failed_first_receipt_rolls_back_only_exact_empty_cache(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An in-process pre-publication failure removes only its exact empty root.
+
+    Args:
+        tmp_path: Pytest-owned directory for the cache creation attempt.
+        monkeypatch: Scoped configuration environment substitution.
+    """
+    owner = CacheOwner(tmp_path, monkeypatch)
+
+    def fail_before_publication(suffix: str, value: dict[str, object]) -> Path:
+        """Fail before creating any durable receipt or pending file.
+
+        Args:
+            suffix: Receipt stage requested by cache creation.
+            value: Receipt content that would have been published.
+        """
+        assert suffix == ""
+        assert set(value) == {"root_identity", "checkout_identity"}
+        raise OSError("simulated original receipt failure")
+
+    owner.owner._record = fail_before_publication
+    with pytest.raises(OSError, match="original receipt failure"):
+        owner.owner.begin()
+    assert not owner.owner.root.exists()
+    assert not list(owner.receipt.parent.glob(owner.receipt.name + "*"))
 
 
 def test_existing_cache_cannot_be_adopted(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -532,6 +641,184 @@ def test_owned_build_pins_and_seals_cache_on_success_or_failure(
     assert json.loads(cache_owner.receipt.read_text(encoding="utf-8"))["binding"] == cache_owner.binding
     assert cache_owner.owner.inspect()["absent"] is False
     cache_owner.owner.release([str(cache_owner.owner.root)])
+
+
+def test_owned_build_repeats_with_immutable_attempt_receipts(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Repeated wrapper builds reuse one root while resetting and appending receipts.
+
+    Args:
+        tmp_path: Pytest-owned directory for the repeated build checkout and receipt.
+        monkeypatch: Scoped environment, build root, and child-process substitutions.
+    """
+    cache_owner = CacheOwner(tmp_path, monkeypatch)
+    monkeypatch.setattr(build_docs, "ROOT", cache_owner.checkout)
+    build_count = 0
+
+    def run(command: list[str], **kwargs: object) -> object:
+        """Require an empty cache at each build and add one attempt-specific artifact.
+
+        Args:
+            command: Exact subprocess argument vector issued by the wrapper.
+            **kwargs: Subprocess keyword arguments supplied by the wrapper.
+        """
+        nonlocal build_count
+        if "zensical" in command:
+            build_count += 1
+            assert "--clean" not in command
+            assert {path.name for path in cache_owner.owner.root.iterdir()} == {MARKER_NAME}
+            if build_count == 1:
+                stale = cache_owner.owner.root / "old-tree" / "nested"
+                stale.mkdir(parents=True)
+                (stale / "stale.bin").write_bytes(b"stale")
+            (cache_owner.owner.root / f"build-{build_count}.bin").write_bytes(str(build_count).encode())
+        return type("ProcessResult", (), {"returncode": 0})()
+
+    monkeypatch.setattr(build_docs.subprocess, "run", run)
+    arguments = [
+        "--cache-receipt", str(cache_owner.receipt),
+        "--task-id", cache_owner.binding["task_id"],
+        "--resource-id", cache_owner.binding["id"],
+        "--source-commit", cache_owner.binding["source_commit"],
+    ]
+    assert build_docs.main(arguments) == 0
+    initial_identity = cache_owner.owner.generations()[0]["root_identity"]
+    base_sealed = cache_owner.owner._stage_path(".sealed").read_bytes()
+    base_manifest = cache_owner.owner._stage_path(".manifest").read_bytes()
+    prior_resource = cache_owner.resource(cache_owner.owner._stage_path(".manifest"))
+    prior_request = {"resource": prior_resource, "handoff_sha256": "2" * 64}
+
+    assert build_docs.main(arguments) == 0
+    first_attempt_sealed = cache_owner.owner._stage_path(".attempt-0001.sealed").read_bytes()
+    first_attempt_manifest = cache_owner.owner._stage_path(".attempt-0001.manifest").read_bytes()
+    assert build_docs.main(arguments) == 0
+    assert build_count == 3
+    assert cache_owner.owner.generations()[0]["root_identity"] == initial_identity
+    assert cache_owner.owner._stage_path(".sealed").read_bytes() == base_sealed
+    assert cache_owner.owner._stage_path(".manifest").read_bytes() == base_manifest
+    assert not (cache_owner.owner.root / "build-1.bin").exists()
+    assert not (cache_owner.owner.root / "build-2.bin").exists()
+    assert not (cache_owner.owner.root / "old-tree").exists()
+    assert (cache_owner.owner.root / "build-3.bin").read_bytes() == b"3"
+    assert cache_owner.owner._stage_path(".attempt-0001.sealed").read_bytes() == first_attempt_sealed
+    assert cache_owner.owner._stage_path(".attempt-0001.manifest").read_bytes() == first_attempt_manifest
+
+    with pytest.raises(Refusal, match="manifest differs"):
+        cache_owner.owner.controller_call("resource.inspect", prior_request, prior_resource)
+    current_manifest = cache_owner.owner._path(".manifest")
+    current_resource = cache_owner.resource(current_manifest)
+    request = {"resource": current_resource, "handoff_sha256": "3" * 64}
+    inspected = cache_owner.owner.controller_call("resource.inspect", request, current_resource)
+    assert inspected["absent"] is False
+    assert cache_owner.owner.controller_call(
+        "resource.release",
+        {**request, "removal_scopes": inspected["removal_scopes"]},
+        current_resource,
+    ) == {"success": True}
+
+
+def test_incomplete_attempt_blocks_inspection_and_begin_until_sealed(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An unfinished builder attempt blocks retry until its same-root state is sealed.
+
+    Args:
+        tmp_path: Pytest-owned directory for the interrupted build checkout and receipt.
+        monkeypatch: Scoped configuration environment substitution.
+    """
+    cache_owner = CacheOwner(tmp_path, monkeypatch)
+    cache_owner.owner.begin()
+    (cache_owner.owner.root / "previous.bin").write_bytes(b"previous")
+    cache_owner.owner.seal()
+    cache_owner.owner.begin()
+    (cache_owner.owner.root / "partial.bin").write_bytes(b"partial")
+
+    with pytest.raises(Refusal, match="unfinished build attempt"):
+        cache_owner.owner.inspect()
+    with pytest.raises(Refusal, match="unfinished build attempt"):
+        cache_owner.owner.begin()
+
+    manifest = cache_owner.owner.seal()
+    resource = cache_owner.resource(manifest)
+    request = {"resource": resource, "handoff_sha256": "4" * 64}
+    assert cache_owner.owner.controller_call("resource.inspect", request, resource)["absent"] is False
+    cache_owner.owner.controller_call(
+        "resource.release",
+        {**request, "removal_scopes": [str(cache_owner.owner.root)]},
+        resource,
+    )
+    with pytest.raises(Refusal, match="Released Zensical cache"):
+        cache_owner.owner.begin()
+
+
+def test_no_ready_attempt_recovery_resets_only_previous_sealed_entries(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A crash during reset can finish only the previously sealed inventory subset.
+
+    Args:
+        tmp_path: Pytest-owned directory for the interrupted reset checkout and receipt.
+        monkeypatch: Scoped configuration environment substitution.
+    """
+    cache_owner = CacheOwner(tmp_path, monkeypatch)
+    cache_owner.owner.begin()
+    previous = cache_owner.owner.root / "previous.bin"
+    previous.write_bytes(b"previous")
+    cache_owner.owner.seal()
+    previous_manifest = cache_owner.owner._path(".manifest")
+    prior_digest = hashlib.sha256(previous_manifest.read_bytes()).hexdigest()
+    cache_owner.owner._record(".attempt-0001", {
+        "attempt": 1,
+        "prior_manifest_sha256": prior_digest,
+    })
+
+    with pytest.raises(Refusal, match="unfinished build attempt"):
+        cache_owner.owner.begin()
+    manifest = cache_owner.owner.seal()
+
+    assert not previous.exists()
+    assert set(cache_owner.owner.files.snapshot(cache_owner.owner.root)) == {".", MARKER_NAME}
+    assert manifest.name.endswith(".attempt-0001.manifest")
+    resource = cache_owner.resource(manifest)
+    cache_owner.owner.controller_call(
+        "resource.release",
+        {"resource": resource, "handoff_sha256": "5" * 64,
+         "removal_scopes": [str(cache_owner.owner.root)]},
+        resource,
+    )
+
+
+def test_tampered_prior_inventory_cannot_authorize_reset_recovery(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A changed prior sealed inventory cannot authorize deletion during reset recovery.
+
+    Args:
+        tmp_path: Pytest-owned directory for the interrupted reset checkout and receipt.
+        monkeypatch: Scoped configuration environment substitution.
+    """
+    cache_owner = CacheOwner(tmp_path, monkeypatch)
+    cache_owner.owner.begin()
+    previous = cache_owner.owner.root / "previous.bin"
+    previous.write_bytes(b"previous")
+    cache_owner.owner.seal()
+    previous_manifest = cache_owner.owner._path(".manifest")
+    prior_digest = hashlib.sha256(previous_manifest.read_bytes()).hexdigest()
+    cache_owner.owner._record(".attempt-0001", {
+        "attempt": 1,
+        "prior_manifest_sha256": prior_digest,
+    })
+    previous_sealed = cache_owner.owner._stage_path(".sealed")
+    previous_sealed.write_bytes(previous_sealed.read_bytes() + b" ")
+
+    with pytest.raises(Refusal, match="preceding manifest differs"):
+        cache_owner.owner.seal()
+    assert previous.read_bytes() == b"previous"
 
 
 def test_owned_build_oserror_seals_and_releases_cache(

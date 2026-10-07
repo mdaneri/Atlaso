@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any, Concatenate, Iterator
 
 from scripts.completed_task_cleanup import (
+    Refusal,
     beneath,
     configured_root,
     ordinary,
@@ -33,6 +34,7 @@ MAX_INVENTORY_BYTES = 512 * 1024 * 1024
 MAX_FILE_BYTES = 64 * 1024 * 1024
 MAX_RECEIPT_BYTES = 64 * 1024 * 1024
 MAX_ENTRIES = 50_000
+MAX_ATTEMPTS = 100
 
 
 def _pinned_checkout[**P, R](
@@ -134,13 +136,37 @@ class ZensicalCache:
                 stack.enter_context(self.files.opened(parent, directory=True))
             yield
 
-    def _path(self, suffix: str) -> Path:
-        """Return the receipt path for a fixed lifecycle stage.
+    def _stage_path(self, suffix: str) -> Path:
+        """Return the path for one fixed or numbered lifecycle stage.
 
         Args:
-            suffix: Fixed receipt stage suffix.
+            suffix: Fixed receipt suffix or exact numbered attempt stage.
         """
         return self.receipt.with_name(self.receipt.name + suffix)
+
+    def _path(self, suffix: str) -> Path:
+        """Resolve sealed and manifest stages to the latest completed attempt.
+
+        Args:
+            suffix: Fixed receipt suffix or current inventory stage.
+        """
+        if suffix in {".sealed", ".manifest"}:
+            attempts = self._attempt_numbers()
+            if attempts:
+                return self._stage_path(f".attempt-{attempts[-1]:04d}{suffix}")
+        return self._stage_path(suffix)
+
+    def _read_receipt(self, path: Path) -> dict[str, Any]:
+        """Read a bounded receipt and require the immutable task binding.
+
+        Args:
+            path: Exact durable receipt path to read.
+        """
+        self._check_pending()
+        value = json.loads(read_bounded_regular(ordinary(path), MAX_RECEIPT_BYTES))
+        require(isinstance(value, dict) and value.get("schema") == 1 and value.get("binding") == self.binding,
+                "Zensical cache receipt differs from original task/resource provenance.")
+        return dict(value)
 
     def _record(self, suffix: str, value: dict[str, Any]) -> Path:
         """Durably publish one new stage receipt bound to this cache.
@@ -161,10 +187,100 @@ class ZensicalCache:
             suffix: Receipt stage suffix to read.
         """
         self._check_pending()
-        value = json.loads(read_bounded_regular(ordinary(self._path(suffix)), MAX_RECEIPT_BYTES))
-        require(isinstance(value, dict) and value.get("schema") == 1 and value.get("binding") == self.binding,
-                "Zensical cache receipt differs from original task/resource provenance.")
-        return dict(value)
+        return self._read_receipt(self._path(suffix))
+
+    def _attempt_numbers(self) -> list[int]:
+        """Find exact numbered attempt stages and reject malformed or gapped sequences."""
+        self._check_pending()
+        prefix = self.receipt.name + ".attempt-"
+        pattern = re.compile(re.escape(prefix) + r"([0-9]{4})(?:\.(?:ready|sealed|manifest))?\Z")
+        numbers: set[int] = set()
+        for path in self.receipt.parent.iterdir():
+            if not path.name.startswith(prefix):
+                continue
+            match = pattern.fullmatch(path.name)
+            if match is None:
+                raise Refusal("Malformed Zensical cache attempt receipt; reconcile before retry.")
+            numbers.add(int(match.group(1)))
+        require(len(numbers) <= MAX_ATTEMPTS and numbers == set(range(1, len(numbers) + 1)),
+                "Zensical cache attempt sequence is oversized or incomplete.")
+        return sorted(numbers)
+
+    def _attempts(self) -> list[dict[str, Any]]:
+        """Validate the append-only attempt chain against each preceding manifest."""
+        attempts: list[dict[str, Any]] = []
+        numbers = self._attempt_numbers()
+        previous_manifest = self._stage_path(".manifest")
+        for number in numbers:
+            start_path = self._stage_path(f".attempt-{number:04d}")
+            ready_path = self._stage_path(f".attempt-{number:04d}.ready")
+            sealed_path = self._stage_path(f".attempt-{number:04d}.sealed")
+            manifest_path = self._stage_path(f".attempt-{number:04d}.manifest")
+            require(start_path.is_file(), "Zensical cache attempt lacks its durable start receipt.")
+            start = self._read_receipt(start_path)
+            require(set(start) == {"schema", "binding", "attempt", "prior_manifest_sha256"},
+                    "Zensical cache attempt start receipt has unexpected fields.")
+            previous_number = number - 1
+            previous_sealed = (self._stage_path(f".attempt-{previous_number:04d}.sealed")
+                               if previous_number else self._stage_path(".sealed"))
+            prior_manifest_value = self._read_receipt(previous_manifest)
+            require(prior_manifest_value.get("sealed_sha256") == _sha256(previous_sealed),
+                    "Zensical cache preceding manifest differs from its sealed inventory.")
+            prior_digest = _sha256(previous_manifest)
+            require(start.get("attempt") == number and start.get("prior_manifest_sha256") == prior_digest,
+                    "Zensical cache attempt is not bound to the preceding manifest.")
+            ready = self._read_receipt(ready_path) if ready_path.exists() else None
+            if ready is not None:
+                require(set(ready) == {"schema", "binding", "attempt", "prior_manifest_sha256", "root_identity"}
+                        and ready.get("attempt") == number
+                        and ready.get("prior_manifest_sha256") == prior_digest
+                        and ready.get("root_identity") == self._load().get("root_identity"),
+                        "Zensical cache ready receipt differs from its original generation.")
+            sealed = self._read_receipt(sealed_path) if sealed_path.exists() else None
+            manifest = self._read_receipt(manifest_path) if manifest_path.exists() else None
+            if sealed is not None:
+                require(ready is not None and set(sealed) == {
+                    "schema", "binding", "root_identity", "entries", "provenance", "attempt", "prior_manifest_sha256",
+                } and sealed.get("attempt") == number
+                        and sealed.get("prior_manifest_sha256") == prior_digest,
+                        "Zensical cache attempt seal differs from its ready receipt.")
+                expected_provenance = {
+                    str(self.receipt): _sha256(self.receipt),
+                    str(self._stage_path(".generation-0000")): _sha256(self._stage_path(".generation-0000")),
+                    str(start_path): _sha256(start_path),
+                    str(ready_path): _sha256(ready_path),
+                    str(previous_manifest): prior_digest,
+                }
+                require(sealed.get("root_identity") == self._load().get("root_identity")
+                        and sealed.get("provenance") == expected_provenance,
+                        "Zensical cache attempt seal lost its immutable creation or prior-attempt provenance.")
+                if manifest is not None:
+                    require(set(manifest) == {
+                        "schema", "binding", "sealed_sha256", "attempt", "prior_manifest_sha256",
+                    } and manifest.get("attempt") == number
+                            and manifest.get("prior_manifest_sha256") == prior_digest
+                            and manifest.get("sealed_sha256") == _sha256(sealed_path),
+                            "Zensical cache attempt manifest differs from its sealed inventory.")
+            else:
+                require(manifest is None, "Zensical cache attempt manifest lacks a sealed inventory.")
+            if number < numbers[-1]:
+                require(ready is not None and sealed is not None and manifest is not None,
+                        "An earlier Zensical cache attempt is incomplete.")
+            attempts.append({
+                "number": number,
+                "start": start,
+                "ready": ready,
+                "sealed": sealed,
+                "manifest": manifest,
+                "start_path": start_path,
+                "ready_path": ready_path,
+                "sealed_path": sealed_path,
+                "manifest_path": manifest_path,
+                "prior_manifest_path": previous_manifest,
+                "prior_manifest_sha256": prior_digest,
+            })
+            previous_manifest = manifest_path
+        return attempts
 
     def generations(self) -> list[dict[str, Any]]:
         """Load the original generation journal and reject gaps or duplicates."""
@@ -176,32 +292,170 @@ class ZensicalCache:
         return [self._load(".generation-0000")]
 
     def begin(self) -> None:
-        """Exclusively create, record, and mark the cache before builder use."""
+        """Create or resume an owned empty cache attempt before builder use."""
         self.create_generation()
 
     def create_generation(self) -> None:
-        """Exclusively create and record the one cache generation used by this build."""
+        """Create the original generation or append a numbered repeat-build attempt."""
         with cleanup_lock(self.permitted, self.lock_id):
             self._check_pending()
             require(not self.checkout.is_relative_to(self.receipt.parent),
                     "Zensical cache receipts must use a separate evidence directory outside checkout ancestors.")
-            require(not list(self.receipt.parent.glob(self.receipt.name + "*")) and not self.root.exists(),
-                    "Zensical cache creation requires new cache and receipt paths; preserve existing state.")
             require(self.checkout.is_dir() and self.receipt.parent.is_dir(),
                     "Zensical cache checkout and receipt directory must exist.")
+            if self.receipt.exists():
+                original = self._load()
+                self._verify_checkout(original)
+                attempts = self._attempts()
+                require(not self._path(".prepared").exists() and not self._path(".absent").exists(),
+                        "Released Zensical cache cannot begin another build attempt.")
+                if (not self._stage_path(".sealed").exists()
+                        and not self._stage_path(".manifest").exists() and not attempts):
+                    self._resume_bootstrap(original)
+                    return
+                current = self.inspect()
+                previous_complete = (attempts[-1]["manifest"] is not None if attempts
+                                     else self._stage_path(".manifest").is_file())
+                require(current["absent"] is False and previous_complete,
+                        "Zensical cache has an unfinished build attempt; seal or reconcile before retry.")
+                prior_manifest = self._path(".manifest")
+                attempt_number = (attempts[-1]["number"] if attempts else 0) + 1
+                require(attempt_number <= MAX_ATTEMPTS,
+                        "Zensical cache build-attempt limit reached; preserve the cache.")
+                prior_digest = _sha256(prior_manifest)
+                with self.files.ancestors(self.root), self.files.opened(self.root, directory=True) as (
+                        _, root_identity, _):
+                    require(list(root_identity) == original["root_identity"],
+                            "Zensical cache root identity changed before the next build attempt.")
+                    self._record(f".attempt-{attempt_number:04d}", {
+                        "attempt": attempt_number,
+                        "prior_manifest_sha256": prior_digest,
+                    })
+                    previous_sealed = self._read_receipt(
+                        attempts[-1]["sealed_path"] if attempts else self._stage_path(".sealed"))
+                    self._reset_from_inventory(previous_sealed["entries"])
+                    self._record(f".attempt-{attempt_number:04d}.ready", {
+                        "attempt": attempt_number,
+                        "prior_manifest_sha256": prior_digest,
+                        "root_identity": original["root_identity"],
+                    })
+                return
+
+            require(not list(self.receipt.parent.glob(self.receipt.name + "*")) and not self.root.exists(),
+                    "Zensical cache creation requires new cache and receipt paths; preserve existing state.")
             with self.files.ancestors(self.root), self.files.opened(self.checkout, directory=True) as (
                     _, checkout_identity, _):
                 self.root.mkdir()
-                with self.files.opened(self.root, directory=True) as (_, root_identity, _):
-                    self._record("", {"root_identity": list(root_identity),
-                                      "checkout_identity": list(checkout_identity)})
-                    self._record(".generation-0000", {"root_identity": list(root_identity)})
-                    marker = self.root / MARKER_NAME
-                    with marker.open("xb") as stream:
-                        stream.write(MARKER_CONTENT)
-                        stream.flush()
-                        os.fsync(stream.fileno())
-                    self._verify_marker()
+                rollback_snapshot: dict[str, dict[str, Any]] | None = None
+                try:
+                    with self.files.opened(self.root, directory=True) as (_, root_identity, _):
+                        try:
+                            self._record("", {"root_identity": list(root_identity),
+                                               "checkout_identity": list(checkout_identity)})
+                        except (OSError, RuntimeError):
+                            if not list(self.receipt.parent.glob(self.receipt.name + "*")):
+                                try:
+                                    snapshot = self.files.snapshot(self.root)
+                                    if set(snapshot) == {"."} and snapshot["."]["identity"] == list(root_identity):
+                                        rollback_snapshot = snapshot
+                                except (OSError, RuntimeError):
+                                    pass
+                            raise
+                        self._record(".generation-0000", {"root_identity": list(root_identity)})
+                        marker = self.root / MARKER_NAME
+                        with marker.open("xb") as stream:
+                            stream.write(MARKER_CONTENT)
+                            stream.flush()
+                            os.fsync(stream.fileno())
+                        self._verify_marker()
+                except (OSError, RuntimeError):
+                    if rollback_snapshot is not None:
+                        try:
+                            self.files.remove(self.root, rollback_snapshot)
+                        except (OSError, RuntimeError):
+                            pass
+                    raise
+
+    def _verify_checkout(self, original: dict[str, Any]) -> None:
+        """Require the exact checkout identity captured by the original receipt.
+
+        Args:
+            original: Durable creation receipt carrying the original checkout identity.
+        """
+        with self.files.opened(self.checkout, directory=True) as (_, checkout_identity, _):
+            require(list(checkout_identity) == original.get("checkout_identity"),
+                    "Zensical cache checkout identity differs from its original binding.")
+
+    def _resume_bootstrap(self, original: dict[str, Any]) -> None:
+        """Finish only original-receipted empty or marker-only bootstrap work.
+
+        Args:
+            original: Durable original receipt that proves cache and checkout identities.
+        """
+        ordinary(self.root)
+        with self.files.ancestors(self.root), self.files.opened(self.root, directory=True) as (_, identity, _):
+            require(list(identity) == original.get("root_identity"),
+                    "Zensical cache root identity differs from its original receipt.")
+            generation_paths = sorted(
+                path for path in self.receipt.parent.glob(self.receipt.name + ".generation-*")
+                if not path.name.endswith(".pending")
+            )
+            require(len(generation_paths) <= 1 and all(
+                path.name == self.receipt.name + ".generation-0000" for path in generation_paths
+            ), "Zensical cache generation receipt is malformed; reconcile before retry.")
+            require(not self._attempt_numbers() and not any(
+                self._stage_path(suffix).exists() for suffix in (".sealed", ".manifest", ".prepared", ".absent")
+            ), "Zensical cache bootstrap is no longer resumable.")
+            current = self.files.snapshot(self.root)
+            require(set(current) <= {".", MARKER_NAME},
+                    "Unreceipted Zensical cache contents block bootstrap recovery.")
+            if MARKER_NAME in current:
+                require(not current[MARKER_NAME]["directory"], "Zensical cache marker has an invalid type.")
+                self._verify_marker()
+            if generation_paths:
+                generation = self._read_receipt(generation_paths[0])
+                require(generation.get("root_identity") == original.get("root_identity"),
+                        "Zensical cache generation receipt differs from its original identity.")
+            else:
+                self._record(".generation-0000", {"root_identity": original["root_identity"]})
+            if MARKER_NAME not in current:
+                marker = self.root / MARKER_NAME
+                with marker.open("xb") as stream:
+                    stream.write(MARKER_CONTENT)
+                    stream.flush()
+                    os.fsync(stream.fileno())
+            self._verify_marker()
+
+    def _reset_from_inventory(self, previous: dict[str, dict[str, Any]]) -> None:
+        """Remove only known prior cache children and leave the exact owner marker.
+
+        Args:
+            previous: Previously sealed full cache inventory with original identities and hashes.
+        """
+        self._verify_marker()
+        current = self._inventory()
+        require(set(current) <= set(previous) and MARKER_NAME in current,
+                "Zensical cache changed before repeat-build reset; preserve it.")
+        for relative, entry in current.items():
+            original = previous[relative]
+            require(entry["identity"] == original["identity"]
+                    and entry["directory"] == original["directory"]
+                    and (entry["directory"] or entry == original),
+                    "Zensical cache identity or file contents changed before repeat-build reset.")
+        top_level = sorted({Path(relative).parts[0] for relative in current if relative != "."
+                            and Path(relative).parts[0] != MARKER_NAME})
+        for name in top_level:
+            subset: dict[str, dict[str, Any]] = {}
+            for relative, entry in current.items():
+                parts = Path(relative).parts
+                if parts and parts[0] == name and len(parts) == 1:
+                    subset["."] = entry
+                elif parts and parts[0] == name:
+                    subset[str(Path(*parts[1:]))] = entry
+            self.files.remove(self.root / name, subset)
+        reset = self._inventory()
+        require(set(reset) == {".", MARKER_NAME},
+                "Repeat-build reset did not leave an empty marked cache.")
 
     @contextmanager
     def pin(self) -> Iterator[None]:
@@ -266,19 +520,48 @@ class ZensicalCache:
     def seal(self) -> Path:
         """Seal completed cache contents and publish a small controller-facing manifest."""
         with cleanup_lock(self.permitted, self.lock_id):
-            self._original()
+            original = self._original()
             require(not self._path(".prepared").exists(), "Prepared cache release cannot be resealed.")
+            attempts = self._attempts()
+            if attempts and attempts[-1]["manifest"] is not None:
+                self.inspect()
+                latest_number = int(attempts[-1]["number"])
+                return self._stage_path(f".attempt-{latest_number:04d}.manifest")
+            if attempts:
+                attempt = attempts[-1]
+                if attempt["ready"] is None:
+                    previous_sealed_path = (attempts[-2]["sealed_path"] if len(attempts) > 1
+                                            else self._stage_path(".sealed"))
+                    previous_sealed = self._read_receipt(previous_sealed_path)
+                    self._reset_from_inventory(previous_sealed["entries"])
+                    self._record(f".attempt-{attempt['number']:04d}.ready", {
+                        "attempt": attempt["number"],
+                        "prior_manifest_sha256": attempt["prior_manifest_sha256"],
+                        "root_identity": original["root_identity"],
+                    })
+                    attempt = self._attempts()[-1]
             self._verify_marker()
             entries = self._inventory()
             sealed_value = {
                 "binding": self.binding,
-                "root_identity": self.generations()[-1]["root_identity"],
+                "root_identity": original["root_identity"],
                 "entries": entries,
                 "provenance": {
                     str(self.receipt): _sha256(self.receipt),
                     str(self._path(".generation-0000")): _sha256(self._path(".generation-0000")),
                 },
             }
+            if attempts:
+                number = attempt["number"]
+                sealed_value.update({
+                    "attempt": number,
+                    "prior_manifest_sha256": attempt["prior_manifest_sha256"],
+                })
+                sealed_value["provenance"].update({
+                    str(attempt["start_path"]): _sha256(attempt["start_path"]),
+                    str(attempt["ready_path"]): _sha256(attempt["ready_path"]),
+                    str(attempt["prior_manifest_path"]): attempt["prior_manifest_sha256"],
+                })
             sealed_path = self._path(".sealed")
             if sealed_path.exists():
                 require(self._load(".sealed") == {"schema": 1, **sealed_value},
@@ -286,6 +569,11 @@ class ZensicalCache:
             else:
                 self._record(".sealed", sealed_value)
             manifest_value = {"binding": self.binding, "sealed_sha256": _sha256(sealed_path)}
+            if attempts:
+                manifest_value.update({
+                    "attempt": attempt["number"],
+                    "prior_manifest_sha256": attempt["prior_manifest_sha256"],
+                })
             manifest_path = self._path(".manifest")
             if manifest_path.exists():
                 require(self._load(".manifest") == {"schema": 1, **manifest_value},
@@ -299,6 +587,11 @@ class ZensicalCache:
     def inspect(self) -> dict[str, Any]:
         """Return fresh ownership, manifest, and exact-scope absence evidence."""
         self._original()
+        attempts = self._attempts()
+        require(not attempts or attempts[-1]["ready"] is not None
+                and attempts[-1]["sealed"] is not None
+                and attempts[-1]["manifest"] is not None,
+                "Zensical cache has an unfinished build attempt; seal or reconcile before inspection.")
         manifest = self._load(".manifest")
         sealed_path = self._path(".sealed")
         sealed_digest = _sha256(sealed_path)
