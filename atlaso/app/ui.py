@@ -3457,10 +3457,12 @@ def retry_network_transaction_cleanup(db: Session) -> int:
                 "Network transaction cleanup completed. Review applied state and submit any remaining components."
             )
             job.progress_percent = 100
-        from atlaso.app.services.task_log_history import capture_task_history
+        from atlaso.app.services.task_log_history import (
+            capture_task_history_for_session,
+        )
 
         db.flush()
-        capture_task_history(db.connection(), job.id)
+        capture_task_history_for_session(db, job.id)
         db.commit()
         return int(recovery.returncode == 0)
     return 0
@@ -14685,6 +14687,11 @@ def adapter_result_to_payload(result: Any) -> dict[str, Any]:
     Args:
         result: Operation result being inspected or returned.
     """
+    from atlaso.important_events import failure_reason
+
+    stage = next((name for name, verb in (("validation", "validate"), ("rollback", "rollback"),
+                 ("recovery", "recover"), ("readiness", "readiness"), ("cleanup", "cleanup"))
+                  if verb in result.command[:8]), "execution")
     return {
         "command": result.command,
         "command_line": " ".join(result.command),
@@ -14692,6 +14699,8 @@ def adapter_result_to_payload(result: Any) -> dict[str, Any]:
         "stdout": apply_output_excerpt(result.stdout),
         "stderr": apply_output_excerpt(result.stderr),
         "returncode": result.returncode,
+        "stage": stage,
+        "reason_code": "none" if result.returncode == 0 else failure_reason(result.stderr, result.returncode),
     }
 
 
@@ -15041,11 +15050,14 @@ def log_appliance_apply_failures(job_id: str, unit_results: list[dict[str, Any]]
         job_id: Stable identifier of the associated job resource.
         unit_results: Unit results consumed by log appliance apply failures.
     """
-    if appliance_apply_failure_summaries(unit_results):
-        APPLY_LOGGER.error(
-            "Appliance apply task %s failed; helper and desired-state details omitted from operational logs.",
-            job_id,
-        )
+    from atlaso.app.services.important_task_events import execution_projection
+
+    for unit in unit_results:
+        component = unit.get("unit_id") if unit.get("unit_id") in APPLIANCE_APPLY_UNIT_IDS else "task"
+        for event in execution_projection(unit, component):
+            if event["outcome"] == "failed":
+                APPLY_LOGGER.error("task_id=%s component=%s stage=%s reason=%s returncode=%s",
+                                   job_id, event["component"], event["stage"], event["reason"], event["returncode"])
 
 
 def log_appliance_apply_submission(
@@ -15065,16 +15077,9 @@ def log_appliance_apply_submission(
         unit_results: Unit results supplied by the caller.
         succeeded: Succeeded supplied by the caller.
     """
-    if succeeded:
-        APPLY_LOGGER.info(
-            "Appliance apply task %s succeeded; desired-state and helper details omitted from operational logs.",
-            job_id,
-        )
-    else:
-        APPLY_LOGGER.info(
-            "Appliance apply task %s failed; desired-state and helper details omitted from operational logs.",
-            job_id,
-        )
+    APPLY_LOGGER.log(logging.INFO if succeeded else logging.WARNING,
+                     "task_id=%s Apply outcome=%s completed_components=%s selected_components=%s skipped_changes=%s; inspect Tasks for stages",
+                     job_id, "succeeded" if succeeded else "unsuccessful", len(unit_results), len(selected_units), len(skipped_changed_units))
 
 
 def _write_staged_config_file(path: Path, config_preview: str) -> None:
@@ -17814,6 +17819,11 @@ def run_appliance_apply_job(job_id: str, *, force_real: bool = False) -> None:
         if getattr(claimed, "rowcount", 0) != 1:
             db.rollback()
             return
+        from atlaso.app.services.task_log_history import (
+            capture_task_history_for_session,
+        )
+
+        capture_task_history_for_session(db, job_id, result_changed=False)
         db.commit()
         db.refresh(job)
 
@@ -18475,7 +18485,7 @@ def run_appliance_apply_job(job_id: str, *, force_real: bool = False) -> None:
                 success=succeeded,
             )
         except Exception as exc:  # noqa: BLE001 - background task must persist a safe terminal state.
-            APPLY_LOGGER.exception("Appliance apply task %s failed before completion", job_id)
+            APPLY_LOGGER.error("Appliance apply task %s failed before completion; inspect retained task stages.", job_id)
             db.rollback()
             exception_recovery: tuple[AdapterResult, dict[str, Any]] | None = None
             if handoff_runtime_pending and handoff_recovery_adapter is not None:

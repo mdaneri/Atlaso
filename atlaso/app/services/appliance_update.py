@@ -666,9 +666,8 @@ def cancel_pending_appliance_update(
     )
     if cancelled.rowcount != 1:
         return False
-    from atlaso.app.services.task_log_history import capture_task_history
+    from atlaso.app.services.task_log_history import capture_task_history_for_session
 
-    capture_task_history(db.connection(), job_id)
     child_error = "Task cancelled by operator before this selected stream could run."
     db.execute(
         update(JobStep)
@@ -692,6 +691,7 @@ def cancel_pending_appliance_update(
             progress_percent=100,
         )
     )
+    capture_task_history_for_session(db, job_id)
     return True
 
 

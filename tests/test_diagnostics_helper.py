@@ -49,3 +49,22 @@ def test_helper_invokes_only_installed_isolated_collector(monkeypatch, capsys):
     assert kwargs["timeout"] == 8
     assert kwargs["stderr"] == helper.subprocess.DEVNULL
     assert json.loads(capsys.readouterr().out)["evidence"]["policies"]["INPUT"] == "DROP"
+
+
+def test_helper_rejects_incompatible_collector_evidence(monkeypatch, capsys):
+    """Keep helper output constrained to the requested source envelope.
+
+    Args:
+        monkeypatch: Fixture restoring subprocess behavior.
+        capsys: Fixture capturing public helper output.
+    """
+    helper = load_helper_module()
+    monkeypatch.setattr(helper.subprocess, "run", lambda *args, **kwargs: SimpleNamespace(
+        returncode=0, stdout=json.dumps({"source": "journal-atlaso-worker", "evidence": {"events": []}}).encode(),
+    ))
+    status = helper.main([
+        "atlaso-helper", "diagnostics", "source", "journal-atlaso", "2026-01-01T00:00:00Z",
+        "2026-01-02T00:00:00Z", "500",
+    ])
+    assert status == 1
+    assert capsys.readouterr().out == ""

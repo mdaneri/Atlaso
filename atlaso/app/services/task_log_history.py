@@ -5,17 +5,20 @@ import hmac
 import json
 from typing import Any
 
-from sqlalchemy import literal, select, update
+from sqlalchemy import delete, literal, select, update
 from sqlalchemy.engine import Connection, Engine
 from sqlalchemy.orm import Session
 
 from atlaso.app.config import get_settings
 from atlaso.app.models import AuditEvent, Job, TaskLogCheckpoint, TaskLogChunk
 from atlaso.app.services import log_viewer
+from atlaso.app.services.important_task_events import capture_important_events
 from atlaso.app.services.log_sanitization import _safe_lines as _safe_lines
 from atlaso.app.services.task_log_redaction import redact_task_value
+from atlaso.important_events import format_event
 
 CHUNK_CHARS = 16384
+RETAINED_CHARS = 8 * 1024 * 1024
 
 
 def _payload(value: str | None) -> dict[str, Any]:
@@ -95,7 +98,7 @@ def _merge_private_redaction(current: Any, snapshot: Any) -> Any:
 def capture_task_history(
     connection: Connection, job_id: str, audit_ids: tuple[int, ...] = (), *,
     result_changed: bool = True, only_if_missing: bool = False, appended_lines: tuple[str, ...] = (),
-) -> None:
+) -> list[dict[str, Any]]:
     """Append result deltas and audit records inside the producer transaction.
 
     Args:
@@ -111,10 +114,10 @@ def capture_task_history(
     if locked.rowcount != 1:
         if appended_lines:
             raise ValueError("Cannot append output to a missing task.")
-        return
+        return []
     checkpoint = connection.execute(select(checkpoints).where(checkpoints.c.job_id == job_id)).mappings().first()
     if only_if_missing and checkpoint is not None:
-        return
+        return []
     result_column = jobs.c.result if result_changed or checkpoint is None else literal(None).label("result")
     job = connection.execute(select(result_column, jobs.c.error, jobs.c.status).where(jobs.c.id == job_id)).one()
     previous = _payload(checkpoint["state_json"]) if checkpoint else {}
@@ -250,11 +253,15 @@ def capture_task_history(
     parser["carry"] = json.dumps(["S", "", bytes(32).hex(), "", active_label], separators=(",", ":"))
     private = bool(active_label)
     state["partial_pem_states"] = partials
+    important = capture_important_events(connection, job_id, previous, state,
+                                        result_changed=result_changed or checkpoint is None)
+    lines.extend(format_event(event) for event in important)
     text = "".join(line + "\n" for line in lines)
     for start in range(0, len(text), CHUNK_CHARS):
         content = text[start:start + CHUNK_CHARS]
         connection.execute(chunks.insert().values(job_id=job_id, start_offset=end, end_offset=end + len(content), content=content))
         end += len(content)
+    connection.execute(delete(chunks).where(chunks.c.job_id == job_id, chunks.c.end_offset <= end - RETAINED_CHARS))
     state.update(stream_pem_state=parser.get("carry", ""), stream_private=private, error=error)
     for key in ("log_pem_state", "result_pem_state", "audit_pem_state"):
         state[key] = partials.get(key.split("_")[0], parser.get("carry", ""))
@@ -264,6 +271,19 @@ def capture_task_history(
         connection.execute(update(checkpoints).where(checkpoints.c.job_id == job_id).values(state_json=state_json, end_offset=end))
     else:
         connection.execute(checkpoints.insert().values(job_id=job_id, state_json=state_json, end_offset=end))
+    return important
+
+
+def capture_task_history_for_session(db: Session, job_id: str, *, result_changed: bool = True) -> None:
+    """Capture Core producer writes and queue operational mirrors for commit only.
+
+    Args:
+        db: Producer session owning the conditional write and commit.
+        job_id: Task whose write was confirmed successful.
+        result_changed: Whether cumulative result evidence changed.
+    """
+    events = capture_task_history(db.connection(), job_id, result_changed=result_changed)
+    db.info.setdefault("important_events_commit", []).extend((job_id, item) for item in events)
 
 
 def append_task_log_lines(db: Session, job_id: str, lines: tuple[str, ...]) -> None:
@@ -285,7 +305,8 @@ def append_task_log_lines(db: Session, job_id: str, lines: tuple[str, ...]) -> N
     if not lines:
         return
     db.flush()
-    capture_task_history(db.connection(), job_id, result_changed=False, appended_lines=lines)
+    events = capture_task_history(db.connection(), job_id, result_changed=False, appended_lines=lines)
+    db.info.setdefault("important_events_commit", []).extend((job_id, item) for item in events)
 
 
 def initialize_task_history(engine: Engine) -> None:
@@ -323,8 +344,15 @@ def task_history_page(db: Session, job_id: str, *, cursor: str = "", tail: bool 
         position = {}
     offset = position.get("offset", 0)
     total = db.execute(select(TaskLogCheckpoint.end_offset).where(TaskLogCheckpoint.job_id == job_id)).scalar_one_or_none() or 0
+    oldest = db.execute(select(TaskLogChunk.start_offset).where(TaskLogChunk.job_id == job_id)
+                        .order_by(TaskLogChunk.start_offset).limit(1)).scalar_one_or_none() or 0
     if type(offset) is not int or not 0 <= offset <= total:
         raise ValueError("Invalid task history position.")
+    truncated = offset < oldest and not (tail and not cursor)
+    if truncated:
+        offset = oldest
+        position = {}
+        reset = bool(cursor)
     backward = position.get("before") is True or (tail and not cursor)
     end = offset if position.get("before") else position.get("page_end", total)
     if end is None:
@@ -355,6 +383,6 @@ def task_history_page(db: Session, job_id: str, *, cursor: str = "", tail: bool 
         return log_viewer.encode_cursor(source, history=1, **values)
     return {"source": source, "available": True, "text": bounded,
             "cursor": encode(offset=offset, page_end=end if backward or position.get("page_end") else None),
-            "next_cursor": encode(offset=finish), "previous_cursor": encode(offset=offset, before=True) if offset else "",
+            "next_cursor": encode(offset=finish), "previous_cursor": encode(offset=offset, before=True) if offset > oldest else "",
             "has_more": finish < total, "reset": reset,
-            "notice": "Task history now uses stable entries; reopened the beginning." if reset else ""}
+            "notice": "Older task output exceeded retention; reopened retained history." if truncated else "Task history now uses stable entries; reopened the beginning." if reset else ""}

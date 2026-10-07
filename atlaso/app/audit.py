@@ -47,6 +47,9 @@ def record_audit(
         detail=detail,
         request_id=request_id,
     )
+    # This facade retains its explicit/deferred emission contract; direct ORM
+    # producers are mirrored by the shared committed-event hook instead.
+    event._atlaso_deferred_operational = True
     db.add(event)
     db.commit()
     try:

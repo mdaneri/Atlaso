@@ -9204,10 +9204,10 @@ def test_appliance_apply_logging_redacts_commands_and_helper_output(caplog):
     assert "sensitive-helper-stdout" not in logged
     assert "sensitive-helper-stderr" not in logged
     assert "job_redacted" in logged
-    assert "helper and desired-state details omitted" in logged
-    assert "desired-state and helper details omitted" in logged
+    assert "component=kms stage=execution reason=helper_failed returncode=2" in logged
+    assert "Apply outcome=unsuccessful" in logged
     assert "command_index" not in logged
-    assert "returncode" not in logged
+    assert "returncode=2" in logged
     assert "stdout_present" not in logged
 
 

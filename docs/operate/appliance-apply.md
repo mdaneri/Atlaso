@@ -159,10 +159,17 @@ the command intent; it does not prove that Photon services changed.
 
 ## Recover from a failed apply
 
-1. Open the failed component and read its validation, error, and redacted command output.
+1. Open the failed component and read its validation, ordered task events, error, and redacted command output.
 2. Correct the desired state on the owning service page.
 3. Review pending units again; successful units keep their baselines, while failed and skipped changes remain pending.
 4. Submit only the units required for the corrected run.
+
+The task keeps significant Apply stages and outcomes, including component success or failure, skipped work,
+cancellation, management-handoff status, and rollback or recovery results. Its event records are bounded and remain
+available independently of the Operational Logs verbosity setting. Use the task ID and timestamps to correlate those
+events with [Operational Logs](logs.md) and the [Audit log](audit-log.md). A helper failure may include a safe stage and
+return code without a root-cause explanation; missing cause remains unknown until the service or native helper provides
+more evidence. [Important-event coverage](logs.md#important-event-coverage) describes this boundary.
 
 If Atlaso restarts during an ordinary apply, startup fails the running child and master task, skips pending children,
 and releases the global lock. For an interrupted management handoff, the privileged helper first stops and verifies any

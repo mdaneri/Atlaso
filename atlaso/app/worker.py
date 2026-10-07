@@ -161,6 +161,11 @@ def claim_next_job(db: Session) -> Job | None:
             db.rollback()
             continue
         claimed_job = db.get(Job, candidate)
+        from atlaso.app.services.task_log_history import (
+            capture_task_history_for_session,
+        )
+
+        capture_task_history_for_session(db, candidate, result_changed=False)
         db.commit()
         return claimed_job
 
@@ -883,12 +888,15 @@ def _fail_job(db: Session, job: Job, exc: Exception) -> None:
     job.status = JobStatus.FAILED.value
     job.finished_at = utcnow()
     job.progress_percent = 100
-    job.error = str(exc)
+    from atlaso.important_events import REASONS, failure_reason
+
+    reason = failure_reason(str(exc))
+    job.error = REASONS[reason]
     try:
         result = json.loads(job.result or "{}")
     except json.JSONDecodeError:
         result = {}
-    result.update({"status": JobStatus.FAILED.value, "success": False, "error": str(exc)})
+    result.update({"status": JobStatus.FAILED.value, "success": False, "error": job.error, "reason_code": reason})
     if restart_required:
         result.update(
             {
@@ -955,8 +963,10 @@ def _terminalize_incomplete_appliance_update_steps(
             continue
         was_running = step.status == JobStatus.RUNNING.value
         status = JobStatus.FAILED.value if was_running else JobStatus.SKIPPED.value
+        from atlaso.important_events import REASONS, failure_reason
+
         error = (
-            str(exc)
+            REASONS[failure_reason(str(exc))]
             if was_running
             else "The parent Appliance Update failed before this selected stream could run."
         )
@@ -1969,9 +1979,11 @@ def _run_pxe_media_sync(db: Session, job: Job) -> None:
                 raise NetworkBootMediaSyncCancelled(
                     "Network Boot media deletion was cancelled before completion."
                 )
-            from atlaso.app.services.task_log_history import capture_task_history
+            from atlaso.app.services.task_log_history import (
+                capture_task_history_for_session,
+            )
 
-            capture_task_history(db.connection(), job.id)
+            capture_task_history_for_session(db, job.id)
             db.add(
                 AuditEvent(
                     actor=job.created_by,
@@ -2051,9 +2063,11 @@ def _run_pxe_media_sync(db: Session, job: Job) -> None:
             raise NetworkBootMediaSyncCancelled(
                 "Network Boot media task was cancelled before completion."
             )
-        from atlaso.app.services.task_log_history import capture_task_history
+        from atlaso.app.services.task_log_history import (
+            capture_task_history_for_session,
+        )
 
-        capture_task_history(db.connection(), job.id)
+        capture_task_history_for_session(db, job.id)
         db.add(
             AuditEvent(
                 actor=job.created_by,
@@ -2099,7 +2113,11 @@ def run_worker_once() -> str | None:
     Raises:
         ValueError: If an input value is invalid.
     """
+    from atlaso.app.operational_logging import refresh_logging_preferences
     from atlaso.app.services import diagnostics
+
+    with SessionLocal() as logging_db:
+        refresh_logging_preferences(logging_db, writer="worker")
 
     try:
         with SessionLocal() as cleanup_db:
@@ -2158,7 +2176,7 @@ def run_worker_once() -> str | None:
         else:
             raise ValueError(f"No worker handler is registered for job type {job_type}.")
     except Exception as exc:  # noqa: BLE001 - the worker must survive individual job failures.
-        LOGGER.exception("Job %s failed", job_id)
+        LOGGER.error("Job %s failed; inspect retained task stages and safe reason codes.", job_id)
         with SessionLocal() as db:
             job = db.get(Job, job_id)
             if job is not None and job.status in {JobStatus.PENDING.value, JobStatus.RUNNING.value}:
@@ -2175,17 +2193,29 @@ def _observe_network_addresses() -> None:
     from atlaso.app.services.network_address_status import refresh_status
     from atlaso.app.ui import retry_network_transaction_cleanup
 
+    cleanup_warning = False
+    observation_warning = False
     while not _stop_requested:
         try:
             with SessionLocal() as recovery_db:
                 retry_network_transaction_cleanup(recovery_db)
+            if cleanup_warning:
+                LOGGER.info("Network transaction cleanup retry is available again.")
+            cleanup_warning = False
         except Exception:  # noqa: BLE001 - retry on the next bounded worker pass.
-            LOGGER.warning("Network transaction cleanup remains pending; worker will retry.")
+            if not cleanup_warning:
+                LOGGER.warning("Network transaction cleanup remains pending; worker will retry. Repeated warnings suppressed until recovery.")
+            cleanup_warning = True
         try:
             with SessionLocal() as observation_db:
                 refresh_status(observation_db)
+            if observation_warning:
+                LOGGER.info("Native address observation recovered.")
+            observation_warning = False
         except Exception:  # noqa: BLE001 - observation failure cannot interrupt other jobs.
-            LOGGER.warning("Native address evidence unavailable; previous observation retained.")
+            if not observation_warning:
+                LOGGER.warning("Native address evidence unavailable; previous observation retained. Repeated warnings suppressed until recovery.")
+            observation_warning = True
         time.sleep(POLL_SECONDS)
 
 
@@ -2199,11 +2229,12 @@ def main() -> int:
     _stop_requested = False
     signal.signal(signal.SIGTERM, _request_stop)
     signal.signal(signal.SIGINT, _request_stop)
-    if get_settings().app_log_history_path is not None:
-        from atlaso.app.operational_logging import configure_operational_logging
+    from atlaso.app.operational_logging import configure_operational_logging
 
-        configure_operational_logging(writer="worker")
+    configure_operational_logging(writer="worker")
     init_db()
+    with SessionLocal() as logging_db:
+        configure_operational_logging(logging_db, writer="worker")
     _write_worker_startup_status()
     release_finalizer_ready = _wait_for_release_restart_finalizer()
     if not release_finalizer_ready:

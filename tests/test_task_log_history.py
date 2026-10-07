@@ -379,7 +379,10 @@ def test_changed_fields_and_log_replacement_append_without_erasing(history_db):
     db.commit()
     job.result = json.dumps({"log_lines": ["replacement", "next"]})
     db.commit()
-    assert _all(db) == "vm: first\nold line\nvm: second\nreplacement\nvm: [removed]\nnext\n"
+    text = _all(db)
+    assert text.count("component=task stage=started") == 1
+    producer_lines = "".join(line for line in text.splitlines(keepends=True) if "component=task stage=started" not in line)
+    assert producer_lines == "vm: first\nold line\nvm: second\nreplacement\nvm: [removed]\nnext\n"
 
 
 @pytest.mark.parametrize("kind", ["appliance-update", "vcf-depot-download"])
@@ -399,6 +402,10 @@ def test_pending_bulk_cancellation_captures_result_and_error(history_db, kind):
     db = history_db
     job = Job(id="task", type=kind, created_by="test", status="pending", result="{}")
     db.add(job)
+    if kind == "appliance-update":
+        from atlaso.app.models import JobStep
+
+        db.add(JobStep(id="task:update", job=job, component_key="atlaso_release", label="Atlaso", position=1, status="pending"))
     db.commit()
     options = {"finished_at": utcnow(), "error": "cancelled safely", "result": '{"outcome":"cancelled"}'}
     if kind == "appliance-update":
@@ -409,6 +416,8 @@ def test_pending_bulk_cancellation_captures_result_and_error(history_db, kind):
     text = _all(db)
     assert "outcome: cancelled" in text
     assert "Error: cancelled safely" in text
+    if kind == "appliance-update":
+        assert "component=atlaso_release stage=completed outcome=skipped" in text
 
 
 def test_nonstandard_log_values_preserve_output_without_nested_secrets(history_db):

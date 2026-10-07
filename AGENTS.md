@@ -9,14 +9,14 @@ In the first progress update, confirm policies read, classify the work as `bug`,
 security-sensitive, and identify the linked issue. For private remediation, confirm private tracking without revealing
 advisory identifiers or findings. Read-only discovery may precede this update.
 
-Record repository, worktree, policy revision, and loaded routes in task context. On repository, worktree, directory,
-policy, or scope change, re-evaluate applicability and read changed or newly applicable instructions before continuing.
-Reuse unchanged policy already read in this task. If an applicable policy is missing, conflicting, or unclear, stop
-before the affected operation for maintainer direction.
+Record repository, worktree, policy revision, and loaded routes in context. On repository, worktree, directory,
+policy, or scope change, re-evaluate routes and read changed or newly applicable instructions before continuing.
+Reuse unchanged policy already read in this task. If applicable policy is missing, conflicting, or unclear, stop
+the affected operation for maintainer direction.
 
 ## Always applicable boundaries
 
-- Keep changes within the linked task and preserve unrelated work. Never commit directly to `main`.
+- Scope changes to the linked task; preserve unrelated work. Never commit directly to `main`.
 - Implementation requires a dedicated clean task worktree and task-owned branch beneath the exact supported Codex
   `git-worktree-root`. Resolve it independently; never guess or implement in the primary checkout. Keep task-owned
   temporary files, caches, builds, logs, and evidence beneath that root or another explicit maintainer-configured
@@ -34,8 +34,8 @@ before the affected operation for maintainer direction.
   workflow before delivery, including default merge authority and explicit holds. Automation must never use or request
   a ruleset or administrative bypass. Auto-merge requires explicit selection.
 - Before destructive actions, signing/publication, or external infrastructure mutation, load the exact procedure and
-  prove authority and ownership. Preserve its fail-closed gates. Reading policy grants no authority; unavailable
-  capabilities never justify inventing a substitute.
+  prove authority and ownership. Preserve its fail-closed gates. Policy grants no authority; unavailable
+  capabilities never justify substitutes.
 - Certificate handoff needs proven address control before mutation; see the
   [VMware procedure](docs/reference/vmware-workstation-lifecycle-testing.md).
 
@@ -72,13 +72,13 @@ For every PR review, including file assignments, load the review route. Complete
 before one consolidated review. Never repeatedly review an unchanged head without
 material new evidence; relevant commits still require re-review under that contract.
 
-A delegating agent's prompt lists the startup gate, exact worktree/state roots, owned files, routes, result, and focused
+A delegating agent lists the startup gate, exact worktree/state roots, owned files, routes, result, and focused
 checks; verify compliance and the diff before use.
 Delegation never expands permissions. The implementation route owns the Luna contract and unavailable-worker fallback.
 
 UI work requires the **Mandatory UI Design Guide Gate**: classify the interaction, name the reused Atlaso reference,
 and obtain explicit maintainer approval for `custom/other` before implementation.
 
-[progressive policy](docs/contribute/progressive-policy.md).
+[Logs](docs/operate/logs.md#important-event-coverage); [progressive policy](docs/contribute/progressive-policy.md).
 
 See [VCF SSH/su](docs/services/vcf-helper.md) and [KMIP trust](docs/services/vsphere-key-providers.md).

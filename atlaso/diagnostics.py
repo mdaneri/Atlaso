@@ -32,14 +32,34 @@ from urllib.parse import urlsplit
 from uuid import uuid4
 
 from atlaso import __build_git_commit__, __version__
+from atlaso.important_events import EVENT_LIMIT, validate_event
+from atlaso.important_events import REASONS as IMPORTANT_EVENT_REASONS
 
 TASK_ID_PATTERN = r"(?:job_[0-9a-fA-F]{12}|job_[0-9a-fA-F]{32}|job_schedule_[0-9]{1,20}_(?:[0-9a-fA-F]{12}|[0-9]{1,20})|[0-9a-fA-F]{32}|[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12})"
 TASK_STATUSES = frozenset({"pending", "running", "succeeded", "failed", "skipped", "cancelled", "no-op", "partial-failure"})
+JOURNAL_STATUS_REASONS = {
+    "available": "The collector returned bounded journal metadata with free-form messages omitted.",
+    "no_entries": "No journal entries were returned for this source and time window; this does not establish healthy operation.",
+    "source_missing": "The requested systemd unit is not installed on this appliance.",
+    "command_missing": "The journal query tool is not installed on this appliance.",
+    "permission_denied": "The collector identity could not read this journal source.",
+    "timed_out": "Journal collection exceeded its bounded deadline.",
+    "malformed_data": "The journal source did not match the expected structured format; raw content was omitted.",
+    "truncated": "Journal evidence reached a configured output limit; the exported prefix may be incomplete.",
+    "helper_incompatible": "The installed diagnostic helper returned an unsupported evidence envelope.",
+    "unavailable": "The journal source or collection command was unavailable within the safe collection limits.",
+}
+JOURNAL_CATEGORIES = frozenset({
+    "message_omitted", "connection_refused", "upstream_timeout", "permission_denied",
+    "websocket_event", "out_of_memory",
+})
+JOURNAL_AVAILABILITIES = frozenset(JOURNAL_STATUS_REASONS)
 SCHEMA_VERSION = 1
 SCOPES = ("network", "terminal", "update", "pxe")
 SOURCE_LIMIT = 262_144
 TOTAL_LIMIT = 8 * 1024 * 1024
 TOTAL_SECONDS = 60
+JOURNAL_STDERR_LIMIT = 64 * 1024
 DATABASE_PATH = Path("/var/lib/atlaso/atlaso.db")
 UNITS = ("atlaso", "atlaso-worker", "nginx", "systemd-networkd", "systemd-resolved")
 SERVICE_FIELDS = {
@@ -341,7 +361,7 @@ class Collector:
             raise EvidenceError("timed_out")
 
     def command(self, args: list[str]) -> str:
-        """Bound pipe reads and runtime; never persist command stderr or environment.
+        """Bound command output and runtime; classify only journal permission errors.
 
         Args:
             args: Fixed command arguments or synthetic helper invocation.
@@ -349,11 +369,14 @@ class Collector:
         self.check()
         executable = shutil.which(args[0], path="/usr/sbin:/usr/bin:/sbin:/bin" if os.name == "posix" else None)
         if not executable:
-            raise EvidenceError("unavailable")
+            raise EvidenceError("command_missing" if args[0] == "journalctl" else "unavailable")
         buffer = bytearray()
+        journal_stderr = bytearray()
+        classify_journal_stderr = args[0] == "journalctl"
         overflow = threading.Event()
         with subprocess.Popen([executable, *args[1:]], stdout=subprocess.PIPE,
-                              stderr=subprocess.DEVNULL, stdin=subprocess.DEVNULL,
+                              stderr=subprocess.PIPE if classify_journal_stderr else subprocess.DEVNULL,
+                              stdin=subprocess.DEVNULL,
                               env={"PATH": "/usr/sbin:/usr/bin:/sbin:/bin", "LC_ALL": "C"}) as process:
             assert process.stdout is not None
             stdout = process.stdout
@@ -367,6 +390,19 @@ class Collector:
 
             reader = threading.Thread(target=drain, daemon=True)
             reader.start()
+            stderr_reader: threading.Thread | None = None
+            if classify_journal_stderr:
+                assert process.stderr is not None
+                stderr = process.stderr
+
+                def drain_stderr() -> None:
+                    while chunk := stderr.read(4096):
+                        remaining = JOURNAL_STDERR_LIMIT - len(journal_stderr)
+                        if remaining > 0:
+                            journal_stderr.extend(chunk[:remaining])
+
+                stderr_reader = threading.Thread(target=drain_stderr, daemon=True)
+                stderr_reader.start()
             end = min(self.deadline, time.monotonic() + 5)
             try:
                 while process.poll() is None:
@@ -377,15 +413,24 @@ class Collector:
                         raise EvidenceError("timed_out")
                     time.sleep(0.1)
                 reader.join(timeout=1)
+                if stderr_reader is not None:
+                    stderr_reader.join(timeout=1)
                 if overflow.is_set():
                     raise EvidenceError("truncated")
                 if process.returncode:
+                    lowered_stderr = bytes(journal_stderr).lower()
+                    if classify_journal_stderr and any(marker in lowered_stderr for marker in (
+                        b"permission denied", b"insufficient permissions",
+                    )):
+                        raise EvidenceError("permission_denied")
                     raise EvidenceError("unavailable")
             finally:
                 if process.poll() is None:
                     process.kill()
                 process.wait(timeout=2)
                 reader.join(timeout=2)
+                if stderr_reader is not None:
+                    stderr_reader.join(timeout=2)
         return buffer.decode("utf-8", errors="strict")
 
     def baseline(self) -> dict[str, Any]:
@@ -628,12 +673,14 @@ class Collector:
             raise EvidenceError("unavailable")
         result: dict[str, Any] = {"availability": "available"}
         with sqlite3.connect(self.database.as_uri() + "?mode=ro", uri=True, timeout=1) as db:
-            db.setlimit(sqlite3.SQLITE_LIMIT_LENGTH, SOURCE_LIMIT)
+            # Checkpoints can contain large unrelated task-state fields. Keep the
+            # SQLite row bound separate from the smaller exported projection cap.
+            db.setlimit(sqlite3.SQLITE_LIMIT_LENGTH, TOTAL_LIMIT)
             db.execute("PRAGMA query_only=ON")
             db.set_progress_handler(lambda: int(time.monotonic() >= self.deadline), 1000)
             result["sqlite_schema_version"] = db.execute("PRAGMA user_version").fetchone()[0]
             result["schema_tables"] = [name for (name,) in db.execute(
-                "SELECT name FROM sqlite_master WHERE type='table' AND name IN ('jobs','settings','physical_interfaces','vlan_interfaces')")]
+                "SELECT name FROM sqlite_master WHERE type='table' AND name IN ('jobs','settings','physical_interfaces','vlan_interfaces','task_log_checkpoints')")]
             if "network" in self.options.scopes or "terminal" in self.options.scopes:
                 cols = "name,mac_address,ip_cidr,ipv6_cidr,role,admin_state,access_management_ui_enabled"
                 result["desired_interfaces"] = [{"name": token(row[0]), "mac": address(row[1]),
@@ -659,16 +706,70 @@ class Collector:
                     for key, enabled in db.execute("SELECT key,enabled FROM network_boot_environments LIMIT 101")
                 ]
             if self.options.scopes or self.options.correlation_id:
-                rows = db.execute("SELECT id,type,status,created_at,started_at,finished_at FROM jobs "
-                    "WHERE created_at >= ? AND created_at <= ? AND (? = '' OR id = ?) ORDER BY created_at DESC LIMIT 101",
+                has_checkpoints = "task_log_checkpoints" in result["schema_tables"]
+                if has_checkpoints:
+                    try:
+                        db.execute("SELECT json_extract('{\"probe\":1}','$.probe')").fetchone()
+                    except sqlite3.Error:
+                        has_checkpoints = False
+                checkpoint_select = (
+                    ",CASE WHEN json_valid(c.state_json) "
+                    "THEN json_object('important_events',json_extract(c.state_json,'$.important_events'), "
+                    "'important_events_omitted',json_extract(c.state_json,'$.important_events_omitted')) "
+                    "ELSE NULL END" if has_checkpoints else ",NULL"
+                )
+                rows = db.execute("SELECT j.id,j.type,j.status,j.created_at,j.started_at,j.finished_at" + checkpoint_select + " FROM jobs j "
+                    + ("LEFT JOIN task_log_checkpoints c ON c.job_id=j.id " if has_checkpoints else "")
+                    + "WHERE j.created_at >= ? AND j.created_at <= ? AND (? = '' OR j.id = ?) ORDER BY j.created_at DESC LIMIT 101",
                     (timestamp(self.options.since).replace(tzinfo=None).isoformat(" "),
                      timestamp(self.options.until).replace(tzinfo=None).isoformat(" "),
                      self.options.correlation_id, self.options.correlation_id)).fetchall()
                 result["truncated"] = len(rows) > 100
                 result["task_row_limit"] = 100
-                result["tasks"] = [{"id": token(row[0], TASK_ID_PATTERN), "type": token(row[1]),
-                    "status": row[2] if row[2] in TASK_STATUSES else None,
-                    "timestamps": [token(v, r"[0-9T :.+Z-]{1,40}") for v in row[3:]]} for row in rows[:100]]
+                tasks = []
+                for row in rows[:100]:
+                    task = {"id": token(row[0], TASK_ID_PATTERN), "type": token(row[1]),
+                            "status": row[2] if row[2] in TASK_STATUSES else None,
+                            "timestamps": [token(v, r"[0-9T :.+Z-]{1,40}") for v in row[3:6]]}
+                    task["important_events"] = []
+                    task["important_events_omitted"] = None
+                    task["important_events_status"] = "evidence_unavailable"
+                    task["important_events_reason"] = "The checkpoint containing typed important events is unavailable; legacy task details are incomplete."
+                    if has_checkpoints and row[6] is not None:
+                        try:
+                            checkpoint = json.loads(row[6])
+                            raw_events = checkpoint.get("important_events") if isinstance(checkpoint, dict) else None
+                            raw_omitted = checkpoint.get("important_events_omitted") if isinstance(checkpoint, dict) else None
+                            if isinstance(raw_events, list) and type(raw_omitted) is int and 0 <= raw_omitted <= 2**31 - 1:
+                                safe_events = []
+                                rejected = 0
+                                for raw_event in raw_events[:EVENT_LIMIT]:
+                                    safe_event = validate_event(raw_event)
+                                    if safe_event is None:
+                                        rejected += 1
+                                        continue
+                                    try:
+                                        safe_event["at"] = timestamp(safe_event["at"]).isoformat()
+                                    except ValueError:
+                                        rejected += 1
+                                        continue
+                                    safe_events.append({**safe_event, "explanation": IMPORTANT_EVENT_REASONS[safe_event["reason"]]})
+                                overflow = max(0, len(raw_events) - EVENT_LIMIT)
+                                task["important_events"] = safe_events
+                                task["important_events_omitted"] = min(2**31 - 1, raw_omitted + rejected + overflow)
+                                if rejected and not safe_events:
+                                    task["important_events_status"] = "evidence_unavailable"
+                                    task["important_events_reason"] = "No stored important event matched the reviewed typed schema."
+                                elif raw_omitted or rejected or overflow:
+                                    task["important_events_status"] = "truncated"
+                                    task["important_events_reason"] = "Some important events were omitted, malformed, or beyond the per-task export limit."
+                                else:
+                                    task["important_events_status"] = "available"
+                                    task["important_events_reason"] = None
+                        except (ValueError, TypeError, KeyError, OverflowError):
+                            pass
+                    tasks.append(task)
+                result["tasks"] = tasks
         capped = []
         for field, limit in (("desired_interfaces", 100), ("desired_vlans", 100),
                              ("network_boot_environments", 100), ("applied_interfaces", 200)):
@@ -711,35 +812,110 @@ class Collector:
         return rows[:201]
 
     def journal(self, unit: str) -> dict[str, Any]:
-        """Export timestamp/severity and fixed categories, never arbitrary log messages.
+        """Export typed journal outcomes and fixed categories, never message text.
 
         Args:
             unit: Fixed systemd unit selected by the collector.
         """
         if os.name == "posix" and getattr(os, "geteuid", lambda: -1)() != 0:
-            return self.privileged("journal-" + unit)
-        raw = self.command(["journalctl", "--unit=" + unit + ".service", "--no-pager", "--output=json",
-                            "--since=" + self.options.since, "--until=" + self.options.until,
-                            "--lines=" + str(self.options.log_lines)])
+            try:
+                evidence = self.privileged("journal-" + unit)
+                events = evidence.get("events")
+                availability = evidence.get("availability")
+                if (not isinstance(availability, str) or availability not in JOURNAL_AVAILABILITIES
+                        or not isinstance(events, list) or len(events) > self.options.log_lines
+                        or evidence.get("limit") != self.options.log_lines
+                        or type(evidence.get("possibly_truncated")) is not bool):
+                    raise EvidenceError("helper_incompatible")
+                projected = []
+                for event in events:
+                    category = event.get("category") if isinstance(event, dict) else None
+                    if not isinstance(category, str) or event.get("unit") != unit or category not in JOURNAL_CATEGORIES:
+                        raise EvidenceError("helper_incompatible")
+                    timestamp_us = event.get("timestamp_us")
+                    priority = event.get("priority")
+                    hostname = event.get("hostname")
+                    if (timestamp_us is not None and (type(timestamp_us) is not int or timestamp_us < 0)
+                            or priority is not None and (type(priority) is not int or not 0 <= priority <= 7)
+                            or hostname is not None and not isinstance(hostname, str)):
+                        raise EvidenceError("helper_incompatible")
+                    projected.append({"timestamp_us": timestamp_us, "priority": priority, "unit": unit,
+                                      "category": category,
+                                      "hostname": self.projection.identifier(hostname, "hostname")})
+                return {"availability": availability, "reason": JOURNAL_STATUS_REASONS[availability],
+                        "events": projected, "limit": self.options.log_lines,
+                        "possibly_truncated": evidence["possibly_truncated"],
+                        "omitted": "All free-form messages, stderr, bodies, session data and unknown fields."}
+            except EvidenceError as exc:
+                status = exc.status if exc.status in JOURNAL_AVAILABILITIES else "unavailable"
+                return self.journal_unavailable(status)
+            except PermissionError:
+                return self.journal_unavailable("permission_denied")
+            except (OSError, ValueError, TypeError, KeyError, IndexError, UnicodeError):
+                return self.journal_unavailable("helper_incompatible")
+        try:
+            raw = self.command(["journalctl", "--unit=" + unit + ".service", "--no-pager", "--output=json",
+                                "--since=" + self.options.since, "--until=" + self.options.until,
+                                "--lines=" + str(self.options.log_lines)])
+        except EvidenceError as exc:
+            status = exc.status if exc.status in JOURNAL_AVAILABILITIES else "unavailable"
+            return self.journal_unavailable(status)
+        except PermissionError:
+            return self.journal_unavailable("permission_denied")
+        except OSError:
+            return self.journal_unavailable("unavailable")
         events = []
-        for line in raw.splitlines():
-            item = json.loads(line)
-            # MESSAGE is intentionally never copied or regex-scrubbed. Unknown text
-            # can contain passwords, payload bodies or terminal transcripts.
-            message = item.get("MESSAGE", "")
-            category = "message_omitted"
-            if isinstance(message, str):
-                for fragment, label in (("Connection refused", "connection_refused"), ("upstream timed out", "upstream_timeout"),
-                                        ("permission denied", "permission_denied"), ("WebSocket", "websocket_event"),
-                                        ("Out of memory", "out_of_memory")):
-                    if fragment.lower() in message.lower():
-                        category = label
-                        break
-            events.append({"timestamp_us": number(item.get("__REALTIME_TIMESTAMP")),
-                           "priority": number(item.get("PRIORITY")), "unit": unit, "category": category,
-                           "hostname": self.projection.identifier(item.get("_HOSTNAME"), "hostname")})
-        return {"events": events, "limit": self.options.log_lines,
+        try:
+            for line in raw.splitlines():
+                item = json.loads(line)
+                if not isinstance(item, dict):
+                    return self.journal_unavailable("malformed_data")
+                # MESSAGE is intentionally never copied or regex-scrubbed. Unknown text
+                # can contain passwords, payload bodies or terminal transcripts.
+                message = item.get("MESSAGE", "")
+                category = "message_omitted"
+                if isinstance(message, str):
+                    for fragment, label in (("Connection refused", "connection_refused"), ("upstream timed out", "upstream_timeout"),
+                                            ("permission denied", "permission_denied"), ("WebSocket", "websocket_event"),
+                                            ("Out of memory", "out_of_memory")):
+                        if fragment.lower() in message.lower():
+                            category = label
+                            break
+                events.append({"timestamp_us": number(item.get("__REALTIME_TIMESTAMP")),
+                               "priority": number(item.get("PRIORITY")), "unit": unit, "category": category,
+                               "hostname": self.projection.identifier(item.get("_HOSTNAME"), "hostname")})
+        except (ValueError, TypeError, UnicodeError):
+            return self.journal_unavailable("malformed_data")
+        availability = "available"
+        if not events:
+            try:
+                state = self.command(["systemctl", "show", unit + ".service", "--property=LoadState", "--value"]).strip()
+            except PermissionError:
+                return self.journal_unavailable("permission_denied")
+            except EvidenceError as exc:
+                status = exc.status if exc.status in JOURNAL_AVAILABILITIES else "unavailable"
+                return self.journal_unavailable(status)
+            except OSError:
+                return self.journal_unavailable("unavailable")
+            availability = "source_missing" if state == "not-found" else "no_entries" if state == "loaded" else "unavailable"
+        elif len(events) >= self.options.log_lines:
+            availability = "truncated"
+        return {"availability": availability, "reason": JOURNAL_STATUS_REASONS[availability],
+                "events": events[:self.options.log_lines],
+                "limit": self.options.log_lines,
                 "possibly_truncated": len(events) >= self.options.log_lines,
+                "omitted": "All free-form messages, stderr, bodies, session data and unknown fields."}
+
+    def journal_unavailable(self, status: str) -> dict[str, Any]:
+        """Return a fixed journal failure projection without exception or helper text.
+
+        Args:
+            status: One of the collector's allowlisted journal outcomes.
+        """
+        if status not in JOURNAL_AVAILABILITIES:
+            status = "unavailable"
+        return {"availability": status, "reason": JOURNAL_STATUS_REASONS[status], "events": [],
+                "limit": self.options.log_lines, "possibly_truncated": status == "truncated",
                 "omitted": "All free-form messages, stderr, bodies, session data and unknown fields."}
 
     def privileged(self, source: str) -> dict[str, Any]:
@@ -750,15 +926,22 @@ class Collector:
         """
         raw = self.command(["sudo", "-n", "/opt/atlaso/bin/atlaso-helper", "diagnostics", "source", source,
                             self.options.since, self.options.until, str(self.options.log_lines)])
-        payload = json.loads(raw)
+        try:
+            payload = json.loads(raw)
+        except (ValueError, TypeError) as exc:
+            raise EvidenceError("helper_incompatible") from exc
         if not isinstance(payload, dict) or payload.get("source") != source or not isinstance(payload.get("evidence"), dict):
-            raise EvidenceError("failed")
+            raise EvidenceError("helper_incompatible")
         evidence: dict[str, Any] = payload["evidence"]
-        # The helper uses the same projections but has no per-bundle alias map.
-        # Apply the parent's map before any evidence bytes leave memory.
+        # Keep helper hostnames raw until journal() validates the complete envelope
+        # and applies this capture's alias map exactly once.
         if source.startswith("journal-"):
-            for event in evidence.get("events", []):
-                event["hostname"] = self.projection.identifier(event.get("hostname"), "hostname")
+            events = evidence.get("events")
+            if not isinstance(events, list):
+                raise EvidenceError("helper_incompatible")
+            for event in events:
+                if not isinstance(event, dict):
+                    raise EvidenceError("helper_incompatible")
         return evidence
 
     def capture(self, bundle_id: str | None = None) -> tuple[bytes, dict[str, Any]]:
@@ -805,18 +988,32 @@ class Collector:
                     raise EvidenceError("truncated")
                 filename = "evidence/" + name + ".json"
                 files[filename] = data
-                entry.update(status="truncated" if evidence.get("truncated") or evidence.get("possibly_truncated") else "success",
-                             path=filename, size_bytes=len(data), sha256=hashlib.sha256(data).hexdigest())
+                availability = evidence.get("availability")
+                if name.startswith("journal-") and availability in JOURNAL_STATUS_REASONS:
+                    source_status = "success" if availability == "available" else availability
+                    source_reason = None if availability == "available" else JOURNAL_STATUS_REASONS[availability]
+                else:
+                    source_status = "truncated" if evidence.get("truncated") or evidence.get("possibly_truncated") else "success"
+                    source_reason = None
+                entry.update(status=source_status, path=filename, size_bytes=len(data),
+                             sha256=hashlib.sha256(data).hexdigest())
+                if source_reason:
+                    entry["reason"] = source_reason
             except EvidenceError as exc:
                 if exc.status == "cancelled":
                     raise
-                entry.update(status=exc.status, reason="Evidence unavailable within the selected safe collection limits.")
+                entry.update(status=exc.status,
+                             reason=JOURNAL_STATUS_REASONS.get(exc.status, "Evidence unavailable within the selected safe collection limits."))
             except PermissionError:
-                entry.update(status="permission_denied", reason="Source is not readable by this collector identity.")
+                entry.update(status="permission_denied", reason=JOURNAL_STATUS_REASONS.get(
+                    "permission_denied", "Source is not readable by this collector identity."))
             except (OSError, sqlite3.Error):
-                entry.update(status="unavailable", reason="Source is absent, unavailable, or busy.")
+                entry.update(status="unavailable", reason=JOURNAL_STATUS_REASONS.get(
+                    "unavailable", "Source is absent, unavailable, or busy."))
             except (ValueError, TypeError, KeyError, IndexError, AttributeError, UnicodeError, RecursionError, OverflowError, subprocess.SubprocessError):
-                entry.update(status="failed", reason="Source did not match the allowlisted schema; raw content omitted.")
+                status = "malformed_data" if name.startswith("journal-") else "failed"
+                entry.update(status=status, reason=JOURNAL_STATUS_REASONS.get(
+                    status, "Source did not match the allowlisted schema; raw content omitted."))
             entry["ended_at"] = utc_now().isoformat()
             entries.append(entry)
         if self.cancelled():
