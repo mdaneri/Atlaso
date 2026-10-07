@@ -108,6 +108,10 @@ and retires the old path only after readiness succeeds. Before publishing the ap
 the helper-confirmed DHCP or SLAAC address in observed interface state so the committed listener remains immediately
 eligible. On failure it restores the complete previous state and records the same actionable failing layer and rollback
 result on every bundled component.
+During upgrade handoff, Atlaso scopes legacy wildcard management listeners to the previous addresses while preserving
+Public Services ownership of existing management HTTPS sockets. The management site retains HTTP redirects and
+loopback readiness listeners. Nginx configuration validation must pass before activation; a validation failure restores
+the prior site and leaves the handoff to recover the captured state.
 Successful baselines use the exact submitted snapshots, including applied resolver values; unrelated or concurrently
 saved Appliance Settings changes remain pending. A missing known-good Network baseline blocks mutation. Durable state
 and backups remain until the database commit is proven and acknowledged, so interruption or cleanup failure can retry

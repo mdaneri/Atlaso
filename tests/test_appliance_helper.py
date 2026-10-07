@@ -2866,6 +2866,128 @@ def test_management_handoff_scopes_old_tls_before_new_address_activation(monkeyp
     assert "listen [::]:443 ssl default_server;" not in installed[0]
 
 
+@pytest.mark.parametrize("https,port", [(True, 443), (True, 8443), (False, 80)])
+@pytest.mark.parametrize("mixed", [False, True])
+def test_management_handoff_wildcard_migration_preserves_public_ownership(
+    monkeypatch, tmp_path, https, port, mixed,
+):
+    """Migrate legacy wildcards without duplicating Public Services defaults.
+
+    Args:
+        monkeypatch: Isolated nginx paths and validation boundary.
+        tmp_path: Disposable runtime and snapshot files.
+        https: Previous management protocol.
+        port: Previous management public port.
+        mixed: Include dedicated addresses alongside Public Services addresses.
+    """
+    helper = load_helper_module()
+    marker = "# Managed by Atlaso. Local changes may be overwritten.\n"
+    management = tmp_path / "management.conf"
+    public = tmp_path / "public.conf"
+    original = marker + (
+        "server {\n  listen 80 default_server;\n  listen [::]:80 default_server;\n}\n"
+        if https else ""
+    ) + (
+        f"server {{\n  listen {port}{' ssl' if https else ''} default_server;\n"
+        f"  listen [::]:{port}{' ssl' if https else ''} default_server;\n}}\n"
+    )
+    management.write_text(original, encoding="utf-8")
+    public_text = marker + (
+        "server {\n  listen 192.0.2.10:443 ssl default_server;\n"
+        "  listen [2001:db8::10]:443 ssl default_server;\n}\n"
+    )
+    public.write_text(public_text, encoding="utf-8")
+    backup = tmp_path / "public.snapshot"
+    backup.write_text(public_text, encoding="utf-8")
+    monkeypatch.setattr(helper, "NGINX_MANAGEMENT_SITE_PATH", management)
+    monkeypatch.setattr(helper, "NGINX_PUBLIC_SERVICES_SITE_PATH", public)
+    state = {
+        "previous_https_enabled": https,
+        "previous_management_public_port": port,
+        "previous_management_addresses": ["192.0.2.10", "2001:db8::10"]
+        + (["192.0.2.20", "2001:db8::20"] if mixed else []),
+        "snapshots": [{"path": str(public), "backup": str(backup)}],
+    }
+    installed = []
+
+    def install(path, text):
+        """Capture the migration and reject duplicated explicit defaults.
+
+        Args:
+            path: Target management site.
+            text: Migrated management configuration.
+        """
+        sockets = re.findall(r"listen (\S+)(?: ssl)? default_server;", text + public_text)
+        assert len(sockets) == len(set(sockets))
+        path.write_text(text, encoding="utf-8")
+        installed.append(text)
+        return 0
+
+    monkeypatch.setattr(helper, "_install_nginx_site", install)
+    helper._scope_management_handoff_old_listener(state)
+    migrated = management.read_text(encoding="utf-8")
+    for address in ("192.0.2.10", "[2001:db8::10]"):
+        assert (f"listen {address}:{port}{' ssl' if https else ''} default_server;" in migrated) == (
+            not https or port != 443
+        )
+        assert f"listen {address}:80 default_server;" in migrated
+    assert f"listen 127.0.0.1:{port}{' ssl' if https else ''} default_server;" in migrated
+    assert f"listen [::1]:{port}{' ssl' if https else ''} default_server;" in migrated
+    if mixed:
+        assert f"listen 192.0.2.20:{port}{' ssl' if https else ''} default_server;" in migrated
+        assert f"listen [2001:db8::20]:{port}{' ssl' if https else ''} default_server;" in migrated
+    helper._scope_management_handoff_old_listener(state)
+    assert len(installed) == 1
+    assert public.read_text(encoding="utf-8") == public_text
+
+
+def test_management_handoff_wildcard_validation_failure_restores_sites(monkeypatch, tmp_path):
+    """Failed isolation validates the candidate and restores the exact old site.
+
+    Args:
+        monkeypatch: Isolate installation dependencies without bypassing the installer.
+        tmp_path: Disposable nginx runtime files.
+    """
+    helper = load_helper_module()
+    marker = "# Managed by Atlaso. Local changes may be overwritten.\n"
+    management = tmp_path / "management.conf"
+    original = marker + (
+        "server {\n  listen 80 default_server;\n  listen [::]:80 default_server;\n}\n"
+        "server {\n  listen 443 ssl default_server;\n  listen [::]:443 ssl default_server;\n}\n"
+    )
+    management.write_text(original, encoding="utf-8")
+    public = tmp_path / "public.conf"
+    public_text = marker + "server {\n  listen 192.0.2.10:443 ssl default_server;\n}\n"
+    public.write_text(public_text, encoding="utf-8")
+    backup = tmp_path / "public.snapshot"
+    backup.write_text(public_text, encoding="utf-8")
+    monkeypatch.setattr(helper, "NGINX_MANAGEMENT_SITE_PATH", management)
+    monkeypatch.setattr(helper, "NGINX_PUBLIC_SERVICES_SITE_PATH", public)
+    monkeypatch.setattr(helper, "_nginx_binary", lambda: "nginx")
+    monkeypatch.setattr(helper, "_install_nginx_include", lambda: None)
+    monkeypatch.setattr(helper, "_nginx_site_conflict", lambda *_args: None)
+    monkeypatch.setattr(helper, "_reload_nginx", lambda: pytest.fail("invalid site reloaded"))
+    validated = []
+
+    def validate():
+        """Observe the staged configuration before returning a failed nginx test."""
+        validated.append(management.read_text(encoding="utf-8"))
+        return subprocess.CompletedProcess(["nginx", "-t"], 1, "", "configuration test failed\n")
+
+    monkeypatch.setattr(helper, "_nginx_test_command", validate)
+    with pytest.raises(ValueError, match="previous management nginx listener could not be address scoped"):
+        helper._scope_management_handoff_old_listener({
+            "previous_https_enabled": True,
+            "previous_management_addresses": ["192.0.2.10"],
+            "snapshots": [{"path": str(public), "backup": str(backup)}],
+        })
+    assert len(validated) == 1
+    assert "listen 192.0.2.10:443 ssl default_server;" not in validated[0]
+    assert "listen 127.0.0.1:443 ssl default_server;" in validated[0]
+    assert management.read_text(encoding="utf-8") == original
+    assert public.read_text(encoding="utf-8") == public_text
+
+
 def test_management_handoff_scopes_old_http_before_new_address_activation(monkeypatch, tmp_path):
     """Do not expose a newly acquired address through the previous plaintext site.
 
