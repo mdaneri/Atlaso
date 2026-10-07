@@ -394,14 +394,15 @@ def test_physical_and_vlan_pages_render(client):
     assert "data-parent-options" in vlans.text
     assert "deleteVlanInterfaceFromMenu" in app_js
     assert "refreshNetworkSideStack" in app_js
+    refresh_network_side_stack_start = "async function refreshNetworkSideStack("
     refreshed_side_stack_js = app_js.split("function initializeRefreshedSideStack(sideStack)", 1)[1].split(
-        "async function refreshNetworkSideStack()", 1
+        refresh_network_side_stack_start, 1
     )[0]
     assert "initializeAutosaveForms(sideStack)" in refreshed_side_stack_js
     assert "initializeSwitchFields(sideStack)" in refreshed_side_stack_js
     assert "initializeServiceBindEditors(sideStack)" in refreshed_side_stack_js
     assert "initializeDnsSettings(sideStack)" in refreshed_side_stack_js
-    refresh_network_side_stack_js = app_js.split("async function refreshNetworkSideStack()", 1)[1].split(
+    refresh_network_side_stack_js = app_js.split(refresh_network_side_stack_start, 1)[1].split(
         "async function autoSavePhysicalInterface", 1
     )[0]
     assert "initializeRefreshedSideStack(nextSideStack)" in refresh_network_side_stack_js

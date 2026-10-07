@@ -1035,7 +1035,7 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     assert "ATLASO_CACHE" in service_worker.text
     assert "atlaso-management-pwa-v" in service_worker.text
     assert "ATLASO_CACHE_PREFIX" in service_worker.text
-    assert 'const ATLASO_CACHE = `${ATLASO_CACHE_PREFIX}351`;' in service_worker.text
+    assert 'const ATLASO_CACHE = `${ATLASO_CACHE_PREFIX}352`;' in service_worker.text
     assert 'fetch(asset, { cache: "reload" })' in service_worker.text
     assert "Required precache request failed" in service_worker.text
     assert "key.startsWith(ATLASO_CACHE_PREFIX)" in service_worker.text
@@ -1055,7 +1055,7 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-10" in service_worker.text
     assert "/static/appliance-apply-polling.js?v=issue-420-6" in service_worker.text
     assert "/static/ui-routes.js?v=issue-287-1" in service_worker.text
-    assert "/static/app.js?v=dhcp-verification-819-1" in service_worker.text
+    assert "/static/app.js?v=routing-refresh-918-1" in service_worker.text
     assert "/static/terminal.js?v=issue-287-2" in service_worker.text
     assert "/static/pwa.js?v=issue-287-2" in service_worker.text
     assert "vcfdt-configuration-248-20260807-14" not in service_worker.text
@@ -1109,7 +1109,7 @@ def test_shared_ui_pattern_shell_and_wizard_contracts(client):
     base = (templates / "base.html").read_text(encoding="utf-8")
     public_base = (templates / "public_portal_base.html").read_text(encoding="utf-8")
     for shell, app_asset in (
-        (base, "/static/app.js?v=dhcp-verification-819-1"),
+        (base, "/static/app.js?v=routing-refresh-918-1"),
         (public_base, "/static/app.js?v=management-address-874-1"),
         (base, "/static/appliance-apply-polling.js?v=issue-420-6"),
     ):
@@ -1300,7 +1300,12 @@ def test_every_existing_tabulator_uses_the_shared_grid_foundation(client):
     assert "cell.setValue(!previousValue)" in adapter_block
     assert "void saveInlineEnabled(cell, previousValue)" in adapter_block
     assert "cell.setValue(previousValue)" in adapter_block
-    assert adapter_block.count("await refreshNetworkSideStack();") == 3
+    assert '''const refreshResourceSideStack = document.querySelector("aside.side-stack") instanceof HTMLElement
+    ? refreshNetworkSideStack
+    : async () => true;''' in adapter_block
+    assert adapter_block.count("const sideStackRefreshed = await refreshResourceSideStack();") == 3
+    assert adapter_block.count("if (sideStackRefreshed === false)") == 3
+    assert adapter_block.count("if (sideStackRefreshed !== true)") == 3
     for name in (
         "initializeApiTokensTable",
         "initializeCaProfilesTable",
@@ -1780,7 +1785,7 @@ def test_monitor_page_renders_template_and_browser_assets(client):
     assert "swagger-link-icon" in page.text
     assert "/static/app.css?v=tooltip-848-3" in page.text
     assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-10" in page.text
-    assert "/static/app.js?v=dhcp-verification-819-1" in page.text
+    assert "/static/app.js?v=routing-refresh-918-1" in page.text
     app_css = client.get("/static/app.css")
     assert app_css.status_code == 200
     assert ".split-workspace > .wide-panel" in app_css.text

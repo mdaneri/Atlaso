@@ -1387,11 +1387,14 @@ function initializeAtlasoResourceWizard(config) {
   if (!(element instanceof HTMLElement) || !(form instanceof HTMLFormElement) || !(dialog instanceof HTMLDialogElement)) {
     return null;
   }
+  const refreshResourceSideStack = document.querySelector("aside.side-stack") instanceof HTMLElement
+    ? refreshNetworkSideStack
+    : async () => true;
   const csrf = element.dataset.csrf || form.elements.namedItem("csrf")?.value || "";
   let table = null;
   let wizard = null;
   const rows = config.includeNewRow === false ? [...config.rows] : [...config.rows, config.newRow];
-  const reportActionError = (error) => {
+  const reportActionError = (error, { statusError = false } = {}) => {
     const message = error instanceof Error ? error.message : String(error || "The resource action failed.");
     const status = config.actionErrorSelector
       ? document.querySelector(config.actionErrorSelector)
@@ -1403,7 +1406,14 @@ function initializeAtlasoResourceWizard(config) {
       status.setAttribute("role", "alert");
       return;
     }
-    showTransientGridStatus(message);
+    showTransientGridStatus(message, { error: statusError });
+  };
+  const reportSideStackRefreshWarning = (message) => {
+    const status = config.actionErrorSelector
+      ? document.querySelector(config.actionErrorSelector)
+      : null;
+    reportActionError(new Error(message), { statusError: true });
+    rememberNetworkSideStackRefreshWarning(status instanceof HTMLElement ? status : document.getElementById("grid-status-toast"), message);
   };
   const wrapRowAction = (action) => ({
     ...action,
@@ -1445,7 +1455,12 @@ function initializeAtlasoResourceWizard(config) {
       if (!resource) throw new Error("The server did not return the saved resource.");
       await cell.getRow().update(resource);
       await Promise.resolve(config.onSaved?.({ payload, resource, form, table }));
-      await refreshNetworkSideStack();
+      const sideStackRefreshed = await refreshResourceSideStack();
+      if (sideStackRefreshed === false) {
+        reportSideStackRefreshWarning(networkSideStackRefreshFailureMessage());
+        return;
+      }
+      if (sideStackRefreshed !== true) return;
       showTransientGridStatus(resource.enabled ? "Enabled" : "Disabled");
     } catch (error) {
       cell.setValue(previousValue);
@@ -1466,7 +1481,12 @@ function initializeAtlasoResourceWizard(config) {
     await atlasoGridWizardRequest(config.deleteUrl(data.id), body, { expectJson: false });
     await row.delete();
     await Promise.resolve(config.onDeleted?.({ data, table }));
-    await refreshNetworkSideStack();
+    const sideStackRefreshed = await refreshResourceSideStack();
+    if (sideStackRefreshed === false) {
+      reportSideStackRefreshWarning(networkSideStackRefreshFailureMessage());
+      return;
+    }
+    if (sideStackRefreshed !== true) return;
     showTransientGridStatus("Deleted");
   };
   const rowActions = [];
@@ -1583,7 +1603,12 @@ function initializeAtlasoResourceWizard(config) {
         await table.addRow(resource, true, config.newRow.id);
       }
       await Promise.resolve(config.onSaved?.({ payload, resource, form, table }));
-      await refreshNetworkSideStack();
+      const sideStackRefreshed = await refreshResourceSideStack();
+      if (sideStackRefreshed === false) {
+        reportSideStackRefreshWarning(networkSideStackRefreshFailureMessage());
+        return { valid: true };
+      }
+      if (sideStackRefreshed !== true) return { valid: true };
       showTransientGridStatus(recordId ? "Updated" : "Created");
       return { valid: true };
     },
@@ -4351,8 +4376,13 @@ async function autoSaveFirewallRule(cell, csrf) {
   }
   try {
     await postFirewallRuleAction(managementUiPath(`/firewall/rules/${data.id}/edit`), data, csrf, { reload: false });
+    const sideStackRefreshed = await refreshNetworkSideStack();
+    if (sideStackRefreshed === false) {
+      showNetworkSideStackRefreshWarning("firewall-rule-error", networkSideStackRefreshFailureMessage());
+      return;
+    }
+    if (sideStackRefreshed !== true) return;
     showTransientGridStatus("Saved");
-    await refreshNetworkSideStack();
   } catch (error) {
     showCaMessage("firewall-rule-error", error instanceof Error ? error.message : "The firewall rule could not be saved.");
     if (typeof cell.restoreOldValue === "function") {
@@ -6228,12 +6258,18 @@ function initializeVsphereKeyProviderTables() {
         const body = new FormData(certificateForm);
         const [providerId, vcenterId] = String(body.get("target") || "").split("|");
         if (!providerId || !vcenterId) return { valid: false, message: "Choose a trusted vCenter." };
+        clearCaMessage("vsphere-certificate-error");
         body.set("provider_id", providerId);
         const payload = await atlasoGridWizardRequest(managementUiPath(`/vsphere-key-providers/trusted-vcenters/${vcenterId}/certificates`), body);
         const certificateTable = document.getElementById("vsphere-certificates-table")?.atlasoTabulator;
         await certificateTable?.addRow?.(payload.certificate, true);
         await updateCertificateCounts(providerId, vcenterId, 1, payload.certificate.status === "valid" ? 1 : 0);
-        await refreshNetworkSideStack();
+        const sideStackRefreshed = await refreshNetworkSideStack();
+        if (sideStackRefreshed === false) {
+          showNetworkSideStackRefreshWarning("vsphere-certificate-error", networkSideStackRefreshFailureMessage());
+          return { valid: true };
+        }
+        if (sideStackRefreshed !== true) return { valid: true };
         showTransientGridStatus("Certificate added");
         return { valid: true };
       },
@@ -6249,10 +6285,16 @@ function initializeVsphereKeyProviderTables() {
       if (!confirmed) return;
       const body = new FormData();
       body.set("csrf", csrf);
+      clearCaMessage("vsphere-certificate-error");
       await atlasoGridWizardRequest(managementUiPath(`/vsphere-key-providers/trusted-vcenters/${data.trusted_vcenter_id}/certificates/${data.id}/delete`), body, { expectJson: false });
       await row.delete();
       await updateCertificateCounts(data.provider_id, data.trusted_vcenter_id, -1, data.status === "valid" ? -1 : 0);
-      await refreshNetworkSideStack();
+      const sideStackRefreshed = await refreshNetworkSideStack();
+      if (sideStackRefreshed === false) {
+        showNetworkSideStackRefreshWarning("vsphere-certificate-error", networkSideStackRefreshFailureMessage());
+        return;
+      }
+      if (sideStackRefreshed !== true) return;
       showTransientGridStatus("Certificate retired");
     };
     const grid = window.AtlasoUiPatterns.createGrid({
@@ -7785,41 +7827,87 @@ function wanPolicyFormatter(cell, policyLabels) {
 }
 
 async function saveWanEnabledState(cell, csrf, path, errorId, fallbackMessage, options = {}) {
-  const data = cell.getRow().getData();
+  const data = options.data || cell.getRow().getData();
+  const isCurrent = typeof options.isCurrent === "function" ? options.isCurrent : () => true;
+  const isLatestEdit = typeof options.isLatestEdit === "function" ? options.isLatestEdit : isCurrent;
+  const persist = async () => {
+    await postWanAction(managementUiPath(`${path}/${data.id}/edit`), data, csrf, { reload: false });
+    if (typeof options.onSaved === "function") {
+      try {
+        options.onSaved(data);
+      } catch (_stateError) {
+        // Persistence succeeded; a local bookkeeping failure must not turn it into a failed save.
+      }
+    }
+  };
   clearCaMessage(errorId);
   try {
-    await postWanAction(managementUiPath(`${path}/${data.id}/edit`), data, csrf, { reload: false });
+    if (typeof options.enqueuePost === "function") await options.enqueuePost(persist);
+    else await persist();
   } catch (error) {
-    cell.restoreOldValue?.();
-    showWanMessage(errorId, error instanceof Error ? error.message : fallbackMessage);
+    if (!isLatestEdit()) return;
+    try {
+      if (typeof options.restoreFailure === "function") await options.restoreFailure(data);
+      else cell.restoreOldValue?.();
+    } catch (_restoreError) {
+      // Keep the save failure visible even if the grid cannot restore the prior value.
+    }
+    const saveError = error instanceof Error ? error.message : fallbackMessage;
+    showWanMessage(errorId, saveError);
+    if (isCurrent() && typeof options.afterFailure === "function") {
+      try {
+        await options.afterFailure();
+      } catch (_refreshError) {
+        if (isCurrent()) {
+          showWanMessage(errorId, `${saveError} The current routing state could not be fully refreshed. Reload the page to see the latest state.`);
+        }
+      }
+    }
     return;
   }
-  showTransientGridStatus("Saved");
+  if (!isCurrent()) return;
   if (typeof options.afterSave === "function") {
     try {
       await options.afterSave();
     } catch (_error) {
+      if (!isCurrent()) return;
       showWanMessage(errorId, options.refreshFailureMessage || "The routing permission was saved, but its displayed effective state could not be refreshed. Reload the page to see the latest state.");
       return;
     }
   }
+  if (!isCurrent()) return;
   try {
-    await refreshNetworkSideStack();
-  } catch (error) {
-    if (typeof options.afterSave === "function") {
-      showWanMessage(errorId, "The routing permission and its displayed state were saved, but the network status panel could not be refreshed.");
+    const refreshed = await refreshNetworkSideStack(isCurrent);
+    if (refreshed === "superseded") return;
+    if (refreshed === false) {
+      if (isCurrent()) {
+        const message = typeof options.afterSave === "function"
+          ? "The routing permission and its displayed state were saved, but the network status panel could not be refreshed. Reload the page to see the latest state."
+          : networkSideStackRefreshFailureMessage();
+        showNetworkSideStackRefreshWarning(errorId, message);
+      }
       return;
     }
-    cell.restoreOldValue?.();
-    showWanMessage(errorId, error instanceof Error ? error.message : fallbackMessage);
+    if (refreshed !== true) return;
+  } catch (error) {
+    if (!isCurrent()) return;
+    const message = typeof options.afterSave === "function"
+      ? "The routing permission and its displayed state were saved, but the network status panel could not be refreshed. Reload the page to see the latest state."
+      : networkSideStackRefreshFailureMessage();
+    showNetworkSideStackRefreshWarning(errorId, message);
+    return;
   }
+  if (!isCurrent()) return;
+  showTransientGridStatus("Saved");
 }
 
-async function refreshRoutesWanRoutingProjection(tableElement, table) {
+async function refreshRoutesWanRoutingProjection(tableElement, table, isCurrent = () => true, enqueueUpdate = (update) => update(), applyTargetOptions = null, applyProjectedRows = null) {
+  if (!isCurrent()) return false;
   const response = await fetch(window.location.href, {
     credentials: "same-origin",
     headers: { "X-Requested-With": "AtlasoRoutingPermissionRefresh", Accept: "text/html" },
   });
+  if (!isCurrent()) return false;
   if (!response.ok) throw new Error("The routing permission projection could not be refreshed.");
   const nextDocument = new DOMParser().parseFromString(await response.text(), "text/html");
   const nextElement = nextDocument.getElementById("routes-wan-routing-table");
@@ -7868,10 +7956,27 @@ async function refreshRoutesWanRoutingProjection(tableElement, table) {
     || projectedIds.some((id) => !currentIds.includes(id))) {
     throw new Error("Routing Permissions changed while the grid was refreshing. Reload the page to continue.");
   }
-  await table.updateData(projectedRows);
-  tableElement.dataset.rules = JSON.stringify(explicitRows);
-  tableElement.dataset.generatedRules = JSON.stringify(generatedRows);
-  tableElement.dataset.targetOptions = JSON.stringify(targetOptions);
+  const applied = await enqueueUpdate(async () => {
+    if (!isCurrent()) return false;
+    const restoreTargetOptions = typeof applyTargetOptions === "function"
+      ? applyTargetOptions(targetOptions)
+      : null;
+    try {
+      await table.updateData(projectedRows);
+      if (!isCurrent()) return false;
+      table.getRows("all").forEach((row) => row.reformat?.());
+    } catch (error) {
+      if (isCurrent() && typeof restoreTargetOptions === "function") restoreTargetOptions();
+      throw error;
+    }
+    if (!isCurrent()) return false;
+    tableElement.dataset.rules = JSON.stringify(explicitRows);
+    tableElement.dataset.generatedRules = JSON.stringify(generatedRows);
+    tableElement.dataset.targetOptions = JSON.stringify(targetOptions);
+    if (typeof applyProjectedRows === "function") applyProjectedRows(explicitRows);
+    return true;
+  });
+  if (!applied || !isCurrent()) return false;
   return targetOptions;
 }
 
@@ -8269,6 +8374,21 @@ function initializeRoutesWanRoutingTable() {
   const generatedWithKind = generatedRows.map((row) => ({ ...row, kind: "auto route-role rule" }));
   const rows = canWrite ? [...generatedWithKind, ...explicitRows, { id: "__new__", is_new: true, generated: false }] : [...generatedWithKind, ...explicitRows];
   let table;
+  let routingEditGeneration = 0;
+  const routingRowGenerations = new Map();
+  const routingConfirmedEnabled = new Map(explicitRows.map((row) => [String(row.id), Boolean(row.enabled)]));
+  let routingSaveQueue = Promise.resolve();
+  const enqueueRoutingSave = (save) => {
+    const queued = routingSaveQueue.then(save);
+    routingSaveQueue = queued.catch(() => {});
+    return queued;
+  };
+  let projectionUpdateQueue = Promise.resolve();
+  const enqueueProjectionUpdate = (update) => {
+    const queued = projectionUpdateQueue.then(update);
+    projectionUpdateQueue = queued.catch(() => {});
+    return queued;
+  };
   const editRow = (row, launcher = null) => {
     const data = row?.getData?.() || row;
     if (!canWrite || !data || data.is_new || data.generated) return;
@@ -8390,20 +8510,70 @@ function initializeRoutesWanRoutingTable() {
           hozAlign: "center",
           width: 100,
           headerSort: false,
-          cellEdited: (cell) => saveWanEnabledState(
-            cell,
-            csrf,
-            "/routes-wan/routing-rules",
-            "routes-wan-routing-error",
-            "The routing permission could not be saved.",
-            {
-              afterSave: async () => {
-                const refreshedTargets = await refreshRoutesWanRoutingProjection(tableElement, table);
-                targetValues = Object.fromEntries(refreshedTargets.map((target) => [target.name, target.label]));
+          cellEdited: (cell) => {
+            const generation = ++routingEditGeneration;
+            const isCurrent = () => generation === routingEditGeneration;
+            const rowData = { ...cell.getRow().getData() };
+            const rowId = String(rowData.id);
+            const rowGeneration = (routingRowGenerations.get(rowId) || 0) + 1;
+            routingRowGenerations.set(rowId, rowGeneration);
+            const isLatestEdit = () => routingRowGenerations.get(rowId) === rowGeneration;
+            const refreshProjection = async () => {
+              if (!isCurrent()) return;
+              await refreshRoutesWanRoutingProjection(
+                tableElement,
+                table,
+                isCurrent,
+                enqueueProjectionUpdate,
+                (targetOptions) => {
+                  const previousTargetValues = targetValues;
+                  targetValues = Object.fromEntries(targetOptions.map((target) => [target.name, target.label]));
+                  return () => {
+                    targetValues = previousTargetValues;
+                  };
+                },
+                (projectedExplicitRows) => {
+                  if (!isCurrent()) return;
+                  for (const projectedRow of projectedExplicitRows) {
+                    routingConfirmedEnabled.set(String(projectedRow.id), Boolean(projectedRow.enabled));
+                  }
+                },
+              );
+            };
+            const refreshAfterFailure = async () => {
+              await refreshProjection();
+              if (!isCurrent()) return;
+              const refreshed = await refreshNetworkSideStack(isCurrent);
+              if (isCurrent() && refreshed === false) {
+                throw new Error("The current network status panel could not be refreshed.");
+              }
+            };
+            return saveWanEnabledState(
+              cell,
+              csrf,
+              "/routes-wan/routing-rules",
+              "routes-wan-routing-error",
+              "The routing permission could not be saved.",
+              {
+                data: rowData,
+                enqueuePost: enqueueRoutingSave,
+                isCurrent,
+                isLatestEdit,
+                onSaved: (savedData) => routingConfirmedEnabled.set(rowId, Boolean(savedData.enabled)),
+                restoreFailure: async () => {
+                  const confirmedEnabled = routingConfirmedEnabled.get(rowId);
+                  if (typeof confirmedEnabled === "boolean") {
+                    await cell.getRow().update({ enabled: confirmedEnabled });
+                  } else {
+                    cell.restoreOldValue?.();
+                  }
+                },
+                afterSave: refreshProjection,
+                afterFailure: refreshAfterFailure,
+                refreshFailureMessage: "The routing permission was saved, but its displayed effective state could not be refreshed. Reload the page to see the latest state.",
               },
-              refreshFailureMessage: "The routing permission was saved, but its displayed effective state could not be refreshed. Reload the page to see the latest state.",
-            },
-          ),
+            );
+          },
         },
         {
           title: "Description",
@@ -9413,7 +9583,17 @@ function initializePortForwarding() {
           { title: "Enabled", field: "enabled", width: 85, hozAlign: "center", headerSort: false, editor: "tickCross", editable: (cell) => canWrite && !cell.getRow().getData().is_new,
             formatter: (cell) => cell.getRow().getData().is_new ? "" : atlasoBooleanFormatter(cell), cellEdited: async (cell) => {
               const body = new FormData(); body.set("csrf", csrf); body.set("enabled", cell.getValue() ? "on" : "off");
-              try { await post(`${root}/${cell.getRow().getData().id}/enabled`, body); showTransientGridStatus("Saved"); await refreshNetworkSideStack(); await refresh(); }
+              try {
+                await post(`${root}/${cell.getRow().getData().id}/enabled`, body);
+                const sideStackRefreshed = await refreshNetworkSideStack();
+                if (sideStackRefreshed === false) {
+                  showNetworkSideStackRefreshWarning("port-forward-error", networkSideStackRefreshFailureMessage());
+                }
+                await refresh();
+                if (sideStackRefreshed === false) return;
+                if (sideStackRefreshed !== true) return;
+                showTransientGridStatus("Saved");
+              }
               catch (error) { cell.restoreOldValue?.(); fail(error.message); }
             } },
           { title: "Runtime", field: "runtime_state", minWidth: 105, formatter: text, tooltip: (cell) => escapeHtml(cell.getRow().getData().runtime_detail || "Refresh runtime observations.") },
@@ -9701,26 +9881,103 @@ function initializeRefreshedSideStack(sideStack) {
   initializeLdapSettingsStatus(sideStack);
 }
 
-async function refreshNetworkSideStack() {
-  const currentSideStack = document.querySelector("aside.side-stack");
-  if (!(currentSideStack instanceof HTMLElement)) {
-    return;
+function networkSideStackRefreshFailureMessage() {
+  return "The change was saved, but the network status panel could not be refreshed. Reload the page to see the latest state.";
+}
+
+let networkSideStackRefreshWarnings = new Map();
+
+function networkSideStackRefreshWarningText(element) {
+  if (element?.id === "grid-status-toast") {
+    return element.querySelector("span")?.textContent ?? element.textContent;
   }
-  const response = await fetch(window.location.href, {
-    credentials: "same-origin",
-    headers: { "X-Requested-With": "AtlasoSideRefresh" },
+  return element?.textContent;
+}
+
+function rememberNetworkSideStackRefreshWarning(element, message) {
+  if (element && networkSideStackRefreshWarningText(element) === message) {
+    networkSideStackRefreshWarnings.set(element, message);
+  }
+}
+
+function showNetworkSideStackRefreshWarning(elementId, message) {
+  showCaMessage(elementId, message);
+  rememberNetworkSideStackRefreshWarning(document.getElementById(elementId), message);
+}
+
+function clearNetworkSideStackRefreshWarnings() {
+  for (const [element, message] of networkSideStackRefreshWarnings) {
+    if (networkSideStackRefreshWarningText(element) !== message) continue;
+    if (element.id === "grid-status-toast") {
+      element.replaceChildren();
+      element.classList.remove("visible", "error");
+    } else {
+      element.textContent = "";
+      element.classList.add("hidden");
+    }
+  }
+  networkSideStackRefreshWarnings.clear();
+}
+
+let networkSideStackRefreshGeneration = 0;
+let networkSideStackRefreshRequest = null;
+
+async function refreshNetworkSideStack(isCurrent = () => true) {
+  if (!isCurrent()) return "superseded";
+  const generation = ++networkSideStackRefreshGeneration;
+  let resolveRefresh;
+  let settled = false;
+  const result = new Promise((resolve) => {
+    resolveRefresh = resolve;
   });
-  if (!response.ok) {
-    return;
+  const request = {
+    result,
+    isCurrent,
+    get settled() { return settled; },
+    resolve(value) {
+      if (settled) return;
+      settled = true;
+      resolveRefresh(value);
+    },
+  };
+  const previousRequest = networkSideStackRefreshRequest;
+  networkSideStackRefreshRequest = request;
+  if (previousRequest && !previousRequest.settled) {
+    previousRequest.resolve(previousRequest.isCurrent() ? result : "superseded");
   }
-  const html = await response.text();
-  const nextDocument = new DOMParser().parseFromString(html, "text/html");
-  const nextSideStack = nextDocument.querySelector("aside.side-stack");
-  if (nextSideStack instanceof HTMLElement) {
+  const isCurrentRequest = () => generation === networkSideStackRefreshGeneration && isCurrent();
+  const refresh = async () => {
+    if (!isCurrentRequest()) return "superseded";
+    if (!(document.querySelector("aside.side-stack") instanceof HTMLElement)) return false;
+    const response = await fetch(window.location.href, {
+      credentials: "same-origin",
+      headers: { "X-Requested-With": "AtlasoSideRefresh" },
+    });
+    if (!isCurrentRequest()) return "superseded";
+    if (!response.ok) return false;
+    const html = await response.text();
+    if (!isCurrentRequest()) return "superseded";
+    const nextDocument = new DOMParser().parseFromString(html, "text/html");
+    const nextSideStack = nextDocument.querySelector("aside.side-stack");
+    if (!isCurrentRequest()) return "superseded";
+    if (!(nextSideStack instanceof HTMLElement)) return false;
+    const currentSideStack = document.querySelector("aside.side-stack");
+    if (!isCurrentRequest()) return "superseded";
+    if (!(currentSideStack instanceof HTMLElement)) return false;
     currentSideStack.replaceWith(nextSideStack);
+    if (document.querySelector("aside.side-stack") !== nextSideStack) return false;
     initializeRefreshedSideStack(nextSideStack);
     highlightConfigPreviews(nextSideStack);
-  }
+    if (!isCurrentRequest()) return "superseded";
+    if (document.querySelector("aside.side-stack") !== nextSideStack) return false;
+    clearNetworkSideStackRefreshWarnings();
+    return true;
+  };
+  void refresh().then(
+    (refreshed) => request.resolve(refreshed),
+    () => request.resolve(isCurrentRequest() ? false : "superseded"),
+  );
+  return request.result;
 }
 
 async function refreshPersistedPhysicalInterfaceRow(row) {
@@ -9757,8 +10014,13 @@ async function autoSavePhysicalInterface(cell, csrf) {
   if (data.role !== "management" || data.mode === "trunk" || !data.ipv6_cidr) data.ipv6_gateway = "";
   try {
     await postNetworkAction(managementUiPath(`/physical-interfaces/${data.id}/edit`), data, csrf, { reload: false });
+    const sideStackRefreshed = await refreshNetworkSideStack();
+    if (sideStackRefreshed === false) {
+      showNetworkSideStackRefreshWarning("physical-interface-error", networkSideStackRefreshFailureMessage());
+      return;
+    }
+    if (sideStackRefreshed !== true) return;
     showTransientGridStatus("Saved");
-    await refreshNetworkSideStack();
   } catch (error) {
     showNetworkMessage("physical-interface-error", error instanceof Error ? error.message : "The physical interface could not be saved.");
     try {
@@ -9785,8 +10047,13 @@ async function savePhysicalInterfaceRow(row, csrf, successMessage = "Saved") {
   if (data.role !== "management" || data.mode === "trunk" || !data.ipv6_cidr) data.ipv6_gateway = "";
   try {
     await postNetworkAction(managementUiPath(`/physical-interfaces/${data.id}/edit`), data, csrf, { reload: false });
+    const sideStackRefreshed = await refreshNetworkSideStack();
+    if (sideStackRefreshed === false) {
+      showNetworkSideStackRefreshWarning("physical-interface-error", networkSideStackRefreshFailureMessage());
+      return;
+    }
+    if (sideStackRefreshed !== true) return;
     showTransientGridStatus(successMessage);
-    await refreshNetworkSideStack();
   } catch (error) {
     showNetworkMessage("physical-interface-error", error instanceof Error ? error.message : "The physical interface could not be saved.");
     throw error;
@@ -11514,12 +11781,17 @@ function initializeVlanInterfacesTable() {
         highlightedVlanId = String(payload.id);
         savedRow?.reformat?.();
         await table.scrollToRow?.(payload.id, "center", false);
-        showTransientGridStatus(recordId ? "VLAN updated" : "VLAN added");
-        await refreshNetworkSideStack();
+        const sideStackRefreshed = await refreshNetworkSideStack();
         window.setTimeout(() => {
           highlightedVlanId = "";
           savedRow?.reformat?.();
         }, 2400);
+        if (sideStackRefreshed === false) {
+          showNetworkSideStackRefreshWarning("vlan-interface-error", networkSideStackRefreshFailureMessage());
+          return { valid: true };
+        }
+        if (sideStackRefreshed !== true) return { valid: true };
+        showTransientGridStatus(recordId ? "VLAN updated" : "VLAN added");
         return { valid: true };
       },
     });
