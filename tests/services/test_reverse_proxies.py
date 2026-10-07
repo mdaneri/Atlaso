@@ -125,6 +125,66 @@ def test_reverse_proxy_hostnames_are_reserved_as_upstreams(upstream):
         engine.dispose()
 
 
+@pytest.mark.parametrize(
+    ("setting_value", "reserved_hostname"),
+    [
+        (None, "esxi-pxe.atlaso.internal"),
+        ("", "esxi-pxe.atlaso.internal"),
+        ("boot.example.test", "boot.example.test"),
+    ],
+)
+@pytest.mark.parametrize("target", ["served", "upstream"])
+def test_network_boot_hostname_is_reserved_for_serving_and_upstreams(
+    setting_value, reserved_hostname, target
+):
+    """Reserve the configured PXE name or canonical default, even while disabled."""
+    engine, db = create_db()
+    try:
+        if setting_value is not None:
+            db.add(Setting(key="esxi_pxe.boot.hostname", value=setting_value))
+            db.add(Setting(key="esxi_pxe.boot.enabled", value="false"))
+            db.commit()
+
+        request = payload(hostname=reserved_hostname)
+        if target == "upstream":
+            request["hostname"] = "application.example.test"
+            request["routes"] = [
+                {**payload()["routes"][0], "upstream_host": reserved_hostname}
+            ]
+            message = "Atlaso-owned service hostname"
+        else:
+            message = "owned by an Atlaso service"
+
+        with pytest.raises(ValueError, match=message):
+            save_proxy(db, request, actor="operator")
+        assert desired_rows(db) == []
+    finally:
+        db.close()
+        engine.dispose()
+
+
+def test_proxy_rename_can_target_its_released_old_hostname():
+    """Exclude the replaced row from peer reservations while keeping its new name protected."""
+    engine, db = create_db()
+    try:
+        original = save_proxy(db, payload(), actor="operator")
+        old_hostname = original.hostname
+        replacement = payload(
+            hostname="renamed.example.test",
+            routes=[
+                {**payload()["routes"][0], "upstream_host": old_hostname}
+            ],
+        )
+
+        updated = save_proxy(db, replacement, actor="operator", proxy_id=original.id)
+
+        assert updated.hostname == "renamed.example.test"
+        assert updated.routes[0].upstream_host == old_hostname
+    finally:
+        db.close()
+        engine.dispose()
+
+
 def test_schema_canonicalizes_hostnames_and_fingerprints():
     """Normalize harmless DNS/fingerprint formatting before saving."""
     request = ReverseProxyCreate.model_validate(

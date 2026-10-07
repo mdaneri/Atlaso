@@ -126,6 +126,7 @@ from atlaso.app.services.esx_storage import StorageInterface, validate_storage_s
 from atlaso.app.services.esxi_pxe import (
     ESXI_PXE_CUSTOM_VARIABLE_LIMIT,
     ESXI_PXE_CUSTOM_VARIABLES_KEY,
+    ESXI_PXE_HOSTNAME_KEY,
     esxi_pxe_boot_settings,
     host_variables_json,
     kickstart_template_validation_errors,
@@ -232,6 +233,7 @@ ARCHIVE_KIND = "atlaso-settings-archive"
 VCF_OFFLINE_DEPOT_ARCHIVE_DEFAULT_PORT = 443
 SAFE_SETTING_KEYS = {
     DNS_CONDITIONAL_FORWARDERS_SETTING_KEY,
+    ESXI_PXE_HOSTNAME_KEY,
     ESXI_PXE_CUSTOM_VARIABLES_KEY,
     FIREWALL_SOURCE_GROUPS_SETTING_KEY,
     LOCAL_USERS_PASSWORD_POLICY_KEY,

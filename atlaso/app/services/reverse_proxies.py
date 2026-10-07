@@ -140,6 +140,14 @@ def _service_hostnames(db: Session) -> set[str]:
             names.add(_canonical_dns_name(appliance.fqdn, require_fqdn=False))
         except ValueError:
             pass
+    # Use the canonical Network Boot settings reader so absent and blank
+    # hostname rows reserve the same appliance-domain default as publication.
+    from atlaso.app.services.esxi_pxe import esxi_pxe_boot_settings
+
+    try:
+        names.add(_canonical_dns_name(esxi_pxe_boot_settings(db)["hostname"], require_fqdn=False))
+    except (KeyError, ValueError):
+        pass
     return names
 
 
@@ -239,7 +247,11 @@ def validate_proxy(
         errors.append(str(exc))
 
     service_names = context.get("service_hostnames", set())
-    proxy_names = {peer.hostname.strip().rstrip(".").casefold() for peer in existing}
+    proxy_names = {
+        peer.hostname.strip().rstrip(".").casefold()
+        for peer in existing
+        if peer.id != exclude_id
+    }
     proxy_names.add(hostname)
     if candidate.managed_dns and len(hostname) > 120:
         errors.append("Managed DNS requires a hostname of at most 120 characters.")

@@ -5,8 +5,10 @@ from typing import Any
 
 from atlaso.app import models
 from atlaso.app.reverse_proxy_schemas import ReverseProxyCreate, ReverseProxyRouteInput
+from atlaso.app.services.esxi_pxe import ESXI_PXE_HOSTNAME_KEY, _normalize_hostname
 from atlaso.app.services.port_forwarding import ListenerClaim
 from atlaso.app.services.reverse_proxies import validate_proxy
+from atlaso.app.services.service_dns_defaults import factory_service_hostname
 
 
 def candidates(data: dict[str, Any]) -> list[models.ReverseProxy]:
@@ -83,6 +85,17 @@ def validate_candidates(proxies: list[models.ReverseProxy], data: dict[str, Any]
                              "esx_storage_settings", "oidc_provider_settings", "ntp_settings", "vcf_backup_settings",
                              "vcf_offline_depot_settings", "vcf_private_registry_settings")
              for row in data.get(section, []) for field in ("hostname", "portal_hostname", "fqdn")}
+    archived_settings = {
+        str(row.get("key") or ""): str(row.get("value") or "")
+        for row in data.get("settings", [])
+    }
+    appliance_fqdn = str(
+        (data.get("appliance_settings") or [{}])[0].get("fqdn") or "core.atlaso.internal"
+    )
+    default_pxe_hostname = factory_service_hostname("esxi-pxe", appliance_fqdn)
+    configured_pxe_hostname = archived_settings.get(ESXI_PXE_HOSTNAME_KEY, "").strip()
+    pxe_hostname = _normalize_hostname(configured_pxe_hostname or default_pxe_hostname)
+    names.add(pxe_hostname)
     context = {"targets": targets, "listeners": options, "addresses": addresses,
                "service_hostnames": names - {""}, "claims": claims, "port_forwards": forwards}
     for proxy, row in zip(proxies, data["reverse_proxies"], strict=True):
