@@ -23,6 +23,7 @@ REASONS = {
     "helper_failed": "The constrained helper returned a failure. Inspect the preceding component stages and return code.",
     "timed_out": "The stage exceeded its deadline. Check component readiness and connectivity before retrying.",
     "cancelled": "A safe cancellation was requested or confirmed. Check cleanup and recovery outcomes before restarting.",
+    "completion_won": "The task reached its recorded terminal outcome before cancellation. Cancellation was not confirmed.",
     "interrupted": "Execution was interrupted. Inspect recovery evidence before submitting another task.",
     "rollback_failed": "Restoration could not be verified. Retain recovery evidence and use the supported recovery workflow.",
     "cleanup_required": "Cleanup remains pending. Inspect the retained task and retry through its supported workflow.",

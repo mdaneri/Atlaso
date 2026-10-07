@@ -108,9 +108,11 @@ def capture_important_events(connection: Connection, job_id: str, previous: dict
     stage = "queued" if status == "pending" else "started" if status == "running" else "completed"
     projections.append(("task", {"component": "task", "stage": stage, "outcome": status, "reason": reason, "returncode": None}))
     if job["cancel_requested_at"]:
+        completion_won = bool(job["cancel_completed_at"]) and job["cancel_outcome"] == "completion-won"
         projections.append(("cancellation", {"component": "task", "stage": "cancellation",
-                            "outcome": "cancelled" if job["cancel_completed_at"] else "running",
-                            "reason": "cleanup_required" if job["cancel_outcome"] == "cleanup-required" else "cancelled", "returncode": None}))
+                            "outcome": status if completion_won else "cancelled" if job["cancel_completed_at"] else "running",
+                            "reason": "completion_won" if completion_won else "cleanup_required" if job["cancel_outcome"] == "cleanup-required" else "cancelled",
+                            "returncode": None}))
     if payload.get("state") == "cleanup-required":
         projections.append(("cleanup", {"component": "task", "stage": "cleanup", "outcome": "partial",
                                        "reason": "cleanup_required", "returncode": None}))
@@ -135,10 +137,21 @@ def capture_important_events(connection: Connection, job_id: str, previous: dict
         snapshots[key] = projection
         if projection == old_snapshots.get(key):
             continue
+        event_outcome = projection["outcome"]
+        event_reason = projection["reason"]
+        severity = (
+            "ERROR"
+            if event_outcome in {"failed", "partial-failure"}
+            else "INFO"
+            if event_outcome == "cancelled" and event_reason == "cancelled"
+            else "INFO"
+            if event_outcome in {"succeeded", "skipped", "no-op"} and event_reason == "completion_won"
+            else "WARNING"
+            if event_reason != "none"
+            else "INFO"
+        )
         event = {"schema": 1, "at": datetime.now(timezone.utc).isoformat(),
-                 "severity": "ERROR" if projection["outcome"] in {"failed", "partial-failure"}
-                 else "WARNING" if projection["reason"] != "none" else "INFO",
-                 **projection}
+                 "severity": severity, **projection}
         if (safe := validate_event(event)) is not None:
             events.append(safe)
             appended.append(safe)

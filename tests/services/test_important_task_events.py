@@ -246,10 +246,21 @@ def test_no_progress_noise_cancellation_cleanup_and_bounded_events(db):
         db.commit()
     assert _state(db, task)["important_events"] == before
     task.cancel_requested_at = utcnow()
+    task.cancel_outcome = "requested"
+    db.commit()
+    requested_events = _state(db, task)["important_events"]
+    assert any(e["stage"] == "cancellation" and e["outcome"] == "running"
+               and e["reason"] == "cancelled" and e["severity"] == "WARNING"
+               for e in requested_events)
     task.cancel_outcome = "cleanup-required"
     task.result = '{"state":"cleanup-required"}'
     db.commit()
-    assert any(e["stage"] == "cleanup" and e["outcome"] == "partial" for e in _state(db, task)["important_events"])
+    pending_events = _state(db, task)["important_events"]
+    assert any(e["stage"] == "cancellation" and e["outcome"] == "running"
+               and e["reason"] == "cleanup_required" and e["severity"] == "WARNING"
+               for e in pending_events)
+    assert any(e["stage"] == "cleanup" and e["outcome"] == "partial"
+               and e["severity"] == "WARNING" for e in pending_events)
     for i in range(90):
         step.status = "running" if i % 2 else "succeeded"
         db.commit()
@@ -258,10 +269,46 @@ def test_no_progress_noise_cancellation_cleanup_and_bounded_events(db):
     assert state["important_events_omitted"] > 0
     assert any(e["reason"] == "cleanup_required" for e in state["important_events"])
     task.status = "cancelled"
+    step.status = "cancelled"
     task.cancel_completed_at = utcnow()
     task.cancel_outcome = "confirmed"
     db.commit()
-    assert any(e["stage"] == "cancellation" and e["outcome"] == "cancelled" for e in _state(db, task)["important_events"])
+    confirmed_events = _state(db, task)["important_events"]
+    assert any(e["component"] == "task" and e["stage"] == "completed"
+               and e["outcome"] == "cancelled" and e["severity"] == "INFO"
+               for e in confirmed_events)
+    assert any(e["component"] == "network" and e["stage"] == "completed"
+               and e["outcome"] == "cancelled" and e["severity"] == "INFO"
+               for e in confirmed_events)
+    assert any(e["stage"] == "cancellation" and e["outcome"] == "cancelled"
+               and e["severity"] == "INFO" for e in confirmed_events)
+
+
+@pytest.mark.parametrize(("status", "expected_severity"), [("succeeded", "INFO"), ("failed", "ERROR")])
+def test_completion_won_keeps_actual_terminal_outcome_severity(db, status, expected_severity):
+    """Cancellation completion-won records the task's actual terminal result.
+
+    Args:
+        db: Isolated producer session.
+        status: Terminal outcome that won the race.
+        expected_severity: Severity matching the actual terminal outcome.
+    """
+    task, step = _new_task(db)
+    task.status = step.status = status
+    if status == "failed":
+        task.error = step.error = "Synthetic operation failure."
+    task.cancel_requested_at = utcnow()
+    task.cancel_completed_at = utcnow()
+    task.cancel_outcome = "completion-won"
+    db.commit()
+
+    events = _state(db, task)["important_events"]
+    assert all(validate_event(event) == event for event in events)
+    assert any(event["stage"] == "completed" and event["outcome"] == status
+               and event["severity"] == expected_severity for event in events)
+    assert any(event["stage"] == "cancellation" and event["outcome"] == status
+               and event["reason"] == "completion_won" and event["severity"] == expected_severity
+               for event in events)
 
 
 def test_history_retention_reopens_old_cursor_with_explicit_notice(db, monkeypatch):
