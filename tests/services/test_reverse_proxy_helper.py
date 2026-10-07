@@ -500,6 +500,7 @@ def test_front_door_readiness_checks_exact_certificate_sni_and_reserved_404(tmp_
             return raw
 
     contexts = []
+    connection_attempts = 0
 
     def create_context(*, cafile):
         context = TlsContext()
@@ -509,14 +510,20 @@ def test_front_door_readiness_checks_exact_certificate_sni_and_reserved_404(tmp_
     monkeypatch.setattr(helper.ssl, "create_default_context", create_context)
 
     def connect(address, timeout):
+        nonlocal connection_attempts
+        connection_attempts += 1
+        if connection_attempts <= 3:
+            raise ConnectionRefusedError(111, "fixture listener is not ready")
         stream = ResponseStream()
         streams.append(stream)
         connections.append((address, timeout))
         return stream
 
     monkeypatch.setattr(helper.socket, "create_connection", connect)
+    monkeypatch.setattr(helper.time, "sleep", lambda _seconds: None)
 
     helper._verify_reverse_proxy_front_doors({"public_services_config_path": config_path})
+    assert connection_attempts == 5
 
     certificate = str(helper.Path("/etc/atlaso/reverse-proxy-10/certs/portal.example.test.crt"))
     assert contexts[0][0] == certificate

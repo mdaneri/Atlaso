@@ -10060,7 +10060,7 @@ def _verify_reverse_proxy_front_doors(payload: dict) -> None:
                 listener_context = context if publication_port == proxy["port"] else None
                 ready = False
                 failure_class = "deadline"
-                for _attempt in range(3):
+                for _attempt in range(150):
                     remaining = deadline - time.monotonic()
                     if remaining <= 0:
                         break
@@ -10089,9 +10089,11 @@ def _verify_reverse_proxy_front_doors(payload: dict) -> None:
                             break
                     except ssl.SSLCertVerificationError:
                         failure_class = "tls_verification"
-                    except (OSError, ValueError):
-                        failure_class = "listener_transport"
-                    time.sleep(0.1)
+                    except OSError as exc:
+                        failure_class = f"listener_transport_{exc.errno}" if isinstance(exc.errno, int) else "listener_transport_timeout"
+                    except ValueError:
+                        failure_class = "listener_transport_invalid"
+                    time.sleep(min(0.3, max(0, deadline - time.monotonic())))
                 if not ready:
                     raise ValueError(
                         "reverse-proxy exact-host front-door readiness failed "

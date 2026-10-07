@@ -98,6 +98,9 @@ async def test_health_cache_sampling_is_periodic_atomic_and_bounded(tmp_path, mo
 
     async def fake_probe(selected, _forbidden):
         nonlocal active, peak, calls
+        if selected["socket_id"] == routes[8]["socket_id"]:
+            published = json.loads((tmp_path / "health.json").read_text(encoding="utf-8"))
+            assert len(published["health"]) == 8
         calls += 1
         active += 1
         peak = max(peak, active)
@@ -132,7 +135,7 @@ async def test_health_cache_sampling_is_periodic_atomic_and_bounded(tmp_path, mo
     assert cache["generation"] == manifest["generation"]
     assert set(cache["health"]) == {item["socket_id"] for item in routes}
     assert len(cache_path.read_bytes()) < 16_384
-    assert all(set(item) == {"status", "last_success", "failure_class", "http_status", "tls_status"}
+    assert all(set(item) == {"status", "last_success", "failure_class", "http_status", "tls_status", "observed_at"}
                for item in cache["health"].values())
 
 

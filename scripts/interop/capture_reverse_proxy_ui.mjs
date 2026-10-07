@@ -43,7 +43,7 @@ try {
   await page.setViewportSize({ width: 900, height: 1200 });
   await capture('reverse-proxies-responsive');
   await page.setViewportSize({ width: 1600, height: 1000 });
-  await page.locator('[data-reverse-proxy-edit]').first().click();
+  await page.locator('#reverse-proxies-table .tabulator-row:not(.is-new-record)').first().dblclick();
   await page.locator('#reverse-proxy-dialog').waitFor({ state: 'visible' });
   await capture('reverse-proxy-wizard');
   await context.close();
