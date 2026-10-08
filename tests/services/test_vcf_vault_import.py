@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Iterator
+from contextlib import nullcontext
 from typing import Any
 
 import httpx
@@ -1099,6 +1100,218 @@ def test_unknown_root_user_password_does_not_infer_root_account_or_endpoint(fake
     assert len(candidates) == 1
     assert candidates[0].username == ""
     assert candidates[0].uris == ()
+
+
+def test_final_candidate_keys_reserve_natural_suffixes_and_survive_reordering(monkeypatch):
+    """Allocate collision keys without stealing natural keys or depending on row order.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace the source API and discovery result.
+    """
+    from types import SimpleNamespace
+
+    first_identity = service.VcfPasswordCandidate(
+        "identity-2", "vcf.cluster.admin", "First account", "vcf_password",
+        "admin", "cluster", "fixture-password-a",
+    )
+    candidates = [
+        first_identity,
+        service.VcfPasswordCandidate(
+            "credential-b", "vcf.cluster.admin", "Second account", "vcf_password",
+            "admin", "cluster", "fixture-password-b",
+        ),
+        service.VcfPasswordCandidate(
+            "credential-c", "vcf.cluster.admin_2", "Natural numeric suffix account", "vcf_password",
+            "admin_2", "cluster", "fixture-password-c",
+        ),
+    ]
+    api = SimpleNamespace(appliance_info=lambda: {"role": "SddcManager"})
+    monkeypatch.setattr(service, "VcfDepotApiClient", lambda *_args, **_kwargs: nullcontext(api))
+    current_candidates = list(candidates)
+    monkeypatch.setattr(service, "_sddc_manager_candidates", lambda _api: list(current_candidates))
+
+    def discover() -> dict[str, service.VcfPasswordCandidate]:
+        """Run discovery and index candidates by stable source identity."""
+        result = service.discover_vcf_passwords(
+            source_type="sddc_manager",
+            address="sddc-manager.example.internal",
+            port=443,
+            username="admin",
+            password="fixture-source-password",
+            expected_fingerprint="AA:BB",
+        )
+        return {candidate.candidate_id: candidate for candidate in result}
+
+    original_keys = {candidate.candidate_id: candidate.key for candidate in candidates}
+    first = discover()
+    assert len({candidate.key for candidate in first.values()}) == len(candidates)
+    assert first["credential-c"].key == original_keys["credential-c"]
+    assert first["identity-2"].key != original_keys["identity-2"]
+    assert first["credential-b"].key != original_keys["credential-b"]
+    assert {candidate.candidate_id: candidate.value for candidate in first.values()} == {
+        candidate.candidate_id: candidate.value for candidate in candidates
+    }
+    assert all(len(candidate.key) <= 180 and normalize_vault_key(candidate.key) == candidate.key
+               for candidate in first.values())
+
+    current_candidates.reverse()
+    reordered = discover()
+    assert {candidate_id: candidate.key for candidate_id, candidate in reordered.items()} == {
+        candidate_id: candidate.key for candidate_id, candidate in first.items()
+    }
+
+
+def test_duplicate_candidate_suffix_cannot_take_another_original_key(monkeypatch):
+    """Reserve a natural key that matches the first candidate's identity suffix.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace the source API and discovery result.
+    """
+    from types import SimpleNamespace
+
+    first = service.VcfPasswordCandidate(
+        "identity-2", "vcf.cluster.admin", "First duplicate", "vcf_password",
+        "admin", "cluster", "fixture-password-a",
+    )
+    reserved_key = f"{first.key}.id_{first.selection_id.removeprefix('vcf-')}"
+    candidates = [
+        first,
+        service.VcfPasswordCandidate(
+            "second-duplicate", "vcf.cluster.admin", "Second duplicate", "vcf_password",
+            "admin", "cluster", "fixture-password-b",
+        ),
+        service.VcfPasswordCandidate(
+            "natural-identity-key", reserved_key, "Natural identity suffix key", "vcf_password",
+            "admin", "cluster", "fixture-password-c",
+        ),
+    ]
+    api = SimpleNamespace(appliance_info=lambda: {"role": "SddcManager"})
+    monkeypatch.setattr(service, "VcfDepotApiClient", lambda *_args, **_kwargs: nullcontext(api))
+    monkeypatch.setattr(service, "_sddc_manager_candidates", lambda _api: list(candidates))
+
+    discovered = service.discover_vcf_passwords(
+        source_type="sddc_manager",
+        address="sddc-manager.example.internal",
+        port=443,
+        username="admin",
+        password="fixture-source-password",
+        expected_fingerprint="AA:BB",
+    )
+    by_id = {candidate.candidate_id: candidate for candidate in discovered}
+
+    assert len({candidate.key for candidate in discovered}) == len(candidates)
+    assert by_id["natural-identity-key"].key == reserved_key
+    assert by_id[first.candidate_id].key != reserved_key
+    assert by_id[first.candidate_id].key.endswith("_2")
+    assert all(len(candidate.key) <= 180 and normalize_vault_key(candidate.key) == candidate.key
+               for candidate in discovered)
+
+
+def test_duplicate_long_original_keys_get_bounded_valid_identity_suffixes(monkeypatch):
+    """Keep two candidates with a 180-character natural key unique and importable.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace the source API and discovery result.
+    """
+    from types import SimpleNamespace
+
+    long_key = "vcf." + "a" * 176
+    candidates = [
+        service.VcfPasswordCandidate(
+            "long-key-a", long_key, "Long key A", "vcf_password", "admin", "resource",
+            "fixture-long-password-a",
+        ),
+        service.VcfPasswordCandidate(
+            "long-key-b", long_key, "Long key B", "vcf_password", "admin", "resource",
+            "fixture-long-password-b",
+        ),
+    ]
+    api = SimpleNamespace(appliance_info=lambda: {"role": "SddcManager"})
+    monkeypatch.setattr(service, "VcfDepotApiClient", lambda *_args, **_kwargs: nullcontext(api))
+    monkeypatch.setattr(service, "_sddc_manager_candidates", lambda _api: list(candidates))
+
+    discovered = service.discover_vcf_passwords(
+        source_type="sddc_manager",
+        address="sddc-manager.example.internal",
+        port=443,
+        username="admin",
+        password="fixture-source-password",
+        expected_fingerprint="AA:BB",
+    )
+
+    assert len({candidate.key for candidate in discovered}) == 2
+    assert all(candidate.key != long_key for candidate in discovered)
+    assert all(len(candidate.key) <= 180 and normalize_vault_key(candidate.key) == candidate.key
+               for candidate in discovered)
+    assert {candidate.candidate_id: candidate.value for candidate in discovered} == {
+        "long-key-a": "fixture-long-password-a",
+        "long-key-b": "fixture-long-password-b",
+    }
+
+
+def test_unique_overlong_original_key_is_bounded_and_valid(monkeypatch):
+    """Bound an overlong natural key even when no other candidate shares it.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace the source API and discovery result.
+    """
+    from types import SimpleNamespace
+
+    original_key = "vcf." + "b" * 177
+    candidate = service.VcfPasswordCandidate(
+        "unique-overlong", original_key, "Unique overlong key", "vcf_password",
+        "admin", "resource", "fixture-unique-long-password",
+    )
+    api = SimpleNamespace(appliance_info=lambda: {"role": "SddcManager"})
+    monkeypatch.setattr(service, "VcfDepotApiClient", lambda *_args, **_kwargs: nullcontext(api))
+    monkeypatch.setattr(service, "_sddc_manager_candidates", lambda _api: [candidate])
+
+    discovered = service.discover_vcf_passwords(
+        source_type="sddc_manager",
+        address="sddc-manager.example.internal",
+        port=443,
+        username="admin",
+        password="fixture-source-password",
+        expected_fingerprint="AA:BB",
+    )
+
+    assert len(discovered) == 1
+    assert discovered[0].candidate_id == candidate.candidate_id
+    assert discovered[0].key != original_key
+    assert len(discovered[0].key) <= 180
+    assert normalize_vault_key(discovered[0].key) == discovered[0].key
+    assert discovered[0].value == candidate.value
+
+
+def test_duplicate_selection_identity_fails_closed_during_key_allocation(monkeypatch):
+    """Reject duplicate browser selection identities rather than ambiguously importing.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace the source API and discovery result.
+    """
+    from types import SimpleNamespace
+
+    candidates = [
+        service.VcfPasswordCandidate(
+            "duplicate-id", "vcf.first.admin", "First", "vcf_password", "admin", "first", "fixture-a",
+        ),
+        service.VcfPasswordCandidate(
+            "duplicate-id", "vcf.second.admin", "Second", "vcf_password", "admin", "second", "fixture-b",
+        ),
+    ]
+    api = SimpleNamespace(appliance_info=lambda: {"role": "SddcManager"})
+    monkeypatch.setattr(service, "VcfDepotApiClient", lambda *_args, **_kwargs: nullcontext(api))
+    monkeypatch.setattr(service, "_sddc_manager_candidates", lambda _api: list(candidates))
+
+    with pytest.raises(VcfDepotTargetError, match="duplicate credential identities"):
+        service.discover_vcf_passwords(
+            source_type="sddc_manager",
+            address="sddc-manager.example.internal",
+            port=443,
+            username="admin",
+            password="fixture-source-password",
+            expected_fingerprint="AA:BB",
+        )
 
 
 def test_candidate_preview_and_repr_do_not_include_password():

@@ -111,6 +111,8 @@ Its `localUserPassword` uses `admin@local` and HTTPS to the same hostname.
 NSX manager root entries retain host-specific identities and keys when managers are reordered or removed.
 Long Installer resource identities use bounded vault keys while retaining full hostnames in discovery identities and URIs.
 Browser selections use stable opaque tokens so metadata redaction cannot change the selected credential identity.
+Credentials whose resource/account labels normalize to the same vault key receive bounded identity suffixes; discovery
+reserves every final key so selecting several credentials cannot overwrite another selected password.
 Operations nodes and the Operations collector map `rootUserPassword` to `root` over SSH to their adjacent `hostname`.
 Operations `adminUserPassword` uses `admin` over HTTPS to `loadBalancerFqdn`, or the explicit master/single node when
 the load balancer is absent. Automation `adminUserPassword` uses `admin` over HTTPS to its `hostname`.
