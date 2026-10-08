@@ -27,6 +27,11 @@ Reverse proxies can opt into Atlaso-managed A/AAAA records when their hostname b
 zone. Otherwise the [reverse-proxy guide](reverse-proxies.md) shows the exact listener records to configure in external
 DNS. Existing operator-owned records are not replaced to satisfy a proxy hostname conflict.
 
+When DNS is disabled and has no selected bind interface, `GET /api/v1/dns/settings` returns the saved empty
+`listen_interface`. The settings update request still requires a nonempty interface; use DNS validation to review bind
+targets before applying desired state. DNS settings changes reach the appliance only through the global Appliance Apply
+workflow.
+
 Atlaso-owned service records follow applied listener-address changes automatically. A Network apply includes the
 generated DNS dependency for enabled local DNS, proves the new listener is ready, publishes its A/AAAA targets and
 CNAME aliases, and checks DNS answers before completing. The separate VCF Depot nginx listener, including a custom port,

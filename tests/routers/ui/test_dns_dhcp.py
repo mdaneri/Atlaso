@@ -2057,6 +2057,7 @@ def test_dns_settings_reconcile_reverse_proxy_records_and_preserve_operator_dns(
 
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import (
+        CaSettings,
         DnsRecord,
         DnsSettings,
         ReverseProxy,
@@ -2065,6 +2066,9 @@ def test_dns_settings_reconcile_reverse_proxy_records_and_preserve_operator_dns(
     from atlaso.app.services.reverse_proxy_publication import DNS_OWNER_PREFIX
 
     with SessionLocal() as db:
+        ca = db.scalar(select(CaSettings))
+        assert ca is not None
+        ca.enabled = True
         settings = db.scalar(select(DnsSettings))
         assert settings is not None
         settings.enabled = True
