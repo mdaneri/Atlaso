@@ -96,6 +96,8 @@ Duplicate or incomplete page results stop discovery. If a listed SDDC Manager pa
 retrieves that supported credential by ID with `GET /v1/credentials/{id}`. For VCF Installer, discovery reads password
 fields from its latest available SDDC specification only. Unsupported, unavailable, masked, or permission-limited
 candidates are summarized by skipped count and reason; vendor error messages and password values are not shown.
+The selection list shows each account and credential type alongside its key, resource, and discovered URIs so multiple
+accounts on one appliance can be distinguished.
 
 Atlaso builds credential-free URIs only from authoritative resource metadata. SDDC Manager SSH credentials use a
 validated FQDN `resourceName` or `resourceIp`; API, SSO, AUDIT, and missing credential types use HTTPS only for known

@@ -189,6 +189,8 @@ test("VCF vault inspect reports discovery coverage and renders safe URI repair g
         candidate_id: "candidate-1",
         key: "<script>alert(1)</script>",
         description: "<img src=x onerror=alert(1)>",
+        secret_type: "vcf_password",
+        username: "<img src=x onerror=alert(2)>",
         resource_name: "vc01.lab.example",
         uris: ["https://vc01.lab.example"],
       },
@@ -196,6 +198,8 @@ test("VCF vault inspect reports discovery coverage and renders safe URI repair g
         candidate_id: "candidate-2",
         key: "credential-without-endpoint",
         description: "Imported account",
+        secret_type: "esx_password",
+        username: "root",
         resource_name: "unknown resource",
         uris: [],
       },
@@ -212,14 +216,73 @@ test("VCF vault inspect reports discovery coverage and renders safe URI repair g
   assert.equal(runtime.form.summary.innerHTML, "");
   assert.equal(runtime.form.candidates.children.length, 2);
   const verifiedCopy = runtime.form.candidates.children[0].children[1];
-  assert.match(verifiedCopy.innerHTML, /&lt;script&gt;alert\(1\)&lt;\/script&gt;/);
-  assert.match(verifiedCopy.innerHTML, /&lt;img src=x onerror=alert\(1\)&gt;/);
-  assert.equal(verifiedCopy.children[0].textContent, "https://vc01.lab.example");
+  assert.equal(verifiedCopy.innerHTML, "");
+  assert.equal(verifiedCopy.children[0].children[0].textContent, "<script>alert(1)</script>");
   assert.equal(verifiedCopy.children[0].innerHTML, "");
+  assert.equal(verifiedCopy.children[1].textContent, "VCF password · <img src=x onerror=alert(2)>");
+  assert.equal(verifiedCopy.children[1].innerHTML, "");
+  assert.equal(verifiedCopy.children[2].textContent, "<img src=x onerror=alert(1)>");
+  assert.equal(verifiedCopy.children[2].innerHTML, "");
+  assert.equal(verifiedCopy.children[3].textContent, "https://vc01.lab.example");
+  assert.equal(verifiedCopy.children[3].innerHTML, "");
+  assert.equal(runtime.form.candidates.children[1].children[1].children[1].textContent, "ESX password · root");
   assert.match(
-    runtime.form.candidates.children[1].children[1].children[0].textContent,
+    runtime.form.candidates.children[1].children[1].children[3].textContent,
     /Add a URI in the Vault editor after import\./,
   );
+});
+
+test("VCF candidate rows distinguish accounts with the same resource and endpoint", async () => {
+  const runtime = makeRuntime([
+    discoveredPayload([
+      {
+        candidate_id: "admin-candidate",
+        key: "vcf-vault-key",
+        secret_type: "vcf_password",
+        username: "administrator",
+        resource_name: "vc01.lab.example",
+        description: "VCENTER credential",
+        uris: ["https://vc01.lab.example"],
+      },
+      {
+        candidate_id: "audit-candidate",
+        key: "vcf-vault-key",
+        secret_type: "vcf_password",
+        username: "audit",
+        resource_name: "vc01.lab.example",
+        description: "VCENTER credential",
+        uris: ["https://vc01.lab.example"],
+      },
+    ]),
+  ]);
+
+  await runtime.getWizardOptions().onNext({ controller: { setError() {} }, step: { id: "credentials" } });
+
+  const accountLabels = runtime.form.candidates.children.map((row) => row.children[1].children[1].textContent);
+  assert.deepEqual(accountLabels, ["VCF password · administrator", "VCF password · audit"]);
+  assert.deepEqual(
+    runtime.form.candidates.children.map((row) => row.children[1].children[3].textContent),
+    ["https://vc01.lab.example", "https://vc01.lab.example"],
+  );
+});
+
+test("unknown VCF credential types use a readable fallback label", async () => {
+  const runtime = makeRuntime([
+    discoveredPayload([
+      {
+        candidate_id: "unknown-type",
+        key: "candidate-key",
+        secret_type: "constructor",
+        username: "operator",
+        description: "Other account",
+        uris: [],
+      },
+    ]),
+  ]);
+
+  await runtime.getWizardOptions().onNext({ controller: { setError() {} }, step: { id: "credentials" } });
+
+  assert.equal(runtime.form.candidates.children[0].children[1].children[1].textContent, "Other credential · operator");
 });
 
 test("zero VCF candidates preserve the skip reason and block selection validation", async () => {

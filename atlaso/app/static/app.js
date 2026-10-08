@@ -24194,11 +24194,22 @@ function initializeVcfVaultImport() {
       checkbox.checked = true;
       const copy = document.createElement("span");
       copy.className = "vcf-helper-action-copy";
-      copy.innerHTML = `<strong><code>${escapeHtml(candidate.key)}</code></strong><span class="muted">${escapeHtml(candidate.description || candidate.resource_name || "")}</span>`;
+      const key = document.createElement("code");
+      key.textContent = String(candidate.key || "");
+      const keyLabel = document.createElement("strong");
+      keyLabel.append(key);
+      const credentialTypeLabel = candidate.secret_type === "vcf_password"
+        ? "VCF password" : candidate.secret_type === "esx_password" ? "ESX password" : "Other credential";
+      const account = document.createElement("span");
+      account.className = "muted";
+      account.textContent = `${credentialTypeLabel} · ${String(candidate.username || "Username unavailable")}`;
+      const description = document.createElement("span");
+      description.className = "muted";
+      description.textContent = String(candidate.description || candidate.resource_name || "");
       const endpoints = document.createElement("span");
       endpoints.className = "muted";
       endpoints.textContent = candidate.uris?.length ? candidate.uris.join(" · ") : "No verified endpoint. Add a URI in the Vault editor after import.";
-      copy.append(endpoints);
+      copy.append(keyLabel, account, description, endpoints);
       label.append(checkbox, copy);
       candidatesElement.append(label);
     });
