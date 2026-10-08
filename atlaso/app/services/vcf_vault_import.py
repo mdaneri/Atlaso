@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 from collections import Counter
 from dataclasses import dataclass, field, replace
+from hashlib import sha256
 from ipaddress import ip_address
 from urllib.parse import quote
 
@@ -326,7 +327,18 @@ def _installer_password_nodes(
                             account = "audit"
                     elif component == "sddcmanagerspec" and key == "sshPassword":
                         account = "vcf"
-                    result.extend((child_path, password, host, account) for host in endpoints)
+                    elif key == "rootUserPassword" and (
+                        component == "vcfoperationscollectorspec"
+                        or (len(path) >= 3 and path[-3:-1] == ("vcfOperationsSpec", "nodes"))
+                    ):
+                        account = "root"
+                    for host in endpoints:
+                        # One shared NSX password expands to individually named managers.
+                        # Bind identity to the host so reorder/removal cannot rotate another key.
+                        node_path = (*path, host, str(key)) if (
+                            component == "nsxtspec" and key == "rootNsxtManagerPassword" and host
+                        ) else child_path
+                        result.append((node_path, password, host, account))
                 elif skipped is not None:
                     skipped["Password missing, masked, or unsupported in the latest specification"] += 1
             else:
@@ -373,14 +385,17 @@ def _vcf_installer_candidates(api: VcfDepotApiClient) -> list[VcfPasswordCandida
     if not isinstance(spec, dict):
         raise VcfDepotTargetError("VCF Installer returned an invalid SDDC specification.")
     result = VcfPasswordDiscovery(scope="Passwords in the latest VCF Installer SDDC specification only; this is not a complete live credential inventory.")
-    for index, (path, password, endpoint, username) in enumerate(_installer_password_nodes(spec, skipped=result.skipped)):
+    for path, password, endpoint, username in _installer_password_nodes(spec, skipped=result.skipped):
         lowered = ".".join(path).lower()
         secret_type = "esx_password" if any(marker in lowered for marker in ("hostspec", "esx", "host.")) else "vcf_password"
         prefix = "esx" if secret_type == "esx_password" else "vcf"
         meaningful = [_segment(item) for item in path if item.lower() not in {"credentials", "password"}]
+        if len(path) >= 3 and path[-3] == "nsxtSpec" and path[-1] == "rootNsxtManagerPassword":
+            # DNS punctuation can normalize to the same key segment for distinct hosts.
+            meaningful[-2] += "_" + sha256(endpoint.encode("utf-8")).hexdigest()
         key = ".".join([prefix, *meaningful[-3:], "password"])
         resource_name = next((item for item in reversed(path[:-1]) if not item.isdigit()), "VCF Installer")
-        candidate_id = f"{sddc_id}:{'.'.join(path)}:{index}"
+        candidate_id = f"{sddc_id}:{'.'.join(path)}"
         scheme = ""
         if (username == "root" or secret_type == "esx_password"
                 or path[-2:] == ("sddcManagerSpec", "sshPassword")):

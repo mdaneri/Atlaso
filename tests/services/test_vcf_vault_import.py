@@ -541,6 +541,123 @@ def test_unrelated_ssh_password_does_not_assume_vcf_account_or_uri(fake_api_fact
     assert candidates[0].uris == ()
 
 
+def test_nsxt_manager_candidate_identity_and_key_survive_reordering_and_removal(fake_api_factory):
+    """Keep each NSX manager's imported identity stable across inventory changes.
+
+    Args:
+        fake_api_factory: Fixture that creates an in-memory HTTP API client.
+    """
+    host_a = "nsx-a.lab.example"
+    host_b = "nsx.a.lab.example"
+
+    def discover(hostnames: list[str]) -> dict[str, tuple[str, str]]:
+        """Return SSH endpoint to candidate identity/key mappings for one spec.
+
+        Args:
+            hostnames: Ordered NSX manager hostnames in the fake specification.
+        """
+        spec = {
+            "nsxtSpec": {
+                "vipFqdn": "nsx-vip.lab.example",
+                "rootNsxtManagerPassword": "fixture-nsxt-root",
+                "nsxtManagers": [{"hostname": hostname} for hostname in hostnames],
+            }
+        }
+
+        def handler(request: httpx.Request) -> tuple[int, Any]:
+            """Return a fake latest SDDC record or its specification.
+
+            Args:
+                request: Intercepted HTTP request to answer.
+            """
+            if request.url.path == "/v1/sddcs/latest":
+                return 200, {"id": "fixture-sddc"}
+            return 200, spec
+
+        api, _requests = fake_api_factory(handler)
+        candidates = service._vcf_installer_candidates(api)
+        return {
+            candidate.uris[0]: (candidate.candidate_id, candidate.key)
+            for candidate in candidates
+            if candidate.uris and candidate.uris[0].startswith("ssh://")
+        }
+
+    original = discover([host_a, host_b])
+    reordered = discover([host_b, host_a])
+    remaining = discover([host_b])
+
+    assert set(original) == {f"ssh://{host_a}", f"ssh://{host_b}"}
+    assert original == reordered
+    assert remaining == {f"ssh://{host_b}": original[f"ssh://{host_b}"]}
+    assert original[f"ssh://{host_a}"][0] != original[f"ssh://{host_b}"][0]
+    assert original[f"ssh://{host_a}"][1] != original[f"ssh://{host_b}"][1]
+
+
+def test_vcf_operations_root_passwords_use_each_node_hostname_for_ssh(fake_api_factory):
+    """Import Operations and collector root passwords against their own SSH hosts.
+
+    Args:
+        fake_api_factory: Fixture that creates an in-memory HTTP API client.
+    """
+    spec = {
+        "vcfOperationsSpec": {
+            "nodes": [
+                {"hostname": "ops01.lab.example", "rootUserPassword": "fixture-ops-root-1"},
+                {"hostname": "ops02.lab.example", "rootUserPassword": "fixture-ops-root-2"},
+            ]
+        },
+        "vcfOperationsCollectorSpec": {
+            "hostname": "collector01.lab.example",
+            "rootUserPassword": "fixture-collector-root",
+        },
+    }
+
+    def handler(request: httpx.Request) -> tuple[int, Any]:
+        """Return a fake latest SDDC record or its specification.
+
+        Args:
+            request: Intercepted HTTP request to answer.
+        """
+        if request.url.path == "/v1/sddcs/latest":
+            return 200, {"id": "fixture-sddc"}
+        return 200, spec
+
+    api, _requests = fake_api_factory(handler)
+    candidates = service._vcf_installer_candidates(api)
+
+    assert [(candidate.username, candidate.uris) for candidate in candidates] == [
+        ("root", ("ssh://ops01.lab.example",)),
+        ("root", ("ssh://ops02.lab.example",)),
+        ("root", ("ssh://collector01.lab.example",)),
+    ]
+
+
+def test_unknown_root_user_password_does_not_infer_root_account_or_endpoint(fake_api_factory):
+    """Leave an unknown rootUserPassword unassociated without a documented component mapping.
+
+    Args:
+        fake_api_factory: Fixture that creates an in-memory HTTP API client.
+    """
+    spec = {"unknownComponentSpec": {"hostname": "unknown01.lab.example", "rootUserPassword": "fixture-unknown-root"}}
+
+    def handler(request: httpx.Request) -> tuple[int, Any]:
+        """Return a fake latest SDDC record or its specification.
+
+        Args:
+            request: Intercepted HTTP request to answer.
+        """
+        if request.url.path == "/v1/sddcs/latest":
+            return 200, {"id": "fixture-sddc"}
+        return 200, spec
+
+    api, _requests = fake_api_factory(handler)
+    candidates = service._vcf_installer_candidates(api)
+
+    assert len(candidates) == 1
+    assert candidates[0].username == ""
+    assert candidates[0].uris == ()
+
+
 def test_candidate_preview_and_repr_do_not_include_password():
     """Mask even a password accidentally repeated in source metadata."""
     candidate = service.VcfPasswordCandidate("id", "vcf.fixture", "fixture-secret", "vcf_password",
