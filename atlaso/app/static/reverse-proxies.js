@@ -49,11 +49,30 @@
       ? labels.map(Number) : null;
   }
 
+  function legacyIpv4Literal(value) {
+    const host = value.trim().toLowerCase().replace(/\.+$/, "");
+    if (ipv4Parts(host)) return false;
+    const labels = host.split(".");
+    if (labels.length < 1 || labels.length > 4) return false;
+    const numbers = [];
+    for (const label of labels) {
+      let base;
+      if (/^0x[0-9a-f]+$/.test(label)) base = 16;
+      else if (/^\d+$/.test(label)) base = label.length > 1 && label.startsWith("0") ? 8 : 10;
+      else return false;
+      if (base === 8 && !/^[0-7]+$/.test(label)) return false;
+      numbers.push(Number.parseInt(label, base));
+    }
+    return numbers.slice(0, -1).every((number) => number <= 255)
+      && numbers.at(-1) < 2 ** (8 * (5 - numbers.length));
+  }
+
   function validDnsHostname(value, fullyQualified = false) {
     const host = String(value || "").trim().toLowerCase();
     const labels = host.replace(/\.+$/, "").split(".");
     const ipv4 = ipv4Parts(labels.join("."));
     return host.length <= 253 && (!fullyQualified || labels.length >= 2)
+      && !legacyIpv4Literal(host)
       && (!fullyQualified || !ipv4)
       && labels.every((label) => /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(label));
   }

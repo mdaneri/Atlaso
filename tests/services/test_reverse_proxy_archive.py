@@ -28,6 +28,31 @@ from tests.services.test_reverse_proxies import payload
 
 
 @pytest.mark.parametrize("target", ["served", "upstream"])
+@pytest.mark.parametrize("host", ["127.1", "0177.0.0.1", "0x7f.0.0.1"])
+def test_archive_rejects_legacy_numeric_names_before_replacement(client, target, host):
+    """Reject ambiguous restored names without replacing any saved section.
+
+    Args:
+        client: Initialized appliance test fixture.
+        target: Served hostname or upstream field in the archive.
+        host: Noncanonical numeric address spelling.
+    """
+    with SessionLocal() as db:
+        interface = db.scalar(select(PhysicalInterface).where(PhysicalInterface.name == "eth2"))
+        save_proxy(db, payload(listeners=[{"interface": "eth2", "address": interface.ip_cidr.split("/")[0]}]), actor="test")
+        before = export_settings_archive(db, actor="test")["data"]
+        archive = deepcopy(export_settings_archive(db, actor="test"))
+        if target == "served":
+            archive["data"]["reverse_proxies"][0]["hostname"] = host
+        else:
+            archive["data"]["reverse_proxy_routes"][0]["upstream_host"] = host
+        with pytest.raises(ValueError, match="legacy numeric"):
+            restore_settings_archive(db, archive)
+        db.expire_all()
+        assert export_settings_archive(db, actor="test")["data"] == before
+
+
+@pytest.mark.parametrize("target", ["served", "upstream"])
 @pytest.mark.parametrize("configured", ["Ns1.Example.Test.", ""])
 def test_archive_reserves_authoritative_primary_before_replacement(client, target, configured):
     """Reject archived nameserver collisions without replacing saved sections.

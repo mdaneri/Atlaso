@@ -37,6 +37,36 @@ _SERVICE_SETTING_MODELS = (
 )
 
 
+def _legacy_ipv4_literal(value: str) -> bool:
+    """Detect noncanonical inet-style numeric addresses without resolving DNS.
+
+    Args:
+        value: Candidate hostname or address spelling.
+    """
+    candidate = value.strip().rstrip(".").lower()
+    try:
+        ipaddress.IPv4Address(candidate)
+        return False
+    except ValueError:
+        pass
+    labels = candidate.split(".")
+    if not 1 <= len(labels) <= 4:
+        return False
+    numbers: list[int] = []
+    for label in labels:
+        if re.fullmatch(r"0x[0-9a-f]+", label):
+            base = 16
+        elif re.fullmatch(r"[0-9]+", label):
+            base = 8 if len(label) > 1 and label.startswith("0") else 10
+        else:
+            return False
+        try:
+            numbers.append(int(label, base))
+        except ValueError:
+            return False
+    return all(number <= 255 for number in numbers[:-1]) and numbers[-1] < 1 << (8 * (5 - len(numbers)))
+
+
 def _canonical_dns_name(value: str, *, require_fqdn: bool) -> str:
     """Return a canonical DNS name or raise for ambiguous host syntax.
 
@@ -45,6 +75,8 @@ def _canonical_dns_name(value: str, *, require_fqdn: bool) -> str:
         require_fqdn: Whether the DNS name must contain multiple labels.
     """
     candidate = value.strip().rstrip(".").lower()
+    if _legacy_ipv4_literal(candidate):
+        raise ValueError("Use a DNS hostname or canonical IP literal, not a legacy numeric address spelling.")
     if not candidate or len(candidate) > 253 or any(not _DNS_LABEL.fullmatch(label) for label in candidate.split(".")):
         raise ValueError("Enter a valid DNS hostname without a URL, port, or credentials.")
     if require_fqdn and "." not in candidate:
@@ -65,6 +97,8 @@ def _host_literal(value: str) -> ipaddress.IPv4Address | ipaddress.IPv6Address |
     Args:
         value: Candidate value to normalize or validate.
     """
+    if _legacy_ipv4_literal(value):
+        raise ValueError("Use a canonical upstream IP literal, not a legacy numeric address spelling.")
     try:
         address = ipaddress.ip_address(value)
     except ValueError:

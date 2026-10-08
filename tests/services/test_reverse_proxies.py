@@ -738,6 +738,35 @@ def test_listener_fanout_is_bounded_before_saved_state_or_audit():
         engine.dispose()
 
 
+@pytest.mark.parametrize("target", ["served", "upstream"])
+@pytest.mark.parametrize("host", ["127.1", "0177.0.0.1", "0x7f.0.0.1", "127.0.1", "2130706433", "0x7f000001", "0300.0.2.1"])
+def test_legacy_numeric_addresses_reject_without_changing_saved_proxy(target, host):
+    """Reject resolver-dependent numeric spellings atomically at shared save validation.
+
+    Args:
+        target: Served hostname or upstream field being replaced.
+        host: Legacy numeric address spelling.
+    """
+    engine, db = create_db()
+    try:
+        proxy = save_proxy(db, payload(), actor="operator")
+        before = runtime_snapshot(db)
+        audit_ids = [row.id for row in db.scalars(select(AuditEvent))]
+        candidate = payload()
+        if target == "served":
+            candidate["hostname"] = host
+        else:
+            candidate["routes"][0]["upstream_host"] = host
+        with pytest.raises(ValueError):
+            save_proxy(db, candidate, actor="operator", proxy_id=proxy.id)
+        db.rollback()
+        assert runtime_snapshot(db) == before
+        assert [row.id for row in db.scalars(select(AuditEvent))] == audit_ids
+    finally:
+        db.close()
+        engine.dispose()
+
+
 def test_save_replaces_routes_atomically_preserves_owned_ids_and_audits(monkeypatch):
     """Preserve submitted child identities and roll back when audit commit fails.
 

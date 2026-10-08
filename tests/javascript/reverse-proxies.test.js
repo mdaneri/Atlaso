@@ -14,7 +14,7 @@ test("wizard rejects invalid served and upstream names on the affected step", ()
   const context = vm.createContext({ ...reverseProxies, form: { querySelector: () => hostname },
     routeNodes: () => [{}], routeField: (_route, name) => fields[name] });
   vm.runInContext(source.slice(start, end), context);
-  for (const value of ["app", "192.0.2.10", "192.0.2.10.", "::1", "bad host.example", "https://app.example", "app.example:443", "-app.example", "a".repeat(64) + ".test", "a".repeat(254)]) {
+  for (const value of ["app", "127.1", "0177.0.0.1", "0x7f.0.0.1", "127.0.1", "2130706433", "0x7f000001", "0300.0.2.1", "192.0.2.10", "192.0.2.10.", "::1", "bad host.example", "https://app.example", "app.example:443", "-app.example", "a".repeat(64) + ".test", "a".repeat(254)]) {
     hostname.value = value;
     const result = context.validateStep({ step: { id: "identity" } });
     assert.equal(result.valid, false, value);
@@ -24,7 +24,7 @@ test("wizard rejects invalid served and upstream names on the affected step", ()
     hostname.value = value;
     assert.equal(context.validateStep({ step: { id: "identity" } }), true, value);
   }
-  for (const value of ["bad host", "https://app.test", "app.test:443", "user@app.test", "[::1]", "2001:::1", "::ffff:192.0.2.999", "fe80::1%eth0", "bad..test", "-app", "a".repeat(64),
+  for (const value of ["127.1", "0177.0.0.1", "0x7f.0.0.1", "127.0.1", "2130706433", "0x7f000001", "0300.0.2.1", "bad host", "https://app.test", "app.test:443", "user@app.test", "[::1]", "2001:::1", "::ffff:192.0.2.999", "fe80::1%eth0", "bad..test", "-app", "a".repeat(64),
     "192.0.2.30" + ".".repeat(254), "127.0.0.1", "127.255.255.255", "127.0.0.1.", "169.254.1.1", "224.0.0.1", "239.255.255.255", "240.0.0.1", "255.255.255.255", "0.0.0.0",
     "::", "::1", "fe80::1", "febf::1", "ff02::1", "::ffff:192.0.2.30", "64:ff9b::1", "100::1", "4000::1", "fbff::1", "fe00::1"]) {
     fields.upstream_host.value = value;
@@ -448,8 +448,8 @@ test("display escaping protects operator-controlled text", () => {
 
 test("management service worker precaches the reverse-proxy page asset", () => {
   const worker = fs.readFileSync("atlaso/app/static/service-worker.js", "utf8");
-  assert.match(worker, /const ATLASO_CACHE = `\$\{ATLASO_CACHE_PREFIX\}364`;/);
-  assert.match(worker, /"\/static\/reverse-proxies\.js\?v=issue-723-11"/);
+  assert.match(worker, /const ATLASO_CACHE = `\$\{ATLASO_CACHE_PREFIX\}365`;/);
+  assert.match(worker, /"\/static\/reverse-proxies\.js\?v=issue-723-12"/);
 });
 
 function classListFor(classes) {
