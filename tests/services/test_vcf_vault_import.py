@@ -20,9 +20,19 @@ def fake_api_factory() -> Iterator[
     clients: list[httpx.Client] = []
 
     def create(handler: Callable[[httpx.Request], tuple[int, Any]]) -> tuple[Any, list[httpx.Request]]:
+        """Create one API stub and expose its recorded requests.
+
+        Args:
+            handler: Fake response factory for each intercepted HTTP request.
+        """
         requests: list[httpx.Request] = []
 
         def transport(request: httpx.Request) -> httpx.Response:
+            """Record and answer one fake HTTP request.
+
+            Args:
+                request: Request intercepted by the in-memory transport.
+            """
             requests.append(request)
             status, payload = handler(request)
             return httpx.Response(status, json=payload, request=request)
@@ -48,14 +58,24 @@ def fake_api_factory() -> Iterator[
     ],
 )
 def test_credential_rows_accepts_documented_inventory_shapes(fake_api_factory, payload, expected_ids):
-    """Accept list and object inventory envelopes, including empty inventories."""
+    """Accept list and object inventory envelopes, including empty inventories.
+
+    Args:
+        fake_api_factory: Fixture that creates an in-memory HTTP API client.
+        payload: Fake inventory response envelope.
+        expected_ids: Expected identifiers extracted from that envelope.
+    """
     api, _requests = fake_api_factory(lambda _request: (200, payload))
 
     assert [row.get("id") for row in service._credential_rows(api)] == expected_ids
 
 
 def test_credential_rows_traverses_documented_pages(fake_api_factory):
-    """Follow pageNumber metadata and use the returned page size after page zero."""
+    """Follow pageNumber metadata and use the returned page size after page zero.
+
+    Args:
+        fake_api_factory: Fixture that creates an in-memory HTTP API client.
+    """
     rows = {
         0: {
             "elements": [{"id": "first"}],
@@ -68,6 +88,11 @@ def test_credential_rows_traverses_documented_pages(fake_api_factory):
     }
 
     def handler(request: httpx.Request) -> tuple[int, Any]:
+        """Return the fake page requested by pageNumber.
+
+        Args:
+            request: Intercepted HTTP request, including its query parameters.
+        """
         assert request.url.path == "/v1/credentials"
         page = int(request.url.params["pageNumber"])
         return 200, rows[page]
@@ -120,10 +145,21 @@ def test_credential_rows_traverses_documented_pages(fake_api_factory):
     ],
 )
 def test_credential_rows_rejects_repeated_or_incomplete_pages(fake_api_factory, responses, message):
-    """Do not present a repeated or truncated inventory as complete."""
+    """Do not present a repeated or truncated inventory as complete.
+
+    Args:
+        fake_api_factory: Fixture that creates an in-memory HTTP API client.
+        responses: Ordered fake page responses.
+        message: Safe error text expected for the invalid inventory.
+    """
     index = 0
 
     def handler(_request: httpx.Request) -> tuple[int, Any]:
+        """Return the next fake page.
+
+        Args:
+            _request: Intercepted request, unused by this ordered response fixture.
+        """
         nonlocal index
         payload = responses[index]
         index += 1
@@ -136,7 +172,11 @@ def test_credential_rows_rejects_repeated_or_incomplete_pages(fake_api_factory, 
 
 
 def test_masked_password_retrieval_uses_encoded_id_and_returns_no_secret_in_preview(fake_api_factory):
-    """Fetch a masked listed credential by encoded ID and expose only its safe preview."""
+    """Fetch a masked listed credential by encoded ID and expose only its safe preview.
+
+    Args:
+        fake_api_factory: Fixture that creates an in-memory HTTP API client.
+    """
     listed = {
         "elements": [
             {
@@ -157,6 +197,11 @@ def test_masked_password_retrieval_uses_encoded_id_and_returns_no_secret_in_prev
     }
 
     def handler(request: httpx.Request) -> tuple[int, Any]:
+        """Return a fixture inventory or matching credential detail.
+
+        Args:
+            request: Intercepted HTTP request to answer.
+        """
         if request.url.path == "/v1/credentials":
             return 200, listed
         assert request.url.raw_path == b"/v1/credentials/credential%2Fwith%20space"
@@ -173,11 +218,20 @@ def test_masked_password_retrieval_uses_encoded_id_and_returns_no_secret_in_prev
 
 
 def test_denied_detail_is_reported_with_fixed_reason_without_vendor_message(fake_api_factory):
-    """Summarize inaccessible credentials without reflecting response diagnostics."""
+    """Summarize inaccessible credentials without reflecting response diagnostics.
+
+    Args:
+        fake_api_factory: Fixture that creates an in-memory HTTP API client.
+    """
     listed = {"elements": [{"id": "masked-id", "password": "••••", "username": "svc"}]}
     vendor_message = "fixture vendor detail diagnostic"
 
     def handler(request: httpx.Request) -> tuple[int, Any]:
+        """Deny detail retrieval with a non-sensitive vendor-message fixture.
+
+        Args:
+            request: Intercepted HTTP request to answer.
+        """
         if request.url.path == "/v1/credentials":
             return 200, listed
         return 403, {"message": vendor_message}
@@ -199,7 +253,12 @@ def test_denied_detail_is_reported_with_fixed_reason_without_vendor_message(fake
     ],
 )
 def test_mismatched_detail_is_skipped(fake_api_factory, detail):
-    """Never pair a listed account/resource with a detail record of another identity."""
+    """Never pair a listed account/resource with a detail record of another identity.
+
+    Args:
+        fake_api_factory: Fixture that creates an in-memory HTTP API client.
+        detail: Mismatched fake detail response.
+    """
     listed = {
         "elements": [
             {
@@ -213,6 +272,11 @@ def test_mismatched_detail_is_skipped(fake_api_factory, detail):
     }
 
     def handler(request: httpx.Request) -> tuple[int, Any]:
+        """Return the listed credential or its mismatched detail.
+
+        Args:
+            request: Intercepted HTTP request to answer.
+        """
         return (200, listed) if request.url.path == "/v1/credentials" else (200, detail)
 
     api, _requests = fake_api_factory(handler)
@@ -238,7 +302,13 @@ def test_mismatched_detail_is_skipped(fake_api_factory, detail):
     ],
 )
 def test_resource_metadata_maps_supported_ssh_and_https_endpoints(credential_type, resource, expected):
-    """Map resource names and verified IP metadata to the credential protocol."""
+    """Map resource names and verified IP metadata to the credential protocol.
+
+    Args:
+        credential_type: Supported credential protocol from the fake response.
+        resource: Sanitized source resource metadata.
+        expected: Expected protocol URIs in discovery order.
+    """
     assert service._resource_uris(resource, credential_type) == expected
 
 
@@ -258,12 +328,20 @@ def test_opaque_credential_id_does_not_become_an_endpoint():
     ],
 )
 def test_credential_bearing_or_malformed_endpoints_are_rejected(resource):
-    """Do not turn URLs, userinfo, paths, or query strings into vault destinations."""
+    """Do not turn URLs, userinfo, paths, or query strings into vault destinations.
+
+    Args:
+        resource: Malformed fake resource endpoint metadata.
+    """
     assert service._resource_uris(resource, "API") == ()
 
 
 def test_unsupported_credential_type_is_counted_and_not_imported(fake_api_factory):
-    """Expose a safe skip reason for credentials Atlaso cannot model."""
+    """Expose a safe skip reason for credentials Atlaso cannot model.
+
+    Args:
+        fake_api_factory: Fixture that creates an in-memory HTTP API client.
+    """
     payload = {
         "elements": [
             {
@@ -283,7 +361,11 @@ def test_unsupported_credential_type_is_counted_and_not_imported(fake_api_factor
 
 
 def test_installer_import_uses_local_endpoints_and_skips_masked_latest_spec(fake_api_factory):
-    """Use each nested component's own endpoint and label installer scope as latest-only."""
+    """Use each nested component's own endpoint and label installer scope as latest-only.
+
+    Args:
+        fake_api_factory: Fixture that creates an in-memory HTTP API client.
+    """
     spec = {
         "hosts": [{"hostname": "esx01.lab.example", "rootPassword": "fixture-root-secret"}],
         "components": [
@@ -296,6 +378,11 @@ def test_installer_import_uses_local_endpoints_and_skips_masked_latest_spec(fake
     }
 
     def handler(request: httpx.Request) -> tuple[int, Any]:
+        """Return the latest SDDC identity or its sanitized specification.
+
+        Args:
+            request: Intercepted HTTP request to answer.
+        """
         if request.url.path == "/v1/sddcs/latest":
             return 200, {"id": "fixture-sddc"}
         assert request.url.path == "/v1/sddcs/fixture-sddc/spec"
@@ -316,7 +403,11 @@ def test_installer_import_uses_local_endpoints_and_skips_masked_latest_spec(fake
 
 
 def test_installer_does_not_guess_protocol_for_unidentified_password_purpose(fake_api_factory):
-    """Keep unknown passwords importable without associating an unrelated web endpoint."""
+    """Keep unknown passwords importable without associating an unrelated web endpoint.
+
+    Args:
+        fake_api_factory: Fixture that creates an in-memory HTTP API client.
+    """
     spec = {
         "unknownService": {"hostname": "unknown.lab.example", "password": "fixture-unknown-secret"},
         "vcenterSpec": {"hostname": "vc01.lab.example", "username": "admin", "password": "fixture-web-secret"},
@@ -327,6 +418,68 @@ def test_installer_does_not_guess_protocol_for_unidentified_password_purpose(fak
     assert [(candidate.username, candidate.uris) for candidate in candidates] == [
         ("", ()), ("admin", ("https://vc01.lab.example",)),
     ]
+
+
+def test_installer_maps_vcenter_and_nsxt_passwords_to_their_local_endpoints(fake_api_factory):
+    """Associate supported vCenter and NSX-T accounts with their documented endpoints.
+
+    Args:
+        fake_api_factory: Fixture that creates an in-memory HTTP API client.
+    """
+    spec = {
+        "vcenterSpec": {
+            "vcenterHostname": "vc01.lab.example",
+            "rootVcenterPassword": "fixture-vcenter-root",
+            "adminUserSsoUsername": "administrator@vsphere.local",
+            "adminUserSsoPassword": "fixture-vcenter-sso",
+        },
+        "nsxtSpec": {
+            "vipFqdn": "nsx-vip.lab.example",
+            "rootNsxtManagerPassword": "fixture-nsxt-root",
+            "nsxtAdminPassword": "fixture-nsxt-admin",
+            "nsxtAuditPassword": "fixture-nsxt-audit",
+            "nsxtManagers": [
+                {"hostname": "nsxt01.lab.example"},
+                {"hostname": "nsxt02.lab.example"},
+            ],
+        },
+    }
+
+    def handler(request: httpx.Request) -> tuple[int, Any]:
+        """Return a fake latest SDDC record or its installer specification.
+
+        Args:
+            request: Intercepted HTTP request to answer.
+        """
+        if request.url.path == "/v1/sddcs/latest":
+            return 200, {"id": "fixture-sddc"}
+        return 200, spec
+
+    api, _requests = fake_api_factory(handler)
+    candidates = service._vcf_installer_candidates(api)
+
+    assert [(candidate.username, candidate.uris) for candidate in candidates] == [
+        ("root", ("ssh://vc01.lab.example",)),
+        ("administrator@vsphere.local", ("https://vc01.lab.example",)),
+        ("root", ("ssh://nsxt01.lab.example",)),
+        ("root", ("ssh://nsxt02.lab.example",)),
+        ("admin", ("https://nsx-vip.lab.example",)),
+        ("audit", ("https://nsx-vip.lab.example",)),
+    ]
+
+
+def test_installer_nsxt_root_without_manager_hosts_does_not_use_vip(fake_api_factory):
+    """Keep a root credential unassociated when only a cluster VIP is known.
+
+    Args:
+        fake_api_factory: Fixture that creates an in-memory HTTP API client.
+    """
+    spec = {"nsxtSpec": {"vipFqdn": "nsx-vip.lab.example",
+                         "rootNsxtManagerPassword": "fixture-root-secret"}}
+    api, _requests = fake_api_factory(lambda request: (200, {"id": "fixture-sddc"})
+                                    if request.url.path == "/v1/sddcs/latest" else (200, spec))
+    candidates = service._vcf_installer_candidates(api)
+    assert [(candidate.username, candidate.uris) for candidate in candidates] == [("root", ())]
 
 
 def test_candidate_preview_and_repr_do_not_include_password():

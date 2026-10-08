@@ -99,13 +99,16 @@ candidates are summarized by skipped count and reason; vendor error messages and
 
 Atlaso builds credential-free URIs only from authoritative resource metadata. SDDC Manager SSH credentials use a
 validated FQDN `resourceName` or `resourceIp`; API, SSO, AUDIT, and missing credential types use HTTPS only for known
-web resource types. Installer credentials use the nearest available `hostname`, `hostName`, `fqdn`, or `ipAddress` in
-the latest specification; root and ESX accounts use SSH, while known web-component accounts use HTTPS. Unknown
-credential purposes need an operator URI association. FTP credentials are not
-treated as SFTP endpoints. If the metadata has no valid host, including a short resource label or opaque ID, the URI
-list stays empty. After import, use the entry's **Edit** action to add a verified endpoint. Reimport preserves an
-existing nonempty operator-managed URI list and adds discovered URIs only when that list is empty. Atlaso re-reads the
-selected values during the reviewed import and encrypts them immediately; existing keys are rotated.
+web resource types. Installer mappings use the latest available SDDC specification only, not a live appliance
+inventory: vCenter root uses SSH to `vcenterHostname`; vCenter SSO uses `adminUserSsoUsername` and HTTPS to
+`vcenterHostname`; each `nsxtManagers[].hostname` gets an NSX root SSH URI (never the cluster VIP); NSX admin and audit
+use HTTPS to `vipFqdn`. Root and ESX accounts use SSH, while other known web-component accounts use HTTPS.
+Unknown credential purposes need an operator URI association. FTP credentials are not treated as SFTP endpoints. If
+the metadata has no valid host, including a short resource label or opaque ID, the URI list stays empty. After import,
+use the entry's **Edit** action to add a verified endpoint. Reimport preserves an existing nonempty operator-managed
+URI list and adds discovered URIs only when that list is empty. Atlaso re-reads the selected values during the reviewed
+import and encrypts them immediately; existing keys are rotated. See Broadcom's [SDDC specification](https://developer.broadcom.com/xapis/vcf-installer-api/latest/data-structures/SddcSpec/)
+for the source field definitions.
 
 For the SDDC Manager response and endpoint contract, see Broadcom's [Get Credentials API](https://developer.broadcom.com/xapis/vmware-cloud-foundation-api/latest/v1/credentials/get/)
 and [Get Credential API](https://developer.broadcom.com/xapis/vmware-cloud-foundation-api/latest/v1/credentials/id/get/).

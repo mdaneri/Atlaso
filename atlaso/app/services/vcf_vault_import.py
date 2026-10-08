@@ -57,7 +57,11 @@ class VcfPasswordDiscovery(list[VcfPasswordCandidate]):
     """Keep safe discovery coverage alongside the request-local candidates."""
 
     def __init__(self, *, scope: str):
-        """Initialize an empty discovery with its supported source scope."""
+        """Initialize an empty discovery with its supported source scope.
+
+        Args:
+            scope: Operator-facing description of the source coverage.
+        """
         super().__init__()
         self.scope = scope
         self.skipped: Counter[str] = Counter()
@@ -68,7 +72,11 @@ class VcfPasswordDiscovery(list[VcfPasswordCandidate]):
 
 
 def _endpoint_host(value: object) -> str:
-    """Accept only an endpoint hostname or IP, never a URL or opaque identifier."""
+    """Accept only an endpoint hostname or IP, never a URL or opaque identifier.
+
+    Args:
+        value: Source endpoint metadata to validate.
+    """
     if not isinstance(value, str):
         return ""
     host = value.strip().rstrip(".")
@@ -89,7 +97,12 @@ def _endpoint_host(value: object) -> str:
 
 
 def _resource_uris(resource: dict, credential_type: str) -> tuple[str, ...]:
-    """Map documented resource endpoints to the credential's supported protocol."""
+    """Map documented resource endpoints to the credential's supported protocol.
+
+    Args:
+        resource: Credential resource metadata from SDDC Manager.
+        credential_type: Source credential protocol or account category.
+    """
     hosts = [_endpoint_host(resource.get("resourceName")), _endpoint_host(resource.get("resourceIp"))]
     web_types = {"ESXI", "VCENTER", "PSC", "NSX_MANAGER", "NSXT_MANAGER", "VRLI", "VROPS",
                  "VRA", "WSA", "VRSLCM", "VXRAIL_MANAGER", "NSX_ALB", "SDDC_MANAGER"}
@@ -105,7 +118,13 @@ def _resource_uris(resource: dict, credential_type: str) -> tuple[str, ...]:
 
 
 def _read_json(api: VcfDepotApiClient, path: str, **kwargs: object) -> object:
-    """Read a source response without reflecting vendor messages or secret values."""
+    """Read a source response without reflecting vendor messages or secret values.
+
+    Args:
+        api: Authenticated source API client.
+        path: Source API path to read.
+        **kwargs: Additional HTTP request options.
+    """
     try:
         response = api.client.get(path, **kwargs)
         if not response.is_success:
@@ -116,7 +135,11 @@ def _read_json(api: VcfDepotApiClient, path: str, **kwargs: object) -> object:
 
 
 def _credential_rows(api: VcfDepotApiClient) -> list[dict]:
-    """Read the documented zero-based pages, refusing incomplete or repeated pages."""
+    """Read the documented zero-based pages, refusing incomplete or repeated pages.
+
+    Args:
+        api: Authenticated SDDC Manager API client.
+    """
     rows: list[dict] = []
     page = 0
     page_size = 0  # Documented all-records request, with metadata traversal if paged.
@@ -263,11 +286,15 @@ def _installer_password_nodes(
     Args:
         value: Value to process.
         path: Filesystem or URL path to read, validate, or update.
+        endpoint: Validated endpoint inherited within the current component.
+        username: Account inherited within the current component.
+        skipped: Optional counter for fixed discovery skip reasons.
     """
     result: list[tuple[tuple[str, ...], str, str, str]] = []
     if isinstance(value, dict):
         local_endpoint = next((_endpoint_host(value.get(field)) for field in
-                               ("hostname", "hostName", "fqdn", "ipAddress") if _endpoint_host(value.get(field))), "")
+                               ("vcenterHostname", "vipFqdn", "hostname", "hostName", "fqdn", "ipAddress")
+                               if _endpoint_host(value.get(field))), "")
         endpoint = local_endpoint or endpoint
         username = str(value.get("username") or value.get("userName") or username)
         for key, child in value.items():
@@ -276,14 +303,36 @@ def _installer_password_nodes(
                 password = _usable_password(child)
                 if password:
                     account = "root" if str(key).lower() == "rootpassword" else username
-                    result.append((child_path, password, endpoint, account))
+                    endpoints = [endpoint]
+                    component = path[-1].lower() if path else ""
+                    if component == "vcenterspec":
+                        if key == "rootVcenterPassword":
+                            account = "root"
+                        elif key == "adminUserSsoPassword":
+                            account = str(value.get("adminUserSsoUsername") or "")
+                    elif component == "nsxtspec":
+                        if key == "rootNsxtManagerPassword":
+                            account = "root"
+                            managers = value.get("nsxtManagers")
+                            endpoints = list(dict.fromkeys(
+                                _endpoint_host(manager.get("hostname")) for manager in managers
+                                if isinstance(manager, dict) and _endpoint_host(manager.get("hostname"))
+                            )) if isinstance(managers, list) else []
+                            # The cluster VIP does not identify an individual SSH node.
+                            endpoints = endpoints or [""]
+                        elif key == "nsxtAdminPassword":
+                            account = "admin"
+                        elif key == "nsxtAuditPassword":
+                            account = "audit"
+                    result.extend((child_path, password, host, account) for host in endpoints)
                 elif skipped is not None:
                     skipped["Password missing, masked, or unsupported in the latest specification"] += 1
             else:
                 # A sibling component spec must identify its own endpoint.
                 nested_endpoint = "" if str(key).lower().endswith("spec") else endpoint
+                nested_username = "" if str(key).lower().endswith("spec") else username
                 nested = _installer_password_nodes(child, child_path, endpoint=nested_endpoint,
-                                                   username=username, skipped=skipped)
+                                                   username=nested_username, skipped=skipped)
                 if "password" in str(key).lower() and isinstance(child, (dict, list)) and not nested and skipped is not None:
                     skipped["Unsupported password container in the latest specification"] += 1
                 result.extend(nested)

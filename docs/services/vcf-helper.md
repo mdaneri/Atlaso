@@ -113,8 +113,11 @@ never shown. SDDC Manager discovery follows its documented all-records collectio
 listed passwords individually when the collection response omits or masks them. Installer discovery uses only the
 latest available SDDC specification, so the results do not represent every appliance account. After selection, Atlaso
 revalidates and re-fetches the reviewed values, then encrypts them in the selected vault. Source credentials are
-request-local. See [Vaults](vaults.md) for resource-based URI mapping, unsupported FTP endpoint association, URI repair,
-reimport behavior, managed-script and Kickstart access, and restore behavior.
+request-local. Installer URI mapping follows the latest SDDC specification: vCenter root and each NSX manager root use
+SSH to their named hosts, while vCenter SSO and NSX admin/audit use HTTPS to the specified vCenter hostname or NSX VIP
+FQDN; NSX root never uses the VIP. Unknown endpoints require correction through the Vault entry's **Edit** action.
+See [Vaults](vaults.md) for exact field mappings, SDDC Manager behavior, unsupported FTP endpoint association, and
+reimport, managed-script, Kickstart, and restore behavior.
 
 The helper creates DNS records in Atlaso, deploys SDDC Manager OVAs, and configures VCF 9 appliances to use the applied
 local offline depot. DNS does not reload `dnsmasq` or change the appliance directly. Review and submit the changed
