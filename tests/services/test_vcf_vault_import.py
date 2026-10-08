@@ -482,6 +482,65 @@ def test_installer_nsxt_root_without_manager_hosts_does_not_use_vip(fake_api_fac
     assert [(candidate.username, candidate.uris) for candidate in candidates] == [("root", ())]
 
 
+def test_installer_maps_sddc_manager_ssh_password_to_vcf_account(fake_api_factory):
+    """Map SDDC Manager root and vcf SSH passwords to its appliance hostname.
+
+    Args:
+        fake_api_factory: Fixture that creates an in-memory HTTP API client.
+    """
+    spec = {
+        "sddcManagerSpec": {
+            "hostname": "sddcm01.lab.example",
+            "rootPassword": "fixture-sddc-root",
+            "sshPassword": "fixture-sddc-vcf",
+        }
+    }
+
+    def handler(request: httpx.Request) -> tuple[int, Any]:
+        """Return a fake latest SDDC record or its installer specification.
+
+        Args:
+            request: Intercepted HTTP request to answer.
+        """
+        if request.url.path == "/v1/sddcs/latest":
+            return 200, {"id": "fixture-sddc"}
+        return 200, spec
+
+    api, _requests = fake_api_factory(handler)
+    candidates = service._vcf_installer_candidates(api)
+
+    assert [(candidate.username, candidate.uris) for candidate in candidates] == [
+        ("root", ("ssh://sddcm01.lab.example",)),
+        ("vcf", ("ssh://sddcm01.lab.example",)),
+    ]
+
+
+def test_unrelated_ssh_password_does_not_assume_vcf_account_or_uri(fake_api_factory):
+    """Keep unrelated sshPassword fields unassociated until their purpose is known.
+
+    Args:
+        fake_api_factory: Fixture that creates an in-memory HTTP API client.
+    """
+    spec = {"unrelatedSpec": {"hostname": "unknown01.lab.example", "sshPassword": "fixture-unknown-ssh"}}
+
+    def handler(request: httpx.Request) -> tuple[int, Any]:
+        """Return a fake latest SDDC record or its installer specification.
+
+        Args:
+            request: Intercepted HTTP request to answer.
+        """
+        if request.url.path == "/v1/sddcs/latest":
+            return 200, {"id": "fixture-sddc"}
+        return 200, spec
+
+    api, _requests = fake_api_factory(handler)
+    candidates = service._vcf_installer_candidates(api)
+
+    assert len(candidates) == 1
+    assert candidates[0].username == ""
+    assert candidates[0].uris == ()
+
+
 def test_candidate_preview_and_repr_do_not_include_password():
     """Mask even a password accidentally repeated in source metadata."""
     candidate = service.VcfPasswordCandidate("id", "vcf.fixture", "fixture-secret", "vcf_password",

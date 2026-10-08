@@ -324,6 +324,8 @@ def _installer_password_nodes(
                             account = "admin"
                         elif key == "nsxtAuditPassword":
                             account = "audit"
+                    elif component == "sddcmanagerspec" and key == "sshPassword":
+                        account = "vcf"
                     result.extend((child_path, password, host, account) for host in endpoints)
                 elif skipped is not None:
                     skipped["Password missing, masked, or unsupported in the latest specification"] += 1
@@ -380,7 +382,8 @@ def _vcf_installer_candidates(api: VcfDepotApiClient) -> list[VcfPasswordCandida
         resource_name = next((item for item in reversed(path[:-1]) if not item.isdigit()), "VCF Installer")
         candidate_id = f"{sddc_id}:{'.'.join(path)}:{index}"
         scheme = ""
-        if username == "root" or secret_type == "esx_password":
+        if (username == "root" or secret_type == "esx_password"
+                or path[-2:] == ("sddcManagerSpec", "sshPassword")):
             scheme = "ssh"
         elif any(marker in lowered for marker in ("vcenter", "sddcmanager", "nsx", "vrops", "vra", "vrslcm")):
             scheme = "https"
