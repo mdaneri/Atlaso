@@ -1795,7 +1795,7 @@
         "type": "object"
       },
       "DnsSettingsResponse": {
-        "description": "Fields returned by the Atlaso dns settings API.\n\nAttributes:\n    id: Unique database identifier assigned to this resource.\n    authoritative_serial: Returned authoritative serial value for this dns settings resource.\n    config_path: Appliance path where the rendered configuration is staged or installed; it is\n        not a free-form input.\n    updated_at: UTC timestamp when the resource was last updated.",
+        "description": "Fields returned by the Atlaso dns settings API.\n\nAttributes:\n    listen_interface: Saved service bind targets; empty when no interface is selected.\n    id: Unique database identifier assigned to this resource.\n    authoritative_serial: Returned authoritative serial value for this dns settings resource.\n    config_path: Appliance path where the rendered configuration is staged or installed; it is\n        not a free-form input.\n    updated_at: UTC timestamp when the resource was last updated.",
         "properties": {
           "authoritative": {
             "default": true,
@@ -1922,10 +1922,9 @@
             "title": "Listen Address"
           },
           "listen_interface": {
-            "default": "eth2",
-            "description": "Saved access interface or enabled VLAN used as the service bind target.",
+            "default": "",
+            "description": "Saved service bind targets; empty when no interface is selected.",
             "maxLength": 80,
-            "minLength": 1,
             "title": "Listen Interface",
             "type": "string"
           },
