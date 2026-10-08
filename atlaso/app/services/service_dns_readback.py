@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import ipaddress
+import json
 import math
+import os
 import secrets
 import socket
 import struct
 import subprocess
+import sys
 from collections import defaultdict
 
 _TYPE_CODES = {"A": 1, "CNAME": 5, "AAAA": 28}
@@ -500,6 +503,71 @@ def _nss_addresses(hostname: str, timeout: float, *, allow_missing: bool = False
     return resolved
 
 
+def _synthetic_hostname_addresses(hostname: str, timeout: float) -> set[str]:
+    """Prove a local synthetic answer and bound it to currently assigned addresses.
+
+    Args:
+        hostname: Exact current kernel hostname, already matched to a direct owner.
+        timeout: Maximum seconds for each read-only native command.
+
+    Raises:
+        ValueError: Native synthesis or current local address ownership is unproven.
+    """
+    environment = {**os.environ, "LC_ALL": "C", "SYSTEMD_COLORS": "0"}
+    try:
+        synthetic = subprocess.run(
+            ["resolvectl", "query", "--cache=no", "--network=no", "--legend=yes", hostname.rstrip(".")],
+            capture_output=True, text=True, timeout=timeout, check=False, env=environment,
+        )
+        if synthetic.returncode != 0:
+            raise ValueError("Appliance own-hostname synthesis could not be verified.")
+        lines = [line.strip() for line in synthetic.stdout.splitlines() if line.strip()]
+        if [line for line in lines if line.startswith("-- Data from:")] != ["-- Data from: synthetic"]:
+            raise ValueError("Appliance own-hostname lookup is not proven exclusively synthetic.")
+        prefix = hostname.rstrip(".") + ":"
+        if not lines or not lines[0].startswith(prefix):
+            raise ValueError("Appliance own-hostname synthesis returned a different name.")
+        addresses: set[str] = set()
+        for index, line in enumerate(lines):
+            if line.startswith("--"):
+                continue
+            value = line.removeprefix(prefix).strip() if index == 0 else line
+            # resolvectl prints an optional interface comment after the address.
+            value = value.partition("-- link:")[0].strip()
+            addresses.add(str(ipaddress.ip_address(value)))
+        if not addresses:
+            raise ValueError("Appliance own-hostname synthesis returned no addresses.")
+
+        observed = subprocess.run(
+            ["ip", "-j", "address", "show"],
+            capture_output=True, text=True, timeout=timeout, check=False, env=environment,
+        )
+        if observed.returncode != 0:
+            raise ValueError("Appliance local address ownership could not be verified.")
+        interfaces = json.loads(observed.stdout)
+        if not isinstance(interfaces, list) or not interfaces:
+            raise ValueError("Appliance local address inventory is unavailable.")
+        local: set[str] = set()
+        for interface in interfaces:
+            if not isinstance(interface, dict) or not isinstance(interface.get("addr_info"), list):
+                raise ValueError("Appliance local address inventory is malformed.")
+            for entry in interface["addr_info"]:
+                if not isinstance(entry, dict) or not isinstance(entry.get("local"), str):
+                    raise ValueError("Appliance local address inventory is malformed.")
+                address = ipaddress.ip_address(entry["local"])
+                if not (address.is_unspecified or address.is_multicast or address.is_link_local):
+                    local.add(str(address))
+        # These are systemd's exact own-hostname fallbacks, not arbitrary loopback.
+        fallbacks = {"127.0.0.2", "::1"}
+        if not addresses <= local | fallbacks:
+            raise ValueError("Appliance own-hostname synthesis contains an unowned address.")
+        if _name(socket.gethostname()) != hostname:
+            raise ValueError("Appliance kernel hostname changed during synthesis verification.")
+        return addresses | fallbacks
+    except (OSError, subprocess.TimeoutExpired, ValueError) as exc:
+        raise ValueError("Appliance own-hostname synthetic address proof failed.") from exc
+
+
 def verify_service_dns_nss(
     records: list[dict[str, str]],
     timeout: float = 2.0,
@@ -554,7 +622,15 @@ def verify_service_dns_nss(
     for hostname, allowed in allowed_by_name.items():
         resolved = _nss_addresses(hostname, timeout)
         if not resolved <= allowed:
-            raise ValueError(f"Appliance NSS lookup for {hostname} returned an unexpected address.")
+            # Only a direct current kernel-name owner can use local synthesis.
+            # Aliases, retired names, and non-native hosts retain the strict rule.
+            try:
+                own_hostname = sys.platform == "linux" and _name(socket.gethostname()) == hostname
+            except (OSError, ValueError):
+                own_hostname = False
+            if (not own_hostname or (hostname, "CNAME") in expected
+                    or not resolved <= _synthetic_hostname_addresses(hostname, timeout)):
+                raise ValueError(f"Appliance NSS lookup for {hostname} returned an unexpected address.")
 
     for hostname in sorted({owner for owner, _record_type in previous} - set(allowed_by_name)):
         stale_addresses = _nss_addresses(hostname, timeout, allow_missing=True)
