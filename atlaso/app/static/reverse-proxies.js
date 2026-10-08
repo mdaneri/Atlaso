@@ -43,6 +43,25 @@
       && !path.includes("//") && !path.split("/").some((segment) => segment === "." || segment === "..");
   }
 
+  function validDnsHostname(value, fullyQualified = false) {
+    const host = String(value || "").trim().toLowerCase();
+    const labels = host.replace(/\.+$/, "").split(".");
+    return host.length <= 253 && (!fullyQualified || labels.length >= 2)
+      && labels.every((label) => /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(label));
+  }
+
+  function validUpstreamHost(value) {
+    const host = String(value || "").trim();
+    if (validDnsHostname(host)) return true;
+    if (!host || host.length > 253 || !/^[a-f\d:.]+$/i.test(host) || !host.includes(":")) return false;
+    try {
+      // Parse IPv6 without accepting URL components or scope identifiers.
+      return Boolean(new URL(`http://[${host}]/`).hostname);
+    } catch {
+      return false;
+    }
+  }
+
   function routeHealthRow(item = {}) {
     return {
       proxy_id: Number(item.proxy_id || 0),
@@ -572,6 +591,9 @@
     }
 
     function validateStep({ step }) {
+      if (step.id === "identity" && !validDnsHostname(form.querySelector('[name="hostname"]')?.value, true)) {
+        return { valid: false, message: "Enter a fully qualified DNS hostname without a URL, port, or credentials.", field: form.querySelector('[name="hostname"]') };
+      }
       if (step.id === "listener") {
         if (!listenerSelect || !listenerSelect.selectedOptions.length) return { valid: false, message: "Select at least one eligible listener address.", field: "listeners" };
         if (form.querySelector("[data-reverse-proxy-redirect]")?.checked && form.querySelector("[data-reverse-proxy-scheme]")?.value !== "https") {
@@ -587,8 +609,8 @@
             return { valid: false, message: "Use an absolute path prefix up to 1024 characters without reserved, encoded, dot, backslash or ambiguous path segments.", field: routeField(route, "path_prefix") };
           }
           const host = String(routeField(route, "upstream_host")?.value || "").trim();
-          if (host.includes("@") || /[/?#]/.test(host)) {
-            return { valid: false, message: "Enter an upstream host or IP without a URL scheme, path, or user information.", field: routeField(route, "upstream_host") };
+          if (!validUpstreamHost(host)) {
+            return { valid: false, message: "Enter an upstream DNS hostname or IP literal without a URL, port, or credentials.", field: routeField(route, "upstream_host") };
           }
           if (routeField(route, "upstream_scheme")?.value === "https" && routeField(route, "trust_mode")?.value === "fingerprint") {
             const fingerprint = normalizeFingerprint(routeField(route, "fingerprint")?.value);
@@ -820,7 +842,7 @@
     return { refreshData, table, wizard, health };
   }
 
-  const api = Object.freeze({ escapeHtml, pathsOverlap, validPathPrefix, routeHealthRow, healthDisplayRow, serializeProxy, visibleProxyRow, initialize });
+  const api = Object.freeze({ escapeHtml, pathsOverlap, validPathPrefix, validDnsHostname, validUpstreamHost, routeHealthRow, healthDisplayRow, serializeProxy, visibleProxyRow, initialize });
   global.AtlasoReverseProxies = api;
   if (global.document?.readyState === "loading") global.document.addEventListener("DOMContentLoaded", initialize, { once: true });
   else if (global.document) initialize();

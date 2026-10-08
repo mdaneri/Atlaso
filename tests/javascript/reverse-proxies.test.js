@@ -5,6 +5,37 @@ const test = require("node:test");
 
 const reverseProxies = require("../../atlaso/app/static/reverse-proxies.js");
 
+test("wizard rejects invalid served and upstream names on the affected step", () => {
+  const source = fs.readFileSync("atlaso/app/static/reverse-proxies.js", "utf8");
+  const start = source.indexOf("    function validateStep({ step }) {");
+  const end = source.indexOf("    function populateReview()", start);
+  const hostname = { value: "app" };
+  const fields = { path_prefix: { value: "/app/" }, upstream_host: { value: "bad host" }, upstream_scheme: { value: "http" } };
+  const context = vm.createContext({ ...reverseProxies, form: { querySelector: () => hostname },
+    routeNodes: () => [{}], routeField: (_route, name) => fields[name] });
+  vm.runInContext(source.slice(start, end), context);
+  for (const value of ["app", "bad host.example", "https://app.example", "app.example:443", "-app.example", "a".repeat(64) + ".test", "a".repeat(254)]) {
+    hostname.value = value;
+    const result = context.validateStep({ step: { id: "identity" } });
+    assert.equal(result.valid, false, value);
+    assert.equal(result.field, hostname);
+  }
+  for (const value of ["APP.Example.TEST.", "a".repeat(63) + ".test"]) {
+    hostname.value = value;
+    assert.equal(context.validateStep({ step: { id: "identity" } }), true, value);
+  }
+  for (const value of ["bad host", "https://app.test", "app.test:443", "user@app.test", "[::1]", "2001:::1", "::ffff:192.0.2.999", "fe80::1%eth0", "bad..test", "-app", "a".repeat(64)]) {
+    fields.upstream_host.value = value;
+    const result = context.validateStep({ step: { id: "routes" } });
+    assert.equal(result.valid, false, value);
+    assert.equal(result.field, fields.upstream_host);
+  }
+  for (const value of ["backend", "APP.Example.TEST.", "192.0.2.30", "::1", "2001:db8::30", "::ffff:192.0.2.30", "2001:db8:0:0:0:0:0:30"]) {
+    fields.upstream_host.value = value;
+    assert.equal(context.validateStep({ step: { id: "routes" } }), true, value);
+  }
+});
+
 test("path prefixes overlap when one can capture the other", () => {
   assert.equal(reverseProxies.pathsOverlap("/app", "/app/admin"), true);
   assert.equal(reverseProxies.pathsOverlap("/app/", "/api/"), false);
@@ -387,8 +418,8 @@ test("display escaping protects operator-controlled text", () => {
 
 test("management service worker precaches the reverse-proxy page asset", () => {
   const worker = fs.readFileSync("atlaso/app/static/service-worker.js", "utf8");
-  assert.match(worker, /const ATLASO_CACHE = `\$\{ATLASO_CACHE_PREFIX\}361`;/);
-  assert.match(worker, /"\/static\/reverse-proxies\.js\?v=issue-723-8"/);
+  assert.match(worker, /const ATLASO_CACHE = `\$\{ATLASO_CACHE_PREFIX\}362`;/);
+  assert.match(worker, /"\/static\/reverse-proxies\.js\?v=issue-723-9"/);
 });
 
 function classListFor(classes) {

@@ -56,7 +56,7 @@ The health fallback also shows the latest bounded observations after **Refresh h
 
 1. **Identity**: enter a unique **Name** and **Hostname**. Add a **Description** to record the application's purpose.
    Atlaso reserves its own service hostnames, including the explicit or default authoritative DNS primary hostname.
-   These names cannot be used as upstream targets either.
+   These names cannot be used as upstream targets either. Identity rejects invalid fully qualified hostnames before Next.
 2. **Listener**: select one or more exact **Listener addresses**, then choose the **Listener scheme** and **Listener
    port**. A shared nginx address and port can serve only one protocol. HTTPS uses an Atlaso CA-managed certificate for
    the hostname; its private key is not shown in the editor. Enable the CA before saving an enabled HTTPS proxy.
@@ -65,6 +65,7 @@ The health fallback also shows the latest bounded observations after **Refresh h
    the selected listener addresses and port.
 3. **Routes**: add one or more path routes. Set an absolute **Path prefix**, upstream HTTP or HTTPS **Upstream
    scheme**, **Upstream host or IP**, and **Upstream port**. Choose whether to **Preserve prefix** or **Strip prefix**.
+   Routes rejects invalid upstream DNS names or IP literals before Review; enter the port in its separate field.
    Route prefixes must not overlap one another or reserved Atlaso and machine paths.
    Atlaso reserves protocol roots, including favicon, certificate downloads, OAuth/OpenID/OIDC, and the `/PROD` prefix;
    catch-all application routes reject requests for these namespaces before forwarding them upstream.
