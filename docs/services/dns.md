@@ -12,11 +12,6 @@ Atlaso manages DNS desired state through dnsmasq. Editing settings, zones, or re
 and the global DNS/DHCP preview; it does not mutate the appliance until an operator submits the `DNS/DHCP (dnsmasq)`
 unit through Appliance Apply.
 
-When DNS is disabled and has no selected bind interface, `GET /api/v1/dns/settings` returns the saved empty
-`listen_interface`. The settings update request still requires a nonempty interface; use DNS validation to review bind
-targets before applying desired state. DNS settings changes reach the appliance only through the global Appliance Apply
-workflow.
-
 <!-- BEGIN GENERATED INTERFACE OVERVIEW -->
 ## Interface overview
 
@@ -27,6 +22,11 @@ This verified appliance view provides visual orientation before you begin.
 *Figure: DNS in the verified clean-appliance desktop state.*
 
 <!-- END GENERATED INTERFACE OVERVIEW -->
+
+When DNS is disabled and has no selected bind interface, `GET /api/v1/dns/settings` returns the saved empty
+`listen_interface`. The settings update request still requires a nonempty interface; use DNS validation to review bind
+targets before applying desired state. DNS settings changes reach the appliance only through the global Appliance Apply
+workflow.
 
 Atlaso-owned service records follow applied listener-address changes automatically. A Network apply includes the
 generated DNS dependency for enabled local DNS, proves the new listener is ready, publishes its A/AAAA targets and
