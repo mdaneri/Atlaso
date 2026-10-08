@@ -1145,9 +1145,11 @@ def test_final_candidate_keys_reserve_natural_suffixes_and_survive_reordering(mo
     original_keys = {candidate.candidate_id: candidate.key for candidate in candidates}
     first = discover()
     assert len({candidate.key for candidate in first.values()}) == len(candidates)
-    assert first["credential-c"].key == original_keys["credential-c"]
-    assert first["identity-2"].key != original_keys["identity-2"]
-    assert first["credential-b"].key != original_keys["credential-b"]
+    for candidate_id, candidate in first.items():
+        natural_key = original_keys[candidate_id]
+        expected_key = f"vcf.imported.id_{candidate.selection_id.removeprefix('vcf-')}"
+        assert candidate.natural_key == natural_key
+        assert candidate.key == expected_key
     assert {candidate.candidate_id: candidate.value for candidate in first.values()} == {
         candidate.candidate_id: candidate.value for candidate in candidates
     }
@@ -1159,6 +1161,21 @@ def test_final_candidate_keys_reserve_natural_suffixes_and_survive_reordering(mo
     assert {candidate_id: candidate.key for candidate_id, candidate in reordered.items()} == {
         candidate_id: candidate.key for candidate_id, candidate in first.items()
     }
+
+    current_candidates[:] = [candidates[0]]
+    alone = discover()
+    assert alone["identity-2"].key == first["identity-2"].key
+
+    added = service.VcfPasswordCandidate(
+        "credential-d", "vcf.cluster.admin", "Added account", "vcf_password",
+        "admin", "cluster", "fixture-password-d",
+    )
+    current_candidates[:] = [candidates[1], candidates[2], added]
+    after_remove_and_add = discover()
+    assert after_remove_and_add["credential-b"].key == first["credential-b"].key
+    assert after_remove_and_add["credential-c"].key == first["credential-c"].key
+    assert after_remove_and_add["credential-d"].key != first["credential-b"].key
+    assert len({candidate.key for candidate in after_remove_and_add.values()}) == 3
 
 
 def test_duplicate_candidate_suffix_cannot_take_another_original_key(monkeypatch):
@@ -1173,7 +1190,7 @@ def test_duplicate_candidate_suffix_cannot_take_another_original_key(monkeypatch
         "identity-2", "vcf.cluster.admin", "First duplicate", "vcf_password",
         "admin", "cluster", "fixture-password-a",
     )
-    reserved_key = f"{first.key}.id_{first.selection_id.removeprefix('vcf-')}"
+    reserved_key = f"vcf.imported.id_{first.selection_id.removeprefix('vcf-')}"
     candidates = [
         first,
         service.VcfPasswordCandidate(
@@ -1200,9 +1217,13 @@ def test_duplicate_candidate_suffix_cannot_take_another_original_key(monkeypatch
     by_id = {candidate.candidate_id: candidate for candidate in discovered}
 
     assert len({candidate.key for candidate in discovered}) == len(candidates)
-    assert by_id["natural-identity-key"].key == reserved_key
-    assert by_id[first.candidate_id].key != reserved_key
-    assert by_id[first.candidate_id].key.endswith("_2")
+    assert by_id["natural-identity-key"].natural_key == reserved_key
+    assert by_id["natural-identity-key"].key != reserved_key
+    assert by_id[first.candidate_id].key == reserved_key
+    assert by_id["natural-identity-key"].key == (
+        f"vcf.imported.id_{by_id['natural-identity-key'].selection_id.removeprefix('vcf-')}"
+    )
+    assert not any(candidate.key.endswith("_2") for candidate in discovered)
     assert all(len(candidate.key) <= 180 and normalize_vault_key(candidate.key) == candidate.key
                for candidate in discovered)
 
@@ -1240,7 +1261,9 @@ def test_duplicate_long_original_keys_get_bounded_valid_identity_suffixes(monkey
     )
 
     assert len({candidate.key for candidate in discovered}) == 2
-    assert all(candidate.key != long_key for candidate in discovered)
+    assert all(candidate.natural_key == long_key for candidate in discovered)
+    assert all(candidate.key == f"vcf.imported.id_{candidate.selection_id.removeprefix('vcf-')}"
+               for candidate in discovered)
     assert all(len(candidate.key) <= 180 and normalize_vault_key(candidate.key) == candidate.key
                for candidate in discovered)
     assert {candidate.candidate_id: candidate.value for candidate in discovered} == {
@@ -1277,6 +1300,8 @@ def test_unique_overlong_original_key_is_bounded_and_valid(monkeypatch):
 
     assert len(discovered) == 1
     assert discovered[0].candidate_id == candidate.candidate_id
+    assert discovered[0].natural_key == original_key
+    assert discovered[0].key == f"vcf.imported.id_{candidate.selection_id.removeprefix('vcf-')}"
     assert discovered[0].key != original_key
     assert len(discovered[0].key) <= 180
     assert normalize_vault_key(discovered[0].key) == discovered[0].key

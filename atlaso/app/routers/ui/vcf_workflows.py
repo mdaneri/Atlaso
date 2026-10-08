@@ -6,6 +6,7 @@ import json
 import re
 import socket
 import ssl
+from collections import Counter
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
@@ -912,25 +913,42 @@ def build_router(dependencies: VcfWorkflowsUiDependencies) -> VcfWorkflowsUiRout
                 )
             imported: list[str] = []
             created_count = 0
+            legacy_identity_counts = Counter(
+                (candidate.natural_key, candidate.resource_name.strip(), candidate.username.strip(), candidate.secret_type.strip().lower())
+                for candidate in candidates if candidate.natural_key
+            )
             for candidate_id in selected:
                 candidate = by_id[candidate_id]
                 existing = db.execute(select(VaultEntry).where(
                     VaultEntry.vault_id == vault.id, VaultEntry.key == candidate.key,
                 )).scalar_one_or_none()
+                legacy_identity = (candidate.natural_key, candidate.resource_name.strip(), candidate.username.strip(), candidate.secret_type.strip().lower())
+                if existing is None and candidate.natural_key and legacy_identity_counts[legacy_identity] == 1:
+                    legacy = db.execute(select(VaultEntry).where(
+                        VaultEntry.vault_id == vault.id, VaultEntry.key == candidate.natural_key,
+                    )).scalar_one_or_none()
+                    if legacy is not None and (
+                        legacy.source_type == source_type
+                        and legacy.source_endpoint == f"{address}:{port}"
+                        and legacy.resource_name == candidate.resource_name.strip()
+                        and legacy.username == candidate.username.strip()
+                        and legacy.secret_type == candidate.secret_type.strip().lower()
+                    ):
+                        existing = legacy
                 # Preserve operator URI positions only for the same source and account.
                 same_source = existing is not None and (
                     existing.source_type == source_type
                     and existing.source_endpoint == f"{address}:{port}"
-                    and existing.resource_name == candidate.resource_name
-                    and existing.username == candidate.username
-                    and existing.secret_type == candidate.secret_type
+                    and existing.resource_name == candidate.resource_name.strip()
+                    and existing.username == candidate.username.strip()
+                    and existing.secret_type == candidate.secret_type.strip().lower()
                 )
                 uris = vault_entry_uris(existing) if same_source else ()
                 entry, created = upsert_vault_entry(
                     db,
                     vault=vault,
                     entry=VaultEntryInput(
-                        key=candidate.key,
+                        key=existing.key if existing is not None else candidate.key,
                         description=candidate.description,
                         secret_type=candidate.secret_type,
                         value=candidate.value,

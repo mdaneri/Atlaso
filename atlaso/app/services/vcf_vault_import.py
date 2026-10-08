@@ -36,6 +36,7 @@ class VcfPasswordCandidate:
     resource_name: str
     value: str = field(repr=False)
     uris: tuple[str, ...] = ()
+    natural_key: str = ""
 
     @property
     def selection_id(self) -> str:
@@ -504,8 +505,6 @@ def discover_vcf_passwords(
             if source_type == "sddc_manager"
             else _vcf_installer_candidates(api)
         )
-    key_counts = Counter(candidate.key for candidate in candidates)
-    original_keys = set(key_counts)
     allocated_keys: set[str] = set()
     selection_ids: set[str] = set()
     unique_candidates: list[VcfPasswordCandidate] = []
@@ -514,19 +513,13 @@ def discover_vcf_passwords(
         if token in selection_ids:
             raise VcfDepotTargetError("VCF returned duplicate credential identities; inspect the source again.")
         selection_ids.add(token)
-        key = candidate.key
-        if len(key) > 180 or key_counts[key] > 1 or key in allocated_keys:
-            # Reserve original keys as well as final keys so a discriminator cannot
-            # take another credential's natural key. Tokens contain identity only.
-            suffix = ".id_" + token.removeprefix("vcf-")
-            key = candidate.key[:180 - len(suffix)].rstrip(".") + suffix
-            attempt = 1
-            while key in original_keys or key in allocated_keys:
-                attempt += 1
-                suffix = ".id_" + token.removeprefix("vcf-") + f"_{attempt}"
-                key = candidate.key[:180 - len(suffix)].rstrip(".") + suffix
+        # Every identity gets the same bounded key independently of its peers.
+        natural_key = candidate.natural_key or candidate.key
+        key = "vcf.imported.id_" + token.removeprefix("vcf-")
+        if key in allocated_keys:
+            raise VcfDepotTargetError("VCF returned conflicting credential keys; inspect the source again.")
         allocated_keys.add(key)
-        unique_candidates.append(candidate if key == candidate.key else replace(candidate, key=key))
+        unique_candidates.append(replace(candidate, key=key, natural_key=natural_key))
     if isinstance(candidates, VcfPasswordDiscovery):
         candidates[:] = unique_candidates
         return candidates
