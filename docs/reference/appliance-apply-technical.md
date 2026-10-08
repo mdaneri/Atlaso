@@ -230,6 +230,11 @@ rollback, cancellation, and desired-state reversion retain the old terminal list
 
 ### Network apply
 
+During upgrade handoff, Atlaso scopes legacy wildcard management listeners to the previous addresses while preserving
+Public Services ownership of existing management HTTPS sockets. The management site retains HTTP redirects and
+loopback readiness listeners. Nginx configuration validation must pass before activation; a validation failure restores
+the prior site and leaves the handoff to recover the captured state.
+
 The real network apply path is Photon `systemd-networkd` backed. The `network` apply unit stages Atlaso's rendered
 network config at `/var/lib/atlaso/apply/network/atlaso-network.conf`, validates management, physical, VLAN, CIDR, and
 gateway intent, installs Atlaso-owned `.network` and `.netdev` files under `/etc/systemd/network/`, reloads networkd,

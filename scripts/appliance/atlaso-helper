@@ -31563,6 +31563,9 @@ def _scope_management_handoff_old_listener(state: dict) -> None:
     if not addresses or any(address.is_unspecified or address.is_multicast or address.is_link_local
                             for address in addresses):
         raise ValueError("previous management listener addresses are invalid")
+    public_tls = _management_handoff_previous_public_tls_addresses(state)
+    public_port = int(state.get("previous_management_public_port") or
+                      (443 if state["previous_https_enabled"] else 80))
     scoped: list[str] = []
     listeners = 0
     wildcard_inventory: list[tuple[int, bool]] = []
@@ -31577,8 +31580,14 @@ def _scope_management_handoff_old_listener(state: dict) -> None:
             listeners += 1
             family = 4 if ipv4 else 6
             wildcard_inventory.append((family, "ssl" in match.group(3).split()))
-            for address in addresses:
+            # Preserve local readiness and keep a TLS block explicit even when
+            # Public Services owns every external socket in this family.
+            loopback = ip_address("127.0.0.1" if family == 4 else "::1")
+            for address in dict.fromkeys([*addresses, loopback]):
                 if address.version == family:
+                    if ("ssl" in match.group(3) and int(match.group(2)) == public_port
+                            and str(address) in public_tls):
+                        continue
                     binding = str(address) if family == 4 else f"[{address}]"
                     scoped.append(f"{match.group(1)}listen {binding}:{match.group(2)}{match.group(3)};")
         elif re.match(r"\s*listen\s", line):
@@ -31605,15 +31614,12 @@ def _scope_management_handoff_old_listener(state: dict) -> None:
         else:
             scoped.append(line)
     if already_scoped:
-        public_tls = _management_handoff_previous_public_tls_addresses(state)
         if listeners or any(len(ports) > 1 for ports in scoped_ports.values()) or any(
             (str(address), ssl) not in already_scoped
             and not (ssl and str(address) in public_tls)
             for address in addresses for ssl in ((False, True) if state["previous_https_enabled"] else (False,))
         ):
             raise ValueError("previous management nginx listener is not canonical")
-        public_port = int(state.get("previous_management_public_port") or
-                          (443 if state["previous_https_enabled"] else 80))
         dedicated = not state["previous_https_enabled"] or any(
             str(address) not in public_tls for address in addresses
         )
