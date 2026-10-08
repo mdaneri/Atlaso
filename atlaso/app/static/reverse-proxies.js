@@ -37,7 +37,7 @@
 
   function validPathPrefix(value) {
     const path = String(value || "");
-    return path.startsWith("/") && path.length <= 1024
+    return path.startsWith("/") && Array.from(path).length <= 1024
       && !RESERVED_ROUTE_COMPONENT.test(path.split("/")[1])
       && !/[\\%?#\s\u0085;{}$"'\x00-\x1f\x7f]/u.test(path)
       && !path.includes("//") && !path.split("/").some((segment) => segment === "." || segment === "..");
@@ -453,19 +453,23 @@
       }));
     }
 
+    function applyCollection(payload) {
+      if (!Array.isArray(payload.items) || payload.items.length > MAX_ITEMS || !Array.isArray(payload.listener_options)) {
+        throw new Error("The reverse-proxy data response is invalid.");
+      }
+      setCollectionRows(payload.items);
+      updateListenerOptions(payload.listener_options);
+      setValidation(payload);
+    }
+
     async function refreshData() {
       const sequence = ++loadSequence;
       try {
         const response = await fetch(dataUrl, { credentials: "same-origin", headers: { Accept: "application/json" } });
         if (!response.ok) throw new Error(await endpointMessage(response, "Reverse-proxy data could not be loaded."));
         const payload = await response.json();
-        if (!Array.isArray(payload.items) || payload.items.length > MAX_ITEMS || !Array.isArray(payload.listener_options)) {
-          throw new Error("The reverse-proxy data response is invalid.");
-        }
         if (sequence !== loadSequence) return;
-        setCollectionRows(payload.items);
-        updateListenerOptions(payload.listener_options);
-        setValidation(payload);
+        applyCollection(payload);
         showError("");
       } catch (error) {
         if (sequence !== loadSequence) return;
@@ -714,8 +718,17 @@
         body: JSON.stringify(payload),
       });
       if (!response.ok) throw new Error(await endpointMessage(response, "The reverse-proxy change could not be saved."));
-      await refreshData();
-      return response.json().catch(() => ({}));
+      const sequence = ++loadSequence;
+      try {
+        const saved = await response.json();
+        if (sequence === loadSequence) {
+          applyCollection(saved);
+          showError("");
+        }
+        return saved;
+      } catch {
+        throw new Error("The change was saved, but its returned collection could not be displayed. Refresh the page before saving again.");
+      }
     }
 
     function openWizard(row, launcher) {

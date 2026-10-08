@@ -70,7 +70,8 @@ The health fallback also shows the latest bounded observations after **Refresh h
    Upstream literals must be ordinary unicast addresses, excluding loopback, link-local, multicast, unspecified,
    reserved and IPv4-mapped IPv6 addresses. Legacy shortened, octal and hexadecimal numeric spellings are rejected
    on Identity and Routes and during desired-state save or archive restore; use canonical IP literals for upstreams.
-   Route prefixes must not overlap one another or reserved Atlaso and machine paths.
+   Route prefixes must not overlap one another or reserved Atlaso and machine paths. The 1024-character limit counts
+   Unicode code points, including one character per astral symbol.
    Atlaso reserves protocol roots, including favicon, certificate downloads, OAuth/OpenID/OIDC, and the `/PROD` prefix;
    catch-all application routes reject requests for these namespaces before forwarding them upstream.
    The Routes step rejects encoded
@@ -99,6 +100,9 @@ The health fallback also shows the latest bounded observations after **Refresh h
 5. **State**: **Proxy enabled** defaults off. Turn it on to include the proxy in validated desired state.
 6. **Review**: check the identity, listener, path routes, publication, and desired state, including any TLS warnings.
    Choose **Save reverse proxy** to save the desired state.
+
+Saving updates the collection and validation preview from the saved response. If the saved result cannot be displayed,
+refresh the page before saving again.
 
 Saving changes desired state only. Review the changed units in **Review appliance changes**, select the applicable
 units, and submit **Submit appliance changes**. Appliance Apply validates and publishes the proxy together with its

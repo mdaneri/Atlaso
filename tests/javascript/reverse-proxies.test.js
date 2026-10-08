@@ -81,6 +81,59 @@ test("route steps reject ambiguous paths before review", () => {
   }
 });
 
+test("path limits count Unicode code points and permit their UTF-16 input representation", () => {
+  for (const count of [600, 1023]) assert.equal(reverseProxies.validPathPrefix("/" + "😀".repeat(count)), true);
+  assert.equal(reverseProxies.validPathPrefix("/" + "😀".repeat(1024)), false);
+  const template = fs.readFileSync("atlaso/app/templates/partials/reverse_proxies.html", "utf8");
+  assert.equal((template.match(/name="path_prefix" maxlength="2048"/g) || []).length, 2);
+  assert.doesNotMatch(template, /name="path_prefix" maxlength="1024"/);
+});
+
+test("successful saves consume the returned collection and ignore older GET responses", async () => {
+  const source = fs.readFileSync("atlaso/app/static/reverse-proxies.js", "utf8");
+  const applyStart = source.indexOf("    function applyCollection(");
+  const applyEnd = source.indexOf("    function routeField(", applyStart);
+  const submitStart = source.indexOf("    async function submitPayload(");
+  const submitEnd = source.indexOf("    function openWizard(", submitStart);
+  const enabledStart = source.indexOf("    const saveEnabled =");
+  const enabledEnd = source.indexOf("    const text =", enabledStart);
+  const saved = { items: [{ id: 7, name: "Saved", enabled: true, routes: [], listeners: [] }], listener_options: [], config_preview: "new preview" };
+  let finishGet, failPost = false;
+  const calls = [], collections = [], previews = [];
+  const context = vm.createContext({ MAX_ITEMS: 512, loadSequence: 0, saveUrl: "/save", dataUrl: "/data", csrf: "test", canWrite: true, items: [],
+    serializeProxy: (record, enabled) => ({ ...record, enabled }), visibleProxyRow: reverseProxies.visibleProxyRow,
+    setCollectionRows: (items) => { context.items = items; collections.push(items); },
+    updateListenerOptions: () => {}, setValidation: (payload) => previews.push(payload.config_preview), showError: () => {},
+    endpointMessage: async () => "POST rejected",
+    fetch: async (url, options) => {
+      calls.push([url, options.method]);
+      if (options.method === "POST") return { ok: !failPost, json: async () => saved };
+      return new Promise((resolve) => { finishGet = resolve; });
+    } });
+  vm.runInContext(source.slice(applyStart, applyEnd) + source.slice(submitStart, submitEnd)
+    + source.slice(enabledStart, enabledEnd) + "globalThis.runEnabled = saveEnabled;", context);
+  const pending = context.refreshData();
+  await context.submitPayload({ id: 7, enabled: true });
+  assert.equal(collections.at(-1), saved.items);
+  assert.equal(previews.at(-1), "new preview");
+  finishGet({ ok: true, json: async () => ({ items: [{ id: 7, enabled: false }], listener_options: [] }) });
+  await pending;
+  assert.equal(collections.length, 1);
+  assert.equal(calls.length, 2); // The initial GET and save POST; no post-save GET.
+  let restored = 0, updated;
+  const cell = { getRow: () => ({ getData: () => ({ id: 7 }), update: async (row) => { updated = row; } }),
+    getValue: () => true, restoreOldValue: () => { restored += 1; } };
+  await context.runEnabled(cell);
+  assert.equal(restored, 0);
+  assert.equal(updated.enabled, true);
+  failPost = true;
+  await context.runEnabled(cell);
+  assert.equal(restored, 1);
+  failPost = false;
+  saved.items = null;
+  await assert.rejects(context.submitPayload({ id: 7 }), /change was saved.*Refresh the page/);
+});
+
 test("route steps reject every reserved component without rejecting neighboring application names", () => {
   const reserved = ["ui", "api", "openapi.json", "identity", "ca", "pxe", "prod", "registry", "v2", "static",
     "manifest.webmanifest", "service-worker.js", "terminal", "requests", "depot",
@@ -448,8 +501,8 @@ test("display escaping protects operator-controlled text", () => {
 
 test("management service worker precaches the reverse-proxy page asset", () => {
   const worker = fs.readFileSync("atlaso/app/static/service-worker.js", "utf8");
-  assert.match(worker, /const ATLASO_CACHE = `\$\{ATLASO_CACHE_PREFIX\}365`;/);
-  assert.match(worker, /"\/static\/reverse-proxies\.js\?v=issue-723-12"/);
+  assert.match(worker, /const ATLASO_CACHE = `\$\{ATLASO_CACHE_PREFIX\}366`;/);
+  assert.match(worker, /"\/static\/reverse-proxies\.js\?v=issue-723-13"/);
 });
 
 function classListFor(classes) {
