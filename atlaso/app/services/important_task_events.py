@@ -17,6 +17,7 @@ from atlaso.important_events import (
     canonical_value,
     failure_reason,
     validate_event,
+    validate_route_conflict,
 )
 
 
@@ -80,8 +81,24 @@ def execution_projection(payload: dict[str, Any], component: str) -> list[dict[s
             reason = "validation_rejected"
         if stage == "rollback" and code:
             reason = "rollback_failed"
-        output.append({"component": component, "stage": stage, "outcome": "succeeded" if code == 0 else "failed",
-                       "reason": reason, "returncode": int(code)})
+        projected: dict[str, Any] = {"component": component, "stage": stage,
+                                     "outcome": "succeeded" if code == 0 else "failed",
+                                     "reason": reason, "returncode": int(code)}
+        if reason == "management_route_conflict":
+            if (route_conflict := validate_route_conflict(command.get("route_conflict"))) is not None:
+                projected["route_conflict"] = route_conflict
+        output.append(projected)
+    handoff = payload.get("management_handoff_failure", payload.get("management_handoff"))
+    if (component == "task" and isinstance(handoff, dict)
+            and canonical_value(handoff.get("reason_code"), REASONS.keys()) == "management_route_conflict"):
+        if payload.get("rollback_proven") is True and handoff.get("rolled_back") is True:
+            output.append({"component": component, "stage": "rollback", "outcome": "succeeded",
+                           "reason": "dependent_work_rolled_back", "returncode": 0})
+        elif payload.get("rollback_proven") is False:
+            rollback_failed = handoff.get("management_handoff") == "rollback incomplete"
+            output.append({"component": component, "stage": "rollback", "outcome": "failed",
+                           "reason": "rollback_failed" if rollback_failed else "evidence_unavailable",
+                           "returncode": 1 if rollback_failed else None})
     for key, stage in (("network_transaction_recovery", "recovery"),
                        ("management_handoff_exception_recovery", "rollback")):
         recovery = payload.get(key)
@@ -117,6 +134,9 @@ def capture_important_events(connection: Connection, job_id: str, previous: dict
     projections: list[tuple[str, dict[str, Any], str | None]] = []
     status = canonical_value(job["status"], OUTCOMES) or "failed"
     recorded_reason = canonical_value(payload.get("reason_code"), REASONS.keys())
+    if not result_changed:
+        recorded_reason = canonical_value(old_snapshots.get("task_reason_code"), REASONS.keys())
+    snapshots["task_reason_code"] = recorded_reason
     reason = ("none" if status not in {"failed", "cancelled", "partial-failure"}
               else recorded_reason if recorded_reason is not None
               else failure_reason(job["error"]))
@@ -142,8 +162,18 @@ def capture_important_events(connection: Connection, job_id: str, previous: dict
     for row in rows:
         component = canonical_value(row["component_key"], COMPONENTS) or "task"
         step_status = canonical_value(row["status"], OUTCOMES) or "failed"
-        step_reason = (failure_reason(row["error"]) if step_status in {"failed", "partial-failure"}
-                       else "cancelled" if step_status == "cancelled" else "none")
+        step_payload = _mapping(row["result"])
+        step_recorded_reason = canonical_value(step_payload.get("reason_code"), REASONS.keys())
+        previous_step = old_snapshots.get(f"step:{row['position']}")
+        if (not result_changed and isinstance(previous_step, dict)
+                and previous_step.get("outcome") == step_status):
+            step_recorded_reason = canonical_value(previous_step.get("reason"), REASONS.keys())
+        if step_status in {"failed", "partial-failure"}:
+            step_reason = step_recorded_reason or failure_reason(row["error"])
+        elif step_status == "cancelled":
+            step_reason = step_recorded_reason or "cancelled"
+        else:
+            step_reason = step_recorded_reason or "none"
         step_stage = "queued" if step_status == "pending" else "started" if step_status == "running" else "completed"
         step_at = _timestamp(row["created_at"] if step_stage == "queued" else
                              row["started_at"] if step_stage == "started" else row["finished_at"])
