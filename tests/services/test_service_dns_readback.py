@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ipaddress
+import json
 import struct
 from types import SimpleNamespace
 
@@ -904,3 +905,412 @@ def test_nss_readback_validates_bounded_timeout(monkeypatch, timeout):
             [{"hostname": "node.example.internal", "record_type": "A", "address": "192.0.2.10"}],
             timeout=timeout,
         )
+
+
+_KERNEL_HOSTNAME = "appliance.example.internal"
+_LOCAL_ADDRESSES = ("192.0.2.10", "2001:db8::10")
+_SYNTHETIC_QUERY = (
+    f"{_KERNEL_HOSTNAME}: {_LOCAL_ADDRESSES[0]} -- link: mgmt0\n"
+    f"                          {_LOCAL_ADDRESSES[1]} -- link: access0\n"
+    "\n-- Information acquired via protocol DNS in 0.1ms.\n"
+    "-- Data is authenticated: yes; Data was acquired via local or encrypted transport: yes\n"
+    "-- Data from: synthetic\n"
+)
+_IP_JSON = json.dumps([{
+    "ifname": "mgmt0",
+    "addr_info": [
+        {"family": "inet", "local": _LOCAL_ADDRESSES[0]},
+        {"family": "inet6", "local": _LOCAL_ADDRESSES[1]},
+    ],
+}])
+_IPV4_ONLY_JSON = json.dumps([{
+    "ifname": "mgmt0",
+    "addr_info": [{"family": "inet", "local": _LOCAL_ADDRESSES[0]}],
+}])
+_IPV6_ONLY_JSON = json.dumps([{
+    "ifname": "access0",
+    "addr_info": [{"family": "inet6", "local": _LOCAL_ADDRESSES[1]}],
+}])
+
+
+def _install_own_hostname_commands(monkeypatch, *, getent_output="::1 appliance.example.internal\n",
+                                   resolvectl_output=_SYNTHETIC_QUERY, ip_output=_IP_JSON,
+                                   platform="linux", hostname=_KERNEL_HOSTNAME, failures=None):
+    """Install controlled NSS, resolver, and local-address commands for hostname proof tests.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace native command and platform dependencies.
+        getent_output: Output returned by the controlled getent invocation.
+        resolvectl_output: Output returned by the controlled resolvectl invocation.
+        ip_output: JSON output returned by the controlled ip invocation.
+        platform: Platform value used by the NSS proof guard.
+        hostname: Kernel hostname returned by the socket module.
+        failures: Optional command-to-exception or command-to-exit-code mapping.
+    """
+    calls = []
+    failures = failures or {}
+
+    def run(args, **kwargs):
+        """Return controlled native command output and retain invocation details.
+
+        Args:
+            args: Argument vector passed to subprocess.run.
+            **kwargs: Keyword arguments passed to subprocess.run.
+        """
+        calls.append((list(args), kwargs))
+        command = args[0]
+        failure = failures.get(command)
+        if isinstance(failure, BaseException):
+            raise failure
+        if failure is not None:
+            return SimpleNamespace(returncode=failure, stdout="", stderr="failed")
+        if command == "getent":
+            return SimpleNamespace(returncode=0, stdout=getent_output, stderr="")
+        if command == "resolvectl":
+            return SimpleNamespace(returncode=0, stdout=resolvectl_output, stderr="")
+        if command == "ip":
+            return SimpleNamespace(returncode=0, stdout=ip_output, stderr="")
+        pytest.fail(f"Unexpected native command: {command}")
+
+    monkeypatch.setattr(dns_readback.subprocess, "run", run)
+    monkeypatch.setattr(dns_readback, "sys", SimpleNamespace(platform=platform))
+    monkeypatch.setattr(dns_readback.socket, "gethostname", lambda: hostname)
+    return calls
+
+
+def _own_hostname_records():
+    """Return direct DNS address records for the current kernel hostname."""
+    return [
+        {"hostname": _KERNEL_HOSTNAME, "record_type": "A", "address": _LOCAL_ADDRESSES[0]},
+        {"hostname": _KERNEL_HOSTNAME, "record_type": "AAAA", "address": _LOCAL_ADDRESSES[1]},
+    ]
+
+
+@pytest.mark.parametrize(
+    "fallback, observed_json, resolver_output",
+    [
+        (
+            "::1", _IPV4_ONLY_JSON,
+            f"{_KERNEL_HOSTNAME}: {_LOCAL_ADDRESSES[0]} -- link: mgmt0\n"
+            "                          ::1 -- link: lo\n\n"
+            "-- Information acquired via protocol DNS in 0.1ms.\n"
+            "-- Data from: synthetic\n",
+        ),
+        (
+            "127.0.0.2", _IPV6_ONLY_JSON,
+            f"{_KERNEL_HOSTNAME}: 127.0.0.2 -- link: lo\n"
+            f"                          {_LOCAL_ADDRESSES[1]} -- link: access0\n\n"
+            "-- Information acquired via protocol DNS in 0.1ms.\n"
+            "-- Data from: synthetic\n",
+        ),
+    ],
+    ids=["ipv6-loopback-fallback", "ipv4-loopback-fallback"],
+)
+def test_nss_readback_accepts_only_proven_synthetic_fallback_for_direct_kernel_hostname(
+    monkeypatch, fallback, observed_json, resolver_output,
+):
+    """Allow exact own-hostname family fallback after resolver and address proofs succeed.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace native host commands.
+        fallback: The family-specific loopback fallback returned by NSS.
+        observed_json: Local interface inventory for the non-fallback address family.
+        resolver_output: System resolver output containing local addresses and synthetic provenance.
+    """
+    calls = _install_own_hostname_commands(
+        monkeypatch,
+        getent_output=f"{fallback} {_KERNEL_HOSTNAME}\n",
+        resolvectl_output=resolver_output,
+        ip_output=observed_json,
+    )
+
+    dns_readback.verify_service_dns_nss(_own_hostname_records())
+
+    assert [call[0] for call in calls] == [
+        ["getent", "hosts", _KERNEL_HOSTNAME],
+        ["resolvectl", "query", "--cache=no", "--network=no", "--legend=yes", _KERNEL_HOSTNAME],
+        ["ip", "-j", "address", "show"],
+    ]
+    assert calls[0][1] == {"capture_output": True, "text": True, "timeout": 2.0, "check": False}
+    for _args, kwargs in calls[1:]:
+        assert kwargs["capture_output"] is True
+        assert kwargs["text"] is True
+        assert kwargs["timeout"] == 2.0
+        assert kwargs["check"] is False
+        assert kwargs["env"]["LC_ALL"] == "C"
+        assert kwargs["env"]["SYSTEMD_COLORS"] == "0"
+
+
+@pytest.mark.parametrize("address", _LOCAL_ADDRESSES, ids=["management-ipv4", "access-ipv6"])
+def test_nss_readback_keeps_actual_local_addresses_on_the_strict_path(monkeypatch, address):
+    """Accept captured local IPv4/IPv6 addresses without invoking synthetic proof.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace native host commands.
+        address: Captured local management or access address returned by NSS.
+    """
+    calls = _install_own_hostname_commands(
+        monkeypatch, getent_output=f"{address} {_KERNEL_HOSTNAME}\n",
+    )
+
+    dns_readback.verify_service_dns_nss(_own_hostname_records())
+
+    assert [call[0] for call in calls] == [["getent", "hosts", _KERNEL_HOSTNAME]]
+
+
+@pytest.mark.parametrize("address", ["2001:db8::10", "2001:db8::99", "127.0.0.9"])
+def test_nss_readback_bounds_unpublished_nss_addresses_to_synthetic_evidence(monkeypatch, address):
+    """Admit a synthetic access address while rejecting stale and arbitrary loopback answers.
+
+    Args:
+        monkeypatch: Replace native commands with local synthesis evidence.
+        address: NSS address absent from the captured management-only DNS record.
+    """
+    calls = _install_own_hostname_commands(monkeypatch, getent_output=f"{address} {_KERNEL_HOSTNAME}\n")
+    records = [{"hostname": _KERNEL_HOSTNAME, "record_type": "A", "address": _LOCAL_ADDRESSES[0]}]
+    if address == "2001:db8::10":
+        dns_readback.verify_service_dns_nss(records)
+        assert [call[0][0] for call in calls] == ["getent", "resolvectl", "ip"]
+    else:
+        with pytest.raises(ValueError, match="unexpected address"):
+            dns_readback.verify_service_dns_nss(records)
+
+
+def test_nss_readback_rejects_synthetic_result_when_kernel_name_is_a_cname_owner(monkeypatch):
+    """The kernel-name exception requires direct address ownership, not an alias.
+
+    Args:
+        monkeypatch: Replace native lookup and current kernel hostname.
+    """
+    calls = _install_own_hostname_commands(monkeypatch)
+    records = [
+        {"hostname": _KERNEL_HOSTNAME, "record_type": "CNAME", "address": "target.example.internal"},
+        {"hostname": "target.example.internal", "record_type": "A", "address": _LOCAL_ADDRESSES[0]},
+    ]
+    with pytest.raises(ValueError, match="unexpected address"):
+        dns_readback.verify_service_dns_nss(records)
+    assert [call[0][0] for call in calls] == ["getent"]
+
+
+def test_nss_readback_does_not_apply_synthesis_to_unrelated_names(monkeypatch):
+    """Keep unexpected NSS results for unrelated direct names strict.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace native host commands.
+    """
+    calls = _install_own_hostname_commands(monkeypatch)
+    records = [{"hostname": "service.example.internal", "record_type": "A", "address": _LOCAL_ADDRESSES[0]}]
+
+    with pytest.raises(ValueError, match="unexpected address"):
+        dns_readback.verify_service_dns_nss(records)
+
+    assert [call[0] for call in calls] == [["getent", "hosts", "service.example.internal"]]
+
+
+def test_nss_readback_does_not_apply_synthesis_to_alias_pointing_at_kernel_hostname(monkeypatch):
+    """Keep an alias to the kernel hostname under the strict captured-address rule.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace native host commands.
+    """
+    calls = _install_own_hostname_commands(
+        monkeypatch, getent_output="::1 alias.example.internal\n",
+    )
+    records = [
+        *_own_hostname_records(),
+        {"hostname": "alias.example.internal", "record_type": "CNAME", "address": _KERNEL_HOSTNAME},
+    ]
+
+    with pytest.raises(ValueError, match="unexpected address"):
+        dns_readback.verify_service_dns_nss(records)
+
+    assert [call[0] for call in calls] == [["getent", "hosts", "alias.example.internal"]]
+
+
+def test_nss_readback_does_not_apply_synthesis_to_retired_kernel_hostname(monkeypatch):
+    """Treat a retired own hostname that still resolves as stale NSS state.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace native host commands.
+    """
+    calls = _install_own_hostname_commands(
+        monkeypatch,
+        getent_output="::1 appliance.example.internal\n",
+    )
+
+    with pytest.raises(ValueError, match="Retired appliance NSS name.*still resolves"):
+        dns_readback.verify_service_dns_nss(
+            [], prior_records=[
+                {"hostname": _KERNEL_HOSTNAME, "record_type": "A", "address": _LOCAL_ADDRESSES[0]},
+            ],
+        )
+
+    assert [call[0] for call in calls] == [["getent", "hosts", _KERNEL_HOSTNAME]]
+
+
+def test_nss_readback_does_not_apply_synthesis_outside_linux(monkeypatch):
+    """Keep the Linux-specific exception disabled on other platforms.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace native host commands.
+    """
+    calls = _install_own_hostname_commands(monkeypatch, platform="win32")
+
+    with pytest.raises(ValueError, match="unexpected address"):
+        dns_readback.verify_service_dns_nss(_own_hostname_records())
+
+    assert [call[0] for call in calls] == [["getent", "hosts", _KERNEL_HOSTNAME]]
+
+
+@pytest.mark.parametrize(
+    "resolvectl_output",
+    [
+        _SYNTHETIC_QUERY.replace("-- Data from: synthetic", "-- Data from: network"),
+        _SYNTHETIC_QUERY.replace("-- Data from: synthetic", "-- Data from: synthetic network"),
+        _SYNTHETIC_QUERY.replace("-- Data from: synthetic", "-- Data from: synthetic cache"),
+        _SYNTHETIC_QUERY.replace("-- Data from: synthetic\n", ""),
+        _SYNTHETIC_QUERY.replace(_KERNEL_HOSTNAME + ":", "other.example.internal:"),
+        _SYNTHETIC_QUERY.replace(_LOCAL_ADDRESSES[0], "not-an-address"),
+    ],
+    ids=["network", "mixed-network", "mixed-cache", "missing-marker", "wrong-name", "bad-address"],
+)
+def test_nss_readback_rejects_unproven_or_malformed_synthetic_output(monkeypatch, resolvectl_output):
+    """Reject non-synthetic, mixed-source, wrong-name, and malformed resolver output.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace native host commands.
+        resolvectl_output: Resolver output that must not authorize an NSS fallback.
+    """
+    _install_own_hostname_commands(monkeypatch, resolvectl_output=resolvectl_output)
+
+    with pytest.raises(ValueError, match="synthetic address proof failed"):
+        dns_readback.verify_service_dns_nss(_own_hostname_records())
+
+
+@pytest.mark.parametrize("bad_address", ["192.0.2.99", "203.0.113.5"], ids=["stale", "unassigned"])
+def test_nss_readback_rejects_synthetic_addresses_not_owned_locally(monkeypatch, bad_address):
+    """Reject a synthetic resolver response containing stale or unassigned addresses.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace native host commands.
+        bad_address: Address present in resolved output but absent from local interface inventory.
+    """
+    output = _SYNTHETIC_QUERY.replace(_LOCAL_ADDRESSES[0], bad_address)
+    _install_own_hostname_commands(monkeypatch, resolvectl_output=output)
+
+    with pytest.raises(ValueError, match="synthetic address proof failed"):
+        dns_readback.verify_service_dns_nss(_own_hostname_records())
+
+
+@pytest.mark.parametrize("command", ["resolvectl", "ip"])
+@pytest.mark.parametrize("failure", ["missing", "timeout", "exit"], ids=["missing", "timeout", "nonzero"])
+def test_nss_readback_fails_closed_when_native_synthetic_proof_command_fails(monkeypatch, command, failure):
+    """Fail closed when resolver or local-address proof is unavailable.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace native host commands.
+        command: Native command whose proof must fail.
+        failure: Failure mode injected into the command.
+    """
+    if failure == "missing":
+        error = FileNotFoundError(command)
+    elif failure == "timeout":
+        error = dns_readback.subprocess.TimeoutExpired([command], 2.0)
+    else:
+        error = 1
+    _install_own_hostname_commands(monkeypatch, failures={command: error})
+
+    with pytest.raises(ValueError, match="synthetic address proof failed"):
+        dns_readback.verify_service_dns_nss(_own_hostname_records())
+
+
+@pytest.mark.parametrize("ip_output", ["not json", "{}", "[]", '[{"ifname":"eth0"}]'])
+def test_nss_readback_rejects_malformed_local_address_inventory(monkeypatch, ip_output):
+    """Reject local address inventories that cannot prove address ownership.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace native host commands.
+        ip_output: Malformed or empty JSON output from ``ip -j address show``.
+    """
+    _install_own_hostname_commands(monkeypatch, ip_output=ip_output)
+
+    with pytest.raises(ValueError, match="synthetic address proof failed"):
+        dns_readback.verify_service_dns_nss(_own_hostname_records())
+
+
+def test_nss_readback_rejects_kernel_hostname_change_during_synthetic_proof(monkeypatch):
+    """Reject resolver proof if the kernel hostname changes during verification.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace native host commands.
+    """
+    _install_own_hostname_commands(monkeypatch)
+    names = iter([_KERNEL_HOSTNAME, "changed.example.internal"])
+    monkeypatch.setattr(dns_readback.socket, "gethostname", lambda: next(names))
+
+    with pytest.raises(ValueError, match="synthetic address proof failed"):
+        dns_readback.verify_service_dns_nss(_own_hostname_records())
+
+
+@pytest.mark.parametrize("resolver_scope", ["", "%access0", "%3"])
+@pytest.mark.parametrize("nss_scope", ["", "%access0", "%3"])
+def test_nss_readback_proves_assigned_link_local_address_and_scope(monkeypatch, resolver_scope, nss_scope):
+    """Accept an assigned link-local answer with matching named, numeric, or absent scope.
+
+    Args:
+        monkeypatch: Replace native commands with current-link address evidence.
+        resolver_scope: Interface scope emitted by resolvectl.
+        nss_scope: Interface scope emitted or omitted by getent hosts.
+    """
+    local_address = "fe80::1234"
+    output = (_SYNTHETIC_QUERY.replace(_LOCAL_ADDRESSES[1], local_address + resolver_scope))
+    observed = json.dumps([
+        {"ifname": "mgmt0", "ifindex": 2, "addr_info": [{"local": _LOCAL_ADDRESSES[0]}]},
+        {"ifname": "access0", "ifindex": 3, "addr_info": [{"local": local_address}]},
+    ])
+    _install_own_hostname_commands(
+        monkeypatch, getent_output=f"{local_address}{nss_scope} {_KERNEL_HOSTNAME}\n",
+        resolvectl_output=output, ip_output=observed,
+    )
+    dns_readback.verify_service_dns_nss(_own_hostname_records())
+
+
+@pytest.mark.parametrize("resolver_address", ["fe80::1234%mgmt0", "fe80::1234%2", "fe80::9999%access0"])
+def test_nss_readback_rejects_link_local_address_on_unowned_scope(monkeypatch, resolver_address):
+    """A scoped synthetic address must be assigned to that exact observed link.
+
+    Args:
+        monkeypatch: Replace native commands with a different-link inventory.
+        resolver_address: Synthetic address with the wrong scope or an unassigned value.
+    """
+    observed = json.dumps([
+        {"ifname": "mgmt0", "ifindex": 2, "addr_info": [{"local": _LOCAL_ADDRESSES[0]}]},
+        {"ifname": "access0", "ifindex": 3, "addr_info": [{"local": "fe80::1234"}]},
+    ])
+    _install_own_hostname_commands(
+        monkeypatch, resolvectl_output=_SYNTHETIC_QUERY.replace(_LOCAL_ADDRESSES[1], resolver_address),
+        ip_output=observed,
+    )
+    with pytest.raises(ValueError, match="synthetic address proof failed"):
+        dns_readback.verify_service_dns_nss(_own_hostname_records())
+
+
+@pytest.mark.parametrize("nss_scope", ["%mgmt0", "%2"])
+def test_nss_readback_rejects_nss_link_local_scope_not_assigned_to_address(monkeypatch, nss_scope):
+    """Valid resolver proof does not admit an NSS result naming a different link.
+
+    Args:
+        monkeypatch: Replace native commands with the assigned access-link evidence.
+        nss_scope: Management-link scope not owning the returned link-local address.
+    """
+    observed = json.dumps([
+        {"ifname": "mgmt0", "ifindex": 2, "addr_info": [{"local": _LOCAL_ADDRESSES[0]}]},
+        {"ifname": "access0", "ifindex": 3, "addr_info": [{"local": "fe80::1234"}]},
+    ])
+    _install_own_hostname_commands(
+        monkeypatch, getent_output=f"fe80::1234{nss_scope} {_KERNEL_HOSTNAME}\n",
+        resolvectl_output=_SYNTHETIC_QUERY.replace(_LOCAL_ADDRESSES[1], "fe80::1234%access0"),
+        ip_output=observed,
+    )
+    with pytest.raises(ValueError, match="unexpected address"):
+        dns_readback.verify_service_dns_nss(_own_hostname_records())
