@@ -14,13 +14,13 @@ test("wizard rejects invalid served and upstream names on the affected step", ()
   const context = vm.createContext({ ...reverseProxies, form: { querySelector: () => hostname },
     routeNodes: () => [{}], routeField: (_route, name) => fields[name] });
   vm.runInContext(source.slice(start, end), context);
-  for (const value of ["app", "bad host.example", "https://app.example", "app.example:443", "-app.example", "a".repeat(64) + ".test", "a".repeat(254)]) {
+  for (const value of ["app", "192.0.2.10", "192.0.2.10.", "::1", "bad host.example", "https://app.example", "app.example:443", "-app.example", "a".repeat(64) + ".test", "a".repeat(254)]) {
     hostname.value = value;
     const result = context.validateStep({ step: { id: "identity" } });
     assert.equal(result.valid, false, value);
     assert.equal(result.field, hostname);
   }
-  for (const value of ["APP.Example.TEST.", "a".repeat(63) + ".test"]) {
+  for (const value of ["APP.Example.TEST.", "192.0.2.10.test", "999.0.2.10", "a".repeat(63) + ".test"]) {
     hostname.value = value;
     assert.equal(context.validateStep({ step: { id: "identity" } }), true, value);
   }
@@ -34,6 +34,33 @@ test("wizard rejects invalid served and upstream names on the affected step", ()
     fields.upstream_host.value = value;
     assert.equal(context.validateStep({ step: { id: "routes" } }), true, value);
   }
+});
+
+test("listener step rejects equal redirect ports and preserves distinct or disabled redirects", () => {
+  const source = fs.readFileSync("atlaso/app/static/reverse-proxies.js", "utf8");
+  const start = source.indexOf("    function validateStep({ step }) {");
+  const end = source.indexOf("    function populateReview()", start);
+  const redirect = { checked: true }, scheme = { value: "https" };
+  const port = { value: "443" }, redirectPort = { value: "443" };
+  const fields = { "[data-reverse-proxy-redirect]": redirect, "[data-reverse-proxy-scheme]": scheme,
+    '[name="port"]': port, '[name="redirect_port"]': redirectPort };
+  const context = vm.createContext({ form: { querySelector: (selector) => fields[selector] },
+    listenerSelect: { selectedOptions: [{}] } });
+  vm.runInContext(source.slice(start, end), context);
+  const validate = () => context.validateStep({ step: { id: "listener" } });
+  assert.equal(validate().valid, false);
+  assert.equal(validate().field, redirectPort);
+  redirectPort.value = "0443";
+  assert.equal(validate().valid, false);
+  redirectPort.value = "80";
+  assert.equal(validate(), true);
+  redirectPort.value = "443";
+  redirect.checked = false;
+  assert.equal(validate(), true);
+  redirect.checked = true;
+  scheme.value = "http";
+  assert.equal(validate().valid, false);
+  assert.equal(validate().field, "scheme");
 });
 
 test("path prefixes overlap when one can capture the other", () => {
@@ -418,8 +445,8 @@ test("display escaping protects operator-controlled text", () => {
 
 test("management service worker precaches the reverse-proxy page asset", () => {
   const worker = fs.readFileSync("atlaso/app/static/service-worker.js", "utf8");
-  assert.match(worker, /const ATLASO_CACHE = `\$\{ATLASO_CACHE_PREFIX\}362`;/);
-  assert.match(worker, /"\/static\/reverse-proxies\.js\?v=issue-723-9"/);
+  assert.match(worker, /const ATLASO_CACHE = `\$\{ATLASO_CACHE_PREFIX\}363`;/);
+  assert.match(worker, /"\/static\/reverse-proxies\.js\?v=issue-723-10"/);
 });
 
 function classListFor(classes) {

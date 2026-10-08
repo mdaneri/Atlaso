@@ -46,7 +46,9 @@
   function validDnsHostname(value, fullyQualified = false) {
     const host = String(value || "").trim().toLowerCase();
     const labels = host.replace(/\.+$/, "").split(".");
+    const ipv4 = labels.length === 4 && labels.every((label) => /^(?:0|[1-9]\d{0,2})$/.test(label) && Number(label) <= 255);
     return host.length <= 253 && (!fullyQualified || labels.length >= 2)
+      && (!fullyQualified || !ipv4)
       && labels.every((label) => /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(label));
   }
 
@@ -598,6 +600,10 @@
         if (!listenerSelect || !listenerSelect.selectedOptions.length) return { valid: false, message: "Select at least one eligible listener address.", field: "listeners" };
         if (form.querySelector("[data-reverse-proxy-redirect]")?.checked && form.querySelector("[data-reverse-proxy-scheme]")?.value !== "https") {
           return { valid: false, message: "HTTP-to-HTTPS redirect requires an HTTPS listener.", field: "scheme" };
+        }
+        if (form.querySelector("[data-reverse-proxy-redirect]")?.checked
+          && Number(form.querySelector('[name="port"]')?.value) === Number(form.querySelector('[name="redirect_port"]')?.value)) {
+          return { valid: false, message: "The HTTPS and HTTP redirect listeners must use different TCP ports.", field: form.querySelector('[name="redirect_port"]') };
         }
       }
       if (step.id === "routes") {
