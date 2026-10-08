@@ -334,3 +334,78 @@ def test_archive_rejects_observed_appliance_upstream_before_replacement(client, 
         db.expire_all()
         assert db.get(ReverseProxy, saved.id).routes[0].upstream_host == "10.10.20.30"
         assert export_settings_archive(db, actor="test")["data"] == before
+
+
+@pytest.mark.parametrize("target", ["served", "upstream"])
+def test_archive_reserves_migrated_factory_names_atomically(client, target):
+    """Reject every factory migration collision before replacing archived rows.
+
+    Args:
+        client: Initialized appliance fixture.
+        target: Served hostname or upstream position claiming the migrated identity.
+    """
+    from atlaso.app.services.service_dns_defaults import FACTORY_SERVICE_IDENTITIES
+
+    with SessionLocal() as db:
+        for identity in FACTORY_SERVICE_IDENTITIES:
+            if db.scalar(select(identity.model)) is None:
+                db.add(identity.model())
+        db.commit()
+        interface = db.scalar(select(PhysicalInterface).where(PhysicalInterface.name == "eth2"))
+        save_proxy(db, payload(listeners=[{"interface": "eth2", "address": interface.ip_cidr.split("/")[0]}]), actor="test")
+        before = export_settings_archive(db, actor="test")["data"]
+        for identity in [*FACTORY_SERVICE_IDENTITIES, None]:
+            archive = deepcopy(export_settings_archive(db, actor="test"))
+            data = archive["data"]
+            data["appliance_settings"][0]["fqdn"] = "core.example.test"
+            label = identity.label if identity else "esxi-pxe"
+            if identity:
+                data[identity.model.__tablename__][0][identity.hostname_attribute] = f"{label.upper()}.ATLASO.INTERNAL."
+            else:
+                data["settings"] = [row for row in data["settings"] if row["key"] != ESXI_PXE_HOSTNAME_KEY]
+                data["settings"].append({"key": ESXI_PXE_HOSTNAME_KEY, "value": "ESXI-PXE.ATLASO.INTERNAL."})
+            if target == "served":
+                data["reverse_proxies"][0]["hostname"] = f"{label}.example.test"
+            else:
+                data["reverse_proxy_routes"][0]["upstream_host"] = f"{label}.example.test"
+            with pytest.raises(ValueError, match="Atlaso.*service"):
+                restore_settings_archive(db, archive)
+            db.expire_all()
+            assert export_settings_archive(db, actor="test")["data"] == before
+
+
+@pytest.mark.parametrize("label", ["ntp", "ca", "kms", "ldap", "oidc", "nfs", "registry", "depot", "esxi-pxe"])
+def test_factory_projection_preserves_operator_names(label):
+    """Keep custom service names while projecting canonical factory migration.
+
+    Args:
+        label: Canonical factory-owned service label.
+    """
+    from atlaso.app.services.service_dns_defaults import (
+        projected_factory_service_hostname,
+    )
+
+    assert projected_factory_service_hostname(label, f"{label.upper()}.ATLASO.INTERNAL.", "core.example.test") == f"{label}.example.test"
+    assert projected_factory_service_hostname(label, "custom.operator.test", "core.example.test") == "custom.operator.test"
+    assert projected_factory_service_hostname(label, f"{label}.atlaso.internal", "") == f"{label}.atlaso.internal"
+
+
+def test_archive_allows_unclaimed_factory_target_for_operator_identity(client):
+    """Restore a proxy at a factory target when the service retains a custom name.
+
+    Args:
+        client: Initialized appliance fixture.
+    """
+    from atlaso.app.models import NtpSettings
+
+    with SessionLocal() as db:
+        interface = db.scalar(select(PhysicalInterface).where(PhysicalInterface.name == "eth2"))
+        save_proxy(db, payload(listeners=[{"interface": "eth2", "address": interface.ip_cidr.split("/")[0]}]), actor="test")
+        archive = export_settings_archive(db, actor="test")
+        archive["data"]["appliance_settings"][0]["fqdn"] = "core.example.test"
+        archive["data"]["ntp_settings"][0]["hostname"] = "custom.operator.test"
+        archive["data"]["reverse_proxies"][0]["hostname"] = "ntp.example.test"
+        restore_settings_archive(db, archive)
+        db.expire_all()
+        assert db.scalar(select(NtpSettings)).hostname == "custom.operator.test"
+        assert db.scalar(select(ReverseProxy)).hostname == "ntp.example.test"

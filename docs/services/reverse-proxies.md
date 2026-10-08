@@ -125,6 +125,8 @@ recovery material; global CA and Public Services Apply regenerate the proxy cert
 A restore changes desired state only and still requires global Appliance Apply.
 Archives with an enabled HTTPS proxy require an enabled CA; restore rejects this inconsistent relationship before
 replacing saved state. Disabled HTTPS intent and enabled HTTP proxies remain portable without an enabled CA.
+Preflight also reserves service names that factory-default identity migration will create under the restored appliance
+domain, including ESXi PXE, before replacing any saved rows. Operator-chosen service names remain unchanged.
 
 <!-- ATLASO-REVERSE-PROXY-ACCEPTANCE-PENDING -->
 ## Native appliance acceptance pending

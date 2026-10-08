@@ -13,7 +13,11 @@ from atlaso.app.services.reverse_proxy_publication import (
     dns_plan,
     validate_dns_ownership,
 )
-from atlaso.app.services.service_dns_defaults import factory_service_hostname
+from atlaso.app.services.service_dns_defaults import (
+    FACTORY_SERVICE_IDENTITIES,
+    factory_service_hostname,
+    projected_factory_service_hostname,
+)
 
 
 def candidates(data: dict[str, Any]) -> list[models.ReverseProxy]:
@@ -109,10 +113,16 @@ def validate_candidates(proxies: list[models.ReverseProxy], data: dict[str, Any]
     appliance_fqdn = str(
         (data.get("appliance_settings") or [{}])[0].get("fqdn") or "core.atlaso.internal"
     )
+    for identity in FACTORY_SERVICE_IDENTITIES:
+        for service_row in data.get(identity.model.__tablename__, []):
+            names.add(projected_factory_service_hostname(
+                identity.label, str(service_row.get(identity.hostname_attribute) or ""), appliance_fqdn
+            ))
     default_pxe_hostname = factory_service_hostname("esxi-pxe", appliance_fqdn)
     configured_pxe_hostname = archived_settings.get(ESXI_PXE_HOSTNAME_KEY, "").strip()
     pxe_hostname = _normalize_hostname(configured_pxe_hostname or default_pxe_hostname)
     names.add(pxe_hostname)
+    names.add(projected_factory_service_hostname("esxi-pxe", pxe_hostname, appliance_fqdn))
     dns_settings = (data.get("dns_settings") or [{}])[0]
     archived_dns = models.DnsSettings(
         enabled=dns_settings.get("enabled", False), authoritative=dns_settings.get("authoritative", False),
