@@ -6,8 +6,11 @@ import json
 import re
 import socket
 import ssl
+from collections import Counter
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
+from hashlib import sha256
+from ipaddress import ip_address
 from pathlib import Path, PurePosixPath
 from threading import Lock
 from typing import Any
@@ -60,6 +63,7 @@ from atlaso.app.services.vaults import (
     redact_secret_values,
     upsert_vault_entry,
     vault_entry_metadata,
+    vault_entry_uris,
 )
 from atlaso.app.services.vcf_backups import (
     VCF_BACKUP_DEFAULT_USERNAME,
@@ -132,6 +136,56 @@ from atlaso.app.ui_routes import MANAGEMENT_UI_ROOT
 
 Endpoint = Callable[..., Any]
 VCF_FQDN_POPULATION_MAX_AGE_SECONDS = 15 * 60
+
+
+def _canonical_vcf_vault_source_endpoint(address: str, port: int) -> str:
+    """Normalize source host spelling while retaining its explicit port.
+
+    Args:
+        address: Parsed source hostname or IP address.
+        port: Source service port.
+    """
+    host = address.strip().strip("[]")
+    try:
+        host = str(ip_address(host))
+    except ValueError:
+        host = host.removesuffix(".").lower()
+    return f"{host}:{port}"
+
+
+def _vcf_vault_source_matches(stored: str, address: str, port: int) -> bool:
+    """Compare a persisted host-port identity, including older unnormalized spellings.
+
+    Args:
+        stored: Existing source identity stored as host followed by its port.
+        address: Parsed current source hostname or IP address.
+        port: Current source service port.
+    """
+    host, separator, port_text = stored.rpartition(":")
+    if not separator or not host or not port_text.isdecimal():
+        return False
+    return _canonical_vcf_vault_source_endpoint(host, int(port_text)) == (
+        _canonical_vcf_vault_source_endpoint(address, port)
+    )
+
+
+def _vcf_vault_selection_id(
+    candidate_selection_id: str, source_type: str, address: str, port: int, fingerprint: str
+) -> str:
+    """Bind a candidate metadata token to the source reviewed during inspection.
+
+    Args:
+        candidate_selection_id: Opaque candidate identity and reviewed metadata token.
+        source_type: Reviewed credential source type.
+        address: Parsed source hostname or IP address.
+        port: Reviewed source service port.
+        fingerprint: Verified source TLS certificate fingerprint.
+    """
+    reviewed = (candidate_selection_id, source_type,
+                _canonical_vcf_vault_source_endpoint(address, port),
+                fingerprint.replace(":", "").strip().lower())
+    encoded = json.dumps(reviewed, ensure_ascii=True, separators=(",", ":"))
+    return "vcf-" + sha256(encoded.encode("utf-8")).hexdigest()
 
 
 def _vcf_fqdn_population_serializer() -> URLSafeTimedSerializer:
@@ -825,7 +879,10 @@ def build_router(dependencies: VcfWorkflowsUiDependencies) -> VcfWorkflowsUiRout
                 detail=redact_secret_values(str(exc), [source_password]),
             ) from exc
         return JSONResponse(
-            {"candidates": [candidate.sanitized() for candidate in candidates]},
+            {"candidates": [{**candidate.sanitized(), "candidate_id": _vcf_vault_selection_id(
+                candidate.selection_id, str(payload.get("source_type") or ""), address, port, fingerprint
+            )} for candidate in candidates],
+             "discovery": candidates.summary() if hasattr(candidates, "summary") else {}},
             headers={"Cache-Control": "no-store, private", "Pragma": "no-cache"},
         )
 
@@ -867,6 +924,7 @@ def build_router(dependencies: VcfWorkflowsUiDependencies) -> VcfWorkflowsUiRout
             not isinstance(selected, list)
             or not selected
             or any(not isinstance(item, str) for item in selected)
+            or len(selected) != len(set(selected))
         ):
             raise HTTPException(
                 status_code=422, detail="Select at least one password to import."
@@ -899,7 +957,9 @@ def build_router(dependencies: VcfWorkflowsUiDependencies) -> VcfWorkflowsUiRout
                 password=source_password,
                 expected_fingerprint=fingerprint,
             )
-            by_id = {candidate.candidate_id: candidate for candidate in candidates}
+            by_id = {_vcf_vault_selection_id(
+                candidate.selection_id, source_type, address, port, fingerprint
+            ): candidate for candidate in candidates}
             missing = [
                 candidate_id for candidate_id in selected if candidate_id not in by_id
             ]
@@ -909,21 +969,51 @@ def build_router(dependencies: VcfWorkflowsUiDependencies) -> VcfWorkflowsUiRout
                 )
             imported: list[str] = []
             created_count = 0
+            legacy_identity_counts = Counter(
+                (candidate.natural_key, candidate.resource_name.strip(), candidate.username.strip(), candidate.secret_type.strip().lower())
+                for candidate in candidates if candidate.natural_key
+            )
             for candidate_id in selected:
                 candidate = by_id[candidate_id]
+                existing = db.execute(select(VaultEntry).where(
+                    VaultEntry.vault_id == vault.id, VaultEntry.key == candidate.key,
+                )).scalar_one_or_none()
+                legacy_identity = (candidate.natural_key, candidate.resource_name.strip(), candidate.username.strip(), candidate.secret_type.strip().lower())
+                if existing is None and candidate.natural_key and legacy_identity_counts[legacy_identity] == 1:
+                    legacy = db.execute(select(VaultEntry).where(
+                        VaultEntry.vault_id == vault.id, VaultEntry.key == candidate.natural_key,
+                    )).scalar_one_or_none()
+                    if legacy is not None and (
+                        legacy.source_type == source_type
+                        and _vcf_vault_source_matches(legacy.source_endpoint, address, port)
+                        and legacy.resource_name == candidate.resource_name.strip()
+                        and legacy.username == candidate.username.strip()
+                        and legacy.secret_type == candidate.secret_type.strip().lower()
+                    ):
+                        existing = legacy
+                # Preserve operator URI positions only for the same source and account.
+                same_source = existing is not None and (
+                    existing.source_type == source_type
+                    and _vcf_vault_source_matches(existing.source_endpoint, address, port)
+                    and existing.resource_name == candidate.resource_name.strip()
+                    and existing.username == candidate.username.strip()
+                    and existing.secret_type == candidate.secret_type.strip().lower()
+                )
+                uris = vault_entry_uris(existing) if same_source else ()
                 entry, created = upsert_vault_entry(
                     db,
                     vault=vault,
                     entry=VaultEntryInput(
-                        key=candidate.key,
+                        key=existing.key if existing is not None else candidate.key,
                         description=candidate.description,
                         secret_type=candidate.secret_type,
                         value=candidate.value,
                         username=candidate.username,
                         resource_name=candidate.resource_name,
                         source_type=source_type,
-                        source_endpoint=f"{address}:{port}",
+                        source_endpoint=_canonical_vcf_vault_source_endpoint(address, port),
                         imported_at=utcnow(),
+                        uris=uris or candidate.uris,
                     ),
                     actor=identity.username,
                 )
