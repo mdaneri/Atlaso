@@ -331,14 +331,19 @@
             cell.colSpan = 8;
             cell.className = "muted";
             cell.textContent = "No reverse proxies are configured.";
-            if (canWrite) {
-              const add = document.createElement("button");
-              add.className = "button tiny";
-              add.type = "button";
-              add.dataset.reverseProxyAdd = "";
-              add.textContent = "Add reverse proxy";
-              cell.append(document.createTextNode(" "), add);
-            }
+            row.append(cell);
+            rows.push(row);
+          }
+          if (canWrite) {
+            const row = document.createElement("tr");
+            const cell = document.createElement("td");
+            cell.colSpan = 8;
+            const add = document.createElement("button");
+            add.className = "button tiny";
+            add.type = "button";
+            add.dataset.reverseProxyAdd = "";
+            add.textContent = "Add reverse proxy";
+            cell.append(document.createTextNode(" "), add);
             row.append(cell);
             rows.push(row);
           }

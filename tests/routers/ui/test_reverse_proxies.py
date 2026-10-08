@@ -81,12 +81,24 @@ def test_ca_settings_preserve_proxy_dependencies_before_dns_and_commit(client, c
         assert [(r.id, r.hostname, r.address, r.description) for r in db.scalars(select(DnsRecord))] == dns_before
 
 
-def test_reverse_proxy_page_uses_reviewed_grid_wizard_and_health_contract(client):
+@pytest.mark.parametrize("populated", [False, True])
+def test_reverse_proxy_page_uses_reviewed_grid_wizard_and_health_contract(client, populated):
     """The management page retains its fallback and explicit review flow.
 
     Args:
         client: Isolated authenticated management client.
+        populated: Whether the initial server fallback contains a saved proxy.
     """
+    if populated:
+        from atlaso.app.services.reverse_proxies import save_proxy
+        from tests.routers.api_v1.test_reverse_proxies import (
+            _enable_test_listener,
+            _payload,
+        )
+
+        _enable_test_listener()
+        with SessionLocal() as db:
+            save_proxy(db, _payload(), actor="test")
     login(client)
     response = client.get("/ui/management/traffic-publishing")
 
@@ -117,12 +129,24 @@ def test_reverse_proxy_page_uses_reviewed_grid_wizard_and_health_contract(client
     assert "/static/reverse-proxies.js" in page
 
 
-def test_read_only_firewall_user_keeps_fallback_without_mutation_wizard(client):
+@pytest.mark.parametrize("populated", [False, True])
+def test_read_only_firewall_user_keeps_fallback_without_mutation_wizard(client, populated):
     """A reader can inspect rendered proxy rows and health without edit controls.
 
     Args:
         client: Isolated management client.
+        populated: Whether the initial server fallback contains a saved proxy.
     """
+    if populated:
+        from atlaso.app.services.reverse_proxies import save_proxy
+        from tests.routers.api_v1.test_reverse_proxies import (
+            _enable_test_listener,
+            _payload,
+        )
+
+        _enable_test_listener()
+        with SessionLocal() as db:
+            save_proxy(db, _payload(), actor="test")
     with SessionLocal() as db:
         admin = db.scalar(select(User).where(User.username == "admin"))
         assert admin is not None

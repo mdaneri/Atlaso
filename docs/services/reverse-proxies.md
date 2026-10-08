@@ -24,6 +24,9 @@ and trunk physical interfaces are not public reverse-proxy listeners. Confirm th
 reachable from the appliance and that its name resolves to the intended upstream. Use HTTPS when the upstream supports
 it; HTTP sends the application traffic without TLS protection between Atlaso and the upstream.
 
+The permission-gated Add action remains available in both empty and populated fallback collections when the grid
+cannot load; it opens the same review wizard as the normal grid.
+
 Reverse proxies preserve the application’s own authentication. Atlaso forwards the selected paths and manages the
 forwarded host, client address, protocol, and WebSocket upgrade headers. The editor does not accept arbitrary headers,
 authentication bypasses, or raw nginx directives.

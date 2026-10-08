@@ -47,6 +47,15 @@ test("browser route validation covers the canonical protocol namespace inventory
   assert.equal(reverseProxies.validPathPrefix("/certificate-authority/certificates/10/downloads/pem"), false);
 });
 
+test("browser retains slashless PROD prefix parity with canonical backend inventory", () => {
+  const inventory = fs.readFileSync("atlaso/app/ui_routes.py", "utf8");
+  assert.match(inventory, /"\/PROD",/);
+  for (const path of ["/product", "/production", "/prod-app", "/PRODartifact", "/PrOd-app/"]) {
+    assert.equal(reverseProxies.validPathPrefix(path), false, path);
+  }
+  assert.equal(reverseProxies.validPathPrefix("/app/product"), true);
+});
+
 test("fallback add action opens the existing new-proxy wizard", () => {
   const source = fs.readFileSync("atlaso/app/static/reverse-proxies.js", "utf8");
   const start = source.lastIndexOf('    fallback?.addEventListener("click",');
@@ -378,8 +387,8 @@ test("display escaping protects operator-controlled text", () => {
 
 test("management service worker precaches the reverse-proxy page asset", () => {
   const worker = fs.readFileSync("atlaso/app/static/service-worker.js", "utf8");
-  assert.match(worker, /const ATLASO_CACHE = `\$\{ATLASO_CACHE_PREFIX\}360`;/);
-  assert.match(worker, /"\/static\/reverse-proxies\.js\?v=issue-723-7"/);
+  assert.match(worker, /const ATLASO_CACHE = `\$\{ATLASO_CACHE_PREFIX\}361`;/);
+  assert.match(worker, /"\/static\/reverse-proxies\.js\?v=issue-723-8"/);
 });
 
 function classListFor(classes) {
@@ -416,12 +425,14 @@ test("fallback refresh replaces nonempty rows, removes stale actions, and escape
   refresh([{ id: 10, name: "Old", hostname: "old.example.test", listeners: [], routes: [] }]);
   refresh([{ id: 11, name: "<img src=x>", hostname: "new.example.test", scheme: "https", port: 443,
     listeners: [{interface: "eth1", address: "192.0.2.10"}], routes: [{path_prefix: "/new/"}], enabled: true }]);
-  assert.equal(body.children.length, 1);
+  assert.equal(body.children.length, 2);
+  assert.equal(body.children[1].children[0].children[1].dataset.reverseProxyAdd, "");
   assert.equal(body.children[0].children[0].children[0].textContent, "<img src=x>");
   assert.equal(body.children[0].children[6].children[0].textContent, "Enabled");
   assert.equal(body.children[0].children[7].children[0].dataset.reverseProxyEdit, "11");
   vm.runInContext("canWrite = false", context);
   refresh([{id: 12, name: "Read", listeners: [], routes: []}]);
+  assert.equal(body.children.length, 1);
   assert.equal(body.children[0].children[7].children[0].textContent, "Read only");
   assert.deepEqual(body.children[0].children[7].children[0].dataset, {});
   refresh([]);
@@ -430,7 +441,8 @@ test("fallback refresh replaces nonempty rows, removes stale actions, and escape
   assert.equal(body.children[0].children[0].colSpan, 8);
   vm.runInContext("canWrite = true", context);
   refresh([]);
-  const add = body.children[0].children[0].children[1];
+  assert.equal(body.children.length, 2);
+  const add = body.children[1].children[0].children[1];
   assert.equal(add.textContent, "Add reverse proxy");
   assert.equal(add.type, "button");
   assert.equal(add.dataset.reverseProxyAdd, "");

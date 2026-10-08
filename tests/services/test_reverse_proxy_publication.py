@@ -351,7 +351,7 @@ def test_firewall_rules_are_exact_ipv4_ipv6_listener_and_redirect_admissions():
 @pytest.mark.parametrize("path", [
     "/favicon.ico", "/certificate-authority/downloads/ca.pem",
     "/certificate-authority/certificates/10/downloads/pem", "/oauth/token", "/openid/configuration",
-    "/oidc/token", "/PRODartifact", "/STATIC/file", "/api/v1",
+    "/oidc/token", "/PRODartifact", "/product", "/production", "/prod-app", "/PrOd-app/", "/STATIC/file", "/api/v1",
 ])
 def test_protocol_namespaces_are_rejected_by_validation_and_catch_all_renderer(path):
     """Keep explicit and catch-all routes outside all canonical protocol namespaces.
