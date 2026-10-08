@@ -500,3 +500,27 @@ def test_long_proxy_identity_survives_real_ca_reconciliation(client, length):
         assert ensure_ca_state(db) == []
         db.refresh(certificate)
         assert x509.load_pem_x509_certificate(certificate.certificate_pem.encode()).serial_number == serial
+
+
+def test_maximum_shared_socket_hostnames_have_bounded_http_hash_settings():
+    """Render all 256 maximum-length names without changing exact host isolation."""
+    proxies = []
+    for index in range(256):
+        proxy = proxy_payload(proxy_id=index + 1)
+        proxy["name"] = f"Maximum name {index}"
+        proxy["hostname"] = f"{index:03d}" + "a" * 60 + "." + "b" * 63 + "." + "c" * 63 + "." + "d" * 61
+        assert len(proxy["hostname"]) == 253
+        proxy["listeners"] = proxy["listeners"][:1]
+        proxy["routes"] = [dict(proxy["routes"][0], id=index + 1)]
+        proxies.append(proxy)
+    manifest = transport_manifest(proxies, ["192.0.2.10"])
+    rendered = render_proxy_servers(proxies, manifest)
+    assert rendered.count("server_names_hash_bucket_size 512;") == 1
+    assert rendered.count("server_names_hash_max_size 4096;") == 1
+    assert rendered.index("server_names_hash_bucket_size") < rendered.index("server {")
+    assert validated_snapshot(rendered) == (proxies, manifest)
+    for proxy in proxies:
+        assert f"server_name {proxy['hostname']};" in rendered
+        assert f"if ($host != {proxy['hostname']}) {{ return 404; }}" in rendered
+    with pytest.raises(ValueError, match="canonical intent"):
+        validated_snapshot(rendered.replace("server_names_hash_bucket_size 512;", "server_names_hash_bucket_size 64;"))

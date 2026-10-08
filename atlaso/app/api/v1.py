@@ -742,6 +742,12 @@ def firewall_validation_payload(db: Session) -> tuple[FirewallSettings, list[Fir
             and vlan.access_management_ui_enabled
         ],
     )
+    from atlaso.app.services.reverse_proxies import runtime_snapshot as proxy_snapshot
+    from atlaso.app.services.reverse_proxy_publication import (
+        firewall_rules as proxy_firewall_rules,
+    )
+
+    generated_rules.extend(proxy_firewall_rules(proxy_snapshot(db)))
     generated_rules.extend(
         managed_routing_firewall_rules(
             physical_interfaces,

@@ -244,6 +244,9 @@ def render_proxy_servers(proxies: list[dict[str, Any]], manifest: dict[str, Any]
              *_metadata_lines(MANIFEST_MARKER, manifest),
              *_metadata_lines(INTENT_MARKER, proxies)]
     if manifest["routes"]:
+        # A 253-byte DNS name plus nginx's hash element overhead needs the next
+        # power-of-two bucket. Reserve headroom for 256 exact proxy names.
+        lines.extend(["server_names_hash_bucket_size 512;", "server_names_hash_max_size 4096;"])
         lines.append("map $http_upgrade $atlaso_reverse_proxy_connection { default upgrade; '' close; }")
     for proxy in proxies:
         if not proxy["enabled"]:
