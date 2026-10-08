@@ -42,7 +42,11 @@ ROUTE_CONFLICT = {
 
 @pytest.fixture
 def db(tmp_path):
-    """Create a task-history database with the production capture hooks."""
+    """Create a task-history database with the production capture hooks.
+
+    Args:
+        tmp_path: Isolated pytest temporary directory.
+    """
     engine = create_engine(f"sqlite:///{tmp_path / 'events.db'}")
     Base.metadata.create_all(engine)
     initialize_task_history(engine)
@@ -52,6 +56,12 @@ def db(tmp_path):
 
 
 def _state(db, task_id):
+    """Read the persisted task checkpoint.
+
+    Args:
+        db: Task-history database session.
+        task_id: Task checkpoint identifier.
+    """
     db.expire_all()
     return json.loads(db.get(TaskLogCheckpoint, task_id).state_json)
 
@@ -120,7 +130,11 @@ def test_helper_adapter_propagates_only_valid_route_conflict_fields():
 
 @pytest.mark.parametrize("rollback_evidence", [{"rolled_back": True}, {"management_handoff": "rolled back"}])
 def test_execution_projection_separates_route_failure_from_rollback(rollback_evidence):
-    """Original failure, proven rollback, and dependent skip get distinct reasons."""
+    """Original failure, proven rollback, and dependent skip get distinct reasons.
+
+    Args:
+        rollback_evidence: Recognized helper rollback evidence shape.
+    """
     payload = {
         "reason_code": "management_route_conflict",
         "rollback_proven": True,
@@ -154,7 +168,11 @@ def test_execution_projection_separates_route_failure_from_rollback(rollback_evi
 
 
 def test_task_events_propagate_route_failure_rollback_and_dependent_skip(db):
-    """Task and component events retain typed cause and distinct dispositions."""
+    """Task and component events retain typed cause and distinct dispositions.
+
+    Args:
+        db: Task-history database session with capture hooks.
+    """
     task = Job(id="job_934events1234", type="appliance-apply", created_by="console:root",
                status="running", started_at=utcnow(), result="{}")
     network = JobStep(id=f"{task.id}:network", job=task, component_key="network", label="Network",
@@ -212,12 +230,23 @@ def test_task_events_propagate_route_failure_rollback_and_dependent_skip(db):
 
 @pytest.mark.parametrize("bad", [None, "bad", {"condition": "raw text"}])
 def test_route_conflict_validator_rejects_incomplete_records(bad):
+    """Reject incomplete route-conflict evidence.
+
+    Args:
+        bad: Invalid route-conflict record.
+    """
     assert validate_route_conflict(bad) is None
 
 
 @pytest.mark.parametrize("typed", [True, False])
 def test_execute_management_handoff_keeps_root_failure_and_bundled_disposition(monkeypatch, tmp_path, typed):
-    """The real handoff coordinator preserves the helper cause across recovery."""
+    """The real handoff coordinator preserves the helper cause across recovery.
+
+    Args:
+        monkeypatch: Scoped dependency replacement fixture.
+        tmp_path: Isolated staging directory.
+        typed: Whether the helper supplies typed diagnostics.
+    """
     monkeypatch.setattr(ui, "acquire_network_objects_write_lock", lambda _db: None)
     monkeypatch.setattr(ui, "load_appliance_apply_baselines", lambda _db: {"appliance_settings": {}})
     monkeypatch.setattr(ui, "network_config_with_removed_vlans", lambda preview, _removed: preview)
@@ -232,10 +261,20 @@ def test_execute_management_handoff_keeps_root_failure_and_bundled_disposition(m
         dry_run = False
 
         def validate_management_handoff(self, manifest_path):
+            """Return successful manifest validation.
+
+            Args:
+                manifest_path: Staged handoff manifest path.
+            """
             return AdapterResult(command=["atlaso-helper", "management-handoff", "validate", manifest_path],
                                  dry_run=False, returncode=0)
 
         def apply_management_handoff(self, manifest_path):
+            """Return the route-conflict response.
+
+            Args:
+                manifest_path: Staged handoff manifest path.
+            """
             evidence = {
                 "management_handoff": "rolled back",
                 "reason_code": "management_route_conflict",

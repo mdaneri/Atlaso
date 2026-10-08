@@ -166,6 +166,11 @@ def validate_route_conflict(value: Any) -> dict[str, Any] | None:
         return None
 
     def route_identity(raw: Any) -> dict[str, Any] | None:
+        """Validate one bounded route identity.
+
+        Args:
+            raw: Untrusted route identity fields.
+        """
         if not isinstance(raw, dict) or set(raw) != {"destination", "gateway", "protocol", "metric"}:
             return None
         destination_raw = raw.get("destination")
