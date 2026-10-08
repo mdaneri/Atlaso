@@ -125,6 +125,8 @@ workflow.
 Settings archives retain proxy and ordered route desired state. They do not carry active transport generations, cached
 health observations, or proxy-owned CA certificate rows and their private keys. Preserve the appliance secrets key with
 recovery material; global CA and Public Services Apply regenerate the proxy certificate from restored desired state.
+Long proxy hostnames remain complete in the managed certificate's DNS SAN and nginx server name. When the hostname
+exceeds the certificate subject common-name limit, Atlaso uses a bounded display name for that subject field.
 A restore changes desired state only and still requires global Appliance Apply.
 Archives with an enabled HTTPS proxy require an enabled CA; restore rejects this inconsistent relationship before
 replacing saved state. Disabled HTTPS intent and enabled HTTP proxies remain portable without an enabled CA.

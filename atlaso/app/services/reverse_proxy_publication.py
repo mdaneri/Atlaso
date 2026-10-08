@@ -200,7 +200,8 @@ def certificate_specs(proxies: list[dict[str, Any]]) -> list[ManagedCertificateS
         if not proxy["enabled"] or proxy["scheme"] != "https":
             continue
         cert, key, chain = proxy_certificate_paths(proxy['id'], proxy["hostname"])
-        result.append(ManagedCertificateSpec(owner=f"reverse_proxy:{proxy['id']}:https", common_name=proxy["hostname"],
+        common_name = proxy["hostname"] if len(proxy["hostname"].encode("utf-8")) <= 64 else "Atlaso reverse proxy"
+        result.append(ManagedCertificateSpec(owner=f"reverse_proxy:{proxy['id']}:https", common_name=common_name,
             dns_names=[proxy["hostname"]], ip_addresses=[item["address"] for item in proxy["listeners"]],
             profile_name=CA_SERVER_PROFILE_NAME, description=f"Managed reverse proxy {proxy['name']}.",
             cert_path=cert, key_path=key, chain_path=chain))

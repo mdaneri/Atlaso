@@ -430,3 +430,73 @@ def test_unicode_prefix_worst_case_fits_transport_manifest(characters):
     finally:
         db.close()
         engine.dispose()
+
+
+@pytest.mark.parametrize("length", [64, 65, 180, 181, 253])
+def test_proxy_certificate_specs_bound_common_name_and_keep_full_san(length):
+    """Keep valid DNS identities independent of bounded certificate subject fields.
+
+    Args:
+        length: Valid DNS name length around certificate and persistence boundaries.
+    """
+    from atlaso.app.models import CaCertificate
+    from atlaso.app.services.reverse_proxy_publication import certificate_specs
+
+    # Four legal labels permit the maximum 253-character DNS identity.
+    remaining = length
+    labels = []
+    while remaining:
+        count = min(63, remaining - 2) if remaining > 63 else remaining
+        labels.append("a" * count)
+        remaining -= count
+        if remaining:
+            remaining -= 1
+    hostname = ".".join(labels)
+    assert len(hostname) == length
+    proxy = proxy_payload()
+    proxy["hostname"] = hostname
+    spec = certificate_specs([proxy])[0]
+    assert len(spec.common_name.encode("utf-8")) <= 64
+    assert len(spec.common_name) <= CaCertificate.__table__.c.common_name.type.length
+    assert spec.common_name == (hostname if length <= 64 else "Atlaso reverse proxy")
+    assert spec.dns_names == [hostname]
+    assert certificate_specs([proxy])[0] == spec
+
+
+@pytest.mark.parametrize("length", [181, 253])
+def test_long_proxy_identity_survives_real_ca_reconciliation(client, length):
+    """Issue and retain a long DNS SAN through the normal managed CA flow.
+
+    Args:
+        client: Initialized appliance fixture with isolated CA custody.
+        length: Valid hostname exceeding the certificate row's persisted CN bound.
+    """
+    from cryptography import x509
+    from cryptography.x509.oid import NameOID
+    from sqlalchemy import select
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import CaCertificate, CaSettings, ReverseProxy
+    from atlaso.app.ui import ensure_ca_state
+
+    hostname = ".".join(["a" * 63, "b" * 63, "c" * 53] if length == 181
+                        else ["a" * 63, "b" * 63, "c" * 63, "d" * 61])
+    assert len(hostname) == length
+    with SessionLocal() as db:
+        settings = db.scalar(select(CaSettings))
+        settings.enabled = True
+        proxy = ReverseProxy(name="Long certificate identity", hostname=hostname, scheme="https", port=8443,
+                             enabled=True, listeners=[{"interface": "eth1", "address": "192.0.2.10"}])
+        db.add(proxy)
+        db.commit()
+        assert ensure_ca_state(db) == []
+        certificate = db.scalar(select(CaCertificate).where(CaCertificate.managed_owner == f"reverse_proxy:{proxy.id}:https"))
+        assert certificate.common_name == "Atlaso reverse proxy"
+        assert certificate.subject_alt_names == hostname
+        leaf = x509.load_pem_x509_certificate(certificate.certificate_pem.encode())
+        assert leaf.subject.get_attributes_for_oid(NameOID.COMMON_NAME)[0].value == "Atlaso reverse proxy"
+        assert leaf.extensions.get_extension_for_class(x509.SubjectAlternativeName).value.get_values_for_type(x509.DNSName) == [hostname]
+        serial = leaf.serial_number
+        assert ensure_ca_state(db) == []
+        db.refresh(certificate)
+        assert x509.load_pem_x509_certificate(certificate.certificate_pem.encode()).serial_number == serial
