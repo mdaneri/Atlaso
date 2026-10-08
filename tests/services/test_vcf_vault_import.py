@@ -9,6 +9,7 @@ import httpx
 import pytest
 
 from atlaso.app.services import vcf_vault_import as service
+from atlaso.app.services.vaults import normalize_vault_key
 from atlaso.app.services.vcf_depot_target import VcfDepotTargetError
 
 
@@ -770,6 +771,214 @@ def test_nsxt_manager_candidate_identity_and_key_survive_reordering_and_removal(
     assert remaining == {f"ssh://{host_b}": original[f"ssh://{host_b}"]}
     assert original[f"ssh://{host_a}"][0] != original[f"ssh://{host_b}"][0]
     assert original[f"ssh://{host_a}"][1] != original[f"ssh://{host_b}"][1]
+
+
+def test_long_nsxt_manager_hostname_keeps_valid_bounded_key_and_exact_identity(fake_api_factory):
+    """Keep a long valid NSX hostname in candidate identity while bounding the vault key.
+
+    Args:
+        fake_api_factory: Fixture that creates an in-memory HTTP API client.
+    """
+    hostname = ".".join(("a" * 63, "b" * 63, "c" * 63, "example"))
+    spec = {
+        "nsxtSpec": {
+            "rootNsxtManagerPassword": "fixture-nsxt-root",
+            "nsxtManagers": [{"hostname": hostname}],
+        }
+    }
+
+    def handler(request: httpx.Request) -> tuple[int, Any]:
+        """Return a fake latest SDDC record or its specification.
+
+        Args:
+            request: Intercepted HTTP request to answer.
+        """
+        if request.url.path == "/v1/sddcs/latest":
+            return 200, {"id": "fixture-sddc"}
+        return 200, spec
+
+    api, _requests = fake_api_factory(handler)
+    candidates = service._vcf_installer_candidates(api)
+    candidate = next(candidate for candidate in candidates if candidate.username == "root")
+
+    assert candidate.candidate_id.endswith(hostname + ".rootNsxtManagerPassword")
+    assert candidate.uris == (f"ssh://{hostname}",)
+    assert len(candidate.key) <= 180
+    assert normalize_vault_key(candidate.key) == candidate.key
+
+
+def test_vsp_system_password_expands_to_distinct_ssh_and_admin_https_entries(fake_api_factory):
+    """Map the shared VSP password to its system-user SSH and local-admin HTTPS accounts.
+
+    Args:
+        fake_api_factory: Fixture that creates an in-memory HTTP API client.
+    """
+    hostname = "platform.vsp.lab.example"
+    spec = {"vspClusterSpec": {"platformFqdn": hostname, "systemUserPassword": "fixture-vsp-password"}}
+
+    def handler(request: httpx.Request) -> tuple[int, Any]:
+        """Return a fake latest SDDC record or its specification.
+
+        Args:
+            request: Intercepted HTTP request to answer.
+        """
+        if request.url.path == "/v1/sddcs/latest":
+            return 200, {"id": "fixture-sddc"}
+        return 200, spec
+
+    api, _requests = fake_api_factory(handler)
+    candidates = service._vcf_installer_candidates(api)
+
+    assert {(candidate.username, candidate.uris) for candidate in candidates} == {
+        ("vmware-system-user", (f"ssh://{hostname}",)),
+        ("admin@vsp.local", (f"https://{hostname}",)),
+    }
+    assert len({candidate.candidate_id for candidate in candidates}) == 2
+    assert len({candidate.key for candidate in candidates}) == 2
+
+
+@pytest.mark.parametrize(
+    "operations, expected_uri",
+    [
+        (
+            {"adminUserPassword": "fixture-ops-admin", "loadBalancerFqdn": "ops-lb.lab.example",
+             "nodes": [{"hostname": "ops-master.lab.example", "type": "master"}]},
+            "https://ops-lb.lab.example",
+        ),
+        (
+            {"adminUserPassword": "fixture-ops-admin", "nodes": [
+                {"hostname": "ops-master.lab.example", "type": "master"},
+                {"hostname": "ops-replica.lab.example", "type": "replica"},
+            ]},
+            "https://ops-master.lab.example",
+        ),
+        (
+            {"adminUserPassword": "fixture-ops-admin", "nodes": [{"hostname": "ops-single.lab.example"}]},
+            "https://ops-single.lab.example",
+        ),
+        (
+            {"adminUserPassword": "fixture-ops-admin", "nodes": [
+                {"hostname": "ops01.lab.example", "type": "replica"},
+                {"hostname": "ops02.lab.example", "type": "replica"},
+            ]},
+            "",
+        ),
+    ],
+)
+def test_vcf_operations_admin_endpoint_uses_load_balancer_or_unambiguous_node(
+    fake_api_factory, operations, expected_uri
+):
+    """Prefer the Operations load balancer, then an explicit master or sole node.
+
+    Args:
+        fake_api_factory: Fixture that creates an in-memory HTTP API client.
+        operations: VCF Operations portion of the fake installer specification.
+        expected_uri: Expected HTTPS endpoint, or empty when node selection is ambiguous.
+    """
+    spec = {"vcfOperationsSpec": operations}
+
+    def handler(request: httpx.Request) -> tuple[int, Any]:
+        """Return a fake latest SDDC record or its specification.
+
+        Args:
+            request: Intercepted HTTP request to answer.
+        """
+        if request.url.path == "/v1/sddcs/latest":
+            return 200, {"id": "fixture-sddc"}
+        return 200, spec
+
+    api, _requests = fake_api_factory(handler)
+    candidates = service._vcf_installer_candidates(api)
+
+    assert len(candidates) == 1
+    assert candidates[0].username == "admin"
+    assert candidates[0].uris == ((expected_uri,) if expected_uri else ())
+
+
+def test_vcf_automation_admin_password_uses_component_hostname(fake_api_factory):
+    """Map the VCF Automation admin password to HTTPS at its explicit hostname.
+
+    Args:
+        fake_api_factory: Fixture that creates an in-memory HTTP API client.
+    """
+    hostname = "automation.lab.example"
+    spec = {"vcfAutomationSpec": {"hostname": hostname, "adminUserPassword": "fixture-automation-admin"}}
+
+    def handler(request: httpx.Request) -> tuple[int, Any]:
+        """Return a fake latest SDDC record or its specification.
+
+        Args:
+            request: Intercepted HTTP request to answer.
+        """
+        if request.url.path == "/v1/sddcs/latest":
+            return 200, {"id": "fixture-sddc"}
+        return 200, spec
+
+    api, _requests = fake_api_factory(handler)
+    candidates = service._vcf_installer_candidates(api)
+
+    assert [(candidate.username, candidate.uris) for candidate in candidates] == [
+        ("admin", (f"https://{hostname}",)),
+    ]
+
+
+@pytest.mark.parametrize(
+    "spec",
+    [
+        {"vspClusterSpec": {"systemUserPassword": "fixture-vsp-password"}},
+        {"vspClusterSpec": {"platformFqdn": "https://bad.example", "systemUserPassword": "fixture-vsp-password"}},
+        {"vcfOperationsSpec": {"adminUserPassword": "fixture-ops-admin", "loadBalancerFqdn": "ops/path"}},
+        {"vcfAutomationSpec": {"adminUserPassword": "fixture-automation-admin", "hostname": "auto?token=x"}},
+    ],
+)
+def test_management_credentials_keep_empty_uris_when_endpoints_are_missing_or_invalid(fake_api_factory, spec):
+    """Keep management credential URIs empty when authoritative endpoints are unusable.
+
+    Args:
+        fake_api_factory: Fixture that creates an in-memory HTTP API client.
+        spec: Fake installer specification with missing or malformed endpoint metadata.
+    """
+    def handler(request: httpx.Request) -> tuple[int, Any]:
+        """Return a fake latest SDDC record or its specification.
+
+        Args:
+            request: Intercepted HTTP request to answer.
+        """
+        if request.url.path == "/v1/sddcs/latest":
+            return 200, {"id": "fixture-sddc"}
+        return 200, spec
+
+    api, _requests = fake_api_factory(handler)
+    candidates = service._vcf_installer_candidates(api)
+
+    assert candidates
+    assert all(candidate.uris == () for candidate in candidates)
+
+
+def test_unknown_management_admin_password_does_not_gain_an_endpoint_or_username(fake_api_factory):
+    """Do not infer account or protocol for an undocumented management password field.
+
+    Args:
+        fake_api_factory: Fixture that creates an in-memory HTTP API client.
+    """
+    spec = {"unknownComponentSpec": {"hostname": "unknown.lab.example", "adminUserPassword": "fixture-unknown-admin"}}
+
+    def handler(request: httpx.Request) -> tuple[int, Any]:
+        """Return a fake latest SDDC record or its specification.
+
+        Args:
+            request: Intercepted HTTP request to answer.
+        """
+        if request.url.path == "/v1/sddcs/latest":
+            return 200, {"id": "fixture-sddc"}
+        return 200, spec
+
+    api, _requests = fake_api_factory(handler)
+    candidates = service._vcf_installer_candidates(api)
+
+    assert len(candidates) == 1
+    assert candidates[0].username == ""
+    assert candidates[0].uris == ()
 
 
 def test_vcf_operations_root_passwords_use_each_node_hostname_for_ssh(fake_api_factory):

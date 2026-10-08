@@ -110,6 +110,9 @@ labels still require an FQDN or `resourceIp`; a short label is not used as a hos
 Its `localUserPassword` uses `admin@local` and HTTPS to the same hostname.
 NSX manager root entries retain host-specific identities and keys when managers are reordered or removed.
 Operations nodes and the Operations collector map `rootUserPassword` to `root` over SSH to their adjacent `hostname`.
+Operations `adminUserPassword` uses `admin` over HTTPS to `loadBalancerFqdn`, or the explicit master/single node when
+the load balancer is absent. Automation `adminUserPassword` uses `admin` over HTTPS to its `hostname`.
+VSP `systemUserPassword` creates separate `vmware-system-user` SSH and `admin@vsp.local` HTTPS entries for `platformFqdn`.
 Root and ESX accounts use SSH, while other known web-component accounts use HTTPS.
 Unknown credential purposes need an operator URI association. FTP credentials are not treated as SFTP endpoints. If
 the metadata has no valid host, including a short resource label or opaque ID, the URI list stays empty. After import,

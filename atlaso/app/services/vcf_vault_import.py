@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import re
-from base64 import b32encode
 from collections import Counter
 from dataclasses import dataclass, field, replace
+from hashlib import sha256
 from ipaddress import ip_address
 from urllib.parse import quote
 
@@ -282,7 +282,7 @@ def _sddc_manager_candidates(api: VcfDepotApiClient) -> list[VcfPasswordCandidat
 def _installer_password_nodes(
     value: object, path: tuple[str, ...] = (), *, endpoint: str = "", username: str = "",
     skipped: Counter[str] | None = None,
-) -> list[tuple[tuple[str, ...], str, str, str]]:
+) -> list[tuple[tuple[str, ...], str, str, str, str]]:
     """Return installer password nodes.
 
     Args:
@@ -292,8 +292,17 @@ def _installer_password_nodes(
         username: Account inherited within the current component.
         skipped: Optional counter for fixed discovery skip reasons.
     """
-    result: list[tuple[tuple[str, ...], str, str, str]] = []
+    result: list[tuple[tuple[str, ...], str, str, str, str]] = []
     if isinstance(value, dict):
+        component = path[-1].lower() if path else ""
+        manager_identifiers: dict[str, str] = {}
+        if component == "nsxtspec" and isinstance(value.get("nsxtManagers"), list):
+            # Compute identifiers directly from hostname metadata before reading passwords.
+            for manager in value["nsxtManagers"]:
+                if isinstance(manager, dict):
+                    host = _endpoint_host(manager.get("hostname"), allow_short=True)
+                    if host:
+                        manager_identifiers[host] = sha256(host.encode("utf-8")).hexdigest()
         local_endpoint = next((_endpoint_host(value.get(field), allow_short=field in
                                              {"vcenterHostname", "hostname", "hostName"}) for field in
                                ("vcenterHostname", "vipFqdn", "hostname", "hostName", "fqdn", "ipAddress")
@@ -308,7 +317,6 @@ def _installer_password_nodes(
                 if password:
                     account = "root" if str(key).lower() == "rootpassword" else username
                     endpoints = [endpoint]
-                    component = path[-1].lower() if path else ""
                     if component == "vcenterspec":
                         if key == "rootVcenterPassword":
                             account = "root"
@@ -320,11 +328,7 @@ def _installer_password_nodes(
                     elif component == "nsxtspec":
                         if key == "rootNsxtManagerPassword":
                             account = "root"
-                            managers = value.get("nsxtManagers")
-                            endpoints = list(dict.fromkeys(
-                                _endpoint_host(manager.get("hostname"), allow_short=True) for manager in managers
-                                if isinstance(manager, dict) and _endpoint_host(manager.get("hostname"), allow_short=True)
-                            )) if isinstance(managers, list) else []
+                            endpoints = list(manager_identifiers)
                             # The cluster VIP does not identify an individual SSH node.
                             endpoints = endpoints or [""]
                         elif key == "nsxtAdminPassword":
@@ -335,6 +339,22 @@ def _installer_password_nodes(
                         account = "vcf"
                     elif component == "sddcmanagerspec" and key == "localUserPassword":
                         account = "admin@local"
+                    elif component == "vspclusterspec" and key == "systemUserPassword":
+                        platform = _endpoint_host(value.get("platformFqdn"))
+                        for identity in ("vmware-system-user", "admin@vsp.local"):
+                            result.append(((*child_path, identity), password, platform, identity, ""))
+                        continue
+                    elif component in {"vcfoperationsspec", "vcfautomationspec"} and key == "adminUserPassword":
+                        account = "admin"
+                        if component == "vcfoperationsspec":
+                            web_endpoint = _endpoint_host(value.get("loadBalancerFqdn"))
+                            nodes = value.get("nodes")
+                            if not web_endpoint and isinstance(nodes, list):
+                                targets = [node for node in nodes if isinstance(node, dict)
+                                           and (len(nodes) == 1 or str(node.get("type") or "").lower() == "master")]
+                                if len(targets) == 1:
+                                    web_endpoint = _endpoint_host(targets[0].get("hostname"), allow_short=True)
+                            endpoints = [web_endpoint]
                     elif key == "rootUserPassword" and (
                         component == "vcfoperationscollectorspec"
                         or (len(path) >= 3 and path[-3:-1] == ("vcfOperationsSpec", "nodes"))
@@ -346,7 +366,8 @@ def _installer_password_nodes(
                         node_path = (*path, host, str(key)) if (
                             component == "nsxtspec" and key == "rootNsxtManagerPassword" and host
                         ) else child_path
-                        result.append((node_path, password, host, account))
+                        result.append((node_path, password, host, account, manager_identifiers.get(host, "")
+                                       if component == "nsxtspec" and key == "rootNsxtManagerPassword" else ""))
                 elif skipped is not None:
                     skipped["Password missing, masked, or unsupported in the latest specification"] += 1
             else:
@@ -393,22 +414,25 @@ def _vcf_installer_candidates(api: VcfDepotApiClient) -> list[VcfPasswordCandida
     if not isinstance(spec, dict):
         raise VcfDepotTargetError("VCF Installer returned an invalid SDDC specification.")
     result = VcfPasswordDiscovery(scope="Passwords in the latest VCF Installer SDDC specification only; this is not a complete live credential inventory.")
-    for path, password, endpoint, username in _installer_password_nodes(spec, skipped=result.skipped):
+    for path, password, endpoint, username, host_identifier in _installer_password_nodes(spec, skipped=result.skipped):
         lowered = ".".join(path).lower()
-        secret_type = "esx_password" if any(marker in lowered for marker in ("hostspec", "esx", "host.")) else "vcf_password"
+        secret_type = "esx_password" if any(item.lower() in {"hostspec", "hostspecs", "hosts", "esx", "esxi"}
+                                             for item in path[:-1]) else "vcf_password"
         prefix = "esx" if secret_type == "esx_password" else "vcf"
         meaningful = [_segment(item) for item in path if item.lower() not in {"credentials", "password"}]
-        if len(path) >= 3 and path[-3] == "nsxtSpec" and path[-1] == "rootNsxtManagerPassword":
+        if host_identifier:
             # DNS punctuation can normalize to the same key segment for distinct hosts.
-            meaningful[-2] = "host_" + b32encode(endpoint.encode("utf-8")).decode("ascii").rstrip("=").lower()
+            meaningful[-2] = "host_" + host_identifier
         key = ".".join([prefix, *meaningful[-3:], "password"])
         resource_name = next((item for item in reversed(path[:-1]) if not item.isdigit()), "VCF Installer")
         candidate_id = f"{sddc_id}:{'.'.join(path)}"
         scheme = ""
         if (username == "root" or secret_type == "esx_password"
-                or path[-2:] == ("sddcManagerSpec", "sshPassword")):
+                or path[-2:] == ("sddcManagerSpec", "sshPassword")
+                or ("vspClusterSpec" in path and username == "vmware-system-user")):
             scheme = "ssh"
-        elif any(marker in lowered for marker in ("vcenter", "sddcmanager", "nsx", "vrops", "vra", "vrslcm")):
+        elif any(marker in lowered for marker in ("vcenter", "sddcmanager", "nsx", "vrops", "vra", "vrslcm",
+                                                  "vspclusterspec", "vcfoperationsspec", "vcfautomationspec")):
             scheme = "https"
         uris = normalize_vault_uris((f"{scheme}://{endpoint}",)) if endpoint and scheme else ()
         result.append(
