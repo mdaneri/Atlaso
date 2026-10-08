@@ -316,6 +316,7 @@ def test_opaque_credential_id_does_not_become_an_endpoint():
     """An opaque ID may label an entry, but cannot establish a network destination."""
     assert service._resource_uris({}, "API") == ()
     assert service._resource_uris({"resourceName": "credential-123"}, "API") == ()
+    assert service._resource_uris({"resourceType": "VCENTER", "resourceName": "vc01"}, "API") == ()
 
 
 @pytest.mark.parametrize(
@@ -430,7 +431,7 @@ def test_installer_maps_vcenter_and_nsxt_passwords_to_their_local_endpoints(fake
         "vcenterSpec": {
             "vcenterHostname": "vc01.lab.example",
             "rootVcenterPassword": "fixture-vcenter-root",
-            "adminUserSsoUsername": "administrator@vsphere.local",
+            "adminUserSsoUsername": "  administrator@vsphere.local  ",
             "adminUserSsoPassword": "fixture-vcenter-sso",
         },
         "nsxtSpec": {
@@ -465,6 +466,156 @@ def test_installer_maps_vcenter_and_nsxt_passwords_to_their_local_endpoints(fake
         ("root", ("ssh://nsxt02.lab.example",)),
         ("admin", ("https://nsx-vip.lab.example",)),
         ("audit", ("https://nsx-vip.lab.example",)),
+    ]
+
+
+def test_installer_host_specs_accept_explicit_short_esxi_hostname(fake_api_factory):
+    """Use a short explicit hostSpecs hostname as the ESXi SSH endpoint.
+
+    Args:
+        fake_api_factory: Fixture that creates an in-memory HTTP API client.
+    """
+    spec = {
+        "hostSpecs": [
+            {"hostname": "esx-1", "credentials": {"username": "root", "password": "fixture-esxi-root"}}
+        ]
+    }
+
+    def handler(request: httpx.Request) -> tuple[int, Any]:
+        """Return a fake latest SDDC record or its specification.
+
+        Args:
+            request: Intercepted HTTP request to answer.
+        """
+        if request.url.path == "/v1/sddcs/latest":
+            return 200, {"id": "fixture-sddc"}
+        return 200, spec
+
+    api, _requests = fake_api_factory(handler)
+    candidates = service._vcf_installer_candidates(api)
+
+    assert [(candidate.username, candidate.uris) for candidate in candidates] == [
+        ("root", ("ssh://esx-1",)),
+    ]
+
+
+def test_installer_nsxt_managers_accept_explicit_short_hostnames(fake_api_factory):
+    """Use each short explicit NSX manager hostname for its root SSH URI.
+
+    Args:
+        fake_api_factory: Fixture that creates an in-memory HTTP API client.
+    """
+    spec = {
+        "nsxtSpec": {
+            "vipFqdn": "nsx-vip.lab.example",
+            "rootNsxtManagerPassword": "fixture-nsxt-root",
+            "nsxtManagers": [{"hostname": "nsx-1"}],
+        }
+    }
+
+    def handler(request: httpx.Request) -> tuple[int, Any]:
+        """Return a fake latest SDDC record or its specification.
+
+        Args:
+            request: Intercepted HTTP request to answer.
+        """
+        if request.url.path == "/v1/sddcs/latest":
+            return 200, {"id": "fixture-sddc"}
+        return 200, spec
+
+    api, _requests = fake_api_factory(handler)
+    candidates = service._vcf_installer_candidates(api)
+
+    assert [(candidate.username, candidate.uris) for candidate in candidates] == [
+        ("root", ("ssh://nsx-1",)),
+    ]
+
+
+@pytest.mark.parametrize(
+    "hostname",
+    [
+        "https://user:password@esx-1",
+        "user:password@esx-1",
+        "esx-1/path",
+        "esx-1?token=fixture",
+        "esx-%31",
+        "-esx",
+        "esx_1",
+        "esx..1",
+    ],
+)
+def test_installer_short_hostname_allowance_still_rejects_malformed_values(fake_api_factory, hostname):
+    """Reject URL syntax and invalid DNS labels even on explicit installer fields.
+
+    Args:
+        fake_api_factory: Fixture that creates an in-memory HTTP API client.
+        hostname: Malformed explicit hostname from the fake specification.
+    """
+    spec = {
+        "hostSpecs": [
+            {"hostname": hostname, "credentials": {"username": "root", "password": "fixture-esxi-root"}}
+        ]
+    }
+
+    def handler(request: httpx.Request) -> tuple[int, Any]:
+        """Return a fake latest SDDC record or its specification.
+
+        Args:
+            request: Intercepted HTTP request to answer.
+        """
+        if request.url.path == "/v1/sddcs/latest":
+            return 200, {"id": "fixture-sddc"}
+        return 200, spec
+
+    api, _requests = fake_api_factory(handler)
+    candidates = service._vcf_installer_candidates(api)
+
+    assert len(candidates) == 1
+    assert candidates[0].uris == ()
+
+
+@pytest.mark.parametrize(
+    "sso_domain, expected_username",
+    [
+        ("", "administrator"),
+        ("vsphere.local", "administrator@vsphere.local"),
+    ],
+)
+def test_vcenter_sso_password_uses_documented_default_username(
+    fake_api_factory, sso_domain, expected_username
+):
+    """Use the documented administrator fallback, adding only a supplied SSO domain.
+
+    Args:
+        fake_api_factory: Fixture that creates an in-memory HTTP API client.
+        sso_domain: Optional valid SSO domain from the fake specification.
+        expected_username: Documented fallback username for that domain.
+    """
+    vcenter = {
+        "vcenterHostname": "vc01.lab.example",
+        "rootVcenterPassword": "fixture-vcenter-root",
+        "adminUserSsoPassword": "fixture-vcenter-sso",
+    }
+    if sso_domain:
+        vcenter["ssoDomain"] = sso_domain
+    spec = {"vcenterSpec": vcenter}
+
+    def handler(request: httpx.Request) -> tuple[int, Any]:
+        """Return a fake latest SDDC record or its specification.
+
+        Args:
+            request: Intercepted HTTP request to answer.
+        """
+        if request.url.path == "/v1/sddcs/latest":
+            return 200, {"id": "fixture-sddc"}
+        return 200, spec
+
+    api, _requests = fake_api_factory(handler)
+    candidates = service._vcf_installer_candidates(api)
+
+    assert [(candidate.username, candidate.uris) for candidate in candidates] == [
+        ("root", ("ssh://vc01.lab.example",)),
+        (expected_username, ("https://vc01.lab.example",)),
     ]
 
 

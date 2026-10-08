@@ -115,9 +115,11 @@ latest available SDDC specification, so the results do not represent every appli
 revalidates and re-fetches the reviewed values, then encrypts them in the selected vault. Source credentials are
 request-local. Installer URI mapping follows the latest SDDC specification: vCenter root and each NSX manager root use
 SSH to their named hosts, while vCenter SSO and NSX admin/audit use HTTPS to the specified vCenter hostname or NSX VIP
-FQDN; NSX root never uses the VIP. Unknown endpoints require correction through the Vault entry's **Edit** action.
-See [Vaults](vaults.md) for exact field mappings, SDDC Manager behavior, unsupported FTP endpoint association, and
-reimport, managed-script, Kickstart, and restore behavior.
+FQDN; NSX root never uses the VIP. Installer hostname fields accept validated short DNS names. A blank or omitted SSO
+username uses `administrator@<ssoDomain>` when the domain is valid, otherwise `administrator`; Atlaso assumes no
+default domain. Unknown endpoints require correction through the Vault entry's **Edit** action. See [Vaults](vaults.md)
+for exact field mappings, SDDC Manager label validation, unsupported FTP endpoint association, and reimport,
+managed-script, Kickstart, and restore behavior.
 
 The helper creates DNS records in Atlaso, deploys SDDC Manager OVAs, and configures VCF 9 appliances to use the applied
 local offline depot. DNS does not reload `dnsmasq` or change the appliance directly. Review and submit the changed

@@ -72,11 +72,12 @@ class VcfPasswordDiscovery(list[VcfPasswordCandidate]):
         return {"scope": self.scope, "available": len(self), "skipped": dict(self.skipped)}
 
 
-def _endpoint_host(value: object) -> str:
+def _endpoint_host(value: object, *, allow_short: bool = False) -> str:
     """Accept only an endpoint hostname or IP, never a URL or opaque identifier.
 
     Args:
         value: Source endpoint metadata to validate.
+        allow_short: Accept a short DNS name only from an explicit Installer endpoint field.
     """
     if not isinstance(value, str):
         return ""
@@ -88,8 +89,8 @@ def _endpoint_host(value: object) -> str:
         return f"[{address}]" if address.version == 6 else str(address)
     except ValueError:
         pass
-    # Require a DNS name: short display labels and UUIDs are not endpoint proof.
-    if len(host) > 253 or "." not in host:
+    # Generic resource labels need a FQDN; explicit Installer hostnames may be short.
+    if len(host) > 253 or (not allow_short and "." not in host):
         return ""
     labels = host.split(".")
     if any(not re.fullmatch(r"[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?", item) for item in labels):
@@ -293,9 +294,11 @@ def _installer_password_nodes(
     """
     result: list[tuple[tuple[str, ...], str, str, str]] = []
     if isinstance(value, dict):
-        local_endpoint = next((_endpoint_host(value.get(field)) for field in
+        local_endpoint = next((_endpoint_host(value.get(field), allow_short=field in
+                                             {"vcenterHostname", "hostname", "hostName"}) for field in
                                ("vcenterHostname", "vipFqdn", "hostname", "hostName", "fqdn", "ipAddress")
-                               if _endpoint_host(value.get(field))), "")
+                               if _endpoint_host(value.get(field), allow_short=field in
+                                                 {"vcenterHostname", "hostname", "hostName"})), "")
         endpoint = local_endpoint or endpoint
         username = str(value.get("username") or value.get("userName") or username)
         for key, child in value.items():
@@ -310,14 +313,17 @@ def _installer_password_nodes(
                         if key == "rootVcenterPassword":
                             account = "root"
                         elif key == "adminUserSsoPassword":
-                            account = str(value.get("adminUserSsoUsername") or "")
+                            account = str(value.get("adminUserSsoUsername") or "").strip()
+                            if not account:
+                                domain = _endpoint_host(value.get("ssoDomain"), allow_short=True)
+                                account = f"administrator@{domain}" if domain else "administrator"
                     elif component == "nsxtspec":
                         if key == "rootNsxtManagerPassword":
                             account = "root"
                             managers = value.get("nsxtManagers")
                             endpoints = list(dict.fromkeys(
-                                _endpoint_host(manager.get("hostname")) for manager in managers
-                                if isinstance(manager, dict) and _endpoint_host(manager.get("hostname"))
+                                _endpoint_host(manager.get("hostname"), allow_short=True) for manager in managers
+                                if isinstance(manager, dict) and _endpoint_host(manager.get("hostname"), allow_short=True)
                             )) if isinstance(managers, list) else []
                             # The cluster VIP does not identify an individual SSH node.
                             endpoints = endpoints or [""]

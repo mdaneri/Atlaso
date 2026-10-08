@@ -102,7 +102,11 @@ validated FQDN `resourceName` or `resourceIp`; API, SSO, AUDIT, and missing cred
 web resource types. Installer mappings use the latest available SDDC specification only, not a live appliance
 inventory: vCenter root uses SSH to `vcenterHostname`; vCenter SSO uses `adminUserSsoUsername` and HTTPS to
 `vcenterHostname`; each `nsxtManagers[].hostname` gets an NSX root SSH URI (never the cluster VIP); NSX admin and audit
-use HTTPS to `vipFqdn`. SDDC Manager `sshPassword` uses the `vcf` account and SSH to its `hostname`.
+use HTTPS to `vipFqdn`. If `adminUserSsoUsername` is blank or omitted, Atlaso uses
+`administrator@<ssoDomain>` when `ssoDomain` is valid, otherwise `administrator`; it does not assume a default domain
+such as `vsphere.local`. Installer hostname fields accept validated short DNS names. Generic SDDC Manager `resourceName`
+labels still require an FQDN or `resourceIp`; a short label is not used as a host. SDDC Manager `sshPassword` uses the
+`vcf` account and SSH to its `hostname`.
 Its `localUserPassword` uses `admin@local` and HTTPS to the same hostname.
 NSX manager root entries retain host-specific identities and keys when managers are reordered or removed.
 Operations nodes and the Operations collector map `rootUserPassword` to `root` over SSH to their adjacent `hostname`.

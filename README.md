@@ -50,6 +50,11 @@ or both fixed domainmanager properties in a tile-launched wizard on VCF Installe
 SSH connects as `vcf` and uses separate root credentials through `su`, with verified writes,
 service restart and explicit recovery. These lab-only settings do not certify hardware or establish production support.
 
+VCF Helper also lets administrators review supported, accessible VCF/ESX credential candidates and import selected
+passwords into encrypted vaults for URI-backed autofill and scripts or Kickstarts. See the
+[Vaults guide](docs/services/vaults.md#vcf-helper-import) for discovery coverage, endpoint mapping, and reimport
+behavior, and the [VCF Helper guide](docs/services/vcf-helper.md) for the wizard workflow.
+
 [Maintenance](docs/operate/backup-restore.md) groups LDAP, Backup, Reset, and Diagnostics into separate tabs.
 Administrators can create [diagnostic support bundles](docs/operate/diagnostics.md) through a reviewed wizard or use
 the recovery CLI when the web service, worker, or database is unavailable. Optional hostname and username aliases are

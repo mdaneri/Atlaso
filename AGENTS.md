@@ -82,3 +82,4 @@ and obtain explicit maintainer approval for `custom/other` before implementation
 [Logs](docs/operate/logs.md#important-event-coverage); [progressive policy](docs/contribute/progressive-policy.md).
 
 See [VCF SSH/su](docs/services/vcf-helper.md) and [KMIP trust](docs/services/vsphere-key-providers.md).
+[VCF import coverage/URI rotation](docs/services/vaults.md#vcf-helper-import).
