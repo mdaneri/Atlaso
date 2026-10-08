@@ -500,6 +500,61 @@ def test_installer_host_specs_accept_explicit_short_esxi_hostname(fake_api_facto
     ]
 
 
+@pytest.mark.parametrize(
+    "spec, hostname, username",
+    [
+        (
+            {
+                "hostSpecs": [
+                    {"hostname": ".".join(("a" * 63, "b" * 63, "c" * 63, "example")),
+                     "credentials": {"username": "root", "password": "fixture-long-esxi-root"}}
+                ]
+            },
+            ".".join(("a" * 63, "b" * 63, "c" * 63, "example")),
+            "root",
+        ),
+        (
+            {
+                "vcfOperationsSpec": {
+                    "nodes": [
+                        {"hostname": ".".join(("d" * 63, "e" * 63, "f" * 63, "example")),
+                         "rootUserPassword": "fixture-long-operations-root"}
+                    ]
+                }
+            },
+            ".".join(("d" * 63, "e" * 63, "f" * 63, "example")),
+            "root",
+        ),
+    ],
+)
+def test_long_host_credentials_keep_raw_identity_and_bounded_valid_key(fake_api_factory, spec, hostname, username):
+    """Bound generated vault keys while retaining the full long host in identity and URI.
+
+    Args:
+        fake_api_factory: Fixture that creates an in-memory HTTP API client.
+        spec: Fake installer specification containing a long explicit host credential.
+        hostname: Long DNS hostname expected in candidate identity and endpoint URI.
+        username: Expected username associated with the candidate.
+    """
+    def handler(request: httpx.Request) -> tuple[int, Any]:
+        """Return a fake latest SDDC record or its specification.
+
+        Args:
+            request: Intercepted HTTP request to answer.
+        """
+        if request.url.path == "/v1/sddcs/latest":
+            return 200, {"id": "fixture-sddc"}
+        return 200, spec
+
+    api, _requests = fake_api_factory(handler)
+    candidate = next(item for item in service._vcf_installer_candidates(api) if item.username == username)
+
+    assert hostname in candidate.candidate_id
+    assert candidate.uris == (f"ssh://{hostname}",)
+    assert len(candidate.key) <= 180
+    assert normalize_vault_key(candidate.key) == candidate.key
+
+
 def test_installer_nsxt_managers_accept_explicit_short_hostnames(fake_api_factory):
     """Use each short explicit NSX manager hostname for its root SSH URI.
 

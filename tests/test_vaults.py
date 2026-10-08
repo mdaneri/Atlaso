@@ -1345,7 +1345,7 @@ def test_vcf_helper_inspection_returns_metadata_and_import_encrypts_value(client
     from atlaso.app.services.vcf_vault_import import VcfPasswordCandidate
 
     candidate = VcfPasswordCandidate(
-        candidate_id="credential-1",
+        candidate_id="ImportedSecret!",
         key="esx.esx01.root",
         description="Imported ESX root password.",
         secret_type="esx_password",
@@ -1379,12 +1379,14 @@ def test_vcf_helper_inspection_returns_metadata_and_import_encrypts_value(client
     inspected = client.post("/vcf-helper/vault-import/inspect", json=source)
     assert inspected.status_code == 200
     assert inspected.json()["candidates"] == [candidate.sanitized()]
+    assert inspected.json()["candidates"][0]["candidate_id"] == candidate.selection_id
+    assert candidate.candidate_id not in inspected.text
     assert "ImportedSecret!" not in inspected.text
     assert "no-store" in inspected.headers["cache-control"]
 
     imported = client.post(
         "/vcf-helper/vault-import",
-        json={**source, "vault_id": vault_id, "candidate_ids": ["credential-1"]},
+        json={**source, "vault_id": vault_id, "candidate_ids": [candidate.selection_id]},
     )
     assert imported.status_code == 200
     assert imported.json()["imported_keys"] == ["esx.esx01.root"]
@@ -1410,7 +1412,7 @@ def test_vcf_helper_inspection_returns_metadata_and_import_encrypts_value(client
     monkeypatch.setattr(ui, "discover_vcf_passwords", lambda **_kwargs: [replace(candidate, uris=())])
     rotated = client.post(
         "/vcf-helper/vault-import",
-        json={**source, "vault_id": vault_id, "candidate_ids": ["credential-1"]},
+        json={**source, "vault_id": vault_id, "candidate_ids": [candidate.selection_id]},
     )
     assert rotated.status_code == 200
     assert rotated.json()["rotated"] == 1
@@ -1419,7 +1421,11 @@ def test_vcf_helper_inspection_returns_metadata_and_import_encrypts_value(client
         assert json.loads(entry.uris_json) == ["https://operator.example.internal", "ssh://operator.example.internal"]
     duplicate = client.post(
         "/vcf-helper/vault-import",
-        json={**source, "vault_id": vault_id, "candidate_ids": ["credential-1", "credential-1"]},
+        json={
+            **source,
+            "vault_id": vault_id,
+            "candidate_ids": [candidate.selection_id, candidate.selection_id],
+        },
     )
     assert duplicate.status_code == 422
 
@@ -1496,7 +1502,7 @@ def test_vcf_import_replaces_operator_uris_when_source_or_account_changes(
     }
     first = client.post(
         "/vcf-helper/vault-import",
-        json={**source, "vault_id": vault_id, "candidate_ids": [candidate.candidate_id]},
+        json={**source, "vault_id": vault_id, "candidate_ids": [candidate.selection_id]},
     )
     assert first.status_code == 200
     with SessionLocal() as db:
@@ -1514,7 +1520,7 @@ def test_vcf_import_replaces_operator_uris_when_source_or_account_changes(
     changed_source = {**source, **{key: value for key, value in mismatch.items() if key in {"source_type", "address"}}}
     rotated = client.post(
         "/vcf-helper/vault-import",
-        json={**changed_source, "vault_id": vault_id, "candidate_ids": [candidate.candidate_id]},
+        json={**changed_source, "vault_id": vault_id, "candidate_ids": [candidate.selection_id]},
     )
 
     assert rotated.status_code == 200

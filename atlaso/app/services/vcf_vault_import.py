@@ -37,6 +37,11 @@ class VcfPasswordCandidate:
     value: str = field(repr=False)
     uris: tuple[str, ...] = ()
 
+    @property
+    def selection_id(self) -> str:
+        """Return a stable opaque browser selection token derived only from source identity."""
+        return "vcf-" + sha256(self.candidate_id.encode("utf-8")).hexdigest()
+
     def sanitized(self) -> dict[str, object]:
         """Return sanitized."""
         metadata = {
@@ -49,9 +54,11 @@ class VcfPasswordCandidate:
             "uris": list(self.uris),
             "uri_status": "available" if self.uris else "Add a verified endpoint in the Vault URI editor after import.",
         }
-        return {key: [redact_secret_values(item, [self.value]) for item in value]
+        sanitized = {key: [redact_secret_values(item, [self.value]) for item in value]
                 if isinstance(value, list) else redact_secret_values(value, [self.value])
-                for key, value in metadata.items()}
+                for key, value in metadata.items() if key != "candidate_id"}
+        sanitized["candidate_id"] = self.selection_id
+        return sanitized
 
 
 class VcfPasswordDiscovery(list[VcfPasswordCandidate]):
@@ -282,7 +289,7 @@ def _sddc_manager_candidates(api: VcfDepotApiClient) -> list[VcfPasswordCandidat
 def _installer_password_nodes(
     value: object, path: tuple[str, ...] = (), *, endpoint: str = "", username: str = "",
     skipped: Counter[str] | None = None,
-) -> list[tuple[tuple[str, ...], str, str, str, str]]:
+) -> list[tuple[tuple[str, ...], str, str, str, str, str]]:
     """Return installer password nodes.
 
     Args:
@@ -292,7 +299,7 @@ def _installer_password_nodes(
         username: Account inherited within the current component.
         skipped: Optional counter for fixed discovery skip reasons.
     """
-    result: list[tuple[tuple[str, ...], str, str, str, str]] = []
+    result: list[tuple[tuple[str, ...], str, str, str, str, str]] = []
     if isinstance(value, dict):
         component = path[-1].lower() if path else ""
         manager_identifiers: dict[str, str] = {}
@@ -312,6 +319,8 @@ def _installer_password_nodes(
         username = str(value.get("username") or value.get("userName") or username)
         for key, child in value.items():
             child_path = (*path, str(key))
+            # Identity metadata is hashed before reading any password value.
+            path_identifier = sha256(".".join(child_path).encode("utf-8")).hexdigest()
             if "password" in str(key).lower() and not isinstance(child, (dict, list)):
                 password = _usable_password(child)
                 if password:
@@ -342,7 +351,7 @@ def _installer_password_nodes(
                     elif component == "vspclusterspec" and key == "systemUserPassword":
                         platform = _endpoint_host(value.get("platformFqdn"))
                         for identity in ("vmware-system-user", "admin@vsp.local"):
-                            result.append(((*child_path, identity), password, platform, identity, ""))
+                            result.append(((*child_path, identity), password, platform, identity, "", path_identifier))
                         continue
                     elif component in {"vcfoperationsspec", "vcfautomationspec"} and key == "adminUserPassword":
                         account = "admin"
@@ -367,7 +376,8 @@ def _installer_password_nodes(
                             component == "nsxtspec" and key == "rootNsxtManagerPassword" and host
                         ) else child_path
                         result.append((node_path, password, host, account, manager_identifiers.get(host, "")
-                                       if component == "nsxtspec" and key == "rootNsxtManagerPassword" else ""))
+                                       if component == "nsxtspec" and key == "rootNsxtManagerPassword" else "",
+                                       path_identifier))
                 elif skipped is not None:
                     skipped["Password missing, masked, or unsupported in the latest specification"] += 1
             else:
@@ -414,7 +424,7 @@ def _vcf_installer_candidates(api: VcfDepotApiClient) -> list[VcfPasswordCandida
     if not isinstance(spec, dict):
         raise VcfDepotTargetError("VCF Installer returned an invalid SDDC specification.")
     result = VcfPasswordDiscovery(scope="Passwords in the latest VCF Installer SDDC specification only; this is not a complete live credential inventory.")
-    for path, password, endpoint, username, host_identifier in _installer_password_nodes(spec, skipped=result.skipped):
+    for path, password, endpoint, username, host_identifier, path_identifier in _installer_password_nodes(spec, skipped=result.skipped):
         lowered = ".".join(path).lower()
         secret_type = "esx_password" if any(item.lower() in {"hostspec", "hostspecs", "hosts", "esx", "esxi"}
                                              for item in path[:-1]) else "vcf_password"
@@ -424,6 +434,8 @@ def _vcf_installer_candidates(api: VcfDepotApiClient) -> list[VcfPasswordCandida
             # DNS punctuation can normalize to the same key segment for distinct hosts.
             meaningful[-2] = "host_" + host_identifier
         key = ".".join([prefix, *meaningful[-3:], "password"])
+        if len(key) > 180:
+            key = f"{prefix}.resource_{path_identifier}.{_segment(username)[:40]}.password"
         resource_name = next((item for item in reversed(path[:-1]) if not item.isdigit()), "VCF Installer")
         candidate_id = f"{sddc_id}:{'.'.join(path)}"
         scheme = ""

@@ -902,7 +902,7 @@ def build_router(dependencies: VcfWorkflowsUiDependencies) -> VcfWorkflowsUiRout
                 password=source_password,
                 expected_fingerprint=fingerprint,
             )
-            by_id = {candidate.candidate_id: candidate for candidate in candidates}
+            by_id = {candidate.selection_id: candidate for candidate in candidates}
             missing = [
                 candidate_id for candidate_id in selected if candidate_id not in by_id
             ]
