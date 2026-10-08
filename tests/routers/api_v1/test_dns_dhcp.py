@@ -252,6 +252,81 @@ def test_dns_api_exposes_read_only_authoritative_settings_and_advances_serial(cl
     assert "authoritative_serial" not in schema["DnsSettingsUpdate"]["properties"]
 
 
+def test_dns_settings_api_reads_disabled_unbound_state_but_rejects_empty_update(client):
+    """Disabled DNS settings may be read without a selected interface.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+    """
+    from sqlalchemy import select
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import DnsSettings
+
+    read_token = create_token(client, ["read:dns"])
+    read_headers = {"Authorization": f"Bearer {read_token}"}
+    with SessionLocal() as db:
+        settings = db.execute(select(DnsSettings)).scalar_one()
+        settings.enabled = False
+        settings.listen_interface = ""
+        settings.listen_address = None
+        db.commit()
+
+    unbound = client.get("/api/v1/dns/settings", headers=read_headers)
+    assert unbound.status_code == 200, unbound.text
+    assert unbound.json()["enabled"] is False
+    assert unbound.json()["listen_interface"] == ""
+
+    denied_token = create_token(client, ["read:dashboard"])
+    denied = client.get(
+        "/api/v1/dns/settings",
+        headers={"Authorization": f"Bearer {denied_token}"},
+    )
+    assert denied.status_code == 403
+
+    with SessionLocal() as db:
+        settings = db.execute(select(DnsSettings)).scalar_one()
+        settings.listen_interface = "eth2"
+        settings.listen_address = "192.168.50.1"
+        db.commit()
+        saved_at = settings.updated_at
+
+    configured = client.get("/api/v1/dns/settings", headers=read_headers)
+    assert configured.status_code == 200, configured.text
+    assert configured.json()["listen_interface"] == "eth2"
+
+    write_token = create_token(client, ["write:dns"])
+    rejected = client.patch(
+        "/api/v1/dns/settings",
+        headers={"Authorization": f"Bearer {write_token}"},
+        json={"listen_interface": ""},
+    )
+    assert rejected.status_code == 422
+    with SessionLocal() as db:
+        settings = db.execute(select(DnsSettings)).scalar_one()
+        assert settings.listen_interface == "eth2"
+        assert settings.listen_address == "192.168.50.1"
+        assert settings.updated_at == saved_at
+
+        settings.enabled = True
+        settings.listen_interface = ""
+        settings.listen_address = None
+        db.commit()
+
+    validation = client.post("/api/v1/dns/validate", headers=read_headers)
+    assert validation.status_code == 200, validation.text
+    assert validation.json()["valid"] is False
+    assert "DNS must listen on at least one interface." in validation.json()["errors"]
+
+    schemas = client.get("/openapi.json").json()["components"]["schemas"]
+    request_field = schemas["DnsSettingsUpdate"]["properties"]["listen_interface"]
+    response_field = schemas["DnsSettingsResponse"]["properties"]["listen_interface"]
+    assert request_field["minLength"] == 1
+    assert request_field["maxLength"] == 80
+    assert "minLength" not in response_field
+    assert response_field["maxLength"] == 80
+
+
 def test_dns_api_update_rejects_duplicate_record(client):
     """Verify that dns api update rejects duplicate record.
 

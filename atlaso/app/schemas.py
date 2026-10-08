@@ -1993,6 +1993,7 @@ class DnsSettingsResponse(DnsSettingsUpdate):
     """Fields returned by the Atlaso dns settings API.
 
     Attributes:
+        listen_interface: Saved service bind targets; empty when no interface is selected.
         id: Unique database identifier assigned to this resource.
         authoritative_serial: Returned authoritative serial value for this dns settings resource.
         config_path: Appliance path where the rendered configuration is staged or installed; it is
@@ -2002,6 +2003,7 @@ class DnsSettingsResponse(DnsSettingsUpdate):
 
     model_config = ConfigDict(from_attributes=True)
 
+    listen_interface: Annotated[str, Field(description='Saved service bind targets; empty when no interface is selected.')] = Field(default="", max_length=80)
     id: Annotated[int, Field(description='Unique database identifier assigned to this resource.')]
     authoritative_serial: Annotated[int, Field(description='Returned authoritative serial value for this dns settings resource.')]
     config_path: Annotated[str, Field(description='Appliance path where the rendered configuration is staged or installed; it is not a free-form input.')]
