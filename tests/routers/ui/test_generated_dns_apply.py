@@ -1693,3 +1693,71 @@ def test_handoff_readback_rejects_missing_authoritative_evidence(monkeypatch):
     monkeypatch.setattr(service_dns_readback, "verify_service_dns_records", lambda *_args, **_kwargs: None)
     with pytest.raises(ValueError, match="listener evidence is incomplete"):
         ui.verify_handoff_service_dns([], [], "listen-address=127.0.0.1\n", authoritative=True)
+
+
+@pytest.mark.parametrize("failed_listener", [None, "recursive", "client", "authoritative"])
+def test_handoff_synthetic_own_hostname_preserves_all_wire_checks(monkeypatch, failed_listener):
+    """Synthetic native NSS permits the own name without weakening wire publication.
+
+    Args:
+        monkeypatch: Replace native commands and wire queries with captured evidence.
+        failed_listener: Wire endpoint whose exact publication proof fails.
+    """
+    from atlaso.app import ui
+    from atlaso.app.services import service_dns_readback
+
+    records = [{"hostname": "atlaso.lab.internal", "record_type": "A", "address": "192.0.2.10"}]
+    config = ("listen-address=192.0.2.20\nlisten-address=127.0.0.1\n"
+              "# atlaso-authoritative-config: port=5353\n"
+              "# atlaso-authoritative-config: listen-address=127.0.0.1\n"
+              "# atlaso-authoritative-config: auth-zone=lab.internal,192.0.2.0/24\n")
+    calls = []
+
+    def verify(captured, **kwargs):
+        """Reject the selected wire endpoint while recording all attempted checks.
+
+        Args:
+            captured: Captured generated ownership sent to the wire verifier.
+            **kwargs: Endpoint and retirement verification options.
+        """
+        calls.append((captured, kwargs))
+        endpoint = ("authoritative" if kwargs.get("port") == 5353 else
+                    "client" if kwargs.get("nameserver") else "recursive")
+        if endpoint == failed_listener:
+            raise ValueError("wire publication failure")
+
+    def run(args, **_kwargs):
+        """Return fresh multi-interface synthesis and local-address evidence.
+
+        Args:
+            args: Native readback argument vector.
+            **_kwargs: Bounded native invocation options.
+        """
+        if args[0] == "getent":
+            return SimpleNamespace(returncode=0, stdout="::1 atlaso.lab.internal\n", stderr="")
+        if args[0] == "resolvectl":
+            return SimpleNamespace(returncode=0, stderr="", stdout=(
+                "atlaso.lab.internal: 192.0.2.10 -- link: eth0\n"
+                "                     192.0.2.20 -- link: eth1\n"
+                "                     ::1\n\n-- Data from: synthetic\n"))
+        assert args == ["ip", "-j", "address", "show"]
+        return SimpleNamespace(returncode=0, stderr="", stdout=json.dumps([
+            {"addr_info": [{"local": "192.0.2.10"}]},
+            {"addr_info": [{"local": "192.0.2.20"}]},
+        ]))
+
+    monkeypatch.setattr(service_dns_readback, "sys", SimpleNamespace(platform="linux"))
+    monkeypatch.setattr(service_dns_readback.socket, "gethostname", lambda: "atlaso.lab.internal")
+    monkeypatch.setattr(service_dns_readback.subprocess, "run", run)
+    monkeypatch.setattr(service_dns_readback, "verify_service_dns_records", verify)
+    if failed_listener:
+        with pytest.raises(ValueError, match="wire publication failure"):
+            ui.verify_handoff_service_dns(records, [], config, authoritative=True)
+    else:
+        ui.verify_handoff_service_dns(records, [], config, authoritative=True)
+        assert calls == [
+            (records, {"prior_records": []}),
+            (records, {"nameserver": "192.0.2.20", "prior_records": [], "require_authoritative": True}),
+            (records, {"nameserver": "127.0.0.1", "port": 5353, "prior_records": [],
+                       "require_authoritative": True}),
+        ]

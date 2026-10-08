@@ -91,7 +91,8 @@ def execution_projection(payload: dict[str, Any], component: str) -> list[dict[s
     handoff = payload.get("management_handoff_failure", payload.get("management_handoff"))
     if (component == "task" and isinstance(handoff, dict)
             and canonical_value(handoff.get("reason_code"), REASONS.keys()) == "management_route_conflict"):
-        if payload.get("rollback_proven") is True and handoff.get("rolled_back") is True:
+        if (payload.get("rollback_proven") is True
+                and (handoff.get("rolled_back") is True or handoff.get("management_handoff") == "rolled back")):
             output.append({"component": component, "stage": "rollback", "outcome": "succeeded",
                            "reason": "dependent_work_rolled_back", "returncode": 0})
         elif payload.get("rollback_proven") is False:

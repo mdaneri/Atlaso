@@ -118,14 +118,15 @@ def test_helper_adapter_propagates_only_valid_route_conflict_fields():
     assert evidence.get("route_conflict") is None
 
 
-def test_execution_projection_separates_route_failure_from_rollback():
+@pytest.mark.parametrize("rollback_evidence", [{"rolled_back": True}, {"management_handoff": "rolled back"}])
+def test_execution_projection_separates_route_failure_from_rollback(rollback_evidence):
     """Original failure, proven rollback, and dependent skip get distinct reasons."""
     payload = {
         "reason_code": "management_route_conflict",
         "rollback_proven": True,
         "management_handoff": {
             "reason_code": "management_route_conflict",
-            "rolled_back": True,
+            **rollback_evidence,
         },
         "commands": [{
             "stage": "execution",
@@ -147,6 +148,9 @@ def test_execution_projection_separates_route_failure_from_rollback():
         "returncode": 0,
     }
     assert len(events) == 1
+    payload["rollback_proven"] = False
+    assert not any(event["stage"] == "rollback" and event["outcome"] == "succeeded"
+                   for event in execution_projection(payload, "task"))
 
 
 def test_task_events_propagate_route_failure_rollback_and_dependent_skip(db):
@@ -237,7 +241,6 @@ def test_execute_management_handoff_keeps_root_failure_and_bundled_disposition(m
                 "reason_code": "management_route_conflict",
                 "route_conflict": ROUTE_CONFLICT,
                 "failing_layer": "network",
-                "rolled_back": True,
                 "error": "previous management route conflicts with live domain",
             }
             if not typed:
@@ -270,6 +273,11 @@ def test_execute_management_handoff_keeps_root_failure_and_bundled_disposition(m
     assert group["reason_code"] == "management_route_conflict"
     if typed:
         assert group["management_handoff"]["reason_code"] == "management_route_conflict"
+        assert "rolled_back" not in group["management_handoff"]
+        assert execution_projection(group, "task")[-1] == {
+            "component": "task", "stage": "rollback", "outcome": "succeeded",
+            "reason": "dependent_work_rolled_back", "returncode": 0,
+        }
     assert group["management_handoff"]["recovery"]["management_handoff"] == "no interrupted transaction"
     assert by_id["network"]["reason_code"] == "management_route_conflict"
     assert by_id["firewall"]["reason_code"] == "dependent_work_rolled_back"
