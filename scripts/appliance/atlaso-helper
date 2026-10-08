@@ -32582,7 +32582,11 @@ def _management_handoff_public_site_with_holdover(
     if not previous_site:
         previous_site = "# Managed by Atlaso. Local changes may be overwritten.\n"
     block_pattern = re.compile(r"(?ms)^server \{.*?^\}")
-    proxy_map = "map $http_upgrade $atlaso_reverse_proxy_connection { default upgrade; '' close; }"
+    proxy_directives = (
+        "map $http_upgrade $atlaso_reverse_proxy_connection { default upgrade; '' close; }",
+        "server_names_hash_bucket_size 512;",
+        "server_names_hash_max_size 4096;",
+    )
 
     def blocks_and_sockets(site: str) -> list[tuple[str, set[str]]]:
         """Require managed top-level server blocks and collect their exact sockets.
@@ -32594,7 +32598,10 @@ def _management_handoff_public_site_with_holdover(
             raise ValueError("Public Services handoff site is not canonical")
         blocks = list(block_pattern.finditer(site))
         remainder = block_pattern.sub("", site)
-        remainder = remainder.replace(proxy_map, "")
+        for directive in proxy_directives:
+            if remainder.splitlines().count(directive) > 1:
+                raise ValueError("Public Services handoff site duplicates a managed directive")
+        remainder = "\n".join(line for line in remainder.splitlines() if line not in proxy_directives)
         if any(line.strip() and not line.lstrip().startswith("#") for line in remainder.splitlines()):
             raise ValueError("Public Services handoff site is not canonical")
         parsed: list[tuple[str, set[str]]] = []
@@ -32614,8 +32621,8 @@ def _management_handoff_public_site_with_holdover(
                 raise ValueError("Public Services handoff server mixes old and new sockets")
             continue
         additions.append(block)
-    if proxy_map in candidate_site and proxy_map not in previous_site:
-        additions.insert(0, proxy_map)
+    additions[:0] = [directive for directive in proxy_directives
+                     if directive in candidate_site.splitlines() and directive not in previous_site.splitlines()]
     return previous_site.rstrip() + "\n\n" + "\n\n".join(additions) + "\n"
 
 

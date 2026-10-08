@@ -1246,3 +1246,63 @@ def test_runtime_status_main_dispatch_emits_one_readonly_snapshot(monkeypatch, c
     assert helper.main(["atlaso-helper", "public-services", "reverse-proxy-status"]) == 0
     assert json.loads(capsys.readouterr().out)["dry_run"] is True
     assert calls == ["read"]
+
+
+@pytest.mark.parametrize("previous_tuning", [False, True])
+@pytest.mark.parametrize("transition", ["deferred", "retained-tls"])
+def test_grouped_handoff_preserves_rendered_proxy_hash_settings_once(tmp_path, monkeypatch, previous_tuning, transition):
+    """Carry bounded hash settings across both old TLS and deferred-socket paths.
+
+    Args:
+        tmp_path: Isolated test filesystem.
+        monkeypatch: Replace retained-site and address observation.
+        previous_tuning: Whether the old site already carries current hash limits.
+        transition: Protected handoff path requiring socket retention.
+    """
+    helper = load_helper_module()
+    header = "# Managed by Atlaso. Local changes may be overwritten.\n"
+    proxy = proxy_payload()
+    proxy.update(scheme="http", redirect_http=False, port=8080)
+    proxy["listeners"] = [{"interface": "eth1", "address": "192.0.2.20"}]
+    candidate = header + render_proxy_servers([proxy], transport_manifest([proxy], ["192.0.2.20"]))
+    old = header + "server {\n  listen 192.0.2.10:443 ssl default_server;\n  server_name _;\n}\n"
+    directives = ["server_names_hash_bucket_size 512;", "server_names_hash_max_size 4096;"]
+    if previous_tuning:
+        old += "\n".join(directives) + "\n"
+    monkeypatch.setattr(helper, "_management_handoff_previous_public_tls_addresses",
+                        lambda _state: ["192.0.2.10"] if transition == "retained-tls" else [])
+    monkeypatch.setattr(helper, "_management_handoff_retained_public_site", lambda _state: old)
+    monkeypatch.setattr(helper, "_management_handoff_snapshot_text", lambda *_args: old)
+    result = helper._management_handoff_public_site_with_holdover(
+        {}, candidate, deferred_sockets={"192.0.2.10:443"} if transition == "deferred" else None,
+    )
+    assert "listen 192.0.2.10:443 ssl default_server;" in result
+    assert "listen 192.0.2.20:8080;" in result
+    assert "server_name portal.example.test;" in result
+    for directive in directives:
+        assert result.splitlines().count(directive) == 1
+    assert result.count("map $http_upgrade $atlaso_reverse_proxy_connection {") == 1
+
+
+@pytest.mark.parametrize("unexpected", [
+    "server_names_hash_bucket_size 64;",
+    "server_names_hash_max_size 8192;",
+    "server_names_hash_bucket_size 512; server_tokens off;",
+    "server_names_hash_bucket_size 512;\nserver_names_hash_bucket_size 512;",
+])
+def test_grouped_handoff_rejects_modified_or_duplicate_hash_directives(monkeypatch, unexpected):
+    """The handoff parser admits exact generated directives without a broad bypass.
+
+    Args:
+        monkeypatch: Replace old-site observation with controlled canonical input.
+        unexpected: Unsupported or duplicated top-level nginx text.
+    """
+    helper = load_helper_module()
+    header = "# Managed by Atlaso. Local changes may be overwritten.\n"
+    old = header + "server {\n  listen 192.0.2.10:443 ssl;\n  server_name _;\n}\n"
+    monkeypatch.setattr(helper, "_management_handoff_previous_public_tls_addresses", lambda _state: [])
+    monkeypatch.setattr(helper, "_management_handoff_snapshot_text", lambda *_args: old)
+    with pytest.raises(ValueError, match="Public Services handoff site"):
+        helper._management_handoff_public_site_with_holdover(
+            {}, header + unexpected + "\n", deferred_sockets={"192.0.2.10:443"},
+        )

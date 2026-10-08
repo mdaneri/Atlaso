@@ -35,6 +35,7 @@ The appliance accepts at most 256 proxies, 256 total path routes, and 256 select
 A route selected on four listener addresses counts as four combinations. Disabled proxies retain these capacity
 reservations so enabling saved state cannot exceed the generated publication bound.
 The generated nginx configuration sizes its server-name hash for accepted 253-character names on shared sockets.
+Protected management handoffs retain those canonical hash settings once alongside old and new proxy listeners.
 Firewall validation and legacy API Firewall Apply retain the same exact-address proxy and redirect admissions.
 
 Exclusive Atlaso services cannot take a socket used by an enabled proxy. Service settings saves reject this conflict
