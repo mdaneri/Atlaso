@@ -402,3 +402,31 @@ def test_all_canonical_protocol_paths_are_reserved_for_proxy_publication():
     for path in ("/", "/app/", "/favicon.ico-app/", "/oauth-app/", "/application/api/"):
         assert not _reserved_route_path(path), path
         assert not re.match(RESERVED_PATTERN, path, re.IGNORECASE), path
+
+
+@pytest.mark.parametrize("characters", [768, 1023])
+def test_unicode_prefix_worst_case_fits_transport_manifest(characters):
+    """Accepted astral path prefixes survive percent encoding and metadata round trip.
+
+    Args:
+        characters: Four-byte Unicode code points after the leading slash.
+    """
+    from atlaso.app.services.reverse_proxies import runtime_snapshot, save_proxy
+    from atlaso.app.services.reverse_proxy_transport import validate_manifest
+    from tests.services.test_reverse_proxies import create_db, payload
+
+    engine, db = create_db()
+    try:
+        value = payload(enabled=True)
+        value["routes"][0]["path_prefix"] = "/" + "\U0001f600" * characters
+        value["routes"][0]["path_behavior"] = "preserve"
+        save_proxy(db, value, actor="test")
+        proxies = runtime_snapshot(db)
+        manifest = transport_manifest(proxies, ["192.168.1.10"])
+        validate_manifest(manifest)
+        assert len(manifest["routes"][0]["probe_path"]) == 1 + 12 * characters
+        rendered = render_proxy_servers(proxies, manifest)
+        assert validated_snapshot(rendered) == (proxies, manifest)
+    finally:
+        db.close()
+        engine.dispose()

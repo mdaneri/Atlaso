@@ -1042,3 +1042,88 @@ def test_enabled_proxy_allows_interface_mtu_edit():
     finally:
         db.close()
         engine.dispose()
+
+
+@pytest.mark.parametrize("inventory_source", ["host", "seed"])
+@pytest.mark.parametrize("missing", [False, True])
+def test_inventory_refresh_suspends_physical_and_vlan_proxies_without_rebinding(monkeypatch, missing, inventory_source):
+    """Inventory identity changes suspend publication atomically and retain reviewed tuples.
+
+    Args:
+        monkeypatch: Native inventory discovery replacement.
+        missing: Remove the selected NIC instead of renaming the same MAC.
+        inventory_source: Native observed identity or disposable seed-only inventory.
+    """
+    from copy import deepcopy
+
+    from atlaso.app.models import DnsRecord, DnsSettings, VlanInterface
+    from atlaso.app.services import networking
+
+    engine, db = create_db()
+    try:
+        db.add(DnsSettings(enabled=True, authoritative=True, domain="example.test"))
+        db.commit()
+        physical = save_proxy(db, payload(enabled=True, managed_dns=True), actor="test")
+        operator = DnsRecord(hostname="operator.example.test", record_type="A", address="192.168.1.20",
+                             description="operator", enabled=True)
+        db.add(operator)
+        db.commit()
+        interface = db.scalar(select(PhysicalInterface).where(PhysicalInterface.name == "eth1"))
+        interface.mode = "trunk"
+        interface.inventory_source = inventory_source
+        interface.desired_state_source = "seed" if inventory_source == "seed" else "user"
+        vlan = VlanInterface(name="eth1.20", parent_interface="eth1", vlan_id=20,
+                             role="access", enabled=True, ip_cidr="192.168.20.10/24")
+        child = ReverseProxy(name="VLAN application", hostname="vlan.example.test", enabled=True,
+                             listeners=[{"interface": "eth1.20", "address": "192.168.20.10"}])
+        unrelated = ReverseProxy(name="Unrelated", hostname="other.example.test", enabled=True,
+                                 listeners=[{"interface": "eth0", "address": "192.168.0.10"}])
+        db.add_all([vlan, child, unrelated])
+        db.commit()
+        before = deepcopy([physical.listeners, child.listeners])
+        observations = [networking.HostPhysicalInterface(
+            name="eth0", mac_address="02:00:00:00:00:02", driver=None, speed=None,
+            host_ip_cidr="192.168.0.10/24", host_mtu=1500, host_admin_state="up", oper_state="up",
+        )]
+        if not missing:
+            observations.append(networking.HostPhysicalInterface(
+                name="eth9", mac_address="02:00:00:00:00:01", driver=None, speed=None,
+                host_ip_cidr="192.168.1.10/24", host_mtu=1500, host_admin_state="up", oper_state="up",
+            ))
+        monkeypatch.setattr(networking, "discover_host_physical_interfaces", lambda **_kwargs: observations)
+        networking.sync_host_physical_interfaces(db)
+        db.expire_all()
+        assert not physical.enabled and not child.enabled
+        assert [physical.listeners, child.listeners] == before
+        assert unrelated.enabled
+        assert list(db.scalars(select(DnsRecord))) == [operator]
+        events = list(db.scalars(select(AuditEvent).where(
+            AuditEvent.action == "suspend_inventory_reverse_proxy_bindings")))
+        assert len(events) == 1 and "review exact listeners" in events[0].detail
+        networking.sync_host_physical_interfaces(db)
+        assert len(list(db.scalars(select(AuditEvent).where(
+            AuditEvent.action == "suspend_inventory_reverse_proxy_bindings")))) == 1
+    finally:
+        db.close()
+        engine.dispose()
+
+
+def test_inventory_proxy_suspension_rolls_back_with_parent_transaction():
+    """A failed inventory transaction restores enablement, listeners and its audit."""
+    from atlaso.app.services.network_objects import acquire_network_objects_write_lock
+    from atlaso.app.services.networking import _retarget_interface_references
+
+    engine, db = create_db()
+    try:
+        proxy = save_proxy(db, payload(enabled=True), actor="test")
+        original = list(proxy.listeners)
+        acquire_network_objects_write_lock(db)
+        _retarget_interface_references(db, {"eth1": "eth9"})
+        assert not proxy.enabled
+        db.rollback()
+        assert proxy.enabled and proxy.listeners == original
+        assert list(db.scalars(select(AuditEvent).where(
+            AuditEvent.action == "suspend_inventory_reverse_proxy_bindings"))) == []
+    finally:
+        db.close()
+        engine.dispose()

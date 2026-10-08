@@ -25,6 +25,8 @@ SOCKET_ROOT = Path("/run/atlaso-rp")
 MAX_CONNECTIONS = 128
 MAX_ROUTES = 256
 BUFFER_LIMIT = 65536
+# A 1,024-code-point prefix can use four UTF-8 bytes, each percent-encoded.
+MAX_PROBE_PATH_LENGTH = 1024 * 4 * 3
 
 
 def manifest_generation(manifest: dict[str, Any]) -> str:
@@ -61,7 +63,7 @@ def validate_manifest(manifest: dict[str, Any]) -> None:
             raise ValueError("Unexpected transport route fields.")
         if (not isinstance(route["probe_host"], str) or len(route["probe_host"]) > 253
                 or not re.fullmatch(r"[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?", route["probe_host"])
-                or not isinstance(route["probe_path"], str) or len(route["probe_path"]) > 9216
+                or not isinstance(route["probe_path"], str) or len(route["probe_path"]) > MAX_PROBE_PATH_LENGTH
                 or not re.fullmatch(r"/[A-Za-z0-9._~/%-]*", route["probe_path"])):
             raise ValueError("Invalid bounded public route health target.")
         if any(not isinstance(route[field], str) for field in ("upstream_scheme", "trust_mode", "fingerprint")):

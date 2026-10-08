@@ -41,6 +41,9 @@ Disable HTTPS proxies before disabling their CA. Conflicting service or CA chang
 Interface edits also reject changes that remove an enabled proxy's exact interface and address binding.
 Disable or move the proxy before changing its address, renaming or deleting its VLAN, or making its parent unavailable.
 Rejected edits preserve the interface, proxy, and owned DNS records together.
+Host inventory refresh disables proxies tied to renamed or missing NICs and their child VLANs in the same transaction.
+Saved exact listener tuples remain unchanged for explicit review; inventory refresh never silently rebinds a proxy.
+Review the warning, select the current listener tuples, and re-enable the proxy before applying publication.
 
 ## Create a reverse proxy
 

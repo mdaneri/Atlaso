@@ -213,3 +213,12 @@ async def test_probe_timeout_is_reported_as_bounded_unavailable_health(monkeypat
     assert result == {"status": "degraded", "last_success": None,
                       "failure_class": "unavailable", "http_status": None,
                       "tls_status": "not_probed"}
+
+
+def test_probe_path_bound_still_rejects_oversized_untrusted_manifest():
+    """The worst-case request allowance remains an independently enforced bound."""
+    manifest = {"schema": 1, "routes": [route(probe_path="/" + "a" * transport.MAX_PROBE_PATH_LENGTH)],
+                "forbidden_addresses": []}
+    manifest["generation"] = transport.manifest_generation(manifest)
+    with pytest.raises(ValueError, match="bounded public route"):
+        transport.validate_manifest(manifest)
