@@ -301,6 +301,16 @@ def test_mismatched_detail_is_skipped(fake_api_factory, detail):
             {"resourceType": "VCENTER", "resourceName": "vc01.lab.example", "resourceIp": "192.0.2.20"},
             ("https://vc01.lab.example", "https://192.0.2.20"),
         ),
+        (
+            "API",
+            {"resourceType": "VCENTER", "resourceName": "vc01.lab.example."},
+            ("https://vc01.lab.example",),
+        ),
+        (
+            "API",
+            {"resourceType": "VCENTER", "resourceName": "vc01.lab.example.."},
+            (),
+        ),
     ],
 )
 def test_resource_metadata_maps_supported_ssh_and_https_endpoints(credential_type, resource, expected):
@@ -471,15 +481,28 @@ def test_installer_maps_vcenter_and_nsxt_passwords_to_their_local_endpoints(fake
     ]
 
 
-def test_installer_host_specs_accept_explicit_short_esxi_hostname(fake_api_factory):
-    """Use a short explicit hostSpecs hostname as the ESXi SSH endpoint.
+@pytest.mark.parametrize(
+    "hostname, expected_uri",
+    [
+        ("esx-1", "ssh://esx-1"),
+        ("esx-1.", "ssh://esx-1"),
+        ("esx-1..", ""),
+        ("esx-1.lab.example", "ssh://esx-1.lab.example"),
+        ("esx-1.lab.example.", "ssh://esx-1.lab.example"),
+        ("esx-1.lab.example..", ""),
+    ],
+)
+def test_installer_host_specs_accept_only_one_trailing_dns_root_dot(fake_api_factory, hostname, expected_uri):
+    """Accept valid short/FQDN host fields and one root dot, but reject multiple trailing dots.
 
     Args:
         fake_api_factory: Fixture that creates an in-memory HTTP API client.
+        hostname: Sanitized explicit hostSpecs hostname.
+        expected_uri: Expected endpoint URI, or an empty string when invalid.
     """
     spec = {
         "hostSpecs": [
-            {"hostname": "esx-1", "credentials": {"username": "root", "password": "fixture-esxi-root"}}
+            {"hostname": hostname, "credentials": {"username": "root", "password": "fixture-esxi-root"}}
         ]
     }
 
@@ -496,9 +519,9 @@ def test_installer_host_specs_accept_explicit_short_esxi_hostname(fake_api_facto
     api, _requests = fake_api_factory(handler)
     candidates = service._vcf_installer_candidates(api)
 
-    assert [(candidate.username, candidate.uris) for candidate in candidates] == [
-        ("root", ("ssh://esx-1",)),
-    ]
+    assert len(candidates) == 1
+    assert candidates[0].username == "root"
+    assert candidates[0].uris == ((expected_uri,) if expected_uri else ())
 
 
 @pytest.mark.parametrize(

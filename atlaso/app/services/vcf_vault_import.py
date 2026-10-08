@@ -98,7 +98,7 @@ def _endpoint_host(value: object, *, allow_short: bool = False) -> str:
     """
     if not isinstance(value, str):
         return ""
-    host = value.strip().rstrip(".")
+    host = value.strip().removesuffix(".")
     if "%" in host:
         return ""
     try:

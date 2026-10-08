@@ -111,8 +111,9 @@ Its `localUserPassword` uses `admin@local` and HTTPS to the same hostname.
 NSX manager root entries retain host-specific identities and keys when managers are reordered or removed.
 Long Installer resource identities use bounded vault keys while retaining full hostnames in discovery identities and URIs.
 Browser selections use stable opaque tokens so metadata redaction cannot change the selected credential identity.
-The token binds the reviewed account, resource, key, description, secret type, and URIs. If those change before import,
-inspect the source again; the password value itself may refresh without changing the selection token.
+Each token binds the canonical source type, host, port, and confirmed TLS fingerprint together with reviewed candidate
+metadata: account, resource, key, description, secret type, and URIs. If a binding or reviewed value changes before
+import, inspect the source again; the password value itself may refresh without changing the selection token.
 Every discovered credential receives a bounded identity suffix, keeping its canonical key stable when peers are added,
 removed, or reordered. Existing natural keys are rotated in place only when the source/resource/account matches and
 discovery has exactly one candidate for that legacy resource/account identity; ambiguous or unrelated legacy entries
@@ -123,7 +124,8 @@ the load balancer is absent. Automation `adminUserPassword` uses `admin` over HT
 VSP `systemUserPassword` creates separate `vmware-system-user` SSH and `admin@vsp.local` HTTPS entries for `platformFqdn`.
 Root and ESX accounts use SSH, while other known web-component accounts use HTTPS.
 Unknown credential purposes need an operator URI association. FTP credentials are not treated as SFTP endpoints. If
-the metadata has no valid host, including a short resource label or opaque ID, the URI list stays empty. After import,
+the metadata has no valid host, including a short generic resource label, opaque ID, or hostname with multiple trailing
+dots, the URI list stays empty. After import,
 use the entry's **Edit** action to add a verified endpoint. Reimport preserves an existing nonempty operator-managed
 URI list only when the source type, source endpoint, resource name, account, and secret type match. A different source
 or account replaces the URI list with its discovered endpoints, including an empty list when none are known. Same-source

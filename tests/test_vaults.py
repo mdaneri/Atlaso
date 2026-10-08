@@ -159,7 +159,35 @@ def _canonical_test_vcf_candidate(
     return replace(candidate, key=canonical_key)
 
 
-def _post_fake_vcf_import(client, monkeypatch, *, csrf: str, vault_id: int, candidates, address: str):
+def _bound_test_vcf_selection_id(candidate, *, source_type, address, port, fingerprint):
+    """Bind a fake candidate's metadata token to the source used by an import request.
+
+    Args:
+        candidate: Fake candidate included in the import attempt.
+        source_type: Source type included in the import attempt.
+        address: Source hostname or IP address included in the import attempt.
+        port: Source service port included in the import attempt.
+        fingerprint: Confirmed TLS fingerprint included in the import attempt.
+    """
+    from atlaso.app.routers.ui.vcf_workflows import _vcf_vault_selection_id
+
+    return _vcf_vault_selection_id(
+        candidate.selection_id, source_type, address, port, fingerprint
+    )
+
+
+def _post_fake_vcf_import(
+    client,
+    monkeypatch,
+    *,
+    csrf: str,
+    vault_id: int,
+    candidates,
+    address: str,
+    source_type: str = "sddc_manager",
+    port: int = 443,
+    fingerprint: str = "AA:BB",
+):
     """Submit an import from a fake source without making an authenticated request.
 
     Args:
@@ -169,17 +197,20 @@ def _post_fake_vcf_import(client, monkeypatch, *, csrf: str, vault_id: int, cand
         vault_id: Target vault ID.
         candidates: Fake candidate sequence exposed by the discovery stub.
         address: Fake source address for this import attempt.
+        source_type: Fake source type bound to the reviewed candidate token.
+        port: Fake source port bound to the reviewed candidate token.
+        fingerprint: Fake TLS fingerprint bound to the reviewed candidate token.
     """
     from atlaso.app import ui
 
-    monkeypatch.setattr(ui, "_confirmed_tls_fingerprint", lambda *_args: ("AA:BB", None))
+    monkeypatch.setattr(ui, "_confirmed_tls_fingerprint", lambda *_args: (fingerprint, None))
     monkeypatch.setattr(ui, "discover_vcf_passwords", lambda **_kwargs: list(candidates))
     source = {
         "csrf": csrf,
-        "source_type": "sddc_manager",
+        "source_type": source_type,
         "address": address,
-        "port": 443,
-        "confirmed_fingerprint": "AA:BB",
+        "port": port,
+        "confirmed_fingerprint": fingerprint,
         "username": "admin",
         "password": "FixtureSourcePassword!",
     }
@@ -188,7 +219,16 @@ def _post_fake_vcf_import(client, monkeypatch, *, csrf: str, vault_id: int, cand
         json={
             **source,
             "vault_id": vault_id,
-            "candidate_ids": [candidate.selection_id for candidate in candidates],
+            "candidate_ids": [
+                _bound_test_vcf_selection_id(
+                    candidate,
+                    source_type=source_type,
+                    address=address,
+                    port=port,
+                    fingerprint=fingerprint,
+                )
+                for candidate in candidates
+            ],
         },
     )
 
@@ -1515,7 +1555,7 @@ def test_vcf_helper_inspection_returns_metadata_and_import_encrypts_value(client
         value="ImportedSecret!",
         uris=("https://esx01.example.internal",),
     )
-    monkeypatch.setattr(ui, "_confirmed_tls_fingerprint", lambda *_args: ("AA:BB", None))
+    monkeypatch.setattr(ui, "_confirmed_tls_fingerprint", lambda _address, _port, confirmed: (confirmed, None))
     monkeypatch.setattr(ui, "discover_vcf_passwords", lambda **_kwargs: [candidate])
     login(client)
     page = client.get("/vaults")
@@ -1539,15 +1579,19 @@ def test_vcf_helper_inspection_returns_metadata_and_import_encrypts_value(client
     }
     inspected = client.post("/vcf-helper/vault-import/inspect", json=source)
     assert inspected.status_code == 200
-    assert inspected.json()["candidates"] == [candidate.sanitized()]
-    assert inspected.json()["candidates"][0]["candidate_id"] == candidate.selection_id
+    inspected_candidate = inspected.json()["candidates"][0]
+    inspected_token = inspected_candidate["candidate_id"]
+    expected_candidate = candidate.sanitized()
+    expected_candidate["candidate_id"] = inspected_token
+    assert inspected_candidate == expected_candidate
+    assert inspected_token != candidate.selection_id
     assert candidate.candidate_id not in inspected.text
     assert "ImportedSecret!" not in inspected.text
     assert "no-store" in inspected.headers["cache-control"]
 
     imported = client.post(
         "/vcf-helper/vault-import",
-        json={**source, "vault_id": vault_id, "candidate_ids": [candidate.selection_id]},
+        json={**source, "vault_id": vault_id, "candidate_ids": [inspected_token]},
     )
     assert imported.status_code == 200
     assert imported.json()["imported_keys"] == ["esx.esx01.root"]
@@ -1574,7 +1618,19 @@ def test_vcf_helper_inspection_returns_metadata_and_import_encrypts_value(client
     monkeypatch.setattr(ui, "discover_vcf_passwords", lambda **_kwargs: [refreshed_candidate])
     rotated = client.post(
         "/vcf-helper/vault-import",
-        json={**source, "vault_id": vault_id, "candidate_ids": [refreshed_candidate.selection_id]},
+        json={
+            **source,
+            "vault_id": vault_id,
+            "candidate_ids": [
+                _bound_test_vcf_selection_id(
+                    refreshed_candidate,
+                    source_type=source["source_type"],
+                    address=source["address"],
+                    port=source["port"],
+                    fingerprint=source["confirmed_fingerprint"],
+                )
+            ],
+        },
     )
     assert rotated.status_code == 200
     assert rotated.json()["rotated"] == 1
@@ -1586,7 +1642,7 @@ def test_vcf_helper_inspection_returns_metadata_and_import_encrypts_value(client
         json={
             **source,
             "vault_id": vault_id,
-            "candidate_ids": [candidate.selection_id, candidate.selection_id],
+            "candidate_ids": [inspected_token, inspected_token],
         },
     )
     assert duplicate.status_code == 422
@@ -1662,9 +1718,16 @@ def test_vcf_import_replaces_operator_uris_when_source_or_account_changes(
         "username": "admin",
         "password": "SourcePassword!",
     }
+    initial_token = _bound_test_vcf_selection_id(
+        candidate,
+        source_type=source["source_type"],
+        address=source["address"],
+        port=source["port"],
+        fingerprint=source["confirmed_fingerprint"],
+    )
     first = client.post(
         "/vcf-helper/vault-import",
-        json={**source, "vault_id": vault_id, "candidate_ids": [candidate.selection_id]},
+        json={**source, "vault_id": vault_id, "candidate_ids": [initial_token]},
     )
     assert first.status_code == 200
     with SessionLocal() as db:
@@ -1680,9 +1743,16 @@ def test_vcf_import_replaces_operator_uris_when_source_or_account_changes(
     )
     monkeypatch.setattr(ui, "discover_vcf_passwords", lambda **_kwargs: [changed_candidate])
     changed_source = {**source, **{key: value for key, value in mismatch.items() if key in {"source_type", "address"}}}
+    changed_token = _bound_test_vcf_selection_id(
+        changed_candidate,
+        source_type=changed_source["source_type"],
+        address=changed_source["address"],
+        port=changed_source["port"],
+        fingerprint=changed_source["confirmed_fingerprint"],
+    )
     rotated = client.post(
         "/vcf-helper/vault-import",
-        json={**changed_source, "vault_id": vault_id, "candidate_ids": [changed_candidate.selection_id]},
+        json={**changed_source, "vault_id": vault_id, "candidate_ids": [changed_token]},
     )
 
     assert rotated.status_code == 200
@@ -1732,7 +1802,6 @@ def test_vcf_import_rejects_candidate_metadata_drift_since_inspection(
         natural_key="vcf.manager.admin",
         value="FixtureCredentialPassword!",
     )
-    inspected_token = candidate.selection_id
     monkeypatch.setattr(ui, "_confirmed_tls_fingerprint", lambda *_args: ("AA:BB", None))
     monkeypatch.setattr(ui, "discover_vcf_passwords", lambda **_kwargs: [candidate])
     source = {
@@ -1746,10 +1815,25 @@ def test_vcf_import_rejects_candidate_metadata_drift_since_inspection(
     }
     inspected = client.post("/vcf-helper/vault-import/inspect", json=source)
     assert inspected.status_code == 200
+    inspected_token = inspected.json()["candidates"][0]["candidate_id"]
+    assert inspected_token == _bound_test_vcf_selection_id(
+        candidate,
+        source_type=source["source_type"],
+        address=source["address"],
+        port=source["port"],
+        fingerprint=source["confirmed_fingerprint"],
+    )
     assert inspected.json()["candidates"][0]["candidate_id"] == inspected_token
 
     changed_candidate = replace(candidate, **{field: changed_value})
-    assert changed_candidate.selection_id != inspected_token
+    changed_token = _bound_test_vcf_selection_id(
+        changed_candidate,
+        source_type=source["source_type"],
+        address=source["address"],
+        port=source["port"],
+        fingerprint=source["confirmed_fingerprint"],
+    )
+    assert changed_token != inspected_token
     monkeypatch.setattr(ui, "discover_vcf_passwords", lambda **_kwargs: [changed_candidate])
     imported = client.post(
         "/vcf-helper/vault-import",
@@ -1760,6 +1844,132 @@ def test_vcf_import_rejects_candidate_metadata_drift_since_inspection(
     with SessionLocal() as db:
         entries = db.execute(select(VaultEntry).where(VaultEntry.vault_id == vault_id)).scalars().all()
         assert entries == []
+
+
+@pytest.mark.parametrize(
+    "changed_source",
+    [
+        {"source_type": "vcf_installer"},
+        {"address": "rotated-sddc.example.internal"},
+        {"port": 8443},
+        {"confirmed_fingerprint": "CC:DD"},
+    ],
+)
+def test_vcf_import_rejects_source_drift_since_inspection(client, monkeypatch, changed_source):
+    """Reject an inspection token when its confirmed source identity changes before import.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+        monkeypatch: Pytest fixture used to replace discovery and TLS confirmation.
+        changed_source: One changed source binding field used by the import request.
+    """
+    from atlaso.app import ui
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import VaultEntry
+
+    csrf, vault_id = _create_empty_vcf_import_vault(client)
+    candidate = _canonical_test_vcf_candidate(
+        candidate_id="source-binding-credential",
+        natural_key="vcf.manager.admin",
+        value="FixtureCredentialPassword!",
+    )
+    monkeypatch.setattr(
+        ui,
+        "_confirmed_tls_fingerprint",
+        lambda _address, _port, confirmed: (confirmed, None),
+    )
+    monkeypatch.setattr(ui, "discover_vcf_passwords", lambda **_kwargs: [candidate])
+    source = {
+        "csrf": csrf,
+        "source_type": "sddc_manager",
+        "address": "sddc-manager.example.internal",
+        "port": 443,
+        "confirmed_fingerprint": "AA:BB",
+        "username": "admin",
+        "password": "FixtureSourcePassword!",
+    }
+    inspected = client.post("/vcf-helper/vault-import/inspect", json=source)
+    assert inspected.status_code == 200
+    old_token = inspected.json()["candidates"][0]["candidate_id"]
+    assert old_token != candidate.selection_id
+    imported = client.post(
+        "/vcf-helper/vault-import",
+        json={
+            **source,
+            **changed_source,
+            "vault_id": vault_id,
+            "candidate_ids": [old_token],
+        },
+    )
+
+    assert imported.status_code == 422
+    with SessionLocal() as db:
+        entries = db.execute(select(VaultEntry).where(VaultEntry.vault_id == vault_id)).scalars().all()
+        assert entries == []
+
+
+@pytest.mark.parametrize(
+    "inspected_address, current_address",
+    [
+        ("sddc-manager.example.internal", "SDDC-MANAGER.Example.Internal."),
+        ("2001:db8::10", "2001:0db8:0000:0000:0000:0000:0000:0010"),
+    ],
+)
+def test_vcf_import_accepts_equivalent_source_spelling_since_inspection(
+    client, monkeypatch, inspected_address, current_address
+):
+    """Accept an inspection token when the source address spelling is canonically equivalent.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+        monkeypatch: Pytest fixture used to replace discovery and TLS confirmation.
+        inspected_address: Source spelling used to create the inspection token.
+        current_address: Equivalent source spelling used by the import request.
+    """
+    from atlaso.app import ui
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import VaultEntry
+    from atlaso.app.secrets import decrypt_secret
+
+    csrf, vault_id = _create_empty_vcf_import_vault(client)
+    candidate = _canonical_test_vcf_candidate(
+        candidate_id=f"equivalent-binding-{inspected_address}",
+        natural_key="vcf.manager.admin",
+        value="BoundSourceCredential!",
+    )
+    monkeypatch.setattr(
+        ui,
+        "_confirmed_tls_fingerprint",
+        lambda _address, _port, confirmed: (confirmed, None),
+    )
+    monkeypatch.setattr(ui, "discover_vcf_passwords", lambda **_kwargs: [candidate])
+    source = {
+        "csrf": csrf,
+        "source_type": "sddc_manager",
+        "address": inspected_address,
+        "port": 443,
+        "confirmed_fingerprint": "AA:BB",
+        "username": "admin",
+        "password": "FixtureSourcePassword!",
+    }
+    inspected = client.post("/vcf-helper/vault-import/inspect", json=source)
+    assert inspected.status_code == 200
+    inspected_token = inspected.json()["candidates"][0]["candidate_id"]
+    imported = client.post(
+        "/vcf-helper/vault-import",
+        json={
+            **source,
+            "address": current_address,
+            "vault_id": vault_id,
+            "candidate_ids": [inspected_token],
+        },
+    )
+
+    assert imported.status_code == 200
+    with SessionLocal() as db:
+        entry = db.execute(select(VaultEntry).where(VaultEntry.vault_id == vault_id)).scalar_one()
+        assert entry.key == candidate.key
+        assert decrypt_secret(entry.encrypted_value) == "BoundSourceCredential!"
 
 
 def test_vcf_import_accepts_password_refresh_when_reviewed_metadata_is_unchanged(client, monkeypatch):
@@ -1799,7 +2009,14 @@ def test_vcf_import_accepts_password_refresh_when_reviewed_metadata_is_unchanged
     inspected = client.post("/vcf-helper/vault-import/inspect", json=source)
     assert inspected.status_code == 200
     selection_id = inspected.json()["candidates"][0]["candidate_id"]
-    assert selection_id == candidate.selection_id
+    assert selection_id == _bound_test_vcf_selection_id(
+        candidate,
+        source_type=source["source_type"],
+        address=source["address"],
+        port=source["port"],
+        fingerprint=source["confirmed_fingerprint"],
+    )
+    assert selection_id != candidate.selection_id
 
     monkeypatch.setattr(ui, "discover_vcf_passwords", lambda **_kwargs: [current_candidate])
     imported = client.post(
@@ -2022,7 +2239,15 @@ def test_vcf_import_does_not_preserve_operator_uris_across_source_port_change(cl
             "username": "admin",
             "password": "FixtureSourcePassword!",
             "vault_id": vault_id,
-            "candidate_ids": [candidate.selection_id],
+            "candidate_ids": [
+                _bound_test_vcf_selection_id(
+                    candidate,
+                    source_type="sddc_manager",
+                    address="sddc-manager.example.internal",
+                    port=8443,
+                    fingerprint="AA:BB",
+                )
+            ],
         },
     )
 

@@ -9,6 +9,7 @@ import ssl
 from collections import Counter
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
+from hashlib import sha256
 from ipaddress import ip_address
 from pathlib import Path, PurePosixPath
 from threading import Lock
@@ -166,6 +167,25 @@ def _vcf_vault_source_matches(stored: str, address: str, port: int) -> bool:
     return _canonical_vcf_vault_source_endpoint(host, int(port_text)) == (
         _canonical_vcf_vault_source_endpoint(address, port)
     )
+
+
+def _vcf_vault_selection_id(
+    candidate_selection_id: str, source_type: str, address: str, port: int, fingerprint: str
+) -> str:
+    """Bind a candidate metadata token to the source reviewed during inspection.
+
+    Args:
+        candidate_selection_id: Opaque candidate identity and reviewed metadata token.
+        source_type: Reviewed credential source type.
+        address: Parsed source hostname or IP address.
+        port: Reviewed source service port.
+        fingerprint: Verified source TLS certificate fingerprint.
+    """
+    reviewed = (candidate_selection_id, source_type,
+                _canonical_vcf_vault_source_endpoint(address, port),
+                fingerprint.replace(":", "").strip().lower())
+    encoded = json.dumps(reviewed, ensure_ascii=True, separators=(",", ":"))
+    return "vcf-" + sha256(encoded.encode("utf-8")).hexdigest()
 
 
 def _vcf_fqdn_population_serializer() -> URLSafeTimedSerializer:
@@ -859,7 +879,9 @@ def build_router(dependencies: VcfWorkflowsUiDependencies) -> VcfWorkflowsUiRout
                 detail=redact_secret_values(str(exc), [source_password]),
             ) from exc
         return JSONResponse(
-            {"candidates": [candidate.sanitized() for candidate in candidates],
+            {"candidates": [{**candidate.sanitized(), "candidate_id": _vcf_vault_selection_id(
+                candidate.selection_id, str(payload.get("source_type") or ""), address, port, fingerprint
+            )} for candidate in candidates],
              "discovery": candidates.summary() if hasattr(candidates, "summary") else {}},
             headers={"Cache-Control": "no-store, private", "Pragma": "no-cache"},
         )
@@ -935,7 +957,9 @@ def build_router(dependencies: VcfWorkflowsUiDependencies) -> VcfWorkflowsUiRout
                 password=source_password,
                 expected_fingerprint=fingerprint,
             )
-            by_id = {candidate.selection_id: candidate for candidate in candidates}
+            by_id = {_vcf_vault_selection_id(
+                candidate.selection_id, source_type, address, port, fingerprint
+            ): candidate for candidate in candidates}
             missing = [
                 candidate_id for candidate_id in selected if candidate_id not in by_id
             ]
