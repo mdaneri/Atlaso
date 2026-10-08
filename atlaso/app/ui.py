@@ -14687,12 +14687,12 @@ def adapter_result_to_payload(result: Any) -> dict[str, Any]:
     Args:
         result: Operation result being inspected or returned.
     """
-    from atlaso.important_events import failure_reason
+    from atlaso.important_events import failure_reason, validate_route_conflict
 
     stage = next((name for name, verb in (("validation", "validate"), ("rollback", "rollback"),
                  ("recovery", "recover"), ("readiness", "readiness"), ("cleanup", "cleanup"))
                   if verb in result.command[:8]), "execution")
-    return {
+    payload = {
         "command": result.command,
         "command_line": " ".join(result.command),
         "dry_run": result.dry_run,
@@ -14702,6 +14702,17 @@ def adapter_result_to_payload(result: Any) -> dict[str, Any]:
         "stage": stage,
         "reason_code": "none" if result.returncode == 0 else failure_reason(result.stderr, result.returncode),
     }
+    if stage == "execution" and result.returncode != 0 and payload["reason_code"] == "management_route_conflict":
+        for line in reversed((result.stderr or "")[:65536].splitlines()[-32:]):
+            try:
+                evidence = json.loads(line)
+            except (json.JSONDecodeError, RecursionError):
+                continue
+            if isinstance(evidence, dict) and evidence.get("reason_code") == "management_route_conflict":
+                if (conflict := validate_route_conflict(evidence.get("route_conflict"))) is not None:
+                    payload["route_conflict"] = conflict
+                    break
+    return payload
 
 
 def management_handoff_result_evidence(result: Any) -> dict[str, Any]:

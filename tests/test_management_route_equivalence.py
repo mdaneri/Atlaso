@@ -1,6 +1,8 @@
 """Regress retained WAN defaults without admitting foreign route replacements."""
 
+import json
 import subprocess
+from contextlib import contextmanager
 
 import pytest
 
@@ -188,3 +190,73 @@ def test_seed_retirement_keeps_captured_boot_default(helper, monkeypatch, tmp_pa
     assert commands[0][3] == "del"
     assert commands[0][-2:] == ["metric", "202"]
     assert original in observed
+
+
+@pytest.mark.parametrize("rollback_failed", [False, True])
+def test_ordinary_network_apply_preserves_conflict_pair_after_transaction_unwind(helper, monkeypatch, tmp_path, capsys,
+                                                                              rollback_failed):
+    """Ordinary Network Apply retains typed evidence after its transaction exits.
+
+    Args:
+        helper: Loaded appliance helper.
+        monkeypatch: Scoped native-operation replacements.
+        tmp_path: Isolated staged configuration directory.
+        capsys: Helper output capture fixture.
+        rollback_failed: Whether transaction restoration reports failure.
+    """
+    from atlaso.app.adapters.system import AdapterResult
+    from atlaso.app.services.important_task_events import execution_projection
+    from atlaso.app.ui import adapter_result_to_payload
+
+    config = tmp_path / "network.conf"
+    row = {"name": "eth0", "table": 100, "destination": "0.0.0.0/0", "gateway": "192.0.2.1",
+           "metric": 100, "protocol": "boot"}
+    conflict = helper.ManagementRouteConflict(row, {"dst": "default", "gateway": "192.0.2.2",
+                                                   "metric": 100, "protocol": "boot"})
+    events = []
+
+    @contextmanager
+    def transaction(_path):
+        """Model transaction exception propagation before helper serialization.
+
+        Args:
+            _path: Staged configuration path.
+        """
+        try:
+            yield
+        except helper.ManagementRouteConflict as exc:
+            events.append("unwound")
+            disposition = "network rollback incomplete" if rollback_failed else "previous network configuration restored"
+            raise ValueError(f"{exc}; {disposition}") from exc
+
+    def seed(*_args):
+        """Reject the observed foreign route.
+
+        Args:
+            *_args: Transition seed call arguments.
+        """
+        raise conflict
+
+    monkeypatch.setattr(helper, "_validate_network_config_path", lambda _path: config)
+    monkeypatch.setattr(helper, "_network_config_errors", lambda _path: [])
+    monkeypatch.setattr(helper, "_network_identity_preflight", lambda _path: None)
+    monkeypatch.setattr(helper, "_network_detection_preflight", lambda _path: None)
+    monkeypatch.setattr(helper, "_route_domain_ingress_desired_rules", lambda _path: [])
+    monkeypatch.setattr(helper, "_ordinary_network_old_management_bindings", lambda _path: [{"name": "eth0"}])
+    monkeypatch.setattr(helper, "_network_apply_transaction", transaction)
+    monkeypatch.setattr(helper, "_removed_vlan_source_holds", lambda _path: [])
+    monkeypatch.setattr(helper, "_network_transaction_state", lambda: {})
+    monkeypatch.setattr(helper, "_seed_transition_routes", seed)
+    monkeypatch.setattr(helper, "_stage_candidate_ingress_guards", lambda _path: pytest.fail("activation began"))
+    assert helper._handle_network_locked("apply", [str(config)]) == 2
+    assert events == ["unwound"]
+    stderr = capsys.readouterr().err
+    evidence = json.loads(stderr)
+    assert evidence["route_conflict"] == conflict.route_conflict
+    assert ("network rollback incomplete" in evidence["error"]) is rollback_failed
+    command = adapter_result_to_payload(AdapterResult(
+        command=["atlaso-helper", "network", "apply", str(config)], dry_run=False, returncode=2, stderr=stderr,
+    ))
+    projected = execution_projection({"commands": [command]}, "network")
+    assert projected[0]["reason"] == "management_route_conflict"
+    assert projected[0]["route_conflict"] == conflict.route_conflict

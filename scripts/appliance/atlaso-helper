@@ -14661,7 +14661,13 @@ def _handle_network_locked(
                     require_replacement=True, allow_disappeared_source=True,
                 )
     except (ValueError, OSError, subprocess.TimeoutExpired) as exc:
-        print(str(exc), file=sys.stderr)
+        conflict = exc if isinstance(exc, ManagementRouteConflict) else exc.__cause__
+        if isinstance(conflict, ManagementRouteConflict):
+            print(json.dumps({"network": "apply failed", "error": str(exc),
+                              "reason_code": "management_route_conflict",
+                              "route_conflict": conflict.route_conflict}, sort_keys=True), file=sys.stderr)
+        else:
+            print(str(exc), file=sys.stderr)
         return 2
     print(
         json.dumps(

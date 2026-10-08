@@ -128,6 +128,32 @@ def test_helper_adapter_propagates_only_valid_route_conflict_fields():
     assert evidence.get("route_conflict") is None
 
 
+@pytest.mark.parametrize("returncode,verb,conflict,expected", [
+    (2, "apply", ROUTE_CONFLICT, True),
+    (2, "apply", {**ROUTE_CONFLICT, "private_text": "synthetic"}, False),
+    (0, "apply", ROUTE_CONFLICT, False),
+    (2, "validate", ROUTE_CONFLICT, False),
+])
+def test_ordinary_network_adapter_retains_only_failed_execution_route_pairs(returncode, verb, conflict, expected):
+    """Only strictly validated failed execution evidence reaches event projections.
+
+    Args:
+        returncode: Helper exit code.
+        verb: Helper operation stage.
+        conflict: Candidate typed route-conflict record.
+        expected: Whether route context may be retained.
+    """
+    stderr = json.dumps({"network": "apply failed", "reason_code": "management_route_conflict",
+                         "error": "previous management route conflicts with live domain",
+                         "route_conflict": conflict, "private_text": "synthetic"})
+    result = AdapterResult(command=["atlaso-helper", "network", verb], dry_run=False,
+                           returncode=returncode, stderr=stderr)
+    payload = adapter_result_to_payload(result)
+    assert ("route_conflict" in payload) is expected
+    projected = execution_projection({"commands": [payload]}, "network")
+    assert "synthetic" not in json.dumps(projected)
+
+
 @pytest.mark.parametrize("rollback_evidence", [{"rolled_back": True}, {"management_handoff": "rolled back"}])
 def test_execution_projection_separates_route_failure_from_rollback(rollback_evidence):
     """Original failure, proven rollback, and dependent skip get distinct reasons.
