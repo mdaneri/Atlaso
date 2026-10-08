@@ -132,7 +132,9 @@ def validated_snapshot(text: str) -> tuple[list[dict[str, Any]], dict[str, Any] 
                  "addresses": set(manifest["forbidden_addresses"]), "service_hostnames": set(),
                  "claims": [], "port_forwards": []}
     for row in rows:
-        errors = validate_proxy(row, inventory, rows, exclude_id=row.id)
+        # Immutable nginx metadata has no database CA inventory; the helper separately
+        # validates its owned certificate files. Desired-state callers retain the CA gate.
+        errors = validate_proxy(row, inventory, rows, exclude_id=row.id, require_managed_ca=False)
         if errors:
             raise ValueError("Invalid reverse-proxy publication metadata.")
     if manifest != transport_manifest(proxies, manifest["forbidden_addresses"]) or "".join(lines[start:]) != render_proxy_servers(proxies, manifest):
@@ -347,6 +349,15 @@ def dns_plan(proxies: list[dict[str, Any]], settings: models.DnsSettings | None)
     return records, warnings
 
 
+def dns_hostname_key(value: str) -> str:
+    """Identify DNS-equivalent spellings for publication ownership guards.
+
+    Args:
+        value: Validated DNS hostname whose case and final root dot are insignificant.
+    """
+    return value.strip().rstrip(".").casefold()
+
+
 def validate_dns_ownership(plan: list[dict[str, Any]], records: list[models.DnsRecord]) -> None:
     """Reject DNS-equivalent operator names before managed publication changes.
 
@@ -354,9 +365,9 @@ def validate_dns_ownership(plan: list[dict[str, Any]], records: list[models.DnsR
         plan: Proposed exact DNS publication records, including managed eligibility.
         records: Existing or archived records whose ownership must be preserved.
     """
-    wanted_names = {row["hostname"].strip().rstrip(".").casefold() for row in plan if row["managed"]}
+    wanted_names = {dns_hostname_key(row["hostname"]) for row in plan if row["managed"]}
     for record in records:
-        if record.hostname.strip().rstrip(".").casefold() in wanted_names and not (record.description or "").startswith(DNS_OWNER_PREFIX):
+        if dns_hostname_key(record.hostname) in wanted_names and not (record.description or "").startswith(DNS_OWNER_PREFIX):
             raise ValueError("Managed reverse-proxy DNS conflicts with an operator or another service record. Preserve that record and resolve the hostname first.")
 
 

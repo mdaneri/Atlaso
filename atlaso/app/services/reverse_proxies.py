@@ -147,6 +147,14 @@ def _service_hostnames(db: Session) -> set[str]:
         db: Caller-owned database session for proxy desired state.
     """
     names: set[str] = set()
+    from atlaso.app.services.dnsmasq import authoritative_server_name
+
+    dns_settings = db.scalar(select(models.DnsSettings))
+    if dns_settings is not None and dns_settings.authoritative:
+        try:
+            names.add(_canonical_dns_name(authoritative_server_name(dns_settings), require_fqdn=False))
+        except ValueError:
+            pass
     for model in _SERVICE_SETTING_MODELS:
         row = db.scalar(select(model))
         if row is None:
@@ -196,6 +204,7 @@ def validation_context(db: Session) -> dict[str, Any]:
         "listeners": listener_options(db),
         "addresses": addresses,
         "service_hostnames": _service_hostnames(db),
+        "ca_enabled": bool((ca := db.scalar(select(models.CaSettings))) is not None and ca.enabled),
         "claims": listener_claims(db, include_reverse_proxies=False),
         "port_forwards": list(db.scalars(select(models.PortForward))),
     }
@@ -315,6 +324,7 @@ def validate_proxy(
     exclude_id: int | None = None,
     *,
     require_binding: bool = True,
+    require_managed_ca: bool = True,
 ) -> list[str]:
     """Validate one complete proxy and nested route replacement before persistence.
 
@@ -324,6 +334,7 @@ def validate_proxy(
         existing: Current proxy collection used for replacement and conflict checks.
         exclude_id: Existing proxy replaced by the candidate.
         require_binding: Whether exact eligible listener binding must be present.
+        require_managed_ca: Whether desired-state CA availability must be checked.
     """
     errors: list[str] = []
     try:
@@ -355,6 +366,8 @@ def validate_proxy(
 
     if candidate.scheme not in {"http", "https"}:
         errors.append("Choose HTTP or HTTPS for the client-facing protocol.")
+    if require_managed_ca and candidate.enabled and candidate.scheme == "https" and not context.get("ca_enabled", False):
+        errors.append("Enabled HTTPS reverse proxies require an enabled CA to issue their managed certificate.")
     if not 1 <= candidate.port <= 65535 or not 1 <= candidate.redirect_port <= 65535:
         errors.append("Client-facing listener ports must be between 1 and 65535.")
     if candidate.redirect_http and candidate.scheme != "https":

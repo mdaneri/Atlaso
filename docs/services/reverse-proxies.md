@@ -41,10 +41,12 @@ sockets, but HTTP and HTTPS cannot occupy the same socket. API settings writers 
 Open **Traffic Publishing**, select **Reverse Proxies**, and choose **Add reverse proxy**. The wizard has six steps:
 
 1. **Identity**: enter a unique **Name** and **Hostname**. Add a **Description** to record the application's purpose.
-   Atlaso reserves its own service hostnames.
+   Atlaso reserves its own service hostnames, including the explicit or default authoritative DNS primary hostname.
+   These names cannot be used as upstream targets either.
 2. **Listener**: select one or more exact **Listener addresses**, then choose the **Listener scheme** and **Listener
    port**. A shared nginx address and port can serve only one protocol. HTTPS uses an Atlaso CA-managed certificate for
-   the hostname; its private key is not shown in the editor.
+   the hostname; its private key is not shown in the editor. Enable the CA before saving an enabled HTTPS proxy.
+   Disabled HTTPS intent can be saved while the CA is disabled.
    Optionally enable **Redirect HTTP to HTTPS** and choose the **Redirect listener port**. The redirect applies only to
    the selected listener addresses and port.
 3. **Routes**: add one or more path routes. Set an absolute **Path prefix**, upstream HTTP or HTTPS **Upstream
@@ -68,7 +70,8 @@ Open **Traffic Publishing**, select **Reverse Proxies**, and choose **Add revers
    authoritative DNS** is a separate opt-in. When enabled and Atlaso authoritative DNS can serve the hostname, Atlaso
    reconciles its A and AAAA records to the selected listener addresses. Otherwise, create those records in your
    external DNS service. Existing operator DNS records for the same name, including a different letter case or final
-   dot, prevent managed publication; resolve the conflict without deleting unrelated records.
+   dot, prevent managed publication; resolve the conflict without deleting unrelated records. Ordinary DNS create,
+   edit, and bulk import operations also reject these alternate spellings of proxy-owned names.
 5. **State**: **Proxy enabled** defaults off. Turn it on to include the proxy in validated desired state.
 6. **Review**: check the identity, listener, path routes, publication, and desired state, including any TLS warnings.
    Choose **Save reverse proxy** to save the desired state.

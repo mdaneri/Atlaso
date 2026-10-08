@@ -3,6 +3,8 @@
 import json
 from pathlib import Path
 
+import pytest
+
 from tests.routers.ui.helpers import login
 
 
@@ -1897,10 +1899,12 @@ def test_zone_file_import_error_preserves_pasted_zone_text(client):
     assert "badrecord IN BOGUS unsupported" in imported.text
 
 
-def test_reverse_proxy_owned_dns_records_reject_ui_edits_deletes_and_imports(client):
+@pytest.mark.parametrize("alias", ["proxy.atlaso.internal", "PrOxY.AtLaSo.InTeRnAl."])
+def test_reverse_proxy_owned_dns_records_reject_ui_edits_deletes_and_imports(client, alias):
     """Keep proxy-owned DNS rows intact across direct and bulk UI operations.
 
     Args:
+        alias: DNS-equivalent spelling submitted to independent writers.
         client: Authenticated management test client with isolated appliance state.
     """
     from sqlalchemy import select
@@ -1954,7 +1958,7 @@ def test_reverse_proxy_owned_dns_records_reject_ui_edits_deletes_and_imports(cli
     created_alias = client.post(
         "/dns/records",
         data={
-            "hostname": "proxy",
+            "hostname": alias,
             "domain": "atlaso.internal",
             "record_type": "AAAA",
             "address": "2001:db8::78",
@@ -1966,7 +1970,7 @@ def test_reverse_proxy_owned_dns_records_reject_ui_edits_deletes_and_imports(cli
     renamed_alias = client.post(
         f"/dns/records/{unrelated_id}/edit",
         data={
-            "hostname": "proxy",
+            "hostname": alias,
             "domain": "atlaso.internal",
             "record_type": "AAAA",
             "address": "2001:db8::79",
@@ -1993,7 +1997,7 @@ def test_reverse_proxy_owned_dns_records_reject_ui_edits_deletes_and_imports(cli
         "/dns/records/import",
         data={
             "domain": "atlaso.internal",
-            "hosts_text": "192.168.50.77 proxy\n",
+            "hosts_text": f"192.168.50.77 {alias}\n",
             "csrf": csrf,
         },
     )
@@ -2018,7 +2022,7 @@ def test_reverse_proxy_owned_dns_records_reject_ui_edits_deletes_and_imports(cli
         "/dns/zones/import",
         data={
             "domain": "atlaso.internal",
-            "zone_text": "$ORIGIN atlaso.internal.\nproxy IN AAAA 2001:db8::78\n",
+            "zone_text": f"$ORIGIN atlaso.internal.\n{alias.rstrip('.')}. IN AAAA 2001:db8::78\n",
             "csrf": csrf,
         },
     )

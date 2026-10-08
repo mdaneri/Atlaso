@@ -11,6 +11,7 @@ from atlaso.app.models import (
     ApplianceSettings,
     AuditEvent,
     Base,
+    CaSettings,
     PhysicalInterface,
     PortForward,
     ReverseProxy,
@@ -172,6 +173,7 @@ def create_db() -> tuple[object, Session]:
                 ip_cidr="192.168.2.10/24",
             ),
             ApplianceSettings(fqdn="core.atlaso.internal"),
+            CaSettings(enabled=True),
         ]
     )
     db.commit()
@@ -185,6 +187,61 @@ def test_managed_dns_hostname_bound_prevents_invalid_owned_record():
         hostname = ".".join(["a" * 60, "b" * 60, "test"])
         with pytest.raises(ValueError, match="at most 120 characters"):
             save_proxy(db, payload(hostname=hostname, managed_dns=True), actor="operator")
+        assert list(db.scalars(select(ReverseProxy))) == []
+    finally:
+        db.close()
+        engine.dispose()
+
+
+def test_live_https_requires_ca_for_save_enable_and_publication_readiness():
+    """Preserve disabled HTTPS intent and reject enabled publication without a CA."""
+    from atlaso.app.services.reverse_proxy_publication import context
+
+    engine, db = create_db()
+    try:
+        db.scalar(select(CaSettings)).enabled = False
+        db.commit()
+        saved = save_proxy(db, payload(), actor="test")
+        before = runtime_snapshot(db)
+        with pytest.raises(ValueError, match="require an enabled CA"):
+            set_enabled(db, saved.id, enabled=True, actor="test")
+        assert runtime_snapshot(db) == before
+        with pytest.raises(ValueError, match="require an enabled CA"):
+            save_proxy(db, payload(name="Other", hostname="other.example.test", enabled=True), actor="test")
+        assert runtime_snapshot(db) == before
+        save_proxy(db, payload(name="HTTP", hostname="http.example.test", scheme="http", port=8080,
+                               redirect_http=False, enabled=True), actor="test")
+        saved.enabled = True
+        db.flush()
+        assert any("enabled CA" in error for error in context(db)["reverse_proxy_validation_errors"])
+    finally:
+        db.rollback()
+        db.close()
+        engine.dispose()
+
+
+@pytest.mark.parametrize(("configured", "target"), [("Ns1.Example.Test.", "served"), ("Ns1.Example.Test.", "upstream"),
+                                                       ("", "served"), ("", "upstream")])
+def test_authoritative_dns_primary_hostname_is_reserved(configured, target):
+    """Reserve explicit and default nameserver identities in both proxy positions.
+
+    Args:
+        configured: Canonicalizable configured primary hostname or empty default.
+        target: Served proxy hostname or upstream route target.
+    """
+    from atlaso.app.models import DnsSettings
+
+    engine, db = create_db()
+    try:
+        db.add(DnsSettings(enabled=True, authoritative=True, domain="example.test", authoritative_server=configured))
+        db.commit()
+        request = payload()
+        if target == "served":
+            request["hostname"] = "ns1.example.test"
+        else:
+            request["routes"][0]["upstream_host"] = "ns1.example.test"
+        with pytest.raises(ValueError, match="Atlaso.*service"):
+            save_proxy(db, request, actor="test")
         assert list(db.scalars(select(ReverseProxy))) == []
     finally:
         db.close()

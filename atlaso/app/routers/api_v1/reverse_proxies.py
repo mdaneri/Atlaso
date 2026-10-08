@@ -106,7 +106,9 @@ def create_reverse_proxy(payload: ReverseProxyCreate, identity: Writer, db: Sess
 
     Requires `write:firewall`. Validates and saves the proxy, nested routes, and
     audit record atomically. Success does not publish listeners; global Appliance
-    Apply is the only host-mutation boundary. Invalid intent returns 422 ProblemDetails.
+    Apply is the only host-mutation boundary. Enabled HTTPS requires an enabled CA.
+    Atlaso service names, including the authoritative DNS primary, are reserved as
+    proxy hostnames and upstream targets. Invalid intent returns 422 ProblemDetails.
 
     Args:
         payload: Complete proxy configuration with every ordered path route.
@@ -149,7 +151,9 @@ def replace_reverse_proxy(
 
     Requires `write:firewall`. The complete object is required so listener,
     identity, publication, timeout, and nested-route intent are validated and
-    audited in one desired-state transaction. Publication requires global Apply.
+    audited in one desired-state transaction. Enabled HTTPS requires an enabled CA;
+    Atlaso service names are reserved as hostnames and upstream targets. Invalid
+    intent returns 422 ProblemDetails. Publication requires global Apply.
 
     Args:
         proxy_id: Existing proxy identity to replace.

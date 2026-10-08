@@ -74,7 +74,7 @@ def _payload(**overrides):
 def _enable_test_listener():
     """Prepare one exact access listener in the isolated application database."""
     from atlaso.app.database import SessionLocal
-    from atlaso.app.models import PhysicalInterface
+    from atlaso.app.models import CaSettings, PhysicalInterface
 
     with SessionLocal() as db:
         interface = db.scalar(select(PhysicalInterface).where(PhysicalInterface.name == "eth1"))
@@ -84,7 +84,36 @@ def _enable_test_listener():
         interface.admin_state = "up"
         interface.oper_state = "up"
         interface.ip_cidr = "192.0.2.10/24"
+        db.scalar(select(CaSettings)).enabled = True
         db.commit()
+
+
+def test_reverse_proxy_api_rejects_enabled_https_without_ca(client):
+    """Reject an unpublishable TLS listener while preserving disabled desired state.
+
+    Args:
+        client: Isolated appliance API test client.
+    """
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import CaSettings, ReverseProxy
+
+    _enable_test_listener()
+    with SessionLocal() as db:
+        db.scalar(select(CaSettings)).enabled = False
+        db.commit()
+    token, _ = create_token(client, scopes=["read:firewall", "write:firewall"])
+    headers = {"Authorization": f"Bearer {token}"}
+    collection = "/api/v1/traffic-publishing/reverse-proxies"
+    rejected = client.post(collection, headers=headers, json=_payload(enabled=True))
+    assert rejected.status_code == 422
+    assert "enabled CA" in rejected.json()["detail"]
+    created = client.post(collection, headers=headers, json=_payload())
+    assert created.status_code == 201
+    enabled = client.put(f"{collection}/{created.json()['id']}", headers=headers, json=_payload(enabled=True))
+    assert enabled.status_code == 422
+    with SessionLocal() as db:
+        rows = list(db.scalars(select(ReverseProxy)))
+        assert len(rows) == 1 and not rows[0].enabled
 
 
 def test_reverse_proxy_api_requires_firewall_scopes(client):

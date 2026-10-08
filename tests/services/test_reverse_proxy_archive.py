@@ -27,6 +27,33 @@ from atlaso.app.services.settings_archive import (
 from tests.services.test_reverse_proxies import payload
 
 
+@pytest.mark.parametrize("target", ["served", "upstream"])
+@pytest.mark.parametrize("configured", ["Ns1.Example.Test.", ""])
+def test_archive_reserves_authoritative_primary_before_replacement(client, target, configured):
+    """Reject archived nameserver collisions without replacing saved sections.
+
+    Args:
+        client: Initialized appliance test fixture.
+        target: Served hostname or upstream route that claims the nameserver.
+        configured: Explicit primary name or empty value selecting the canonical default.
+    """
+    with SessionLocal() as db:
+        interface = db.scalar(select(PhysicalInterface).where(PhysicalInterface.name == "eth2"))
+        save_proxy(db, payload(listeners=[{"interface": "eth2", "address": interface.ip_cidr.split("/")[0]}]), actor="test")
+        before = export_settings_archive(db, actor="test")["data"]
+        archive = deepcopy(export_settings_archive(db, actor="test"))
+        archive["data"]["dns_settings"][0].update(authoritative=True, domain="example.test", disabled_domains="",
+                                                  authoritative_server=configured, authoritative_admin="hostmaster.example.test")
+        if target == "served":
+            archive["data"]["reverse_proxies"][0]["hostname"] = "ns1.example.test"
+        else:
+            archive["data"]["reverse_proxy_routes"][0]["upstream_host"] = "ns1.example.test"
+        with pytest.raises(ValueError, match="Atlaso.*service"):
+            restore_settings_archive(db, archive)
+        db.expire_all()
+        assert export_settings_archive(db, actor="test")["data"] == before
+
+
 @pytest.mark.parametrize("hostname", ["APPLICATION.EXAMPLE.TEST", "Application.Example.Test."])
 def test_archive_dns_collision_rejects_before_replacement(client, hostname):
     """Preserve all saved sections when archived operator DNS conflicts with a proxy.

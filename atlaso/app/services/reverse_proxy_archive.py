@@ -5,6 +5,7 @@ from typing import Any
 
 from atlaso.app import models
 from atlaso.app.reverse_proxy_schemas import ReverseProxyCreate, ReverseProxyRouteInput
+from atlaso.app.services.dnsmasq import authoritative_server_name
 from atlaso.app.services.esxi_pxe import ESXI_PXE_HOSTNAME_KEY, _normalize_hostname
 from atlaso.app.services.port_forwarding import ListenerClaim
 from atlaso.app.services.reverse_proxies import validate_proxy
@@ -112,8 +113,17 @@ def validate_candidates(proxies: list[models.ReverseProxy], data: dict[str, Any]
     configured_pxe_hostname = archived_settings.get(ESXI_PXE_HOSTNAME_KEY, "").strip()
     pxe_hostname = _normalize_hostname(configured_pxe_hostname or default_pxe_hostname)
     names.add(pxe_hostname)
+    dns_settings = (data.get("dns_settings") or [{}])[0]
+    archived_dns = models.DnsSettings(
+        enabled=dns_settings.get("enabled", False), authoritative=dns_settings.get("authoritative", False),
+        domain=dns_settings.get("domain", ""), disabled_domains=dns_settings.get("disabled_domains", ""),
+        authoritative_server=dns_settings.get("authoritative_server", ""),
+    )
+    if archived_dns.authoritative:
+        names.add(authoritative_server_name(archived_dns))
     context = {"targets": targets, "listeners": options, "addresses": addresses,
-               "service_hostnames": names - {""}, "claims": claims, "port_forwards": forwards}
+               "service_hostnames": names - {""}, "claims": claims, "port_forwards": forwards,
+               "ca_enabled": any(row.get("enabled", False) for row in data.get("ca_settings", []))}
     for proxy, row in zip(proxies, data["reverse_proxies"], strict=True):
         available = all(listener in options for listener in proxy.listeners)
         if not available:
@@ -128,13 +138,9 @@ def validate_candidates(proxies: list[models.ReverseProxy], data: dict[str, Any]
         errors = validate_proxy(proxy, context, proxies, exclude_id=proxy.id, require_binding=available)
         if errors:
             raise ValueError(f"Settings archive reverse proxy {proxy.name} is invalid: {errors[0]}")
-    dns_settings = (data.get("dns_settings") or [{}])[0]
     plan, _warnings = dns_plan(
         [{**row, "id": proxy.id} for proxy, row in zip(proxies, data["reverse_proxies"], strict=True)],
-        models.DnsSettings(enabled=dns_settings.get("enabled", False),
-                           authoritative=dns_settings.get("authoritative", False),
-                           domain=dns_settings.get("domain", ""),
-                           disabled_domains=dns_settings.get("disabled_domains", "")),
+        archived_dns,
     )
     validate_dns_ownership(plan, [models.DnsRecord(hostname=row["hostname"], description=row.get("description", ""))
                                   for row in data.get("dns_records", [])])

@@ -1,5 +1,7 @@
 """Test DNS/DHCP API v1 transport behavior."""
 
+import pytest
+
 
 def test_dhcp_availability_opt_out_survives_omitted_api_field(client):
     """Old API clients cannot silently re-enable an explicit opt-out.
@@ -333,10 +335,12 @@ def test_dns_hosts_import_replaces_existing_records(client):
     assert "core.atlaso.internal" not in validation.json()["config_preview"]
 
 
-def test_reverse_proxy_owned_dns_records_reject_independent_crud_and_imports(client):
+@pytest.mark.parametrize("alias", ["proxy.atlaso.internal", "PrOxY.AtLaSo.InTeRnAl."])
+def test_reverse_proxy_owned_dns_records_reject_independent_crud_and_imports(client, alias):
     """Keep proxy-owned DNS records under their reverse-proxy desired-state owner.
 
     Args:
+        alias: DNS-equivalent spelling submitted to independent writers.
         client: HTTP test client with isolated appliance state.
     """
     from atlaso.app.database import SessionLocal
@@ -388,7 +392,7 @@ def test_reverse_proxy_owned_dns_records_reject_independent_crud_and_imports(cli
         "/api/v1/dns/records",
         headers=headers,
         json={
-            "hostname": "proxy.atlaso.internal",
+            "hostname": alias,
             "record_type": "AAAA",
             "address": "2001:db8::78",
             "description": "Operator-owned conflicting alias",
@@ -398,7 +402,7 @@ def test_reverse_proxy_owned_dns_records_reject_independent_crud_and_imports(cli
         f"/api/v1/dns/records/{unrelated_id}",
         headers=headers,
         json={
-            "hostname": "proxy.atlaso.internal",
+            "hostname": alias,
             "record_type": "AAAA",
             "address": "2001:db8::79",
             "description": "Operator-owned renamed alias",
@@ -428,7 +432,7 @@ def test_reverse_proxy_owned_dns_records_reject_independent_crud_and_imports(cli
     overwrite = client.post(
         "/api/v1/dns/records/import",
         headers=headers,
-        json={"replace_existing": False, "hosts_text": "192.168.50.78 proxy.atlaso.internal\n"},
+        json={"replace_existing": False, "hosts_text": f"192.168.50.78 {alias}\n"},
     )
     unrelated_import = client.post(
         "/api/v1/dns/records/import",

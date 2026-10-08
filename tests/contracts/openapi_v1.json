@@ -19981,7 +19981,7 @@
         ]
       },
       "post": {
-        "description": "Create a complete proxy and its ordered routes as desired state.\n\nRequires `write:firewall`. Validates and saves the proxy, nested routes, and\naudit record atomically. Success does not publish listeners; global Appliance\nApply is the only host-mutation boundary. Invalid intent returns 422 ProblemDetails.",
+        "description": "Create a complete proxy and its ordered routes as desired state.\n\nRequires `write:firewall`. Validates and saves the proxy, nested routes, and\naudit record atomically. Success does not publish listeners; global Appliance\nApply is the only host-mutation boundary. Enabled HTTPS requires an enabled CA.\nAtlaso service names, including the authoritative DNS primary, are reserved as\nproxy hostnames and upstream targets. Invalid intent returns 422 ProblemDetails.",
         "operationId": "createReverseProxy",
         "requestBody": {
           "content": {
@@ -20176,7 +20176,7 @@
         ]
       },
       "put": {
-        "description": "Atomically replace one proxy and its complete ordered route collection.\n\nRequires `write:firewall`. The complete object is required so listener,\nidentity, publication, timeout, and nested-route intent are validated and\naudited in one desired-state transaction. Publication requires global Apply.",
+        "description": "Atomically replace one proxy and its complete ordered route collection.\n\nRequires `write:firewall`. The complete object is required so listener,\nidentity, publication, timeout, and nested-route intent are validated and\naudited in one desired-state transaction. Enabled HTTPS requires an enabled CA;\nAtlaso service names are reserved as hostnames and upstream targets. Invalid\nintent returns 422 ProblemDetails. Publication requires global Apply.",
         "operationId": "replaceReverseProxy",
         "parameters": [
           {
