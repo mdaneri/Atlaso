@@ -1250,3 +1250,67 @@ def test_nss_readback_rejects_kernel_hostname_change_during_synthetic_proof(monk
 
     with pytest.raises(ValueError, match="synthetic address proof failed"):
         dns_readback.verify_service_dns_nss(_own_hostname_records())
+
+
+@pytest.mark.parametrize("resolver_scope", ["", "%access0", "%3"])
+@pytest.mark.parametrize("nss_scope", ["", "%access0", "%3"])
+def test_nss_readback_proves_assigned_link_local_address_and_scope(monkeypatch, resolver_scope, nss_scope):
+    """Accept an assigned link-local answer with matching named, numeric, or absent scope.
+
+    Args:
+        monkeypatch: Replace native commands with current-link address evidence.
+        resolver_scope: Interface scope emitted by resolvectl.
+        nss_scope: Interface scope emitted or omitted by getent hosts.
+    """
+    local_address = "fe80::1234"
+    output = (_SYNTHETIC_QUERY.replace(_LOCAL_ADDRESSES[1], local_address + resolver_scope))
+    observed = json.dumps([
+        {"ifname": "mgmt0", "ifindex": 2, "addr_info": [{"local": _LOCAL_ADDRESSES[0]}]},
+        {"ifname": "access0", "ifindex": 3, "addr_info": [{"local": local_address}]},
+    ])
+    _install_own_hostname_commands(
+        monkeypatch, getent_output=f"{local_address}{nss_scope} {_KERNEL_HOSTNAME}\n",
+        resolvectl_output=output, ip_output=observed,
+    )
+    dns_readback.verify_service_dns_nss(_own_hostname_records())
+
+
+@pytest.mark.parametrize("resolver_address", ["fe80::1234%mgmt0", "fe80::1234%2", "fe80::9999%access0"])
+def test_nss_readback_rejects_link_local_address_on_unowned_scope(monkeypatch, resolver_address):
+    """A scoped synthetic address must be assigned to that exact observed link.
+
+    Args:
+        monkeypatch: Replace native commands with a different-link inventory.
+        resolver_address: Synthetic address with the wrong scope or an unassigned value.
+    """
+    observed = json.dumps([
+        {"ifname": "mgmt0", "ifindex": 2, "addr_info": [{"local": _LOCAL_ADDRESSES[0]}]},
+        {"ifname": "access0", "ifindex": 3, "addr_info": [{"local": "fe80::1234"}]},
+    ])
+    _install_own_hostname_commands(
+        monkeypatch, resolvectl_output=_SYNTHETIC_QUERY.replace(_LOCAL_ADDRESSES[1], resolver_address),
+        ip_output=observed,
+    )
+    with pytest.raises(ValueError, match="synthetic address proof failed"):
+        dns_readback.verify_service_dns_nss(_own_hostname_records())
+
+
+@pytest.mark.parametrize("nss_scope", ["%mgmt0", "%2"])
+def test_nss_readback_rejects_nss_link_local_scope_not_assigned_to_address(monkeypatch, nss_scope):
+    """Valid resolver proof does not admit an NSS result naming a different link.
+
+    Args:
+        monkeypatch: Replace native commands with the assigned access-link evidence.
+        nss_scope: Management-link scope not owning the returned link-local address.
+    """
+    observed = json.dumps([
+        {"ifname": "mgmt0", "ifindex": 2, "addr_info": [{"local": _LOCAL_ADDRESSES[0]}]},
+        {"ifname": "access0", "ifindex": 3, "addr_info": [{"local": "fe80::1234"}]},
+    ])
+    _install_own_hostname_commands(
+        monkeypatch, getent_output=f"fe80::1234{nss_scope} {_KERNEL_HOSTNAME}\n",
+        resolvectl_output=_SYNTHETIC_QUERY.replace(_LOCAL_ADDRESSES[1], "fe80::1234%access0"),
+        ip_output=observed,
+    )
+    with pytest.raises(ValueError, match="unexpected address"):
+        dns_readback.verify_service_dns_nss(_own_hostname_records())

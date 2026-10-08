@@ -555,15 +555,24 @@ def _synthetic_hostname_addresses(hostname: str, timeout: float) -> set[str]:
                 if not isinstance(entry, dict) or not isinstance(entry.get("local"), str):
                     raise ValueError("Appliance local address inventory is malformed.")
                 address = ipaddress.ip_address(entry["local"])
-                if not (address.is_unspecified or address.is_multicast or address.is_link_local):
+                if not (address.is_unspecified or address.is_multicast):
                     local.add(str(address))
+                    if isinstance(address, ipaddress.IPv6Address) and address.is_link_local:
+                        # resolvectl scopes link-local addresses; getent hosts may
+                        # omit that scope. Prove scoped forms on the exact link.
+                        if isinstance(interface.get("ifname"), str) and interface["ifname"]:
+                            local.add(f"{address}%{interface['ifname']}")
+                        if (isinstance(interface.get("ifindex"), int)
+                                and not isinstance(interface["ifindex"], bool) and interface["ifindex"] > 0):
+                            local.add(f"{address}%{interface['ifindex']}")
         # These are systemd's exact own-hostname fallbacks, not arbitrary loopback.
         fallbacks = {"127.0.0.2", "::1"}
         if not addresses <= local | fallbacks:
             raise ValueError("Appliance own-hostname synthesis contains an unowned address.")
         if _name(socket.gethostname()) != hostname:
             raise ValueError("Appliance kernel hostname changed during synthesis verification.")
-        return addresses | fallbacks
+        proven_addresses = {value.partition("%")[0] for value in addresses}
+        return addresses | fallbacks | {value for value in local if value.partition("%")[0] in proven_addresses}
     except (OSError, subprocess.TimeoutExpired, ValueError) as exc:
         raise ValueError("Appliance own-hostname synthetic address proof failed.") from exc
 

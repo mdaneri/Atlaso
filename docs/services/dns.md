@@ -140,6 +140,8 @@ For the appliance's exact current kernel hostname, native NSS may synthesize loc
 systemd fallback addresses `::1` and `127.0.0.2`. Apply accepts these only for a directly owned generated name after
 a bounded, network-disabled `resolvectl` lookup proves exclusively synthetic resolution and its addresses match the
 current local address inventory or those exact fallbacks. This exception does not extend to aliases or retired names.
+Assigned IPv6 link-local addresses participate in that proof; scoped resolver results must match the address on the
+named interface or interface index before an NSS result without the scope can be accepted.
 Authoritative and recursive wire DNS checks still require the exact captured published records, and unexpected,
 unowned, or stale addresses still fail Apply.
 From an allowed LAN client, query local records, SOA/NS, and an external name over UDP and TCP. If DNS activation fails,
