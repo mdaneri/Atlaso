@@ -98,11 +98,25 @@ def _endpoint_host(value: object, *, allow_short: bool = False) -> str:
     """
     if not isinstance(value, str):
         return ""
-    host = value.strip().removesuffix(".")
+    host = value.strip()
     if "%" in host:
         return ""
+    if "[" in host or "]" in host:
+        if not (host.startswith("[") and host.endswith("]")):
+            return ""
+        bracketed_host = host[1:-1]
+        if "[" in bracketed_host or "]" in bracketed_host:
+            return ""
+        try:
+            address = ip_address(bracketed_host)
+        except ValueError:
+            return ""
+        if address.version != 6:
+            return ""
+        return f"[{address}]"
+    host = host.removesuffix(".")
     try:
-        address = ip_address(host.strip("[]"))
+        address = ip_address(host)
         return f"[{address}]" if address.version == 6 else str(address)
     except ValueError:
         pass

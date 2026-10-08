@@ -297,6 +297,11 @@ def test_mismatched_detail_is_skipped(fake_api_factory, detail):
             ("ssh://esx01.lab.example", "ssh://[2001:db8::10]"),
         ),
         (
+            "SSH",
+            {"resourceType": "ESXI", "resourceIp": "[2001:db8::10]"},
+            ("ssh://[2001:db8::10]",),
+        ),
+        (
             "API",
             {"resourceType": "VCENTER", "resourceName": "vc01.lab.example", "resourceIp": "192.0.2.20"},
             ("https://vc01.lab.example", "https://192.0.2.20"),
@@ -338,6 +343,13 @@ def test_opaque_credential_id_does_not_become_an_endpoint():
         {"resourceType": "VCENTER", "resourceName": "user:pass@vc01.lab.example"},
         {"resourceType": "VCENTER", "resourceIp": "vc01.lab.example/path"},
         {"resourceType": "VCENTER", "resourceIp": "vc01.lab.example?token=fixture"},
+        {"resourceType": "VCENTER", "resourceIp": "[2001:db8::10"},
+        {"resourceType": "VCENTER", "resourceIp": "2001:db8::10]"},
+        {"resourceType": "VCENTER", "resourceIp": "[[2001:db8::10]]"},
+        {"resourceType": "VCENTER", "resourceIp": "[2001:db8::10]]"},
+        {"resourceType": "VCENTER", "resourceIp": "[192.0.2.20]"},
+        {"resourceType": "VCENTER", "resourceName": "[vc01.lab.example]"},
+        {"resourceType": "VCENTER", "resourceIp": "[2001:db8::10]."},
     ],
 )
 def test_credential_bearing_or_malformed_endpoints_are_rejected(resource):
@@ -490,10 +502,12 @@ def test_installer_maps_vcenter_and_nsxt_passwords_to_their_local_endpoints(fake
         ("esx-1.lab.example", "ssh://esx-1.lab.example"),
         ("esx-1.lab.example.", "ssh://esx-1.lab.example"),
         ("esx-1.lab.example..", ""),
+        ("2001:db8::10", "ssh://[2001:db8::10]"),
+        ("[2001:db8::10]", "ssh://[2001:db8::10]"),
     ],
 )
-def test_installer_host_specs_accept_only_one_trailing_dns_root_dot(fake_api_factory, hostname, expected_uri):
-    """Accept valid short/FQDN host fields and one root dot, but reject multiple trailing dots.
+def test_installer_host_specs_accept_valid_dns_and_ipv6_notation(fake_api_factory, hostname, expected_uri):
+    """Accept valid short/FQDN and IPv6 host fields, with at most one DNS root dot.
 
     Args:
         fake_api_factory: Fixture that creates an in-memory HTTP API client.
@@ -622,6 +636,13 @@ def test_installer_nsxt_managers_accept_explicit_short_hostnames(fake_api_factor
         "-esx",
         "esx_1",
         "esx..1",
+        "[2001:db8::10",
+        "2001:db8::10]",
+        "[[2001:db8::10]]",
+        "[2001:db8::10]]",
+        "[192.0.2.20]",
+        "[esx-1.lab.example]",
+        "[2001:db8::10].",
     ],
 )
 def test_installer_short_hostname_allowance_still_rejects_malformed_values(fake_api_factory, hostname):

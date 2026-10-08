@@ -125,7 +125,7 @@ VSP `systemUserPassword` creates separate `vmware-system-user` SSH and `admin@vs
 Root and ESX accounts use SSH, while other known web-component accounts use HTTPS.
 Unknown credential purposes need an operator URI association. FTP credentials are not treated as SFTP endpoints. If
 the metadata has no valid host, including a short generic resource label, opaque ID, or hostname with multiple trailing
-dots, the URI list stays empty. After import,
+dots, or malformed brackets (including bracketed IPv4 or DNS names), the URI list stays empty. After import,
 use the entry's **Edit** action to add a verified endpoint. Reimport preserves an existing nonempty operator-managed
 URI list only when the source type, source endpoint, resource name, account, and secret type match. A different source
 or account replaces the URI list with its discovered endpoints, including an empty list when none are known. Same-source
