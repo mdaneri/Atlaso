@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import re
+from base64 import b32encode
 from collections import Counter
 from dataclasses import dataclass, field, replace
-from hashlib import sha256
 from ipaddress import ip_address
 from urllib.parse import quote
 
@@ -327,6 +327,8 @@ def _installer_password_nodes(
                             account = "audit"
                     elif component == "sddcmanagerspec" and key == "sshPassword":
                         account = "vcf"
+                    elif component == "sddcmanagerspec" and key == "localUserPassword":
+                        account = "admin@local"
                     elif key == "rootUserPassword" and (
                         component == "vcfoperationscollectorspec"
                         or (len(path) >= 3 and path[-3:-1] == ("vcfOperationsSpec", "nodes"))
@@ -392,7 +394,7 @@ def _vcf_installer_candidates(api: VcfDepotApiClient) -> list[VcfPasswordCandida
         meaningful = [_segment(item) for item in path if item.lower() not in {"credentials", "password"}]
         if len(path) >= 3 and path[-3] == "nsxtSpec" and path[-1] == "rootNsxtManagerPassword":
             # DNS punctuation can normalize to the same key segment for distinct hosts.
-            meaningful[-2] += "_" + sha256(endpoint.encode("utf-8")).hexdigest()
+            meaningful[-2] = "host_" + b32encode(endpoint.encode("utf-8")).decode("ascii").rstrip("=").lower()
         key = ".".join([prefix, *meaningful[-3:], "password"])
         resource_name = next((item for item in reversed(path[:-1]) if not item.isdigit()), "VCF Installer")
         candidate_id = f"{sddc_id}:{'.'.join(path)}"

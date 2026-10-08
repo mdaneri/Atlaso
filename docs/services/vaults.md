@@ -103,6 +103,7 @@ web resource types. Installer mappings use the latest available SDDC specificati
 inventory: vCenter root uses SSH to `vcenterHostname`; vCenter SSO uses `adminUserSsoUsername` and HTTPS to
 `vcenterHostname`; each `nsxtManagers[].hostname` gets an NSX root SSH URI (never the cluster VIP); NSX admin and audit
 use HTTPS to `vipFqdn`. SDDC Manager `sshPassword` uses the `vcf` account and SSH to its `hostname`.
+Its `localUserPassword` uses `admin@local` and HTTPS to the same hostname.
 NSX manager root entries retain host-specific identities and keys when managers are reordered or removed.
 Operations nodes and the Operations collector map `rootUserPassword` to `root` over SSH to their adjacent `hostname`.
 Root and ESX accounts use SSH, while other known web-component accounts use HTTPS.

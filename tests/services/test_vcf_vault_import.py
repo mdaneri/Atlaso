@@ -493,6 +493,7 @@ def test_installer_maps_sddc_manager_ssh_password_to_vcf_account(fake_api_factor
             "hostname": "sddcm01.lab.example",
             "rootPassword": "fixture-sddc-root",
             "sshPassword": "fixture-sddc-vcf",
+            "localUserPassword": "fixture-sddc-local-admin",
         }
     }
 
@@ -512,6 +513,7 @@ def test_installer_maps_sddc_manager_ssh_password_to_vcf_account(fake_api_factor
     assert [(candidate.username, candidate.uris) for candidate in candidates] == [
         ("root", ("ssh://sddcm01.lab.example",)),
         ("vcf", ("ssh://sddcm01.lab.example",)),
+        ("admin@local", ("https://sddcm01.lab.example",)),
     ]
 
 
@@ -525,6 +527,32 @@ def test_unrelated_ssh_password_does_not_assume_vcf_account_or_uri(fake_api_fact
 
     def handler(request: httpx.Request) -> tuple[int, Any]:
         """Return a fake latest SDDC record or its installer specification.
+
+        Args:
+            request: Intercepted HTTP request to answer.
+        """
+        if request.url.path == "/v1/sddcs/latest":
+            return 200, {"id": "fixture-sddc"}
+        return 200, spec
+
+    api, _requests = fake_api_factory(handler)
+    candidates = service._vcf_installer_candidates(api)
+
+    assert len(candidates) == 1
+    assert candidates[0].username == ""
+    assert candidates[0].uris == ()
+
+
+def test_unrelated_local_user_password_does_not_assume_admin_account_or_uri(fake_api_factory):
+    """Keep unrelated localUserPassword fields unassociated without a source contract.
+
+    Args:
+        fake_api_factory: Fixture that creates an in-memory HTTP API client.
+    """
+    spec = {"unrelatedSpec": {"hostname": "unknown01.lab.example", "localUserPassword": "fixture-unknown-local"}}
+
+    def handler(request: httpx.Request) -> tuple[int, Any]:
+        """Return a fake latest SDDC record or its specification.
 
         Args:
             request: Intercepted HTTP request to answer.
