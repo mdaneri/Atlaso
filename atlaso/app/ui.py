@@ -16147,6 +16147,8 @@ def execute_management_handoff(
     reason_code = canonical_value(evidence.get("reason_code"), REASONS.keys())
     if reason_code is None and failure_reason(evidence.get("error")) == "management_route_conflict":
         reason_code = "management_route_conflict"
+    if reason_code is not None and not succeeded:
+        evidence = {**evidence, "reason_code": reason_code}
     route_conflict = validate_route_conflict(evidence.get("route_conflict"))
     if reason_code == "management_route_conflict" and route_conflict is not None:
         for command_payload in command_payloads:

@@ -336,13 +336,16 @@ def test_execute_management_handoff_keeps_root_failure_and_bundled_disposition(m
     assert group["success"] is False
     assert group["rollback_proven"] is True
     assert group["reason_code"] == "management_route_conflict"
-    if typed:
-        assert group["management_handoff"]["reason_code"] == "management_route_conflict"
-        assert "rolled_back" not in group["management_handoff"]
-        assert execution_projection(group, "task")[-1] == {
+    assert group["management_handoff"]["reason_code"] == "management_route_conflict"
+    assert "rolled_back" not in group["management_handoff"]
+    persisted = {**group, "management_handoff": True, "management_handoff_failure": group["management_handoff"]}
+    for payload in (group, persisted):
+        assert execution_projection(payload, "task")[-1] == {
             "component": "task", "stage": "rollback", "outcome": "succeeded",
             "reason": "dependent_work_rolled_back", "returncode": 0,
         }
+        assert not any(event["stage"] == "rollback" and event["outcome"] == "succeeded"
+                       for event in execution_projection({**payload, "rollback_proven": False}, "task"))
     assert group["management_handoff"]["recovery"]["management_handoff"] == "no interrupted transaction"
     assert by_id["network"]["reason_code"] == "management_route_conflict"
     assert by_id["firewall"]["reason_code"] == "dependent_work_rolled_back"
