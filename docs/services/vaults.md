@@ -117,7 +117,9 @@ Root and ESX accounts use SSH, while other known web-component accounts use HTTP
 Unknown credential purposes need an operator URI association. FTP credentials are not treated as SFTP endpoints. If
 the metadata has no valid host, including a short resource label or opaque ID, the URI list stays empty. After import,
 use the entry's **Edit** action to add a verified endpoint. Reimport preserves an existing nonempty operator-managed
-URI list and adds discovered URIs only when that list is empty. Atlaso re-reads the selected values during the reviewed
+URI list only when the source type, source endpoint, resource name, account, and secret type match. A different source
+or account replaces the URI list with its discovered endpoints, including an empty list when none are known. Same-source
+rotation adds discovered URIs only when the existing list is empty. Atlaso re-reads the selected values during the reviewed
 import and encrypts them immediately; existing keys are rotated. See Broadcom's [SDDC specification](https://developer.broadcom.com/xapis/vcf-installer-api/latest/data-structures/SddcSpec/)
 for the source field definitions.
 

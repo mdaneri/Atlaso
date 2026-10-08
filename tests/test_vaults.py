@@ -1424,6 +1424,112 @@ def test_vcf_helper_inspection_returns_metadata_and_import_encrypts_value(client
     assert duplicate.status_code == 422
 
 
+@pytest.mark.parametrize(
+    "mismatch, candidate_uris, expected_source_type, expected_address, expected_port",
+    [
+        ({"source_type": "vcf_installer"}, ("https://fresh.example.internal",), "vcf_installer", "sddc-manager.example.internal", 443),
+        ({"address": "rotated-source.example.internal"}, (), "sddc_manager", "rotated-source.example.internal", 443),
+        ({"resource_name": "different-resource"}, ("ssh://fresh.example.internal",), "sddc_manager", "sddc-manager.example.internal", 443),
+        ({"username": "different-account"}, (), "sddc_manager", "sddc-manager.example.internal", 443),
+        ({"secret_type": "vcf_password"}, ("https://fresh.example.internal",), "sddc_manager", "sddc-manager.example.internal", 443),
+    ],
+)
+def test_vcf_import_replaces_operator_uris_when_source_or_account_changes(
+    client,
+    monkeypatch,
+    mismatch,
+    candidate_uris,
+    expected_source_type,
+    expected_address,
+    expected_port,
+):
+    """Replace operator URI positions unless every source and account identity field matches.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+        monkeypatch: Pytest fixture used to replace discovery dependencies.
+        mismatch: One source or account identity field to change for the second import.
+        candidate_uris: Current discovery URIs, including the empty-URI case.
+        expected_source_type: Source type expected on the updated vault entry.
+        expected_address: Source address expected on the updated vault entry.
+        expected_port: Source port expected on the updated vault entry.
+    """
+    from dataclasses import replace
+
+    from atlaso.app import ui
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Vault, VaultEntry
+    from atlaso.app.secrets import decrypt_secret
+    from atlaso.app.services.vcf_vault_import import VcfPasswordCandidate
+
+    candidate = VcfPasswordCandidate(
+        candidate_id="credential-source-rotation",
+        key="esx.esx01.root",
+        description="Imported ESX root password.",
+        secret_type="esx_password",
+        username="root",
+        resource_name="esx01",
+        value="InitialImportedSecret!",
+        uris=("https://discovered.example.internal",),
+    )
+    monkeypatch.setattr(ui, "_confirmed_tls_fingerprint", lambda *_args: ("AA:BB", None))
+    monkeypatch.setattr(ui, "discover_vcf_passwords", lambda **_kwargs: [candidate])
+    login(client)
+    page = client.get("/vaults")
+    csrf = csrf_from_page(page.text)
+    assert client.post(
+        "/vaults",
+        data={"csrf": csrf, "name": "Source rotation", "description": ""},
+        follow_redirects=False,
+    ).status_code == 303
+    with SessionLocal() as db:
+        vault_id = db.execute(select(Vault).where(Vault.name == "Source rotation")).scalar_one().id
+
+    source = {
+        "csrf": csrf,
+        "source_type": "sddc_manager",
+        "address": "sddc-manager.example.internal",
+        "port": 443,
+        "confirmed_fingerprint": "AA:BB",
+        "username": "admin",
+        "password": "SourcePassword!",
+    }
+    first = client.post(
+        "/vcf-helper/vault-import",
+        json={**source, "vault_id": vault_id, "candidate_ids": [candidate.candidate_id]},
+    )
+    assert first.status_code == 200
+    with SessionLocal() as db:
+        entry = db.execute(select(VaultEntry).where(VaultEntry.vault_id == vault_id)).scalar_one()
+        entry.uris_json = json.dumps(["https://operator.example.internal", "ssh://operator.example.internal"])
+        db.commit()
+
+    changed_candidate = replace(
+        candidate,
+        value="CurrentImportedSecret!",
+        uris=candidate_uris,
+        **{name: value for name, value in mismatch.items() if name in {"resource_name", "username", "secret_type"}},
+    )
+    monkeypatch.setattr(ui, "discover_vcf_passwords", lambda **_kwargs: [changed_candidate])
+    changed_source = {**source, **{key: value for key, value in mismatch.items() if key in {"source_type", "address"}}}
+    rotated = client.post(
+        "/vcf-helper/vault-import",
+        json={**changed_source, "vault_id": vault_id, "candidate_ids": [candidate.candidate_id]},
+    )
+
+    assert rotated.status_code == 200
+    assert rotated.json()["rotated"] == 1
+    with SessionLocal() as db:
+        entry = db.execute(select(VaultEntry).where(VaultEntry.vault_id == vault_id)).scalar_one()
+        assert json.loads(entry.uris_json) == list(candidate_uris)
+        assert decrypt_secret(entry.encrypted_value) == "CurrentImportedSecret!"
+        assert entry.source_type == expected_source_type
+        assert entry.source_endpoint == f"{expected_address}:{expected_port}"
+        assert entry.resource_name == changed_candidate.resource_name
+        assert entry.username == changed_candidate.username
+        assert entry.secret_type == changed_candidate.secret_type
+
+
 def test_vcf_helper_vault_picker_resolves_password_only_on_server(client, monkeypatch):
     """Verify that vcf helper vault picker resolves password only on server.
 

@@ -917,8 +917,15 @@ def build_router(dependencies: VcfWorkflowsUiDependencies) -> VcfWorkflowsUiRout
                 existing = db.execute(select(VaultEntry).where(
                     VaultEntry.vault_id == vault.id, VaultEntry.key == candidate.key,
                 )).scalar_one_or_none()
-                # Operator-maintained URI positions are stable across password rotation.
-                uris = vault_entry_uris(existing) if existing is not None else ()
+                # Preserve operator URI positions only for the same source and account.
+                same_source = existing is not None and (
+                    existing.source_type == source_type
+                    and existing.source_endpoint == f"{address}:{port}"
+                    and existing.resource_name == candidate.resource_name
+                    and existing.username == candidate.username
+                    and existing.secret_type == candidate.secret_type
+                )
+                uris = vault_entry_uris(existing) if same_source else ()
                 entry, created = upsert_vault_entry(
                     db,
                     vault=vault,
