@@ -66,7 +66,10 @@ from atlaso.app.services.esxi_pxe import (
 )
 from atlaso.app.services.network_boot import lock_esxi_host_reference_lifecycle
 from atlaso.app.services.network_objects import acquire_network_objects_write_lock
-from atlaso.app.services.reverse_proxies import runtime_snapshot
+from atlaso.app.services.reverse_proxies import (
+    runtime_snapshot,
+    validate_service_proxy_dependencies,
+)
 from atlaso.app.services.reverse_proxy_publication import (
     DNS_OWNER_PREFIX,
     dns_hostname_key,
@@ -349,6 +352,7 @@ def build_router(dependencies: DnsDhcpUiDependencies) -> DnsDhcpUiRouter:
         )
         settings.updated_at = utcnow()
         try:
+            validate_service_proxy_dependencies(db)
             reconcile_proxy_dns(db, runtime_snapshot(db))
         except ValueError as exc:
             db.rollback()

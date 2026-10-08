@@ -335,7 +335,7 @@ def build_router(dependencies: ManagedLdapApiDependencies) -> ManagedLdapApiRout
         response_model=LdapSettingsResponse,
         tags=["LDAP"],
         operation_id="updateLdapSettings",
-        responses={409: {"model": ProblemDetails, "description": "The desired listener conflicts with an enabled reverse proxy; no service edits are saved."}},
+        responses={409: {"model": ProblemDetails, "description": "Service hostname, CA dependency or listener conflicts with saved reverse proxies; no service edits are saved."}},
     )
     def update_ldap_settings(
         payload: LdapSettingsUpdate,
@@ -347,7 +347,8 @@ def build_router(dependencies: ManagedLdapApiDependencies) -> ManagedLdapApiRout
         Requires the `write:ldap` API scope. The operation updates saved Atlaso state and does not
         bypass the documented global Appliance Apply or service lifecycle boundary.
         Listener writes share the Network Objects transaction lock and return 409 without saving changes
-        when an enabled reverse proxy owns the requested exclusive socket.
+        when a saved reverse proxy owns the requested hostname or upstream, its CA dependency is invalid,
+        or an enabled proxy owns the requested exclusive socket.
 
         Args:
             payload: Validated request or task payload consumed by the operation.

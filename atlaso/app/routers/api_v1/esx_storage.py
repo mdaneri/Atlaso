@@ -26,6 +26,7 @@ from atlaso.app.schemas import (
     EsxStorageVolumeCreate,
     EsxStorageVolumeResponse,
     EsxStorageVolumeUpdate,
+    ProblemDetails,
 )
 from atlaso.app.security import Identity, require_scope
 from atlaso.app.services.esx_storage import (
@@ -110,6 +111,7 @@ def build_router(dependencies: EsxStorageApiDependencies) -> EsxStorageApiRouter
         response_model=EsxStorageStatusResponse,
         tags=["ESX Storage"],
         operation_id="updateEsxStorageSettings",
+        responses={409: {"model": ProblemDetails, "description": "Service hostname conflicts with saved reverse-proxy ownership; settings remain unchanged."}},
     )
     def update_esx_storage_settings(
         payload: EsxStorageSettingsUpdate,
@@ -118,15 +120,26 @@ def build_router(dependencies: EsxStorageApiDependencies) -> EsxStorageApiRouter
     ) -> EsxStorageStatusResponse:
         """Update Esx Storage Settings.
 
-        Requires the `write:esx-storage` API scope. The request is evaluated without persisting desired
-        state or mutating appliance runtime state.
+        Requires `write:esx-storage`. Saves desired state under the Network Objects lock; global
+        Appliance Apply publishes runtime state. A hostname that invalidates saved reverse-proxy
+        ownership returns 409 without saving changes.
 
         Args:
             payload: Validated request or task payload consumed by the operation.
             identity: Authenticated identity authorizing the operation.
             db: Active database session used by the operation.
         """
+        from atlaso.app.services.network_objects import (
+            acquire_network_objects_write_lock,
+        )
+        from atlaso.app.services.reverse_proxies import (
+            validate_service_proxy_dependencies,
+        )
+
+        acquire_network_objects_write_lock(db)
         row = dependencies.get_esx_storage_settings(db)
+        acquire_network_objects_write_lock(db)
+        db.refresh(row)
         previous_hostname = row.hostname
         hostname = (payload.hostname or row.hostname).strip().lower().rstrip(".")
         if "." not in hostname:
@@ -137,6 +150,11 @@ def build_router(dependencies: EsxStorageApiDependencies) -> EsxStorageApiRouter
         row.enabled = payload.enabled
         row.hostname = hostname
         row.updated_at = utcnow()
+        try:
+            validate_service_proxy_dependencies(db)
+        except ValueError as exc:
+            db.rollback()
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
         dependencies.reconcile_esx_storage_dns(
             db, identity.username, previous_hostname=previous_hostname
         )

@@ -35,6 +35,8 @@ reservations so enabling saved state cannot exceed the generated publication bou
 Exclusive Atlaso services cannot take a socket used by an enabled proxy. Service settings saves reject this conflict
 before changing desired state; move or disable the proxy first. Matching HTTP or HTTPS virtual hosts can share nginx
 sockets, but HTTP and HTTPS cannot occupy the same socket. API settings writers return **409 Conflict** for this case.
+Service hostname edits also preserve saved proxy names and upstream targets, including disabled proxy intent.
+Disable HTTPS proxies before disabling their CA. Conflicting service or CA changes are rejected without saving them.
 
 ## Create a reverse proxy
 

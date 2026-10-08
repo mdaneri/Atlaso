@@ -263,6 +263,31 @@ def _nginx_http_front_door(claim: ListenerClaim) -> bool:
     )
 
 
+def validate_service_proxy_dependencies(db: Session) -> None:
+    """Preserve saved proxy hostname ownership and enabled HTTPS CA dependencies.
+
+    Callers hold the Network Objects writer lock and roll back on rejection.
+
+    Args:
+        db: Caller-owned session containing candidate service desired state.
+
+    Raises:
+        ValueError: If candidate service state would invalidate a saved proxy.
+    """
+    proxies = desired_rows(db)
+    if not proxies:
+        return
+    names = _service_hostnames(db)
+    ca = db.scalar(select(models.CaSettings))
+    for proxy in proxies:
+        if proxy.hostname.strip().rstrip(".").casefold() in names:
+            raise ValueError(f"Service hostname conflicts with saved reverse proxy {proxy.name}. Move or remove the proxy before saving this service hostname.")
+        if any(route.upstream_host.strip().rstrip(".").casefold() in names for route in proxy.routes):
+            raise ValueError(f"Service hostname conflicts with an upstream of saved reverse proxy {proxy.name}. Change that upstream before saving this service hostname.")
+        if proxy.enabled and proxy.scheme == "https" and (ca is None or not ca.enabled):
+            raise ValueError("Disable enabled HTTPS reverse proxies before disabling their Certificate Authority.")
+
+
 def validate_service_listener_sockets(db: Session) -> None:
     """Reject service edits that take an enabled proxy's socket before commit.
 
@@ -273,8 +298,9 @@ def validate_service_listener_sockets(db: Session) -> None:
         db: Caller-owned session containing the complete candidate service state.
 
     Raises:
-        ValueError: If a service requires an exclusive or incompatible socket.
+        ValueError: If service state conflicts with proxy names, CA or sockets.
     """
+    validate_service_proxy_dependencies(db)
     claims = listener_claims(db, include_reverse_proxies=False)
     for proxy in desired_rows(db):
         if not proxy.enabled:

@@ -1250,6 +1250,8 @@ def build_routers(
         verify_csrf(request, csrf)
         acquire_network_objects_write_lock(db)
         settings = get_ca_settings_row(db)
+        acquire_network_objects_write_lock(db)
+        db.refresh(settings)
         previous_portal_hostname = settings.portal_hostname
         selected_interfaces, selected_addresses = resolve_service_bind_targets(
             db,
@@ -1281,6 +1283,15 @@ def build_routers(
         settings.ocsp_enabled = ocsp_enabled == "on"
         settings.storage_path = settings.storage_path.strip() or "/etc/atlaso/ca"
         settings.updated_at = utcnow()
+        from atlaso.app.services.reverse_proxies import (
+            validate_service_proxy_dependencies,
+        )
+
+        try:
+            validate_service_proxy_dependencies(db)
+        except ValueError as exc:
+            db.rollback()
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
         ensure_dns_for_ca_portal(
             db, settings, identity.username, previous_hostname=previous_portal_hostname
         )

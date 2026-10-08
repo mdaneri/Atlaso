@@ -12547,7 +12547,7 @@
         ]
       },
       "patch": {
-        "description": "Update Dns Settings.\n\nRequires the `write:dns` API scope. The operation serializes DNS eligibility changes with proxy\nwrites and reconciles proxy-owned records atomically. A conflicting operator record returns 409\nwithout saving settings. Host enforcement remains subject to global Appliance Apply.",
+        "description": "Update Dns Settings.\n\nRequires the `write:dns` API scope. The operation serializes DNS eligibility changes with proxy\nwrites and reconciles proxy-owned records atomically. A conflicting operator record or authoritative\nprimary hostname claimed by a saved proxy returns 409\nwithout saving settings. Host enforcement remains subject to global Appliance Apply.",
         "operationId": "updateDnsSettings",
         "requestBody": {
           "content": {
@@ -12578,7 +12578,7 @@
                 }
               }
             },
-            "description": "Reverse-proxy-managed DNS conflicts with an operator or other service record; settings remain unchanged."
+            "description": "DNS ownership or authoritative service hostname conflicts with saved reverse proxies; settings remain unchanged."
           },
           "422": {
             "content": {
@@ -12941,7 +12941,7 @@
         ]
       },
       "patch": {
-        "description": "Update Esx Storage Settings.\n\nRequires the `write:esx-storage` API scope. The request is evaluated without persisting desired\nstate or mutating appliance runtime state.",
+        "description": "Update Esx Storage Settings.\n\nRequires `write:esx-storage`. Saves desired state under the Network Objects lock; global\nAppliance Apply publishes runtime state. A hostname that invalidates saved reverse-proxy\nownership returns 409 without saving changes.",
         "operationId": "updateEsxStorageSettings",
         "requestBody": {
           "content": {
@@ -12963,6 +12963,16 @@
               }
             },
             "description": "Update Esx Storage Settings. The response body matches the documented success schema."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Service hostname conflicts with saved reverse-proxy ownership; settings remain unchanged."
           },
           "422": {
             "content": {
@@ -15917,7 +15927,7 @@
         ]
       },
       "patch": {
-        "description": "Update Ldap Settings.\n\nRequires the `write:ldap` API scope. The operation updates saved Atlaso state and does not\nbypass the documented global Appliance Apply or service lifecycle boundary.\nListener writes share the Network Objects transaction lock and return 409 without saving changes\nwhen an enabled reverse proxy owns the requested exclusive socket.",
+        "description": "Update Ldap Settings.\n\nRequires the `write:ldap` API scope. The operation updates saved Atlaso state and does not\nbypass the documented global Appliance Apply or service lifecycle boundary.\nListener writes share the Network Objects transaction lock and return 409 without saving changes\nwhen a saved reverse proxy owns the requested hostname or upstream, its CA dependency is invalid,\nor an enabled proxy owns the requested exclusive socket.",
         "operationId": "updateLdapSettings",
         "requestBody": {
           "content": {
@@ -15948,7 +15958,7 @@
                 }
               }
             },
-            "description": "The desired listener conflicts with an enabled reverse proxy; no service edits are saved."
+            "description": "Service hostname, CA dependency or listener conflicts with saved reverse proxies; no service edits are saved."
           },
           "422": {
             "content": {
@@ -19616,7 +19626,7 @@
         ]
       },
       "patch": {
-        "description": "Update Settings.\n\nRequires the `admin:all` API scope. The operation updates only properties present in the request,\npreserves every omitted property, and does not bypass the documented global Appliance Apply or\nservice lifecycle boundary.",
+        "description": "Update Settings.\n\nRequires the `admin:all` API scope. The operation updates only properties present in the request,\npreserves every omitted property, and does not bypass the documented global Appliance Apply or\nservice lifecycle boundary. Appliance and derived service hostname conflicts with saved\nreverse proxies return 409 without saving changes.",
         "operationId": "updateSettings",
         "requestBody": {
           "content": {
@@ -19638,6 +19648,16 @@
               }
             },
             "description": "Update Settings. The response body matches the documented success schema."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Appliance or derived service hostname conflicts with saved reverse-proxy ownership; settings remain unchanged."
           },
           "422": {
             "content": {
@@ -21153,7 +21173,7 @@
         ]
       },
       "patch": {
-        "description": "Update saved listener desired state without mutating the appliance host.\n\nRequires the `write:kms` API scope. Enforcement remains exclusively in global Appliance Apply.\nListener writes share the Network Objects transaction lock and return 409 without saving changes\nwhen an enabled reverse proxy owns the requested exclusive socket.",
+        "description": "Update saved listener desired state without mutating the appliance host.\n\nRequires the `write:kms` API scope. Enforcement remains exclusively in global Appliance Apply.\nListener writes share the Network Objects transaction lock and return 409 without saving changes\nwhen a saved reverse proxy owns the requested hostname or upstream, its CA dependency is invalid,\nor an enabled proxy owns the requested exclusive socket.",
         "operationId": "updateVsphereKeyProviderSettings",
         "requestBody": {
           "content": {
@@ -21184,7 +21204,7 @@
                 }
               }
             },
-            "description": "The desired listener conflicts with an enabled reverse proxy; no service edits are saved."
+            "description": "Service hostname, CA dependency or listener conflicts with saved reverse proxies; no service edits are saved."
           },
           "422": {
             "content": {

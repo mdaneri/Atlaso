@@ -1,5 +1,6 @@
 """Test Traffic Publishing reverse-proxy UI structure and permissions."""
 
+import pytest
 from sqlalchemy import select
 
 from atlaso.app.database import SessionLocal
@@ -40,6 +41,44 @@ def test_service_ui_enable_rejects_existing_proxy_socket(client):
     with SessionLocal() as db:
         settings = db.scalar(select(KmsSettings))
         assert (settings.enabled, settings.port, settings.hostname) == before
+
+
+@pytest.mark.parametrize("change", ["hostname", "disable"])
+def test_ca_settings_preserve_proxy_dependencies_before_dns_and_commit(client, change):
+    """Reject reverse-order CA edits atomically at the actual management writer.
+
+    Args:
+        client: Isolated authenticated management client.
+        change: Portal-name takeover or disable of the required CA.
+    """
+    from atlaso.app.models import CaSettings, DnsRecord
+    from atlaso.app.services.reverse_proxies import runtime_snapshot, save_proxy
+    from tests.routers.api_v1.test_reverse_proxies import (
+        _enable_test_listener,
+        _payload,
+    )
+
+    login(client)
+    page = client.get("/ui/management/traffic-publishing")
+    csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    _enable_test_listener()
+    with SessionLocal() as db:
+        proxy = save_proxy(db, _payload(enabled=True), actor="test")
+        ca = db.scalar(select(CaSettings))
+        before = (ca.enabled, ca.portal_hostname, ca.organization)
+        proxy_before = runtime_snapshot(db)
+        dns_before = [(r.id, r.hostname, r.address, r.description) for r in db.scalars(select(DnsRecord))]
+        form = {"csrf": csrf, "root_common_name": ca.root_common_name,
+                "organization": "Attempted change", "portal_hostname": ca.portal_hostname}
+        if change == "hostname":
+            form.update(enabled="on", portal_hostname=proxy.hostname)
+    response = client.post("/ui/management/certificate-authority/settings", data=form, follow_redirects=False)
+    assert response.status_code == 409, response.text
+    with SessionLocal() as db:
+        ca = db.scalar(select(CaSettings))
+        assert (ca.enabled, ca.portal_hostname, ca.organization) == before
+        assert runtime_snapshot(db) == proxy_before
+        assert [(r.id, r.hostname, r.address, r.description) for r in db.scalars(select(DnsRecord))] == dns_before
 
 
 def test_reverse_proxy_page_uses_reviewed_grid_wizard_and_health_contract(client):

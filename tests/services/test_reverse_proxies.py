@@ -29,6 +29,7 @@ from atlaso.app.services.reverse_proxies import (
     set_enabled,
     validate_proxy,
     validate_service_listener_sockets,
+    validate_service_proxy_dependencies,
     validation_context,
 )
 
@@ -72,6 +73,57 @@ def test_service_socket_guard_retains_exclusive_and_shared_protocol_ownership(mo
         validate_service_listener_sockets(db)
     finally:
         db.rollback()
+        db.close()
+        engine.dispose()
+
+
+@pytest.mark.parametrize("model_name", ["CaSettings", "KmsSettings", "LdapSettings", "EsxStorageSettings",
+                                       "OidcProviderSettings", "NtpSettings", "VcfBackupSettings",
+                                       "VcfOfflineDepotSettings", "VcfPrivateRegistrySettings"])
+def test_service_hostname_edits_preserve_disabled_proxy_ownership(model_name):
+    """Reserve proxy names even before enabling their listener.
+
+    Args:
+        model_name: Service settings owner whose candidate hostname is changed.
+    """
+    from atlaso.app import models
+
+    engine, db = create_db()
+    try:
+        proxy = save_proxy(db, payload(), actor="test")
+        before = runtime_snapshot(db)
+        model = getattr(models, model_name)
+        service = db.scalar(select(model))
+        if service is None:
+            service = model()
+            db.add(service)
+        field = "portal_hostname" if model_name == "CaSettings" else "hostname"
+        setattr(service, field, proxy.hostname.upper() + ".")
+        with pytest.raises(ValueError, match="Service hostname conflicts"):
+            validate_service_proxy_dependencies(db)
+        db.rollback()
+        assert runtime_snapshot(db) == before
+    finally:
+        db.close()
+        engine.dispose()
+
+
+@pytest.mark.parametrize(("scheme", "enabled"), [("https", False), ("http", True)])
+def test_ca_disable_retains_disabled_https_and_enabled_http(scheme, enabled):
+    """Permit CA retirement when no saved proxy requires an active HTTPS leaf.
+
+    Args:
+        scheme: Client-facing protocol of the saved proxy.
+        enabled: Desired proxy availability.
+    """
+    engine, db = create_db()
+    try:
+        save_proxy(db, payload(scheme=scheme, enabled=enabled, port=9443, redirect_http=False), actor="test")
+        db.scalar(select(CaSettings)).enabled = False
+        validate_service_proxy_dependencies(db)
+        db.commit()
+        assert not db.scalar(select(CaSettings)).enabled
+    finally:
         db.close()
         engine.dispose()
 

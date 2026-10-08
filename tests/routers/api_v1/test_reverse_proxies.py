@@ -1,5 +1,6 @@
 """Exercise Firewall-scoped reverse-proxy desired-state API contracts."""
 
+import pytest
 from sqlalchemy import select
 
 from tests.routers.api_v1.helpers import create_token
@@ -114,6 +115,43 @@ def test_reverse_proxy_api_rejects_enabled_https_without_ca(client):
     with SessionLocal() as db:
         rows = list(db.scalars(select(ReverseProxy)))
         assert len(rows) == 1 and not rows[0].enabled
+
+
+@pytest.mark.parametrize(("endpoint", "field", "scope", "model_name"), [
+    ("/api/v1/settings", "appliance_fqdn", "admin:all", "ApplianceSettings"),
+    ("/api/v1/esx-storage/status", "hostname", "write:esx-storage", "EsxStorageSettings"),
+])
+def test_service_hostname_api_rejects_takeover_of_saved_proxy(client, endpoint, field, scope, model_name):
+    """Reject direct and derived service ownership changes without committing edits.
+
+    Args:
+        client: Isolated appliance client.
+        endpoint: Canonical service settings mutation route.
+        field: Hostname field in that route's request.
+        scope: Scope required for the settings writer.
+        model_name: Saved settings model whose state must be retained.
+    """
+    from atlaso.app import models
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.services.reverse_proxies import runtime_snapshot, save_proxy
+
+    _enable_test_listener()
+    with SessionLocal() as db:
+        proxy = save_proxy(db, _payload(), actor="test")
+        hostname = proxy.hostname
+        row = db.scalar(select(getattr(models, model_name)))
+        before = getattr(row, "fqdn", getattr(row, "hostname", ""))
+        proxies_before = runtime_snapshot(db)
+    token, _ = create_token(client, scopes=[scope])
+    payload = {field: hostname}
+    if field == "hostname":
+        payload["enabled"] = False
+    response = client.patch(endpoint, headers={"Authorization": f"Bearer {token}"}, json=payload)
+    assert response.status_code == 409, response.text
+    with SessionLocal() as db:
+        row = db.scalar(select(getattr(models, model_name)))
+        assert getattr(row, "fqdn", getattr(row, "hostname", "")) == before
+        assert runtime_snapshot(db) == proxies_before
 
 
 def test_reverse_proxy_api_requires_firewall_scopes(client):

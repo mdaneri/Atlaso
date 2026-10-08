@@ -80,7 +80,10 @@ from atlaso.app.services.dnsmasq import (
     validate_dns_settings,
 )
 from atlaso.app.services.network_objects import acquire_network_objects_write_lock
-from atlaso.app.services.reverse_proxies import runtime_snapshot
+from atlaso.app.services.reverse_proxies import (
+    runtime_snapshot,
+    validate_service_proxy_dependencies,
+)
 from atlaso.app.services.reverse_proxy_publication import (
     DNS_OWNER_PREFIX,
     dns_hostname_key,
@@ -257,7 +260,7 @@ def build_router(dependencies: DnsDhcpApiDependencies) -> DnsDhcpApiRouter:
         response_model=DnsSettingsResponse,
         tags=["DNS"],
         operation_id="updateDnsSettings",
-        responses={409: {"model": ProblemDetails, "description": "Reverse-proxy-managed DNS conflicts with an operator or other service record; settings remain unchanged."}},
+        responses={409: {"model": ProblemDetails, "description": "DNS ownership or authoritative service hostname conflicts with saved reverse proxies; settings remain unchanged."}},
     )
     def update_dns_settings(
         payload: DnsSettingsUpdate,
@@ -267,7 +270,8 @@ def build_router(dependencies: DnsDhcpApiDependencies) -> DnsDhcpApiRouter:
         """Update Dns Settings.
 
         Requires the `write:dns` API scope. The operation serializes DNS eligibility changes with proxy
-        writes and reconciles proxy-owned records atomically. A conflicting operator record returns 409
+        writes and reconciles proxy-owned records atomically. A conflicting operator record or authoritative
+        primary hostname claimed by a saved proxy returns 409
         without saving settings. Host enforcement remains subject to global Appliance Apply.
 
         Args:
@@ -301,6 +305,7 @@ def build_router(dependencies: DnsDhcpApiDependencies) -> DnsDhcpApiRouter:
             setattr(settings, key, value)
         settings.updated_at = utcnow()
         try:
+            validate_service_proxy_dependencies(db)
             reconcile_proxy_dns(db, runtime_snapshot(db))
         except ValueError as exc:
             db.rollback()
