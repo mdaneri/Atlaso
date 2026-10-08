@@ -101,8 +101,8 @@ The health fallback also shows the latest bounded observations after **Refresh h
 6. **Review**: check the identity, listener, path routes, publication, and desired state, including any TLS warnings.
    Choose **Save reverse proxy** to save the desired state.
 
-Saving updates the collection and validation preview from the saved response. If the saved result cannot be displayed,
-refresh the page before saving again.
+Saving or deleting updates the collection and validation preview from the returned response. If the completed result
+cannot be displayed, refresh the page before saving again.
 
 Saving changes desired state only. Review the changed units in **Review appliance changes**, select the applicable
 units, and submit **Submit appliance changes**. Appliance Apply validates and publishes the proxy together with its

@@ -718,6 +718,10 @@
         body: JSON.stringify(payload),
       });
       if (!response.ok) throw new Error(await endpointMessage(response, "The reverse-proxy change could not be saved."));
+      return applyMutationResponse(response, "saved");
+    }
+
+    async function applyMutationResponse(response, operation) {
       const sequence = ++loadSequence;
       try {
         const saved = await response.json();
@@ -727,7 +731,7 @@
         }
         return saved;
       } catch {
-        throw new Error("The change was saved, but its returned collection could not be displayed. Refresh the page before saving again.");
+        throw new Error(`The change was ${operation}, but its returned collection could not be displayed. Refresh the page before saving again.`);
       }
     }
 
@@ -843,8 +847,7 @@
                 headers: { Accept: "application/json", "X-CSRF-Token": csrf },
               });
               if (!response.ok) throw new Error(await endpointMessage(response, "The reverse proxy could not be deleted."));
-              await refreshData();
-              showError("");
+              await applyMutationResponse(response, "deleted");
             } catch (error) {
               showError(error instanceof Error ? error.message : "The reverse proxy could not be deleted.");
             }

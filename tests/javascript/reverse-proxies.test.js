@@ -134,6 +134,41 @@ test("successful saves consume the returned collection and ignore older GET resp
   await assert.rejects(context.submitPayload({ id: 7 }), /change was saved.*Refresh the page/);
 });
 
+test("successful deletes consume their returned collection without a follow-up GET", async () => {
+  const source = fs.readFileSync("atlaso/app/static/reverse-proxies.js", "utf8");
+  const helperStart = source.indexOf("    async function applyMutationResponse(");
+  const helperEnd = source.indexOf("    function openWizard(", helperStart);
+  const actionStart = source.indexOf("action: async", source.indexOf('{ label: "Delete reverse proxy"')) + "action: ".length;
+  const actionEnd = source.indexOf("\n          } },", actionStart) + "\n          }".length;
+  let allowed = true, ok = true, malformed = false;
+  const calls = [], errors = [], collections = [];
+  const deleted = { items: [], listener_options: [], config_preview: "retired preview" };
+  const context = vm.createContext({ loadSequence: 0, saveUrl: "/proxies/save", csrf: "test",
+    global: { requestConfirmation: async () => allowed },
+    applyCollection: (payload) => { if (!Array.isArray(payload.items)) throw new Error("invalid"); collections.push(payload); },
+    showError: (error) => errors.push(error), endpointMessage: async () => "Delete rejected",
+    fetch: async (url, options) => { calls.push([url, options]); return { ok, json: async () => malformed ? {} : deleted }; },
+  });
+  vm.runInContext(source.slice(helperStart, helperEnd) + "globalThis.deleteProxy = " + source.slice(actionStart, actionEnd), context);
+  const row = { getData: () => ({ id: 7, name: "Proxy" }) };
+  await context.deleteProxy(null, row);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0][0], "/proxies/7/delete");
+  assert.equal(calls[0][1].method, "POST");
+  assert.equal(collections.at(-1), deleted);
+  assert.equal(errors.at(-1), "");
+  allowed = false;
+  await context.deleteProxy(null, row);
+  assert.equal(calls.length, 1);
+  allowed = true; ok = false;
+  await context.deleteProxy(null, row);
+  assert.equal(errors.at(-1), "Delete rejected");
+  assert.equal(collections.length, 1);
+  ok = true; malformed = true;
+  await context.deleteProxy(null, row);
+  assert.match(errors.at(-1), /change was deleted.*Refresh the page/);
+});
+
 test("route steps reject every reserved component without rejecting neighboring application names", () => {
   const reserved = ["ui", "api", "openapi.json", "identity", "ca", "pxe", "prod", "registry", "v2", "static",
     "manifest.webmanifest", "service-worker.js", "terminal", "requests", "depot",
@@ -501,8 +536,8 @@ test("display escaping protects operator-controlled text", () => {
 
 test("management service worker precaches the reverse-proxy page asset", () => {
   const worker = fs.readFileSync("atlaso/app/static/service-worker.js", "utf8");
-  assert.match(worker, /const ATLASO_CACHE = `\$\{ATLASO_CACHE_PREFIX\}366`;/);
-  assert.match(worker, /"\/static\/reverse-proxies\.js\?v=issue-723-13"/);
+  assert.match(worker, /const ATLASO_CACHE = `\$\{ATLASO_CACHE_PREFIX\}367`;/);
+  assert.match(worker, /"\/static\/reverse-proxies\.js\?v=issue-723-14"/);
 });
 
 function classListFor(classes) {
