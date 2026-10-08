@@ -57,6 +57,7 @@ def test_reverse_proxy_page_uses_reviewed_grid_wizard_and_health_contract(client
     assert 'id="reverse-proxy-panel"' in page
     assert 'id="reverse-proxies-table"' in page
     assert 'id="reverse-proxies-fallback"' in page
+    assert 'data-reverse-proxy-add' in page.split('id="reverse-proxies-fallback"', 1)[1].split('</table>', 1)[0]
     assert 'data-reverse-proxy-wizard' in page
     assert 'data-atlaso-wizard-step="identity"' in page
     assert 'data-atlaso-wizard-step="listener"' in page

@@ -33,6 +33,13 @@
     return String(value || "").replace(/[:\s-]/g, "");
   }
 
+  function validPathPrefix(value) {
+    const path = String(value || "");
+    return path.startsWith("/") && path.length <= 1024
+      && !/[\\%?#\s\u0085;{}$"'\x00-\x1f\x7f]/u.test(path)
+      && !path.includes("//") && !path.split("/").some((segment) => segment === "." || segment === "..");
+  }
+
   function routeHealthRow(item = {}) {
     return {
       proxy_id: Number(item.proxy_id || 0),
@@ -296,6 +303,14 @@
             cell.colSpan = 8;
             cell.className = "muted";
             cell.textContent = "No reverse proxies are configured.";
+            if (canWrite) {
+              const add = document.createElement("button");
+              add.className = "button tiny";
+              add.type = "button";
+              add.dataset.reverseProxyAdd = "";
+              add.textContent = "Add reverse proxy";
+              cell.append(document.createTextNode(" "), add);
+            }
             row.append(cell);
             rows.push(row);
           }
@@ -535,8 +550,8 @@
         if (!routes.length) return { valid: false, message: "Add at least one path route." };
         for (const route of routes) {
           const path = String(routeField(route, "path_prefix")?.value || "").trim();
-          if (!path.startsWith("/") || path.length > 1024 || path.includes("?") || path.includes("#")) {
-            return { valid: false, message: "Each route needs an absolute path prefix no longer than 1024 characters.", field: routeField(route, "path_prefix") };
+          if (!validPathPrefix(path)) {
+            return { valid: false, message: "Use an absolute path prefix up to 1024 characters without encoded, dot, backslash or ambiguous path segments.", field: routeField(route, "path_prefix") };
           }
           const host = String(routeField(route, "upstream_host")?.value || "").trim();
           if (host.includes("@") || /[/?#]/.test(host)) {
@@ -750,6 +765,8 @@
     });
     fallback?.addEventListener("click", (event) => {
       if (!(event.target instanceof Element)) return;
+      const add = event.target.closest("[data-reverse-proxy-add]");
+      if (add) { edit(null, add); return; }
       const button = event.target.closest("[data-reverse-proxy-edit]");
       if (button) edit(items.find((item) => String(item.id) === button.dataset.reverseProxyEdit), button);
     });
@@ -770,7 +787,7 @@
     return { refreshData, table, wizard, health };
   }
 
-  const api = Object.freeze({ escapeHtml, pathsOverlap, routeHealthRow, healthDisplayRow, serializeProxy, visibleProxyRow, initialize });
+  const api = Object.freeze({ escapeHtml, pathsOverlap, validPathPrefix, routeHealthRow, healthDisplayRow, serializeProxy, visibleProxyRow, initialize });
   global.AtlasoReverseProxies = api;
   if (global.document?.readyState === "loading") global.document.addEventListener("DOMContentLoaded", initialize, { once: true });
   else if (global.document) initialize();

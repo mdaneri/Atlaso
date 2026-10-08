@@ -39,6 +39,7 @@ sockets, but HTTP and HTTPS cannot occupy the same socket. API settings writers 
 ## Create a reverse proxy
 
 Open **Traffic Publishing**, select **Reverse Proxies**, and choose **Add reverse proxy**. The wizard has six steps:
+If the grid cannot load, the empty fallback table retains **Add reverse proxy** for permitted writers.
 
 1. **Identity**: enter a unique **Name** and **Hostname**. Add a **Description** to record the application's purpose.
    Atlaso reserves its own service hostnames, including the explicit or default authoritative DNS primary hostname.
@@ -51,7 +52,9 @@ Open **Traffic Publishing**, select **Reverse Proxies**, and choose **Add revers
    the selected listener addresses and port.
 3. **Routes**: add one or more path routes. Set an absolute **Path prefix**, upstream HTTP or HTTPS **Upstream
    scheme**, **Upstream host or IP**, and **Upstream port**. Choose whether to **Preserve prefix** or **Strip prefix**.
-   Route prefixes must not overlap one another or reserved Atlaso and machine paths. For HTTPS upstreams, choose
+   Route prefixes must not overlap one another or reserved Atlaso and machine paths. The Routes step rejects encoded
+   paths, repeated slashes, dot segments, whitespace, backslashes, and configuration delimiters before Review.
+   For HTTPS upstreams, choose
    **HTTPS upstream trust**:
    - **Trusted CA validation** uses the system's trusted certificate authorities.
    - **Exact SHA-256 fingerprint** pins the upstream leaf certificate on each TLS connection. Enter the expected

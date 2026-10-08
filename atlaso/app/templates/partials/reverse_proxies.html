@@ -70,7 +70,9 @@
         <td>{% if can_write_firewall %}<button class="button tiny" type="button" data-reverse-proxy-edit="{{ proxy.id }}">Edit</button>{% else %}<span class="muted">Read only</span>{% endif %}</td>
       </tr>
       {% else %}
-      <tr><td colspan="8" class="muted">No reverse proxies are configured.</td></tr>
+      <tr><td colspan="8" class="muted">No reverse proxies are configured.
+        {% if can_write_firewall %}<button class="button tiny" type="button" data-reverse-proxy-add>Add reverse proxy</button>{% endif %}
+      </td></tr>
       {% endfor %}
     </tbody>
   </table>

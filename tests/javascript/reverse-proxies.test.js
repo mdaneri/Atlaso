@@ -11,6 +11,31 @@ test("path prefixes overlap when one can capture the other", () => {
   assert.equal(reverseProxies.pathsOverlap("", "/app"), false);
 });
 
+test("route steps reject ambiguous paths before review", () => {
+  for (const path of ["/app%2Fadmin", "/app//admin", "/app/../admin", "/./app", "/app\\admin", "/a b", "/a\t", "/a\u0085b", "/a?b", "/a#b", "/a;b", "/a{b", "/a}b", "/a$b", '/a"b', "/a'b", "/a\x00", "/a\x7f", "app", "", "/" + "a".repeat(1024)]) {
+    assert.equal(reverseProxies.validPathPrefix(path), false, path);
+  }
+  for (const path of ["/", "/app/", "/app/admin", "/a-b_c.json", "/" + "a".repeat(1023)]) {
+    assert.equal(reverseProxies.validPathPrefix(path), true, path);
+  }
+});
+
+test("fallback add action opens the existing new-proxy wizard", () => {
+  const source = fs.readFileSync("atlaso/app/static/reverse-proxies.js", "utf8");
+  const start = source.lastIndexOf('    fallback?.addEventListener("click",');
+  const end = source.indexOf("\n\n    try {", start);
+  class Element { closest(selector) { return selector === "[data-reverse-proxy-add]" ? this : null; } }
+  let handler; const opened = [];
+  const context = vm.createContext({ Element, fallback: { addEventListener: (_type, callback) => { handler = callback; } },
+    edit: (...args) => opened.push(args), items: [] });
+  vm.runInContext(source.slice(start, end), context);
+  const launcher = new Element();
+  handler({target: launcher});
+  assert.equal(opened.length, 1);
+  assert.equal(opened[0][0], null);
+  assert.equal(opened[0][1], launcher);
+});
+
 test("health projection contains bounded status fields without response payloads", () => {
   const row = reverseProxies.routeHealthRow({
     proxy_id: 21,
@@ -300,8 +325,8 @@ test("display escaping protects operator-controlled text", () => {
 
 test("management service worker precaches the reverse-proxy page asset", () => {
   const worker = fs.readFileSync("atlaso/app/static/service-worker.js", "utf8");
-  assert.match(worker, /const ATLASO_CACHE = `\$\{ATLASO_CACHE_PREFIX\}356`;/);
-  assert.match(worker, /"\/static\/reverse-proxies\.js\?v=issue-723-4"/);
+  assert.match(worker, /const ATLASO_CACHE = `\$\{ATLASO_CACHE_PREFIX\}357`;/);
+  assert.match(worker, /"\/static\/reverse-proxies\.js\?v=issue-723-5"/);
 });
 
 function classListFor(classes) {
@@ -350,4 +375,10 @@ test("fallback refresh replaces nonempty rows, removes stale actions, and escape
   assert.equal(body.children.length, 1);
   assert.equal(body.children[0].children[0].textContent, "No reverse proxies are configured.");
   assert.equal(body.children[0].children[0].colSpan, 8);
+  vm.runInContext("canWrite = true", context);
+  refresh([]);
+  const add = body.children[0].children[0].children[1];
+  assert.equal(add.textContent, "Add reverse proxy");
+  assert.equal(add.type, "button");
+  assert.equal(add.dataset.reverseProxyAdd, "");
 });
