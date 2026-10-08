@@ -1147,7 +1147,7 @@ def test_final_candidate_keys_reserve_natural_suffixes_and_survive_reordering(mo
     assert len({candidate.key for candidate in first.values()}) == len(candidates)
     for candidate_id, candidate in first.items():
         natural_key = original_keys[candidate_id]
-        expected_key = f"vcf.imported.id_{candidate.selection_id.removeprefix('vcf-')}"
+        expected_key = f"vcf.imported.id_{candidate.identity_id.removeprefix('vcf-')}"
         assert candidate.natural_key == natural_key
         assert candidate.key == expected_key
     assert {candidate.candidate_id: candidate.value for candidate in first.values()} == {
@@ -1190,7 +1190,7 @@ def test_duplicate_candidate_suffix_cannot_take_another_original_key(monkeypatch
         "identity-2", "vcf.cluster.admin", "First duplicate", "vcf_password",
         "admin", "cluster", "fixture-password-a",
     )
-    reserved_key = f"vcf.imported.id_{first.selection_id.removeprefix('vcf-')}"
+    reserved_key = f"vcf.imported.id_{first.identity_id.removeprefix('vcf-')}"
     candidates = [
         first,
         service.VcfPasswordCandidate(
@@ -1221,7 +1221,7 @@ def test_duplicate_candidate_suffix_cannot_take_another_original_key(monkeypatch
     assert by_id["natural-identity-key"].key != reserved_key
     assert by_id[first.candidate_id].key == reserved_key
     assert by_id["natural-identity-key"].key == (
-        f"vcf.imported.id_{by_id['natural-identity-key'].selection_id.removeprefix('vcf-')}"
+        f"vcf.imported.id_{by_id['natural-identity-key'].identity_id.removeprefix('vcf-')}"
     )
     assert not any(candidate.key.endswith("_2") for candidate in discovered)
     assert all(len(candidate.key) <= 180 and normalize_vault_key(candidate.key) == candidate.key
@@ -1262,7 +1262,7 @@ def test_duplicate_long_original_keys_get_bounded_valid_identity_suffixes(monkey
 
     assert len({candidate.key for candidate in discovered}) == 2
     assert all(candidate.natural_key == long_key for candidate in discovered)
-    assert all(candidate.key == f"vcf.imported.id_{candidate.selection_id.removeprefix('vcf-')}"
+    assert all(candidate.key == f"vcf.imported.id_{candidate.identity_id.removeprefix('vcf-')}"
                for candidate in discovered)
     assert all(len(candidate.key) <= 180 and normalize_vault_key(candidate.key) == candidate.key
                for candidate in discovered)
@@ -1301,7 +1301,7 @@ def test_unique_overlong_original_key_is_bounded_and_valid(monkeypatch):
     assert len(discovered) == 1
     assert discovered[0].candidate_id == candidate.candidate_id
     assert discovered[0].natural_key == original_key
-    assert discovered[0].key == f"vcf.imported.id_{candidate.selection_id.removeprefix('vcf-')}"
+    assert discovered[0].key == f"vcf.imported.id_{candidate.identity_id.removeprefix('vcf-')}"
     assert discovered[0].key != original_key
     assert len(discovered[0].key) <= 180
     assert normalize_vault_key(discovered[0].key) == discovered[0].key
@@ -1337,6 +1337,66 @@ def test_duplicate_selection_identity_fails_closed_during_key_allocation(monkeyp
             password="fixture-source-password",
             expected_fingerprint="AA:BB",
         )
+
+
+@pytest.mark.parametrize(
+    "field, changed_value",
+    [
+        ("key", "vcf.changed.key"),
+        ("description", "Updated reviewed description"),
+        ("secret_type", "esx_password"),
+        ("username", "updated-user"),
+        ("resource_name", "updated-resource.example.internal"),
+        ("uris", ("https://updated.example.internal",)),
+    ],
+)
+def test_selection_identity_binds_reviewed_metadata_but_canonical_identity_is_stable(field, changed_value):
+    """Invalidate a reviewed selection token on metadata drift without changing source identity.
+
+    Args:
+        field: Candidate metadata field changed after inspection.
+        changed_value: Updated value for the selected metadata field.
+    """
+    from dataclasses import replace
+
+    candidate = service.VcfPasswordCandidate(
+        "stable-source-credential",
+        "vcf.imported.id_source",
+        "Original description",
+        "vcf_password",
+        "admin",
+        "manager.example.internal",
+        "fixture-password-original",
+        ("https://manager.example.internal",),
+    )
+    changed = replace(candidate, **{field: changed_value})
+
+    assert changed.selection_id != candidate.selection_id
+    assert changed.identity_id == candidate.identity_id
+    assert f"vcf.imported.id_{changed.identity_id.removeprefix('vcf-')}" == (
+        f"vcf.imported.id_{candidate.identity_id.removeprefix('vcf-')}"
+    )
+
+
+def test_password_only_refresh_keeps_selection_and_canonical_identity_tokens():
+    """Allow a password refresh when the source candidate's reviewed metadata is unchanged."""
+    from dataclasses import replace
+
+    candidate = service.VcfPasswordCandidate(
+        "stable-source-credential",
+        "vcf.imported.id_source",
+        "Reviewed description",
+        "vcf_password",
+        "admin",
+        "manager.example.internal",
+        "fixture-password-old",
+        ("https://manager.example.internal",),
+    )
+    refreshed = replace(candidate, value="fixture-password-current")
+
+    assert refreshed.selection_id == candidate.selection_id
+    assert refreshed.identity_id == candidate.identity_id
+    assert refreshed.value == "fixture-password-current"
 
 
 def test_candidate_preview_and_repr_do_not_include_password():

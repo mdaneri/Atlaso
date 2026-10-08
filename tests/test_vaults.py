@@ -96,6 +96,29 @@ def _seed_legacy_vcf_import_entry(
     return csrf, vault_id
 
 
+def _create_empty_vcf_import_vault(client) -> tuple[str, int]:
+    """Create a fresh empty vault and return its CSRF token and ID.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+    """
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Vault
+
+    login(client)
+    page = client.get("/vaults")
+    csrf = csrf_from_page(page.text)
+    created = client.post(
+        "/vaults",
+        data={"csrf": csrf, "name": "Metadata drift", "description": ""},
+        follow_redirects=False,
+    )
+    assert created.status_code == 303
+    with SessionLocal() as db:
+        vault_id = db.execute(select(Vault).where(Vault.name == "Metadata drift")).scalar_one().id
+    return csrf, vault_id
+
+
 def _canonical_test_vcf_candidate(
     *,
     candidate_id: str,
@@ -132,7 +155,7 @@ def _canonical_test_vcf_candidate(
         uris=uris,
         natural_key=natural_key,
     )
-    canonical_key = f"vcf.imported.id_{candidate.selection_id.removeprefix('vcf-')}"
+    canonical_key = f"vcf.imported.id_{candidate.identity_id.removeprefix('vcf-')}"
     return replace(candidate, key=canonical_key)
 
 
@@ -1547,10 +1570,11 @@ def test_vcf_helper_inspection_returns_metadata_and_import_encrypts_value(client
     assert "ImportedSecret!" not in helper_page.text
     from dataclasses import replace
 
-    monkeypatch.setattr(ui, "discover_vcf_passwords", lambda **_kwargs: [replace(candidate, uris=())])
+    refreshed_candidate = replace(candidate, uris=())
+    monkeypatch.setattr(ui, "discover_vcf_passwords", lambda **_kwargs: [refreshed_candidate])
     rotated = client.post(
         "/vcf-helper/vault-import",
-        json={**source, "vault_id": vault_id, "candidate_ids": [candidate.selection_id]},
+        json={**source, "vault_id": vault_id, "candidate_ids": [refreshed_candidate.selection_id]},
     )
     assert rotated.status_code == 200
     assert rotated.json()["rotated"] == 1
@@ -1658,7 +1682,7 @@ def test_vcf_import_replaces_operator_uris_when_source_or_account_changes(
     changed_source = {**source, **{key: value for key, value in mismatch.items() if key in {"source_type", "address"}}}
     rotated = client.post(
         "/vcf-helper/vault-import",
-        json={**changed_source, "vault_id": vault_id, "candidate_ids": [candidate.selection_id]},
+        json={**changed_source, "vault_id": vault_id, "candidate_ids": [changed_candidate.selection_id]},
     )
 
     assert rotated.status_code == 200
@@ -1672,6 +1696,122 @@ def test_vcf_import_replaces_operator_uris_when_source_or_account_changes(
         assert entry.resource_name == changed_candidate.resource_name
         assert entry.username == changed_candidate.username
         assert entry.secret_type == changed_candidate.secret_type
+
+
+@pytest.mark.parametrize(
+    "field, changed_value",
+    [
+        ("username", "changed-admin"),
+        ("resource_name", "other-manager.example.internal"),
+        ("uris", ("https://changed-manager.example.internal",)),
+        ("secret_type", "esx_password"),
+        ("key", "vcf.changed.key"),
+        ("description", "Changed after review"),
+    ],
+)
+def test_vcf_import_rejects_candidate_metadata_drift_since_inspection(
+    client, monkeypatch, field, changed_value
+):
+    """Reject an import when the selected candidate metadata changed after inspection.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+        monkeypatch: Pytest fixture used to replace discovery and TLS confirmation.
+        field: Candidate metadata field changed between inspect and import.
+        changed_value: Updated metadata value returned by the source on import.
+    """
+    from dataclasses import replace
+
+    from atlaso.app import ui
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import VaultEntry
+
+    csrf, vault_id = _create_empty_vcf_import_vault(client)
+    candidate = _canonical_test_vcf_candidate(
+        candidate_id="metadata-drift-credential",
+        natural_key="vcf.manager.admin",
+        value="FixtureCredentialPassword!",
+    )
+    inspected_token = candidate.selection_id
+    monkeypatch.setattr(ui, "_confirmed_tls_fingerprint", lambda *_args: ("AA:BB", None))
+    monkeypatch.setattr(ui, "discover_vcf_passwords", lambda **_kwargs: [candidate])
+    source = {
+        "csrf": csrf,
+        "source_type": "sddc_manager",
+        "address": "sddc-manager.example.internal",
+        "port": 443,
+        "confirmed_fingerprint": "AA:BB",
+        "username": "admin",
+        "password": "FixtureSourcePassword!",
+    }
+    inspected = client.post("/vcf-helper/vault-import/inspect", json=source)
+    assert inspected.status_code == 200
+    assert inspected.json()["candidates"][0]["candidate_id"] == inspected_token
+
+    changed_candidate = replace(candidate, **{field: changed_value})
+    assert changed_candidate.selection_id != inspected_token
+    monkeypatch.setattr(ui, "discover_vcf_passwords", lambda **_kwargs: [changed_candidate])
+    imported = client.post(
+        "/vcf-helper/vault-import",
+        json={**source, "vault_id": vault_id, "candidate_ids": [inspected_token]},
+    )
+
+    assert imported.status_code == 422
+    with SessionLocal() as db:
+        entries = db.execute(select(VaultEntry).where(VaultEntry.vault_id == vault_id)).scalars().all()
+        assert entries == []
+
+
+def test_vcf_import_accepts_password_refresh_when_reviewed_metadata_is_unchanged(client, monkeypatch):
+    """Import the latest password when source identity and reviewed metadata remain stable.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+        monkeypatch: Pytest fixture used to replace discovery and TLS confirmation.
+    """
+    from dataclasses import replace
+
+    from atlaso.app import ui
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import VaultEntry
+    from atlaso.app.secrets import decrypt_secret
+
+    csrf, vault_id = _create_empty_vcf_import_vault(client)
+    candidate = _canonical_test_vcf_candidate(
+        candidate_id="password-refresh-credential",
+        natural_key="vcf.manager.admin",
+        value="FixtureCredentialOldPassword!",
+    )
+    current_candidate = replace(candidate, value="FixtureCredentialCurrentPassword!")
+    assert current_candidate.identity_id == candidate.identity_id
+    assert current_candidate.selection_id == candidate.selection_id
+    monkeypatch.setattr(ui, "_confirmed_tls_fingerprint", lambda *_args: ("AA:BB", None))
+    monkeypatch.setattr(ui, "discover_vcf_passwords", lambda **_kwargs: [candidate])
+    source = {
+        "csrf": csrf,
+        "source_type": "sddc_manager",
+        "address": "sddc-manager.example.internal",
+        "port": 443,
+        "confirmed_fingerprint": "AA:BB",
+        "username": "admin",
+        "password": "FixtureSourcePassword!",
+    }
+    inspected = client.post("/vcf-helper/vault-import/inspect", json=source)
+    assert inspected.status_code == 200
+    selection_id = inspected.json()["candidates"][0]["candidate_id"]
+    assert selection_id == candidate.selection_id
+
+    monkeypatch.setattr(ui, "discover_vcf_passwords", lambda **_kwargs: [current_candidate])
+    imported = client.post(
+        "/vcf-helper/vault-import",
+        json={**source, "vault_id": vault_id, "candidate_ids": [selection_id]},
+    )
+
+    assert imported.status_code == 200
+    with SessionLocal() as db:
+        entry = db.execute(select(VaultEntry).where(VaultEntry.vault_id == vault_id)).scalar_one()
+        assert entry.key == candidate.key
+        assert decrypt_secret(entry.encrypted_value) == "FixtureCredentialCurrentPassword!"
 
 
 def test_vcf_import_rotates_matching_legacy_key_and_keeps_operator_uris(client, monkeypatch):

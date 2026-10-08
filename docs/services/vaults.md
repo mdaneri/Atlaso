@@ -111,6 +111,8 @@ Its `localUserPassword` uses `admin@local` and HTTPS to the same hostname.
 NSX manager root entries retain host-specific identities and keys when managers are reordered or removed.
 Long Installer resource identities use bounded vault keys while retaining full hostnames in discovery identities and URIs.
 Browser selections use stable opaque tokens so metadata redaction cannot change the selected credential identity.
+The token binds the reviewed account, resource, key, description, secret type, and URIs. If those change before import,
+inspect the source again; the password value itself may refresh without changing the selection token.
 Every discovered credential receives a bounded identity suffix, keeping its canonical key stable when peers are added,
 removed, or reordered. Existing natural keys are rotated in place only when the source/resource/account matches and
 discovery has exactly one candidate for that legacy resource/account identity; ambiguous or unrelated legacy entries

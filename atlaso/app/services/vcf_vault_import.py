@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import re
 from collections import Counter
 from dataclasses import dataclass, field, replace
@@ -39,9 +40,17 @@ class VcfPasswordCandidate:
     natural_key: str = ""
 
     @property
-    def selection_id(self) -> str:
-        """Return a stable opaque browser selection token derived only from source identity."""
+    def identity_id(self) -> str:
+        """Return a stable opaque token derived only from source identity."""
         return "vcf-" + sha256(self.candidate_id.encode("utf-8")).hexdigest()
+
+    @property
+    def selection_id(self) -> str:
+        """Bind browser selection to reviewed metadata while allowing password refresh."""
+        metadata = (self.candidate_id, self.key, self.description, self.secret_type,
+                    self.username, self.resource_name, self.uris)
+        encoded = json.dumps(metadata, ensure_ascii=True, separators=(",", ":"))
+        return "vcf-" + sha256(encoded.encode("utf-8")).hexdigest()
 
     def sanitized(self) -> dict[str, object]:
         """Return sanitized."""
@@ -509,7 +518,7 @@ def discover_vcf_passwords(
     selection_ids: set[str] = set()
     unique_candidates: list[VcfPasswordCandidate] = []
     for candidate in candidates:
-        token = candidate.selection_id
+        token = candidate.identity_id
         if token in selection_ids:
             raise VcfDepotTargetError("VCF returned duplicate credential identities; inspect the source again.")
         selection_ids.add(token)
