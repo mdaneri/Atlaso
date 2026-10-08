@@ -46,6 +46,7 @@ Rejected edits preserve the interface, proxy, and owned DNS records together.
 
 Open **Traffic Publishing**, select **Reverse Proxies**, and choose **Add reverse proxy**. The wizard has six steps:
 If the grid cannot load, the empty fallback table retains **Add reverse proxy** for permitted writers.
+The health fallback also shows the latest bounded observations after **Refresh health**.
 
 1. **Identity**: enter a unique **Name** and **Hostname**. Add a **Description** to record the application's purpose.
    Atlaso reserves its own service hostnames, including the explicit or default authoritative DNS primary hostname.

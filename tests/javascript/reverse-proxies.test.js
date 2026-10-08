@@ -20,6 +20,20 @@ test("route steps reject ambiguous paths before review", () => {
   }
 });
 
+test("route steps reject every reserved component without rejecting neighboring application names", () => {
+  const reserved = ["ui", "api", "openapi.json", "identity", "ca", "pxe", "prod", "registry", "v2", "static",
+    "manifest.webmanifest", "service-worker.js", "terminal", "requests", "depot"];
+  for (const name of reserved) {
+    for (const path of [`/${name}`, `/${name}/app`, `/${name.toUpperCase()}/`]) {
+      assert.equal(reverseProxies.validPathPrefix(path), false, path);
+    }
+    assert.equal(reverseProxies.validPathPrefix(`/${name}-app/`), true, name);
+  }
+  assert.equal(reverseProxies.validPathPrefix("/ſtatic/app"), false);
+  assert.equal(reverseProxies.validPathPrefix("/"), true);
+  assert.equal(reverseProxies.validPathPrefix("/app/api/"), true);
+});
+
 test("fallback add action opens the existing new-proxy wizard", () => {
   const source = fs.readFileSync("atlaso/app/static/reverse-proxies.js", "utf8");
   const start = source.lastIndexOf('    fallback?.addEventListener("click",');
@@ -133,7 +147,17 @@ test("health refresh keeps the visible fallback when shared grid creation has no
   const instrumented = source.replace(hook, "  globalThis.__initializeHealthForTest = initializeHealth;\n" + hook);
   const fallbackClasses = new Set(["hidden"]);
   const gridClasses = new Set();
-  const fallback = { classList: classListFor(fallbackClasses) };
+  class Node {
+    constructor(tag) { this.tagName = tag; this.children = []; this.textContent = ""; }
+    appendChild(child) { this.children.push(child); }
+    replaceChildren(...children) { this.children = children; }
+    set innerHTML(_value) { throw new Error("health values must use text nodes"); }
+  }
+  const body = new Node("tbody");
+  const fallback = { classList: classListFor(fallbackClasses), tBodies: [body] };
+  let observations = [{ proxy_name: "<img src=x>", path_prefix: "/inventory/", status: "degraded",
+    last_success: "2026-10-08T02:00:00Z", failure_class: "upstream_http", http_status: 502,
+    tls_status: "trusted_ca", applied: true, pending: true, warning: "<script>warning</script>" }];
   const element = {
     dataset: { fallbackId: "health-fallback", healthUrl: "/health" },
     classList: classListFor(gridClasses),
@@ -144,11 +168,12 @@ test("health refresh keeps the visible fallback when shared grid creation has no
     AtlasoUiPatterns: { createGrid: () => ({ table: null }) },
     document: {
       readyState: "loading",
+      createElement: (tag) => new Node(tag),
       addEventListener() {},
       getElementById: () => fallback,
       querySelector: (selector) => selector === "[data-reverse-proxy-health-message]" ? message : null,
     },
-    fetch: async () => ({ ok: true, json: async () => ({ items: [] }) }),
+    fetch: async () => ({ ok: true, json: async () => ({ items: observations }) }),
     window: { setTimeout: () => 1, clearTimeout() {} },
   };
   vm.runInNewContext(instrumented, sandbox, { filename: "reverse-proxies.js" });
@@ -163,6 +188,21 @@ test("health refresh keeps the visible fallback when shared grid creation has no
   assert.equal(element.dataset.atlasoGridState, "fallback");
   assert.match(message.textContent, /Showing the fallback view/);
   assert.deepEqual(errors, []);
+  assert.equal(body.children.length, 1);
+  assert.deepEqual(body.children[0].children.map((cell) => cell.textContent), [
+    "<img src=x>", "/inventory/", "Degraded", "2026-10-08T02:00:00Z", "Upstream HTTP error",
+    "HTTP 502 · TLS Trusted CA", "Applied with pending changes", "<script>warning</script>",
+  ]);
+  observations = [{ proxy_name: "New", path_prefix: "/new/", status: "healthy", applied: true }];
+  await health.refresh();
+  assert.equal(body.children.length, 1);
+  assert.equal(body.children[0].children[0].textContent, "New");
+  assert.equal(body.children[0].children[2].textContent, "Healthy");
+  observations = [];
+  await health.refresh();
+  assert.equal(body.children.length, 1);
+  assert.equal(body.children[0].children[0].colSpan, 8);
+  assert.equal(body.children[0].children[0].textContent, "No route health observations are available.");
 });
 
 test("inline save serializes only the complete desired-state model", () => {
@@ -325,8 +365,8 @@ test("display escaping protects operator-controlled text", () => {
 
 test("management service worker precaches the reverse-proxy page asset", () => {
   const worker = fs.readFileSync("atlaso/app/static/service-worker.js", "utf8");
-  assert.match(worker, /const ATLASO_CACHE = `\$\{ATLASO_CACHE_PREFIX\}357`;/);
-  assert.match(worker, /"\/static\/reverse-proxies\.js\?v=issue-723-5"/);
+  assert.match(worker, /const ATLASO_CACHE = `\$\{ATLASO_CACHE_PREFIX\}358`;/);
+  assert.match(worker, /"\/static\/reverse-proxies\.js\?v=issue-723-6"/);
 });
 
 function classListFor(classes) {

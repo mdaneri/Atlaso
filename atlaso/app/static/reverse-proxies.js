@@ -33,9 +33,12 @@
     return String(value || "").replace(/[:\s-]/g, "");
   }
 
+  const RESERVED_ROUTE_COMPONENT = /^(?:ui|api|openapi\.json|identity|ca|pxe|prod|registry|v2|static|manifest\.webmanifest|service-worker\.js|terminal|requests|depot)$/iu;
+
   function validPathPrefix(value) {
     const path = String(value || "");
     return path.startsWith("/") && path.length <= 1024
+      && !RESERVED_ROUTE_COMPONENT.test(path.split("/")[1])
       && !/[\\%?#\s\u0085;{}$"'\x00-\x1f\x7f]/u.test(path)
       && !path.includes("//") && !path.split("/").some((segment) => segment === "." || segment === "..");
   }
@@ -185,6 +188,30 @@
     });
     table = grid?.table || null;
 
+    function refreshFallback(rows) {
+      const body = fallback?.tBodies?.[0];
+      if (!body) return;
+      const fields = ["proxy_name", "path_prefix", "status", "last_success", "failure_class", "http_tls", "apply_state", "warning"];
+      const rendered = rows.map((row) => {
+        const tr = document.createElement("tr");
+        fields.forEach((field) => {
+          const td = document.createElement("td");
+          td.textContent = String(row[field] || "—");
+          tr.appendChild(td);
+        });
+        return tr;
+      });
+      if (!rendered.length) {
+        const tr = document.createElement("tr");
+        const td = document.createElement("td");
+        td.colSpan = fields.length;
+        td.textContent = "No route health observations are available.";
+        tr.appendChild(td);
+        rendered.push(tr);
+      }
+      body.replaceChildren(...rendered);
+    }
+
     const refresh = async () => {
       const sequence = ++requestSequence;
       const controller = new AbortController();
@@ -202,6 +229,7 @@
         }
         if (sequence !== requestSequence) return;
         const rows = payload.items.map(healthDisplayRow);
+        refreshFallback(rows);
         if (!table || typeof table.replaceData !== "function") {
           element.classList.add("hidden");
           fallback?.classList.remove("hidden");
@@ -551,7 +579,7 @@
         for (const route of routes) {
           const path = String(routeField(route, "path_prefix")?.value || "").trim();
           if (!validPathPrefix(path)) {
-            return { valid: false, message: "Use an absolute path prefix up to 1024 characters without encoded, dot, backslash or ambiguous path segments.", field: routeField(route, "path_prefix") };
+            return { valid: false, message: "Use an absolute path prefix up to 1024 characters without reserved, encoded, dot, backslash or ambiguous path segments.", field: routeField(route, "path_prefix") };
           }
           const host = String(routeField(route, "upstream_host")?.value || "").trim();
           if (host.includes("@") || /[/?#]/.test(host)) {
