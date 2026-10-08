@@ -470,7 +470,7 @@ def refresh_interface_dependent_addresses(
     actor: str | None = None,
     dns_refresher: DependentDnsRefresher | None = None,
 ) -> list[str]:
-    """Refresh desired service, DHCP, PXE, and DNS state after an interface change.
+    """Refresh dependencies, rejecting changes that strand enabled proxy listeners.
 
     The caller owns the transaction. This function never commits, so every dependent row can be
     rolled back together with the interface row.
@@ -501,6 +501,16 @@ def refresh_interface_dependent_addresses(
             ).scalars()
             if vlan.name not in affected_interface_names
         )
+
+    from atlaso.app.services.reverse_proxies import validate_interface_proxy_bindings
+
+    try:
+        validate_interface_proxy_bindings(
+            db, set(affected_interface_names),
+            removed_names={old_name} if new_name != old_name else set(),
+        )
+    except ValueError as exc:
+        raise PhysicalInterfaceUpdateError(str(exc)) from exc
 
     def selection_replacements(eligible_names: set[str]) -> dict[str, str]:
         """Return replacements for every directly or transitively affected interface.

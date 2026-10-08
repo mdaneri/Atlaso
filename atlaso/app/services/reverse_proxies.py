@@ -140,6 +140,30 @@ def listener_options(db: Session) -> list[dict[str, str]]:
     return sorted(options, key=lambda item: (item["interface"], item["address"]))
 
 
+def validate_interface_proxy_bindings(
+    db: Session, interface_names: set[str], *, removed_names: set[str] | None = None,
+) -> None:
+    """Reject interface edits that strand an enabled proxy's reviewed exact tuple.
+
+    Args:
+        db: Caller-owned candidate-state transaction holding the Network Objects lock.
+        interface_names: Direct and dependent interface names affected by the edit.
+        removed_names: Names being deleted or renamed before their database rows are removed.
+    """
+    available = {(item["interface"], item["address"]) for item in listener_options(db)}
+    for proxy in desired_rows(db):
+        if not proxy.enabled:
+            continue
+        for listener in proxy.listeners:
+            name = str(listener.get("interface") or "")
+            address = str(listener.get("address") or "")
+            if name in interface_names and (name in (removed_names or set()) or (name, address) not in available):
+                raise ValueError(
+                    f"Enabled reverse proxy {proxy.name} still depends on {name} at {address}. "
+                    "Disable or move the proxy binding before changing its interface or listen address."
+                )
+
+
 def _service_hostnames(db: Session) -> set[str]:
     """Collect Atlaso-owned service and appliance names reserved by existing services.
 

@@ -36,6 +36,7 @@ from atlaso.app.services.physical_interfaces import (
     PhysicalInterfaceMutationAudit,
     mutate_physical_interface_desired_state,
 )
+from atlaso.app.services.reverse_proxies import validate_interface_proxy_bindings
 
 Endpoint = Callable[..., Any]
 
@@ -54,6 +55,20 @@ class PhysicalVlanApiRouter:
 
     router: APIRouter
     endpoints: Mapping[str, Endpoint]
+
+
+def _validate_proxy_interface_edit(db: Session, name: str) -> None:
+    """Reject a candidate VLAN transaction before commit if an enabled proxy loses its binding.
+
+    Args:
+        db: Candidate-state database transaction holding the Network Objects lock.
+        name: Original VLAN name, including a deleted or renamed row.
+    """
+    try:
+        validate_interface_proxy_bindings(db, {name})
+    except ValueError as exc:
+        db.rollback()
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 def build_router(dependencies: PhysicalVlanApiDependencies) -> PhysicalVlanApiRouter:
@@ -387,6 +402,8 @@ def build_router(dependencies: PhysicalVlanApiDependencies) -> PhysicalVlanApiRo
         Requires the `write:vlans` API scope. The operation updates saved Atlaso state and does not
         bypass the documented global Appliance Apply or service lifecycle boundary.
 
+        Interface changes that strand an enabled reverse proxy are rejected atomically with 422.
+
         Args:
             vlan_id: Stable identifier of the VLAN record.
             payload: Validated VLAN desired-state payload.
@@ -397,6 +414,7 @@ def build_router(dependencies: PhysicalVlanApiDependencies) -> PhysicalVlanApiRo
         vlan = db.get(VlanInterface, vlan_id)
         if not vlan:
             raise HTTPException(status_code=404, detail="VLAN not found")
+        old_name = vlan.name
         had_management_candidate = desired_management_candidate_exists(db)
         values = dependencies.validate_vlan_api_payload(payload, db)
         if "check_duplicate_ip_addresses" not in payload.model_fields_set:
@@ -408,6 +426,7 @@ def build_router(dependencies: PhysicalVlanApiDependencies) -> PhysicalVlanApiRo
         if had_management_candidate and not desired_management_candidate_exists(db):
             db.rollback()
             raise HTTPException(status_code=422, detail=MANAGEMENT_LISTENER_REQUIRED_DETAIL)
+        _validate_proxy_interface_edit(db, old_name)
         db.commit()
         db.refresh(vlan)
         record_audit(
@@ -438,6 +457,8 @@ def build_router(dependencies: PhysicalVlanApiDependencies) -> PhysicalVlanApiRo
         Requires the `write:vlans` API scope. Removal or revocation takes effect in Atlaso application
         state; appliance host changes remain subject to the documented apply boundary for the resource.
 
+        Interface changes that strand an enabled reverse proxy are rejected atomically with 422.
+
         Args:
             vlan_id: Stable identifier of the VLAN record.
             identity: Authenticated identity authorizing the operation.
@@ -447,12 +468,14 @@ def build_router(dependencies: PhysicalVlanApiDependencies) -> PhysicalVlanApiRo
         vlan = db.get(VlanInterface, vlan_id)
         if not vlan:
             raise HTTPException(status_code=404, detail="VLAN not found")
+        old_name = vlan.name
         had_management_candidate = desired_management_candidate_exists(db)
         db.delete(vlan)
         db.flush()
         if had_management_candidate and not desired_management_candidate_exists(db):
             db.rollback()
             raise HTTPException(status_code=422, detail=MANAGEMENT_LISTENER_REQUIRED_DETAIL)
+        _validate_proxy_interface_edit(db, old_name)
         db.commit()
         record_audit(
             db,
@@ -537,6 +560,8 @@ def build_router(dependencies: PhysicalVlanApiDependencies) -> PhysicalVlanApiRo
         appliance host enforcement remains subject to the documented apply or task boundary for the
         resource.
 
+        Interface changes that strand an enabled reverse proxy are rejected atomically with 422.
+
         Args:
             vlan_id: Stable identifier of the VLAN record.
             identity: Authenticated identity authorizing the operation.
@@ -546,12 +571,14 @@ def build_router(dependencies: PhysicalVlanApiDependencies) -> PhysicalVlanApiRo
         vlan = db.get(VlanInterface, vlan_id)
         if not vlan:
             raise HTTPException(status_code=404, detail="VLAN not found")
+        old_name = vlan.name
         had_management_candidate = desired_management_candidate_exists(db)
         vlan.enabled = False
         db.flush()
         if had_management_candidate and not desired_management_candidate_exists(db):
             db.rollback()
             raise HTTPException(status_code=422, detail=MANAGEMENT_LISTENER_REQUIRED_DETAIL)
+        _validate_proxy_interface_edit(db, old_name)
         db.commit()
         db.refresh(vlan)
         record_audit(

@@ -912,3 +912,133 @@ def test_proxy_mutations_capture_legacy_applied_service_dns_before_reconcile(mon
     finally:
         db.close()
         engine.dispose()
+
+
+@pytest.mark.parametrize("change", [
+    {"ip_cidr": "192.168.1.11/24"}, {"role": "unused"}, {"admin_state": "down"},
+    {"mode": "trunk"}, {"ipv6_cidr": "2001:db8:1::11/64"},
+])
+def test_physical_interface_edit_preserves_enabled_proxy_and_dns(change):
+    """Roll back real physical mutations before an exact proxy tuple becomes stale.
+
+    Args:
+        change: Candidate interface field changes that remove a reviewed listener.
+    """
+    from atlaso.app.models import DnsRecord, DnsSettings
+    from atlaso.app.services.interface_updates import (
+        PhysicalInterfaceUpdateError,
+        update_physical_interface_desired_state,
+    )
+
+    engine, db = create_db()
+    try:
+        interface = db.scalar(select(PhysicalInterface).where(PhysicalInterface.name == "eth1"))
+        interface.ipv6_enabled = True
+        interface.ipv6_cidr = "2001:db8:1::10/64"
+        db.add(DnsSettings(enabled=True, authoritative=True, domain="example.test"))
+        db.commit()
+        address = "2001:db8:1::10" if "ipv6_cidr" in change else "192.168.1.10"
+        save_proxy(db, payload(enabled=True, scheme="http", port=9443, redirect_http=False,
+                               managed_dns=True, listeners=[{"interface": "eth1", "address": address}]), actor="test")
+        before = runtime_snapshot(db)
+        dns_before = [(row.id, row.hostname, row.record_type, row.address, row.description, row.enabled) for row in db.scalars(select(DnsRecord))]
+        with pytest.raises(PhysicalInterfaceUpdateError, match="Enabled reverse proxy"):
+            update_physical_interface_desired_state(db, interface, change)
+        assert runtime_snapshot(db) == before
+        assert [(row.id, row.hostname, row.record_type, row.address, row.description, row.enabled) for row in db.scalars(select(DnsRecord))] == dns_before
+        assert interface.ip_cidr == "192.168.1.10/24"
+        assert interface.ipv6_cidr == "2001:db8:1::10/64"
+        assert interface.role == "access" and interface.mode == "access" and interface.admin_state == "up"
+    finally:
+        db.close()
+        engine.dispose()
+
+
+@pytest.mark.parametrize("change", ["address", "rename", "delete", "disable", "parent"])
+def test_vlan_interface_edit_rejects_enabled_proxy_binding_loss(change):
+    """Cover VLAN edits and transitive physical-parent eligibility in the shared transaction.
+
+    Args:
+        change: Candidate VLAN or parent mutation.
+    """
+    from atlaso.app.models import VlanInterface
+    from atlaso.app.services.interface_updates import (
+        PhysicalInterfaceUpdateError,
+        refresh_interface_dependent_addresses,
+    )
+    from atlaso.app.services.network_objects import acquire_network_objects_write_lock
+
+    engine, db = create_db()
+    try:
+        parent = db.scalar(select(PhysicalInterface).where(PhysicalInterface.name == "eth1"))
+        parent.mode = "trunk"
+        vlan = VlanInterface(name="eth1.20", parent_interface="eth1", vlan_id=20,
+                             ip_cidr="192.168.20.10/24", role="access", enabled=True)
+        db.add(vlan)
+        db.commit()
+        save_proxy(db, payload(enabled=True, scheme="http", port=9443, redirect_http=False,
+                               listeners=[{"interface": "eth1.20", "address": "192.168.20.10"}]), actor="test")
+        before = runtime_snapshot(db)
+        acquire_network_objects_write_lock(db)
+        old_name = "eth1" if change == "parent" else vlan.name
+        new_name = old_name
+        if change == "address":
+            vlan.ip_cidr = "192.168.20.11/24"
+        elif change == "rename":
+            vlan.name = new_name = "eth1.21"
+            vlan.vlan_id = 21
+        elif change == "delete":
+            db.delete(vlan)
+            new_name = ""
+        elif change == "disable":
+            vlan.enabled = False
+        else:
+            parent.mode = "access"
+        db.flush()
+        with pytest.raises(PhysicalInterfaceUpdateError, match="Enabled reverse proxy"):
+            refresh_interface_dependent_addresses(db, old_name=old_name, new_name=new_name,
+                                                 old_ip_cidr="192.168.20.10/24", old_ipv6_cidr=None)
+        db.rollback()
+        assert runtime_snapshot(db) == before
+        assert db.scalar(select(VlanInterface)).name == "eth1.20"
+        assert db.scalar(select(VlanInterface)).enabled
+    finally:
+        db.close()
+        engine.dispose()
+
+
+def test_disabled_proxy_does_not_block_interface_address_edit():
+    """Keep disabled saved intent portable while unrelated edits remain available."""
+    from atlaso.app.services.interface_updates import (
+        update_physical_interface_desired_state,
+    )
+
+    engine, db = create_db()
+    try:
+        save_proxy(db, payload(), actor="test")
+        interface = db.scalar(select(PhysicalInterface).where(PhysicalInterface.name == "eth1"))
+        result = update_physical_interface_desired_state(db, interface, {"ip_cidr": "192.168.1.11/24"})
+        assert result.interface.ip_cidr == "192.168.1.11/24"
+        assert not db.scalar(select(ReverseProxy)).enabled
+    finally:
+        db.close()
+        engine.dispose()
+
+
+def test_enabled_proxy_allows_interface_mtu_edit():
+    """Permit an unrelated interface edit that preserves every exact proxy listener."""
+    from atlaso.app.services.interface_updates import (
+        update_physical_interface_desired_state,
+    )
+
+    engine, db = create_db()
+    try:
+        save_proxy(db, payload(enabled=True, scheme="http", port=9443, redirect_http=False), actor="test")
+        before = runtime_snapshot(db)
+        interface = db.scalar(select(PhysicalInterface).where(PhysicalInterface.name == "eth1"))
+        result = update_physical_interface_desired_state(db, interface, {"mtu": 1400})
+        assert result.interface.mtu == 1400
+        assert runtime_snapshot(db) == before
+    finally:
+        db.close()
+        engine.dispose()

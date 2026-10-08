@@ -20716,7 +20716,7 @@
     },
     "/api/v1/vlans/{vlan_id}": {
       "delete": {
-        "description": "Delete Vlan.\n\nRequires the `write:vlans` API scope. Removal or revocation takes effect in Atlaso application\nstate; appliance host changes remain subject to the documented apply boundary for the resource.",
+        "description": "Delete Vlan.\n\nRequires the `write:vlans` API scope. Removal or revocation takes effect in Atlaso application\nstate; appliance host changes remain subject to the documented apply boundary for the resource.\n\nInterface changes that strand an enabled reverse proxy are rejected atomically with 422.",
         "operationId": "deleteVlan",
         "parameters": [
           {
@@ -20805,7 +20805,7 @@
         ]
       },
       "patch": {
-        "description": "Update Vlan.\n\nRequires the `write:vlans` API scope. The operation updates saved Atlaso state and does not\nbypass the documented global Appliance Apply or service lifecycle boundary.",
+        "description": "Update Vlan.\n\nRequires the `write:vlans` API scope. The operation updates saved Atlaso state and does not\nbypass the documented global Appliance Apply or service lifecycle boundary.\n\nInterface changes that strand an enabled reverse proxy are rejected atomically with 422.",
         "operationId": "updateVlan",
         "parameters": [
           {
@@ -20915,7 +20915,7 @@
     },
     "/api/v1/vlans/{vlan_id}/disable": {
       "post": {
-        "description": "Disable Vlan.\n\nRequires the `write:vlans` API scope. The operation changes saved Atlaso application state; any\nappliance host enforcement remains subject to the documented apply or task boundary for the\nresource.",
+        "description": "Disable Vlan.\n\nRequires the `write:vlans` API scope. The operation changes saved Atlaso application state; any\nappliance host enforcement remains subject to the documented apply or task boundary for the\nresource.\n\nInterface changes that strand an enabled reverse proxy are rejected atomically with 422.",
         "operationId": "disableVlan",
         "parameters": [
           {

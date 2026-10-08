@@ -38,6 +38,10 @@ sockets, but HTTP and HTTPS cannot occupy the same socket. API settings writers 
 Service hostname edits also preserve saved proxy names and upstream targets, including disabled proxy intent.
 Disable HTTPS proxies before disabling their CA. Conflicting service or CA changes are rejected without saving them.
 
+Interface edits also reject changes that remove an enabled proxy's exact interface and address binding.
+Disable or move the proxy before changing its address, renaming or deleting its VLAN, or making its parent unavailable.
+Rejected edits preserve the interface, proxy, and owned DNS records together.
+
 ## Create a reverse proxy
 
 Open **Traffic Publishing**, select **Reverse Proxies**, and choose **Add reverse proxy**. The wizard has six steps:
