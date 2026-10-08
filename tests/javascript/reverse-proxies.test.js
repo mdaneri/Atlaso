@@ -24,13 +24,16 @@ test("wizard rejects invalid served and upstream names on the affected step", ()
     hostname.value = value;
     assert.equal(context.validateStep({ step: { id: "identity" } }), true, value);
   }
-  for (const value of ["bad host", "https://app.test", "app.test:443", "user@app.test", "[::1]", "2001:::1", "::ffff:192.0.2.999", "fe80::1%eth0", "bad..test", "-app", "a".repeat(64)]) {
+  for (const value of ["bad host", "https://app.test", "app.test:443", "user@app.test", "[::1]", "2001:::1", "::ffff:192.0.2.999", "fe80::1%eth0", "bad..test", "-app", "a".repeat(64),
+    "192.0.2.30" + ".".repeat(254), "127.0.0.1", "127.255.255.255", "127.0.0.1.", "169.254.1.1", "224.0.0.1", "239.255.255.255", "240.0.0.1", "255.255.255.255", "0.0.0.0",
+    "::", "::1", "fe80::1", "febf::1", "ff02::1", "::ffff:192.0.2.30", "64:ff9b::1", "100::1", "4000::1", "fbff::1", "fe00::1"]) {
     fields.upstream_host.value = value;
     const result = context.validateStep({ step: { id: "routes" } });
     assert.equal(result.valid, false, value);
     assert.equal(result.field, fields.upstream_host);
   }
-  for (const value of ["backend", "APP.Example.TEST.", "192.0.2.30", "::1", "2001:db8::30", "::ffff:192.0.2.30", "2001:db8:0:0:0:0:0:30"]) {
+  for (const value of ["backend", "APP.Example.TEST.", "192.0.2.30", "10.0.0.1", "0.0.0.1", "126.255.255.255", "128.0.0.1", "169.253.255.255", "169.255.0.0", "223.255.255.255",
+    "2001:db8::30", "2001:db8:0:0:0:0:0:30", "2000::1", "3fff::1", "fc00::1", "fdff::1", "fec0::1", "feff::1"]) {
     fields.upstream_host.value = value;
     assert.equal(context.validateStep({ step: { id: "routes" } }), true, value);
   }
@@ -445,8 +448,8 @@ test("display escaping protects operator-controlled text", () => {
 
 test("management service worker precaches the reverse-proxy page asset", () => {
   const worker = fs.readFileSync("atlaso/app/static/service-worker.js", "utf8");
-  assert.match(worker, /const ATLASO_CACHE = `\$\{ATLASO_CACHE_PREFIX\}363`;/);
-  assert.match(worker, /"\/static\/reverse-proxies\.js\?v=issue-723-10"/);
+  assert.match(worker, /const ATLASO_CACHE = `\$\{ATLASO_CACHE_PREFIX\}364`;/);
+  assert.match(worker, /"\/static\/reverse-proxies\.js\?v=issue-723-11"/);
 });
 
 function classListFor(classes) {

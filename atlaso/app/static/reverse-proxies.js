@@ -43,10 +43,16 @@
       && !path.includes("//") && !path.split("/").some((segment) => segment === "." || segment === "..");
   }
 
+  function ipv4Parts(value) {
+    const labels = value.split(".");
+    return labels.length === 4 && labels.every((label) => /^(?:0|[1-9]\d{0,2})$/.test(label) && Number(label) <= 255)
+      ? labels.map(Number) : null;
+  }
+
   function validDnsHostname(value, fullyQualified = false) {
     const host = String(value || "").trim().toLowerCase();
     const labels = host.replace(/\.+$/, "").split(".");
-    const ipv4 = labels.length === 4 && labels.every((label) => /^(?:0|[1-9]\d{0,2})$/.test(label) && Number(label) <= 255);
+    const ipv4 = ipv4Parts(labels.join("."));
     return host.length <= 253 && (!fullyQualified || labels.length >= 2)
       && (!fullyQualified || !ipv4)
       && labels.every((label) => /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(label));
@@ -54,11 +60,21 @@
 
   function validUpstreamHost(value) {
     const host = String(value || "").trim();
+    if (!host || host.length > 253) return false;
+    const ipv4 = ipv4Parts(host.replace(/\.+$/, ""));
+    if (ipv4) {
+      return ipv4[0] !== 127 && !(ipv4[0] === 169 && ipv4[1] === 254)
+        && ipv4[0] < 224 && ipv4.some((part) => part !== 0);
+    }
     if (validDnsHostname(host)) return true;
-    if (!host || host.length > 253 || !/^[a-f\d:.]+$/i.test(host) || !host.includes(":")) return false;
+    if (!/^[a-f\d:.]+$/i.test(host) || !host.includes(":")) return false;
     try {
       // Parse IPv6 without accepting URL components or scope identifiers.
-      return Boolean(new URL(`http://[${host}]/`).hostname);
+      const normalized = new URL(`http://[${host}]/`).hostname.slice(1, -1);
+      const first = Number.parseInt(normalized.split(":")[0] || "0", 16);
+      // Match ipaddress's reserved, link-local, multicast, unspecified and mapped exclusions.
+      return (first >= 0x2000 && first <= 0x3fff) || (first >= 0xfc00 && first <= 0xfdff)
+        || (first >= 0xfec0 && first <= 0xfeff);
     } catch {
       return false;
     }
@@ -616,7 +632,7 @@
           }
           const host = String(routeField(route, "upstream_host")?.value || "").trim();
           if (!validUpstreamHost(host)) {
-            return { valid: false, message: "Enter an upstream DNS hostname or IP literal without a URL, port, or credentials.", field: routeField(route, "upstream_host") };
+            return { valid: false, message: "Enter an upstream DNS hostname or ordinary unicast IP without a URL, port, credentials or special-purpose address.", field: routeField(route, "upstream_host") };
           }
           if (routeField(route, "upstream_scheme")?.value === "https" && routeField(route, "trust_mode")?.value === "fingerprint") {
             const fingerprint = normalizeFingerprint(routeField(route, "fingerprint")?.value);

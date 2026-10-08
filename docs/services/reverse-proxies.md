@@ -67,6 +67,8 @@ The health fallback also shows the latest bounded observations after **Refresh h
 3. **Routes**: add one or more path routes. Set an absolute **Path prefix**, upstream HTTP or HTTPS **Upstream
    scheme**, **Upstream host or IP**, and **Upstream port**. Choose whether to **Preserve prefix** or **Strip prefix**.
    Routes rejects invalid upstream DNS names or IP literals before Review; enter the port in its separate field.
+   Upstream literals must be ordinary unicast addresses, excluding loopback, link-local, multicast, unspecified,
+   reserved and IPv4-mapped IPv6 addresses.
    Route prefixes must not overlap one another or reserved Atlaso and machine paths.
    Atlaso reserves protocol roots, including favicon, certificate downloads, OAuth/OpenID/OIDC, and the `/PROD` prefix;
    catch-all application routes reject requests for these namespaces before forwarding them upstream.
