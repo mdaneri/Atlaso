@@ -288,7 +288,6 @@ def _listener_sockets(proxy: models.ReverseProxy) -> list[tuple[str, str, int, s
 def _claim_conflicts(
     claim: ListenerClaim,
     *,
-    interface: str,
     address: str,
     port: int,
 ) -> bool:
@@ -296,13 +295,11 @@ def _claim_conflicts(
 
     Args:
         claim: Input used by  claim conflicts.
-        interface: Input used by  claim conflicts.
         address: Input used by  claim conflicts.
         port: Input used by  claim conflicts.
     """
     return (
-        claim.interface in ("*", interface)
-        and claim.address in ("*", "0.0.0.0", "::", address)
+        claim.address in ("*", "0.0.0.0", "::", address)
         and claim.protocol == "tcp"
         and claim.start <= port <= claim.end
     )
@@ -366,7 +363,7 @@ def validate_service_listener_sockets(db: Session) -> None:
             continue
         for interface, address, port, scheme in _listener_sockets(proxy):
             for claim in claims:
-                if _claim_conflicts(claim, interface=interface, address=address, port=port):
+                if _claim_conflicts(claim, address=address, port=port):
                     if _nginx_http_front_door(claim) and scheme == claim.scheme:
                         continue
                     raise ValueError(
@@ -505,7 +502,7 @@ def validate_proxy(
         address = str(listener.get("address") or "")
         for port, socket_scheme in candidate_sockets:
             for claim in claims:
-                if _claim_conflicts(claim, interface=interface, address=address, port=port):
+                if _claim_conflicts(claim, address=address, port=port):
                     if _nginx_http_front_door(claim) and socket_scheme == claim.scheme:
                         continue
                     errors.append("The listener collides with an exclusive Atlaso service socket.")

@@ -38,7 +38,8 @@ The generated nginx configuration sizes its server-name hash for accepted 253-ch
 Protected management handoffs retain those canonical hash settings once alongside old and new proxy listeners.
 Firewall validation and legacy API Firewall Apply retain the same exact-address proxy and redirect admissions.
 
-Exclusive Atlaso services cannot take a socket used by an enabled proxy. Service settings saves reject this conflict
+Exclusive Atlaso services cannot take an address and port used by an enabled proxy, even on another interface.
+Service settings saves reject this conflict
 before changing desired state; move or disable the proxy first. Matching HTTP or HTTPS virtual hosts can share nginx
 sockets, but HTTP and HTTPS cannot occupy the same address and port even across different interfaces.
 API settings writers return **409 Conflict** for this case.

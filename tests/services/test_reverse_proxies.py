@@ -45,22 +45,31 @@ from atlaso.app.services.reverse_proxies import (
     ("VcfOfflineDepotSettings", "https", False),
     ("NtpSettings", "http", False),
 ])
-def test_service_socket_guard_retains_exclusive_and_shared_protocol_ownership(model_name, scheme, conflicts):
+@pytest.mark.parametrize("listen_interface", ["eth1", "eth2"])
+def test_service_socket_guard_retains_exclusive_and_shared_protocol_ownership(model_name, scheme, conflicts, listen_interface):
     """Validate service-first and proxy-first ownership with shared nginx exceptions.
 
     Args:
         model_name: Canonical service settings model owning the requested socket.
         scheme: Existing proxy protocol on the shared TCP port.
         conflicts: Whether the service must reject the enabled proxy socket.
+        listen_interface: Same or different interface sharing the proxy address.
     """
     from atlaso.app import models
     from atlaso.app.services.network_objects import acquire_network_objects_write_lock
 
     engine, db = create_db()
     try:
+        if listen_interface == "eth2":
+            db.add(PhysicalInterface(
+                name="eth2", mac_address="02:00:00:00:00:03", admin_state="up", oper_state="up",
+                role="access", mode="access", ip_cidr="192.168.1.10/24",
+            ))
+            db.commit()
         proxy = save_proxy(db, payload(enabled=True, scheme=scheme, port=9443, redirect_http=False), actor="test")
         acquire_network_objects_write_lock(db)
-        service = getattr(models, model_name)(enabled=True, port=9443, listen_interface="eth1", listen_address="192.168.1.10")
+        service = getattr(models, model_name)(enabled=True, port=9443, listen_interface=listen_interface,
+                                             listen_address="192.168.1.10")
         if model_name == "LdapSettings":
             service.ldaps_enabled = True
         db.add(service)
