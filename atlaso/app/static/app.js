@@ -24166,6 +24166,7 @@ function initializeVcfVaultImport() {
   const form = document.querySelector("[data-vcf-vault-import-form]");
   if (!(modal instanceof HTMLDialogElement) || !(form instanceof HTMLFormElement) || !window.AtlasoUiPatterns) return;
   const candidatesElement = form.querySelector("[data-vcf-vault-candidates]");
+  const discoverySummary = form.querySelector("[data-vcf-vault-discovery-summary]");
   const fingerprintHelp = form.querySelector("[data-vcf-vault-fingerprint]");
   const fingerprintConfirm = form.querySelector("[data-vcf-vault-fingerprint-confirm]");
   let candidates = [];
@@ -24193,7 +24194,22 @@ function initializeVcfVaultImport() {
       checkbox.checked = true;
       const copy = document.createElement("span");
       copy.className = "vcf-helper-action-copy";
-      copy.innerHTML = `<strong><code>${escapeHtml(candidate.key)}</code></strong><span class="muted">${escapeHtml(candidate.description || candidate.resource_name || "")}</span>`;
+      const key = document.createElement("code");
+      key.textContent = String(candidate.key || "");
+      const keyLabel = document.createElement("strong");
+      keyLabel.append(key);
+      const credentialTypeLabel = candidate.secret_type === "vcf_password"
+        ? "VCF password" : candidate.secret_type === "esx_password" ? "ESX password" : "Other credential";
+      const account = document.createElement("span");
+      account.className = "muted";
+      account.textContent = `${credentialTypeLabel} · ${String(candidate.username || "Username unavailable")}`;
+      const description = document.createElement("span");
+      description.className = "muted";
+      description.textContent = String(candidate.description || candidate.resource_name || "");
+      const endpoints = document.createElement("span");
+      endpoints.className = "muted";
+      endpoints.textContent = candidate.uris?.length ? candidate.uris.join(" · ") : "No verified endpoint. Add a URI in the Vault editor after import.";
+      copy.append(keyLabel, account, description, endpoints);
       label.append(checkbox, copy);
       candidatesElement.append(label);
     });
@@ -24219,9 +24235,12 @@ function initializeVcfVaultImport() {
       return "error";
     }
     candidates = Array.isArray(payload.candidates) ? payload.candidates : [];
+    const discovery = payload.discovery || {};
+    const skipped = Object.entries(discovery.skipped || {}).map(([reason, count]) => `${reason}: ${count}`);
+    if (discoverySummary) discoverySummary.textContent = [discovery.scope, `${candidates.length} available.`, ...skipped].filter(Boolean).join(" ");
     if (!candidates.length) {
-      controller.setError("The source returned no supported passwords.");
-      return "error";
+      renderCandidates();
+      return "ready";
     }
     renderCandidates();
     return "ready";
@@ -24245,6 +24264,7 @@ function initializeVcfVaultImport() {
       if (fingerprintHelp) fingerprintHelp.textContent = "Not inspected yet";
       if (fingerprintConfirm instanceof HTMLInputElement) fingerprintConfirm.checked = false;
       candidates = [];
+      if (discoverySummary) discoverySummary.textContent = "";
       candidatesElement?.replaceChildren();
     },
     onNext: async ({ controller, step }) => {

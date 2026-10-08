@@ -89,8 +89,56 @@ audit event. An SFTP URI opens an interactive SSH terminal on the same endpoint;
 **VCF Helper > Import passwords into a vault** discovers supported password metadata from a VCF 9 SDDC Manager or VCF
 Installer. After the server page, Atlaso probes without resolving or sending credentials and opens a dedicated TLS
 page. Confirm the observed SHA-256 fingerprint out of band before authentication, select the passwords, and choose a
-destination vault. Atlaso re-reads the selected values during the reviewed import and encrypts them immediately.
-Existing keys are rotated.
+destination vault. Discovery covers credentials the authenticated account can access; it is not a complete inventory of
+every appliance account. For SDDC Manager, Atlaso requests the credential collection with the documented
+`pageSize=0` all-records behavior and follows additional pages only when response metadata explicitly reports them.
+Duplicate or incomplete page results stop discovery. If a listed SDDC Manager password is absent or masked, Atlaso
+retrieves that supported credential by ID with `GET /v1/credentials/{id}`. For VCF Installer, discovery reads password
+fields from its latest available SDDC specification only. Unsupported, unavailable, masked, or permission-limited
+candidates are summarized by skipped count and reason; vendor error messages and password values are not shown.
+The selection list shows each account and credential type alongside its key, resource, and discovered URIs so multiple
+accounts on one appliance can be distinguished.
+
+Atlaso builds credential-free URIs only from authoritative resource metadata. SDDC Manager SSH credentials use a
+validated FQDN `resourceName` or `resourceIp`; API, SSO, AUDIT, and missing credential types use HTTPS only for known
+web resource types. Installer mappings use the latest available SDDC specification only, not a live appliance
+inventory: vCenter root uses SSH to `vcenterHostname`; vCenter SSO uses `adminUserSsoUsername` and HTTPS to
+`vcenterHostname`; each `nsxtManagers[].hostname` gets an NSX root SSH URI (never the cluster VIP); NSX admin and audit
+use HTTPS to `vipFqdn`. If `adminUserSsoUsername` is blank or omitted, Atlaso uses
+`administrator@<ssoDomain>` when `ssoDomain` is valid, otherwise `administrator`; it does not assume a default domain
+such as `vsphere.local`. Installer hostname fields accept validated short DNS names. Generic SDDC Manager `resourceName`
+labels still require an FQDN or `resourceIp`; a short label is not used as a host. SDDC Manager `sshPassword` uses the
+`vcf` account and SSH to its `hostname`.
+Its `localUserPassword` uses `admin@local` and HTTPS to the same hostname.
+NSX manager root entries retain host-specific identities and keys when managers are reordered or removed.
+Long Installer resource identities use bounded vault keys while retaining full hostnames in discovery identities and URIs.
+Browser selections use stable opaque tokens so metadata redaction cannot change the selected credential identity.
+Each token binds the canonical source type, host, port, and confirmed TLS fingerprint together with reviewed candidate
+metadata: account, resource, key, description, secret type, and URIs. If a binding or reviewed value changes before
+import, inspect the source again; the password value itself may refresh without changing the selection token.
+Every discovered credential receives a bounded identity suffix, keeping its canonical key stable when peers are added,
+removed, or reordered. Existing natural keys are rotated in place only when the source/resource/account matches and
+discovery has exactly one candidate for that legacy resource/account identity; ambiguous or unrelated legacy entries
+remain separate.
+Operations nodes and the Operations collector map `rootUserPassword` to `root` over SSH to their adjacent `hostname`.
+Operations `adminUserPassword` uses `admin` over HTTPS to `loadBalancerFqdn`, or the explicit master/single node when
+the load balancer is absent. Automation `adminUserPassword` uses `admin` over HTTPS to its `hostname`.
+VSP `systemUserPassword` creates separate `vmware-system-user` SSH and `admin@vsp.local` HTTPS entries for `platformFqdn`.
+Root and ESX accounts use SSH, while other known web-component accounts use HTTPS.
+Unknown credential purposes need an operator URI association. FTP credentials are not treated as SFTP endpoints. If
+the metadata has no valid host, including a short generic resource label, opaque ID, or hostname with multiple trailing
+dots, or malformed brackets (including bracketed IPv4 or DNS names), the URI list stays empty. After import,
+use the entry's **Edit** action to add a verified endpoint. Reimport preserves an existing nonempty operator-managed
+URI list only when the source type, source endpoint, resource name, account, and secret type match. A different source
+or account replaces the URI list with its discovered endpoints, including an empty list when none are known. Same-source
+rotation adds discovered URIs only when the existing list is empty. Atlaso re-reads the selected values during the reviewed
+import and encrypts them immediately; existing keys are rotated. See Broadcom's [SDDC specification](https://developer.broadcom.com/xapis/vcf-installer-api/latest/data-structures/SddcSpec/)
+for the source field definitions. Source endpoints are canonicalized before storage and identity comparison, including legacy
+stored spellings: DNS names ignore case and a trailing root dot, equivalent IPv6 spellings identify the same host, and
+different ports remain distinct sources.
+
+For the SDDC Manager response and endpoint contract, see Broadcom's [Get Credentials API](https://developer.broadcom.com/xapis/vmware-cloud-foundation-api/latest/v1/credentials/get/)
+and [Get Credential API](https://developer.broadcom.com/xapis/vmware-cloud-foundation-api/latest/v1/credentials/id/get/).
 
 ## VCF Helper autofill
 
