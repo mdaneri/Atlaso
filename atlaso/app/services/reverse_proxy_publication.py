@@ -19,13 +19,19 @@ from atlaso.app.services.ca import (
 from atlaso.app.services.dnsmasq import split_domains
 from atlaso.app.services.firewall import ATLASO_SERVICE_FIREWALL_RULE_MARKER
 from atlaso.app.services.nginx import format_nginx_listen
+from atlaso.app.services.reverse_proxies import RESERVED_ROUTE_ROOTS
 from atlaso.app.services.reverse_proxy_transport import (
     SOCKET_ROOT,
     manifest_generation,
     validate_manifest,
 )
+from atlaso.app.ui_routes import PROTOCOL_PATH_PREFIXES
 
-RESERVED_PATTERN = r"^/(?:ui(?:/|$)|api(?:/|$)|openapi\.json(?:/|$)|identity(?:/|$)|ca(?:/|$)|pxe(?:/|$)|PROD(?:/|$)|depot(?:/|$)|registry(?:/|$)|v2(?:/|$)|static(?:/|$)|manifest\.webmanifest(?:/|$)|service-worker\.js(?:/|$)|terminal(?:/|$)|requests(?:/|$))"
+# Keep catch-all upstream routes behind every canonical Atlaso protocol namespace.
+RESERVED_PATTERN = "^/(?:" + "|".join([
+    *(re.escape(root) + "(?:/|$)" for root in sorted(RESERVED_ROUTE_ROOTS)),
+    *(re.escape(prefix.lstrip("/")) for prefix in PROTOCOL_PATH_PREFIXES),
+]) + ")"
 STAGED_PATH = "/var/lib/atlaso/apply/public-services/atlaso-public-services.conf"
 DNS_OWNER_PREFIX = "Atlaso-managed reverse proxy DNS: "
 GENERATION_MARKER = "# Managed reverse-proxy generation: "

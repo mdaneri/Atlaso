@@ -33,7 +33,7 @@
     return String(value || "").replace(/[:\s-]/g, "");
   }
 
-  const RESERVED_ROUTE_COMPONENT = /^(?:ui|api|openapi\.json|identity|ca|pxe|prod|registry|v2|static|manifest\.webmanifest|service-worker\.js|terminal|requests|depot)$/iu;
+  const RESERVED_ROUTE_COMPONENT = /^(?:ui|api|openapi\.json|identity|ca|pxe|prod|registry|v2|static|manifest\.webmanifest|service-worker\.js|terminal|requests|depot|favicon\.ico|certificate-authority|oauth|openid|oidc)$|^prod/iu;
 
   function validPathPrefix(value) {
     const path = String(value || "");

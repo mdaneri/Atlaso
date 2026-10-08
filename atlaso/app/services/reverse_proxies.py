@@ -16,6 +16,7 @@ from atlaso.app.reverse_proxy_schemas import ReverseProxyCreate
 from atlaso.app.services.network_objects import acquire_network_objects_write_lock
 from atlaso.app.services.port_forwarding import ListenerClaim, listener_claims
 from atlaso.app.services.traffic_publishing import nat_targets
+from atlaso.app.ui_routes import PROTOCOL_EXACT_PATHS, PROTOCOL_PATH_PREFIXES
 
 MAX_REVERSE_PROXIES = 256
 MAX_PROXY_ROUTES = 64
@@ -350,10 +351,12 @@ def _route_overlap(left: str, right: str) -> bool:
     return left.startswith(right) or right.startswith(left)
 
 
-_RESERVED_ROUTE_PREFIXES = {
+RESERVED_ROUTE_ROOTS = frozenset({
     "ui", "api", "openapi.json", "identity", "ca", "pxe", "prod", "registry", "v2", "static",
     "manifest.webmanifest", "service-worker.js", "terminal", "requests", "depot",
-}
+    "certificate-authority",
+}) | frozenset(path.lstrip("/").split("/", 1)[0].casefold()
+              for path in (*PROTOCOL_EXACT_PATHS, *PROTOCOL_PATH_PREFIXES))
 
 
 def _reserved_route_path(path: str) -> bool:
@@ -364,7 +367,9 @@ def _reserved_route_path(path: str) -> bool:
     """
     if path == "/":
         return False
-    return path.lstrip("/").split("/", 1)[0].casefold() in _RESERVED_ROUTE_PREFIXES
+    folded = path.casefold()
+    return (folded.lstrip("/").split("/", 1)[0] in RESERVED_ROUTE_ROOTS
+            or any(folded.startswith(prefix.casefold()) for prefix in PROTOCOL_PATH_PREFIXES))
 
 
 def validate_proxy(

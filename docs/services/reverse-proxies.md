@@ -59,7 +59,10 @@ The health fallback also shows the latest bounded observations after **Refresh h
    the selected listener addresses and port.
 3. **Routes**: add one or more path routes. Set an absolute **Path prefix**, upstream HTTP or HTTPS **Upstream
    scheme**, **Upstream host or IP**, and **Upstream port**. Choose whether to **Preserve prefix** or **Strip prefix**.
-   Route prefixes must not overlap one another or reserved Atlaso and machine paths. The Routes step rejects encoded
+   Route prefixes must not overlap one another or reserved Atlaso and machine paths.
+   Atlaso reserves protocol roots, including favicon, certificate downloads, OAuth/OpenID/OIDC, and the `/PROD` prefix;
+   catch-all application routes reject requests for these namespaces before forwarding them upstream.
+   The Routes step rejects encoded
    paths, repeated slashes, dot segments, whitespace, backslashes, and configuration delimiters before Review.
    For HTTPS upstreams, choose
    **HTTPS upstream trust**:

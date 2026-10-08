@@ -346,3 +346,59 @@ def test_firewall_rules_are_exact_ipv4_ipv6_listener_and_redirect_admissions():
     ]
     assert all(rule.direction == "input" and rule.action == "accept" for rule in rules)
     assert all(rule.protocol == "tcp" and rule.source == "any" and rule.enabled for rule in rules)
+
+
+@pytest.mark.parametrize("path", [
+    "/favicon.ico", "/certificate-authority/downloads/ca.pem",
+    "/certificate-authority/certificates/10/downloads/pem", "/oauth/token", "/openid/configuration",
+    "/oidc/token", "/PRODartifact", "/STATIC/file", "/api/v1",
+])
+def test_protocol_namespaces_are_rejected_by_validation_and_catch_all_renderer(path):
+    """Keep explicit and catch-all routes outside all canonical protocol namespaces.
+
+    Args:
+        path: Atlaso protocol request path that an upstream must never receive.
+    """
+    import re
+
+    from atlaso.app.services.reverse_proxies import save_proxy
+    from atlaso.app.services.reverse_proxy_publication import RESERVED_PATTERN
+    from tests.services.test_reverse_proxies import create_db, payload
+
+    engine, db = create_db()
+    try:
+        with pytest.raises(ValueError, match="reserved Atlaso"):
+            save_proxy(db, payload(routes=[{**payload()["routes"][0], "path_prefix": path}]), actor="test")
+        assert re.match(RESERVED_PATTERN, path, re.IGNORECASE)
+        proxy = proxy_payload()
+        proxy["routes"] = [dict(proxy["routes"][0], path_prefix="/", position=0)]
+        rendered = render_proxy_servers([proxy], transport_manifest([proxy], []))
+        guard = f"location ~* {RESERVED_PATTERN} {{ return 404; }}"
+        assert rendered.count(guard) == 4  # Both listener families and both redirect servers.
+        assert rendered.index(guard) < rendered.index("location / {")
+    finally:
+        db.close()
+        engine.dispose()
+
+
+def test_all_canonical_protocol_paths_are_reserved_for_proxy_publication():
+    """Derive coverage from the route owner's exact paths and protocol prefixes."""
+    import re
+
+    from atlaso.app.services.reverse_proxies import _reserved_route_path
+    from atlaso.app.services.reverse_proxy_publication import RESERVED_PATTERN
+    from atlaso.app.ui_routes import (
+        PROTOCOL_EXACT_PATHS,
+        PROTOCOL_PATH_PREFIXES,
+        is_protocol_path,
+    )
+
+    paths = set(PROTOCOL_EXACT_PATHS) | {prefix + "artifact" for prefix in PROTOCOL_PATH_PREFIXES}
+    paths.add("/certificate-authority/certificates/10/downloads/pem")
+    for path in paths:
+        assert is_protocol_path(path), path
+        assert _reserved_route_path(path), path
+        assert re.match(RESERVED_PATTERN, path, re.IGNORECASE), path
+    for path in ("/", "/app/", "/favicon.ico-app/", "/oauth-app/", "/application/api/"):
+        assert not _reserved_route_path(path), path
+        assert not re.match(RESERVED_PATTERN, path, re.IGNORECASE), path

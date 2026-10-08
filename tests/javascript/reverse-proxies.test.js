@@ -22,16 +22,29 @@ test("route steps reject ambiguous paths before review", () => {
 
 test("route steps reject every reserved component without rejecting neighboring application names", () => {
   const reserved = ["ui", "api", "openapi.json", "identity", "ca", "pxe", "prod", "registry", "v2", "static",
-    "manifest.webmanifest", "service-worker.js", "terminal", "requests", "depot"];
+    "manifest.webmanifest", "service-worker.js", "terminal", "requests", "depot",
+    "favicon.ico", "certificate-authority", "oauth", "openid", "oidc"];
   for (const name of reserved) {
     for (const path of [`/${name}`, `/${name}/app`, `/${name.toUpperCase()}/`]) {
       assert.equal(reverseProxies.validPathPrefix(path), false, path);
     }
-    assert.equal(reverseProxies.validPathPrefix(`/${name}-app/`), true, name);
+    assert.equal(reverseProxies.validPathPrefix(`/${name}-app/`), name !== "prod", name);
   }
   assert.equal(reverseProxies.validPathPrefix("/ſtatic/app"), false);
   assert.equal(reverseProxies.validPathPrefix("/"), true);
   assert.equal(reverseProxies.validPathPrefix("/app/api/"), true);
+});
+
+test("browser route validation covers the canonical protocol namespace inventory", () => {
+  const source = fs.readFileSync("atlaso/app/ui_routes.py", "utf8");
+  for (const name of ["PROTOCOL_PATH_PREFIXES", "PROTOCOL_EXACT_PATHS"]) {
+    const section = source.match(new RegExp(`${name} = [\\s\\S]*?\\r?\\n\\)`))[0];
+    for (const match of section.matchAll(/"([^"\n]+)"/g)) {
+      const path = name === "PROTOCOL_PATH_PREFIXES" ? match[1] + "artifact" : match[1];
+      assert.equal(reverseProxies.validPathPrefix(path), false, path);
+    }
+  }
+  assert.equal(reverseProxies.validPathPrefix("/certificate-authority/certificates/10/downloads/pem"), false);
 });
 
 test("fallback add action opens the existing new-proxy wizard", () => {
@@ -365,8 +378,8 @@ test("display escaping protects operator-controlled text", () => {
 
 test("management service worker precaches the reverse-proxy page asset", () => {
   const worker = fs.readFileSync("atlaso/app/static/service-worker.js", "utf8");
-  assert.match(worker, /const ATLASO_CACHE = `\$\{ATLASO_CACHE_PREFIX\}358`;/);
-  assert.match(worker, /"\/static\/reverse-proxies\.js\?v=issue-723-6"/);
+  assert.match(worker, /const ATLASO_CACHE = `\$\{ATLASO_CACHE_PREFIX\}359`;/);
+  assert.match(worker, /"\/static\/reverse-proxies\.js\?v=issue-723-7"/);
 });
 
 function classListFor(classes) {
