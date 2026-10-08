@@ -129,7 +129,9 @@ URI list only when the source type, source endpoint, resource name, account, and
 or account replaces the URI list with its discovered endpoints, including an empty list when none are known. Same-source
 rotation adds discovered URIs only when the existing list is empty. Atlaso re-reads the selected values during the reviewed
 import and encrypts them immediately; existing keys are rotated. See Broadcom's [SDDC specification](https://developer.broadcom.com/xapis/vcf-installer-api/latest/data-structures/SddcSpec/)
-for the source field definitions.
+for the source field definitions. Source endpoints are canonicalized before storage and identity comparison, including legacy
+stored spellings: DNS names ignore case and a trailing root dot, equivalent IPv6 spellings identify the same host, and
+different ports remain distinct sources.
 
 For the SDDC Manager response and endpoint contract, see Broadcom's [Get Credentials API](https://developer.broadcom.com/xapis/vmware-cloud-foundation-api/latest/v1/credentials/get/)
 and [Get Credential API](https://developer.broadcom.com/xapis/vmware-cloud-foundation-api/latest/v1/credentials/id/get/).

@@ -1866,6 +1866,178 @@ def test_vcf_import_rotates_matching_legacy_key_and_keeps_operator_uris(client, 
         assert entry.source_endpoint == "sddc-manager.example.internal:443"
 
 
+@pytest.mark.parametrize(
+    "entry_kind, stored_address, current_address, expected_endpoint",
+    [
+        (
+            "canonical",
+            "SDDC-MANAGER.Example.Internal.",
+            "sddc-manager.example.internal",
+            "sddc-manager.example.internal:443",
+        ),
+        (
+            "legacy",
+            "sddc-manager.example.internal",
+            "SDDC-MANAGER.Example.Internal.",
+            "sddc-manager.example.internal:443",
+        ),
+        (
+            "canonical",
+            "2001:0db8:0000:0000:0000:0000:0000:0010",
+            "2001:db8::10",
+            "2001:db8::10:443",
+        ),
+        (
+            "legacy",
+            "2001:db8::10",
+            "2001:0db8:0000:0000:0000:0000:0000:0010",
+            "2001:db8::10:443",
+        ),
+    ],
+)
+def test_vcf_import_preserves_operator_uris_for_equivalent_source_spellings(
+    client, monkeypatch, entry_kind, stored_address, current_address, expected_endpoint
+):
+    """Preserve operator URI positions when equivalent source spellings rotate a credential.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+        monkeypatch: Pytest fixture used to replace discovery and TLS confirmation.
+        entry_kind: Existing canonical or legacy key format under test.
+        stored_address: Host spelling persisted before the password refresh.
+        current_address: Equivalent source spelling used by the refresh request.
+        expected_endpoint: Canonical host and port expected after the refresh.
+    """
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import VaultEntry
+    from atlaso.app.secrets import decrypt_secret
+
+    natural_key = "vcf.legacy.admin"
+    operator_uris = ("https://operator-a.example.internal", "ssh://operator-b.example.internal")
+    candidate = _canonical_test_vcf_candidate(
+        candidate_id=f"equivalent-source-{entry_kind}-{stored_address}",
+        natural_key=natural_key,
+        value="InitialEquivalentSourceSecret!",
+        uris=(),
+    )
+    if entry_kind == "legacy":
+        csrf, vault_id = _seed_legacy_vcf_import_entry(
+            client,
+            natural_key=natural_key,
+            secret_value="PriorEquivalentSourceSecret!",
+            username="admin",
+            resource_name=candidate.resource_name,
+            secret_type=candidate.secret_type,
+            source_type="sddc_manager",
+            source_endpoint=f"{stored_address}:443",
+            uris=operator_uris,
+        )
+    else:
+        csrf, vault_id = _create_empty_vcf_import_vault(client)
+        first_import = _post_fake_vcf_import(
+            client,
+            monkeypatch,
+            csrf=csrf,
+            vault_id=vault_id,
+            candidates=[candidate],
+            address=stored_address,
+        )
+        assert first_import.status_code == 200
+        with SessionLocal() as db:
+            entry = db.execute(select(VaultEntry).where(VaultEntry.vault_id == vault_id)).scalar_one()
+            entry.source_endpoint = f"{stored_address}:443"
+            entry.uris_json = json.dumps(operator_uris)
+            db.commit()
+
+    refreshed = _canonical_test_vcf_candidate(
+        candidate_id=candidate.candidate_id,
+        natural_key=natural_key,
+        value="CurrentEquivalentSourceSecret!",
+        uris=(),
+    )
+    rotated = _post_fake_vcf_import(
+        client,
+        monkeypatch,
+        csrf=csrf,
+        vault_id=vault_id,
+        candidates=[refreshed],
+        address=current_address,
+    )
+
+    assert rotated.status_code == 200
+    expected_key = natural_key if entry_kind == "legacy" else candidate.key
+    assert rotated.json()["imported_keys"] == [expected_key]
+    with SessionLocal() as db:
+        entries = db.execute(select(VaultEntry).where(VaultEntry.vault_id == vault_id)).scalars().all()
+        assert len(entries) == 1
+        entry = entries[0]
+        assert entry.key == expected_key
+        assert decrypt_secret(entry.encrypted_value) == "CurrentEquivalentSourceSecret!"
+        assert json.loads(entry.uris_json) == list(operator_uris)
+        assert entry.source_type == "sddc_manager"
+        assert entry.source_endpoint == expected_endpoint
+
+
+def test_vcf_import_does_not_preserve_operator_uris_across_source_port_change(client, monkeypatch):
+    """Treat a changed source port as a different identity when rotating operator URIs.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+        monkeypatch: Pytest fixture used to replace discovery and TLS confirmation.
+    """
+    from atlaso.app import ui
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import VaultEntry
+    from atlaso.app.secrets import decrypt_secret
+
+    natural_key = "vcf.legacy.port_guard"
+    operator_uris = ("https://operator.example.internal",)
+    csrf, vault_id = _seed_legacy_vcf_import_entry(
+        client,
+        natural_key=natural_key,
+        secret_value="PriorPortGuardSecret!",
+        username="admin",
+        resource_name="manager.example.internal",
+        secret_type="vcf_password",
+        source_type="sddc_manager",
+        source_endpoint="sddc-manager.example.internal:443",
+        uris=operator_uris,
+    )
+    candidate = _canonical_test_vcf_candidate(
+        candidate_id="changed-source-port-credential",
+        natural_key=natural_key,
+        value="NewPortGuardSecret!",
+        uris=(),
+    )
+    monkeypatch.setattr(ui, "_confirmed_tls_fingerprint", lambda *_args: ("AA:BB", None))
+    monkeypatch.setattr(ui, "discover_vcf_passwords", lambda **_kwargs: [candidate])
+    response = client.post(
+        "/vcf-helper/vault-import",
+        json={
+            "csrf": csrf,
+            "source_type": "sddc_manager",
+            "address": "sddc-manager.example.internal",
+            "port": 8443,
+            "confirmed_fingerprint": "AA:BB",
+            "username": "admin",
+            "password": "FixtureSourcePassword!",
+            "vault_id": vault_id,
+            "candidate_ids": [candidate.selection_id],
+        },
+    )
+
+    assert response.status_code == 200
+    with SessionLocal() as db:
+        entries = db.execute(select(VaultEntry).where(VaultEntry.vault_id == vault_id)).scalars().all()
+        by_key = {entry.key: entry for entry in entries}
+        assert set(by_key) == {natural_key, candidate.key}
+        assert decrypt_secret(by_key[natural_key].encrypted_value) == "PriorPortGuardSecret!"
+        assert json.loads(by_key[natural_key].uris_json) == list(operator_uris)
+        assert decrypt_secret(by_key[candidate.key].encrypted_value) == "NewPortGuardSecret!"
+        assert json.loads(by_key[candidate.key].uris_json) == []
+        assert by_key[candidate.key].source_endpoint == "sddc-manager.example.internal:8443"
+
+
 def test_vcf_import_source_mismatch_keeps_legacy_entry_and_creates_canonical_key(client, monkeypatch):
     """Keep an old entry unchanged when the import source endpoint no longer matches.
 

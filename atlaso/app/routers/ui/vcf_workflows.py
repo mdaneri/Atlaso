@@ -9,6 +9,7 @@ import ssl
 from collections import Counter
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
+from ipaddress import ip_address
 from pathlib import Path, PurePosixPath
 from threading import Lock
 from typing import Any
@@ -134,6 +135,37 @@ from atlaso.app.ui_routes import MANAGEMENT_UI_ROOT
 
 Endpoint = Callable[..., Any]
 VCF_FQDN_POPULATION_MAX_AGE_SECONDS = 15 * 60
+
+
+def _canonical_vcf_vault_source_endpoint(address: str, port: int) -> str:
+    """Normalize source host spelling while retaining its explicit port.
+
+    Args:
+        address: Parsed source hostname or IP address.
+        port: Source service port.
+    """
+    host = address.strip().strip("[]")
+    try:
+        host = str(ip_address(host))
+    except ValueError:
+        host = host.removesuffix(".").lower()
+    return f"{host}:{port}"
+
+
+def _vcf_vault_source_matches(stored: str, address: str, port: int) -> bool:
+    """Compare a persisted host-port identity, including older unnormalized spellings.
+
+    Args:
+        stored: Existing source identity stored as host followed by its port.
+        address: Parsed current source hostname or IP address.
+        port: Current source service port.
+    """
+    host, separator, port_text = stored.rpartition(":")
+    if not separator or not host or not port_text.isdecimal():
+        return False
+    return _canonical_vcf_vault_source_endpoint(host, int(port_text)) == (
+        _canonical_vcf_vault_source_endpoint(address, port)
+    )
 
 
 def _vcf_fqdn_population_serializer() -> URLSafeTimedSerializer:
@@ -929,7 +961,7 @@ def build_router(dependencies: VcfWorkflowsUiDependencies) -> VcfWorkflowsUiRout
                     )).scalar_one_or_none()
                     if legacy is not None and (
                         legacy.source_type == source_type
-                        and legacy.source_endpoint == f"{address}:{port}"
+                        and _vcf_vault_source_matches(legacy.source_endpoint, address, port)
                         and legacy.resource_name == candidate.resource_name.strip()
                         and legacy.username == candidate.username.strip()
                         and legacy.secret_type == candidate.secret_type.strip().lower()
@@ -938,7 +970,7 @@ def build_router(dependencies: VcfWorkflowsUiDependencies) -> VcfWorkflowsUiRout
                 # Preserve operator URI positions only for the same source and account.
                 same_source = existing is not None and (
                     existing.source_type == source_type
-                    and existing.source_endpoint == f"{address}:{port}"
+                    and _vcf_vault_source_matches(existing.source_endpoint, address, port)
                     and existing.resource_name == candidate.resource_name.strip()
                     and existing.username == candidate.username.strip()
                     and existing.secret_type == candidate.secret_type.strip().lower()
@@ -955,7 +987,7 @@ def build_router(dependencies: VcfWorkflowsUiDependencies) -> VcfWorkflowsUiRout
                         username=candidate.username,
                         resource_name=candidate.resource_name,
                         source_type=source_type,
-                        source_endpoint=f"{address}:{port}",
+                        source_endpoint=_canonical_vcf_vault_source_endpoint(address, port),
                         imported_at=utcnow(),
                         uris=uris or candidate.uris,
                     ),
