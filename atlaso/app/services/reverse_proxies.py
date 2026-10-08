@@ -525,8 +525,8 @@ def validate_proxy(
                     continue
                 if not peer.enabled:
                     continue
-                for peer_interface, peer_address, peer_port, peer_scheme in _listener_sockets(peer):
-                    if peer_interface == interface and peer_address == address and peer_port == port:
+                for _peer_interface, peer_address, peer_port, peer_scheme in _listener_sockets(peer):
+                    if peer_address == address and peer_port == port:
                         if peer_scheme != socket_scheme:
                             errors.append("HTTP and HTTPS virtual hosts cannot share the same listener socket.")
                         elif hostname and peer.hostname.strip().rstrip(".").casefold() == hostname:

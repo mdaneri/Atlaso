@@ -1156,3 +1156,46 @@ def test_inventory_proxy_suspension_rolls_back_with_parent_transaction():
     finally:
         db.close()
         engine.dispose()
+
+
+@pytest.mark.parametrize("address", ["192.168.1.10", "2001:db8:1::10"])
+@pytest.mark.parametrize(("scheme", "port", "conflicts"), [
+    ("http", 443, True), ("https", 80, True), ("https", 443, False), ("http", 8080, False),
+])
+def test_proxy_socket_protocol_ownership_ignores_duplicate_interface_addresses(address, scheme, port, conflicts):
+    """Keep nginx protocol ownership address-scoped while retaining interface bindings.
+
+    Args:
+        address: Exact duplicate saved IPv4 or IPv6 listener address.
+        scheme: Candidate client-facing protocol.
+        port: Candidate TCP port, including the existing HTTP redirect socket.
+        conflicts: Whether save must reject a mixed-protocol socket without mutation.
+    """
+    engine, db = create_db()
+    try:
+        first_interface = db.scalar(select(PhysicalInterface).where(PhysicalInterface.name == "eth1"))
+        if ":" in address:
+            first_interface.ipv6_enabled = True
+            first_interface.ipv6_cidr = address + "/64"
+        second_interface = PhysicalInterface(
+            name="eth2", mac_address="02:00:00:00:00:03", admin_state="up", oper_state="up",
+            role="access", mode="access", ip_cidr="192.168.1.10/24",
+            ipv6_enabled=":" in address, ipv6_cidr=address + "/64" if ":" in address else None,
+        )
+        db.add(second_interface)
+        db.commit()
+        first = save_proxy(db, payload(enabled=True, listeners=[{"interface": "eth1", "address": address}]),
+                           actor="operator")
+        candidate = payload(name="Second", hostname="second.example.test", enabled=True, scheme=scheme,
+                            port=port, redirect_http=False, listeners=[{"interface": "eth2", "address": address}])
+        if conflicts:
+            with pytest.raises(ValueError, match="HTTP and HTTPS virtual hosts cannot share"):
+                save_proxy(db, candidate, actor="operator")
+            assert list(db.scalars(select(ReverseProxy))) == [first]
+        else:
+            second = save_proxy(db, candidate, actor="operator")
+            assert second.listeners == [{"interface": "eth2", "address": address}]
+        assert first.listeners == [{"interface": "eth1", "address": address}]
+    finally:
+        db.close()
+        engine.dispose()
