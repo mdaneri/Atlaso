@@ -524,3 +524,44 @@ def test_maximum_shared_socket_hostnames_have_bounded_http_hash_settings():
         assert f"if ($host != {proxy['hostname']}) {{ return 404; }}" in rendered
     with pytest.raises(ValueError, match="canonical intent"):
         validated_snapshot(rendered.replace("server_names_hash_bucket_size 512;", "server_names_hash_bucket_size 64;"))
+
+
+@pytest.mark.parametrize("field", ["name", "description"])
+@pytest.mark.parametrize("keyword", ["password", "token", "secret"])
+def test_public_apply_tracks_disabled_intent_hidden_by_redaction(client, field, keyword):
+    """Offer metadata edits as pending while keeping both previews secret-safe.
+
+    Args:
+        client: Initialized appliance fixture.
+        field: Operator metadata field changed after publication.
+        keyword: Word causing the entire intent fragment to be redacted.
+    """
+    from atlaso.app import ui
+
+    proxy = proxy_payload()
+    proxy["enabled"] = False
+    proxy[field] = f"{keyword} before"
+    kwargs = dict(unit_id="public_services", label="Public Services", page_url="/appliance-apply",
+                  context={}, summary=[], validation_errors=[], config_path="/public/config")
+
+    def unit(candidate, baseline):
+        """Build the actual Apply comparison from the canonical renderer.
+
+        Args:
+            candidate: Complete disabled desired-state projection.
+            baseline: Previously published Apply unit.
+        """
+        preview = render_proxy_servers([candidate], transport_manifest([candidate], []))
+        return ui.make_appliance_apply_unit(config_preview=preview, baseline=baseline, **kwargs)
+
+    applied = unit(proxy, None)
+    assert unit(proxy, applied)["changed"] is False
+    changed = deepcopy(proxy)
+    changed[field] = f"{keyword} after"
+    pending = unit(changed, applied)
+    assert applied["config_preview"] == pending["config_preview"]
+    assert proxy[field] not in applied["config_preview"]
+    assert changed[field] not in pending["config_preview"]
+    assert pending["changed"] is True
+    assert applied["snapshot_marker"] != pending["snapshot_marker"]
+    assert unit(changed, pending)["changed"] is False

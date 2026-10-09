@@ -11575,6 +11575,15 @@ def make_appliance_apply_unit(
         The make appliance apply unit result.
     """
     redacted_preview = redact_config_preview(config_preview)
+    if unit_id == "public_services":
+        from atlaso.app.services.reverse_proxy_publication import INTENT_MARKER
+
+        # Redaction can hide an entire metadata fragment, including disabled
+        # intent. Keep comparison sensitive to every fragment without exposing it.
+        intent = "".join(line[len(INTENT_MARKER):] for line in config_preview.splitlines()
+                         if line.startswith(INTENT_MARKER))
+        if intent:
+            snapshot_marker = {"reverse_proxy_intent_sha256": hashlib.sha256(intent.encode("utf-8")).hexdigest()}
     protected_esxi = (
         unit_id == "esxi_pxe" and isinstance(snapshot_marker, dict)
         and snapshot_marker.get("protected_runtime_manifest") == 1
