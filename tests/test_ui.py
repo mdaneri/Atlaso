@@ -1035,8 +1035,8 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     assert "ATLASO_CACHE" in service_worker.text
     assert "atlaso-management-pwa-v" in service_worker.text
     assert "ATLASO_CACHE_PREFIX" in service_worker.text
-    assert 'const ATLASO_CACHE = `${ATLASO_CACHE_PREFIX}368`;' in service_worker.text
-    assert '"/static/reverse-proxies.js?v=issue-723-15"' in service_worker.text
+    assert 'const ATLASO_CACHE = `${ATLASO_CACHE_PREFIX}369`;' in service_worker.text
+    assert '"/static/reverse-proxies.js?v=issue-723-16"' in service_worker.text
     assert 'fetch(asset, { cache: "reload" })' in service_worker.text
     assert "Required precache request failed" in service_worker.text
     assert "key.startsWith(ATLASO_CACHE_PREFIX)" in service_worker.text

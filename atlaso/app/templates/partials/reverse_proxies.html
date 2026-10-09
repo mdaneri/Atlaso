@@ -4,8 +4,8 @@
 <div class="panel" data-reverse-proxy-validation>
   <div class="panel-head">
     <h2>Validation</h2>
-    <span class="status-pill {{ 'good' if not reverse_proxy_validation_errors else 'warn' }}" data-reverse-proxy-validation-status>
-      {{ "valid" if not reverse_proxy_validation_errors else "needs attention" }}
+    <span class="status-pill {{ 'warn' if reverse_proxy_validation_errors or reverse_proxy_validation_warnings else 'good' }}" data-reverse-proxy-validation-status>
+      {{ "needs attention" if reverse_proxy_validation_errors else "review warnings" if reverse_proxy_validation_warnings else "valid" }}
     </span>
   </div>
   <div class="alert error {{ 'hidden' if not reverse_proxy_validation_errors else '' }}" data-reverse-proxy-validation-errors aria-live="polite">
@@ -39,7 +39,7 @@
       <h3>Reverse Proxies</h3>
       <p class="muted">Publish selected application paths on exact hostnames and listener addresses.</p>
     </div>
-    <span class="status-pill muted">{{ reverse_proxies|length }} proxies</span>
+    <span class="status-pill muted" data-reverse-proxy-count>{{ reverse_proxies|length }} proxies</span>
   </div>
   <div id="reverse-proxy-error" class="alert error hidden" role="alert" data-reverse-proxy-error></div>
   <div

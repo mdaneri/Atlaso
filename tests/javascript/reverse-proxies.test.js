@@ -559,8 +559,8 @@ test("display escaping protects operator-controlled text", () => {
 
 test("management service worker precaches the reverse-proxy page asset", () => {
   const worker = fs.readFileSync("atlaso/app/static/service-worker.js", "utf8");
-  assert.match(worker, /const ATLASO_CACHE = `\$\{ATLASO_CACHE_PREFIX\}368`;/);
-  assert.match(worker, /"\/static\/reverse-proxies\.js\?v=issue-723-15"/);
+  assert.match(worker, /const ATLASO_CACHE = `\$\{ATLASO_CACHE_PREFIX\}369`;/);
+  assert.match(worker, /"\/static\/reverse-proxies\.js\?v=issue-723-16"/);
 });
 
 function classListFor(classes) {
@@ -583,8 +583,10 @@ test("fallback refresh replaces nonempty rows, removes stale actions, and escape
   const body = new HTMLElement("tbody");
   const fallback = new HTMLElement();
   fallback.tBodies = [body];
+  const count = new HTMLElement("span");
   const context = vm.createContext({ HTMLElement, document: {
     getElementById: () => fallback,
+    querySelector: () => count,
     createElement: (tag) => new HTMLElement(tag),
     createTextNode: (text) => ({ textContent: text }),
   }, visibleProxyRow: reverseProxies.visibleProxyRow });
@@ -596,6 +598,9 @@ test("fallback refresh replaces nonempty rows, removes stale actions, and escape
     vm.runInContext("setCollectionRows(nextRows)", context);
   };
   refresh([{ id: 10, name: "Old", hostname: "old.example.test", listeners: [], routes: [] }]);
+  assert.equal(count.textContent, "1 proxies");
+  refresh([{ id: 10, name: "Old" }, { id: 13, name: "Created" }]);
+  assert.equal(count.textContent, "2 proxies");
   refresh([{ id: 11, name: "<img src=x>", hostname: "new.example.test", scheme: "https", port: 443,
     listeners: [{interface: "eth1", address: "192.0.2.10"}], routes: [{path_prefix: "/new/"}], enabled: true }]);
   assert.equal(body.children.length, 2);
@@ -615,6 +620,7 @@ test("fallback refresh replaces nonempty rows, removes stale actions, and escape
   assert.equal(body.children[0].children[7].children.length, 1);
   assert.deepEqual(body.children[0].children[7].children[0].dataset, {});
   refresh([]);
+  assert.equal(count.textContent, "0 proxies");
   assert.equal(body.children.length, 1);
   assert.equal(body.children[0].children[0].textContent, "No reverse proxies are configured.");
   assert.equal(body.children[0].children[0].colSpan, 8);

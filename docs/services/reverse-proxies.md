@@ -62,6 +62,8 @@ Appliance Apply.
 Open **Traffic Publishing**, select **Reverse Proxies**, and choose **Add reverse proxy**. The wizard has six steps:
 If the grid cannot load, the empty fallback table retains **Add reverse proxy** for permitted writers.
 The health fallback also shows the latest bounded observations after **Refresh health**.
+The collection count follows saved create and delete results. Validation shows **review warnings** when warnings
+remain without errors, including before browser scripts run; review these warnings before global Appliance Apply.
 
 1. **Identity**: enter a unique **Name** and **Hostname**. Add a **Description** to record the application's purpose.
    Atlaso reserves its own service hostnames, including the explicit or default authoritative DNS primary hostname.

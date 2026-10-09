@@ -107,6 +107,7 @@ def test_reverse_proxy_page_uses_reviewed_grid_wizard_and_health_contract(client
     assert 'data-tab-target="reverse-proxy-panel"' in page
     assert 'id="reverse-proxy-panel"' in page
     assert 'id="reverse-proxies-table"' in page
+    assert f'data-reverse-proxy-count>{1 if populated else 0} proxies</span>' in page
     assert 'id="reverse-proxies-fallback"' in page
     fallback = page.split('id="reverse-proxies-fallback"', 1)[1].split('</table>', 1)[0]
     assert ('data-reverse-proxy-delete=' in fallback) is populated
@@ -132,6 +133,40 @@ def test_reverse_proxy_page_uses_reviewed_grid_wizard_and_health_contract(client
     assert 'name="nginx_directive"' not in page
     assert 'name="raw_config"' not in page
     assert "/static/reverse-proxies.js" in page
+
+
+@pytest.mark.parametrize("errors,warnings,label,style", [
+    ([], [], "valid", "good"),
+    ([], ["Insecure upstream TLS requires review"], "review warnings", "warn"),
+    (["Listener unavailable"], ["Insecure upstream TLS requires review"], "needs attention", "warn"),
+])
+def test_reverse_proxy_initial_validation_status_matches_review_state(client, monkeypatch, errors, warnings, label, style):
+    """Render warning-only and error states truthfully before browser refresh.
+
+    Args:
+        client: Isolated management client.
+        monkeypatch: Scoped publication-context replacement.
+        errors: Publication validation errors.
+        warnings: Publication validation warnings.
+        label: Expected initial review state.
+        style: Expected shared status-pill style.
+    """
+    from atlaso.app.services import reverse_proxy_publication
+
+    original = reverse_proxy_publication.context
+
+    def review_context(db):
+        value = original(db)
+        value.update(reverse_proxy_validation_errors=errors, reverse_proxy_validation_warnings=warnings)
+        return value
+
+    monkeypatch.setattr(reverse_proxy_publication, "context", review_context)
+    login(client)
+    response = client.get("/ui/management/traffic-publishing")
+    assert response.status_code == 200
+    badge = response.text.split('data-reverse-proxy-validation-status>', 1)
+    assert badge[0].endswith(f'class="status-pill {style}" ')
+    assert badge[1].split('</span>', 1)[0].strip() == label
 
 
 @pytest.mark.parametrize("populated", [False, True])

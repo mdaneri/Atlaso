@@ -347,6 +347,8 @@
 
     function setCollectionRows(nextItems = items) {
       items = Array.isArray(nextItems) ? nextItems.slice(0, MAX_ITEMS) : [];
+      const count = document.querySelector("[data-reverse-proxy-count]");
+      if (count instanceof HTMLElement) count.textContent = `${items.length} proxies`;
       const tableRows = canWrite ? [...items.map(visibleProxyRow), { is_new: true, name: "" }] : items.map(visibleProxyRow);
       void table?.setData?.(tableRows);
       const fallback = document.getElementById(element.dataset.fallbackId || "");
