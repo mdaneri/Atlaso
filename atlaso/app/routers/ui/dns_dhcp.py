@@ -1866,6 +1866,7 @@ def build_router(dependencies: DnsDhcpUiDependencies) -> DnsDhcpUiRouter:
             The endpoint response.
         """
         verify_csrf(request, csrf)
+        acquire_network_objects_write_lock(db)
         reservation = DhcpReservation(
             hostname=hostname.strip(),
             mac_address=mac_address.strip(),
@@ -2094,6 +2095,7 @@ def build_router(dependencies: DnsDhcpUiDependencies) -> DnsDhcpUiRouter:
             HTTPException: If the request cannot be fulfilled.
         """
         verify_csrf(request, csrf)
+        acquire_network_objects_write_lock(db)
         reservation = db.get(DhcpReservation, reservation_id)
         if not reservation:
             raise HTTPException(status_code=404, detail="DHCP reservation not found")

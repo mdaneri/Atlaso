@@ -567,3 +567,65 @@ def test_public_apply_tracks_disabled_intent_hidden_by_redaction(client, field, 
     assert pending["changed"] is True
     assert applied["snapshot_marker"] != pending["snapshot_marker"]
     assert unit(changed, pending)["changed"] is False
+
+
+@pytest.mark.parametrize("transport", ["api", "ui_create", "ui_edit"])
+@pytest.mark.parametrize("address", ["192.168.50.130", "fd00:50::130"])
+@pytest.mark.parametrize("hostname", ["proxy", "PROXY.ATLASO.INTERNAL."])
+def test_dhcp_reservation_rejects_proxy_dns_owner_atomically(client, transport, address, hostname):
+    """Protect both address families and scope-expanded names through real transports.
+
+    Args:
+        client: Isolated appliance HTTP client.
+        transport: Reservation mutation endpoint under test.
+        address: Reservation address in an IPv4 or IPv6 scope.
+        hostname: Short or DNS-equivalent spelling of the proxy-owned name.
+    """
+    from sqlalchemy import select
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import AuditEvent, DhcpReservation, DhcpScope, DnsRecord
+    from atlaso.app.services.reverse_proxy_publication import DNS_OWNER_PREFIX
+    from tests.routers.api_v1.test_dns_dhcp import create_token
+    from tests.routers.ui.helpers import login
+
+    login(client)
+    csrf = client.get("/dhcp").text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    token = create_token(client, ["write:dhcp"])
+    with SessionLocal() as db:
+        db.add(DhcpScope(name="IPv6 reservation", interface_name="eth2", address_family="ipv6", site_address="fd00:50::1",
+                         prefix_length=64, range_expression="fd00:50::100-fd00:50::200",
+                         domain_name="atlaso.internal", enabled=True))
+        owner = DnsRecord(hostname="proxy.atlaso.internal", record_type="A", address="192.168.50.1",
+                          description=f"{DNS_OWNER_PREFIX}17", enabled=True)
+        original = DhcpReservation(hostname="original.atlaso.internal", mac_address="02:15:5d:00:22:22",
+                                   ip_address="192.168.50.122", description="preserve", enabled=True)
+        db.add_all([owner, original])
+        db.commit()
+        reservation_id = original.id
+        before_dns = [(r.id, r.hostname, r.record_type, r.address, r.description) for r in db.scalars(select(DnsRecord))]
+        before_audits = list(db.scalars(select(AuditEvent.id)))
+        before_reservations = [(r.id, r.hostname, r.ip_address, r.description) for r in db.scalars(select(DhcpReservation))]
+    data = dict(hostname=hostname, mac_address="02:15:5d:00:22:23", ip_address=address)
+    if transport == "api":
+        response = client.post("/api/v1/dhcp/reservations", headers={"Authorization": f"Bearer {token}"}, json=data)
+    else:
+        path = "/dhcp/reservations" if transport == "ui_create" else f"/dhcp/reservations/{reservation_id}/edit"
+        response = client.post(path, data={**data, "csrf": csrf, "enabled": "on"}, follow_redirects=False)
+    assert response.status_code == 409, response.text
+    assert "managed by Reverse Proxies" in response.text
+    with SessionLocal() as db:
+        assert [(r.id, r.hostname, r.record_type, r.address, r.description) for r in db.scalars(select(DnsRecord))] == before_dns
+        assert list(db.scalars(select(AuditEvent.id))) == before_audits
+        assert [(r.id, r.hostname, r.ip_address, r.description) for r in db.scalars(select(DhcpReservation))] == before_reservations
+    data["hostname"] = "ordinary-client"
+    if transport == "api":
+        response = client.post("/api/v1/dhcp/reservations", headers={"Authorization": f"Bearer {token}"}, json=data)
+        assert response.status_code == 201, response.text
+    else:
+        response = client.post(path, data={**data, "csrf": csrf, "enabled": "on"}, follow_redirects=False)
+        assert response.status_code == 303, response.text
+    with SessionLocal() as db:
+        record = db.scalar(select(DnsRecord).where(DnsRecord.hostname == "ordinary-client.atlaso.internal"))
+        assert record is not None and record.address == address
+        assert record.record_type == ("AAAA" if ":" in address else "A")

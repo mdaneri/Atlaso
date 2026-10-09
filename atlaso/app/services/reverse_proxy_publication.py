@@ -8,7 +8,7 @@ from ipaddress import ip_address, ip_interface
 from typing import Any
 from urllib.parse import quote
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from atlaso.app import models
@@ -379,6 +379,19 @@ def dns_hostname_key(value: str) -> str:
         value: Validated DNS hostname whose case and final root dot are insignificant.
     """
     return value.strip().rstrip(".").casefold()
+
+
+def proxy_owns_dns_hostname(db: Session, hostname: str) -> bool:
+    """Check canonical hostname ownership in the caller's locked transaction.
+
+    Args:
+        db: Caller-owned session holding the network-object writer lock.
+        hostname: Generated or operator-supplied DNS hostname.
+    """
+    return db.scalar(select(models.DnsRecord.id).where(
+        func.lower(func.rtrim(models.DnsRecord.hostname, ".")) == dns_hostname_key(hostname),
+        models.DnsRecord.description.startswith(DNS_OWNER_PREFIX),
+    )) is not None
 
 
 def validate_dns_ownership(plan: list[dict[str, Any]], records: list[models.DnsRecord]) -> None:

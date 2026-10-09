@@ -1050,11 +1050,17 @@ def ensure_dns_for_dhcp_reservation(db: Session, reservation: DhcpReservation, a
         reservation: Reservation supplied by the caller.
         actor: Authenticated identity attributed to the audit record.
     """
+    from atlaso.app.services.network_objects import acquire_network_objects_write_lock
+    from atlaso.app.services.reverse_proxy_publication import proxy_owns_dns_hostname
+
+    acquire_network_objects_write_lock(db)
     scopes = db.execute(select(DhcpScope).order_by(DhcpScope.name)).scalars().all()
     record_values = reservation_dns_record(reservation, scopes)
     if record_values is None:
         return
     hostname, record_type, address = record_values
+    if proxy_owns_dns_hostname(db, hostname):
+        raise HTTPException(status_code=409, detail="This DNS hostname is managed by Reverse Proxies. Edit it in Reverse Proxies.")
     reservation.hostname = hostname
     existing = db.execute(
         select(DnsRecord).where(

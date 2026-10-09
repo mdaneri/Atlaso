@@ -1377,6 +1377,7 @@ def build_router(dependencies: DnsDhcpApiDependencies) -> DnsDhcpApiRouter:
             identity: Authenticated identity authorizing the operation.
             db: Active database session used by the operation.
         """
+        acquire_network_objects_write_lock(db)
         reservation = DhcpReservation(**payload.model_dump())
         db.add(reservation)
         db.flush()
