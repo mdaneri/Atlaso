@@ -14661,7 +14661,13 @@ def _handle_network_locked(
                     require_replacement=True, allow_disappeared_source=True,
                 )
     except (ValueError, OSError, subprocess.TimeoutExpired) as exc:
-        print(str(exc), file=sys.stderr)
+        conflict = exc if isinstance(exc, ManagementRouteConflict) else exc.__cause__
+        if isinstance(conflict, ManagementRouteConflict):
+            print(json.dumps({"network": "apply failed", "error": str(exc),
+                              "reason_code": "management_route_conflict",
+                              "route_conflict": conflict.route_conflict}, sort_keys=True), file=sys.stderr)
+        else:
+            print(str(exc), file=sys.stderr)
         return 2
     print(
         json.dumps(
@@ -30471,7 +30477,8 @@ def _snapshot_management_handoff_routing(interfaces: list[str], tables: dict[str
                     raise ValueError("previous routing-domain router preference is invalid")
                 captured_route = {"destination": str(network), "gateway": gateway,
                                   "metric": metric, "scope": scope, "table": tables[name],
-                                  "preferred_source": preferred_source, "preference": preference}
+                                  "preferred_source": preferred_source, "preference": preference,
+                                  "protocol": _transition_route_protocol(route.get("protocol"))}
                 routes[(str(network), gateway, metric)] = captured_route
         # Standby route metrics must be disjoint from all observed metrics. A
         # uniform offset preserves ordering without replacing live DHCP/RA keys.
@@ -30591,8 +30598,27 @@ def _transition_route_matches(row: dict, observed: dict, *, seeded: bool) -> boo
     return observed.get("metric", 0) != row["seed_metric"]
 
 
+def _transition_route_protocol(value: object) -> str:
+    """Normalize only native route protocol identifiers for safe comparison.
+
+    Args:
+        value: Native named or numeric protocol from route inventory.
+    """
+    aliases = {"2": "kernel", "3": "boot", "4": "static", "9": "ra", "16": "dhcp"}
+    token = str(value)
+    if token in aliases:
+        return aliases[token]
+    if token in {"kernel", "boot", "static", "ra", "dhcp", "unknown", "other"}:
+        return token
+    if type(value) is int and 0 <= value <= 255:
+        return str(value)
+    if isinstance(value, str) and value.isascii() and value.isdigit() and len(value) <= 3 and int(value) <= 255:
+        return str(int(value))
+    return "unknown" if value is None else "other"
+
+
 def _transition_route_successor(row: dict, observed: dict, seed_metrics: set[int]) -> bool:
-    """Require a live networkd route for the old destination on its exact link.
+    """Require networkd readiness or an unchanged captured boot route.
 
     Args:
         row: Journaled old route whose successor is required.
@@ -30601,12 +30627,25 @@ def _transition_route_successor(row: dict, observed: dict, seed_metrics: set[int
     """
     if observed.get("dev") != row["name"] or observed.get("type", "unicast") != "unicast":
         return False
+    metric = observed.get("metric", 0)
+    if type(metric) is not int or not 0 <= metric <= 0xFFFFFFFF:
+        return False
     exact_holdover = (observed.get("metric", 0) == row["holdover_metric"]
                       and str(observed.get("gateway") or "") == row["gateway"])
-    if not exact_holdover and str(observed.get("protocol")) not in {"kernel", "static", "dhcp", "ra"}:
+    protocol = _transition_route_protocol(observed.get("protocol"))
+    # Routes & WAN uses native `ip route replace` without a protocol tag,
+    # which produces boot routes. Reuse only the exact captured old key;
+    # boot alone never authorizes a different gateway or metric as a successor.
+    exact_boot = (protocol == "boot" and observed.get("metric", 0) == row.get("metric")
+                  and str(observed.get("gateway") or "") == row["gateway"]
+                  and str(observed.get("prefsrc") or "") == row.get("preferred_source", "")
+                  and not observed.get("multipath") and observed.get("from", "all") == "all"
+                  and observed.get("nhid") is None)
+    if not exact_holdover and not exact_boot and protocol not in {"kernel", "static", "dhcp", "ra"}:
         return False
     flags = observed.get("flags", [])
-    if not isinstance(flags, list) or set(flags) & {"dead", "linkdown"}:
+    if (not isinstance(flags, list) or any(not isinstance(flag, str) for flag in flags)
+            or set(flags) & {"dead", "linkdown"}):
         return False
     if observed.get("metric", 0) in seed_metrics:
         return False
@@ -30683,6 +30722,50 @@ def _transition_old_source_absent(name: str, mac: str, cidrs: list[str], family:
     return not any(entry.get("local") in old and entry.get("valid_life_time") != 0 for entry in entries)
 
 
+class ManagementRouteConflict(ValueError):
+    """Retain a bounded operational route pair without copying native text."""
+
+    def __init__(self, row: dict, observed: dict) -> None:
+        """Capture only canonical route identifiers and the failed condition.
+
+        Args:
+            row: Validated old route and its bound domain.
+            observed: Same-destination live route rejected by the guard.
+        """
+        family = ip_network(row["destination"]).version
+        destination = observed.get("dst", "default")
+        if destination == "default":
+            destination = "0.0.0.0/0" if family == 4 else "::/0"
+        gateway = str(observed.get("gateway") or "")
+        if gateway:
+            parsed_gateway = ip_address(gateway)
+            if getattr(parsed_gateway, "scope_id", None) is not None or parsed_gateway.version != family:
+                raise ValueError("transition routing-domain route gateway is malformed")
+            gateway = str(parsed_gateway)
+        metric = observed.get("metric", 0)
+        if type(metric) is not int or not 0 <= metric <= 0xFFFFFFFF:
+            raise ValueError("transition routing-domain route metric is malformed")
+        protocol = _transition_route_protocol(observed.get("protocol"))
+        condition = "same_destination_without_successor"
+        if gateway != row["gateway"]:
+            condition = "gateway_mismatch"
+        elif protocol not in {"kernel", "static", "dhcp", "ra", "boot"}:
+            condition = "protocol_not_supported"
+        elif metric != row["metric"] and protocol == "boot":
+            condition = "metric_not_equivalent"
+        elif observed.get("type", "unicast") != "unicast":
+            condition = "route_not_usable"
+        self.route_conflict = {
+            "interface": row["name"], "family": family, "table": row["table"],
+            "condition": condition,
+            "expected": {"destination": row["destination"], "gateway": row["gateway"],
+                         "protocol": _transition_route_protocol(row.get("protocol")), "metric": row["metric"]},
+            "observed": {"destination": str(ip_network(destination, strict=False)), "gateway": gateway,
+                         "protocol": protocol, "metric": metric},
+        }
+        super().__init__("previous management route conflicts with live domain")
+
+
 def _seed_transition_routes(state: dict, bindings: list[dict], marker: Path) -> None:
     """Stage proven old routes before source rules can select their domain.
 
@@ -30732,7 +30815,7 @@ def _seed_transition_routes(state: dict, bindings: list[dict], marker: Path) -> 
                 except ValueError as exc:
                     raise ValueError("transition routing-domain route is malformed") from exc
                 if same_destination:
-                    raise ValueError("previous management route conflicts with live domain")
+                    raise ManagementRouteConflict(row, candidate)
             if any(candidate.get("metric") == row["seed_metric"] for candidate in observed):
                 raise ValueError("transition route seed metric is occupied")
             planned.append(row)
@@ -30808,7 +30891,7 @@ def _retire_transition_routes(
                 ]
                 supported_destination = [
                     item for item in live_destination
-                    if str(item.get("protocol")) in {"kernel", "static", "dhcp", "ra"}
+                    if _transition_route_protocol(item.get("protocol")) in {"kernel", "static", "dhcp", "ra"}
                     or (item.get("metric", 0) == row["holdover_metric"]
                         and str(item.get("gateway") or "") == row["gateway"])
                 ]
@@ -33872,6 +33955,8 @@ def _apply_management_handoff(payload: dict) -> int:
                     "management_handoff": "rolled back" if not rollback_error else "rollback incomplete",
                     "failing_layer": failing_layer,
                     "error": str(exc),
+                    **({"reason_code": "management_route_conflict", "route_conflict": exc.route_conflict}
+                       if isinstance(exc, ManagementRouteConflict) else {}),
                     "rollback_error": rollback_error,
                     "rollback": rollback,
                 },

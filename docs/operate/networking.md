@@ -488,6 +488,24 @@ interfaces introduced to the candidate and deletes candidate-only VLAN devices. 
 access, use the local console network recovery action to restore a known-good management configuration, then review
 desired state before retrying.
 
+An unchanged Routes & WAN default may appear as protocol `boot` (native protocol `3`), because Atlaso installs it through
+`ip route replace`. Protected Network Apply accepts that route only on the captured old interface and domain with the
+same destination, gateway, and metric. It does not delete it or adopt a different operator route as its replacement.
+This applies to dedicated-management table `100` and Access-management table `200`, including repeated Apply after an
+upgrade. Networkd protocol names and their native numbers are equivalent for route readiness checks.
+
+If a route conflict blocks Apply, Tasks and Operational Logs retain `management_route_conflict` and a bounded expected
+and observed route pair: interface, family, table, destination, gateway, protocol, metric, and the failed condition.
+The original failure remains separate from dependent rollback or skipped work. Review the pair alongside the applied
+Network and Routes & WAN intent; retain operator routes and use the console recovery workflow if rollback is unproven.
+Do not disable Routing or remove routes simply to bypass the guard. Confirm loopback, guest-local management, and
+management-host access before treating reported rollback as independent recovery evidence.
+
+The WAN cleanup path currently tolerates exit `2` from root-qdisc deletion, including the native message
+`Cannot delete qdisc with handle of zero.` when no removable root qdisc exists. That message alone does not identify a
+route conflict or prove successful cleanup. The previous-route conflict guard runs before candidate WAN activation;
+use the recorded failing layer, route pair, return code, and recovery outcome to identify the original failure.
+
 ## Transport ownership
 
 The management Routes/WAN transports and their API v1 counterparts are owned by the dedicated `routes_wan` domain

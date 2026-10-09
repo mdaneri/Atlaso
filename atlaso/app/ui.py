@@ -14687,12 +14687,12 @@ def adapter_result_to_payload(result: Any) -> dict[str, Any]:
     Args:
         result: Operation result being inspected or returned.
     """
-    from atlaso.important_events import failure_reason
+    from atlaso.important_events import failure_reason, validate_route_conflict
 
     stage = next((name for name, verb in (("validation", "validate"), ("rollback", "rollback"),
                  ("recovery", "recover"), ("readiness", "readiness"), ("cleanup", "cleanup"))
                   if verb in result.command[:8]), "execution")
-    return {
+    payload = {
         "command": result.command,
         "command_line": " ".join(result.command),
         "dry_run": result.dry_run,
@@ -14702,6 +14702,17 @@ def adapter_result_to_payload(result: Any) -> dict[str, Any]:
         "stage": stage,
         "reason_code": "none" if result.returncode == 0 else failure_reason(result.stderr, result.returncode),
     }
+    if stage == "execution" and result.returncode != 0 and payload["reason_code"] == "management_route_conflict":
+        for line in reversed((result.stderr or "")[:65536].splitlines()[-32:]):
+            try:
+                evidence = json.loads(line)
+            except (json.JSONDecodeError, RecursionError):
+                continue
+            if isinstance(evidence, dict) and evidence.get("reason_code") == "management_route_conflict":
+                if (conflict := validate_route_conflict(evidence.get("route_conflict"))) is not None:
+                    payload["route_conflict"] = conflict
+                    break
+    return payload
 
 
 def management_handoff_result_evidence(result: Any) -> dict[str, Any]:
@@ -14713,6 +14724,12 @@ def management_handoff_result_evidence(result: Any) -> dict[str, Any]:
     Returns:
         Parsed non-secret helper evidence, or an empty object.
     """
+    from atlaso.important_events import (
+        REASONS,
+        canonical_value,
+        validate_route_conflict,
+    )
+
     for stream in (result.stdout, result.stderr):
         for line in reversed((stream or "").splitlines()):
             try:
@@ -14720,7 +14737,18 @@ def management_handoff_result_evidence(result: Any) -> dict[str, Any]:
             except json.JSONDecodeError:
                 continue
             if isinstance(candidate, dict) and "management_handoff" in candidate:
-                return candidate
+                projected = dict(candidate)
+                reason_code = canonical_value(projected.get("reason_code"), REASONS.keys())
+                if reason_code is None:
+                    projected.pop("reason_code", None)
+                else:
+                    projected["reason_code"] = reason_code
+                route_conflict = validate_route_conflict(projected.get("route_conflict"))
+                if route_conflict is None:
+                    projected.pop("route_conflict", None)
+                else:
+                    projected["route_conflict"] = route_conflict
+                return projected
     return {}
 
 
@@ -16105,24 +16133,53 @@ def execute_management_handoff(
             db,
             routing_enabled=wan["context"]["routes_wan_settings"].routing_enabled,
         )
+    command_payloads = [
+        adapter_result_to_payload(result)
+        for result in [*results, *([recovery_result] if recovery_result is not None else [])]
+    ]
+    from atlaso.important_events import (
+        REASONS,
+        canonical_value,
+        failure_reason,
+        validate_route_conflict,
+    )
+
+    reason_code = canonical_value(evidence.get("reason_code"), REASONS.keys())
+    if reason_code is None and failure_reason(evidence.get("error")) == "management_route_conflict":
+        reason_code = "management_route_conflict"
+    if reason_code is not None and not succeeded:
+        evidence = {**evidence, "reason_code": reason_code}
+    route_conflict = validate_route_conflict(evidence.get("route_conflict"))
+    if reason_code == "management_route_conflict" and route_conflict is not None:
+        for command_payload in command_payloads:
+            if command_payload.get("returncode", 0) and command_payload.get("stage") == "execution":
+                command_payload["reason_code"] = reason_code
+                command_payload["route_conflict"] = route_conflict
+                break
     group_result = {
         "success": succeeded,
         "dry_run": any(result.dry_run for result in results),
-        "commands": [
-            adapter_result_to_payload(result)
-            for result in [*results, *([recovery_result] if recovery_result is not None else [])]
-        ],
+        "commands": command_payloads,
         "management_handoff": evidence or {
             "management_handoff": "committed" if succeeded else "failed before bounded helper evidence"
         },
         "rollback_proven": rollback_proven,
         "listener_baselines": listener_baselines if succeeded else {},
     }
+    if reason_code is not None and not succeeded:
+        group_result["reason_code"] = reason_code
     failure_layer = str(group_result["management_handoff"].get("failing_layer") or "")
     failure_error = str(group_result["management_handoff"].get("error") or "")
     unit_results = []
     for unit_id in handoff_unit_ids:
         unit = units_by_id[unit_id]
+        unit_reason_code = reason_code
+        if not succeeded and unit_id != "network" and reason_code == "management_route_conflict":
+            unit_reason_code = (
+                "dependent_work_rolled_back" if rollback_proven else
+                "rollback_failed" if evidence.get("management_handoff") == "rollback incomplete" else
+                "evidence_unavailable"
+            )
         unit_results.append(
             {
                 "unit_id": unit_id,
@@ -16135,6 +16192,7 @@ def execute_management_handoff(
                 "failing_layer": failure_layer,
                 "rolled_back": rolled_back,
                 "rollback_proven": rollback_proven,
+                **({"reason_code": unit_reason_code} if unit_reason_code is not None and not succeeded else {}),
                 "error": failure_error if not succeeded else "",
                 "summary": unit["summary"],
                 "validation_errors": unit["validation_errors"],
@@ -18020,6 +18078,13 @@ def run_appliance_apply_job(job_id: str, *, force_real: bool = False) -> None:
                         )
                     current_payload = _job_payload(job)
                     next_payload = {**current_payload, "units": unit_results}
+                    if group_result.get("reason_code"):
+                        next_payload["reason_code"] = group_result["reason_code"]
+                    else:
+                        next_payload.pop("reason_code", None)
+                    if not group_result.get("success"):
+                        next_payload["rollback_proven"] = group_result.get("rollback_proven") is True
+                        next_payload["management_handoff_failure"] = group_result["management_handoff"]
                     if handoff_runtime_pending:
                         next_payload["management_handoff_runtime_commit_pending"] = True
                     else:
@@ -18196,6 +18261,7 @@ def run_appliance_apply_job(job_id: str, *, force_real: bool = False) -> None:
                                 {
                                     "summary": remaining_unit["summary"],
                                     "reason": "management_handoff_failed",
+                                    "reason_code": "dependent_work_skipped",
                                 },
                                 indent=2,
                             )
