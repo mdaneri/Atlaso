@@ -142,7 +142,8 @@ recovery material; global CA and Public Services Apply regenerate the proxy cert
 Long proxy hostnames remain complete in the managed certificate's DNS SAN and nginx server name. When the hostname
 exceeds the certificate subject common-name limit, Atlaso uses a bounded display name for that subject field.
 Apply comparison retains a digest of the complete proxy intent, including disabled names and descriptions, while
-configuration previews keep sensitive text redacted.
+configuration previews keep sensitive text redacted. This comparison also selects the protected handoff when an
+edit is hidden by preview redaction. The digest covers only the canonical proxy snapshot, outside shared credential previews.
 A restore changes desired state only and still requires global Appliance Apply. Preflight renders the complete proxy
 collection, including disabled intent, and rejects publication metadata above the ordinary save size limit before
 replacing any saved rows.

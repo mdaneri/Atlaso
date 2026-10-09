@@ -4810,6 +4810,7 @@ def public_services_context(db: Session, *, reconcile: bool = True) -> dict[str,
     return {
         "public_service_entries": entries,
         "public_service_config_preview": config_preview,
+        "reverse_proxy_intent_marker": proxy_publication["reverse_proxy_intent_marker"],
         "public_service_config_path": PUBLIC_SERVICES_STAGED_CONFIG_PATH,
         "public_service_validation_errors": validation_errors,
         "public_service_validation_warnings": proxy_publication["reverse_proxy_validation_warnings"],
@@ -11575,15 +11576,6 @@ def make_appliance_apply_unit(
         The make appliance apply unit result.
     """
     redacted_preview = redact_config_preview(config_preview)
-    if unit_id == "public_services":
-        from atlaso.app.services.reverse_proxy_publication import INTENT_MARKER
-
-        # Redaction can hide an entire metadata fragment, including disabled
-        # intent. Keep comparison sensitive to every fragment without exposing it.
-        intent = "".join(line[len(INTENT_MARKER):] for line in config_preview.splitlines()
-                         if line.startswith(INTENT_MARKER))
-        if intent:
-            snapshot_marker = {"reverse_proxy_intent_sha256": hashlib.sha256(intent.encode("utf-8")).hexdigest()}
     protected_esxi = (
         unit_id == "esxi_pxe" and isinstance(snapshot_marker, dict)
         and snapshot_marker.get("protected_runtime_manifest") == 1
@@ -12681,6 +12673,7 @@ def appliance_apply_units(db: Session, *, reconcile: bool = True, applying_dns: 
             config_path=public_services["public_service_config_path"],
             config_preview=public_services["public_service_config_preview"],
             baseline=baselines.get("public_services"),
+            snapshot_marker=public_services.get("reverse_proxy_intent_marker"),
         ),
     ]
     for unit in units:
@@ -15827,6 +15820,7 @@ def execute_management_handoff(
                 context=public_services["context"], summary=public_services["summary"], validation_errors=[],
                 config_path=public_services["config_path"], config_preview=public_config,
                 baseline=baselines.get("public_services"),
+                snapshot_marker=public_services.get("snapshot_marker"),
             ))
         except (KeyError, TypeError, ValueError) as exc:
             succeeded = False
@@ -18971,7 +18965,9 @@ def _submit_appliance_apply(
                             if line.startswith(proxy_markers)]
     applied_proxy_intent = [line for line in str((apply_baselines.get("public_services") or {}).get("config_preview") or "").splitlines()
                             if line.startswith(proxy_markers)]
-    proxy_handoff = bool(desired_proxy_intent != applied_proxy_intent
+    desired_proxy_marker = unit_map.get("public_services", {}).get("snapshot_marker")
+    applied_proxy_marker = (apply_baselines.get("public_services") or {}).get("snapshot_marker")
+    proxy_handoff = bool((desired_proxy_intent != applied_proxy_intent or desired_proxy_marker != applied_proxy_marker)
                          and selected_ids.intersection({*MANAGEMENT_HANDOFF_UNIT_IDS, "dnsmasq"}))
     if proxy_handoff:
         unchecked_dependencies = [unit["label"] for unit in units

@@ -4618,3 +4618,47 @@ def test_management_handoff_discovery_failure_preserves_observations(client, mon
             interface = next_writer.scalar(select(PhysicalInterface).where(PhysicalInterface.name == "eth0"))
             assert interface.host_ip_cidr == "192.0.2.10/24"
             next_writer.rollback()
+
+
+@pytest.mark.parametrize("field", ["name", "description"])
+@pytest.mark.parametrize("keyword", ["password", "token", "secret"])
+def test_redacted_disabled_proxy_edit_submits_protected_handoff(client, field, keyword):
+    """Route identically redacted proxy edits through the required protected journal.
+
+    Args:
+        client: Initialized authenticated appliance fixture.
+        field: Proxy metadata edited after its baseline is captured.
+        keyword: Redaction-triggering word retained on both sides of the edit.
+    """
+    from sqlalchemy import select
+
+    from atlaso.app import ui
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Job, PhysicalInterface
+    from atlaso.app.services.reverse_proxies import save_proxy
+    from tests.services.test_reverse_proxies import payload
+
+    login(client)
+    with SessionLocal() as db:
+        interface = db.scalar(select(PhysicalInterface).where(PhysicalInterface.name == "eth2"))
+        saved = save_proxy(db, payload(**{field: f"{keyword} before"},
+                                      listeners=[{"interface": "eth2", "address": interface.ip_cidr.split("/")[0]}]),
+                           actor="test")
+        units = ui.appliance_apply_units(db)
+        ui.update_appliance_apply_baselines(db, units, {unit["id"] for unit in units})
+        baseline = ui.load_appliance_apply_baselines(db)["public_services"]
+        setattr(saved, field, f"{keyword} after")
+        db.commit()
+        pending = next(unit for unit in ui.appliance_apply_units(db) if unit["id"] == "public_services")
+        assert pending["config_preview"] == baseline["config_preview"]
+        assert pending["changed"] is True
+    page = client.get("/dashboard")
+    csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    response = client.post("/appliance-apply", data={"csrf": csrf, "selected_units": "public_services"},
+                           headers={"Accept": "application/json"})
+    assert response.status_code == 202, response.text
+    with SessionLocal() as db:
+        job = db.get(Job, response.json()["job_id"])
+        result = json.loads(job.result or "{}")
+        assert result["management_handoff"] is True
+        assert "public_services" in result["management_handoff_units"]

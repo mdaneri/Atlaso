@@ -1,5 +1,6 @@
 """Project reverse-proxy intent into the existing Public Services owners."""
 
+import hashlib
 import json
 import re
 import sys
@@ -422,6 +423,18 @@ def reconcile_proxy_dns(db: Session, proxies: list[dict[str, Any]]) -> None:
     db.flush()
 
 
+def intent_snapshot_marker(proxies: list[dict[str, Any]]) -> dict[str, str] | None:
+    """Digest canonical proxy-only operational intent outside secret-bearing previews.
+
+    Args:
+        proxies: Renderer-safe proxy snapshot without passwords, keys, or tokens.
+    """
+    if not proxies:
+        return None
+    intent = json.dumps(proxies, sort_keys=True, separators=(",", ":"))
+    return {"reverse_proxy_intent_sha256": hashlib.sha256(intent.encode("utf-8")).hexdigest()}
+
+
 def context(db: Session) -> dict[str, Any]:
     """Build read-only collection, validation and redacted publication previews.
 
@@ -456,7 +469,8 @@ def context(db: Session) -> dict[str, Any]:
     return {"reverse_proxies": [response_for_proxy(row).model_dump(mode="json") for row in rows], "reverse_proxy_listener_options": listener_options(db),
             "reverse_proxy_validation_errors": errors, "reverse_proxy_validation_warnings": warnings,
             "reverse_proxy_config_preview": preview, "reverse_proxy_config_path": STAGED_PATH,
-            "reverse_proxy_manifest": manifest, "reverse_proxy_dns_records": records}
+            "reverse_proxy_manifest": manifest, "reverse_proxy_dns_records": records,
+            "reverse_proxy_intent_marker": intent_snapshot_marker(proxies)}
 
 
 def main() -> None:

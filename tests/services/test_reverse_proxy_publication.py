@@ -11,6 +11,7 @@ from atlaso.app.services.reverse_proxy_publication import (
     METADATA_CHUNK_SIZE,
     directory_entries,
     firewall_rules,
+    intent_snapshot_marker,
     render_proxy_servers,
     retire_obsolete_proxy_certificates,
     transport_manifest,
@@ -552,7 +553,8 @@ def test_public_apply_tracks_disabled_intent_hidden_by_redaction(client, field, 
             baseline: Previously published Apply unit.
         """
         preview = render_proxy_servers([candidate], transport_manifest([candidate], []))
-        return ui.make_appliance_apply_unit(config_preview=preview, baseline=baseline, **kwargs)
+        return ui.make_appliance_apply_unit(config_preview=preview, baseline=baseline,
+                                            snapshot_marker=intent_snapshot_marker([candidate]), **kwargs)
 
     applied = unit(proxy, None)
     assert unit(proxy, applied)["changed"] is False
