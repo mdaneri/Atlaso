@@ -108,6 +108,11 @@ def test_reverse_proxy_page_uses_reviewed_grid_wizard_and_health_contract(client
     assert 'id="reverse-proxy-panel"' in page
     assert 'id="reverse-proxies-table"' in page
     assert 'id="reverse-proxies-fallback"' in page
+    fallback = page.split('id="reverse-proxies-fallback"', 1)[1].split('</table>', 1)[0]
+    assert ('data-reverse-proxy-delete=' in fallback) is populated
+    if populated:
+        assert 'aria-label="Delete reverse proxy ' in fallback
+        assert 'class="button tiny danger"' in fallback
     assert 'data-reverse-proxy-add' in page.split('id="reverse-proxies-fallback"', 1)[1].split('</table>', 1)[0]
     assert 'data-reverse-proxy-wizard' in page
     assert 'data-atlaso-wizard-step="identity"' in page
@@ -164,6 +169,7 @@ def test_read_only_firewall_user_keeps_fallback_without_mutation_wizard(client, 
     assert 'data-reverse-proxy-wizard' not in response.text
     assert 'data-reverse-proxy-add' not in response.text
     assert 'data-reverse-proxy-edit=' not in response.text
+    assert 'data-reverse-proxy-delete=' not in response.text
 
 
 def test_reverse_proxy_transport_verifies_csrf_before_json_and_uses_strict_integer_ids(client, monkeypatch):

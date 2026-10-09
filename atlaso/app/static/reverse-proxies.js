@@ -378,6 +378,15 @@
               action.dataset.reverseProxyEdit = String(proxy.id);
             }
             actions.append(action);
+            if (canWrite) {
+              const remove = document.createElement("button");
+              remove.className = "button tiny danger";
+              remove.type = "button";
+              remove.textContent = "Delete";
+              remove.dataset.reverseProxyDelete = String(proxy.id);
+              remove.setAttribute("aria-label", `Delete reverse proxy ${proxy.name}`);
+              actions.append(remove);
+            }
             row.append(actions);
             return row;
           });
@@ -796,6 +805,26 @@
       });
     }
 
+    async function deleteProxy(data) {
+      if (!canWrite || !data || data.is_new) return;
+      if (typeof global.requestConfirmation !== "function" || !await global.requestConfirmation({
+        title: `Delete reverse proxy ${data.name}?`,
+        message: "This removes the proxy from desired state. Global Appliance Apply retires its listener, DNS, firewall, certificate reference, and directory entry.",
+        label: "Delete reverse proxy",
+        tone: "danger",
+      })) return;
+      try {
+        const response = await fetch(`${saveUrl.replace(/\/save$/, "")}/${encodeURIComponent(data.id)}/delete`, {
+          method: "POST", credentials: "same-origin",
+          headers: { Accept: "application/json", "X-CSRF-Token": csrf },
+        });
+        if (!response.ok) throw new Error(await endpointMessage(response, "The reverse proxy could not be deleted."));
+        await applyMutationResponse(response, "deleted");
+      } catch (error) {
+        showError(error instanceof Error ? error.message : "The reverse proxy could not be deleted.");
+      }
+    }
+
     const fallback = document.getElementById(element.dataset.fallbackId || "");
     const edit = (rowData, launcher) => {
       const row = items.find((item) => String(item.id) === String(rowData?.id));
@@ -833,25 +862,7 @@
         rowFormatter: (row) => row.getElement()?.classList.toggle("is-new-record", Boolean(row.getData().is_new)),
         rowContextMenu: canWrite ? [
           { label: "Edit reverse proxy", disabled: (row) => Boolean(row.getData().is_new), action: (_event, row) => edit(row.getData(), row.getElement()) },
-          { label: "Delete reverse proxy", disabled: (row) => Boolean(row.getData().is_new), action: async (_event, row) => {
-            const data = row.getData();
-            if (typeof global.requestConfirmation !== "function" || !await global.requestConfirmation({
-              title: `Delete reverse proxy ${data.name}?`,
-              message: "This removes the proxy from desired state. Global Appliance Apply retires its listener, DNS, firewall, certificate reference, and directory entry.",
-              label: "Delete reverse proxy",
-              tone: "danger",
-            })) return;
-            try {
-              const response = await fetch(`${saveUrl.replace(/\/save$/, "")}/${encodeURIComponent(data.id)}/delete`, {
-                method: "POST", credentials: "same-origin",
-                headers: { Accept: "application/json", "X-CSRF-Token": csrf },
-              });
-              if (!response.ok) throw new Error(await endpointMessage(response, "The reverse proxy could not be deleted."));
-              await applyMutationResponse(response, "deleted");
-            } catch (error) {
-              showError(error instanceof Error ? error.message : "The reverse proxy could not be deleted.");
-            }
-          } },
+          { label: "Delete reverse proxy", disabled: (row) => Boolean(row.getData().is_new), action: (_event, row) => deleteProxy(row.getData()) },
         ] : [],
         columns: [
           { title: "Name", field: "name", minWidth: 150, formatter: (cell) => cell.getRow().getData().is_new ? '<button class="add-row-button" type="button" data-reverse-proxy-add>+ Add reverse proxy here</button>' : text(cell) },
@@ -879,6 +890,8 @@
       if (!(event.target instanceof Element)) return;
       const add = event.target.closest("[data-reverse-proxy-add]");
       if (add) { edit(null, add); return; }
+      const deleteButton = event.target.closest("[data-reverse-proxy-delete]");
+      if (deleteButton) return deleteProxy(items.find((item) => String(item.id) === deleteButton.dataset.reverseProxyDelete));
       const button = event.target.closest("[data-reverse-proxy-edit]");
       if (button) edit(items.find((item) => String(item.id) === button.dataset.reverseProxyEdit), button);
     });

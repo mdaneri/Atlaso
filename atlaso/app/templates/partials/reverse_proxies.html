@@ -67,7 +67,7 @@
         <td>{% for route in proxy.routes %}<code>{{ route.path_prefix }}</code>{% if not loop.last %}<br>{% endif %}{% else %}No paths{% endfor %}</td>
         <td>{{ "Public directory" if proxy.public_listing else "Hidden" }} · {{ "Atlaso DNS" if proxy.managed_dns else "External DNS" }}</td>
         <td>{{ "Enabled" if proxy.enabled else "Disabled" }}</td>
-        <td>{% if can_write_firewall %}<button class="button tiny" type="button" data-reverse-proxy-edit="{{ proxy.id }}">Edit</button>{% else %}<span class="muted">Read only</span>{% endif %}</td>
+        <td>{% if can_write_firewall %}<button class="button tiny" type="button" data-reverse-proxy-edit="{{ proxy.id }}">Edit</button><button class="button tiny danger" type="button" data-reverse-proxy-delete="{{ proxy.id }}" aria-label="Delete reverse proxy {{ proxy.name }}">Delete</button>{% else %}<span class="muted">Read only</span>{% endif %}</td>
       </tr>
       {% else %}
       <tr><td colspan="8" class="muted">No reverse proxies are configured.</td></tr>

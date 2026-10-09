@@ -55,6 +55,10 @@ Review the warning, select the current listener tuples, and re-enable the proxy 
 
 ## Create a reverse proxy
 
+If the grid cannot initialize, the fallback table keeps **Edit** and **Delete** available to writers. **Delete**
+uses the same confirmation and desired-state removal flow as the grid menu; runtime retirement requires global
+Appliance Apply.
+
 Open **Traffic Publishing**, select **Reverse Proxies**, and choose **Add reverse proxy**. The wizard has six steps:
 If the grid cannot load, the empty fallback table retains **Add reverse proxy** for permitted writers.
 The health fallback also shows the latest bounded observations after **Refresh health**.

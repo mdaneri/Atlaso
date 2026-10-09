@@ -134,39 +134,62 @@ test("successful saves consume the returned collection and ignore older GET resp
   await assert.rejects(context.submitPayload({ id: 7 }), /change was saved.*Refresh the page/);
 });
 
-test("successful deletes consume their returned collection without a follow-up GET", async () => {
+test("fallback deletes share confirmation and consume returned collections without a follow-up GET", async () => {
   const source = fs.readFileSync("atlaso/app/static/reverse-proxies.js", "utf8");
   const helperStart = source.indexOf("    async function applyMutationResponse(");
   const helperEnd = source.indexOf("    function openWizard(", helperStart);
-  const actionStart = source.indexOf("action: async", source.indexOf('{ label: "Delete reverse proxy"')) + "action: ".length;
-  const actionEnd = source.indexOf("\n          } },", actionStart) + "\n          }".length;
+  const actionStart = source.indexOf("    async function deleteProxy(");
+  const actionEnd = source.indexOf("    const fallback =", actionStart);
+  const fallbackStart = source.lastIndexOf('    fallback?.addEventListener("click",');
+  const fallbackEnd = source.indexOf("\n\n    try {", fallbackStart);
+  class Element {
+    constructor(id) { this.dataset = { reverseProxyDelete: id }; }
+    closest(selector) { return selector === "[data-reverse-proxy-delete]" ? this : null; }
+  }
+  let handler;
   let allowed = true, ok = true, malformed = false;
-  const calls = [], errors = [], collections = [];
+  const calls = [], errors = [], collections = [], confirmations = [];
   const deleted = { items: [], listener_options: [], config_preview: "retired preview" };
   const context = vm.createContext({ loadSequence: 0, saveUrl: "/proxies/save", csrf: "test",
-    global: { requestConfirmation: async () => allowed },
+    canWrite: true, Element, items: [{ id: 7, name: "Proxy" }],
+    fallback: { addEventListener: (_type, callback) => { handler = callback; } },
+    global: { requestConfirmation: async (options) => { confirmations.push(options); return allowed; } },
     applyCollection: (payload) => { if (!Array.isArray(payload.items)) throw new Error("invalid"); collections.push(payload); },
     showError: (error) => errors.push(error), endpointMessage: async () => "Delete rejected",
     fetch: async (url, options) => { calls.push([url, options]); return { ok, json: async () => malformed ? {} : deleted }; },
   });
-  vm.runInContext(source.slice(helperStart, helperEnd) + "globalThis.deleteProxy = " + source.slice(actionStart, actionEnd), context);
-  const row = { getData: () => ({ id: 7, name: "Proxy" }) };
-  await context.deleteProxy(null, row);
+  vm.runInContext(source.slice(helperStart, helperEnd) + source.slice(actionStart, actionEnd)
+    + source.slice(fallbackStart, fallbackEnd), context);
+  const button = new Element("7");
+  await handler({ target: button });
+  assert.equal(confirmations[0].title, "Delete reverse proxy Proxy?");
+  assert.match(confirmations[0].message, /desired state.*Global Appliance Apply/);
   assert.equal(calls.length, 1);
   assert.equal(calls[0][0], "/proxies/7/delete");
   assert.equal(calls[0][1].method, "POST");
+  assert.equal(calls[0][1].headers["X-CSRF-Token"], "test");
+  assert.equal(calls[0][1].credentials, "same-origin");
   assert.equal(collections.at(-1), deleted);
   assert.equal(errors.at(-1), "");
   allowed = false;
-  await context.deleteProxy(null, row);
+  await handler({ target: button });
   assert.equal(calls.length, 1);
   allowed = true; ok = false;
-  await context.deleteProxy(null, row);
+  await handler({ target: button });
   assert.equal(errors.at(-1), "Delete rejected");
   assert.equal(collections.length, 1);
   ok = true; malformed = true;
-  await context.deleteProxy(null, row);
+  await handler({ target: button });
   assert.match(errors.at(-1), /change was deleted.*Refresh the page/);
+  const before = calls.length, confirmed = confirmations.length;
+  vm.runInContext("canWrite = false", context);
+  await handler({ target: button });
+  assert.equal(calls.length, before);
+  assert.equal(confirmations.length, confirmed);
+  vm.runInContext("canWrite = true", context);
+  await handler({ target: new Element("999") });
+  assert.equal(calls.length, before);
+  assert.equal(confirmations.length, confirmed);
 });
 
 test("route steps reject every reserved component without rejecting neighboring application names", () => {
@@ -536,8 +559,8 @@ test("display escaping protects operator-controlled text", () => {
 
 test("management service worker precaches the reverse-proxy page asset", () => {
   const worker = fs.readFileSync("atlaso/app/static/service-worker.js", "utf8");
-  assert.match(worker, /const ATLASO_CACHE = `\$\{ATLASO_CACHE_PREFIX\}367`;/);
-  assert.match(worker, /"\/static\/reverse-proxies\.js\?v=issue-723-14"/);
+  assert.match(worker, /const ATLASO_CACHE = `\$\{ATLASO_CACHE_PREFIX\}368`;/);
+  assert.match(worker, /"\/static\/reverse-proxies\.js\?v=issue-723-15"/);
 });
 
 function classListFor(classes) {
@@ -553,6 +576,7 @@ test("fallback refresh replaces nonempty rows, removes stale actions, and escape
   const end = source.indexOf("    function setValidation(", start);
   class HTMLElement {
     constructor(tag = "table") { this.tag = tag; this.children = []; this.dataset = {}; }
+    setAttribute(name, value) { this[name] = value; }
     append(...children) { this.children.push(...children); }
     replaceChildren(...children) { this.children = children; }
   }
@@ -579,10 +603,16 @@ test("fallback refresh replaces nonempty rows, removes stale actions, and escape
   assert.equal(body.children[0].children[0].children[0].textContent, "<img src=x>");
   assert.equal(body.children[0].children[6].children[0].textContent, "Enabled");
   assert.equal(body.children[0].children[7].children[0].dataset.reverseProxyEdit, "11");
+  const remove = body.children[0].children[7].children[1];
+  assert.equal(remove.dataset.reverseProxyDelete, "11");
+  assert.equal(remove.type, "button");
+  assert.equal(remove.textContent, "Delete");
+  assert.equal(remove["aria-label"], "Delete reverse proxy <img src=x>");
   vm.runInContext("canWrite = false", context);
   refresh([{id: 12, name: "Read", listeners: [], routes: []}]);
   assert.equal(body.children.length, 1);
   assert.equal(body.children[0].children[7].children[0].textContent, "Read only");
+  assert.equal(body.children[0].children[7].children.length, 1);
   assert.deepEqual(body.children[0].children[7].children[0].dataset, {});
   refresh([]);
   assert.equal(body.children.length, 1);
