@@ -19,6 +19,7 @@ command check run directly as the unprivileged appliance SSH user rather than th
 host-reachable Site A network. Supply the powered-off, provenance-admitted builder VMX explicitly with
 `-ApplianceVmxPath`; the runner installs its wheel from the admitted clean source commit. Use `-Purpose docs -KeepVms`
 when retaining the dedicated documentation appliance. Credentials follow the protected lifecycle handoff.
+The direct runner also rejects combining `-ReverseProxyOnly` with any other focused lifecycle mode before VM preparation.
 
 The host fixture binds only to the selected Site A host address. The consumer saves desired state and uses global
 Appliance Apply to verify standard and custom HTTP and HTTPS publication, the managed listener certificate, preserve
