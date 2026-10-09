@@ -689,14 +689,11 @@ def save_proxy(
             raise ValueError("Reverse-proxy identity capacity is exhausted; contact the appliance maintainer.")
         from atlaso.app.services.reverse_proxy_publication import (
             appliance_addresses,
-            render_proxy_servers,
-            transport_manifest,
+            validate_publication_size,
         )
 
         snapshot = runtime_snapshot(db)
-        rendered = render_proxy_servers(snapshot, transport_manifest(snapshot, appliance_addresses(db)))
-        if len(rendered.encode("utf-8")) > 1_500_000:
-            raise ValueError("Reverse-proxy publication exceeds its generated configuration size bound.")
+        validate_publication_size(snapshot, appliance_addresses(db))
         from atlaso.app.services.reverse_proxy_publication import reconcile_proxy_dns
 
         reconcile_proxy_dns(db, runtime_snapshot(db))
@@ -826,6 +823,15 @@ def runtime_snapshot(db: Session) -> list[dict[str, Any]]:
     Args:
         db: Caller-owned database session for proxy desired state.
     """
+    return publication_snapshot(desired_rows(db))
+
+
+def publication_snapshot(proxies: list[models.ReverseProxy]) -> list[dict[str, Any]]:
+    """Project live or reconstructed rows through the same publication contract.
+
+    Args:
+        proxies: Complete desired-state proxy collection with ordered routes.
+    """
     return [
         {
             "id": proxy.id,
@@ -859,5 +865,5 @@ def runtime_snapshot(db: Session) -> list[dict[str, Any]]:
                 for route in proxy.routes
             ],
         }
-        for proxy in desired_rows(db)
+        for proxy in proxies
     ]

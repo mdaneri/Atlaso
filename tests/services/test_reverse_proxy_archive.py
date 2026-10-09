@@ -7,6 +7,7 @@ from sqlalchemy import select
 
 from atlaso.app.database import SessionLocal
 from atlaso.app.models import (
+    AuditEvent,
     EsxStorageSettings,
     PhysicalInterface,
     ReverseProxy,
@@ -434,3 +435,42 @@ def test_archive_allows_unclaimed_factory_target_for_operator_identity(client):
         db.expire_all()
         assert db.scalar(select(NtpSettings)).hostname == "custom.operator.test"
         assert db.scalar(select(ReverseProxy)).hostname == "ntp.example.test"
+
+
+@pytest.mark.parametrize("count", [64, 256])
+def test_archive_preflights_combined_unicode_publication_before_replacement(client, count):
+    """Accept bounded intent and reject oversized metadata before any restore write.
+
+    Args:
+        client: Initialized appliance fixture.
+        count: Number of individually valid disabled proxies in the archive.
+    """
+    with SessionLocal() as db:
+        interface = db.scalar(select(PhysicalInterface).where(PhysicalInterface.name == "eth2"))
+        save_proxy(db, payload(listeners=[{"interface": "eth2", "address": interface.ip_cidr.split("/")[0]}]), actor="test")
+        before = export_settings_archive(db, actor="test")["data"]
+        archive = deepcopy(export_settings_archive(db, actor="test"))
+        proxy_template = archive["data"]["reverse_proxies"][0]
+        route_template = archive["data"]["reverse_proxy_routes"][0]
+        archive["data"]["reverse_proxies"] = []
+        archive["data"]["reverse_proxy_routes"] = []
+        for index in range(count):
+            name = f"Archived {index}"
+            archive["data"]["reverse_proxies"].append({
+                **proxy_template, "name": name, "hostname": f"archive-{index}.example.test",
+                "enabled": False, "description": "界" * 1000,
+            })
+            archive["data"]["reverse_proxy_routes"].append({
+                **route_template, "proxy_name": name, "path_prefix": "/" + "界" * 1023,
+            })
+        audits = list(db.scalars(select(AuditEvent.id).order_by(AuditEvent.id)))
+        if count == 256:
+            with pytest.raises(ValueError, match="generated configuration size bound"):
+                restore_settings_archive(db, archive)
+            db.expire_all()
+            assert list(db.scalars(select(AuditEvent.id).order_by(AuditEvent.id))) == audits
+            assert export_settings_archive(db, actor="test")["data"] == before
+        else:
+            result = restore_settings_archive(db, archive)
+            assert result["reverse_proxies"] == result["reverse_proxy_routes"] == count
+            assert all(not row.enabled for row in desired_rows(db))

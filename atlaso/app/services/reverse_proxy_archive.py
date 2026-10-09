@@ -8,10 +8,11 @@ from atlaso.app.reverse_proxy_schemas import ReverseProxyCreate, ReverseProxyRou
 from atlaso.app.services.dnsmasq import authoritative_server_name
 from atlaso.app.services.esxi_pxe import ESXI_PXE_HOSTNAME_KEY, _normalize_hostname
 from atlaso.app.services.port_forwarding import ListenerClaim
-from atlaso.app.services.reverse_proxies import validate_proxy
+from atlaso.app.services.reverse_proxies import publication_snapshot, validate_proxy
 from atlaso.app.services.reverse_proxy_publication import (
     dns_plan,
     validate_dns_ownership,
+    validate_publication_size,
 )
 from atlaso.app.services.service_dns_defaults import (
     FACTORY_SERVICE_IDENTITIES,
@@ -148,6 +149,7 @@ def validate_candidates(proxies: list[models.ReverseProxy], data: dict[str, Any]
         errors = validate_proxy(proxy, context, proxies, exclude_id=proxy.id, require_binding=available)
         if errors:
             raise ValueError(f"Settings archive reverse proxy {proxy.name} is invalid: {errors[0]}")
+    validate_publication_size(publication_snapshot(proxies), sorted(addresses))
     plan, _warnings = dns_plan(
         [{**row, "id": proxy.id} for proxy, row in zip(proxies, data["reverse_proxies"], strict=True)],
         archived_dns,
