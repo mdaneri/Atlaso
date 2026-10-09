@@ -156,6 +156,11 @@ def test_reverse_proxy_initial_validation_status_matches_review_state(client, mo
     original = reverse_proxy_publication.context
 
     def review_context(db):
+        """Return publication context with the requested review state.
+
+        Args:
+            db: Active database session used by the publication context.
+        """
         value = original(db)
         value.update(reverse_proxy_validation_errors=errors, reverse_proxy_validation_warnings=warnings)
         return value
