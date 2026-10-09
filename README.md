@@ -21,6 +21,11 @@ Apply and startup enforce mutual exclusion; health requires actual synchronizati
 
 ## What Atlaso brings together
 
+[Managed reverse proxies](docs/services/reverse-proxies.md) are planned under issue #723 for **Traffic Publishing**.
+Operators review hostname, exact listener addresses, ordered path routes, and upstream TLS trust in one wizard;
+global Appliance Apply coordinates publication, certificates, firewall admissions, and owned DNS records.
+Native appliance acceptance remains incomplete, so this workflow retains roadmap status.
+
 - **Infrastructure** — deploy and operate a Photon OS appliance across supported virtualization platforms.
 - **Storage** — provide lab storage and manage VCF depot and backup workflows.
 - **Identity** — manage local users, LDAP, OpenID Connect, certificates, and scoped credentials.
