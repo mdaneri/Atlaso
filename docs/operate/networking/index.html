@@ -4784,6 +4784,21 @@ WAN runtime, firewall, nginx, certificate, and service state before the task bec
 interfaces introduced to the candidate and deletes candidate-only VLAN devices. If automatic rollback cannot restore
 access, use the local console network recovery action to restore a known-good management configuration, then review
 desired state before retrying.</p>
+<p>An unchanged Routes &amp; WAN default may appear as protocol <code>boot</code> (native protocol <code>3</code>), because Atlaso installs it through
+<code>ip route replace</code>. Protected Network Apply accepts that route only on the captured old interface and domain with the
+same destination, gateway, and metric. It does not delete it or adopt a different operator route as its replacement.
+This applies to dedicated-management table <code>100</code> and Access-management table <code>200</code>, including repeated Apply after an
+upgrade. Networkd protocol names and their native numbers are equivalent for route readiness checks.</p>
+<p>If a route conflict blocks Apply, Tasks and Operational Logs retain <code>management_route_conflict</code> and a bounded expected
+and observed route pair: interface, family, table, destination, gateway, protocol, metric, and the failed condition.
+The original failure remains separate from dependent rollback or skipped work. Review the pair alongside the applied
+Network and Routes &amp; WAN intent; retain operator routes and use the console recovery workflow if rollback is unproven.
+Do not disable Routing or remove routes simply to bypass the guard. Confirm loopback, guest-local management, and
+management-host access before treating reported rollback as independent recovery evidence.</p>
+<p>The WAN cleanup path currently tolerates exit <code>2</code> from root-qdisc deletion, including the native message
+<code>Cannot delete qdisc with handle of zero.</code> when no removable root qdisc exists. That message alone does not identify a
+route conflict or prove successful cleanup. The previous-route conflict guard runs before candidate WAN activation;
+use the recorded failing layer, route pair, return code, and recovery outcome to identify the original failure.</p>
 <h2 id="transport-ownership">Transport ownership<a class="headerlink" href="#transport-ownership" title="Permanent link">&para;</a></h2>
 <p>The management Routes/WAN transports and their API v1 counterparts are owned by the dedicated <code>routes_wan</code> domain
 routers. The stable UI and API facade modules continue to aggregate and export those handlers. This internal ownership
