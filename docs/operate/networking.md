@@ -501,6 +501,10 @@ same destination, gateway, and metric. It does not delete it or adopt a differen
 This applies to dedicated-management table `100` and Access-management table `200`, including repeated Apply after an
 upgrade. Networkd protocol names and their native numbers are equivalent for route readiness checks.
 
+Management handoff inventories request detailed native JSON because ordinary `ip -j route show` output can omit the
+`boot` protocol. For comparison, use `ip -j -details -4 route show table 200 dev eth0` with the captured family, table,
+and interface. A protocol still missing from detailed output remains unknown; Atlaso does not infer `boot` from omission.
+
 If a route conflict blocks Apply, Tasks and Operational Logs retain `management_route_conflict` and a bounded expected
 and observed route pair: interface, family, table, destination, gateway, protocol, metric, and the failed condition.
 The original failure remains separate from dependent rollback or skipped work. Review the pair alongside the applied
