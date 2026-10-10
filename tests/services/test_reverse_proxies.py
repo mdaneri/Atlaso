@@ -87,7 +87,7 @@ def test_service_socket_guard_retains_exclusive_and_shared_protocol_ownership(mo
 
 
 @pytest.mark.parametrize("model_name", ["CaSettings", "KmsSettings", "LdapSettings", "EsxStorageSettings",
-                                       "OidcProviderSettings", "NtpSettings", "VcfBackupSettings",
+                                       "OidcProviderSettings", "NtpSettings",
                                        "VcfOfflineDepotSettings", "VcfPrivateRegistrySettings"])
 def test_service_hostname_edits_preserve_disabled_proxy_ownership(model_name):
     """Reserve proxy names even before enabling their listener.

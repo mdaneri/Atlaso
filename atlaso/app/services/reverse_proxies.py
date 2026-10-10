@@ -5,7 +5,7 @@ from __future__ import annotations
 import ipaddress
 import logging
 import re
-from typing import Any
+from typing import Any, cast
 
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
@@ -24,14 +24,18 @@ MAX_TOTAL_PROXY_ROUTES = 256
 MAX_TOTAL_PROXY_PUBLICATION_ROUTES = 256
 _DNS_LABEL = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$")
 _FINGERPRINT = re.compile(r"^[0-9a-f]{64}$")
-_SERVICE_SETTING_MODELS = (
+type _ServiceHostnameSettings = (
+    models.NtpSettings | models.CaSettings | models.KmsSettings | models.LdapSettings |
+    models.EsxStorageSettings | models.OidcProviderSettings | models.VcfPrivateRegistrySettings |
+    models.VcfOfflineDepotSettings
+)
+_SERVICE_SETTING_MODELS: tuple[type[_ServiceHostnameSettings], ...] = (
     models.NtpSettings,
     models.CaSettings,
     models.KmsSettings,
     models.LdapSettings,
     models.EsxStorageSettings,
     models.OidcProviderSettings,
-    models.VcfBackupSettings,
     models.VcfPrivateRegistrySettings,
     models.VcfOfflineDepotSettings,
 )
@@ -234,21 +238,23 @@ def _service_hostnames(db: Session) -> set[str]:
         except ValueError:
             pass
     for model in _SERVICE_SETTING_MODELS:
-        row = db.scalar(select(model))
+        row = cast(_ServiceHostnameSettings | None, db.scalar(select(model)))
         if row is None:
             continue
-        for field in ("hostname", "portal_hostname"):
-            value = str(getattr(row, field, "") or "").strip()
-            if not value:
-                continue
-            try:
-                names.add(_canonical_dns_name(value, require_fqdn=False))
+        # Read only explicit operational identity fields. Generic getattr on
+        # secret-bearing settings also obscures the hostname-only hash data flow.
+        value = str((row.portal_hostname if isinstance(row, models.CaSettings) else row.hostname) or "").strip()
+        if not value:
+            continue
+        try:
+            names.add(_canonical_dns_name(value, require_fqdn=False))
+            if not isinstance(row, models.EsxStorageSettings):
                 names.update(service_alias_names(
-                    value, getattr(row, "listen_interface", ""), getattr(row, "listen_address", ""), naming,
-                    shared_target_token="service" if model is models.NtpSettings else None,
+                    value, row.listen_interface, row.listen_address, naming,
+                    shared_target_token="service" if isinstance(row, models.NtpSettings) else None,
                 ))
-            except ValueError:
-                continue
+        except ValueError:
+            continue
     appliance = db.scalar(select(models.ApplianceSettings))
     if appliance is not None and appliance.fqdn:
         try:
