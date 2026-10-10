@@ -30402,7 +30402,7 @@ def _snapshot_management_handoff_routing(interfaces: list[str], tables: dict[str
         routes = {}
         observed_route_counts: dict[int, dict[str, int]] = {}
         for family in (4, 6):
-            result = _network_observation_command(["ip", "-j", f"-{family}", "route", "show", "table", "all", "dev", name])
+            result = _network_observation_command(["ip", "-j", "-details", f"-{family}", "route", "show", "table", "all", "dev", name])
             if result.returncode:
                 raise ValueError("previous routing-domain routes could not be captured")
             entries = json.loads(result.stdout)
@@ -30510,12 +30510,14 @@ def _transition_route_rows(name: str, family: int, table: int) -> list[dict]:
     # the returned JSON. An as-yet empty numeric table can instead exit 2, so
     # use the all-table inventory only to establish that no explicit entry for
     # the numeric table exists before the first seed.
-    command = ["ip", "-j", f"-{family}", "route", "show", "table", str(table), "dev", name]
+    # Ordinary iproute2 JSON hides RTPROT_BOOT. Request details rather than
+    # interpreting a missing protocol as ownership or successor evidence.
+    command = ["ip", "-j", "-details", f"-{family}", "route", "show", "table", str(table), "dev", name]
     result = _network_observation_command(command)
     missing_table = bool(result.returncode)
     if missing_table:
         result = _network_observation_command(
-            ["ip", "-j", f"-{family}", "route", "show", "table", "all", "dev", name]
+            ["ip", "-j", "-details", f"-{family}", "route", "show", "table", "all", "dev", name]
         )
         if result.returncode:
             raise ValueError("transition routing-domain routes could not be observed")
@@ -30986,7 +30988,7 @@ def _wait_management_handoff_routes(state: dict, *, attempts: int = 31) -> None:
                 expected = [route for route in evidence["routes"] if ip_network(route["destination"]).version == family]
                 if not expected:
                     continue
-                result = _network_observation_command(["ip", "-j", f"-{family}", "route", "show", "table", str(evidence["table"]), "dev", name])
+                result = _network_observation_command(["ip", "-j", "-details", f"-{family}", "route", "show", "table", str(evidence["table"]), "dev", name])
                 if result.returncode:
                     missing = True
                     continue
