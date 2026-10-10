@@ -437,8 +437,16 @@ def build_router(dependencies: IdentityUiDependencies) -> IdentityUiRouter:
             HTTPException: If the request cannot be fulfilled.
             OidcConfigurationError: If the operation encounters an invalid state.
         """
+        from atlaso.app.services.network_objects import (
+            acquire_network_objects_write_lock,
+        )
+        from atlaso.app.services.reverse_proxies import (
+            validate_service_listener_sockets,
+        )
+
         verify_csrf(request, csrf)
         require_admin_identity(identity)
+        acquire_network_objects_write_lock(db)
         provider = ensure_oidc_provider_settings(db)
         previous_hostname = provider.hostname
         try:
@@ -478,6 +486,11 @@ def build_router(dependencies: IdentityUiDependencies) -> IdentityUiRouter:
             300, min(signing_key_overlap_seconds, 604800)
         )
         provider.enabled = enabled
+        try:
+            validate_service_listener_sockets(db)
+        except ValueError as exc:
+            db.rollback()
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
         provider.updated_at = utcnow()
         db.add(provider)
         db.flush()

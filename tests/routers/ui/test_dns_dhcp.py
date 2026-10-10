@@ -3,6 +3,8 @@
 import json
 from pathlib import Path
 
+import pytest
+
 from tests.routers.ui.helpers import login
 
 
@@ -1895,3 +1897,386 @@ def test_zone_file_import_error_preserves_pasted_zone_text(client):
     assert "Import Zone File" in imported.text
     assert "Line 2:" in imported.text
     assert "badrecord IN BOGUS unsupported" in imported.text
+
+
+@pytest.mark.parametrize("alias", ["proxy.atlaso.internal", "PrOxY.AtLaSo.InTeRnAl."])
+def test_reverse_proxy_owned_dns_records_reject_ui_edits_deletes_and_imports(client, alias):
+    """Keep proxy-owned DNS rows intact across direct and bulk UI operations.
+
+    Args:
+        alias: DNS-equivalent spelling submitted to independent writers.
+        client: Authenticated management test client with isolated appliance state.
+    """
+    from sqlalchemy import select
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import DnsRecord
+    from atlaso.app.services.reverse_proxy_publication import DNS_OWNER_PREFIX
+
+    with SessionLocal() as db:
+        record = DnsRecord(
+            hostname="proxy.atlaso.internal",
+            record_type="A",
+            address="192.168.50.77",
+            record_data_json='{"address":"192.168.50.77"}',
+            description=f"{DNS_OWNER_PREFIX}17",
+            enabled=True,
+        )
+        unrelated = DnsRecord(
+            hostname="ordinary.atlaso.internal",
+            record_type="A",
+            address="192.168.50.76",
+            record_data_json='{"address":"192.168.50.76"}',
+            description="Operator-owned DNS record",
+            enabled=True,
+        )
+        db.add_all([record, unrelated])
+        db.commit()
+        record_id = record.id
+        unrelated_id = unrelated.id
+
+    login(client)
+    page = client.get("/dns")
+    csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    edited = client.post(
+        f"/dns/records/{record_id}/edit",
+        data={
+            "hostname": "renamed.atlaso.internal",
+            "record_type": "A",
+            "address": "192.168.50.78",
+            "description": "ordinary DNS edit",
+            "enabled": "on",
+            "csrf": csrf,
+        },
+    )
+    deleted = client.post(f"/dns/records/{record_id}/delete", data={"csrf": csrf})
+    assert edited.status_code == 409
+    assert "Edit it in Reverse Proxies." in edited.text
+    assert deleted.status_code == 409
+    assert "Edit it in Reverse Proxies." in deleted.text
+
+    created_alias = client.post(
+        "/dns/records",
+        data={
+            "hostname": alias,
+            "domain": "atlaso.internal",
+            "record_type": "AAAA",
+            "address": "2001:db8::78",
+            "description": "Operator-owned conflicting alias",
+            "enabled": "on",
+            "csrf": csrf,
+        },
+    )
+    renamed_alias = client.post(
+        f"/dns/records/{unrelated_id}/edit",
+        data={
+            "hostname": alias,
+            "domain": "atlaso.internal",
+            "record_type": "AAAA",
+            "address": "2001:db8::79",
+            "description": "Operator-owned renamed alias",
+            "enabled": "on",
+            "csrf": csrf,
+        },
+    )
+    assert created_alias.status_code == 409
+    assert "Edit it in Reverse Proxies." in created_alias.text
+    assert renamed_alias.status_code == 409
+    assert "Edit it in Reverse Proxies." in renamed_alias.text
+
+    replaced = client.post(
+        "/dns/records/import",
+        data={
+            "domain": "atlaso.internal",
+            "hosts_text": "192.168.50.80 imported\n",
+            "replace_existing": "on",
+            "csrf": csrf,
+        },
+    )
+    overwritten = client.post(
+        "/dns/records/import",
+        data={
+            "domain": "atlaso.internal",
+            "hosts_text": f"192.168.50.77 {alias}\n",
+            "csrf": csrf,
+        },
+    )
+    unrelated_import = client.post(
+        "/dns/records/import",
+        data={
+            "domain": "atlaso.internal",
+            "hosts_text": "192.168.50.80 unrelated\n",
+            "csrf": csrf,
+        },
+    )
+    zone_replaced = client.post(
+        "/dns/zones/import",
+        data={
+            "domain": "atlaso.internal",
+            "zone_text": "$ORIGIN atlaso.internal.\nwww IN A 192.168.50.80\n",
+            "replace_existing": "on",
+            "csrf": csrf,
+        },
+    )
+    zone_overwrite = client.post(
+        "/dns/zones/import",
+        data={
+            "domain": "atlaso.internal",
+            "zone_text": f"$ORIGIN atlaso.internal.\n{alias.rstrip('.')}. IN AAAA 2001:db8::78\n",
+            "csrf": csrf,
+        },
+    )
+    assert replaced.status_code == 409
+    assert overwritten.status_code == 409
+    assert zone_replaced.status_code == 409
+    assert overwritten.status_code == 409
+    assert zone_overwrite.status_code == 409
+    assert unrelated_import.status_code == 200
+    for response in (replaced, overwritten, zone_replaced, zone_overwrite):
+        assert "Edit it in Reverse Proxies." in response.text
+
+    with SessionLocal() as db:
+        preserved = db.get(DnsRecord, record_id)
+        assert preserved is not None
+        assert preserved.hostname == "proxy.atlaso.internal"
+        assert preserved.address == "192.168.50.77"
+        assert preserved.enabled is True
+        unrelated_after = db.get(DnsRecord, unrelated_id)
+        assert unrelated_after is not None
+        assert unrelated_after.hostname == "ordinary.atlaso.internal"
+        assert db.scalar(select(DnsRecord).where(DnsRecord.hostname == "unrelated.atlaso.internal")) is not None
+
+
+def test_dns_settings_reconcile_reverse_proxy_records_and_preserve_operator_dns(client):
+    """Authoritative DNS changes retire and restore proxy rows atomically.
+
+    Args:
+        client: Authenticated management test client with isolated appliance state.
+    """
+    from sqlalchemy import select
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import (
+        CaSettings,
+        DnsRecord,
+        DnsSettings,
+        ReverseProxy,
+        ReverseProxyRoute,
+    )
+    from atlaso.app.services.reverse_proxy_publication import DNS_OWNER_PREFIX
+
+    with SessionLocal() as db:
+        ca = db.scalar(select(CaSettings))
+        assert ca is not None
+        ca.enabled = True
+        settings = db.scalar(select(DnsSettings))
+        assert settings is not None
+        settings.enabled = True
+        settings.authoritative = True
+        settings.domain = "atlaso.internal"
+        proxy = ReverseProxy(
+            name="UI managed proxy",
+            hostname="ui-proxy.atlaso.internal",
+            scheme="https",
+            port=8443,
+            enabled=True,
+            managed_dns=True,
+            listeners=[{"interface": "eth2", "address": "192.168.50.1"}],
+            routes=[ReverseProxyRoute(
+                position=0,
+                path_prefix="/",
+                upstream_scheme="http",
+                upstream_host="10.10.20.30",
+                upstream_port=8080,
+            )],
+        )
+        owner_record = DnsRecord(
+            hostname="ui-proxy.atlaso.internal",
+            record_type="A",
+            address="192.168.50.1",
+            record_data_json='{"address":"192.168.50.1"}',
+            description=f"{DNS_OWNER_PREFIX}1",
+            enabled=True,
+        )
+        operator_record = DnsRecord(
+            hostname="operator.atlaso.internal",
+            record_type="A",
+            address="192.168.50.99",
+            record_data_json='{"address":"192.168.50.99"}',
+            description="Operator-owned DNS record",
+            enabled=True,
+        )
+        db.add_all([proxy, owner_record, operator_record])
+        db.commit()
+        operator_id = operator_record.id
+
+    login(client)
+    page = client.get("/dns")
+    csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    common = {
+        "enabled": "on",
+        "listen_interfaces_present": "1",
+        "listen_addresses_present": "1",
+        "listen_interfaces": ["eth2"],
+        "listen_addresses": ["192.168.50.1"],
+        "domains": "atlaso.internal",
+        "upstream_servers": "1.1.1.1",
+        "cache_size": "1000",
+        "expand_hosts": "on",
+        "authoritative_server": "ns1.atlaso.internal",
+        "authoritative_contact": "hostmaster.atlaso.internal",
+        "authoritative_ttl": "3600",
+        "authoritative_refresh": "1200",
+        "authoritative_retry": "180",
+        "authoritative_expire": "1209600",
+        "csrf": csrf,
+    }
+    disabled = client.post("/dns/settings", data=common, follow_redirects=False)
+    assert disabled.status_code == 303
+    with SessionLocal() as db:
+        assert db.scalar(select(DnsRecord).where(DnsRecord.description.startswith(DNS_OWNER_PREFIX))) is None
+        operator_after_disable = db.get(DnsRecord, operator_id)
+        assert operator_after_disable is not None
+        assert operator_after_disable.address == "192.168.50.99"
+
+    enabled = client.post(
+        "/dns/settings",
+        data={**common, "authoritative": "on"},
+        follow_redirects=False,
+    )
+    assert enabled.status_code == 303
+    with SessionLocal() as db:
+        owner_after_enable = db.scalar(select(DnsRecord).where(DnsRecord.description.startswith(DNS_OWNER_PREFIX)))
+        operator_after_enable = db.get(DnsRecord, operator_id)
+        assert owner_after_enable is not None
+        assert owner_after_enable.hostname == "ui-proxy.atlaso.internal"
+        assert owner_after_enable.address == "192.168.50.1"
+        assert operator_after_enable is not None
+        assert operator_after_enable.description == "Operator-owned DNS record"
+        assert operator_after_enable.address == "192.168.50.99"
+
+
+def test_dns_zone_eligibility_reconciles_proxy_records_atomically(client):
+    """Create, disable and re-enable an authoritative zone with its managed proxy DNS rows.
+
+    Args:
+        client: Initialized authenticated appliance test client.
+    """
+    from sqlalchemy import select
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import DnsRecord, DnsSettings, ReverseProxy
+    from atlaso.app.services.reverse_proxy_publication import DNS_OWNER_PREFIX
+
+    with SessionLocal() as db:
+        settings = db.scalar(select(DnsSettings))
+        assert settings is not None
+        settings.enabled = True
+        settings.authoritative = True
+        settings.domain = "atlaso.internal"
+        settings.disabled_domains = ""
+        db.add(
+            ReverseProxy(
+                name="External then managed proxy",
+                hostname="inventory.newzone.example.test",
+                scheme="https",
+                port=8443,
+                enabled=True,
+                managed_dns=True,
+                listeners=[{"interface": "eth9", "address": "192.168.50.121"}],
+            )
+        )
+        db.commit()
+
+    login(client)
+    csrf = client.get("/dns").text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    created = client.post(
+        "/dns/zones",
+        data={"domain": "newzone.example.test", "description": "Proxy zone", "csrf": csrf},
+    )
+    assert created.status_code == 200, created.text
+    with SessionLocal() as db:
+        owner_record = db.scalar(select(DnsRecord).where(DnsRecord.description.startswith(DNS_OWNER_PREFIX)))
+        assert owner_record is not None
+        assert owner_record.hostname == "inventory.newzone.example.test"
+        assert owner_record.address == "192.168.50.121"
+
+    disabled = client.post(
+        "/dns/zones/enabled",
+        data={"domain": "newzone.example.test", "csrf": csrf},
+    )
+    assert disabled.status_code == 200, disabled.text
+    with SessionLocal() as db:
+        assert db.scalar(select(DnsRecord).where(DnsRecord.description.startswith(DNS_OWNER_PREFIX))) is None
+
+    reenabled = client.post(
+        "/dns/zones/enabled",
+        data={"domain": "newzone.example.test", "enabled": "on", "csrf": csrf},
+    )
+    assert reenabled.status_code == 200, reenabled.text
+    with SessionLocal() as db:
+        owner_record = db.scalar(select(DnsRecord).where(DnsRecord.description.startswith(DNS_OWNER_PREFIX)))
+        assert owner_record is not None
+        assert owner_record.hostname == "inventory.newzone.example.test"
+        assert owner_record.address == "192.168.50.121"
+
+
+def test_dns_zone_enable_conflict_rolls_back_eligibility_and_operator_record(client):
+    """Reject a zone activation that would claim an operator-owned proxy hostname.
+
+    Args:
+        client: Initialized authenticated appliance test client.
+    """
+    from sqlalchemy import select
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import DnsRecord, DnsSettings, ReverseProxy
+    from atlaso.app.services.reverse_proxy_publication import DNS_OWNER_PREFIX
+
+    with SessionLocal() as db:
+        settings = db.scalar(select(DnsSettings))
+        assert settings is not None
+        settings.enabled = True
+        settings.authoritative = True
+        settings.domain = "atlaso.internal"
+        settings.disabled_domains = "newzone.example.test"
+        operator_record = DnsRecord(
+            hostname="inventory.newzone.example.test",
+            record_type="A",
+            address="192.168.50.122",
+            record_data_json='{"address":"192.168.50.122"}',
+            description="Operator-owned address",
+            enabled=True,
+        )
+        db.add(operator_record)
+        db.add(
+            ReverseProxy(
+                name="Conflicting proxy",
+                hostname="inventory.newzone.example.test",
+                scheme="https",
+                port=8443,
+                enabled=True,
+                managed_dns=True,
+                listeners=[{"interface": "eth9", "address": "192.168.50.121"}],
+            )
+        )
+        db.commit()
+        operator_id = operator_record.id
+
+    login(client)
+    csrf = client.get("/dns").text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    enabled = client.post(
+        "/dns/zones/enabled",
+        data={"domain": "newzone.example.test", "enabled": "on", "csrf": csrf},
+    )
+    assert enabled.status_code == 409
+    assert "conflicts with an operator" in enabled.text
+    with SessionLocal() as db:
+        settings = db.scalar(select(DnsSettings))
+        assert settings is not None
+        assert settings.domain == "atlaso.internal"
+        assert settings.disabled_domains == "newzone.example.test"
+        operator_after = db.get(DnsRecord, operator_id)
+        assert operator_after is not None
+        assert operator_after.address == "192.168.50.122"
+        assert db.scalar(select(DnsRecord).where(DnsRecord.description.startswith(DNS_OWNER_PREFIX))) is None

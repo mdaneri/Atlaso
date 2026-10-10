@@ -44,6 +44,10 @@ appliance-apply unit.
 4. Inspect the rendered ruleset and resolve validation errors.
 5. Submit the Firewall unit through [Appliance Apply](../operate/appliance-apply.md).
 
+Enabled reverse proxies contribute generated TCP admissions for their exact selected listener addresses and ports,
+including an optional HTTP redirect port. These rows are derived from proxy desired state and should be changed in the
+[reverse-proxy editor](reverse-proxies.md), not as operator rules.
+
 Atlaso always blocks management-to-lab and lab-to-management forwarding. DHCP bootstrap rules remain interface-bound
 and are not group-filtered.
 

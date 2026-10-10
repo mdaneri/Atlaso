@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% from "partials/resource_wizard.html" import resource_wizard %}
+{% from "partials/reverse_proxies.html" import reverse_proxy_validation_panel with context %}
 {% block page_title %}Traffic Publishing{% endblock %}
 {% block content %}
 <section class="split-workspace">
@@ -8,6 +9,7 @@
     <div class="tab-buttons" role="tablist" aria-label="Traffic Publishing tools" data-tab-storage-key="atlaso:traffic-publishing:active-tab">
       <button class="tab-button active" type="button" role="tab" data-tab-target="routes-wan-nat-panel" aria-controls="routes-wan-nat-panel" aria-selected="true">Source NAT</button>
       <button class="tab-button" type="button" role="tab" data-tab-target="port-forward-panel" aria-controls="port-forward-panel" aria-selected="false">Port Forwarding</button>
+      <button class="tab-button" type="button" role="tab" data-tab-target="reverse-proxy-panel" aria-controls="reverse-proxy-panel" aria-selected="false">Reverse Proxies</button>
     </div>
     <div id="routes-wan-nat-error" class="alert error hidden"></div>
       <div id="routes-wan-nat-panel" class="tab-panel active">
@@ -65,9 +67,11 @@
       </div>
 
     {% include "partials/port_forwarding.html" %}
+    {% include "partials/reverse_proxies.html" %}
   </div>
   <aside class="side-stack">
     {% include "partials/appliance_apply_status.html" %}
+    {{ reverse_proxy_validation_panel() }}
     <div class="panel"><h2>Source NAT Settings</h2>
       <form class="form-stack" action="{{ management_ui_root }}/traffic-publishing/settings" method="post" {% if routes_wan_can_write %}data-autosave-form data-autosave-status-id="nat-settings-status"{% endif %}>
         <input type="hidden" name="csrf" value="{{ csrf_token }}">
@@ -108,3 +112,4 @@
 
 {% endif %}
 {% endblock %}
+{% block extra_scripts %}<script src="/static/reverse-proxies.js?v=issue-723-16" defer></script>{% endblock %}

@@ -1,0 +1,1308 @@
+"""Verify the privileged publication validator rejects unowned proxy directives."""
+
+import hashlib
+import json
+import subprocess
+from pathlib import Path
+from types import SimpleNamespace
+
+import pytest
+
+from atlaso.app.services.reverse_proxy_publication import (
+    render_proxy_servers,
+    transport_manifest,
+    validated_snapshot,
+)
+from tests.services.test_reverse_proxy_publication import proxy_payload
+from tests.test_appliance_helper import load_helper_module
+
+
+def mock_root_owned_path_stats(monkeypatch, paths, *, modes=None):
+    """Represent appliance root-owned files while retaining real fixture identity.
+
+    Args:
+        monkeypatch: Scoped patch fixture for the pathlib stat call.
+        paths: Exact temporary paths whose appliance ownership is simulated.
+        modes: Optional safe modes for exact paths such as the appliance config directory.
+    """
+    original_stat = Path.stat
+    owned_paths = set(paths)
+    safe_modes = modes or {}
+
+    class RootOwnedStat:
+        def __init__(self, result, mode=None):
+            """Simulate   init   for the focused fixture.
+
+            Args:
+                result: Original filesystem stat result whose identity is retained.
+                mode: Simulated appliance-safe permission mode.
+            """
+            self._result = result
+            self.st_uid = 0
+            self.st_gid = 0
+            self.st_mode = result.st_mode if mode is None else mode
+
+        def __getattr__(self, name):
+            """Simulate   getattr   for the focused fixture.
+
+            Args:
+                name: Attribute name delegated to the original stat result.
+            """
+            return getattr(self._result, name)
+
+    def appliance_stat(path, *args, **kwargs):
+        """Simulate appliance stat for the focused fixture.
+
+        Args:
+            path: Exact fixture filesystem or HTTP path.
+            *args: Additional positional arguments forwarded unchanged.
+            **kwargs: Additional keyword arguments forwarded unchanged.
+        """
+        result = original_stat(path, *args, **kwargs)
+        if path not in owned_paths:
+            return result
+        return RootOwnedStat(result, safe_modes.get(path))
+
+    monkeypatch.setattr(Path, "stat", appliance_stat)
+
+
+def site():
+    """Build a canonical HTTP proxy block with no certificate fixture bodies."""
+    proxy = proxy_payload()
+    proxy.update(scheme="http", redirect_http=False)
+    manifest = transport_manifest([proxy], ["192.0.2.10", "2001:db8::10"])
+    return "# IP-scoped public service front door for non-management interfaces.\n" + render_proxy_servers([proxy], manifest)
+
+
+def test_helper_uses_fixed_bounded_validator_and_keeps_legacy_checks(tmp_path, monkeypatch):
+    """Deny locations and metadata strings do not look like machine-service exposure.
+    Args:
+        tmp_path: Isolated filesystem root used for test artifacts.
+        monkeypatch: Scoped replacements for helper dependencies.
+    """
+    helper = load_helper_module()
+    calls = []
+    responses = []
+
+    def validate(command, input_text, *, timeout):
+        """Simulate validate for the focused fixture.
+
+        Args:
+            command: Exact bounded subprocess command under test.
+            input_text: Candidate serialized artifact submitted for validation.
+            timeout: Maximum command or request duration.
+        """
+        calls.append((command, timeout))
+        proxies, manifest = validated_snapshot(input_text)
+        endpoints = [
+            {"proxy_id": proxy["id"], "hostname": proxy["hostname"], "interface": listener["interface"],
+             "address": listener["address"], "scheme": proxy["scheme"], "port": proxy["port"]}
+            for proxy in proxies if proxy["enabled"] for listener in proxy["listeners"]
+        ]
+        metadata = {"manifest": manifest, "endpoints": endpoints, "proxies": proxies}
+        responses.append(metadata)
+        return subprocess.CompletedProcess(command, 0, json.dumps(metadata), "")
+
+    monkeypatch.setattr(helper, "_run_with_input", validate)
+    path = tmp_path / "site.conf"
+    path.write_text(site(), encoding="utf-8")
+    assert helper._public_services_config_errors(path) == []
+    assert calls[0] == ([str(helper.ATLASO_VENV_PYTHON_PATH), "-I", "-B", "-m",
+                          "atlaso.app.services.reverse_proxy_publication", "--validate"], 10)
+    assert set(responses[0]) == {"manifest", "endpoints", "proxies"}
+    expected_proxy = proxy_payload()
+    expected_proxy.update(scheme="http", redirect_http=False)
+    assert responses[0]["proxies"] == [expected_proxy]
+    assert responses[0]["endpoints"] == [
+        {"proxy_id": expected_proxy["id"], "hostname": expected_proxy["hostname"],
+         "interface": listener["interface"], "address": listener["address"],
+         "scheme": "http", "port": expected_proxy["port"]}
+        for listener in expected_proxy["listeners"]
+    ]
+    redirect_proxy = proxy_payload()
+    redirect_proxy.update(scheme="https", redirect_http=True)
+    redirect_manifest = transport_manifest([redirect_proxy], [])
+    rendered_redirect = render_proxy_servers([redirect_proxy], redirect_manifest)
+    assert rendered_redirect.count("if ($http_host = '') { return 404; }") == 4
+    path.write_text(site().replace("# IP-scoped public service front door", "# Unknown front door"), encoding="utf-8")
+    assert "Public services nginx config must be generated by Atlaso." in helper._public_services_config_errors(path)
+
+
+def test_helper_rejects_incomplete_canonical_validator_projection(tmp_path, monkeypatch):
+    """Require validator metadata to include the regenerated proxy intent.
+    Args:
+        tmp_path: Isolated filesystem root used for test artifacts.
+        monkeypatch: Scoped replacements for helper dependencies.
+    """
+    helper = load_helper_module()
+
+    def incomplete(command, _input_text, *, timeout):
+        """Simulate incomplete for the focused fixture.
+
+        Args:
+            command: Exact bounded subprocess command under test.
+            _input_text: Fixture input for incomplete.
+            timeout: Maximum command or request duration.
+        """
+        return subprocess.CompletedProcess(command, 0, json.dumps({"manifest": {}, "endpoints": []}), "")
+
+    monkeypatch.setattr(helper, "_run_with_input", incomplete)
+    path = tmp_path / "site.conf"
+    path.write_text(site(), encoding="utf-8")
+    errors = helper._public_services_config_errors(path)
+    assert errors == ["Public Services reverse-proxy publication is invalid or unavailable."]
+
+
+@pytest.mark.parametrize("failure", ["timeout", "invalid_json", "failed"])
+def test_helper_validation_failure_is_closed_and_sanitized(tmp_path, monkeypatch, failure):
+    """Unavailable or failed validation cannot authorize proxy publication.
+    Args:
+        tmp_path: Isolated filesystem root used for test artifacts.
+        monkeypatch: Scoped replacements for helper dependencies.
+        failure: Parameterized validator failure mode.
+    """
+    helper = load_helper_module()
+
+    def unavailable(command, _input_text, *, timeout):
+        """Simulate unavailable for the focused fixture.
+
+        Args:
+            command: Exact bounded subprocess command under test.
+            _input_text: Fixture input for unavailable.
+            timeout: Maximum command or request duration.
+        """
+        if failure == "timeout":
+            raise subprocess.TimeoutExpired(command, timeout)
+        return subprocess.CompletedProcess(command, 1 if failure == "failed" else 0, "invalid", "private diagnostic")
+
+    monkeypatch.setattr(helper, "_run_with_input", unavailable)
+    path = tmp_path / "site.conf"
+    path.write_text(site(), encoding="utf-8")
+    errors = helper._public_services_config_errors(path)
+    assert errors == ["Public Services reverse-proxy publication is invalid or unavailable."]
+    assert "private diagnostic" not in str(errors)
+
+
+def _metadata(generation):
+    """Return the helper's minimal validated generation projection.
+
+    Args:
+        generation: Fixture input for  metadata.
+    """
+    return {
+        "manifest": {"generation": generation, "routes": [{"socket_id": "1-2"}]},
+        "endpoints": [],
+        "proxies": [],
+    }
+
+
+def test_runtime_paths_bind_both_generations_and_reject_unowned_unit(tmp_path, monkeypatch):
+    """Capture only exact candidate/applied manifest paths and trusted unit template.
+
+    Args:
+        tmp_path: Isolated filesystem for candidate and service-template fixtures.
+        monkeypatch: Scoped helper replacements and appliance ownership simulation.
+    """
+    helper = load_helper_module()
+    candidate_path = tmp_path / "candidate.conf"
+    candidate_path.write_text("candidate", encoding="utf-8")
+    candidate = _metadata("b" * 64)
+    previous = _metadata("a" * 64)
+    unit_path = tmp_path / "atlaso-reverse-proxy@.service"
+    config_root = tmp_path / "config"
+    monkeypatch.setattr(helper, "REVERSE_PROXY_UNIT_PATH", unit_path)
+    monkeypatch.setattr(helper, "REVERSE_PROXY_CONFIG_ROOT", config_root)
+    monkeypatch.setattr(helper, "_reverse_proxy_applied", lambda: previous)
+    monkeypatch.setattr(helper, "_reverse_proxy_publication", lambda _text: candidate)
+
+    paths = helper._reverse_proxy_runtime_paths({"public_services_config_path": candidate_path})
+
+    assert paths == [
+        unit_path,
+        config_root / ("b" * 64 + ".json"),
+        config_root / ("a" * 64 + ".json"),
+        config_root / ("b" * 64 + ".pending"),
+    ]
+    pending = config_root / ("b" * 64 + ".pending")
+    pending.parent.mkdir(parents=True)
+    pending.write_text("unowned staging", encoding="utf-8")
+    with pytest.raises(ValueError, match="staging has unrelated ownership"):
+        helper._reverse_proxy_runtime_paths({"public_services_config_path": candidate_path})
+    pending.unlink()
+    unit_path.write_text("unowned service", encoding="utf-8")
+    mock_root_owned_path_stats(monkeypatch, {unit_path})
+    with pytest.raises(ValueError, match="not Atlaso-owned"):
+        helper._reverse_proxy_runtime_paths({"public_services_config_path": candidate_path})
+
+
+def test_snapshot_refuses_unrelated_active_candidate_and_records_prior_state(tmp_path, monkeypatch):
+    """Never adopt a pre-running candidate and snapshot the prior unit's exact state.
+    Args:
+        tmp_path: Isolated filesystem root used for test artifacts.
+        monkeypatch: Scoped replacements for helper dependencies.
+    """
+    helper = load_helper_module()
+    candidate_path = tmp_path / "candidate.conf"
+    candidate_path.write_text("candidate", encoding="utf-8")
+    network_path = tmp_path / "candidate-network.conf"
+    network_path.write_text("[physical_interfaces]\n", encoding="utf-8")
+    previous = _metadata("a" * 64)
+    candidate = _metadata("b" * 64)
+    config_root = tmp_path / "config"
+    config_root.mkdir()
+    previous_manifest_path = config_root / ("a" * 64 + ".json")
+    previous_manifest_path.write_text(json.dumps(previous["manifest"]), encoding="utf-8")
+    monkeypatch.setattr(helper, "REVERSE_PROXY_CONFIG_ROOT", config_root)
+    monkeypatch.setattr(helper, "NGINX_SITES_DIR", tmp_path / "sites")
+    monkeypatch.setattr(helper, "_reverse_proxy_applied", lambda: previous)
+    monkeypatch.setattr(helper, "_reverse_proxy_publication", lambda _text: candidate)
+    monkeypatch.setattr(helper, "_validate_reverse_proxy_listener_protocols", lambda *_args: None)
+    monkeypatch.setattr(helper, "_vcf_depot_listener_admission", lambda _path: [])
+    candidate_unit = helper._reverse_proxy_unit("b" * 64)
+    commands = []
+
+    def unrelated_active(command):
+        """Simulate unrelated active for the focused fixture.
+
+        Args:
+            command: Exact bounded subprocess command under test.
+        """
+        commands.append(command)
+        return SimpleNamespace(returncode=0 if command == ["systemctl", "is-active", candidate_unit] else 1)
+
+    monkeypatch.setattr(helper, "_run", unrelated_active)
+    with pytest.raises(ValueError, match="unrelated runtime ownership"):
+        helper._snapshot_reverse_proxy_runtime({"public_services_config_path": candidate_path,
+                                                "network_config_path": network_path})
+    assert commands == [["systemctl", "is-active", candidate_unit]]
+
+    commands.clear()
+
+    def prior_state(command):
+        """Simulate prior state for the focused fixture.
+
+        Args:
+            command: Exact bounded subprocess command under test.
+        """
+        commands.append(command)
+        return SimpleNamespace(returncode=0 if command == ["systemctl", "is-active", helper._reverse_proxy_unit("a" * 64)] else 1)
+
+    monkeypatch.setattr(helper, "_run", prior_state)
+    snapshot = helper._snapshot_reverse_proxy_runtime({"public_services_config_path": candidate_path,
+                                                       "network_config_path": network_path})
+    assert snapshot == {
+        "previous_generation": "a" * 64,
+        "candidate_generation": "b" * 64,
+        "retired_certificate_files": [],
+        "previous_manifest_sha256": hashlib.sha256(previous_manifest_path.read_bytes()).hexdigest(),
+        "previous_active": True,
+        "previous_enabled": False,
+    }
+
+
+@pytest.mark.parametrize(
+    "interface,address,parent_state,expect_error",
+    [
+        ("eth0", "192.168.49.1", "up", True),
+        ("eth2.20", "192.168.20.1", "down", True),
+        ("eth1", "192.0.2.99", "up", True),
+        ("eth2.20", "192.168.20.1", "up", False),
+    ],
+)
+def test_candidate_network_admission_is_exact_and_excludes_management_or_disabled_parent(
+    tmp_path, monkeypatch, interface, address, parent_state, expect_error
+):
+    """Require exact eligible candidate addresses, with VLANs tied to active trunks.
+    Args:
+        tmp_path: Isolated filesystem root used for test artifacts.
+        monkeypatch: Scoped replacements for helper dependencies.
+        interface: Candidate interface name under test.
+        parent_state: Candidate parent-interface state.
+        expect_error: Whether the candidate must be rejected.
+
+    Args:
+        address: Fixture input for test candidate network admission is exact and excludes management or disabled parent.
+    """
+    helper = load_helper_module()
+    candidate_path = tmp_path / "candidate.conf"
+    candidate_path.write_text("candidate", encoding="utf-8")
+    network_path = tmp_path / "network.conf"
+    network_path.write_text(
+        """[physical_interfaces]
+interface=eth0
+  role=management
+  mode=access
+  admin_state=up
+  ip_cidr=192.168.49.1/24
+interface=eth1
+  role=access
+  mode=access
+  admin_state=up
+  ip_cidr=192.0.2.10/24
+interface=eth2
+  role=access
+  mode=trunk
+  admin_state={parent_state}
+
+[vlan_interfaces]
+vlan=eth2.20
+  parent=eth2
+  role=access
+  ip_cidr=192.168.20.1/24
+""".format(parent_state=parent_state),
+        encoding="utf-8",
+    )
+    candidate = _metadata("b" * 64)
+    candidate["proxies"] = [{"enabled": True, "scheme": "http", "listeners": [{"interface": interface, "address": address}]}]
+    monkeypatch.setattr(helper, "_reverse_proxy_applied", lambda: {"manifest": None, "proxies": []})
+    monkeypatch.setattr(helper, "_reverse_proxy_publication", lambda _text: candidate)
+    monkeypatch.setattr(helper, "_validate_reverse_proxy_listener_protocols", lambda *_args: None)
+    monkeypatch.setattr(helper, "_vcf_depot_listener_admission", lambda _path: [])
+    monkeypatch.setattr(helper, "_run", lambda _command: SimpleNamespace(returncode=1))
+    payload = {"public_services_config_path": candidate_path, "network_config_path": network_path}
+
+    if expect_error:
+        with pytest.raises(ValueError, match="not bound to an eligible candidate Network"):
+            helper._snapshot_reverse_proxy_runtime(payload)
+    else:
+        snapshot = helper._snapshot_reverse_proxy_runtime(payload)
+        assert snapshot["candidate_generation"] == "b" * 64
+
+
+@pytest.mark.parametrize("inventory", ["candidate-prefix", "other-nginx-site"])
+def test_native_listener_protocol_scan_rejects_http_tls_socket_ambiguity(tmp_path, monkeypatch, inventory):
+    """Scan both legacy prefix listeners and other nginx sites before handoff.
+    Args:
+        tmp_path: Isolated filesystem root used for test artifacts.
+        monkeypatch: Scoped replacements for helper dependencies.
+        inventory: Existing nginx listener inventory case.
+    """
+    helper = load_helper_module()
+    sites = tmp_path / "sites"
+    sites.mkdir()
+    candidate_path = tmp_path / "candidate.conf"
+    candidate_prefix = "server {\n  listen 192.0.2.10:443;\n}\n"
+    candidate_text = candidate_prefix if inventory == "candidate-prefix" else "# no legacy listener\n"
+    candidate_path.write_text(candidate_text + "# Managed reverse-proxy generation: " + "a" * 64 + "\n",
+                              encoding="utf-8")
+    if inventory == "other-nginx-site":
+        (sites / "depot.conf").write_text("server {\n  listen 192.0.2.10:443;\n}\n", encoding="utf-8")
+    monkeypatch.setattr(helper, "NGINX_SITES_DIR", sites)
+    monkeypatch.setattr(helper, "NGINX_PUBLIC_SERVICES_SITE_PATH", sites / "public-services.conf")
+    metadata = {"proxies": [{"enabled": True, "scheme": "https", "port": 443,
+                             "redirect_http": False, "listeners": [{"address": "192.0.2.10"}]}]}
+
+    with pytest.raises(ValueError, match="shared nginx socket protocol"):
+        helper._validate_reverse_proxy_listener_protocols(
+            metadata, {"public_services_config_path": candidate_path}
+        )
+
+
+def test_runtime_restore_replays_prior_state_and_propagates_lifecycle_failure(tmp_path, monkeypatch):
+    """Rollback stops only its candidate, restores prior state and surfaces failures.
+    Args:
+        tmp_path: Isolated filesystem root used for test artifacts.
+        monkeypatch: Scoped replacements for helper dependencies.
+    """
+    helper = load_helper_module()
+    previous = "a" * 64
+    candidate = "b" * 64
+    state = {"reverse_proxy_runtime": {
+        "previous_generation": previous,
+        "candidate_generation": candidate,
+        "previous_active": True,
+        "previous_enabled": False,
+    }}
+    commands = []
+    unit_path = tmp_path / "atlaso-reverse-proxy@.service"
+    unit_path.write_text(helper.REVERSE_PROXY_UNIT_TEXT, encoding="utf-8")
+    monkeypatch.setattr(helper, "REVERSE_PROXY_UNIT_PATH", unit_path)
+    monkeypatch.setattr(helper, "_reverse_proxy_command", commands.append)
+
+    helper._quiesce_reverse_proxy_candidate(state)
+    helper._restore_reverse_proxy_runtime(state)
+    assert commands == [
+        ["systemctl", "disable", "--now", helper._reverse_proxy_unit(candidate)],
+        ["systemctl", "disable", helper._reverse_proxy_unit(previous)],
+        ["systemctl", "start", helper._reverse_proxy_unit(previous)],
+    ]
+
+    def fail_command(command):
+        """Simulate fail command for the focused fixture.
+
+        Args:
+            command: Exact bounded subprocess command under test.
+        """
+        raise ValueError("reverse-proxy service lifecycle operation failed")
+
+    monkeypatch.setattr(helper, "_reverse_proxy_command", fail_command)
+    with pytest.raises(ValueError, match="lifecycle operation failed"):
+        helper._retire_reverse_proxy_runtime(state)
+
+
+def test_retirement_unlinks_only_unchanged_captured_manifest(tmp_path, monkeypatch):
+    """Retire only the stopped generation whose immutable bytes match the journal hash.
+
+    Args:
+        tmp_path: Isolated directory for the captured immutable manifest.
+        monkeypatch: Scoped runtime command and appliance ownership replacements.
+    """
+    helper = load_helper_module()
+    config_root = tmp_path / "config"
+    config_root.mkdir()
+    previous = "a" * 64
+    candidate = "b" * 64
+    path = config_root / (previous + ".json")
+    path.write_text("captured manifest", encoding="utf-8")
+    state = {"reverse_proxy_runtime": {
+        "previous_generation": previous,
+        "candidate_generation": candidate,
+        "previous_manifest_sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+    }}
+    commands = []
+    removed = []
+    monkeypatch.setattr(helper, "REVERSE_PROXY_CONFIG_ROOT", config_root)
+    mock_root_owned_path_stats(monkeypatch, {path})
+    monkeypatch.setattr(helper, "_reverse_proxy_command", commands.append)
+    monkeypatch.setattr(helper, "_run", lambda command: SimpleNamespace(returncode=1))
+    monkeypatch.setattr(helper, "_durable_management_handoff_unlink", removed.append)
+
+    helper._retire_reverse_proxy_runtime(state)
+    assert commands == [["systemctl", "disable", "--now", helper._reverse_proxy_unit(previous)]]
+    assert removed == [path]
+
+    removed.clear()
+    commands.clear()
+    path.unlink()
+    helper._retire_reverse_proxy_runtime(state)
+    assert commands == [["systemctl", "disable", "--now", helper._reverse_proxy_unit(previous)]]
+    assert removed == []
+
+    commands.clear()
+    path.write_text("captured manifest", encoding="utf-8")
+    monkeypatch.setattr(helper, "_run", lambda _command: SimpleNamespace(returncode=0))
+    with pytest.raises(ValueError, match="still active"):
+        helper._retire_reverse_proxy_runtime(state)
+    assert removed == []
+
+    monkeypatch.setattr(helper, "_run", lambda _command: SimpleNamespace(returncode=1))
+    path.write_text("replacement manifest", encoding="utf-8")
+    with pytest.raises(ValueError, match="manifest ownership changed"):
+        helper._retire_reverse_proxy_runtime(state)
+    assert removed == []
+
+
+@pytest.mark.parametrize("change", ["unchanged", "bytes", "identity", "missing", "foreign"])
+def test_certificate_retirement_uses_original_identity_without_snapshot_backups(tmp_path, monkeypatch, change):
+    """Commit receipts retire unchanged keys and preserve replacement or foreign files.
+    Args:
+        tmp_path: Isolated filesystem root used for test artifacts.
+        monkeypatch: Scoped replacements for helper dependencies.
+
+    Args:
+        change: Ownership or bytes mutation under test.
+    """
+    helper = load_helper_module()
+    root = tmp_path / "atlaso"
+    path = root / "reverse-proxy-10" / "certs" / "app.example.test.key"
+    path.parent.mkdir(parents=True)
+    path.write_text("opaque test key", encoding="utf-8")
+    monkeypatch.setattr(helper, "REVERSE_PROXY_TLS_ROOT", root)
+    # Windows does not expose POSIX write permissions; emulate the appliance's
+    # root-owned 0600 key while preserving the real file identity and bytes.
+    original_lstat = Path.lstat
+
+    def key_lstat(self):
+        info = original_lstat(self)
+        if self == path:
+            return SimpleNamespace(st_mode=0o100600, st_uid=0, st_nlink=1,
+                                   st_dev=info.st_dev, st_ino=info.st_ino)
+        return info
+
+    monkeypatch.setattr(Path, "lstat", key_lstat)
+    recorded = helper._reverse_proxy_tls_owner(path)
+    state = {"reverse_proxy_runtime": {"retired_certificate_files": [recorded]}}
+    removed = []
+    monkeypatch.setattr(helper, "_durable_management_handoff_unlink", removed.append)
+    if change == "bytes":
+        path.write_text("replacement key", encoding="utf-8")
+    elif change == "identity":
+        recorded["inode"] += 1
+    elif change == "missing":
+        path.unlink()
+    elif change == "foreign":
+        recorded["path"] = str(root / "manual" / "certs" / "app.example.test.key")
+    if change in {"bytes", "identity", "foreign"}:
+        with pytest.raises(ValueError, match="ownership changed|path is unproven"):
+            helper._retire_reverse_proxy_runtime(state)
+        assert removed == []
+    else:
+        helper._retire_reverse_proxy_runtime(state)
+        assert removed == ([path] if change == "unchanged" else [])
+
+
+@pytest.mark.parametrize("accepted,restart_result", [(True, 0), (False, 0), (False, 1)])
+def test_nginx_reload_confirms_master_acceptance_before_existing_restart_fallback(monkeypatch, accepted, restart_result):
+    """A successful SIGHUP command with rejected bindings cannot report apply success.
+    Args:
+        monkeypatch: Scoped replacements for helper dependencies.
+        accepted: Whether nginx reports the candidate reload accepted.
+        restart_result: Result returned by the fallback restart.
+    """
+    helper = load_helper_module()
+    previous = (100, {101})
+    observed = []
+    commands = []
+    monkeypatch.setattr(helper, "_nginx_worker_generation", lambda: previous)
+    monkeypatch.setattr(helper, "_wait_nginx_reload_generation", lambda generation: observed.append(generation) or accepted)
+
+    def run(command):
+        """Simulate run for the focused fixture.
+
+        Args:
+            command: Exact bounded subprocess command under test.
+        """
+        commands.append(command)
+        return subprocess.CompletedProcess(command, restart_result if command == ["systemctl", "restart", "nginx"] else 0, "", "")
+
+    monkeypatch.setattr(helper, "_run", run)
+    assert helper._reload_nginx() == (0 if accepted else restart_result)
+    assert observed == [previous]
+    assert commands == [["systemctl", "reload", "nginx"], ["systemctl", "enable", "--now", "nginx"]] + (
+        [] if accepted else [["systemctl", "restart", "nginx"]]
+    )
+
+
+@pytest.mark.parametrize("status,pid,expected", [(0, "0", None), (1, "100", "unavailable"), (0, "invalid", "unavailable")])
+def test_nginx_generation_observer_rejects_unavailable_service_identity(monkeypatch, status, pid, expected):
+    """Exercise the production observer without inspecting an unrelated host service.
+    Args:
+        monkeypatch: Scoped replacements for helper dependencies.
+        status: systemd main-process status returned by the fixture.
+        pid: Main-process identity returned by the fixture.
+        expected: Expected observer result for the supplied service identity.
+    """
+    helper = load_helper_module(observe_nginx=True)
+    helper.os = SimpleNamespace(name="posix")
+    calls = []
+
+    def run(command, *, timeout):
+        """Simulate run for the focused fixture.
+
+        Args:
+            command: Exact bounded subprocess command under test.
+            timeout: Maximum command or request duration.
+        """
+        calls.append((command, timeout))
+        return subprocess.CompletedProcess(command, status, pid + "\n", "")
+
+    monkeypatch.setattr(helper, "_run", run)
+    if expected:
+        with pytest.raises(ValueError, match=expected):
+            helper._nginx_worker_generation()
+    else:
+        assert helper._nginx_worker_generation() is None
+    assert calls == [(["systemctl", "show", "nginx", "--property=MainPID", "--value"], 5)]
+
+
+@pytest.mark.parametrize("observations,accepted", [([(100, {101}), (100, {101, 102})], True), ([(100, {101})], False)])
+def test_nginx_reload_generation_requires_new_master_children(monkeypatch, observations, accepted):
+    """Bound reload confirmation and reject the unchanged old generation.
+    Args:
+        monkeypatch: Scoped replacements for helper dependencies.
+        observations: Bound sequence of master and worker observations.
+        accepted: Whether nginx reports the candidate reload accepted.
+    """
+    helper = load_helper_module()
+    generations = iter(observations)
+    clock = iter([0, 1, 2] if accepted else [0, 1, 11])
+    monkeypatch.setattr(helper, "_nginx_worker_generation", lambda: next(generations))
+    monkeypatch.setattr(helper.time, "monotonic", lambda: next(clock))
+    monkeypatch.setattr(helper.time, "sleep", lambda _seconds: None)
+    assert helper._wait_nginx_reload_generation((100, {101})) is accepted
+
+
+def test_nginx_reload_generation_preserves_unexpected_master_change(monkeypatch):
+    """An unrelated service generation cannot authorize further reload fallback.
+    Args:
+        monkeypatch: Scoped replacements for helper dependencies.
+    """
+    helper = load_helper_module()
+    monkeypatch.setattr(helper, "_nginx_worker_generation", lambda: (200, {201}))
+    with pytest.raises(ValueError, match="master changed"):
+        helper._wait_nginx_reload_generation((100, {101}))
+
+
+def test_reverse_proxy_service_timeout_is_sanitized_and_bounded(monkeypatch):
+    """Apply lifecycle commands with a fixed timeout and no subprocess detail leakage.
+    Args:
+        monkeypatch: Scoped replacements for helper dependencies.
+    """
+    helper = load_helper_module()
+    commands = []
+
+    def timeout(command, *, timeout):
+        """Simulate timeout for the focused fixture.
+
+        Args:
+            command: Exact bounded subprocess command under test.
+            timeout: Maximum command or request duration.
+        """
+        commands.append((command, timeout))
+        raise subprocess.TimeoutExpired(command, timeout, stderr="private diagnostic")
+
+    monkeypatch.setattr(helper, "_run", timeout)
+    with pytest.raises(ValueError, match="lifecycle operation timed out") as exc_info:
+        helper._reverse_proxy_command(["systemctl", "enable", "atlaso-reverse-proxy@" + "a" * 64 + ".service"])
+    assert commands[0][1] == 15
+    assert "private diagnostic" not in str(exc_info.value)
+
+
+def test_factory_reset_requires_admitted_marker_before_runtime_changes(monkeypatch):
+    """Keep retained proxy runtime unavailable outside the protected reset phase.
+    Args:
+        monkeypatch: Scoped replacements for helper dependencies.
+    """
+    helper = load_helper_module()
+    monkeypatch.setattr(helper, "_factory_reset_runtime_cleanup_is_admitted", lambda: False)
+    monkeypatch.setattr(helper, "_reverse_proxy_command", lambda _command: pytest.fail("must not stop a unit"))
+    monkeypatch.setattr(helper, "_durable_management_handoff_unlink", lambda _path: pytest.fail("must not unlink"))
+
+    with pytest.raises(ValueError, match="protected applying marker"):
+        helper._reset_reverse_proxy_runtime()
+
+
+def test_factory_reset_validates_all_generations_then_removes_only_owned_artifacts(tmp_path, monkeypatch):
+    """Validate each immutable manifest and unit identity before reset stops or unlinks anything.
+
+    Args:
+        tmp_path: Isolated appliance config root and generation fixtures.
+        monkeypatch: Scoped helper operations and root-owned appliance metadata.
+    """
+    from atlaso.app.services.reverse_proxy_transport import validate_manifest
+
+    helper = load_helper_module()
+    proxy = proxy_payload()
+    manifest = transport_manifest([proxy], [listener["address"] for listener in proxy["listeners"]])
+    config_root = tmp_path / "config"
+    config_root.mkdir()
+    manifest_path = config_root / (manifest["generation"] + ".json")
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    unit_path = tmp_path / "atlaso-reverse-proxy@.service"
+    unit_path.write_text(helper.REVERSE_PROXY_UNIT_TEXT, encoding="utf-8")
+    monkeypatch.setattr(helper, "REVERSE_PROXY_CONFIG_ROOT", config_root)
+    monkeypatch.setattr(helper, "REVERSE_PROXY_UNIT_PATH", unit_path)
+    monkeypatch.setattr(helper, "_factory_reset_runtime_cleanup_is_admitted", lambda: True)
+
+    mock_root_owned_path_stats(
+        monkeypatch,
+        {config_root, manifest_path, unit_path},
+        modes={config_root: helper.stat.S_IFDIR | 0o700},
+    )
+    validated = []
+
+    def validate_input(command, input_text, *, timeout):
+        """Simulate validate input for the focused fixture.
+
+        Args:
+            command: Exact bounded subprocess command under test.
+            input_text: Candidate serialized artifact submitted for validation.
+            timeout: Maximum command or request duration.
+        """
+        validated.append((command, timeout))
+        validate_manifest(json.loads(input_text))
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    commands = []
+    removed = []
+    monkeypatch.setattr(helper, "_run_with_input", validate_input)
+    monkeypatch.setattr(helper, "_reverse_proxy_command", commands.append)
+    monkeypatch.setattr(helper, "_run", lambda _command: SimpleNamespace(returncode=1))
+    monkeypatch.setattr(helper, "_durable_management_handoff_unlink", removed.append)
+
+    helper._reset_reverse_proxy_runtime()
+
+    assert validated == [(
+        [str(helper.ATLASO_VENV_PYTHON_PATH), "-I", "-B", "-m",
+         "atlaso.app.services.reverse_proxy_transport", "--validate-manifest"],
+        10,
+    )]
+    assert commands == [
+        ["systemctl", "disable", "--now", helper._reverse_proxy_unit(manifest["generation"])],
+        ["systemctl", "daemon-reload"],
+    ]
+    assert removed == [manifest_path, unit_path]
+
+
+def test_prepare_rejects_candidate_changed_after_journal_capture(tmp_path, monkeypatch):
+    """Do not install or start a generation that differs from durable handoff ownership.
+    Args:
+        tmp_path: Isolated filesystem root used for test artifacts.
+        monkeypatch: Scoped replacements for helper dependencies.
+    """
+    helper = load_helper_module()
+    candidate_path = tmp_path / "candidate.conf"
+    candidate_path.write_text("changed candidate", encoding="utf-8")
+    monkeypatch.setattr(helper, "_reverse_proxy_publication", lambda _text: _metadata("b" * 64))
+    monkeypatch.setattr(helper, "_reverse_proxy_command", lambda _command: pytest.fail("must fail before systemctl"))
+    monkeypatch.setattr(helper.grp, "getgrnam", lambda _group: pytest.fail("must fail before touching ownership"))
+    state = {"reverse_proxy_runtime": {"candidate_generation": "a" * 64}}
+
+    with pytest.raises(ValueError, match="changed after journal capture"):
+        helper._prepare_reverse_proxy_runtime(state, {"public_services_config_path": candidate_path})
+
+
+def test_front_door_readiness_checks_exact_certificate_sni_and_reserved_404(tmp_path, monkeypatch):
+    """Verify the exact public TLS identity and nginx guard without upstream access.
+    Args:
+        tmp_path: Isolated filesystem root used for test artifacts.
+        monkeypatch: Scoped replacements for helper dependencies.
+    """
+    helper = load_helper_module()
+    generation = "a" * 64
+    proxy = {"id": 10, "enabled": True, "scheme": "https", "hostname": "portal.example.test",
+             "port": 443, "redirect_http": True, "redirect_port": 80,
+             "listeners": [{"interface": "eth1", "address": "192.0.2.10"}]}
+    monkeypatch.setattr(helper, "_reverse_proxy_publication", lambda _text: {
+        "manifest": {"generation": generation}, "proxies": [proxy],
+    })
+    config_path = tmp_path / "candidate.conf"
+    config_path.write_text("candidate", encoding="utf-8")
+    connections = []
+    streams = []
+
+    class ResponseStream:
+        def __init__(self):
+            self.response = bytearray(
+                f"HTTP/1.1 404 Not Found\r\nX-Atlaso-Reverse-Proxy: 10-{generation}\r\n\r\n".encode("ascii")
+            )
+            self.request = b""
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            """Simulate   exit   for the focused fixture.
+
+            Args:
+                *_args: Fixture input for   exit  .
+            """
+            return False
+
+        def settimeout(self, _timeout):
+            """Simulate settimeout for the focused fixture.
+
+            Args:
+                _timeout: Fixture input for settimeout.
+            """
+            pass
+
+        def sendall(self, data):
+            """Simulate sendall for the focused fixture.
+
+            Args:
+                data: Fixture input for sendall.
+            """
+            self.request = data
+
+        def recv(self, size):
+            """Simulate recv for the focused fixture.
+
+            Args:
+                size: Fixture input for recv.
+            """
+            result = bytes(self.response[:size])
+            del self.response[:size]
+            return result
+
+        def close(self):
+            pass
+
+    class TlsContext:
+        verify_flags = 0
+        minimum_version = None
+
+        def wrap_socket(self, raw, *, server_hostname):
+            """Simulate wrap socket for the focused fixture.
+
+            Args:
+                raw: Fixture input for wrap socket.
+                server_hostname: Fixture input for wrap socket.
+            """
+            assert raw in streams
+            self.server_hostname = server_hostname
+            return raw
+
+    contexts = []
+    connection_attempts = 0
+
+    def create_context(*, cafile):
+        """Simulate create context for the focused fixture.
+
+        Args:
+            cafile: Fixture input for create context.
+        """
+        context = TlsContext()
+        contexts.append((cafile, context))
+        return context
+
+    monkeypatch.setattr(helper.ssl, "create_default_context", create_context)
+
+    def connect(address, timeout):
+        """Simulate connect for the focused fixture.
+
+        Args:
+            address: Fixture input for connect.
+            timeout: Maximum command or request duration.
+        """
+        nonlocal connection_attempts
+        connection_attempts += 1
+        if connection_attempts <= 3:
+            raise ConnectionRefusedError(111, "fixture listener is not ready")
+        stream = ResponseStream()
+        streams.append(stream)
+        connections.append((address, timeout))
+        return stream
+
+    monkeypatch.setattr(helper.socket, "create_connection", connect)
+    monkeypatch.setattr(helper.time, "sleep", lambda _seconds: None)
+
+    helper._verify_reverse_proxy_front_doors({"public_services_config_path": config_path})
+    assert connection_attempts == 5
+
+    certificate = str(helper.Path("/etc/atlaso/reverse-proxy-10/certs/portal.example.test.crt"))
+    assert contexts[0][0] == certificate
+    assert contexts[0][1].minimum_version == helper.ssl.TLSVersion.TLSv1_2
+    assert contexts[0][1].verify_flags & helper.ssl.VERIFY_X509_PARTIAL_CHAIN
+    assert contexts[0][1].server_hostname == "portal.example.test"
+    assert [connection[0] for connection in connections] == [("192.0.2.10", 443), ("192.0.2.10", 80)]
+    assert [stream.request for stream in streams] == [
+        b"HEAD /api/v1/ HTTP/1.1\r\nHost: portal.example.test:443\r\nConnection: close\r\n\r\n",
+        b"HEAD /api/v1/ HTTP/1.1\r\nHost: portal.example.test:80\r\nConnection: close\r\n\r\n",
+    ]
+
+
+def test_prepare_installs_validated_generation_and_waits_for_its_socket(tmp_path, monkeypatch):
+    """Prepare writes only the manifest/template and waits on the generation's Unix socket.
+    Args:
+        tmp_path: Isolated filesystem root used for test artifacts.
+        monkeypatch: Scoped replacements for helper dependencies.
+    """
+    helper = load_helper_module()
+    proxy = proxy_payload()
+    manifest = transport_manifest([proxy], [])
+    config_path = tmp_path / "candidate.conf"
+    config_path.write_text("candidate", encoding="utf-8")
+    config_root = tmp_path / "etc" / "reverse-proxies"
+    unit_path = tmp_path / "systemd" / "atlaso-reverse-proxy@.service"
+    unit_path.parent.mkdir()
+    runtime_root = tmp_path / "run" / "atlaso-rp"
+    socket_directory = runtime_root / manifest["generation"]
+    socket_directory.mkdir(parents=True)
+    for route in manifest["routes"]:
+        (socket_directory / (route["socket_id"] + ".sock")).write_bytes(b"test-only mocked socket readiness")
+
+    monkeypatch.setattr(helper, "REVERSE_PROXY_CONFIG_ROOT", config_root)
+    monkeypatch.setattr(helper, "REVERSE_PROXY_UNIT_PATH", unit_path)
+    monkeypatch.setattr(helper, "REVERSE_PROXY_RUNTIME_ROOT", runtime_root)
+    monkeypatch.setattr(helper, "_reverse_proxy_publication", lambda _text: {"manifest": manifest})
+    monkeypatch.setattr(helper.grp, "getgrnam", lambda _name: SimpleNamespace(gr_gid=123))
+    monkeypatch.setattr(helper.os, "chown", lambda *_args: None, raising=False)
+    monkeypatch.setattr(helper.os, "O_NOFOLLOW", 0, raising=False)
+    monkeypatch.setattr(helper, "_fsync_directory", lambda _path: None)
+    monkeypatch.setattr(helper.stat, "S_ISSOCK", lambda _mode: True)
+    commands = []
+
+    def run(command, *, timeout=None):
+        """Simulate run for the focused fixture.
+
+        Args:
+            command: Exact bounded subprocess command under test.
+            timeout: Maximum command or request duration.
+        """
+        commands.append((command, timeout))
+        return SimpleNamespace(returncode=0)
+
+    monkeypatch.setattr(helper, "_run", run)
+    monkeypatch.setattr(helper.time, "monotonic", lambda: 0.0)
+    monkeypatch.setattr(helper.time, "sleep", lambda _seconds: None)
+
+    helper._prepare_reverse_proxy_runtime(
+        {"reverse_proxy_runtime": {"candidate_generation": manifest["generation"]}},
+        {"public_services_config_path": config_path},
+    )
+
+    installed_manifest = config_root / (manifest["generation"] + ".json")
+    assert json.loads(installed_manifest.read_text(encoding="utf-8")) == manifest
+    assert (config_root / (manifest["generation"] + ".pending")).exists() is False
+    assert unit_path.read_text(encoding="utf-8") == helper.REVERSE_PROXY_UNIT_TEXT
+    assert commands == [
+        (["systemctl", "daemon-reload"], 15),
+        (["systemctl", "enable", "--now", helper._reverse_proxy_unit(manifest["generation"])], 15),
+        (["systemctl", "is-active", helper._reverse_proxy_unit(manifest["generation"])], None),
+    ]
+
+
+def test_final_grouped_publication_keeps_disabled_proxy_metadata_without_servers(tmp_path, monkeypatch):
+    """Final grouped publication retains metadata even when disabled proxies add no server blocks.
+    Args:
+        tmp_path: Isolated filesystem root used for test artifacts.
+        monkeypatch: Scoped replacements for helper dependencies.
+    """
+    helper = load_helper_module()
+    generation = "b" * 64
+    candidate_site = (
+        "# Managed by Atlaso. Local changes may be overwritten.\n"
+        f"# Managed reverse-proxy generation: {generation}\n"
+        '# Reverse-proxy transport manifest: {"generation":"' + generation + '"}\n'
+        '# Reverse-proxy intent: [{"enabled":false,"id":10}]\n'
+    )
+    management_path = tmp_path / "nginx" / "management.conf"
+    public_path = tmp_path / "nginx" / "public-services.conf"
+    management_path.parent.mkdir()
+    monkeypatch.setattr(helper, "NGINX_MANAGEMENT_SITE_PATH", management_path)
+    monkeypatch.setattr(helper, "NGINX_PUBLIC_SERVICES_SITE_PATH", public_path)
+    monkeypatch.setattr(helper, "_nginx_binary", lambda: "nginx")
+    monkeypatch.setattr(helper, "_install_nginx_include", lambda: None)
+    monkeypatch.setattr(helper, "_nginx_site_conflict", lambda _path, _text: None)
+    monkeypatch.setattr(helper, "_nginx_test_command", lambda: SimpleNamespace(returncode=0, stdout="", stderr=""))
+    monkeypatch.setattr(helper, "_reload_nginx", lambda: 0)
+
+    assert helper._management_handoff_publish_final_sites("# management site\n", candidate_site) == 0
+    assert public_path.read_text(encoding="utf-8") == candidate_site
+
+
+def test_public_services_apply_keeps_disabled_only_publication_metadata(tmp_path, monkeypatch):
+    """Public Services apply installs the comment-only canonical intent for disabled proxies.
+    Args:
+        tmp_path: Isolated filesystem root used for test artifacts.
+        monkeypatch: Scoped replacements for helper dependencies.
+    """
+    helper = load_helper_module()
+    config_path = tmp_path / "candidate.conf"
+    config_path.write_text("disabled proxy publication", encoding="utf-8")
+    generation = "c" * 64
+    candidate = {
+        "manifest": {"generation": generation, "routes": []},
+        "endpoints": [],
+        "proxies": [{"id": 10, "enabled": False, "hostname": "portal.example.test"}],
+    }
+    previous = {"manifest": None, "endpoints": [], "proxies": []}
+    journal = tmp_path / "handoff.json"
+    journal.write_text(json.dumps({"reverse_proxy_runtime": {"candidate_generation": None}}), encoding="utf-8")
+    installed = []
+    monkeypatch.setattr(helper, "MANAGEMENT_HANDOFF_STATE_PATH", journal)
+    monkeypatch.setattr(helper, "_validate_public_services_config_path", lambda _value: config_path)
+    monkeypatch.setattr(helper, "_public_services_config_errors", lambda _path: [])
+    monkeypatch.setattr(helper, "_reverse_proxy_applied", lambda: previous)
+    monkeypatch.setattr(helper, "_reverse_proxy_publication", lambda text: candidate if text == "disabled proxy publication" else previous)
+    monkeypatch.setattr(helper, "_factory_reset_runtime_cleanup_is_admitted", lambda: False)
+    monkeypatch.setattr(helper, "_install_nginx_site", lambda _path, text: (installed.append(text) or 0))
+
+    assert helper._handle_public_services("apply", [str(config_path)]) == 0
+    assert installed == ["disabled proxy publication"]
+
+
+def test_grouped_handoff_allows_the_managed_upgrade_map(tmp_path, monkeypatch):
+    """Carry the exact proxy connection map through grouped transition configuration.
+    Args:
+        tmp_path: Isolated filesystem root used for test artifacts.
+        monkeypatch: Scoped replacements for helper dependencies.
+    """
+    helper = load_helper_module()
+    previous_site_path = tmp_path / "previous.conf"
+    previous_site_path.write_text(
+        "# Managed by Atlaso. Local changes may be overwritten.\n"
+        "server {\n  listen 192.0.2.10:443 ssl default_server;\n  server_name _;\n}\n",
+        encoding="utf-8",
+    )
+    candidate_site = (
+        "# Managed by Atlaso. Local changes may be overwritten.\n"
+        "map $http_upgrade $atlaso_reverse_proxy_connection { default upgrade; '' close; }\n"
+        "# Managed reverse-proxy generation: " + "d" * 64 + "\n"
+        'server {\n  listen 192.0.2.20:8443 ssl;\n  server_name portal.example.test;\n}\n'
+    )
+    live_path = tmp_path / "live.conf"
+    monkeypatch.setattr(helper, "NGINX_PUBLIC_SERVICES_SITE_PATH", live_path)
+    state = {"previous_management_addresses": [], "snapshots": [
+        {"path": str(live_path), "backup": str(previous_site_path)},
+    ]}
+
+    result = helper._management_handoff_public_site_with_holdover(
+        state, candidate_site, deferred_sockets={"192.0.2.10:443"},
+    )
+
+    assert "map $http_upgrade $atlaso_reverse_proxy_connection {" in result
+    assert "listen 192.0.2.20:8443 ssl;" in result
+
+
+def test_front_door_readiness_fails_without_generation_identity_header(tmp_path, monkeypatch):
+    """A generic reserved-path 404 cannot prove the exact virtual host is active.
+    Args:
+        tmp_path: Isolated filesystem root used for test artifacts.
+        monkeypatch: Scoped replacements for helper dependencies.
+    """
+    helper = load_helper_module()
+    proxy = {"id": 10, "enabled": True, "scheme": "http", "hostname": "portal.example.test",
+             "port": 8080, "redirect_http": False, "redirect_port": 80,
+             "listeners": [{"interface": "eth1", "address": "192.0.2.10"}]}
+    monkeypatch.setattr(helper, "_reverse_proxy_publication", lambda _text: {
+        "manifest": {"generation": "a" * 64}, "proxies": [proxy],
+    })
+    config_path = tmp_path / "candidate.conf"
+    config_path.write_text("candidate", encoding="utf-8")
+
+    class MissingIdentityStream:
+        def __init__(self):
+            self.response = bytearray(b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\r\n")
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            """Simulate   exit   for the focused fixture.
+
+            Args:
+                *_args: Fixture input for   exit  .
+            """
+            return False
+
+        def settimeout(self, _timeout):
+            """Simulate settimeout for the focused fixture.
+
+            Args:
+                _timeout: Fixture input for settimeout.
+            """
+            pass
+
+        def sendall(self, _data):
+            """Simulate sendall for the focused fixture.
+
+            Args:
+                _data: Fixture input for sendall.
+            """
+            pass
+
+        def recv(self, size):
+            """Simulate recv for the focused fixture.
+
+            Args:
+                size: Fixture input for recv.
+            """
+            result = bytes(self.response[:size])
+            del self.response[:size]
+            return result
+
+    monkeypatch.setattr(helper.socket, "create_connection", lambda *_args, **_kwargs: MissingIdentityStream())
+    monkeypatch.setattr(helper.time, "sleep", lambda _seconds: None)
+    with pytest.raises(ValueError, match="exact-host front-door readiness failed"):
+        helper._verify_reverse_proxy_front_doors({"public_services_config_path": config_path})
+
+
+def test_runtime_status_reads_only_bounded_cached_health_without_probing(tmp_path, monkeypatch):
+    """Read the applied generation cache, and withhold oversized status snapshots.
+    Args:
+        tmp_path: Isolated filesystem root used for test artifacts.
+        monkeypatch: Scoped replacements for helper dependencies.
+    """
+    helper = load_helper_module()
+    generation = "a" * 64
+    runtime_root = tmp_path / "runtime"
+    generation_root = runtime_root / generation
+    generation_root.mkdir(parents=True)
+    monkeypatch.setattr(helper, "REVERSE_PROXY_RUNTIME_ROOT", runtime_root)
+    monkeypatch.setattr(helper, "_reverse_proxy_applied", lambda: {
+        "manifest": {"generation": generation, "routes": [{"socket_id": "1-2"}]},
+        "endpoints": [],
+        "proxies": [{"id": 1, "hostname": "portal.example.test"}],
+    })
+
+    def unexpected_probe(*_args, **_kwargs):
+        """Simulate unexpected probe for the focused fixture.
+
+        Args:
+            *_args: Fixture input for unexpected probe.
+            **_kwargs: Fixture input for unexpected probe.
+        """
+        raise AssertionError("status must consume cached health without probing")
+
+    monkeypatch.setattr(helper, "_run", unexpected_probe)
+    monkeypatch.setattr(helper, "_run_with_input", unexpected_probe)
+    cache = {"schema": 1, "generation": generation,
+             "health": {"1-2": {"status": "healthy"}}, "observed_at": "2026-10-07T00:00:00+00:00"}
+    cache_path = generation_root / "health.json"
+    cache_path.write_text(json.dumps(cache), encoding="utf-8")
+
+    status = helper._reverse_proxy_status()
+    assert status == {"schema": 1, "proxies": [{"id": 1, "hostname": "portal.example.test"}],
+                      "generation": generation, "health": cache["health"], "observed_at": cache["observed_at"]}
+
+    cache_path.write_text(" " * 262145, encoding="utf-8")
+    unavailable = helper._reverse_proxy_status()
+    assert unavailable["health"] == {}
+    assert unavailable["observed_at"] is None
+
+
+def test_runtime_status_keeps_previous_snapshot_until_matching_commit_receipt(tmp_path, monkeypatch):
+    """Hide candidate publication during an uncommitted handoff and expose it after commit.
+    Args:
+        tmp_path: Isolated filesystem root used for test artifacts.
+        monkeypatch: Scoped replacements for helper dependencies.
+    """
+    helper = load_helper_module()
+    old = _metadata("a" * 64)
+    old["proxies"] = [{"id": 1, "name": "Previous"}]
+    current = _metadata("b" * 64)
+    current["proxies"] = [{"id": 2, "name": "Candidate"}]
+    backup_dir = tmp_path / "backups"
+    backup_dir.mkdir()
+    backup = backup_dir / "public-services.conf"
+    backup.write_text("old-site", encoding="utf-8")
+    state_path = tmp_path / "handoff.json"
+    receipt_path = tmp_path / "commit.json"
+    nginx_site = tmp_path / "nginx" / "public-services.conf"
+    state_path.write_text(json.dumps({"job_id": "job-1", "snapshots": [{
+        "path": str(nginx_site), "existed": True, "backup": str(backup),
+    }]}), encoding="utf-8")
+    monkeypatch.setattr(helper, "MANAGEMENT_HANDOFF_STATE_PATH", state_path)
+    monkeypatch.setattr(helper, "MANAGEMENT_HANDOFF_COMMIT_PATH", receipt_path)
+    monkeypatch.setattr(helper, "MANAGEMENT_HANDOFF_BACKUP_DIR", backup_dir)
+    monkeypatch.setattr(helper, "NGINX_PUBLIC_SERVICES_SITE_PATH", nginx_site)
+    monkeypatch.setattr(helper, "REVERSE_PROXY_RUNTIME_ROOT", tmp_path / "runtime")
+    def committed_applied():
+        receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+        if receipt.get("phase") == "committed" and receipt.get("job_id") == "job-1":
+            return current
+        pytest.fail("status must prefer the protected previous snapshot during handoff")
+
+    monkeypatch.setattr(helper, "_reverse_proxy_applied", committed_applied)
+    monkeypatch.setattr(helper, "_reverse_proxy_publication", lambda text: old if text == "old-site" else current)
+    monkeypatch.setattr(helper, "_run", lambda *_args, **_kwargs: pytest.fail("status must not invoke systemctl"))
+
+    no_receipt = helper._reverse_proxy_status()
+    assert no_receipt["proxies"] == old["proxies"]
+    assert no_receipt["generation"] == "a" * 64
+    receipt_path.write_text(json.dumps({"phase": "committed", "job_id": "another-job"}), encoding="utf-8")
+    mismatched_receipt = helper._reverse_proxy_status()
+    assert mismatched_receipt["proxies"] == old["proxies"]
+
+    receipt_path.write_text(json.dumps({"phase": "committed", "job_id": "job-1"}), encoding="utf-8")
+    committed = helper._reverse_proxy_status()
+    assert committed["proxies"] == current["proxies"]
+    assert committed["generation"] == "b" * 64
+
+
+def test_interrupted_committed_handoff_retires_without_rollback(tmp_path, monkeypatch, capsys):
+    """Complete the durable-commit cleanup window instead of restoring old settings.
+    Args:
+        tmp_path: Isolated filesystem root used for test artifacts.
+        monkeypatch: Scoped replacements for helper dependencies.
+        capsys: Captured stdout and stderr for the logging assertion.
+    """
+    helper = load_helper_module()
+    state_path = tmp_path / "handoff.json"
+    receipt_path = tmp_path / "commit.json"
+    state = {"job_id": "job-1", "reverse_proxy_runtime": {"previous_generation": "a" * 64}}
+    state_path.write_text(json.dumps(state), encoding="utf-8")
+    receipt_path.write_text(json.dumps({"phase": "committed", "job_id": "job-1"}), encoding="utf-8")
+    monkeypatch.setattr(helper, "MANAGEMENT_HANDOFF_STATE_PATH", state_path)
+    monkeypatch.setattr(helper, "MANAGEMENT_HANDOFF_COMMIT_PATH", receipt_path)
+    monkeypatch.setattr(helper, "_quiesce_management_handoff_apply", lambda: {"state": "quiesced"})
+    retired = []
+    cleared = []
+    monkeypatch.setattr(helper, "_retire_reverse_proxy_runtime", retired.append)
+    monkeypatch.setattr(helper, "_restore_management_handoff",
+                        lambda _state: pytest.fail("committed handoff must not roll back"))
+    monkeypatch.setattr(helper, "_clear_management_handoff_state",
+                        lambda *, keep_commit_receipt=False: cleared.append(keep_commit_receipt))
+
+    assert helper._recover_management_handoff() == 0
+    assert retired == [state]
+    assert cleared == [True]
+    assert json.loads(capsys.readouterr().out)["management_handoff"] == "committed recovery complete"
+
+
+def test_runtime_status_main_dispatch_emits_one_readonly_snapshot(monkeypatch, capsys):
+    """Exercise the CLI gate and keep invocation records out of status JSON.
+
+    Args:
+        monkeypatch: Scoped cache-reader replacement.
+        capsys: Captured helper standard output and error.
+    """
+    helper = load_helper_module()
+    snapshot = {"schema": 1, "proxies": [], "generation": None, "health": {}, "observed_at": "2026-10-07T20:00:00+00:00"}
+    calls = []
+    def read_cache():
+        """Return the cached observation without any service operation."""
+        calls.append("read")
+        return snapshot
+    monkeypatch.setattr(helper, "_reverse_proxy_status", read_cache)
+    assert helper.main(["atlaso-helper", "public-services", "reverse-proxy-status", "--real"]) == 0
+    assert json.loads(capsys.readouterr().out) == snapshot
+    assert calls == ["read"]
+    assert helper.main(["atlaso-helper", "public-services", "reverse-proxy-status", "--real", "/etc/atlaso/unused"]) == 2
+    assert calls == ["read"]
+    capsys.readouterr()
+    assert helper.main(["atlaso-helper", "public-services", "reverse-proxy-status"]) == 0
+    assert json.loads(capsys.readouterr().out)["dry_run"] is True
+    assert calls == ["read"]
+
+
+@pytest.mark.parametrize("previous_tuning", [False, True])
+@pytest.mark.parametrize("transition", ["deferred", "retained-tls"])
+def test_grouped_handoff_preserves_rendered_proxy_hash_settings_once(tmp_path, monkeypatch, previous_tuning, transition):
+    """Carry bounded hash settings across both old TLS and deferred-socket paths.
+
+    Args:
+        tmp_path: Isolated test filesystem.
+        monkeypatch: Replace retained-site and address observation.
+        previous_tuning: Whether the old site already carries current hash limits.
+        transition: Protected handoff path requiring socket retention.
+    """
+    helper = load_helper_module()
+    header = "# Managed by Atlaso. Local changes may be overwritten.\n"
+    proxy = proxy_payload()
+    proxy.update(scheme="http", redirect_http=False, port=8080)
+    proxy["listeners"] = [{"interface": "eth1", "address": "192.0.2.20"}]
+    candidate = header + render_proxy_servers([proxy], transport_manifest([proxy], ["192.0.2.20"]))
+    old = header + "server {\n  listen 192.0.2.10:443 ssl default_server;\n  server_name _;\n}\n"
+    directives = ["server_names_hash_bucket_size 512;", "server_names_hash_max_size 4096;"]
+    if previous_tuning:
+        old += "\n".join(directives) + "\n"
+    monkeypatch.setattr(helper, "_management_handoff_previous_public_tls_addresses",
+                        lambda _state: ["192.0.2.10"] if transition == "retained-tls" else [])
+    monkeypatch.setattr(helper, "_management_handoff_retained_public_site", lambda _state: old)
+    monkeypatch.setattr(helper, "_management_handoff_snapshot_text", lambda *_args: old)
+    result = helper._management_handoff_public_site_with_holdover(
+        {}, candidate, deferred_sockets={"192.0.2.10:443"} if transition == "deferred" else None,
+    )
+    assert "listen 192.0.2.10:443 ssl default_server;" in result
+    assert "listen 192.0.2.20:8080;" in result
+    assert "server_name portal.example.test;" in result
+    for directive in directives:
+        assert result.splitlines().count(directive) == 1
+    assert result.count("map $http_upgrade $atlaso_reverse_proxy_connection {") == 1
+
+
+@pytest.mark.parametrize("unexpected", [
+    "server_names_hash_bucket_size 64;",
+    "server_names_hash_max_size 8192;",
+    "server_names_hash_bucket_size 512; server_tokens off;",
+    "server_names_hash_bucket_size 512;\nserver_names_hash_bucket_size 512;",
+])
+def test_grouped_handoff_rejects_modified_or_duplicate_hash_directives(monkeypatch, unexpected):
+    """The handoff parser admits exact generated directives without a broad bypass.
+
+    Args:
+        monkeypatch: Replace old-site observation with controlled canonical input.
+        unexpected: Unsupported or duplicated top-level nginx text.
+    """
+    helper = load_helper_module()
+    header = "# Managed by Atlaso. Local changes may be overwritten.\n"
+    old = header + "server {\n  listen 192.0.2.10:443 ssl;\n  server_name _;\n}\n"
+    monkeypatch.setattr(helper, "_management_handoff_previous_public_tls_addresses", lambda _state: [])
+    monkeypatch.setattr(helper, "_management_handoff_snapshot_text", lambda *_args: old)
+    with pytest.raises(ValueError, match="Public Services handoff site"):
+        helper._management_handoff_public_site_with_holdover(
+            {}, header + unexpected + "\n", deferred_sockets={"192.0.2.10:443"},
+        )

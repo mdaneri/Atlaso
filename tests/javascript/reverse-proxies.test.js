@@ -1,0 +1,634 @@
+const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const vm = require("node:vm");
+const test = require("node:test");
+
+const reverseProxies = require("../../atlaso/app/static/reverse-proxies.js");
+
+test("wizard rejects invalid served and upstream names on the affected step", () => {
+  const source = fs.readFileSync("atlaso/app/static/reverse-proxies.js", "utf8");
+  const start = source.indexOf("    function validateStep({ step }) {");
+  const end = source.indexOf("    function populateReview()", start);
+  const hostname = { value: "app" };
+  const fields = { path_prefix: { value: "/app/" }, upstream_host: { value: "bad host" }, upstream_scheme: { value: "http" } };
+  const context = vm.createContext({ ...reverseProxies, form: { querySelector: () => hostname },
+    routeNodes: () => [{}], routeField: (_route, name) => fields[name] });
+  vm.runInContext(source.slice(start, end), context);
+  for (const value of ["app", "127.1", "0177.0.0.1", "0x7f.0.0.1", "127.0.1", "2130706433", "0x7f000001", "0300.0.2.1", "192.0.2.10", "192.0.2.10.", "::1", "bad host.example", "https://app.example", "app.example:443", "-app.example", "a".repeat(64) + ".test", "a".repeat(254)]) {
+    hostname.value = value;
+    const result = context.validateStep({ step: { id: "identity" } });
+    assert.equal(result.valid, false, value);
+    assert.equal(result.field, hostname);
+  }
+  for (const value of ["APP.Example.TEST.", "192.0.2.10.test", "999.0.2.10", "a".repeat(63) + ".test"]) {
+    hostname.value = value;
+    assert.equal(context.validateStep({ step: { id: "identity" } }), true, value);
+  }
+  for (const value of ["127.1", "0177.0.0.1", "0x7f.0.0.1", "127.0.1", "2130706433", "0x7f000001", "0300.0.2.1", "bad host", "https://app.test", "app.test:443", "user@app.test", "[::1]", "2001:::1", "::ffff:192.0.2.999", "fe80::1%eth0", "bad..test", "-app", "a".repeat(64),
+    "192.0.2.30" + ".".repeat(254), "127.0.0.1", "127.255.255.255", "127.0.0.1.", "169.254.1.1", "224.0.0.1", "239.255.255.255", "240.0.0.1", "255.255.255.255", "0.0.0.0",
+    "::", "::1", "fe80::1", "febf::1", "ff02::1", "::ffff:192.0.2.30", "fe80::192.0.2.1", "ff02::192.0.2.1", "2001:4860::192.0.2.999", "64:ff9b::1", "100::1", "4000::1", "fbff::1", "fe00::1"]) {
+    fields.upstream_host.value = value;
+    const result = context.validateStep({ step: { id: "routes" } });
+    assert.equal(result.valid, false, value);
+    assert.equal(result.field, fields.upstream_host);
+  }
+  for (const value of ["backend", "APP.Example.TEST.", "192.0.2.30", "10.0.0.1", "0.0.0.1", "126.255.255.255", "128.0.0.1", "169.253.255.255", "169.255.0.0", "223.255.255.255",
+    "2001:4860::192.0.2.1", "2001:db8::192.0.2.30", "fc00::192.0.2.1", "2001:db8::30", "2001:db8:0:0:0:0:0:30", "2000::1", "3fff::1", "fc00::1", "fdff::1", "fec0::1", "feff::1"]) {
+    fields.upstream_host.value = value;
+    assert.equal(context.validateStep({ step: { id: "routes" } }), true, value);
+  }
+});
+
+test("listener step rejects equal redirect ports and preserves distinct or disabled redirects", () => {
+  const source = fs.readFileSync("atlaso/app/static/reverse-proxies.js", "utf8");
+  const start = source.indexOf("    function validateStep({ step }) {");
+  const end = source.indexOf("    function populateReview()", start);
+  const redirect = { checked: true }, scheme = { value: "https" };
+  const port = { value: "443" }, redirectPort = { value: "443" };
+  const fields = { "[data-reverse-proxy-redirect]": redirect, "[data-reverse-proxy-scheme]": scheme,
+    '[name="port"]': port, '[name="redirect_port"]': redirectPort };
+  const context = vm.createContext({ form: { querySelector: (selector) => fields[selector] },
+    listenerSelect: { selectedOptions: [{}] } });
+  vm.runInContext(source.slice(start, end), context);
+  const validate = () => context.validateStep({ step: { id: "listener" } });
+  assert.equal(validate().valid, false);
+  assert.equal(validate().field, redirectPort);
+  redirectPort.value = "0443";
+  assert.equal(validate().valid, false);
+  redirectPort.value = "80";
+  assert.equal(validate(), true);
+  redirectPort.value = "443";
+  redirect.checked = false;
+  assert.equal(validate(), true);
+  redirect.checked = true;
+  scheme.value = "http";
+  assert.equal(validate().valid, false);
+  assert.equal(validate().field, "scheme");
+});
+
+test("path prefixes overlap when one can capture the other", () => {
+  assert.equal(reverseProxies.pathsOverlap("/app", "/app/admin"), true);
+  assert.equal(reverseProxies.pathsOverlap("/app/", "/api/"), false);
+  assert.equal(reverseProxies.pathsOverlap("", "/app"), false);
+});
+
+test("route steps reject ambiguous paths before review", () => {
+  for (const path of ["/app%2Fadmin", "/app//admin", "/app/../admin", "/./app", "/app\\admin", "/a b", "/a\t", "/a\u0085b", "/a?b", "/a#b", "/a;b", "/a{b", "/a}b", "/a$b", '/a"b', "/a'b", "/a\x00", "/a\x7f", "app", "", "/" + "a".repeat(1024)]) {
+    assert.equal(reverseProxies.validPathPrefix(path), false, path);
+  }
+  for (const path of ["/", "/app/", "/app/admin", "/a-b_c.json", "/" + "a".repeat(1023)]) {
+    assert.equal(reverseProxies.validPathPrefix(path), true, path);
+  }
+});
+
+test("path limits count Unicode code points and permit their UTF-16 input representation", () => {
+  for (const count of [600, 1023]) assert.equal(reverseProxies.validPathPrefix("/" + "😀".repeat(count)), true);
+  assert.equal(reverseProxies.validPathPrefix("/" + "😀".repeat(1024)), false);
+  const template = fs.readFileSync("atlaso/app/templates/partials/reverse_proxies.html", "utf8");
+  assert.equal((template.match(/name="path_prefix" maxlength="2048"/g) || []).length, 2);
+  assert.doesNotMatch(template, /name="path_prefix" maxlength="1024"/);
+});
+
+test("successful saves consume the returned collection and ignore older GET responses", async () => {
+  const source = fs.readFileSync("atlaso/app/static/reverse-proxies.js", "utf8");
+  const applyStart = source.indexOf("    function applyCollection(");
+  const applyEnd = source.indexOf("    function routeField(", applyStart);
+  const submitStart = source.indexOf("    async function submitPayload(");
+  const submitEnd = source.indexOf("    function openWizard(", submitStart);
+  const enabledStart = source.indexOf("    const saveEnabled =");
+  const enabledEnd = source.indexOf("    const text =", enabledStart);
+  const saved = { items: [{ id: 7, name: "Saved", enabled: true, routes: [], listeners: [] }], listener_options: [], config_preview: "new preview" };
+  let finishGet, failPost = false;
+  const calls = [], collections = [], previews = [];
+  const context = vm.createContext({ MAX_ITEMS: 512, loadSequence: 0, saveUrl: "/save", dataUrl: "/data", csrf: "test", canWrite: true, items: [],
+    serializeProxy: (record, enabled) => ({ ...record, enabled }), visibleProxyRow: reverseProxies.visibleProxyRow,
+    setCollectionRows: (items) => { context.items = items; collections.push(items); },
+    updateListenerOptions: () => {}, setValidation: (payload) => previews.push(payload.config_preview), showError: () => {},
+    endpointMessage: async () => "POST rejected",
+    fetch: async (url, options) => {
+      calls.push([url, options.method]);
+      if (options.method === "POST") return { ok: !failPost, json: async () => saved };
+      return new Promise((resolve) => { finishGet = resolve; });
+    } });
+  vm.runInContext(source.slice(applyStart, applyEnd) + source.slice(submitStart, submitEnd)
+    + source.slice(enabledStart, enabledEnd) + "globalThis.runEnabled = saveEnabled;", context);
+  const pending = context.refreshData();
+  await context.submitPayload({ id: 7, enabled: true });
+  assert.equal(collections.at(-1), saved.items);
+  assert.equal(previews.at(-1), "new preview");
+  finishGet({ ok: true, json: async () => ({ items: [{ id: 7, enabled: false }], listener_options: [] }) });
+  await pending;
+  assert.equal(collections.length, 1);
+  assert.equal(calls.length, 2); // The initial GET and save POST; no post-save GET.
+  let restored = 0, updated;
+  const cell = { getRow: () => ({ getData: () => ({ id: 7 }), update: async (row) => { updated = row; } }),
+    getValue: () => true, restoreOldValue: () => { restored += 1; } };
+  await context.runEnabled(cell);
+  assert.equal(restored, 0);
+  assert.equal(updated.enabled, true);
+  failPost = true;
+  await context.runEnabled(cell);
+  assert.equal(restored, 1);
+  failPost = false;
+  saved.items = null;
+  await assert.rejects(context.submitPayload({ id: 7 }), /change was saved.*Refresh the page/);
+});
+
+test("fallback deletes share confirmation and consume returned collections without a follow-up GET", async () => {
+  const source = fs.readFileSync("atlaso/app/static/reverse-proxies.js", "utf8");
+  const helperStart = source.indexOf("    async function applyMutationResponse(");
+  const helperEnd = source.indexOf("    function openWizard(", helperStart);
+  const actionStart = source.indexOf("    async function deleteProxy(");
+  const actionEnd = source.indexOf("    const fallback =", actionStart);
+  const fallbackStart = source.lastIndexOf('    fallback?.addEventListener("click",');
+  const fallbackEnd = source.indexOf("\n\n    try {", fallbackStart);
+  class Element {
+    constructor(id) { this.dataset = { reverseProxyDelete: id }; }
+    closest(selector) { return selector === "[data-reverse-proxy-delete]" ? this : null; }
+  }
+  let handler;
+  let allowed = true, ok = true, malformed = false;
+  const calls = [], errors = [], collections = [], confirmations = [];
+  const deleted = { items: [], listener_options: [], config_preview: "retired preview" };
+  const context = vm.createContext({ loadSequence: 0, saveUrl: "/proxies/save", csrf: "test",
+    canWrite: true, Element, items: [{ id: 7, name: "Proxy" }],
+    fallback: { addEventListener: (_type, callback) => { handler = callback; } },
+    global: { requestConfirmation: async (options) => { confirmations.push(options); return allowed; } },
+    applyCollection: (payload) => { if (!Array.isArray(payload.items)) throw new Error("invalid"); collections.push(payload); },
+    showError: (error) => errors.push(error), endpointMessage: async () => "Delete rejected",
+    fetch: async (url, options) => { calls.push([url, options]); return { ok, json: async () => malformed ? {} : deleted }; },
+  });
+  vm.runInContext(source.slice(helperStart, helperEnd) + source.slice(actionStart, actionEnd)
+    + source.slice(fallbackStart, fallbackEnd), context);
+  const button = new Element("7");
+  await handler({ target: button });
+  assert.equal(confirmations[0].title, "Delete reverse proxy Proxy?");
+  assert.match(confirmations[0].message, /desired state.*Global Appliance Apply/);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0][0], "/proxies/7/delete");
+  assert.equal(calls[0][1].method, "POST");
+  assert.equal(calls[0][1].headers["X-CSRF-Token"], "test");
+  assert.equal(calls[0][1].credentials, "same-origin");
+  assert.equal(collections.at(-1), deleted);
+  assert.equal(errors.at(-1), "");
+  allowed = false;
+  await handler({ target: button });
+  assert.equal(calls.length, 1);
+  allowed = true; ok = false;
+  await handler({ target: button });
+  assert.equal(errors.at(-1), "Delete rejected");
+  assert.equal(collections.length, 1);
+  ok = true; malformed = true;
+  await handler({ target: button });
+  assert.match(errors.at(-1), /change was deleted.*Refresh the page/);
+  const before = calls.length, confirmed = confirmations.length;
+  vm.runInContext("canWrite = false", context);
+  await handler({ target: button });
+  assert.equal(calls.length, before);
+  assert.equal(confirmations.length, confirmed);
+  vm.runInContext("canWrite = true", context);
+  await handler({ target: new Element("999") });
+  assert.equal(calls.length, before);
+  assert.equal(confirmations.length, confirmed);
+});
+
+test("route steps reject every reserved component without rejecting neighboring application names", () => {
+  const reserved = ["ui", "api", "openapi.json", "identity", "ca", "pxe", "prod", "registry", "v2", "static",
+    "manifest.webmanifest", "service-worker.js", "terminal", "requests", "depot",
+    "favicon.ico", "certificate-authority", "oauth", "openid", "oidc"];
+  for (const name of reserved) {
+    for (const path of [`/${name}`, `/${name}/app`, `/${name.toUpperCase()}/`]) {
+      assert.equal(reverseProxies.validPathPrefix(path), false, path);
+    }
+    assert.equal(reverseProxies.validPathPrefix(`/${name}-app/`), name !== "prod", name);
+  }
+  assert.equal(reverseProxies.validPathPrefix("/ſtatic/app"), false);
+  assert.equal(reverseProxies.validPathPrefix("/"), true);
+  assert.equal(reverseProxies.validPathPrefix("/app/api/"), true);
+});
+
+test("browser route validation covers the canonical protocol namespace inventory", () => {
+  const source = fs.readFileSync("atlaso/app/ui_routes.py", "utf8");
+  for (const name of ["PROTOCOL_PATH_PREFIXES", "PROTOCOL_EXACT_PATHS"]) {
+    const section = source.match(new RegExp(`${name} = [\\s\\S]*?\\r?\\n\\)`))[0];
+    for (const match of section.matchAll(/"([^"\n]+)"/g)) {
+      const path = name === "PROTOCOL_PATH_PREFIXES" ? match[1] + "artifact" : match[1];
+      assert.equal(reverseProxies.validPathPrefix(path), false, path);
+    }
+  }
+  assert.equal(reverseProxies.validPathPrefix("/certificate-authority/certificates/10/downloads/pem"), false);
+});
+
+test("browser retains slashless PROD prefix parity with canonical backend inventory", () => {
+  const inventory = fs.readFileSync("atlaso/app/ui_routes.py", "utf8");
+  assert.match(inventory, /"\/PROD",/);
+  for (const path of ["/product", "/production", "/prod-app", "/PRODartifact", "/PrOd-app/"]) {
+    assert.equal(reverseProxies.validPathPrefix(path), false, path);
+  }
+  assert.equal(reverseProxies.validPathPrefix("/app/product"), true);
+});
+
+test("fallback add action opens the existing new-proxy wizard", () => {
+  const source = fs.readFileSync("atlaso/app/static/reverse-proxies.js", "utf8");
+  const start = source.lastIndexOf('    fallback?.addEventListener("click",');
+  const end = source.indexOf("\n\n    try {", start);
+  class Element { closest(selector) { return selector === "[data-reverse-proxy-add]" ? this : null; } }
+  let handler; const opened = [];
+  const context = vm.createContext({ Element, fallback: { addEventListener: (_type, callback) => { handler = callback; } },
+    edit: (...args) => opened.push(args), items: [] });
+  vm.runInContext(source.slice(start, end), context);
+  const launcher = new Element();
+  handler({target: launcher});
+  assert.equal(opened.length, 1);
+  assert.equal(opened[0][0], null);
+  assert.equal(opened[0][1], launcher);
+});
+
+test("health projection contains bounded status fields without response payloads", () => {
+  const row = reverseProxies.routeHealthRow({
+    proxy_id: 21,
+    route_id: 34,
+    proxy_name: "Inventory",
+    path_prefix: "/inventory/",
+    status: "degraded",
+    last_success: "2026-10-06T18:00:00Z",
+    failure_class: "upstream_http",
+    http_status: 504,
+    tls_status: "not applicable",
+    applied: true,
+    pending: false,
+    warning: "The upstream did not respond within the configured timeout.",
+    response_body: "secret application data",
+    detail: "raw response details",
+  });
+
+  assert.equal(row.failure_class, "upstream_http");
+  assert.equal(row.proxy_id, 21);
+  assert.equal(row.route_id, 34);
+  assert.equal(typeof row.proxy_id, "number");
+  assert.equal(row.http_status, "504");
+  assert.equal(Object.hasOwn(row, "response_body"), false);
+  assert.equal(Object.hasOwn(row, "detail"), false);
+});
+
+test("health display maps worker states without losing apply, TLS, or warning details", () => {
+  const pending = reverseProxies.healthDisplayRow({
+    proxy_id: 21,
+    route_id: 35,
+    status: "pending",
+    failure_class: "desired_state_pending",
+    tls_status: "not_probed",
+    pending: true,
+    applied: false,
+  });
+  assert.equal(pending.status, "Pending");
+  assert.equal(pending.failure_class, "Desired state pending");
+  assert.equal(pending.http_tls, "TLS Not probed");
+  assert.equal(pending.apply_state, "Pending apply");
+
+  const insecure = reverseProxies.healthDisplayRow({
+    proxy_id: 21,
+    route_id: 36,
+    status: "degraded",
+    failure_class: "insecure_verification",
+    tls_status: "insecure",
+    http_status: 502,
+    pending: false,
+    applied: true,
+    warning: "Upstream certificate verification is disabled; this route remains degraded.",
+  });
+  assert.equal(insecure.status, "Degraded");
+  assert.equal(insecure.failure_class, "Insecure verification");
+  assert.equal(insecure.http_tls, "HTTP 502 · TLS Insecure");
+  assert.equal(insecure.apply_state, "Applied");
+  assert.match(insecure.warning, /verification is disabled/);
+
+  const healthy = reverseProxies.healthDisplayRow({
+    status: "healthy",
+    tls_status: "trusted_ca",
+    pending: false,
+    applied: true,
+  });
+  assert.equal(healthy.status, "Healthy");
+  assert.equal(healthy.failure_class, "—");
+  assert.equal(healthy.http_tls, "TLS Trusted CA");
+  assert.equal(healthy.apply_state, "Applied");
+
+  const unavailable = reverseProxies.healthDisplayRow({
+    status: "unavailable",
+    failure_class: "runtime_observer_unavailable",
+    tls_status: "not_probed",
+    pending: true,
+    applied: false,
+  });
+  assert.equal(unavailable.status, "Unavailable");
+  assert.equal(unavailable.failure_class, "Runtime observation unavailable");
+  assert.equal(unavailable.apply_state, "Pending apply");
+
+  const disabled = reverseProxies.healthDisplayRow({
+    status: "disabled",
+    applied: true,
+    pending: false,
+  });
+  assert.equal(disabled.status, "Disabled");
+  assert.equal(disabled.apply_state, "Applied");
+});
+
+test("health refresh keeps the visible fallback when shared grid creation has no table", async () => {
+  const source = fs.readFileSync("atlaso/app/static/reverse-proxies.js", "utf8");
+  const hook = "  const api = Object.freeze({";
+  assert.equal(source.split(hook).length, 2, "expected one private API assembly point");
+  const instrumented = source.replace(hook, "  globalThis.__initializeHealthForTest = initializeHealth;\n" + hook);
+  const fallbackClasses = new Set(["hidden"]);
+  const gridClasses = new Set();
+  class Node {
+    constructor(tag) { this.tagName = tag; this.children = []; this.textContent = ""; }
+    appendChild(child) { this.children.push(child); }
+    replaceChildren(...children) { this.children = children; }
+    set innerHTML(_value) { throw new Error("health values must use text nodes"); }
+  }
+  const body = new Node("tbody");
+  const fallback = { classList: classListFor(fallbackClasses), tBodies: [body] };
+  let observations = [{ proxy_name: "<img src=x>", path_prefix: "/inventory/", status: "degraded",
+    last_success: "2026-10-08T02:00:00Z", failure_class: "upstream_http", http_status: 502,
+    tls_status: "trusted_ca", applied: true, pending: true, warning: "<script>warning</script>" }];
+  const element = {
+    dataset: { fallbackId: "health-fallback", healthUrl: "/health" },
+    classList: classListFor(gridClasses),
+  };
+  const message = { textContent: "" };
+  const sandbox = {
+    AbortController,
+    AtlasoUiPatterns: { createGrid: () => ({ table: null }) },
+    document: {
+      readyState: "loading",
+      createElement: (tag) => new Node(tag),
+      addEventListener() {},
+      getElementById: () => fallback,
+      querySelector: (selector) => selector === "[data-reverse-proxy-health-message]" ? message : null,
+    },
+    fetch: async () => ({ ok: true, json: async () => ({ items: observations }) }),
+    window: { setTimeout: () => 1, clearTimeout() {} },
+  };
+  vm.runInNewContext(instrumented, sandbox, { filename: "reverse-proxies.js" });
+
+  const errors = [];
+  const health = sandbox.__initializeHealthForTest(element, (error) => errors.push(error));
+  await health.refresh();
+
+  assert.equal(health.table, null);
+  assert.equal(gridClasses.has("hidden"), true);
+  assert.equal(fallbackClasses.has("hidden"), false);
+  assert.equal(element.dataset.atlasoGridState, "fallback");
+  assert.match(message.textContent, /Showing the fallback view/);
+  assert.deepEqual(errors, []);
+  assert.equal(body.children.length, 1);
+  assert.deepEqual(body.children[0].children.map((cell) => cell.textContent), [
+    "<img src=x>", "/inventory/", "Degraded", "2026-10-08T02:00:00Z", "Upstream HTTP error",
+    "HTTP 502 · TLS Trusted CA", "Applied with pending changes", "<script>warning</script>",
+  ]);
+  observations = [{ proxy_name: "New", path_prefix: "/new/", status: "healthy", applied: true }];
+  await health.refresh();
+  assert.equal(body.children.length, 1);
+  assert.equal(body.children[0].children[0].textContent, "New");
+  assert.equal(body.children[0].children[2].textContent, "Healthy");
+  observations = [];
+  await health.refresh();
+  assert.equal(body.children.length, 1);
+  assert.equal(body.children[0].children[0].colSpan, 8);
+  assert.equal(body.children[0].children[0].textContent, "No route health observations are available.");
+});
+
+test("inline save serializes only the complete desired-state model", () => {
+  const payload = reverseProxies.serializeProxy({
+    id: 21,
+    name: "Inventory",
+    description: "Internal inventory app",
+    hostname: "inventory.example.test",
+    scheme: "https",
+    port: 8443,
+    redirect_http: true,
+    redirect_port: 8080,
+    enabled: false,
+    public_listing: false,
+    managed_dns: true,
+    listeners: [{ interface: "eth2", address: "192.0.2.10", label: "read-only projection" }],
+    routes: [{
+      id: 34,
+      path_prefix: "/inventory/",
+      upstream_scheme: "https",
+      upstream_host: "192.0.2.30",
+      upstream_port: 9443,
+      path_behavior: "strip",
+      trust_mode: "fingerprint",
+      fingerprint: "ab".repeat(32),
+      insecure_acknowledged: true,
+      health_status: "healthy",
+      last_probe_detail: "read-only projection",
+    }],
+    connect_timeout: 7,
+    read_timeout: 45,
+    send_timeout: 55,
+    body_limit: 8388608,
+    health_status: "healthy",
+    pending: false,
+  }, true);
+
+  assert.equal(payload.id, 21);
+  assert.equal(payload.enabled, true);
+  assert.deepEqual(payload.listeners, [{ interface: "eth2", address: "192.0.2.10" }]);
+  assert.deepEqual(payload.routes[0], {
+    id: 34,
+    path_prefix: "/inventory/",
+    upstream_scheme: "https",
+    upstream_host: "192.0.2.30",
+    upstream_port: 9443,
+    path_behavior: "strip",
+    trust_mode: "fingerprint",
+    fingerprint: "ab".repeat(32),
+    insecure_acknowledged: false,
+  });
+  assert.equal(Object.hasOwn(payload, "health_status"), false);
+  assert.equal(Object.hasOwn(payload.routes[0], "last_probe_detail"), false);
+});
+
+test("wizard payload normalizes every fingerprint separator accepted by validation", () => {
+  const source = fs.readFileSync("atlaso/app/static/reverse-proxies.js", "utf8");
+  const helperStart = source.indexOf("  function normalizeFingerprint(value) {");
+  const helperEnd = source.indexOf("\n  }", helperStart) + "\n  }".length;
+  const collectStart = source.indexOf("    function collectPayload() {");
+  const validateStart = source.indexOf("    function validateStep({ step }) {", collectStart);
+  assert.ok(helperStart >= 0 && helperEnd > helperStart && collectStart >= 0 && validateStart > collectStart);
+  const helperSource = source.slice(helperStart, helperEnd);
+  const collectSource = source.slice(collectStart, validateStart);
+  const expected = "ab".repeat(32);
+  const variants = [
+    expected.match(/.{2}/g).join(":"),
+    expected.match(/.{2}/g).join("-"),
+    `${expected.slice(0, 18)} ${expected.slice(18, 42)}\t${expected.slice(42)}`,
+  ];
+
+  for (const fingerprint of variants) {
+    const harness = `
+      const DEFAULTS = { connect_timeout: 5, read_timeout: 60, send_timeout: 60, body_limit: 16777216 };
+      ${helperSource}
+      const routeFields = {
+        route_id: { value: "" }, path_prefix: { value: "/" },
+        upstream_scheme: { value: "https" }, upstream_host: { value: "upstream.example.test" },
+        upstream_port: { value: "443" }, path_behavior: { value: "preserve" },
+        trust_mode: { value: "fingerprint" }, fingerprint: { value: ${JSON.stringify(fingerprint)} },
+      };
+      function routeField(_route, name) { return routeFields[name]; }
+      function routeNodes() { return [{}]; }
+      const listenerSelect = null;
+      const values = {
+        name: { value: "Inventory" }, description: { value: "" }, hostname: { value: "inventory.example.test" },
+        scheme: { value: "https" }, port: { value: "443" }, redirect_port: { value: "0" },
+        redirect_http: { checked: false }, enabled: { checked: false }, public_listing: { checked: true },
+        managed_dns: { checked: false }, connect_timeout: { value: "5" }, read_timeout: { value: "60" },
+        send_timeout: { value: "60" }, body_limit: { value: "16777216" }, id: { value: "" },
+      };
+      const form = { querySelector(selector) {
+        if (selector === "[data-reverse-proxy-insecure-ack]") return { checked: false };
+        const match = selector.match(/^\\[name="([^"]+)"\\]$/);
+        return match ? values[match[1]] || null : null;
+      } };
+      ${collectSource}
+      collectPayload();
+    `;
+    const payload = vm.runInNewContext(harness, { HTMLSelectElement: class HTMLSelectElement {} });
+    assert.equal(payload.hostname, "inventory.example.test");
+    assert.equal(payload.routes[0].fingerprint, expected);
+  }
+});
+
+test("visible row keeps all strict desired-state fields and drops projection extras", () => {
+  const row = reverseProxies.visibleProxyRow({
+    id: 91,
+    name: "Portal",
+    description: "Internal operator portal",
+    hostname: "portal.example.test",
+    scheme: "https",
+    port: 443,
+    enabled: true,
+    public_listing: false,
+    managed_dns: false,
+    listeners: [{ interface: "eth1", address: "192.0.2.10", label: "display-only" }],
+    routes: [{
+      id: 92,
+      path_prefix: "/portal/",
+      upstream_scheme: "https",
+      upstream_host: "192.0.2.20",
+      upstream_port: 9443,
+      trust_mode: "insecure",
+      insecure_acknowledged: true,
+      path_behavior: "preserve",
+      probe_detail: "display-only",
+    }],
+    connect_timeout: 13,
+    read_timeout: 120,
+    send_timeout: 121,
+    body_limit: 8388608,
+    pending: true,
+    health_status: "degraded",
+  });
+
+  assert.equal(row.id, 91);
+  assert.equal(row.description, "Internal operator portal");
+  assert.equal(row.connect_timeout, 13);
+  assert.equal(row.read_timeout, 120);
+  assert.equal(row.send_timeout, 121);
+  assert.equal(row.body_limit, 8388608);
+  assert.deepEqual(row.listeners, [{ interface: "eth1", address: "192.0.2.10" }]);
+  assert.equal(row.routes[0].id, 92);
+  assert.equal(row.routes[0].insecure_acknowledged, true);
+  assert.equal(Object.hasOwn(row.routes[0], "probe_detail"), false);
+  assert.equal(Object.hasOwn(row, "pending"), false);
+  assert.equal(Object.hasOwn(row, "health_status"), false);
+});
+
+test("new desired state defaults disabled and keeps the bounded body limit", () => {
+  const payload = reverseProxies.serializeProxy({ name: "New" });
+  assert.equal(payload.enabled, false);
+  assert.equal(payload.body_limit, 16777216);
+});
+
+test("display escaping protects operator-controlled text", () => {
+  assert.equal(reverseProxies.escapeHtml(`<script title="x">'&</script>`), "&lt;script title=&quot;x&quot;&gt;&#39;&amp;&lt;/script&gt;");
+});
+
+test("management service worker precaches the reverse-proxy page asset", () => {
+  const worker = fs.readFileSync("atlaso/app/static/service-worker.js", "utf8");
+  assert.match(worker, /const ATLASO_CACHE = `\$\{ATLASO_CACHE_PREFIX\}369`;/);
+  assert.match(worker, /"\/static\/reverse-proxies\.js\?v=issue-723-16"/);
+});
+
+function classListFor(classes) {
+  return {
+    add: (name) => classes.add(name),
+    remove: (name) => classes.delete(name),
+  };
+}
+
+test("fallback refresh replaces nonempty rows, removes stale actions, and escapes text", () => {
+  const source = fs.readFileSync("atlaso/app/static/reverse-proxies.js", "utf8");
+  const start = source.indexOf("    function setCollectionRows(");
+  const end = source.indexOf("    function setValidation(", start);
+  class HTMLElement {
+    constructor(tag = "table") { this.tag = tag; this.children = []; this.dataset = {}; }
+    setAttribute(name, value) { this[name] = value; }
+    append(...children) { this.children.push(...children); }
+    replaceChildren(...children) { this.children = children; }
+  }
+  const body = new HTMLElement("tbody");
+  const fallback = new HTMLElement();
+  fallback.tBodies = [body];
+  const count = new HTMLElement("span");
+  const context = vm.createContext({ HTMLElement, document: {
+    getElementById: () => fallback,
+    querySelector: () => count,
+    createElement: (tag) => new HTMLElement(tag),
+    createTextNode: (text) => ({ textContent: text }),
+  }, visibleProxyRow: reverseProxies.visibleProxyRow });
+  vm.runInContext(`const MAX_ITEMS = 256; let items = []; const table = null;
+    let canWrite = true; const element = {dataset: {fallbackId: "fallback"}};
+    ${source.slice(start, end)}`, context);
+  const refresh = (rows) => {
+    context.nextRows = rows;
+    vm.runInContext("setCollectionRows(nextRows)", context);
+  };
+  refresh([{ id: 10, name: "Old", hostname: "old.example.test", listeners: [], routes: [] }]);
+  assert.equal(count.textContent, "1 proxies");
+  refresh([{ id: 10, name: "Old" }, { id: 13, name: "Created" }]);
+  assert.equal(count.textContent, "2 proxies");
+  refresh([{ id: 11, name: "<img src=x>", hostname: "new.example.test", scheme: "https", port: 443,
+    listeners: [{interface: "eth1", address: "192.0.2.10"}], routes: [{path_prefix: "/new/"}], enabled: true }]);
+  assert.equal(body.children.length, 2);
+  assert.equal(body.children[1].children[0].children[1].dataset.reverseProxyAdd, "");
+  assert.equal(body.children[0].children[0].children[0].textContent, "<img src=x>");
+  assert.equal(body.children[0].children[6].children[0].textContent, "Enabled");
+  assert.equal(body.children[0].children[7].children[0].dataset.reverseProxyEdit, "11");
+  const remove = body.children[0].children[7].children[1];
+  assert.equal(remove.dataset.reverseProxyDelete, "11");
+  assert.equal(remove.type, "button");
+  assert.equal(remove.textContent, "Delete");
+  assert.equal(remove["aria-label"], "Delete reverse proxy <img src=x>");
+  vm.runInContext("canWrite = false", context);
+  refresh([{id: 12, name: "Read", listeners: [], routes: []}]);
+  assert.equal(body.children.length, 1);
+  assert.equal(body.children[0].children[7].children[0].textContent, "Read only");
+  assert.equal(body.children[0].children[7].children.length, 1);
+  assert.deepEqual(body.children[0].children[7].children[0].dataset, {});
+  refresh([]);
+  assert.equal(count.textContent, "0 proxies");
+  assert.equal(body.children.length, 1);
+  assert.equal(body.children[0].children[0].textContent, "No reverse proxies are configured.");
+  assert.equal(body.children[0].children[0].colSpan, 8);
+  vm.runInContext("canWrite = true", context);
+  refresh([]);
+  assert.equal(body.children.length, 2);
+  const add = body.children[1].children[0].children[1];
+  assert.equal(add.textContent, "Add reverse proxy");
+  assert.equal(add.type, "button");
+  assert.equal(add.dataset.reverseProxyAdd, "");
+});

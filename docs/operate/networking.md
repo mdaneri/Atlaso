@@ -22,6 +22,10 @@ This verified appliance view provides visual orientation before you begin.
 
 <!-- END GENERATED INTERFACE OVERVIEW -->
 
+Public reverse proxies bind to exact addresses on eligible addressed access or route interfaces and enabled VLANs.
+Management-role interfaces and trunk physical interfaces are excluded; see the
+[reverse-proxy guide](../services/reverse-proxies.md) before changing a selected listener's interface or address.
+
 ## Before you begin
 
 Record the current management interface, address, gateway, and VM network attachment. Keep the
@@ -480,7 +484,10 @@ before completion.
 
 The committed management site also keeps loopback listeners for console and update readiness. A later handoff accepts
 those address-scoped listeners as its proven previous site. A wildcard previous site is scoped before new addresses
-activate.
+activate. Nginx first enables socket reuse on the existing listener, opens the address-scoped listeners, and returns
+to the canonical configuration. Each reload must produce a new worker generation; a successful signal alone cannot
+prove that nginx accepted the new bindings. The existing restart fallback handles a rejected reload, and the protected
+handoff retains its captured runtime state for rollback.
 
 A failed management handoff reports its non-secret failing layer and rolls back the captured network, coupled Routes &
 WAN runtime, firewall, nginx, certificate, and service state before the task becomes failed. Rollback also reconfigures

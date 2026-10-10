@@ -65,11 +65,60 @@ from atlaso.app.services.esxi_pxe import (
     sync_esxi_pxe_host_network_records,
 )
 from atlaso.app.services.network_boot import lock_esxi_host_reference_lifecycle
+from atlaso.app.services.network_objects import acquire_network_objects_write_lock
+from atlaso.app.services.reverse_proxies import (
+    runtime_snapshot,
+    validate_service_proxy_dependencies,
+)
+from atlaso.app.services.reverse_proxy_publication import (
+    DNS_OWNER_PREFIX,
+    dns_hostname_key,
+    reconcile_proxy_dns,
+)
 from atlaso.app.ui_routes import (
     MANAGEMENT_UI_ROOT,
 )
 
 Endpoint = Callable[..., Any]
+REVERSE_PROXY_DNS_OWNER_ERROR = "This DNS record is managed by Reverse Proxies. Edit it in Reverse Proxies."
+RESERVED_DNS_OWNER_ERROR = "The Reverse Proxies DNS owner marker is reserved for that service."
+
+
+def _is_reverse_proxy_dns_record(record: DnsRecord) -> bool:
+    """Identify DNS records whose lifecycle belongs to Reverse Proxies.
+
+    Args:
+        record: Candidate DNS record whose managed ownership is checked.
+    """
+    return (record.description or "").startswith(DNS_OWNER_PREFIX)
+
+
+def _is_reverse_proxy_dns_hostname(db: Session, hostname: str) -> bool:
+    """Identify DNS names with at least one record owned by Reverse Proxies.
+
+    Args:
+        db: Caller-owned database session for proxy desired state.
+        hostname: Canonical hostname whose proxy reservation is checked.
+    """
+    return db.scalar(
+        select(DnsRecord.id).where(
+            func.lower(func.rtrim(DnsRecord.hostname, ".")) == dns_hostname_key(hostname),
+            DnsRecord.description.startswith(DNS_OWNER_PREFIX),
+        )
+    ) is not None
+
+
+def _remember_applied_dns_records(db: Session) -> None:
+    """Capture legacy service-record ownership before generated DNS rows change.
+
+    Args:
+        db: Caller-owned database session for proxy desired state.
+    """
+    from atlaso.app.services.applied_service_dns import (
+        remember_applied_service_dns_records,
+    )
+
+    remember_applied_service_dns_records(db)
 
 
 @dataclass(frozen=True)
@@ -230,7 +279,22 @@ def build_router(dependencies: DnsDhcpUiDependencies) -> DnsDhcpUiRouter:
             The endpoint response.
         """
         verify_csrf(request, csrf)
+        acquire_network_objects_write_lock(db)
         settings = get_dns_settings_row(db)
+        # The compatibility getter may commit while seeding missing defaults.
+        # Reacquire after it and refresh before deriving owner-managed DNS.
+        acquire_network_objects_write_lock(db)
+        db.refresh(settings)
+        try:
+            _remember_applied_dns_records(db)
+        except ValueError as exc:
+            db.rollback()
+            return render(
+                request,
+                "dns.html",
+                {"identity": identity, **dnsmasq_context(db), "form_error": str(exc)},
+                status_code=409,
+            )
         available_options = service_bind_options(db)
         available_names = {item["name"] for item in available_options}
         selected_interfaces, selected_addresses = resolve_service_bind_targets(
@@ -287,6 +351,21 @@ def build_router(dependencies: DnsDhcpUiDependencies) -> DnsDhcpUiRouter:
             else "off"
         )
         settings.updated_at = utcnow()
+        try:
+            validate_service_proxy_dependencies(db)
+            reconcile_proxy_dns(db, runtime_snapshot(db))
+        except ValueError as exc:
+            db.rollback()
+            return render(
+                request,
+                "dns.html",
+                {
+                    "identity": identity,
+                    **dnsmasq_context(db),
+                    "form_error": str(exc),
+                },
+                status_code=409,
+            )
         db.commit()
         record_audit(
             db,
@@ -357,7 +436,10 @@ def build_router(dependencies: DnsDhcpUiDependencies) -> DnsDhcpUiRouter:
             The endpoint response.
         """
         verify_csrf(request, csrf)
+        acquire_network_objects_write_lock(db)
         settings = get_dns_settings_row(db)
+        acquire_network_objects_write_lock(db)
+        db.refresh(settings)
         existing_domains = dns_domains_for_settings(settings)
         new_domains = split_domains(domain)
         if len(new_domains) != 1:
@@ -386,15 +468,26 @@ def build_router(dependencies: DnsDhcpUiDependencies) -> DnsDhcpUiRouter:
         active_domains = split_domains(settings.domain) or ["atlaso.internal"]
         disabled_domains = split_domains(settings.disabled_domains)
         next_enabled = enabled == "on" if enabled_present is not None else True
-        if next_enabled:
-            save_dns_domains(settings, [*active_domains, new_domain])
-            save_disabled_dns_domains(
-                settings, [item for item in disabled_domains if item != new_domain]
+        try:
+            _remember_applied_dns_records(db)
+            if next_enabled:
+                save_dns_domains(settings, [*active_domains, new_domain])
+                save_disabled_dns_domains(
+                    settings, [item for item in disabled_domains if item != new_domain]
+                )
+            else:
+                save_disabled_dns_domains(settings, [*disabled_domains, new_domain])
+            save_dns_domain_description(settings, new_domain, description)
+            settings.updated_at = utcnow()
+            reconcile_proxy_dns(db, runtime_snapshot(db))
+        except ValueError as exc:
+            db.rollback()
+            return render(
+                request,
+                "dns.html",
+                {"identity": identity, **dnsmasq_context(db), "form_error": str(exc)},
+                status_code=409,
             )
-        else:
-            save_disabled_dns_domains(settings, [*disabled_domains, new_domain])
-        save_dns_domain_description(settings, new_domain, description)
-        settings.updated_at = utcnow()
         db.commit()
         record_audit(
             db,
@@ -440,7 +533,10 @@ def build_router(dependencies: DnsDhcpUiDependencies) -> DnsDhcpUiRouter:
             HTTPException: If the request cannot be fulfilled.
         """
         verify_csrf(request, csrf)
+        acquire_network_objects_write_lock(db)
         settings = get_dns_settings_row(db)
+        acquire_network_objects_write_lock(db)
+        db.refresh(settings)
         normalized_domain = split_domains(domain)
         existing_domains = dns_domains_for_settings(settings)
         if len(normalized_domain) != 1 or normalized_domain[0] not in existing_domains:
@@ -457,17 +553,23 @@ def build_router(dependencies: DnsDhcpUiDependencies) -> DnsDhcpUiRouter:
             raise HTTPException(
                 status_code=422, detail="At least one DNS domain must remain enabled."
             )
-        if next_enabled:
-            save_dns_domains(settings, [*active_domains, selected_domain])
-            save_disabled_dns_domains(
-                settings, [item for item in disabled_domains if item != selected_domain]
-            )
-        else:
-            save_dns_domains(
-                settings, [item for item in active_domains if item != selected_domain]
-            )
-            save_disabled_dns_domains(settings, [*disabled_domains, selected_domain])
-        settings.updated_at = utcnow()
+        try:
+            _remember_applied_dns_records(db)
+            if next_enabled:
+                save_dns_domains(settings, [*active_domains, selected_domain])
+                save_disabled_dns_domains(
+                    settings, [item for item in disabled_domains if item != selected_domain]
+                )
+            else:
+                save_dns_domains(
+                    settings, [item for item in active_domains if item != selected_domain]
+                )
+                save_disabled_dns_domains(settings, [*disabled_domains, selected_domain])
+            settings.updated_at = utcnow()
+            reconcile_proxy_dns(db, runtime_snapshot(db))
+        except ValueError as exc:
+            db.rollback()
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
         db.commit()
         record_audit(
             db,
@@ -503,7 +605,10 @@ def build_router(dependencies: DnsDhcpUiDependencies) -> DnsDhcpUiRouter:
             The endpoint response.
         """
         verify_csrf(request, csrf)
+        acquire_network_objects_write_lock(db)
         settings = get_dns_settings_row(db)
+        acquire_network_objects_write_lock(db)
+        db.refresh(settings)
         existing_domains = dns_domains_for_settings(settings)
         normalized_domain = split_domains(domain)
         if len(normalized_domain) != 1 or normalized_domain[0] not in existing_domains:
@@ -530,6 +635,17 @@ def build_router(dependencies: DnsDhcpUiDependencies) -> DnsDhcpUiRouter:
                 status_code=422,
             )
         deleted_records = records_for_domain(db, deleted_domain)
+        if any(_is_reverse_proxy_dns_record(record) for record in deleted_records):
+            return render(
+                request,
+                "dns.html",
+                {
+                    "identity": identity,
+                    **dnsmasq_context(db),
+                    "form_error": REVERSE_PROXY_DNS_OWNER_ERROR,
+                },
+                status_code=409,
+            )
         for record in deleted_records:
             db.delete(record)
         save_dns_domains(
@@ -591,13 +707,31 @@ def build_router(dependencies: DnsDhcpUiDependencies) -> DnsDhcpUiRouter:
         hostname = normalize_dns_hostname(hostname, domain)
         record_type = record_type.strip().upper()
         address = address.strip()
+        acquire_network_objects_write_lock(db)
+        if (description or "").startswith(DNS_OWNER_PREFIX):
+            return render(
+                request,
+                "dns.html",
+                {
+                    "identity": identity,
+                    **dnsmasq_context(db),
+                    "form_error": RESERVED_DNS_OWNER_ERROR,
+                },
+                status_code=422,
+            )
         record_data_json = dump_dns_record_data(record_type, address)
         validation_errors = validate_dns_record(hostname, record_type, address)
-        validation_errors.extend(
-            validate_authoritative_dns_record(
-                get_dns_settings_row(db), hostname, record_type, address
+        dns_settings = get_dns_settings_row(db)
+        acquire_network_objects_write_lock(db)
+        db.refresh(dns_settings)
+        if _is_reverse_proxy_dns_hostname(db, hostname):
+            return render(
+                request,
+                "dns.html",
+                {"identity": identity, **dnsmasq_context(db), "form_error": REVERSE_PROXY_DNS_OWNER_ERROR},
+                status_code=409,
             )
-        )
+        validation_errors.extend(validate_authoritative_dns_record(dns_settings, hostname, record_type, address))
         if validation_errors:
             return render(
                 request,
@@ -683,9 +817,12 @@ def build_router(dependencies: DnsDhcpUiDependencies) -> DnsDhcpUiRouter:
             HTTPException: If the request cannot be fulfilled.
         """
         verify_csrf(request, csrf)
+        acquire_network_objects_write_lock(db)
         record = db.get(DnsRecord, record_id)
         if not record:
             raise HTTPException(status_code=404, detail="DNS record not found")
+        if _is_reverse_proxy_dns_record(record):
+            raise HTTPException(status_code=409, detail=REVERSE_PROXY_DNS_OWNER_ERROR)
         db.delete(record)
         db.commit()
         record_audit(
@@ -733,19 +870,40 @@ def build_router(dependencies: DnsDhcpUiDependencies) -> DnsDhcpUiRouter:
             HTTPException: If the request cannot be fulfilled.
         """
         verify_csrf(request, csrf)
+        acquire_network_objects_write_lock(db)
         record = db.get(DnsRecord, record_id)
         if not record:
             raise HTTPException(status_code=404, detail="DNS record not found")
+        if _is_reverse_proxy_dns_record(record):
+            raise HTTPException(status_code=409, detail=REVERSE_PROXY_DNS_OWNER_ERROR)
+        if (description or "").startswith(DNS_OWNER_PREFIX):
+            return render(
+                request,
+                "dns.html",
+                {
+                    "identity": identity,
+                    **dnsmasq_context(db),
+                    "form_error": RESERVED_DNS_OWNER_ERROR,
+                },
+                status_code=422,
+            )
         hostname = normalize_dns_hostname(hostname, domain)
         record_type = record_type.strip().upper()
         address = address.strip()
         record_data_json = dump_dns_record_data(record_type, address)
         validation_errors = validate_dns_record(hostname, record_type, address)
-        validation_errors.extend(
-            validate_authoritative_dns_record(
-                get_dns_settings_row(db), hostname, record_type, address
+        dns_settings = get_dns_settings_row(db)
+        acquire_network_objects_write_lock(db)
+        db.refresh(dns_settings)
+        db.refresh(record)
+        if _is_reverse_proxy_dns_hostname(db, hostname):
+            return render(
+                request,
+                "dns.html",
+                {"identity": identity, **dnsmasq_context(db), "form_error": REVERSE_PROXY_DNS_OWNER_ERROR},
+                status_code=409,
             )
-        )
+        validation_errors.extend(validate_authoritative_dns_record(dns_settings, hostname, record_type, address))
         if validation_errors:
             return render(
                 request,
@@ -830,6 +988,7 @@ def build_router(dependencies: DnsDhcpUiDependencies) -> DnsDhcpUiRouter:
             The endpoint response.
         """
         verify_csrf(request, csrf)
+        acquire_network_objects_write_lock(db)
         parsed_records, errors = parse_hosts_records(hosts_text)
         if errors:
             return render(
@@ -845,6 +1004,8 @@ def build_router(dependencies: DnsDhcpUiDependencies) -> DnsDhcpUiRouter:
             )
         scoped_domain = domain.strip().strip(".").lower()
         dns_settings = get_dns_settings_row(db)
+        acquire_network_objects_write_lock(db)
+        db.refresh(dns_settings)
         for item in parsed_records:
             if scoped_domain:
                 item["hostname"] = normalize_dns_hostname(
@@ -858,6 +1019,8 @@ def build_router(dependencies: DnsDhcpUiDependencies) -> DnsDhcpUiRouter:
                     str(item["address"]),
                 )
             )
+        if any(str(item.get("description") or "").startswith(DNS_OWNER_PREFIX) for item in parsed_records):
+            errors.append(RESERVED_DNS_OWNER_ERROR)
         if errors:
             return render(
                 request,
@@ -871,12 +1034,42 @@ def build_router(dependencies: DnsDhcpUiDependencies) -> DnsDhcpUiRouter:
                 status_code=422,
             )
         replace = replace_existing == "on"
+        existing_owner_hostnames = {
+            dns_hostname_key(record.hostname)
+            for record in db.execute(select(DnsRecord)).scalars().all()
+            if _is_reverse_proxy_dns_record(record)
+        }
+        if any(dns_hostname_key(str(item["hostname"])) in existing_owner_hostnames for item in parsed_records):
+            return render(
+                request,
+                "dns.html",
+                {
+                    "identity": identity,
+                    **dnsmasq_context(db),
+                    "bulk_error": REVERSE_PROXY_DNS_OWNER_ERROR,
+                    "active_zone_import_domain": scoped_domain,
+                    "hosts_editor_text": hosts_text,
+                },
+                status_code=409,
+            )
         if replace:
             records_to_delete = (
                 records_for_domain(db, scoped_domain)
                 if scoped_domain
                 else db.execute(select(DnsRecord)).scalars().all()
             )
+            if any(_is_reverse_proxy_dns_record(record) for record in records_to_delete):
+                return render(
+                    request,
+                    "dns.html",
+                    {
+                        "identity": identity,
+                        **dnsmasq_context(db),
+                        "bulk_error": REVERSE_PROXY_DNS_OWNER_ERROR,
+                        "hosts_editor_text": hosts_text,
+                    },
+                    status_code=409,
+                )
             for record in records_to_delete:
                 db.delete(record)
             db.flush()
@@ -951,9 +1144,13 @@ def build_router(dependencies: DnsDhcpUiDependencies) -> DnsDhcpUiRouter:
             The endpoint response.
         """
         verify_csrf(request, csrf)
+        acquire_network_objects_write_lock(db)
         scoped_domain = domain.strip().strip(".").lower()
+        dns_settings = get_dns_settings_row(db)
+        acquire_network_objects_write_lock(db)
+        db.refresh(dns_settings)
         parsed_records, errors = parse_zone_records(
-            zone_text, scoped_domain, get_dns_settings_row(db)
+            zone_text, scoped_domain, dns_settings
         )
         if errors:
             return render(
@@ -968,9 +1165,54 @@ def build_router(dependencies: DnsDhcpUiDependencies) -> DnsDhcpUiRouter:
                 },
                 status_code=422,
             )
+        existing_owner_hostnames = {
+            dns_hostname_key(record.hostname)
+            for record in db.execute(select(DnsRecord)).scalars().all()
+            if _is_reverse_proxy_dns_record(record)
+        }
+        if any(dns_hostname_key(str(item["hostname"])) in existing_owner_hostnames for item in parsed_records):
+            return render(
+                request,
+                "dns.html",
+                {
+                    "identity": identity,
+                    **dnsmasq_context(db),
+                    "bulk_error": REVERSE_PROXY_DNS_OWNER_ERROR,
+                    "active_zone_import_domain": scoped_domain,
+                    "zone_editor_text": zone_text,
+                },
+                status_code=409,
+            )
+        if any(str(item.get("description") or "").startswith(DNS_OWNER_PREFIX) for item in parsed_records):
+            return render(
+                request,
+                "dns.html",
+                {
+                    "identity": identity,
+                    **dnsmasq_context(db),
+                    "bulk_error": RESERVED_DNS_OWNER_ERROR,
+                    "active_zone_import_domain": scoped_domain,
+                    "zone_editor_text": zone_text,
+                },
+                status_code=422,
+            )
         replace = replace_existing == "on"
         if replace:
-            for record in records_for_domain(db, scoped_domain):
+            records_to_delete = records_for_domain(db, scoped_domain)
+            if any(_is_reverse_proxy_dns_record(record) for record in records_to_delete):
+                return render(
+                    request,
+                    "dns.html",
+                    {
+                        "identity": identity,
+                        **dnsmasq_context(db),
+                        "bulk_error": REVERSE_PROXY_DNS_OWNER_ERROR,
+                        "active_zone_import_domain": scoped_domain,
+                        "zone_editor_text": zone_text,
+                    },
+                    status_code=409,
+                )
+            for record in records_to_delete:
                 db.delete(record)
             db.flush()
         for item in parsed_records:
@@ -1624,6 +1866,7 @@ def build_router(dependencies: DnsDhcpUiDependencies) -> DnsDhcpUiRouter:
             The endpoint response.
         """
         verify_csrf(request, csrf)
+        acquire_network_objects_write_lock(db)
         reservation = DhcpReservation(
             hostname=hostname.strip(),
             mac_address=mac_address.strip(),
@@ -1852,6 +2095,7 @@ def build_router(dependencies: DnsDhcpUiDependencies) -> DnsDhcpUiRouter:
             HTTPException: If the request cannot be fulfilled.
         """
         verify_csrf(request, csrf)
+        acquire_network_objects_write_lock(db)
         reservation = db.get(DhcpReservation, reservation_id)
         if not reservation:
             raise HTTPException(status_code=404, detail="DHCP reservation not found")

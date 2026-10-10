@@ -148,7 +148,17 @@ def build_router(dependencies: EsxStorageUiDependencies) -> EsxStorageUiRouter:
         """
         dependencies.verify_csrf(request, csrf)
         require_esx_storage_write(identity)
+        from atlaso.app.services.network_objects import (
+            acquire_network_objects_write_lock,
+        )
+        from atlaso.app.services.reverse_proxies import (
+            validate_service_proxy_dependencies,
+        )
+
+        acquire_network_objects_write_lock(db)
         settings = dependencies.get_esx_storage_settings_row(db)
+        acquire_network_objects_write_lock(db)
+        db.refresh(settings)
         previous_hostname = settings.hostname
         normalized_hostname = dependencies.normalize_dns_hostname(
             hostname.strip() or settings.hostname
@@ -161,6 +171,11 @@ def build_router(dependencies: EsxStorageUiDependencies) -> EsxStorageUiRouter:
         settings.enabled = enabled == "on"
         settings.hostname = normalized_hostname
         settings.updated_at = utcnow()
+        try:
+            validate_service_proxy_dependencies(db)
+        except ValueError as exc:
+            db.rollback()
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
         dns_action = dependencies.ensure_dns_for_esx_storage(
             db, identity.username, previous_hostname=previous_hostname
         )

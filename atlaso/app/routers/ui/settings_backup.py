@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends, File, Form, Request, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -574,6 +574,15 @@ def build_router(dependencies: SettingsBackupUiDependencies) -> SettingsBackupUi
             db,
             previous_appliance_fqdn=previous_fqdn,
         )
+        from atlaso.app.services.reverse_proxies import (
+            validate_service_proxy_dependencies,
+        )
+
+        try:
+            validate_service_proxy_dependencies(db)
+        except ValueError as exc:
+            db.rollback()
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
         ca_state_errors: list[str] = []
         if (
             settings.management_https_enabled

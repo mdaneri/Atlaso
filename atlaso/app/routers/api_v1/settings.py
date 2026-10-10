@@ -20,7 +20,7 @@ from atlaso.app.models import (
     utcnow,
 )
 from atlaso.app.openapi import DocumentedAPIRoute
-from atlaso.app.schemas import SettingsResponse, SettingsUpdate
+from atlaso.app.schemas import ProblemDetails, SettingsResponse, SettingsUpdate
 from atlaso.app.security import Identity, require_scope
 from atlaso.app.services.appliance_settings import (
     APPLIANCE_SETTINGS_STAGED_CONFIG_PATH,
@@ -103,6 +103,7 @@ def build_router(dependencies: SettingsApiDependencies) -> SettingsApiRouter:
         response_model=SettingsResponse,
         tags=["Settings"],
         operation_id="updateSettings",
+        responses={409: {"model": ProblemDetails, "description": "Appliance or derived service hostname conflicts with saved reverse-proxy ownership; settings remain unchanged."}},
     )
     def update_app_settings(
         payload: SettingsUpdate,
@@ -114,7 +115,8 @@ def build_router(dependencies: SettingsApiDependencies) -> SettingsApiRouter:
 
         Requires the `admin:all` API scope. The operation updates only properties present in the request,
         preserves every omitted property, and does not bypass the documented global Appliance Apply or
-        service lifecycle boundary.
+        service lifecycle boundary. Appliance and derived service hostname conflicts with saved
+        reverse proxies return 409 without saving changes.
 
         Args:
             payload: Validated request or task payload consumed by the operation.
@@ -198,6 +200,15 @@ def build_router(dependencies: SettingsApiDependencies) -> SettingsApiRouter:
                 db,
                 previous_appliance_fqdn=previous_fqdn,
             )
+            from atlaso.app.services.reverse_proxies import (
+                validate_service_proxy_dependencies,
+            )
+
+            try:
+                validate_service_proxy_dependencies(db)
+            except ValueError as exc:
+                db.rollback()
+                raise HTTPException(status_code=409, detail=str(exc)) from exc
             appliance_dns_action = ensure_dns_for_appliance_settings(
                 db,
                 desired,

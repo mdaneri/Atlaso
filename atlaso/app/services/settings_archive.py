@@ -65,6 +65,8 @@ from atlaso.app.models import (
     OidcSubject,
     PhysicalInterface,
     PortForward,
+    ReverseProxy,
+    ReverseProxyRoute,
     Route,
     RoutingRule,
     Schedule,
@@ -124,6 +126,7 @@ from atlaso.app.services.esx_storage import StorageInterface, validate_storage_s
 from atlaso.app.services.esxi_pxe import (
     ESXI_PXE_CUSTOM_VARIABLE_LIMIT,
     ESXI_PXE_CUSTOM_VARIABLES_KEY,
+    ESXI_PXE_HOSTNAME_KEY,
     esxi_pxe_boot_settings,
     host_variables_json,
     kickstart_template_validation_errors,
@@ -230,6 +233,7 @@ ARCHIVE_KIND = "atlaso-settings-archive"
 VCF_OFFLINE_DEPOT_ARCHIVE_DEFAULT_PORT = 443
 SAFE_SETTING_KEYS = {
     DNS_CONDITIONAL_FORWARDERS_SETTING_KEY,
+    ESXI_PXE_HOSTNAME_KEY,
     ESXI_PXE_CUSTOM_VARIABLES_KEY,
     FIREWALL_SOURCE_GROUPS_SETTING_KEY,
     LOCAL_USERS_PASSWORD_POLICY_KEY,
@@ -244,6 +248,7 @@ SCALAR_TABLES = {
     "wan_policies": WanPolicy,
     "nat_rules": NatRule,
     "port_forwards": PortForward,
+    "reverse_proxies": ReverseProxy,
     "routing_rules": RoutingRule,
     "service_states": ServiceState,
     "appliance_settings": ApplianceSettings,
@@ -270,6 +275,7 @@ SCALAR_TABLES = {
 
 ARCHIVE_SECTION_MODELS = {
     **SCALAR_TABLES,
+    "reverse_proxy_routes": ReverseProxyRoute,
     "routes": Route,
     "dhcp_options": DhcpOption,
     "ca_certificates": CaCertificate,
@@ -292,6 +298,7 @@ ARCHIVE_SECTION_MODELS = {
     "settings": Setting,
 }
 ARCHIVE_REQUIRED_FIELD_REPLACEMENTS = {
+    "reverse_proxy_routes": ({"proxy_id"}, {"proxy_name", "position"}),
     "ldap_users": ({"organization_id"}, {"organization_slug"}),
     "ldap_groups": ({"organization_id"}, {"organization_slug"}),
     "oidc_client_redirect_uris": ({"oidc_client_id"}, {"client_id"}),
@@ -403,6 +410,8 @@ RESTORE_DELETE_MODELS = [
     RoutingRule,
     NatRule,
     PortForward,
+    ReverseProxyRoute,
+    ReverseProxy,
     WanPolicy,
     VlanInterface,
     PhysicalInterface,
@@ -939,12 +948,18 @@ def export_settings_archive(db: Session, *, actor: str) -> dict[str, Any]:
     _normalize_registry_uploaded_ca_handoff(data, payload["notes"])
 
     data["routes"] = _routes_to_archive(db)
+    proxy_names = {row.id: row.name for row in db.scalars(select(ReverseProxy))}
+    data["reverse_proxy_routes"] = [
+        {**_row_to_dict(row, exclude={"proxy_id"}), "proxy_name": proxy_names[row.proxy_id]}
+        for row in db.scalars(select(ReverseProxyRoute).order_by(ReverseProxyRoute.proxy_id, ReverseProxyRoute.position))
+    ]
     data["dhcp_options"] = _dhcp_options_to_archive(db)
     ntp_server_enabled = any(bool(row.get("nts_server_enabled")) for row in data["ntp_settings"])
     data["ca_certificates"] = [
         row
         for row in _ca_certificates_to_archive(db)
-        if ntp_server_enabled or row.get("managed_owner") != "ntp:nts"
+        if (ntp_server_enabled or row.get("managed_owner") != "ntp:nts")
+        and not str(row.get("managed_owner") or "").startswith("reverse_proxy:")
     ]
     data["vsphere_key_providers"] = _vsphere_key_providers_to_archive(db)
     data["vsphere_trusted_vcenters"] = _vsphere_trusted_vcenters_to_archive(db)
@@ -1467,9 +1482,15 @@ def _restore_settings_archive_data(db: Session, data: dict[str, Any]) -> dict[st
     _clear_desired_state(db)
 
     counts: dict[str, int] = {}
-    for key in ["physical_interfaces", "vlan_interfaces", "wan_policies", "nat_rules", "port_forwards", "routing_rules"]:
+    for key in ["physical_interfaces", "vlan_interfaces", "wan_policies", "nat_rules", "port_forwards", "reverse_proxies", "routing_rules"]:
         counts[key] = _insert_rows(db, SCALAR_TABLES[key], data.get(key, []))
     db.flush()
+    proxies_by_name = {row.name: row for row in db.scalars(select(ReverseProxy))}
+    for row in data.get("reverse_proxy_routes", []):
+        db.add(ReverseProxyRoute(proxy_id=proxies_by_name[row["proxy_name"]].id,
+                                **_model_kwargs(ReverseProxyRoute, row, exclude={"proxy_id"})))
+    db.flush()
+    counts["reverse_proxy_routes"] = len(data.get("reverse_proxy_routes", []))
 
     counts["routes"] = _restore_routes(db, data.get("routes", []))
     for key in [
@@ -1594,6 +1615,13 @@ def _restore_settings_archive_data(db: Session, data: dict[str, Any]) -> dict[st
         db.execute(select(Setting).where(Setting.key.in_(SAFE_SETTING_KEYS))).scalars().all()
     )
     reconcile_factory_service_identities(db)
+    from atlaso.app.services.reverse_proxies import (
+        runtime_snapshot as proxy_runtime_snapshot,
+    )
+    from atlaso.app.services.reverse_proxy_publication import reconcile_proxy_dns
+
+    reconcile_proxy_dns(db, proxy_runtime_snapshot(db))
+    counts["dns_records"] = len(db.scalars(select(DnsRecord)).all())
     _disable_startup_example_seed(db)
     return counts
 
@@ -1663,6 +1691,7 @@ def desired_state_counts(db: Session) -> dict[str, int]:
     """
     counts = {key: len(db.execute(select(model)).scalars().all()) for key, model in SCALAR_TABLES.items()}
     counts["routes"] = len(db.execute(select(Route)).scalars().all())
+    counts["reverse_proxy_routes"] = len(db.scalars(select(ReverseProxyRoute)).all())
     counts["routing_rules"] = len(db.execute(select(RoutingRule)).scalars().all())
     counts["dhcp_options"] = len(db.execute(select(DhcpOption)).scalars().all())
     counts["ca_certificates"] = len(db.execute(select(CaCertificate)).scalars().all())
@@ -1799,10 +1828,12 @@ def _validate_archive(archive: dict[str, Any]) -> None:
         raise ValueError("The settings archive contains an unsupported data section.")
     # v2 archives exported before managed forwarding have no such collection.
     # Preserve their replacement semantics while keeping every older section mandatory.
-    missing_sections = ARCHIVE_SECTION_NAMES.difference(data, {"port_forwards"})
+    missing_sections = ARCHIVE_SECTION_NAMES.difference(data, {"port_forwards", "reverse_proxies", "reverse_proxy_routes"})
     if missing_sections:
         raise ValueError("The settings archive is missing a required data section.")
     data.setdefault("port_forwards", [])
+    data.setdefault("reverse_proxies", [])
+    data.setdefault("reverse_proxy_routes", [])
     for section_name, rows in data.items():
         if not isinstance(rows, list):
             raise ValueError(f"The settings archive data section '{section_name}' must be a list.")
@@ -1827,6 +1858,9 @@ ARCHIVE_UNGUARDED_UNIQUE_IDENTITIES: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("wan_policies", ("name",)),
     ("nat_rules", ("name",)),
     ("port_forwards", ("name",)),
+    ("reverse_proxies", ("name",)),
+    ("reverse_proxies", ("hostname",)),
+    ("reverse_proxy_routes", ("proxy_name", "position")),
     ("routing_rules", ("name",)),
     ("service_states", ("service",)),
     ("dns_records", ("hostname", "record_type", "address")),
@@ -2685,9 +2719,22 @@ def _validate_archive_relationships(data: dict[str, list[dict[str, Any]]]) -> No
             unavailable_forward_ids.add(candidate.id)
             row["enabled"] = False
             row["restore_review_required"] = True
+    from atlaso.app.services.reverse_proxy_archive import (
+        candidates as proxy_archive_candidates,
+    )
+    from atlaso.app.services.reverse_proxy_archive import (
+        listener_claims as proxy_archive_claims,
+    )
+    from atlaso.app.services.reverse_proxy_archive import (
+        validate_candidates as validate_proxy_archive,
+    )
+
+    proxy_candidates = proxy_archive_candidates(data)
+    service_claims = _archive_port_forward_listener_claims(data) if forwards or proxy_candidates else []
+    validate_proxy_archive(proxy_candidates, data, traffic_targets, service_claims, forwards)
     forward_context = {"targets": traffic_targets, "interfaces": [*archived_interfaces, *archived_vlans],
                        "groups": firewall_source_groups,
-                       "claims": _archive_port_forward_listener_claims(data) if forwards else []}
+                       "claims": [*service_claims, *proxy_archive_claims(proxy_candidates)]}
     for row_index, candidate in enumerate(forwards, start=1):
         errors = validate_port_forward(candidate, forwards, forward_context,
                                        require_binding=candidate.id not in unavailable_forward_ids)
@@ -4412,6 +4459,8 @@ def _validate_archive_model_scalar_types(
             expected_type = list
             if not isinstance(value, list) or any(not isinstance(name, str) for name in value):
                 raise ValueError("NAT inbound interfaces must be a list of interface/VLAN names.")
+        if model is ReverseProxy and column.name == "listeners":
+            expected_type = list
         valid_type = (
             type(value) is expected_type
             if expected_type in {bool, int, str}

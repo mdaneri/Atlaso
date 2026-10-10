@@ -1250,6 +1250,8 @@ def build_routers(
         verify_csrf(request, csrf)
         acquire_network_objects_write_lock(db)
         settings = get_ca_settings_row(db)
+        acquire_network_objects_write_lock(db)
+        db.refresh(settings)
         previous_portal_hostname = settings.portal_hostname
         selected_interfaces, selected_addresses = resolve_service_bind_targets(
             db,
@@ -1281,6 +1283,15 @@ def build_routers(
         settings.ocsp_enabled = ocsp_enabled == "on"
         settings.storage_path = settings.storage_path.strip() or "/etc/atlaso/ca"
         settings.updated_at = utcnow()
+        from atlaso.app.services.reverse_proxies import (
+            validate_service_proxy_dependencies,
+        )
+
+        try:
+            validate_service_proxy_dependencies(db)
+        except ValueError as exc:
+            db.rollback()
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
         ensure_dns_for_ca_portal(
             db, settings, identity.username, previous_hostname=previous_portal_hostname
         )
@@ -2217,8 +2228,19 @@ def build_routers(
         Returns:
             The endpoint response.
         """
+        from atlaso.app.services.network_objects import (
+            acquire_network_objects_write_lock,
+        )
+        from atlaso.app.services.reverse_proxies import (
+            validate_service_listener_sockets,
+        )
+
         verify_csrf(request, csrf)
+        acquire_network_objects_write_lock(db)
         settings = get_kms_settings_row(db)
+        # Default-row readers may commit; reacquire before editing their result.
+        acquire_network_objects_write_lock(db)
+        db.refresh(settings)
         previous_hostname = settings.hostname
         selected_interfaces, selected_addresses = resolve_service_bind_targets(
             db,
@@ -2252,6 +2274,11 @@ def build_routers(
         settings.require_client_cert = True
         settings.allow_register = False
         settings.allow_destroy = False
+        try:
+            validate_service_listener_sockets(db)
+        except ValueError as exc:
+            db.rollback()
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
         settings.updated_at = utcnow()
         if settings.enabled:
             ensure_dns_for_kms(

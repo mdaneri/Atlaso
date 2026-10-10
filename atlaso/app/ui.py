@@ -269,6 +269,48 @@ from atlaso.app.services.appliance_update import (
     update_stream_configuration_fingerprints,
     validate_update_settings,
 )
+from atlaso.app.services.applied_service_dns import (
+    APPLIANCE_APPLY_BASELINES_KEY as APPLIANCE_APPLY_BASELINES_KEY,
+)
+from atlaso.app.services.applied_service_dns import (
+    CA_PORTAL_DNS_DESCRIPTION as CA_PORTAL_DNS_DESCRIPTION,
+)
+from atlaso.app.services.applied_service_dns import (
+    VCF_DEPOT_DNS_DESCRIPTION as VCF_DEPOT_DNS_DESCRIPTION,
+)
+from atlaso.app.services.applied_service_dns import (
+    VCF_REGISTRY_DNS_DESCRIPTION as VCF_REGISTRY_DNS_DESCRIPTION,
+)
+from atlaso.app.services.applied_service_dns import (
+    address_from_cidr as address_from_cidr,
+)
+from atlaso.app.services.applied_service_dns import (
+    interface_addresses_from_cidrs as interface_addresses_from_cidrs,
+)
+from atlaso.app.services.applied_service_dns import (
+    load_appliance_apply_baselines as load_appliance_apply_baselines,
+)
+from atlaso.app.services.applied_service_dns import (
+    owned_service_dns_records as owned_service_dns_records,
+)
+from atlaso.app.services.applied_service_dns import (
+    prefix_from_cidr as prefix_from_cidr,
+)
+from atlaso.app.services.applied_service_dns import (
+    primary_listen_interface as primary_listen_interface,
+)
+from atlaso.app.services.applied_service_dns import (
+    remember_applied_service_dns_records as remember_applied_service_dns_records,
+)
+from atlaso.app.services.applied_service_dns import (
+    save_appliance_apply_baselines as save_appliance_apply_baselines,
+)
+from atlaso.app.services.applied_service_dns import (
+    service_bind_options as service_bind_options,
+)
+from atlaso.app.services.applied_service_dns import (
+    set_setting_value as set_setting_value,
+)
 from atlaso.app.services.automation import (
     SCHEDULE_TASK_TYPES,
     SCRIPT_INTERPRETERS,
@@ -544,6 +586,10 @@ from atlaso.app.services.service_dns_defaults import (
 )
 from atlaso.app.services.service_dns_defaults import (
     appliance_domain_from_fqdn as canonical_appliance_domain_from_fqdn,
+)
+from atlaso.app.services.service_dns_names import (
+    service_dns_target_token,
+    service_target_hostname,
 )
 from atlaso.app.services.service_registry import (
     SERVICE_STATE_IDS,
@@ -1402,6 +1448,13 @@ def managed_ca_certificate_specs(
     if managed_owners == {"appliance:https"}:
         return specs
 
+    from atlaso.app.services.reverse_proxies import runtime_snapshot as proxy_snapshot
+    from atlaso.app.services.reverse_proxy_publication import (
+        certificate_specs as proxy_certificates,
+    )
+
+    specs.extend(proxy_certificates(proxy_snapshot(db)))
+
     oidc_settings = ensure_oidc_provider_settings(db) if reconcile else db.scalar(select(OidcProviderSettings))
     if oidc_settings is not None and oidc_settings.enabled:
         oidc_hostname = normalize_dns_hostname(
@@ -1596,6 +1649,15 @@ def ensure_ca_state(
             changed = True
         changed = ensure_root_ca_material(settings) or changed
         specs = managed_ca_certificate_specs(db, reconcile=False, managed_owners=managed_owners, management_snapshot=management_snapshot)
+        if managed_owners is None:
+            from atlaso.app.services.reverse_proxies import (
+                runtime_snapshot as proxy_snapshot,
+            )
+            from atlaso.app.services.reverse_proxy_publication import (
+                retire_obsolete_proxy_certificates,
+            )
+
+            changed = retire_obsolete_proxy_certificates(db, proxy_snapshot(db)) or changed
         if managed_owners is not None:
             specs = [spec for spec in specs if spec.owner in managed_owners]
         changed = ensure_managed_certificate_rows(db, settings=settings, profiles=profiles, specs=specs) or changed
@@ -1818,32 +1880,8 @@ def get_vcf_offline_depot_settings_row(
     return settings
 
 
-def address_from_cidr(value: str | None) -> str:
-    """Return address from cidr.
-
-    Args:
-        value: Candidate value consumed by address from CIDR.
-    """
-    if not value:
-        return ""
-    try:
-        return str(ip_interface(value).ip)
-    except ValueError:
-        return ""
 
 
-def prefix_from_cidr(value: str | None) -> int | None:
-    """Return prefix from cidr.
-
-    Args:
-        value: Candidate value consumed by prefix from CIDR.
-    """
-    if not value:
-        return None
-    try:
-        return int(ip_interface(value).network.prefixlen)
-    except ValueError:
-        return None
 
 
 def cidr_for_family(value: str, version: int, label: str) -> Response | str:
@@ -1867,82 +1905,8 @@ def cidr_for_family(value: str, version: int, label: str) -> Response | str:
     return candidate
 
 
-def interface_addresses_from_cidrs(ipv4_cidr: str | None, ipv6_cidr: str | None) -> list[str]:
-    """Return interface addresses from cidrs.
-
-    Args:
-        ipv4_cidr: Ipv4 cidr consumed by interface addresses from cidrs.
-        ipv6_cidr: Ipv6 cidr consumed by interface addresses from cidrs.
-    """
-    addresses: list[str] = []
-    for cidr in (ipv4_cidr, ipv6_cidr):
-        address = address_from_cidr(cidr)
-        if address and address not in addresses:
-            addresses.append(address)
-    return addresses
 
 
-def service_bind_options(db: Session) -> list[dict]:
-    """Return service bind options.
-
-    Args:
-        db: Active database session.
-    """
-    physical_interfaces = db.execute(select(PhysicalInterface).order_by(PhysicalInterface.name)).scalars().all()
-    vlan_interfaces = db.execute(
-        select(VlanInterface).where(VlanInterface.enabled.is_(True)).order_by(VlanInterface.parent_interface, VlanInterface.vlan_id)
-    ).scalars().all()
-    interfaces_by_name = {interface.name: interface for interface in physical_interfaces}
-    options: list[dict[str, str]] = []
-    for interface in physical_interfaces:
-        if interface.oper_state == "missing" or interface.admin_state != "up":
-            continue
-        mode = normalize_interface_mode(interface.mode)
-        role = normalize_interface_role(interface.role)
-        ipv4_cidr = interface.host_ip_cidr if interface.ipv4_method == "dhcp" else interface.ip_cidr
-        ipv6_cidr = (interface.ipv6_cidr or interface.host_ipv6_cidr) if interface.ipv6_enabled else None
-        addresses = interface_addresses_from_cidrs(
-            ipv4_cidr, ipv6_cidr,
-        )
-        if role in {"management", "unused"} or mode == "trunk" or not addresses:
-            continue
-        address_label = " / ".join(addresses)
-        options.append(
-            {
-                "name": interface.name,
-                "label": f"{interface.name} - {role} / {mode} / {address_label}",
-                "role": role,
-                "address": addresses[0],
-                "addresses": addresses,
-                "ipv4_address": address_from_cidr(ipv4_cidr),
-                "ipv4_prefix": prefix_from_cidr(ipv4_cidr),
-                "ipv6_address": address_from_cidr(ipv6_cidr),
-                "ipv6_prefix": prefix_from_cidr(ipv6_cidr),
-            }
-        )
-    for vlan in vlan_interfaces:
-        parent = interfaces_by_name.get(vlan.parent_interface)
-        if parent and parent.oper_state == "missing":
-            continue
-        role = normalize_interface_role(vlan.role)
-        addresses = interface_addresses_from_cidrs(vlan.ip_cidr, vlan.ipv6_cidr)
-        if role in {"management", "unused"} or not addresses:
-            continue
-        address_label = " / ".join(addresses)
-        options.append(
-            {
-                "name": vlan.name,
-                "label": f"{vlan.name} - VLAN {vlan.vlan_id} on {vlan.parent_interface} / {role} / {address_label}",
-                "role": role,
-                "address": addresses[0],
-                "addresses": addresses,
-                "ipv4_address": address_from_cidr(vlan.ip_cidr),
-                "ipv4_prefix": prefix_from_cidr(vlan.ip_cidr),
-                "ipv6_address": address_from_cidr(vlan.ipv6_cidr),
-                "ipv6_prefix": prefix_from_cidr(vlan.ipv6_cidr),
-            }
-        )
-    return options
 
 
 def ldap_service_bind_options(db: Session) -> list[dict[str, Any]]:
@@ -2147,14 +2111,6 @@ def primary_listen_address(raw_address: str | None) -> str:
     return addresses[0] if addresses else ""
 
 
-def primary_listen_interface(raw_interface: str | None) -> str:
-    """Return primary listen interface.
-
-    Args:
-        raw_interface: Raw interface consumed by primary listen interface.
-    """
-    interfaces = split_interfaces(raw_interface)
-    return interfaces[0] if interfaces else ""
 
 
 def service_bind_label(raw_interface: str | None, raw_address: str | None) -> str:
@@ -2429,26 +2385,6 @@ def setting_value(db: Session, key: str) -> str:
     return setting.value if setting else ""
 
 
-def set_setting_value(db: Session, key: str, value: str) -> Setting:
-    """Update setting value.
-
-    Args:
-        db: Active database session.
-        key: Stable setting, vault, or mapping key.
-        value: Value to process.
-
-    Returns:
-        The set setting value result.
-    """
-    setting = db.execute(select(Setting).where(Setting.key == key)).scalar_one_or_none()
-    if setting is None:
-        setting = Setting(key=key, value=value)
-        db.add(setting)
-    else:
-        setting.value = value
-        setting.updated_at = utcnow()
-    db.flush()
-    return setting
 
 
 def appliance_settings_management_context(db: Session) -> dict[str, Any]:
@@ -4548,6 +4484,12 @@ def firewall_context(db: Session, *, reconcile: bool = True) -> dict:
             and vlan.access_management_ui_enabled
         ],
     )
+    from atlaso.app.services.reverse_proxies import runtime_snapshot as proxy_snapshot
+    from atlaso.app.services.reverse_proxy_publication import (
+        firewall_rules as proxy_firewall_rules,
+    )
+
+    generated_rules.extend(proxy_firewall_rules(proxy_snapshot(db)))
     generated_rules.extend(
         managed_routing_firewall_rules(
             physical_interfaces,
@@ -4761,6 +4703,10 @@ def public_services_context(db: Session, *, reconcile: bool = True) -> dict[str,
         db: Active database session.
         reconcile: Whether dependent desired state should be reconciled.
     """
+    from atlaso.app.services.reverse_proxy_publication import context as proxy_context
+
+    proxy_publication = proxy_context(db)
+
     interfaces = db.execute(select(PhysicalInterface).order_by(PhysicalInterface.name)).scalars().all()
     vlans = db.execute(select(VlanInterface).where(VlanInterface.enabled.is_(True)).order_by(VlanInterface.parent_interface, VlanInterface.vlan_id)).scalars().all()
     ca_settings = get_ca_settings_row(db)
@@ -4826,7 +4772,7 @@ def public_services_context(db: Session, *, reconcile: bool = True) -> dict[str,
             for address in web_terminal_addresses(terminal_interfaces, terminal_options)
         )
     )
-    validation_errors = []
+    validation_errors = list(proxy_publication["reverse_proxy_validation_errors"])
     if depot_settings.enabled and not depot_settings.allow_unauthenticated_access:
         depot_user = db.get(User, depot_settings.http_user_id) if depot_settings.http_user_id else None
         if depot_user is None:
@@ -4864,12 +4810,14 @@ def public_services_context(db: Session, *, reconcile: bool = True) -> dict[str,
         management_certificate_path=terminal_cert_path,
         management_key_path=terminal_key_path,
     )
+    config_preview = config_preview.rstrip() + "\n" + proxy_publication["reverse_proxy_config_preview"]
     return {
         "public_service_entries": entries,
         "public_service_config_preview": config_preview,
+        "reverse_proxy_intent_marker": proxy_publication["reverse_proxy_intent_marker"],
         "public_service_config_path": PUBLIC_SERVICES_STAGED_CONFIG_PATH,
         "public_service_validation_errors": validation_errors,
-        "public_service_validation_warnings": [],
+        "public_service_validation_warnings": proxy_publication["reverse_proxy_validation_warnings"],
     }
 
 
@@ -5213,6 +5161,12 @@ def public_service_directory_context(db: Session, binding: dict[str, str]) -> di
                 "pill": "good",
             }
         )
+    from atlaso.app.services.reverse_proxies import runtime_snapshot as proxy_snapshot
+    from atlaso.app.services.reverse_proxy_publication import (
+        directory_entries as proxy_directory_entries,
+    )
+
+    services.extend(proxy_directory_entries(proxy_snapshot(db), binding["address"]))
     services = [
         {
             **service,
@@ -5661,6 +5615,10 @@ def traffic_publishing_context(db: Session) -> dict:
     Args:
         db: Session containing desired rules, interfaces and shared Source Groups.
     """
+    from atlaso.app.services.reverse_proxy_publication import (
+        context as reverse_proxy_context,
+    )
+
     ensure_routes_wan_settings(db)
     settings = ensure_traffic_publishing_settings(db)
     rules = list(db.scalars(select(NatRule).order_by(NatRule.priority, NatRule.name)))
@@ -5680,6 +5638,7 @@ def traffic_publishing_context(db: Session) -> dict:
     validation_errors = [*(errors if settings.effective_nat_enabled else []),
                          *(forward_errors if settings.routing_enabled else [])]
     return {
+        **reverse_proxy_context(db),
         "nat_rules": rules, "nat_rule_rows": [nat_rule_to_dict(rule) for rule in rules],
         "port_forwards": forwards,
         "port_forward_rows": [PortForwardResponse.model_validate(rule).model_dump(mode="json") for rule in forwards],
@@ -6259,11 +6218,17 @@ def ensure_dns_for_dhcp_reservation(db: Session, reservation: DhcpReservation, a
         reservation: Reservation supplied by the caller.
         actor: Authenticated identity attributed to the audit record.
     """
+    from atlaso.app.services.network_objects import acquire_network_objects_write_lock
+    from atlaso.app.services.reverse_proxy_publication import proxy_owns_dns_hostname
+
+    acquire_network_objects_write_lock(db)
     scopes = db.execute(select(DhcpScope).order_by(DhcpScope.name)).scalars().all()
     record_values = reservation_dns_record(reservation, scopes)
     if record_values is None:
         return
     hostname, record_type, address = record_values
+    if proxy_owns_dns_hostname(db, hostname):
+        raise HTTPException(status_code=409, detail="This DNS hostname is managed by Reverse Proxies. Edit it in Reverse Proxies.")
     reservation.hostname = hostname
     existing = db.execute(
         select(DnsRecord).where(
@@ -6302,55 +6267,6 @@ def desired_dns_records_for_listen_addresses(raw_addresses: str | None) -> dict[
     return desired
 
 
-VCF_DEPOT_DNS_DESCRIPTION = "Created from VCF Offline Depot endpoint."
-VCF_REGISTRY_DNS_DESCRIPTION = "Created from VCF private registry endpoint."
-CA_PORTAL_DNS_DESCRIPTION = "Created from Certificate Authority portal endpoint."
-
-
-def service_dns_target_token(strategy: str, interface_name: str, address: str) -> str:
-    """Return service dns target token.
-
-    Args:
-        strategy: Strategy consumed by service DNS target token.
-        interface_name: Host network-interface name affected by the operation.
-        address: Network address contacted or validated by the operation.
-    """
-    if strategy == "ip":
-        try:
-            parsed = ip_address(address)
-        except ValueError:
-            return re.sub(r"[^a-z0-9]+", "-", address.strip().lower()).strip("-") or "address"
-        if parsed.version == 4:
-            return str(parsed).replace(".", "-")
-        return "-".join(format(int(group, 16), "x") for group in parsed.exploded.split(":"))
-    safe_interface = re.sub(r"[^a-z0-9]+", "-", interface_name.strip().lower()).strip("-")
-    return safe_interface or "interface"
-
-
-def service_target_hostname(hostname: str, target_token: str) -> str:
-    """Return service target hostname.
-
-    Args:
-        hostname: DNS hostname contacted, validated, or configured by the operation.
-        target_token: Target token consumed by service target hostname.
-    """
-    normalized = normalize_dns_hostname(hostname)
-    if "." not in normalized:
-        return normalized
-    label, domain = normalized.split(".", 1)
-    safe_token = re.sub(r"[^a-z0-9]+", "-", target_token.strip().lower()).strip("-") or "target"
-    suffix = f"-{safe_token}"
-    if len(label) + len(suffix) <= 63:
-        target_label = f"{label}{suffix}"
-    else:
-        digest = hashlib.sha1(f"{label}{suffix}".encode("utf-8")).hexdigest()[:8]
-        hash_suffix = f"-{digest}"
-        max_label_len = 63 - len(suffix) - len(hash_suffix)
-        if max_label_len >= 1:
-            target_label = f"{label[:max_label_len].rstrip('-')}{suffix}{hash_suffix}"
-        else:
-            target_label = f"{safe_token[: max(1, 63 - len(hash_suffix))].rstrip('-')}{hash_suffix}"
-    return f"{target_label}.{domain}"
 
 
 def service_interface_dns_targets(
@@ -7397,83 +7313,8 @@ def reconcile_service_dns_aliases(db: Session, actor: str | None = None) -> list
     return refresh_interface_service_dns_aliases(db, actor=actor)
 
 
-def owned_service_dns_records(db: Session, config: str) -> list[dict[str, str]]:
-    """Capture exact owned records present in a rendered DNS snapshot.
-
-    Args:
-        db: Session used to prove record ownership.
-        config: DNS configuration whose ownership is being recorded.
-    """
-    descriptions = {
-        APPLIANCE_DNS_RECORD_DESCRIPTION, CA_PORTAL_DNS_DESCRIPTION,
-        ESX_STORAGE_DNS_DESCRIPTION, ESXI_PXE_DNS_RECORD_DESCRIPTION,
-        KMS_DNS_RECORD_DESCRIPTION, LDAP_DNS_RECORD_DESCRIPTION,
-        NTP_DNS_DESCRIPTION, OIDC_DNS_RECORD_DESCRIPTION,
-        VCF_DEPOT_DNS_DESCRIPTION, VCF_REGISTRY_DNS_DESCRIPTION,
-    }
-    directives = {line.removeprefix("# atlaso-authoritative-config: ") for line in config.splitlines()}
-    service_interfaces = {}
-    for model, description in (
-        (CaSettings, CA_PORTAL_DNS_DESCRIPTION), (KmsSettings, KMS_DNS_RECORD_DESCRIPTION),
-        (LdapSettings, LDAP_DNS_RECORD_DESCRIPTION), (OidcProviderSettings, OIDC_DNS_RECORD_DESCRIPTION),
-        (NtpSettings, NTP_DNS_DESCRIPTION), (VcfOfflineDepotSettings, VCF_DEPOT_DNS_DESCRIPTION),
-        (VcfPrivateRegistrySettings, VCF_REGISTRY_DNS_DESCRIPTION),
-    ):
-        settings = db.scalars(select(model)).first()
-        if settings is not None:
-            selected = split_interfaces(settings.listen_interface)
-            if len(selected) == 1:
-                service_interfaces[description] = selected[0]
-    service_interfaces[ESXI_PXE_DNS_RECORD_DESCRIPTION] = primary_listen_interface(str(esxi_pxe_boot_settings(db).get("listen_interface") or ""))
-    explicit_ptrs = {row.hostname for row in db.scalars(select(DnsRecord).where(DnsRecord.record_type == "PTR", DnsRecord.enabled.is_(True)))}
-    address_sources = {address: option["name"] for option in service_bind_options(db) for address in option["addresses"]}
-    # The management plane is deliberately excluded from service bind choices.
-    # Its generated FQDN still needs provenance, including the assigned DHCP
-    # address retained in observations while a static candidate is reviewed.
-    for interface in db.scalars(select(PhysicalInterface)):
-        for cidr in (interface.ip_cidr, interface.ipv6_cidr, interface.host_ip_cidr, interface.host_ipv6_cidr):
-            address = address_from_cidr(cidr)
-            if address:
-                address_sources.setdefault(address, interface.name)
-    result = []
-    for row in db.scalars(select(DnsRecord).where(DnsRecord.description.in_(descriptions))):
-        if not row.enabled or row.record_type not in {"A", "AAAA", "CNAME"}:
-            continue
-        directive = f"{'cname' if row.record_type == 'CNAME' else 'host-record'}={row.hostname},{row.address}"
-        if directive not in directives:
-            continue
-        generated_ptr = row.record_type in {"A", "AAAA"} and ip_address(row.address).reverse_pointer not in explicit_ptrs
-        result.append({
-            "hostname": row.hostname, "record_type": row.record_type,
-            "address": row.address, "description": row.description,
-            "generated_ptr": "true" if generated_ptr else "false",
-            "source_interface": service_interfaces.get(row.description, address_sources.get(row.address, "")),
-        })
-    captured = {(row["hostname"], row["record_type"], row["address"]) for row in result}
-    # A partial DNS publication can retain applied owned rows whose desired
-    # identity was edited separately. Preserve their applied provenance.
-    for row in (load_appliance_apply_baselines(db).get("dnsmasq") or {}).get("service_dns_records", []):
-        key = (row["hostname"], row["record_type"], row["address"])
-        directive = f"{'cname' if row['record_type'] == 'CNAME' else 'host-record'}={row['hostname']},{row['address']}"
-        if row.get("description") in descriptions and key not in captured and directive in directives:
-            result.append(row)
-    return result
 
 
-def remember_applied_service_dns_records(db: Session) -> None:
-    """Preserve legacy exact-marker ownership before desired aliases are replaced.
-
-    Args:
-        db: Caller-owned transaction; this function never commits.
-    """
-    acquire_network_objects_write_lock(db)
-    db.flush()
-    baselines = load_appliance_apply_baselines(db, refresh=True)
-    baseline = baselines.get("dnsmasq")
-    if not baseline or "service_dns_records" in baseline:
-        return
-    baseline["service_dns_records"] = owned_service_dns_records(db, str(baseline.get("config_preview") or ""))
-    save_appliance_apply_baselines(db, baselines)
 
 
 def network_generated_dns_unit(db: Session, units_by_id: dict[str, dict[str, Any]]) -> dict[str, Any] | None:
@@ -10358,7 +10199,6 @@ def _normalize_vcf_trust_address(address: str) -> tuple[str, list[str]]:
     return normalized_address, errors
 
 
-APPLIANCE_APPLY_BASELINES_KEY = "appliance_apply.baselines.v1"
 APPLIANCE_APPLY_MANAGEMENT_RESTART_DELAY_SECONDS = 3
 APPLIANCE_APPLY_MANAGEMENT_RECONNECT_GRACE_SECONDS = 15
 MANAGEMENT_CERTIFICATE_CONNECTION_WARNING = (
@@ -10460,26 +10300,6 @@ def redact_config_preview(config_preview: str) -> str:
     return "\n".join(lines)
 
 
-def load_appliance_apply_baselines(db: Session, *, refresh: bool = False) -> dict[str, dict[str, Any]]:
-    """Return appliance apply baselines.
-
-    Args:
-        db: Active database session.
-        refresh: Reload the baseline row after writer admission.
-    """
-    row = db.scalar(select(Setting).where(Setting.key == APPLIANCE_APPLY_BASELINES_KEY)
-                    .execution_options(populate_existing=refresh))
-    raw_value = row.value if row is not None else ""
-    if not raw_value:
-        return {}
-    try:
-        payload = json.loads(raw_value)
-    except json.JSONDecodeError:
-        return {}
-    if not isinstance(payload, dict):
-        return {}
-    baselines = {str(key): value for key, value in payload.items() if isinstance(value, dict)}
-    return baselines
 
 
 def rotated_ca_certificate_consumers(ca_unit: dict[str, Any], ca_baseline: dict[str, Any] | None) -> set[str]:
@@ -10514,6 +10334,8 @@ def rotated_ca_certificate_consumers(ca_unit: dict[str, Any], ca_baseline: dict[
         "ntp:nts": "ntpd",
         "vcf_private_registry:https": "vcf_private_registry",
     }
+    owner_units.update({row["managed_owner"]: "public_services" for row in current.get("certificates", [])
+                        if isinstance(row, dict) and str(row.get("managed_owner") or "").startswith("reverse_proxy:")})
     return {
         owner_units[row["managed_owner"]]
         for row in current.get("certificates", [])
@@ -10567,15 +10389,6 @@ def applied_resolver_uses_local_dns(baseline: dict[str, Any] | None) -> bool:
     )
 
 
-def save_appliance_apply_baselines(db: Session, baselines: dict[str, dict[str, Any]]) -> None:
-    """Persist appliance apply baselines.
-
-    Args:
-        db: Active database session.
-        baselines: Baselines supplied by the caller.
-    """
-    acquire_network_objects_write_lock(db)
-    set_setting_value(db, APPLIANCE_APPLY_BASELINES_KEY, json.dumps(baselines, indent=2, sort_keys=True))
 
 
 def appliance_snapshot_hash(payload: dict[str, Any]) -> str:
@@ -12824,6 +12637,7 @@ def appliance_apply_units(db: Session, *, reconcile: bool = True, applying_dns: 
             config_path=public_services["public_service_config_path"],
             config_preview=public_services["public_service_config_preview"],
             baseline=baselines.get("public_services"),
+            snapshot_marker=public_services.get("reverse_proxy_intent_marker"),
         ),
     ]
     for unit in units:
@@ -15970,6 +15784,7 @@ def execute_management_handoff(
                 context=public_services["context"], summary=public_services["summary"], validation_errors=[],
                 config_path=public_services["config_path"], config_preview=public_config,
                 baseline=baselines.get("public_services"),
+                snapshot_marker=public_services.get("snapshot_marker"),
             ))
         except (KeyError, TypeError, ValueError) as exc:
             succeeded = False
@@ -19109,12 +18924,34 @@ def _submit_appliance_apply(
         return JSONResponse({"detail": detail}, status_code=422) if wants_json else Response(
             detail, status_code=422, media_type="text/plain",
         )
+    proxy_markers = ("# Reverse-proxy intent: ", "# Reverse-proxy transport manifest: ")
+    desired_proxy_intent = [line for line in str(unit_map.get("public_services", {}).get("config_preview") or "").splitlines()
+                            if line.startswith(proxy_markers)]
+    applied_proxy_intent = [line for line in str((apply_baselines.get("public_services") or {}).get("config_preview") or "").splitlines()
+                            if line.startswith(proxy_markers)]
+    desired_proxy_marker = unit_map.get("public_services", {}).get("snapshot_marker")
+    applied_proxy_marker = (apply_baselines.get("public_services") or {}).get("snapshot_marker")
+    proxy_handoff = bool((desired_proxy_intent != applied_proxy_intent or desired_proxy_marker != applied_proxy_marker)
+                         and selected_ids.intersection({*MANAGEMENT_HANDOFF_UNIT_IDS, "dnsmasq"}))
+    if proxy_handoff:
+        unchecked_dependencies = [unit["label"] for unit in units
+                                  if unit["id"] in {*MANAGEMENT_HANDOFF_UNIT_IDS, "dnsmasq"}
+                                  and unit["changed"] and unit["id"] not in requested_ids]
+        if unchecked_dependencies:
+            detail = ("Select the pending reverse-proxy publication dependencies together: "
+                      + ", ".join(unchecked_dependencies) + ". Unchecked changes cannot be applied by the protected handoff.")
+            return JSONResponse({"detail": detail}, status_code=422) if wants_json else Response(
+                detail, status_code=422, media_type="text/plain",
+            )
+        if "dnsmasq" in unit_map and unit_map["dnsmasq"]["changed"]:
+            selected_ids.add("dnsmasq")
     management_handoff = bool(
         (
             selected_ids.intersection(MANAGEMENT_HANDOFF_UNIT_IDS)
             and unit_map.get("network", {}).get("management_handoff_required")
         )
         or binding_change
+        or proxy_handoff
         or (
             "wan" in selected_ids
             and unit_map.get("network", {}).get("management_default_mirror_change")

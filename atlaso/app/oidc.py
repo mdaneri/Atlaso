@@ -45,6 +45,7 @@ from atlaso.app.schemas import (
     OidcProviderSettingsUpdate,
     OidcSigningKeyResponse,
     OidcSubjectResponse,
+    ProblemDetails,
 )
 from atlaso.app.security import (
     SESSION_APPLIANCE_INSTANCE_SESSION_KEY,
@@ -1043,7 +1044,10 @@ def get_oidc_provider_settings(
     return _provider_response(db)
 
 
-@admin_router.put("/provider", response_model=OidcProviderSettingsResponse)
+@admin_router.put(
+    "/provider", response_model=OidcProviderSettingsResponse,
+    responses={409: {"model": ProblemDetails, "description": "Provider readiness or listener ownership conflicts prevent the save; no requested settings edits are persisted."}},
+)
 def update_oidc_provider_settings(
     payload: OidcProviderSettingsUpdate,
     request: Request,
@@ -1054,6 +1058,8 @@ def update_oidc_provider_settings(
 
     Requires the `admin:all` API scope. The operation updates saved Atlaso state and does not bypass
     the documented global Appliance Apply or service lifecycle boundary.
+    Listener writes share the Network Objects transaction lock and reject incompatible enabled
+    reverse-proxy sockets with 409 before saving changes.
 
     Args:
         payload: Validated request or task payload consumed by the operation.
@@ -1061,6 +1067,10 @@ def update_oidc_provider_settings(
         identity: Authenticated identity authorizing the operation.
         db: Active database session used by the operation.
     """
+    from atlaso.app.services.network_objects import acquire_network_objects_write_lock
+    from atlaso.app.services.reverse_proxies import validate_service_listener_sockets
+
+    acquire_network_objects_write_lock(db)
     if payload.enabled and not OIDC_AUTHORIZATION_FLOW_AVAILABLE:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -1084,6 +1094,11 @@ def update_oidc_provider_settings(
     provider.authorization_code_lifetime_seconds = payload.authorization_code_lifetime_seconds
     provider.clock_skew_seconds = payload.clock_skew_seconds
     provider.signing_key_overlap_seconds = payload.signing_key_overlap_seconds
+    try:
+        validate_service_listener_sockets(db)
+    except ValueError as exc:
+        db.rollback()
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     provider.updated_at = utcnow()
     db.add(provider)
     db.flush()

@@ -363,3 +363,80 @@ def test_legacy_firewall_apply_rejects_pending_routing_intent(client, monkeypatc
     assert len(calls) == 1
     with SessionLocal() as db:
         assert db.scalar(select(Setting).where(Setting.key == "appliance_apply.baselines.v1")).value == baseline_applied
+
+
+def test_legacy_firewall_apply_preserves_exact_proxy_listener_admissions(client, monkeypatch):
+    """Keep the same address/port rules in UI, API validation, and legacy Apply.
+
+    Args:
+        client: Isolated authenticated application client.
+        monkeypatch: Capture the dry-run adapter publication boundary.
+    """
+    from sqlalchemy import select
+
+    from atlaso.app.adapters.system import SystemAdapter
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import (
+        CaSettings,
+        FirewallSettings,
+        PhysicalInterface,
+        ReverseProxy,
+        ReverseProxyRoute,
+    )
+    from atlaso.app.ui import (
+        appliance_apply_units,
+        firewall_context,
+        update_appliance_apply_baselines,
+    )
+
+    token, _ = create_token(client, scopes=["read:firewall", "write:firewall"])
+    headers = {"Authorization": f"Bearer {token}"}
+    with SessionLocal() as db:
+        db.scalar(select(FirewallSettings)).enabled = True
+        db.scalar(select(CaSettings)).enabled = True
+        db.add(PhysicalInterface(name="proxy-access", role="access", mode="access",
+                                ip_cidr="192.0.2.50/24", ipv6_cidr="2001:db8:50::1/64",
+                                mac_address="02:00:00:00:50:01"))
+        listeners = [{"interface": "proxy-access", "address": address}
+                     for address in ("192.0.2.50", "2001:db8:50::1")]
+        db.add_all([
+            ReverseProxy(name="Published proxy", hostname="published.example.test", enabled=True,
+                         scheme="https", port=8443, redirect_http=True, redirect_port=8080,
+                         listeners=listeners, routes=[ReverseProxyRoute(
+                             path_prefix="/", upstream_host="upstream.example.test", upstream_port=8081)]),
+            ReverseProxy(name="Disabled proxy", hostname="disabled.example.test", enabled=False,
+                         scheme="http", port=9090, listeners=listeners),
+        ])
+        db.commit()
+        ui_preview = firewall_context(db, reconcile=False)["firewall_config_preview"]
+        update_appliance_apply_baselines(db, appliance_apply_units(db), {"wan", "firewall"})
+        db.commit()
+    calls = []
+    original = SystemAdapter.apply_firewall_config
+
+    def track(adapter, config_path):
+        """Capture actual compatibility Apply while retaining dry-run behavior.
+
+        Args:
+            adapter: System adapter receiving the generated firewall configuration.
+            config_path: Staged or desired configuration path.
+        """
+        calls.append(config_path)
+        return original(adapter, config_path)
+
+    monkeypatch.setattr(SystemAdapter, "apply_firewall_config", track)
+    validation = client.get("/api/v1/firewall/validate", headers=headers)
+    applied = client.post("/api/v1/firewall/apply", headers=headers)
+    assert validation.status_code == applied.status_code == 200
+    assert validation.json()["valid"] and applied.json()["valid"]
+    assert len(calls) == 1
+    expected = sorted(line.strip() for line in ui_preview.splitlines() if 'comment "reverse_proxy:' in line)
+    assert len(expected) == 4
+    for response in (validation, applied):
+        actual = sorted(line.strip() for line in response.json()["config_preview"].splitlines()
+                        if 'comment "reverse_proxy:' in line)
+        assert actual == expected
+        assert all("9090" not in line for line in actual)
+        assert any("ip daddr 192.0.2.50/32" in line for line in actual)
+        assert any("ip6 daddr 2001:db8:50::1/128" in line for line in actual)
+        assert all("tcp dport 8443" in line or "tcp dport 8080" in line for line in actual)

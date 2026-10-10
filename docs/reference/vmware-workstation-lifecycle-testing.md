@@ -13,6 +13,30 @@ The shared lifecycle host-state checks verify that first-boot appliances retain 
 `VCF.PowerCLI==9.1.1.25718932`, and `Connect-VIServer` after the wheel-only test deployment. The PowerCLI import and
 command check run directly as the unprivileged appliance SSH user rather than through sudo.
 
+## Focused reverse-proxy acceptance
+
+`invoke-lifecycle-test.ps1 -ReverseProxyOnly -PullRequestNumber <number>` uses a two-interface appliance and a
+host-reachable Site A network. Supply the powered-off, provenance-admitted builder VMX explicitly with
+`-ApplianceVmxPath`; the runner installs its wheel from the admitted clean source commit. Use `-Purpose docs -KeepVms`
+when retaining the dedicated documentation appliance. Credentials follow the protected lifecycle handoff.
+The direct runner also rejects combining `-ReverseProxyOnly` with any other focused lifecycle mode before VM preparation.
+
+The host fixture binds only to the selected Site A host address. The consumer saves desired state and uses global
+Appliance Apply to verify standard and custom HTTP and HTTPS publication, the managed listener certificate, preserve
+and strip path mapping, normalized forwarding headers, upstream authentication challenges, WebSocket upgrade and frame
+exchange, reserved paths, exact Host selection, standard and custom redirects, duplicate hostname rejection, and the
+cached health API. An owned fixture outage verifies safe Apply and degraded health followed by recovery. An audited
+appliance reboot repeats publication and cached health checks. HTTPS upstream checks use
+public `example.com` and `self-signed.badssl.com` endpoints to prove CA validation, connected-leaf fingerprint pinning,
+wrong-pin rejection, and explicit insecure degradation; endpoint failure fails the run rather than skipping evidence.
+These checks do not yet prove DNS ownership, archive/reset recovery, or failed-Apply rollback.
+Those remain acceptance
+gates for issue #723. Optional screenshot tooling uses the installed Node.js, Playwright, Sharp, and Chrome paths.
+Session cookies travel through standard input after the Node consumer is assigned to a Windows process job. Capture
+uses an isolated browser context, stores no session-state file, and proves the entire browser process tree inactive
+before reporting success. The lifecycle owns the screenshot output beneath its result root; no screenshot success is
+implied by passing the socket checks.
+
 ## Configure non-interactive 1Password authentication
 
 Use a 1Password service account with read access to the exact `Atlaso` Environment. Vault access is not required. Copy

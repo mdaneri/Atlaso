@@ -5,14 +5,13 @@
 Read this file and [CONTRIBUTING.md](CONTRIBUTING.md) before planning or mutation.
 Load each applicable route below before planning or performing its operation; other links are conditional.
 
-In the first progress update, confirm policies read, classify the work as `bug`, `enhancement`, `documentation`, or
-security-sensitive, and identify the linked issue. For private remediation, confirm private tracking without revealing
-advisory identifiers or findings. Read-only discovery may precede this update.
+First progress update: confirm policies read, classify work as `bug`, `enhancement`, `documentation`, or security-sensitive,
+and link the issue. Private remediation: confirm private tracking without advisory identifiers or findings.
+Read-only discovery may precede this update.
 
-Record repository, worktree, policy revision, and loaded routes in context. On repository, worktree, directory,
-policy, or scope change, re-evaluate routes and read changed or newly applicable instructions before continuing.
-Reuse unchanged policy already read in this task. If applicable policy is missing, conflicting, or unclear, stop
-the affected operation for maintainer direction.
+Record repository, worktree, policy revision, and loaded routes. Re-evaluate routes on repository, worktree, directory,
+policy, or scope changes; read changed or newly applicable instructions. Reuse unchanged policy already read in this task.
+If policy is missing, conflicting, or unclear, stop the affected operation for maintainer direction.
 
 ## Always applicable boundaries
 
@@ -41,8 +40,8 @@ the affected operation for maintainer direction.
 
 ## Conditional policy routes
 
-Select routes by operation AND affected behavior, not filenames alone; load all affected routes. Read relevant subsystem
-sections as needed. Resolve unknown applicability before mutation rather than treating it as an exemption.
+Select routes by operation AND affected behavior, not filenames alone; load all affected routes and relevant subsystem
+sections. Resolve unknown applicability before mutation rather than treating it as an exemption.
 
 | Route | Trigger before planning or action | Canonical source |
 | --- | --- | --- |
@@ -64,6 +63,8 @@ sections as needed. Resolve unknown applicability before mutation rather than tr
 
 [Routing](docs/operate/networking.md); [DHCP](docs/services/dhcp.md): native limits/report-only checks.
 
+[Reverse proxies](docs/services/reverse-proxies.md): Apply, ownership, trust, native acceptance.
+
 For tty1, load subsystem applied-address observation and atomic Settings capture.
 
 ## Review and delegation
@@ -72,8 +73,8 @@ For every PR review, including file assignments, load the review route. Complete
 before one consolidated review. Never repeatedly review an unchanged head without
 material new evidence; relevant commits still require re-review under that contract.
 
-A delegating agent lists the startup gate, exact worktree/state roots, owned files, routes, result, and focused
-checks; verify compliance and the diff before use.
+A delegating agent lists startup gate, exact worktree/state roots, owned files, routes, result, and focused checks;
+verify compliance and diff before use.
 Delegation never expands permissions. The implementation route owns the Luna contract and unavailable-worker fallback.
 
 UI work requires the **Mandatory UI Design Guide Gate**: classify the interaction, name the reused Atlaso reference,

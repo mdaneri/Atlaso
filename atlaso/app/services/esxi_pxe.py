@@ -956,6 +956,10 @@ def save_esxi_pxe_boot_settings(
     Returns:
         The save esxi pxe boot settings result.
     """
+    from atlaso.app.services.network_objects import acquire_network_objects_write_lock
+    from atlaso.app.services.reverse_proxies import validate_service_listener_sockets
+
+    acquire_network_objects_write_lock(db)
     normalized_scopes = _normalize_dhcp_scope_selections(db, dhcp_scope_ids if dhcp_scope_ids is not None else [dhcp_scope_id] if dhcp_scope_id else [])
     if normalized_scopes:
         listen_interface = "\n".join(_ordered_unique(scope.interface_name.strip() for scope in normalized_scopes if scope.interface_name.strip()))
@@ -986,6 +990,7 @@ def save_esxi_pxe_boot_settings(
         else:
             row.value = value
     db.flush()
+    validate_service_listener_sockets(db)
     return esxi_pxe_boot_settings(db)
 
 
