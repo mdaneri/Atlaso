@@ -5,6 +5,7 @@ from typing import Any
 
 from atlaso.app import models
 from atlaso.app.reverse_proxy_schemas import ReverseProxyCreate, ReverseProxyRouteInput
+from atlaso.app.services.appliance_settings import normalize_service_dns_target_naming
 from atlaso.app.services.dnsmasq import authoritative_server_name
 from atlaso.app.services.esxi_pxe import ESXI_PXE_HOSTNAME_KEY, _normalize_hostname
 from atlaso.app.services.port_forwarding import ListenerClaim
@@ -15,9 +16,14 @@ from atlaso.app.services.reverse_proxy_publication import (
     validate_publication_size,
 )
 from atlaso.app.services.service_dns_defaults import (
+    ESXI_PXE_DNS_DESCRIPTION,
     FACTORY_SERVICE_IDENTITIES,
     factory_service_hostname,
     projected_factory_service_hostname,
+)
+from atlaso.app.services.service_dns_names import (
+    service_alias_names,
+    storage_alias_names,
 )
 
 
@@ -114,16 +120,40 @@ def validate_candidates(proxies: list[models.ReverseProxy], data: dict[str, Any]
     appliance_fqdn = str(
         (data.get("appliance_settings") or [{}])[0].get("fqdn") or "core.atlaso.internal"
     )
+    naming = normalize_service_dns_target_naming(
+        (data.get("appliance_settings") or [{}])[0].get("service_dns_target_naming")
+    )
+    owned_descriptions = {identity.dns_description for identity in FACTORY_SERVICE_IDENTITIES} - {None}
+    owned_descriptions.add(ESXI_PXE_DNS_DESCRIPTION)
+    names.update(str(row.get("hostname") or "").strip().lower().rstrip(".")
+                 for row in data.get("dns_records", []) if row.get("description") in owned_descriptions)
     for identity in FACTORY_SERVICE_IDENTITIES:
         for service_row in data.get(identity.model.__tablename__, []):
-            names.add(projected_factory_service_hostname(
+            projected = projected_factory_service_hostname(
                 identity.label, str(service_row.get(identity.hostname_attribute) or ""), appliance_fqdn
-            ))
+            )
+            names.add(projected)
+            for hostname in {projected, str(service_row.get(identity.hostname_attribute) or "")} - {""}:
+                names.update(service_alias_names(
+                    hostname, service_row.get("listen_interface"), service_row.get("listen_address"), naming,
+                    shared_target_token="service" if identity.model is models.NtpSettings else None,
+                ))
+    for storage in data.get("esx_storage_settings", []):
+        hostname = projected_factory_service_hostname("nfs", str(storage.get("hostname") or ""), appliance_fqdn)
+        for share in data.get("esx_nfs_shares", []):
+            share_addresses = [option["address"] for option in options
+                               if option["interface"] == share.get("interface_name")]
+            names.update(storage_alias_names(hostname, str(share.get("interface_name") or ""),
+                         share_addresses, str(share.get("address_families") or ""), naming))
     default_pxe_hostname = factory_service_hostname("esxi-pxe", appliance_fqdn)
     configured_pxe_hostname = archived_settings.get(ESXI_PXE_HOSTNAME_KEY, "").strip()
     pxe_hostname = _normalize_hostname(configured_pxe_hostname or default_pxe_hostname)
     names.add(pxe_hostname)
     names.add(projected_factory_service_hostname("esxi-pxe", pxe_hostname, appliance_fqdn))
+    names.update(service_alias_names(
+        pxe_hostname, archived_settings.get("esxi_pxe.boot.listen_interface"),
+        archived_settings.get("esxi_pxe.boot.listen_address"), naming,
+    ))
     dns_settings = (data.get("dns_settings") or [{}])[0]
     archived_dns = models.DnsSettings(
         enabled=dns_settings.get("enabled", False), authoritative=dns_settings.get("authoritative", False),

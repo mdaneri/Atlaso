@@ -68,9 +68,10 @@ The collection count follows saved create and delete results. Validation shows *
 remain without errors, including before browser scripts run; review these warnings before global Appliance Apply.
 
 1. **Identity**: enter a unique **Name** and **Hostname**. Add a **Description** to record the application's purpose.
-   Atlaso reserves its own service hostnames, including the explicit or default authoritative DNS primary hostname.
-   These names cannot be used as upstream targets either. Identity rejects invalid fully qualified hostnames and
-   IP literals before Next.
+   Atlaso reserves its own service hostnames, generated interface/address targets, retained app-owned DNS aliases,
+   and the explicit or default authoritative DNS primary hostname. Selected service targets remain reserved while
+   their bindings are unavailable. These names cannot be used as upstream targets either. Identity rejects invalid
+   fully qualified hostnames and IP literals before Next.
 2. **Listener**: select one or more exact **Listener addresses**, then choose the **Listener scheme** and **Listener
    port**. A shared nginx address and port can serve only one protocol. HTTPS uses an Atlaso CA-managed certificate for
    the hostname; its private key is not shown in the editor. Enable the CA before saving an enabled HTTPS proxy.

@@ -474,3 +474,64 @@ def test_archive_preflights_combined_unicode_publication_before_replacement(clie
             result = restore_settings_archive(db, archive)
             assert result["reverse_proxies"] == result["reverse_proxy_routes"] == count
             assert all(not row.enabled for row in desired_rows(db))
+
+
+@pytest.mark.parametrize("naming", ["ip", "interface"])
+@pytest.mark.parametrize("service_section", ["ntp_settings", "kms_settings"])
+def test_archive_reserves_projected_service_alias_before_replacement(client, naming, service_section):
+    """Reject generated aliases from archived desired state before replacing any section.
+
+    Args:
+        client: Initialized appliance test fixture.
+        naming: Archived service target naming strategy.
+        service_section: Archived service whose binding supplies the generated alias.
+    """
+    from atlaso.app.services.service_dns_names import (
+        service_dns_target_token,
+        service_target_hostname,
+    )
+
+    with SessionLocal() as db:
+        interface = db.scalar(select(PhysicalInterface).where(PhysicalInterface.name == "eth2"))
+        address = interface.ip_cidr.split("/")[0]
+        save_proxy(db, payload(listeners=[{"interface": "eth2", "address": address}]), actor="test")
+        before = export_settings_archive(db, actor="test")["data"]
+        archive = deepcopy(export_settings_archive(db, actor="test"))
+        archive["data"]["appliance_settings"][0]["service_dns_target_naming"] = naming
+        service = archive["data"][service_section][0]
+        service.update(hostname="owned.example.test", listen_interface="eth2", listen_address=address)
+        token = "service" if service_section == "ntp_settings" else service_dns_target_token(naming, "eth2", address)
+        archive["data"]["reverse_proxy_routes"][0]["upstream_host"] = service_target_hostname(service["hostname"], token)
+        audit_ids = list(db.scalars(select(AuditEvent.id)))
+        with pytest.raises(ValueError, match="Atlaso.*service"):
+            restore_settings_archive(db, archive)
+        db.expire_all()
+        assert list(db.scalars(select(AuditEvent.id))) == audit_ids
+        assert export_settings_archive(db, actor="test")["data"] == before
+
+
+@pytest.mark.parametrize("target", ["served", "upstream"])
+def test_archive_reserves_retained_service_dns_alias(client, target):
+    """Reserve archived generated records without replacing current state.
+
+    Args:
+        client: Initialized appliance test fixture.
+        target: Served hostname or upstream route claiming the retained alias.
+    """
+    from atlaso.app.services.service_dns_defaults import NTP_DNS_DESCRIPTION
+
+    with SessionLocal() as db:
+        interface = db.scalar(select(PhysicalInterface).where(PhysicalInterface.name == "eth2"))
+        save_proxy(db, payload(listeners=[{"interface": "eth2", "address": interface.ip_cidr.split("/")[0]}]), actor="test")
+        before = export_settings_archive(db, actor="test")["data"]
+        archive = deepcopy(export_settings_archive(db, actor="test"))
+        record = archive["data"]["dns_records"][0]
+        record.update(hostname="ntp-192-168-1-10.example.test", description=NTP_DNS_DESCRIPTION)
+        if target == "served":
+            archive["data"]["reverse_proxies"][0]["hostname"] = record["hostname"]
+        else:
+            archive["data"]["reverse_proxy_routes"][0]["upstream_host"] = record["hostname"]
+        with pytest.raises(ValueError, match="Atlaso.*service"):
+            restore_settings_archive(db, archive)
+        db.expire_all()
+        assert export_settings_archive(db, actor="test")["data"] == before

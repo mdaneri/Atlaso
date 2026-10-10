@@ -1208,3 +1208,122 @@ def test_proxy_socket_protocol_ownership_ignores_duplicate_interface_addresses(a
     finally:
         db.close()
         engine.dispose()
+
+
+@pytest.mark.parametrize("model_name", ["CaSettings", "KmsSettings", "LdapSettings", "OidcProviderSettings",
+                                       "NtpSettings", "VcfOfflineDepotSettings", "VcfPrivateRegistrySettings"])
+@pytest.mark.parametrize("naming", ["ip", "interface"])
+@pytest.mark.parametrize("address", ["192.168.1.10", "2001:db8::10"])
+def test_generated_service_aliases_rejected_before_save(model_name, naming, address):
+    """Reserve actual DNS publication targets without committing proxy or audit rows.
+
+    Args:
+        model_name: Canonical service settings owner.
+        naming: Appliance service target naming strategy.
+        address: Selected IPv4 or IPv6 listener address.
+    """
+    from atlaso.app import models, ui
+
+    engine, db = create_db()
+    try:
+        interface = db.scalar(select(PhysicalInterface).where(PhysicalInterface.name == "eth1"))
+        interface.ipv6_enabled = True
+        interface.ipv6_cidr = "2001:db8::10/64"
+        db.scalar(select(ApplianceSettings)).service_dns_target_naming = naming
+        model = getattr(models, model_name)
+        service = db.scalar(select(model))
+        if service is None:
+            service = model()
+            db.add(service)
+        field = "portal_hostname" if model_name == "CaSettings" else "hostname"
+        setattr(service, field, "a" * 63 + ".example.test")
+        service.listen_interface = "eth1"
+        service.listen_address = address
+        db.commit()
+        target = ui.service_interface_dns_targets(
+            db, hostname=getattr(service, field), listen_interface="eth1", listen_address=address,
+            shared_target_token="service" if model_name == "NtpSettings" else None,
+        )[0]["hostname"]
+        before = desired_rows(db)
+        audits = list(db.scalars(select(AuditEvent.id)))
+        request = payload()
+        request["routes"][0]["upstream_host"] = target.upper() + "."
+        with pytest.raises(ValueError, match="Atlaso.*service"):
+            save_proxy(db, request, actor="test")
+        assert desired_rows(db) == before
+        assert list(db.scalars(select(AuditEvent.id))) == audits
+        request["routes"][0]["upstream_host"] = "remote-" + target.split(".", 1)[1]
+        save_proxy(db, request, actor="test")
+    finally:
+        db.close()
+        engine.dispose()
+
+
+@pytest.mark.parametrize("target", ["served", "upstream"])
+def test_owned_service_dns_aliases_reserved_but_operator_dns_allowed(target):
+    """Reserve retained generated records without treating operator DNS as service ownership.
+
+    Args:
+        target: Proxy hostname or upstream route claiming the generated alias.
+    """
+    from atlaso.app.models import DnsRecord
+    from atlaso.app.services.service_dns_defaults import NTP_DNS_DESCRIPTION
+
+    engine, db = create_db()
+    try:
+        db.add(DnsRecord(hostname="ntp-192-168-1-10.example.test", record_type="A", address="192.168.1.10",
+                         description=NTP_DNS_DESCRIPTION))
+        db.add(DnsRecord(hostname="remote-192-168-1-10.example.test", record_type="A", address="10.10.20.30",
+                         description="Operator-owned record"))
+        db.commit()
+        request = payload()
+        if target == "served":
+            request["hostname"] = "ntp-192-168-1-10.example.test"
+        else:
+            request["routes"][0]["upstream_host"] = "ntp-192-168-1-10.example.test"
+        with pytest.raises(ValueError, match="Atlaso.*service"):
+            save_proxy(db, request, actor="test")
+        request = payload()
+        request["routes"][0]["upstream_host"] = "remote-192-168-1-10.example.test"
+        save_proxy(db, request, actor="test")
+    finally:
+        db.close()
+        engine.dispose()
+
+
+@pytest.mark.parametrize("naming", ["ip", "interface"])
+def test_storage_and_network_boot_generated_aliases_reserved(naming):
+    """Use each publisher's target naming rules for selected local addresses.
+
+    Args:
+        naming: Appliance service target naming strategy.
+    """
+    from atlaso.app.models import EsxNfsShare, EsxStorageSettings, EsxStorageVolume
+    from atlaso.app.services.esx_storage import target_hostname, target_token
+    from atlaso.app.services.esxi_pxe import (
+        ESXI_PXE_LISTEN_ADDRESS_KEY,
+        ESXI_PXE_LISTEN_INTERFACE_KEY,
+    )
+    from atlaso.app.services.service_dns_names import (
+        service_dns_target_token,
+        service_target_hostname,
+    )
+
+    engine, db = create_db()
+    try:
+        db.scalar(select(ApplianceSettings)).service_dns_target_naming = naming
+        db.add(EsxStorageSettings(hostname="nfs.example.test"))
+        volume = EsxStorageVolume(name="reserved-volume", stable_device_id="test-device")
+        db.add(volume)
+        db.flush()
+        db.add(EsxNfsShare(datastore_name="reserved", volume_id=volume.id, interface_name="eth1", address_families="ipv4"))
+        db.add(Setting(key=ESXI_PXE_LISTEN_INTERFACE_KEY, value="eth1"))
+        db.add(Setting(key=ESXI_PXE_LISTEN_ADDRESS_KEY, value="192.168.1.10"))
+        db.commit()
+        names = validation_context(db)["service_hostnames"]
+        assert target_hostname("nfs.example.test", target_token("192.168.1.10", naming, "eth1")) in names
+        assert service_target_hostname("esxi-pxe.atlaso.internal",
+                                       service_dns_target_token(naming, "eth1", "192.168.1.10")) in names
+    finally:
+        db.close()
+        engine.dispose()

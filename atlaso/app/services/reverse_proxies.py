@@ -206,7 +206,26 @@ def _service_hostnames(db: Session) -> set[str]:
         db: Caller-owned database session for proxy desired state.
     """
     names: set[str] = set()
+    from atlaso.app.services.appliance_settings import (
+        normalize_service_dns_target_naming,
+    )
     from atlaso.app.services.dnsmasq import authoritative_server_name
+    from atlaso.app.services.service_dns_defaults import (
+        ESXI_PXE_DNS_DESCRIPTION,
+        FACTORY_SERVICE_IDENTITIES,
+    )
+    from atlaso.app.services.service_dns_names import (
+        service_alias_names,
+        storage_alias_names,
+    )
+
+    appliance = db.scalar(select(models.ApplianceSettings))
+    naming = normalize_service_dns_target_naming(appliance.service_dns_target_naming if appliance else None)
+    owned_descriptions = {identity.dns_description for identity in FACTORY_SERVICE_IDENTITIES} - {None}
+    owned_descriptions.add(ESXI_PXE_DNS_DESCRIPTION)
+    names.update(str(record.hostname).strip().lower().rstrip(".") for record in db.scalars(
+        select(models.DnsRecord).where(models.DnsRecord.description.in_(owned_descriptions))
+    ))
 
     dns_settings = db.scalar(select(models.DnsSettings))
     if dns_settings is not None and dns_settings.authoritative:
@@ -224,6 +243,10 @@ def _service_hostnames(db: Session) -> set[str]:
                 continue
             try:
                 names.add(_canonical_dns_name(value, require_fqdn=False))
+                names.update(service_alias_names(
+                    value, getattr(row, "listen_interface", ""), getattr(row, "listen_address", ""), naming,
+                    shared_target_token="service" if model is models.NtpSettings else None,
+                ))
             except ValueError:
                 continue
     appliance = db.scalar(select(models.ApplianceSettings))
@@ -232,12 +255,22 @@ def _service_hostnames(db: Session) -> set[str]:
             names.add(_canonical_dns_name(appliance.fqdn, require_fqdn=False))
         except ValueError:
             pass
+    from atlaso.app.services.applied_service_dns import service_bind_options
+
+    storage = db.scalar(select(models.EsxStorageSettings))
+    if storage is not None:
+        options = {option["name"]: option["addresses"] for option in service_bind_options(db)}
+        for share in db.scalars(select(models.EsxNfsShare)):
+            names.update(storage_alias_names(storage.hostname, share.interface_name,
+                         options.get(share.interface_name, []), share.address_families, naming))
     # Use the canonical Network Boot settings reader so absent and blank
     # hostname rows reserve the same appliance-domain default as publication.
     from atlaso.app.services.esxi_pxe import esxi_pxe_boot_settings
 
     try:
-        names.add(_canonical_dns_name(esxi_pxe_boot_settings(db)["hostname"], require_fqdn=False))
+        boot = esxi_pxe_boot_settings(db)
+        names.add(_canonical_dns_name(boot["hostname"], require_fqdn=False))
+        names.update(service_alias_names(boot["hostname"], boot["listen_interface"], boot["listen_address"], naming))
     except (KeyError, ValueError):
         pass
     return names
