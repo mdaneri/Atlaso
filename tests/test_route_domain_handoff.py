@@ -169,8 +169,8 @@ def test_transition_route_observation_accepts_empty_numeric_table(monkeypatch):
     monkeypatch.setattr(helper, "_network_observation_command", observe)
     assert helper._transition_route_rows("eth0", 4, 100) == []
     assert commands == [
-        ["ip", "-j", "-4", "route", "show", "table", "100", "dev", "eth0"],
-        ["ip", "-j", "-4", "route", "show", "table", "all", "dev", "eth0"],
+        ["ip", "-j", "-details", "-4", "route", "show", "table", "100", "dev", "eth0"],
+        ["ip", "-j", "-details", "-4", "route", "show", "table", "all", "dev", "eth0"],
     ]
 
 
@@ -198,7 +198,7 @@ def test_transition_route_observation_binds_omitted_json_table_and_device(monkey
     rows = helper._transition_route_rows("eth0", 4, 100)
     assert rows == [{"dst": "default", "gateway": "192.0.2.1", "metric": 1,
                      "protocol": "boot", "dev": "eth0", "table": 100}]
-    assert commands == [["ip", "-j", "-4", "route", "show", "table", "100", "dev", "eth0"]]
+    assert commands == [["ip", "-j", "-details", "-4", "route", "show", "table", "100", "dev", "eth0"]]
 
 
 @pytest.mark.parametrize("destination,gateway,source", [

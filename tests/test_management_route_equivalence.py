@@ -3,6 +3,7 @@
 import json
 import subprocess
 from contextlib import contextmanager
+from ipaddress import ip_network
 
 import pytest
 
@@ -13,6 +14,125 @@ from tests.test_appliance_helper import load_helper_module
 def helper():
     """Load the large helper once; monkeypatch restores each test's boundaries."""
     return load_helper_module()
+
+
+@pytest.fixture(params=["kernel", "boot"])
+def native_route_inventory(helper, monkeypatch, request):
+    """Provide a bounded iproute2 observer with selector-bound owner omissions.
+
+    Args:
+        helper: Isolated helper module.
+        monkeypatch: Restore native observation and mutation boundaries.
+        request: Connected route protocol reported by the native inventory.
+    """
+    routes = {
+        4: [
+            {"dst": "192.0.2.0/24", "table": "main", "scope": "link", "metric": 0,
+             "protocol": request.param},
+            {"dst": "default", "table": "main", "gateway": "192.0.2.1", "metric": 100,
+             "protocol": "boot"},
+        ],
+        6: [
+            {"dst": "2001:db8:1::/64", "table": "main", "scope": "link", "metric": 0,
+             "protocol": request.param},
+            {"dst": "default", "table": "main", "gateway": "fe80::1", "metric": 100,
+             "protocol": "boot"},
+        ],
+    }
+    table_routes = {(family, table): [] for family in (4, 6) for table in (100, 200)}
+    commands = []
+
+    def observe(command):
+        """Return native-style JSON rows for the selected interface and table.
+
+        Args:
+            command: Native observation command built by the helper.
+        """
+        commands.append(command)
+        if command[1:4] == ["-j", "address", "show"]:
+            return subprocess.CompletedProcess(command, 0, json.dumps([{
+                "ifname": "eth0", "address": "02:00:00:00:00:01", "addr_info": [
+                    {"local": "192.0.2.10", "prefixlen": 24, "scope": "global"},
+                    {"local": "2001:db8:1::10", "prefixlen": 64, "scope": "global"},
+                ],
+            }]), "")
+        if "route" not in command:
+            return subprocess.CompletedProcess(command, 0, "[]", "")
+
+        family = 4 if "-4" in command else 6
+        table_index = command.index("table") + 1
+        table = command[table_index]
+        detailed = "-details" in command
+        if table == "all":
+            rows = routes[family]
+        else:
+            rows = table_routes[(family, int(table))]
+        native_rows = []
+        for row in rows:
+            native = {key: value for key, value in row.items() if key != "dev"}
+            if not detailed and native.get("protocol") == "boot":
+                native.pop("protocol", None)
+            native_rows.append(native)
+        return subprocess.CompletedProcess(command, 0, json.dumps(native_rows), "")
+
+    def run(command):
+        """Apply only the fixed route additions and deletions under test.
+
+        Args:
+            command: Native route mutation command built by the helper.
+        """
+        commands.append(command)
+        family = 4 if "-4" in command else 6
+        table = int(command[command.index("table") + 1])
+        action = command[3]
+        destination = command[4]
+        metric = int(command[command.index("metric") + 1])
+        gateway = command[command.index("via") + 1] if "via" in command else ""
+        row = {"dst": destination, "gateway": gateway, "metric": metric, "protocol": "kernel"}
+        if action == "add":
+            table_routes[(family, table)].append(row)
+        else:
+            table_routes[(family, table)] = [
+                candidate for candidate in table_routes[(family, table)]
+                if not (candidate.get("dst") == destination and candidate.get("metric") == metric)
+            ]
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    monkeypatch.setattr(helper, "_network_observation_command", observe)
+    monkeypatch.setattr(helper, "_run", run)
+    monkeypatch.setattr(helper, "_durable_management_handoff_state_write", lambda *_args: None)
+
+    def install_successors(table, evidence, protocol="boot"):
+        """Install native routes representing the original usable paths.
+
+        Args:
+            table: Management or lab routing table under observation.
+            evidence: Snapshot captured before the route transition.
+            protocol: Native route protocol reported for successor rows.
+        """
+        for route in evidence["eth0"]["routes"]:
+            table_routes[(ip_network(route["destination"]).version, table)].append({
+                "dst": "default" if ip_network(route["destination"]).prefixlen == 0 else route["destination"],
+                "gateway": route["gateway"], "metric": route["metric"], "protocol": protocol,
+            })
+
+    def install_holdovers(table, evidence):
+        """Install the observed DHCP/RA replacements required by route readiness.
+
+        Args:
+            table: Management or lab routing table under observation.
+            evidence: Snapshot captured before the route transition.
+        """
+        for route in evidence["eth0"]["routes"]:
+            family = ip_network(route["destination"]).version
+            table_routes[(family, table)].append({
+                "dst": "default" if ip_network(route["destination"]).prefixlen == 0 else route["destination"],
+                "gateway": route["gateway"], "metric": route["holdover_metric"],
+                "protocol": "dhcp" if family == 4 else "ra",
+            })
+
+    return {"commands": commands, "connected_protocol": request.param, "install_holdovers": install_holdovers,
+            "install_successors": install_successors, "table_routes": table_routes}
 
 
 @pytest.mark.parametrize("table", [100, 200])
@@ -61,9 +181,11 @@ def test_numeric_networkd_successor_protocols(helper, protocol):
 
 
 @pytest.mark.parametrize("change", [
-    {"gateway": "192.0.2.2"}, {"metric": 101}, {"protocol": 99}, {"dev": "eth1"},
+    {"gateway": "192.0.2.2"}, {"metric": 101}, {"protocol": 99}, {"protocol": "unknown"},
+    {"dev": "eth1"},
     {"flags": ["linkdown"]}, {"type": "blackhole"}, {"nhid": 7},
-    {"from": "192.0.2.0/24"}, {"prefsrc": "192.0.2.99"}, {"metric": 202}, {"metric": True},
+    {"from": "192.0.2.0/24"}, {"prefsrc": "192.0.2.99"},
+    {"multipath": [{"gateway": "192.0.2.1"}]}, {"metric": 202}, {"metric": True},
 ])
 def test_boot_protocol_does_not_authorize_changed_or_foreign_successor(helper, change):
     """Boot is admitted only with the exact usable, captured old route key.
@@ -190,6 +312,50 @@ def test_seed_retirement_keeps_captured_boot_default(helper, monkeypatch, tmp_pa
     assert commands[0][3] == "del"
     assert commands[0][-2:] == ["metric", "202"]
     assert original in observed
+
+
+@pytest.mark.parametrize("table", [100, 200])
+def test_native_details_capture_seed_and_retire_routes_with_omitted_owner_fields(
+    helper, native_route_inventory, tmp_path, table,
+):
+    """Detailed native inventory preserves boot routes through table-bound retirement.
+
+    Args:
+        helper: Isolated helper module.
+        native_route_inventory: Native-style observer omitting selector-bound fields.
+        tmp_path: Isolated transition marker location.
+        table: Management or lab routing domain selected for the interface.
+    """
+    marker = tmp_path / "state.json"
+    state = {}
+    bindings = [{"name": "eth0", "table": table}]
+
+    helper._seed_transition_routes(state, bindings, marker)
+    evidence = state["previous_management_routing"]
+    assert {ip_network(route["destination"]).version for route in evidence["eth0"]["routes"]} == {4, 6}
+    assert {route["protocol"] for route in evidence["eth0"]["routes"]} == {
+        "boot", native_route_inventory["connected_protocol"],
+    }
+    assert len(state["transition_seed_routes"]) == 4
+
+    native_route_inventory["install_holdovers"](table, evidence)
+    helper._wait_management_handoff_routes({"previous_management_routing": evidence}, attempts=1)
+    native_route_inventory["install_successors"](table, evidence)
+    seed_metrics = {row["seed_metric"] for row in state["transition_seed_routes"]}
+    helper._retire_transition_routes(state, marker, require_replacement=True)
+
+    assert state["transition_seed_routes"] == []
+    selected_rows = [row for (family, observed_table), rows in native_route_inventory["table_routes"].items()
+                     if observed_table == table for row in rows]
+    assert selected_rows
+    assert not seed_metrics.intersection(row["metric"] for row in selected_rows)
+    assert all(not rows for (_family, observed_table), rows in native_route_inventory["table_routes"].items()
+               if observed_table != table)
+    route_reads = [command for command in native_route_inventory["commands"] if "route" in command and "show" in command]
+    assert route_reads
+    assert all("-details" in command for command in route_reads)
+    assert all(command[-2:] == ["dev", "eth0"] for command in route_reads)
+    assert {command[command.index("table") + 1] for command in route_reads} >= {"all", str(table)}
 
 
 @pytest.mark.parametrize("rollback_failed", [False, True])
