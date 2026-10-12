@@ -1169,7 +1169,7 @@ def test_inventory_proxy_suspension_rolls_back_with_parent_transaction():
 
 @pytest.mark.parametrize("address", ["192.168.1.10", "2001:db8:1::10"])
 @pytest.mark.parametrize(("scheme", "port", "conflicts"), [
-    ("http", 443, True), ("https", 80, True), ("https", 443, False), ("http", 8080, False),
+    ("http", 443, True), ("https", 80, True), ("https", 443, True), ("http", 8080, False),
 ])
 def test_proxy_socket_protocol_ownership_ignores_duplicate_interface_addresses(address, scheme, port, conflicts):
     """Keep nginx protocol ownership address-scoped while retaining interface bindings.
@@ -1178,7 +1178,7 @@ def test_proxy_socket_protocol_ownership_ignores_duplicate_interface_addresses(a
         address: Exact duplicate saved IPv4 or IPv6 listener address.
         scheme: Candidate client-facing protocol.
         port: Candidate TCP port, including the existing HTTP redirect socket.
-        conflicts: Whether save must reject a mixed-protocol socket without mutation.
+        conflicts: Whether save must reject protocol or ingress-scope overlap without mutation.
     """
     engine, db = create_db()
     try:
@@ -1198,13 +1198,99 @@ def test_proxy_socket_protocol_ownership_ignores_duplicate_interface_addresses(a
         candidate = payload(name="Second", hostname="second.example.test", enabled=True, scheme=scheme,
                             port=port, redirect_http=False, listeners=[{"interface": "eth2", "address": address}])
         if conflicts:
-            with pytest.raises(ValueError, match="HTTP and HTTPS virtual hosts cannot share"):
+            message = "identical interface scopes" if (scheme, port) == ("https", 443) else "HTTP and HTTPS virtual hosts cannot share"
+            with pytest.raises(ValueError, match=message):
                 save_proxy(db, candidate, actor="operator")
             assert list(db.scalars(select(ReverseProxy))) == [first]
         else:
             second = save_proxy(db, candidate, actor="operator")
             assert second.listeners == [{"interface": "eth2", "address": address}]
         assert first.listeners == [{"interface": "eth1", "address": address}]
+    finally:
+        db.close()
+        engine.dispose()
+
+
+@pytest.mark.parametrize("address", ["192.168.1.10", "2001:db8:1::10"])
+@pytest.mark.parametrize(("scheme", "port"), [("https", 443), ("http", 80)])
+@pytest.mark.parametrize(("first_scopes", "second_scopes", "conflicts"), [
+    (("eth1",), ("eth1",), False),
+    (("eth1", "eth2"), ("eth2", "eth1"), False),
+    (("eth1",), ("eth2",), True),
+    (("eth1", "eth2"), ("eth1",), True),
+    (("eth1",), ("eth1", "eth2"), True),
+])
+def test_shared_proxy_sockets_require_identical_ingress_scopes(address, scheme, port, first_scopes, second_scopes, conflicts):
+    """Protect primary and redirect hosts while admitting identical unordered scopes.
+
+    Args:
+        address: Exact duplicate saved IPv4 or IPv6 address.
+        scheme: Candidate protocol sharing the primary or redirect socket.
+        port: Existing primary or redirect listener port.
+        first_scopes: Interfaces selected by the existing enabled proxy.
+        second_scopes: Interfaces selected by the candidate proxy.
+        conflicts: Whether differing ingress scopes must reject the write atomically.
+    """
+    engine, db = create_db()
+    try:
+        first_interface = db.scalar(select(PhysicalInterface).where(PhysicalInterface.name == "eth1"))
+        first_interface.ipv6_enabled = ":" in address
+        first_interface.ipv6_cidr = address + "/64" if ":" in address else None
+        db.add(PhysicalInterface(
+            name="eth2", mac_address="02:00:00:00:00:03", admin_state="up", oper_state="up",
+            role="access", mode="access", ip_cidr="192.168.1.10/24",
+            ipv6_enabled=":" in address, ipv6_cidr=address + "/64" if ":" in address else None,
+        ))
+        db.commit()
+        first = save_proxy(db, payload(enabled=True, listeners=[
+            {"interface": interface, "address": address} for interface in first_scopes
+        ]), actor="operator")
+        before_audits = list(db.scalars(select(AuditEvent.id)))
+        candidate = payload(name="Second", hostname="second.example.test", enabled=True, scheme=scheme,
+                            port=port, redirect_http=False, listeners=[
+                                {"interface": interface, "address": address} for interface in second_scopes
+                            ])
+        if conflicts:
+            with pytest.raises(ValueError, match="identical interface scopes"):
+                save_proxy(db, candidate, actor="operator")
+            assert list(db.scalars(select(ReverseProxy))) == [first]
+            assert list(db.scalars(select(AuditEvent.id))) == before_audits
+        else:
+            second = save_proxy(db, candidate, actor="operator")
+            assert {binding["interface"] for binding in second.listeners} == set(second_scopes)
+        assert {binding["interface"] for binding in first.listeners} == set(first_scopes)
+    finally:
+        db.close()
+        engine.dispose()
+
+
+def test_shared_proxy_scope_is_per_address_and_rejected_edit_preserves_state():
+    """Admit unrelated bindings and reject a changed shared-socket scope atomically."""
+    engine, db = create_db()
+    try:
+        db.add(PhysicalInterface(
+            name="eth2", mac_address="02:00:00:00:00:03", admin_state="up", oper_state="up",
+            role="access", mode="access", ip_cidr="192.168.1.11/24",
+        ))
+        db.add(PhysicalInterface(
+            name="eth3", mac_address="02:00:00:00:00:04", admin_state="up", oper_state="up",
+            role="access", mode="access", ip_cidr="192.168.1.10/24",
+        ))
+        db.commit()
+        first = save_proxy(db, payload(enabled=True, listeners=[
+            {"interface": "eth1", "address": "192.168.1.10"},
+            {"interface": "eth2", "address": "192.168.1.11"},
+        ]), actor="operator")
+        second_payload = payload(name="Second", hostname="second.example.test", enabled=True)
+        second = save_proxy(db, second_payload, actor="operator")
+        assert second.listeners == [{"interface": "eth1", "address": "192.168.1.10"}]
+        before_audits = list(db.scalars(select(AuditEvent.id)))
+        second_payload["listeners"] = [{"interface": "eth3", "address": "192.168.1.10"}]
+        with pytest.raises(ValueError, match="identical interface scopes"):
+            save_proxy(db, second_payload, actor="operator", proxy_id=second.id)
+        assert second.listeners == [{"interface": "eth1", "address": "192.168.1.10"}]
+        assert first.listeners[0] == second.listeners[0]
+        assert list(db.scalars(select(AuditEvent.id))) == before_audits
     finally:
         db.close()
         engine.dispose()

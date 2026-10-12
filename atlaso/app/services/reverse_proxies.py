@@ -565,9 +565,14 @@ def validate_proxy(
                     if peer_address == address and peer_port == port:
                         if peer_scheme != socket_scheme:
                             errors.append("HTTP and HTTPS virtual hosts cannot share the same listener socket.")
+                        elif {key[0] for key in seen_listeners if key[1] == address} != {
+                            str(binding.get("interface") or "") for binding in peer.listeners
+                            if str(binding.get("address") or "") == address
+                        }:
+                            errors.append("Virtual hosts sharing a listener socket must select identical interface scopes.")
                         elif hostname and peer.hostname.strip().rstrip(".").casefold() == hostname:
                             errors.append("The same hostname cannot claim an nginx socket more than once.")
-                        # Distinct hostnames intentionally share an nginx listener socket.
+                        # Distinct hostnames may share a socket with the same ingress scope.
 
     upstream_addresses = context.get("addresses", set())
     route_ids: set[int] = set()

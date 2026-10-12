@@ -28,6 +28,36 @@ from atlaso.app.services.settings_archive import (
 from tests.services.test_reverse_proxies import payload
 
 
+def test_archive_rejects_different_ingress_scopes_on_shared_proxy_socket(client):
+    """Reject shared-socket scope differences before replacing any saved section.
+
+    Args:
+        client: Initialized appliance test fixture.
+    """
+    with SessionLocal() as db:
+        interface = db.scalar(select(PhysicalInterface).where(PhysicalInterface.name == "eth2"))
+        address = interface.ip_cidr.split("/")[0]
+        db.add(PhysicalInterface(
+            name="eth3", mac_address="02:00:00:00:00:04", admin_state="up", oper_state="up",
+            role="access", mode="access", ip_cidr=interface.ip_cidr,
+        ))
+        db.commit()
+        for name, target, port in (("First", "eth2", 8084), ("Second", "eth3", 8085)):
+            save_proxy(db, payload(name=name, hostname=name.lower() + ".example.test", enabled=True,
+                                   scheme="http", port=port, redirect_http=False,
+                                   listeners=[{"interface": target, "address": address}]), actor="test")
+        archive = deepcopy(export_settings_archive(db, actor="test"))
+        before = deepcopy(archive["data"])
+        second = next(row for row in archive["data"]["reverse_proxies"] if row["name"] == "Second")
+        second["port"] = 8084
+        before_audits = list(db.scalars(select(AuditEvent.id)))
+        with pytest.raises(ValueError, match="identical interface scopes"):
+            restore_settings_archive(db, archive)
+        db.expire_all()
+        assert list(db.scalars(select(AuditEvent.id))) == before_audits
+        assert export_settings_archive(db, actor="test")["data"] == before
+
+
 @pytest.mark.parametrize("target", ["served", "upstream"])
 @pytest.mark.parametrize("host", ["127.1", "0177.0.0.1", "0x7f.0.0.1"])
 def test_archive_rejects_legacy_numeric_names_before_replacement(client, target, host):
