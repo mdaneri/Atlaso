@@ -177,7 +177,9 @@ def test_combined_wan_rejects_candidate_ingress_over_capacity(client, monkeypatc
     review = client.get("/appliance-apply/review")
     assert review.status_code == 200
     review_wan = next(unit for unit in review.json()["units"] if unit["id"] == "wan")
-    assert review_wan["valid"] is True
+    # Review now displays the effective combined snapshot, rather than the
+    # valid standalone WAN snapshot that would not execute with Network.
+    assert review_wan["valid"] is False
     assert review_wan["network_candidate_valid"] is False
     assert review_wan["forces_network_selection"] is True
     assert any("ingress rule capacity" in error
@@ -1452,6 +1454,10 @@ def test_dns_activation_review_projects_local_resolver_for_existing_settings_row
     assert settings_rows[0]["requires_dns_selection"] is False
 
     if previous_apply:
+        settings_only = client.get("/appliance-apply/review", params={"selected_units": "appliance_settings"}).json()
+        settings_review = next(unit for unit in settings_only["units"] if unit["id"] == "appliance_settings")
+        assert json.loads(settings_review["config_preview"])["resolver_servers"] != ["127.0.0.1"]
+        assert "resolver local DNS" not in settings_review["summary"]
         csrf = client.get("/dashboard").text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
         response = client.post(
             "/appliance-apply",
@@ -3067,16 +3073,19 @@ def test_wan_apply_preview_uses_selected_network_ownership(client, monkeypatch, 
         candidate = wan["network_candidate_variant"]
         assert wan["config_preview"] != candidate["config_preview"]
 
-    review = client.get("/appliance-apply/review")
+    selection = ["wan", "network"] if network_selected else ["wan"]
+    review = client.get("/appliance-apply/review", params={"selected_units": selection})
     assert review.status_code == 200
-    review_wan = next(unit for unit in review.json()["units"] if unit["id"] == "wan")
-    assert review_wan["config_preview"] == wan["config_preview"]
+    review_units = review.json()["units"]
+    review_wan = next(unit for unit in review_units if unit["id"] == "wan")
+    reviewed_network = any(unit["id"] == "network" and unit["selected"] for unit in review_units)
+    reviewed_wan = candidate if reviewed_network else wan
+    assert review_wan["config_preview"] == reviewed_wan["config_preview"]
     assert review_wan["network_candidate_preview"] == candidate["config_preview"]
 
     monkeypatch.setattr(ui, "run_appliance_apply_job", lambda _job_id: None)
     page = client.get("/dashboard")
     csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
-    selection = ["wan", "network"] if network_selected else ["wan"]
     response = client.post("/appliance-apply", data={"csrf": csrf, "selected_units": selection},
                            headers={"Accept": "application/json"})
     assert response.status_code == 202, response.text
@@ -3086,6 +3095,7 @@ def test_wan_apply_preview_uses_selected_network_ownership(client, monkeypatch, 
     captured = next(unit for unit in payload["captured_units"] if unit["unit_id"] == "wan")
     assert captured["snapshot_hash"] == expected["snapshot_hash"]
     assert captured["config_preview"] == expected["config_preview"]
+    assert captured["config_preview"] == review_wan["config_preview"]
 
 
 @pytest.mark.parametrize("selected_unit", ["network", "nat"])

@@ -13080,9 +13080,11 @@ def appliance_apply_context(db: Session) -> dict[str, Any]:
             and "dnsmasq" not in submitted_ids and network_generated_dns_unit(db, unit_map) is not None):
         # Dynamic address drift does not alter saved Network intent, but DNS
         # publication still needs its explicitly reviewed readiness handoff.
+        listener_note = "Select with DNS to verify effective listener addresses before publication"
         review_units = [{
             **network_unit,
-            "summary": [*network_unit["summary"], "Select with DNS to verify effective listener addresses before publication"],
+            "review_notes": [listener_note],
+            "summary": [*network_unit["summary"], listener_note],
         }, *review_units]
     dns_settings = dns_unit.get("context", {}).get("dns_settings")
     if (
@@ -13098,7 +13100,8 @@ def appliance_apply_context(db: Session) -> dict[str, Any]:
         )
         if not initial_apply_required and not settings_unit.get("changed"):
             projected["requires_dns_selection"] = True
-            projected["summary"] = [*projected["summary"], "Selected with DNS to activate the host resolver"]
+            projected["review_notes"] = ["Selected with DNS to activate the host resolver"]
+            projected["summary"] = [*projected["summary"], *projected["review_notes"]]
         if any(unit["id"] == "appliance_settings" for unit in review_units):
             review_units = [
                 projected if unit["id"] == "appliance_settings" else unit
@@ -13113,9 +13116,11 @@ def appliance_apply_context(db: Session) -> dict[str, Any]:
             unit_id for unit_id in MANAGEMENT_HANDOFF_UNIT_IDS
             if unit_id != "network" and unit_map.get(unit_id, {}).get("changed")
         }
+        handoff_note = "Required with Network for the protected listener handoff"
         review_units = [
             {**unit, "requires_network_selection": True,
-             "summary": [*unit["summary"], "Required with Network for the protected listener handoff"]}
+             "review_notes": [*unit.get("review_notes", []), handoff_note],
+             "summary": [*unit["summary"], handoff_note]}
             if unit["id"] in required_ids else unit
             for unit in review_units
         ]
@@ -18851,42 +18856,31 @@ def run_vcf_depot_software_id_job(job_id: str) -> None:
             )
 
 
-def _submit_appliance_apply(
-    request: Request,
-    background_tasks: BackgroundTasks,
-    selected_units: list[str] = Form(default=[]),
-    format_confirmations: list[str] = Form(default=[]),
-    refresh_vcf_depot_software_depot_id: bool = Form(False),
-    csrf: str = Form(...),
-    identity: Identity = Depends(require_session_identity),
-    db: Session = Depends(get_db),
-) -> Response:
-    """Handle the submit appliance apply endpoint.
+def appliance_apply_execution_plan(
+    db: Session, units: list[dict[str, Any]], selected_ids: set[str], *, enforce_consent: bool = True, consented_ids: set[str] | None = None,
+) -> dict[str, Any]:
+    """Expand and validate the same effective plan for review and submission.
 
     Args:
-        request: Incoming HTTP request.
-        background_tasks: Background tasks supplied by the caller.
-        selected_units: Selected units supplied by the caller.
-        format_confirmations: Format confirmations supplied by the caller.
-        refresh_vcf_depot_software_depot_id: Identifier of the refresh vcf depot software depot.
-        csrf: Validated CSRF token authorizing the request.
-        identity: Authenticated identity authorizing the request.
-        db: Active database session.
+        db: Active desired-state database session.
+        units: Current validated component snapshots.
+        selected_ids: Explicit operator selection before dependency expansion.
+        enforce_consent: Require explicit consent and valid units at submission.
+        consented_ids: Effective components explicitly consented to in review.
 
     Returns:
-        The endpoint response.
+        Expanded ordered snapshots and protected transaction metadata.
     """
-    verify_csrf(request, csrf)
-    wants_json = "application/json" in request.headers.get("accept", "")
-    invalidate_observed_management_dhcp_dns()
-    units = appliance_apply_units(db)
     unit_map = {unit["id"]: unit for unit in units}
-    selected_ids = {unit_id for unit_id in selected_units if unit_id in APPLIANCE_APPLY_UNIT_IDS}
-    requested_ids = set(selected_ids)
+    selected_ids = set(selected_ids)
+    requested_ids = set(selected_ids if consented_ids is None else consented_ids)
     if "dnsmasq" in selected_ids and "network" not in selected_ids and network_generated_dns_unit(db, unit_map) is not None:
+        if not enforce_consent or "network" in requested_ids:
+            selected_ids.add("network")
+    if enforce_consent and "dnsmasq" in selected_ids and "network" not in selected_ids and network_generated_dns_unit(db, unit_map) is not None:
         detail = "Select Network with DNS to publish generated records only after listener readiness."
-        return JSONResponse({"detail": detail}, status_code=422) if wants_json else Response(detail, status_code=422, media_type="text/plain")
-    appliance_settings_selected = "appliance_settings" in selected_ids
+        raise ValueError(detail)
+    appliance_settings_selected = "appliance_settings" in requested_ids
     ntp_dns_dependency = bool(
         unit_map.get("ntpd", {}).get("changed")
         and unit_map.get("dnsmasq", {}).get("changed")
@@ -18895,9 +18889,6 @@ def _submit_appliance_apply(
     )
     if ntp_dns_dependency:
         selected_ids.update({"ntpd", "dnsmasq"})
-    refresh_vcf_depot_software_depot_id = bool(
-        refresh_vcf_depot_software_depot_id and "vcf_offline_depot" in selected_ids
-    )
     ntp_settings_for_apply = unit_map.get("ntpd", {}).get("context", {}).get("ntp_settings")
     ca_required_for_nts = bool(
         "ntpd" in selected_ids
@@ -18960,11 +18951,10 @@ def _submit_appliance_apply(
             if unit_id in unit_map and unit_map[unit_id]["has_baseline"]
             and unit_map[unit_id]["changed"] and unit_id not in selected_ids
         }
-        if pending_ca_consumers:
+        selected_ids.update(pending_ca_consumers if not enforce_consent else pending_ca_consumers & requested_ids)
+        if enforce_consent and pending_ca_consumers - requested_ids:
             detail = "Select the changed listener units before applying rotated CA certificates."
-            return JSONResponse({"detail": detail}, status_code=422) if wants_json else Response(
-                detail, status_code=422, media_type="text/plain"
-            )
+            raise ValueError(detail)
         # Replay unchanged applied listeners, without silently admitting any
         # pending service edits that the operator did not select.
         selected_ids.update(
@@ -18979,9 +18969,9 @@ def _submit_appliance_apply(
             apply_baselines.get("appliance_settings")
         )
     )
-    if dns_resolver_activation and not appliance_settings_selected:
+    if enforce_consent and dns_resolver_activation and not appliance_settings_selected:
         detail = "Select Appliance Settings with DNS to approve the host resolver change and all pending settings."
-        return JSONResponse({"detail": detail}, status_code=422) if wants_json else Response(detail, status_code=422, media_type="text/plain")
+        raise ValueError(detail)
     if dns_resolver_activation:
         selected_ids.add("appliance_settings")
     local_dns_disable_requires_resolver = bool(
@@ -18990,9 +18980,9 @@ def _submit_appliance_apply(
         and applied_local_dns_enabled(apply_baselines.get("dnsmasq"))
         and applied_resolver_uses_local_dns(apply_baselines.get("appliance_settings"))
     )
-    if local_dns_disable_requires_resolver and not appliance_settings_selected:
+    if enforce_consent and local_dns_disable_requires_resolver and not appliance_settings_selected:
         detail = "Select Appliance Settings with DNS to approve the host resolver change and all pending settings."
-        return JSONResponse({"detail": detail}, status_code=422) if wants_json else Response(detail, status_code=422, media_type="text/plain")
+        raise ValueError(detail)
     if local_dns_disable_requires_resolver and "appliance_settings" in unit_map:
         selected_ids.add("appliance_settings")
     ldap_related_units = {"ca", "dnsmasq", "firewall", "ldap"}
@@ -19058,7 +19048,7 @@ def _submit_appliance_apply(
         )
     except ValueError:
         detail = "Cannot verify applied forwarding intent; restore helper readiness before submitting appliance changes."
-        return JSONResponse({"detail": detail}, status_code=422) if wants_json else Response(detail, status_code=422, media_type="text/plain")
+        raise ValueError(detail) from None
     if publishing_pair_required and selected_ids.intersection(listener_units) and "nat" in unit_map:
         # Service publication must pass the same desired-listener collision check
         # even when the operator selected only that service in global Apply.
@@ -19104,11 +19094,11 @@ def _submit_appliance_apply(
             apply_baselines.get("appliance_settings"),
         )
     )
-    if binding_change and unit_map.get("network", {}).get("changed") and "network" not in selected_ids:
+    if (not enforce_consent or "network" in requested_ids) and binding_change and unit_map.get("network", {}).get("changed"):
+        selected_ids.add("network")
+    if enforce_consent and binding_change and unit_map.get("network", {}).get("changed") and "network" not in selected_ids:
         detail = "Select Network with Appliance Settings to review pending Network changes in the protected handoff."
-        return JSONResponse({"detail": detail}, status_code=422) if wants_json else Response(
-            detail, status_code=422, media_type="text/plain",
-        )
+        raise ValueError(detail)
     management_handoff = bool(
         (
             selected_ids.intersection(MANAGEMENT_HANDOFF_UNIT_IDS)
@@ -19136,15 +19126,13 @@ def _submit_appliance_apply(
                 or (pending_nat_intent and unit["id"] == "nat")) and unit["changed"]
             and unit["id"] not in requested_ids
         ]
-        if unchecked_dependencies:
+        if enforce_consent and unchecked_dependencies:
             detail = (
                 "Select the pending protected handoff changes with Network: "
                 + ", ".join(unchecked_dependencies)
                 + ". Unchecked changes cannot be applied by the listener readiness handoff."
             )
-            return JSONResponse({"detail": detail}, status_code=422) if wants_json else Response(
-                detail, status_code=422, media_type="text/plain",
-            )
+            raise ValueError(detail)
     if management_handoff and not routing_permission_pair_required:
         # Appliance Settings can start a handoff before an enforcement owner
         # is selected; pair any pending permission change before expansion.
@@ -19181,9 +19169,7 @@ def _submit_appliance_apply(
                 "Routing & WAN has pending settings beyond the Network upgrade migration. "
                 "Apply those settings separately before retrying Network; they have not been applied."
             )
-            return JSONResponse({"detail": detail}, status_code=422) if wants_json else Response(
-                detail, status_code=422, media_type="text/plain",
-            )
+            raise ValueError(detail)
         if not (previous_routing_off and desired_routing_off) and not (
             revision_only_migration and unchanged_wan_intent
         ):
@@ -19191,9 +19177,7 @@ def _submit_appliance_apply(
                 "Disable Routing and apply that change first, then apply the management Network change. "
                 "Re-enable Routing after the management handoff completes."
             )
-            return JSONResponse({"detail": detail}, status_code=422) if wants_json else Response(
-                detail, status_code=422, media_type="text/plain",
-            )
+            raise ValueError(detail)
     if management_handoff:
         selected_ids.update(
             unit_id for unit_id in MANAGEMENT_HANDOFF_UNIT_IDS if unit_id in unit_map
@@ -19233,9 +19217,9 @@ def _submit_appliance_apply(
             apply_baselines.get("appliance_settings")
         )
     )
-    if dns_resolver_activation and not appliance_settings_selected:
+    if enforce_consent and dns_resolver_activation and not appliance_settings_selected:
         detail = "Select Appliance Settings with DNS to approve the host resolver change and all pending settings."
-        return JSONResponse({"detail": detail}, status_code=422) if wants_json else Response(detail, status_code=422, media_type="text/plain")
+        raise ValueError(detail)
     if dns_resolver_activation:
         selected_ids.add("appliance_settings")
         units = appliance_apply_units(db, applying_dns=True)
@@ -19247,9 +19231,9 @@ def _submit_appliance_apply(
         and applied_local_dns_enabled(apply_baselines.get("dnsmasq"))
         and applied_resolver_uses_local_dns(apply_baselines.get("appliance_settings"))
     )
-    if local_dns_disable_requires_resolver and not appliance_settings_selected:
+    if enforce_consent and local_dns_disable_requires_resolver and not appliance_settings_selected:
         detail = "Select Appliance Settings with DNS to approve the host resolver change and all pending settings."
-        return JSONResponse({"detail": detail}, status_code=422) if wants_json else Response(detail, status_code=422, media_type="text/plain")
+        raise ValueError(detail)
     if local_dns_disable_requires_resolver and "appliance_settings" in unit_map:
         selected_ids.add("appliance_settings")
         if management_handoff:
@@ -19258,15 +19242,15 @@ def _submit_appliance_apply(
             management_handoff_dnsmasq = True
     if selected_ids.intersection({"wan", "network", "firewall"}) and "nat" in unit_map:
         selected_ids.add("nat")
-    if not selected_ids:
+    if enforce_consent and not selected_ids:
         detail = "Select at least one appliance change to submit."
-        return JSONResponse({"detail": detail}, status_code=422) if wants_json else Response(detail, status_code=422, media_type="text/plain")
+        raise ValueError(detail)
     units = appliance_apply_units_for_selection(units, selected_ids)
     unit_map = {unit["id"]: unit for unit in units}
     invalid_units = [unit for unit in units if unit["id"] in selected_ids and unit["validation_errors"]]
-    if invalid_units:
+    if enforce_consent and invalid_units:
         detail = "Resolve validation errors before submitting appliance changes."
-        return JSONResponse({"detail": detail}, status_code=422) if wants_json else Response(detail, status_code=422, media_type="text/plain")
+        raise ValueError(detail)
 
     selected_ordered_units = [unit for unit in units if unit["id"] in selected_ids]
     if ntp_dns_dependency:
@@ -19345,6 +19329,180 @@ def _submit_appliance_apply(
         for unit in units
         if unit["changed"] and unit["id"] not in selected_ids
     ]
+    return {
+        "units": units,
+        "unit_map": unit_map,
+        "selected_ids": selected_ids,
+        "selected_ordered_units": selected_ordered_units,
+        "skipped_changed_units": skipped_changed_units,
+        "generated_dns_only": generated_dns_only,
+        "dns_resolver_activation": dns_resolver_activation,
+        "management_handoff": management_handoff,
+        "traffic_publishing_pair": traffic_publishing_pair,
+        "routing_publishing_pair": routing_publishing_pair,
+        "routing_publishing_network": routing_publishing_network,
+        "management_handoff_dnsmasq": management_handoff_dnsmasq,
+        "publishing_pair_required": publishing_pair_required,
+    }
+
+
+def appliance_apply_plan_token(plan: dict[str, Any]) -> str:
+    """Bind browser consent to the ordered effective desired-state snapshots.
+
+    Args:
+        plan: Server-owned expanded execution plan.
+    """
+    return appliance_snapshot_hash({
+        "units": [(unit["id"], unit["snapshot_hash"]) for unit in plan["selected_ordered_units"]],
+        "generated_dns_only": plan["generated_dns_only"],
+        "management_handoff": plan["management_handoff"],
+        "management_handoff_dnsmasq": plan["management_handoff_dnsmasq"],
+        "dns_resolver_activation": plan["dns_resolver_activation"],
+        "traffic_publishing_pair": plan["traffic_publishing_pair"],
+        "routing_publishing_pair": plan["routing_publishing_pair"],
+    })
+
+
+def appliance_apply_review_plan(db: Session, selected_units: list[str] | None = None) -> dict[str, Any]:
+    """Project current choices and every execution dependency without host mutation.
+
+    Args:
+        db: Active desired-state database session.
+        selected_units: Explicit choices, or None for validated review defaults.
+    """
+    context = appliance_apply_context(db)
+    review_units = context["review_apply_units"]
+    selectable = {unit["id"] for unit in review_units}
+    requested = (
+        {unit["id"] for unit in review_units if unit["valid"]}
+        if selected_units is None else {unit_id for unit_id in selected_units if unit_id in selectable}
+    )
+    try:
+        plan = appliance_apply_execution_plan(db, context["apply_units"], requested, enforce_consent=False)
+    except ValueError as exc:
+        return {**context, "review_apply_units": [{**unit, "selected": unit["id"] in requested} for unit in review_units],
+                "plan_error": str(exc), "plan_token": "", "requested_units": sorted(requested), "execution_count": 0}
+    effective = plan["selected_ids"]
+    effective_map = plan["unit_map"]
+    review_map = {unit["id"]: unit for unit in [*context["apply_units"], *review_units]}
+    network = effective_map.get("network", {})
+    wan = effective_map.get("wan", {})
+    network_forces_wan = bool(
+        "network" in effective and (network.get("forces_wan_selection")
+        or network.get("management_domain_migration_required")
+        or (network.get("management_handoff_required") and (
+            network.get("management_gateway_route_migrations") or network.get("management_default_mirror_change"))))
+    )
+    wan_forces_network = bool("wan" in effective and not network_forces_wan and (
+        not network.get("has_baseline") or wan.get("network_address_dependency")
+        or wan.get("forces_network_selection")))
+    rows = []
+    # Retain unselected changed choices alongside the full ordered execution scope.
+    ordered = [*plan["selected_ordered_units"], *[unit for unit in review_units if unit["id"] not in effective]]
+    for unit in ordered:
+        unit_id = unit["id"]
+        required = unit_id in effective and (
+            unit_id not in requested
+            or (network_forces_wan and unit_id == "wan")
+            or (wan_forces_network and unit_id == "network")
+            or ("network" in effective and plan["management_handoff"]
+                and unit_id in MANAGEMENT_HANDOFF_UNIT_IDS and unit_id != "network")
+        )
+        reason = ""
+        if required:
+            if plan["management_handoff"] and unit_id in MANAGEMENT_HANDOFF_UNIT_IDS:
+                reason = "Protect management access through the shared listener handoff and rollback."
+            elif unit_id == "nat":
+                reason = "Replay Traffic Publishing after Network, routing, or Firewall changes."
+            elif unit_id in {"wan", "firewall"}:
+                reason = "Keep routing permissions and traffic publication consistent."
+            elif unit_id == "network":
+                reason = "Establish the listener addresses and routing targets used by this task."
+            elif unit_id == "ca":
+                reason = "Deploy the certificates required by the selected listeners."
+            elif unit_id == "dnsmasq":
+                reason = "Publish dependent DNS records after listener readiness."
+            elif unit_id == "appliance_settings":
+                reason = "Keep the appliance resolver consistent with DNS service state."
+            elif unit_id == "local_users":
+                reason = "Apply the account required for authenticated depot access."
+            else:
+                reason = "Keep the selected service and its certificate or listener dependencies consistent."
+        reviewed = review_map.get(unit_id, {})
+        executed = effective_map.get(unit_id, unit)
+        rows.append({
+            **reviewed, **executed,
+            "summary": list(dict.fromkeys([*executed["summary"], *reviewed.get("review_notes", [])])),
+            "selected": unit_id in effective,
+            "required_dependency": required,
+            "dependency_reason": reason,
+        })
+    invalid = [unit["label"] for unit in plan["selected_ordered_units"] if unit["validation_errors"]]
+    return {**context, "review_apply_units": rows, "plan_token": appliance_apply_plan_token(plan),
+            "requested_units": sorted(requested), "execution_count": len(effective),
+            "plan_error": "Resolve validation errors in: " + ", ".join(invalid) if invalid else ""}
+
+
+def _submit_appliance_apply(
+    request: Request,
+    background_tasks: BackgroundTasks,
+    selected_units: list[str] = Form(default=[]),
+    format_confirmations: list[str] = Form(default=[]),
+    refresh_vcf_depot_software_depot_id: bool = Form(False),
+    csrf: str = Form(...),
+    reviewed_plan: str = Form(""),
+    requested_units: list[str] = Form(default=[]),
+    identity: Identity = Depends(require_session_identity),
+    db: Session = Depends(get_db),
+) -> Response:
+    """Handle the submit appliance apply endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        background_tasks: Background tasks supplied by the caller.
+        selected_units: Selected units supplied by the caller.
+        format_confirmations: Format confirmations supplied by the caller.
+        refresh_vcf_depot_software_depot_id: Identifier of the refresh vcf depot software depot.
+        csrf: Validated CSRF token authorizing the request.
+        reviewed_plan: Fingerprint of the effective snapshots shown before submission.
+        requested_units: Selection roots of a fingerprint-bound browser review.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+    """
+    verify_csrf(request, csrf)
+    wants_json = "application/json" in request.headers.get("accept", "")
+    invalidate_observed_management_dhcp_dns()
+    units = appliance_apply_units(db)
+    selected_ids = {unit_id for unit_id in selected_units if unit_id in APPLIANCE_APPLY_UNIT_IDS}
+    try:
+        roots = {unit_id for unit_id in requested_units if unit_id in APPLIANCE_APPLY_UNIT_IDS} if reviewed_plan else selected_ids
+        plan = appliance_apply_execution_plan(db, units, roots, consented_ids=selected_ids)
+        if reviewed_plan and (selected_ids != plan["selected_ids"] or reviewed_plan != appliance_apply_plan_token(plan)):
+            raise ValueError("Appliance changes or dependencies changed since review. Reopen appliance review and try again.")
+    except ValueError as exc:
+        detail = str(exc)
+        return JSONResponse({"detail": detail}, status_code=422) if wants_json else Response(
+            detail, status_code=422, media_type="text/plain",
+        )
+    units = plan["units"]
+    unit_map = plan["unit_map"]
+    selected_ids = plan["selected_ids"]
+    selected_ordered_units = plan["selected_ordered_units"]
+    skipped_changed_units = plan["skipped_changed_units"]
+    generated_dns_only = plan["generated_dns_only"]
+    dns_resolver_activation = plan["dns_resolver_activation"]
+    management_handoff = plan["management_handoff"]
+    traffic_publishing_pair = plan["traffic_publishing_pair"]
+    routing_publishing_pair = plan["routing_publishing_pair"]
+    routing_publishing_network = plan["routing_publishing_network"]
+    management_handoff_dnsmasq = plan["management_handoff_dnsmasq"]
+    publishing_pair_required = plan["publishing_pair_required"]
+    refresh_vcf_depot_software_depot_id = bool(
+        refresh_vcf_depot_software_depot_id and "vcf_offline_depot" in selected_ids
+    )
     parsed_format_confirmations: dict[int, str] = {}
     for raw_confirmation in format_confirmations:
         try:
@@ -19504,7 +19662,7 @@ _appliance_apply_ui = build_appliance_apply_ui_router(
         require_management_ui_request=require_management_ui_request,
         require_session_identity=require_session_identity,
         invalidate_observed_management_dhcp_dns=invalidate_observed_management_dhcp_dns,
-        appliance_apply_context=appliance_apply_context,
+        appliance_apply_context=appliance_apply_review_plan,
         appliance_apply_status_projection=appliance_apply_status_projection,
         appliance_apply_client_status=appliance_apply_client_status,
         active_appliance_apply_job=active_appliance_apply_job,

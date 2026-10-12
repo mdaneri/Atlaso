@@ -64,12 +64,14 @@ def build_router(dependencies: ApplianceApplyUiDependencies) -> ApplianceApplyUi
 
     @router.get("/appliance-apply/review", response_class=JSONResponse, response_model=None)
     def appliance_apply_review(
+        selected_units: list[str] | None = Query(default=None),
         identity: Identity = Depends(dependencies.require_session_identity),
         db: Session = Depends(get_db),
     ) -> JSONResponse:
         """Handle the appliance apply review endpoint.
 
         Args:
+            selected_units: Explicit review choices; omitted for validated defaults.
             identity: Authenticated identity authorizing the request.
             db: Active database session.
 
@@ -77,7 +79,7 @@ def build_router(dependencies: ApplianceApplyUiDependencies) -> ApplianceApplyUi
             The endpoint response.
         """
         dependencies.invalidate_observed_management_dhcp_dns()
-        context = dependencies.appliance_apply_context(db)
+        context = dependencies.appliance_apply_context(db, selected_units)
         network_unit = next(unit for unit in context["apply_units"] if unit["id"] == "network")
         units = [
             {
@@ -131,7 +133,10 @@ def build_router(dependencies: ApplianceApplyUiDependencies) -> ApplianceApplyUi
                     )
                 ),
                 "has_baseline": unit["has_baseline"],
-                "selected": unit["valid"],
+                "changed": unit["changed"],
+                "selected": unit.get("selected", unit["valid"]),
+                "required_dependency": unit.get("required_dependency", False),
+                "dependency_reason": unit.get("dependency_reason", ""),
                 "requires_dns_selection": unit.get("requires_dns_selection", False),
                 "requires_network_selection": bool(unit.get("requires_network_selection", False)),
                 "format_volumes": [
@@ -155,7 +160,11 @@ def build_router(dependencies: ApplianceApplyUiDependencies) -> ApplianceApplyUi
         return JSONResponse(
             {
                 "units": units,
-                "pending_count": len(units),
+                "pending_count": context["changed_apply_unit_count"],
+                "execution_count": context.get("execution_count", 0),
+                "requested_units": context.get("requested_units", []),
+                "plan_token": context.get("plan_token", ""),
+                "plan_error": context.get("plan_error", ""),
                 "initial_apply_required": context["initial_apply_required"],
                 "active_task": active_task,
             }
@@ -208,6 +217,8 @@ def build_router(dependencies: ApplianceApplyUiDependencies) -> ApplianceApplyUi
         format_confirmations: list[str] = Form(default=[]),
         refresh_vcf_depot_software_depot_id: bool = Form(False),
         csrf: str = Form(...),
+        reviewed_plan: str = Form(""),
+        requested_units: list[str] = Form(default=[]),
         identity: Identity = Depends(dependencies.require_session_identity),
         db: Session = Depends(get_db),
     ) -> Response:
@@ -220,6 +231,8 @@ def build_router(dependencies: ApplianceApplyUiDependencies) -> ApplianceApplyUi
             format_confirmations: Format confirmations supplied by the caller.
             refresh_vcf_depot_software_depot_id: Whether to refresh the VCFDT software depot identifier.
             csrf: Validated CSRF token authorizing the request.
+            reviewed_plan: Fingerprint binding the submitted review to current snapshots.
+            requested_units: Explicit choices before reviewed dependency expansion.
             identity: Authenticated identity authorizing the request.
             db: Active database session.
 
@@ -235,6 +248,8 @@ def build_router(dependencies: ApplianceApplyUiDependencies) -> ApplianceApplyUi
                 format_confirmations=format_confirmations,
                 refresh_vcf_depot_software_depot_id=refresh_vcf_depot_software_depot_id,
                 csrf=csrf,
+                reviewed_plan=reviewed_plan,
+                requested_units=requested_units,
                 identity=identity,
                 db=db,
             ),

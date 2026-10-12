@@ -6,6 +6,8 @@ const vm = require("node:vm");
 const source = fs.readFileSync("atlaso/app/static/app.js", "utf8");
 const updateSelection = `function updateApplianceApplySelection${source.split("function updateApplianceApplySelection", 2)[1].split("async function openApplianceApplyReview", 1)[0]}`;
 const submitForm = `async function submitApplianceApplyForm${source.split("async function submitApplianceApplyForm", 2)[1].split("async function pollGlobalApplianceApply", 1)[0]}`;
+const currentPlanRequest = `function isCurrentApplianceApplyPlanRequest${source.split("function isCurrentApplianceApplyPlanRequest", 2)[1].split("function applianceApplySelectedValues", 1)[0]}`;
+const selectedPlanValues = `function applianceApplySelectedValues${source.split("function applianceApplySelectedValues", 2)[1].split("function preserveApplianceApplyReviewState", 1)[0]}`;
 
 function createNetworkDependencyHarness({ networkChecked = true, dependentChecked = false, dependentValid = true,
   wanChecked = false, forcesNetwork = false } = {}) {
@@ -44,6 +46,7 @@ function createNetworkDependencyHarness({ networkChecked = true, dependentChecke
   dependent.closest = () => dependentRow;
 
   const modal = new HTMLDialogElement();
+  modal.dataset = {};
   modal.querySelector = (selector) => ({
     '[data-appliance-apply-review-checkbox][value="network"]': network,
     '[data-apply-unit-id="network"]': networkRow,
@@ -65,6 +68,50 @@ function createNetworkDependencyHarness({ networkChecked = true, dependentChecke
   });
   vm.runInContext(updateSelection, context);
   return { context, modal, network, dependent, wan, selectionSummary, submit };
+}
+
+function createServerPlanHarness(specs) {
+  class HTMLElement {}
+  class HTMLDialogElement extends HTMLElement {}
+  class HTMLInputElement extends HTMLElement {}
+  class HTMLButtonElement extends HTMLElement {}
+
+  const checkboxes = specs.map((spec) => {
+    const checkbox = new HTMLInputElement();
+    Object.assign(checkbox, {
+      checked: spec.selected,
+      disabled: spec.required || !spec.valid,
+      value: spec.id,
+      dataset: {
+        changed: String(Boolean(spec.changed)),
+        requiredDependency: String(Boolean(spec.required)),
+        valid: String(Boolean(spec.valid)),
+      },
+      closest: () => ({ querySelectorAll: () => [] }),
+    });
+    return checkbox;
+  });
+  const modal = new HTMLDialogElement();
+  modal.dataset = {
+    serverPlanAvailable: "true",
+    planLoading: "false",
+    planError: "",
+    requestedUnits: JSON.stringify(specs.filter((spec) => spec.selected && !spec.required).map((spec) => spec.id)),
+  };
+  modal.querySelectorAll = (selector) => selector === "[data-appliance-apply-review-checkbox]:checked"
+    ? checkboxes.filter((checkbox) => checkbox.checked) : [];
+  const selectionSummary = new HTMLElement();
+  const submit = new HTMLButtonElement();
+  const connectionWarning = new HTMLElement();
+  connectionWarning.classList = { toggle() {} };
+  connectionWarning.replaceChildren = () => {};
+  connectionWarning.append = () => {};
+  const context = vm.createContext({
+    HTMLDialogElement, HTMLInputElement, HTMLElement, HTMLButtonElement,
+    applianceApplyModalElements: () => ({ modal, selectionSummary, submit, connectionWarning }),
+  });
+  vm.runInContext(updateSelection, context);
+  return { context, modal, checkboxes, selectionSummary, submit };
 }
 
 test("combined Network and WAN selection surfaces candidate errors and blocks submit", () => {
@@ -100,6 +147,7 @@ test("combined Network and WAN selection surfaces candidate errors and blocks su
   wan.closest = () => wanRow;
   network.closest = () => null;
   const modal = new HTMLDialogElement();
+  modal.dataset = {};
   modal.querySelector = (selector) => ({
     '[data-appliance-apply-review-checkbox][value="network"]': network,
     '[data-apply-unit-id="network"]': networkRow,
@@ -204,6 +252,66 @@ test("WAN-forced Network selection also locks and then restores its dependencies
   assert.equal(harness.dependent.disabled, false);
 });
 
+test("server plan counts locked changed WAN separately from five unchanged dependencies", () => {
+  const harness = createServerPlanHarness([
+    { id: "network", selected: true, changed: true, valid: true },
+    { id: "wan", selected: true, changed: true, required: true, valid: true },
+    ...["ca", "firewall", "appliance_settings", "public_services", "nat"].map((id) => ({
+      id, selected: true, changed: false, required: true, valid: true,
+    })),
+  ]);
+  harness.context.updateApplianceApplySelection();
+
+  assert.match(harness.selectionSummary.textContent, /2 changed components \+ 5 required dependencies = 7 components to process/);
+  assert.match(harness.selectionSummary.textContent, /1 explicitly selected/);
+  assert.equal(harness.submit.disabled, false);
+  assert.equal(harness.checkboxes.filter((checkbox) => checkbox.checked).length, 7);
+
+  harness.checkboxes[1].checked = false;
+  harness.modal.dataset.requestedUnits = JSON.stringify(["network"]);
+  harness.context.updateApplianceApplySelection();
+  assert.match(harness.selectionSummary.textContent, /1 changed component \+ 5 required dependencies = 6 components to process/);
+  assert.match(harness.selectionSummary.textContent, /1 explicitly selected/);
+});
+
+test("server plan leaves required rows checked when invalid and blocks submission", () => {
+  const harness = createServerPlanHarness([
+    { id: "network", selected: true, changed: true, valid: true },
+    { id: "wan", selected: true, changed: true, valid: true },
+    { id: "ca", selected: true, changed: false, required: true, valid: false },
+  ]);
+  harness.modal.dataset.planError = "Certificate Authority needs attention.";
+  harness.context.updateApplianceApplySelection();
+
+  assert.equal(harness.checkboxes[2].checked, true);
+  assert.equal(harness.checkboxes[2].disabled, true);
+  assert.match(harness.selectionSummary.textContent, /Certificate Authority needs attention/);
+  assert.equal(harness.submit.disabled, true);
+});
+
+test("plan request roots exclude server-required dependency rows", () => {
+  class HTMLElement {}
+  class HTMLInputElement extends HTMLElement {}
+  const selected = [
+    Object.assign(new HTMLInputElement(), { value: "network", dataset: { requiredDependency: "false" } }),
+    Object.assign(new HTMLInputElement(), { value: "ca", dataset: { requiredDependency: "true" } }),
+    Object.assign(new HTMLInputElement(), { value: "wan", dataset: { requiredDependency: "false" } }),
+  ];
+  const modal = { querySelectorAll: () => selected };
+  const context = vm.createContext({ HTMLElement, HTMLInputElement });
+  vm.runInContext(`${selectedPlanValues}; globalThis.selectedPlanValues = applianceApplySelectedValues;`, context);
+
+  assert.deepEqual(Array.from(context.selectedPlanValues(modal)), ["network", "wan"]);
+});
+
+test("late plan responses are rejected after a newer request starts", () => {
+  const context = vm.createContext({});
+  vm.runInContext(`let applianceApplyPlanRequest = 2; ${currentPlanRequest}; globalThis.isCurrentPlanRequest = isCurrentApplianceApplyPlanRequest;`, context);
+
+  assert.equal(context.isCurrentPlanRequest(1), false);
+  assert.equal(context.isCurrentPlanRequest(2), true);
+});
+
 test("checked disabled review units are serialized in the submit FormData", async () => {
   class HTMLElement {}
   class HTMLDialogElement extends HTMLElement {}
@@ -222,6 +330,15 @@ test("checked disabled review units are serialized in the submit FormData", asyn
     append(name, value) {
       this.values.push([name, value]);
     }
+
+    set(name, value) {
+      this.delete(name);
+      this.append(name, value);
+    }
+
+    delete(name) {
+      this.values = this.values.filter(([key]) => key !== name);
+    }
   }
 
   const network = new HTMLInputElement();
@@ -229,7 +346,11 @@ test("checked disabled review units are serialized in the submit FormData", asyn
   const dependent = new HTMLInputElement();
   Object.assign(dependent, { name: "selected_units", value: "public_services", type: "checkbox", checked: true, disabled: true });
   const modal = new HTMLDialogElement();
-  modal.dataset = {};
+  modal.dataset = {
+    serverPlanAvailable: "true",
+    planToken: "plan-fingerprint",
+    requestedUnits: JSON.stringify(["network", "wan"]),
+  };
   modal.querySelectorAll = (selector) => selector === "[data-appliance-apply-review-checkbox]:checked:disabled"
     ? [network, dependent] : [];
   const submit = new HTMLButtonElement();
@@ -247,12 +368,24 @@ test("checked disabled review units are serialized in the submit FormData", asyn
     applianceApplyPollController: { trackJob() {} },
     refreshApplianceApplySidebar: async () => {},
     setApplianceApplyModalError() {},
+    updateApplianceApplySelection() {},
   });
   vm.runInContext(`${submitForm}; globalThis.submitReview = submitApplianceApplyForm;`, context);
 
   await context.submitReview(form);
   assert.deepEqual(submittedBody.values, [
+    ["reviewed_plan", "plan-fingerprint"],
+    ["requested_units", "network"],
+    ["requested_units", "wan"],
     ["selected_units", "network"],
     ["selected_units", "public_services"],
   ]);
+  submittedBody = null;
+  modal.dataset.planLoading = "true";
+  assert.equal(await context.submitReview(form), false);
+  assert.equal(submittedBody, null);
+  modal.dataset.planLoading = "false";
+  modal.dataset.planToken = "";
+  assert.equal(await context.submitReview(form), false);
+  assert.equal(submittedBody, null);
 });

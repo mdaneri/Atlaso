@@ -67,7 +67,7 @@ also validate listener conflicts. See [Traffic Publishing](traffic-publishing.md
 
 1. Finish editing the desired state on the relevant service pages.
 2. Open **Review appliance changes** from the lower-left sidebar card or a page-level pending-change action.
-3. Read the status of every changed unit:
+3. Read the status of every changed unit and every required dependency:
 
    | Status | Meaning | What to do |
    | --- | --- | --- |
@@ -78,7 +78,20 @@ also validate listener conflicts. See [Traffic Publishing](traffic-publishing.md
 4. Expand each selected unit and inspect its summary and rendered difference.
 5. Clear the checkbox for a valid unit that should remain pending for a later run.
 
-Valid changed units are selected by default; invalid units are not. Unselected units remain pending after submission.
+Valid changed units are selected by default; invalid independent units are not. Unselected changes remain pending.
+The review also lists unchanged components that must run for management protection, certificate deployment, DNS
+publication, or routing and Firewall consistency. These required dependencies stay checked and locked, with a reason
+beside each component. Clear the originating change to defer its dependencies; the server recomputes the plan after
+each selection change. A required component needing attention blocks submission until its validation is resolved.
+
+The summary distinguishes changed components, unchanged required dependencies, explicit choices, and the complete
+execution scope. For example, **2 changed components + 5 required dependencies = 7 components to process** means one
+appliance task with seven component tasks. Network and Routing & WAN can require Appliance Settings, Firewall, Traffic
+Publishing, Certificate Authority, and Public Services even when those five have no pending edits. Traffic Publishing
+replays translation after Firewall replacement, while the protected group keeps management access recoverable.
+
+Submission revalidates the effective snapshots and dependency plan. If desired state or dependencies changed since
+review, reopen **Review appliance changes**, inspect the new plan, and submit again.
 
 Select **Network** to verify DHCP/SLAAC listeners and **DNS/DHCP** to publish generated DNS, even after startup renewal.
 If applied listener ownership is unproven, apply the named service first. Inspect locked pending Certificate Authority,
