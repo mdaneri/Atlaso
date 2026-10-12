@@ -437,6 +437,13 @@ non-secret error text; Appliance Apply writes that evidence to every bundled com
 baselines unless the transaction commits. The committed baselines come from the exact snapshots hash-checked and staged
 at task start; desired-state edits saved during the helper's bounded readiness interval remain pending.
 
+During an upgrade or repeated Apply, a main-table connected route can have a preferred source and `kernel` protocol
+while the same prefix in the management listener's routing domain retains a legacy `boot` route without that source.
+Atlaso captures the domain route's own identity before the handoff, regardless of native inventory order, and preserves
+an unchanged usable route. Main-table routes supply missing domain paths during migration. A changed source, gateway,
+metric, device, or unsupported protocol still blocks the handoff; do not delete operator routes to bypass a conflict.
+After a failure, check the reported rollback result and verify management connectivity before reviewing and retrying.
+
 ### Routes and WAN apply
 
 The real Routing & WAN apply path stages config at `/var/lib/atlaso/apply/wan/atlaso-wan.conf`. The `wan` unit

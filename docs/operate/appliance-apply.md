@@ -165,13 +165,6 @@ Correlate their task IDs and timestamps with [Operational Logs](logs.md) and the
 Safe helper stages and return codes may be retained while the cause remains unknown. See
 [Important-event coverage](logs.md#important-event-coverage) for retained evidence and limits.
 
-During an upgrade or repeated Apply, a main-table connected route can have a preferred source and `kernel` protocol
-while the same prefix in the management listener's routing domain retains a legacy `boot` route without that source.
-Atlaso captures the domain route's own identity before the handoff, regardless of native inventory order, and preserves
-an unchanged usable route. Main-table routes supply missing domain paths during migration. A changed source, gateway,
-metric, device, or unsupported protocol still blocks the handoff; do not delete operator routes to bypass a conflict.
-After a failure, check the reported rollback result and verify management connectivity before reviewing and retrying.
-
 If Atlaso restarts during an ordinary apply, startup fails the running child and master task, skips pending children,
 and releases the global lock. For an interrupted management handoff, the privileged helper first stops and verifies any
 surviving apply process, restores the captured previous runtime state, and records the recovery result.
