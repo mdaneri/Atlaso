@@ -356,6 +356,29 @@ def proxy_payload(
     }
 
 
+def appliance_upstream_fingerprint(lifecycle: Any, args: Any) -> str:
+    """Observe the validated www.example.com leaf from the appliance network path.
+
+    Args:
+        lifecycle: Supported bounded appliance SSH operations.
+        args: Admitted appliance address, credentials and SSH host-key pin.
+    """
+    program = (
+        "import ssl,socket,hashlib;context=ssl.create_default_context();"
+        "context.minimum_version=ssl.TLSVersion.TLSv1_2;"
+        "raw=socket.create_connection(('www.example.com',443),timeout=15);"
+        "peer=context.wrap_socket(raw,server_hostname='www.example.com');"
+        "print(hashlib.sha256(peer.getpeercert(binary_form=True)).hexdigest());peer.close()"
+    )
+    encoded = base64.b64encode(program.encode()).decode("ascii")
+    command = f"/opt/atlaso/.venv/bin/python -c 'import base64;exec(base64.b64decode(\"{encoded}\"))'"
+    result = lifecycle.ssh_command(args.appliance_ssh_host, args, command, role="appliance", appliance_as_root=False)
+    fingerprint = result.get("stdout", "").strip()
+    if result.get("returncode") != 0 or len(fingerprint) != 64 or any(char not in "0123456789abcdef" for char in fingerprint):
+        raise RuntimeError("The appliance did not return a validated connected-leaf fingerprint.")
+    return fingerprint
+
+
 def trust_proxy_payloads(address: str, interface: str, fingerprint: str, insecure_address: str) -> list[dict[str, Any]]:
     """Match each public Host to the external TLS origin's virtual host.
 
@@ -471,11 +494,7 @@ def run_reverse_proxy_acceptance(lifecycle: Any, results: list[Any], client: Any
             "Directory listing without managed DNS", f"external-listed.{args.domain}", address,
             args.site_interface, host, fixture_port, port=8083, managed_dns=False, public_listing=True,
         )
-        upstream_context = ssl.create_default_context()
-        upstream_context.minimum_version = ssl.TLSVersion.TLSv1_2
-        with socket.create_connection(("www.example.com", 443), timeout=15) as raw:
-            with upstream_context.wrap_socket(raw, server_hostname="www.example.com") as upstream:
-                fingerprint = hashlib.sha256(upstream.getpeercert(binary_form=True)).hexdigest()
+        fingerprint = appliance_upstream_fingerprint(lifecycle, args)
         insecure_address = socket.getaddrinfo("self-signed.badssl.com", 443, socket.AF_INET, socket.SOCK_STREAM)[0][4][0]
         trust_payloads = trust_proxy_payloads(address, args.site_interface, fingerprint, insecure_address)
         http_proxy = client.json_request("POST", API, json_body=http_payload)

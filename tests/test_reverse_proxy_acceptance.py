@@ -1,5 +1,6 @@
 """Verify native proxy fixture behavior and focused lifecycle admission."""
 
+import base64
 import http.client
 import importlib.util
 import io
@@ -80,6 +81,26 @@ def test_fixture_challenge_and_bounded_echo():
         server.server_close()
         thread.join(timeout=5)
         assert not thread.is_alive()
+
+
+def test_tls_pin_is_observed_from_the_admitted_appliance_path():
+    """Capture a validated peer through appliance SSH instead of the Windows resolver."""
+    module = load_module("proxy_native_fingerprint_test", "reverse_proxy_acceptance.py")
+    bridge = Mock(return_value={"returncode": 0, "stdout": "a" * 64 + "\n"})
+    args = SimpleNamespace(appliance_ssh_host="192.0.2.10")
+    assert module.appliance_upstream_fingerprint(SimpleNamespace(ssh_command=bridge), args) == "a" * 64
+    assert bridge.call_args.args[:2] == (args.appliance_ssh_host, args)
+    assert bridge.call_args.kwargs == {"role": "appliance", "appliance_as_root": False}
+    command = bridge.call_args.args[2]
+    encoded = command.split('b64decode("')[1].split('"')[0]
+    program = base64.b64decode(encoded).decode()
+    assert "ssl.create_default_context()" in program and "TLSv1_2" in program
+    assert "server_hostname='www.example.com'" in program and "timeout=15" in program
+    assert "peer.getpeercert(binary_form=True)" in program
+    for response in ({"returncode": 1, "stdout": "a" * 64}, {"returncode": 0, "stdout": "not-a-pin"}):
+        bridge.return_value = response
+        with pytest.raises(RuntimeError, match="validated connected-leaf fingerprint"):
+            module.appliance_upstream_fingerprint(SimpleNamespace(ssh_command=bridge), args)
 
 
 def test_tls_fixture_matches_public_host_to_each_origin_without_dns_or_redirects():
