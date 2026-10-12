@@ -84,10 +84,9 @@ publication, or routing and Firewall consistency. These required dependencies st
 beside each component. Clear the originating change to defer its dependencies; the server recomputes the plan after
 each selection change. A required component needing attention blocks submission until its validation is resolved.
 
-The summary distinguishes changed components, required dependencies, explicit choices, and complete scope. For example, **2 changed components + 5 required dependencies = 7 components to process** means one
-appliance task with seven component tasks. Network and Routing & WAN can require Appliance Settings, Firewall, Traffic
-Publishing, Certificate Authority, and Public Services even when those five have no pending edits. Traffic Publishing
-replays translation after Firewall replacement, while the protected group keeps management access recoverable.
+The summary shows changed components, required dependencies, explicit choices, and complete scope. For example,
+**2 changed components + 5 required dependencies = 7 components to process** means one task with seven components.
+Network/WAN dependencies protect management access and replay translation even when they have no pending edits.
 
 Submission revalidates the effective snapshots and dependency plan. If desired state or dependencies changed since
 review, reopen **Review appliance changes**, inspect the new plan, and submit again.
