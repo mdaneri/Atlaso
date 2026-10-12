@@ -397,7 +397,7 @@ def test_dns_and_dhcp_pages_render(client):
     assert "applyConnectionWarnings" in app_js.text
     assert 'elements.submit.classList.add("hidden")' in app_js.text
     assert (
-        'elements.submit.classList.toggle("hidden", units.length === 0)' in app_js.text
+        'elements.submit.classList.toggle("hidden", units.length === 0 && !payload.plan_error)' in app_js.text
     )
     assert '{ title: "Status", field: "status", width: 150' in app_js.text
     assert 'applianceApplyModalTable?.on("rowClick"' in app_js.text

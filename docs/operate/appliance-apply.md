@@ -84,8 +84,7 @@ publication, or routing and Firewall consistency. These required dependencies st
 beside each component. Clear the originating change to defer its dependencies; the server recomputes the plan after
 each selection change. A required component needing attention blocks submission until its validation is resolved.
 
-The summary distinguishes changed components, unchanged required dependencies, explicit choices, and the complete
-execution scope. For example, **2 changed components + 5 required dependencies = 7 components to process** means one
+The summary distinguishes changed components, required dependencies, explicit choices, and complete scope. For example, **2 changed components + 5 required dependencies = 7 components to process** means one
 appliance task with seven component tasks. Network and Routing & WAN can require Appliance Settings, Firewall, Traffic
 Publishing, Certificate Authority, and Public Services even when those five have no pending edits. Traffic Publishing
 replays translation after Firewall replacement, while the protected group keeps management access recoverable.
@@ -112,30 +111,18 @@ If another session starts an Apply after the current one, the monitor finishes t
 
 Components run sequentially. On failure, Atlaso marks the rest **skipped**. Writes are locked while a master task
 is pending or running; read-only pages, task inspection, authentication, and safe cancellation remain available.
-A management-path change is the exception to independent component execution. Atlaso selects Certificate Authority,
-Network, Firewall, Appliance Settings, and Public Services together after all other dependencies expand, then runs one
-recoverable handoff. It retains the previous addresses, listener, firewall policy, and TLS identity until bounded Atlaso
-loopback, candidate nginx, dynamic-address, and host-facing `/openapi.json` checks prove the candidate ready.
-The transaction validates bundled TLS material, persists the candidate resolver and source-restricted firewall rules,
-and retires the old path only after readiness succeeds. Before publishing the applied Network baseline, Atlaso records
-the helper-confirmed DHCP or SLAAC address in observed interface state so the committed listener remains immediately
-eligible. On failure it restores the complete previous state and records the same actionable failing layer and rollback
-result on every bundled component.
-Successful baselines use the exact submitted snapshots, including applied resolver values; unrelated or concurrently
-saved Appliance Settings changes remain pending. A missing known-good Network baseline blocks mutation. Durable state
-and backups remain until the database commit is proven and acknowledged, so interruption or cleanup failure can retry
-rollback or acknowledgement safely. See the technical reference for the complete handoff and recovery contract.
+A management-path change runs related components as one recoverable handoff. Atlaso retains the previous addresses,
+listeners, firewall policy, and TLS identity until readiness checks prove the candidate ready. On failure it restores
+the previous state and records the failing layer and rollback result on each bundled component. A missing known-good
+Network baseline blocks mutation. Baselines use the submitted snapshots; unrelated or concurrent edits remain pending.
+See the [technical reference](../reference/appliance-apply-technical.md) for readiness, durable recovery, and commit contracts.
 
-Safe cancellation does not interrupt the component already running. Every helper or adapter command in that component
-continues to completion. After the component returns, Atlaso skips the remaining components and releases the mutation
-lock when the master task becomes terminal.
+Safe cancellation lets the running component finish. Every helper or adapter command in that component
+completes before remaining components are skipped and the terminal master task releases the mutation lock.
 
-An ordinary Appliance Settings Apply keeps management access online without restarting the Atlaso worker. It checks
-the front door before and after activation and restores the previous configuration if readiness fails. See the
-[technical reference](../reference/appliance-apply-technical.md) for durable recovery and interruption handling.
-The dialog still understands the bounded **Applying management settings; Atlaso is reconnecting to task status.** state
-when following a retained task created by an older release that contains authenticated restart metadata. Current
-Appliance Settings tasks do not create that restart window.
+An ordinary Appliance Settings Apply keeps management access online and restores the previous configuration if
+readiness fails. Retained tasks from older releases can show **Applying management settings; Atlaso is reconnecting
+to task status.** Current Appliance Settings tasks do not create that restart window.
 
 If that reconnect exceeds the bounded grace window, or a status failure is not part of the planned restart, the dialog
 instead shows **Live task status is temporarily unavailable** with a link-free instruction to open **Tasks** in another

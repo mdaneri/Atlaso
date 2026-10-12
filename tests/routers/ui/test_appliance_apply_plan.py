@@ -58,7 +58,12 @@ def _prepare_network_handoff_review(client, monkeypatch, *, invalid_firewall=Fal
 
 
 def test_network_wan_review_expands_to_five_unchanged_handoff_dependencies(client, monkeypatch):
-    """Show the full seven-unit execution plan and dependency explanations."""
+    """Show the full seven-unit execution plan and dependency explanations.
+
+    Args:
+        client: Isolated authenticated HTTP test client.
+        monkeypatch: Test-scoped replacements for Apply planning dependencies.
+    """
     _units, _csrf, _ui = _prepare_network_handoff_review(client, monkeypatch)
 
     response = client.get("/appliance-apply/review?selected_units=network&selected_units=wan")
@@ -81,7 +86,12 @@ def test_network_wan_review_expands_to_five_unchanged_handoff_dependencies(clien
 
 
 def test_reviewed_network_wan_plan_submits_same_ordered_effective_selection(client, monkeypatch):
-    """Submit exactly the effective units represented by a reviewed token."""
+    """Submit exactly the effective units represented by a reviewed token.
+
+    Args:
+        client: Isolated authenticated HTTP test client.
+        monkeypatch: Test-scoped replacements for Apply planning dependencies.
+    """
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import Job
 
@@ -112,7 +122,12 @@ def test_reviewed_network_wan_plan_submits_same_ordered_effective_selection(clie
 
 
 def test_deselected_network_plan_can_shrink_to_local_users_or_empty(client, monkeypatch):
-    """Recompute dependencies when Network is deselected, including empty choice."""
+    """Recompute dependencies when Network is deselected, including empty choice.
+
+    Args:
+        client: Isolated authenticated HTTP test client.
+        monkeypatch: Test-scoped replacements for Apply planning dependencies.
+    """
     _units, _csrf, _ui = _prepare_network_handoff_review(
         client, monkeypatch, changed_local_users=True,
     )
@@ -134,7 +149,12 @@ def test_deselected_network_plan_can_shrink_to_local_users_or_empty(client, monk
 
 
 def test_invalid_required_handoff_dependency_is_visible_and_submit_is_rejected(client, monkeypatch):
-    """Keep an invalid required dependency in the plan and fail submission closed."""
+    """Keep an invalid required dependency in the plan and fail submission closed.
+
+    Args:
+        client: Isolated authenticated HTTP test client.
+        monkeypatch: Test-scoped replacements for Apply planning dependencies.
+    """
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import Job
 
@@ -169,7 +189,12 @@ def test_invalid_required_handoff_dependency_is_visible_and_submit_is_rejected(c
 
 
 def test_reviewed_plan_rejects_snapshot_change_before_submission(client, monkeypatch):
-    """Reject a plan token after one captured component snapshot changes."""
+    """Reject a plan token after one captured component snapshot changes.
+
+    Args:
+        client: Isolated authenticated HTTP test client.
+        monkeypatch: Test-scoped replacements for Apply planning dependencies.
+    """
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import Job
 
@@ -198,7 +223,12 @@ def test_reviewed_plan_rejects_snapshot_change_before_submission(client, monkeyp
 
 
 def test_generated_dns_only_plan_captures_the_reviewed_generated_snapshot(client, monkeypatch):
-    """Preserve the generated DNS snapshot through review and token-bound submit."""
+    """Preserve the generated DNS snapshot through review and token-bound submit.
+
+    Args:
+        client: Isolated authenticated HTTP test client.
+        monkeypatch: Test-scoped replacements for Apply planning dependencies.
+    """
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import Job
 
@@ -244,7 +274,12 @@ def test_generated_dns_only_plan_captures_the_reviewed_generated_snapshot(client
 
 
 def test_plan_token_binds_every_boolean_execution_control(client, monkeypatch):
-    """Changing an execution control invalidates consent without changing snapshots."""
+    """Changing an execution control invalidates consent without changing snapshots.
+
+    Args:
+        client: Isolated authenticated HTTP test client.
+        monkeypatch: Test-scoped replacements for Apply planning dependencies.
+    """
     from atlaso.app.database import SessionLocal
 
     units, _csrf, ui = _prepare_network_handoff_review(client, monkeypatch)
@@ -259,7 +294,13 @@ def test_plan_token_binds_every_boolean_execution_control(client, monkeypatch):
 
 @pytest.mark.parametrize("request_dns", [False, True])
 def test_disabled_dns_dependency_preserves_requested_handoff_semantics(client, monkeypatch, request_dns):
-    """Consenting to an LDAP dependency must not turn it into a DNS request."""
+    """Consenting to an LDAP dependency must not turn it into a DNS request.
+
+    Args:
+        client: Isolated authenticated HTTP test client.
+        monkeypatch: Test-scoped replacements for Apply planning dependencies.
+        request_dns: Whether DNS is explicitly requested rather than added as a dependency.
+    """
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import Job
 
@@ -293,7 +334,13 @@ def test_disabled_dns_dependency_preserves_requested_handoff_semantics(client, m
 
 @pytest.mark.parametrize("control", ["publishing_pair_required", "routing_publishing_network"])
 def test_reviewed_plan_rejects_changed_execution_grouping(client, monkeypatch, control):
-    """Reject a grouping change even while every desired snapshot stays identical."""
+    """Reject a grouping change even while every desired snapshot stays identical.
+
+    Args:
+        client: Isolated authenticated HTTP test client.
+        monkeypatch: Test-scoped replacements for Apply planning dependencies.
+        control: Execution-grouping control changed after review.
+    """
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import Job
 
@@ -302,6 +349,12 @@ def test_reviewed_plan_rejects_changed_execution_grouping(client, monkeypatch, c
     changed = False
 
     def grouped_plan(*args, **kwargs):
+        """Recompute the plan with changed grouping after review.
+
+        Args:
+            *args: Positional arguments forwarded to the shared planner.
+            **kwargs: Keyword arguments forwarded to the shared planner.
+        """
         plan = original(*args, **kwargs)
         if changed:
             plan[control] = not plan[control]
@@ -326,11 +379,23 @@ def test_reviewed_plan_rejects_changed_execution_grouping(client, monkeypatch, c
 
 @pytest.mark.parametrize("submission", [False, True])
 def test_unexpected_planning_diagnostics_use_generic_request_failure(client, monkeypatch, submission):
-    """Only intentional operator guidance may be returned by Apply planning."""
+    """Only intentional operator guidance may be returned by Apply planning.
+
+    Args:
+        client: Isolated authenticated HTTP test client.
+        monkeypatch: Test-scoped replacements for Apply planning dependencies.
+        submission: Whether to exercise submission instead of preview.
+    """
     _units, csrf, ui = _prepare_network_handoff_review(client, monkeypatch)
     diagnostic = "unexpected internal planning diagnostic"
 
     def unexpected_failure(*_args, **_kwargs):
+        """Inject an unexpected planning failure.
+
+        Args:
+            *_args: Unused positional planner arguments.
+            **_kwargs: Unused keyword planner arguments.
+        """
         raise ValueError(diagnostic)
 
     monkeypatch.setattr(ui, "appliance_apply_execution_plan", unexpected_failure)
