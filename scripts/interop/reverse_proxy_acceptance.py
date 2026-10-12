@@ -356,6 +356,45 @@ def proxy_payload(
     }
 
 
+def trust_proxy_payloads(address: str, interface: str, fingerprint: str, insecure_address: str) -> list[dict[str, Any]]:
+    """Match each public Host to the external TLS origin's virtual host.
+
+    Args:
+        address: Exact selected Site A IPv4 listener address.
+        interface: Admitted physical Site A interface name.
+        fingerprint: Observed www.example.com connected-leaf fingerprint.
+        insecure_address: Observed BadSSL IPv4 endpoint serving its expired fallback certificate.
+    """
+    scenarios = [
+        ("Native trusted HTTPS", "example.com", 8445, [
+            ("/trusted/", "www.example.com", "trusted_ca", ""),
+            ("/pinned/", "www.example.com", "fingerprint", fingerprint),
+            ("/wrong-pin/", "www.example.com", "fingerprint", "0" * 64),
+        ]),
+        ("Native self-signed HTTPS", "self-signed.proxy.atlaso.internal", 8446, [
+            ("/self-signed/", "self-signed.badssl.com", "trusted_ca", ""),
+        ]),
+        ("Native insecure HTTPS", "badssl.com", 8447, [
+            ("/insecure/", insecure_address, "insecure", ""),
+        ]),
+    ]
+    payloads = []
+    for name, hostname, port, routes in scenarios:
+        payload = proxy_payload(
+            name, hostname, address, interface, routes[0][1], 443,
+            scheme="https", port=port, public_listing=False,
+        )
+        payload["redirect_http"] = False
+        payload["routes"] = [
+            {"path_prefix": prefix, "upstream_scheme": "https", "upstream_host": upstream_host,
+             "upstream_port": 443, "path_behavior": "strip", "trust_mode": trust,
+             "fingerprint": digest, "insecure_acknowledged": trust == "insecure"}
+            for prefix, upstream_host, trust, digest in routes
+        ]
+        payloads.append(payload)
+    return payloads
+
+
 def websocket_exchange(address: str, port: int, hostname: str, *, context: ssl.SSLContext | None = None) -> None:
     """Verify a real bounded upgrade and masked frame exchange through a route.
 
@@ -434,27 +473,18 @@ def run_reverse_proxy_acceptance(lifecycle: Any, results: list[Any], client: Any
         )
         upstream_context = ssl.create_default_context()
         upstream_context.minimum_version = ssl.TLSVersion.TLSv1_2
-        with socket.create_connection(("example.com", 443), timeout=15) as raw:
-            with upstream_context.wrap_socket(raw, server_hostname="example.com") as upstream:
+        with socket.create_connection(("www.example.com", 443), timeout=15) as raw:
+            with upstream_context.wrap_socket(raw, server_hostname="www.example.com") as upstream:
                 fingerprint = hashlib.sha256(upstream.getpeercert(binary_form=True)).hexdigest()
-        trust_routes = [
-            ("/trusted/", "example.com", "trusted_ca", ""),
-            ("/pinned/", "example.com", "fingerprint", fingerprint),
-            ("/wrong-pin/", "example.com", "fingerprint", "0" * 64),
-            ("/self-signed/", "self-signed.badssl.com", "trusted_ca", ""),
-            ("/insecure/", "self-signed.badssl.com", "insecure", ""),
-        ]
-        for prefix, upstream_host, trust, digest in trust_routes:
-            https_payload["routes"].append({"path_prefix": prefix, "upstream_scheme": "https",
-                                            "upstream_host": upstream_host, "upstream_port": 443,
-                                            "path_behavior": "strip", "trust_mode": trust,
-                                            "fingerprint": digest, "insecure_acknowledged": trust == "insecure"})
+        insecure_address = socket.getaddrinfo("self-signed.badssl.com", 443, socket.AF_INET, socket.SOCK_STREAM)[0][4][0]
+        trust_payloads = trust_proxy_payloads(address, args.site_interface, fingerprint, insecure_address)
         http_proxy = client.json_request("POST", API, json_body=http_payload)
         https_proxy = client.json_request("POST", API, json_body=https_payload)
         client.json_request("POST", API, json_body=standard_http)
         client.json_request("POST", API, json_body=standard_https)
         dns_proxy = client.json_request("POST", API, json_body=dns_not_listed)
         listing_proxy = client.json_request("POST", API, json_body=listed_without_dns)
+        trust_proxies = [client.json_request("POST", API, json_body=payload) for payload in trust_payloads]
         step(results, "apply-managed-proxies", lifecycle.apply_units, client, UNITS, args)
         status, root, _headers = client.request("GET", "/certificate-authority/downloads/root-ca.pem")
         if status != 200 or "BEGIN CERTIFICATE" not in root:
@@ -525,12 +555,14 @@ def run_reverse_proxy_acceptance(lifecycle: Any, results: list[Any], client: Any
         def verify_upstream_trust() -> dict[str, Any]:
             """Exercise trusted, connected-leaf pin, rejection and insecure paths."""
             observations = []
-            for prefix, _host, trust, _digest in trust_routes:
-                code, _body, _ = listener_request(address, 8443, https_payload["hostname"], prefix, context=context)
-                expected = {502, 503, 504} if prefix in {"/wrong-pin/", "/self-signed/"} else {200}
-                if code not in expected:
-                    raise lifecycle.LifecycleError(f"Upstream trust mode {prefix} returned HTTP {code}.")
-                observations.append({"path": prefix, "trust": trust, "status": code})
+            for payload in trust_payloads:
+                for route in payload["routes"]:
+                    prefix = route["path_prefix"]
+                    code, _body, _ = listener_request(address, payload["port"], payload["hostname"], prefix, context=context)
+                    expected = {502, 503, 504} if prefix in {"/wrong-pin/", "/self-signed/"} else {200}
+                    if code not in expected:
+                        raise lifecycle.LifecycleError(f"Upstream trust mode {prefix} returned HTTP {code}.")
+                    observations.append({"path": prefix, "trust": route["trust_mode"], "status": code})
             return {"observations": observations, "upstream_leaf_sha256": fingerprint}
 
         step(results, "https-upstream-trust", verify_upstream_trust)
@@ -555,9 +587,13 @@ def run_reverse_proxy_acceptance(lifecycle: Any, results: list[Any], client: Any
             """Require explicit cached trust outcomes including insecure degradation."""
             deadline = time.monotonic() + 90
             while time.monotonic() < deadline:
-                rows = {row["path_prefix"]: row for row in client.json_request("GET", API + "/health")["items"] if row["proxy_id"] == https_proxy["id"]}
+                ids = {proxy["id"] for proxy in trust_proxies}
+                rows = {row["path_prefix"]: row for row in client.json_request("GET", API + "/health")["items"] if row["proxy_id"] in ids}
                 expected_tls = {"/trusted/": "trusted_ca", "/pinned/": "fingerprint", "/wrong-pin/": "failed", "/self-signed/": "failed", "/insecure/": "insecure"}
                 if all(prefix in rows and rows[prefix]["applied"] and not rows[prefix]["pending"] and rows[prefix]["tls_status"] == tls for prefix, tls in expected_tls.items()):
+                    if any(rows[prefix]["http_status"] != 200 for prefix in ("/trusted/", "/pinned/", "/insecure/")):
+                        time.sleep(2)
+                        continue
                     insecure = rows["/insecure/"]
                     if insecure["status"] != "degraded" or not insecure["warning"] or insecure["failure_class"] != "insecure_verification":
                         raise lifecycle.LifecycleError("Insecure upstream trust was not explicitly reported as degraded.")
@@ -619,12 +655,13 @@ def run_reverse_proxy_acceptance(lifecycle: Any, results: list[Any], client: Any
 
         def verify_restored_proxy_intent() -> dict[str, Any]:
             """Verify archived identity/flags and rebind runtime IDs after restore."""
-            nonlocal http_proxy, https_proxy, dns_proxy, listing_proxy
+            nonlocal http_proxy, https_proxy, dns_proxy, listing_proxy, trust_proxies
             rows = client.json_request("GET", API)
             by_name = {row["name"]: row for row in rows if isinstance(row, dict) and row.get("name")}
             expected_names = {
                 http_payload["name"], https_payload["name"],
                 dns_not_listed["name"], listed_without_dns["name"],
+                *(payload["name"] for payload in trust_payloads),
             }
             expectations = {
                 row["name"]: row for row in archive_metadata["proxy_flags"]
@@ -641,6 +678,7 @@ def run_reverse_proxy_acceptance(lifecycle: Any, results: list[Any], client: Any
             https_proxy = by_name[https_payload["name"]]
             dns_proxy = by_name[dns_not_listed["name"]]
             listing_proxy = by_name[listed_without_dns["name"]]
+            trust_proxies = [by_name[payload["name"]] for payload in trust_payloads]
             return {"restored_proxy_count": len(expectations), "flags_verified": True, "ids_rebound": True}
 
         step(results, "proxy-settings-archive-restored-intent", verify_restored_proxy_intent)

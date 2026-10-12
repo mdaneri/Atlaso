@@ -82,6 +82,29 @@ def test_fixture_challenge_and_bounded_echo():
         assert not thread.is_alive()
 
 
+def test_tls_fixture_matches_public_host_to_each_origin_without_dns_or_redirects():
+    """Exercise trust modes with origin-compatible Hosts while retaining exact pins."""
+    module = load_module("proxy_trust_virtual_hosts_test", "reverse_proxy_acceptance.py")
+    fingerprint = "a" * 64
+    payloads = module.trust_proxy_payloads("192.0.2.44", "eth1", fingerprint, "198.51.100.44")
+    assert [(row["hostname"], row["port"]) for row in payloads] == [
+        ("example.com", 8445), ("self-signed.proxy.atlaso.internal", 8446), ("badssl.com", 8447),
+    ]
+    routes = {route["path_prefix"]: route for row in payloads for route in row["routes"]}
+    assert routes["/trusted/"]["trust_mode"] == "trusted_ca"
+    assert routes["/pinned/"]["fingerprint"] == fingerprint
+    assert routes["/wrong-pin/"]["fingerprint"] == "0" * 64
+    assert routes["/self-signed/"]["trust_mode"] == "trusted_ca"
+    assert routes["/insecure/"]["insecure_acknowledged"] is True
+    assert routes["/insecure/"]["upstream_host"] == "198.51.100.44"
+    assert routes["/self-signed/"]["upstream_host"] == "self-signed.badssl.com"
+    for row in payloads:
+        assert row["listeners"] == [{"interface": "eth1", "address": "192.0.2.44"}]
+        assert not row["redirect_http"] and not row["managed_dns"] and not row["public_listing"]
+        assert all(route["upstream_host"] != row["hostname"] and route["upstream_port"] == 443
+                   and route["upstream_scheme"] == "https" for route in row["routes"])
+
+
 def test_dns_payload_only_changes_authoritative_ipv4_listener():
     """Preserve DNS settings while never posting DHCP or IPv6 defaults."""
     module = load_module("proxy_dns_acceptance_test", "reverse_proxy_acceptance.py")
