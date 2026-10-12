@@ -30400,6 +30400,7 @@ def _snapshot_management_handoff_routing(interfaces: list[str], tables: dict[str
         if not cidrs:
             raise ValueError("previous routing-domain assigned addresses are missing")
         routes = {}
+        route_tables = {}
         observed_route_counts: dict[int, dict[str, int]] = {}
         for family in (4, 6):
             result = _network_observation_command(["ip", "-j", "-details", f"-{family}", "route", "show", "table", "all", "dev", name])
@@ -30479,7 +30480,16 @@ def _snapshot_management_handoff_routing(interfaces: list[str], tables: dict[str
                                   "metric": metric, "scope": scope, "table": tables[name],
                                   "preferred_source": preferred_source, "preference": preference,
                                   "protocol": _transition_route_protocol(route.get("protocol"))}
-                routes[(str(network), gateway, metric)] = captured_route
+                key = (str(network), gateway, metric)
+                # Main and domain routes can share a key while differing in
+                # preferred source and protocol. Preserve the route already
+                # serving the old source domain, independent of native order;
+                # main supplies only keys absent from that domain during upgrade.
+                if key not in routes or table == str(tables[name]):
+                    if route_tables.get(key) == table and routes[key] != captured_route:
+                        raise ValueError("previous routing-domain route identity is ambiguous")
+                    routes[key] = captured_route
+                    route_tables[key] = table
         # Standby route metrics must be disjoint from all observed metrics. A
         # uniform offset preserves ordering without replacing live DHCP/RA keys.
         offset = max((route["metric"] for route in routes.values()), default=0) + 1
