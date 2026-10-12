@@ -10,6 +10,7 @@ import sys
 import threading
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import Mock
 
 import pytest
 
@@ -160,34 +161,52 @@ def test_proxy_dns_owner_record_requires_exact_identity_and_address():
         module.assert_proxy_dns_record(Client(), proxy, "192.0.2.44", expected=False)
 
 
-def test_wire_dns_query_is_bounded_and_read_only():
-    """Use the admitted appliance SSH bridge only for a short read-only A query."""
+def test_wire_dns_query_is_bounded_and_read_only(monkeypatch):
+    """Use the shared authoritative wire parser without a guest shell or dig.
+
+    Args:
+        monkeypatch: Fixture replacing the wire transport with deterministic answers.
+    """
     module = load_module("proxy_dns_wire_test", "reverse_proxy_acceptance.py")
-    calls = []
-
-    class Lifecycle:
-        @staticmethod
-        def ssh_command(host, args, command, *, role, appliance_as_root):
-            """Simulate ssh command for the focused fixture.
-
-            Args:
-                host: Fixture input for ssh command.
-                args: Fixture input for ssh command.
-                command: Exact bounded subprocess command under test.
-                role: Fixture input for ssh command.
-                appliance_as_root: Fixture input for ssh command.
-            """
-            calls.append((host, command, role, appliance_as_root))
-            return {"returncode": 0, "stdout": "192.0.2.44\n"}
-
+    reader = module.dns_readback_module()
+    owner = "dns-hidden.example.test."
+    query = Mock(return_value=({(owner, 1): {"192.0.2.44"}}, 0))
+    monkeypatch.setattr(reader, "_query", query)
+    monkeypatch.setattr(module, "dns_readback_module", lambda: reader)
     args = SimpleNamespace(appliance_ssh_host="192.0.2.10")
-    module.verify_proxy_dns_wire(Lifecycle, args, "dns-hidden.example.test", "192.0.2.44", expected=True)
-    host, command, role, as_root = calls[0]
-    assert host == args.appliance_ssh_host and role == "appliance" and as_root is False
-    assert "+time=2 +tries=1 +short A" in command
-    assert "@192.0.2.44" in command and "dns-hidden.example.test" in command
+    module.verify_proxy_dns_wire(None, args, owner, "192.0.2.44", expected=True)
+    query.assert_called_once_with(
+        "192.0.2.44", 53, 2.0, owner, "A", allow_nxdomain=False, require_authoritative=True,
+    )
     with pytest.raises(RuntimeError, match="bounded authoritative DNS query"):
-        module.verify_proxy_dns_wire(Lifecycle, args, "dns-hidden.example.test", "192.0.2.44", expected=False)
+        module.verify_proxy_dns_wire(None, args, owner, "192.0.2.44", expected=False)
+    query.return_value = ({}, 3)
+    module.verify_proxy_dns_wire(None, args, owner, "192.0.2.44", expected=False)
+    assert query.call_args.kwargs == {"allow_nxdomain": True, "require_authoritative": True}
+    query.return_value = ({(owner, 5): {"other.example.test."}}, 0)
+    with pytest.raises(RuntimeError, match="bounded authoritative DNS query"):
+        module.verify_proxy_dns_wire(None, args, owner, "192.0.2.44", expected=False)
+
+
+@pytest.mark.parametrize("answers", [
+    {},
+    {("other.example.test.", 1): {"192.0.2.44"}},
+    {("dns-hidden.example.test.", 1): {"192.0.2.45"}},
+    {("dns-hidden.example.test.", 1): {"192.0.2.44", "192.0.2.45"}},
+])
+def test_wire_dns_rejects_missing_wrong_or_extra_owned_addresses(monkeypatch, answers):
+    """Require the exact queried owner and complete saved address set.
+
+    Args:
+        monkeypatch: Fixture replacing the DNS transport.
+        answers: Parsed records that do not match the saved proxy intent.
+    """
+    module = load_module("proxy_dns_exact_answers_test", "reverse_proxy_acceptance.py")
+    reader = module.dns_readback_module()
+    monkeypatch.setattr(reader, "_query", Mock(return_value=(answers, 0)))
+    monkeypatch.setattr(module, "dns_readback_module", lambda: reader)
+    with pytest.raises(RuntimeError, match="bounded authoritative DNS query"):
+        module.verify_proxy_dns_wire(None, None, "dns-hidden.example.test", "192.0.2.44", expected=True)
 
 
 def test_public_directory_visibility_checks_site_public_path():

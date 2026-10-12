@@ -8,7 +8,6 @@ import http.client
 import importlib.util
 import json
 import os
-import shlex
 import socket
 import ssl
 import sys
@@ -96,22 +95,35 @@ def assert_proxy_dns_record(client: Any, proxy: dict[str, Any], address: str, *,
         raise RuntimeError("A proxy with managed DNS disabled created an owner-managed DNS record.")
 
 
+def dns_readback_module() -> Any:
+    """Load the shared DNS wire verifier from the admitted source snapshot."""
+    path = Path(__file__).resolve().parents[2] / "atlaso/app/services/service_dns_readback.py"
+    spec = importlib.util.spec_from_file_location("atlaso_proxy_dns_readback", path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError("The admitted DNS wire verifier is unavailable.")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
 def verify_proxy_dns_wire(lifecycle: Any, args: Any, hostname: str, address: str, *, expected: bool) -> None:
-    """Check the authoritative Site A DNS listener with one bounded read-only dig.
+    """Check the authoritative Site A listener through the shared DNS wire parser.
 
     Args:
-        lifecycle: Supported lifecycle operations used by the fixture.
-        args: Admitted lifecycle credentials and network selections.
+        lifecycle: Supported lifecycle operations retained for caller compatibility.
+        args: Admitted lifecycle selections retained for caller compatibility.
         hostname: Canonical proxy hostname to verify.
         address: Exact selected Site A IPv4 listener address.
         expected: Expected presence or runtime outcome.
     """
-    command = (
-        f"dig +time=2 +tries=1 +short A {shlex.quote(hostname)} @{shlex.quote(address)}"
+    reader = dns_readback_module()
+    owner = reader._name(hostname)
+    answers, _rcode = reader._query(
+        address, 53, 2.0, owner, "A",
+        allow_nxdomain=not expected, require_authoritative=True,
     )
-    result = lifecycle.ssh_command(args.appliance_ssh_host, args, command, role="appliance", appliance_as_root=False)
-    answers = {line.strip() for line in result.get("stdout", "").splitlines() if line.strip()}
-    if result.get("returncode") != 0 or ((address in answers) != expected):
+    values = answers.get((owner, 1), set())
+    if (values != {address} if expected else bool(answers)):
         raise RuntimeError("The bounded authoritative DNS query did not match the saved proxy DNS intent.")
 
 
