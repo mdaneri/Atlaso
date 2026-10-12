@@ -2,6 +2,9 @@
 
 import json
 
+import pytest
+from starlette.testclient import TestClient
+
 from tests.routers.ui.helpers import login
 
 
@@ -237,3 +240,74 @@ def test_generated_dns_only_plan_captures_the_reviewed_generated_snapshot(client
     captured_dns = next(unit for unit in submitted["captured_units"] if unit["unit_id"] == "dnsmasq")
     assert captured_dns["snapshot_hash"] == "generated-dns-snapshot"
     assert captured_dns["config_preview"] == "generated listener DNS records"
+
+
+def test_plan_token_binds_every_boolean_execution_control(client, monkeypatch):
+    """Changing an execution control invalidates consent without changing snapshots."""
+    from atlaso.app.database import SessionLocal
+
+    units, _csrf, ui = _prepare_network_handoff_review(client, monkeypatch)
+    with SessionLocal() as db:
+        plan = ui.appliance_apply_execution_plan(db, units, {"network", "wan"})
+    original_token = ui.appliance_apply_plan_token(plan)
+    controls = {key: value for key, value in plan.items() if isinstance(value, bool)}
+    assert {"publishing_pair_required", "routing_publishing_network"}.issubset(controls)
+    for key, value in controls.items():
+        assert ui.appliance_apply_plan_token({**plan, key: not value}) != original_token, key
+
+
+@pytest.mark.parametrize("control", ["publishing_pair_required", "routing_publishing_network"])
+def test_reviewed_plan_rejects_changed_execution_grouping(client, monkeypatch, control):
+    """Reject a grouping change even while every desired snapshot stays identical."""
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Job
+
+    _units, csrf, ui = _prepare_network_handoff_review(client, monkeypatch)
+    original = ui.appliance_apply_execution_plan
+    changed = False
+
+    def grouped_plan(*args, **kwargs):
+        plan = original(*args, **kwargs)
+        if changed:
+            plan[control] = not plan[control]
+        return plan
+
+    monkeypatch.setattr(ui, "appliance_apply_execution_plan", grouped_plan)
+    monkeypatch.setattr(ui, "run_appliance_apply_job", lambda _job_id: None)
+    preview = client.get("/appliance-apply/review?selected_units=network&selected_units=wan").json()
+    changed = True
+    response = client.post(
+        "/appliance-apply",
+        data={"csrf": csrf, "reviewed_plan": preview["plan_token"],
+              "requested_units": preview["requested_units"],
+              "selected_units": [unit["id"] for unit in preview["units"] if unit["selected"]]},
+        headers={"Accept": "application/json"},
+    )
+    assert response.status_code == 422
+    assert "changed since review" in response.json()["detail"]
+    with SessionLocal() as db:
+        assert db.query(Job).filter(Job.id != "completed-before-review").count() == 0
+
+
+@pytest.mark.parametrize("submission", [False, True])
+def test_unexpected_planning_diagnostics_use_generic_request_failure(client, monkeypatch, submission):
+    """Only intentional operator guidance may be returned by Apply planning."""
+    _units, csrf, ui = _prepare_network_handoff_review(client, monkeypatch)
+    diagnostic = "unexpected internal planning diagnostic"
+
+    def unexpected_failure(*_args, **_kwargs):
+        raise ValueError(diagnostic)
+
+    monkeypatch.setattr(ui, "appliance_apply_execution_plan", unexpected_failure)
+    guarded_client = TestClient(client.app, raise_server_exceptions=False, cookies=client.cookies)
+    try:
+        response = (
+            guarded_client.post("/appliance-apply", data={"csrf": csrf, "selected_units": "network"},
+                                headers={"Accept": "application/json"})
+            if submission else guarded_client.get("/appliance-apply/review")
+        )
+    finally:
+        guarded_client.close()
+    assert response.status_code == 500
+    assert diagnostic not in response.text
+    assert "Traceback" not in response.text

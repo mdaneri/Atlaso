@@ -18856,6 +18856,19 @@ def run_vcf_depot_software_id_job(job_id: str) -> None:
             )
 
 
+class ApplianceApplyPlanError(ValueError):
+    """An intentional planning refusal containing approved operator guidance."""
+
+    def __init__(self, public_detail: str) -> None:
+        """Keep approved guidance separate from unexpected exception diagnostics.
+
+        Args:
+            public_detail: Server-owned explanation of a planning refusal.
+        """
+        self.public_detail = public_detail
+        super().__init__("Appliance Apply planning refused.")
+
+
 def appliance_apply_execution_plan(
     db: Session, units: list[dict[str, Any]], selected_ids: set[str], *, enforce_consent: bool = True, consented_ids: set[str] | None = None,
 ) -> dict[str, Any]:
@@ -18879,7 +18892,7 @@ def appliance_apply_execution_plan(
             selected_ids.add("network")
     if enforce_consent and "dnsmasq" in selected_ids and "network" not in selected_ids and network_generated_dns_unit(db, unit_map) is not None:
         detail = "Select Network with DNS to publish generated records only after listener readiness."
-        raise ValueError(detail)
+        raise ApplianceApplyPlanError(detail)
     appliance_settings_selected = "appliance_settings" in requested_ids
     ntp_dns_dependency = bool(
         unit_map.get("ntpd", {}).get("changed")
@@ -18954,7 +18967,7 @@ def appliance_apply_execution_plan(
         selected_ids.update(pending_ca_consumers if not enforce_consent else pending_ca_consumers & requested_ids)
         if enforce_consent and pending_ca_consumers - requested_ids:
             detail = "Select the changed listener units before applying rotated CA certificates."
-            raise ValueError(detail)
+            raise ApplianceApplyPlanError(detail)
         # Replay unchanged applied listeners, without silently admitting any
         # pending service edits that the operator did not select.
         selected_ids.update(
@@ -18971,7 +18984,7 @@ def appliance_apply_execution_plan(
     )
     if enforce_consent and dns_resolver_activation and not appliance_settings_selected:
         detail = "Select Appliance Settings with DNS to approve the host resolver change and all pending settings."
-        raise ValueError(detail)
+        raise ApplianceApplyPlanError(detail)
     if dns_resolver_activation:
         selected_ids.add("appliance_settings")
     local_dns_disable_requires_resolver = bool(
@@ -18982,7 +18995,7 @@ def appliance_apply_execution_plan(
     )
     if enforce_consent and local_dns_disable_requires_resolver and not appliance_settings_selected:
         detail = "Select Appliance Settings with DNS to approve the host resolver change and all pending settings."
-        raise ValueError(detail)
+        raise ApplianceApplyPlanError(detail)
     if local_dns_disable_requires_resolver and "appliance_settings" in unit_map:
         selected_ids.add("appliance_settings")
     ldap_related_units = {"ca", "dnsmasq", "firewall", "ldap"}
@@ -19048,7 +19061,7 @@ def appliance_apply_execution_plan(
         )
     except ValueError:
         detail = "Cannot verify applied forwarding intent; restore helper readiness before submitting appliance changes."
-        raise ValueError(detail) from None
+        raise ApplianceApplyPlanError(detail) from None
     if publishing_pair_required and selected_ids.intersection(listener_units) and "nat" in unit_map:
         # Service publication must pass the same desired-listener collision check
         # even when the operator selected only that service in global Apply.
@@ -19098,7 +19111,7 @@ def appliance_apply_execution_plan(
         selected_ids.add("network")
     if enforce_consent and binding_change and unit_map.get("network", {}).get("changed") and "network" not in selected_ids:
         detail = "Select Network with Appliance Settings to review pending Network changes in the protected handoff."
-        raise ValueError(detail)
+        raise ApplianceApplyPlanError(detail)
     management_handoff = bool(
         (
             selected_ids.intersection(MANAGEMENT_HANDOFF_UNIT_IDS)
@@ -19132,7 +19145,7 @@ def appliance_apply_execution_plan(
                 + ", ".join(unchecked_dependencies)
                 + ". Unchecked changes cannot be applied by the listener readiness handoff."
             )
-            raise ValueError(detail)
+            raise ApplianceApplyPlanError(detail)
     if management_handoff and not routing_permission_pair_required:
         # Appliance Settings can start a handoff before an enforcement owner
         # is selected; pair any pending permission change before expansion.
@@ -19169,7 +19182,7 @@ def appliance_apply_execution_plan(
                 "Routing & WAN has pending settings beyond the Network upgrade migration. "
                 "Apply those settings separately before retrying Network; they have not been applied."
             )
-            raise ValueError(detail)
+            raise ApplianceApplyPlanError(detail)
         if not (previous_routing_off and desired_routing_off) and not (
             revision_only_migration and unchanged_wan_intent
         ):
@@ -19177,7 +19190,7 @@ def appliance_apply_execution_plan(
                 "Disable Routing and apply that change first, then apply the management Network change. "
                 "Re-enable Routing after the management handoff completes."
             )
-            raise ValueError(detail)
+            raise ApplianceApplyPlanError(detail)
     if management_handoff:
         selected_ids.update(
             unit_id for unit_id in MANAGEMENT_HANDOFF_UNIT_IDS if unit_id in unit_map
@@ -19219,7 +19232,7 @@ def appliance_apply_execution_plan(
     )
     if enforce_consent and dns_resolver_activation and not appliance_settings_selected:
         detail = "Select Appliance Settings with DNS to approve the host resolver change and all pending settings."
-        raise ValueError(detail)
+        raise ApplianceApplyPlanError(detail)
     if dns_resolver_activation:
         selected_ids.add("appliance_settings")
         units = appliance_apply_units(db, applying_dns=True)
@@ -19233,7 +19246,7 @@ def appliance_apply_execution_plan(
     )
     if enforce_consent and local_dns_disable_requires_resolver and not appliance_settings_selected:
         detail = "Select Appliance Settings with DNS to approve the host resolver change and all pending settings."
-        raise ValueError(detail)
+        raise ApplianceApplyPlanError(detail)
     if local_dns_disable_requires_resolver and "appliance_settings" in unit_map:
         selected_ids.add("appliance_settings")
         if management_handoff:
@@ -19244,13 +19257,13 @@ def appliance_apply_execution_plan(
         selected_ids.add("nat")
     if enforce_consent and not selected_ids:
         detail = "Select at least one appliance change to submit."
-        raise ValueError(detail)
+        raise ApplianceApplyPlanError(detail)
     units = appliance_apply_units_for_selection(units, selected_ids)
     unit_map = {unit["id"]: unit for unit in units}
     invalid_units = [unit for unit in units if unit["id"] in selected_ids and unit["validation_errors"]]
     if enforce_consent and invalid_units:
         detail = "Resolve validation errors before submitting appliance changes."
-        raise ValueError(detail)
+        raise ApplianceApplyPlanError(detail)
 
     selected_ordered_units = [unit for unit in units if unit["id"] in selected_ids]
     if ntp_dns_dependency:
@@ -19354,12 +19367,7 @@ def appliance_apply_plan_token(plan: dict[str, Any]) -> str:
     """
     return appliance_snapshot_hash({
         "units": [(unit["id"], unit["snapshot_hash"]) for unit in plan["selected_ordered_units"]],
-        "generated_dns_only": plan["generated_dns_only"],
-        "management_handoff": plan["management_handoff"],
-        "management_handoff_dnsmasq": plan["management_handoff_dnsmasq"],
-        "dns_resolver_activation": plan["dns_resolver_activation"],
-        "traffic_publishing_pair": plan["traffic_publishing_pair"],
-        "routing_publishing_pair": plan["routing_publishing_pair"],
+        "execution_controls": {key: value for key, value in plan.items() if isinstance(value, bool)},
     })
 
 
@@ -19379,9 +19387,9 @@ def appliance_apply_review_plan(db: Session, selected_units: list[str] | None = 
     )
     try:
         plan = appliance_apply_execution_plan(db, context["apply_units"], requested, enforce_consent=False)
-    except ValueError as exc:
+    except ApplianceApplyPlanError as exc:
         return {**context, "review_apply_units": [{**unit, "selected": unit["id"] in requested} for unit in review_units],
-                "plan_error": str(exc), "plan_token": "", "requested_units": sorted(requested), "execution_count": 0}
+                "plan_error": exc.public_detail, "plan_token": "", "requested_units": sorted(requested), "execution_count": 0}
     effective = plan["selected_ids"]
     effective_map = plan["unit_map"]
     review_map = {unit["id"]: unit for unit in [*context["apply_units"], *review_units]}
@@ -19481,9 +19489,9 @@ def _submit_appliance_apply(
         roots = {unit_id for unit_id in requested_units if unit_id in APPLIANCE_APPLY_UNIT_IDS} if reviewed_plan else selected_ids
         plan = appliance_apply_execution_plan(db, units, roots, consented_ids=selected_ids)
         if reviewed_plan and (selected_ids != plan["selected_ids"] or reviewed_plan != appliance_apply_plan_token(plan)):
-            raise ValueError("Appliance changes or dependencies changed since review. Reopen appliance review and try again.")
-    except ValueError as exc:
-        detail = str(exc)
+            raise ApplianceApplyPlanError("Appliance changes or dependencies changed since review. Reopen appliance review and try again.")
+    except ApplianceApplyPlanError as exc:
+        detail = exc.public_detail
         return JSONResponse({"detail": detail}, status_code=422) if wants_json else Response(
             detail, status_code=422, media_type="text/plain",
         )
