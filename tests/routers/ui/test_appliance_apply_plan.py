@@ -1,6 +1,7 @@
 """Cover server-owned Appliance Apply review plans and consent binding."""
 
 import json
+from types import SimpleNamespace
 
 import pytest
 from starlette.testclient import TestClient
@@ -254,6 +255,40 @@ def test_plan_token_binds_every_boolean_execution_control(client, monkeypatch):
     assert {"publishing_pair_required", "routing_publishing_network"}.issubset(controls)
     for key, value in controls.items():
         assert ui.appliance_apply_plan_token({**plan, key: not value}) != original_token, key
+
+
+@pytest.mark.parametrize("request_dns", [False, True])
+def test_disabled_dns_dependency_preserves_requested_handoff_semantics(client, monkeypatch, request_dns):
+    """Consenting to an LDAP dependency must not turn it into a DNS request."""
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Job
+
+    units, csrf, ui = _prepare_network_handoff_review(client, monkeypatch)
+    dns = next(unit for unit in units if unit["id"] == "dnsmasq")
+    dns["changed"] = True
+    dns["context"]["dns_settings"] = SimpleNamespace(enabled=False)
+    ldap = next(unit for unit in units if unit["id"] == "ldap")
+    ldap["context"]["ldap_settings"] = SimpleNamespace(enabled=True)
+    next(unit for unit in units if unit["id"] == "ca")["changed"] = True
+    roots = ["network", "wan", "ca"] + (["dnsmasq"] if request_dns else [])
+    monkeypatch.setattr(ui, "run_appliance_apply_job", lambda _job_id: None)
+    preview = client.get("/appliance-apply/review", params=[("selected_units", unit) for unit in roots]).json()
+    assert not preview["plan_error"]
+    reviewed_dns = next(unit for unit in preview["units"] if unit["id"] == "dnsmasq")
+    assert reviewed_dns["selected"]
+    assert reviewed_dns["required_dependency"] is (not request_dns)
+    response = client.post(
+        "/appliance-apply",
+        data={"csrf": csrf, "reviewed_plan": preview["plan_token"],
+              "requested_units": preview["requested_units"],
+              "selected_units": [unit["id"] for unit in preview["units"] if unit["selected"]]},
+        headers={"Accept": "application/json"},
+    )
+    assert response.status_code == 202, response.text
+    with SessionLocal() as db:
+        job = db.get(Job, response.json()["job_id"])
+        submitted = json.loads(job.result or "{}")
+    assert ("dnsmasq" in submitted["management_handoff_units"]) is request_dns
 
 
 @pytest.mark.parametrize("control", ["publishing_pair_required", "routing_publishing_network"])

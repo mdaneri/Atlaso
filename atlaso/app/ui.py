@@ -18886,14 +18886,15 @@ def appliance_apply_execution_plan(
     """
     unit_map = {unit["id"]: unit for unit in units}
     selected_ids = set(selected_ids)
-    requested_ids = set(selected_ids if consented_ids is None else consented_ids)
+    requested_ids = set(selected_ids)
+    approved_ids = set(requested_ids if consented_ids is None else consented_ids)
     if "dnsmasq" in selected_ids and "network" not in selected_ids and network_generated_dns_unit(db, unit_map) is not None:
-        if not enforce_consent or "network" in requested_ids:
+        if not enforce_consent or "network" in approved_ids:
             selected_ids.add("network")
     if enforce_consent and "dnsmasq" in selected_ids and "network" not in selected_ids and network_generated_dns_unit(db, unit_map) is not None:
         detail = "Select Network with DNS to publish generated records only after listener readiness."
         raise ApplianceApplyPlanError(detail)
-    appliance_settings_selected = "appliance_settings" in requested_ids
+    appliance_settings_selected = "appliance_settings" in approved_ids
     ntp_dns_dependency = bool(
         unit_map.get("ntpd", {}).get("changed")
         and unit_map.get("dnsmasq", {}).get("changed")
@@ -18964,8 +18965,8 @@ def appliance_apply_execution_plan(
             if unit_id in unit_map and unit_map[unit_id]["has_baseline"]
             and unit_map[unit_id]["changed"] and unit_id not in selected_ids
         }
-        selected_ids.update(pending_ca_consumers if not enforce_consent else pending_ca_consumers & requested_ids)
-        if enforce_consent and pending_ca_consumers - requested_ids:
+        selected_ids.update(pending_ca_consumers if not enforce_consent else pending_ca_consumers & approved_ids)
+        if enforce_consent and pending_ca_consumers - approved_ids:
             detail = "Select the changed listener units before applying rotated CA certificates."
             raise ApplianceApplyPlanError(detail)
         # Replay unchanged applied listeners, without silently admitting any
@@ -19107,7 +19108,7 @@ def appliance_apply_execution_plan(
             apply_baselines.get("appliance_settings"),
         )
     )
-    if (not enforce_consent or "network" in requested_ids) and binding_change and unit_map.get("network", {}).get("changed"):
+    if (not enforce_consent or "network" in approved_ids) and binding_change and unit_map.get("network", {}).get("changed"):
         selected_ids.add("network")
     if enforce_consent and binding_change and unit_map.get("network", {}).get("changed") and "network" not in selected_ids:
         detail = "Select Network with Appliance Settings to review pending Network changes in the protected handoff."
@@ -19137,7 +19138,7 @@ def appliance_apply_execution_plan(
             unit["label"] for unit in units
             if (unit["id"] in MANAGEMENT_HANDOFF_UNIT_IDS
                 or (pending_nat_intent and unit["id"] == "nat")) and unit["changed"]
-            and unit["id"] not in requested_ids
+            and unit["id"] not in approved_ids
         ]
         if enforce_consent and unchecked_dependencies:
             detail = (
