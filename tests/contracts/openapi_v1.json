@@ -14651,7 +14651,7 @@
         ]
       },
       "patch": {
-        "description": "Update Physical Interface Desired State.\n\nRequires the `write:interfaces` API scope. This operation validates and saves the supplied\nphysical-interface fields, then atomically reconciles dependent DNS, NTP/NTS, Certificate\nAuthority, KMS, LDAP, VCF service, ESX Storage, Web Terminal, DHCP, and Network Boot bindings.\nIf any dependent update fails, Atlaso rolls back the interface and every dependent row. The\noperation also rejects a transition that leaves no complete desired management listener. A\nstatic management-to-access conversion migrates valid prior IPv4 and IPv6 gateways to enabled\nRoutes & WAN Simulation defaults in the same transaction; an existing conflicting family\ndefault rejects and rolls back the edit. Missing gateways do not create route intent. The call\nchanges desired state only; active requested-interface eligibility stays on the last-applied\nNetwork binding until the global Appliance Apply management handoff commits.",
+        "description": "Update Physical Interface Desired State.\n\nRequires the `write:interfaces` API scope. This operation validates and saves the supplied\nphysical-interface fields, then atomically reconciles dependent DNS, NTP/NTS, Certificate\nAuthority, KMS, LDAP, VCF service, ESX Storage, Web Terminal, DHCP, and Network Boot bindings.\nIf any dependent update fails, Atlaso rolls back the interface and every dependent row. The\noperation also rejects a transition that leaves no complete desired management listener. A\nstatic management-to-access conversion migrates valid prior IPv4 and IPv6 gateways to enabled\nRoutes & WAN Simulation defaults in the same transaction; an existing conflicting family\ndefault rejects and rolls back the edit. Missing gateways do not create route intent.\nAssigning an enabled reverse proxy literal upstream address to the appliance rejects the\ntransaction with 422, including all dependent changes. The operation changes desired state\nonly; active requested-interface eligibility stays on the last-applied\nNetwork binding until the global Appliance Apply management handoff commits.",
         "operationId": "updatePhysicalInterface",
         "parameters": [
           {
@@ -20668,7 +20668,7 @@
         ]
       },
       "post": {
-        "description": "Create Vlan.\n\nRequires the `write:vlans` API scope. The operation changes saved Atlaso application state; any\nappliance host enforcement remains subject to the documented apply or task boundary for the\nresource.",
+        "description": "Create Vlan.\n\nRequires the `write:vlans` API scope. The operation changes saved Atlaso application state; any\nappliance host enforcement remains subject to the documented apply or task boundary for the\nresource.\n\nAssigning an enabled reverse proxy literal upstream address to the appliance rejects the\ntransaction with 422 before desired state or its audit record is committed.",
         "operationId": "createVlan",
         "requestBody": {
           "content": {
@@ -20804,7 +20804,7 @@
         ]
       },
       "patch": {
-        "description": "Update Vlan.\n\nRequires the `write:vlans` API scope. The operation updates saved Atlaso state and does not\nbypass the documented global Appliance Apply or service lifecycle boundary.\n\nInterface changes that strand an enabled reverse proxy are rejected atomically with 422.",
+        "description": "Update Vlan.\n\nRequires the `write:vlans` API scope. The operation updates saved Atlaso state and does not\nbypass the documented global Appliance Apply or service lifecycle boundary.\n\nInterface changes that strand an enabled reverse proxy listener or assign its literal\nupstream address to the appliance are rejected atomically with 422.",
         "operationId": "updateVlan",
         "parameters": [
           {
@@ -20964,7 +20964,7 @@
     },
     "/api/v1/vlans/{vlan_id}/enable": {
       "post": {
-        "description": "Enable Vlan.\n\nRequires the `write:vlans` API scope. The operation changes saved Atlaso application state; any\nappliance host enforcement remains subject to the documented apply or task boundary for the\nresource.",
+        "description": "Enable Vlan.\n\nRequires the `write:vlans` API scope. The operation changes saved Atlaso application state; any\nappliance host enforcement remains subject to the documented apply or task boundary for the\nresource.\n\nAssigning an enabled reverse proxy literal upstream address to the appliance rejects the\ntransaction with 422 before desired state or its audit record is committed.",
         "operationId": "enableVlan",
         "parameters": [
           {

@@ -48,6 +48,8 @@ Service hostname edits also preserve saved proxy names and upstream targets, inc
 Disable HTTPS proxies before disabling their CA. Conflicting service or CA changes are rejected without saving them.
 
 Interface edits also reject changes that remove an enabled proxy's exact interface and address binding.
+Physical-interface and VLAN writers also reject assigning an enabled proxy's literal upstream address to the appliance,
+even when the changed interface is unrelated to the proxy's listeners. Disable or move that upstream first.
 Disable or move the proxy before changing its address, renaming or deleting its VLAN, or making its parent unavailable.
 Rejected edits preserve the interface, proxy, and owned DNS records together.
 DHCP reservation create and edit reject proxy-owned DNS names, including short names expanded by their scope.

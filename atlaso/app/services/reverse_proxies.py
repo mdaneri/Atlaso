@@ -179,10 +179,29 @@ def listener_options(db: Session) -> list[dict[str, str]]:
     return sorted(options, key=lambda item: (item["interface"], item["address"]))
 
 
+def _interface_address_inventory(
+    interfaces: list[models.PhysicalInterface], vlans: list[models.VlanInterface],
+) -> set[str]:
+    """Collect desired and observed addresses reserved against proxy upstreams.
+
+    Args:
+        interfaces: Candidate physical interface rows.
+        vlans: Candidate VLAN rows.
+    """
+    addresses: set[str] = set()
+    for interface in [*interfaces, *vlans]:
+        for field in ("ip_cidr", "ipv6_cidr", "host_ip_cidr", "host_ipv6_cidr"):
+            try:
+                addresses.add(str(ipaddress.ip_interface(str(getattr(interface, field, "") or "")).ip))
+            except ValueError:
+                continue
+    return addresses
+
+
 def validate_interface_proxy_bindings(
     db: Session, interface_names: set[str], *, removed_names: set[str] | None = None,
 ) -> None:
-    """Reject interface edits that strand an enabled proxy's reviewed exact tuple.
+    """Reject candidate interfaces that strand enabled proxy listeners or upstreams.
 
     Args:
         db: Caller-owned candidate-state transaction holding the Network Objects lock.
@@ -190,6 +209,9 @@ def validate_interface_proxy_bindings(
         removed_names: Names being deleted or renamed before their database rows are removed.
     """
     available = {(item["interface"], item["address"]) for item in listener_options(db)}
+    addresses = _interface_address_inventory(
+        list(db.scalars(select(models.PhysicalInterface))), list(db.scalars(select(models.VlanInterface))),
+    )
     for proxy in desired_rows(db):
         if not proxy.enabled:
             continue
@@ -200,6 +222,13 @@ def validate_interface_proxy_bindings(
                 raise ValueError(
                     f"Enabled reverse proxy {proxy.name} still depends on {name} at {address}. "
                     "Disable or move the proxy binding before changing its interface or listen address."
+                )
+        for route in proxy.routes:
+            literal = _host_literal(str(route.upstream_host).strip())
+            if literal is not None and str(literal) in addresses:
+                raise ValueError(
+                    f"Enabled reverse proxy {proxy.name} still uses upstream address {literal}. "
+                    "Disable or move the proxy upstream before assigning its address to the appliance."
                 )
 
 
@@ -290,17 +319,10 @@ def validation_context(db: Session) -> dict[str, Any]:
     """
     interfaces = list(db.scalars(select(models.PhysicalInterface)))
     vlans = list(db.scalars(select(models.VlanInterface)))
-    addresses: set[str] = set()
-    for interface in [*interfaces, *vlans]:
-        for field in ("ip_cidr", "ipv6_cidr", "host_ip_cidr", "host_ipv6_cidr"):
-            try:
-                addresses.add(str(ipaddress.ip_interface(str(getattr(interface, field, "") or "")).ip))
-            except ValueError:
-                continue
     return {
         "targets": nat_targets(interfaces, vlans),
         "listeners": listener_options(db),
-        "addresses": addresses,
+        "addresses": _interface_address_inventory(interfaces, vlans),
         "service_hostnames": _service_hostnames(db),
         "ca_enabled": bool((ca := db.scalar(select(models.CaSettings))) is not None and ca.enabled),
         "claims": listener_claims(db, include_reverse_proxies=False),

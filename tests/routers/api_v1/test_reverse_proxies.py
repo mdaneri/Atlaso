@@ -412,3 +412,78 @@ def test_reverse_proxy_delete_conflict_returns_problem_details_and_retains_inten
     assert problem.status == 422
     assert "conflicts" in problem.detail
     assert client.get(f"{collection}/{proxy_id}", headers=headers).status_code == 200
+
+
+@pytest.mark.parametrize("operation", ["physical", "vlan_create", "vlan_edit", "ui_vlan_create", "ui_vlan_edit"])
+@pytest.mark.parametrize("upstream", ["10.10.20.30", "2001:db8::30"])
+@pytest.mark.parametrize("proxy_enabled,collides", [(True, True), (False, True), (True, False)])
+def test_interface_writers_preserve_proxy_upstream_ownership(client, operation, upstream, proxy_enabled, collides):
+    """Reject appliance takeover of an enabled literal upstream before commit.
+
+    Args:
+        client: Isolated application HTTP client.
+        operation: Physical or VLAN writer transport to exercise.
+        upstream: Canonical IPv4 or IPv6 upstream literal.
+        proxy_enabled: Whether the proxy must retain usable upstream ownership.
+        collides: Whether the candidate assigns the upstream address itself.
+    """
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import AuditEvent, PhysicalInterface, VlanInterface
+    from atlaso.app.services.reverse_proxies import save_proxy
+    from atlaso.app.services.settings_archive import export_settings_archive
+    from tests.routers.ui.helpers import login
+
+    _enable_test_listener()
+    ipv6 = ":" in upstream
+    candidate = upstream if collides else ("2001:db8::40" if ipv6 else "10.10.20.40")
+    cidr = candidate + ("/64" if ipv6 else "/24")
+    with SessionLocal() as db:
+        parent = db.scalar(select(PhysicalInterface).where(PhysicalInterface.name == "eth2"))
+        parent.role = "access" if operation == "physical" else "unused"
+        parent.mode = "access" if operation == "physical" else "trunk"
+        parent.admin_state = parent.oper_state = "up"
+        parent.ip_cidr = "10.10.40.1/24" if operation == "physical" else None
+        db.commit()
+        request = _payload(enabled=proxy_enabled, scheme="http", port=9443, redirect_http=False)
+        request["routes"][0]["upstream_host"] = upstream
+        save_proxy(db, request, actor="test")
+        vlan_id = None
+        if operation.endswith("edit"):
+            vlan = VlanInterface(name="eth2.23", parent_interface="eth2", vlan_id=23,
+                                 ip_cidr="10.10.40.1/24", role="access", enabled=True)
+            db.add(vlan)
+            db.commit()
+            vlan_id = vlan.id
+    token, _ = create_token(client, scopes=["write:interfaces", "write:vlans"])
+    headers = {"Authorization": f"Bearer {token}"}
+    values = {"parent_interface": "eth2", "vlan_id": 23, "role": "access", "enabled": True,
+              "ip_cidr": "" if ipv6 else cidr, "ipv6_cidr": cidr if ipv6 else "",
+              "check_duplicate_ip_addresses": False}
+    if operation.startswith("ui_"):
+        login(client)
+        page = client.get("/vlan-interfaces")
+        csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+        values.update(enabled="on", csrf=csrf, check_duplicate_ip_addresses="false")
+        headers = {"X-Atlaso-Grid": "1", "Accept": "application/json"}
+    with SessionLocal() as db:
+        before = export_settings_archive(db, actor="test")["data"]
+        audit_ids = list(db.scalars(select(AuditEvent.id)))
+    if operation == "physical":
+        response = client.patch("/api/v1/interfaces/physical/eth2", headers=headers, json={
+            "ipv6_enabled": ipv6, "ipv6_cidr": cidr if ipv6 else "", "ip_cidr": "10.10.40.1/24" if ipv6 else cidr,
+        })
+    elif operation == "vlan_create":
+        response = client.post("/api/v1/vlans", headers=headers, json=values)
+    elif operation == "vlan_edit":
+        response = client.patch(f"/api/v1/vlans/{vlan_id}", headers=headers, json=values)
+    else:
+        path = "/vlan-interfaces" if operation.endswith("create") else f"/vlan-interfaces/{vlan_id}/edit"
+        response = client.post(path, headers=headers, data=values)
+    if proxy_enabled and collides:
+        assert response.status_code == 422, response.text
+        assert "upstream address" in response.text
+        with SessionLocal() as db:
+            assert list(db.scalars(select(AuditEvent.id))) == audit_ids
+            assert export_settings_archive(db, actor="test")["data"] == before
+    else:
+        assert response.status_code in {200, 201}, response.text

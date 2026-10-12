@@ -161,8 +161,10 @@ def build_router(dependencies: PhysicalVlanApiDependencies) -> PhysicalVlanApiRo
         operation also rejects a transition that leaves no complete desired management listener. A
         static management-to-access conversion migrates valid prior IPv4 and IPv6 gateways to enabled
         Routes & WAN Simulation defaults in the same transaction; an existing conflicting family
-        default rejects and rolls back the edit. Missing gateways do not create route intent. The call
-        changes desired state only; active requested-interface eligibility stays on the last-applied
+        default rejects and rolls back the edit. Missing gateways do not create route intent.
+        Assigning an enabled reverse proxy literal upstream address to the appliance rejects the
+        transaction with 422, including all dependent changes. The operation changes desired state
+        only; active requested-interface eligibility stays on the last-applied
         Network binding until the global Appliance Apply management handoff commits.
 
         Args:
@@ -330,6 +332,9 @@ def build_router(dependencies: PhysicalVlanApiDependencies) -> PhysicalVlanApiRo
         appliance host enforcement remains subject to the documented apply or task boundary for the
         resource.
 
+        Assigning an enabled reverse proxy literal upstream address to the appliance rejects the
+        transaction with 422 before desired state or its audit record is committed.
+
         Args:
             payload: Validated VLAN desired-state payload.
             identity: Authenticated identity authorizing the operation.
@@ -342,6 +347,8 @@ def build_router(dependencies: PhysicalVlanApiDependencies) -> PhysicalVlanApiRo
             **values,
         )
         db.add(vlan)
+        db.flush()
+        _validate_proxy_interface_edit(db, vlan.name)
         db.commit()
         db.refresh(vlan)
         record_audit(
@@ -402,7 +409,8 @@ def build_router(dependencies: PhysicalVlanApiDependencies) -> PhysicalVlanApiRo
         Requires the `write:vlans` API scope. The operation updates saved Atlaso state and does not
         bypass the documented global Appliance Apply or service lifecycle boundary.
 
-        Interface changes that strand an enabled reverse proxy are rejected atomically with 422.
+        Interface changes that strand an enabled reverse proxy listener or assign its literal
+        upstream address to the appliance are rejected atomically with 422.
 
         Args:
             vlan_id: Stable identifier of the VLAN record.
@@ -506,6 +514,9 @@ def build_router(dependencies: PhysicalVlanApiDependencies) -> PhysicalVlanApiRo
         appliance host enforcement remains subject to the documented apply or task boundary for the
         resource.
 
+        Assigning an enabled reverse proxy literal upstream address to the appliance rejects the
+        transaction with 422 before desired state or its audit record is committed.
+
         Args:
             vlan_id: Stable identifier of the VLAN record.
             identity: Authenticated identity authorizing the operation.
@@ -529,6 +540,8 @@ def build_router(dependencies: PhysicalVlanApiDependencies) -> PhysicalVlanApiRo
                 ),
             )
         vlan.enabled = True
+        db.flush()
+        _validate_proxy_interface_edit(db, vlan.name)
         db.commit()
         db.refresh(vlan)
         record_audit(
