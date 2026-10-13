@@ -416,7 +416,8 @@ observations of the original management addresses on their snapshotted interface
 requires a current networkd lease bound to that address and interface; a retained static address or a lease for another
 address cannot satisfy recovery. Static and dynamic IPv6 addresses retain their native source checks. Rollback checks
 address ownership again before nginx validation and reload-or-restart, so asynchronous DHCP reacquisition cannot race
-an address-specific listener. Missing, conflicting, unstable, or unprovable address ownership prevents nginx activation
+an address-specific listener. The VCF Offline Depot listener restorer also rechecks ownership and nginx validation
+immediately before its nginx restart. Missing, conflicting, unstable, or unprovable address ownership prevents nginx activation
 and keeps the journal for supported recovery. Older journals lacking the original identity or addressing intent remain
 incomplete rather than acquiring ownership from today's desired state. Existing route/source equivalence, resolver,
 DNS, TLS, and old-path readiness checks still must succeed before rollback can retire the journal.

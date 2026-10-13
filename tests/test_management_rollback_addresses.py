@@ -9,6 +9,41 @@ import pytest
 from tests.test_appliance_helper import load_helper_module
 
 
+@pytest.mark.parametrize("failure", ["none", "lease", "nginx-validation"])
+def test_depot_listener_rollback_rechecks_addresses_before_its_nginx_restart(monkeypatch, failure):
+    """The generic Depot restorer cannot bypass the final nginx ownership gate."""
+    helper = load_helper_module()
+    state = rollback_state()
+    prior = {"active": True, "enabled": True, "enabled_state": "enabled"}
+    state["listener_service_states"] = {"vcf_offline_depot": dict(prior), "kms": dict(prior)}
+    events = []
+
+    def wait(_state):
+        events.append("native-address-check")
+        if failure == "lease":
+            raise ValueError("restored lease disappeared")
+
+    monkeypatch.setattr(helper, "_wait_restored_management_addresses", wait)
+    monkeypatch.setattr(helper, "_nginx_binary", lambda: "nginx")
+    monkeypatch.setattr(helper, "_nginx_test_command", lambda: events.append("nginx-test")
+                        or subprocess.CompletedProcess([], int(failure == "nginx-validation")))
+    monkeypatch.setattr(helper, "_run", lambda command: events.append(" ".join(command))
+                        or subprocess.CompletedProcess(command, 0))
+    monkeypatch.setattr(helper, "_management_handoff_listener_unit_state", lambda _unit: dict(prior))
+    monkeypatch.setattr(helper, "_verify_management_handoff_listener_runtime",
+                        lambda service, _moves: events.append("verify-" + service))
+    if failure != "none":
+        with pytest.raises(ValueError, match="vcf_offline_depot"):
+            helper._restore_management_handoff_listener_services(state, [])
+        assert "systemctl restart nginx.service" not in events
+    else:
+        helper._restore_management_handoff_listener_services(state, [])
+        assert events.index("native-address-check") < events.index("nginx-test")
+        assert events.index("nginx-test") < events.index("systemctl restart nginx.service")
+        assert events.index("systemctl restart nginx.service") < events.index("verify-vcf_offline_depot")
+    assert "systemctl restart atlaso-kmip.service" in events
+
+
 def rollback_state(*, paths=None, routing=None, addresses=None):
     """Return an immutable management-address snapshot for rollback tests."""
     return {

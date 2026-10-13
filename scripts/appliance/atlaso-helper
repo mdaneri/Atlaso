@@ -30164,6 +30164,10 @@ def _restore_management_handoff_listener_services(state: dict, commands: list[di
                 raise ValueError("LDAP rollback daemon-reload failed")
             if service == "ntpd" and _ntpd_guard("pre-ntpd") != 0:
                 raise ValueError("NTP rollback time-source guard failed")
+            if unit == "nginx.service" and prior.get("active") is True:
+                _wait_restored_management_addresses(state)
+                if _nginx_binary() is None or _nginx_test_command().returncode != 0:
+                    raise ValueError("nginx listener rollback validation failed")
             operation = "restart" if prior.get("active") is True else "stop"
             result = _run(["systemctl", operation, unit])
             commands.append({"stage": "listener rollback", "command": ["systemctl", operation, unit], "returncode": result.returncode})
