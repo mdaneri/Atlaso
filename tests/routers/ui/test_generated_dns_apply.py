@@ -6,7 +6,7 @@ from types import SimpleNamespace
 import pytest
 from sqlalchemy import select
 
-from tests.routers.ui.helpers import login
+from tests.routers.ui.helpers import login, submit_reviewed_appliance_apply
 
 
 def test_partial_dns_baseline_compares_served_records_and_keeps_manual_edits_pending(client):
@@ -357,7 +357,7 @@ def test_network_apply_captures_refreshed_service_dns_after_direct_ip_change(cli
     page = client.get("/dashboard")
     csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
     monkeypatch.setattr(ui, "run_appliance_apply_job", lambda _job_id: None)
-    response = client.post(
+    response = submit_reviewed_appliance_apply(client,
         "/appliance-apply",
         data={"csrf": csrf, "selected_units": list(ui.MANAGEMENT_HANDOFF_UNIT_IDS)},
         headers={"Accept": "application/json"},
@@ -466,7 +466,7 @@ def test_network_only_apply_cannot_omit_dns_when_static_service_interface_goes_d
     page = client.get("/dashboard")
     csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
     monkeypatch.setattr(ui, "run_appliance_apply_job", lambda _job_id: None)
-    response = client.post(
+    response = submit_reviewed_appliance_apply(client,
         "/appliance-apply",
         data={"csrf": csrf, "selected_units": "network"},
         headers={"Accept": "application/json"},
@@ -1431,7 +1431,7 @@ def test_slaac_address_drift_offers_network_review_and_captures_dns_after_reboot
     if required_dependencies:
         with SessionLocal() as db:
             previous_baselines = ui.load_appliance_apply_baselines(db)
-        rejected = client.post(
+        rejected = submit_reviewed_appliance_apply(client,
             "/appliance-apply",
             data={"csrf": csrf, "selected_units": ["network", "dnsmasq"]},
             headers={"Accept": "application/json"},
@@ -1441,7 +1441,7 @@ def test_slaac_address_drift_offers_network_review_and_captures_dns_after_reboot
         with SessionLocal() as db:
             assert ui.load_appliance_apply_baselines(db) == previous_baselines
             assert db.scalar(select(Job).where(Job.status == JobStatus.PENDING.value)) is None
-    response = client.post(
+    response = submit_reviewed_appliance_apply(client,
         "/appliance-apply",
         data={"csrf": csrf, "selected_units": ["network", "dnsmasq", *required_dependencies]},
         headers={"Accept": "application/json"},

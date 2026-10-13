@@ -6,7 +6,7 @@ from sqlalchemy import select
 from atlaso.app.database import SessionLocal
 from atlaso.app.models import Role, User
 from atlaso.app.security import roles_to_json
-from tests.routers.ui.helpers import login
+from tests.routers.ui.helpers import login, submit_reviewed_appliance_apply
 
 
 def test_service_ui_enable_rejects_existing_proxy_socket(client):
@@ -407,8 +407,8 @@ def test_changed_reverse_proxy_intent_requires_pending_publication_dependencies(
         ),
     )
 
-    response = client.post(
-        "/appliance-apply",
+    response = submit_reviewed_appliance_apply(
+        client, "/appliance-apply",
         data={"csrf": csrf, "selected_units": "public_services"},
         headers={"Accept": "application/json"},
     )
@@ -420,10 +420,19 @@ def test_changed_reverse_proxy_intent_requires_pending_publication_dependencies(
         "Certificate Authority", "Network", "Firewall", "Appliance Settings", "DNS/DHCP (dnsmasq)",
     ))
 
+    review_response = client.get("/ui/management/appliance-apply/review", params={"selected_units": "public_services"})
+    assert review_response.status_code == 200
+    review = review_response.json()
+    assert not review["plan_error"]
+    effective = [unit["id"] for unit in review["units"] if unit["selected"]]
+    assert changed_ids <= set(effective)
+    assert all(unit["required_dependency"] and unit["dependency_reason"]
+               for unit in review["units"] if unit["id"] in changed_ids - {"public_services"})
     monkeypatch.setattr(ui, "run_appliance_apply_job", lambda _job_id: None)
     accepted = client.post(
         "/appliance-apply",
-        data={"csrf": csrf, "selected_units": sorted(changed_ids)},
+        data={"csrf": csrf, "selected_units": effective, "requested_units": ["public_services"],
+              "reviewed_plan": review["plan_token"]},
         headers={"Accept": "application/json"},
     )
     assert accepted.status_code == 202, accepted.text
@@ -461,8 +470,8 @@ def test_unchanged_reverse_proxy_intent_keeps_public_services_apply_independent(
     )
     monkeypatch.setattr(ui, "run_appliance_apply_job", lambda _job_id: None)
 
-    response = client.post(
-        "/appliance-apply",
+    response = submit_reviewed_appliance_apply(
+        client, "/appliance-apply",
         data={"csrf": csrf, "selected_units": "public_services"},
         headers={"Accept": "application/json"},
     )

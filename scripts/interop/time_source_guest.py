@@ -518,6 +518,39 @@ def wait_status(opener, mode, health="healthy", timeout=90):
     )
 
 
+def apply_review_path(path: str, units: list[str]) -> str:
+    """Build a selection-specific review URL.
+
+    Args:
+        path: Management review endpoint.
+        units: Explicit execution roots, including unchanged runtime replays.
+    """
+    return path + "?" + urlencode([("selected_units", unit) for unit in units])
+
+
+def apply_review_fields(review: dict) -> list[tuple[str, str]]:
+    """Return only consent fields from a valid server-owned execution review.
+
+    Args:
+        review: Selection-specific review response without transport diagnostics.
+
+    Raises:
+        ValueError: When the review cannot authorize submission.
+    """
+    roots = review.get("requested_units")
+    token = review.get("plan_token")
+    rows = review.get("units")
+    if (review.get("active_task") or review.get("plan_error") or not isinstance(token, str) or not token
+            or not isinstance(roots, list) or not roots or not all(isinstance(root, str) for root in roots)
+            or not isinstance(rows, list)):
+        raise ValueError("Appliance Apply review unavailable or invalid.")
+    selected = [row for row in rows if isinstance(row, dict) and row.get("selected")]
+    if not selected or any(not row.get("valid") or not isinstance(row.get("id"), str) for row in selected):
+        raise ValueError("Appliance Apply review unavailable or invalid.")
+    return [("reviewed_plan", token), *[("requested_units", root) for root in roots],
+            *[("selected_units", row["id"]) for row in selected]]
+
+
 def apply_unit(opener, unit_id, csrf):
     """Apply one selected appliance unit and wait for its task to finish.
 
@@ -526,37 +559,22 @@ def apply_unit(opener, unit_id, csrf):
         unit_id: Appliance Apply unit identifier submitted to the management UI.
         csrf: CSRF token extracted from the management form.
     """
-    _, _, _, review_body = request(opener, "/appliance-apply/review")
-    review = json.loads(review_body)
-    unit = next(
-        (item for item in review.get("units", []) if item.get("id") == unit_id), None
-    )
-    # Review omits unchanged units. The normal submit endpoint validates all
-    # explicitly selected units and supports reapplying ntpd after runtime drift.
-    if not unit and unit_id != "ntpd":
-        raise SafeFailure(
-            "apply-review", "Global Appliance Apply did not expose the selected unit."
-        )
-    if unit and not unit.get("valid"):
-        raise SafeFailure(
-            "apply-review",
-            "Global Appliance Apply reports invalid desired state for the selected unit.",
-        )
-    if review.get("active_task"):
-        raise SafeFailure(
-            "apply-review", "Another global Appliance Apply task is already active."
-        )
-    selected = [unit_id]
+    roots = [unit_id]
     if unit_id in {"network", "ntpd"}:
-        firewall = next(
-            (item for item in review.get("units", []) if item.get("id") == "firewall"),
-            None,
-        )
-        if firewall and firewall.get("valid"):
-            selected.append("firewall")
-    apply_fields = urlencode(
-        [("csrf", csrf), *[("selected_units", item) for item in selected]]
-    ).encode()
+        _, _, _, pending_body = request(opener, "/appliance-apply/review")
+        pending = json.loads(pending_body)
+        if any(row.get("id") == "firewall" and row.get("valid") for row in pending.get("units", [])):
+            roots.append("firewall")
+    path = apply_review_path("/appliance-apply/review", roots)
+    _, _, _, review_body = request(opener, path)
+    review = json.loads(review_body)
+    try:
+        fields = apply_review_fields(review)
+    except ValueError:
+        raise SafeFailure("apply-review", "Global Appliance Apply review is unavailable or invalid.") from None
+    if unit_id not in review["requested_units"]:
+        raise SafeFailure("apply-review", "Global Appliance Apply did not expose the selected unit.")
+    apply_fields = urlencode([("csrf", csrf), *fields]).encode()
     _, location, _, _ = request(
         opener,
         "/appliance-apply",

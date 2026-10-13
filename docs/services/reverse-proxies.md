@@ -23,6 +23,8 @@ Choose an eligible addressed access or route interface, or enabled VLAN, for eac
 and trunk physical interfaces are not public reverse-proxy listeners. Confirm that the upstream host and port are
 reachable from the appliance and that its name resolves to the intended upstream. Use HTTPS when the upstream supports
 it; HTTP sends the application traffic without TLS protection between Atlaso and the upstream.
+Literal upstreams must not match any desired or observed appliance address, including every preferred automatic
+IPv6 address retained during prefix renumbering.
 
 The permission-gated Add action remains available in both empty and populated fallback collections when the grid
 cannot load; it opens the same review wizard as the normal grid.

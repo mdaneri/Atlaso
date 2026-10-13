@@ -190,9 +190,12 @@ def _interface_address_inventory(
     """
     addresses: set[str] = set()
     for interface in [*interfaces, *vlans]:
-        for field in ("ip_cidr", "ipv6_cidr", "host_ip_cidr", "host_ipv6_cidr"):
+        candidates = [getattr(interface, field, "") for field in
+                      ("ip_cidr", "ipv6_cidr", "host_ip_cidr", "host_ipv6_cidr")]
+        candidates.extend(getattr(interface, "host_ipv6_cidrs", None) or [])
+        for cidr in candidates:
             try:
-                addresses.add(str(ipaddress.ip_interface(str(getattr(interface, field, "") or "")).ip))
+                addresses.add(str(ipaddress.ip_interface(str(cidr or "")).ip))
             except ValueError:
                 continue
     return addresses

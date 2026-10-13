@@ -5,7 +5,11 @@ from pathlib import Path
 
 import pytest
 
-from tests.routers.ui.helpers import assert_apply_redirect, login
+from tests.routers.ui.helpers import (
+    assert_apply_redirect,
+    login,
+    submit_reviewed_appliance_apply,
+)
 
 
 @pytest.mark.parametrize("drift", ["missing", "family"])
@@ -1023,7 +1027,7 @@ def test_routes_wan_autosave_endpoints_and_apply_task(client):
         assert routing.policy == "automatic"
         assert routing.ip_family == 0
 
-    apply_response = client.post("/appliance-apply", data={"csrf": csrf, "selected_units": "wan"})
+    apply_response = submit_reviewed_appliance_apply(client, "/appliance-apply", data={"csrf": csrf, "selected_units": "wan"})
     assert_apply_redirect(apply_response)
     with SessionLocal() as db:
         job = db.execute(select(Job).where(Job.type == "appliance-apply")).scalar_one()

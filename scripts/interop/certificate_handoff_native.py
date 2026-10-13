@@ -31,6 +31,7 @@ from certificate_peer_transport import (
     PinnedApplianceSession,
     PinnedPeerTransport,
 )
+from time_source_guest import apply_review_fields, apply_review_path
 
 
 class Refusal(Exception):
@@ -286,7 +287,7 @@ def submit(client):
         raise Refusal("apply_already_active")
     protected = {"network", "ca", "firewall", "appliance_settings", "public_services"}
     units = review.get("units", [])
-    if any(unit.get("id") not in protected for unit in units):
+    if any(unit.get("id") not in protected and unit.get("changed", True) for unit in units):
         raise Refusal("unrelated_pending_units")
     if any(not unit.get("valid") for unit in units):
         raise Refusal("apply_review_invalid")
@@ -294,7 +295,20 @@ def submit(client):
     csrf = Page(body).csrf
     if not csrf:
         raise Refusal("apply_csrf_missing")
-    status, result = client.json("/ui/management/appliance-apply", {"csrf": csrf, "selected_units": sorted(protected)})
+    _, review = client.json(apply_review_path("/ui/management/appliance-apply/review", sorted(protected)))
+    try:
+        fields = apply_review_fields(review)
+    except ValueError:
+        raise Refusal("apply_review_invalid") from None
+    if set(review["requested_units"]) != protected:
+        raise Refusal("apply_review_invalid")
+    if any(unit.get("id") not in protected and unit.get("changed", True) for unit in review["units"]
+           if unit.get("selected")):
+        raise Refusal("unrelated_pending_units")
+    form = {"csrf": csrf, "reviewed_plan": review["plan_token"],
+            "requested_units": review["requested_units"],
+            "selected_units": [value for key, value in fields if key == "selected_units"]}
+    status, result = client.json("/ui/management/appliance-apply", form)
     if status != 202 or not result.get("job_id"):
         raise Refusal("apply_not_admitted")
     path = str(result.get("status_url", ""))

@@ -71,7 +71,7 @@ also validate listener conflicts. See [Traffic Publishing](traffic-publishing.md
 
 1. Finish editing the desired state on the relevant service pages.
 2. Open **Review appliance changes** from the lower-left sidebar card or a page-level pending-change action.
-3. Read the status of every changed unit:
+3. Read the status of every changed unit and every required dependency:
 
    | Status | Meaning | What to do |
    | --- | --- | --- |
@@ -82,7 +82,19 @@ also validate listener conflicts. See [Traffic Publishing](traffic-publishing.md
 4. Expand each selected unit and inspect its summary and rendered difference.
 5. Clear the checkbox for a valid unit that should remain pending for a later run.
 
-Valid changed units are selected by default; invalid units are not. Unselected units remain pending after submission.
+Valid changed units are selected by default; invalid independent units are not. Unselected changes remain pending.
+The review also lists unchanged components that must run for management protection, certificate deployment, DNS
+publication, or routing and Firewall consistency. These required dependencies stay checked and locked, with a reason
+beside each component. Clear the originating change to defer its dependencies; the server recomputes the plan after
+each selection change. A required component needing attention blocks submission until its validation is resolved.
+
+The summary shows changed components, required dependencies, explicit choices, and complete scope. For example,
+**2 changed components + 5 required dependencies = 7 components to process** means one task with seven components.
+Network/WAN dependencies protect management access and replay translation even when they have no pending edits.
+
+Submission revalidates reviewed snapshots and dependencies. Validation clients review unchanged units for runtime drift.
+Clients submit the token, roots, and full scope. Reopen changed plans in **Review appliance changes** before submission.
+A changed storage manifest or disk identity clears any typed format confirmation; inspect the disk and confirm again.
 
 Select **Network** to verify DHCP/SLAAC listeners and **DNS/DHCP** to publish generated DNS, even after startup renewal.
 If applied listener ownership is unproven, apply the named service first. Inspect locked pending Certificate Authority,
@@ -117,9 +129,8 @@ pending. A missing known-good Network baseline blocks mutation. Durable state an
 the database commit is proven and acknowledged. See the [technical reference](../reference/appliance-apply-technical.md)
 for the complete handoff and recovery contract.
 
-Safe cancellation does not interrupt the component already running. Every helper or adapter command in that component
-continues to completion. After the component returns, Atlaso skips the remaining components and releases the mutation
-lock when the master task becomes terminal.
+Safe cancellation lets the running component finish. Every helper or adapter command in that component
+completes before remaining components are skipped and the terminal master task releases the mutation lock.
 
 An ordinary Appliance Settings Apply keeps management access online, checks readiness, and restores the previous
 configuration on failure; see the [technical reference](../reference/appliance-apply-technical.md). Retained older tasks

@@ -137,6 +137,7 @@ def test_static_analysis_configuration_is_pinned_and_scoped() -> None:
         "warn_unused_configs": True,
         "follow_imports": "silent",
         "files": [
+            "atlaso/app/services/appliance_apply_admission.py",
             "atlaso/important_events.py",
             "atlaso/app/services/important_task_events.py",
             "scripts/pytest_git_fixtures.py",

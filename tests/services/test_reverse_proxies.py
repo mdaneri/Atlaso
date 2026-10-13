@@ -1413,3 +1413,56 @@ def test_storage_and_network_boot_generated_aliases_reserved(naming):
     finally:
         db.close()
         engine.dispose()
+
+
+@pytest.mark.parametrize("enabled", [False, True])
+def test_interface_guard_uses_secondary_observed_ipv6_and_preserves_rollback(enabled):
+    """The shared candidate inventory sees every native address on unrelated interfaces.
+
+    Args:
+        enabled: Whether the saved proxy is active and must block a conflicting interface.
+    """
+    from atlaso.app.services.reverse_proxies import validate_interface_proxy_bindings
+
+    engine, db = create_db()
+    try:
+        route = {**payload()["routes"][0], "upstream_host": "2001:db8:2::10"}
+        save_proxy(db, payload(enabled=enabled, routes=[route]), actor="test")
+        before = runtime_snapshot(db)
+        audits = list(db.scalars(select(AuditEvent.id)))
+        interface = db.scalar(select(PhysicalInterface).where(PhysicalInterface.name == "eth0"))
+        interface.host_ipv6_cidr = "2001:db8:1::10/64"
+        interface.host_ipv6_cidrs = ["invalid", "2001:db8:1::10/64", "2001:0db8:0002::0010/64"]
+        if enabled:
+            with pytest.raises(ValueError, match="still uses upstream address"):
+                validate_interface_proxy_bindings(db, {"eth0"})
+        else:
+            validate_interface_proxy_bindings(db, {"eth0"})
+        db.rollback()
+        assert runtime_snapshot(db) == before
+        assert list(db.scalars(select(AuditEvent.id))) == audits
+        assert interface.host_ipv6_cidrs == []
+    finally:
+        db.close()
+        engine.dispose()
+
+
+@pytest.mark.parametrize("observed", [None, [], ["bad-cidr"], ["2001:db8:1::10/64", "2001:db8:1::10/64"]])
+def test_observed_ipv6_inventory_retains_distinct_external_upstream(observed):
+    """Empty, malformed or duplicate observations do not block a distinct ordinary address.
+
+    Args:
+        observed: Legacy-empty or repeated native IPv6 observation metadata.
+    """
+    engine, db = create_db()
+    try:
+        interface = db.scalar(select(PhysicalInterface).where(PhysicalInterface.name == "eth0"))
+        interface.host_ipv6_cidr = "2001:db8:1::10/64"
+        interface.host_ipv6_cidrs = observed
+        db.commit()
+        route = {**payload()["routes"][0], "upstream_host": "2001:db8:2::11"}
+        proxy = save_proxy(db, payload(routes=[route]), actor="test")
+        assert proxy.routes[0].upstream_host == "2001:db8:2::11"
+    finally:
+        db.close()
+        engine.dispose()

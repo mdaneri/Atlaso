@@ -487,3 +487,48 @@ def test_interface_writers_preserve_proxy_upstream_ownership(client, operation, 
             assert export_settings_archive(db, actor="test")["data"] == before
     else:
         assert response.status_code in {200, 201}, response.text
+
+
+@pytest.mark.parametrize("interface_name", ["eth0", "eth1"])
+@pytest.mark.parametrize("enabled", [False, True])
+@pytest.mark.parametrize("editing", [False, True])
+def test_proxy_api_rejects_secondary_observed_ipv6_without_state_changes(client, interface_name, enabled, editing):
+    """Reject a renumbered local upstream atomically at actual create and edit writers.
+
+    Args:
+        client: Isolated API test client.
+        interface_name: Management or access owner of the observed local addresses.
+        enabled: Saved proxy enabled state, including disabled intent.
+        editing: Whether to replace an existing saved proxy instead of creating one.
+    """
+    import hashlib
+    import json
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import AuditEvent, PhysicalInterface
+    from atlaso.app.services.reverse_proxies import save_proxy
+    from atlaso.app.services.settings_archive import export_settings_archive
+
+    _enable_test_listener()
+    token, _ = create_token(client, scopes=["write:firewall"])
+    headers = {"Authorization": f"Bearer {token}"}
+    endpoint = "/api/v1/traffic-publishing/reverse-proxies"
+    with SessionLocal() as db:
+        interface = db.scalar(select(PhysicalInterface).where(PhysicalInterface.name == interface_name))
+        interface.host_ipv6_cidr = "2001:db8:1::10/64"
+        interface.host_ipv6_cidrs = ["2001:db8:1::10/64", "bad-cidr", "2001:0db8:0002::0010/64"]
+        db.commit()
+        if editing:
+            proxy = save_proxy(db, _payload(enabled=enabled), actor="test")
+            endpoint += f"/{proxy.id}"
+        before = hashlib.sha256(json.dumps(export_settings_archive(db, actor="test")["data"], sort_keys=True).encode()).hexdigest()
+        audits = list(db.scalars(select(AuditEvent.id)))
+    request = _payload(enabled=enabled)
+    request["routes"][0]["upstream_host"] = "2001:db8:2::10"
+    response = client.put(endpoint, json=request, headers=headers) if editing else client.post(endpoint, json=request, headers=headers)
+    assert response.status_code == 422, response.text
+    assert "assigned to this Atlaso appliance" in response.text
+    with SessionLocal() as db:
+        after = hashlib.sha256(json.dumps(export_settings_archive(db, actor="test")["data"], sort_keys=True).encode()).hexdigest()
+        assert after == before
+        assert list(db.scalars(select(AuditEvent.id))) == audits
