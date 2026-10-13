@@ -43,6 +43,12 @@ Exact task identifier paired with -OwnershipRoot for a human CLI ownership recei
 Original receipt path preserved in the task inventory for an existing VM.
 .PARAMETER OwnershipReceiptSha256
 Creation-time original receipt digest preserved independently in the task inventory.
+.PARAMETER RecoverPreparedDirectory
+Recover a pre-clone destination using its independently preserved preparation receipt before retrying creation.
+.PARAMETER PreparedDirectoryReceiptPath
+Original preparation receipt path, required with RecoverPreparedDirectory.
+.PARAMETER PreparedDirectoryReceiptSha256
+Original preparation receipt digest, required with RecoverPreparedDirectory.
 
 .PARAMETER VmrunPath
 Optional VMware vmrun executable override.
@@ -187,6 +193,9 @@ param(
     [string]$OwnershipTaskId = '',
     [string]$OwnershipReceiptPath = '',
     [string]$OwnershipReceiptSha256 = '',
+    [switch]$RecoverPreparedDirectory,
+    [string]$PreparedDirectoryReceiptPath = '',
+    [string]$PreparedDirectoryReceiptSha256 = '',
     [string]$VmrunPath = '',
     [string]$ManagementNetwork = 'VMnet8',
     [string]$SiteANetwork = 'VMnet2',
@@ -3078,6 +3087,15 @@ $ownershipContext = New-AtlasoTestVmOwnershipContext `
     -PullRequestNumber $PullRequestNumber `
     -LocalBuilder:$LocalBuilder
 $existingOwnershipReceipt = $null
+if ($RecoverPreparedDirectory -or $PreparedDirectoryReceiptPath -or $PreparedDirectoryReceiptSha256) {
+    if (-not $RecoverPreparedDirectory -or -not $PreparedDirectoryReceiptPath -or -not $PreparedDirectoryReceiptSha256 -or
+        $OwnershipReceiptPath -or $OwnershipReceiptSha256) {
+        throw 'Prepared recovery requires its explicit switch and paired original selectors; existing-VM selectors cannot be combined.'
+    }
+    $preparedRecoveryVmrun = Resolve-TestVmVmrunPath -Path $VmrunPath
+    Remove-AtlasoTestVmPreparedOutput -Context $ownershipContext -ReceiptPath $PreparedDirectoryReceiptPath -ReceiptSha256 $PreparedDirectoryReceiptSha256 -VmrunPath $preparedRecoveryVmrun -Confirm:$false
+    if ($WhatIfPreference) { return }
+}
 if ($ownershipContext.Enabled -and (Test-Path -LiteralPath $resolvedOutputDirectory)) {
     $existingOwnershipReceipt = Assert-AtlasoTestVmOriginalOwnership -Context $ownershipContext
 }
@@ -3359,11 +3377,11 @@ if ($PSCmdlet.ShouldProcess($targetVmx, "Create Atlaso Workstation test VM from 
         $cloneSourcePin = $null
         try {
         if ($ownershipContext.Enabled) {
-            $cloneOutputPin = New-AtlasoTestVmPreparedOutput -Context $ownershipContext
             $cloneSourcePin = Get-AtlasoTestVmCloneSourcePin `
                 -SourceVmxPath $resolvedSourceVmx `
                 -SourceVmxIdentity $sourceVmxIdentity `
                 -ExpectedSourceCommit $expectedPayloadSourceCommit
+            $cloneOutputPin = New-AtlasoTestVmPreparedOutput -Context $ownershipContext
         }
         & (Join-Path $PSScriptRoot 'create-atlaso-vm.ps1') `
             -Name $Name `

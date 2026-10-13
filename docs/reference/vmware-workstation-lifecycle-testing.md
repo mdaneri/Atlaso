@@ -1182,7 +1182,13 @@ Before provider cloning, the wrapper exclusively creates each missing destinatio
 parent and immediately publishes an immutable `atlaso-test-vm-directory-<id>.json` creation record. It retains the
 original directory handles with writer and replacement exclusion through cloning and the original VM receipt callback.
 A concurrently inserted directory or junction is refused rather than adopted. Failed preparation preserves its
-published records and any incomplete directory for independent recovery; it does not invent a completed VM receipt.
+published records and any incomplete directory; it does not invent a completed VM receipt. Retry an incomplete
+canonical output with `-RecoverPreparedDirectory`, `-PreparedDirectoryReceiptPath`, and
+`-PreparedDirectoryReceiptSha256` using the selectors emitted at its original preparation. Recovery verifies the
+original receipt, intent, task/source ancestry and directory identity inside the owning remover before retiring an
+empty destination or ordinary partial-clone files. A VMX, lock directory, unknown file, replaced directory, or
+altered receipt is preserved. Completed clones still require their original VM receipt and the normal redeploy path.
+Ancestor preparation records remain historical evidence; recovery never removes a shared parent directory.
 The clone callback emits the original receipt path and SHA-256 immediately after publication, so preserve those
 selectors even when later configuration or readiness fails.
 

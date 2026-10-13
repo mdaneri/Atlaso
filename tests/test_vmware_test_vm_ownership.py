@@ -11,6 +11,7 @@ from pathlib import Path
 import pytest
 
 from scripts.pytest_git_fixtures import PytestGitFixtures
+from tests.test_vmware_cleanup import _write_fake_vmrun
 
 ROOT = Path(__file__).resolve().parents[1]
 VMWARE = ROOT / "scripts/windows/vmware"
@@ -48,12 +49,13 @@ def context_script(tmp_path: Path, *, invocation_id: str = "") -> str:
     )
 
 
-def run_powershell(command: str, *, check: bool = True) -> subprocess.CompletedProcess[str]:
+def run_powershell(command: str, *, check: bool = True, environment: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
     """Run one bounded PowerShell ownership operation.
 
     Args:
         command: Complete PowerShell source to execute.
         check: Raise for a nonzero result when true.
+        environment: Optional isolated fake-provider environment.
     """
     return subprocess.run(
         ["pwsh", "-NoProfile", "-NonInteractive", "-Command", command],
@@ -61,6 +63,7 @@ def run_powershell(command: str, *, check: bool = True) -> subprocess.CompletedP
         text=True,
         timeout=60,
         check=check,
+        env=environment,
     )
 
 
@@ -145,6 +148,50 @@ def test_prepared_destination_publishes_each_creation_before_clone_use(tmp_path)
     }
     assert all(record["task_id"] == "synthetic-task" and record["original_identity"] for record in records)
     assert "prepared directory receipt SHA-256" in result.stdout
+
+
+@pytest.mark.parametrize("case", ["empty", "partial", "digest", "replaced", "vmx", "unsupported", "foreign"])
+def test_prepared_directory_recovery_requires_original_receipt_and_no_completed_vm(tmp_path, case):
+    """A pre-callback failure can recover only its original incomplete destination.
+
+    Args:
+        tmp_path: Original pytest-owned temporary root.
+        case: Empty/partial recovery or a receipt, identity, VMX, artifact, or owner refusal.
+    """
+    (tmp_path / "evidence").mkdir()
+    source = tmp_path / "source.vmx"
+    source.write_text("public fixture", encoding="utf-8")
+    provider, environment, _, _ = _write_fake_vmrun(tmp_path / "provider", [], registered=False)
+    setup = (
+        ownership_prefix()
+        + context_script(tmp_path)
+        + f"$ctx=New-AtlasoTestVmOwnershipIntent -Context $ctx -SourceVmxPath {ps_literal(source)} "
+        + f"-SourceVmxIdentity ([Atlaso.WorkstationFileIdentity]::Get({ps_literal(source)})); "
+        + "$pin=New-AtlasoTestVmPreparedOutput -Context $ctx; $pin.Dispose(); "
+    )
+    changes = {
+        "empty": "",
+        "partial": "[IO.File]::WriteAllText((Join-Path $output 'partial.vmdk'),'public incomplete disk'); ",
+        "digest": "$ctx.PreparedReceiptSha256='0'*64; ",
+        "replaced": "[IO.Directory]::Move($output,($output+'-original')); [void][IO.Directory]::CreateDirectory($output); ",
+        "vmx": "[IO.File]::WriteAllText($vmx,'public VMX'); ",
+        "unsupported": "[IO.File]::WriteAllText((Join-Path $output 'unrelated.txt'),'preserve'); ",
+        "foreign": "$ctx.TaskId='another-task'; ",
+    }
+    result = run_powershell(
+        setup + changes[case]
+        + "Remove-AtlasoTestVmPreparedOutput -Context $ctx -ReceiptPath $ctx.PreparedReceiptPath "
+        + f"-ReceiptSha256 $ctx.PreparedReceiptSha256 -VmrunPath {ps_literal(provider)} -Confirm:$false; "
+        + "if (Test-Path -LiteralPath $output) { throw 'Recovery did not retire the original directory' }",
+        check=False,
+        environment=environment,
+    )
+    if case in {"empty", "partial"}:
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert not (tmp_path / "checkout" / "test-vm").exists()
+    else:
+        assert result.returncode != 0
+        assert (tmp_path / "checkout" / "test-vm").exists()
 
 
 def identity_writer_prefix() -> str:
@@ -328,6 +375,7 @@ def test_agent_context_uses_configured_root_and_requires_registered_clean_worktr
 
     Args:
         tmp_path: Existing pytest temporary root.
+        request: Pytest finalizer registration for the isolated Git fixture.
     """
     codex_home = Path(os.environ.get("CODEX_HOME", Path.home() / ".codex"))
     config_path = codex_home / "config.toml"

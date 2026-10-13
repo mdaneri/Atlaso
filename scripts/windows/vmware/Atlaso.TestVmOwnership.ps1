@@ -258,7 +258,8 @@ function New-AtlasoTestVmPreparedOutput {
                 invocation_id = [string]$Context.InvocationId; path = $CreatedPath; original_identity = $OriginalIdentity
                 intent_path = [string]$Context.IntentPath; intent_sha256 = [string]$Context.IntentSha256
                 kind = 'prepared_directory'; created_utc = [DateTimeOffset]::UtcNow.ToString('o')
-                retention = 'Preserve unless supported cleanup independently admits this creation receipt.'
+                cleanup_tool = 'scripts/windows/vmware/create-atlaso-test-vm.ps1 -RecoverPreparedDirectory -PreparedDirectoryReceiptPath <original-path> -PreparedDirectoryReceiptSha256 <creation-digest>'
+                retention = 'Canonical incomplete output is recoverable only with the independently preserved preparation selectors; preserve ancestor records.'
             }
             $publicationContext = $Context.PSObject.Copy()
             $publicationContext.InvocationId = [guid]::NewGuid().ToString('N')
@@ -267,12 +268,113 @@ function New-AtlasoTestVmPreparedOutput {
             Write-Host "Test VM prepared directory receipt SHA-256: $($published.Sha256)"
             if ($CreatedPath.Equals([string]$Context.OutputDirectory, [StringComparison]::OrdinalIgnoreCase)) {
                 $Context | Add-Member -NotePropertyName PreparedOutputIdentity -NotePropertyValue $OriginalIdentity -Force
+                $Context | Add-Member -NotePropertyName PreparedReceiptPath -NotePropertyValue $published.Path -Force
+                $Context | Add-Member -NotePropertyName PreparedReceiptSha256 -NotePropertyValue $published.Sha256 -Force
             }
         }
         return [Atlaso.WorkstationFileIdentity]::CreateAndPinOrdinaryDirectoryPath(
             [string]$Context.OutputDirectory, $publish)
     }
     finally { $intentPin.Dispose() }
+}
+
+<#
+.SYNOPSIS
+Recover one receipt-bound pre-clone directory without adopting a completed VM.
+.PARAMETER Context
+Admitted clean task checkout and canonical destination context.
+.PARAMETER ReceiptPath
+Creation receipt path independently preserved when the directory was prepared.
+.PARAMETER ReceiptSha256
+Original creation receipt digest preserved independently in the task inventory.
+.PARAMETER VmrunPath
+Verified provider executable used by the owning root-scoped cleanup tool.
+#>
+function Remove-AtlasoTestVmPreparedOutput {
+    [CmdletBinding(SupportsShouldProcess = $true)]
+    param(
+        [Parameter(Mandatory = $true)][psobject]$Context,
+        [Parameter(Mandatory = $true)][string]$ReceiptPath,
+        [Parameter(Mandatory = $true)][ValidatePattern('^[0-9a-fA-F]{64}$')][string]$ReceiptSha256,
+        [Parameter(Mandatory = $true)][string]$VmrunPath
+    )
+    if (-not $Context.Enabled) { throw 'Prepared-directory recovery requires task ownership.' }
+    $receipt = [IO.Path]::GetFullPath($ReceiptPath)
+    $scope = [IO.Path]::GetFullPath([string]$Context.EvidenceDirectory).TrimEnd('\', '/') + '\'
+    if (-not $receipt.StartsWith($scope, [StringComparison]::OrdinalIgnoreCase)) {
+        throw 'The prepared-directory receipt is outside the admitted durable evidence scope.'
+    }
+    $evidencePin = [Atlaso.WorkstationFileIdentity]::PinOrdinaryDirectoryPath([IO.Path]::GetDirectoryName($receipt), $true)
+    $receiptPin = $null
+    $intentPin = $null
+    $intentDirectoryPin = $null
+    $directoryPin = $null
+    try {
+        $receiptPin = [Atlaso.WorkstationFileIdentity]::PinOrdinaryReadFile($receipt, $true)
+        if ((Get-Item -LiteralPath $receipt).Length -gt 65536 -or
+            (Get-FileHash -LiteralPath $receipt -Algorithm SHA256).Hash -ine $ReceiptSha256) {
+            throw 'The prepared-directory receipt differs from its independently preserved creation digest.'
+        }
+        $record = Get-Content -LiteralPath $receipt -Raw | ConvertFrom-Json
+        if ($record.schema -ne 1 -or $record.kind -cne 'prepared_directory' -or
+            [string]$record.task_id -cne [string]$Context.TaskId -or
+            [string]$record.repository -cne [string]$Context.Repository -or
+            [string]$record.worktree -cne [string]$Context.Worktree -or
+            [string]$record.path -cne [string]$Context.OutputDirectory -or
+            [string]$record.original_identity -cnotmatch '^[0-9A-F]{8}:[0-9A-F]{16}$' -or
+            [string]$record.source_commit -cnotmatch '^[0-9a-f]{40}$' -or
+            [string]$record.invocation_id -cnotmatch '^[0-9a-f]{32}$' -or
+            [string]$record.intent_sha256 -cnotmatch '^[0-9a-f]{64}$') {
+            throw 'Prepared-directory recovery does not match the original task and canonical destination.'
+        }
+        $intentPath = [IO.Path]::GetFullPath([string]$record.intent_path)
+        if (-not $intentPath.StartsWith($scope, [StringComparison]::OrdinalIgnoreCase)) {
+            throw 'The original preparation intent is outside the durable evidence scope.'
+        }
+        $intentDirectoryPin = [Atlaso.WorkstationFileIdentity]::PinOrdinaryDirectoryPath([IO.Path]::GetDirectoryName($intentPath), $true)
+        $intentPin = [Atlaso.WorkstationFileIdentity]::PinOrdinaryReadFile($intentPath, $true)
+        if ((Get-Item -LiteralPath $intentPath).Length -gt 65536 -or
+            (Get-FileHash -LiteralPath $intentPath -Algorithm SHA256).Hash -ine [string]$record.intent_sha256) {
+            throw 'The original preparation intent changed.'
+        }
+        $intent = Get-Content -LiteralPath $intentPath -Raw | ConvertFrom-Json
+        if ($intent.schema -ne 1 -or $intent.phase -cne 'clone-pending' -or
+            [string]$intent.task_id -cne [string]$Context.TaskId -or
+            [string]$intent.repository -cne [string]$Context.Repository -or
+            [string]$intent.worktree -cne [string]$Context.Worktree -or
+            [string]$intent.source_branch -cne [string]$Context.Branch -or
+            [string]$intent.output_directory -cne [string]$Context.OutputDirectory -or
+            [string]$intent.vmx_path -cne [string]$Context.VmxPath -or
+            [string]$intent.canonical_name -cne [string]$Context.Name -or
+            [int]$intent.pull_request_number -ne [int]$Context.PullRequestNumber -or
+            [bool]$intent.local_builder -ne [bool]$Context.LocalBuilder -or
+            [string]$intent.source_commit -cne [string]$record.source_commit -or
+            [string]$intent.invocation_id -cne [string]$record.invocation_id) {
+            throw 'The original preparation intent is not bound to this canonical task destination.'
+        }
+        if ([string]$record.source_commit -cne [string]$Context.SourceCommit) {
+            & git -C $Context.Worktree merge-base --is-ancestor ([string]$record.source_commit) ([string]$Context.SourceCommit) 2>$null
+            if ($LASTEXITCODE) { throw 'The preparation source is not an ancestor of the admitted source.' }
+        }
+        $directoryPin = [Atlaso.WorkstationFileIdentity]::PinOrdinaryDirectoryPath([string]$Context.OutputDirectory, $true)
+        if ([Atlaso.WorkstationFileIdentity]::Get([string]$Context.OutputDirectory) -cne [string]$record.original_identity) {
+            throw 'The prepared directory was replaced; preserve it.'
+        }
+        # A VMX needs its original VM receipt. Pre-clone recovery must never
+        # manufacture that receipt or become an alternate VM deletion path.
+        $directoryPin.Dispose()
+        $directoryPin = $null
+        if ($PSCmdlet.ShouldProcess([string]$Context.OutputDirectory, 'Remove receipt-bound incomplete clone directory')) {
+            Remove-AtlasoWorkstationVmArtifacts -VmrunPath $VmrunPath -VmxPaths @() -RemovalRoot $Context.OutputDirectory -ExpectedPreparedDirectoryIdentity $record.original_identity -Confirm:$false
+        }
+    }
+    finally {
+        if ($directoryPin) { $directoryPin.Dispose() }
+        if ($intentPin) { $intentPin.Dispose() }
+        if ($intentDirectoryPin) { $intentDirectoryPin.Dispose() }
+        if ($receiptPin) { $receiptPin.Dispose() }
+        $evidencePin.Dispose()
+    }
 }
 
 <#

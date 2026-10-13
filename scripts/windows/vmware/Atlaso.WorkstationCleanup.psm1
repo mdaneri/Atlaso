@@ -1951,6 +1951,74 @@ function Restore-AtlasoWorkstationExternalVmdks {
 
 <#
 .SYNOPSIS
+Validate the mutually exclusive original-VM and prepared-directory cleanup bindings.
+.PARAMETER RootIdentity
+Original VM directory identity, paired with its persistent identity digest.
+.PARAMETER VmIdentitySha256
+Original persistent VM identity digest.
+.PARAMETER PreparedDirectoryIdentity
+Original pre-clone directory identity, permitted only without any VMX target.
+.PARAMETER VmxCount
+Number of VMX targets supplied to the owning cleanup tool.
+#>
+function Test-AtlasoWorkstationCleanupExpectedIdentityParameters {
+    param([string]$RootIdentity, [string]$VmIdentitySha256, [string]$PreparedDirectoryIdentity, [int]$VmxCount)
+    $vm = -not [string]::IsNullOrEmpty($RootIdentity)
+    if ($vm -ne (-not [string]::IsNullOrEmpty($VmIdentitySha256))) {
+        throw 'Caller-preserved cleanup identities must be supplied together.'
+    }
+    if ($vm -and ($RootIdentity -cnotmatch '^[0-9A-F]{8}:[0-9A-F]{16}$' -or
+        $VmIdentitySha256 -cnotmatch '^[0-9A-Fa-f]{64}$' -or $VmxCount -ne 1)) {
+        throw 'Caller-preserved cleanup identities require one VM target and valid original identities.'
+    }
+    if ($PreparedDirectoryIdentity -and ($vm -or $VmxCount -ne 0 -or
+        $PreparedDirectoryIdentity -cnotmatch '^[0-9A-F]{8}:[0-9A-F]{16}$')) {
+        throw 'Prepared-directory cleanup requires its original identity and no VMX targets.'
+    }
+    return $vm
+}
+
+<#
+.SYNOPSIS
+Require the fresh cleanup snapshot to retain the caller's original directory identity.
+.PARAMETER Snapshot
+Fresh native root snapshot captured by the owning cleanup tool.
+.PARAMETER VmRootIdentity
+Optional original VM directory identity.
+.PARAMETER PreparedDirectoryIdentity
+Optional original pre-clone directory identity.
+#>
+function Assert-AtlasoWorkstationCleanupRootBinding {
+    param([psobject]$Snapshot, [string]$VmRootIdentity, [string]$PreparedDirectoryIdentity)
+    $expected = if ($VmRootIdentity) { $VmRootIdentity } else { $PreparedDirectoryIdentity }
+    if ($expected -and $Snapshot.RootIdentity -cne $expected) {
+        throw 'Artifact directory differs from its caller-preserved original identity; artifacts were preserved.'
+    }
+}
+
+<#
+.SYNOPSIS
+Admit only ordinary partial-clone files in the already captured preparation snapshot.
+.PARAMETER Root
+Exact original preparation directory.
+.PARAMETER Snapshot
+Fresh directory identity and complete child inventory captured by the owning remover.
+#>
+function Assert-AtlasoPreparedArtifactSnapshot {
+    param([string]$Root, [psobject]$Snapshot)
+    foreach ($relative in $Snapshot.Items.Keys) {
+        if ($relative -eq '.') { continue }
+        $entry = Get-Item -LiteralPath (Join-Path $Root $relative) -Force
+        if ($entry.PSIsContainer -or $entry.Extension -notin @('.vmdk', '.vmxf', '.nvram', '.vmsd', '.log') -or
+            ($entry.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+            throw 'Prepared cleanup found a completed VM, active lock, or unsupported artifact; preserve it.'
+        }
+    }
+    Assert-AtlasoRootSnapshotUnreplaced -RemovalRoot $Root -Snapshot $Snapshot
+}
+
+<#
+.SYNOPSIS
 Safely remove validated VMware Workstation artifacts under one exact root.
 
 .PARAMETER VmrunPath
@@ -1975,6 +2043,8 @@ ExpectedRootIdentity and is accepted only for one VMX target.
 
 .PARAMETER KeepRemovalRoot
 Remove validated contents but retain the empty root for a caller holding its lifetime identity pin.
+.PARAMETER ExpectedPreparedDirectoryIdentity
+Original directory creation identity for receipt-bound pre-clone recovery with no VMX files.
 #>
 function Remove-AtlasoWorkstationVmArtifacts {
     [CmdletBinding(SupportsShouldProcess = $true)]
@@ -1985,18 +2055,11 @@ function Remove-AtlasoWorkstationVmArtifacts {
         [Parameter(Mandatory = $false)][AllowEmptyString()][string]$AllowMissingRegistrationsUnderRoot = '',
         [Parameter(Mandatory = $false)][AllowEmptyString()][string]$ExpectedRootIdentity = '',
         [Parameter(Mandatory = $false)][AllowEmptyString()][string]$ExpectedPersistentVmIdentitySha256 = '',
+        [AllowEmptyString()][string]$ExpectedPreparedDirectoryIdentity = '',
         [switch]$KeepRemovalRoot
     )
-    $hasExpectedRootIdentity = -not [string]::IsNullOrEmpty($ExpectedRootIdentity)
-    $hasExpectedPersistentVmIdentity = -not [string]::IsNullOrEmpty($ExpectedPersistentVmIdentitySha256)
-    if ($hasExpectedRootIdentity -ne $hasExpectedPersistentVmIdentity) {
-        throw 'Caller-preserved cleanup identities must be supplied together.'
-    }
-    if ($hasExpectedRootIdentity -and
-        ($ExpectedRootIdentity -cnotmatch '^[0-9A-F]{8}:[0-9A-F]{16}$' -or
-         $ExpectedPersistentVmIdentitySha256 -cnotmatch '^[0-9A-Fa-f]{64}$')) {
-        throw 'Caller-preserved cleanup identities are malformed.'
-    }
+    $hasExpectedRootIdentity = Test-AtlasoWorkstationCleanupExpectedIdentityParameters -RootIdentity $ExpectedRootIdentity -VmIdentitySha256 $ExpectedPersistentVmIdentitySha256 -PreparedDirectoryIdentity $ExpectedPreparedDirectoryIdentity -VmxCount $VmxPaths.Count
+    $hasExpectedPersistentVmIdentity = $hasExpectedRootIdentity
     $resolvedRemovalRoot = Get-AtlasoCanonicalPath -Path $RemovalRoot
     $filesystemRoot = [System.IO.Path]::GetPathRoot($resolvedRemovalRoot)
     if (-not $filesystemRoot -or (Test-AtlasoSamePath -Left $resolvedRemovalRoot -Right $filesystemRoot)) {
@@ -2032,13 +2095,9 @@ function Remove-AtlasoWorkstationVmArtifacts {
     if (@(Compare-Object -ReferenceObject $expectedSet -DifferenceObject $discoveredSet).Count -ne 0) {
         throw 'VMware artifact root contains an unvalidated VMX; artifacts were preserved.'
     }
-    if ($hasExpectedRootIdentity -and $resolvedVmxPaths.Count -ne 1) {
-        throw 'Caller-preserved cleanup identities require exactly one VMware target.'
-    }
     $snapshot = Get-AtlasoRootSnapshot -RemovalRoot $resolvedRemovalRoot
-    if ($hasExpectedRootIdentity -and $snapshot.RootIdentity -cne $ExpectedRootIdentity) {
-        throw "VMware artifact root does not match the caller-preserved original identity; artifacts were preserved: $resolvedRemovalRoot"
-    }
+    Assert-AtlasoWorkstationCleanupRootBinding -Snapshot $snapshot -VmRootIdentity $ExpectedRootIdentity -PreparedDirectoryIdentity $ExpectedPreparedDirectoryIdentity
+    if ($ExpectedPreparedDirectoryIdentity) { Assert-AtlasoPreparedArtifactSnapshot -Root $resolvedRemovalRoot -Snapshot $snapshot }
     $validatedTargetIdentities = @{}
     $validatedTargetHashes = @{}
     $validatedShutdownInvariants = @{}
