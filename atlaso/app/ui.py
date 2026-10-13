@@ -216,6 +216,9 @@ from atlaso.app.security import (
     user_roles,
 )
 from atlaso.app.services import task_cancellation
+from atlaso.app.services.appliance_apply_admission import (
+    lock_appliance_apply_snapshot_tables,
+)
 from atlaso.app.services.appliance_settings import (
     APPLIANCE_DNS_RECORD_DESCRIPTION,
     APPLIANCE_SETTINGS_STAGED_CONFIG_PATH,
@@ -19499,6 +19502,7 @@ def _submit_appliance_apply(
         # Refresh and build the complete consent-bound plan only after writer
         # admission, then capture that admitted plan through job creation.
         acquire_network_objects_write_lock(db)
+        lock_appliance_apply_snapshot_tables(db)
         db.expire_all()
         if "vcf_offline_depot" in selected_ids:
             acquire_vcf_depot_admission_gate(db)
