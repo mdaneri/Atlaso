@@ -557,6 +557,105 @@ def test_web_startup_confirms_reserved_apply_before_interruption_recovery(db, mo
     assert db.get(Job, "earlier-0").status == "pending"
 
 
+def test_web_startup_yields_before_management_http_confirmation_and_joins_at_shutdown(db, monkeypatch):
+    """Serve after native startup recovery while tracked HTTP confirmation remains pending.
+
+    Args:
+        db: Isolated lifecycle database.
+        monkeypatch: Replace unrelated startup operations and control confirmation timing.
+    """
+    import asyncio
+    from threading import Event
+    from types import SimpleNamespace
+
+    from atlaso.app import main
+    from atlaso.app.adapters import system as system_adapter
+
+    confirmation_started = Event()
+    release_confirmation = Event()
+    confirmation_finished = Event()
+    close_checks: list[str] = []
+    startup_modes: list[bool] = []
+
+    def confirm_after_http_serves():
+        """Block the post-yield confirmation until the test begins shutdown.
+
+        Raises:
+            AssertionError: If the test does not release confirmation in time.
+        """
+        confirmation_started.set()
+        try:
+            assert release_confirmation.wait(5)
+        finally:
+            confirmation_finished.set()
+
+    def recover_interrupted(_db, *, startup=False):
+        """Record native-only startup recovery and retain its pending lock.
+
+        Args:
+            _db: Active startup database session.
+            startup: Whether this call defers HTTP readiness confirmation.
+        """
+        startup_modes.append(startup)
+        return 1
+
+    monkeypatch.setattr(main, "SessionLocal", lambda: Session(db.get_bind()))
+    monkeypatch.setattr(main, "get_settings", lambda: SimpleNamespace(environment="appliance"))
+    for name in (
+        "cleanup_transient_secret_staging_files", "configure_logging", "init_db", "seed_initial_data",
+        "ensure_environment_rows", "recover_interrupted_network_boot_media_swaps",
+        "register_bundled_inventory_media", "recover_interrupted_vcf_depot_software_id_jobs",
+        "ensure_vcf_depot_running_operation_index", "recover_interrupted_vcf_helper_jobs",
+        "recover_interrupted_vcf_lab_jobs", "refresh_startup_host_inventory", "ensure_ca_state",
+        "initialize_factory_appliance_apply_baseline", "reconcile_startup_time_source",
+        "validate_enabled_provider_at_startup",
+    ):
+        monkeypatch.setattr(main, name, lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(main, "recover_interrupted_appliance_apply_jobs", recover_interrupted)
+    monkeypatch.setattr(main, "complete_startup_appliance_apply_recovery", confirm_after_http_serves)
+    monkeypatch.setattr(main, "start_monitor_sampler", lambda: None)
+    monkeypatch.setattr(
+        system_adapter,
+        "SystemAdapter",
+        lambda: SimpleNamespace(dry_run=True),
+    )
+
+    def close_upload_store():
+        """Prove shutdown closes shared state only after confirmation completes."""
+        assert confirmation_finished.is_set()
+        close_checks.append("closed-after-confirmation")
+
+    monkeypatch.setattr(main.upload_store, "close", close_upload_store)
+
+    async def exercise_lifespan():
+        """Enter the lifespan, verify yielded readiness, and await shutdown join."""
+        context = main.lifespan(main.app)
+        await context.__aenter__()
+        try:
+            assert await asyncio.to_thread(confirmation_started.wait, 2)
+            assert startup_modes == [True]
+            assert not confirmation_finished.is_set()
+            assert not close_checks
+
+            release_after_shutdown = asyncio.Event()
+
+            async def release_when_shutdown_waits():
+                """Release the worker only after lifespan shutdown reaches its await."""
+                await release_after_shutdown.wait()
+                release_confirmation.set()
+
+            release_task = asyncio.create_task(release_when_shutdown_waits())
+            release_after_shutdown.set()
+            await context.__aexit__(None, None, None)
+            await release_task
+            assert confirmation_finished.is_set()
+            assert close_checks == ["closed-after-confirmation"]
+        finally:
+            release_confirmation.set()
+
+    asyncio.run(exercise_lifespan())
+
+
 @pytest.mark.parametrize("startup", [False, True])
 @pytest.mark.parametrize("newer_confirmation", [False, True])
 def test_cancelled_check_retains_completed_availability(db, monkeypatch, startup, newer_confirmation):

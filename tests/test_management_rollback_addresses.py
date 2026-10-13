@@ -479,8 +479,9 @@ def test_recovery_keeps_journal_and_skips_routes_and_nginx_when_address_is_unrea
     assert error["failing_layer"] == "interruption recovery"
 
 
+@pytest.mark.parametrize("startup", [False, True])
 def test_recovery_waits_for_restored_lease_before_route_listener_and_nginx_activation(
-    monkeypatch, tmp_path, capsys,
+    monkeypatch, tmp_path, capsys, startup,
 ):
     """Successful supported recovery retains its journal through native and HTTP checks.
 
@@ -488,6 +489,7 @@ def test_recovery_waits_for_restored_lease_before_route_listener_and_nginx_activ
         monkeypatch: Pytest fixture for replacing recovery dependencies.
         tmp_path: Isolated directory for the marker and networkd fixture.
         capsys: Pytest fixture for checking bounded recovery output.
+        startup: Retain the journal for HTTP readiness after startup.
     """
     helper = load_helper_module()
     state = rollback_state()
@@ -576,29 +578,39 @@ def test_recovery_waits_for_restored_lease_before_route_listener_and_nginx_activ
         return subprocess.CompletedProcess(command, 0, "", "")
 
     monkeypatch.setattr(helper, "_run", run)
-    monkeypatch.setattr(
-        helper, "_management_handoff_readiness",
-        lambda *_args, **_kwargs: events.append("old-path-http-readiness") or {"stable_samples": 3},
-    )
-    original_clear = helper._clear_management_handoff_state
+    if startup:
+        monkeypatch.setattr(
+            helper, "_management_handoff_readiness",
+            lambda *_args, **_kwargs: pytest.fail("startup recovery must defer HTTP readiness"),
+        )
+        monkeypatch.setattr(
+            helper, "_clear_management_handoff_state",
+            lambda **_kwargs: pytest.fail("startup recovery must retain the rollback journal"),
+        )
+    else:
+        monkeypatch.setattr(
+            helper, "_management_handoff_readiness",
+            lambda *_args, **_kwargs: events.append("old-path-http-readiness") or {"stable_samples": 3},
+        )
+        original_clear = helper._clear_management_handoff_state
 
-    def clear_after_checks(**kwargs):
-        """Verify the original marker remains until every readiness layer passed.
+        def clear_after_checks(**kwargs):
+            """Verify the original marker remains until every readiness layer passed.
 
-        Args:
-            **kwargs: Marker-clear options forwarded to the real implementation.
-        """
-        assert marker.exists()
-        assert marker.read_bytes() == marker_before
-        assert "nginx-validation" in events
-        assert "systemctl reload-or-restart nginx.service" in events
-        assert "old-path-http-readiness" in events
-        events.append("clear-journal")
-        original_clear(**kwargs)
+            Args:
+                **kwargs: Marker-clear options forwarded to the real implementation.
+            """
+            assert marker.exists()
+            assert marker.read_bytes() == marker_before
+            assert "nginx-validation" in events
+            assert "systemctl reload-or-restart nginx.service" in events
+            assert "old-path-http-readiness" in events
+            events.append("clear-journal")
+            original_clear(**kwargs)
 
-    monkeypatch.setattr(helper, "_clear_management_handoff_state", clear_after_checks)
+        monkeypatch.setattr(helper, "_clear_management_handoff_state", clear_after_checks)
 
-    result = helper._recover_management_handoff()
+    result = helper._recover_management_handoff(startup=startup)
 
     assert result == 0
     assert events.index("native-4") < events.index("legacy-routes")
@@ -606,8 +618,39 @@ def test_recovery_waits_for_restored_lease_before_route_listener_and_nginx_activ
     assert events.index("legacy-routes") < events.index("routes") < events.index("listeners")
     assert events.index("addresses-ready", events.index("listeners")) < events.index("nginx-validation")
     assert events.index("nginx-validation") < events.index("systemctl reload-or-restart nginx.service")
-    assert events.index("systemctl reload-or-restart nginx.service") < events.index("old-path-http-readiness")
-    assert events.index("old-path-http-readiness") < events.index("clear-journal")
-    assert not marker.exists()
+    if startup:
+        assert "old-path-http-readiness" not in events
+        assert marker.exists()
+        assert marker.read_bytes() == marker_before
+    else:
+        assert events.index("systemctl reload-or-restart nginx.service") < events.index("old-path-http-readiness")
+        assert events.index("old-path-http-readiness") < events.index("clear-journal")
+        assert not marker.exists()
     output = json.loads(capsys.readouterr().out)
-    assert output["management_handoff"] == "rolled back after interruption"
+    if startup:
+        assert output["management_handoff"] == "rollback awaiting application readiness"
+        assert output["rolled_back"] is False
+        assert output["readiness_pending"] is True
+    else:
+        assert output["management_handoff"] == "rolled back after interruption"
+        assert output["rolled_back"] is True
+
+
+def test_management_handoff_recovery_rejects_unknown_startup_arguments(monkeypatch, capsys):
+    """Reject unsupported recovery flags before invoking rollback mutation.
+
+    Args:
+        monkeypatch: Pytest fixture that makes accidental recovery invocation fail.
+        capsys: Pytest fixture used to inspect the bounded command error.
+    """
+    helper = load_helper_module()
+    monkeypatch.setattr(
+        helper,
+        "_recover_management_handoff",
+        lambda **_kwargs: pytest.fail("unknown arguments must not start recovery"),
+    )
+
+    result = helper._handle_management_handoff("recover", ["--unknown"])
+
+    assert result == 2
+    assert "accepts only --startup" in capsys.readouterr().err

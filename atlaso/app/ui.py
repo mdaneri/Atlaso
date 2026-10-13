@@ -3468,11 +3468,12 @@ def retry_network_transaction_cleanup(db: Session) -> int:
     return 0
 
 
-def recover_interrupted_appliance_apply_jobs(db: Session) -> int:
+def recover_interrupted_appliance_apply_jobs(db: Session, *, startup: bool = False) -> int:
     """Return recover interrupted appliance apply jobs.
 
     Args:
         db: Active database session.
+        startup: Restore native handoff state before serving, retaining its pending mutation lock.
     """
     candidate_jobs = db.scalars(
         select(Job)
@@ -3522,7 +3523,7 @@ def recover_interrupted_appliance_apply_jobs(db: Session) -> int:
             ):
                 recovery = adapter.acknowledge_management_handoff(handoff_job.id)
             else:
-                recovery = adapter.recover_management_handoff()
+                recovery = adapter.recover_management_handoff(startup=True) if startup else adapter.recover_management_handoff()
             handoff_recoveries[handoff_job.id] = (
                 recovery,
                 management_handoff_result_evidence(recovery),

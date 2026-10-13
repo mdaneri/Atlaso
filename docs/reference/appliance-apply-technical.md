@@ -411,6 +411,13 @@ captured state requires it. Each captured artifact, link, and later runtime laye
 backup is reported as an incomplete rollback but does not prevent restoration attempts for the remaining network,
 firewall, nginx, Atlaso, and readiness layers. Restored file bytes and every affected parent-directory entry are synced
 before the durable transaction marker can be cleared; a sync failure keeps rollback incomplete for startup retry.
+Startup handoff recovery uses two phases. `management-handoff recover --startup` restores the native snapshots,
+address ownership, routes, firewall, TLS and nginx configuration, but skips the final HTTP probes and retains the
+journal with `rolled_back=false` and `readiness_pending=true`. The application keeps the durable mutation lock.
+After ASGI startup can serve requests, one tracked background consumer invokes full recovery, including the old-path
+and loopback HTTP readiness checks. Only actual successful rollback retires the journal and releases the lock;
+failed confirmation remains pending. Shutdown waits for the bounded consumer instead of detaching it.
+
 After restored-link reconfiguration, rollback waits up to thirty seconds for three consecutive complete native
 observations of the original management addresses on their snapshotted interface, MAC, and exact CIDR. Every observed
 interface must have a complete address inventory, so omitted competing addresses cannot prove sole ownership. DHCP IPv4

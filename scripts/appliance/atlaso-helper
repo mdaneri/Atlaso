@@ -32855,11 +32855,12 @@ def _restore_management_handoff_wan(state: dict, commands: list[dict[str, object
         raise ValueError("Routes & WAN rollback failed")
 
 
-def _restore_management_handoff(state: dict) -> dict:
+def _restore_management_handoff(state: dict, *, startup: bool = False) -> dict:
     """Restore every snapshotted management runtime artifact.
 
     Args:
         state: Durable transaction state.
+        startup: Restore native state before serving, retaining HTTP verification for after startup.
 
     Returns:
         Bounded rollback evidence.
@@ -33109,7 +33110,7 @@ def _restore_management_handoff(state: dict) -> dict:
             ),
         )
 
-    if addresses_ready:
+    if addresses_ready and not startup:
         attempt("old-path readiness", check_readiness)
     if errors:
         bounded = errors[:8]
@@ -33118,7 +33119,7 @@ def _restore_management_handoff(state: dict) -> dict:
         raise ValueError("rollback incomplete: " + "; ".join(bounded))
     if state.get("source_transition_guard") and not state.get("previous_route_domain_service", {}).get("active"):
         _transition_source_guard(False)
-    return {"commands": commands, "readiness": readiness}
+    return {"commands": commands, "readiness": readiness, "readiness_pending": startup}
 
 
 def _clear_management_handoff_state(*, keep_commit_receipt: bool = False) -> None:
@@ -33390,8 +33391,12 @@ def _quiesce_management_handoff_apply() -> dict[str, object]:
     return _quiesce_management_handoff_unit(MANAGEMENT_HANDOFF_APPLY_UNIT, "apply")
 
 
-def _recover_management_handoff() -> int:
-    """Roll back an interrupted management handoff before Atlaso task recovery."""
+def _recover_management_handoff(*, startup: bool = False) -> int:
+    """Roll back an interrupted management handoff before Atlaso task recovery.
+
+    Args:
+        startup: Restore native state without retiring the journal before application readiness.
+    """
     try:
         helper_state = _quiesce_management_handoff_apply()
     except ValueError as exc:
@@ -33421,7 +33426,7 @@ def _recover_management_handoff() -> int:
         return 0
     try:
         state = json.loads(MANAGEMENT_HANDOFF_STATE_PATH.read_text(encoding="utf-8"))
-        evidence = _restore_management_handoff(state)
+        evidence = _restore_management_handoff(state, startup=True) if startup else _restore_management_handoff(state)
     except (OSError, ValueError, json.JSONDecodeError) as exc:
         print(
             json.dumps(
@@ -33435,6 +33440,10 @@ def _recover_management_handoff() -> int:
             file=sys.stderr,
         )
         return 1
+    if startup:
+        print(json.dumps({"management_handoff": "rollback awaiting application readiness",
+                          "rolled_back": False, "helper_state": helper_state, **evidence}, sort_keys=True))
+        return 0
     try:
         _clear_management_handoff_state()
     except OSError as exc:
@@ -34099,10 +34108,10 @@ def _handle_management_handoff(action: str, args: list[str]) -> int:
         args: Parsed command-line options consumed by the operation.
     """
     if action == "recover":
-        if args:
-            print("management-handoff recover does not accept a path", file=sys.stderr)
+        if args not in ([], ["--startup"]):
+            print("management-handoff recover accepts only --startup", file=sys.stderr)
             return 2
-        return _recover_management_handoff()
+        return _recover_management_handoff(startup=True) if args else _recover_management_handoff()
     if action == "acknowledge":
         if len(args) != 1:
             print("management-handoff acknowledge requires exactly one task id", file=sys.stderr)

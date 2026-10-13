@@ -168,6 +168,9 @@ Safe helper stages and return codes may be retained while the cause remains unkn
 If Atlaso restarts during an ordinary apply, startup fails the running child and master task, skips pending children,
 and releases the global lock. For an interrupted management handoff, the privileged helper first stops and verifies any
 surviving apply process, restores the captured previous runtime state, and records the recovery result.
+Startup restores native networking and listener configuration before serving requests, retaining the recovery journal
+and Apply lock. Once the application can serve HTTP, a bounded background confirmation verifies the old management
+path and records actual rollback before releasing the lock. Failed confirmation leaves recovery pending.
 The same path runs immediately after a helper wait timeout because the fixed apply service can outlive its waiting
 process. Recovery uses a separate fixed service identity; before retrying, the helper stops and verifies any surviving
 recovery service so two rollback attempts cannot mutate the same network state concurrently.

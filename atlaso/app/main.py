@@ -9,6 +9,7 @@ from uuid import uuid4
 from fastapi import Depends, FastAPI, Request
 from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 from starlette.middleware.sessions import SessionMiddleware
 
@@ -140,6 +141,16 @@ def reconcile_startup_time_source(*, environment: str) -> None:
         )
 
 
+def complete_startup_appliance_apply_recovery() -> None:
+    """Confirm restored management HTTP after startup without admitting mutations early."""
+    try:
+        with SessionLocal() as db:
+            recover_interrupted_appliance_apply_jobs(db)
+    except (OSError, ValueError, RuntimeError, SQLAlchemyError) as exc:
+        # The durable pending flag and helper journal continue to own recovery.
+        REQUEST_LOGGER.warning("Startup Apply confirmation needs attention (%s).", type(exc).__name__)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Manage application startup and shutdown.
@@ -164,7 +175,10 @@ async def lifespan(app: FastAPI):
             )
         register_bundled_inventory_media(db)
         db.commit()
-        recover_interrupted_appliance_apply_jobs(db)
+        recovered_applies = (
+            recover_interrupted_appliance_apply_jobs(db, startup=True)
+            if appliance_mode else recover_interrupted_appliance_apply_jobs(db)
+        )
         if appliance_mode:
             from atlaso.app.adapters.system import SystemAdapter
 
@@ -187,9 +201,22 @@ async def lifespan(app: FastAPI):
         reconcile_startup_time_source(environment=settings.environment)
         validate_enabled_provider_at_startup(db)
     monitor_sampler = start_monitor_sampler()
+    # A separate thread can probe HTTP while ASGI finishes startup and serves it.
+    # The native phase above retained the journal and database mutation lock.
+    recovery_confirmation = (
+        asyncio.create_task(asyncio.to_thread(complete_startup_appliance_apply_recovery))
+        if appliance_mode and recovered_applies else None
+    )
     try:
         yield
     finally:
+        if recovery_confirmation is not None:
+            # Do not detach a privileged recovery consumer during normal shutdown.
+            try:
+                await asyncio.shield(recovery_confirmation)
+            except asyncio.CancelledError:
+                await recovery_confirmation
+                raise
         upload_store.close()
         if monitor_sampler:
             monitor_sampler.stop()
