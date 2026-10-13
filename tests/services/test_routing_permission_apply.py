@@ -4,7 +4,7 @@ import json
 
 import pytest
 
-from tests.routers.ui.helpers import login
+from tests.routers.ui.helpers import login, submit_reviewed_appliance_apply
 
 
 @pytest.mark.parametrize("selected", ["wan", "firewall"])
@@ -41,7 +41,7 @@ def test_routing_permission_apply_captures_both_units(client, selected):
 
     page = client.get("/routes-wan")
     csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
-    response = client.post("/appliance-apply", data={"csrf": csrf, "selected_units": [selected]},
+    response = submit_reviewed_appliance_apply(client, "/appliance-apply", data={"csrf": csrf, "selected_units": [selected]},
                            headers={"Accept": "application/json"})
     assert response.status_code == 202, response.text
     with SessionLocal() as db:
@@ -94,7 +94,7 @@ def test_permission_apply_leaves_unrelated_network_edits_pending(client, field, 
         assert next(unit for unit in appliance_apply_units(db) if unit["id"] == "network")["changed"]
 
     csrf = client.get("/routes-wan").text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
-    response = client.post("/appliance-apply", data={"csrf": csrf, "selected_units": "wan"},
+    response = submit_reviewed_appliance_apply(client, "/appliance-apply", data={"csrf": csrf, "selected_units": "wan"},
                            headers={"Accept": "application/json"})
     assert response.status_code == 202, response.text
     with SessionLocal() as db:
@@ -179,7 +179,7 @@ def test_access_only_topology_change_requires_paired_apply(client, selected):
 
     page = client.get("/routes-wan")
     csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
-    response = client.post("/appliance-apply", data={"csrf": csrf, "selected_units": selected},
+    response = submit_reviewed_appliance_apply(client, "/appliance-apply", data={"csrf": csrf, "selected_units": selected},
                            headers={"Accept": "application/json"})
     assert response.status_code == 202, response.text
     with SessionLocal() as db:
@@ -225,7 +225,7 @@ def test_apply_rejects_enabled_permission_after_endpoint_loses_forwarding_role(c
         assert any("Retained denial source must be" in error for error in errors)
 
     csrf = client.get("/routes-wan").text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
-    response = client.post("/appliance-apply", data={"csrf": csrf, "selected_units": "firewall"},
+    response = submit_reviewed_appliance_apply(client, "/appliance-apply", data={"csrf": csrf, "selected_units": "firewall"},
                            headers={"Accept": "application/json"})
     assert response.status_code == 422, response.text
 
@@ -259,7 +259,7 @@ def test_nat_only_selection_pairs_new_access_endpoint_with_firewall(client):
 
     page = client.get("/routes-wan")
     csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
-    response = client.post("/appliance-apply", data={"csrf": csrf, "selected_units": "nat"},
+    response = submit_reviewed_appliance_apply(client, "/appliance-apply", data={"csrf": csrf, "selected_units": "nat"},
                            headers={"Accept": "application/json"})
     assert response.status_code == 202, response.text
     with SessionLocal() as db:
@@ -313,7 +313,7 @@ def test_routing_permission_change_waits_for_forwarding_off_during_management_ha
     monkeypatch.setattr(ui, "appliance_apply_units", handoff_units)
     page = client.get("/routes-wan")
     csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
-    response = client.post("/appliance-apply", data={"csrf": csrf, "selected_units": "network"},
+    response = submit_reviewed_appliance_apply(client, "/appliance-apply", data={"csrf": csrf, "selected_units": "network"},
                            headers={"Accept": "application/json"})
     assert response.status_code == 422, response.text
     assert "Disable Routing" in response.json()["detail"]
@@ -385,7 +385,7 @@ def test_access_network_apply_failure_does_not_publish_network_standalone(client
     monkeypatch.setattr(SystemAdapter, "apply_network_config", record_network)
     page = client.get("/routes-wan")
     csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
-    response = client.post("/appliance-apply", data={"csrf": csrf, "selected_units": "network"},
+    response = submit_reviewed_appliance_apply(client, "/appliance-apply", data={"csrf": csrf, "selected_units": "network"},
                            headers={"Accept": "application/json"})
     assert response.status_code == 202, response.text
     with SessionLocal() as db:
@@ -470,7 +470,7 @@ def test_routing_permission_pair_fails_as_one_group(client, monkeypatch, routing
     monkeypatch.setattr(SystemAdapter, "apply_firewall_config", record_independent)
     page = client.get("/routes-wan")
     csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
-    response = client.post("/appliance-apply", data={"csrf": csrf, "selected_units": "wan"},
+    response = submit_reviewed_appliance_apply(client, "/appliance-apply", data={"csrf": csrf, "selected_units": "wan"},
                            headers={"Accept": "application/json"})
     assert response.status_code == 202, response.text
     with SessionLocal() as db:

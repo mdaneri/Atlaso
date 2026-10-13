@@ -6,7 +6,7 @@ from sqlalchemy import select
 from atlaso.app.database import SessionLocal
 from atlaso.app.models import PhysicalInterface, PortForward, Role, User
 from atlaso.app.security import roles_to_json
-from tests.routers.ui.helpers import login
+from tests.routers.ui.helpers import login, submit_reviewed_appliance_apply
 from tests.services.test_port_forwarding import payload
 
 
@@ -74,7 +74,7 @@ def test_service_only_apply_cannot_redirect_an_enabled_port_forward(client, monk
         raise AssertionError("Conflicting listener reached the host")
 
     monkeypatch.setattr(SystemAdapter, "_helper_result", forbidden)
-    response = client.post("/appliance-apply", data={"csrf": csrf, "selected_units": "kms"},
+    response = submit_reviewed_appliance_apply(client, "/appliance-apply", data={"csrf": csrf, "selected_units": "kms"},
                            headers={"Accept": "application/json"})
     assert response.status_code == 422
 

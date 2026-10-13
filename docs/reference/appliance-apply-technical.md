@@ -1037,13 +1037,14 @@ Global apply `stage-tool` extracts the uploaded archive under `/opt/atlaso/vcf-d
 `/opt/atlaso/vcf-download-tool/vcf-download-tool` wrapper for helper-owned apply work, records the tool version from
 `--version`, and applies `application-prodv2.properties` to both the helper extraction tree and
 `/var/lib/atlaso/vcfDownloadTool/active-tool/conf/`. Atlaso preserves the current software depot ID during ordinary
-settings and download-profile applies. It runs `vcf-download-tool configuration generate --software-depot-id` only
-when no ID has been recorded or the operator explicitly confirms **Refresh software depot ID**. The helper then runs
+settings and download-profile applies. Global Apply runs `vcf-download-tool configuration generate --software-depot-id`
+only when no ID has been recorded. Explicit refresh belongs to the dedicated Software Depot ID task. The helper then runs
 `vcf-download-tool configuration get --software-depot-id` and records only the unambiguous persisted readback value;
 it does not trust the first UUID printed during first-run initialization. A generation failure leaves the previous ID
 recorded. Successful generation followed by failed or ambiguous readback clears the displayed ID because VCFDT may
-already have replaced its runtime identity. The refresh icon submits explicit refresh intent through the same global
-`/ui/management/appliance-apply` workflow for `vcf_offline_depot`; it is not a service-specific helper call.
+already have replaced its runtime identity. VCFDT configuration review dispatches the dedicated identity task for
+explicit replacement; global `/ui/management/appliance-apply` rejects a form-only refresh flag. The dedicated task
+stages tool inputs and reads back the identity without applying nginx or updating the depot Apply baseline.
 Download tokens and activation codes use the combined VCFDT configuration wizard's state-aware credential selector and
 conditional upload-or-paste step; storage keys remain separate for compatibility.
 Metadata and binaries profiles use whichever credential was staged most recently: the runtime download-token file used

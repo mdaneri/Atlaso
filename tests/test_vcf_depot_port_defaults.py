@@ -11,7 +11,7 @@ from atlaso.app.services.settings_archive import (
     export_settings_archive,
     restore_settings_archive,
 )
-from tests.routers.ui.helpers import login
+from tests.routers.ui.helpers import login, submit_reviewed_appliance_apply
 
 
 @pytest.mark.parametrize("firewall_changed", [False, True])
@@ -53,7 +53,7 @@ def test_depot_apply_includes_changed_firewall(client, monkeypatch, firewall_cha
     monkeypatch.setattr(ui, "run_appliance_apply_job", lambda _job_id: None)
     page = client.get("/dashboard")
     csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
-    response = client.post("/appliance-apply", data={"csrf": csrf, "selected_units": "vcf_offline_depot"},
+    response = submit_reviewed_appliance_apply(client, "/appliance-apply", data={"csrf": csrf, "selected_units": "vcf_offline_depot"},
                            headers={"Accept": "application/json"})
     assert response.status_code == 202
     with SessionLocal() as db:
