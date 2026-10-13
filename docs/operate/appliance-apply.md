@@ -90,6 +90,7 @@ Network/WAN dependencies protect management access and replay translation even w
 
 Submission revalidates the effective snapshots and dependency plan. If desired state or dependencies changed since
 review, reopen **Review appliance changes**, inspect the new plan, and submit again.
+A changed storage manifest or disk identity clears any typed format confirmation; inspect the disk and confirm again.
 
 Select **Network** to verify DHCP/SLAAC listeners and **DNS/DHCP** to publish generated DNS, even after startup renewal.
 If applied listener ownership is unproven, apply the named service first. Inspect locked pending Certificate Authority,

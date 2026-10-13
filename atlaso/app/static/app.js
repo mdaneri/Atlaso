@@ -19095,6 +19095,13 @@ function setApplianceApplyPollNotice(message = "", tone = "warning") {
   }
 }
 
+function applianceApplyFormatIdentity(unit, volume) {
+  return JSON.stringify([
+    unit.snapshot_hash || "", volume.id, volume.stable_device_id,
+    Object.entries(volume.fingerprint || {}).sort(([left], [right]) => left.localeCompare(right)),
+  ]);
+}
+
 function applianceApplyReviewRow(unit) {
   const row = document.createElement("article");
   row.className = "appliance-apply-review-row";
@@ -19190,6 +19197,7 @@ function applianceApplyReviewRow(unit) {
       input.autocomplete = "off";
       input.dataset.esxFormatConfirmation = "";
       input.dataset.expected = volume.confirmation || `FORMAT ${volume.name}`;
+      input.dataset.formatIdentity = applianceApplyFormatIdentity(unit, volume);
       const hidden = document.createElement("input");
       hidden.type = "hidden";
       hidden.name = "format_confirmations";
@@ -19578,8 +19586,10 @@ function preserveApplianceApplyReviewState(modal) {
   modal.querySelectorAll("[data-apply-unit-id]").forEach((row) => {
     if (!(row instanceof HTMLElement)) return;
     const unitId = row.dataset.applyUnitId || "";
-    Array.from(row.querySelectorAll("[data-esx-format-confirmation]")).forEach((input, index) => {
-      if (input instanceof HTMLInputElement) confirmations.set(`${unitId}:${index}:${input.dataset.expected || ""}`, input.value);
+    Array.from(row.querySelectorAll("[data-esx-format-confirmation]")).forEach((input) => {
+      if (input instanceof HTMLInputElement && input.dataset.formatIdentity) {
+        confirmations.set(`${unitId}:${input.dataset.formatIdentity}:${input.dataset.expected || ""}`, input.value);
+      }
     });
   });
   return { confirmations, focused, active };
@@ -19589,9 +19599,10 @@ function restoreApplianceApplyReviewState(modal, state) {
   modal.querySelectorAll("[data-apply-unit-id]").forEach((row) => {
     if (!(row instanceof HTMLElement)) return;
     const unitId = row.dataset.applyUnitId || "";
-    Array.from(row.querySelectorAll("[data-esx-format-confirmation]")).forEach((input, index) => {
+    Array.from(row.querySelectorAll("[data-esx-format-confirmation]")).forEach((input) => {
       if (!(input instanceof HTMLInputElement)) return;
-      const value = state.confirmations.get(`${unitId}:${index}:${input.dataset.expected || ""}`);
+      if (!input.dataset.formatIdentity) return;
+      const value = state.confirmations.get(`${unitId}:${input.dataset.formatIdentity}:${input.dataset.expected || ""}`);
       if (value === undefined) return;
       input.value = value;
       const hidden = input.parentElement?.querySelector('[name="format_confirmations"]');

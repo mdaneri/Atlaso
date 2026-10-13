@@ -395,3 +395,45 @@ test("checked disabled review units are serialized in the submit FormData", asyn
   assert.equal(await context.submitReview(form), false);
   assert.equal(submittedBody, null);
 });
+const formatIdentitySource = source.slice(source.indexOf("function applianceApplyFormatIdentity"), source.indexOf("function applianceApplyReviewRow"));
+const reviewStateSource = source.slice(source.indexOf("function preserveApplianceApplyReviewState"), source.indexOf("async function refreshApplianceApplyPlan"));
+
+test("format confirmation survives only the same reviewed manifest and disk identity", () => {
+  class HTMLElement {}
+  class HTMLInputElement extends HTMLElement {}
+  const context = vm.createContext({ HTMLElement, HTMLInputElement, document: { activeElement: null } });
+  vm.runInContext(formatIdentitySource + reviewStateSource, context);
+  const unit = { snapshot_hash: "reviewed-storage-manifest" };
+  const volume = { id: 17, name: "datastore", stable_device_id: "/dev/disk/by-id/original",
+    fingerprint: { serial: "original", wwn: "wwn-original", size_bytes: 1000 } };
+  const makeRow = (identity, value = "") => {
+    const hidden = Object.assign(new HTMLInputElement(), { disabled: true, value: JSON.stringify({ volume_id: identity.id }) });
+    const input = Object.assign(new HTMLInputElement(), { value, dataset: {
+      expected: "FORMAT datastore", formatIdentity: context.applianceApplyFormatIdentity(identity.unit || unit, identity),
+    }, parentElement: { querySelector: () => hidden } });
+    const row = Object.assign(new HTMLElement(), { dataset: { applyUnitId: "esx_storage" }, querySelectorAll: () => [input] });
+    return { row, input, hidden };
+  };
+  const old = makeRow(volume, "FORMAT datastore");
+  const saved = context.preserveApplianceApplyReviewState({ querySelectorAll: () => [old.row] });
+  const same = makeRow({ ...volume, fingerprint: { size_bytes: 1000, wwn: "wwn-original", serial: "original" } });
+  context.restoreApplianceApplyReviewState({ querySelectorAll: () => [same.row] }, saved);
+  assert.equal(same.input.value, "FORMAT datastore");
+  assert.equal(same.hidden.disabled, false);
+  for (const replacement of [
+    { ...volume, id: 18 },
+    { ...volume, stable_device_id: "/dev/disk/by-id/replacement" },
+    { ...volume, fingerprint: { ...volume.fingerprint, serial: "replacement" } },
+    { ...volume, unit: { snapshot_hash: "replacement-manifest" } },
+  ]) {
+    const fresh = makeRow(replacement);
+    context.restoreApplianceApplyReviewState({ querySelectorAll: () => [fresh.row] }, saved);
+    assert.equal(fresh.input.value, "");
+    assert.equal(fresh.hidden.disabled, true);
+  }
+  const missing = makeRow(volume);
+  delete missing.input.dataset.formatIdentity;
+  context.restoreApplianceApplyReviewState({ querySelectorAll: () => [missing.row] }, saved);
+  assert.equal(missing.input.value, "");
+  assert.equal(missing.hidden.disabled, true);
+});
