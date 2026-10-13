@@ -19644,6 +19644,17 @@ async function refreshApplianceApplyPlan() {
     const payload = await response.json();
     if (!isCurrentApplianceApplyPlanRequest(requestId)) return;
     if (!response.ok) throw new Error(payload.detail || "Unable to update the appliance plan.");
+    if (payload.active_task) {
+      ++applianceApplyPlanRequest;
+      elements.modal.dataset.planLoading = "false";
+      if (elements.submit instanceof HTMLButtonElement) {
+        elements.submit.classList.add("hidden");
+        elements.submit.disabled = true;
+      }
+      if (applianceApplyPollController) await applianceApplyPollController.observeTask(payload.active_task);
+      else renderApplianceApplyTask(payload.active_task);
+      return;
+    }
     const rows = Array.isArray(payload.units) ? payload.units : [];
     if (document.activeElement !== state.active) state.focused = null;
     elements.reviewList?.replaceChildren(...rows.map(applianceApplyReviewRow));

@@ -438,3 +438,52 @@ test("format confirmation survives only the same reviewed manifest and disk iden
   assert.equal(missing.input.value, "");
   assert.equal(missing.hidden.disabled, true);
 });
+const refreshPlanSource = source.slice(source.indexOf("async function refreshApplianceApplyPlan"), source.indexOf("function applianceApplyDuration"));
+
+for (const withController of [false, true]) {
+  test("plan refresh observes another session's active task without installing review rows: " + withController, async () => {
+    class HTMLElement {}
+    class HTMLDialogElement extends HTMLElement {}
+    class HTMLInputElement extends HTMLElement {}
+    class HTMLButtonElement extends HTMLElement {}
+    const modal = Object.assign(new HTMLDialogElement(), { dataset: {
+      serverPlanAvailable: "true", planToken: "old-plan",
+    } });
+    const token = Object.assign(new HTMLInputElement(), { value: "old-plan" });
+    let installedRows = 0;
+    let restored = 0;
+    let selectionUpdates = 0;
+    const submit = Object.assign(new HTMLButtonElement(), { disabled: false, classList: { add: (value) => { submit.hiddenClass = value; } } });
+    const observed = [];
+    const task = { id: "other-session-task", status: "running" };
+    const elements = {
+      modal, submit, reviewForm: { querySelector: () => token },
+      reviewList: { replaceChildren: () => { installedRows += 1; } },
+    };
+    const context = vm.createContext({
+      HTMLElement, HTMLDialogElement, HTMLInputElement, HTMLButtonElement, URLSearchParams,
+      applianceApplyModalElements: () => elements,
+      applianceApplySelectedValues: () => ["network"],
+      preserveApplianceApplyReviewState: () => ({ active: null, focused: null }),
+      restoreApplianceApplyReviewState: () => { restored += 1; },
+      updateApplianceApplySelection: () => { selectionUpdates += 1; },
+      managementUiPath: (path) => path,
+      applianceApplyPollController: withController ? { observeTask: async (value) => observed.push(value) } : null,
+      renderApplianceApplyTask: (value) => observed.push(value),
+      fetch: async () => ({ ok: true, json: async () => ({
+        active_task: task, plan_token: "obsolete-plan", units: [{ id: "network" }],
+      }) }),
+    });
+    vm.runInContext("let applianceApplyPlanRequest = 0; function isCurrentApplianceApplyPlanRequest(id) { return id === applianceApplyPlanRequest; } " + refreshPlanSource, context);
+    await context.refreshApplianceApplyPlan();
+    assert.deepEqual(observed, [task]);
+    assert.equal(installedRows, 0);
+    assert.equal(restored, 0);
+    assert.equal(modal.dataset.planToken, undefined);
+    assert.equal(token.value, "");
+    assert.equal(modal.dataset.planLoading, "false");
+    assert.equal(selectionUpdates, 1);
+    assert.equal(submit.disabled, true);
+    assert.equal(submit.hiddenClass, "hidden");
+  });
+}
