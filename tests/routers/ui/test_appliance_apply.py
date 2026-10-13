@@ -6,7 +6,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from tests.routers.ui.helpers import login
+from tests.routers.ui.helpers import login, submit_reviewed_appliance_apply
 
 
 @pytest.mark.parametrize("baseline_kind", ["missing", "legacy", "modern"])
@@ -56,9 +56,9 @@ def test_initial_wan_submission_includes_network_dependency(client, monkeypatch,
             unit["context"]["traffic_publishing_settings"] = SimpleNamespace(effective_nat_enabled=selection == "nat")
             unit["context"]["port_forward_effective"] = False
             unit["validation_errors"] = []
-    monkeypatch.setattr(ui, "appliance_apply_units", lambda _db: units)
+    monkeypatch.setattr(ui, "appliance_apply_units", lambda _db, **_kwargs: units)
     monkeypatch.setattr(ui, "run_appliance_apply_job", lambda _job_id: None)
-    response = client.post("/appliance-apply", data={"csrf": csrf, "selected_units": selection},
+    response = submit_reviewed_appliance_apply(client, "/appliance-apply", data={"csrf": csrf, "selected_units": selection},
                            headers={"Accept": "application/json"})
     blocked = baseline_kind == "missing" and invalid_network
     assert response.status_code == (422 if blocked else 202)
@@ -177,7 +177,9 @@ def test_combined_wan_rejects_candidate_ingress_over_capacity(client, monkeypatc
     review = client.get("/appliance-apply/review")
     assert review.status_code == 200
     review_wan = next(unit for unit in review.json()["units"] if unit["id"] == "wan")
-    assert review_wan["valid"] is True
+    # Review now displays the effective combined snapshot, rather than the
+    # valid standalone WAN snapshot that would not execute with Network.
+    assert review_wan["valid"] is False
     assert review_wan["network_candidate_valid"] is False
     assert review_wan["forces_network_selection"] is True
     assert any("ingress rule capacity" in error
@@ -227,7 +229,7 @@ def test_network_only_rejects_ingress_over_applied_routing_capacity(client, monk
     csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
     with SessionLocal() as db:
         count_before = db.query(Job).count()
-    response = client.post("/appliance-apply", data={"csrf": csrf, "selected_units": "network"},
+    response = submit_reviewed_appliance_apply(client, "/appliance-apply", data={"csrf": csrf, "selected_units": "network"},
                            headers={"Accept": "application/json"})
     assert response.status_code == 422, response.text
     with SessionLocal() as db:
@@ -271,7 +273,7 @@ def test_pending_vlan_disable_joins_routing_permission_apply(client, monkeypatch
 
     monkeypatch.setattr(ui, "run_appliance_apply_job", lambda _job_id: None)
     csrf = client.get("/dashboard").text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
-    response = client.post(
+    response = submit_reviewed_appliance_apply(client,
         "/appliance-apply",
         data={"csrf": csrf, "selected_units": "wan"},
         headers={"Accept": "application/json"},
@@ -460,7 +462,7 @@ def test_legacy_flagged_default_network_revision_couples_wan_handoff(client, mon
     monkeypatch.setattr(ui, "run_appliance_apply_job", lambda _job_id: None)
     page = client.get("/dashboard")
     csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
-    response = client.post("/appliance-apply", data={"csrf": csrf, "selected_units": "network"},
+    response = submit_reviewed_appliance_apply(client, "/appliance-apply", data={"csrf": csrf, "selected_units": "network"},
                            headers={"Accept": "application/json"})
     assert response.status_code == 202, response.text
     with SessionLocal() as db:
@@ -569,7 +571,7 @@ def test_upgrade_network_migration_with_legacy_routing_baselines(client, monkeyp
     # A permission edit also changes Firewall. Select it deliberately so this
     # case still reaches the forwarding-off guard after the consent gate.
     requested = ["network", "firewall"] if change == "permission" else ["network"]
-    response = client.post("/appliance-apply", data={"csrf": csrf, "selected_units": requested},
+    response = submit_reviewed_appliance_apply(client, "/appliance-apply", data={"csrf": csrf, "selected_units": requested},
                            headers={"Accept": "application/json"})
     assert response.status_code == (202 if change == "none" else 422), response.text
     with SessionLocal() as db:
@@ -678,7 +680,7 @@ def test_upgrade_migration_requires_consent_for_pending_protected_units(client, 
     monkeypatch.setattr(ui, "appliance_apply_units", pending_units)
     monkeypatch.setattr(ui, "run_appliance_apply_job", lambda _job_id: None)
     csrf = client.get("/dashboard").text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
-    response = client.post("/appliance-apply", data={"csrf": csrf, "selected_units": ["network", pending_unit] if selected else ["network"]},
+    response = submit_reviewed_appliance_apply(client, "/appliance-apply", data={"csrf": csrf, "selected_units": ["network", pending_unit] if selected else ["network"]},
                            headers={"Accept": "application/json"})
     assert response.status_code == (202 if selected else 422), response.text
     with SessionLocal() as db:
@@ -1376,11 +1378,12 @@ def test_pending_dhcp_management_does_not_require_external_dns(client, monkeypat
 
 
 
-def test_local_dns_enable_applies_listener_before_host_resolver(client):
+def test_local_dns_enable_applies_listener_before_host_resolver(client, monkeypatch):
     """Require explicit Settings selection before activating the resolver.
 
     Args:
         client: HTTP test client used to exercise the Atlaso application.
+        monkeypatch: Enforce read-only planning across the resolver projection.
     """
     from atlaso.app import ui
     from atlaso.app.database import SessionLocal
@@ -1396,17 +1399,37 @@ def test_local_dns_enable_applies_listener_before_host_resolver(client):
         db.add(Job(id="dns-enable-previous-apply", type="appliance-apply", status="succeeded", created_by="admin"))
         dns.enabled = True
         db.commit()
+    original_plan = ui.appliance_apply_execution_plan
+
+    def read_only_plan(*args, **kwargs):
+        """Reject commits from any nested planner capture.
+
+        Args:
+            *args: Session, snapshots and selection passed to the real planner.
+            **kwargs: Consent controls passed to the real planner.
+        """
+        with monkeypatch.context() as patch:
+            patch.setattr(args[0], "commit", lambda: pytest.fail("planning released writer admission"))
+            return original_plan(*args, **kwargs)
+
+    monkeypatch.setattr(ui, "appliance_apply_execution_plan", read_only_plan)
     review = client.get("/appliance-apply/review")
     assert review.status_code == 200
     settings_review = next(unit for unit in review.json()["units"] if unit["id"] == "appliance_settings")
     assert settings_review["requires_dns_selection"] is True
+    assert settings_review["required_dependency"] is True
+    assert "appliance_settings" not in review.json()["requested_units"]
     assert json.loads(settings_review["config_preview"])["resolver_servers"] == ["127.0.0.1"]
+    without_dns = client.get("/appliance-apply/review", params={"selected_units": ""}).json()
+    assert without_dns["requested_units"] == []
+    assert without_dns["execution_count"] == 0
+    assert not any(unit["selected"] for unit in without_dns["units"])
     csrf = client.get("/dashboard").text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
-    response = client.post("/appliance-apply", data={"csrf": csrf, "selected_units": "dnsmasq"},
+    response = submit_reviewed_appliance_apply(client, "/appliance-apply", data={"csrf": csrf, "selected_units": "dnsmasq"},
                            headers={"Accept": "application/json"})
     assert response.status_code == 422
     assert "Select Appliance Settings" in response.json()["detail"]
-    response = client.post("/appliance-apply", data={"csrf": csrf, "selected_units": ["dnsmasq", "appliance_settings"]},
+    response = submit_reviewed_appliance_apply(client, "/appliance-apply", data={"csrf": csrf, "selected_units": ["dnsmasq", "appliance_settings"]},
                            headers={"Accept": "application/json"})
     assert response.status_code == 202
     with SessionLocal() as db:
@@ -1450,10 +1473,16 @@ def test_dns_activation_review_projects_local_resolver_for_existing_settings_row
     assert len(settings_rows) == 1
     assert json.loads(settings_rows[0]["config_preview"])["resolver_servers"] == ["127.0.0.1"]
     assert settings_rows[0]["requires_dns_selection"] is False
+    assert "appliance_settings" in review.json()["requested_units"]
 
     if previous_apply:
+        assert settings_rows[0]["required_dependency"] is False
+        settings_only = client.get("/appliance-apply/review", params={"selected_units": "appliance_settings"}).json()
+        settings_review = next(unit for unit in settings_only["units"] if unit["id"] == "appliance_settings")
+        assert json.loads(settings_review["config_preview"])["resolver_servers"] != ["127.0.0.1"]
+        assert "resolver local DNS" not in settings_review["summary"]
         csrf = client.get("/dashboard").text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
-        response = client.post(
+        response = submit_reviewed_appliance_apply(client,
             "/appliance-apply",
             data={"csrf": csrf, "selected_units": ["dnsmasq", "appliance_settings"]},
             headers={"Accept": "application/json"},
@@ -1495,7 +1524,7 @@ def test_dns_change_keeps_unrelated_settings_pending_when_resolver_is_already_lo
         db.commit()
 
     csrf = client.get("/dashboard").text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
-    response = client.post(
+    response = submit_reviewed_appliance_apply(client,
         "/appliance-apply",
         data={"csrf": csrf, "selected_units": "dnsmasq"},
         headers={"Accept": "application/json"},
@@ -1549,7 +1578,7 @@ def test_management_https_applies_pending_ca_before_settings(client, monkeypatch
     monkeypatch.setattr(ui, "appliance_apply_units", units_with_pending_ca)
     monkeypatch.setattr(ui, "run_appliance_apply_job", lambda _job_id: None)
     csrf = client.get("/dashboard").text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
-    response = client.post(
+    response = submit_reviewed_appliance_apply(client,
         "/appliance-apply",
         data={"csrf": csrf, "selected_units": "appliance_settings"},
         headers={"Accept": "application/json"},
@@ -1602,7 +1631,7 @@ def test_kms_apply_includes_only_unapplied_server_certificate(client, monkeypatc
 
     monkeypatch.setattr(ui, "run_appliance_apply_job", lambda _job_id: None)
     csrf = client.get("/dashboard").text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
-    response = client.post("/appliance-apply", data={"csrf": csrf, "selected_units": "kms"},
+    response = submit_reviewed_appliance_apply(client, "/appliance-apply", data={"csrf": csrf, "selected_units": "kms"},
                            headers={"Accept": "application/json"})
     assert response.status_code == 202, response.text
     with SessionLocal() as db:
@@ -1642,7 +1671,7 @@ def test_management_binding_handoff_pairs_pending_routing_permission(client, mon
 
     monkeypatch.setattr(ui, "run_appliance_apply_job", lambda _job_id: None)
     csrf = client.get("/dashboard").text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
-    response = client.post("/appliance-apply", data={"csrf": csrf, "selected_units": "appliance_settings"},
+    response = submit_reviewed_appliance_apply(client, "/appliance-apply", data={"csrf": csrf, "selected_units": "appliance_settings"},
                            headers={"Accept": "application/json"})
     assert response.status_code == 202, response.text
     with SessionLocal() as db:
@@ -1677,7 +1706,7 @@ def test_management_binding_change_requires_pending_network_selection(client):
         db.commit()
 
     csrf = client.get("/dashboard").text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
-    response = client.post(
+    response = submit_reviewed_appliance_apply(client,
         "/appliance-apply",
         data={"csrf": csrf, "selected_units": "appliance_settings"},
         headers={"Accept": "application/json"},
@@ -1735,7 +1764,7 @@ def test_applied_https_does_not_reselect_unrelated_pending_ca(client, monkeypatc
     monkeypatch.setattr(ui, "appliance_apply_units", units_with_pending_ca)
     monkeypatch.setattr(ui, "run_appliance_apply_job", lambda _job_id: None)
     csrf = client.get("/dashboard").text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
-    response = client.post(
+    response = submit_reviewed_appliance_apply(client,
         "/appliance-apply",
         data={"csrf": csrf, "selected_units": "appliance_settings"},
         headers={"Accept": "application/json"},
@@ -1775,7 +1804,7 @@ def test_management_https_hostname_change_applies_new_ca_certificate_first(clien
 
     monkeypatch.setattr(ui, "run_appliance_apply_job", lambda _job_id: None)
     csrf = client.get("/dashboard").text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
-    response = client.post(
+    response = submit_reviewed_appliance_apply(client,
         "/appliance-apply",
         data={"csrf": csrf, "selected_units": "appliance_settings"},
         headers={"Accept": "application/json"},
@@ -1813,7 +1842,7 @@ def test_local_dns_disable_forces_resolver_move_before_dns_stop(client):
     page = client.get("/dashboard")
     csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
 
-    response = client.post(
+    response = submit_reviewed_appliance_apply(client,
         "/appliance-apply",
         data={"csrf": csrf, "selected_units": ["dnsmasq", "appliance_settings"]},
         headers={"Accept": "application/json"},
@@ -1854,7 +1883,7 @@ def test_local_dns_disable_retry_accepts_already_applied_external_resolver(clien
         update_appliance_apply_baselines(db, units, {"appliance_settings"})
         db.commit()
     csrf = client.get("/dashboard").text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
-    response = client.post(
+    response = submit_reviewed_appliance_apply(client,
         "/appliance-apply",
         data={"csrf": csrf, "selected_units": "dnsmasq"},
         headers={"Accept": "application/json"},
@@ -1895,7 +1924,7 @@ def test_management_handoff_keeps_dns_shutdown_after_resolver_move(client):
     page = client.get("/dashboard")
     csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
 
-    response = client.post(
+    response = submit_reviewed_appliance_apply(client,
         "/appliance-apply",
         data={"csrf": csrf, "selected_units": ["network", "dnsmasq", "appliance_settings", "firewall"]},
         headers={"Accept": "application/json"},
@@ -1939,7 +1968,7 @@ def test_management_handoff_leaves_unselected_dns_record_pending(client, monkeyp
     monkeypatch.setattr(ui, "run_appliance_apply_job", lambda _job_id: None)
     csrf = client.get("/dashboard").text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
 
-    response = client.post(
+    response = submit_reviewed_appliance_apply(client,
         "/appliance-apply",
         data={"csrf": csrf, "selected_units": ["network", "appliance_settings"]},
         headers={"Accept": "application/json"},
@@ -1999,7 +2028,7 @@ def test_ldap_dependency_dns_disable_includes_resolver_move(client, monkeypatch)
     monkeypatch.setattr(ui, "run_appliance_apply_job", lambda _job_id: None)
     csrf = client.get("/dashboard").text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
 
-    response = client.post(
+    response = submit_reviewed_appliance_apply(client,
         "/appliance-apply",
         data={"csrf": csrf, "selected_units": ["ldap", "appliance_settings"]},
         headers={"Accept": "application/json"},
@@ -2759,7 +2788,7 @@ def test_appliance_apply_status_retains_terminal_planned_restart_lock(client, mo
         "remaining_ms": 18000,
     }
 
-    blocked = client.post(
+    blocked = submit_reviewed_appliance_apply(client,
         "/appliance-apply",
         data={"csrf": csrf, "selected_units": "firewall"},
     )
@@ -3092,17 +3121,20 @@ def test_wan_apply_preview_uses_selected_network_ownership(client, monkeypatch, 
         candidate = wan["network_candidate_variant"]
         assert wan["config_preview"] != candidate["config_preview"]
 
-    review = client.get("/appliance-apply/review")
+    selection = ["wan", "network"] if network_selected else ["wan"]
+    review = client.get("/appliance-apply/review", params={"selected_units": selection})
     assert review.status_code == 200
-    review_wan = next(unit for unit in review.json()["units"] if unit["id"] == "wan")
-    assert review_wan["config_preview"] == wan["config_preview"]
+    review_units = review.json()["units"]
+    review_wan = next(unit for unit in review_units if unit["id"] == "wan")
+    reviewed_network = any(unit["id"] == "network" and unit["selected"] for unit in review_units)
+    reviewed_wan = candidate if reviewed_network else wan
+    assert review_wan["config_preview"] == reviewed_wan["config_preview"]
     assert review_wan["network_candidate_preview"] == candidate["config_preview"]
 
     monkeypatch.setattr(ui, "run_appliance_apply_job", lambda _job_id: None)
     page = client.get("/dashboard")
     csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
-    selection = ["wan", "network"] if network_selected else ["wan"]
-    response = client.post("/appliance-apply", data={"csrf": csrf, "selected_units": selection},
+    response = submit_reviewed_appliance_apply(client, "/appliance-apply", data={"csrf": csrf, "selected_units": selection},
                            headers={"Accept": "application/json"})
     assert response.status_code == 202, response.text
     with SessionLocal() as db:
@@ -3111,6 +3143,7 @@ def test_wan_apply_preview_uses_selected_network_ownership(client, monkeypatch, 
     captured = next(unit for unit in payload["captured_units"] if unit["unit_id"] == "wan")
     assert captured["snapshot_hash"] == expected["snapshot_hash"]
     assert captured["config_preview"] == expected["config_preview"]
+    assert captured["config_preview"] == review_wan["config_preview"]
 
 
 @pytest.mark.parametrize("selected_unit", ["network", "nat"])
@@ -3176,7 +3209,7 @@ def test_nat_review_locks_network_wan_pair_and_rejects_invalid_candidate(client,
 
     page = client.get("/dashboard")
     csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
-    response = client.post(
+    response = submit_reviewed_appliance_apply(client,
         "/appliance-apply",
         data={"csrf": csrf, "selected_units": selected_unit},
         headers={"Accept": "application/json"},
@@ -3270,9 +3303,9 @@ def test_wan_gateway_target_address_requires_network_apply(client, monkeypatch, 
 
     page = client.get("/dashboard")
     csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
-    monkeypatch.setattr(ui, "appliance_apply_units", lambda _db: units)
+    monkeypatch.setattr(ui, "appliance_apply_units", lambda _db, **_kwargs: units)
     monkeypatch.setattr(ui, "run_appliance_apply_job", lambda _job_id: None)
-    response = client.post("/appliance-apply", data={"csrf": csrf, "selected_units": "wan"},
+    response = submit_reviewed_appliance_apply(client, "/appliance-apply", data={"csrf": csrf, "selected_units": "wan"},
                            headers={"Accept": "application/json"})
     rejected = scenario in {"invalid_network", "change_domain"}
     assert response.status_code == (422 if rejected else 202), response.text
@@ -3437,7 +3470,7 @@ def test_management_move_leaves_unselected_dns_enablement_pending(client):
     page = client.get("/dashboard")
     csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
 
-    response = client.post(
+    response = submit_reviewed_appliance_apply(client,
         "/appliance-apply",
         data={"csrf": csrf, "selected_units": "firewall"},
         headers={"Accept": "application/json"},
@@ -3529,7 +3562,7 @@ def test_mirror_changing_listener_edit_forces_wan_into_handoff(
 
     page = client.get("/dashboard")
     csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
-    response = client.post(
+    response = submit_reviewed_appliance_apply(client,
         "/appliance-apply",
         data={"csrf": csrf, "selected_units": "network"},
         headers={"Accept": "application/json"},
@@ -3599,7 +3632,7 @@ def test_modern_flagged_listener_enable_forces_candidate_wan_handoff(client, mon
     monkeypatch.setattr(ui, "run_appliance_apply_job", lambda _job_id: None)
     page = client.get("/dashboard")
     csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
-    response = client.post("/appliance-apply", data={"csrf": csrf, "selected_units": "network"},
+    response = submit_reviewed_appliance_apply(client, "/appliance-apply", data={"csrf": csrf, "selected_units": "network"},
                            headers={"Accept": "application/json"})
     assert response.status_code == 202, response.text
     with SessionLocal() as db:
@@ -3663,7 +3696,7 @@ def test_standalone_mirrored_default_edit_starts_management_handoff(
 
     page = client.get("/dashboard")
     csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
-    response = client.post(
+    response = submit_reviewed_appliance_apply(client,
         "/appliance-apply",
         data={"csrf": csrf, "selected_units": "wan"},
         headers={"Accept": "application/json"},
@@ -3729,7 +3762,7 @@ def test_selected_wan_change_executes_inside_existing_management_handoff(client)
 
     page = client.get("/dashboard")
     csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
-    response = client.post(
+    response = submit_reviewed_appliance_apply(client,
         "/appliance-apply",
         data={"csrf": csrf, "selected_units": ["network", "wan"]},
         headers={"Accept": "application/json"},
@@ -3784,7 +3817,7 @@ def test_ntp_apply_includes_generated_dns_after_ntp(client, monkeypatch, initial
     monkeypatch.setattr(ui, "run_appliance_apply_job", lambda _job_id: None)
     page = client.get("/dashboard")
     csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
-    response = client.post(
+    response = submit_reviewed_appliance_apply(client,
         "/appliance-apply",
         data={"csrf": csrf, "selected_units": "ntpd"},
         headers={"Accept": "application/json"},
@@ -3847,7 +3880,7 @@ def test_ntp_and_unrelated_dns_changes_keep_explicit_selection(
     monkeypatch.setattr(ui, "run_appliance_apply_job", lambda _job_id: None)
     page = client.get("/dashboard")
     csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
-    response = client.post(
+    response = submit_reviewed_appliance_apply(client,
         "/appliance-apply",
         data={"csrf": csrf, "selected_units": selected_id},
         headers={"Accept": "application/json"},
@@ -3905,7 +3938,7 @@ def test_ntp_apply_does_not_select_manual_ptr_to_its_target(client, monkeypatch)
 
     monkeypatch.setattr(ui, "run_appliance_apply_job", lambda _job_id: None)
     csrf = client.get("/dashboard").text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
-    response = client.post(
+    response = submit_reviewed_appliance_apply(client,
         "/appliance-apply",
         data={"csrf": csrf, "selected_units": "ntpd"},
         headers={"Accept": "application/json"},
@@ -3964,7 +3997,7 @@ def test_management_move_rechecks_handoff_after_ldap_dependency_expansion(client
     page = client.get("/dashboard")
     csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
 
-    response = client.post(
+    response = submit_reviewed_appliance_apply(client,
         "/appliance-apply",
         data={"csrf": csrf, "selected_units": "ldap"},
         headers={"Accept": "application/json"},
@@ -4034,7 +4067,7 @@ def test_management_handoff_baselines_exact_applied_snapshot(client, monkeypatch
     page = client.get("/dashboard")
     csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
 
-    response = client.post(
+    response = submit_reviewed_appliance_apply(client,
         "/appliance-apply",
         data={"csrf": csrf, "selected_units": "network"},
         headers={"Accept": "application/json"},
@@ -4255,7 +4288,7 @@ def test_management_handoff_staging_failure_clears_unstarted_runtime_lock(client
     page = client.get("/dashboard")
     csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
 
-    response = client.post(
+    response = submit_reviewed_appliance_apply(client,
         "/appliance-apply",
         data={"csrf": csrf, "selected_units": "network"},
         headers={"Accept": "application/json"},
@@ -4605,7 +4638,7 @@ def test_appliance_apply_json_submission_returns_master_with_live_child_status(c
     page = client.get("/dashboard")
     csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
 
-    response = client.post(
+    response = submit_reviewed_appliance_apply(client,
         "/appliance-apply",
         data={"csrf": csrf, "selected_units": "wan"},
         headers={"Accept": "application/json"},
@@ -4658,7 +4691,7 @@ def test_appliance_apply_rejects_submission_while_another_task_is_active(client)
         )
         db.commit()
 
-    response = client.post(
+    response = submit_reviewed_appliance_apply(client,
         "/appliance-apply",
         data={"csrf": csrf, "selected_units": "firewall"},
     )

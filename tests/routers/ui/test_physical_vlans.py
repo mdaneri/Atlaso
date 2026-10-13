@@ -4,7 +4,11 @@ import json
 
 import pytest
 
-from tests.routers.ui.helpers import assert_apply_redirect, login
+from tests.routers.ui.helpers import (
+    assert_apply_redirect,
+    login,
+    submit_reviewed_appliance_apply,
+)
 
 
 @pytest.mark.parametrize(
@@ -1335,7 +1339,7 @@ def test_vlan_interface_create_edit_delete_and_apply(client):
     assert "192.168.50.1/24" in page.text
     assert "fd00:50::1/64" in page.text
     csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
-    apply_response = client.post("/appliance-apply", data={"csrf": csrf, "selected_units": "network"})
+    apply_response = submit_reviewed_appliance_apply(client, "/appliance-apply", data={"csrf": csrf, "selected_units": "network"})
     assert_apply_redirect(apply_response)
 
     with SessionLocal() as db:

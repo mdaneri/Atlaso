@@ -78,12 +78,23 @@ preserved with their affected subsystem below. Keep new requirements at their to
   valid/needs-attention state, validation messages, warnings, and compact rendered config preview actions.
 - Top-of-page pending banners should be scoped to the current page's changed apply unit only. The sidebar apply card
   remains the global pending-unit indicator.
-- The shared appliance-review modal should list changed apply units, check changed valid units by default, show compact
-  summaries, show rendered config diffs/previews, allow users to unselect units, and submit one `appliance-apply` job.
+- The shared appliance-review modal lists changed units and the complete server-expanded execution plan, including
+  unchanged required dependencies with reasons. Check changed valid units by default, keep explicit roots deselectable,
+  and lock implicit dependencies,
+  recompute on selection changes, and bind submission to reviewed snapshots. Show compact summaries and rendered
+  config diffs/previews, allow users to unselect independent units, and submit one `appliance-apply` job.
   Do not restore a standalone appliance-apply page; direct GET requests redirect to Dashboard and open the modal.
 - Apply actions should create one global job/task that captures selected units, skipped changed units, current desired
   state summaries, rendered config previews/diffs, validation results, adapter commands, dry-run status, and audit
   event.
+- Submission reconciles desired state before writer admission, then expires cached ORM state and builds the complete
+  consent-bound plan read-only through job creation. SQLite uses database writer admission; PostgreSQL first tries
+  the shared advisory gate without waiting, then
+  locks every registered application table in `EXCLUSIVE MODE NOWAIT` so ordinary desired-state saves and inserts
+  cannot bypass capture by omitting an advisory lock. This serializes writes across application tables during capture
+  while allowing reads. Contention rolls back admission and returns 409 with retry guidance, so partial table locks
+  never wait in an unrelated writer's lock order. Nested DNS/resolver projections must use `reconcile=False` and must not
+  commit during planning.
 - Real Appliance Settings apply must prove the configured Atlaso loopback `/openapi.json` upstream before publishing a
   management nginx candidate, write and daemon-reload the durable loopback drop-in without restarting the active Atlaso
   worker, then require consecutive guest-local front-door readiness on the applied management address and public port.
@@ -2236,7 +2247,8 @@ preserved with their affected subsystem below. Keep new requirements at their to
 ### Preserved implementation boundaries
 
 - VCF Offline Depot settings and download-profile applies preserve the registered VCFDT software depot ID. Generate an
-  ID only when none exists or an administrator explicitly confirms **Refresh software depot ID** through global apply;
+  ID during ordinary global Apply only when none exists. Explicit **Refresh software depot ID** uses the dedicated
+  identity task dispatched by VCFDT configuration review, never a global Apply form flag;
   preserve the old ID when generation itself fails, but invalidate it if generation succeeds and canonical readback
   fails because VCFDT may already have replaced its runtime identity. Once generation succeeds, remove both staged and
   runtime Broadcom credentials because neither remains valid for the replacement identity. Keep Broadcom credential replacement,

@@ -25,7 +25,11 @@ from scripts.interop.routing_overlap import (
     verify_source_rules,
 )
 from scripts.interop.routing_overlap_transport import FixtureHttpClient, TLSChannel
-from scripts.interop.time_source_guest import FormParser
+from scripts.interop.time_source_guest import (
+    FormParser,
+    apply_review_fields,
+    apply_review_path,
+)
 
 FIELDS = (
     "role", "mode", "ipv4_method", "ip_cidr", "gateway", "ipv6_enabled",
@@ -282,7 +286,14 @@ def _apply(
     if status != 200:
         raise OverlapPrerequisiteError("global Apply page unavailable")
     selected = units if units is not None else ["network", "firewall", "wan"]
-    form = [("csrf", extract_csrf(body)), *(("selected_units", unit) for unit in selected)]
+    review = client.json_request("GET", apply_review_path("/ui/management/appliance-apply/review", selected))
+    try:
+        consent = apply_review_fields(review)
+    except ValueError:
+        raise OverlapPrerequisiteError("global Apply review unavailable or invalid") from None
+    if set(selected) != set(review["requested_units"]):
+        raise OverlapPrerequisiteError("global Apply review omitted an explicitly requested unit")
+    form = [("csrf", extract_csrf(body)), *consent]
     try:
         status, body, _headers = client.request(
             "POST", "/ui/management/appliance-apply", form=form,

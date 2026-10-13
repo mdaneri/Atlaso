@@ -1,5 +1,4 @@
 """Test extracted identity-management UI transports."""
-
 from sqlalchemy import select
 
 from atlaso.app.database import SessionLocal
@@ -9,7 +8,7 @@ from atlaso.app.services.oidc import (
     create_group_mapping,
     update_group_mapping,
 )
-from tests.routers.ui.helpers import login
+from tests.routers.ui.helpers import login, submit_reviewed_appliance_apply
 from tests.test_oidc import _admin_headers, _configure_protocol_client
 
 
@@ -676,7 +675,7 @@ def test_local_users_password_policy_staging_and_apply_redaction(client):
     assert plaintext not in review.text
 
     csrf = apply_page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
-    applied = client.post(
+    applied = submit_reviewed_appliance_apply(client,
         "/appliance-apply", data={"csrf": csrf, "selected_units": "local_users"}
     )
     assert applied.status_code == 200
