@@ -11,7 +11,12 @@ from tests.test_appliance_helper import load_helper_module
 
 @pytest.mark.parametrize("failure", ["none", "lease", "nginx-validation"])
 def test_depot_listener_rollback_rechecks_addresses_before_its_nginx_restart(monkeypatch, failure):
-    """The generic Depot restorer cannot bypass the final nginx ownership gate."""
+    """The generic Depot restorer cannot bypass the final nginx ownership gate.
+
+    Args:
+        monkeypatch: Pytest fixture for replacing helper dependencies.
+        failure: Injected rollback or nginx-validation failure mode.
+    """
     helper = load_helper_module()
     state = rollback_state()
     prior = {"active": True, "enabled": True, "enabled_state": "enabled"}
@@ -19,6 +24,11 @@ def test_depot_listener_rollback_rechecks_addresses_before_its_nginx_restart(mon
     events = []
 
     def wait(_state):
+        """Record address readiness and optionally reject a missing lease.
+
+        Args:
+            _state: Rollback snapshot passed to the address waiter.
+        """
         events.append("native-address-check")
         if failure == "lease":
             raise ValueError("restored lease disappeared")
@@ -45,7 +55,13 @@ def test_depot_listener_rollback_rechecks_addresses_before_its_nginx_restart(mon
 
 
 def rollback_state(*, paths=None, routing=None, addresses=None):
-    """Return an immutable management-address snapshot for rollback tests."""
+    """Return an immutable management-address snapshot for rollback tests.
+
+    Args:
+        paths: Prior management paths with their address methods and families.
+        routing: Prior interface identity, CIDR, routes, and table snapshots.
+        addresses: Prior management listener addresses.
+    """
     return {
         "previous_management_addresses": addresses or ["192.0.2.10"],
         "previous_management_paths": paths or [
@@ -58,7 +74,14 @@ def rollback_state(*, paths=None, routing=None, addresses=None):
 
 
 def observed_link(*, name="eth0", mac="00:11:22:33:44:55", ifindex=2, addresses=None):
-    """Return complete, configured native evidence for one restored interface."""
+    """Return complete, configured native evidence for one restored interface.
+
+    Args:
+        name: Observed native interface name.
+        mac: Observed hardware address.
+        ifindex: Observed kernel interface index.
+        addresses: Observed interface address rows, or the default IPv4 row.
+    """
     return {
         "name": name,
         "mac": mac,
@@ -80,12 +103,21 @@ def observed_link(*, name="eth0", mac="00:11:22:33:44:55", ifindex=2, addresses=
 
 
 def native_observation(*links, complete=True):
-    """Wrap native link rows in the helper observation contract."""
+    """Wrap native link rows in the helper observation contract.
+
+    Args:
+        *links: Observed native interface rows.
+        complete: Whether the full native inventory was collected.
+    """
     return {"complete": complete, "links": list(links), "conflicts": []}
 
 
 def test_restored_address_wait_resets_streak_until_dhcp_lease_is_stable(monkeypatch):
-    """Require three consecutive ready samples after withdrawal and ACD checking."""
+    """Require three consecutive ready samples after withdrawal and ACD checking.
+
+    Args:
+        monkeypatch: Pytest fixture for replacing sleep and observation calls.
+    """
     helper = load_helper_module()
     monkeypatch.setattr(helper.time, "sleep", lambda _seconds: None)
     expected = observed_link()
@@ -117,7 +149,11 @@ def test_restored_address_wait_resets_streak_until_dhcp_lease_is_stable(monkeypa
 
 
 def test_restored_address_requires_exact_static_ipv4_ipv6_and_slaac_sources(monkeypatch):
-    """Accept prior static addresses and a native SLAAC address on exact links."""
+    """Accept prior static addresses and a native SLAAC address on exact links.
+
+    Args:
+        monkeypatch: Pytest fixture for replacing the native observation.
+    """
     helper = load_helper_module()
     monkeypatch.setattr(helper.time, "sleep", lambda _seconds: None)
     state = rollback_state(
@@ -164,7 +200,12 @@ def test_restored_address_requires_exact_static_ipv4_ipv6_and_slaac_sources(monk
     "wrong-prefix", "incomplete-observation", "incomplete-address-inventory", "configuring",
 ])
 def test_restored_dhcp_address_rejects_missing_or_wrong_native_ownership(monkeypatch, invalid):
-    """Do not accept an address without exact live DHCP and link identity evidence."""
+    """Do not accept an address without exact live DHCP and link identity evidence.
+
+    Args:
+        monkeypatch: Pytest fixture for replacing sleep and native observation.
+        invalid: Ownership-evidence defect to inject into the native sample.
+    """
     helper = load_helper_module()
     monkeypatch.setattr(helper.time, "sleep", lambda _seconds: None)
     link = observed_link()
@@ -195,7 +236,11 @@ def test_restored_dhcp_address_rejects_missing_or_wrong_native_ownership(monkeyp
 
 
 def test_restored_address_conflict_fails_immediately(monkeypatch):
-    """A native conflict cannot become ready through repeated observations."""
+    """A native conflict cannot become ready through repeated observations.
+
+    Args:
+        monkeypatch: Pytest fixture for replacing sleep and native observation.
+    """
     helper = load_helper_module()
     monkeypatch.setattr(helper.time, "sleep", lambda _seconds: None)
     link = observed_link()
@@ -212,7 +257,11 @@ def test_restored_address_conflict_fails_immediately(monkeypatch):
 
 
 def test_restored_address_index_change_resets_stability(monkeypatch):
-    """A link identity change restarts the stable-sample streak."""
+    """A link identity change restarts the stable-sample streak.
+
+    Args:
+        monkeypatch: Pytest fixture for replacing sleep and native observation.
+    """
     helper = load_helper_module()
     monkeypatch.setattr(helper.time, "sleep", lambda _seconds: None)
     indices = iter([2, 2, 3, 3, 3])
@@ -232,7 +281,11 @@ def test_restored_address_index_change_resets_stability(monkeypatch):
 
 
 def test_restored_address_rejects_duplicate_owner_on_second_interface(monkeypatch):
-    """The same restored listener address cannot be claimed by two prior links."""
+    """The same restored listener address cannot be claimed by two prior links.
+
+    Args:
+        monkeypatch: Pytest fixture for replacing native observation.
+    """
     helper = load_helper_module()
     state = rollback_state(
         routing={
@@ -264,7 +317,12 @@ def test_restored_address_rejects_duplicate_owner_on_second_interface(monkeypatc
     }]},
 ])
 def test_restored_address_requires_immutable_interface_ownership_snapshot(monkeypatch, state):
-    """Legacy/incomplete journal metadata cannot guess which link owned DHCP."""
+    """Legacy/incomplete journal metadata cannot guess which link owned DHCP.
+
+    Args:
+        monkeypatch: Pytest fixture for rejecting any native observation.
+        state: Incomplete rollback snapshot to validate.
+    """
     helper = load_helper_module()
     monkeypatch.setattr(helper, "_network_address_observation", lambda: pytest.fail("must fail before probing"))
 
@@ -278,7 +336,13 @@ def test_restored_address_requires_immutable_interface_ownership_snapshot(monkey
 def test_recovery_keeps_journal_and_skips_routes_and_nginx_when_address_is_unready(
     monkeypatch, tmp_path, capsys,
 ):
-    """Supported recovery retains its marker and does not activate nginx without old ownership."""
+    """Supported recovery retains its marker and does not activate nginx without old ownership.
+
+    Args:
+        monkeypatch: Pytest fixture for replacing recovery dependencies.
+        tmp_path: Isolated directory for the marker and networkd fixture.
+        capsys: Pytest fixture for checking bounded recovery diagnostics.
+    """
     helper = load_helper_module()
     state = rollback_state()
     state.update({
@@ -350,7 +414,13 @@ def test_recovery_keeps_journal_and_skips_routes_and_nginx_when_address_is_unrea
 def test_recovery_waits_for_restored_lease_before_route_listener_and_nginx_activation(
     monkeypatch, tmp_path, capsys,
 ):
-    """Successful supported recovery retains its journal through native and HTTP checks."""
+    """Successful supported recovery retains its journal through native and HTTP checks.
+
+    Args:
+        monkeypatch: Pytest fixture for replacing recovery dependencies.
+        tmp_path: Isolated directory for the marker and networkd fixture.
+        capsys: Pytest fixture for checking bounded recovery output.
+    """
     helper = load_helper_module()
     state = rollback_state()
     state.update({
@@ -397,7 +467,12 @@ def test_recovery_waits_for_restored_lease_before_route_listener_and_nginx_activ
     original_wait = helper._wait_restored_management_addresses
 
     def wait_without_mutating_snapshot(current_state, **kwargs):
-        """Run the real native waiter and prove it leaves journal state untouched."""
+        """Run the waiter and prove it leaves journal state untouched.
+
+        Args:
+            current_state: Rollback snapshot passed to the real waiter.
+            **kwargs: Waiter options forwarded to the real implementation.
+        """
         before = copy.deepcopy(current_state)
         evidence = original_wait(current_state, **kwargs)
         assert current_state == before
@@ -423,7 +498,11 @@ def test_recovery_waits_for_restored_lease_before_route_listener_and_nginx_activ
     )
 
     def run(command):
-        """Record required systemd activation and return successful completion."""
+        """Record required systemd activation and return successful completion.
+
+        Args:
+            command: System command issued by the recovery helper.
+        """
         if command[:2] == ["systemctl", "start"] or command[:2] == ["systemctl", "reload-or-restart"]:
             events.append(" ".join(command))
         return subprocess.CompletedProcess(command, 0, "", "")
@@ -436,7 +515,11 @@ def test_recovery_waits_for_restored_lease_before_route_listener_and_nginx_activ
     original_clear = helper._clear_management_handoff_state
 
     def clear_after_checks(**kwargs):
-        """Verify the original marker remains until every readiness layer passed."""
+        """Verify the original marker remains until every readiness layer passed.
+
+        Args:
+            **kwargs: Marker-clear options forwarded to the real implementation.
+        """
         assert marker.exists()
         assert marker.read_bytes() == marker_before
         assert "nginx-validation" in events
