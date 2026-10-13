@@ -11,7 +11,7 @@ from pathlib import Path
 import pytest
 
 from scripts.pytest_git_fixtures import PytestGitFixtures
-from tests.test_vmware_cleanup import _write_fake_vmrun
+from tests.test_vmware_cleanup import _write_fake_vmrun, _write_vmware_payload_fixture
 
 ROOT = Path(__file__).resolve().parents[1]
 VMWARE = ROOT / "scripts/windows/vmware"
@@ -521,6 +521,37 @@ def test_output_ancestor_pin_rejects_junction_before_clone(tmp_path):
     assert result.returncode != 0
     assert "ordinary directory" in result.stderr.lower()
     assert not (target / "new-vm").exists()
+
+
+@pytest.mark.parametrize("failure", [False, True])
+def test_clone_source_pins_protect_payload_bytes_and_release_on_failure(tmp_path, failure):
+    """Real provenance checks retain both disks and release every handle on refusal.
+
+    Args:
+        tmp_path: Original pytest-owned temporary root.
+        failure: Whether provenance intentionally fails after disk handles are acquired.
+    """
+    source = _write_vmware_payload_fixture(tmp_path / "source")
+    expected = "0" * 40 if failure else "a" * 40
+    result = run_powershell(
+        ownership_prefix()
+        + f"Import-Module {ps_literal(VMWARE / 'Atlaso.VmwarePayload.psm1')}; "
+        + f"$source={ps_literal(source)}; $identity=[Atlaso.WorkstationFileIdentity]::Get($source); "
+        + "$pin=$null; $rejected=$false; try { "
+        + f"$pin=Get-AtlasoTestVmCloneSourcePin -SourceVmxPath $source -SourceVmxIdentity $identity -ExpectedSourceCommit '{expected}'; "
+        + "foreach ($payload in @(Get-AtlasoVmwarePayloadLayout -VmxPath $source -RequireExactlyTwoVmdks)) { "
+        + "$writeBlocked=$false; $renameBlocked=$false; "
+        + "try { [IO.File]::AppendAllText($payload.File.FullName,'mutation') } catch { $writeBlocked=$true }; "
+        + "try { [IO.File]::Move($payload.File.FullName,($payload.File.FullName+'.replacement')) } catch { $renameBlocked=$true }; "
+        + "if (-not ($writeBlocked -and $renameBlocked)) { throw 'Source payload bytes could change under the clone pin' } } "
+        + "} catch { $rejected=$true; if ($pin) { throw } } finally { if ($pin) { $pin.Dispose() } }; "
+        + f"if ($rejected -ne ${str(failure).lower()}) {{ throw 'Unexpected provenance result' }}; "
+        + "foreach ($file in @(Get-ChildItem -LiteralPath ([IO.Path]::GetDirectoryName($source)) -File)) { "
+        + "$writer=[IO.File]::Open($file.FullName,'Open','Write','None'); $writer.Dispose() }; "
+        + "$parent=[IO.Path]::GetDirectoryName($source); [IO.Directory]::Move($parent,($parent+'-released'))",
+        check=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
 
 
 def test_clone_source_pin_rejects_replaced_template(tmp_path):

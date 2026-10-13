@@ -415,10 +415,19 @@ function Get-AtlasoTestVmCloneSourcePin {
         [AllowEmptyString()][string]$ExpectedSourceCommit = ''
     )
 
-    $pin = [Atlaso.WorkstationFileIdentity]::PinOrdinaryReadFile($SourceVmxPath, $true)
+    $pin = [Atlaso.WorkstationFileIdentity+ReadOnlySourcePins]::new()
     try {
+        # Pin the namespace before opening the VMX and its local payload disks.
+        # Acquire every disk pin before hashing; a successful provenance check
+        # then describes exactly the bytes retained through the provider clone.
+        $pin.Add([Atlaso.WorkstationFileIdentity]::PinOrdinaryDirectoryPath([IO.Path]::GetDirectoryName([IO.Path]::GetFullPath($SourceVmxPath)), $true))
+        $pin.Add([Atlaso.WorkstationFileIdentity]::PinOrdinaryReadFile($SourceVmxPath, $true))
         if ([Atlaso.WorkstationFileIdentity]::Get($SourceVmxPath) -cne $SourceVmxIdentity) {
             throw 'The recorded appliance template changed before cloning.'
+        }
+        $pin.Add([Atlaso.WorkstationFileIdentity]::PinOrdinaryReadFile([IO.Path]::ChangeExtension($SourceVmxPath, 'provenance.json'), $true))
+        foreach ($payload in @(Get-AtlasoVmwarePayloadLayout -VmxPath $SourceVmxPath -RequireExactlyTwoVmdks)) {
+            $pin.Add([Atlaso.WorkstationFileIdentity]::PinOrdinaryReadFile($payload.File.FullName, $true))
         }
         Assert-AtlasoVmwarePayloadProvenance `
             -VmxPath $SourceVmxPath `

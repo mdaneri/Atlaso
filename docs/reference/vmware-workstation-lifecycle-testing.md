@@ -1202,7 +1202,9 @@ original receipt for the replacement. For an existing VM, pass `-OwnershipReceip
 `-OwnershipReceiptSha256` from the independently preserved task inventory; do not derive a replacement digest from
 the current receipt. Both selectors are required in receipt-enabled runs. Output ancestors are checked before
 credential access and pinned through cloning, and the recorded source template identity and expected commit are
-rechecked at that boundary. A missing receipt, changed identity, failed publication, or ambiguous state keeps
+rechecked at that boundary. The source namespace, VMX, provenance and both payload disks stay pinned against writes
+and replacement from byte validation through cloning. A missing receipt, changed identity, failed publication, or
+ambiguous state keeps
 the VM preserved. Never manufacture an original receipt from a later snapshot, edit a receipt, or delete an incomplete
 publication to make admission pass. `-WhatIf` publishes no receipts and performs no credential or VM mutation.
 

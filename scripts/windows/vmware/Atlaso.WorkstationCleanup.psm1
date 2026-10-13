@@ -434,6 +434,17 @@ namespace Atlaso
             }
             catch { pins.Dispose(); throw; }
         }
+        public sealed class ReadOnlySourcePins : IDisposable
+        {
+            private readonly System.Collections.Generic.List<IDisposable> pins =
+                new System.Collections.Generic.List<IDisposable>();
+            public void Add(IDisposable pin) { pins.Add(pin); }
+            public void Dispose()
+            {
+                for (int i = pins.Count - 1; i >= 0; --i) pins[i].Dispose();
+                pins.Clear();
+            }
+        }
         public static SafeFileHandle PinOrdinaryReadFile(string path, bool singleLink = false, bool allowDelete = false)
         {
             SafeFileHandle handle = CreateFileW(path, 0x80000000 | (allowDelete ? 0x10000U : 0), FileShareRead,
