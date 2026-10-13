@@ -19236,7 +19236,7 @@ def appliance_apply_execution_plan(
         raise ApplianceApplyPlanError(detail)
     if dns_resolver_activation:
         selected_ids.add("appliance_settings")
-        units = appliance_apply_units(db, applying_dns=True)
+        units = appliance_apply_units(db, reconcile=False, applying_dns=True)
         unit_map = {unit["id"]: unit for unit in units}
     local_dns_disable_requires_resolver = bool(
         "dnsmasq" in selected_ids

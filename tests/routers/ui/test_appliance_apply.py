@@ -1378,11 +1378,12 @@ def test_pending_dhcp_management_does_not_require_external_dns(client, monkeypat
 
 
 
-def test_local_dns_enable_applies_listener_before_host_resolver(client):
+def test_local_dns_enable_applies_listener_before_host_resolver(client, monkeypatch):
     """Require explicit Settings selection before activating the resolver.
 
     Args:
         client: HTTP test client used to exercise the Atlaso application.
+        monkeypatch: Enforce read-only planning across the resolver projection.
     """
     from atlaso.app import ui
     from atlaso.app.database import SessionLocal
@@ -1398,6 +1399,20 @@ def test_local_dns_enable_applies_listener_before_host_resolver(client):
         db.add(Job(id="dns-enable-previous-apply", type="appliance-apply", status="succeeded", created_by="admin"))
         dns.enabled = True
         db.commit()
+    original_plan = ui.appliance_apply_execution_plan
+
+    def read_only_plan(*args, **kwargs):
+        """Reject commits from any nested planner capture.
+
+        Args:
+            *args: Session, snapshots and selection passed to the real planner.
+            **kwargs: Consent controls passed to the real planner.
+        """
+        with monkeypatch.context() as patch:
+            patch.setattr(args[0], "commit", lambda: pytest.fail("planning released writer admission"))
+            return original_plan(*args, **kwargs)
+
+    monkeypatch.setattr(ui, "appliance_apply_execution_plan", read_only_plan)
     review = client.get("/appliance-apply/review")
     assert review.status_code == 200
     settings_review = next(unit for unit in review.json()["units"] if unit["id"] == "appliance_settings")
