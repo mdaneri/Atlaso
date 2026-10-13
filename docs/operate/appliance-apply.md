@@ -16,7 +16,6 @@ Appliance Apply enforces selected desired state from multiple service pages in o
 This verified appliance view provides visual orientation before you begin.
 
 ![Review appliance changes dialog with selected valid units and one unit needing attention.](../assets/screenshots/appliance-review-modal-desktop.webp)
-
 *Figure: Appliance change review with valid and invalid desired-state units.*
 
 <!-- END GENERATED INTERFACE OVERVIEW -->
@@ -88,8 +87,9 @@ The summary shows changed components, required dependencies, explicit choices, a
 **2 changed components + 5 required dependencies = 7 components to process** means one task with seven components.
 Network/WAN dependencies protect management access and replay translation even when they have no pending edits.
 
-Submission requires a current review and revalidates its snapshots and dependencies. Reopen old tabs or changed plans
-in **Review appliance changes**, inspect the plan, and submit again.
+Submission requires a current review and revalidates its snapshots and dependencies. Validation clients also review
+explicit unchanged units for runtime drift and submit the token, roots, and complete effective selection. Reopen old tabs
+in **Review appliance changes**, inspect the current plan, and submit again.
 A changed storage manifest or disk identity clears any typed format confirmation; inspect the disk and confirm again.
 
 Select **Network** to verify DHCP/SLAAC listeners and **DNS/DHCP** to publish generated DNS, even after startup renewal.

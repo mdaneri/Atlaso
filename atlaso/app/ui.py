@@ -19384,7 +19384,8 @@ def appliance_apply_review_plan(db: Session, selected_units: list[str] | None = 
     """
     context = appliance_apply_context(db)
     review_units = context["review_apply_units"]
-    selectable = {unit["id"] for unit in review_units}
+    # Explicit clients may repair runtime drift by reviewing an unchanged unit.
+    selectable = {unit["id"] for unit in context["apply_units"]}
     independently_changed = {unit["id"] for unit in context["changed_apply_units"]}
     requested = (
         {unit["id"] for unit in review_units if unit["valid"]

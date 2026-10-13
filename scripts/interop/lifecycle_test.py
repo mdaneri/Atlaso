@@ -40,6 +40,12 @@ except ImportError:  # pragma: no cover - Photon image should include cryptograp
     x509 = None  # type: ignore[assignment]  # Optional cryptography import keeps the lifecycle runner usable without extras.
 
 
+try:
+    from scripts.interop.time_source_guest import apply_review_fields, apply_review_path
+except ModuleNotFoundError:  # Standalone checked-in runner executed from its interop directory.
+    from time_source_guest import apply_review_fields, apply_review_path
+
+
 ALL_SCOPES = [
     "read:dashboard",
     "read:interfaces",
@@ -3246,9 +3252,14 @@ def apply_units(client: HttpClient, units: list[str], args: argparse.Namespace) 
             raise LifecycleError(f"GET /ui/management/appliance-apply failed with HTTP {status}")
         csrf = extract_csrf(body)
         form: list[tuple[str, Any]] = [("csrf", csrf)]
-        form.extend(("selected_units", unit) for unit in units)
-        if "esx_storage" in units:
-            review = client.json_request("GET", "/ui/management/appliance-apply/review")
+        review = client.json_request("GET", apply_review_path("/ui/management/appliance-apply/review", units))
+        try:
+            form.extend(apply_review_fields(review))
+        except ValueError:
+            raise LifecycleError("Appliance Apply review unavailable or invalid.") from None
+        if set(units) != set(review["requested_units"]):
+            raise LifecycleError("Appliance Apply review omitted an explicitly requested unit.")
+        if any(key == "selected_units" and value == "esx_storage" for key, value in form):
             esx_unit = next((item for item in review.get("units", []) if item.get("id") == "esx_storage"), None)
             format_volumes = list((esx_unit or {}).get("format_volumes") or [])
             if format_volumes and not args.confirm_esx_storage_format:

@@ -549,3 +549,23 @@ def test_reviewed_plan_rechecks_baseline_after_writer_admission(client, monkeypa
     assert "changed since review" in response.json()["detail"]
     with SessionLocal() as db:
         assert db.query(Job).filter(Job.id != "completed-before-review").count() == 0
+
+
+def test_explicit_unchanged_runtime_replay_is_reviewed(client, monkeypatch):
+    """An unchanged NTP replay uses the same reviewed submission contract.
+
+    Args:
+        client: Isolated authenticated management client.
+        monkeypatch: Replace host execution and current snapshots.
+    """
+    _units, csrf, ui = _prepare_network_handoff_review(client, monkeypatch)
+    monkeypatch.setattr(ui, "run_appliance_apply_job", lambda _job_id: None)
+    preview = client.get("/appliance-apply/review?selected_units=ntpd").json()
+    assert preview["requested_units"] == ["ntpd"]
+    selected = [unit for unit in preview["units"] if unit["selected"]]
+    assert any(unit["id"] == "ntpd" and not unit["changed"] for unit in selected)
+    response = client.post("/appliance-apply", data={"csrf": csrf, "reviewed_plan": preview["plan_token"],
+                           "requested_units": preview["requested_units"],
+                           "selected_units": [unit["id"] for unit in selected]},
+                           headers={"Accept": "application/json"})
+    assert response.status_code == 202, response.text
