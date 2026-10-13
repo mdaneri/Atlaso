@@ -4462,6 +4462,14 @@ def test_startup_management_handoff_recovery_retains_lock_until_http_confirmatio
 
     monkeypatch.setattr(ui, "SystemAdapter", RecoveryAdapter)
     with SessionLocal() as db:
+        ordinary_interrupted_job = Job(
+            id="ordinary-interrupted-apply",
+            type="appliance-apply",
+            status=JobStatus.RUNNING.value,
+            created_by="admin",
+            progress_percent=20,
+            result=json.dumps({"state": "running"}),
+        )
         job = Job(
             id="handoff-startup-readiness",
             type="appliance-apply",
@@ -4473,22 +4481,45 @@ def test_startup_management_handoff_recovery_retains_lock_until_http_confirmatio
                 "management_handoff_runtime_commit_pending": True,
             }),
         )
-        db.add(job)
+        db.add_all([ordinary_interrupted_job, job])
         db.commit()
 
-        assert ui.recover_interrupted_appliance_apply_jobs(db, startup=True) == 1
+        assert ui.recover_interrupted_appliance_apply_jobs(db, startup=True) == 2
+        assert ordinary_interrupted_job.status == JobStatus.FAILED.value
         startup_payload = json.loads(job.result or "{}")
         assert startup_payload["management_handoff_recovery"]["evidence"]["readiness_pending"] is True
         assert startup_payload["management_handoff_runtime_commit_pending"] is True
+        startup_job_ids = ui.retained_startup_management_handoff_job_ids(db)
+        assert startup_job_ids == (job.id,)
         retained_lock = ui.active_appliance_apply_job(db)
         assert retained_lock is not None and retained_lock.id == job.id
 
-        assert ui.recover_interrupted_appliance_apply_jobs(db) == 1
+        fresh_result = json.dumps({"state": "pending", "created_after_startup_capture": True})
+        fresh_job = Job(
+            id="fresh-ordinary-apply",
+            type="appliance-apply",
+            status=JobStatus.PENDING.value,
+            created_by="admin",
+            progress_percent=0,
+            result=fresh_result,
+        )
+        db.add(fresh_job)
+        db.commit()
+
+        assert ui.recover_interrupted_appliance_apply_jobs(db, job_ids=()) == 0
+        assert fresh_job.status == JobStatus.PENDING.value
+        assert fresh_job.result == fresh_result
+        assert calls == [True]
+
+        assert ui.recover_interrupted_appliance_apply_jobs(db, job_ids=startup_job_ids) == 1
+        assert fresh_job.status == JobStatus.PENDING.value
+        assert fresh_job.result == fresh_result
         completed_payload = json.loads(job.result or "{}")
         if confirmation_succeeds:
             assert completed_payload["management_handoff_recovery"]["evidence"]["rolled_back"] is True
             assert "management_handoff_runtime_commit_pending" not in completed_payload
-            assert ui.active_appliance_apply_job(db) is None
+            active_lock = ui.active_appliance_apply_job(db)
+            assert active_lock is not None and active_lock.id == fresh_job.id
         else:
             assert completed_payload["management_handoff_recovery"]["evidence"]["rolled_back"] is False
             assert completed_payload["management_handoff_runtime_commit_pending"] is True

@@ -59,6 +59,7 @@ from atlaso.app.ui import (
     recover_interrupted_vcf_helper_jobs,
     remember_applied_service_dns_records,
     require_management_ui_request,
+    retained_startup_management_handoff_job_ids,
 )
 from atlaso.app.ui import router as ui_router
 from atlaso.app.ui_routes import (
@@ -141,11 +142,15 @@ def reconcile_startup_time_source(*, environment: str) -> None:
         )
 
 
-def complete_startup_appliance_apply_recovery() -> None:
-    """Confirm restored management HTTP after startup without admitting mutations early."""
+def complete_startup_appliance_apply_recovery(job_ids: tuple[str, ...]) -> None:
+    """Confirm only the exact startup-retained management handoffs.
+
+    Args:
+        job_ids: Immutable identities captured before startup admitted new requests.
+    """
     try:
         with SessionLocal() as db:
-            recover_interrupted_appliance_apply_jobs(db)
+            recover_interrupted_appliance_apply_jobs(db, job_ids=job_ids)
     except (OSError, ValueError, RuntimeError, SQLAlchemyError) as exc:
         # The durable pending flag and helper journal continue to own recovery.
         REQUEST_LOGGER.warning("Startup Apply confirmation needs attention (%s).", type(exc).__name__)
@@ -175,10 +180,11 @@ async def lifespan(app: FastAPI):
             )
         register_bundled_inventory_media(db)
         db.commit()
-        recovered_applies = (
+        if appliance_mode:
             recover_interrupted_appliance_apply_jobs(db, startup=True)
-            if appliance_mode else recover_interrupted_appliance_apply_jobs(db)
-        )
+        else:
+            recover_interrupted_appliance_apply_jobs(db)
+        startup_handoffs = retained_startup_management_handoff_job_ids(db) if appliance_mode else ()
         if appliance_mode:
             from atlaso.app.adapters.system import SystemAdapter
 
@@ -204,8 +210,8 @@ async def lifespan(app: FastAPI):
     # A separate thread can probe HTTP while ASGI finishes startup and serves it.
     # The native phase above retained the journal and database mutation lock.
     recovery_confirmation = (
-        asyncio.create_task(asyncio.to_thread(complete_startup_appliance_apply_recovery))
-        if appliance_mode and recovered_applies else None
+        asyncio.create_task(asyncio.to_thread(complete_startup_appliance_apply_recovery, startup_handoffs))
+        if startup_handoffs else None
     )
     try:
         yield

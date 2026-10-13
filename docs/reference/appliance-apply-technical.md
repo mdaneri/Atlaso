@@ -415,7 +415,9 @@ Startup handoff recovery uses two phases. `management-handoff recover --startup`
 address ownership, routes, firewall, TLS and nginx configuration, but skips the final HTTP probes and retains the
 journal with `rolled_back=false` and `readiness_pending=true`. The application keeps the durable mutation lock.
 After ASGI startup can serve requests, one tracked background consumer invokes full recovery, including the old-path
-and loopback HTTP readiness checks. Only actual successful rollback retires the journal and releases the lock;
+and loopback HTTP readiness checks. Startup captures the exact retained handoff job IDs before admitting requests;
+confirmation targets only those jobs and is not scheduled for ordinary interrupted Applies.
+Only actual successful rollback retires the journal and releases the lock;
 failed confirmation remains pending. Shutdown waits for the bounded consumer instead of detaching it.
 
 After restored-link reconfiguration, rollback waits up to thirty seconds for three consecutive complete native

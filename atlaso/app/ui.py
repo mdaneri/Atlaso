@@ -3468,18 +3468,46 @@ def retry_network_transaction_cleanup(db: Session) -> int:
     return 0
 
 
-def recover_interrupted_appliance_apply_jobs(db: Session, *, startup: bool = False) -> int:
+def retained_startup_management_handoff_job_ids(db: Session) -> tuple[str, ...]:
+    """Select only handoffs whose native startup recovery awaits HTTP confirmation.
+
+    Args:
+        db: Startup database session after native recovery has committed its evidence.
+    """
+    jobs = db.scalars(select(Job).where(
+        Job.type == "appliance-apply", Job.status == JobStatus.FAILED.value,
+    )).all()
+    retained: list[str] = []
+    for job in jobs:
+        payload = _job_payload(job)
+        recovery = payload.get("management_handoff_recovery")
+        evidence = recovery.get("evidence") if isinstance(recovery, dict) else None
+        if (
+            payload.get("management_handoff_runtime_commit_pending") is True
+            and isinstance(evidence, dict) and evidence.get("readiness_pending") is True
+        ):
+            retained.append(job.id)
+    return tuple(retained)
+
+
+def recover_interrupted_appliance_apply_jobs(
+    db: Session, *, startup: bool = False, job_ids: tuple[str, ...] | None = None,
+) -> int:
     """Return recover interrupted appliance apply jobs.
 
     Args:
         db: Active database session.
         startup: Restore native handoff state before serving, retaining its pending mutation lock.
+        job_ids: Exact startup-retained jobs to confirm; None performs the initial startup scan.
     """
-    candidate_jobs = db.scalars(
+    candidates = (
         select(Job)
         .options(selectinload(Job.steps))
         .where(Job.type == "appliance-apply")
-    ).all()
+    )
+    if job_ids is not None:
+        candidates = candidates.where(Job.id.in_(job_ids))
+    candidate_jobs = db.scalars(candidates).all()
     # Startup must settle durable pre-claim reservations before classifying interruptions.
     # This owner-scoped pass cannot be starved by the worker's unrelated request batch.
     for job in candidate_jobs:
