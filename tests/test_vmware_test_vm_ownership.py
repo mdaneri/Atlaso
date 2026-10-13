@@ -73,6 +73,20 @@ def ownership_prefix() -> str:
     )
 
 
+def identity_writer_prefix() -> str:
+    """Load the actual VMX identity writer without executing VM creation."""
+    return (
+        f". {ps_literal(VMWARE / 'Atlaso.WorkstationFirstBoot.ps1')}; "
+        "$tokens=$null; $parseErrors=$null; "
+        f"$ast=[System.Management.Automation.Language.Parser]::ParseFile({ps_literal(VMWARE / 'create-atlaso-test-vm.ps1')}, "
+        "[ref]$tokens,[ref]$parseErrors); if ($parseErrors) { throw 'Wrapper parse failed' }; "
+        "$names=@('Set-AtlasoTestVmCleanupIdentity','Get-AtlasoTestVmCleanupIdentity',"
+        "'Get-AtlasoTestVmCleanupIdentityHash','Get-AtlasoCleanupIdentityHash'); "
+        "foreach ($node in $ast.FindAll({param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst]},$true)) { "
+        "if ($node.Name -in $names) { . ([scriptblock]::Create($node.Extent.Text)) } }; "
+    )
+
+
 def test_original_vm_directory_and_vmx_are_published_before_configuration(tmp_path):
     """The real publisher captures both original identities before VMX edits.
 
@@ -86,16 +100,20 @@ def test_original_vm_directory_and_vmx_are_published_before_configuration(tmp_pa
     output = tmp_path / "checkout" / "test-vm"
     command = (
         ownership_prefix()
+        + identity_writer_prefix()
         + context_script(tmp_path)
         + f"$source={ps_literal(source)}; $sourceId=[Atlaso.WorkstationFileIdentity]::Get($source); "
         + "$ctx=New-AtlasoTestVmOwnershipIntent -Context $ctx -SourceVmxPath $source -SourceVmxIdentity $sourceId; "
         + "$cleanupIdentity=('d'*32); [void][System.IO.Directory]::CreateDirectory($output); "
-        + "[System.IO.File]::WriteAllText($vmx, ('source clone' + [Environment]::NewLine + 'guestinfo.atlaso.test_vm_cleanup_identity = ' + [char]34 + $cleanupIdentity + [char]34 + [Environment]::NewLine)); "
+        + "[System.IO.File]::WriteAllText($vmx, ('source clone' + [Environment]::NewLine)); "
         + "$events=[System.Collections.Generic.List[string]]::new(); function git { "
         + "if ($args.Count -eq 6 -and $args[0] -eq '-C' -and $args[2] -eq 'merge-base' -and "
         + "$args[3] -eq '--is-ancestor' -and $args[4] -eq ('a'*40) -and $args[5] -eq ('a'*40)) { "
         + "$global:LASTEXITCODE=0; return }; throw 'Unexpected Git command in publisher test' }; "
-        + "Publish-AtlasoTestVmOriginalOwnership -Context $ctx -DirectoryPath $output -VmxPath $vmx -CleanupIdentity $cleanupIdentity | Out-Null; "
+        + "$publication={param($held) Publish-AtlasoTestVmOriginalOwnership -Context $ctx -DirectoryPath $output "
+        + "-VmxPath $vmx -CleanupIdentity $cleanupIdentity -HeldVmxStream $held | Out-Null}; "
+        + "Set-AtlasoTestVmCleanupIdentity -VmxPath $vmx -Identity $cleanupIdentity "
+        + "-ExpectedVmxIdentity ([Atlaso.WorkstationFileIdentity]::Get($vmx)) -DurableIdentityAction $publication; "
         + "$events.Add('receipt'); $replacement=($vmx + '.replacement'); "
         + "[System.IO.File]::WriteAllText($replacement, ('configured' + [Environment]::NewLine + 'guestinfo.atlaso.test_vm_cleanup_identity = ' + [char]34 + $cleanupIdentity + [char]34 + [Environment]::NewLine)); "
         + "$backup=($vmx + '.backup'); [System.IO.File]::Replace($replacement,$vmx,$backup); $events.Add('configured'); "

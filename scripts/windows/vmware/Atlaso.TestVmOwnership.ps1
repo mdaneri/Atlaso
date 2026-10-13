@@ -399,6 +399,8 @@ Newly cloned output directory supplied by create-atlaso-vm.ps1.
 Newly cloned VMX supplied by create-atlaso-vm.ps1.
 .PARAMETER CleanupIdentity
 Stable non-secret VMX identity published while the original receipt is flushed.
+.PARAMETER HeldVmxStream
+Optional original VMX stream held by the identity writer against replacement.
 #>
 function Publish-AtlasoTestVmOriginalOwnership {
     [CmdletBinding()]
@@ -407,7 +409,8 @@ function Publish-AtlasoTestVmOriginalOwnership {
         [Parameter(Mandatory = $true)][psobject]$Context,
         [Parameter(Mandatory = $true)][string]$DirectoryPath,
         [Parameter(Mandatory = $true)][string]$VmxPath,
-        [Parameter(Mandatory = $true)][ValidatePattern('^[0-9a-f]{32}$')][string]$CleanupIdentity
+        [Parameter(Mandatory = $true)][ValidatePattern('^[0-9a-f]{32}$')][string]$CleanupIdentity,
+        [System.IO.FileStream]$HeldVmxStream
     )
 
     if (-not $Context.Enabled -or -not $Context.IntentPath -or -not $Context.IntentSha256) {
@@ -435,7 +438,18 @@ function Publish-AtlasoTestVmOriginalOwnership {
         }
 
         $directoryPin = [Atlaso.WorkstationFileIdentity]::PinOrdinaryDirectoryPath($resolvedDirectory, $true)
-        $vmxPin = [Atlaso.WorkstationFileIdentity]::PinOrdinaryReadFile($resolvedVmx, $true)
+        if ($null -ne $HeldVmxStream) {
+            # The identity writer denies other writers and deletion. A second
+            # read pin would deny its already-open write access on Windows.
+            if (-not $HeldVmxStream.CanRead -or -not $HeldVmxStream.CanWrite -or
+                -not [System.IO.Path]::GetFullPath($HeldVmxStream.Name).Equals(
+                    $resolvedVmx, [System.StringComparison]::OrdinalIgnoreCase)) {
+                throw 'The original VMX stream does not match the clone callback.'
+            }
+        }
+        else {
+            $vmxPin = [Atlaso.WorkstationFileIdentity]::PinOrdinaryReadFile($resolvedVmx, $true)
+        }
         $directoryIdentity = [Atlaso.WorkstationFileIdentity]::Get($resolvedDirectory)
         $vmxIdentity = [Atlaso.WorkstationFileIdentity]::Get($resolvedVmx)
         $observedCleanupIdentity = Get-AtlasoTestVmOwnershipCleanupIdentity -VmxPath $resolvedVmx

@@ -1317,7 +1317,7 @@ Filesystem identity captured before acquiring the mutation lock.
 
 .PARAMETER DurableIdentityAction
 Optional marker-publication action that must complete while the VMX remains
-locked against writers and same-path replacement.
+locked against writers and same-path replacement. Receives the held VMX stream.
 
 .PARAMETER AllowExistingIdentity
 Permit one exact matching cleanup identity to be rebound to a durable marker.
@@ -1417,7 +1417,7 @@ function Set-AtlasoTestVmCleanupIdentity {
             throw "The cleanup identity could not be proven in the VMX: $resolvedVmxPath"
         }
         if ($null -ne $DurableIdentityAction) {
-            & $DurableIdentityAction
+            & $DurableIdentityAction $stream
         }
     }
     finally {
@@ -3318,11 +3318,13 @@ if ($PSCmdlet.ShouldProcess($targetVmx, "Create Atlaso Workstation test VM from 
                     param($CreatedDirectory, $CreatedVmx, $Context)
                     $cleanupIdentity = [guid]::NewGuid().ToString('N')
                     $cleanupIdentityAction = {
+                        param($HeldVmxStream)
                         Publish-AtlasoTestVmOriginalOwnership `
                             -Context $Context `
                             -DirectoryPath $CreatedDirectory `
                             -VmxPath $CreatedVmx `
-                            -CleanupIdentity $cleanupIdentity | Out-Null
+                            -CleanupIdentity $cleanupIdentity `
+                            -HeldVmxStream $HeldVmxStream | Out-Null
                     }
                     Set-AtlasoTestVmCleanupIdentity `
                         -VmxPath $CreatedVmx `
