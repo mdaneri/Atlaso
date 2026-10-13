@@ -86,7 +86,7 @@ from atlaso.app.services.reverse_proxies import (
 )
 from atlaso.app.services.reverse_proxy_publication import (
     DNS_OWNER_PREFIX,
-    dns_hostname_key,
+    proxy_owns_dns_hostname,
     reconcile_proxy_dns,
 )
 
@@ -131,13 +131,7 @@ def _reject_reverse_proxy_dns_hostname(db: Session, hostname: str) -> None:
         db: Caller-owned database session for proxy desired state.
         hostname: Canonical hostname whose proxy reservation is checked.
     """
-    owner_record_id = db.scalar(
-        select(DnsRecord.id).where(
-            func.lower(func.rtrim(DnsRecord.hostname, ".")) == dns_hostname_key(hostname),
-            DnsRecord.description.startswith(DNS_OWNER_PREFIX),
-        )
-    )
-    if owner_record_id is not None:
+    if proxy_owns_dns_hostname(db, hostname):
         raise HTTPException(status_code=409, detail=REVERSE_PROXY_DNS_OWNER_ERROR)
 
 
@@ -575,9 +569,8 @@ def build_router(dependencies: DnsDhcpApiDependencies) -> DnsDhcpApiRouter:
         )
         existing_records = db.execute(select(DnsRecord)).scalars().all()
         proxy_owned = [record for record in existing_records if _is_reverse_proxy_dns_record(record)]
-        proxy_owned_hostnames = {dns_hostname_key(record.hostname) for record in proxy_owned}
-        if any(dns_hostname_key(str(item["hostname"])) in proxy_owned_hostnames for item in parsed_records):
-            raise HTTPException(status_code=409, detail=REVERSE_PROXY_DNS_OWNER_ERROR)
+        for item in parsed_records:
+            _reject_reverse_proxy_dns_hostname(db, str(item["hostname"]))
         if payload.replace_existing:
             if proxy_owned:
                 raise HTTPException(status_code=409, detail=REVERSE_PROXY_DNS_OWNER_ERROR)

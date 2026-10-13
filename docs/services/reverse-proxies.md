@@ -56,6 +56,7 @@ Disable or move the proxy before changing its address, renaming or deleting its 
 Rejected edits preserve the interface, proxy, and owned DNS records together.
 DHCP reservation create and edit reject proxy-owned DNS names, including short names expanded by their scope.
 Enabled managed-DNS proxies reserve their names even while authoritative DNS is disabled or cannot serve their zone.
+Ordinary DNS create, edit, hosts import, and zone import enforce the same reservation before changing any rows.
 The reservation and generated DNS changes remain atomic; ownership conflicts return **409 Conflict**.
 Host inventory refresh disables proxies tied to renamed or missing NICs and their child VLANs in the same transaction.
 Saved exact listener tuples remain unchanged for explicit review; inventory refresh never silently rebinds a proxy.

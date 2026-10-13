@@ -649,3 +649,98 @@ def test_dhcp_reservation_rejects_proxy_dns_owner_atomically(client, transport, 
         record = db.scalar(select(DnsRecord).where(DnsRecord.hostname == "ordinary-client.atlaso.internal"))
         assert record is not None and record.address == address
         assert record.record_type == ("AAAA" if ":" in address else "A")
+
+
+@pytest.mark.parametrize("transport", ["api_create", "api_edit", "api_import", "ui_create", "ui_edit", "ui_hosts", "ui_zone"])
+@pytest.mark.parametrize("dns_state", ["disabled", "unserved"])
+@pytest.mark.parametrize("alias", ["proxy.atlaso.internal", "PrOxY.AtLaSo.InTeRnAl."])
+def test_dns_writers_reserve_unpublished_proxy_intent_atomically(client, transport, dns_state, alias):
+    """Reject every ordinary DNS writer before any desired row or audit changes.
+
+    Args:
+        client: Isolated appliance HTTP client.
+        transport: API or UI create, edit, hosts-import or zone-import handler.
+        dns_state: Disabled authoritative service or enabled service with another zone.
+        alias: DNS-equivalent spelling of a reserved proxy hostname.
+    """
+    from sqlalchemy import select
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import (
+        AuditEvent,
+        DnsRecord,
+        DnsSettings,
+        ReverseProxy,
+        ReverseProxyRoute,
+    )
+    from atlaso.app.services.settings_archive import export_settings_archive
+    from tests.routers.api_v1.test_dns_dhcp import create_token
+    from tests.routers.ui.helpers import login
+
+    login(client)
+    csrf = client.get("/dns").text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    token = create_token(client, ["write:dns"])
+    with SessionLocal() as db:
+        settings = db.scalar(select(DnsSettings))
+        settings.enabled = dns_state != "disabled"
+        settings.authoritative = True
+        settings.domain = "other.test"
+        settings.disabled_domains = "atlaso.internal"
+        db.add(ReverseProxy(name="Reserved proxy", hostname="proxy.atlaso.internal", enabled=True,
+                            managed_dns=True, scheme="http", port=18090,
+                            listeners=[{"interface": "eth2", "address": "192.168.50.1"}],
+                            routes=[ReverseProxyRoute(position=0, path_prefix="/", upstream_scheme="http",
+                                                      upstream_host="backend.example.test", upstream_port=8080)]))
+        original = DnsRecord(hostname="ordinary.atlaso.internal", record_type="A", address="192.168.50.76",
+                             record_data_json='{"address":"192.168.50.76"}', description="preserve", enabled=True)
+        db.add(original)
+        db.commit()
+        original_id = original.id
+    # Establish canonical page projections before measuring a rejected write.
+    assert client.get("/dns").status_code == 200
+    with SessionLocal() as db:
+        settings = db.scalar(select(DnsSettings))
+        assert not settings.enabled or "atlaso.internal" in settings.disabled_domains
+        assert db.scalar(select(DnsRecord.id).where(DnsRecord.hostname == "proxy.atlaso.internal")) is None
+        before = export_settings_archive(db, actor="test")["data"]
+        before_audits = list(db.scalars(select(AuditEvent.id)))
+
+    def write(hostname):
+        """Submit a canonical ordinary DNS write through the selected transport.
+
+        Args:
+            hostname: Desired DNS name under test.
+        """
+        headers = {"Authorization": f"Bearer {token}"}
+        data = dict(hostname=hostname, record_type="AAAA", address="2001:db8::78", description="operator", enabled=True)
+        if transport == "api_create":
+            return client.post("/api/v1/dns/records", headers=headers, json=data)
+        if transport == "api_edit":
+            return client.patch(f"/api/v1/dns/records/{original_id}", headers=headers, json=data)
+        hosts = f"192.168.50.80 valid-import.atlaso.internal\n192.168.50.81 {hostname}\n"
+        if transport == "api_import":
+            return client.post("/api/v1/dns/records/import", headers=headers,
+                               json=dict(hosts_text=hosts, replace_existing=True))
+        form = {**data, "domain": "atlaso.internal", "enabled": "on", "csrf": csrf}
+        if transport == "ui_create":
+            return client.post("/dns/records", data=form, follow_redirects=False)
+        if transport == "ui_edit":
+            return client.post(f"/dns/records/{original_id}/edit", data=form, follow_redirects=False)
+        if transport == "ui_hosts":
+            return client.post("/dns/records/import", data=dict(domain="atlaso.internal", hosts_text=hosts,
+                               replace_existing="on", csrf=csrf), follow_redirects=False)
+        zone = f"$ORIGIN atlaso.internal.\nvalid-import IN A 192.168.50.80\n{hostname.rstrip('.')}. IN AAAA 2001:db8::78\n"
+        return client.post("/dns/zones/import", data=dict(domain="atlaso.internal", zone_text=zone,
+                           replace_existing="on", csrf=csrf), follow_redirects=False)
+
+    response = write(alias)
+    assert response.status_code == 409, response.text
+    assert "Reverse Proxies" in response.text
+    with SessionLocal() as db:
+        assert export_settings_archive(db, actor="test")["data"] == before
+        assert list(db.scalars(select(AuditEvent.id))) == before_audits
+    positive = write("distinct.atlaso.internal")
+    assert positive.status_code == (201 if transport == "api_create" else 200 if transport.startswith("api") else 303), positive.text
+    with SessionLocal() as db:
+        assert db.scalar(select(ReverseProxy.hostname)) == "proxy.atlaso.internal"
+        assert db.scalar(select(DnsRecord.id).where(DnsRecord.hostname == "distinct.atlaso.internal")) is not None

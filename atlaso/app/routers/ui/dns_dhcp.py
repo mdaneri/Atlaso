@@ -72,7 +72,7 @@ from atlaso.app.services.reverse_proxies import (
 )
 from atlaso.app.services.reverse_proxy_publication import (
     DNS_OWNER_PREFIX,
-    dns_hostname_key,
+    proxy_owns_dns_hostname,
     reconcile_proxy_dns,
 )
 from atlaso.app.ui_routes import (
@@ -94,18 +94,13 @@ def _is_reverse_proxy_dns_record(record: DnsRecord) -> bool:
 
 
 def _is_reverse_proxy_dns_hostname(db: Session, hostname: str) -> bool:
-    """Identify DNS names with at least one record owned by Reverse Proxies.
+    """Identify DNS names reserved by proxy intent or published owner records.
 
     Args:
         db: Caller-owned database session for proxy desired state.
         hostname: Canonical hostname whose proxy reservation is checked.
     """
-    return db.scalar(
-        select(DnsRecord.id).where(
-            func.lower(func.rtrim(DnsRecord.hostname, ".")) == dns_hostname_key(hostname),
-            DnsRecord.description.startswith(DNS_OWNER_PREFIX),
-        )
-    ) is not None
+    return proxy_owns_dns_hostname(db, hostname)
 
 
 def _remember_applied_dns_records(db: Session) -> None:
@@ -1034,12 +1029,7 @@ def build_router(dependencies: DnsDhcpUiDependencies) -> DnsDhcpUiRouter:
                 status_code=422,
             )
         replace = replace_existing == "on"
-        existing_owner_hostnames = {
-            dns_hostname_key(record.hostname)
-            for record in db.execute(select(DnsRecord)).scalars().all()
-            if _is_reverse_proxy_dns_record(record)
-        }
-        if any(dns_hostname_key(str(item["hostname"])) in existing_owner_hostnames for item in parsed_records):
+        if any(_is_reverse_proxy_dns_hostname(db, str(item["hostname"])) for item in parsed_records):
             return render(
                 request,
                 "dns.html",
@@ -1165,12 +1155,7 @@ def build_router(dependencies: DnsDhcpUiDependencies) -> DnsDhcpUiRouter:
                 },
                 status_code=422,
             )
-        existing_owner_hostnames = {
-            dns_hostname_key(record.hostname)
-            for record in db.execute(select(DnsRecord)).scalars().all()
-            if _is_reverse_proxy_dns_record(record)
-        }
-        if any(dns_hostname_key(str(item["hostname"])) in existing_owner_hostnames for item in parsed_records):
+        if any(_is_reverse_proxy_dns_hostname(db, str(item["hostname"])) for item in parsed_records):
             return render(
                 request,
                 "dns.html",
