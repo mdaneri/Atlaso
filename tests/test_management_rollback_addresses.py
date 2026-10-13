@@ -763,3 +763,199 @@ def test_management_handoff_main_rejects_invalid_args_before_path_or_recovery(
 
     assert result == 2
     assert "accepts only --startup" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    "runtime_flags",
+    [
+        pytest.param({"deprecated": True}, id="deprecated-boolean"),
+        pytest.param({"flags": ["deprecated"]}, id="deprecated-flag"),
+        pytest.param({"preferred_life_time": 0}, id="preferred-lifetime-zero"),
+        pytest.param({"valid_life_time": 0}, id="valid-lifetime-zero"),
+        pytest.param({"tentative": True}, id="tentative-boolean"),
+        pytest.param({"flags": ["tentative"]}, id="tentative-flag"),
+        pytest.param({"dadfailed": True}, id="dadfailed-boolean"),
+        pytest.param({"flags": ["dadfailed"]}, id="dadfailed-flag"),
+    ],
+)
+def test_management_handoff_capture_excludes_unusable_runtime_addresses(monkeypatch, runtime_flags):
+    """Exclude deprecated, expired, and unconfirmed runtime addresses from handoff capture.
+
+    Args:
+        monkeypatch: Replace native address command output with the scoped fixture.
+        runtime_flags: Native address state that makes the runtime address unusable.
+    """
+    helper = load_helper_module()
+    observed = json.dumps([{
+        "addr_info": [{
+            "scope": "global",
+            "local": "2001:db8::20",
+            "prefixlen": 64,
+            **runtime_flags,
+        }],
+    }])
+    monkeypatch.setattr(
+        helper, "_run",
+        lambda command: subprocess.CompletedProcess(command, 0, observed, ""),
+    )
+
+    addresses = helper._management_handoff_previous_addresses({
+        "previous_management_addresses": ["192.0.2.10"],
+        "previous_management_interfaces": ["eth0"],
+    })
+
+    assert addresses == ["192.0.2.10"]
+
+
+@pytest.mark.parametrize(
+    ("lifetimes",),
+    [
+        pytest.param({"valid_life_time": 3600, "preferred_life_time": 1800}, id="finite-lifetimes"),
+        pytest.param({"valid_life_time": "forever", "preferred_life_time": "forever"}, id="forever-lifetimes"),
+    ],
+)
+def test_management_handoff_capture_keeps_usable_global_addresses(monkeypatch, lifetimes):
+    """Retain usable global runtime addresses with finite or forever lifetimes.
+
+    Args:
+        monkeypatch: Replace native address command output with the scoped fixture.
+        lifetimes: Valid/preferred lifetimes for an assigned global address.
+    """
+    helper = load_helper_module()
+    observed = json.dumps([{
+        "addr_info": [{
+            "scope": "global",
+            "local": "2001:db8::20",
+            "prefixlen": 64,
+            **lifetimes,
+        }],
+    }])
+    monkeypatch.setattr(
+        helper, "_run",
+        lambda command: subprocess.CompletedProcess(command, 0, observed, ""),
+    )
+
+    addresses = helper._management_handoff_previous_addresses({
+        "previous_management_addresses": ["192.0.2.10"],
+        "previous_management_interfaces": ["eth0"],
+    })
+
+    assert addresses == ["192.0.2.10", "2001:db8::20"]
+
+
+def test_management_handoff_capture_preserves_configured_listener_address_when_runtime_is_stale(monkeypatch):
+    """Keep an explicit prior listener address even when its runtime row is deprecated.
+
+    Args:
+        monkeypatch: Replace native address command output with a stale runtime row.
+    """
+    helper = load_helper_module()
+    observed = json.dumps([{
+        "addr_info": [{
+            "scope": "global",
+            "local": "192.0.2.10",
+            "prefixlen": 24,
+            "deprecated": True,
+            "valid_life_time": 0,
+            "preferred_life_time": 0,
+        }],
+    }])
+    monkeypatch.setattr(
+        helper, "_run",
+        lambda command: subprocess.CompletedProcess(command, 0, observed, ""),
+    )
+
+    addresses = helper._management_handoff_previous_addresses({
+        "previous_management_addresses": ["192.0.2.10"],
+        "previous_management_interfaces": ["eth0"],
+    })
+
+    assert addresses == ["192.0.2.10"]
+
+
+def test_management_address_capture_flows_into_stable_rollback_readiness(monkeypatch):
+    """Use captured live SLAAC ownership while excluding a stale address from readiness.
+
+    Args:
+        monkeypatch: Replace native commands and address samples with deterministic fixtures.
+    """
+    helper = load_helper_module()
+    monkeypatch.setattr(helper.time, "sleep", lambda _seconds: None)
+    captured_native = json.dumps([{
+        "addr_info": [
+            {"scope": "global", "local": "192.0.2.10", "prefixlen": 24},
+            {
+                "scope": "global",
+                "local": "2001:db8::10",
+                "prefixlen": 64,
+                "valid_life_time": "forever",
+                "preferred_life_time": "forever",
+            },
+            {
+                "scope": "global",
+                "local": "2001:db8:dead::10",
+                "prefixlen": 64,
+                "deprecated": True,
+            },
+        ],
+    }])
+    monkeypatch.setattr(
+        helper, "_run",
+        lambda command: subprocess.CompletedProcess(command, 0, captured_native, ""),
+    )
+    captured_addresses = helper._management_handoff_previous_addresses({
+        "previous_management_addresses": ["192.0.2.10"],
+        "previous_management_interfaces": ["eth0"],
+    })
+    assert captured_addresses == ["192.0.2.10", "2001:db8::10"]
+
+    state = rollback_state(
+        addresses=captured_addresses,
+        paths=[{
+            "name": "eth0",
+            "ipv4_method": "static",
+            "ipv6_enabled": "true",
+            "ipv6_cidr": "",
+        }],
+        routing={
+            "eth0": {
+                "mac": "00:11:22:33:44:55",
+                "cidrs": ["192.0.2.10/24", "2001:db8::10/64", "2001:db8:dead::10/64"],
+                "routes": [],
+                "table": 100,
+            },
+        },
+    )
+    sample = native_observation(observed_link(addresses=[
+        {
+            "address": "192.0.2.10",
+            "cidr": "192.0.2.10/24",
+            "scope": "global",
+            "source": "static",
+            "state": "assigned",
+        },
+        {
+            "address": "2001:db8::10",
+            "cidr": "2001:db8::10/64",
+            "scope": "global",
+            "source": "NDisc",
+            "state": "assigned",
+        },
+    ]))
+    samples = iter([sample, sample, sample])
+    observations = []
+
+    def observe():
+        """Return one complete, stable sample after capturing the old addresses."""
+        observations.append(True)
+        return next(samples)
+
+    monkeypatch.setattr(helper, "_network_address_observation", observe)
+
+    evidence = helper._wait_restored_management_addresses(state, attempts=3)
+
+    assert evidence == {
+        "stable_samples": 3,
+        "addresses": ["192.0.2.10", "2001:db8::10"],
+    }
+    assert len(observations) == 3

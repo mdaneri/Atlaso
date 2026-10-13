@@ -420,6 +420,8 @@ confirmation targets only those jobs and is not scheduled for ordinary interrupt
 Only actual successful rollback retires the journal and releases the lock;
 failed confirmation remains pending. Shutdown waits for the bounded consumer instead of detaching it.
 
+Runtime additions to the captured old listener set exclude tentative, conflicted, deprecated, expired, and unpreferred
+addresses, matching normal inventory eligibility. Explicitly configured listener addresses remain mandatory.
 After restored-link reconfiguration, rollback waits up to thirty seconds for three consecutive complete native
 observations of the original management addresses on their snapshotted interface, MAC, and exact CIDR. Every observed
 interface must have a complete address inventory, so omitted competing addresses cannot prove sole ownership. DHCP IPv4

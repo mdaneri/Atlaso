@@ -30352,6 +30352,11 @@ def _management_handoff_previous_addresses(payload: dict) -> list[str]:
             raise ValueError(f"previous management addresses were malformed on {interface}")
         for entry in entries:
             for info in entry.get("addr_info", []):
+                flags = info.get("flags") or []
+                if any(info.get(flag) or flag in flags for flag in ("tentative", "dadfailed", "deprecated")):
+                    continue
+                if info.get("valid_life_time") == 0 or info.get("preferred_life_time") == 0:
+                    continue
                 local = str(info.get("local") or "")
                 if info.get("scope") == "global" and local:
                     previous_addresses.append(str(ip_address(local)))
