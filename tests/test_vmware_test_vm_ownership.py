@@ -194,6 +194,63 @@ def test_prepared_directory_recovery_requires_original_receipt_and_no_completed_
         assert (tmp_path / "checkout" / "test-vm").exists()
 
 
+def test_prepared_root_removal_keeps_original_handle_through_retirement(tmp_path):
+    """A concurrent rename cannot swap the captured root before handle deletion.
+
+    Args:
+        tmp_path: Original pytest-owned temporary root.
+    """
+    output = tmp_path / "prepared"
+    output.mkdir()
+    (output / "partial.vmdk").write_text("public incomplete disk", encoding="utf-8")
+    result = run_powershell(
+        ownership_prefix()
+        + f"$output={ps_literal(output)}; $snapshot=& (Get-Module Atlaso.WorkstationCleanup) "
+        + "{param($root) Get-AtlasoRootSnapshot -RemovalRoot $root} $output; "
+        + "$inventory=[Collections.Generic.Dictionary[string,string]]::new([StringComparer]::OrdinalIgnoreCase); "
+        + "foreach ($path in $snapshot.Items.Keys) { $inventory.Add($path,$snapshot.Items[$path]) }; "
+        + "$removal=[Atlaso.WorkstationCapturedContentsV1]::new($output,$snapshot.RootIdentity,$inventory,$true); "
+        + "try { $removal.CaptureSnapshot(); $renameBlocked=$false; "
+        + "try { [IO.Directory]::Move($output,($output+'-replaced')) } catch { $renameBlocked=$true }; "
+        + "if (-not $renameBlocked) { throw 'The original prepared root could be replaced' }; "
+        + "$removal.RemoveRoot() } finally { $removal.Dispose() }; "
+        + "if (Test-Path -LiteralPath $output) { throw 'Original root was not retired' }",
+        check=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert not output.exists()
+    assert not output.with_name("prepared-replaced").exists()
+
+
+@pytest.mark.parametrize("parameter", ["NoStart", "SkipLabNetworkAdapters", "IncludeLabNetworkAdapters", "SshPublicKeyPath", "ApplianceVmxPath"])
+def test_prepared_recovery_rejects_creation_inputs_before_removal(tmp_path, parameter):
+    """Invalid creation options preserve a recoverable destination and its evidence.
+
+    Args:
+        tmp_path: Original pytest-owned temporary root.
+        parameter: Creation option forbidden by the cleanup-only invocation.
+    """
+    (tmp_path / "evidence").mkdir()
+    source = tmp_path / "source.vmx"
+    source.write_text("public fixture", encoding="utf-8")
+    result = run_powershell(
+        ownership_prefix() + context_script(tmp_path)
+        + f"$ctx=New-AtlasoTestVmOwnershipIntent -Context $ctx -SourceVmxPath {ps_literal(source)} "
+        + f"-SourceVmxIdentity ([Atlaso.WorkstationFileIdentity]::Get({ps_literal(source)})); "
+        + "$pin=New-AtlasoTestVmPreparedOutput -Context $ctx; $pin.Dispose(); "
+        + "$bound=@{RecoverPreparedDirectory=$true; PreparedDirectoryReceiptPath=$ctx.PreparedReceiptPath; "
+        + "PreparedDirectoryReceiptSha256=$ctx.PreparedReceiptSha256}; "
+        + f"$bound[{ps_literal(parameter)}]='invalid'; "
+        + "Assert-AtlasoPreparedRecoveryParameters -BoundParameters $bound; "
+        + "[IO.Directory]::Delete($output)",
+        check=False,
+    )
+    assert result.returncode != 0
+    assert "cleanup-only" in result.stderr
+    assert (tmp_path / "checkout" / "test-vm").is_dir()
+    assert list((tmp_path / "evidence").glob("atlaso-test-vm-directory-*.json"))
+
+
 def identity_writer_prefix() -> str:
     """Load the actual VMX identity writer without executing VM creation."""
     return (

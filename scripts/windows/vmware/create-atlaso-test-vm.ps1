@@ -44,7 +44,7 @@ Original receipt path preserved in the task inventory for an existing VM.
 .PARAMETER OwnershipReceiptSha256
 Creation-time original receipt digest preserved independently in the task inventory.
 .PARAMETER RecoverPreparedDirectory
-Recover a pre-clone destination using its independently preserved preparation receipt before retrying creation.
+Remove an incomplete pre-clone destination and exit; retry creation in a separate invocation.
 .PARAMETER PreparedDirectoryReceiptPath
 Original preparation receipt path, required with RecoverPreparedDirectory.
 .PARAMETER PreparedDirectoryReceiptSha256
@@ -3092,9 +3092,10 @@ if ($RecoverPreparedDirectory -or $PreparedDirectoryReceiptPath -or $PreparedDir
         $OwnershipReceiptPath -or $OwnershipReceiptSha256) {
         throw 'Prepared recovery requires its explicit switch and paired original selectors; existing-VM selectors cannot be combined.'
     }
+    Assert-AtlasoPreparedRecoveryParameters -BoundParameters $PSBoundParameters
     $preparedRecoveryVmrun = Resolve-TestVmVmrunPath -Path $VmrunPath
     Remove-AtlasoTestVmPreparedOutput -Context $ownershipContext -ReceiptPath $PreparedDirectoryReceiptPath -ReceiptSha256 $PreparedDirectoryReceiptSha256 -VmrunPath $preparedRecoveryVmrun -Confirm:$false
-    if ($WhatIfPreference) { return }
+    return
 }
 if ($ownershipContext.Enabled -and (Test-Path -LiteralPath $resolvedOutputDirectory)) {
     $existingOwnershipReceipt = Assert-AtlasoTestVmOriginalOwnership -Context $ownershipContext

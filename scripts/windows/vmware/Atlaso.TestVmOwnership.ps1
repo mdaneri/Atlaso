@@ -280,6 +280,25 @@ function New-AtlasoTestVmPreparedOutput {
 
 <#
 .SYNOPSIS
+Reject creation options before a cleanup-only prepared-directory recovery.
+.PARAMETER BoundParameters
+Explicit parameters supplied to the normal test-VM wrapper.
+#>
+function Assert-AtlasoPreparedRecoveryParameters {
+    param([System.Collections.IDictionary]$BoundParameters)
+    $allowed = @('RecoverPreparedDirectory', 'PreparedDirectoryReceiptPath', 'PreparedDirectoryReceiptSha256',
+        'OwnershipRoot', 'OwnershipTaskId', 'OutputDirectory', 'PullRequestNumber', 'LocalBuilder', 'Purpose',
+        'CollisionSuffix', 'VmrunPath', 'WhatIf', 'Confirm', 'Verbose', 'Debug', 'ErrorAction', 'WarningAction',
+        'InformationAction', 'ErrorVariable', 'WarningVariable', 'InformationVariable', 'OutVariable', 'OutBuffer', 'PipelineVariable')
+    foreach ($parameterName in $BoundParameters.Keys) {
+        if ($parameterName -notin $allowed) {
+            throw "Prepared recovery is cleanup-only; creation parameter -$parameterName cannot be combined with it."
+        }
+    }
+}
+
+<#
+.SYNOPSIS
 Recover one receipt-bound pre-clone directory without adopting a completed VM.
 .PARAMETER Context
 Admitted clean task checkout and canonical destination context.

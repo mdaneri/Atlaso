@@ -111,13 +111,15 @@ namespace Atlaso {
             }
             return h;
         }
-        public WorkstationCapturedContentsV1(string path, string expectedRoot, IDictionary<string,string> inventory) {
+        public WorkstationCapturedContentsV1(string path, string expectedRoot, IDictionary<string,string> inventory)
+            : this(path, expectedRoot, inventory, false) { }
+        public WorkstationCapturedContentsV1(string path, string expectedRoot, IDictionary<string,string> inventory, bool deleteRoot) {
             Root = Path.GetFullPath(path);
             try {
                 var chain = new Stack<string>();
                 for (var p = Directory.GetParent(Root); p != null; p = p.Parent) chain.Push(p.FullName);
                 foreach (var p in chain) ancestors.Add(Open(p, false, true));
-                entries.Add(Open(Root, false, true, true));
+                entries.Add(Open(Root, deleteRoot, true, true));
                 rootIdentity = Identity(entries[0]);
                 if (rootIdentity != expectedRoot) throw new IOException("Cleanup root identity changed.");
                 foreach (var entry in inventory) expected.Add(Path.GetFullPath(Path.Combine(Root, entry.Key)), entry.Value);
@@ -160,6 +162,16 @@ namespace Atlaso {
                     throw new Win32Exception(Marshal.GetLastWin32Error());
                 entries[i].Dispose();
             }
+        }
+        public void RemoveRoot() {
+            // The same delete-capable root handle excludes rename/replacement
+            // from admission through retirement; no pathname is reopened.
+            Remove();
+            RestorePermissions();
+            byte delete = 1;
+            if (!SetFileInformationByHandle(entries[0], 4, ref delete, 1))
+                throw new Win32Exception(Marshal.GetLastWin32Error());
+            entries[0].Dispose();
         }
         public void Dispose() {
             try { RestorePermissions(); }
@@ -2019,6 +2031,36 @@ function Assert-AtlasoPreparedArtifactSnapshot {
 
 <#
 .SYNOPSIS
+Retire captured artifacts through their original directory and file handles.
+.PARAMETER Root
+Exact original preparation directory.
+.PARAMETER Snapshot
+Original root identity and complete admitted partial-clone inventory.
+.PARAMETER KeepRoot
+Retain the original empty root for its caller's subsequent use.
+#>
+function Remove-AtlasoCapturedArtifactSnapshot {
+    param([string]$Root, [psobject]$Snapshot, [switch]$KeepRoot)
+    $inventory = [Collections.Generic.Dictionary[string,string]]::new([StringComparer]::OrdinalIgnoreCase)
+    foreach ($relative in $Snapshot.Items.Keys) { $inventory.Add($relative, $Snapshot.Items[$relative]) }
+    $removal = [Atlaso.WorkstationCapturedContentsV1]::new($Root, $Snapshot.RootIdentity, $inventory, (-not $KeepRoot))
+    try {
+        Assert-AtlasoRootSnapshotUnreplaced -RemovalRoot $Root -Snapshot $Snapshot
+        if (-not $KeepRoot) { Assert-AtlasoPreparedArtifactSnapshot -Root $Root -Snapshot $Snapshot }
+        $removal.CaptureSnapshot()
+        if ($KeepRoot) {
+            $removal.Remove()
+            if (@(Get-ChildItem -LiteralPath $Root -Force -ErrorAction Stop).Count) {
+                throw 'VMware artifact root still contains entries after cleanup.'
+            }
+        }
+        else { $removal.RemoveRoot() }
+    }
+    finally { $removal.Dispose() }
+}
+
+<#
+.SYNOPSIS
 Safely remove validated VMware Workstation artifacts under one exact root.
 
 .PARAMETER VmrunPath
@@ -2274,21 +2316,13 @@ function Remove-AtlasoWorkstationVmArtifacts {
     if (-not $providerRemovedRoot) {
         Assert-AtlasoRootSnapshotUnreplaced -RemovalRoot $resolvedRemovalRoot -Snapshot $snapshot
         if ($KeepRemovalRoot) {
-            $retainedRootPin = [Atlaso.WorkstationFileIdentity]::PinOrdinaryDirectoryPath($resolvedRemovalRoot, $true)
-            try {
-                Assert-AtlasoRootSnapshotUnreplaced -RemovalRoot $resolvedRemovalRoot -Snapshot $snapshot
-                $capturedInventory = [Collections.Generic.Dictionary[string,string]]::new([StringComparer]::OrdinalIgnoreCase)
-                foreach ($relativePath in $snapshot.Items.Keys) { $capturedInventory.Add($relativePath, $snapshot.Items[$relativePath]) }
-                $capturedRemoval = [Atlaso.WorkstationCapturedContentsV1]::new($resolvedRemovalRoot, $snapshot.RootIdentity, $capturedInventory)
-                try { $capturedRemoval.CaptureSnapshot(); $capturedRemoval.Remove() }
-                finally { $capturedRemoval.Dispose() }
-                if (@(Get-ChildItem -LiteralPath $resolvedRemovalRoot -Force -ErrorAction Stop).Count) {
-                    throw 'VMware artifact root still contains entries after cleanup.'
-                }
-            } finally { $retainedRootPin.Dispose() }
+            Remove-AtlasoCapturedArtifactSnapshot -Root $resolvedRemovalRoot -Snapshot $snapshot -KeepRoot
             return
         }
-        if (Test-Path -LiteralPath $resolvedRemovalRoot) { Remove-Item -LiteralPath $resolvedRemovalRoot -Recurse -Force -ErrorAction Stop }
+        if ($ExpectedPreparedDirectoryIdentity) {
+            Remove-AtlasoCapturedArtifactSnapshot -Root $resolvedRemovalRoot -Snapshot $snapshot
+        }
+        elseif (Test-Path -LiteralPath $resolvedRemovalRoot) { Remove-Item -LiteralPath $resolvedRemovalRoot -Recurse -Force -ErrorAction Stop }
     }
     if (Test-Path -LiteralPath $resolvedRemovalRoot) {
         throw "VMware artifact directory remains after recursive cleanup; refusing to report success: $resolvedRemovalRoot"

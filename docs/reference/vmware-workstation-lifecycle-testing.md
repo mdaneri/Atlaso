@@ -1184,7 +1184,9 @@ original directory handles with writer and replacement exclusion through cloning
 A concurrently inserted directory or junction is refused rather than adopted. Failed preparation preserves its
 published records and any incomplete directory; it does not invent a completed VM receipt. Retry an incomplete
 canonical output with `-RecoverPreparedDirectory`, `-PreparedDirectoryReceiptPath`, and
-`-PreparedDirectoryReceiptSha256` using the selectors emitted at its original preparation. Recovery verifies the
+`-PreparedDirectoryReceiptSha256` using the selectors emitted at its original preparation. This is a cleanup-only
+invocation: it rejects creation options before removal and exits without cloning; retry creation separately.
+Recovery retains the original root through handle-based deletion and verifies the
 original receipt, intent, task/source ancestry and directory identity inside the owning remover before retiring an
 empty destination or ordinary partial-clone files. A VMX, lock directory, unknown file, replaced directory, or
 altered receipt is preserved. Completed clones still require their original VM receipt and the normal redeploy path.
