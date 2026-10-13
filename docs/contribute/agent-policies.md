@@ -2238,7 +2238,8 @@ preserved with their affected subsystem below. Keep new requirements at their to
 ### Preserved implementation boundaries
 
 - VCF Offline Depot settings and download-profile applies preserve the registered VCFDT software depot ID. Generate an
-  ID only when none exists or an administrator explicitly confirms **Refresh software depot ID** through global apply;
+  ID during ordinary global Apply only when none exists. Explicit **Refresh software depot ID** uses the dedicated
+  identity task dispatched by VCFDT configuration review, never a global Apply form flag;
   preserve the old ID when generation itself fails, but invalidate it if generation succeeds and canonical readback
   fails because VCFDT may already have replaced its runtime identity. Once generation succeeds, remove both staged and
   runtime Broadcom credentials because neither remains valid for the replacement identity. Keep Broadcom credential replacement,

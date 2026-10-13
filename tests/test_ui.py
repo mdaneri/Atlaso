@@ -14786,8 +14786,8 @@ def test_appliance_apply_connection_warnings_detect_management_address_and_certi
     ) == [MANAGEMENT_CERTIFICATE_CONNECTION_WARNING]
 
 
-def test_appliance_apply_carries_explicit_vcf_depot_id_refresh_intent_to_execution(client, monkeypatch):
-    """Verify that appliance apply carries explicit vcf depot id refresh intent to execution.
+def test_appliance_apply_rejects_vcf_depot_id_refresh_outside_dedicated_review(client, monkeypatch):
+    """Global Apply rejects identity replacement while ordinary depot Apply stays valid.
 
     Args:
         client: HTTP test client used to exercise the Atlaso application.
@@ -14815,11 +14815,20 @@ def test_appliance_apply_carries_explicit_vcf_depot_id_refresh_intent_to_executi
         headers={"Accept": "application/json"},
     )
 
+    assert response.status_code == 422, response.text
+    assert "dedicated Software Depot ID task" in response.json()["detail"]
+    with SessionLocal() as db:
+        assert db.query(Job).count() == 0
+    response = submit_reviewed_appliance_apply(
+        client, "/appliance-apply",
+        data={"csrf": csrf, "selected_units": "vcf_offline_depot"},
+        headers={"Accept": "application/json"},
+    )
     assert response.status_code == 202, response.text
     job_id = response.json()["job_id"]
     with SessionLocal() as db:
         submitted_job = db.get(Job, job_id)
-        assert json.loads(submitted_job.result)["refresh_vcf_depot_software_depot_id"] is True
+        assert json.loads(submitted_job.result)["refresh_vcf_depot_software_depot_id"] is False
 
     received_refresh_intent: dict[str, bool] = {}
 
@@ -14854,7 +14863,7 @@ def test_appliance_apply_carries_explicit_vcf_depot_id_refresh_intent_to_executi
     monkeypatch.setattr(ui, "execute_appliance_apply_unit", execute)
     run_appliance_apply_job(job_id)
 
-    assert received_refresh_intent.pop("vcf_offline_depot") is True
+    assert received_refresh_intent.pop("vcf_offline_depot") is False
     assert not any(received_refresh_intent.values())
     with SessionLocal() as db:
         completed_job = db.get(Job, job_id)

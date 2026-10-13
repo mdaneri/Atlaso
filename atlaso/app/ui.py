@@ -19497,6 +19497,8 @@ def _submit_appliance_apply(
     try:
         if not reviewed_plan:
             raise ApplianceApplyPlanError("Reopen appliance review before submitting appliance changes.")
+        if refresh_vcf_depot_software_depot_id:
+            raise ApplianceApplyPlanError("Use the dedicated Software Depot ID task from VCFDT configuration review to refresh the identity.")
         roots = {unit_id for unit_id in requested_units if unit_id in APPLIANCE_APPLY_UNIT_IDS}
         plan = appliance_apply_execution_plan(db, units, roots, consented_ids=selected_ids)
         if selected_ids != plan["selected_ids"] or reviewed_plan != appliance_apply_plan_token(plan):
